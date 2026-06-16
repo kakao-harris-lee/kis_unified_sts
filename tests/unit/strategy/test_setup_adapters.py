@@ -263,9 +263,9 @@ class TestSetupAEntryAdapterHappyPath:
         assert "valid_until" in result.metadata
         valid_until = result.metadata["valid_until"]
         assert valid_until is not None
-        assert valid_until > result.timestamp, (
-            "valid_until must be in the future relative to signal timestamp"
-        )
+        assert (
+            valid_until > result.timestamp
+        ), "valid_until must be in the future relative to signal timestamp"
 
     @pytest.mark.asyncio
     async def test_signal_timestamp_is_tz_aware_utc(self):
@@ -288,9 +288,9 @@ class TestSetupAEntryAdapterHappyPath:
         assert result.timestamp.tzinfo is not None, "timestamp must be tz-aware"
         # Must be UTC (or an alias for UTC such as timezone.utc / ZoneInfo("UTC"))
         # Check by converting to UTC and back; the offset must be 0.
-        assert result.timestamp.utcoffset().total_seconds() == 0, (
-            "timestamp must be in UTC (offset = 0)"
-        )
+        assert (
+            result.timestamp.utcoffset().total_seconds() == 0
+        ), "timestamp must be in UTC (offset = 0)"
 
     @pytest.mark.asyncio
     async def test_signal_timestamp_is_utc_when_context_timestamp_is_naive(self):
@@ -316,7 +316,9 @@ class TestSetupAEntryAdapterHappyPath:
         result = await adapter.generate(context)
 
         assert result is not None
-        assert result.timestamp.tzinfo is not None, "timestamp must be tz-aware even from naive input"
+        assert (
+            result.timestamp.tzinfo is not None
+        ), "timestamp must be tz-aware even from naive input"
 
 
 class TestSetupAEntryAdapterFallbacks:
@@ -338,6 +340,7 @@ class TestSetupAEntryAdapterFallbacks:
         result = await adapter.generate(context)
         # Result type is valid (None or Signal)
         from shared.models.signal import Signal as OrchestratorSignal
+
         assert result is None or isinstance(result, OrchestratorSignal)
 
     @pytest.mark.asyncio
@@ -461,7 +464,7 @@ class TestSetupCEntryAdapterPreconditions:
         event = _make_event(impact_tier=1, scheduled_at=_kst(9, 20))
         context = EntryContext(
             market_data=_market_data_for_event_breakout(
-                current_price=349.5,   # inside [349.0, 350.0] range
+                current_price=349.5,  # inside [349.0, 350.0] range
                 last_15min_high=350.0,
                 last_15min_low=349.0,
             ),
@@ -546,9 +549,9 @@ class TestSetupCEntryAdapterHappyPath:
 
         assert result is not None
         assert result.timestamp.tzinfo is not None, "timestamp must be tz-aware"
-        assert result.timestamp.utcoffset().total_seconds() == 0, (
-            "timestamp must be in UTC (offset = 0)"
-        )
+        assert (
+            result.timestamp.utcoffset().total_seconds() == 0
+        ), "timestamp must be in UTC (offset = 0)"
 
     @pytest.mark.asyncio
     async def test_signal_timestamp_utc_when_context_timestamp_is_naive(self):
@@ -599,6 +602,7 @@ class TestSetupCEntryAdapterFallbacks:
             metadata={"scheduled_events": [event]},
         )
         from shared.models.signal import Signal as OrchestratorSignal
+
         result = await adapter.generate(context)
         assert result is None or isinstance(result, OrchestratorSignal)
 
@@ -616,7 +620,11 @@ class TestSetupCEntryAdapterFallbacks:
             ),
             indicators={},
             timestamp=ts,
-            metadata={"scheduled_events": [_make_event(impact_tier=1, scheduled_at=_kst(9, 25))]},
+            metadata={
+                "scheduled_events": [
+                    _make_event(impact_tier=1, scheduled_at=_kst(9, 25))
+                ]
+            },
         )
         result = await adapter.generate(context)
         assert result is None
@@ -636,12 +644,12 @@ def test_setup_adapters_registered():
     EntryRegistry.clear()
     try:
         register_builtin_components()
-        assert EntryRegistry.is_registered("setup_a_gap_reversion"), (
-            "setup_a_gap_reversion must be registered"
-        )
-        assert EntryRegistry.is_registered("setup_c_event_reaction"), (
-            "setup_c_event_reaction must be registered"
-        )
+        assert EntryRegistry.is_registered(
+            "setup_a_gap_reversion"
+        ), "setup_a_gap_reversion must be registered"
+        assert EntryRegistry.is_registered(
+            "setup_c_event_reaction"
+        ), "setup_c_event_reaction must be registered"
     finally:
         # Restore previous state
         EntryRegistry._components.clear()
@@ -953,7 +961,7 @@ class TestSetupALLMTuning:
             enabled=True,
             risk_off_threshold=75.0,
             risk_off_confidence_multiplier=0.3,  # aggressive penalty
-            min_signal_confidence=0.5,           # higher floor than max scaled
+            min_signal_confidence=0.5,  # higher floor than max scaled
         )
         llm_ctx = _llm_context(
             regime="NEUTRAL",
@@ -973,7 +981,7 @@ class TestSetupALLMTuning:
             enabled=True,
             risk_off_threshold=75.0,
             risk_off_confidence_multiplier=0.3,  # penalty
-            min_signal_confidence=0.0,           # no floor (default)
+            min_signal_confidence=0.0,  # no floor (default)
         )
         llm_ctx = _llm_context(
             regime="NEUTRAL",
@@ -1011,6 +1019,7 @@ class TestSetupALLMTuning:
         # LLM tuning is disabled → signal should pass if Setup A conditions are met
         # (may still be None if Setup A itself rejects it — that's OK)
         from shared.models.signal import Signal as OrchestratorSignal
+
         assert result is None or isinstance(result, OrchestratorSignal)
 
 
@@ -1268,7 +1277,9 @@ class TestSetupALLMVeto:
         context = _gap_up_context(market_context=llm_ctx)
         result = await adapter.generate(context)
 
-        assert result is None, "Veto must fire when overall_signal is the real Enum value"
+        assert (
+            result is None
+        ), "Veto must fire when overall_signal is the real Enum value"
         assert veto_logger.pending_count() >= 1
         event = veto_logger._pending_veto_events[-1]
         # Buffered overall_signal should be the .name string, not str(enum)
@@ -1359,6 +1370,7 @@ class TestSetupALLMVeto:
         result = await adapter.generate(context)
         # No veto for non-STRONG signal
         from shared.models.signal import Signal as OrchestratorSignal
+
         assert result is None or isinstance(result, OrchestratorSignal)
         # If signal emitted, direction must be long
         if result is not None:
@@ -1379,6 +1391,7 @@ class TestSetupALLMVeto:
         result = await adapter.generate(context)
         # LLM tuning entirely disabled → veto never runs
         from shared.models.signal import Signal as OrchestratorSignal
+
         assert result is None or isinstance(result, OrchestratorSignal)
         # If signal returned, it should not have been vetoed
         # (adapter simply passes raw signal through when enabled=False)
@@ -1387,7 +1400,7 @@ class TestSetupALLMVeto:
     async def test_veto_enabled_false_no_veto(self):
         """When veto_enabled=False (master enabled), veto is skipped."""
         adapter = _setup_a_adapter_with_veto(
-            enabled=True,   # master on
+            enabled=True,  # master on
             veto_enabled=False,  # veto off independently
         )
         llm_ctx = _llm_context_with_overall(
@@ -1398,6 +1411,7 @@ class TestSetupALLMVeto:
         result = await adapter.generate(context)
         # Veto disabled → long signal should survive if Setup A fires
         from shared.models.signal import Signal as OrchestratorSignal
+
         assert result is None or isinstance(result, OrchestratorSignal)
 
     @pytest.mark.asyncio
@@ -1505,6 +1519,7 @@ class TestSetupCLLMVeto:
         context = _long_breakout_context(market_context=llm_ctx)
         result = await adapter.generate(context)
         from shared.models.signal import Signal as OrchestratorSignal
+
         assert result is None or isinstance(result, OrchestratorSignal)
 
     @pytest.mark.asyncio
@@ -1522,6 +1537,7 @@ class TestSetupCLLMVeto:
         result = await adapter.generate(context)
         # Veto disabled → Setup C long signal should pass
         from shared.models.signal import Signal as OrchestratorSignal
+
         assert result is None or isinstance(result, OrchestratorSignal)
         if result is not None:
             assert result.metadata["direction"] == "long"
@@ -1558,3 +1574,39 @@ class TestSetupCLLMVeto:
             assert event["direction"] == "long"
             assert event["regime"] == "BEAR_STRONG"
             assert abs(event["confidence"] - 0.7) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Reject-reason observability: INFO log is throttled to state changes
+# ---------------------------------------------------------------------------
+
+
+def test_publish_setup_eval_logs_only_on_state_change(monkeypatch, caplog):
+    """_publish_setup_eval must log INFO only when (outcome, reason) changes.
+
+    The entry loop runs ~1/s; logging every cycle spammed ~170k identical
+    lines/day. Repeated identical rejects → a single INFO line; a new reason →
+    a new line. The Redis publish path is stubbed out (acquire_infra_clients
+    returns (None, None)) so this isolates the logging behaviour.
+    """
+    import logging as _logging
+
+    from shared.strategy.entry import setup_adapters as sa
+
+    monkeypatch.setattr(sa, "acquire_infra_clients", lambda: (None, None))
+    sa._last_eval_log.pop("setup_x", None)  # isolate this setup's state
+
+    with caplog.at_level(_logging.INFO, logger=sa.logger.name):
+        for _ in range(5):
+            sa._publish_setup_eval("setup_x", "reject", "no_event_in_window")
+        same = [r for r in caplog.records if "no_event_in_window" in r.message]
+        assert len(same) == 1, "identical rejects must log once, not per-cycle"
+
+        sa._publish_setup_eval("setup_x", "reject", "kr_gap_below_min(0.1<0.2)")
+        changed = [r for r in caplog.records if "kr_gap_below_min" in r.message]
+        assert len(changed) == 1, "a changed reason must produce a new INFO line"
+
+        # Back to the first reason → logs again (state changed away and back)
+        sa._publish_setup_eval("setup_x", "reject", "no_event_in_window")
+        again = [r for r in caplog.records if "no_event_in_window" in r.message]
+        assert len(again) == 2
