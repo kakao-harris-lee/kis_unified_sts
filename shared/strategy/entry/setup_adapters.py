@@ -885,11 +885,25 @@ def _send_veto_alert_background(
 # value=JSON{outcome, reason, ts_kst}). Best-effort; never breaks the entry loop.
 SETUP_EVAL_KEY = "trading:futures:setup_eval"
 
+# Last (outcome, reason) logged per setup, so the INFO line fires only on a
+# STATE CHANGE — the entry loop runs ~1/s and would otherwise spam ~170k
+# identical lines/day. The Redis hash below is still refreshed every cycle for
+# live "what is it doing right now" inspection.
+_last_eval_log: dict[str, str] = {}
+
 
 def _publish_setup_eval(name: str, outcome: str, reason: str) -> None:
-    """Log + publish a setup's latest evaluation outcome (observability only)."""
-    if outcome == "reject":
-        logger.info("[%s] no signal this cycle: %s", name, reason)
+    """Log (on change) + publish a setup's latest evaluation outcome.
+
+    Observability only — never affects entry/exit decisions.
+    """
+    state = f"{outcome}:{reason}"
+    if _last_eval_log.get(name) != state:
+        _last_eval_log[name] = state
+        if outcome == "reject":
+            logger.info("[%s] no signal this cycle: %s", name, reason)
+        else:
+            logger.info("[%s] signal %s: %s", name, outcome, reason)
     try:
         import json
 
