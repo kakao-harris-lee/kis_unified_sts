@@ -149,9 +149,16 @@ def _futures_symbol() -> str:
         return ""
 
 
-def probe(asset: str, symbol: str, duration: float, tr_id: str) -> int:
+def probe(
+    asset: str, symbol: str, duration: float, tr_id: str, trace: bool = False
+) -> int:
     app_key, app_secret, is_real, base = _resolve_auth(asset)
     ws_url = WS_URL_REAL if is_real else WS_URL_MOCK
+    if trace:
+        # Wire-level handshake log: prints the exact HTTP Upgrade request we send
+        # and KIS's response (or a bare TCP RST with no response = IP/firewall
+        # block rather than an HTTP-level rejection).
+        websocket.enableTrace(True)
     _log(
         f"=== KIS WS probe: asset={asset} env={'REAL' if is_real else 'MOCK'} "
         f"symbol={symbol} tr_id={tr_id} ws={ws_url} ==="
@@ -264,6 +271,11 @@ def main() -> int:
         default="trade",
         help="futures only: trade=H0IFCNT0 (default), orderbook=H0IFASP0",
     )
+    p.add_argument(
+        "--trace",
+        action="store_true",
+        help="wire-level WS handshake trace (the bytes sent + KIS's response/RST)",
+    )
     args = p.parse_args()
 
     if args.asset == "stock":
@@ -284,7 +296,7 @@ def main() -> int:
             )
         tr_id = TR_FUTURES_ASK if args.tr == "orderbook" else TR_FUTURES_TRADE
 
-    return probe(args.asset, symbol, args.duration, tr_id)
+    return probe(args.asset, symbol, args.duration, tr_id, trace=args.trace)
 
 
 if __name__ == "__main__":
