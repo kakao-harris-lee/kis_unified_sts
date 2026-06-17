@@ -2,11 +2,15 @@
 """
 Market Close Summary Briefing (15:30)
 
-Reads trading state from Redis (published by orchestrator & RL paper trader)
+Reads trading state from Redis (published by the stock & futures orchestrators)
 and sends a comprehensive end-of-day report via Telegram.
+
+NOTE: futures runs Setup A/C (gap-reversion / event-reaction), NOT RL — RL was
+removed 2026-06-03. The report section is labelled "선물 트레이딩 성과" accordingly.
 
 Cron: 30 15 * * 1-5
 """
+
 import asyncio
 import sys
 from datetime import datetime
@@ -83,7 +87,9 @@ def _build_stock_report(reader) -> str | None:
     positions = reader.get_positions()
     if positions:
         lines.append("")
-        lines.append(f"<b>\U0001f4c8 \ubcf4\uc720 \ud3ec\uc9c0\uc158 ({len(positions)}\uac74)</b>")
+        lines.append(
+            f"<b>\U0001f4c8 \ubcf4\uc720 \ud3ec\uc9c0\uc158 ({len(positions)}\uac74)</b>"
+        )
         for i, pos in enumerate(positions, 1):
             name = pos.get("name") or pos.get("code", "?")
             code = pos.get("code", "")
@@ -93,9 +99,7 @@ def _build_stock_report(reader) -> str | None:
             pnl_pct = float(pos.get("pnl_pct", 0))
             pstate = pos.get("state", "")
             strategy = pos.get("strategy", "")
-            lines.append(
-                f"  {i}. {name}({code}) | {entry_p:,.0f}\u2192{cur_p:,.0f}"
-            )
+            lines.append(f"  {i}. {name}({code}) | {entry_p:,.0f}\u2192{cur_p:,.0f}")
             lines.append(
                 f"     {_fmt_pnl(u_pnl)}\uc6d0 ({_fmt_pct(pnl_pct)}) | {pstate} | {strategy}"
             )
@@ -105,7 +109,9 @@ def _build_stock_report(reader) -> str | None:
     today_trades = [t for t in trades if _is_today(t.get("exit_time"))]
     if today_trades:
         lines.append("")
-        lines.append(f"<b>\U0001f4c9 \uccad\uc0b0 \uac70\ub798 ({len(today_trades)}\uac74)</b>")
+        lines.append(
+            f"<b>\U0001f4c9 \uccad\uc0b0 \uac70\ub798 ({len(today_trades)}\uac74)</b>"
+        )
         for i, t in enumerate(today_trades, 1):
             name = t.get("name") or t.get("symbol", "?")
             symbol = t.get("symbol", "")
@@ -114,9 +120,7 @@ def _build_stock_report(reader) -> str | None:
             pnl = float(t.get("pnl", 0))
             pnl_pct = float(t.get("pnl_pct", 0))
             strategy = t.get("strategy", "")
-            lines.append(
-                f"  {i}. {name}({symbol}) | {entry_p:,.0f}\u2192{exit_p:,.0f}"
-            )
+            lines.append(f"  {i}. {name}({symbol}) | {entry_p:,.0f}\u2192{exit_p:,.0f}")
             lines.append(
                 f"     {_fmt_pnl(pnl)}\uc6d0 ({_fmt_pct(pnl_pct)}) | {strategy}"
             )
@@ -127,14 +131,18 @@ def _build_stock_report(reader) -> str | None:
         lines.append("")
         lines.append("<b>\U0001f3af \uc804\ub7b5\ubcc4 \ubcf4\uc720</b>")
         for strat, val in by_strategy.items():
-            cnt = val if isinstance(val, int) else val.get("count", 0) if isinstance(val, dict) else 0
+            cnt = (
+                val
+                if isinstance(val, int)
+                else val.get("count", 0) if isinstance(val, dict) else 0
+            )
             lines.append(f"  \u2022 {strat}: {cnt}\uac74")
 
     return "\n".join(lines)
 
 
 def _build_futures_report(reader) -> str | None:
-    """Build futures (RL) trading section of the report."""
+    """Build the futures trading section (Setup A/C orchestrator — not RL)."""
     status = reader.get_status()
     if not status:
         return None
@@ -150,7 +158,7 @@ def _build_futures_report(reader) -> str | None:
     combined_pnl = total_pnl + unrealized_pnl
 
     lines = [
-        f"<b>\U0001f916 \uc120\ubb3c RL \uc131\uacfc</b>",
+        f"<b>\U0001f916 \uc120\ubb3c \ud2b8\ub808\uc774\ub529 \uc131\uacfc</b>",
         f"\u2022 \uc0c1\ud0dc: {state}",
         f"\u2022 \ucd1d \uac70\ub798: {total_trades}\uac74 (\uc2b9\ub960 {win_rate:.1f}%)",
         f"\u2022 \uc2e4\ud604 \uc190\uc775: {_pnl_emoji(total_pnl)} {_fmt_pnl(total_pnl)}\uc6d0",
@@ -166,7 +174,9 @@ def _build_futures_report(reader) -> str | None:
             entry_p = float(pos.get("entry_price", 0))
             cur_p = float(pos.get("current_price", 0))
             u_pnl = float(pos.get("unrealized_pnl", 0))
-            lines.append(f"  \u2192 {name} {side} | {entry_p:,.0f}\u2192{cur_p:,.0f} | {_fmt_pnl(u_pnl)}\uc6d0")
+            lines.append(
+                f"  \u2192 {name} {side} | {entry_p:,.0f}\u2192{cur_p:,.0f} | {_fmt_pnl(u_pnl)}\uc6d0"
+            )
 
     return "\n".join(lines)
 
@@ -214,7 +224,9 @@ async def main():
 
     parts.append("")
     parts.append("\u2501" * 20)
-    parts.append("<i>\ub0b4\uc77c\ub3c4 \uc131\uacf5\uc801\uc778 \ud2b8\ub808\uc774\ub529 \ub418\uc138\uc694!</i>")
+    parts.append(
+        "<i>\ub0b4\uc77c\ub3c4 \uc131\uacf5\uc801\uc778 \ud2b8\ub808\uc774\ub529 \ub418\uc138\uc694!</i>"
+    )
 
     message = "\n".join(parts)
 
