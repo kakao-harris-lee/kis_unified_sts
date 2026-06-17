@@ -1465,7 +1465,7 @@ position record, flag routing), integration (candidate→risk→final→order→
 OpenPositionFilter re-entry block), full `tests/` gate green, ruff/black/mypy clean.
 
 Spec: `docs/superpowers/specs/2026-06-05-stock-execution-pipeline-m4ro-design.md`
-Plan: `docs/superpowers/plans/2026-06-05-stock-execution-pipeline-m4ro.md`
+Plan: `docs/superpowers/plans/archive/2026-06-05-stock-execution-pipeline-m4ro.md`
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF

@@ -4,7 +4,7 @@ Operator runbook for the final step of the cron→compose migration: removing al
 KIS triggers from the **host crontab** and running every scheduled job from the
 Compose stack instead.
 
-- Design: `docs/plans/2026-06-09-cron-to-compose-scheduler.md`
+- Design: `docs/plans/archive/2026-06-09-cron-to-compose-scheduler.md`
 - Prereqs (already merged): PR-A scheduler infra (#447), PR-B one-shots (#448),
   PR-C producer services + session gate (#449)
 - **Cutover window: off-hours only** (after 16:00 KST or before 06:30 KST). The

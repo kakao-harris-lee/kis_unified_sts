@@ -1289,7 +1289,7 @@ mypy/ruff/black clean; stock_monitor suite still green (reuse-by-import only).
 > pre-existing `ConfigLoader`-singleton xdist artifact). CI `test` gate is the arbiter.
 
 Spec: `docs/superpowers/specs/2026-06-07-futures-monitor-f5-design.md`
-Plan: `docs/superpowers/plans/2026-06-07-futures-monitor-f5.md`
+Plan: `docs/superpowers/plans/archive/2026-06-07-futures-monitor-f5.md`
 
 ## Follow-ups
 F-4 (MarketContext builder unification — last Phase B item), F-8/F-9 cutover. Hoisting AlertSink to

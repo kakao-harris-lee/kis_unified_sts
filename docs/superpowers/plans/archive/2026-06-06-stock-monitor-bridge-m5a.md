@@ -1336,7 +1336,7 @@ routing + fail-safe suffix), integration (streams → dashboard `:shadow` keys v
 `TradingStateReader`, live keys untouched), full `tests/` gate green, ruff/black clean.
 
 Spec: `docs/superpowers/specs/2026-06-06-stock-monitor-bridge-m5a-design.md`
-Plan: `docs/superpowers/plans/2026-06-06-stock-monitor-bridge-m5a.md`
+Plan: `docs/superpowers/plans/archive/2026-06-06-stock-monitor-bridge-m5a.md`
 
 ## Follow-ups
 M5b (LLM context), M5c (daily reset), M5d (cutover flag-flip + runbook + rollback),

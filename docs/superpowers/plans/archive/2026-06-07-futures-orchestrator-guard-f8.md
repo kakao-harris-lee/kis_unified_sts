@@ -227,7 +227,7 @@ blocked matrix (futures+disabled→True, stock→False, default→False); CLI bl
 Stock guard tests unchanged + green. Full gate green; ruff/black clean.
 
 Spec: `docs/superpowers/specs/2026-06-07-futures-orchestrator-guard-f8-design.md`
-Plan: `docs/superpowers/plans/2026-06-07-futures-orchestrator-guard-f8.md`
+Plan: `docs/superpowers/plans/archive/2026-06-07-futures-orchestrator-guard-f8.md`
 
 ## Follow-ups
 F-9 (futures cutover runbook: add decoupled daemons to docker-compose, set this flag false, Phase-5

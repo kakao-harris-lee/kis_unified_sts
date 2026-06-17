@@ -352,7 +352,7 @@ clean.
 > `test_entry_path_100_symbols` (known pre-existing artifacts). CI `test` gate is the arbiter.
 
 Spec: `docs/superpowers/specs/2026-06-07-market-context-unify-f4-design.md`
-Plan: `docs/superpowers/plans/2026-06-07-market-context-unify-f4.md`
+Plan: `docs/superpowers/plans/archive/2026-06-07-market-context-unify-f4.md`
 
 ## Follow-ups (Phase B complete after this)
 F-2 (decision_engine live producer), then F-8/F-9 cutover. If a future Setup needs real vwap/spread,

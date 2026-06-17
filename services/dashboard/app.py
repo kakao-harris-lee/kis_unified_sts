@@ -4,7 +4,7 @@ API-only service: provides trading-data endpoints under /api/* plus /health,
 /docs, /metrics, and the /ws WebSocket. The UI is served separately by the
 Next.js app (strategy-builder-ui) and reaches these endpoints through Caddy on
 :5080. (The Vite SPA that used to be served from here was removed in the
-Next.js consolidation — see docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md.)
+Next.js consolidation — see docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md.)
 """
 
 from __future__ import annotations

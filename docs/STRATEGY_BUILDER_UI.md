@@ -3,7 +3,8 @@
 The upstream KIS Strategy Builder frontend is imported in `strategy-builder-ui/`.
 
 - Upstream source: `koreainvestment/open-trading-api/strategy_builder/frontend`
-- User-facing URL: `http://localhost:5080`
+- User-facing URL: `http://localhost:5080` by default
+  (`DASHBOARD_HOST_PORT` may override the host port locally).
 - Internal container port: `strategy-builder-ui:3100`
 - Backend compatibility API: `services/dashboard/routes/kis_builder.py`
 

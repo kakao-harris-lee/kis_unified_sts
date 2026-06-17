@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # supercronic — crontab runner for the `scheduler` compose service (cron→compose
-# migration, docs/plans/2026-06-09-cron-to-compose-scheduler.md). Logs to stdout,
+# migration, docs/plans/archive/2026-06-09-cron-to-compose-scheduler.md). Logs to stdout,
 # honours TZ, no PID-1/docker-socket. Shared into the app image so the scheduler
 # uses the same code + entrypoints. TODO(hardening): pin a sha256.
 ENV SUPERCRONIC_VERSION=v0.2.33

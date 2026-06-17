@@ -1025,7 +1025,7 @@ candidate↔risk_filter contract), integration (raw_data → shadow candidate),
 full `tests/` gate green, ruff/black clean.
 
 Spec: `docs/superpowers/specs/2026-06-05-futures-strategy-daemon-design.md`
-Plan: `docs/superpowers/plans/2026-06-05-futures-strategy-daemon.md`
+Plan: `docs/superpowers/plans/archive/2026-06-05-futures-strategy-daemon.md`
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF

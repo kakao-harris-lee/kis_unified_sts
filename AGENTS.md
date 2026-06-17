@@ -1,43 +1,46 @@
 # Repository Guidelines
 
-## Primary References
-Treat `CLAUDE.md` and project memory (`/home/deploy/.claude/projects/-home-deploy-project-kis-unified-sts/memory/MEMORY.md`) as operational source-of-truth for trading/runtime rules.
+This repository keeps detailed operational rules in [CLAUDE.md](CLAUDE.md).
+Read that file first for trading/runtime constraints. This file is intentionally
+thin to avoid duplicated instructions drifting over time.
 
-## Project Structure & Module Organization
-- `shared/`: core reusable logic (strategy, execution, indicators, streaming, models).
-- `services/`: runtime apps (`trading/`, `api/`, `dashboard/`, `monitoring/`).
-- `domains/`: domain-specific code (keep minimal; prefer shared implementations).
-- `config/`: YAML configs (`strategies/{stock,futures}`, `exit/`, infra configs).
-- `cli/main.py`: `sts` command entrypoint.
-- `tests/unit`, `tests/integration`: backend test suites.
-- `strategy-builder-ui/`: Next.js (App Router) UI — the single frontend. Serves the dashboard (Cockpit/positions/signals/trades) and the strategy builder/executor.
+## Source Of Truth
 
-## Architecture & Trading Rules
-- Configuration-driven only: do not hardcode thresholds, symbols, or risk values; place them in YAML.
-- Keep code DRY: shared behavior belongs in `shared/`, not duplicated by asset domain.
-- Standard runtime path is `services/trading/orchestrator.py` for stock and futures paper/live flow.
-- Futures: ML/RL paths are removed; use Setup A/C plus LLM market context and explicit indicator/strategy-native exits. Preserve long/short symmetry.
-- Stock swing behavior: do not force blanket EOD liquidation; exits should remain strategy-signal based.
+- Current runtime/coding rules: [CLAUDE.md](CLAUDE.md)
+- Project snapshot: [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)
+- Documentation index: [docs/INDEX.md](docs/INDEX.md)
+- Plan index: [docs/plans/INDEX.md](docs/plans/INDEX.md)
+- Deploy-host memory, when present:
+  `/home/deploy/.claude/projects/-home-deploy-project-kis-unified-sts/memory/MEMORY.md`
 
-## Infrastructure Rules (Redis/Caching)
-- Use Redis DB 1 only (`REDIS_URL=redis://localhost:6379/1`); DB 0 is reserved elsewhere.
-- New Redis keys must define TTL. Default operational TTL is 24h; accumulation snapshots use 48h.
-- For containerized services, Redis host binding must allow Docker access (`0.0.0.0`).
+## Working Rules
 
-## Build, Test, and Development Commands
-- `pip install -e ".[dev]"`: install backend + dev tools.
-- `pytest tests/ -v --cov=shared --cov=services --cov=domains`: CI-aligned backend tests.
-- `ruff check .` / `black --check .` / `mypy shared/ --ignore-missing-imports --no-error-summary`.
-- `docker compose up -d`: start local stack.
-- `sts --help`: inspect CLI flows (trade, paper, backtest, optimize, mlflow).
-- Frontend: `cd strategy-builder-ui && npm run dev|build|lint`.
+- Keep code configuration-driven; put thresholds, symbols, risk values, Redis DBs,
+  ports, and schedules in YAML/env/config files.
+- Put shared behavior in `shared/`; keep `domains/` and per-service code thin.
+- Use Redis DB 1 for this project and define TTLs for new Redis keys.
+- Preserve stock swing behavior: no blanket EOD liquidation.
+- Preserve futures long/short symmetry and do not reintroduce removed ML/RL/TFT
+  runtime paths.
+- Do not commit secrets, `.kis_token_*`, or filled `.env` files.
 
-## Testing, Commits, and PRs
-- Test naming: `tests/**/test_*.py`; use markers `unit`, `integration`, `slow`, `backtest`.
-- Integration tests should run with Redis on DB 1.
-- Commit style follows current history: `feat:`, `fix:`, `docs:`, `perf:`, `refactor:`.
-- PRs must include scope, linked issues, config/env changes, and validation artifacts (test output, dashboard screenshots when UI changes).
+## Common Commands
 
-## Security & Config Hygiene
-- Copy `.env.example` to `.env`; never commit secrets or `.kis_token_*` files.
-- Keep credentials in env vars and reference via `${VAR}` in YAML.
+```bash
+pip install -e ".[dev]"
+pytest tests/ -v --cov=shared --cov=services --cov=domains
+ruff check .
+black --check .
+mypy shared/ --ignore-missing-imports --no-error-summary
+docker compose up -d
+sts --help
+```
+
+Frontend:
+
+```bash
+cd strategy-builder-ui
+npm run dev
+npm run build
+npm run lint
+```

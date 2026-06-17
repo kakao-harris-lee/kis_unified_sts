@@ -598,7 +598,7 @@ the bid + logs, and misses when the market stays away (no fill logged). Full `te
 gate green; mypy clean on the new `shared/` file.
 
 Spec: `docs/superpowers/specs/2026-06-07-order-router-paper-execution-f3-design.md`
-Plan: `docs/superpowers/plans/2026-06-07-order-router-paper-execution-f3.md`
+Plan: `docs/superpowers/plans/archive/2026-06-07-order-router-paper-execution-f3.md`
 
 ## Follow-ups
 F-1 (stream-naming coherence — enables end-to-end shadow), F-2 (decision_engine live

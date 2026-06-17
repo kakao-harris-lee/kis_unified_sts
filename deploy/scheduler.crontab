@@ -1,7 +1,7 @@
 # KIS scheduler crontab — run by the `scheduler` compose service via supercronic.
 # Times are KST (the service sets TZ=Asia/Seoul; supercronic honours TZ).
 # Replaces the host crontab KIS jobs (cron→compose migration,
-# docs/plans/2026-06-09-cron-to-compose-scheduler.md). One-shot jobs only — the
+# docs/plans/archive/2026-06-09-cron-to-compose-scheduler.md). One-shot jobs only — the
 # market-hours daemons (screener/fusion) are separate compose services.
 #
 # Entrypoints run from /app (the app image); no host .sh wrappers, no `sts`

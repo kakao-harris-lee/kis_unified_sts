@@ -153,9 +153,10 @@ Cron에서 `--engine` 플래그를 사용했다면 제거 필요:
 
 ## 🔗 관련 문서
 
-- [CLAUDE.md - RL 선물 운용 규칙](../../CLAUDE.md#rl-선물-운용-규칙)
+- [CLAUDE.md - current futures runtime rules](../../CLAUDE.md#futures)
+- [ML/RL removal decision](../plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md)
 - [TradingOrchestrator 구현](../../services/trading/orchestrator.py)
-- [RL MPPO 전략 설정](../../config/strategies/futures/rl_mppo.yaml)
+- Removed historical config: `config/strategies/futures/rl_mppo.yaml`
 
 ---
 

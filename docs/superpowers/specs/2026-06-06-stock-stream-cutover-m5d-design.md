@@ -10,7 +10,7 @@
 > to Docker Compose profiles. Treat the `systemctl` command examples below as
 > historical design context; the active operator runbook is
 > `docs/runbooks/stock-pipeline-cutover-m5d.md`, and the compose migration plan is
-> `docs/plans/2026-06-06-compose-pipeline-services.md`.
+> `docs/plans/archive/2026-06-06-compose-pipeline-services.md`.
 
 ## 1. Goal & scope
 

@@ -341,7 +341,7 @@ green), full `tests/` gate green, ruff/black clean. Implemented subagent-driven 
 an isolated worktree.
 
 Spec: `docs/superpowers/specs/2026-06-06-daily-risk-reset-cron-m5c-design.md`
-Plan: `docs/superpowers/plans/2026-06-06-daily-risk-reset-cron-m5c.md`
+Plan: `docs/superpowers/plans/archive/2026-06-06-daily-risk-reset-cron-m5c.md`
 
 ## Follow-ups
 M5d (cutover flip + runbook + rollback), M5e (orchestrator reduction); document the

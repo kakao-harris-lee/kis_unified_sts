@@ -565,7 +565,7 @@ decision_engine helper assertion, e2e on production bases, shadow integration te
 (uses the shadow name). Full gate green; mypy/ruff/black clean.
 
 Spec: `docs/superpowers/specs/2026-06-07-futures-stream-naming-coherence-f1-design.md`
-Plan: `docs/superpowers/plans/2026-06-07-futures-stream-naming-coherence-f1.md`
+Plan: `docs/superpowers/plans/archive/2026-06-07-futures-stream-naming-coherence-f1.md`
 
 ## Follow-ups
 F-2 (decision_engine live producer), F-4/F-5/F-6, F-8/F-9 cutover. Shared `signal_streams` helper

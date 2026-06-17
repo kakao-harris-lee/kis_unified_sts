@@ -299,7 +299,7 @@ CliRunner `trade start --asset stock` with the flag off → exit 1 + decoupled m
 `bash -n` on the deprecated scripts.
 
 Spec: `docs/superpowers/specs/2026-06-06-orchestrator-stock-decommission-m5e-design.md`
-Plan: `docs/superpowers/plans/2026-06-06-orchestrator-stock-decommission-m5e.md`
+Plan: `docs/superpowers/plans/archive/2026-06-06-orchestrator-stock-decommission-m5e.md`
 
 ## Follow-ups
 This completes the M5 stream-pipeline-decoupling series (M0a–M5e). Future: residual

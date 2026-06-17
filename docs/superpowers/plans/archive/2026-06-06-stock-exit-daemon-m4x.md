@@ -1138,7 +1138,7 @@ integration (open → exit → close + PnL feedback + re-entry freed), three_sta
 regression green, full `tests/` gate green, ruff/black clean.
 
 Spec: `docs/superpowers/specs/2026-06-06-stock-exit-daemon-m4x-design.md`
-Plan: `docs/superpowers/plans/2026-06-06-stock-exit-daemon-m4x.md`
+Plan: `docs/superpowers/plans/archive/2026-06-06-stock-exit-daemon-m4x.md`
 
 ## Follow-ups
 Per-strategy exit configs (needs M4-O `strategy` persistence); BEAR_EXIT/regime

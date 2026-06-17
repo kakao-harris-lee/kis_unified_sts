@@ -2127,7 +2127,7 @@ git add shared/forecasting/__init__.py
 git commit -m "feat(forecasting): __init__.py exports (Phase A)"
 git push -u origin feat/forecasting-phase-a-foundation
 gh pr create --title "feat(forecasting): Phase A — foundation modules + V6 migration" \
-  --body "Phase A of forecast-aware paradigm per docs/superpowers/plans/2026-05-13-forecast-aware-paradigm.md. Foundation modules only — no consumer yet. Adds shared/forecasting/ (~900 LOC) + ClickHouse V6 migration (3 tables). ~40 new tests."
+  --body "Phase A of forecast-aware paradigm per docs/superpowers/plans/archive/2026-05-13-forecast-aware-paradigm.md. Foundation modules only — no consumer yet. Adds shared/forecasting/ (~900 LOC) + ClickHouse V6 migration (3 tables). ~40 new tests."
 ```
 
 - [ ] **Step 5: Wait CI + merge**
@@ -2823,7 +2823,7 @@ In `setup_a_gap_reversion.yaml`, find the `params:` block under `entry:` and app
 
 ```yaml
       # Phase 5 forecast integration (default off — gated activation per
-      # docs/superpowers/plans/2026-05-13-forecast-aware-paradigm.md Phase E)
+      # docs/superpowers/plans/archive/2026-05-13-forecast-aware-paradigm.md Phase E)
       forecast_integration:
         enabled: false                       # feature flag
         gap_threshold_vol_mult: 1.0
@@ -4083,7 +4083,7 @@ All spec sections covered.
 
 ---
 
-**Plan complete and saved to `docs/superpowers/plans/2026-05-13-forecast-aware-paradigm.md`. Two execution options:**
+**Plan complete and saved to `docs/superpowers/plans/archive/2026-05-13-forecast-aware-paradigm.md`. Two execution options:**
 
 **1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration.
 

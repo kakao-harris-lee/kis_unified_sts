@@ -345,7 +345,7 @@ services:
   # host crontab (scanners, backfills, briefings, macro, forecasting refit,
   # verifications). Profile-gated; DO NOT start it while the host crontab still
   # runs the same jobs (double-execution). Cutover is off-hours after disabling
-  # the host KIS crons — docs/plans/2026-06-09-cron-to-compose-scheduler.md.
+  # the host KIS crons — docs/plans/archive/2026-06-09-cron-to-compose-scheduler.md.
   # Market-hours daemons (screener/fusion) are separate services (PR-C).
   # =============================================================================
   scheduler:

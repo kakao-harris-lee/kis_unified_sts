@@ -1758,7 +1758,7 @@ git commit -F /tmp/p2_t10_msg.txt
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-05-22-p2-approach3-setup-ac-regime-gate.md`. Two execution options:
+Plan complete and saved to `docs/superpowers/plans/archive/2026-05-22-p2-approach3-setup-ac-regime-gate.md`. Two execution options:
 
 **1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, spec+quality review per task; through-and-out in this session.
 

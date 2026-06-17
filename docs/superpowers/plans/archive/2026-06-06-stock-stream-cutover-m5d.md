@@ -623,7 +623,7 @@ warn not fail), rollback.sh `--dry-run` non-destructive + shellcheck, full `test
 gate green.
 
 Spec: `docs/superpowers/specs/2026-06-06-stock-stream-cutover-m5d-design.md`
-Plan: `docs/superpowers/plans/2026-06-06-stock-stream-cutover-m5d.md`
+Plan: `docs/superpowers/plans/archive/2026-06-06-stock-stream-cutover-m5d.md`
 
 ## Follow-ups
 M5e (orchestrator reduction to supervisor/health, after the cutover proves stable);

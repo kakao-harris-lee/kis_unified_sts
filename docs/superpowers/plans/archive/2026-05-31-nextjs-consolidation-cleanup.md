@@ -31,7 +31,7 @@
 - Modify: `unified_trading_architecture.md` (line 44)
 - Modify: `docker-compose.yml` (caddy comment ~line 160)
 - Audit only: `caddy/Caddyfile`; `strategy-builder-ui/src/lib/dashboard/types.ts:1`; `strategy-builder-ui/src/hooks/dashboard/useLocalStorage.ts:1`; `strategy-builder-ui/src/contexts/dashboard/AssetClassContext.tsx:3`
-- Modify: `docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md` (status → DONE)
+- Modify: `docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md` (status → DONE)
 
 **WS3 — STS-native client split** (all under `strategy-builder-ui/src/lib/dashboard/`)
 - Create: `client.ts`, `trading.ts`, `signals.ts`, `trades.ts`, `strategies.ts`, `strategyLab.ts`, `strategyBuilder.ts`, `fills.ts`, `health.ts`, `killSwitch.ts`
@@ -70,7 +70,7 @@ API-only service: provides trading-data endpoints under /api/* plus /health,
 /docs, /metrics, and the /ws WebSocket. The UI is served separately by the
 Next.js app (strategy-builder-ui) and reaches these endpoints through Caddy on
 :5080. (The Vite SPA that used to be served from here was removed in the
-Next.js consolidation — see docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md.)
+Next.js consolidation — see docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md.)
 """
 ```
 
@@ -139,7 +139,7 @@ serves a static SPA. HTMLViewMiddleware retained (operator debug view)."
 ## Task 2: Stale-reference sweep (WS2)
 
 **Files:**
-- Modify: `AGENTS.md`, `unified_trading_architecture.md`, `docker-compose.yml`, `docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md`
+- Modify: `AGENTS.md`, `unified_trading_architecture.md`, `docker-compose.yml`, `docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md`
 - Audit only: `caddy/Caddyfile`, three source provenance comments
 
 - [ ] **Step 1: Fix `AGENTS.md`**
@@ -225,7 +225,7 @@ Expected matches are **provenance comments** (e.g. `// Ported from dashboard-fro
 
 - [ ] **Step 6: Mark the 2026-05-28 migration plan DONE**
 
-In `docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md`, change the status header (line 3):
+In `docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md`, change the status header (line 3):
 
 ```markdown
 **Status**: draft (2026-05-28)
@@ -246,7 +246,7 @@ cd /home/deploy/project/kis_unified_sts
 grep -rIn "dashboard-frontend" \
   --include=*.md --include=*.yml --include=*.yaml --include=*.py \
   --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.next \
-  . | grep -v "docs/plans/archive/" | grep -v "docs/superpowers/specs/2026-05-31" | grep -v "docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md"
+  . | grep -v "docs/plans/archive/" | grep -v "docs/superpowers/specs/2026-05-31" | grep -v "docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md"
 ```
 
 Expected: the only remaining matches are the three TS provenance comments from Step 5 (intentionally kept). Anything else is a miss — fix it.
@@ -255,7 +255,7 @@ Expected: the only remaining matches are the three TS provenance comments from S
 
 ```bash
 cd /home/deploy/project/kis_unified_sts
-git add AGENTS.md unified_trading_architecture.md docker-compose.yml docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md
+git add AGENTS.md unified_trading_architecture.md docker-compose.yml docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md
 git commit -m "docs: sweep stale dashboard-frontend (Vite SPA) references
 
 Update AGENTS.md, architecture doc, and the Caddy compose comment to the

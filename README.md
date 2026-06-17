@@ -1,274 +1,162 @@
 # KIS Unified Trading Platform
 
-> 주식/선물 통합 단기매매 시스템 (Stock/Futures Unified Short-Term Trading System)
+> 한국투자증권 API 기반 주식/선물 통합 단기매매 시스템
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 개요 (Overview)
+## Overview
 
-KIS Unified Trading Platform은 한국투자증권 API를 활용한 알고리즘 트레이딩 시스템입니다. 주식과 선물 거래를 단일 플랫폼에서 통합 관리하며, 설정 기반(Configuration-Driven) 전략 시스템을 제공합니다.
+KIS Unified STS is a configuration-driven trading platform for Korean stocks and
+KOSPI200 futures. It combines YAML-defined strategies, backtesting, paper/live
+runtime services, Redis Streams, SQLite runtime ledgers, Parquet/DuckDB market
+data, and a Next.js operator dashboard.
 
-### 주요 기능 (Key Features)
+For the current operational snapshot, read [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
+For the full documentation map, read [docs/INDEX.md](docs/INDEX.md).
 
-- **전략 프레임워크**: 진입/청산 로직 분리, YAML 기반 설정
-- **백테스팅**: MLflow 통합, Optuna 파라미터 최적화
-- **실시간 거래**: Redis Streams 기반 이벤트 파이프라인
-- **모의투자 (Paper Trading)**: 가상 브로커를 통한 전략 검증
-- **모니터링**: React 운영 대시보드, Prometheus 메트릭, Telegram 알림
+## Current Runtime
 
-### 프로젝트 현황 (Project Status)
+- **Frontend/API**: Caddy is the only host web entrypoint. It routes the Next.js
+  UI (`strategy-builder-ui`) and FastAPI dashboard API (`services/dashboard`).
+- **Stock paper runtime**: decoupled Compose pipeline
+  (`stock-ingest` + `stock-pipeline`) after M5d cutover.
+- **Futures runtime**: Setup A/C with LLM market context and explicit
+  indicator/strategy-native exits. Decoupled futures services are available via
+  `futures-ingest`, `futures-pipeline`, and `futures-killswitch` profiles.
+- **Removed paths**: futures ML/RL/TFT runtime code and old `sts rl *` /
+  `sts tft *` commands are removed.
+- **Storage**: Redis DB 1 for runtime streams/state, SQLite WAL for runtime
+  ledger, Parquet/DuckDB for historical market data. ClickHouse is not an active
+  runtime dependency.
 
-오랜만에 돌아온 운영자/엔지니어를 위한 한눈 대시보드: [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) — 현재 phase, active 전략, 자동화 스케줄, blocking risks, 미완 작업.
+## Quick Start
 
-전체 문서 인덱스 (architecture / strategy / operations 카테고리화): [docs/INDEX.md](docs/INDEX.md).
-
-### 운영 런북 (Runbooks)
-
-`docs/runbooks/` 디렉토리에 운영 런북 모음. 상황별로 다음을 참조:
-
-| Runbook | 사용 시점 |
-|---------|----------|
-| [phase2-startup.md](docs/runbooks/phase2-startup.md) | **Phase 2 paper validation 첫 거래일 cutover** (Mon 08:55 KST). 사전 점검 + 당일 절차 + 트러블슈팅 + 롤백. |
-| [futures-paradigm-operations.md](docs/runbooks/futures-paradigm-operations.md) | Phase 5 paradigm **일일 운영 체크리스트** (post-Phase 2 정상 가동 시). |
-| [futures-paradigm-rollback.md](docs/runbooks/futures-paradigm-rollback.md) | **비상 롤백** 절차 (Phase 5 → Phase 4 paper-only). |
-| [futures-paradigm-failure-modes.md](docs/runbooks/futures-paradigm-failure-modes.md) | 알려진 **장애 모드 매트릭스** — symptom / root cause / mitigation. |
-| [futures-legal-review.md](docs/runbooks/futures-legal-review.md) | Phase 5 Gate-2 **법무/세무 검토** 체크리스트. |
-| [phase1-verification.md](docs/runbooks/phase1-verification.md) | Phase 1 (data infra) 검증 게이트. |
-| [phase2-verification.md](docs/runbooks/phase2-verification.md) | Phase 2 (scoring) 검증 게이트. |
-| [phase3-verification.md](docs/runbooks/phase3-verification.md) | Phase 3 (decision engine) 검증 게이트. |
-| [phase4-verification.md](docs/runbooks/phase4-verification.md) | Phase 4 (execution) 검증 게이트 — **2-week paper-uptime gate**. |
-| [phase5-verification.md](docs/runbooks/phase5-verification.md) | Phase 5 (rollout) 게이트 1–4. |
-
-## 빠른 시작 (Quick Start)
-
-### 요구 사항 (Requirements)
+### Requirements
 
 - Python 3.11+
-- Redis (선택)
-- Docker & Docker Compose (선택)
+- Redis
+- Docker and Docker Compose
+- Node.js/npm for frontend development
 
-### 설치 (Installation)
+### Backend Setup
 
 ```bash
-# 저장소 클론
 git clone https://github.com/kakao-harris-lee/kis-unified-sts.git
 cd kis-unified-sts
 
-# 가상환경 생성
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate
 
-# 의존성 설치
 pip install -e ".[dev]"
-
-# 환경 설정
 cp .env.example .env
-# .env 파일 편집하여 KIS API 키 설정
 ```
 
-### Docker로 실행
+Fill `.env` with KIS credentials before running trading or data-collection paths.
+
+### Docker Stack
 
 ```bash
-# 환경 설정
-cp .env.example .env
-# .env 파일 편집
-
-# 서비스 시작
-./scripts/docker-start.sh
-
-# 또는 직접 실행
 docker compose up -d
-
-# 서비스 중지
-./scripts/docker-stop.sh
 ```
 
-### 접속 URL
-
-- Dashboard: http://localhost:5080
-- Prometheus: http://localhost:9090
-
-### CLI 사용
+Useful profiles:
 
 ```bash
-# 백테스트 실행
+docker compose --profile stock-pipeline up -d
+docker compose --profile stock-ingest --profile stock-pipeline up -d
+docker compose --profile futures-pipeline up -d
+docker compose --profile futures-ingest --profile futures-pipeline up -d
+```
+
+### Access URLs
+
+- Dashboard/UI/API: `http://localhost:${DASHBOARD_HOST_PORT:-5080}`
+- If a local env overrides `DASHBOARD_HOST_PORT=5081`, use `http://localhost:5081`.
+- Internal only: `dashboard:8001`, `strategy-builder-ui:3100`.
+
+## Common Commands
+
+```bash
+# CLI help
+sts --help
+
+# Backtest
 sts backtest run --strategy bb_reversion --asset stock
 
-# 모의투자 시작
-sts paper start --strategy bb_reversion --capital 100000000
+# Parameter optimization
+sts optimize --strategy bb_reversion --asset stock --metric sharpe_ratio --trials 100
 
-# 모의투자 상태 확인
-sts paper status
-
-# MLflow UI 실행
+# MLflow UI for backtest/optimization tracking
 sts mlflow ui
 
-# 파라미터 최적화
-sts optimize --strategy bb_reversion --asset stock --metric sharpe_ratio --trials 100
+# Tests and checks
+pytest tests/ -v --cov=shared --cov=services --cov=domains
+ruff check .
+black --check .
+mypy shared/ --ignore-missing-imports --no-error-summary
 ```
 
-## 아키텍처 (Architecture)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Strategy Layer                            │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │ EntrySignal │  │ ExitSignal  │  │ PositionSizing      │ │
-│  │ Generator   │  │ Generator   │  │ Calculator          │ │
-│  └─────────────┘  └─────────────┘  └─────────────────────┘ │
-├─────────────────────────────────────────────────────────────┤
-│                    Trading Pipeline                          │
-│  Regime Detection → Entry Signal → Monitoring → Exit Signal │
-├─────────────────────────────────────────────────────────────┤
-│                    Infrastructure                            │
-│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐│
-│  │ KIS API   │  │ Redis     │  │ Parquet   │  │ MLflow   ││
-│  └───────────┘  └───────────┘  └───────────┘  └──────────┘│
-└─────────────────────────────────────────────────────────────┘
-```
-
-## 프로젝트 구조 (Project Structure)
-
-```
-kis-unified-trading/
-├── shared/                 # 공유 모듈
-│   ├── config/            # 설정 로더 및 스키마
-│   ├── strategy/          # 전략 프레임워크
-│   │   ├── entry/        # 진입 시그널 생성기
-│   │   └── exit/         # 청산 시그널 생성기
-│   ├── backtest/          # 백테스트 엔진
-│   ├── paper/             # 모의투자 엔진
-│   ├── indicators/        # 기술적 지표
-│   ├── regime/            # 시장 상태 감지
-│   ├── execution/         # 주문 실행
-│   └── alerts/            # 알림 시스템
-├── domains/               # 도메인별 구현
-│   ├── stock/            # 주식 도메인
-│   └── futures/          # 선물 도메인
-├── services/              # 애플리케이션 서비스
-│   ├── api/              # REST API
-│   ├── dashboard/        # 대시보드 API
-│   └── trading/          # 거래 오케스트레이터
-├── config/                # 설정 파일
-│   ├── strategies/       # 전략 설정 (YAML)
-│   └── risk/             # 리스크 설정
-├── cli/                   # CLI 명령어
-└── tests/                 # 테스트 코드
-```
-
-## 전략 설정 (Strategy Configuration)
-
-전략은 YAML 파일로 정의됩니다:
-
-```yaml
-# config/strategies/stock/bb_reversion.yaml
-strategy:
-  name: bb_reversion
-  asset_class: stock
-
-  entry:
-    type: bb_lower_reentry
-    params:
-      bb_period: 20
-      bb_std: 2.0
-      rsi_oversold: 30
-      volume_confirm: true
-
-  exit:
-    type: three_stage
-    params:
-      hard_stop_pct: 1.5
-      breakeven_threshold_pct: 1.5
-      trailing_stop_pct: 3.0
-```
-
-## 포함된 전략 (Included Strategies)
-
-### 진입 전략 (Entry Strategies)
-
-| 전략 | 설명 | 자산군 | 상태 |
-|------|------|--------|------|
-| **trend_pullback** | 일봉 필터 + BB/Williams 풀백 진입 + ATR 동적 청산 | 주식 | 검증 중 |
-| **momentum_breakout** | 일봉 고가 근접 + 거래량 트렌드 + 돌파 진입 + ATR 청산 | 주식 | 검증 중 |
-| BB Reversion | 볼린저 밴드 + RSI 평균회귀 | 주식 | 비활성화 |
-| V35 Optimized | BB + RSI + MACD 복합 지표 | 주식 | 레거시 |
-| OFI Momentum | 주문흐름 불균형 기반 | 선물 | 레거시 |
-| Microstructure | 복합 마이크로스트럭처 | 선물 | 레거시 |
-
-### 청산 전략 (Exit Strategies)
-
-| 전략 | 설명 | 상태 |
-|------|------|------|
-| **ATR Dynamic** | ATR 기반 동적 스탑/트레일 (신규 전략용) | 활성 |
-| 3-Stage Exit | Survival → Breakeven → Maximize | 활성 |
-| Trailing Stop | 동적 트레일링 스탑 | 활성 |
-| Time-Based | 시간 기반 청산 | 활성 |
-
-### 3-Stage Exit 동작 원리
-
-```
-Stage 1: SURVIVAL (손실 최소화)
-├── Hard Stop: -1.5%에서 무조건 청산
-└── 목표: 자본 보전
-
-Stage 2: BREAKEVEN (+1.5% 도달 시)
-├── 스탑을 본전으로 이동
-└── 목표: 손실 없는 거래 확보
-
-Stage 3: MAXIMIZE (+3.0% 도달 시)
-├── 트레일링 스탑 활성화
-└── 목표: 수익 극대화
-```
-
-## 테스트 (Testing)
+Frontend:
 
 ```bash
-# 전체 테스트
-pytest tests/ -v
-
-# 특정 모듈 테스트
-pytest tests/unit/strategy/ -v
-pytest tests/integration/ -v
-
-# 커버리지 리포트
-pytest tests/ --cov=shared --cov=services --cov-report=html
-
-# 빠른 테스트 (커버리지 없이)
-pytest tests/ -q
+cd strategy-builder-ui
+npm run dev
+npm run build
+npm run lint
 ```
 
-## 환경 변수 (Environment Variables)
+## Project Structure
 
-| 변수 | 설명 | 필수 |
-|------|------|------|
-| KIS_APP_KEY | 한투 API 앱 키 | O |
-| KIS_APP_SECRET | 한투 API 앱 시크릿 | O |
-| KIS_IS_REAL | 실전투자 여부 (false=모의) | O |
-| API_KEY | 내부 API 인증 키 | O |
-| REDIS_URL | Redis 연결 URL | X |
-| TELEGRAM_BOT_TOKEN | 텔레그램 봇 토큰 | X |
-| TELEGRAM_CHAT_ID | 텔레그램 채팅 ID | X |
+```text
+shared/              reusable strategy, execution, risk, storage, streaming, model logic
+services/            runtime apps and daemons
+  dashboard/         FastAPI API, health, metrics, WebSocket routes
+  trading/           monolithic trading orchestrator
+  stock_*            decoupled stock pipeline services
+  decision_engine/   futures decision producer
+  risk_filter/       futures risk filter
+  order_router/      futures paper/live router
+  futures_monitor/   futures dashboard/alert bridge
+strategy-builder-ui/ Next.js frontend: cockpit, builder, executor, experiments
+config/              YAML configs for strategies, execution, risk, storage, infra
+cli/main.py          sts command entrypoint
+tests/               unit, integration, performance, and service tests
+docs/                architecture, plans, runbooks, operations docs
+```
 
-## 문서 (Documentation)
+## Strategy Notes
 
-- [API 문서](docs/api.md)
-- [전략 가이드](docs/strategies.md)
-- [배포 가이드](docs/deployment.md)
-- [주식 전략 검증 요약](docs/STOCK_STRATEGY_VALIDATION_SUMMARY.md) - trend_pullback & momentum_breakout 검증 현황
+- Strategy implementations live under `shared/strategy/`.
+- Strategy YAML lives under `config/strategies/{stock,futures}/`.
+- New thresholds, risk knobs, symbols, and feature flags should be added to
+  config files, not hardcoded.
+- Stock swing positions must remain strategy-signal based; do not force blanket
+  EOD liquidation.
+- Futures strategies must support long and short symmetry.
 
-## 기여 (Contributing)
+## Runbooks
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+| Runbook | Use |
+|---|---|
+| [paper-trading-docker.md](docs/runbooks/paper-trading-docker.md) | Docker paper stack operation |
+| [stock-pipeline-cutover-m5d.md](docs/runbooks/stock-pipeline-cutover-m5d.md) | Stock decoupled pipeline cutover/rollback |
+| [futures-pipeline-cutover-f9.md](docs/runbooks/futures-pipeline-cutover-f9.md) | Futures decoupled pipeline cutover |
+| [paper-live-code-separation.md](docs/runbooks/paper-live-code-separation.md) | Validated-code live clone and promotion |
+| [futures-paradigm-operations.md](docs/runbooks/futures-paradigm-operations.md) | Futures daily operations checklist |
+| [futures-paradigm-rollback.md](docs/runbooks/futures-paradigm-rollback.md) | Emergency futures rollback |
 
-## 라이선스 (License)
+## Documentation
 
-MIT License - 자세한 내용은 [LICENSE](LICENSE) 파일 참조
+- [CLAUDE.md](CLAUDE.md) - compact operational rules for coding agents
+- [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) - current status snapshot
+- [docs/INDEX.md](docs/INDEX.md) - documentation index
+- [docs/plans/INDEX.md](docs/plans/INDEX.md) - current/reference/archive plan map
+- [docs/ports.md](docs/ports.md) - host port policy
+- [docs/runtime_storage_architecture.md](docs/runtime_storage_architecture.md) - runtime storage design
 
----
+## Safety
 
-**주의사항**: 이 시스템은 교육 및 연구 목적으로 개발되었습니다. 실제 투자에 사용하기 전에 충분한 테스트와 백테스트를 수행하시기 바랍니다. 투자에 따른 손실은 본인 책임입니다.
+This system is for research and controlled paper/live validation. Real-money use
+requires explicit operator approval, validated code, live-mode guards, and the
+appropriate runbook gate.

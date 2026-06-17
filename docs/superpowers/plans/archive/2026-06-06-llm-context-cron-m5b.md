@@ -379,7 +379,7 @@ None-analysis skip — OpenAI mocked), integration (shadow → `:shadow` key, li
 untouched, reader round-trip), full `tests/` gate green, ruff/black clean.
 
 Spec: `docs/superpowers/specs/2026-06-06-llm-context-cron-m5b-design.md`
-Plan: `docs/superpowers/plans/2026-06-06-llm-context-cron-m5b.md`
+Plan: `docs/superpowers/plans/archive/2026-06-06-llm-context-cron-m5b.md`
 
 ## Follow-ups
 M5c (daily risk reset), M5d (cutover flip + runbook + rollback), M5e (orchestrator

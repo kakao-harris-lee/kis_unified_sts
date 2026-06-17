@@ -280,7 +280,7 @@ green; mypy/ruff/black clean.
 > `test_entry_path_100_symbols` (known pre-existing artifacts). CI `test` gate is the arbiter.
 
 Spec: `docs/superpowers/specs/2026-06-07-decision-engine-live-producer-f2-design.md`
-Plan: `docs/superpowers/plans/2026-06-07-decision-engine-live-producer-f2.md`
+Plan: `docs/superpowers/plans/archive/2026-06-07-decision-engine-live-producer-f2.md`
 
 ## Follow-ups
 With F-2 the decoupled chain can produce candidates in live. Phase C remains (Gate-gated):

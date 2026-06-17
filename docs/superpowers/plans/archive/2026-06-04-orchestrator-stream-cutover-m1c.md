@@ -833,7 +833,7 @@ Stock only — futures stays `websocket` (tick stream has no orderbook). Enablin
 the M1a ingest unit + flipping the flag is an operator step (runbook).
 
 Spec: `docs/superpowers/specs/2026-06-04-orchestrator-stream-cutover-m1c-design.md`
-Plan: `docs/superpowers/plans/2026-06-04-orchestrator-stream-cutover-m1c.md`
+Plan: `docs/superpowers/plans/archive/2026-06-04-orchestrator-stream-cutover-m1c.md`
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF

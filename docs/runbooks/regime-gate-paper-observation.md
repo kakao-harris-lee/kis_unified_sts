@@ -1,7 +1,7 @@
 # RegimeGate Paper Observation Runbook (P2-③)
 
 Spec: `docs/superpowers/specs/2026-05-22-p2-approach3-setup-ac-regime-gate-design.md`
-Plan: `docs/superpowers/plans/2026-05-22-p2-approach3-setup-ac-regime-gate.md`
+Plan: `docs/superpowers/plans/archive/2026-05-22-p2-approach3-setup-ac-regime-gate.md`
 
 ## Activation (per strategy)
 

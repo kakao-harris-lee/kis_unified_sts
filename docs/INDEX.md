@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: 2026-06-06 (ClickHouse shutdown documentation cleanup).
+Last updated: 2026-06-17 (agent docs compacted + completed plan archive cleanup).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
@@ -52,7 +52,9 @@ For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS
 
 | Path | 내용 |
 |------|------|
-| [plans/](plans/) | Master plan + active/reference/archive 분류 → [plans/INDEX.md](plans/INDEX.md) |
+| [plans/](plans/) | Current/reference/archive plan 분류 → [plans/INDEX.md](plans/INDEX.md) |
+| [superpowers/plans/](superpowers/plans/) | Completed generated implementation plans → [superpowers/plans/INDEX.md](superpowers/plans/INDEX.md) |
+| [superpowers/specs/](superpowers/specs/) | Design specs paired with generated implementation plans |
 | [runbooks/](runbooks/) | 운영 런북 → [README.md § 운영 런북](../README.md#운영-런북-runbooks) |
 | [archive/](archive/) | 시간 의존적 stale snapshot 보존 (정보 보존 목적) |
 

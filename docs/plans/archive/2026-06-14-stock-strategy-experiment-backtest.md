@@ -66,7 +66,7 @@ StockExperimentRunner  (신규, shared/backtest/experiment_runner.py)
 
 ### Phase 2 — 야간 정기 배치(compose 스케줄러)
 - `deploy/scheduler.crontab`에 야간 엔트리 추가(KST native): `sts experiment run --spec config/experiments/stock_default.yaml`.
-- 죽은 호스트 크론(`stock_builder_preset_experiment`) 제거, 크론→compose 컷오버 마무리(`docs/plans/2026-06-09-cron-to-compose-scheduler.md` 연계).
+- 죽은 호스트 크론(`stock_builder_preset_experiment`) 제거, 크론→compose 컷오버 마무리(`docs/plans/archive/2026-06-09-cron-to-compose-scheduler.md` 연계).
 - rolling 윈도우(예: 최근 N개월)로 매일 갱신 → `ended_incomplete` 같은 만료 상태 소멸.
 
 ### Phase 3 — 백엔드 API 일반화 + 온디맨드 잡 러너

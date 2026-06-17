@@ -333,7 +333,7 @@ gate green.
 allowed (same gate the order_router uses).
 
 Spec: `docs/superpowers/specs/2026-06-06-orchestrator-futures-live-guard-f7-design.md`
-Plan: `docs/superpowers/plans/2026-06-06-orchestrator-futures-live-guard-f7.md`
+Plan: `docs/superpowers/plans/archive/2026-06-06-orchestrator-futures-live-guard-f7.md`
 
 ## Follow-ups
 The broader futures decoupling roadmap (F-1 stream-naming coherence, F-3 order_router

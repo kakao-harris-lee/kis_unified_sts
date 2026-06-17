@@ -1,528 +1,153 @@
 # Deployment Guide
 
-KIS Unified Trading Platform 배포 가이드
+KIS Unified STS is deployed through Docker Compose. Caddy is the single
+host-published web entrypoint; service ports stay internal unless a runbook says
+otherwise.
 
-## 목차
+## Prerequisites
 
-1. [사전 요구사항](#사전-요구사항)
-2. [로컬 개발 환경](#로컬-개발-환경)
-3. [Docker 배포](#docker-배포)
-4. [프로덕션 배포](#프로덕션-배포)
-5. [모니터링 설정](#모니터링-설정)
-6. [문제 해결](#문제-해결)
+| Requirement | Minimum |
+|---|---|
+| Python | 3.11 |
+| Docker | 24.0 |
+| Docker Compose | 2.20 |
+| Redis | 7.x |
 
----
+Host resources: 2 CPU / 4 GB RAM minimum, 4 CPU / 8 GB RAM recommended.
 
-## 사전 요구사항
+## Port Policy
 
-### 소프트웨어
+See [ports.md](ports.md) for the canonical port allocation.
 
-| 요구사항 | 최소 버전 | 권장 버전 |
-|----------|-----------|-----------|
-| Python | 3.11 | 3.12 |
-| Docker | 24.0 | 25.0+ |
-| Docker Compose | 2.20 | 2.24+ |
-| Redis | 7.0 | 7.2 |
+| Port | Owner | Exposure |
+|---:|---|---|
+| `${DASHBOARD_HOST_PORT:-5080}` | Caddy | Host-published dashboard/UI/API/WebSocket entrypoint |
+| `8001` | `dashboard` | Docker-network internal FastAPI API/metrics |
+| `3100` | `strategy-builder-ui` | Docker-network internal Next.js app |
+| `6379` | Redis | Internal or host-local, depending on env/runbook |
+| `9090` | Prometheus | Host-local or internal monitoring, depending on env/runbook |
 
-### 하드웨어 (프로덕션)
+Do not publish the old `services/api` `:8000` gateway. It has been consolidated
+into `services/dashboard`.
 
-| 리소스 | 최소 | 권장 |
-|--------|------|------|
-| CPU | 2 cores | 4 cores |
-| RAM | 4 GB | 8 GB |
-| Storage | 20 GB | 50 GB SSD |
-
-### 네트워크
-
-- 한국투자증권 API 접속을 위한 인터넷 연결
-- 포트: 8000 (API), 8001 (Dashboard), 9090 (Prometheus)
-
-### 보안 구성
-
-KIS Unified Trading Platform은 기본적으로 보안을 우선시하는 구성을 사용합니다.
-
-#### 서비스 바인딩 (Localhost-Only)
-
-모든 민감한 서비스는 **127.0.0.1** (localhost)에만 바인딩되어 외부 네트워크 접근을 차단합니다:
-
-| 서비스 | 포트 바인딩 | 설명 |
-|--------|-------------|------|
-| Redis | `127.0.0.1:6379:6379` | 캐시/메시지 큐 - 인증 필수 |
-| Prometheus | `127.0.0.1:9090:9090` | 메트릭 수집 |
-| Stream Exporter | `127.0.0.1:9093:9093` | 스트리밍 메트릭 |
-
-**⚠️ 중요:** `0.0.0.0`로 바인딩하면 모든 네트워크 인터페이스에 노출되어 보안 위험이 발생합니다.
-
-#### Redis 인증
-
-Redis는 비밀번호 인증을 **필수**로 요구합니다:
+## Environment
 
 ```bash
-# .env 파일에 강력한 비밀번호 설정 (최소 16자)
-REDIS_PASSWORD=your_strong_password_here
-
-# 개발 환경에서도 비밀번호 사용 권장
-# 빈 비밀번호는 보안 위험!
-```
-
-**비밀번호 생성 예시:**
-
-```bash
-# 32자 랜덤 비밀번호 생성
-openssl rand -base64 24
-```
-
-#### Prometheus 관리 API
-
-보안을 위해 Prometheus 관리 API는 **비활성화**되어 있습니다:
-
-- `--web.enable-admin-api` 플래그 제거됨
-- 인증 없이 데이터 삭제/스냅샷 생성하는 위험 방지
-- 메트릭 조회 기능은 정상 작동
-
-#### 개발 모드 보안
-
-`docker-compose.dev.yml` 사용 시:
-
-- Redis 비밀번호: 개발 환경에서도 설정 권장
-- 모든 서비스 여전히 localhost 바인딩 유지
-
-#### 프로덕션 보안 체크리스트
-
-프로덕션 배포 전 반드시 확인:
-
-- [ ] `REDIS_PASSWORD` 설정 (최소 16자, 영문+숫자+특수문자)
-- [ ] `API_KEY` 설정 (API 인증용)
-- [ ] `.env` 파일 권한 `chmod 600 .env`
-- [ ] `.env` 파일 Git 커밋 절대 금지 (`.gitignore` 확인)
-- [ ] 모든 서비스 포트가 `127.0.0.1`에 바인딩 확인
-- [ ] 방화벽 설정 (필요한 포트만 개방)
-- [ ] SSL/TLS 인증서 설정 (리버스 프록시 사용 시)
-
-**보안 설정 검증:**
-
-```bash
-# Docker Compose 구성 확인
-docker compose config | grep -E '(127.0.0.1|requirepass|enable-admin-api)'
-
-# 기대 결과:
-# - 모든 포트에 127.0.0.1 바인딩 확인
-# - Redis에 --requirepass 플래그 확인
-# - enable-admin-api 플래그 없음 확인
-```
-
----
-
-## 로컬 개발 환경
-
-### 1. 저장소 클론
-
-```bash
-git clone https://github.com/kakao-harris-lee/kis-unified-sts.git
-cd kis-unified-sts
-```
-
-### 2. 가상환경 설정
-
-```bash
-# 가상환경 생성
-python -m venv venv
-
-# 활성화
-source venv/bin/activate  # Linux/macOS
-# 또는
-venv\Scripts\activate     # Windows
-
-# 의존성 설치
-pip install -e ".[dev]"
-```
-
-### 3. 환경 변수 설정
-
-```bash
-# 예제 파일 복사
 cp .env.example .env
-
-# 필수 값 설정
-nano .env  # 또는 선호하는 편집기
-```
-
-**.env 필수 설정:**
-
-```bash
-# KIS API
-KIS_APP_KEY=your_app_key
-KIS_APP_SECRET=your_app_secret
-KIS_IS_REAL=false  # 모의투자
-
-# API Authentication
-API_KEY=your_secure_api_key_here
-```
-
-### 4. 테스트 실행
-
-```bash
-# 전체 테스트
-pytest tests/ -v
-
-# 빠른 테스트
-pytest tests/ -q
-```
-
-### 5. 로컬 서버 실행
-
-```bash
-# Dashboard + UI + Caddy
-docker compose up -d dashboard strategy-builder-ui caddy
-```
-
----
-
-## Docker 배포
-
-### 1. 환경 설정
-
-```bash
-# 프로덕션용 환경 파일 생성
-cp .env.production.example .env
-
-# 환경 변수 편집
-nano .env
-```
-
-### 2. 서비스 시작
-
-```bash
-# 시작 스크립트 사용
-./scripts/docker-start.sh
-
-# 또는 직접 실행
-docker compose up -d
-```
-
-### 3. 상태 확인
-
-```bash
-# 헬스 체크
-./scripts/docker-health.sh
-
-# 로그 확인
-docker compose logs -f
-
-# 특정 서비스 로그
-docker compose logs -f app
-```
-
-### 4. 서비스 중지
-
-```bash
-./scripts/docker-stop.sh
-# 또는
-docker compose down
-```
-
-### Docker Compose 서비스 구성
-
-| 서비스 | 포트 | 설명 |
-|--------|------|------|
-| app | host 미노출 | Trading runtime; container-internal health check only |
-| dashboard | 8001 | Dashboard API |
-| redis | 6379 | 캐시/메시지 큐 |
-| prometheus | 9090 | 메트릭 수집 |
-
----
-
-## 프로덕션 배포
-
-### 프로덕션용 Docker 이미지 빌드
-
-```bash
-# 프로덕션 이미지 빌드
-docker build -f Dockerfile.prod -t kis-unified:latest .
-
-# Dashboard 이미지 빌드
-docker build -f Dockerfile.dashboard -t kis-unified-dashboard:latest .
-```
-
-### 보안 설정
-
-#### 1. 환경 변수 보호
-
-```bash
-# .env 파일 권한 설정
 chmod 600 .env
-
-# 또는 Docker secrets 사용
-docker secret create kis_app_key ./secrets/app_key.txt
 ```
 
-#### 2. API 키 생성
+Fill the KIS credentials and runtime settings before starting trading services.
+Do not commit filled env files or `.kis_token_*`.
+
+Important defaults:
 
 ```bash
-# 강력한 API 키 생성
-openssl rand -hex 32
+REDIS_URL=redis://localhost:6379/1
+DASHBOARD_HOST_PORT=5080
 ```
 
-#### 3. 네트워크 보안
+Local/operator env files may override `DASHBOARD_HOST_PORT` (for example `5081`)
+when another local service already owns `5080`.
 
-```yaml
-# docker-compose.prod.yml
-services:
-  app:
-    networks:
-      - internal
-      - external
-    # No host port by default; keep app traffic inside the compose network.
-
-networks:
-  internal:
-    internal: true
-  external:
-```
-
-### Reverse Proxy (Nginx)
-
-```nginx
-# /etc/nginx/sites-available/kis-trading
-server {
-    listen 443 ssl http2;
-    server_name trading.example.com;
-
-    ssl_certificate /etc/ssl/certs/trading.crt;
-    ssl_certificate_key /etc/ssl/private/trading.key;
-
-    location / {
-        proxy_pass http://127.0.0.1:8001;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-
-    location /ws {
-        proxy_pass http://127.0.0.1:8001;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
-
-### Systemd 서비스
-
-```ini
-# /etc/systemd/system/kis-trading.service
-[Unit]
-Description=KIS Unified Trading Platform
-Requires=docker.service
-After=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=/opt/kis-unified-sts
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
-TimeoutStartSec=0
-
-[Install]
-WantedBy=multi-user.target
-```
+## Base Stack
 
 ```bash
-# 서비스 활성화
-sudo systemctl enable kis-trading
-sudo systemctl start kis-trading
+docker compose up -d redis dashboard strategy-builder-ui caddy stream-exporter prometheus
 ```
 
----
-
-## 모니터링 설정
-
-운영 모니터링 화면은 Caddy 단일 진입점(`http://localhost:5080`)을 사용합니다.
-Prometheus(`http://localhost:9090`)는 메트릭 수집 및 알림 규칙 검증용으로 유지합니다.
-
-### Prometheus 알림 규칙
-
-```yaml
-# config/prometheus/alerts.yml
-groups:
-  - name: trading
-    rules:
-      - alert: HighErrorRate
-        expr: rate(trading_errors_total[5m]) > 0.1
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: High error rate detected
-
-      - alert: ServiceDown
-        expr: up{job="trading-api"} == 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: Trading API is down
-```
-
-### Telegram 알림 설정
-
-1. BotFather로 봇 생성
-2. Chat ID 확인
-3. .env에 설정:
+Verify:
 
 ```bash
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-```
-
----
-
-## 백업 및 복구
-
-### 데이터 백업
-
-```bash
-# Redis 데이터 백업
-docker compose exec redis redis-cli -a "$REDIS_PASSWORD" BGSAVE
-docker cp kis-redis:/data/dump.rdb ./backups/redis-$(date +%Y%m%d).rdb
-
-# 설정 파일 백업
-tar -czvf backups/config-$(date +%Y%m%d).tar.gz config/
-```
-
-### 복구
-
-```bash
-# Redis 복구
-docker cp ./backups/redis-backup.rdb kis-redis:/data/dump.rdb
-docker compose restart redis
-```
-
----
-
-## 문제 해결
-
-### 일반적인 문제
-
-#### 1. Docker 컨테이너 시작 실패
-
-```bash
-# 로그 확인
-docker compose logs app
-
-# 컨테이너 상태 확인
 docker compose ps
-
-# 재시작
-docker compose restart app
+curl -f "http://localhost:${DASHBOARD_HOST_PORT:-5080}/health"
 ```
 
-#### 2. Redis 연결 실패
+## Stock Paper Runtime
+
+Shadow validation:
 
 ```bash
-# Redis 상태 확인
-docker compose exec redis redis-cli -a "$REDIS_PASSWORD" ping
-
-# 연결 테스트
-docker compose exec app python -c "import redis; r = redis.Redis(host='redis', port=6379, password='$REDIS_PASSWORD'); print(r.ping())"
+docker compose --env-file .env.paper --profile stock-pipeline up -d \
+  stock-strategy stock-risk-filter stock-order-router stock-exit stock-monitor
+python -m scripts.ops.stock_cutover_verify --mode shadow
 ```
 
-#### 3. KIS API 인증 실패
+Live decoupled stock paper cutover:
 
 ```bash
-# 환경 변수 확인
-docker compose exec app env | grep KIS
-
-# 토큰 갱신
-docker compose exec app python -c "from shared.kis.auth import KISAuth; auth = KISAuth(); print(auth.get_token())"
+STOCK_PIPELINE_MODE=live \
+STOCK_ORCHESTRATOR_ENABLED=false \
+docker compose --env-file .env.paper \
+  --profile stock-ingest --profile stock-pipeline up -d \
+  stock-market-ingest stock-strategy stock-risk-filter stock-order-router \
+  stock-exit stock-monitor
+python -m scripts.ops.stock_cutover_verify --mode live
 ```
 
-#### 4. 메모리 부족
+Runbook: [runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md).
+
+## Futures Runtime
+
+Default futures operation remains Setup A/C with explicit live-mode guards. The
+decoupled futures pipeline is profile-gated and should be cut over only through
+the F9 runbook.
+
+Shadow:
 
 ```bash
-# 메모리 사용량 확인
-docker stats
-
-# 컨테이너 메모리 제한 설정
-# docker-compose.yml
-services:
-  app:
-    deploy:
-      resources:
-        limits:
-          memory: 2G
+FUTURES_PIPELINE_MODE=shadow \
+FUTURES_ORDER_ROUTER_MODE=paper \
+docker compose --env-file .env.paper --profile futures-pipeline up -d \
+  futures-decision-engine futures-risk-filter futures-order-router futures-monitor
 ```
 
-### 로그 레벨 변경
+Cutover runbook: [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md).
+
+## Scheduler And Producers
+
+KIS one-shot jobs run through the Compose `scheduler` profile using
+`deploy/scheduler.crontab` and supercronic. Market-hours producer daemons run
+through the `producers` profile.
 
 ```bash
-# .env에서 설정
-LOG_LEVEL=DEBUG
-
-# 또는 런타임에 변경
-docker compose exec app python -c "import logging; logging.getLogger().setLevel(logging.DEBUG)"
+docker compose --env-file .env.paper --profile scheduler up -d scheduler
+docker compose --env-file .env.paper --profile producers up -d screener fusion-ranker
 ```
 
-### 헬스 체크 엔드포인트
+Runbook: [runbooks/cron-to-compose-cutover.md](runbooks/cron-to-compose-cutover.md).
 
-| 엔드포인트 | 설명 |
-|------------|------|
-| `GET /health/live` | 컨테이너 생존 확인 |
-| `GET /health/ready` | 서비스 준비 상태 |
-| `GET /metrics` | Prometheus 메트릭 |
+## Monitoring
 
----
+- Dashboard/UI/API: `http://localhost:${DASHBOARD_HOST_PORT:-5080}`
+- Prometheus: `http://localhost:9090` when exposed by the selected env/profile.
+- Metrics route: Caddy proxies dashboard metrics through the unified web entry.
 
-## 업그레이드
-
-### 1. 백업
+Use:
 
 ```bash
-./scripts/backup.sh
+docker compose logs -f dashboard
+docker compose logs -f scheduler
+docker compose logs -f stream-exporter
 ```
 
-### 2. 코드 업데이트
+## Security Checklist
+
+- [ ] Filled `.env*` files are not committed.
+- [ ] `API_KEY` is set when dashboard API auth is enabled.
+- [ ] Redis uses DB 1 for this project.
+- [ ] Runtime services bind only required host ports.
+- [ ] Real-money futures uses `config/futures_live.yaml::enabled=true` only after
+      the relevant runbook gates pass.
+- [ ] LIVE code is promoted through validated tags per
+      [runbooks/paper-live-code-separation.md](runbooks/paper-live-code-separation.md).
+
+## Useful Commands
 
 ```bash
-git pull origin main
-```
-
-### 3. 이미지 재빌드
-
-```bash
-docker compose build --no-cache
-```
-
-### 4. 서비스 재시작
-
-```bash
+docker compose config
+docker compose ps
+docker compose logs -f
 docker compose down
-docker compose up -d
+pytest tests/ -v --cov=shared --cov=services --cov=domains
 ```
-
-### 5. 검증
-
-```bash
-./scripts/docker-health.sh
-```
-
----
-
-## 체크리스트
-
-### 배포 전 체크리스트
-
-- [ ] .env 파일 설정 완료
-- [ ] KIS API 키 유효성 확인
-- [ ] 테스트 통과
-- [ ] Docker 이미지 빌드 성공
-- [ ] 헬스 체크 통과
-
-### 프로덕션 체크리스트
-
-- [ ] SSL 인증서 설정
-- [ ] 방화벽 규칙 설정
-- [ ] 모니터링 알림 설정
-- [ ] 백업 스케줄 설정
-- [ ] 로그 로테이션 설정

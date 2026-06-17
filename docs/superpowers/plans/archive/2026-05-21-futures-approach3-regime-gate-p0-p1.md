@@ -1307,7 +1307,7 @@ EOF
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-05-21-futures-approach3-regime-gate-p0-p1.md`. Two execution options:
+Plan complete and saved to `docs/superpowers/plans/archive/2026-05-21-futures-approach3-regime-gate-p0-p1.md`. Two execution options:
 
 **1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, with two-stage review (spec compliance then code quality) between tasks. Same flow as yesterday's P0+P1 — through-and-out in this session.
 

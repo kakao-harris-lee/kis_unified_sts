@@ -335,7 +335,7 @@ activation; rate-limit recovery log; WS/redis best-effort counters. Full gate gr
 clean.
 
 Spec: `docs/superpowers/specs/2026-06-07-paper-readiness-observability-design.md`
-Plan: `docs/superpowers/plans/2026-06-07-paper-readiness-observability.md`
+Plan: `docs/superpowers/plans/archive/2026-06-07-paper-readiness-observability.md`
 
 ## Follow-up
 Increment 2: futures WS exponential-backoff auto-reconnect (mirror stock_feed) + its reconnect counter.

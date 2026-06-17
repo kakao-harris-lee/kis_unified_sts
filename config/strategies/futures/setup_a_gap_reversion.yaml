@@ -81,7 +81,7 @@ strategy:
         veto_short_block_signal: "STRONG_BULLISH"  # opposing signal that blocks shorts
 
       # Phase 5 forecast integration (default off — gated activation per
-      # docs/superpowers/plans/2026-05-13-forecast-aware-paradigm.md Phase E)
+      # docs/superpowers/plans/archive/2026-05-13-forecast-aware-paradigm.md Phase E)
       forecast_integration:
         enabled: false                       # feature flag
         gap_threshold_vol_mult: 1.0

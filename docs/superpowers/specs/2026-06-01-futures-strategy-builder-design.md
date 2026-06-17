@@ -73,7 +73,7 @@
 → 선물 빌더가 동작하려면(주식 포함) 이 정합이 **필수 선행 조건**이다. 운영 결정(2026-06-01)에 따라
 **별도 선행 PR(PR 1)** 로 분리한다. 해법: 빌더 입력 모델에 `alias_generator=to_camel`
 + `populate_by_name=True`를 추가해 camel(프론트)·snake(테스트/YAML)을 모두 수용하고, `model_dump`는
-snake로 유지하여 런타임/YAML은 불변. 상세 태스크: `docs/superpowers/plans/2026-06-01-futures-strategy-builder.md` PR 1.
+snake로 유지하여 런타임/YAML은 불변. 상세 태스크: `docs/superpowers/plans/archive/2026-06-01-futures-strategy-builder.md` PR 1.
 
 ---
 

@@ -3,7 +3,7 @@
 **Status**: approved (2026-05-31)
 **Owner**: operator
 **Driver**: Finish ("마저 정리") the Vite → Next.js migration begun in
-`docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md`. That migration's
+`docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md`. That migration's
 phases 0–5 already shipped (PRs #346, #350, #353, #355, #359–#361): the Vite SPA
 `dashboard-frontend/` is deleted, every page runs on Next.js
 (`strategy-builder-ui/`), Caddy is the single external entry on `:5080`, and the
@@ -79,7 +79,7 @@ Update live references to the deleted `dashboard-frontend/`:
   `src/contexts/dashboard/AssetClassContext.tsx` — fix misleading comments.
   **Keep** any `dashboard-frontend`-named **localStorage key** verbatim
   (renaming silently resets operator preferences); only the comment changes.
-- Mark `docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md` status as
+- Mark `docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md` status as
   ✅ DONE with a one-line completion note pointing at this spec.
 - **Leave `docs/plans/archive/*` untouched** (historical record).
 

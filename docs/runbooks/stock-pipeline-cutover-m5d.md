@@ -6,7 +6,7 @@ context job + M5c daily risk reset. Paper->paper: M4-O still uses `VirtualBroker
 The operational risks are silent stop, double trading, and stale market data.
 
 Spec: `docs/superpowers/specs/2026-06-06-stock-stream-cutover-m5d-design.md`
-Compose plan: `docs/plans/2026-06-06-compose-pipeline-services.md`
+Compose plan: `docs/plans/archive/2026-06-06-compose-pipeline-services.md`
 
 ## Compose Profiles
 

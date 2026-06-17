@@ -804,7 +804,7 @@ records PnL; no-feed→no monitor); LiveExitExecutor (market order when clear, n
 None when unfilled); e2e paper entry→stop-exit lifecycle. Full gate green; mypy/ruff/black clean.
 
 Spec: `docs/superpowers/specs/2026-06-07-futures-exit-execution-f6-design.md`
-Plan: `docs/superpowers/plans/2026-06-07-futures-exit-execution-f6.md`
+Plan: `docs/superpowers/plans/archive/2026-06-07-futures-exit-execution-f6.md`
 
 ## Follow-ups
 F-5 (futures monitor — consumes these exit fills), F-4 (MarketContext builder unification), F-8/F-9
