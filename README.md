@@ -59,12 +59,18 @@ make test-docker
 ### Option C — Host (Python 3.11)
 
 ```bash
-make setup          # python -m pip install -e ".[dev]" + create .env
+make setup          # python -m pip install -e ".[dev]"  (no .env — see note below)
 make test-unit      # fast unit subset, non-serial (needs Redis at localhost:6379)
 make test           # full suite (needs a Redis at localhost:6379)
 ```
 
 For a zero-setup run with no host Python or Redis, use Option B (`make test-docker`).
+
+> **Run tests without a `.env`.** The suite is meant to run hermetically (like
+> CI). A `.env` copied from `.env.example` sets production-leaning values
+> (`DASHBOARD_REQUIRE_AUTH=true`, `REDIS_HOST=redis`) that `conftest`/`cli.main`
+> load and that break unit tests. Create a `.env` (via `make env`) only when you
+> need real KIS credentials for live/data runs.
 
 Run `make help` for the full target list (lint, fmt, typecheck, up/down, ui).
 
@@ -84,11 +90,11 @@ python -m venv venv
 source venv/bin/activate
 
 pip install -e ".[dev]"
-cp .env.example .env
+cp .env.example .env   # only for live/data — see the test note above
 ```
 
 Fill `.env` with KIS credentials before running trading or data-collection paths.
-The test and Dev Container paths do **not** need real credentials.
+The test and Dev Container paths do **not** need (and should not have) a `.env`.
 
 ### Docker Stack
 

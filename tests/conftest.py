@@ -57,14 +57,6 @@ os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "5")
 # in; individual tests still pass explicit throwaway URIs where needed.
 os.environ["MLFLOW_TRACKING_URI"] = "sqlite:///mlflow.db"
 
-# Pin the test environment regardless of the host/container ENVIRONMENT. The CI
-# host job sets ENVIRONMENT=test, but the Dev Container sets ENVIRONMENT=dev for
-# the running app — and parts of the suite (e.g. the dashboard auth bypass)
-# assume "test". Force it here (not setdefault) so `pytest` behaves identically
-# whether it runs on the host, in the test image, or inside the Dev Container.
-# Individual tests still override per-case via monkeypatch.setenv.
-os.environ["ENVIRONMENT"] = "test"
-
 # --- pytest-xdist worker isolation -------------------------------------------
 # xdist workers are separate processes, so in-process singletons are already
 # isolated per worker. The remaining cross-worker hazard among the *parallel*

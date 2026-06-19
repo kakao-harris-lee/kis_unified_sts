@@ -16,12 +16,12 @@ help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-setup: env ## Install Python deps (editable + dev extras) into the active env
+setup: ## Install Python deps (editable + dev extras) into the active env
 	python -m pip install --upgrade pip
 	python -m pip install -e ".[dev]" prometheus-client
 
-env: ## Create .env from .env.example if it does not exist
-	@test -f .env || { cp .env.example .env && echo "created .env from .env.example"; }
+env: ## Create .env from .env.example (ONLY for live/data creds; breaks the test suite)
+	@test -f .env || { cp .env.example .env && echo "created .env from .env.example — fill in KIS secrets"; }
 
 test: ## Full suite on the host (needs Python 3.11 + a Redis at localhost:6379)
 	pytest tests/ $(PYTEST_FLAGS) -n auto -m "not serial"
