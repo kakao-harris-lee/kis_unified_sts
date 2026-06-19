@@ -32,14 +32,47 @@ For the full documentation map, read [docs/INDEX.md](docs/INDEX.md).
 
 ## Quick Start
 
+From a fresh `git clone`, pick whichever path fits the machine — all three give a
+working dev/test environment with no manual Redis or dependency wrangling.
+
+### Option A — Dev Container / Codespaces (zero local setup)
+
+Nothing required but Docker (local) or a browser (Codespaces). The container
+ships Python 3.11, Node, a throwaway Redis at `localhost:6379`, and all `.[dev]`
+dependencies pre-installed.
+
+- **VS Code:** open the folder → "Reopen in Container".
+- **GitHub Codespaces:** "Code ▸ Codespaces ▸ Create codespace".
+
+Then `pytest tests/unit -q` or `make help`. Config lives in `.devcontainer/`.
+
+### Option B — Docker only (no host Python)
+
+Run the full test suite in a container that mirrors CI — the only requirement is
+Docker:
+
+```bash
+make test-docker
+# = docker compose --profile test run --build --rm tests
+```
+
+### Option C — Host (Python 3.11)
+
+```bash
+make setup          # python -m pip install -e ".[dev]" + create .env
+make test-unit      # fast unit subset (fakeredis, no external Redis)
+make test           # full suite (needs a Redis at localhost:6379)
+```
+
+Run `make help` for the full target list (lint, fmt, typecheck, up/down, ui).
+
 ### Requirements
 
-- Python 3.11+
-- Redis
-- Docker and Docker Compose
-- Node.js/npm for frontend development
+- Docker and Docker Compose — sufficient on their own for Options A and B
+- Python 3.11+ and a local Redis — only for Option C (host) workflows
+- Node.js/npm — only for host frontend development (bundled in the Dev Container)
 
-### Backend Setup
+### Manual backend setup (equivalent to `make setup`)
 
 ```bash
 git clone https://github.com/kakao-harris-lee/kis-unified-sts.git
@@ -53,6 +86,7 @@ cp .env.example .env
 ```
 
 Fill `.env` with KIS credentials before running trading or data-collection paths.
+The test and Dev Container paths do **not** need real credentials.
 
 ### Docker Stack
 
