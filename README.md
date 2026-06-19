@@ -60,9 +60,11 @@ make test-docker
 
 ```bash
 make setup          # python -m pip install -e ".[dev]" + create .env
-make test-unit      # fast unit subset (fakeredis, no external Redis)
+make test-unit      # fast unit subset, non-serial (needs Redis at localhost:6379)
 make test           # full suite (needs a Redis at localhost:6379)
 ```
+
+For a zero-setup run with no host Python or Redis, use Option B (`make test-docker`).
 
 Run `make help` for the full target list (lint, fmt, typecheck, up/down, ui).
 

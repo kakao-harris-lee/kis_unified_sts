@@ -27,8 +27,8 @@ test: ## Full suite on the host (needs Python 3.11 + a Redis at localhost:6379)
 	pytest tests/ $(PYTEST_FLAGS) -n auto -m "not serial"
 	pytest tests/ $(PYTEST_FLAGS) -m serial
 
-test-unit: ## Fast host subset (unit tests only; fakeredis, no external Redis)
-	pytest tests/unit $(PYTEST_FLAGS) -n auto
+test-unit: ## Fast subset: unit tests, non-serial (needs Redis at localhost:6379)
+	pytest tests/unit $(PYTEST_FLAGS) -n auto -m "not serial"
 
 test-docker: ## Full suite in Docker — zero host setup beyond Docker (CI parity)
 	$(COMPOSE) --profile test run --build --rm tests
