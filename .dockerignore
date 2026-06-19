@@ -25,7 +25,12 @@ mlruns
 artifacts
 data
 
-# Local credentials and environment files
+# Local credentials and environment files. Keep real (secret) env files and
+# tokens out, but let the committed, non-secret *.example templates through:
+# tests/unit/test_compose_runtime_env.py reads .env.paper.example /
+# .env.live.example, and they only contain ${VAR} placeholders.
 .env
 .env.*
+!.env.example
+!.env.*.example
 .kis_token_*

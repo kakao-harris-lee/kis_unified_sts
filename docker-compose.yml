@@ -719,6 +719,63 @@ services:
       - trading-network
 
 # =============================================================================
+# Test runner (profile: test)
+#
+# Runs the full pytest suite in Docker, mirroring .github/workflows/test.yml
+# (parallel non-serial pass + serial pass, tests/performance excluded). Uses an
+# isolated, password-less, ephemeral `redis-test` — it never touches the real
+# `redis` service or its paper-trading DB 1.
+#
+#   # Run the whole suite (exit code = pytest result):
+#   docker compose --profile test run --rm tests
+#
+#   # Ad-hoc subset:
+#   docker compose --profile test run --rm tests pytest tests/unit/strategy -q
+#
+#   # Tear down the lingering redis-test afterwards:
+#   docker compose --profile test down
+#
+# `run` starts only `tests` + its dependency `redis-test` (not the default
+# stack). KIS_RUN_LIVE_INFRA_TESTS=1 opts into the live-infra tests — safe here
+# because that target is the isolated redis-test, not DB 1 on the real server.
+# =============================================================================
+  redis-test:
+    image: redis:7-alpine
+    profiles: ["test"]
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-redis-test
+    # No auth + ephemeral (no volume): matches CI's bare redis:7-alpine and
+    # keeps the suite isolated from the real `redis` service's paper DB 1.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - trading-network
+
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: ${COMPOSE_PROJECT_NAME:-kis}-tests
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-tests
+    environment:
+      ENVIRONMENT: test
+      REDIS_URL: "redis://localhost:6379/1"
+      # Default off (CI parity). The live-infra tests write real Redis keys, but
+      # here that target is the isolated redis-test, so 1 is safe if desired.
+      KIS_RUN_LIVE_INFRA_TESTS: "${KIS_RUN_LIVE_INFRA_TESTS:-0}"
+    # Share redis-test's network namespace so Redis is reachable at
+    # localhost:6379 exactly like CI's runner. NOTE: network_mode forbids a
+    # sibling `networks:` key — connectivity is inherited from redis-test.
+    network_mode: "service:redis-test"
+    depends_on:
+      redis-test:
+        condition: service_healthy
+
+# =============================================================================
 # 네트워크
 # =============================================================================
 networks:

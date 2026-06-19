@@ -1,0 +1,57 @@
+# KIS Unified Trading Platform — test image.
+#
+# Faithfully reproduces the CI test environment (.github/workflows/test.yml) so
+# the full pytest suite can run in Docker. Three things the bare runtime
+# Dockerfile does NOT provide but the suite needs:
+#   1. dev/test deps  -> pip install ".[dev]" (pytest, xdist, fakeredis, ...).
+#   2. the `git` CLI   -> tests/unit/ops/test_live_preflight.py and
+#                         test_promote_live.py shell out to git to build
+#                         throwaway repos under tmp_path. (The real .git is NOT
+#                         needed: shared/backtest/mlflow_tracker._get_git_sha
+#                         swallows the error and returns "unknown".)
+#   3. a non-root user -> tests that assert a path is *not* writable (e.g. the
+#                         recover_positions sentinel fallback) only hold for a
+#                         non-root user; root can mkdir/write anywhere.
+#
+# Redis is supplied by the `redis-test` compose service. This image expects it
+# reachable at localhost:6379 — the `tests` compose service shares redis-test's
+# network namespace so localhost works exactly like CI's runner.
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    ENVIRONMENT=test \
+    REDIS_URL=redis://localhost:6379/1
+
+# git: required by the ops preflight/promote tests (they `git init`/`clone`
+# throwaway repos under tmp_path). CI's ubuntu runner ships git; slim does not.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Dependency layer — cached until pyproject/README change. Mirrors the runtime
+# Dockerfile's split: deps install first, source is overlaid afterwards and
+# imported from /app via pytest's `pythonpath = ["."]` (so the non-editable
+# install never shadows the working tree).
+COPY pyproject.toml README.md ./
+RUN pip install --upgrade pip && pip install ".[dev]" prometheus-client
+
+# Application + tests. .dockerignore keeps out .venv/.git/data/node_modules/etc.
+COPY . .
+
+# Non-root (uid 1000), matching the runtime image's appuser and CI's runner.
+RUN useradd -m -u 1000 tester && chown -R tester:tester /app
+USER tester
+
+# Default: the CI two-pass run — parallel (non-serial) then serial, with
+# tests/performance excluded (CI runs those in a separate job). Override per-run
+# with e.g. `docker compose --profile test run --rm tests pytest tests/unit -q`.
+CMD ["bash", "-lc", "\
+  pytest tests/ --ignore=tests/performance -n auto -m 'not serial' \
+    --timeout=180 --timeout-method=thread -q \
+  && pytest tests/ --ignore=tests/performance -m serial \
+    --timeout=180 --timeout-method=thread -q"]
