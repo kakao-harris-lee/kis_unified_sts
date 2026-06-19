@@ -1,0 +1,36 @@
+{
+  "name": "KIS Unified STS",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/kis_unified_sts",
+  "shutdownAction": "stopCompose",
+
+  // Node is needed for the strategy-builder-ui frontend (npm run dev/build).
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" }
+  },
+
+  // Dev servers: UI (3100), dashboard API (8001), MLflow (5000), Caddy (5080).
+  "forwardPorts": [3100, 8001, 5000, 5080],
+
+  // One-time bootstrap: editable install of .[dev], seed .env, frontend deps.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "remoteUser": "vscode",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-python.black-formatter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"]
+      }
+    }
+  }
+}

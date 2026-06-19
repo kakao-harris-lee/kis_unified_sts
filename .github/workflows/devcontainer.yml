@@ -1,0 +1,55 @@
+# Validates the two "clone-and-go" entry points so they don't bit-rot:
+#   - the Docker test profile (Dockerfile.test + `tests` compose service), and
+#   - the Dev Container (.devcontainer/).
+# Path-gated: only runs when the relevant config changes, so it never slows down
+# ordinary code PRs (the host test suite in test.yml covers those).
+#
+# Both jobs run the unit suite as TWO passes — parallel (non-serial) then serial
+# — exactly like test.yml. `serial`-marked tests assume the dedicated serial
+# pass (shared external state / ordering-sensitive) and fail if mixed in.
+name: Dev/Test Containers
+
+on:
+  push:
+    branches: [main, develop]
+    paths: &paths
+      - '.devcontainer/**'
+      - 'Dockerfile.test'
+      - 'docker-compose.yml'
+      - 'Makefile'
+      - 'pyproject.toml'
+      - '.github/workflows/devcontainer.yml'
+  pull_request:
+    branches: [main]
+    paths: *paths
+
+jobs:
+  docker-test-profile:
+    name: Docker test profile (Dockerfile.test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # Builds Dockerfile.test, brings up the isolated redis-test, and runs a
+      # unit smoke inside the `tests` service (full parity is test.yml's job).
+      - name: Build image + unit smoke via the test profile
+        run: |
+          docker compose --profile test run --build --rm tests bash -lc "\
+            pytest tests/unit -n auto -m 'not serial' --timeout=180 --timeout-method=thread -q && \
+            pytest tests/unit -m serial --timeout=180 --timeout-method=thread -q"
+
+  devcontainer:
+    name: Dev Container build + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      # Builds .devcontainer (postCreate installs .[dev]) and runs a unit smoke
+      # inside it — the same path a contributor gets via "Reopen in Container".
+      - name: Build dev container and run unit smoke
+        uses: devcontainers/ci@v0.3
+        with:
+          runCmd: |
+            bash -lc "\
+              pytest tests/unit -n auto -m 'not serial' --timeout=180 --timeout-method=thread -q && \
+              pytest tests/unit -m serial --timeout=180 --timeout-method=thread -q"
