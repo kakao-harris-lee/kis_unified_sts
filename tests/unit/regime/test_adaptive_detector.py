@@ -14,6 +14,17 @@ from shared.regime.adaptive_detector import (
 class TestAdaptiveRegimeDetector:
     """Test suite for AdaptiveRegimeDetector."""
 
+    @pytest.fixture(autouse=True)
+    def _seed_rng(self):
+        """Seed NumPy's global RNG before each test for determinism.
+
+        Several tests build synthetic OHLCV candles with ``np.random.*`` without
+        seeding, so the regime classification — and thus the assertions — was
+        non-deterministic (e.g. ``test_detect_volatile_sideways`` occasionally
+        drew data that landed outside its expected regime set, failing in CI).
+        """
+        np.random.seed(0)
+
     # 1. Test regime classification for each state
 
     def test_detect_trending_bull(self):
