@@ -260,11 +260,16 @@ class TestMessageProcessing:
         assert mock_adapter._aes_iv == b"fedcba9876543210"
 
     def test_pingpong_response(self, mock_adapter):
-        """Test PINGPONG message is echoed back."""
+        """Test PINGPONG message is echoed back.
+
+        KIS keys the keepalive frame by header.tr_id (not tr_cd); echoing it
+        keeps the socket alive and avoids the idle-drop -> reconnect-churn ->
+        IP-block incident.
+        """
         mock_adapter._set_connected(True)
         mock_adapter.ws = MagicMock()
 
-        json_msg = '{"header":{"tr_cd":"PINGPONG"},"body":{}}'
+        json_msg = '{"header":{"tr_id":"PINGPONG","datetime":"20220830144632"},"body":{}}'
         mock_adapter._process_message(json_msg)
 
         mock_adapter.ws.send.assert_called_once()

@@ -102,6 +102,16 @@ class KISFuturesPriceFeed:
         self._reconnect_breaker_cooldown = float(
             feed_cfg.get("reconnect_breaker_cooldown_seconds", 300.0)
         )
+        # Reconnect-rate ceiling (defense-in-depth): more than rate_max
+        # reconnects within rate_window seconds trips the breaker regardless of
+        # consecutive-failure count — catches a flapping connection that
+        # "succeeds" then drops each cycle (the churn that re-triggers a KIS IP
+        # block). The supervisor loop is single and long-lived, so its policy is
+        # built there; these knobs feed it.
+        self._reconnect_rate_max = int(feed_cfg.get("reconnect_rate_max", 4))
+        self._reconnect_rate_window = float(
+            feed_cfg.get("reconnect_rate_window_seconds", 600.0)
+        )
         # Bounded retries for the *initial* connect. KIS intermittently resets
         # the WS right after the approval handshake; without this a single
         # startup reset leaves the feed permanently dead (the supervisor loop
@@ -320,6 +330,8 @@ class KISFuturesPriceFeed:
             max_delay=self._reconnect_max_delay,
             breaker_threshold=self._reconnect_breaker_threshold,
             breaker_cooldown=self._reconnect_breaker_cooldown,
+            rate_max=self._reconnect_rate_max,
+            rate_window=self._reconnect_rate_window,
         )
         delay = self._reconnect_initial_delay
         while self._running:
@@ -341,13 +353,31 @@ class KISFuturesPriceFeed:
                 self._adapter.connect()
                 logger.info("[FuturesPriceFeed] Reconnected to futures WS feed")
                 _record_ws_reconnect("futures")
+                # Feed the rolling rate ceiling on every successful (re)connect:
+                # a flap that keeps connecting then dropping accumulates here and
+                # trips the breaker even though each cycle resets consecutive
+                # failures.
+                policy.record_reconnect()
                 self._adapter.subscribe(self._symbols, self._on_tick)
                 # subscribe() returned: the connection lived then dropped (or
                 # stop()). Only now reset the breaker/backoff — resetting before
                 # subscribe would let a connect-ok-but-subscribe-fails flap loop
-                # forever without ever tripping the breaker.
+                # forever without ever tripping the breaker. reset() preserves
+                # the rate window, so a tripped ceiling stays latched.
                 policy.reset()
-                delay = self._reconnect_initial_delay
+                if policy.rate_tripped:
+                    logger.warning(
+                        "[FuturesPriceFeed] Reconnect-rate ceiling tripped "
+                        "(flapping) — circuit breaker open, backing off %.0fs to "
+                        "avoid a KIS account block; REST fallback covers data",
+                        self._reconnect_breaker_cooldown,
+                    )
+                    approval_key_cache.invalidate(
+                        self._config.app_key, self._config.is_real
+                    )
+                    delay = self._reconnect_breaker_cooldown
+                else:
+                    delay = self._reconnect_initial_delay
             except Exception as e:  # noqa: BLE001 — backoff and retry
                 logger.error(f"[FuturesPriceFeed] Reconnect attempt failed: {e}")
                 # Advance backoff / trip the breaker after repeated failures.
