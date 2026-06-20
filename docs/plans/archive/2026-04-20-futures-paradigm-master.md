@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED / HISTORICAL — DO NOT REFERENCE.** Archived 2026-06-20. Origin of the Phase 1–5 futures structure, but its internal RL wording is superseded by the 2026-06-03 RL removal. The Phase structure is historical context only; the current futures direction is [`../2026-06-03-ml-rl-removal-llm-indicator-futures.md`](../2026-06-03-ml-rl-removal-llm-indicator-futures.md) + [`../../ROADMAP.md`](../../ROADMAP.md). (The Phase 5 promotion *procedure* itself remains live in [`../2026-04-20-futures-paradigm-phase5-rollout.md`](../2026-04-20-futures-paradigm-phase5-rollout.md).) Kept for audit trail only.
+
 # 선물 패러다임 전환 — 마스터 인덱스 & 디컴포지션
 
 **Status:** Draft (needs user review)

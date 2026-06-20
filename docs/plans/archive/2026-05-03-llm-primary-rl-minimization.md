@@ -1,6 +1,8 @@
+> ⚠️ **SUPERSEDED / HISTORICAL — DO NOT REFERENCE.** Archived 2026-06-20. LLM-primary cutover + RL-minimization audit trail (header was already v5.0 "Superseded") — replaced for all future work by [`../2026-06-03-ml-rl-removal-llm-indicator-futures.md`](../2026-06-03-ml-rl-removal-llm-indicator-futures.md); see also [`../../ROADMAP.md`](../../ROADMAP.md). Kept for audit trail only.
+
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v5.0 — Superseded for future work (2026-06-03)** by [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md). ML/RL은 runtime roadmap에서 제거 대상으로 전환됐다. 이 문서의 retraining 보존, RL auxiliary filter, shadow/counterfactual 재활성화 gate는 더 이상 active direction이 아니며, 아래 v4.x 내용은 LLM-primary cutover와 deprecation 근거의 historical record로 유지한다.
+**Status**: **v5.0 — Superseded for future work (2026-06-03)** by [2026-06-03-ml-rl-removal-llm-indicator-futures.md](../2026-06-03-ml-rl-removal-llm-indicator-futures.md). ML/RL은 runtime roadmap에서 제거 대상으로 전환됐다. 이 문서의 retraining 보존, RL auxiliary filter, shadow/counterfactual 재활성화 gate는 더 이상 active direction이 아니며, 아래 v4.x 내용은 LLM-primary cutover와 deprecation 근거의 historical record로 유지한다.
 
 **v4.11 — RL_mppo deprecate 유지, 사유 정정 (2026-05-15)**. ⚠️ v4.10의 deprecate *사유는 사실과 달랐음*. 재평가(2026-05-15, shadow 5/11–5/15 데이터 48,708건):
 
