@@ -1,5 +1,16 @@
 # P2-③ — RegimeGate for Setup A/C + bb_reversion_15m (Live Paper) — Design
 
+> **Note (2026-06-20):** This design remains active/trusted. One infra caveat:
+> the `regime_gate_decisions` **ClickHouse** audit table (§6 C2, §7) is
+> best-effort only, and **ClickHouse was removed from the runtime on
+> 2026-06-03**. With ClickHouse absent, the audit insert simply misses
+> (failure-isolated try/except) and the weekly counterfactual digest has no
+> rows — but the **gate behavior is unchanged**: on any missing input the gate
+> degrades PERMISSIVE (§9), never silently blocks. The live gate data source is
+> Redis (`forecast:vol:current`), not ClickHouse, so gate decisions are
+> unaffected by the ClickHouse removal. (Audit logging would need a Parquet/
+> SQLite sink to be restored.)
+
 **Status:** Design — awaiting user review before plan
 **Date:** 2026-05-22
 **Author:** brainstorming session (operator: chihunlee)

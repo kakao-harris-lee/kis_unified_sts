@@ -569,7 +569,7 @@ A ──► B ──► C ──┬──► D ──► E ──► F ──►
 
 ### Plan v4.9 → v5.0 갱신
 
-`docs/plans/2026-05-03-llm-primary-rl-minimization.md`:
+`docs/plans/archive/2026-05-03-llm-primary-rl-minimization.md`:
 - §1 결정 배경: RL 추가 축소 (운영자 §7-4)
 - §2 목표 상태: forecast-aware paradigm + RL deprecation gate
 - §4 Phase 5 신설 (forecasting integration)
@@ -717,7 +717,7 @@ DELETED_PATTERNS=(
 
 - 브레인스토밍 5 Q&A 결정 (Q1–Q5): 본 문서 §1
 - 관련 운영 컨텍스트:
-  - `docs/plans/2026-05-03-llm-primary-rl-minimization.md` (Phase 2 cutover LIVE, v4.9)
+  - `docs/plans/archive/2026-05-03-llm-primary-rl-minimization.md` (Phase 2 cutover LIVE, v4.9)
   - `docs/investigations/2026-05-12-stock-signals-regression.md` (PR #233, 5/6 이후 stock 0-signals)
   - Phase 5 paradigm services: `services/decision_engine/`, `services/risk_filter/`, `services/order_router/`
 - Setup A/C 기존 구현: `shared/strategy/entry/setup_adapters.py`, `config/strategies/futures/setup_{a,c}_*.yaml`

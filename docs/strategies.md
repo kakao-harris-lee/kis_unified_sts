@@ -2,6 +2,12 @@
 
 전략 설정 및 커스터마이징 가이드
 
+> **Last verified 2026-06-20 (KST).** Enabled/disabled status below reflects
+> `config/strategies/stock/*.yaml` as of this date. Runtime/backtest storage is
+> Parquet/DuckDB + SQLite + Redis DB 1 (ClickHouse removed 2026-06-03). For the
+> live snapshot see [PROJECT_STATUS.md](PROJECT_STATUS.md) and the authoritative
+> phased plan in [ROADMAP.md](ROADMAP.md).
+
 ## 개요
 
 KIS Unified Trading Platform은 설정 기반(Configuration-Driven) 전략 시스템을 사용합니다. 모든 전략은 YAML 파일로 정의되며, 코드 수정 없이 파라미터를 조정할 수 있습니다.
@@ -52,10 +58,10 @@ strategy:
 
 ## 진입 전략 (Entry Strategies)
 
-### Trend Pullback (신규 - 검증 중)
+### Trend Pullback (현재 비활성)
 
-**상태:** 백테스트 및 페이퍼 트레이딩 검증 중
-**검증 문서:** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](STOCK_STRATEGY_VALIDATION_SUMMARY.md)
+**상태 (2026-06-20):** `enabled: false` — 재검증 대기. 과거 검증은 합성 데이터 기반이었음.
+**검증 문서 (historical, archived):** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md)
 
 일봉 추세 필터와 분봉 풀백 시그널을 결합한 다중 시간프레임 전략
 
@@ -93,10 +99,10 @@ entry:
 5. 장 시작 30분, 마감 15분 제외
 6. 시그널 간 120초 쿨다운
 
-### Momentum Breakout (신규 - 검증 중)
+### Momentum Breakout (현재 활성 — paper 관찰)
 
-**상태:** 백테스트 및 페이퍼 트레이딩 검증 중
-**검증 문서:** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](STOCK_STRATEGY_VALIDATION_SUMMARY.md)
+**상태 (2026-06-20):** `enabled: true` — paper 관찰용 재활성화 (#443). 재튜닝 미해결.
+**검증 문서 (historical, archived):** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md)
 
 일봉 고가 근접과 거래량 트렌드를 활용한 모멘텀 돌파 전략
 
@@ -570,39 +576,44 @@ position:
 
 ## 주식 전략 검증 현황 (Stock Strategy Validation Status)
 
-### 신규 전략 (2026-03 검증 중)
+> **Last verified 2026-06-20 (KST)** against `config/strategies/stock/*.yaml`.
+> Live state lives in [PROJECT_STATUS.md](PROJECT_STATUS.md); the phased plan and
+> open reactivation decisions live in [ROADMAP.md](ROADMAP.md). The 2026-03
+> validation summary was synthetic-data-based and is archived
+> ([archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md)).
 
-**Task 007:** Stock Strategy Redesign - trend_pullback & momentum_breakout
+### 활성 전략 (`enabled: true`)
 
-두 개의 새로운 주식 전략이 현재 백테스트 및 페이퍼 트레이딩 검증 단계에 있습니다:
+운영 환경은 paper 전용입니다 (KIS real key로 시세 수집 + VirtualBroker 주문).
+청산은 시그널 기반 three-stage이며 무조건적 EOD 청산은 없습니다.
 
-1. **trend_pullback** - 일봉 필터 + 분봉 풀백 진입
-2. **momentum_breakout** - 거래량 트렌드 + 돌파 진입
+| 전략 | 설정 파일 | 비고 |
+|------|----------|------|
+| momentum_breakout | `config/strategies/stock/momentum_breakout.yaml` | paper 관찰용 재활성화 (#443); 재튜닝 미해결 (최근 Sharpe -5.24). |
+| pattern_pullback | `config/strategies/stock/pattern_pullback.yaml` | 활성 패턴 풀백 진입. |
+| williams_r | `config/strategies/stock/williams_r.yaml` | 활성 (지표 기반 진입). |
 
-**검증 상태 및 결과:** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](STOCK_STRATEGY_VALIDATION_SUMMARY.md)
+### 비활성 전략 (`enabled: false`)
 
-**목표:**
-- Sharpe Ratio > 1.0 (0.5% 비용 반영 후)
-- 백테스트 6개월+ 데이터
-- 페이퍼 트레이딩 20일+ 양성 수익
+| 전략 | 설정 파일 | 사유 |
+|------|----------|------|
+| bb_reversion | `config/strategies/stock/bb_reversion.yaml` | 비활성. |
+| opening_volume_surge (+ combo/score 변형) | `config/strategies/stock/opening_volume_surge*.yaml` | 비활성. |
+| volume_accumulation | `config/strategies/stock/volume_accumulation.yaml` | 비활성. |
+| trend_pullback | `config/strategies/stock/trend_pullback.yaml` | 비활성 — 재검증 대기. |
+| vr_composite | `config/strategies/stock/vr_composite.yaml` | 비활성. |
+| technical_consensus (+ exit 실험) | `config/strategies/stock/technical_consensus*.yaml` | 0% 승률(2026-06-02)로 비활성; 재활성화 결정 보류 ([ROADMAP.md](ROADMAP.md)). |
+| trend_continuation_vwap | `config/strategies/stock/trend_continuation_vwap.yaml` | 비활성. |
+| daily_pullback | `config/strategies/stock/daily_pullback.yaml` | 비활성. |
+| trix_golden | `config/strategies/stock/trix_golden.yaml` | 비활성. |
 
-### 레거시 전략 (비활성화)
-
-다음 4개 전략은 음의 샤프 비율로 인해 **비활성화** 상태입니다:
-
-| 전략 | 설정 파일 | 상태 | 사유 |
-|------|----------|------|------|
-| bb_reversion | `config/strategies/stock/bb_reversion.yaml` | `enabled: false` | trend_pullback로 흡수 |
-| opening_volume_surge | `config/strategies/stock/opening_volume_surge.yaml` | `enabled: false` | 일봉 컨텍스트 부재 |
-| volume_accumulation | `config/strategies/stock/volume_accumulation.yaml` | `enabled: false` | momentum_breakout로 흡수 |
-| williams_r | `config/strategies/stock/williams_r.yaml` | `enabled: false` | 성능 부진 |
-
-**참고:** 레거시 전략 코드는 참고용으로 유지되지만, 운영 환경에서는 사용되지 않습니다.
+**참고:** 비활성 전략 코드는 참고/실험용으로 유지되지만, 운영 환경에서는 사용되지 않습니다.
+정확한 활성 여부는 항상 각 YAML의 `enabled` 플래그가 단일 진실원입니다.
 
 ---
 
 ## 관련 문서 (Related Documentation)
 
-- [주식 전략 검증 요약](STOCK_STRATEGY_VALIDATION_SUMMARY.md) - 백테스트 및 페이퍼 트레이딩 결과
+- [주식 전략 검증 요약 (archived, historical)](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md) - 2026-03 합성 데이터 백테스트 결과 (보관용)
 - [백테스트 성능 리뷰](BACKTEST_PERFORMANCE_REVIEW.md) - 상세 백테스트 분석
 - [페이퍼 트레이딩 모니터링 가이드](PAPER_TRADING_MONITORING_GUIDE.md) - 20일 검증 절차

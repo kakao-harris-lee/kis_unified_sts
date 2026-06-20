@@ -1,11 +1,13 @@
 # Documentation Index
 
-Last updated: 2026-06-17 (agent docs compacted + completed plan archive cleanup).
+Last updated: 2026-06-20 (superseded RL/paradigm + stock validation docs archived; ROADMAP added).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
 
 For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS.md).
+For "where is each asset headed (phased)?" → **[ROADMAP.md](ROADMAP.md)** — the
+authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 
 ---
 
@@ -13,6 +15,7 @@ For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS
 
 | Doc | Use |
 |-----|-----|
+| [ROADMAP.md](ROADMAP.md) | **Authoritative phased roadmap (Stock + Futures).** North Star, phase tables, current state, open next-steps. Supersedes scattered plan docs. |
 | [PROJECT_STATUS.md](PROJECT_STATUS.md) | 60-second dashboard — current phase, active strategies, automation schedule, blocking risks. |
 
 ## 📐 Architecture & API
@@ -36,7 +39,6 @@ For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS
 |-----|-----|
 | [BACKTEST_PERFORMANCE_REVIEW.md](BACKTEST_PERFORMANCE_REVIEW.md) | 백테스트 성능 리뷰. |
 | [BACKTEST_RESULTS_INTERPRETATION_GUIDE.md](BACKTEST_RESULTS_INTERPRETATION_GUIDE.md) | 백테스트 결과 해석 + 배포 의사결정. |
-| [STOCK_STRATEGY_VALIDATION_SUMMARY.md](STOCK_STRATEGY_VALIDATION_SUMMARY.md) | 주식 전략 검증 요약. |
 | [PAPER_TRADING_MONITORING_GUIDE.md](PAPER_TRADING_MONITORING_GUIDE.md) | trend_pullback / momentum_breakout 20+ 거래일 검증 모니터링. |
 | [TREND_PULLBACK_PAPER_TRADING.md](TREND_PULLBACK_PAPER_TRADING.md) | trend_pullback 페이퍼 트레이딩 운영. |
 | [MOMENTUM_BREAKOUT_PAPER_TRADING.md](MOMENTUM_BREAKOUT_PAPER_TRADING.md) | momentum_breakout 페이퍼 트레이딩 운영. |
@@ -64,6 +66,7 @@ For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS
 |-----|-----|
 | [archive/HYBRID_PIPELINE_TRUST_STATUS.md](archive/HYBRID_PIPELINE_TRUST_STATUS.md) | 2026-03-12 — 하이브리드 파이프라인 신뢰 상태 스냅샷 (점-시간 기록) |
 | [archive/STOCK_STRATEGY_DEPLOYMENT_STATUS.md](archive/STOCK_STRATEGY_DEPLOYMENT_STATUS.md) | 2026-03-09 — 주식 전략 배포 상태 스냅샷 (이미 다른 전략으로 진화) |
+| [archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md) | 2026-03-06 — 합성 데이터 기반 주식 전략 검증 요약 (현재 활성 상태와 불일치; archived 2026-06-20). 현재 상태는 [ROADMAP.md](ROADMAP.md) + [PROJECT_STATUS.md](PROJECT_STATUS.md). |
 | [archive/verification/](archive/verification/) | 2026-03 — 완료된 migration/security/performance 검증 스냅샷 |
 
 ## How to add a new doc

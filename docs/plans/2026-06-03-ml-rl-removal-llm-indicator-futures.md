@@ -3,7 +3,7 @@
 - 작성일: 2026-06-03
 - 상태: Runtime removal completed; ClickHouse dependency audit updated 2026-06-04
 - 관련 문서:
-  - [2026-05-03-llm-primary-rl-minimization.md](2026-05-03-llm-primary-rl-minimization.md)
+  - [2026-05-03-llm-primary-rl-minimization.md](archive/2026-05-03-llm-primary-rl-minimization.md) (archived 2026-06-20 — historical predecessor superseded by this plan)
   - [2026-06-03-runtime-storage-decoupling-implementation.md](2026-06-03-runtime-storage-decoupling-implementation.md)
   - [../runtime_storage_architecture.md](../runtime_storage_architecture.md)
 

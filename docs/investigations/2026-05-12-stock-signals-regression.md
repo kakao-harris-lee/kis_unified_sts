@@ -116,4 +116,4 @@ Stock paper trading log volume is normal (15MB/day) so silent — only visible v
 - **PR #159 (suspect)**: `fix(paper): tz-aware UTC across entry hot-path; restore signal-to-fill flow` — commit `c37214f`, merged 2026-05-04 10:49 KST. Validation in body was futures-only.
 - Dashboard fix (separate): PR #232 — `fix(dashboard): route stock vs futures trades to different DB.table`
 - Related: PR #218 (`fix(data-provider): silent-stall guard via fresh-symbol ratio threshold`) — applied 2026-05-11. Doesn't directly fix this regression but its existence is **corroborating evidence for H0**: a stock-side silent-stall on 2026-05-11 had the same fingerprint (data fresh ratio collapse → strategy receives no usable data → 0 signals). The post-#218 `min_fresh_ratio=0.5` default should now fail health checks if the stock path hits a similar mode again.
-- Phase 2 cutover plan: `docs/plans/2026-05-03-llm-primary-rl-minimization.md`
+- Phase 2 cutover plan: `docs/plans/archive/2026-05-03-llm-primary-rl-minimization.md`

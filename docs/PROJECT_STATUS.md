@@ -1,6 +1,8 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-06-17
+**Last updated**: 2026-06-20
+
+> Phased roadmap (Stock + Futures): [ROADMAP.md](ROADMAP.md) — authoritative.
 
 ## Current Runtime
 
@@ -31,15 +33,23 @@
 
 ## Active Strategies
 
+Verified 2026-06-20 against `config/strategies/{stock,futures}/*.yaml` (`enabled` flag is the single source of truth).
+
 | Asset | Strategy | Mode | Note |
 |---|---|---|---|
-| Stock | `bb_reversion`, `opening_volume_surge`, `volume_accumulation` | Paper/configured | Stock swing exits remain signal-driven; no blanket EOD liquidation. |
-| Stock | registry strategies such as `pattern_pullback`, `williams_r`, `vr_composite`, `trend_pullback` | Experiment/backtest/paper candidates | Enabled status is controlled by each YAML config and experiment specs. |
-| Futures | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper primary | Uses Setup target exits, LLM context/veto/risk hooks, and live-mode guards. |
-| Futures | `williams_r_15m`, `bb_reversion_15m`, other indicator candidates | Candidate/reference | Use explicit validation gates before promotion. |
+| Stock | `momentum_breakout`, `pattern_pullback`, `williams_r` | Paper (enabled) | `momentum_breakout` re-enabled for paper observation (#443). Swing exits are signal-driven (three-stage); no blanket EOD liquidation. |
+| Stock | `bb_reversion`, `opening_volume_surge`, `volume_accumulation`, `trend_pullback`, `vr_composite`, `technical_consensus`, `trend_continuation_vwap`, `daily_pullback`, `trix_golden` | Disabled | `enabled: false`. `technical_consensus` disabled after 0% win (2026-06-02); reactivation under review (see ROADMAP). |
+| Futures | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper primary (enabled) | Setup A fires live signals; Setup C coded but ~0 signals (event sourcing sparse). Uses Setup target exits, LLM context/veto/risk hooks, live-mode guards. |
+| Futures | `williams_r_15m`, `bb_reversion_15m`, `macd_ema_crossover_15m`, `momentum_breakout`, `trend_pullback`, `trix_golden` | Disabled | `enabled: false`. Trend strategies collapse in walk-forward; `bb_reversion_15m` disabled (triggered stock BEAR_EXIT, #479). |
 | Futures | `llm_directed_indicator` | Deprecated | Not an active path without a separate redefinition gate. |
 
 ## Recent Decisions
+
+**2026-06-20** - Documentation cleanup (this PR). Superseded RL/paradigm plans
+and the synthetic-data stock validation summary were archived with SUPERSEDED
+banners and de-indexed; a single authoritative [ROADMAP.md](ROADMAP.md) (Stock +
+Futures) was added; `strategies.md` and Phase-5/Strategy-Lab/RegimeGate specs
+were corrected for current state (no RL, no ClickHouse, Next.js UI).
 
 **2026-06-17** - Documentation cleanup. `CLAUDE.md` was compacted, `AGENTS.md`
 became a thin pointer, completed plan records moved to archive, and plan indexes
@@ -65,8 +75,18 @@ default Python dependencies no longer include ClickHouse drivers.
 
 ## Open Validation
 
-- HAR-RV log-RV follow-up and stock strategy reactivation decisions from
+Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top items:
+
+- **Stock:** HAR-RV log-RV transition (forecast model stale since 2026-05-31,
+  daily refit failing — needs backtest + ~1wk shadow before cutover);
+  `technical_consensus` reactivation decision (strong long-horizon backtest vs
+  recent live loss); `momentum_breakout` redesign (retune still negative);
+  Strategy Lab build-out. See
   [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
-- Paper/live E2E smoke with Redis + SQLite only after each cutover.
-- Position recovery drill after process restart.
-- Futures decoupled F9 cutover gates before replacing the orchestrator path.
+- **Futures:** F9 decoupled cutover gates (shadow → Gate 2 → operator-gated
+  cutover) before replacing the orchestrator path; Phase 5 Gate 1–3 to small
+  live; Setup C activation (event-sourcing fix); kill-switch sentinel →
+  shared-volume path (required before live).
+- **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
+  position-recovery drill after process restart; MLflow restart
+  (`localhost:5000` down).
