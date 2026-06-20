@@ -20,6 +20,13 @@ long cooldown independent of the consecutive-failure count. The rate history
 deliberately survives :meth:`reset` — clearing it on each success would defeat
 the purpose, since flapping *is* a stream of successes.
 
+The rate trip is *self-healing*, not a permanent latch: while it holds, the feed
+reconnects only once per cooldown, so the rolling window drains; once the window
+falls back to/below ``rate_max`` (the flapping has stopped) the trip clears and
+fast reconnect resumes — mirroring how the consecutive breaker recovers on a
+clean connect. (A permanent latch would pin a feed at cooldown-spaced reconnects
+for the whole process after a single transient flap, long after KIS recovered.)
+
 Pure/stateful and side-effect-free so it is trivially unit-testable; the feeds
 own the actual sleeping and logging.
 """
@@ -38,6 +45,9 @@ class ReconnectPolicy:
       * ``breaker_threshold`` consecutive failed reconnect attempts, or
       * more than ``rate_max`` reconnects within a rolling ``rate_window`` —
         catches success-then-drop flapping that consecutive counting misses.
+
+    The rate trip self-heals: it holds only while the rolling window stays above
+    ``rate_max``, and clears once the window drains (flapping stopped).
 
     Set ``rate_max <= 0`` to disable the rate ceiling (consecutive-only).
     """
@@ -66,9 +76,6 @@ class ReconnectPolicy:
         self._rate_window = rate_window
         self._time_fn = time_fn
         self._reconnects: deque[float] = deque()
-        # Latches once the rate ceiling trips so the breaker stays open through
-        # the cooldown even as old reconnect timestamps age out of the window.
-        self._rate_tripped = False
 
     def reset(self) -> None:
         """Clear the failure count after a successful connection.
@@ -83,18 +90,22 @@ class ReconnectPolicy:
     def record_reconnect(self) -> None:
         """Register a successful (re)connect for the rolling rate ceiling.
 
-        Trips the breaker (latched) once more than ``rate_max`` reconnects fall
-        within ``rate_window``. No-op when the rate ceiling is disabled.
+        Trips the breaker once more than ``rate_max`` reconnects fall within
+        ``rate_window``. No-op when the rate ceiling is disabled.
         """
-        if self._rate_max <= 0 or self._rate_window <= 0:
-            return
-        now = self._time_fn()
-        self._reconnects.append(now)
-        cutoff = now - self._rate_window
+        if self._rate_enabled:
+            self._reconnects.append(self._time_fn())
+            self._prune()
+
+    def _prune(self) -> None:
+        """Drop reconnect timestamps older than the rolling window."""
+        cutoff = self._time_fn() - self._rate_window
         while self._reconnects and self._reconnects[0] < cutoff:
             self._reconnects.popleft()
-        if len(self._reconnects) > self._rate_max:
-            self._rate_tripped = True
+
+    @property
+    def _rate_enabled(self) -> bool:
+        return self._rate_max > 0 and self._rate_window > 0
 
     def record_failure(self) -> float:
         """Register a failed attempt; return the delay to wait before retrying.
@@ -113,12 +124,20 @@ class ReconnectPolicy:
     @property
     def breaker_open(self) -> bool:
         """True once consecutive failures hit the threshold OR the rate ceiling tripped."""
-        return self._rate_tripped or self._consecutive >= self._breaker_threshold
+        return self.rate_tripped or self._consecutive >= self._breaker_threshold
 
     @property
     def rate_tripped(self) -> bool:
-        """True if the reconnect-rate ceiling (flap detector) has tripped."""
-        return self._rate_tripped
+        """True while the reconnect-rate ceiling is exceeded (flap detector).
+
+        Evaluated against the live rolling window (old timestamps pruned first),
+        so it self-heals: once reconnects within ``rate_window`` fall back to/below
+        ``rate_max`` it returns False and fast reconnect resumes.
+        """
+        if not self._rate_enabled:
+            return False
+        self._prune()
+        return len(self._reconnects) > self._rate_max
 
     @property
     def consecutive_failures(self) -> int:

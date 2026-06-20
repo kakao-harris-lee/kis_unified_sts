@@ -606,11 +606,16 @@ class KISStockPriceFeed:
             )
             while self._running and not self._connected.is_set():
                 if policy.breaker_open:
+                    reason = (
+                        "reconnect-rate ceiling (flapping)"
+                        if policy.rate_tripped
+                        else f"{policy.consecutive_failures} consecutive failures"
+                    )
                     logger.warning(
                         "[StockPriceFeed] Reconnect circuit breaker OPEN "
-                        "(%d consecutive failures) — backing off %.0fs to avoid a "
-                        "KIS account block; REST fallback covers data meanwhile",
-                        policy.consecutive_failures,
+                        "(%s) — backing off %.0fs to avoid a KIS account block; "
+                        "REST fallback covers data meanwhile",
+                        reason,
                         delay,
                     )
                 else:

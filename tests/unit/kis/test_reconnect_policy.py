@@ -118,10 +118,13 @@ def test_rate_window_prunes_old_reconnects():
     assert not p.rate_tripped
 
 
-def test_rate_trip_latches_through_reset_and_window_expiry():
-    # Once tripped, the breaker stays open even as timestamps age out and reset()
-    # is called — so the long cooldown holds for the whole recovery, not just one
-    # cycle.
+def test_rate_trip_holds_through_reset_then_self_heals_when_window_drains():
+    # The trip holds across reset() (a flap is a stream of successes) but is NOT
+    # a permanent latch: once the rolling window drains below the ceiling (the
+    # flapping stopped — e.g. the feed is now reconnecting only once per cooldown)
+    # the breaker reopens to fast reconnect, mirroring the consecutive breaker's
+    # self-heal. A permanent latch would pin the feed at cooldown for the whole
+    # process after a single transient flap.
     clock = _Clock()
     p = _policy(rate_max=4, rate_window=600.0, time_fn=clock)
     for _ in range(5):
@@ -129,6 +132,21 @@ def test_rate_trip_latches_through_reset_and_window_expiry():
         clock.advance(10.0)
     assert p.rate_tripped
     p.reset()
-    clock.advance(10_000.0)  # all timestamps now far outside the window
-    assert p.rate_tripped  # latched
-    assert p.breaker_open
+    assert p.rate_tripped  # survives reset() while the window is still hot
+    clock.advance(10_000.0)  # all timestamps now age out of the window
+    assert not p.rate_tripped  # self-healed: flapping stopped
+    assert not p.breaker_open
+
+
+def test_rate_ceiling_keeps_tripping_under_sustained_flap_after_pruning():
+    # Steady-state guard: a sustained 105s flap must KEEP the ceiling tripped
+    # even after old timestamps prune out of the window — not just trip on the
+    # first burst. With window=600s/period=105s the window holds ~6 reconnects,
+    # which stays > rate_max=4 for the whole sustained flap.
+    clock = _Clock()
+    p = _policy(rate_max=4, rate_window=600.0, time_fn=clock)
+    for _ in range(40):  # ~70 min of sustained 105s flapping
+        p.record_reconnect()
+        clock.advance(105.0)
+        assert p.rate_tripped or len(p._reconnects) <= 4  # noqa: SLF001
+    assert p.rate_tripped  # still tripped deep into the flap, post-pruning
