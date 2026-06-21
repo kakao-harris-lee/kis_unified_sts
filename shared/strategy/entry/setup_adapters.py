@@ -303,6 +303,15 @@ class SetupAEntryConfig(ServiceConfigBase):
         default=0.5,
         description="Minimum LLM confidence required to compute a non-flat daily bias",
     )
+    daily_bias_refresh_minutes: int = Field(
+        default=60,
+        description=(
+            "I2: minutes before a stale flat bias is re-evaluated. "
+            "A flat bias older than this is recomputed on the next call; "
+            "non-flat (long/short) biases remain sticky all day. "
+            "Default 60 minutes."
+        ),
+    )
 
 
 class SetupCEntryConfig(ServiceConfigBase):
@@ -367,6 +376,15 @@ class SetupCEntryConfig(ServiceConfigBase):
     daily_bias_min_confidence: float = Field(
         default=0.5,
         description="Minimum LLM confidence required to compute a non-flat daily bias",
+    )
+    daily_bias_refresh_minutes: int = Field(
+        default=60,
+        description=(
+            "I2: minutes before a stale flat bias is re-evaluated. "
+            "A flat bias older than this is recomputed on the next call; "
+            "non-flat (long/short) biases remain sticky all day. "
+            "Default 60 minutes."
+        ),
     )
 
 
@@ -1014,6 +1032,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         self._daily_bias_provider = DailyBiasProvider(
             bias_min_confidence=config.daily_bias_min_confidence,
             non_long_regimes=list(config.llm_tuning.long_blocked_regimes),
+            bias_refresh_minutes=config.daily_bias_refresh_minutes,
         )
 
     def _derive_gap_threshold_pct(self, forecast: Any | None) -> float:
@@ -1312,6 +1331,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         self._daily_bias_provider = DailyBiasProvider(
             bias_min_confidence=config.daily_bias_min_confidence,
             non_long_regimes=list(config.llm_tuning.long_blocked_regimes),
+            bias_refresh_minutes=config.daily_bias_refresh_minutes,
         )
 
     def _derive_thresholds(

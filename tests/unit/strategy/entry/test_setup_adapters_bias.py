@@ -211,3 +211,36 @@ async def test_setup_c_misaligned_bias_blocks_entry(monkeypatch):
 
     result = await adapter.generate(_ctx())
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# I2: bias_refresh_minutes wired through adapter configs
+# ---------------------------------------------------------------------------
+
+
+def test_setup_a_adapter_wires_bias_refresh_minutes():
+    """SetupAEntryAdapter passes daily_bias_refresh_minutes to DailyBiasProvider."""
+    from shared.strategy.entry.setup_adapters import SetupAEntryAdapter, SetupAEntryConfig
+
+    cfg = SetupAEntryConfig()
+    cfg.daily_bias_refresh_minutes = 90
+    adapter = SetupAEntryAdapter(cfg)
+    assert adapter._daily_bias_provider._bias_refresh_minutes == 90
+
+
+def test_setup_c_adapter_wires_bias_refresh_minutes():
+    """SetupCEntryAdapter passes daily_bias_refresh_minutes to DailyBiasProvider."""
+    from shared.strategy.entry.setup_adapters import SetupCEntryAdapter, SetupCEntryConfig
+
+    cfg = SetupCEntryConfig()
+    cfg.daily_bias_refresh_minutes = 45
+    adapter = SetupCEntryAdapter(cfg)
+    assert adapter._daily_bias_provider._bias_refresh_minutes == 45
+
+
+def test_bias_refresh_default_is_60():
+    """daily_bias_refresh_minutes defaults to 60 in both adapter configs."""
+    from shared.strategy.entry.setup_adapters import SetupAEntryConfig, SetupCEntryConfig
+
+    assert SetupAEntryConfig().daily_bias_refresh_minutes == 60
+    assert SetupCEntryConfig().daily_bias_refresh_minutes == 60
