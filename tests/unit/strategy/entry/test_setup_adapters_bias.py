@@ -21,6 +21,8 @@ from shared.strategy.entry import setup_adapters
 from shared.strategy.entry.setup_adapters import (
     SetupAEntryAdapter,
     SetupAEntryConfig,
+    SetupCEntryAdapter,
+    SetupCEntryConfig,
 )
 from shared.strategy.base import EntryContext
 
@@ -39,6 +41,14 @@ def _adapter(enabled: bool = True) -> SetupAEntryAdapter:
     cfg.llm_tuning.enabled = False
     cfg.daily_bias_filter_enabled = enabled
     return SetupAEntryAdapter(cfg)
+
+
+def _adapter_c(enabled: bool = True) -> SetupCEntryAdapter:
+    """Build a SetupCEntryAdapter with LLM tuning disabled (bypass LLM gating)."""
+    cfg = SetupCEntryConfig()
+    cfg.llm_tuning.enabled = False
+    cfg.daily_bias_filter_enabled = enabled
+    return SetupCEntryAdapter(cfg)
 
 
 def _fake_decision(direction: str = "long") -> MagicMock:
@@ -166,3 +176,38 @@ async def test_misaligned_bias_publishes_correct_reason(monkeypatch):
     await adapter.generate(_ctx())
 
     publish_spy.assert_called_with(adapter.name, "reject", "daily_bias_misaligned")
+
+
+# ---------------------------------------------------------------------------
+# SetupC adapter — bias filter coverage (mirrors SetupA patterns)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_setup_c_flat_bias_blocks_entry(monkeypatch):
+    """SetupC: when daily bias is 'flat', generate() must return None."""
+    adapter = _adapter_c()
+    adapter._setup.check = MagicMock(return_value=_fake_decision("long"))
+    monkeypatch.setattr(setup_adapters, "_build_market_context", lambda _c: MagicMock())
+    monkeypatch.setattr(setup_adapters, "_publish_setup_eval", MagicMock())
+    monkeypatch.setattr(
+        adapter._daily_bias_provider, "get_or_compute_bias", MagicMock(return_value="flat")
+    )
+
+    result = await adapter.generate(_ctx())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_setup_c_misaligned_bias_blocks_entry(monkeypatch):
+    """SetupC: when bias='long' but signal direction='short', generate() returns None."""
+    adapter = _adapter_c()
+    adapter._setup.check = MagicMock(return_value=_fake_decision("short"))
+    monkeypatch.setattr(setup_adapters, "_build_market_context", lambda _c: MagicMock())
+    monkeypatch.setattr(setup_adapters, "_publish_setup_eval", MagicMock())
+    monkeypatch.setattr(
+        adapter._daily_bias_provider, "get_or_compute_bias", MagicMock(return_value="long")
+    )
+
+    result = await adapter.generate(_ctx())
+    assert result is None

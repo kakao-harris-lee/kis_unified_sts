@@ -297,7 +297,7 @@ class SetupAEntryConfig(ServiceConfigBase):
     )
     daily_bias_filter_enabled: bool = Field(
         default=True,
-        description="Gate entries on daily directional bias (Task 4)",
+        description="Gate entries on daily directional bias (LLM regime-guided)",
     )
     daily_bias_min_confidence: float = Field(
         default=0.5,
@@ -362,7 +362,7 @@ class SetupCEntryConfig(ServiceConfigBase):
     )
     daily_bias_filter_enabled: bool = Field(
         default=True,
-        description="Gate entries on daily directional bias (Task 4)",
+        description="Gate entries on daily directional bias (LLM regime-guided)",
     )
     daily_bias_min_confidence: float = Field(
         default=0.5,
@@ -1010,7 +1010,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         # gap threshold + reversion range dynamically and scale position size.
         self._forecast_client = forecast_client
         self._gate_cfg = gate_cfg  # P2-③ T5
-        # Task 4 — daily directional bias provider.
+        # Daily directional bias provider — gates on LLM-derived long/short regime.
         self._daily_bias_provider = DailyBiasProvider(
             bias_min_confidence=config.daily_bias_min_confidence,
             non_long_regimes=list(config.llm_tuning.long_blocked_regimes),
@@ -1202,7 +1202,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     _publish_setup_eval(self.name, "reject", "regime_gate_blocked")
                     return None
 
-        # Task 4 — daily directional bias gate (after RegimeGate, before signal emission).
+        # Daily directional bias gate (after RegimeGate, before signal emission).
         if self.config.daily_bias_filter_enabled:
             bias = self._daily_bias_provider.get_or_compute_bias(
                 _get_llm_context(context), now_kst()
@@ -1308,7 +1308,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         # breakout buffer/target dynamically.
         self._forecast_client = forecast_client
         self._gate_cfg = gate_cfg  # P2-③ T5
-        # Task 4 — daily directional bias provider.
+        # Daily directional bias provider — gates on LLM-derived long/short regime.
         self._daily_bias_provider = DailyBiasProvider(
             bias_min_confidence=config.daily_bias_min_confidence,
             non_long_regimes=list(config.llm_tuning.long_blocked_regimes),
@@ -1485,7 +1485,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                     _publish_setup_eval(self.name, "reject", "regime_gate_blocked")
                     return None
 
-        # Task 4 — daily directional bias gate (after RegimeGate, before signal emission).
+        # Daily directional bias gate (after RegimeGate, before signal emission).
         if self.config.daily_bias_filter_enabled:
             bias = self._daily_bias_provider.get_or_compute_bias(
                 _get_llm_context(context), now_kst()
