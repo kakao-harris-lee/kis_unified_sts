@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED / HISTORICAL — DO NOT REFERENCE.** Archived 2026-06-20. 2026-03-06 backtest validation on synthetic data for trend_pullback/momentum_breakout; contradicts the current enabled-strategy state (trend_pullback is disabled; enabled = momentum_breakout, pattern_pullback, williams_r). Current stock state: [`../ROADMAP.md`](../ROADMAP.md) + [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md). Kept for audit trail only.
+
 # Stock Strategy Validation Summary
 ## trend_pullback & momentum_breakout - Task 007
 

@@ -1,7 +1,7 @@
 # Phase 3 — Decision Engine (Week 5)
 
 **Status:** Draft
-**Parent:** `docs/plans/2026-04-20-futures-paradigm-master.md`
+**Parent:** `docs/plans/archive/2026-04-20-futures-paradigm-master.md` (archived 2026-06-20)
 **Target branch:** `feat/futures-paradigm-phase3`
 **Depends on:** Phase 1, Phase 2 완료 게이트 통과
 **Blocks:** Phase 4

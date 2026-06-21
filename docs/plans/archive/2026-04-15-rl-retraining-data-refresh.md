@@ -1,6 +1,8 @@
+> ⚠️ **SUPERSEDED / HISTORICAL — DO NOT REFERENCE.** Archived 2026-06-20. RL retraining plan — RL was fully removed from the futures runtime on 2026-06-03; do NOT resume retraining without an explicit operator reversal. Current futures direction: [`../2026-06-03-ml-rl-removal-llm-indicator-futures.md`](../2026-06-03-ml-rl-removal-llm-indicator-futures.md) and [`../../ROADMAP.md`](../../ROADMAP.md). Kept for audit trail only.
+
 # RL Model Retraining & Data Refresh Plan
 
-**Status**: Superseded 2026-06-03 by [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md). Do not resume this retraining pipeline unless the operator explicitly reverses the ML/RL removal decision. This file is retained as historical context only.
+**Status**: Superseded 2026-06-03 by [2026-06-03-ml-rl-removal-llm-indicator-futures.md](../2026-06-03-ml-rl-removal-llm-indicator-futures.md). Do not resume this retraining pipeline unless the operator explicitly reverses the ML/RL removal decision. This file is retained as historical context only.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans.
 

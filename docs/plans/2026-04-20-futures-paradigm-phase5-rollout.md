@@ -1,7 +1,20 @@
 # Phase 5 — Paper → Live Rollout (Week 7+)
 
+> **Note (2026-06-20):** The Gate 1–4 promotion procedure below is current and
+> still authoritative. However, references to **RL `rl_mppo` 병행 운영** (§5),
+> and to **systemd units / ClickHouse** in the rollback runbook (§6.2) are
+> **historical**: RL/TFT were fully removed from the futures runtime on
+> 2026-06-03, and the runtime is Docker Compose (no systemd) with
+> Parquet/DuckDB + SQLite + Redis DB 1 (no ClickHouse). Read those sections as
+> the legacy promotion model; the current futures direction is
+> [`archive/2026-04-20-futures-paradigm-master.md`](archive/2026-04-20-futures-paradigm-master.md) →
+> [`2026-06-03-ml-rl-removal-llm-indicator-futures.md`](2026-06-03-ml-rl-removal-llm-indicator-futures.md)
+> and [`../ROADMAP.md`](../ROADMAP.md). For the live-cutover gate procedure that
+> supersedes the rollback commands here, see
+> [`../runbooks/futures-pipeline-cutover-f9.md`](../runbooks/futures-pipeline-cutover-f9.md).
+
 **Status:** Draft
-**Parent:** `docs/plans/2026-04-20-futures-paradigm-master.md`
+**Parent:** `docs/plans/archive/2026-04-20-futures-paradigm-master.md` (archived 2026-06-20)
 **Target branch:** `feat/futures-paradigm-phase5`
 **Depends on:**
 1. Phase 4 완료 게이트 통과 (2주 paper uptime + 20 fills + slippage ≤ 0.4 tick + kill-switch drill green)
@@ -112,6 +125,13 @@ Gate 3 통과 후:
 
 ## 5. RL `rl_mppo` 병행 운영 방침
 
+> **HISTORICAL (removed 2026-06-03):** RL/TFT runtime paths (`rl_mppo` 포함) were
+> fully removed from the futures runtime on 2026-06-03. There is no `rl_mppo`
+> parallel-operation track anymore. The entire §5 below is retained only as a
+> record of the original promotion model; it is no longer an active requirement.
+> Current futures direction:
+> [`2026-06-03-ml-rl-removal-llm-indicator-futures.md`](2026-06-03-ml-rl-removal-llm-indicator-futures.md).
+
 ### 5.1 원칙
 
 - **Phase 5 전 기간 동안** `rl_mppo` 운용 유지
@@ -143,14 +163,22 @@ Gate 3 통과 후:
 
 ### 6.2 수동 롤백 런북 (`docs/runbooks/futures-paradigm-rollback.md`)
 
+> **HISTORICAL (infra changed):** The block below predates the current infra.
+> The runtime is **Docker Compose, not systemd** (`systemctl stop ...` does not
+> apply; stop/restart Compose services instead — see
+> [`../runbooks/futures-pipeline-cutover-f9.md`](../runbooks/futures-pipeline-cutover-f9.md)),
+> there is **no `rl_mppo`** to keep running (removed 2026-06-03), and logs are
+> in **Redis DB 1 + SQLite + app logs, not ClickHouse** (ClickHouse removed
+> 2026-06-03). Use the F9 cutover/rollback runbook for the current procedure.
+
 ```
 1. 모든 오픈 포지션 시장가 청산 확인
    > sts futures flatten-all --confirm
-2. 신 시스템 systemd units 정지
-   > systemctl stop kis-news-collector kis-news-scorer ...
+2. 신 시스템 컨테이너 정지 (Docker Compose; systemd 아님)
+   > docker compose stop decision_engine risk_filter order_router futures_monitor
 3. Decision Engine 비활성화 (config/decision_engine.yaml enabled=false)
-4. rl_mppo 운용만 유지 확인
-5. 로그 수집 (ClickHouse + Redis + 앱)
+4. (legacy) rl_mppo 운용만 유지 확인 — 더 이상 해당 없음 (2026-06-03 제거)
+5. 로그 수집 (Redis DB 1 + SQLite ledger + 앱 로그; ClickHouse 아님)
 6. 24시간 내 근본 원인 분석 완료 전 재개 금지
 7. 재개 전 Paper Trading 최소 3일 재검증
 ```

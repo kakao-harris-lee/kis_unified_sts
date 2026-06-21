@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED / HISTORICAL — DO NOT REFERENCE.** Archived 2026-06-20. ClickHouse-era stock strategy redesign — the strategy *philosophy* is historical context only, and the data layer is obsolete: runtime/backtest storage is now Parquet/DuckDB + SQLite + Redis DB 1, not ClickHouse. Current stock direction: [`../../ROADMAP.md`](../../ROADMAP.md) + [`../../PROJECT_STATUS.md`](../../PROJECT_STATUS.md). Kept for audit trail only.
+
 # Stock Strategy Redesign — Absolute Return
 
 **Date**: 2026-02-26

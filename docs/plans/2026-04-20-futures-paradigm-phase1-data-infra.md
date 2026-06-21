@@ -1,7 +1,7 @@
 # Phase 1 — 데이터 인프라 (Week 1-2)
 
 **Status:** Approved (2026-04-20, Q1-Q6 확정 반영)
-**Parent:** `docs/plans/2026-04-20-futures-paradigm-master.md`
+**Parent:** `docs/plans/archive/2026-04-20-futures-paradigm-master.md` (archived 2026-06-20)
 **Target branch:** `feat/futures-paradigm-phase1`
 **Blocks:** Phase 2, 3
 

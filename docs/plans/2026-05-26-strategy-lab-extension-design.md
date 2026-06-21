@@ -1,7 +1,14 @@
 # Strategy Lab Redesign
 
+> **Note (2026-06-20):** Design is **active and being implemented** — parts now
+> exist in `strategy-builder-ui/`, dashboard APIs, and the experiment runner.
+> One assumption is outdated: the UI is now **Next.js (`strategy-builder-ui/`)**,
+> not Vite. Wherever this doc says "existing Vite dashboard", read it as the
+> Next.js builder UI behind Caddy. See [`../ROADMAP.md`](../ROADMAP.md) for the
+> current Strategy Lab phase status.
+
 **Date**: 2026-05-26
-**Status**: Design proposal
+**Status**: Design proposal (active; UI is Next.js as of 2026-06-20)
 **Goal**: Make `kis_unified_sts` a visual strategy workstation where an
 operator designs a trading strategy in the UI, sees generated BUY/SELL/HOLD
 signals, and can execute paper buy/sell orders directly from those signals.
@@ -481,7 +488,8 @@ design to observed paper behavior.
 
 ## Dashboard UX
 
-Add `/strategy-lab` to the existing Vite dashboard.
+Add `/strategy-lab` to the existing dashboard UI (now Next.js
+`strategy-builder-ui/`, not Vite — see top note).
 
 Views:
 

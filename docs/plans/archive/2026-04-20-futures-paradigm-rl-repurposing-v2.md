@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED / HISTORICAL — DO NOT REFERENCE.** Archived 2026-06-20. RL repurposing v2 — RL was fully removed from the futures runtime on 2026-06-03; futures direction is now Setup A/C + LLM context + explicit indicators per [`../2026-06-03-ml-rl-removal-llm-indicator-futures.md`](../2026-06-03-ml-rl-removal-llm-indicator-futures.md) and [`../../ROADMAP.md`](../../ROADMAP.md). Kept for audit trail only.
+
 # RL 재활용 v2 — 메인에서 보조 필터로 전환
 
 **Status:** Draft v2 (supersedes v1 §1-§9 + integrates v1 §10 review findings)

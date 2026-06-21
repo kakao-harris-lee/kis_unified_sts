@@ -18,7 +18,7 @@ fast multi-indicator suite executes entry/exit timing within that bias —
 succeeding RL_mppo's hierarchical (high-level direction / low-level
 execution) role.
 
-Related: `docs/plans/2026-05-03-llm-primary-rl-minimization.md` v4.11,
+Related: `docs/plans/archive/2026-05-03-llm-primary-rl-minimization.md` v4.11,
 `2026-05-15-williams-r-futures-design.md`, PRs #249–#258 (this session's
 forecasting/cache/Setup-A/C wiring fixes inform the failure-mode design).
 

@@ -1,7 +1,7 @@
 # Phase 2 — 뉴스 감성 분류기 (Week 3-4)
 
 **Status:** Draft
-**Parent:** `docs/plans/2026-04-20-futures-paradigm-master.md`
+**Parent:** `docs/plans/archive/2026-04-20-futures-paradigm-master.md` (archived 2026-06-20)
 **Target branch:** `feat/futures-paradigm-phase2`
 **Depends on:** Phase 1 완료 게이트 통과
 **Blocks:** Phase 3
