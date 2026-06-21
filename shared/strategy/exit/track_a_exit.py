@@ -76,7 +76,19 @@ class TrackAExitConfig(ConfigMixin):
 
 
 class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
-    """Placeholder — full implementation in Task 2."""
+    """ATR trailing stop + crash guard + catastrophic backstop + EOD exit.
+
+    Replaces ``setup_target_exit`` for futures Setup A/C.
+    Precedence (highest priority first):
+        1. crash guard  → FORCE_CLOSE
+        2. catastrophic → STOP_LOSS
+        3. trail stop   → TRAILING_STOP
+        4. EOD          → EOD_CLOSE
+    ATR is read from the live snapshot; falls back to ``position.metadata["entry_atr"]``.
+    When ATR == 0 all ATR-based exits are skipped (only EOD can fire).
+    ``prev_price`` is read from then written to ``position.metadata["prev_price"]`` each tick.
+    """
+
     CONFIG_CLASS = TrackAExitConfig
 
     def _validate_config(self) -> None:
@@ -87,7 +99,184 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         return "track_a_exit"
 
     async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
-        raise NotImplementedError
+        signal = self._check_position(context.position, context.market_data or {})
+        return (signal is not None, signal)
 
-    async def scan_positions(self, positions: list[Position], market_data: dict[str, Any], market_state: MarketStateProtocol | None = None) -> list[ExitSignal]:
-        raise NotImplementedError
+    async def scan_positions(
+        self,
+        positions: list[Position],
+        market_data: dict[str, Any],
+        market_state: MarketStateProtocol | None = None,
+    ) -> list[ExitSignal]:
+        signals: list[ExitSignal] = []
+        for position in positions:
+            snapshot = get_symbol_snapshot(market_data, position.code)
+            signal = self._check_position(position, snapshot)
+            if signal is not None:
+                signals.append(signal)
+        return signals
+
+    def _check_position(self, position: Position, snapshot: dict[str, Any]) -> ExitSignal | None:
+        current_price = get_price_from_snapshot(snapshot)
+        if current_price is None:
+            current_price = position.current_price if position.current_price > 0 else None
+        if current_price is None or position.entry_price <= 0:
+            return None
+
+        now = now_kst()
+        atr = self._get_atr(snapshot, position)
+        prev_price = float(position.metadata.get("prev_price", current_price))
+        profit_pct = self._calc_profit_pct(position, current_price)
+        profit_amount = self._calc_profit_amount(position, current_price)
+        holding_minutes = int((to_kst(now) - to_kst(position.entry_time)).total_seconds() / 60)
+        favorable_extreme = (
+            position.highest_price if position.side == PositionSide.LONG else position.lowest_price
+        )
+
+        # Update prev_price each tick before any early return.
+        position.metadata["prev_price"] = current_price
+
+        # p1: crash guard — single-tick adverse move >= crash_atr_mult * ATR
+        if atr > 0 and crash_triggered(
+            position.side, current_price, prev_price, atr, self.config.crash_atr_mult
+        ):
+            return self._create_exit_signal(
+                position=position, current_price=current_price,
+                profit_pct=profit_pct, profit_amount=profit_amount,
+                reason=ExitReason.FORCE_CLOSE, priority=1,
+                holding_minutes=holding_minutes,
+                metadata={
+                    "exit_type": "crash_guard",
+                    "prev_price": prev_price,
+                    "atr": atr,
+                    "crash_cooldown_minutes": self.config.crash_cooldown_minutes,
+                },
+            )
+
+        # p2: catastrophic backstop — total loss from entry >= catastrophic_atr_mult * ATR
+        if atr > 0 and catastrophic_stop_hit(
+            position.side, position.entry_price, current_price, atr, self.config.catastrophic_atr_mult
+        ):
+            return self._create_exit_signal(
+                position=position, current_price=current_price,
+                profit_pct=profit_pct, profit_amount=profit_amount,
+                reason=ExitReason.STOP_LOSS, priority=2,
+                holding_minutes=holding_minutes,
+                metadata={"exit_type": "catastrophic_stop", "atr": atr},
+            )
+
+        # p3: trailing stop — only after trail activation threshold is reached
+        if atr > 0 and trail_activated(
+            position.side, position.entry_price, favorable_extreme, atr, self.config.trail_activate_atr_mult
+        ):
+            trail = trail_stop_price(
+                position.side, favorable_extreme, atr, self.config.trail_atr_mult
+            )
+            crossed = (
+                current_price <= trail
+                if position.side == PositionSide.LONG
+                else current_price >= trail
+            )
+            if crossed:
+                return self._create_exit_signal(
+                    position=position, current_price=current_price,
+                    profit_pct=profit_pct, profit_amount=profit_amount,
+                    reason=ExitReason.TRAILING_STOP, priority=3,
+                    holding_minutes=holding_minutes,
+                    metadata={
+                        "exit_type": "trail_stop",
+                        "trail_price": trail,
+                        "favorable_extreme": favorable_extreme,
+                        "atr": atr,
+                    },
+                )
+
+        # p4: EOD close
+        if self._should_eod_close(now):
+            return self._create_exit_signal(
+                position=position, current_price=current_price,
+                profit_pct=profit_pct, profit_amount=profit_amount,
+                reason=ExitReason.EOD_CLOSE, priority=4,
+                holding_minutes=holding_minutes,
+                metadata={"exit_type": "eod_close"},
+            )
+
+        return None
+
+    def _get_atr(self, snapshot: dict[str, Any], position: Position) -> float:
+        """Snapshot ATR first; fall back to ``position.metadata["entry_atr"]``."""
+        for key in ("atr", "atr_14", "atr14"):
+            val = snapshot.get(key)
+            if val is not None:
+                try:
+                    f = float(val)
+                    if f > 0:
+                        return f
+                except (TypeError, ValueError):
+                    pass
+        entry_atr = position.metadata.get("entry_atr")
+        if entry_atr is not None:
+            try:
+                f = float(entry_atr)
+                if f > 0:
+                    return f
+            except (TypeError, ValueError):
+                pass
+        return 0.0
+
+    def _should_eod_close(self, now: Any) -> bool:
+        if not self.config.eod_close_enabled:
+            return False
+        now_local = to_kst(now)
+        if not is_trading_day_kst(now_local):
+            return False
+        return now_local.time() >= effective_close_time(self.config.eod_close_time)
+
+    @staticmethod
+    def _calc_profit_pct(position: Position, current_price: float) -> float:
+        if position.side == PositionSide.SHORT:
+            return (position.entry_price - current_price) / position.entry_price
+        return (current_price - position.entry_price) / position.entry_price
+
+    @staticmethod
+    def _calc_profit_amount(position: Position, current_price: float) -> float:
+        if position.side == PositionSide.SHORT:
+            return (position.entry_price - current_price) * position.quantity
+        return (current_price - position.entry_price) * position.quantity
+
+    def _create_exit_signal(
+        self,
+        *,
+        position: Position,
+        current_price: float,
+        profit_pct: float,
+        profit_amount: float,
+        reason: ExitReason,
+        priority: int,
+        holding_minutes: int,
+        metadata: dict[str, Any],
+    ) -> ExitSignal:
+        logger.info(
+            "[%s] Exit: %s reason=%s price=%.2f pnl=%+.2f%%",
+            self.name, position.code, reason.value, current_price, profit_pct * 100,
+        )
+        return ExitSignal(
+            code=position.code,
+            name=position.name,
+            position_id=position.id,
+            reason=reason,
+            strategy=self.name,
+            current_price=current_price,
+            exit_price=current_price,
+            entry_price=position.entry_price,
+            profit_amount=profit_amount,
+            profit_pct=profit_pct,
+            confidence=self.config.default_exit_confidence,
+            priority=priority,
+            timestamp=now_kst(),
+            stage=PositionState.SURVIVAL.value,
+            high_since_entry=position.highest_price,
+            holding_minutes=holding_minutes,
+            quantity=position.quantity,
+            metadata=metadata,
+        )

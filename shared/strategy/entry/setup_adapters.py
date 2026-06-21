@@ -471,6 +471,7 @@ def _decision_signal_to_orchestrator_signal(
     strategy_name: str,
     timestamp: datetime,
     confidence_override: float | None = None,
+    entry_atr: float = 0.0,
 ) -> OrchestratorSignal:
     """Convert a :class:`shared.decision.signal.Signal` to a :class:`shared.models.signal.Signal`.
 
@@ -485,6 +486,9 @@ def _decision_signal_to_orchestrator_signal(
         timestamp: Tz-aware UTC datetime from the orchestrator tick.
         confidence_override: When provided, replaces ``decision_signal.confidence``
             on the emitted signal (used by LLM threshold scaling in Phase 1.1).
+        entry_atr: ATR at entry time, forwarded into signal metadata so that
+            downstream exit generators (e.g. TrackAExit) can use it as a
+            fallback when the live snapshot carries no ATR.
 
     Returns:
         OrchestratorSignal ready for the TradingOrchestrator pipeline.
@@ -512,6 +516,7 @@ def _decision_signal_to_orchestrator_signal(
         "setup_type": decision_signal.setup_type,
         "stop_loss": decision_signal.stop_loss,
         "take_profit": decision_signal.take_profit,
+        "entry_atr": entry_atr,
         "reason_tags": list(decision_signal.reason_tags),
     }
     # Preserve the decision-engine TTL so downstream consumers (risk filter,
@@ -1175,11 +1180,24 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     return None
 
         _publish_setup_eval(self.name, "fired", decision_signal.direction)
+        md = context.market_data or {}
+        _atr_14 = 0.0
+        for _atr_key in ("atr", "atr_14", "atr14"):
+            _v = md.get(_atr_key)
+            if _v is not None:
+                try:
+                    _f = float(_v)
+                    if _f > 0:
+                        _atr_14 = _f
+                        break
+                except (TypeError, ValueError):
+                    pass
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
             strategy_name=self.name,
             timestamp=ts,
             confidence_override=confidence_override,
+            entry_atr=_atr_14,
         )
 
 
@@ -1427,9 +1445,22 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                     return None
 
         _publish_setup_eval(self.name, "fired", decision_signal.direction)
+        md = context.market_data or {}
+        _atr_14 = 0.0
+        for _atr_key in ("atr", "atr_14", "atr14"):
+            _v = md.get(_atr_key)
+            if _v is not None:
+                try:
+                    _f = float(_v)
+                    if _f > 0:
+                        _atr_14 = _f
+                        break
+                except (TypeError, ValueError):
+                    pass
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
             strategy_name=self.name,
             timestamp=ts,
             confidence_override=confidence_override,
+            entry_atr=_atr_14,
         )
