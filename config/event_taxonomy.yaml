@@ -46,6 +46,10 @@ events:
     impact_score: 70
     aliases: ["DPRK missile", "North Korea", "geopolitical"]
     description: "Korea-related geopolitical event"
+  - key: CHINA_PMI
+    impact_score: 65
+    aliases: ["China PMI", "NBS PMI", "China manufacturing", "Caixin PMI", "중국 PMI"]
+    description: "China NBS PMI release (same-day KR session impact via trade linkage)"
 
 # Floor for matched-but-unweighted events
 unknown_match_score: 40
