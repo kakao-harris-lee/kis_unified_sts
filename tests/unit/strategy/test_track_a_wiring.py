@@ -77,23 +77,23 @@ def test_track_a_exit_yaml_defaults():
 
 
 # ---------------------------------------------------------------------------
-# Setup A/C YAML: exit.type == track_a_exit
+# Setup A/C YAML: exit.type == setup_target_exit (reverted; track_a_exit still registered)
 # ---------------------------------------------------------------------------
 
-def test_setup_a_yaml_uses_track_a_exit():
-    """setup_a_gap_reversion.yaml specifies exit.type: track_a_exit."""
+def test_setup_a_yaml_uses_setup_target_exit():
+    """setup_a_gap_reversion.yaml specifies exit.type: setup_target_exit (reverted from track_a_exit)."""
     path = CONFIG_DIR / "strategies" / "futures" / "setup_a_gap_reversion.yaml"
     data = _load_yaml(path)
     exit_type = data["strategy"]["exit"]["type"]
-    assert exit_type == "track_a_exit", f"Expected track_a_exit, got {exit_type!r}"
+    assert exit_type == "setup_target_exit", f"Expected setup_target_exit, got {exit_type!r}"
 
 
-def test_setup_c_yaml_uses_track_a_exit():
-    """setup_c_event_reaction.yaml specifies exit.type: track_a_exit."""
+def test_setup_c_yaml_uses_setup_target_exit():
+    """setup_c_event_reaction.yaml specifies exit.type: setup_target_exit (reverted from track_a_exit)."""
     path = CONFIG_DIR / "strategies" / "futures" / "setup_c_event_reaction.yaml"
     data = _load_yaml(path)
     exit_type = data["strategy"]["exit"]["type"]
-    assert exit_type == "track_a_exit", f"Expected track_a_exit, got {exit_type!r}"
+    assert exit_type == "setup_target_exit", f"Expected setup_target_exit, got {exit_type!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -125,38 +125,39 @@ def test_setup_c_yaml_has_daily_bias_filter():
 # ---------------------------------------------------------------------------
 
 def test_setup_a_via_loader_exit_type():
-    """load_strategy_config returns setup_a config with exit.type=track_a_exit."""
+    """load_strategy_config returns setup_a config with exit.type=setup_target_exit."""
     from shared.config.loader import load_strategy_config
 
     cfg = load_strategy_config("futures", "setup_a_gap_reversion")
     exit_type = cfg["strategy"]["exit"]["type"]
-    assert exit_type == "track_a_exit", f"Loader returned exit.type={exit_type!r}"
+    assert exit_type == "setup_target_exit", f"Loader returned exit.type={exit_type!r}"
 
 
 def test_setup_c_via_loader_exit_type():
-    """load_strategy_config returns setup_c config with exit.type=track_a_exit."""
+    """load_strategy_config returns setup_c config with exit.type=setup_target_exit."""
     from shared.config.loader import load_strategy_config
 
     cfg = load_strategy_config("futures", "setup_c_event_reaction")
     exit_type = cfg["strategy"]["exit"]["type"]
-    assert exit_type == "track_a_exit", f"Loader returned exit.type={exit_type!r}"
+    assert exit_type == "setup_target_exit", f"Loader returned exit.type={exit_type!r}"
 
 
 # ---------------------------------------------------------------------------
 # Integration smoke tests (Task 6)
 # ---------------------------------------------------------------------------
 
-def test_strategy_factory_setup_a_exit_is_track_a_exit():
-    """StrategyFactory.create_from_file("futures","setup_a_gap_reversion").exit is TrackAExit."""
+def test_strategy_factory_setup_a_exit_is_setup_target_exit():
+    """setup_a_gap_reversion assembles with SetupTargetExit (reverted from track_a_exit
+    2026-06-21 per PR #495 real-signal backtest). TrackAExit stays registered/available."""
     from shared.strategy.registry import StrategyFactory, register_builtin_components
-    from shared.strategy.exit.track_a_exit import TrackAExit
+    from shared.strategy.exit.setup_target_exit import SetupTargetExit
 
     register_builtin_components()
 
     strategy = StrategyFactory.create_from_file("futures", "setup_a_gap_reversion")
 
-    assert isinstance(strategy.exit, TrackAExit), (
-        f"Expected strategy.exit to be TrackAExit, got {type(strategy.exit).__name__}"
+    assert isinstance(strategy.exit, SetupTargetExit), (
+        f"Expected strategy.exit to be SetupTargetExit, got {type(strategy.exit).__name__}"
     )
 
 

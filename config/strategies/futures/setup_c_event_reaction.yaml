@@ -57,7 +57,7 @@ strategy:
 
       # Daily bias filter — filters entries against the intraday directional bias.
       # Provided by DailyBiasProvider; false = disabled (default safe).
-      daily_bias_filter_enabled: true
+      daily_bias_filter_enabled: false
       daily_bias_min_confidence: 0.5    # Min bias confidence to apply filter
 
       # Phase 1.1 LLM-aware threshold tuning (INNER gate).
@@ -105,20 +105,16 @@ strategy:
         permissive_on_missing: true
 
   exit:
-    # Track A composed exit: ATR trailing stop + crash guard + catastrophic backstop + EOD.
-    # Replaces setup_target_exit. Rollback: revert type to setup_target_exit.
-    type: track_a_exit
+    # Reverted to setup_target_exit 2026-06-21: real-signal holdout backtest (PR #495,
+    # clean window) showed the Track A trailing exit underperforms (Sharpe -1.24 vs +2.02
+    # for fixed stop/target on real Setup A). TrackAExit code + track_a_exit.yaml retained
+    # (registered) for future re-tuning; re-enable by setting type back to track_a_exit.
+    type: setup_target_exit
     params:
-      trail_atr_mult: 1.5
-      trail_activate_atr_mult: 2.0
-      crash_atr_mult: 3.5
-      crash_cooldown_minutes: 30
-      catastrophic_atr_mult: 6.0
       eod_close_enabled: true
       eod_close_hour: 15
       eod_close_minute: 15
       default_exit_confidence: 0.9
-      enabled: true
 
   position:
     # Phase 1.3: multi-tier LLM-aware sizing replaces the previous fixed sizer.
