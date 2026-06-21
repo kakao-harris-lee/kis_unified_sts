@@ -32,17 +32,17 @@ strategy:
 
       # Time window: minutes after 09:00 KST market open
       valid_minutes_min: 10
-      valid_minutes_max: 120      # was 90; +30m for retrace to develop
+      valid_minutes_max: 60       # tightened 120->60: 60-120m entries were all losers (PR #495 selectivity matrix B+60min, Sharpe 5.1)
 
       # Overnight macro confirmation thresholds
-      min_sp500_gap_pct: 0.15    # 0.5 → 0.3 (#336) → 0.15 (2026-05-28): today SP500 +0.016%
+      min_sp500_gap_pct: 0.30    # restored 0.15->0.30: loose thresholds diluted edge (PR #495 matrix; B beats A)
                                  # blocked all entries; widen ~65% → ~80% of trading days.
                                  # Re-evaluate after 1 week of paper if noise-entry rate spikes.
-      min_kr_gap_pct: 0.2        # was 0.3; KR futures gap usually >> 0.2%
+      min_kr_gap_pct: 0.30       # restored 0.2->0.30 (PR #495 selectivity matrix)
 
       # Retrace band: fraction of the gap that must have reversed
-      retrace_min: 0.20          # was 0.30; catches shallow retrace (e.g. 5/14 ret=0.22)
-      retrace_max: 0.70          # was 0.55; catches deeper retrace (e.g. 4/22 ret=0.61, 5/6 ret=0.63)
+      retrace_min: 0.30          # restored 0.20->0.30 (PR #495 selectivity matrix)
+      retrace_max: 0.55          # restored 0.70->0.55 (PR #495 selectivity matrix)
 
       # Exit targets
       # Widened 2026-06-09 1.5 → 2.5: the tight 1.5×ATR stop got shaken out by
