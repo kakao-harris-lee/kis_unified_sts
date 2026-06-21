@@ -25,8 +25,11 @@
 # --- intraday LLM refresh (hourly 10:00–15:00) ---
 0 10-15 * * 1-5  cd /app && python -m scripts.analysis.llm_intraday_refresh
 
-# --- market close (15:30 / 15:40) ---
+# --- market close (15:30 / 15:32 / 15:40) ---
 30 15 * * 1-5  cd /app && python -m scripts.analysis.llm_market_close_briefing
+# Setup A/C paper-observation daily digest — runs 2 min after the main briefing
+# so it appears as a follow-on message in the briefing channel.
+32 15 * * 1-5  cd /app && python -m scripts.analysis.setup_ac_paper_observation >> /app/logs/setup_ac_paper_obs_$(date +\%Y\%m\%d).log 2>&1
 40 15 * * 1-5  cd /app && python scripts/analysis/publish_equity_snapshot.py
 
 # --- EOD backfill + verification (15:50–16:20) ---
@@ -49,6 +52,8 @@
 # --- maintenance / weekly ---
 0 4  * * 0  cd /app && python -m scripts.maintenance.rotate_reports
 0 18 * * 0  cd /app && python scripts/analysis/regime_gate_counterfactual.py
+# Setup A/C paper-observation WEEKLY rollup — Friday 16:30 KST after EOD tasks.
+30 16 * * 5  cd /app && python -m scripts.analysis.setup_ac_paper_observation --weekly >> /app/logs/setup_ac_paper_obs_$(date +\%Y\%m\%d)_weekly.log 2>&1
 
 # --- DROPPED (PR-B): host crons that point at missing/stale scripts — NOT migrated ---
 #   phase2_daily_verification  — scripts/cron/phase2_daily_verification.sh is MISSING (dead cron)
