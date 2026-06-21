@@ -41,6 +41,7 @@ from shared.config.loader import ConfigLoader
 from shared.kis.approval_cache import approval_key_cache
 from shared.kis.auth import KISAuthConfig
 from shared.kis.reconnect_policy import ReconnectPolicy
+from shared.kis.ws_keepalive import is_pingpong
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +221,25 @@ class KISStockPriceFeed:
         )
         self._reconnect_breaker_cooldown = float(
             feed_cfg.get("reconnect_breaker_cooldown_seconds", 300.0)
+        )
+        # Reconnect-rate ceiling (defense-in-depth): more than rate_max
+        # reconnects within rate_window seconds trips the breaker regardless of
+        # consecutive-failure count. Catches a flapping/periodic drop (each
+        # cycle "succeeds" then drops ~105s later) that consecutive counting
+        # never sees — exactly the churn that re-triggers a KIS IP block. The
+        # policy is instance-level (built below) so its rolling window persists
+        # across the per-drop reconnect threads _on_close spawns.
+        self._reconnect_rate_max = int(feed_cfg.get("reconnect_rate_max", 4))
+        self._reconnect_rate_window = float(
+            feed_cfg.get("reconnect_rate_window_seconds", 600.0)
+        )
+        self._policy = ReconnectPolicy(
+            initial_delay=self._initial_reconnect_delay,
+            max_delay=self._max_reconnect_delay,
+            breaker_threshold=self._reconnect_breaker_threshold,
+            breaker_cooldown=self._reconnect_breaker_cooldown,
+            rate_max=self._reconnect_rate_max,
+            rate_window=self._reconnect_rate_window,
         )
         # Min seconds a reconnected socket must stay up before the breaker is
         # cleared — a KIS open-then-immediate-drop flap clears _connected within
@@ -574,20 +594,28 @@ class KISStockPriceFeed:
         if not self._reconnect_lock.acquire(blocking=False):
             return  # a reconnect loop is already running
         try:
-            policy = ReconnectPolicy(
-                initial_delay=self._initial_reconnect_delay,
-                max_delay=self._max_reconnect_delay,
-                breaker_threshold=self._reconnect_breaker_threshold,
-                breaker_cooldown=self._reconnect_breaker_cooldown,
+            # Reuse the instance-level policy so the reconnect-rate window
+            # accumulates across the separate reconnect threads _on_close spawns
+            # per drop — a fresh per-call policy would reset the flap detector
+            # every cycle and never trip the rate ceiling.
+            policy = self._policy
+            delay = (
+                self._reconnect_breaker_cooldown
+                if policy.breaker_open
+                else self._initial_reconnect_delay
             )
-            delay = self._initial_reconnect_delay
             while self._running and not self._connected.is_set():
                 if policy.breaker_open:
+                    reason = (
+                        "reconnect-rate ceiling (flapping)"
+                        if policy.rate_tripped
+                        else f"{policy.consecutive_failures} consecutive failures"
+                    )
                     logger.warning(
                         "[StockPriceFeed] Reconnect circuit breaker OPEN "
-                        "(%d consecutive failures) — backing off %.0fs to avoid a "
-                        "KIS account block; REST fallback covers data meanwhile",
-                        policy.consecutive_failures,
+                        "(%s) — backing off %.0fs to avoid a KIS account block; "
+                        "REST fallback covers data meanwhile",
+                        reason,
                         delay,
                     )
                 else:
@@ -631,6 +659,24 @@ class KISStockPriceFeed:
                             logger.info("[StockPriceFeed] Reconnected successfully")
                             _record_ws_metric("record_ws_reconnect", "stock")
                             policy.reset()
+                            # Feed the rolling rate ceiling: a flap that keeps
+                            # "succeeding" then dropping accumulates here and
+                            # trips the breaker even though each cycle resets the
+                            # consecutive-failure count.
+                            policy.record_reconnect()
+                            if policy.rate_tripped:
+                                approval_key_cache.invalidate(
+                                    self._config.app_key, self._config.is_real
+                                )
+                                logger.warning(
+                                    "[StockPriceFeed] Reconnect-rate ceiling tripped "
+                                    "(flapping) — opening circuit breaker, backing "
+                                    "off %.0fs to avoid a KIS account block; REST "
+                                    "fallback covers data meanwhile",
+                                    self._reconnect_breaker_cooldown,
+                                )
+                                delay = self._reconnect_breaker_cooldown
+                                continue
                             # WS is up; the while condition will exit the loop.
                             delay = self._initial_reconnect_delay
                             continue
@@ -722,10 +768,14 @@ class KISStockPriceFeed:
             self._aes_iv = output["iv"].encode("utf-8")
             logger.debug("[StockPriceFeed] AES key received")
 
-        # PINGPONG keepalive
-        if header.get("tr_cd") == "PINGPONG":
+        # PINGPONG keepalive — KIS idle-closes (and eventually blocks) a socket
+        # whose app-level PINGPONG is not echoed back verbatim. The frame is
+        # keyed by header.tr_id (not tr_cd); is_pingpong checks both so a missed
+        # echo can't silently regress and re-cause the periodic-drop incident.
+        if is_pingpong(header):
             if self._ws and self._connected.is_set():
                 self._ws.send(json.dumps(data))
+                logger.debug("[StockPriceFeed] PINGPONG echoed")
 
         msg_code = body.get("msg_cd", "")
         if msg_code and msg_code != "OPSP0000":

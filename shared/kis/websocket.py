@@ -46,6 +46,7 @@ from shared.collector.adapter import BaseAPIAdapter
 from shared.collector.models import TickData
 from shared.kis.approval_cache import approval_key_cache
 from shared.kis.auth import KISAuthConfig
+from shared.kis.ws_keepalive import is_pingpong
 
 if TYPE_CHECKING:
     pass
@@ -767,10 +768,14 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                 self._aes_iv = output["iv"].encode("utf-8")
                 logger.info("[KIS WS] AES key received")
 
-        # Respond to PINGPONG
-        if header.get("tr_cd") == "PINGPONG":
+        # Respond to PINGPONG — KIS idle-closes (and eventually blocks) a socket
+        # whose app-level PINGPONG is not echoed back verbatim. The frame is
+        # keyed by header.tr_id (not tr_cd); is_pingpong checks both so a missed
+        # echo can't silently regress and re-cause the periodic-drop incident.
+        if is_pingpong(header):
             if self.ws and self.is_connected:
                 self.ws.send(json.dumps(data))
+                logger.debug("[KIS WS] PINGPONG echoed")
 
         msg_code = body.get("msg_cd", "")
         if msg_code and msg_code != "OPSP0000":
