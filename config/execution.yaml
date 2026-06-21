@@ -52,6 +52,7 @@ entry_reentry_guard:
       momentum_decay: 900          # 15 min
       vwap_breakdown: 900          # 15 min
       trailing_stop: 600           # 10 min
+      force_close: 1800            # 30 min after crash guard FORCE_CLOSE (Track A exit)
 
 # 전략별 승률 기반 투자금액 동적 조정
 adaptive_sizing:

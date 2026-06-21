@@ -553,6 +553,13 @@ def register_builtin_components() -> None:
         logger.debug("SetupTargetExit not available")
 
     try:
+        from shared.strategy.exit.track_a_exit import TrackAExit
+
+        ExitRegistry.register_class("track_a_exit", TrackAExit)
+    except ImportError:
+        logger.debug("TrackAExit not available")
+
+    try:
         from shared.strategy.exit.chandelier_exit import ChandelierExit
 
         ExitRegistry.register_class("chandelier_exit", ChandelierExit)
