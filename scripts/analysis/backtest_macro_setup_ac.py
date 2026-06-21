@@ -806,6 +806,17 @@ def main() -> None:
         default=30,
         help="Minimum bar volume to include (default 30, suppresses phantom bars)",
     )
+    parser.add_argument(
+        "--min-bars-per-day",
+        type=int,
+        default=330,
+        help=(
+            "Drop trading days with fewer than this many bars before the volume filter "
+            "(default 330 — ~85%% of a full 09:00-15:30 KST session). "
+            "Use to exclude months with degraded futures feed. "
+            "Set to 0 to disable."
+        ),
+    )
     args = parser.parse_args()
 
     data_path = Path(args.data)
@@ -820,6 +831,30 @@ def main() -> None:
     df = df.sort_values("datetime").reset_index(drop=True)
     # Rename to 'timestamp' for replay compatibility
     df = df.rename(columns={"datetime": "timestamp"})
+
+    # Bar-density gate: drop degraded trading days (e.g. Jul–Oct 2025 where
+    # WS feed degradation left <200 bars/day on most sessions).
+    if args.min_bars_per_day > 0:
+        bars_per_day = df.groupby(df["timestamp"].dt.date).size()
+        healthy_days = set(bars_per_day[bars_per_day >= args.min_bars_per_day].index)
+        before = len(df)
+        before_days = df["timestamp"].dt.date.nunique()
+        df = df[df["timestamp"].dt.date.map(lambda d: d in healthy_days)].reset_index(drop=True)
+        dropped_days = before_days - df["timestamp"].dt.date.nunique()
+        logger.info(
+            "Bar-density gate (>=%d bars/day): dropped %d/%d days, %d/%d bars. "
+            "Remaining: %s ~ %s",
+            args.min_bars_per_day,
+            dropped_days,
+            before_days,
+            before - len(df),
+            before,
+            df["timestamp"].min().date() if len(df) else "N/A",
+            df["timestamp"].max().date() if len(df) else "N/A",
+        )
+        if len(df) == 0:
+            print("ERROR: All days filtered out by bar-density gate. Lower --min-bars-per-day.", file=sys.stderr)
+            sys.exit(1)
     logger.info(
         "Loaded %d bars | %s ~ %s",
         len(df),
@@ -916,6 +951,7 @@ def main() -> None:
 
     min_volume = args.min_volume
     results["min_volume"] = min_volume
+    results["min_bars_per_day"] = args.min_bars_per_day
 
     if not args.holdout_only:
         train_res = run_backtest(
