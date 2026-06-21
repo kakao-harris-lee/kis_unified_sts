@@ -237,16 +237,16 @@ events:
     scheduled_at: "2026-05-29T01:00:00Z"   # 10:00 KST May 29 2026
     impact_tier: 1
 
-  - event_id: "bok_2026_jun"
+  - event_id: "bok_2026_jul"
     event_type: "BOK_rate_decision"
-    scheduled_at: "2026-07-10T01:00:00Z"   # placeholder: BOK Jul 2026 (Jun meeting TBC)
+    scheduled_at: "2026-07-10T01:00:00Z"   # 10:00 KST Jul 10 2026; placeholder, BOK MPC date TBC
     impact_tier: 1
 
   # ── China NBS PMI (last business day of month, ~09:00 KST = 00:00 UTC) ──
 
   - event_id: "china_pmi_2026_jan"
     event_type: "CHINA_PMI"
-    scheduled_at: "2026-01-30T01:00:00Z"   # 10:00 KST Jan 30 2026 (CNY offset to Feb 28)
+    scheduled_at: "2026-01-30T00:00:00Z"   # 09:00 KST Jan 30 2026 (NBS China Jan PMI; aligned to other CHINA_PMI entries)
     impact_tier: 2
 
   - event_id: "china_pmi_2026_feb"
