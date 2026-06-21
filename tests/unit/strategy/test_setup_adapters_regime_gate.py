@@ -111,7 +111,7 @@ async def test_gate_allows_returns_signal(adapter_class, cfg_class, monkeypatch)
 
     AdapterCls = getattr(setup_adapters, adapter_class)
     CfgCls = getattr(setup_adapters, cfg_class)
-    adapter = AdapterCls(CfgCls(), gate_cfg=_cfg())
+    adapter = AdapterCls(CfgCls(daily_bias_filter_enabled=False), gate_cfg=_cfg())
     _stub_infra(monkeypatch, setup_adapters)
     fake_decision = MagicMock()
     fake_decision.metadata = {"signal_direction": "long"}
@@ -149,7 +149,7 @@ async def test_gate_degrades_permissive_when_redis_unavailable(
 
     AdapterCls = getattr(setup_adapters, adapter_class)
     CfgCls = getattr(setup_adapters, cfg_class)
-    adapter = AdapterCls(CfgCls(), gate_cfg=_cfg())
+    adapter = AdapterCls(CfgCls(daily_bias_filter_enabled=False), gate_cfg=_cfg())
 
     fake_decision = MagicMock()
     fake_decision.metadata = {"signal_direction": "long"}
