@@ -110,8 +110,8 @@ def catastrophic_stop_hit(side: PositionSide, entry_price: float, current_price:
 
 @dataclass
 class TrackAExitConfig(ConfigMixin):
-    trail_atr_mult: float = 3.0
-    trail_activate_atr_mult: float = 1.0
+    trail_atr_mult: float = 1.5
+    trail_activate_atr_mult: float = 2.0
     crash_atr_mult: float = 3.5
     crash_cooldown_minutes: int = 30
     crash_window_seconds: float = 60.0  # I1: rolling window for windowed crash detection

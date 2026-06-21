@@ -4,8 +4,8 @@
 
 track_a_exit:
   params:
-    trail_atr_mult: 3.0            # Trailing stop distance (ATR units)
-    trail_activate_atr_mult: 1.0   # Min profit (ATR units) before trail activates
+    trail_atr_mult: 1.5            # Trailing stop distance (ATR units) — tuned from 3.0 (holdout backtest 2026-06-21)
+    trail_activate_atr_mult: 2.0   # Min profit (ATR units) before trail activates — tuned from 1.0 (holdout backtest 2026-06-21)
     crash_atr_mult: 3.5            # Adverse move threshold → FORCE_CLOSE (applies to both paths below)
     crash_cooldown_minutes: 30     # Re-entry guard after crash guard fires
     crash_window_seconds: 60.0     # I1: rolling window (seconds) for windowed crash detection.

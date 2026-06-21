@@ -113,8 +113,8 @@ strategy:
     # Replaces setup_target_exit. Rollback: revert type to setup_target_exit.
     type: track_a_exit
     params:
-      trail_atr_mult: 3.0
-      trail_activate_atr_mult: 1.0
+      trail_atr_mult: 1.5
+      trail_activate_atr_mult: 2.0
       crash_atr_mult: 3.5
       crash_cooldown_minutes: 30
       catastrophic_atr_mult: 6.0
