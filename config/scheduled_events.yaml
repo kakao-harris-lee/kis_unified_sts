@@ -2,172 +2,408 @@
 # impact_tier: 1 = top tier (FOMC, CPI, NFP), 2 = medium (BOK, PPI), 3 = minor
 # scheduled_at: UTC ISO 8601 (append Z). KST = UTC+9.
 #
-# Historical entries (2025-07 onward) used for Phase 3 backtest evaluation of
-# Setup C. Release times are the announcement moments (not the KST session
-# when impact lands — the Setup C window_minutes parameter handles latency).
+# TIMING SEMANTICS FOR SETUP C
+# ──────────────────────────────────────────────────────────────────────────────
+# Setup C fires when scheduled_at <= ctx.now (KST) AND elapsed < window_minutes
+# (default 15 min). ctx.now is the live tick timestamp during the KR session
+# 09:00–15:45 KST (= 00:00–06:45 UTC).
+#
+# Events that CAN fire Setup C (KST-session-time):
+#   BOK rate decisions      10:00 KST = 01:00 UTC  (in-session)
+#   China PMI/NBS data      09:00 KST = 00:00 UTC  (in-session)
+#   KOSPI200 rebalance eff  15:00 KST = 06:00 UTC  (in-session, close window)
+#   KR CPI (some years)     08:00 KST = 23:00 UTC prev — within 15-min gap window at 09:00
+#
+# Events that CANNOT fire Setup C (fire outside KR session):
+#   FOMC rate decision      03:00–05:00 KST (pre-session)
+#   US CPI                  22:30 KST next day (post-session)
+#   US NFP                  22:30 KST next day (post-session)
+#   → These are retained for operator reference and Setup A gap context only.
 #
 # Sources:
-# - FOMC: federalreserve.gov/monetarypolicy/fomccalendars.htm
-# - US CPI: bls.gov/schedule/news_release/cpi.htm (8:30 ET = 12:30 or 13:30 UTC DST)
-# - US NFP: bls.gov/schedule/news_release/empsit.htm (8:30 ET)
-# - BOK: bok.or.kr (09:00 KST = 00:00 UTC)
+#   BOK:          bok.or.kr (press release 10:00 KST, sometimes 09:00 after reform)
+#   China NBS:    stats.gov.cn PMI = last business day of month ~09:00 KST
+#   KOSPI200 rebalance: KRX quarterly (Mar/Jun/Sep/Dec, announcement ~10 business
+#                       days before close; effective at T-1 close)
+#   FOMC:         federalreserve.gov/monetarypolicy/fomccalendars.htm
+#   US CPI:       bls.gov (8:30 ET = 13:30 UTC EDT / 22:30 KST)
+#   US NFP:       bls.gov (8:30 ET first Friday of month)
+#   KR CPI:       kostat.go.kr (08:00 KST last business day of prior month)
+# ──────────────────────────────────────────────────────────────────────────────
 
 events:
 
-  # -------------------------------------------------------------- 2025 H2
-  - event_id: "fomc_2025_jul"
-    event_type: "FOMC_rate_decision"
-    scheduled_at: "2025-07-30T18:00:00Z"   # 14:00 ET
-    impact_tier: 1
-  - event_id: "us_cpi_2025_jul"
-    event_type: "US_CPI"
-    scheduled_at: "2025-07-15T12:30:00Z"
-    impact_tier: 1
-  - event_id: "us_nfp_2025_jul"
-    event_type: "US_NFP"
-    scheduled_at: "2025-07-03T12:30:00Z"   # early release, July 4 holiday
-    impact_tier: 1
+  # ============================================================ 2025 H2
+  # ── BOK MPC meetings (10:00 KST = 01:00 UTC) ─────────────────────────
+
   - event_id: "bok_2025_jul"
     event_type: "BOK_rate_decision"
-    scheduled_at: "2025-07-10T01:00:00Z"
+    scheduled_at: "2025-07-10T01:00:00Z"   # 10:00 KST; BOK cut 25bp to 2.75%
+    impact_tier: 1
+
+  - event_id: "bok_2025_aug"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2025-08-28T01:00:00Z"   # 10:00 KST
+    impact_tier: 1
+
+  - event_id: "bok_2025_oct"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2025-10-16T01:00:00Z"   # 10:00 KST
+    impact_tier: 1
+
+  - event_id: "bok_2025_nov"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2025-11-27T01:00:00Z"   # 10:00 KST
+    impact_tier: 1
+
+  # ── China NBS PMI (last business day of month, ~09:00 KST = 00:00 UTC) ──
+
+  - event_id: "china_pmi_2025_jul"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2025-07-31T00:00:00Z"   # 09:00 KST Jul 31 2025
     impact_tier: 2
+
+  - event_id: "china_pmi_2025_aug"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2025-08-29T00:00:00Z"   # 09:00 KST Aug 29 2025
+    impact_tier: 2
+
+  - event_id: "china_pmi_2025_sep"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2025-09-30T00:00:00Z"   # 09:00 KST Sep 30 2025
+    impact_tier: 2
+
+  - event_id: "china_pmi_2025_oct"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2025-10-31T00:00:00Z"   # 09:00 KST Oct 31 2025
+    impact_tier: 2
+
+  - event_id: "china_pmi_2025_nov"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2025-11-28T00:00:00Z"   # 09:00 KST Nov 28 2025
+    impact_tier: 2
+
+  - event_id: "china_pmi_2025_dec"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2025-12-31T00:00:00Z"   # 09:00 KST Dec 31 2025
+    impact_tier: 2
+
+  # ── KR CPI (Statistics Korea, 08:00 KST = 23:00 UTC prior day) ────────
+  # 08:00 KST is 60 min before session open. At 09:00 KST open, elapsed = 60 min
+  # >> window_minutes=15. These events are OUTSIDE the Setup C window and will
+  # NOT fire Setup C. Retained at tier 3 (skipped by default min_impact_tier=2)
+  # for operator calendar awareness and potential future window-expansion config.
+
+  - event_id: "kr_cpi_2025_aug"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2025-07-31T23:00:00Z"   # 08:00 KST Aug 1 2025
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2025_sep"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2025-08-28T23:00:00Z"   # 08:00 KST Aug 29 2025
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2025_oct"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2025-09-30T23:00:00Z"   # 08:00 KST Oct 1 2025
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2025_nov"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2025-10-30T23:00:00Z"   # 08:00 KST Oct 31 2025
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2025_dec"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2025-11-27T23:00:00Z"   # 08:00 KST Nov 28 2025
+    impact_tier: 3
+
+  # ── KOSPI200 quarterly rebalance (effective pre-close, ~15:00 KST = 06:00 UTC)
+  # KRX KOSPI200 rebalance: Dec 2025 (effective Dec 12, 2025 = announcement Nov 28)
+  # The index constituent change takes effect at close; "event" moment for Setup C
+  # is the opening of the effective day when positioning for the close rebalance.
+
+  - event_id: "kospi200_rebalance_2025_dec"
+    event_type: "KOSPI200_REBALANCE"
+    scheduled_at: "2025-12-11T00:00:00Z"   # 09:00 KST Dec 11 2025 (effective day open)
+    impact_tier: 2
+
+  # ── FOMC / US data: retained for reference but DO NOT fire Setup C ────
+  # These occur at 03:00-05:00 KST (FOMC) or 22:30 KST (CPI/NFP) —
+  # outside the KR session window. Kept for operator calendar awareness
+  # and potential Setup A gap context.
+
+  - event_id: "fomc_2025_jul"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2025-07-30T18:00:00Z"   # 14:00 ET / 03:00 KST Jul 31 — pre-session
+    impact_tier: 1
+
+  - event_id: "us_cpi_2025_jul"
+    event_type: "US_CPI"
+    scheduled_at: "2025-07-15T12:30:00Z"   # 08:30 ET / 21:30 KST — post-session
+    impact_tier: 1
+
+  - event_id: "us_nfp_2025_jul"
+    event_type: "US_NFP"
+    scheduled_at: "2025-07-03T12:30:00Z"   # early release (Jul 4 holiday) — post-session
+    impact_tier: 1
 
   - event_id: "us_cpi_2025_aug"
     event_type: "US_CPI"
-    scheduled_at: "2025-08-12T12:30:00Z"
+    scheduled_at: "2025-08-12T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
+
   - event_id: "us_nfp_2025_aug"
     event_type: "US_NFP"
-    scheduled_at: "2025-08-01T12:30:00Z"
+    scheduled_at: "2025-08-01T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
-  - event_id: "bok_2025_aug"
-    event_type: "BOK_rate_decision"
-    scheduled_at: "2025-08-28T01:00:00Z"
-    impact_tier: 2
 
   - event_id: "fomc_2025_sep"
     event_type: "FOMC_rate_decision"
-    scheduled_at: "2025-09-17T18:00:00Z"
+    scheduled_at: "2025-09-17T18:00:00Z"   # 03:00 KST Sep 18 — pre-session
     impact_tier: 1
+
   - event_id: "us_cpi_2025_sep"
     event_type: "US_CPI"
-    scheduled_at: "2025-09-11T12:30:00Z"
+    scheduled_at: "2025-09-11T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
+
   - event_id: "us_nfp_2025_sep"
     event_type: "US_NFP"
-    scheduled_at: "2025-09-05T12:30:00Z"
+    scheduled_at: "2025-09-05T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
 
   - event_id: "us_cpi_2025_oct"
     event_type: "US_CPI"
-    scheduled_at: "2025-10-15T12:30:00Z"
+    scheduled_at: "2025-10-15T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
+
   - event_id: "us_nfp_2025_oct"
     event_type: "US_NFP"
-    scheduled_at: "2025-10-03T12:30:00Z"
+    scheduled_at: "2025-10-03T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
-  - event_id: "bok_2025_oct"
-    event_type: "BOK_rate_decision"
-    scheduled_at: "2025-10-23T01:00:00Z"
-    impact_tier: 2
 
   - event_id: "fomc_2025_oct_nov"
     event_type: "FOMC_rate_decision"
-    scheduled_at: "2025-10-29T18:00:00Z"
+    scheduled_at: "2025-10-29T18:00:00Z"   # 03:00 KST Oct 30 — pre-session
     impact_tier: 1
+
   - event_id: "us_cpi_2025_nov"
     event_type: "US_CPI"
-    scheduled_at: "2025-11-13T13:30:00Z"   # post DST: 08:30 ET = 13:30 UTC
+    scheduled_at: "2025-11-13T13:30:00Z"   # post-DST: 22:30 KST — post-session
     impact_tier: 1
+
   - event_id: "us_nfp_2025_nov"
     event_type: "US_NFP"
-    scheduled_at: "2025-11-07T13:30:00Z"
+    scheduled_at: "2025-11-07T13:30:00Z"   # 22:30 KST — post-session
     impact_tier: 1
-  - event_id: "bok_2025_nov"
-    event_type: "BOK_rate_decision"
-    scheduled_at: "2025-11-27T01:00:00Z"
-    impact_tier: 2
 
   - event_id: "fomc_2025_dec"
     event_type: "FOMC_rate_decision"
-    scheduled_at: "2025-12-10T19:00:00Z"
-    impact_tier: 1
-  - event_id: "us_cpi_2025_dec"
-    event_type: "US_CPI"
-    scheduled_at: "2025-12-10T13:30:00Z"
-    impact_tier: 1
-  - event_id: "us_nfp_2025_dec"
-    event_type: "US_NFP"
-    scheduled_at: "2025-12-05T13:30:00Z"
+    scheduled_at: "2025-12-10T19:00:00Z"   # 04:00 KST Dec 11 — pre-session
     impact_tier: 1
 
-  # -------------------------------------------------------------- 2026 H1
-  - event_id: "fomc_2026_jan"
-    event_type: "FOMC_rate_decision"
-    scheduled_at: "2026-01-28T19:00:00Z"
-    impact_tier: 1
-  - event_id: "us_cpi_2026_jan"
+  - event_id: "us_cpi_2025_dec"
     event_type: "US_CPI"
-    scheduled_at: "2026-01-14T13:30:00Z"
+    scheduled_at: "2025-12-10T13:30:00Z"   # 22:30 KST — post-session
     impact_tier: 1
-  - event_id: "us_nfp_2026_jan"
+
+  - event_id: "us_nfp_2025_dec"
     event_type: "US_NFP"
-    scheduled_at: "2026-01-09T13:30:00Z"
+    scheduled_at: "2025-12-05T13:30:00Z"   # 22:30 KST — post-session
     impact_tier: 1
+
+  # ============================================================ 2026 H1
+  # ── BOK MPC meetings (10:00 KST = 01:00 UTC) ─────────────────────────
+
   - event_id: "bok_2026_jan"
     event_type: "BOK_rate_decision"
-    scheduled_at: "2026-01-15T01:00:00Z"
+    scheduled_at: "2026-01-16T01:00:00Z"   # 10:00 KST Jan 16 2026
+    impact_tier: 1
+
+  - event_id: "bok_2026_feb"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-02-26T01:00:00Z"   # 10:00 KST Feb 26 2026
+    impact_tier: 1
+
+  - event_id: "bok_2026_apr"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-04-17T01:00:00Z"   # 10:00 KST Apr 17 2026
+    impact_tier: 1
+
+  - event_id: "bok_2026_may"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-05-29T01:00:00Z"   # 10:00 KST May 29 2026
+    impact_tier: 1
+
+  - event_id: "bok_2026_jun"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-07-10T01:00:00Z"   # placeholder: BOK Jul 2026 (Jun meeting TBC)
+    impact_tier: 1
+
+  # ── China NBS PMI (last business day of month, ~09:00 KST = 00:00 UTC) ──
+
+  - event_id: "china_pmi_2026_jan"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-01-30T01:00:00Z"   # 10:00 KST Jan 30 2026 (CNY offset to Feb 28)
     impact_tier: 2
+
+  - event_id: "china_pmi_2026_feb"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-02-27T00:00:00Z"   # 09:00 KST Feb 27 2026
+    impact_tier: 2
+
+  - event_id: "china_pmi_2026_mar"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-03-31T00:00:00Z"   # 09:00 KST Mar 31 2026
+    impact_tier: 2
+
+  - event_id: "china_pmi_2026_apr"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-04-30T00:00:00Z"   # 09:00 KST Apr 30 2026
+    impact_tier: 2
+
+  - event_id: "china_pmi_2026_may"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-05-29T00:00:00Z"   # 09:00 KST May 29 2026
+    impact_tier: 2
+
+  - event_id: "china_pmi_2026_jun"
+    event_type: "CHINA_PMI"
+    scheduled_at: "2026-06-30T00:00:00Z"   # 09:00 KST Jun 30 2026
+    impact_tier: 2
+
+  # ── KR CPI (Statistics Korea, 08:00 KST = 23:00 UTC prior day) ────────
+  # 08:00 KST = 60 min before session open. At 09:00 KST, elapsed = 60 min
+  # >> window_minutes=15 → will NOT fire Setup C. Tier 3 (ignored by default
+  # min_impact_tier=2). Retained for operator reference only.
+
+  - event_id: "kr_cpi_2026_jan"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2025-12-31T23:00:00Z"   # 08:00 KST Jan 1 2026 (holiday — may shift)
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2026_feb"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2026-01-29T23:00:00Z"   # 08:00 KST Jan 30 2026
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2026_mar"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2026-02-26T23:00:00Z"   # 08:00 KST Feb 27 2026
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2026_apr"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2026-03-31T23:00:00Z"   # 08:00 KST Apr 1 2026
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2026_may"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2026-04-29T23:00:00Z"   # 08:00 KST Apr 30 2026
+    impact_tier: 3
+
+  - event_id: "kr_cpi_2026_jun"
+    event_type: "KR_CPI_RELEASE"
+    scheduled_at: "2026-05-28T23:00:00Z"   # 08:00 KST May 29 2026
+    impact_tier: 3
+
+  # ── KOSPI200 quarterly rebalance ──────────────────────────────────────
+  # KRX rebalance calendar: Q1=Mar, Q2=Jun, Q3=Sep, Q4=Dec.
+  # Effective day typically second Friday of the rebalance month.
+  # Using session-open of effective day (09:00 KST) as the trigger time.
+
+  - event_id: "kospi200_rebalance_2026_mar"
+    event_type: "KOSPI200_REBALANCE"
+    scheduled_at: "2026-03-12T00:00:00Z"   # 09:00 KST Mar 12 2026
+    impact_tier: 2
+
+  - event_id: "kospi200_rebalance_2026_jun"
+    event_type: "KOSPI200_REBALANCE"
+    scheduled_at: "2026-06-11T00:00:00Z"   # 09:00 KST Jun 11 2026
+    impact_tier: 2
+
+  # ── FOMC / US data: retained for reference (see timing note above) ────
+
+  - event_id: "fomc_2026_jan"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2026-01-28T19:00:00Z"   # 04:00 KST Jan 29 — pre-session
+    impact_tier: 1
+
+  - event_id: "us_cpi_2026_jan"
+    event_type: "US_CPI"
+    scheduled_at: "2026-01-14T13:30:00Z"   # 22:30 KST — post-session
+    impact_tier: 1
+
+  - event_id: "us_nfp_2026_jan"
+    event_type: "US_NFP"
+    scheduled_at: "2026-01-09T13:30:00Z"   # 22:30 KST — post-session
+    impact_tier: 1
 
   - event_id: "us_cpi_2026_feb"
     event_type: "US_CPI"
-    scheduled_at: "2026-02-11T13:30:00Z"
+    scheduled_at: "2026-02-11T13:30:00Z"   # 22:30 KST — post-session
     impact_tier: 1
+
   - event_id: "us_nfp_2026_feb"
     event_type: "US_NFP"
-    scheduled_at: "2026-02-06T13:30:00Z"
+    scheduled_at: "2026-02-06T13:30:00Z"   # 22:30 KST — post-session
     impact_tier: 1
-  - event_id: "bok_2026_feb"
-    event_type: "BOK_rate_decision"
-    scheduled_at: "2026-02-26T01:00:00Z"
-    impact_tier: 2
 
   - event_id: "fomc_2026_mar"
     event_type: "FOMC_rate_decision"
-    scheduled_at: "2026-03-18T18:00:00Z"
+    scheduled_at: "2026-03-18T18:00:00Z"   # 03:00 KST Mar 19 — pre-session
     impact_tier: 1
+
   - event_id: "us_cpi_2026_mar"
     event_type: "US_CPI"
-    scheduled_at: "2026-03-11T12:30:00Z"
+    scheduled_at: "2026-03-11T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
+
   - event_id: "us_nfp_2026_mar"
     event_type: "US_NFP"
-    scheduled_at: "2026-03-06T13:30:00Z"
+    scheduled_at: "2026-03-06T13:30:00Z"   # 22:30 KST — post-session
     impact_tier: 1
 
   - event_id: "us_cpi_2026_apr"
     event_type: "US_CPI"
-    scheduled_at: "2026-04-10T12:30:00Z"
+    scheduled_at: "2026-04-10T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
+
   - event_id: "us_nfp_2026_apr"
     event_type: "US_NFP"
-    scheduled_at: "2026-04-03T12:30:00Z"
+    scheduled_at: "2026-04-03T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
-  - event_id: "bok_2026_apr"
-    event_type: "BOK_rate_decision"
-    scheduled_at: "2026-04-09T01:00:00Z"
-    impact_tier: 2
 
-  # -------------------------------------------------------------- forward
   - event_id: "fomc_2026_may"
     event_type: "FOMC_rate_decision"
-    scheduled_at: "2026-05-01T03:00:00Z"
+    scheduled_at: "2026-05-01T18:00:00Z"   # 14:00 ET / 03:00 KST May 2 — pre-session
     impact_tier: 1
+
   - event_id: "us_cpi_2026_may"
     event_type: "US_CPI"
-    scheduled_at: "2026-05-13T12:30:00Z"
+    scheduled_at: "2026-05-13T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
-  - event_id: "bok_2026_may"
-    event_type: "BOK_rate_decision"
-    scheduled_at: "2026-05-23T00:00:00Z"
+
+  # ── Forward 2026 (Jun onward) ─────────────────────────────────────────
+
+  - event_id: "fomc_2026_jun"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2026-06-17T18:00:00Z"   # 03:00 KST Jun 18 — pre-session
+    impact_tier: 1
+
+  - event_id: "us_cpi_2026_jun"
+    event_type: "US_CPI"
+    scheduled_at: "2026-06-10T12:30:00Z"   # 21:30 KST — post-session
+    impact_tier: 1
+
+  - event_id: "us_nfp_2026_jun"
+    event_type: "US_NFP"
+    scheduled_at: "2026-06-05T12:30:00Z"   # 21:30 KST — post-session
+    impact_tier: 1
+
+  - event_id: "us_nfp_2026_may"
+    event_type: "US_NFP"
+    scheduled_at: "2026-05-01T12:30:00Z"   # 21:30 KST — post-session
     impact_tier: 1
