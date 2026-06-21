@@ -3,11 +3,26 @@
 Replaces ``setup_target_exit`` for futures Setup A/C.
 Precedence: crash guard → catastrophic backstop → trail stop → EOD.
 Long/short symmetric; all thresholds config-driven.
+
+Crash guard (I1 follow-up)
+--------------------------
+Two complementary paths detect a crash:
+
+1. **Single-tick fast path** (original): a single adverse tick ≥ ``crash_atr_mult × ATR``.
+   Catches a sudden vertical spike within one scan interval (~0.5s).
+2. **Rolling-window path** (I1 fix): the maximum adverse move within the last
+   ``crash_window_seconds`` (default 60) is compared against the same threshold.
+   Catches gradual 1-minute sell-offs that no single tick trips.
+
+Either path fires the ``FORCE_CLOSE`` signal.  The price history is kept in
+``position.metadata["crash_price_history"]`` (list of ``[iso_ts, price]`` pairs),
+pruned to the rolling window each tick.
 """
 from __future__ import annotations
+import json
 import logging
 from dataclasses import dataclass
-from datetime import time
+from datetime import datetime, time
 from typing import Any
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
@@ -17,6 +32,8 @@ from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snap
 from shared.strategy.market_time import effective_close_time, is_trading_day_kst, now_kst, to_kst
 
 logger = logging.getLogger(__name__)
+
+_CRASH_HISTORY_KEY = "crash_price_history"
 
 
 def trail_stop_price(side: PositionSide, favorable_extreme: float, atr: float, trail_atr_mult: float) -> float:
@@ -41,6 +58,48 @@ def crash_triggered(side: PositionSide, current_price: float, prev_price: float,
     return (current_price - prev_price) >= threshold
 
 
+def max_adverse_move_in_window(
+    side: PositionSide,
+    current_price: float,
+    history: list[tuple[datetime, float]],
+    window_seconds: float,
+    current_ts: datetime,
+) -> float:
+    """Return the maximum adverse move within the rolling window.
+
+    For LONG: the largest drop (oldest_price_in_window - current_price).
+    For SHORT: the largest rise (current_price - oldest_price_in_window).
+
+    Only prices whose timestamp falls within ``[current_ts - window_seconds, current_ts]``
+    are considered.  ``current_price`` itself is always included as the latest point.
+
+    Args:
+        side: Position direction (LONG or SHORT).
+        current_price: Latest price (most recent data point).
+        history: List of ``(timestamp, price)`` pairs in any order.
+        window_seconds: Rolling window width in seconds.
+        current_ts: Timestamp of ``current_price`` (tz-aware KST preferred).
+
+    Returns:
+        Maximum adverse move in price units (≥ 0 when adverse, ≤ 0 when favorable).
+    """
+    from datetime import timedelta
+
+    cutoff = current_ts - timedelta(seconds=window_seconds)
+    in_window = [price for ts, price in history if ts >= cutoff]
+    if not in_window:
+        return 0.0
+
+    if side == PositionSide.LONG:
+        # Worst price in window is the highest (best) entry price; we moved adversely DOWN.
+        peak = max(in_window)
+        return peak - current_price
+    else:
+        # Worst price in window is the lowest (best) entry price; we moved adversely UP.
+        trough = min(in_window)
+        return current_price - trough
+
+
 def catastrophic_stop_hit(side: PositionSide, entry_price: float, current_price: float, atr: float, catastrophic_atr_mult: float) -> bool:
     """True when loss from entry >= catastrophic_atr_mult*atr."""
     threshold = catastrophic_atr_mult * atr
@@ -51,10 +110,11 @@ def catastrophic_stop_hit(side: PositionSide, entry_price: float, current_price:
 
 @dataclass
 class TrackAExitConfig(ConfigMixin):
-    trail_atr_mult: float = 3.0
-    trail_activate_atr_mult: float = 1.0
+    trail_atr_mult: float = 1.5
+    trail_activate_atr_mult: float = 2.0
     crash_atr_mult: float = 3.5
     crash_cooldown_minutes: int = 30
+    crash_window_seconds: float = 60.0  # I1: rolling window for windowed crash detection
     catastrophic_atr_mult: float = 6.0
     eod_close_enabled: bool = True
     eod_close_hour: int = 15
@@ -71,6 +131,7 @@ class TrackAExitConfig(ConfigMixin):
         assert self.trail_activate_atr_mult >= 0
         assert self.crash_atr_mult > 0
         assert self.crash_cooldown_minutes >= 0
+        assert self.crash_window_seconds > 0
         assert self.catastrophic_atr_mult > 0
         assert 0.0 < self.default_exit_confidence <= 1.0
 
@@ -116,6 +177,41 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
                 signals.append(signal)
         return signals
 
+    def _update_crash_history(
+        self, position: Position, current_price: float, now: Any
+    ) -> list[tuple[datetime, float]]:
+        """Append current_price to ``crash_price_history`` and prune to the rolling window.
+
+        History is stored in ``position.metadata[_CRASH_HISTORY_KEY]`` as a list of
+        ``[iso_timestamp, price]`` pairs (JSON-serialisable).  Returns the pruned
+        history as a list of ``(datetime, float)`` tuples for immediate use.
+        """
+        from datetime import timedelta
+
+        now_dt: datetime = to_kst(now)
+        cutoff = now_dt - timedelta(seconds=self.config.crash_window_seconds)
+
+        raw: list[list] = position.metadata.get(_CRASH_HISTORY_KEY, [])
+        # Parse existing entries.
+        parsed: list[tuple[datetime, float]] = []
+        for entry in raw:
+            try:
+                ts_str, price = entry[0], float(entry[1])
+                ts = datetime.fromisoformat(ts_str)
+                if ts >= cutoff:
+                    parsed.append((ts, price))
+            except (IndexError, TypeError, ValueError):
+                continue
+
+        # Append current tick.
+        parsed.append((now_dt, current_price))
+
+        # Persist pruned list back to metadata.
+        position.metadata[_CRASH_HISTORY_KEY] = [
+            [ts.isoformat(), price] for ts, price in parsed
+        ]
+        return parsed
+
     def _check_position(self, position: Position, snapshot: dict[str, Any]) -> ExitSignal | None:
         current_price = get_price_from_snapshot(snapshot)
         if current_price is None:
@@ -133,25 +229,40 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
             position.highest_price if position.side == PositionSide.LONG else position.lowest_price
         )
 
-        # Update prev_price each tick before any early return.
+        # Update prev_price and rolling crash history each tick before any early return.
         position.metadata["prev_price"] = current_price
+        crash_history = self._update_crash_history(position, current_price, now)
 
-        # p1: crash guard — single-tick adverse move >= crash_atr_mult * ATR
-        if atr > 0 and crash_triggered(
-            position.side, current_price, prev_price, atr, self.config.crash_atr_mult
-        ):
-            return self._create_exit_signal(
-                position=position, current_price=current_price,
-                profit_pct=profit_pct, profit_amount=profit_amount,
-                reason=ExitReason.FORCE_CLOSE, priority=1,
-                holding_minutes=holding_minutes,
-                metadata={
-                    "exit_type": "crash_guard",
-                    "prev_price": prev_price,
-                    "atr": atr,
-                    "crash_cooldown_minutes": self.config.crash_cooldown_minutes,
-                },
+        # p1: crash guard — single-tick OR windowed adverse move >= crash_atr_mult * ATR
+        if atr > 0:
+            single_tick_crash = crash_triggered(
+                position.side, current_price, prev_price, atr, self.config.crash_atr_mult
             )
+            windowed_crash = (
+                max_adverse_move_in_window(
+                    side=position.side,
+                    current_price=current_price,
+                    history=crash_history,
+                    window_seconds=self.config.crash_window_seconds,
+                    current_ts=to_kst(now),
+                )
+                >= self.config.crash_atr_mult * atr
+            )
+            if single_tick_crash or windowed_crash:
+                crash_path = "single_tick" if single_tick_crash else "windowed"
+                return self._create_exit_signal(
+                    position=position, current_price=current_price,
+                    profit_pct=profit_pct, profit_amount=profit_amount,
+                    reason=ExitReason.FORCE_CLOSE, priority=1,
+                    holding_minutes=holding_minutes,
+                    metadata={
+                        "exit_type": "crash_guard",
+                        "crash_path": crash_path,
+                        "prev_price": prev_price,
+                        "atr": atr,
+                        "crash_cooldown_minutes": self.config.crash_cooldown_minutes,
+                    },
+                )
 
         # p2: catastrophic backstop — total loss from entry >= catastrophic_atr_mult * ATR
         if atr > 0 and catastrophic_stop_hit(

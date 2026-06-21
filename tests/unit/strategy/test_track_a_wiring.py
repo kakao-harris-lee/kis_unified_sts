@@ -66,12 +66,12 @@ def test_track_a_exit_yaml_defaults():
     data = _load_yaml(path)
     params = data["track_a_exit"]["params"]
 
-    assert params["trail_atr_mult"] == 3.0
+    assert params["trail_atr_mult"] == 1.5
     assert params["crash_atr_mult"] == 3.5
     assert params["catastrophic_atr_mult"] == 6.0
     assert params["eod_close_hour"] == 15
     assert params["eod_close_minute"] == 15
-    assert params["trail_activate_atr_mult"] == 1.0
+    assert params["trail_activate_atr_mult"] == 2.0
     assert params["eod_close_enabled"] is True
     assert params["enabled"] is True
 
