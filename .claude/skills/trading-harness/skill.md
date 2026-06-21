@@ -1,6 +1,6 @@
 ---
 name: trading-harness
-description: "KIS Unified Trading Platform 통합 오케스트레이터. 지표 전략 개발, RegimeGate 검증, 노코드 빌더, Paper→Live 승격, 코드 유지보수, 운영/모니터링. 전문가 풀에서 적절한 에이전트를 선택하여 라우팅한다."
+description: "KIS Unified Trading Platform 통합 오케스트레이터. 지표 전략 개발, RegimeGate 검증, 노코드 빌더, Paper→Live 승격, 코드 유지보수, 운영/모니터링, 빌드/테스트/CI 인프라(DevX). 전문가 풀에서 적절한 에이전트를 선택하여 라우팅한다."
 ---
 
 # Trading Harness — 통합 전문가 풀 오케스트레이터
@@ -9,7 +9,7 @@ KIS Unified Trading Platform의 전략 개발, RegimeGate 검증, 전략 승격,
 운영 1차 방향은 **지표 기반 전략(Williams %R/RSI/MACD) + RegimeGate + Setup A/C**이며,
 RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 
-## 전문가 풀 (24명)
+## 전문가 풀 (27명)
 
 ### 전략 개발 팀
 | 에이전트 | 전문 영역 | 트리거 키워드 |
@@ -63,6 +63,15 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 | `ui-engineer` | Cockpit/대시보드 컴포넌트/반응형/차트 | UI, 컴포넌트, 화면, Cockpit, 반응형, 모바일, 차트, 스타일 |
 | `frontend-realtime-engineer` | WebSocket/React Query/API 배선 | 실시간, WebSocket, React Query, API 연동, 낙관적 업데이트 |
 
+### DevOps/테스트-인프라 팀 (빌드/테스트/CI 표면)
+| 에이전트 | 전문 영역 | 트리거 키워드 |
+|---------|----------|-------------|
+| `container-engineer` | Docker 이미지/compose 프로파일/Dev Container/.dockerignore/Makefile | Docker, 이미지, compose, devcontainer, dockerignore, 온보딩, clone-and-go |
+| `ci-pipeline-engineer` | GitHub Actions/게이팅/gha 캐싱/flaky 잡 운영 | CI, GitHub Actions, 워크플로우, 잡, 캐시, 체크, 게이팅 |
+| `test-reliability-engineer` | hermetic/2-pass/fakeredis 격리/de-flaking | flaky, 테스트 깨짐, hermetic, 2-pass, serial, 시드, 결정론, conftest |
+
+> 빌드/테스트/CI 인프라는 `devx-harness` 서브 오케스트레이터가 전담한다. 런타임 모니터링·장애·알림은 `ops-harness`(별개)가 맡는다.
+
 ## 도메인별 서브 오케스트레이터
 
 복잡한 도메인 작업은 전용 오케스트레이터 스킬이 관리:
@@ -73,6 +82,7 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 | `ops-harness` | 전문가 풀 | ops-monitor, incident-responder, alert-manager | 운영/모니터링 |
 | `code-audit` | 팬아웃/팬인 | architecture/security/performance/style-auditor (병렬) → review-synthesizer | 종합 다중 렌즈 코드 감사 → 단일 리포트 |
 | `frontend-lab` | 파이프라인 (설계→구현) | frontend-architect → ui-engineer + frontend-realtime-engineer (병렬) | Next.js 단일 앱 화면/기능 개발 (builder 제외) |
+| `devx-harness` | 전문가 풀 / 생성-검증 | container-engineer, ci-pipeline-engineer, test-reliability-engineer | 빌드/테스트/CI 인프라 (Docker·compose·devcontainer·GitHub Actions·flaky/hermetic·clone-and-go); 하위 스킬 `containerize`·`ci-workflow`·`hermetic-tests` |
 | `rl-pipeline` | 파이프라인 (DEPRECATED) | indicator-specialist(보조) → model-evaluator → model-deployer | RL 재학습 전용 (운영 경로 아님) |
 
 ## 라우팅 규칙
@@ -88,6 +98,7 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 주문 실행/체결/ATS/KIS API 관련   → execution-specialist
 LLM 분석/브리핑 콘텐츠 관련        → llm-analyst
 프론트엔드/대시보드/UI/Next.js 관련 → 프론트엔드 팀 (→ frontend-lab 스킬; builder 기능은 strategy-builder)
+Docker/compose/devcontainer·CI/GitHub Actions·flaky/hermetic 테스트·온보딩 → DevX 팀 (→ devx-harness 스킬)
 RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 예외적)
 ```
 
@@ -95,6 +106,8 @@ RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 
 키워드 매칭으로 가장 적합한 전문가 1명 또는 파이프라인 선택.
 
 **모호어 처리 — "롤백"**: 전략/모델 되돌리기(이전 설정·배포 버전 복원)는 `model-deployer`, 장애·운영 복구(프로세스/연결/포지션 정합성 복구)는 `incident-responder`. 맥락이 불분명하면 직전 작업이 배포면 model-deployer, 장애 대응 중이면 incident-responder로 라우팅한다.
+
+**모호어 처리 — "테스트"**: 테스트 *작성*/커버리지 보강은 `test-engineer`, flaky/hermetic/2-pass·serial·CI 결정론 등 테스트 *신뢰성·인프라*는 `test-reliability-engineer`(→ devx-harness). "테스트 깨졌어"는 신뢰성 문제일 가능성이 높으므로 test-reliability-engineer로 진단 먼저.
 
 ```
 "BB 기반 새 전략 만들어줘"            → strategy-architect
@@ -124,6 +137,11 @@ RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 
 "Cockpit 포지션 카드 모바일 개선"      → ui-engineer
 "실시간 시그널이 안 갱신돼"            → frontend-realtime-engineer
 "디자인 토큰/테마 정리해줘"            → frontend-architect
+"Dockerfile/compose 프로파일 손봐줘"   → container-engineer (→ devx-harness)
+"CI 워크플로우/GitHub Actions 고쳐줘"  → ci-pipeline-engineer (→ devx-harness)
+"이 테스트 flaky해 / CI 빨개"          → test-reliability-engineer (진단 먼저, → devx-harness)
+"clone-and-go 온보딩 안 돼"            → container-engineer (+ test-reliability-engineer)
+"전체 빌드/테스트/CI 인프라 감사"      → devx-harness (3 에이전트 병렬)
 "RL 모델 재학습 검토" (예외)          → rl-pipeline (DEPRECATED)
 ```
 
