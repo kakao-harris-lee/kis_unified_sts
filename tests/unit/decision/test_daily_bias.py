@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
-import pytest
 from shared.decision.daily_bias import DailyBiasProvider, bias_from_context
 
 def test_strong_bullish_maps_to_long(): assert bias_from_context("STRONG_BULLISH", confidence=0.7) == "long"

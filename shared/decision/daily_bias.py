@@ -14,7 +14,7 @@ _SHORT_SIGNALS = {"STRONG_BEARISH", "BEARISH"}
 _KST = ZoneInfo("Asia/Seoul")
 
 
-def bias_from_context(overall_signal_name, confidence, bias_min_confidence=0.5, non_long_regimes=None, regime=""):
+def bias_from_context(overall_signal_name: str, confidence: float, bias_min_confidence: float = 0.5, non_long_regimes: list[str] | None = None, regime: str = "") -> Literal["long", "short", "flat"]:
     if confidence < bias_min_confidence:
         return "flat"
     signal = overall_signal_name.upper()
@@ -30,6 +30,8 @@ def bias_from_context(overall_signal_name, confidence, bias_min_confidence=0.5, 
 
 
 def _eod_ttl_seconds(now: datetime) -> int:
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_KST)
     eod = datetime(now.year, now.month, now.day, 15, 45, 0, tzinfo=_KST)
     return max(60, int((eod - now).total_seconds()))
 
@@ -41,15 +43,16 @@ class DailyBiasProvider:
 
     def get_or_compute_bias(self, market_context: Any | None, now_kst_dt: datetime) -> Literal["long", "short", "flat"]:
         today_str = now_kst_dt.date().isoformat()
+        cached = self._read_redis(today_str)
+        if cached is not None:
+            return cached
+        # _read_redis returns None if Redis is unavailable, so check after the cache read
         try:
             redis, _ = acquire_infra_clients()
             if redis is None:
                 return "flat"
         except Exception:
             return "flat"
-        cached = self._read_redis(today_str)
-        if cached is not None:
-            return cached
         if market_context is None:
             return "flat"
         try:
