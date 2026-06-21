@@ -152,6 +152,32 @@ monitoring:
 
 
 # =============================================================================
+# Setup A/C paper-observation digest
+#
+# Drives scripts/analysis/setup_ac_paper_observation.py, which runs via the
+# compose scheduler after market close (daily) and on Fridays (weekly).
+# =============================================================================
+setup_ac_paper_observation:
+  # Number of trades per setup required before a holdout re-validation
+  # backtest is statistically meaningful.  The digest shows N=X/<threshold>
+  # on every run so the operator knows when to trigger re-validation.
+  validation_n_threshold: 30
+
+  # Date the restored Setup A/C config was deployed (2026-06-21 maintenance
+  # deploy).  Trades before this date belong to the prior config era and are
+  # excluded from the accumulation count.
+  observation_start_date: "2026-06-21"
+
+  # Trades closed within this many minutes after entry are flagged as
+  # fast-stopouts — a symptom of overly tight stops or bad gap fills.
+  fast_stopout_minutes: 30
+
+  # Individual trades with pnl_pct below this threshold are flagged as
+  # catastrophic losses in early-warning output.
+  catastrophic_loss_pct: -3.0
+
+
+# =============================================================================
 # 환경별 오버라이드
 # =============================================================================
 
