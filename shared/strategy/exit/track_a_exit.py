@@ -260,6 +260,9 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
             "[%s] Exit: %s reason=%s price=%.2f pnl=%+.2f%%",
             self.name, position.code, reason.value, current_price, profit_pct * 100,
         )
+        high_since_entry = (
+            position.highest_price if position.side == PositionSide.LONG else position.lowest_price
+        )
         return ExitSignal(
             code=position.code,
             name=position.name,
@@ -275,7 +278,7 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
             priority=priority,
             timestamp=now_kst(),
             stage=PositionState.SURVIVAL.value,
-            high_since_entry=position.highest_price,
+            high_since_entry=high_since_entry,
             holding_minutes=holding_minutes,
             quantity=position.quantity,
             metadata=metadata,

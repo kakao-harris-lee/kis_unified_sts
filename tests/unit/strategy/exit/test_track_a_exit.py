@@ -1,6 +1,6 @@
 """Unit tests for TrackAExit pure math helpers and generator."""
 from __future__ import annotations
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 import pytest
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason
@@ -44,17 +44,20 @@ def test_catastrophic_not_triggered_within_threshold():
 # Generator tests (Task 2)
 # ---------------------------------------------------------------------------
 
+_FIXED_ENTRY_TIME = datetime(2026, 1, 1, tzinfo=UTC)
+
+
 def _long_position(entry_price=100.0, highest_price=None, stop_price=0.0, **md):
     meta = {"entry_atr": 2.0, "prev_price": entry_price, **md}
     return Position(id="pos-long-1", code="A05603", name="KOSPI200 Mini", side=PositionSide.LONG,
-        quantity=1, entry_price=entry_price, entry_time=datetime.now(UTC) - timedelta(minutes=30),
+        quantity=1, entry_price=entry_price, entry_time=_FIXED_ENTRY_TIME,
         current_price=entry_price, stop_price=stop_price,
         highest_price=highest_price if highest_price is not None else entry_price, metadata=meta)
 
 def _short_position(entry_price=100.0, lowest_price=None, stop_price=0.0, **md):
     meta = {"entry_atr": 2.0, "prev_price": entry_price, **md}
     return Position(id="pos-short-1", code="A05603", name="KOSPI200 Mini", side=PositionSide.SHORT,
-        quantity=1, entry_price=entry_price, entry_time=datetime.now(UTC) - timedelta(minutes=30),
+        quantity=1, entry_price=entry_price, entry_time=_FIXED_ENTRY_TIME,
         current_price=entry_price, stop_price=stop_price,
         lowest_price=lowest_price if lowest_price is not None else entry_price, metadata=meta)
 
@@ -138,3 +141,30 @@ async def test_no_atr_skips_all_atr_exits():
 async def test_scan_positions_returns_signals_for_triggered():
     signals = await TrackAExit(_cfg()).scan_positions(positions=[_long_position(prev_price=100.0)], market_data={"A05603": {"close": 92.0, "atr": 2.0}})
     assert len(signals) == 1 and signals[0].reason == ExitReason.FORCE_CLOSE
+
+
+@pytest.mark.asyncio
+async def test_eod_fires_when_atr_zero(monkeypatch):
+    """I1: ATR=0 skips ATR-based exits but EOD_CLOSE must still fire."""
+    from zoneinfo import ZoneInfo
+    import shared.strategy.exit.track_a_exit as _mod
+
+    KST = ZoneInfo("Asia/Seoul")
+    # Monday 2026-06-22 at 15:20 KST — well past 15:15 EOD cutoff.
+    fixed_now = datetime(2026, 6, 22, 15, 20, 0, tzinfo=KST)
+
+    monkeypatch.setattr(_mod, "now_kst", lambda: fixed_now)
+    monkeypatch.setattr(_mod, "is_trading_day_kst", lambda dt: True)
+    monkeypatch.setattr(_mod, "effective_close_time", lambda cfg_close: cfg_close)
+
+    # Position with no entry_atr and snapshot atr=0 → _get_atr returns 0.0.
+    pos = _long_position(prev_price=100.0)
+    pos.metadata.pop("entry_atr", None)
+
+    cfg = _cfg(eod_close_enabled=True, eod_close_hour=15, eod_close_minute=15)
+    ctx = ExitContext(position=pos, market_data={"close": 100.0, "atr": 0.0}, timestamp=fixed_now)
+
+    fired, sig = await TrackAExit(cfg).should_exit(ctx)
+    assert fired
+    assert sig.reason == ExitReason.EOD_CLOSE
+    assert sig.metadata["exit_type"] == "eod_close"
