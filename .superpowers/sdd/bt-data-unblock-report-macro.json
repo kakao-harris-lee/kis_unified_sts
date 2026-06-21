@@ -1,0 +1,112 @@
+{
+  "generated_at": "2026-06-21T08:10:00.744623",
+  "data_path": "/home/deploy/project/kis_unified_sts/data/kospi200f_1m_ch_101S6000.csv",
+  "data_start": "2025-07-01",
+  "data_end": "2026-04-23",
+  "holdout_split": "2026-01-15",
+  "macro_coverage_pct": 100.0,
+  "llm_context": "excluded — no persisted overall_signal/regime for holdout span",
+  "setup_a_config": {
+    "min_sp500_gap_pct": 0.3,
+    "min_kr_gap_pct": 0.2,
+    "retrace_min": 0.2,
+    "retrace_max": 0.7,
+    "valid_minutes_min": 10,
+    "valid_minutes_max": 120,
+    "stop_atr_mult": 1.5
+  },
+  "track_a_params": {
+    "trail_atr_mult": 1.5,
+    "trail_activate_atr_mult": 2.0,
+    "crash_atr_mult": 3.5,
+    "catastrophic_atr_mult": 6.0
+  },
+  "periods": [
+    {
+      "label": "TRAIN (in-sample)",
+      "n_entries": 18,
+      "track_a": {
+        "n_trades": 18,
+        "win_rate": 50.0,
+        "avg_return_pct": -0.0247,
+        "total_pnl_pts": -1.65,
+        "total_pnl_krw": -82500.0,
+        "sharpe": -1.181,
+        "mdd_pct": 4.92,
+        "median_hold_min": 22.5,
+        "mean_hold_min": 33.2,
+        "exit_reasons": {
+          "trailing_stop": 17,
+          "catastrophic_stop": 1
+        }
+      },
+      "target_exit": {
+        "n_trades": 18,
+        "win_rate": 66.7,
+        "avg_return_pct": 0.4928,
+        "total_pnl_pts": 42.65,
+        "total_pnl_krw": 2132500.0,
+        "sharpe": 6.248,
+        "mdd_pct": 7.22,
+        "median_hold_min": 13.5,
+        "mean_hold_min": 39.9,
+        "exit_reasons": {
+          "target_reached": 11,
+          "eod_close": 1,
+          "stop_loss": 6
+        }
+      },
+      "giveback_track_a": {
+        "median_giveback_pct": 0.6153,
+        "mean_giveback_pct": 0.8547,
+        "trades_with_max_profit": 18
+      },
+      "verdict_sharpe_delta": -7.429,
+      "verdict_pnl_delta_pts": -44.3,
+      "verdict_win_delta_pct": -16.7
+    },
+    {
+      "label": "HOLDOUT (out-of-sample)",
+      "n_entries": 18,
+      "track_a": {
+        "n_trades": 18,
+        "win_rate": 61.1,
+        "avg_return_pct": -0.0899,
+        "total_pnl_pts": -13.05,
+        "total_pnl_krw": -652500.0,
+        "sharpe": -1.344,
+        "mdd_pct": 16.67,
+        "median_hold_min": 33.5,
+        "mean_hold_min": 35.9,
+        "exit_reasons": {
+          "catastrophic_stop": 5,
+          "trailing_stop": 13
+        }
+      },
+      "target_exit": {
+        "n_trades": 18,
+        "win_rate": 44.4,
+        "avg_return_pct": 0.0026,
+        "total_pnl_pts": 3.0,
+        "total_pnl_krw": 150000.0,
+        "sharpe": 0.056,
+        "mdd_pct": 9.83,
+        "median_hold_min": 13.0,
+        "mean_hold_min": 16.1,
+        "exit_reasons": {
+          "stop_loss": 10,
+          "target_reached": 8
+        }
+      },
+      "giveback_track_a": {
+        "median_giveback_pct": 0.3658,
+        "mean_giveback_pct": 0.5229,
+        "trades_with_max_profit": 16
+      },
+      "verdict_sharpe_delta": -1.4,
+      "verdict_pnl_delta_pts": -16.05,
+      "verdict_win_delta_pct": 16.7
+    }
+  ],
+  "min_volume": 30
+}
