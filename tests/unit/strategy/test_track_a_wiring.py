@@ -140,3 +140,67 @@ def test_setup_c_via_loader_exit_type():
     cfg = load_strategy_config("futures", "setup_c_event_reaction")
     exit_type = cfg["strategy"]["exit"]["type"]
     assert exit_type == "track_a_exit", f"Loader returned exit.type={exit_type!r}"
+
+
+# ---------------------------------------------------------------------------
+# Integration smoke tests (Task 6)
+# ---------------------------------------------------------------------------
+
+def test_strategy_factory_setup_a_exit_is_track_a_exit():
+    """StrategyFactory.create_from_file("futures","setup_a_gap_reversion").exit is TrackAExit."""
+    from shared.strategy.registry import StrategyFactory, register_builtin_components
+    from shared.strategy.exit.track_a_exit import TrackAExit
+
+    register_builtin_components()
+
+    strategy = StrategyFactory.create_from_file("futures", "setup_a_gap_reversion")
+
+    assert isinstance(strategy.exit, TrackAExit), (
+        f"Expected strategy.exit to be TrackAExit, got {type(strategy.exit).__name__}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_track_a_exit_crash_guard_smoke():
+    """TrackAExit.scan_positions crash smoke: prev 370 → close 362 = 8pt drop fires FORCE_CLOSE."""
+    from datetime import UTC, datetime
+    from shared.models.position import Position, PositionSide
+    from shared.models.signal import ExitReason
+    from shared.strategy.exit.track_a_exit import TrackAExit, TrackAExitConfig
+
+    # Build a LONG position: entry 370, highest 370, prev 370.
+    _FIXED_ENTRY_TIME = datetime(2026, 1, 1, tzinfo=UTC)
+    pos = Position(
+        id="pos-smoke-1",
+        code="A05603",
+        name="KOSPI200 Mini",
+        side=PositionSide.LONG,
+        quantity=1,
+        entry_price=370.0,
+        entry_time=_FIXED_ENTRY_TIME,
+        current_price=370.0,
+        stop_price=0.0,
+        highest_price=370.0,
+        metadata={"entry_atr": 2.0, "prev_price": 370.0},
+    )
+
+    # Crash scenario: close 362 (drop of 8 pts = 4.0 atr; threshold is 3.5 atr).
+    cfg = TrackAExitConfig(
+        trail_atr_mult=3.0,
+        trail_activate_atr_mult=1.0,
+        crash_atr_mult=3.5,
+        crash_cooldown_minutes=30,
+        catastrophic_atr_mult=6.0,
+        eod_close_enabled=False,
+        default_exit_confidence=0.9,
+        enabled=True,
+    )
+
+    signals = await TrackAExit(cfg).scan_positions(
+        positions=[pos], market_data={"A05603": {"close": 362.0, "atr": 2.0}}
+    )
+
+    assert len(signals) == 1, f"Expected 1 signal, got {len(signals)}"
+    assert signals[0].reason == ExitReason.FORCE_CLOSE, (
+        f"Expected FORCE_CLOSE, got {signals[0].reason}"
+    )
