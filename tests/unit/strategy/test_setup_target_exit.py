@@ -103,10 +103,10 @@ async def test_short_uses_inverted_stop_and_target():
     assert signal.reason == ExitReason.STOP_LOSS
 
 
-def test_setup_a_config_uses_track_a_exit():
+def test_setup_a_config_uses_setup_target_exit():
     # setup_a_gap_reversion was migrated from setup_target_exit to track_a_exit
     # (ATR trailing + crash guard + catastrophic backstop).
     # setup_target_exit remains registered as the rollback path.
     config = ConfigLoader.load_strategy("futures", "setup_a_gap_reversion")
 
-    assert config["strategy"]["exit"]["type"] == "track_a_exit"
+    assert config["strategy"]["exit"]["type"] == "setup_target_exit"
