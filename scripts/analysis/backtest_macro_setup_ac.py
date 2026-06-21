@@ -12,13 +12,15 @@ macro_overnight context, so ``SetupAGapReversion.check()`` always returns
    data KNOWN at/before 06:30 KST, i.e. T-1 US close → T KR session).
 3. Runs ``MarketContextReplay`` + real ``SetupAGapReversion`` (config from
    ``config/decision_engine.yaml``) on the full dataset.
-4. Setup C is also exercised; without a real scheduled-event calendar it fires
-   as a pure 15-min-range breakout (``scheduled_events=[]`` — events come
-   from the context but ``find_recent_event`` requires non-empty events).
-   Setup C entries are therefore 0 for now; this is documented as a known
-   limitation, not a code bug.
+4. Setup C (``SetupCEventReaction``) is exercised using the real macro-event
+   calendar from ``config/scheduled_events.yaml``, loaded via
+   ``load_scheduled_events()``.  Events are passed into ``MarketContextReplay``
+   so ``find_recent_event`` can match them against each bar's KST timestamp
+   without look-ahead (``scheduled_at <= ctx.now``).
 5. For each Setup-A entry, simulates both TrackAExit (tuned trail=1.5,
    activate=2.0) and SetupTargetExit (fixed stop from config) and compares.
+   Setup C uses SetupTargetExit brackets only (event-driven trades are
+   short-lived; the trailing exit is tuned for the gap-reversion arc).
 
 LLM context
 -----------
@@ -70,7 +72,8 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from shared.backtest.market_context_replay import MarketContextReplay
-from shared.decision.context import MarketContext
+from shared.decision.context import MarketContext, load_scheduled_events
+from shared.decision.setups.event_reaction import SetupCConfig, SetupCEventReaction
 from shared.decision.setups.gap_reversion import SetupAConfig, SetupAGapReversion
 from shared.execution.contract_spec import ContractSpec
 from shared.macro.base import MacroSnapshot
@@ -282,6 +285,67 @@ def collect_real_setup_a_entries(
             )
         )
         last_entry_day = day
+
+    return signals
+
+
+def collect_real_setup_c_entries(
+    replay: MarketContextReplay,
+    config: SetupCConfig,
+    df: pd.DataFrame,
+) -> list[RealEntrySignal]:
+    """Iterate MarketContextReplay and collect real Setup C signals.
+
+    Unlike Setup A (one entry per day), Setup C allows multiple entries per day
+    — one per event (deduped by event_id via EventTradeTracker inside the
+    setup instance).  The tracker lives for the full replay so each event_id
+    is only traded once across the entire backtest window.
+    """
+    setup = SetupCEventReaction(config=config)
+    signals: list[RealEntrySignal] = []
+
+    ts_col = df["timestamp"].tolist()
+
+    for ctx in replay.iter_contexts():
+        signal = setup.check(ctx)
+        if signal is None:
+            continue
+
+        ts_kst = ctx.now
+        ts_naive = pd.Timestamp(ts_kst).tz_localize(None)
+        bar_idx = None
+        for i, ts in enumerate(ts_col):
+            t = pd.Timestamp(ts)
+            if t.tzinfo is not None:
+                t = t.tz_convert(None)
+            if t == ts_naive or abs((t - ts_naive).total_seconds()) < 30:
+                bar_idx = i
+                break
+
+        if bar_idx is None:
+            logger.debug("Setup C: could not locate bar for ts=%s — skipping", ts_kst)
+            continue
+
+        atr = ctx.atr_14
+        if signal.direction == "long":
+            side: Literal["BUY", "SELL"] = "BUY"
+        else:
+            side = "SELL"
+
+        signals.append(
+            RealEntrySignal(
+                bar_idx=bar_idx,
+                entry_price=signal.entry_price,
+                side=side,
+                atr=atr,
+                stop_price=signal.stop_loss,
+                take_profit=signal.take_profit,
+                setup="setup_c_real",
+                confidence=signal.confidence,
+                sp500_change_pct=None,
+                kr_gap_pct=None,
+            )
+        )
 
     return signals
 
@@ -651,9 +715,18 @@ def run_backtest(
     macro_snapshots: dict[date, MacroSnapshot],
     setup_a_config: SetupAConfig,
     label: str = "",
+    scheduled_events: list | None = None,
     **kwargs: object,
 ) -> dict:
-    """Run real Setup A/C backtest on df slice. Returns metrics dict."""
+    """Run real Setup A/C backtest on df slice. Returns metrics dict.
+
+    ``scheduled_events`` is the parsed list from ``load_scheduled_events()``.
+    When provided, Setup C entries are collected via ``SetupCEventReaction``;
+    when ``None`` or empty, Setup C is skipped (0 entries reported).
+    """
+    if scheduled_events is None:
+        scheduled_events = []
+
     print(f"\n{'#'*65}")
     print(f"  Period: {df['timestamp'].min().date()} ~ {df['timestamp'].max().date()}")
     print(f"  Bars : {len(df)}  |  Days: {df['timestamp'].dt.date.nunique()}")
@@ -665,6 +738,8 @@ def run_backtest(
     print(f"  TrackA params: trail_atr_mult={TRAIL_ATR_MULT_TUNED}, "
           f"trail_activate={TRAIL_ACTIVATE_ATR_MULT_TUNED}")
     print(f"  min_volume filter: {min_volume} (phantom-bar suppression)")
+    print(f"  Scheduled events wired: {len(scheduled_events)} "
+          f"(Setup C will fire on tier<=2 in-session events)")
     print(f"{'#'*65}")
 
     # Build a ContractSpec stub for MarketContextReplay
@@ -689,58 +764,58 @@ def run_backtest(
     def macro_provider(kr_date: date) -> MacroSnapshot | None:
         return macro_snapshots.get(kr_date)
 
-    min_volume: int = kwargs.get("min_volume", 30)
     replay = MarketContextReplay(
         df=replay_df,
         symbol="101S6000",
         macro_snapshot=None,  # per-day provider used instead
-        scheduled_events=[],  # Setup C requires real event calendar — excluded
+        scheduled_events=scheduled_events,  # real event calendar
         contract_spec=contract_spec,
         macro_provider=macro_provider,
         min_volume=min_volume,
     )
 
     logger.info("Collecting real Setup A entries ...")
-    entries = collect_real_setup_a_entries(replay, setup_a_config, replay_df)
+    entries_a = collect_real_setup_a_entries(replay, setup_a_config, replay_df)
 
-    # For Setup C: 0 entries without real scheduled_events (documented limitation)
-    print(f"\n  Real Setup A entries: {len(entries)}")
-    print(f"  Setup C entries: 0 (no scheduled-event calendar in backtest — known limitation)")
+    logger.info("Collecting real Setup C entries ...")
+    setup_c_config = SetupCConfig()
+    entries_c = collect_real_setup_c_entries(replay, setup_c_config, replay_df)
 
-    if not entries:
+    print(f"\n  Real Setup A entries: {len(entries_a)}")
+    print(f"  Real Setup C entries: {len(entries_c)}")
+
+    # ── Setup A — run both exit arms ────────────────────────────────────────
+    if not entries_a:
         print("  WARNING: no Setup A entries — check macro coverage or threshold config")
-        empty_m = compute_metrics([])
-        return {
-            "label": label,
-            "n_entries": 0,
-            "track_a": empty_m,
-            "target_exit": empty_m,
-        }
 
-    # Run exit arms
     track_a_trades: list[SimTrade] = []
-    target_trades: list[SimTrade] = []
-    for entry in entries:
+    target_trades_a: list[SimTrade] = []
+    for entry in entries_a:
         t1 = simulate_track_a_exit(replay_df, entry)
         if t1 is not None:
             track_a_trades.append(t1)
         t2 = simulate_setup_target_exit(replay_df, entry)
         if t2 is not None:
-            target_trades.append(t2)
+            target_trades_a.append(t2)
 
     m_track = compute_metrics(track_a_trades)
-    m_target = compute_metrics(target_trades)
+    m_target_a = compute_metrics(target_trades_a)
     gb_track = trailing_giveback(track_a_trades)
-    gb_target = trailing_giveback(target_trades)
+    gb_target_a = trailing_giveback(target_trades_a)
 
-    print_metrics(f"ARM A — TrackAExit (trail={TRAIL_ATR_MULT_TUNED}, activate={TRAIL_ACTIVATE_ATR_MULT_TUNED})", m_track, gb_track)
-    print_metrics("ARM B — SetupTargetExit (fixed stop/target)", m_target, gb_target)
+    print_metrics(
+        f"SETUP A — TrackAExit (trail={TRAIL_ATR_MULT_TUNED},"
+        f" activate={TRAIL_ACTIVATE_ATR_MULT_TUNED})",
+        m_track,
+        gb_track,
+    )
+    print_metrics("SETUP A — SetupTargetExit (fixed stop/target)", m_target_a, gb_target_a)
 
-    # Verdict
-    sharpe_delta = m_track["sharpe"] - m_target["sharpe"]
-    pnl_delta = m_track["total_pnl_pts"] - m_target["total_pnl_pts"]
-    win_delta = m_track["win_rate"] - m_target["win_rate"]
-    print(f"\n  VERDICT SUMMARY ({label})")
+    # Verdict for Setup A
+    sharpe_delta = m_track["sharpe"] - m_target_a["sharpe"]
+    pnl_delta = m_track["total_pnl_pts"] - m_target_a["total_pnl_pts"]
+    win_delta = m_track["win_rate"] - m_target_a["win_rate"]
+    print(f"\n  VERDICT SUMMARY Setup A ({label})")
     print(f"  {'─'*60}")
     print(f"  Sharpe delta (TrackA − Target): {sharpe_delta:+.3f}")
     print(f"  Win-rate delta                : {win_delta:+.1f}%")
@@ -760,15 +835,45 @@ def run_backtest(
     else:
         print("  VERDICT: Results comparable — no clear winner.")
 
+    # ── Setup C — target-exit brackets only ─────────────────────────────────
+    target_trades_c: list[SimTrade] = []
+    for entry in entries_c:
+        t = simulate_setup_target_exit(replay_df, entry)
+        if t is not None:
+            target_trades_c.append(t)
+
+    m_target_c = compute_metrics(target_trades_c)
+    gb_target_c = trailing_giveback(target_trades_c)
+
+    print_metrics(
+        "SETUP C — SetupTargetExit (event-reaction breakout, fixed brackets)",
+        m_target_c,
+        gb_target_c,
+    )
+
+    if len(entries_c) < 5:
+        print(
+            f"\n  NOTE: Setup C produced only {len(entries_c)} trades — "
+            "sample is too thin for statistical inference. "
+            "Results are directional only; treat any Sharpe figure with caution."
+        )
+
     return {
         "label": label,
-        "n_entries": len(entries),
-        "track_a": m_track,
-        "target_exit": m_target,
-        "giveback_track_a": gb_track,
-        "verdict_sharpe_delta": round(sharpe_delta, 3),
-        "verdict_pnl_delta_pts": round(pnl_delta, 2),
-        "verdict_win_delta_pct": round(win_delta, 1),
+        "setup_a": {
+            "n_entries": len(entries_a),
+            "track_a": m_track,
+            "target_exit": m_target_a,
+            "giveback_track_a": gb_track,
+            "verdict_sharpe_delta": round(sharpe_delta, 3),
+            "verdict_pnl_delta_pts": round(pnl_delta, 2),
+            "verdict_win_delta_pct": round(win_delta, 1),
+        },
+        "setup_c": {
+            "n_entries": len(entries_c),
+            "target_exit": m_target_c,
+            "giveback": gb_target_c,
+        },
     }
 
 
@@ -794,6 +899,11 @@ def main() -> None:
         "--holdout-only",
         action="store_true",
         help="Only report holdout period results",
+    )
+    parser.add_argument(
+        "--events",
+        default="config/scheduled_events.yaml",
+        help="Path to scheduled_events.yaml (default: config/scheduled_events.yaml)",
     )
     parser.add_argument(
         "--output",
@@ -825,6 +935,21 @@ def main() -> None:
     if not data_path.exists():
         print(f"ERROR: Data file not found: {data_path}", file=sys.stderr)
         sys.exit(1)
+
+    events_path = Path(args.events)
+    if not events_path.is_absolute():
+        events_path = PROJECT_ROOT / events_path
+    if events_path.exists():
+        scheduled_events = load_scheduled_events(str(events_path))
+        logger.info(
+            "Loaded %d scheduled events from %s", len(scheduled_events), events_path
+        )
+    else:
+        logger.warning(
+            "Scheduled events file not found: %s — Setup C will produce 0 entries",
+            events_path,
+        )
+        scheduled_events = []
 
     logger.info("Loading data: %s", data_path)
     df = pd.read_csv(data_path, parse_dates=["datetime"])
@@ -931,6 +1056,8 @@ def main() -> None:
         "holdout_split": str(split_date),
         "macro_coverage_pct": round(trading_days_with_macro / total_days * 100, 1),
         "llm_context": "excluded — no persisted overall_signal/regime for holdout span",
+        "scheduled_events_path": str(events_path),
+        "scheduled_events_count": len(scheduled_events),
         "setup_a_config": {
             "min_sp500_gap_pct": setup_a_config.min_sp500_gap_pct,
             "min_kr_gap_pct": setup_a_config.min_kr_gap_pct,
@@ -955,14 +1082,22 @@ def main() -> None:
 
     if not args.holdout_only:
         train_res = run_backtest(
-            df_train, macro_snapshots, setup_a_config,
-            label="TRAIN (in-sample)", min_volume=min_volume,
+            df_train,
+            macro_snapshots,
+            setup_a_config,
+            label="TRAIN (in-sample)",
+            scheduled_events=scheduled_events,
+            min_volume=min_volume,
         )
         results["periods"].append(train_res)
 
     holdout_res = run_backtest(
-        df_holdout, macro_snapshots, setup_a_config,
-        label="HOLDOUT (out-of-sample)", min_volume=min_volume,
+        df_holdout,
+        macro_snapshots,
+        setup_a_config,
+        label="HOLDOUT (out-of-sample)",
+        scheduled_events=scheduled_events,
+        min_volume=min_volume,
     )
     results["periods"].append(holdout_res)
 
