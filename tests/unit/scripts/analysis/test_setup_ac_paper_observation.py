@@ -143,13 +143,28 @@ class TestComputeSetupStats:
         assert stats[SETUP_C].catastrophic_loss_count == 0
 
     def test_last_exit_kst_is_most_recent(self):
-        # query_trades returns DESC order; first row = latest
+        # query_trades returns DESC order; first row = latest.
+        # Naive timestamps (no tzinfo) are treated as KST by to_kst(),
+        # so the stored value gains the +09:00 suffix.
         trades = [
             _trade(strategy=SETUP_A, exit_time="2026-06-23T14:00:00"),
             _trade(strategy=SETUP_A, exit_time="2026-06-21T11:00:00"),
         ]
         stats = _compute(trades)
-        assert stats[SETUP_A].last_exit_kst == "2026-06-23T14:00:00"
+        assert stats[SETUP_A].last_exit_kst == "2026-06-23T14:00:00+09:00"
+
+    def test_utc_exit_time_converted_to_kst(self):
+        # RuntimeLedger stores UTC ISO strings; verify 9h shift to KST.
+        trades = [_trade(strategy=SETUP_A, exit_time="2026-06-21T06:00:00+00:00")]
+        stats = _compute(trades)
+        assert stats[SETUP_A].last_exit_kst == "2026-06-21T15:00:00+09:00"
+
+    def test_no_fast_stopout_at_exact_threshold(self):
+        # hold_seconds == 30 min exactly — boundary is exclusive (< not <=),
+        # so the trade at the threshold must NOT be flagged as fast stopout.
+        trades = [_trade(strategy=SETUP_A, hold_seconds=1800)]
+        stats = _compute(trades, fast_stopout_minutes=30)
+        assert stats[SETUP_A].fast_stopout_count == 0
 
 
 # ---------------------------------------------------------------------------

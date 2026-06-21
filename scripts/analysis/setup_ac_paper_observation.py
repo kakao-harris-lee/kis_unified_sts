@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
@@ -89,13 +90,10 @@ def _load_obs_config() -> dict[str, Any]:
     script is runnable without a full config stack.
     """
     try:
-        import yaml  # type: ignore[import-untyped]
+        from shared.config.loader import ConfigLoader
 
-        cfg_path = _REPO_ROOT / "config" / "monitoring.yaml"
-        if cfg_path.exists():
-            raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-            section = (raw or {}).get("setup_ac_paper_observation", {}) or {}
-            return section
+        raw = ConfigLoader.load("monitoring.yaml")
+        return (raw or {}).get("setup_ac_paper_observation", {}) or {}
     except Exception:  # noqa: BLE001 — config errors must not break digest
         pass
     return {}
@@ -207,8 +205,9 @@ def _load_setup_eval_from_redis() -> dict[str, dict[str, str]]:
     try:
         import redis as redis_lib
 
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/1")
         r = redis_lib.Redis.from_url(
-            "redis://localhost:6379/1",
+            redis_url,
             decode_responses=True,
             socket_connect_timeout=2,
             socket_timeout=2,
@@ -227,6 +226,22 @@ def _load_setup_eval_from_redis() -> dict[str, dict[str, str]]:
 # ---------------------------------------------------------------------------
 # Computation
 # ---------------------------------------------------------------------------
+
+def _to_kst_str(iso: str) -> str:
+    """Convert a UTC or naive ISO timestamp string to a KST ISO string.
+
+    RuntimeLedger writes UTC via _utc_now_iso(); this converts those strings
+    to KST before storing in _kst-labelled fields.  Naive strings (no tzinfo)
+    are treated as KST (already local), consistent with to_kst() behaviour.
+    """
+    from shared.strategy.market_time import to_kst
+
+    try:
+        dt = datetime.fromisoformat(iso)
+        return to_kst(dt).isoformat(timespec="seconds")
+    except Exception:  # noqa: BLE001
+        return iso
+
 
 def _compute_setup_stats(
     trades: list[dict[str, Any]],
@@ -269,12 +284,13 @@ def _compute_setup_stats(
             s.catastrophic_loss_count += 1
 
         # Track most recent entry/exit times (rows are ordered DESC by exit_time).
+        # RuntimeLedger writes UTC via _utc_now_iso(); convert to KST here.
         exit_time = str(row.get("exit_time") or "")
         entry_time = str(row.get("entry_time") or "")
         if exit_time and (s.last_exit_kst is None):
-            s.last_exit_kst = exit_time
+            s.last_exit_kst = _to_kst_str(exit_time)
         if entry_time and (s.last_entry_kst is None):
-            s.last_entry_kst = entry_time
+            s.last_entry_kst = _to_kst_str(entry_time)
 
     return stats
 
@@ -300,8 +316,10 @@ def _build_early_warnings(
     fast_stopout_minutes: int,
     catastrophic_loss_pct: float,
 ) -> list[str]:
+    from shared.strategy.market_time import now_kst
+
     warnings: list[str] = []
-    today = date.today()
+    today = now_kst().date()
     days_observed = max(1, (today - since).days + 1)
 
     for name, s in stats.items():
@@ -355,10 +373,6 @@ def _n_bar(n: int, threshold: int) -> str:
 
 def _format_telegram(digest: ObservationDigest) -> str:
     """Format the observation digest as a Telegram HTML message."""
-    from zoneinfo import ZoneInfo
-
-    KST = ZoneInfo("Asia/Seoul")  # noqa: N806 — match project style
-
     lines: list[str] = []
 
     if digest.is_weekly:
@@ -484,7 +498,7 @@ def build_digest(
     from shared.strategy.market_time import now_kst
 
     now = now_kst()
-    days_observed = max(0, (date.today() - since).days + 1)
+    days_observed = max(1, (now.date() - since).days + 1)
 
     trades = trade_rows if trade_rows is not None else _load_trades_from_ledger(since)
     raw_eval = redis_eval if redis_eval is not None else _load_setup_eval_from_redis()
@@ -541,7 +555,9 @@ def main() -> int:
             fast_stopout_minutes=fast_stopout,
             catastrophic_loss_pct=catastrophic,
         )
-        archive_path = _write_archive(digest, date.today())
+        from shared.strategy.market_time import now_kst as _now_kst
+
+        archive_path = _write_archive(digest, _now_kst().date())
         msg = _format_telegram(digest)
         print(msg)
 
