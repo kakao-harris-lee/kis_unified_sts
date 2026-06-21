@@ -1,0 +1,20 @@
+# Track A Exit — ATR trailing stop + crash guard + catastrophic backstop + EOD
+# Default param block for futures Setup A/C.
+# Loaded by TrackAExitConfig.from_dict via ExitRegistry.create("track_a_exit", params).
+
+track_a_exit:
+  params:
+    trail_atr_mult: 1.5            # Trailing stop distance (ATR units) — tuned from 3.0 (holdout backtest 2026-06-21)
+    trail_activate_atr_mult: 2.0   # Min profit (ATR units) before trail activates — tuned from 1.0 (holdout backtest 2026-06-21)
+    crash_atr_mult: 3.5            # Adverse move threshold → FORCE_CLOSE (applies to both paths below)
+    crash_cooldown_minutes: 30     # Re-entry guard after crash guard fires
+    crash_window_seconds: 60.0     # I1: rolling window (seconds) for windowed crash detection.
+                                   # Detects gradual 1-minute crashes that no single tick trips.
+                                   # Both paths (single-tick and windowed) use crash_atr_mult as
+                                   # the threshold; set to 0 to disable windowed path (not recommended).
+    catastrophic_atr_mult: 6.0    # Total-loss backstop → STOP_LOSS
+    eod_close_enabled: true        # Force-close at EOD time
+    eod_close_hour: 15             # EOD close hour (KST)
+    eod_close_minute: 15           # EOD close minute (KST)
+    default_exit_confidence: 0.9
+    enabled: true

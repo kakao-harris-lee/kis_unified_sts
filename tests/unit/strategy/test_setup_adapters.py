@@ -105,13 +105,15 @@ def _market_data_for_gap_reversion(
 
 
 def _setup_a_adapter() -> SetupAEntryAdapter:
-    """Build a SetupAEntryAdapter with spec-default config."""
-    return SetupAEntryAdapter(SetupAEntryConfig())
+    """Build a SetupAEntryAdapter with spec-default config (bias filter off for unit tests)."""
+    cfg = SetupAEntryConfig(daily_bias_filter_enabled=False)
+    return SetupAEntryAdapter(cfg)
 
 
 def _setup_c_adapter() -> SetupCEntryAdapter:
-    """Build a SetupCEntryAdapter with spec-default config."""
-    return SetupCEntryAdapter(SetupCEntryConfig())
+    """Build a SetupCEntryAdapter with spec-default config (bias filter off for unit tests)."""
+    cfg = SetupCEntryConfig(daily_bias_filter_enabled=False)
+    return SetupCEntryAdapter(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -735,7 +737,7 @@ def _setup_a_adapter_with_llm_tuning(
         long_blocked_regimes=long_blocked_regimes,
         short_blocked_regimes=short_blocked_regimes,
     )
-    cfg = SetupAEntryConfig(llm_tuning=tuning)
+    cfg = SetupAEntryConfig(llm_tuning=tuning, daily_bias_filter_enabled=False)
     return SetupAEntryAdapter(cfg)
 
 
@@ -764,7 +766,7 @@ def _setup_c_adapter_with_llm_tuning(
         long_blocked_regimes=long_blocked_regimes,
         short_blocked_regimes=short_blocked_regimes,
     )
-    cfg = SetupCEntryConfig(llm_tuning=tuning)
+    cfg = SetupCEntryConfig(llm_tuning=tuning, daily_bias_filter_enabled=False)
     return SetupCEntryAdapter(cfg)
 
 
@@ -1193,7 +1195,7 @@ def _setup_a_adapter_with_veto(
         long_blocked_regimes=long_blocked_regimes,
         short_blocked_regimes=short_blocked_regimes,
     )
-    cfg = SetupAEntryConfig(llm_tuning=tuning)
+    cfg = SetupAEntryConfig(llm_tuning=tuning, daily_bias_filter_enabled=False)
     return SetupAEntryAdapter(cfg)
 
 
@@ -1226,7 +1228,7 @@ def _setup_c_adapter_with_veto(
         long_blocked_regimes=long_blocked_regimes,
         short_blocked_regimes=short_blocked_regimes,
     )
-    cfg = SetupCEntryConfig(llm_tuning=tuning)
+    cfg = SetupCEntryConfig(llm_tuning=tuning, daily_bias_filter_enabled=False)
     return SetupCEntryAdapter(cfg)
 
 

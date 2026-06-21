@@ -81,12 +81,14 @@ from shared.decision.context import (
     ScheduledEvent,
     build_market_context,
 )
+from shared.decision.daily_bias import DailyBiasProvider
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.gates.adapter_helper import (
     acquire_infra_clients,
     apply_regime_gate,
 )
 from shared.strategy.gates.regime_gate import GateConfig
+from shared.strategy.market_time import now_kst
 
 if TYPE_CHECKING:
     from shared.models.signal import Signal as OrchestratorSignal
@@ -293,6 +295,23 @@ class SetupAEntryConfig(ServiceConfigBase):
         default_factory=SetupAForecastIntegrationConfig,
         description="Phase 5 forecast integration (default off — gated activation)",
     )
+    daily_bias_filter_enabled: bool = Field(
+        default=True,
+        description="Gate entries on daily directional bias (LLM regime-guided)",
+    )
+    daily_bias_min_confidence: float = Field(
+        default=0.5,
+        description="Minimum LLM confidence required to compute a non-flat daily bias",
+    )
+    daily_bias_refresh_minutes: int = Field(
+        default=60,
+        description=(
+            "I2: minutes before a stale flat bias is re-evaluated. "
+            "A flat bias older than this is recomputed on the next call; "
+            "non-flat (long/short) biases remain sticky all day. "
+            "Default 60 minutes."
+        ),
+    )
 
 
 class SetupCEntryConfig(ServiceConfigBase):
@@ -349,6 +368,23 @@ class SetupCEntryConfig(ServiceConfigBase):
     forecast_integration: SetupCForecastIntegrationConfig = Field(
         default_factory=SetupCForecastIntegrationConfig,
         description="Phase 5 forecast integration (default off — gated activation)",
+    )
+    daily_bias_filter_enabled: bool = Field(
+        default=True,
+        description="Gate entries on daily directional bias (LLM regime-guided)",
+    )
+    daily_bias_min_confidence: float = Field(
+        default=0.5,
+        description="Minimum LLM confidence required to compute a non-flat daily bias",
+    )
+    daily_bias_refresh_minutes: int = Field(
+        default=60,
+        description=(
+            "I2: minutes before a stale flat bias is re-evaluated. "
+            "A flat bias older than this is recomputed on the next call; "
+            "non-flat (long/short) biases remain sticky all day. "
+            "Default 60 minutes."
+        ),
     )
 
 
@@ -471,6 +507,7 @@ def _decision_signal_to_orchestrator_signal(
     strategy_name: str,
     timestamp: datetime,
     confidence_override: float | None = None,
+    entry_atr: float = 0.0,
 ) -> OrchestratorSignal:
     """Convert a :class:`shared.decision.signal.Signal` to a :class:`shared.models.signal.Signal`.
 
@@ -485,6 +522,9 @@ def _decision_signal_to_orchestrator_signal(
         timestamp: Tz-aware UTC datetime from the orchestrator tick.
         confidence_override: When provided, replaces ``decision_signal.confidence``
             on the emitted signal (used by LLM threshold scaling in Phase 1.1).
+        entry_atr: ATR at entry time, forwarded into signal metadata so that
+            downstream exit generators (e.g. TrackAExit) can use it as a
+            fallback when the live snapshot carries no ATR.
 
     Returns:
         OrchestratorSignal ready for the TradingOrchestrator pipeline.
@@ -512,6 +552,7 @@ def _decision_signal_to_orchestrator_signal(
         "setup_type": decision_signal.setup_type,
         "stop_loss": decision_signal.stop_loss,
         "take_profit": decision_signal.take_profit,
+        "entry_atr": entry_atr,
         "reason_tags": list(decision_signal.reason_tags),
     }
     # Preserve the decision-engine TTL so downstream consumers (risk filter,
@@ -987,6 +1028,12 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         # gap threshold + reversion range dynamically and scale position size.
         self._forecast_client = forecast_client
         self._gate_cfg = gate_cfg  # P2-③ T5
+        # Daily directional bias provider — gates on LLM-derived long/short regime.
+        self._daily_bias_provider = DailyBiasProvider(
+            bias_min_confidence=config.daily_bias_min_confidence,
+            non_long_regimes=list(config.llm_tuning.long_blocked_regimes),
+            bias_refresh_minutes=config.daily_bias_refresh_minutes,
+        )
 
     def _derive_gap_threshold_pct(self, forecast: Any | None) -> float:
         """Return the gap entry threshold in percent units.
@@ -1174,12 +1221,38 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     _publish_setup_eval(self.name, "reject", "regime_gate_blocked")
                     return None
 
+        # Daily directional bias gate (after RegimeGate, before signal emission).
+        if self.config.daily_bias_filter_enabled:
+            bias = self._daily_bias_provider.get_or_compute_bias(
+                _get_llm_context(context), now_kst()
+            )
+            direction = decision_signal.direction
+            if bias == "flat":
+                _publish_setup_eval(self.name, "reject", "daily_bias_flat")
+                return None
+            if direction != bias:
+                _publish_setup_eval(self.name, "reject", "daily_bias_misaligned")
+                return None
+
         _publish_setup_eval(self.name, "fired", decision_signal.direction)
+        md = context.market_data or {}
+        _atr_14 = 0.0
+        for _atr_key in ("atr", "atr_14", "atr14"):
+            _v = md.get(_atr_key)
+            if _v is not None:
+                try:
+                    _f = float(_v)
+                    if _f > 0:
+                        _atr_14 = _f
+                        break
+                except (TypeError, ValueError):
+                    pass
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
             strategy_name=self.name,
             timestamp=ts,
             confidence_override=confidence_override,
+            entry_atr=_atr_14,
         )
 
 
@@ -1254,6 +1327,12 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         # breakout buffer/target dynamically.
         self._forecast_client = forecast_client
         self._gate_cfg = gate_cfg  # P2-③ T5
+        # Daily directional bias provider — gates on LLM-derived long/short regime.
+        self._daily_bias_provider = DailyBiasProvider(
+            bias_min_confidence=config.daily_bias_min_confidence,
+            non_long_regimes=list(config.llm_tuning.long_blocked_regimes),
+            bias_refresh_minutes=config.daily_bias_refresh_minutes,
+        )
 
     def _derive_thresholds(
         self, forecast: Any | None, atr: float
@@ -1426,10 +1505,36 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                     _publish_setup_eval(self.name, "reject", "regime_gate_blocked")
                     return None
 
+        # Daily directional bias gate (after RegimeGate, before signal emission).
+        if self.config.daily_bias_filter_enabled:
+            bias = self._daily_bias_provider.get_or_compute_bias(
+                _get_llm_context(context), now_kst()
+            )
+            direction = decision_signal.direction
+            if bias == "flat":
+                _publish_setup_eval(self.name, "reject", "daily_bias_flat")
+                return None
+            if direction != bias:
+                _publish_setup_eval(self.name, "reject", "daily_bias_misaligned")
+                return None
+
         _publish_setup_eval(self.name, "fired", decision_signal.direction)
+        md = context.market_data or {}
+        _atr_14 = 0.0
+        for _atr_key in ("atr", "atr_14", "atr14"):
+            _v = md.get(_atr_key)
+            if _v is not None:
+                try:
+                    _f = float(_v)
+                    if _f > 0:
+                        _atr_14 = _f
+                        break
+                except (TypeError, ValueError):
+                    pass
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
             strategy_name=self.name,
             timestamp=ts,
             confidence_override=confidence_override,
+            entry_atr=_atr_14,
         )

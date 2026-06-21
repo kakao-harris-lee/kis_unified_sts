@@ -7090,6 +7090,7 @@ class TradingOrchestrator:
         for key in (
             "stop_loss",
             "take_profit",
+            "entry_atr",
             "exit_stop_atr_multiplier",
             "exit_trail_activation_atr",
             "exit_trail_atr_multiplier",
