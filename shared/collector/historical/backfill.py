@@ -321,18 +321,42 @@ async def fetch_minute_async(
                     page_params = dict(params)
                     page_params["FID_INPUT_HOUR_1"] = cursor_hour
 
-                    # Per-page retry: on transient error (rt_cd != "0"), retry the
-                    # SAME cursor up to PAGE_MAX_RETRIES times before giving up.
+                    # Per-page retry: on transient error (rt_cd != "0") OR network
+                    # exception (Timeout, ConnectError, etc.), retry the SAME cursor
+                    # up to PAGE_MAX_RETRIES times before giving up.
                     # Genuinely terminal conditions (empty page, cursor non-advance)
                     # are handled AFTER a successful (rt_cd == "0") response and are
                     # NOT retried — they exit the while-loop normally.
                     page_rows: list[dict] = []
                     page_fetch_ok = False
                     for page_attempt in range(PAGE_MAX_RETRIES):
-                        await _get_rate_limiter().wait()
-                        page_resp = await client.get(
-                            url, headers=headers, params=page_params
-                        )
+                        try:
+                            await _get_rate_limiter().wait()
+                            page_resp = await client.get(
+                                url, headers=headers, params=page_params
+                            )
+                        except (
+                            httpx.TimeoutException,
+                            httpx.ReadTimeout,
+                            httpx.ConnectError,
+                            httpx.RemoteProtocolError,
+                        ) as net_err:
+                            # Transient network error on this page — retry same cursor.
+                            if page_attempt < PAGE_MAX_RETRIES - 1:
+                                wait_s = PAGE_RETRY_BACKOFF_BASE * (page_attempt + 1)
+                                logger.warning(
+                                    "Page %d for %s %s network error (%s); "
+                                    "retry %d/%d in %.1fs",
+                                    pages_fetched + 1,
+                                    code,
+                                    date_str,
+                                    net_err,
+                                    page_attempt + 1,
+                                    PAGE_MAX_RETRIES,
+                                    wait_s,
+                                )
+                                await asyncio.sleep(wait_s)
+                            continue  # retry same cursor
 
                         if not page_resp.text or page_resp.text.strip() == "":
                             # Empty HTTP body — treat as terminal, not retryable.

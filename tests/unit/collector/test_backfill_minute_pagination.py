@@ -4,6 +4,7 @@ Covers:
 - Page 2 returns rt_cd != '0' twice then 200-with-rows → all pages collected (> 102 bars).
 - Page 2 error persists past page_max_retries → loop breaks, returns gathered pages, no raise.
 - A normal empty/last page still terminates without spurious retries.
+- Page 2 raises ReadTimeout twice then returns 200 rows → all pages collected.
 """
 
 from __future__ import annotations
@@ -11,6 +12,20 @@ from __future__ import annotations
 import asyncio
 import importlib
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _patch_sleep(monkeypatch):
+    """Monkeypatch asyncio.sleep in backfill module so retry backoff is instant.
+
+    Uses importlib to get the real module object (the package __init__ shadows
+    the module name with a function, so `import shared...backfill` yields a
+    function, not the module).
+    """
+    _backfill_mod = _get_backfill_module()
+    monkeypatch.setattr(_backfill_mod.asyncio, "sleep", AsyncMock())
 
 
 def _get_backfill_module():
@@ -201,3 +216,48 @@ def test_empty_last_page_terminates_without_spurious_retries(monkeypatch):
     assert (
         call_count["n"] == 2
     ), f"Expected exactly 2 HTTP calls (page1 + empty page2), got {call_count['n']}"
+
+
+def test_page2_read_timeout_twice_then_200_collects_all_pages(monkeypatch):
+    """Page 2 raises ReadTimeout twice, then returns 200 rows → all pages collected.
+
+    Verifies that per-page network exceptions (not just rt_cd errors) are retried
+    on the same cursor so all rows from both pages are returned.
+    """
+    import httpx
+
+    mod = _get_backfill_module()
+    _patch_backfill_infra(monkeypatch, mod)
+
+    page1_rows = _make_rows(start=100000, count=102)
+    page2_rows = _make_rows(start=200000, count=100)
+
+    page1_payload = _page_payload(page1_rows)
+    page2_payload = _page_payload(page2_rows)
+
+    call_count = {"n": 0}
+
+    async def fake_get(url, *, headers=None, params=None):
+        call_count["n"] += 1
+        n = call_count["n"]
+        if n == 1:
+            return _make_response(page1_payload)
+        elif n in (2, 3):
+            raise httpx.ReadTimeout("timed out")
+        else:
+            return _make_response(page2_payload)
+
+    client = MagicMock()
+    client.get = AsyncMock(side_effect=fake_get)
+
+    code, date_str, result = asyncio.run(
+        mod.fetch_minute_async(client, "A05601", "20260601")
+    )
+
+    assert "error" not in result, f"Unexpected error: {result.get('error')}"
+    rows = result.get("output2", [])
+    # page1 (102) + page2 (100) = 202 total
+    assert (
+        len(rows) > 102
+    ), f"Expected > 102 rows (page-2 timeout retry not working); got {len(rows)}"
+    assert len(rows) >= 200, f"Expected ~202 rows, got {len(rows)}"
