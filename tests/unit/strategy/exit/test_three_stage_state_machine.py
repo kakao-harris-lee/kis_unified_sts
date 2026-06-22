@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -216,6 +217,77 @@ async def test_bear_market_triggers_bear_exit_when_enabled():
     assert should_exit is True
     assert signal is not None
     assert signal.reason == ExitReason.BEAR_EXIT
+
+
+@pytest.mark.asyncio
+async def test_bear_exit_skipped_for_override_symbol():
+    """scan_positions: override symbol is NOT bear-exited; non-override IS.
+
+    Two positions in a bear market with enable_bear_exit=True:
+    - pos_005930 is in bear_override_symbols → must NOT return BEAR_EXIT.
+    - pos_000660 is NOT in bear_override_symbols → MUST return BEAR_EXIT.
+    Default call (no bear_override_symbols) → both positions are BEAR_EXIT.
+    """
+    cfg = _minimal_config(enable_bear_exit=True)
+    strategy = ThreeStageExit(cfg)
+
+    bear_state = MarketStateAdapter("BEAR")
+    # Both prices give a small profit so no stop/trailing fires.
+    base_price = 100_000.0
+    market_data = {
+        "005930": {"close": base_price * 1.001},
+        "000660": {"close": base_price * 1.001},
+    }
+    # Pin wall-clock to 10:00 KST (before EOD) so scan_positions's now_kst()
+    # does not trigger EOD_CLOSE ahead of the BEAR check.
+    _morning_kst = datetime(2026, 5, 15, 10, 0, 0, tzinfo=_KST)
+
+    def _make_position(code: str) -> Position:
+        return Position(
+            id=f"pos_{code}",
+            code=code,
+            name=code,
+            side=PositionSide.LONG,
+            quantity=10,
+            entry_price=base_price,
+            entry_time=datetime(2026, 5, 15, 9, 55, 0, tzinfo=_KST),
+            state=PositionState.SURVIVAL,
+            highest_price=base_price,
+            stop_price=0.0,
+        )
+
+    _module = "shared.strategy.exit.three_stage"
+    with (
+        patch(f"{_module}.now_kst", return_value=_morning_kst),
+        patch(f"{_module}.is_trading_day_kst", return_value=False),
+    ):
+        pos_override = _make_position("005930")  # in override set
+        pos_normal = _make_position("000660")  # NOT in override set
+
+        # --- With override ---
+        signals_with_override = await strategy.scan_positions(
+            positions=[pos_override, pos_normal],
+            market_data=market_data,
+            market_state=bear_state,
+            bear_override_symbols={"005930"},
+        )
+        reasons = {s.code: s.reason for s in signals_with_override}
+        # Override symbol must NOT be BEAR_EXIT
+        assert "005930" not in reasons or reasons["005930"] != ExitReason.BEAR_EXIT
+        # Non-override symbol MUST be BEAR_EXIT
+        assert reasons.get("000660") == ExitReason.BEAR_EXIT
+
+        # --- Default (no override) → both positions are BEAR_EXIT ---
+        pos_override2 = _make_position("005930")
+        pos_normal2 = _make_position("000660")
+        signals_default = await strategy.scan_positions(
+            positions=[pos_override2, pos_normal2],
+            market_data=market_data,
+            market_state=bear_state,
+        )
+    reasons_default = {s.code: s.reason for s in signals_default}
+    assert reasons_default.get("005930") == ExitReason.BEAR_EXIT
+    assert reasons_default.get("000660") == ExitReason.BEAR_EXIT
 
 
 @pytest.mark.asyncio
