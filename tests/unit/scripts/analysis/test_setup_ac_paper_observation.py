@@ -17,7 +17,6 @@ import pytest
 
 import scripts.analysis.setup_ac_paper_observation as _mod
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -55,6 +54,7 @@ def _compute(trades, fast_stopout_minutes=30, catastrophic_loss_pct=-3.0):
 # ---------------------------------------------------------------------------
 # SetupStats computation
 # ---------------------------------------------------------------------------
+
 
 class TestComputeSetupStats:
     def test_empty_trades_produces_zero_counts(self):
@@ -171,6 +171,7 @@ class TestComputeSetupStats:
 # N-threshold progress
 # ---------------------------------------------------------------------------
 
+
 class TestNThresholdProgress:
     def test_below_threshold_not_validatable(self):
         """Trade count below threshold yields 'not yet validatable' in message."""
@@ -211,18 +212,137 @@ class TestNThresholdProgress:
 # Early warnings
 # ---------------------------------------------------------------------------
 
+
 class TestEarlyWarnings:
     def test_silent_setup_warns(self):
         """0 trades for any setup should raise an early warning."""
         since = date.today() - timedelta(days=3)
         warnings = _mod._build_early_warnings(
-            {SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=0),
-             SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=0)},
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=0),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=0),
+            },
             since=since,
             fast_stopout_minutes=30,
             catastrophic_loss_pct=-3.0,
         )
         assert any("0 trades" in w for w in warnings)
+
+    # ------------------------------------------------------------------
+    # 0-trade reason classification (legitimate selectivity vs suppression)
+    # ------------------------------------------------------------------
+
+    def _warnings_for_setup_a(
+        self, reason: str, since: date | None = None
+    ) -> list[str]:
+        """Helper: build early warnings for Setup A with 0 trades and a given reason."""
+        if since is None:
+            since = date(2026, 6, 21)
+        snap_a = _mod.SetupEvalSnapshot(
+            name=SETUP_A, outcome="reject", reason=reason, ts_kst="2026-06-21T10:00:00"
+        )
+        snap_c = _mod.SetupEvalSnapshot(
+            name=SETUP_C, outcome="reject", reason=reason, ts_kst="2026-06-21T10:00:00"
+        )
+        return _mod._build_early_warnings(
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=0),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=5),  # only A is 0
+            },
+            since=since,
+            fast_stopout_minutes=30,
+            catastrophic_loss_pct=-3.0,
+            eval_snapshots=[snap_a, snap_c],
+        )
+
+    def test_legitimate_reason_outside_time_window_emits_info_not_suppressed(self):
+        """outside_time_window(91m∉[10,60]) is a selectivity gate — NOT suppression."""
+        reason = "outside_time_window(91m∉[10,60])"
+        warnings = self._warnings_for_setup_a(reason)
+        a_warnings = [w for w in warnings if "0 trades" in w and "A" in w]
+        assert len(a_warnings) == 1
+        assert "no qualifying setup" in a_warnings[0]
+        assert "expected" in a_warnings[0]
+        assert "suppressed" not in a_warnings[0]
+        # reason text must be present
+        assert reason in a_warnings[0]
+
+    def test_suppression_reason_llm_veto_emits_warning(self):
+        """llm_veto:llm_veto is a genuine suppression — should emit 'possibly suppressed'."""
+        reason = "llm_veto:llm_veto"
+        warnings = self._warnings_for_setup_a(reason)
+        a_warnings = [w for w in warnings if "0 trades" in w and "A" in w]
+        assert len(a_warnings) == 1
+        assert "possibly suppressed" in a_warnings[0]
+        assert "no qualifying setup" not in a_warnings[0]
+        assert reason in a_warnings[0]
+
+    def test_no_eval_snapshot_emits_no_eval_data_warning(self):
+        """No eval snapshot for a setup → 'no eval data' warning (can't confirm evaluation)."""
+        since = date(2026, 6, 21)
+        # Pass only Setup C snapshot; Setup A has no entry in Redis.
+        snap_c = _mod.SetupEvalSnapshot(
+            name=SETUP_C, outcome="reject", reason="outside_time_window", ts_kst=""
+        )
+        warnings = _mod._build_early_warnings(
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=0),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=5),
+            },
+            since=since,
+            fast_stopout_minutes=30,
+            catastrophic_loss_pct=-3.0,
+            eval_snapshots=[snap_c],  # no Setup A entry
+        )
+        a_warnings = [w for w in warnings if "0 trades" in w and "A" in w]
+        assert len(a_warnings) == 1
+        assert "no eval data" in a_warnings[0]
+        assert "possibly suppressed" in a_warnings[0]
+
+    def test_nonzero_trades_produces_no_zero_trade_warning(self):
+        """Regression: a setup with trades > 0 must not emit a 0-trade line."""
+        snap_a = _mod.SetupEvalSnapshot(
+            name=SETUP_A, outcome="fired", reason="", ts_kst=""
+        )
+        snap_c = _mod.SetupEvalSnapshot(
+            name=SETUP_C, outcome="fired", reason="", ts_kst=""
+        )
+        warnings = _mod._build_early_warnings(
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=3),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=2),
+            },
+            since=date(2026, 6, 21),
+            fast_stopout_minutes=30,
+            catastrophic_loss_pct=-3.0,
+            eval_snapshots=[snap_a, snap_c],
+        )
+        assert not any("0 trades" in w for w in warnings)
+
+    def test_legitimate_reason_no_event_in_window(self):
+        """no_event_in_window is a selectivity gate."""
+        warnings = self._warnings_for_setup_a("no_event_in_window")
+        a_warnings = [w for w in warnings if "0 trades" in w and "A" in w]
+        assert "no qualifying setup" in a_warnings[0]
+        assert "suppressed" not in a_warnings[0]
+
+    def test_legitimate_reason_no_macro_overnight(self):
+        """no_macro_overnight is a selectivity gate."""
+        warnings = self._warnings_for_setup_a("no_macro_overnight")
+        a_warnings = [w for w in warnings if "0 trades" in w and "A" in w]
+        assert "no qualifying setup" in a_warnings[0]
+
+    def test_legitimate_reason_sp500_kr_gap_misaligned(self):
+        """sp500_kr_gap_misaligned is a selectivity gate."""
+        warnings = self._warnings_for_setup_a("sp500_kr_gap_misaligned")
+        a_warnings = [w for w in warnings if "0 trades" in w and "A" in w]
+        assert "no qualifying setup" in a_warnings[0]
+
+    def test_legitimate_reason_after_cutoff(self):
+        """after_cutoff is a selectivity gate."""
+        warnings = self._warnings_for_setup_a("after_cutoff")
+        a_warnings = [w for w in warnings if "0 trades" in w and "A" in w]
+        assert "no qualifying setup" in a_warnings[0]
 
     def test_high_fast_stopout_ratio_warns(self):
         s = _mod.SetupStats(name=SETUP_A, trade_count=4, fast_stopout_count=3)
@@ -259,6 +379,7 @@ class TestEarlyWarnings:
 # Eval snapshots
 # ---------------------------------------------------------------------------
 
+
 class TestEvalSnapshots:
     def test_both_setups_present_even_if_redis_empty(self):
         snapshots = _mod._build_eval_snapshots({})
@@ -268,7 +389,11 @@ class TestEvalSnapshots:
 
     def test_known_outcome_populated(self):
         raw = {
-            SETUP_A: {"outcome": "reject", "reason": "regime_gate_blocked", "ts_kst": "2026-06-21T10:00:00"},
+            SETUP_A: {
+                "outcome": "reject",
+                "reason": "regime_gate_blocked",
+                "ts_kst": "2026-06-21T10:00:00",
+            },
         }
         snapshots = _mod._build_eval_snapshots(raw)
         snap_a = next(s for s in snapshots if s.name == SETUP_A)
@@ -287,6 +412,7 @@ class TestEvalSnapshots:
 # ---------------------------------------------------------------------------
 # Telegram formatting
 # ---------------------------------------------------------------------------
+
 
 class TestFormatTelegram:
     def _make_digest(self, trade_rows=None, is_weekly=False):
@@ -352,7 +478,11 @@ class TestFormatTelegram:
             since=date(2026, 6, 21),
             trade_rows=[],
             redis_eval={
-                SETUP_A: {"outcome": "reject", "reason": "no_market_context", "ts_kst": "2026-06-21T09:05:00"},
+                SETUP_A: {
+                    "outcome": "reject",
+                    "reason": "no_market_context",
+                    "ts_kst": "2026-06-21T09:05:00",
+                },
             },
         )
         msg = _mod._format_telegram(digest)
@@ -373,6 +503,7 @@ class TestFormatTelegram:
 # ---------------------------------------------------------------------------
 # N-bar helper
 # ---------------------------------------------------------------------------
+
 
 class TestNBar:
     def test_empty_is_all_dots(self):
