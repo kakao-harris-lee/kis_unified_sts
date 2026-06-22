@@ -1,24 +1,4 @@
-# Task 2 Report — Throttle backfill to KIS limits (configurable)
-
-## Status: DONE
-
-## Change summary
-
-- `shared/collector/historical/backfill.py` — replaced hardcoded `Semaphore(10)` / `RateLimiter(20)` in `_get_semaphore()` / `_get_rate_limiter()` with configurable reads from env vars `BACKFILL_CONCURRENCY` (default **3**) and `BACKFILL_RPS` (default **5**). Added inline comments explaining that 20 rps / 10-concurrent bursting was the root cause of KIS HTTP 500 cascade.
-- `tests/unit/collector/test_backfill_throttle_config.py` — new TDD test file: asserts default concurrency=3/rps=5 and env-override BACKFILL_CONCURRENCY=4/BACKFILL_RPS=8 are reflected. Resets module-level singletons via monkeypatch between tests.
-
-## Tests
-
-- 2 new tests PASS (test_default_concurrency_and_rps, test_env_override_concurrency_and_rps)
-- Full `tests/unit/collector/` suite: **39/39 PASS**, no regressions
-
-## Concerns
-
-None. The lazy-singleton structure and all call sites are unchanged. Singleton loop-rebind guard preserved.
-
----
-
-# [Previous sprint] Task 2 Report — TrackAExit generator + entry_atr wiring
+# Task 2 Report — TrackAExit generator + entry_atr wiring
 
 ## Status: DONE_WITH_CONCERNS
 
