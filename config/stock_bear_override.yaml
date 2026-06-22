@@ -1,5 +1,5 @@
 stock_bear_override:
-  enabled: false              # paper env enables; code default off = no behavior change
+  enabled: true               # ACTIVATED in paper 2026-06-22 (code default stays off)
   redis_key: "stock:daemon:bear_override"
   publish_ttl_seconds: 900
   max_age_seconds: 300.0      # staleness gate (consumer); stale → normal bear behavior
