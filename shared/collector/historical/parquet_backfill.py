@@ -87,8 +87,7 @@ class ParquetBackfillState:
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS backfill_tasks (
                     asset_class TEXT NOT NULL,
                     timeframe TEXT NOT NULL,
@@ -103,8 +102,7 @@ class ParquetBackfillState:
                         asset_class, timeframe, dataset, code, trade_date
                     )
                 )
-                """
-            )
+                """)
 
     def is_completed(
         self,
