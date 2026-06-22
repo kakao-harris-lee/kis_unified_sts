@@ -180,9 +180,14 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         return signals
 
     def _update_crash_history(
-        self, position: Position, current_price: float, now: Any
+        self, position: Position, current_price: float, tick_ts: datetime
     ) -> list[tuple[datetime, float]]:
         """Append current_price to ``crash_price_history`` and prune to the rolling window.
+
+        Args:
+            tick_ts: timestamp of ``current_price`` (the bar/context time; tz-aware
+                KST preferred, naive treated as KST via ``to_kst``). Anchors the
+                rolling window so pruning is deterministic in backtest/replay/tests.
 
         History is stored in ``position.metadata[_CRASH_HISTORY_KEY]`` as a list of
         ``[iso_timestamp, price]`` pairs (JSON-serialisable).  Returns the pruned
@@ -190,8 +195,8 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         """
         from datetime import timedelta
 
-        now_dt: datetime = to_kst(now)
-        cutoff = now_dt - timedelta(seconds=self.config.crash_window_seconds)
+        tick_ts_kst: datetime = to_kst(tick_ts)
+        cutoff = tick_ts_kst - timedelta(seconds=self.config.crash_window_seconds)
 
         raw: list[list] = position.metadata.get(_CRASH_HISTORY_KEY, [])
         # Parse existing entries.
@@ -206,7 +211,7 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
                 continue
 
         # Append current tick.
-        parsed.append((now_dt, current_price))
+        parsed.append((tick_ts_kst, current_price))
 
         # Persist pruned list back to metadata.
         position.metadata[_CRASH_HISTORY_KEY] = [
@@ -227,6 +232,7 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         # Crash window + history use the BAR timestamp (context.timestamp) when provided,
         # so the rolling window is deterministic in backtest/replay/tests; fall back to
         # wall-clock now_kst() only for live scanning (scan_positions passes None).
+        # bar_ts: tz-aware preferred; a naive datetime is treated as KST (via to_kst).
         # holding_minutes / EOD intentionally keep now_kst().
         crash_ts = to_kst(bar_ts) if bar_ts is not None else to_kst(now)
         atr = self._get_atr(snapshot, position)
