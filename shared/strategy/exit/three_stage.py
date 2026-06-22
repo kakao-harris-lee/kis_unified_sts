@@ -282,6 +282,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         positions: list[Position],
         market_data: dict[str, Any],
         market_state: MarketStateProtocol | None = None,
+        bear_override_symbols: set[str] | None = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 청산 시그널 스캔
 
@@ -289,6 +290,8 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
             positions: 현재 보유 포지션 리스트
             market_data: 시장 데이터 (code -> price 매핑)
             market_state: 현재 시장 상태 (MarketClassifier 결과)
+            bear_override_symbols: BEAR_EXIT 면제 심볼 집합.
+                None(기본)이면 현재 동작 유지 (하위호환).
 
         Returns:
             ExitSignal 리스트 (청산 대상 포지션들)
@@ -305,6 +308,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
                 market_data=market_data,
                 market_state=market_state,
                 now=now,
+                bear_override_symbols=bear_override_symbols,
             )
             if signal:
                 signals.append(signal)
@@ -366,12 +370,13 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         market_data: dict[str, Any],
         market_state: MarketStateProtocol | None,
         now: datetime,
+        bear_override_symbols: set[str] | None = None,
     ) -> ExitSignal | None:
         """개별 포지션 청산 조건 체크
 
         우선순위:
             1. EOD Close
-            2. BEAR 시장 청산
+            2. BEAR 시장 청산 (bear_override_symbols에 포함된 심볼은 면제)
             3. Stage별 청산 조건 (Hard Stop, Breakeven, Trailing)
             4. Time Cut
         """
@@ -414,8 +419,15 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
                 holding_minutes=holding_minutes,
             )
 
-        # 2. BEAR 시장 체크
-        if self.config.enable_bear_exit and self._is_bear_market(market_state):
+        # 2. BEAR 시장 체크 (per-symbol override 면제)
+        overridden = (
+            bool(bear_override_symbols) and position.code in bear_override_symbols
+        )
+        if (
+            self.config.enable_bear_exit
+            and self._is_bear_market(market_state)
+            and not overridden
+        ):
             return self._create_exit_signal(
                 position=position,
                 current_price=current_price,

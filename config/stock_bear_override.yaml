@@ -1,0 +1,11 @@
+stock_bear_override:
+  enabled: false              # paper env enables; code default off = no behavior change
+  redis_key: "stock:daemon:bear_override"
+  publish_ttl_seconds: 900
+  max_age_seconds: 300.0      # staleness gate (consumer); stale → normal bear behavior
+  max_override_positions: 3   # cap on concurrent override-eligible open positions
+  daily_indicators_key: "system:daily_indicators:latest"
+  rsi_min: 55.0
+  require_above_sma20: true
+  require_rsi_rising: true
+  require_macd_positive: true

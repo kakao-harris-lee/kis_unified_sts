@@ -27,6 +27,12 @@ from services.stock_strategy.candidate import stock_signal_to_stream_dict
 from services.stock_strategy.universe import parse_watchlist_codes
 from shared.models.signal import Signal
 from shared.strategy.base import EntryContext
+from shared.strategy.symbol_strength import compute_strong_symbols
+from shared.streaming.stock_bear_override import (
+    BearOverrideConfig,
+    compute_override_payload,
+)
+from shared.streaming.stock_keys import stock_daemon_positions_key
 from shared.streaming.stock_regime import (
     StockRegimeConfig,
     compute_regime_payload,
@@ -57,6 +63,7 @@ class StockStrategyDaemon:
         regime_config: StockRegimeConfig | None = None,
         prewarm_fn: Callable[[str], Awaitable[Any]] | None = None,
         max_prewarm_per_cycle: int = 5,
+        bear_override_config: BearOverrideConfig | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -73,6 +80,7 @@ class StockStrategyDaemon:
         self._regime_config = regime_config
         self._prewarm_fn = prewarm_fn
         self._max_prewarm_per_cycle = max_prewarm_per_cycle
+        self._bear_override_config = bear_override_config
         self._universe: list[str] = []
         self._stop = asyncio.Event()
 
@@ -134,26 +142,93 @@ class StockStrategyDaemon:
             logger.exception("stock regime publish failed")
         return payload
 
+    async def _publish_strong_set(self, now: datetime) -> set[str]:
+        """Compute strong symbols from daily indicators and publish to Redis.
+
+        Returns the strong set. Any compute/publish failure returns an empty set
+        so the caller treats it as "no strong symbols" → blanket bear block
+        (fail-safe).
+        """
+        cfg = self._bear_override_config
+        if cfg is None or not cfg.enabled:
+            return set()
+        try:
+            raw = await self.redis.get(cfg.daily_indicators_key)
+            indicators = json.loads(raw).get("indicators", {}) if raw else {}
+            strong = compute_strong_symbols(indicators, cfg.criteria)
+        except Exception:
+            logger.exception("strong-set compute failed")
+            return set()
+        try:
+            payload = compute_override_payload(
+                strong, now_ms=int(now.timestamp() * 1000)
+            )
+            await self.redis.set(
+                cfg.redis_key, json.dumps(payload), ex=cfg.publish_ttl_seconds
+            )
+        except Exception:
+            logger.exception("strong-set publish failed")
+        return strong
+
+    async def _override_count(self, strong: set[str]) -> int:
+        """Count open positions whose code is in the strong set.
+
+        Read failure → returns a very large number (cap-reached) so no new
+        override entries are admitted (conservative/fail-safe).
+        """
+        try:
+            open_codes = await self.redis.hkeys(stock_daemon_positions_key())
+        except Exception:
+            logger.exception("positions hash read failed; treating cap as reached")
+            return 1 << 30
+        decoded = {
+            (c.decode() if isinstance(c, (bytes, bytearray)) else str(c))
+            for c in (open_codes or [])
+        }
+        return len(decoded & strong)
+
     async def evaluate_once(self) -> int:
         """Build context + check_entries per warm symbol; publish. Returns #published."""
         published = 0
         now = self._now_fn()
         regime_payload = await self._publish_regime(now)
-        if (
+        is_bear = (
             regime_payload is not None
             and self._regime_config is not None
             and self._regime_config.block_entries_in_bear
             and is_bear_regime(regime_payload.get("regime"))
-        ):
+        )
+        strong = (
+            await self._publish_strong_set(now)
+            if (self._bear_override_config and self._bear_override_config.enabled)
+            else set()
+        )
+        override_codes: set[str] = set()
+        if is_bear:
+            if not strong:
+                logger.info(
+                    "bear regime %s (mfi=%s, symbols=%s) — skipping entry evaluation",
+                    regime_payload.get("regime"),
+                    regime_payload.get("mfi"),
+                    regime_payload.get("mfi_symbols"),
+                )
+                return 0
+            cap = self._bear_override_config.max_override_positions  # type: ignore[union-attr]
+            if await self._override_count(strong) >= cap:
+                logger.info(
+                    "bear override: cap %d reached — no new override entries", cap
+                )
+                return 0
+            override_codes = strong
             logger.info(
-                "bear regime %s (mfi=%s, symbols=%s) — skipping entry evaluation",
-                regime_payload.get("regime"),
-                regime_payload.get("mfi"),
-                regime_payload.get("mfi_symbols"),
+                "bear override: %d strong symbol(s) — evaluating %s",
+                len(strong),
+                sorted(strong),
             )
-            return 0
         for symbol in list(self._universe):
             try:
+                if is_bear and symbol not in override_codes:
+                    continue
                 if not self.engine.is_warm(symbol):
                     continue
                 market_data = await self.feed.get_current_price(symbol)
@@ -169,6 +244,11 @@ class StockStrategyDaemon:
                 )
                 signals = await self.manager.check_entries(ctx)
                 for sig in signals or []:
+                    if is_bear:
+                        with contextlib.suppress(Exception):
+                            sig.metadata["bear_override"] = (
+                                True  # best-effort; tag is observability only
+                            )
                     await self._publish(sig)
                     published += 1
             except Exception:

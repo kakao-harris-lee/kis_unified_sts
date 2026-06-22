@@ -108,6 +108,7 @@ async def _build_and_run() -> int:
     from shared.storage.config import StorageConfig
     from shared.storage.market_data_store import ParquetMarketDataStore
     from shared.streaming.client import RedisClient
+    from shared.streaming.stock_bear_override import BearOverrideConfig
     from shared.streaming.stock_regime import StockRegimeConfig
 
     candidate_stream = _candidate_stream_for(mode)
@@ -217,6 +218,11 @@ async def _build_and_run() -> int:
     if not regime_config.enabled:
         regime_config = None
 
+    # Bear override config for M4-P entry override (None when disabled).
+    bear_override_config = BearOverrideConfig.load()
+    if not bear_override_config.enabled:
+        bear_override_config = None
+
     daemon = StockStrategyDaemon(
         redis=redis_client,
         feed=feed,
@@ -229,6 +235,7 @@ async def _build_and_run() -> int:
         max_symbols=int(os.environ.get("STOCK_MAX_SYMBOLS", "40")),
         watchlist_reader=_watchlist_reader,
         regime_config=regime_config,
+        bear_override_config=bear_override_config,
         prewarm_fn=prewarm_fn,
         max_prewarm_per_cycle=prewarm_cfg.max_prewarm_per_cycle,
     )
