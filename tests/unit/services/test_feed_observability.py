@@ -357,33 +357,89 @@ class TestWarmupMissWarnings:
         orch._metrics.record_warmup_miss.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_parquet_exception_emits_warning_not_debug(self, caplog, monkeypatch):
-        """B: _fetch_candles_from_market_data_store exception → WARNING (not just DEBUG).
+    async def test_warmup_engine_config_fields_futures(self):
+        """B (D1): orchestrator passes correctly-sized StockPrewarmConfig to warmup_engine.
 
-        This method is still present in the orchestrator (kept to avoid bloating
-        the diff — it may be removed in a follow-up cleanup PR).  The test
-        exercises the method directly to ensure the exception-handling contract
-        (WARNING level, not DEBUG) has not regressed.
+        Futures: parquet_minute_limit=700, minute_lookback_days=20,
+                 rest_count=120, seed_daily=False.
+        The old path used .tail(limit) with no date window; the new warmup_engine
+        path must request a 20-day window to robustly cover 700 bars under
+        holiday/feed-degradation gaps (MEMORY: backtest-data-coverage-2026-06).
         """
+        from shared.streaming.candle_warmup import WarmupResult
+
+        orch = _make_minimal_orchestrator("futures")
+        _patch_feed_obs_cfg(orch, {"warmup_min_candles": 20})
+
+        mock_ie = MagicMock()
+        mock_ie.is_warm.return_value = False
+        orch._indicator_engine = mock_ie
+        orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
+
+        captured: dict = {}
+
+        async def _capture_warmup_engine(*_a, **kw):
+            captured.update(kw)
+            return WarmupResult(700, 0, "parquet")
+
+        with patch(
+            "services.trading.orchestrator.warmup_engine", new=_capture_warmup_engine
+        ):
+            await orch._prewarm_symbols(["A05603"])
+
+        cfg = captured.get("config")
+        assert cfg is not None, "warmup_engine must be called with a config= kwarg"
+        assert (
+            cfg.parquet_minute_limit == 700
+        ), f"futures parquet_minute_limit must be 700, got {cfg.parquet_minute_limit}"
+        assert cfg.minute_lookback_days >= 20, (
+            f"futures minute_lookback_days must be >=20 to cover 700 bars under "
+            f"holiday/degradation gaps, got {cfg.minute_lookback_days}"
+        )
+        assert cfg.rest_count == 120, f"rest_count must be 120, got {cfg.rest_count}"
+        assert (
+            captured.get("seed_daily") is False
+        ), f"futures must have seed_daily=False, got {captured.get('seed_daily')}"
+
+    @pytest.mark.asyncio
+    async def test_warmup_engine_config_fields_stock(self):
+        """B (D1): orchestrator passes correctly-sized StockPrewarmConfig for stock.
+
+        Stock: parquet_minute_limit=120, minute_lookback_days>=7, seed_daily=True.
+        """
+        from shared.streaming.candle_warmup import WarmupResult
+
         orch = _make_minimal_orchestrator("stock")
+        _patch_feed_obs_cfg(orch, {"warmup_min_candles": 20})
 
-        import shared.storage
+        mock_ie = MagicMock()
+        mock_ie.is_warm.return_value = False
+        orch._indicator_engine = mock_ie
+        orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
 
-        def _raise(*_args, **_kwargs):
-            raise OSError("Connection refused")
+        captured: dict = {}
 
-        monkeypatch.setattr(shared.storage, "load_market_bars_for_backtest", _raise)
+        async def _capture_warmup_engine(*_a, **kw):
+            captured.update(kw)
+            return WarmupResult(120, 0, "parquet")
 
-        with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
-            result = await orch._fetch_candles_from_market_data_store(
-                "A000000", limit=120
-            )
+        with patch(
+            "services.trading.orchestrator.warmup_engine", new=_capture_warmup_engine
+        ):
+            await orch._prewarm_symbols(["A000000"])
 
-        assert result == [], "Exception should return empty list"
-        warning_msgs = [r for r in caplog.records if r.levelno >= logging.WARNING]
-        assert any(
-            "prewarm" in r.message.lower() for r in warning_msgs
-        ), f"Expected WARNING about Parquet prewarm failure; got: {[r.message for r in caplog.records]}"
+        cfg = captured.get("config")
+        assert cfg is not None, "warmup_engine must be called with a config= kwarg"
+        assert (
+            cfg.parquet_minute_limit == 120
+        ), f"stock parquet_minute_limit must be 120, got {cfg.parquet_minute_limit}"
+        assert cfg.minute_lookback_days >= 7, (
+            f"stock minute_lookback_days must be >=7 to cover 120 bars reliably, "
+            f"got {cfg.minute_lookback_days}"
+        )
+        assert (
+            captured.get("seed_daily") is True
+        ), f"stock must have seed_daily=True, got {captured.get('seed_daily')}"
 
     @pytest.mark.asyncio
     async def test_multiple_symbols_accumulate_miss_count(self):

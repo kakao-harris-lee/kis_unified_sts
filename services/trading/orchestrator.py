@@ -3838,15 +3838,34 @@ class TradingOrchestrator:
         # Map orchestrator knobs → shared warmup config.
         # Futures need more minute candles for 15m resampling strategies
         # (e.g. BB period=43 on 15m bars → 43*15=645 1-min candles).
-        parquet_minute_limit = 700 if self.config.asset_class == "futures" else 120
+        is_futures = self.config.asset_class == "futures"
+        parquet_minute_limit = 700 if is_futures else 120
+
+        # D1 — minute_lookback_days must be generous enough to fill parquet_minute_limit
+        # even with holiday gaps and documented feed degradation (PR #491, #480).
+        #   Futures: 700 bars target.  A regular KRX+night session produces ~360–720
+        #     1-min bars/day (MEMORY: backtest-data-coverage-2026-06 notes ~352–2184
+        #     bars/day, heavily degraded recently).  20 calendar days ensures we can
+        #     satisfy 700 bars even when several days have only a few hundred bars.
+        #   Stock: 120 bars target.  7 calendar days (≥5 trading days) is ample.
+        minute_lookback_days = 20 if is_futures else 7
+
         warmup_cfg = StockPrewarmConfig(
-            parquet_minute_limit=parquet_minute_limit,
-            rest_count=120,
+            parquet_minute_limit=parquet_minute_limit,  # bars to load (700 futures / 120 stock)
+            minute_lookback_days=minute_lookback_days,  # calendar-day window (see D1 above)
+            daily_lookback_days=400,  # keep default; used only when seed_daily=True
+            daily_limit=252,  # keep default; used only when seed_daily=True
+            rest_count=120,  # KIS REST bars on parquet miss
             rest_enabled=True,
             min_candles=warmup_min_candles,
         )
-        # Futures must NOT seed daily candles (preserve existing behaviour).
-        do_seed_daily = self.config.asset_class == "stock"
+        # Futures (live path): no daily seed — futures strategies are intraday-only and
+        #   never used daily candles.  Stock orchestrator path: seed_daily=True, but
+        #   NOTE this path is currently DORMANT (decoupled stock pipeline runs post-cutover,
+        #   STOCK_ORCHESTRATOR_ENABLED=false).  If re-enabled, daily seeds are un-cleaned
+        #   (no clean_daily_candle_frame), matching the decoupled daemon — accepted
+        #   divergence (see D2 in the review findings for this refactor).
+        do_seed_daily = not is_futures
 
         parquet_hits = 0
         kis_hits = 0
