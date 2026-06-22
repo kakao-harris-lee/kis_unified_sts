@@ -398,7 +398,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         )
 
         # 현재 Stage 결정
-        stage = self._determine_stage(position, profit_pct)
+        stage = self._determine_stage(profit_pct)
 
         # 1. EOD 체크 (최우선) — eod_exempt_maximize 시 MAXIMIZE는 면제(no-flatten)
         close_time = effective_close_time(self.config.eod_close_time)
@@ -485,7 +485,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
 
         return None
 
-    def _determine_stage(self, position: Position, profit_pct: float) -> PositionState:
+    def _determine_stage(self, profit_pct: float) -> PositionState:
         """현재 수익률에 따른 Stage 결정 (항상 profit_pct 기준으로 승격)"""
         if profit_pct >= self.config.maximize_threshold_pct:
             return PositionState.MAXIMIZE

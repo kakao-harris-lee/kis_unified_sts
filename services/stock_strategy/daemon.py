@@ -245,10 +245,10 @@ class StockStrategyDaemon:
                 signals = await self.manager.check_entries(ctx)
                 for sig in signals or []:
                     if is_bear:
-                        try:
-                            sig.metadata["bear_override"] = True
-                        except Exception:
-                            pass  # best-effort; tag is observability only
+                        with contextlib.suppress(Exception):
+                            sig.metadata["bear_override"] = (
+                                True  # best-effort; tag is observability only
+                            )
                     await self._publish(sig)
                     published += 1
             except Exception:

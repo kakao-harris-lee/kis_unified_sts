@@ -418,7 +418,7 @@ async def test_load_bear_override_missing_key_returns_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_load_bear_override_disabled_config_returns_empty() -> None:
-    """disabled=False config returns empty set regardless of Redis contents."""
+    """enabled=False config returns empty set regardless of Redis contents."""
     redis = fakeredis.aioredis.FakeRedis()
     disabled_cfg = BearOverrideConfig(enabled=False)
     daemon = _build_daemon(redis, bear_override_config=disabled_cfg)

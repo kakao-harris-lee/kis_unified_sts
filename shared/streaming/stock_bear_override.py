@@ -47,7 +47,7 @@ class BearOverrideConfig:
         )
 
     @classmethod
-    def load(cls) -> "BearOverrideConfig":
+    def load(cls) -> BearOverrideConfig:
         """Load from ``config/stock_bear_override.yaml`` (defaults on any failure)."""
         try:
             from shared.config.loader import ConfigLoader

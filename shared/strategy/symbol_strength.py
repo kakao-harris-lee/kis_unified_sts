@@ -37,13 +37,13 @@ def is_strong(daily: dict, criteria: StrengthCriteria) -> bool:
 
     if rsi is None or rsi < criteria.rsi_min:
         return False
-    if criteria.require_above_sma20 and (close is None or sma20 is None or close <= sma20):
+    if criteria.require_above_sma20 and (
+        close is None or sma20 is None or close <= sma20
+    ):
         return False
     if criteria.require_rsi_rising and (prev_rsi is None or rsi <= prev_rsi):
         return False
-    if criteria.require_macd_positive and (macd is None or macd <= 0):
-        return False
-    return True
+    return not (criteria.require_macd_positive and (macd is None or macd <= 0))
 
 
 def compute_strong_symbols(
