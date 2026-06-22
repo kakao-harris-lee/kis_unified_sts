@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -15,15 +16,19 @@ _NOW = datetime(2026, 6, 5, 0, 30, tzinfo=UTC)
 
 
 class _FakeEngine:
-    def __init__(self, warm=("005930",), mfi_values=None):
+    def __init__(self, warm=("005930",), mfi_values=None, latest_tick_ts=None):
         self._warm = set(warm)
         self._mfi_values = mfi_values
+        self._latest_tick_ts = latest_tick_ts
 
     def is_warm(self, symbol):
         return symbol in self._warm
 
     def get_market_mfi_values(self, _active_symbols=None):
         return dict(self._mfi_values or {})
+
+    def get_market_latest_tick_ts(self, _active_symbols=None):
+        return self._latest_tick_ts
 
 
 class _FakeResolver:
@@ -251,6 +256,107 @@ async def test_engine_without_mfi_support_skips_publish():
 
     assert published == 1  # entries ungated when the engine can't provide MFI
     assert redis.kv == {}
+
+
+# ---------------------------------------------------------------------------
+# Candle-freshness observability (issue #460)
+# ---------------------------------------------------------------------------
+
+_BULL_MFI = {"005930": 55.0, "000660": 60.0}
+
+
+@pytest.mark.asyncio
+async def test_payload_includes_last_tick_ts_from_engine():
+    tick_ts = _NOW - timedelta(seconds=42)
+    redis = _FakeRedis()
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(mfi_values=_BULL_MFI, latest_tick_ts=tick_ts),
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    payload = json.loads(redis.kv[_REGIME_CFG.redis_key])
+    assert payload["last_tick_ts_ms"] == int(tick_ts.timestamp() * 1000)
+
+
+@pytest.mark.asyncio
+async def test_payload_last_tick_none_when_engine_lacks_support():
+    class _MfiOnlyEngine:
+        def is_warm(self, _symbol):
+            return True
+
+        def get_market_mfi_values(self, _active_symbols=None):
+            return dict(_BULL_MFI)
+
+    redis = _FakeRedis()
+    d = _daemon(redis=redis, engine=_MfiOnlyEngine(), regime_config=_REGIME_CFG)
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    payload = json.loads(redis.kv[_REGIME_CFG.redis_key])
+    assert payload["last_tick_ts_ms"] is None  # old-schema engines stay valid
+
+
+@pytest.mark.asyncio
+async def test_lag_warning_emitted_in_session(monkeypatch, caplog):
+    monkeypatch.setattr(
+        "services.stock_strategy.daemon.is_regular_session_open", lambda _dt: True
+    )
+    d = _daemon(
+        engine=_FakeEngine(
+            mfi_values=_BULL_MFI, latest_tick_ts=_NOW - timedelta(seconds=600)
+        ),
+        regime_config=_REGIME_CFG,  # warn_indicator_lag_seconds default 180
+    )
+    d._universe = ["005930"]
+
+    with caplog.at_level(logging.WARNING, logger="services.stock_strategy.daemon"):
+        await d.evaluate_once()
+
+    assert "indicator lag" in caplog.text
+    assert "600s" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_lag_warning_suppressed_off_session(monkeypatch, caplog):
+    monkeypatch.setattr(
+        "services.stock_strategy.daemon.is_regular_session_open", lambda _dt: False
+    )
+    d = _daemon(
+        engine=_FakeEngine(
+            mfi_values=_BULL_MFI, latest_tick_ts=_NOW - timedelta(seconds=600)
+        ),
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    with caplog.at_level(logging.WARNING, logger="services.stock_strategy.daemon"):
+        await d.evaluate_once()
+
+    assert "indicator lag" not in caplog.text  # off-hours: stream silent by design
+
+
+@pytest.mark.asyncio
+async def test_no_lag_warning_below_threshold(monkeypatch, caplog):
+    monkeypatch.setattr(
+        "services.stock_strategy.daemon.is_regular_session_open", lambda _dt: True
+    )
+    d = _daemon(
+        engine=_FakeEngine(
+            mfi_values=_BULL_MFI, latest_tick_ts=_NOW - timedelta(seconds=30)
+        ),
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    with caplog.at_level(logging.WARNING, logger="services.stock_strategy.daemon"):
+        await d.evaluate_once()
+
+    assert "indicator lag" not in caplog.text
 
 
 class _SetBoomRedis(_FakeRedis):

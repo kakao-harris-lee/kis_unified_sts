@@ -1431,6 +1431,32 @@ class StreamingIndicatorEngine:
             return (mfi_values[n // 2 - 1] + mfi_values[n // 2]) / 2
         return mfi_values[n // 2]
 
+    def get_market_latest_tick_ts(
+        self, active_symbols: set[str] | None = None
+    ) -> datetime | None:
+        """Most recent tick timestamp across (active) accumulators, UTC-aware.
+
+        Freshness marker for market-wide indicators (regime MFI, issue #460):
+        all symbols share one tick stream, so when the stream stalls this
+        stops advancing while regime publishes keep their own clock —
+        consumers compare it against ``computed_at_ms`` for indicator lag.
+        Returns None when no matching accumulator has seen a tick.
+        """
+        latest: datetime | None = None
+        for symbol, acc in self._accumulators.items():
+            if active_symbols is not None and symbol not in active_symbols:
+                continue
+            ts = acc.last_tick_ts
+            if ts is None:
+                continue
+            # Normalize naive → UTC (same convention as get_tick_age_seconds)
+            # so mixed naive/aware accumulators don't raise on comparison.
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            if latest is None or ts > latest:
+                latest = ts
+        return latest
+
     def get_stats(self) -> dict:
         """Diagnostic stats."""
         warm = [s for s in self._accumulators if self.is_warm(s)]
