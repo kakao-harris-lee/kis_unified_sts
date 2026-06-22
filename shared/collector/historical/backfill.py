@@ -206,19 +206,25 @@ _rate_limiter_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_semaphore() -> asyncio.Semaphore:
+    # KIS allows ~5 req/s; bursting at 10-concurrent triggered the 500 cascade.
+    # Override via BACKFILL_CONCURRENCY env var (default: 3).
     global _semaphore, _semaphore_loop
     loop = asyncio.get_running_loop()
     if _semaphore is None or _semaphore_loop is not loop:
-        _semaphore = asyncio.Semaphore(10)
+        concurrency = int(os.getenv("BACKFILL_CONCURRENCY", "3"))
+        _semaphore = asyncio.Semaphore(concurrency)
         _semaphore_loop = loop
     return _semaphore
 
 
 def _get_rate_limiter() -> RateLimiter:
+    # KIS allows ~5 req/s; bursting at 20 rps triggered the 500 cascade.
+    # Override via BACKFILL_RPS env var (default: 5).
     global _rate_limiter, _rate_limiter_loop
     loop = asyncio.get_running_loop()
     if _rate_limiter is None or _rate_limiter_loop is not loop:
-        _rate_limiter = RateLimiter(20)
+        rps = int(os.getenv("BACKFILL_RPS", "5"))
+        _rate_limiter = RateLimiter(rps)
         _rate_limiter_loop = loop
     return _rate_limiter
 
