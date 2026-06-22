@@ -14,6 +14,10 @@ from shared.execution.fill_logger import FillLogger
 from shared.paper.broker import VirtualBroker
 from shared.risk.runtime_state import RuntimeRiskState
 from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+from shared.streaming.stock_bear_override import (
+    BearOverrideConfig,
+    compute_override_payload,
+)
 from shared.streaming.stock_regime import StockRegimeConfig
 
 _KST = ZoneInfo("Asia/Seoul")
@@ -75,6 +79,7 @@ def _build_daemon(
     exit_strategy=None,
     regime_config=None,
     runtime_ledger=None,
+    bear_override_config=None,
 ) -> StockExitDaemon:
     return StockExitDaemon(
         redis=redis,
@@ -97,6 +102,7 @@ def _build_daemon(
         now_fn=lambda: _MID_SESSION,
         regime_config=regime_config,
         runtime_ledger=runtime_ledger,
+        bear_override_config=bear_override_config,
     )
 
 
@@ -356,3 +362,163 @@ async def test_no_regime_config_keeps_market_state_none() -> None:
 
     assert await redis.hexists("trading:stock:positions", "005930")
     assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+# ---------------------------------------------------------------------------
+# Bear override: _load_bear_override (M4-P publishes strong set -> M4-X reads)
+# ---------------------------------------------------------------------------
+
+_OVERRIDE_CFG = BearOverrideConfig(enabled=True, max_age_seconds=300.0)
+
+
+def _override_payload(symbols: set[str], age_seconds: float) -> str:
+    now_ms = int(_MID_SESSION.timestamp() * 1000)
+    payload = compute_override_payload(symbols, now_ms=now_ms - int(age_seconds * 1000))
+    return json.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_load_bear_override_fresh_returns_set() -> None:
+    """Fresh payload within max_age_seconds returns the strong-symbol set."""
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis, bear_override_config=_OVERRIDE_CFG)
+    payload = _override_payload({"005930", "035420"}, age_seconds=10)
+    await redis.set(_OVERRIDE_CFG.redis_key, payload)
+
+    result = await daemon._load_bear_override()
+
+    assert result == {"005930", "035420"}
+
+
+@pytest.mark.asyncio
+async def test_load_bear_override_stale_returns_empty() -> None:
+    """Payload older than max_age_seconds returns empty set (fail-safe)."""
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis, bear_override_config=_OVERRIDE_CFG)
+    stale_age = _OVERRIDE_CFG.max_age_seconds + 60
+    payload = _override_payload({"005930"}, age_seconds=stale_age)
+    await redis.set(_OVERRIDE_CFG.redis_key, payload)
+
+    result = await daemon._load_bear_override()
+
+    assert result == set()
+
+
+@pytest.mark.asyncio
+async def test_load_bear_override_missing_key_returns_empty() -> None:
+    """Missing Redis key returns empty set (fail-safe)."""
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis, bear_override_config=_OVERRIDE_CFG)
+    # no key set
+
+    result = await daemon._load_bear_override()
+
+    assert result == set()
+
+
+@pytest.mark.asyncio
+async def test_load_bear_override_disabled_config_returns_empty() -> None:
+    """disabled=False config returns empty set regardless of Redis contents."""
+    redis = fakeredis.aioredis.FakeRedis()
+    disabled_cfg = BearOverrideConfig(enabled=False)
+    daemon = _build_daemon(redis, bear_override_config=disabled_cfg)
+    payload = _override_payload({"005930"}, age_seconds=10)
+    await redis.set(disabled_cfg.redis_key, payload)
+
+    result = await daemon._load_bear_override()
+
+    assert result == set()
+
+
+@pytest.mark.asyncio
+async def test_load_bear_override_none_config_returns_empty() -> None:
+    """None bear_override_config returns empty set (feature disabled)."""
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis, bear_override_config=None)
+
+    result = await daemon._load_bear_override()
+
+    assert result == set()
+
+
+@pytest.mark.asyncio
+async def test_load_bear_override_redis_failure_returns_empty() -> None:
+    """Redis read error returns empty set — never exempt on bad data."""
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis, bear_override_config=_OVERRIDE_CFG)
+
+    class _GetBoomRedis:
+        def __init__(self, inner):
+            self._inner = inner
+
+        async def get(self, _key):
+            raise RuntimeError("redis down")
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    daemon.redis = _GetBoomRedis(redis)
+
+    result = await daemon._load_bear_override()
+
+    assert result == set()
+
+
+@pytest.mark.asyncio
+async def test_bear_override_exempts_strong_symbol_from_bear_exit() -> None:
+    """Symbol in override set is NOT liquidated even in BEAR_STRONG regime."""
+    redis = fakeredis.aioredis.FakeRedis()
+    # Use bear-exit enabled strategy
+    exit_strategy = ThreeStageExit(
+        ThreeStageExitConfig(enable_bear_exit=True, eod_exempt_maximize=True)
+    )
+    daemon = _build_daemon(
+        redis,
+        exit_strategy=exit_strategy,
+        regime_config=_REGIME_CFG,
+        bear_override_config=_OVERRIDE_CFG,
+    )
+    # Seed a position that would otherwise be liquidated by BEAR_STRONG
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    daemon.feed.prices["005930"] = {"close": 71300.0}  # +0.4%, above stop
+    # Publish BEAR_STRONG regime
+    await redis.set(_REGIME_CFG.redis_key, _regime_payload("BEAR_STRONG", 10))
+    # Publish override set including the symbol
+    await redis.set(
+        _OVERRIDE_CFG.redis_key, _override_payload({"005930"}, age_seconds=10)
+    )
+
+    await daemon.run_cycle()
+
+    # Position must survive because it's in the override set
+    assert await redis.hexists("trading:stock:positions", "005930")
+    assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_bear_override_does_not_protect_non_override_symbol() -> None:
+    """Symbol NOT in override set is still liquidated in BEAR_STRONG regime."""
+    redis = fakeredis.aioredis.FakeRedis()
+    exit_strategy = ThreeStageExit(
+        ThreeStageExitConfig(enable_bear_exit=True, eod_exempt_maximize=True)
+    )
+    daemon = _build_daemon(
+        redis,
+        exit_strategy=exit_strategy,
+        regime_config=_REGIME_CFG,
+        bear_override_config=_OVERRIDE_CFG,
+    )
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    daemon.feed.prices["005930"] = {"close": 71300.0}
+    await redis.set(_REGIME_CFG.redis_key, _regime_payload("BEAR_STRONG", 10))
+    # Override set has a *different* symbol, not 005930
+    await redis.set(
+        _OVERRIDE_CFG.redis_key, _override_payload({"035420"}, age_seconds=10)
+    )
+
+    await daemon.run_cycle()
+
+    # 005930 is NOT in override -> should be liquidated
+    assert not await redis.hexists("trading:stock:positions", "005930")
+    fills = await redis.xrange("order.fill.stock.shadow")
+    assert len(fills) == 1

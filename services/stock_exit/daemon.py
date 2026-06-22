@@ -24,6 +24,7 @@ from services.stock_exit.positions import (
 from shared.models.position import Position
 from shared.paper.models import OrderSide, OrderType
 from shared.strategy.base import MarketStateAdapter
+from shared.streaming.stock_bear_override import BearOverrideConfig, parse_strong_set
 from shared.streaming.stock_regime import StockRegimeConfig, parse_market_state
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class StockExitDaemon:
         now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
         regime_config: StockRegimeConfig | None = None,
         runtime_ledger: Any | None = None,
+        bear_override_config: BearOverrideConfig | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -58,6 +60,7 @@ class StockExitDaemon:
         self.interval_seconds = interval_seconds
         self.now_fn = now_fn
         self.regime_config = regime_config
+        self._bear_override_config = bear_override_config
         self.fee_rate = float(getattr(exit_strategy.config, "fee_rate", 0.003))
         self._stop = asyncio.Event()
 
@@ -97,6 +100,24 @@ class StockExitDaemon:
         now_ms = int(self.now_fn().timestamp() * 1000)
         return parse_market_state(raw, config=cfg, now_ms=now_ms)
 
+    async def _load_bear_override(self) -> set[str]:
+        """Read the M4-P-published strong-symbol set; ∅ on missing/stale/error.
+
+        Fail-safe: any read failure, stale payload, or disabled config returns
+        the empty set so the bear exit applies to all symbols (no unintended
+        exemptions). Mirrors ``_load_market_state``.
+        """
+        cfg = self._bear_override_config
+        if cfg is None or not cfg.enabled:
+            return set()
+        try:
+            raw = await self.redis.get(cfg.redis_key)
+        except Exception:
+            logger.warning("bear override read failed; no override this cycle")
+            return set()
+        now_ms = int(self.now_fn().timestamp() * 1000)
+        return parse_strong_set(raw, config=cfg, now_ms=now_ms)
+
     async def run_cycle(self) -> None:
         raw = await self.redis.hgetall(self.positions_key)
         positions = []
@@ -134,8 +155,12 @@ class StockExitDaemon:
         # would evaluate them at profit_pct=0 and fire TIME_CUT incorrectly.
         priced_positions = [p for p in positions if p.code in market_data]
         market_state = await self._load_market_state()
+        bear_override = await self._load_bear_override()
         signals = await self.exit_strategy.scan_positions(
-            priced_positions, market_data, market_state=market_state
+            priced_positions,
+            market_data,
+            market_state=market_state,
+            bear_override_symbols=bear_override,
         )
         # Keyed over ALL positions, so the ``pos is None`` guard in
         # ``_execute_exit`` is defence-in-depth (sig.code always ∈ priced ⊆ positions).

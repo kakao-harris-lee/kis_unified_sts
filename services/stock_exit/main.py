@@ -52,6 +52,7 @@ async def _build_and_run() -> int:
     from shared.storage import SQLiteRuntimeLedger
     from shared.storage.config import StorageConfig
     from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+    from shared.streaming.stock_bear_override import BearOverrideConfig
     from shared.streaming.stock_keys import stock_daemon_positions_key
     from shared.streaming.stock_regime import StockRegimeConfig
 
@@ -88,6 +89,11 @@ async def _build_and_run() -> int:
     if not regime_config.enabled:
         regime_config = None
 
+    # Bear override consumer (None-equivalent when disabled → override=∅).
+    bear_override_config = BearOverrideConfig.load()
+    if not bear_override_config.enabled:
+        bear_override_config = None
+
     daemon = StockExitDaemon(
         redis=redis_client,
         feed=feed,
@@ -99,6 +105,7 @@ async def _build_and_run() -> int:
         interval_seconds=interval,
         regime_config=regime_config,
         runtime_ledger=runtime_ledger,
+        bear_override_config=bear_override_config,
     )
 
     loop = asyncio.get_running_loop()
