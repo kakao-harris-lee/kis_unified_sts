@@ -458,7 +458,7 @@ class TestThreeStageBreakevenToMaximizePromotion:
 
         # _determine_stage should return MAXIMIZE regardless of position.state
         profit_pct = (current - entry) / entry  # 0.04
-        stage = strategy._determine_stage(profit_pct)
+        stage = strategy._determine_stage(position, profit_pct)
 
         assert stage == PositionState.MAXIMIZE, (
             f"Expected MAXIMIZE at profit_pct={profit_pct:.2%}, got {stage}"
@@ -534,7 +534,7 @@ class TestThreeStageBreakevenToMaximizePromotion:
 
         current = 50300.0
         profit_pct = (current - entry) / entry  # 0.006
-        stage = strategy._determine_stage(profit_pct)
+        stage = strategy._determine_stage(position, profit_pct)
         assert stage == PositionState.SURVIVAL  # 0.6% < 1.5% breakeven threshold
 
         # Now verify: if current is still above maximize threshold but just triggered trailing:
