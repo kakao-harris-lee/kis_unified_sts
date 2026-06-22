@@ -1,91 +1,55 @@
-# Task 2 Report — TrackAExit generator + entry_atr wiring
+# Task 2 Report: `warmup_engine` shared helper
 
-## Status: DONE_WITH_CONCERNS
+## Status: DONE
 
-## TDD RED → GREEN
+## TDD Evidence
 
-### RED (Step 2b)
+### RED (Step 2)
+Command: `.venv/bin/pytest tests/unit/streaming/test_candle_warmup.py -v`
 ```
-.venv/bin/pytest tests/unit/strategy/exit/test_track_a_exit.py::test_crash_guard_long_fires -x -v
-FAILED — NotImplementedError (as expected)
-```
-
-### GREEN (Step 2e)
-```
-.venv/bin/pytest tests/unit/strategy/exit/test_track_a_exit.py -v
-27 passed in 0.79s
+collected 0 items / 1 error
+ImportError: cannot import name 'warmup_engine' from 'shared.streaming.candle_warmup'
 ```
 
-Broader strategy suite: 604 passed, 31 warnings.
+### GREEN (Step 4)
+Command: `.venv/bin/pytest tests/unit/streaming/test_candle_warmup.py -v`
+```
+collected 6 items
+tests/unit/streaming/test_candle_warmup.py ......   [100%]
+6 passed in 0.78s
+```
 
 ## Commits
-- `ff1ea99` feat(futures): TrackAExit generator + entry_atr wiring
+- `fc123e9` feat(stock-prewarm): warmup_engine shared helper (parquet→REST + daily, guarded)
 
 ## Files Changed
-1. `shared/strategy/exit/track_a_exit.py` — replaced stub with full generator: `should_exit`, `scan_positions`, `_check_position`, `_get_atr`, `_should_eod_close`, `_calc_profit_pct`, `_calc_profit_amount`, `_create_exit_signal`
-2. `tests/unit/strategy/exit/test_track_a_exit.py` — appended 13 generator tests (27 total)
-3. `shared/strategy/entry/setup_adapters.py` — added `entry_atr` parameter to `_decision_signal_to_orchestrator_signal`; both SetupA and SetupC call sites extract ATR from `context.market_data` and pass it; `entry_atr` added to the metadata dict
-4. `services/trading/orchestrator.py:7093` — `"entry_atr"` added to the key list copied `signal_meta` → `pos_metadata`
 
-## Exact Insertion Points
-
-### setup_adapters.py
-- `_decision_signal_to_orchestrator_signal` signature: added `entry_atr: float = 0.0`
-- metadata dict (L515): `"entry_atr": entry_atr`
-- SetupA call site (~L1179): added 11-line ATR-extraction block before the return
-- SetupC call site (~L1447): identical ATR-extraction block before the return
-
-### orchestrator.py
-- L7093: inserted `"entry_atr",` between `"take_profit",` and `"exit_stop_atr_multiplier",`
-
-## Concern: Brief Test Data Inconsistency
-
-The brief's three catastrophic/beats-trail tests used `prev_price` values that caused the crash guard (p1, threshold = 3.5×ATR = 7) to fire instead of the intended catastrophic stop (p2). Specifically:
-
-| Test | prev_price | close | tick-drop | crash threshold | Result |
-|------|-----------|-------|-----------|-----------------|--------|
-| test_catastrophic_stop_long | 99.0 | 88.0 | 11 | 7 | crash fires (wrong) |
-| test_catastrophic_stop_short | 101.0 | 112.0 | 11 | 7 | crash fires (wrong) |
-| test_catastrophic_beats_trail | 100.0 | 88.0 | 12 | 7 | crash fires (wrong) |
-
-These tests were corrected to `prev_price=89.0/111.0/89.0` respectively (1pt tick move vs 12pt catastrophic from entry). The test intent is preserved: catastrophic = large loss from entry without a single-tick spike.
+1. `shared/streaming/candle_warmup.py` — appended `WarmupResult`, `_df_tail_to_candles`, `_seed_daily`, and async `warmup_engine`; added imports (`asyncio`, `datetime`, `UTC`, `timedelta`, `Any`, `NamedTuple`). `StockPrewarmConfig` untouched.
+2. `tests/unit/streaming/test_candle_warmup.py` — new test file, 6 async tests covering: parquet hit, parquet miss→REST, rate-limited skip, rest_enabled=False skip, already-warm noop, exception best-effort.
 
 ## Self-Review
-- Long/short symmetry: crash, catastrophic, trail, EOD all tested both sides
-- ATR fallback path: `_get_atr` tries snapshot keys first then `entry_atr` from metadata
-- ATR=0 guard: `test_no_atr_skips_all_atr_exits` confirms all ATR exits skipped when atr=0
-- `prev_price` updated before any return (prevents stale prev after early exit)
-- No daily-bias filter added (Task 4 scope)
-- No blanket EOD liquidation changes
-- Config-driven (all thresholds in TrackAExitConfig)
+
+**Correctness:**
+- Tier 1 (parquet) → Tier 2 (REST, rate-limit guarded) → daily seed flow matches spec
+- IP-ban guard: REST only when `minute_seeded == 0 AND cfg.rest_enabled AND kis_client is not None AND not is_rate_limited`
+- `asyncio.wait_for(..., timeout=5.0)` wraps REST call (one-shot, never a loop)
+- `asyncio.sleep(0.3)` pacing immediately after successful REST call
+- Already-warm short-circuits before any I/O
+- All exceptions caught at all levels; never raises out of `warmup_engine`
+- Returns `WarmupResult(0, 0, "none")` on any failure/noop path
+
+**Config-driven:**
+- All limits (`parquet_minute_limit`, `daily_limit`, `rest_count`, `min_candles`, `minute_lookback_days`, `daily_lookback_days`) read from `StockPrewarmConfig`; zero hardcoded thresholds in new code
+
+**KST rule:**
+- Date-bound computation uses UTC only for lookback window (`datetime.now(UTC) - timedelta(days=...)`) — no KST↔UTC trading-logic comparisons; compliant per project rules
+
+**DRY:**
+- `_df_tail_to_candles` shared by both minute and daily paths
+
+## Concerns
+
+None. Implementation is a verbatim match to the brief's spec. All 6 tests pass.
 
 ## Report Path
 `/home/deploy/project/kis_unified_sts/.superpowers/sdd/task-2-report.md`
-
----
-
-## Review Fixes Applied (2026-06-21)
-
-### Changes Made
-
-**I1 — EOD fires when ATR=0 (new positive-path test)**
-- Added `test_eod_fires_when_atr_zero` in `tests/unit/strategy/exit/test_track_a_exit.py`
-- Monkeypatches `now_kst`, `is_trading_day_kst`, and `effective_close_time` in `shared.strategy.exit.track_a_exit` module namespace
-- Fixed KST time: Monday 2026-06-22 15:20 KST (past 15:15 cutoff)
-- Position has no `entry_atr` and snapshot `atr=0.0` — confirms ATR=0 guard skips only ATR exits, EOD still fires
-- Asserts `reason == ExitReason.EOD_CLOSE` and `metadata["exit_type"] == "eod_close"`
-
-**I2 — Deterministic entry_time in test fixtures**
-- Replaced `datetime.now(UTC) - timedelta(minutes=30)` in `_long_position` and `_short_position` with `_FIXED_ENTRY_TIME = datetime(2026, 1, 1, tzinfo=UTC)`
-- No assertions use `holding_minutes`, so fixed past time is safe
-
-**M1 — Symmetric high_since_entry in _create_exit_signal**
-- In `shared/strategy/exit/track_a_exit.py`, `_create_exit_signal` now passes:
-  `high_since_entry = position.highest_price if position.side == PositionSide.LONG else position.lowest_price`
-- SHORT positions now report the favorable extreme (lowest_price) rather than always highest_price
-
-### Test Run
-```
-.venv/bin/pytest tests/unit/strategy/exit/test_track_a_exit.py -v
-28 passed in 0.77s
-```

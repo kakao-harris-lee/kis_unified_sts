@@ -19,10 +19,6 @@ class _Engine:
         self.daily[s] = candles
 
 
-class _Row(dict):
-    pass
-
-
 class _DF:
     """Minimal DataFrame stand-in: list of dict rows."""
 

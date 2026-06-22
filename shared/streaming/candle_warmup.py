@@ -87,7 +87,11 @@ def _seed_daily(engine: Any, store: Any, symbol: str, cfg: StockPrewarmConfig) -
     if store is None:
         return 0
     try:
-        start = (datetime.now(UTC) - timedelta(days=cfg.daily_lookback_days)).date().isoformat()
+        start = (
+            (datetime.now(UTC) - timedelta(days=cfg.daily_lookback_days))
+            .date()
+            .isoformat()
+        )
         df = store.get_daily_bars(symbol, start=start)
         candles = _df_tail_to_candles(df, cfg.daily_limit)
         if candles:
@@ -125,8 +129,10 @@ async def warmup_engine(
     try:
         if store is not None:
             start = (
-                datetime.now(UTC) - timedelta(days=cfg.minute_lookback_days)
-            ).date().isoformat()
+                (datetime.now(UTC) - timedelta(days=cfg.minute_lookback_days))
+                .date()
+                .isoformat()
+            )
             candles = _df_tail_to_candles(
                 store.get_minute_bars(symbol, start=start), cfg.parquet_minute_limit
             )

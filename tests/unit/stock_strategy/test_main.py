@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import services.stock_strategy.main as m
 
 
@@ -21,9 +23,6 @@ def test_live_mode_is_active_and_unsuffixed() -> None:
     assert m._is_active_mode("live") is True
     assert m._candidate_stream_for("live") == "signal.candidate.stock"
     assert m._is_active_mode("off") is False
-
-
-import pytest
 
 
 @pytest.mark.asyncio
