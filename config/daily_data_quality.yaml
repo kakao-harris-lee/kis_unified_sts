@@ -27,8 +27,11 @@ futures_minute_coverage:
   # the single source of truth for "expected bars".  Env override:
   # FUTURES_MINUTE_COVERAGE_MIN_ROWS.
   min_rows: null
-  # Lower floor below which a short day is treated as a legitimate early-close /
-  # half-day rather than a shortfall.  Empty => quarter of the full session.
+  # Lower floor below which a short day is treated as a real shortfall.
+  # Counts at/above this floor (but below min_rows) are tolerated as a plausible
+  # early-close / half-day.  Empty => MINUTE_SESSION_BARS // 2 - 52 ≈ 150, which
+  # sits below a genuine KRX half-day (~200 bars) so real early-closes pass, while
+  # a single-KIS-page-only fetch (~102 bars) is still flagged.
   half_day_min_rows: null
   # Front-month product to verify ("mini" or "kospi200").
   product: "mini"

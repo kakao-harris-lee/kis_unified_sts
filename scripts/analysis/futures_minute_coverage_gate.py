@@ -38,7 +38,6 @@ if str(_REPO_ROOT) not in sys.path:
 
 from shared.collector.historical.calendar import (  # noqa: E402
     get_trading_days_range,
-    is_trading_day,
 )
 from shared.collector.historical.futures import get_front_month_code  # noqa: E402
 from shared.collector.historical.parquet_backfill import (  # noqa: E402
@@ -52,11 +51,20 @@ log = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 CONFIG_PATH = "daily_data_quality.yaml"
 
-# Half-day / early-close floor: half the full regular session.  A genuine KRX
-# early-close (~12:30) still clears this floor and is tolerated, while a
-# single-KIS-page-only fetch (~102 bars) falls below it and is flagged.  Days at
-# or above this floor (but below ``min_rows``) are tolerated, not flagged.
-_DEFAULT_HALF_DAY_MIN_ROWS = max(1, MINUTE_SESSION_BARS // 2)
+# Half-day / early-close floor.
+#
+# Band behaviour:
+#   bars < half_day_min_rows              → flagged (real shortfall)
+#   half_day_min_rows <= bars < min_rows  → tolerated (plausible early-close)
+#   bars >= min_rows                      → fully covered
+#
+# A genuine KRX early-close / half-day (~12:30) produces ~200 bars.  The floor
+# must be BELOW 200 so real half-days are tolerated, while a single-KIS-page-only
+# fetch (~102 bars) remains above 0 and would be flagged.  MINUTE_SESSION_BARS//2
+# ≈ 202 which is ABOVE 200, so we subtract a margin of ~50 to land at 150.
+# That leaves ~50 bars of headroom for genuine early-close variation while still
+# catching the ~102-bar single-page case.
+_DEFAULT_HALF_DAY_MIN_ROWS = max(1, MINUTE_SESSION_BARS // 2 - 52)
 
 
 class MinuteBarCounter(Protocol):
@@ -129,9 +137,14 @@ def _front_month_code(report_date: date, *, product: str = "mini") -> str:
 
 
 def _resolve_trading_days(config: CoverageConfig, report_date: date) -> list[date]:
-    """Return the trading days in the lookback window ending at ``report_date``."""
+    """Return the trading days in the lookback window ending at ``report_date``.
+
+    ``get_trading_days_range`` already yields only KRX trading days; no further
+    ``is_trading_day`` filtering is needed (and adding it would risk divergence if
+    the two functions ever differ in edge cases).
+    """
     start = report_date - timedelta(days=max(1, config.lookback_days) * 2)
-    days = [d for d in get_trading_days_range(start, report_date) if is_trading_day(d)]
+    days = list(get_trading_days_range(start, report_date))
     return days[-config.lookback_days :]
 
 
@@ -201,6 +214,9 @@ async def _send_alert(report: CoverageReport) -> bool:
     try:
         notifier = notifier_for_domain("briefing")
         if notifier is None:
+            log.warning(
+                "futures-minute coverage: Telegram not configured — shortfall not alerted"
+            )
             return False
         await notifier.send_message(
             _format_alert(report),

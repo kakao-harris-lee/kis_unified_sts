@@ -24,10 +24,11 @@ class _FakeStore:
 
 
 def _config(**overrides) -> gate.CoverageConfig:
+    """Build a CoverageConfig using the same defaults as the module (_DEFAULT_HALF_DAY_MIN_ROWS)."""
     base = {
         "lookback_days": 5,
         "min_rows": MINUTE_COMPLETENESS_MIN_ROWS,
-        "half_day_min_rows": max(1, MINUTE_SESSION_BARS // 2),
+        "half_day_min_rows": gate._DEFAULT_HALF_DAY_MIN_ROWS,
         "notify_on_shortfall": True,
     }
     base.update(overrides)
@@ -68,18 +69,34 @@ def test_shortfall_day_is_flagged():
 
 
 def test_half_day_tolerance_not_flagged():
-    # A short but >= half-day-floor count must not flag (early-close tolerance).
+    # A realistic KRX early-close / half-day (~200 bars) must NOT be flagged with
+    # the DEFAULT half_day_min_rows (150).  Bars=200 sits in the tolerated band:
+    #   half_day_min_rows (150) <= 200 < min_rows (303)  → tolerated, not flagged.
     day = date(2026, 6, 18)
-    half_floor = max(1, MINUTE_SESSION_BARS // 4)
-    store = _FakeStore({day: half_floor})
+    store = _FakeStore({day: 200})
     report = gate.evaluate_coverage(
         store=store,
         code="A05607",
         trading_days=[day],
-        config=_config(half_day_min_rows=half_floor),
+        config=_config(),  # default floor = 150
     )
     assert report.has_shortfall is False
     assert report.shortfalls == []
+
+
+def test_single_page_fetch_is_flagged():
+    # A single-KIS-page-only fetch (~102 bars) must be flagged; 102 < 150 floor.
+    day = date(2026, 6, 18)
+    store = _FakeStore({day: 102})
+    report = gate.evaluate_coverage(
+        store=store,
+        code="A05607",
+        trading_days=[day],
+        config=_config(),  # default floor = 150
+    )
+    assert report.has_shortfall is True
+    assert len(report.shortfalls) == 1
+    assert report.shortfalls[0].bars == 102
 
 
 def test_in_progress_day_is_skipped(monkeypatch):
@@ -148,3 +165,23 @@ def test_run_gate_no_alert_when_full(monkeypatch):
 
     assert rc == 0
     assert sent == []
+
+
+def test_run_gate_returns_rc2_on_store_error(monkeypatch):
+    # When _build_store raises, run_gate must return rc=2 and send no alert.
+    sent: list[dict] = []
+
+    class _FakeNotifier:
+        async def send_message(self, text, **_kwargs):
+            sent.append({"text": text})
+
+    def _raise():
+        raise RuntimeError("parquet unavailable")
+
+    monkeypatch.setattr(gate, "_build_store", _raise)
+    monkeypatch.setattr(gate, "notifier_for_domain", lambda _domain: _FakeNotifier())
+
+    rc = gate.run_gate(report_date=date(2026, 6, 19), config=_config())
+
+    assert rc == 2
+    assert sent == [], "No alert must be sent on store/script error"
