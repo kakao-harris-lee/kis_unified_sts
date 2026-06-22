@@ -381,7 +381,6 @@ def test_completeness_gate_past_day_with_market_open(monkeypatch, tmp_path):
     """
     from shared.collector.historical import futures as futures_module
     from shared.collector.historical.parquet_backfill import (
-        MINUTE_COMPLETENESS_MIN_ROWS,
         ParquetBackfillState,
         backfill_futures_parquet,
     )
