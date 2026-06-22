@@ -78,10 +78,41 @@ _DEFAULT_START_DATE = date(2026, 6, 21)  # restored-config deploy
 _DEFAULT_FAST_STOPOUT_MINUTES = 30
 _DEFAULT_CATASTROPHIC_LOSS_PCT = -3.0
 
+# Reject reasons that indicate *legitimate selectivity* (no qualifying setup
+# today), not a suppression or config problem.  Matched by prefix so that
+# reasons with embedded values like ``outside_time_window(91m∉[10,60])`` are
+# covered.  A/C average ~4.8 qualifying setups/month, so 0 trades over a few
+# days is expected under these gates.
+_LEGITIMATE_NO_SETUP_REASONS: frozenset[str] = frozenset(
+    [
+        "outside_time_window",
+        "no_event_in_window",
+        "after_cutoff",
+        "sp500_kr_gap_misaligned",
+        "no_macro_overnight",
+        "no_sp500_data",
+        "no_prev_close",
+    ]
+)
+
+
+def _is_legitimate_no_setup(reason: str) -> bool:
+    """Return True when *reason* is a selectivity gate (expected 0 trades).
+
+    The comparison is prefix-based so that reasons with embedded runtime
+    values (e.g. ``outside_time_window(91m∉[10,60])``) are matched by their
+    base name.
+    """
+    reason_lower = reason.lower()
+    return any(
+        reason_lower.startswith(leg.lower()) for leg in _LEGITIMATE_NO_SETUP_REASONS
+    )
+
 
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
+
 
 def _load_obs_config() -> dict[str, Any]:
     """Read setup_ac_paper_observation section from config/monitoring.yaml.
@@ -107,6 +138,7 @@ def _get_cfg(cfg: dict[str, Any], key: str, default: Any) -> Any:
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SetupStats:
     """Per-setup cumulative paper-observation statistics."""
@@ -119,7 +151,7 @@ class SetupStats:
     pnl_values: list[float] = field(default_factory=list)
     hold_seconds_values: list[float] = field(default_factory=list)
     exit_reason_counts: dict[str, int] = field(default_factory=dict)
-    fast_stopout_count: int = 0     # closed within fast_stopout_minutes
+    fast_stopout_count: int = 0  # closed within fast_stopout_minutes
     catastrophic_loss_count: int = 0  # pnl_pct below catastrophic threshold
     last_entry_kst: str | None = None
     last_exit_kst: str | None = None
@@ -177,6 +209,7 @@ class ObservationDigest:
 # Data loading
 # ---------------------------------------------------------------------------
 
+
 def _load_trades_from_ledger(since: date) -> list[dict[str, Any]]:
     """Query futures trades from RuntimeLedger since *since* (inclusive)."""
     from shared.storage import SQLiteRuntimeLedger, StorageConfig
@@ -217,7 +250,11 @@ def _load_setup_eval_from_redis() -> dict[str, dict[str, str]]:
             try:
                 result[field_name] = json.loads(value)
             except Exception:  # noqa: BLE001
-                result[field_name] = {"outcome": "unknown", "reason": str(value), "ts_kst": ""}
+                result[field_name] = {
+                    "outcome": "unknown",
+                    "reason": str(value),
+                    "ts_kst": "",
+                }
     except Exception:  # noqa: BLE001 — Redis unavailable is non-fatal
         pass
     return result
@@ -226,6 +263,7 @@ def _load_setup_eval_from_redis() -> dict[str, dict[str, str]]:
 # ---------------------------------------------------------------------------
 # Computation
 # ---------------------------------------------------------------------------
+
 
 def _to_kst_str(iso: str) -> str:
     """Convert a UTC or naive ISO timestamp string to a KST ISO string.
@@ -315,6 +353,7 @@ def _build_early_warnings(
     since: date,
     fast_stopout_minutes: int,
     catastrophic_loss_pct: float,
+    eval_snapshots: list[SetupEvalSnapshot] | None = None,
 ) -> list[str]:
     from shared.strategy.market_time import now_kst
 
@@ -322,14 +361,40 @@ def _build_early_warnings(
     today = now_kst().date()
     days_observed = max(1, (today - since).days + 1)
 
+    # Build a name→reason lookup from eval snapshots for the 0-trade classifier.
+    reason_by_name: dict[str, str] = {}
+    if eval_snapshots:
+        for snap in eval_snapshots:
+            reason_by_name[snap.name] = snap.reason
+
     for name, s in stats.items():
-        short = name.replace("setup_", "").replace("_gap_reversion", " A").replace("_event_reaction", " C")
+        short = (
+            name.replace("setup_", "")
+            .replace("_gap_reversion", " A")
+            .replace("_event_reaction", " C")
+        )
 
         if s.trade_count == 0:
-            warnings.append(
-                f"{short}: 0 trades over {days_observed} day(s) — "
-                "strategy may be suppressed or config issue"
-            )
+            reason = reason_by_name.get(name, "")
+            if not reason:
+                # No eval data at all — cannot confirm the strategy is evaluating.
+                warnings.append(
+                    f"{short}: 0 trades over {days_observed} day(s) — "
+                    "possibly suppressed (no eval data); verify config/veto"
+                )
+            elif _is_legitimate_no_setup(reason):
+                # Selectivity gate fired — this is expected given A/C avg ~4.8 setups/mo.
+                warnings.append(
+                    f"{short}: 0 trades over {days_observed} day(s) — "
+                    f"no qualifying setup (reason: {reason}); "
+                    "expected, A/C avg ~4.8 setups/mo"
+                )
+            else:
+                # Suppression or config-error reason.
+                warnings.append(
+                    f"{short}: 0 trades over {days_observed} day(s) — "
+                    f"possibly suppressed (reason: {reason}); verify config/veto"
+                )
 
         if s.fast_stopout_count > 0 and s.trade_count > 0:
             fso_ratio = s.fast_stopout_count / s.trade_count
@@ -352,6 +417,7 @@ def _build_early_warnings(
 # ---------------------------------------------------------------------------
 # Formatting
 # ---------------------------------------------------------------------------
+
 
 def _fmt_pnl(pnl: float) -> str:
     sign = "+" if pnl >= 0 else ""
@@ -380,20 +446,24 @@ def _format_telegram(digest: ObservationDigest) -> str:
     else:
         lines.append("<b>Setup A/C Paper Observation</b>")
 
-    lines.append(f"Observation period: {digest.observation_start} to {digest.generated_kst[:10]}"
-                 f" ({digest.observation_days} day(s))")
+    lines.append(
+        f"Observation period: {digest.observation_start} to {digest.generated_kst[:10]}"
+        f" ({digest.observation_days} day(s))"
+    )
     lines.append("━" * 22)
 
     for s in digest.setup_stats:
         short = (
-            "Setup A (gap_reversion)" if s.name == SETUP_A
+            "Setup A (gap_reversion)"
+            if s.name == SETUP_A
             else "Setup C (event_reaction)"
         )
         n = s.trade_count
         threshold = digest.validation_n_threshold
         progress_bar = _n_bar(n, threshold)
         n_status = (
-            "READY FOR REVALIDATION" if n >= threshold
+            "READY FOR REVALIDATION"
+            if n >= threshold
             else f"N={n}/{threshold} — not yet validatable"
         )
 
@@ -449,6 +519,7 @@ def _format_telegram(digest: ObservationDigest) -> str:
 # Archive
 # ---------------------------------------------------------------------------
 
+
 def _write_archive(digest: ObservationDigest, report_date: date) -> Path:
     """Write digest as JSON to reports/setup_ac_paper_obs/YYYY-MM-DD.json."""
     _REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -481,6 +552,7 @@ def _write_archive(digest: ObservationDigest, report_date: date) -> Path:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def build_digest(
     since: date,
     *,
@@ -503,9 +575,13 @@ def build_digest(
     trades = trade_rows if trade_rows is not None else _load_trades_from_ledger(since)
     raw_eval = redis_eval if redis_eval is not None else _load_setup_eval_from_redis()
 
-    stats_map = _compute_setup_stats(trades, fast_stopout_minutes, catastrophic_loss_pct)
+    stats_map = _compute_setup_stats(
+        trades, fast_stopout_minutes, catastrophic_loss_pct
+    )
     eval_snapshots = _build_eval_snapshots(raw_eval)
-    warnings = _build_early_warnings(stats_map, since, fast_stopout_minutes, catastrophic_loss_pct)
+    warnings = _build_early_warnings(
+        stats_map, since, fast_stopout_minutes, catastrophic_loss_pct, eval_snapshots
+    )
 
     return ObservationDigest(
         generated_kst=now.isoformat(timespec="seconds"),
@@ -520,7 +596,9 @@ def build_digest(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--since",
         type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(),
@@ -537,8 +615,12 @@ def main() -> int:
 
     cfg = _load_obs_config()
     validation_n = int(_get_cfg(cfg, "validation_n_threshold", _DEFAULT_VALIDATION_N))
-    fast_stopout = int(_get_cfg(cfg, "fast_stopout_minutes", _DEFAULT_FAST_STOPOUT_MINUTES))
-    catastrophic = float(_get_cfg(cfg, "catastrophic_loss_pct", _DEFAULT_CATASTROPHIC_LOSS_PCT))
+    fast_stopout = int(
+        _get_cfg(cfg, "fast_stopout_minutes", _DEFAULT_FAST_STOPOUT_MINUTES)
+    )
+    catastrophic = float(
+        _get_cfg(cfg, "catastrophic_loss_pct", _DEFAULT_CATASTROPHIC_LOSS_PCT)
+    )
 
     if args.since is not None:
         since = args.since
@@ -576,7 +658,10 @@ def main() -> int:
                 if notifier is not None:
                     asyncio.run(notifier.send_message(msg, is_critical=True))
                 else:
-                    print("[warn] TELEGRAM_BRIEFING_* not configured; skipped send", file=sys.stderr)
+                    print(
+                        "[warn] TELEGRAM_BRIEFING_* not configured; skipped send",
+                        file=sys.stderr,
+                    )
             except Exception as exc:  # noqa: BLE001
                 print(f"[warn] telegram send failed: {exc}", file=sys.stderr)
 
