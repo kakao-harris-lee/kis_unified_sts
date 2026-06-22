@@ -151,3 +151,29 @@ async def test_exception_is_best_effort():
     )
     assert res.source == "none"
     assert res.minute_seeded == 0
+
+
+@pytest.mark.asyncio
+async def test_seed_daily_false_skips_daily_seeding():
+    """seed_daily=False must not call seed_daily_candles; minute seeding still happens."""
+    eng = _Engine()
+    store = _Store(minute=_bars(60), daily=_bars(252))
+    cfg = StockPrewarmConfig()
+    res = await warmup_engine(
+        eng, "005930", store=store, kis_client=None, config=cfg, seed_daily=False
+    )
+    assert res.daily_seeded == 0
+    assert "005930" not in eng.daily  # seed_daily_candles NOT called
+    assert res.minute_seeded == 60  # minute seeding unaffected
+    assert res.source == "parquet"
+
+
+@pytest.mark.asyncio
+async def test_seed_daily_true_default_still_seeds_daily():
+    """Default (seed_daily=True) must still seed daily — regression guard."""
+    eng = _Engine()
+    store = _Store(minute=_bars(60), daily=_bars(252))
+    cfg = StockPrewarmConfig()
+    res = await warmup_engine(eng, "005930", store=store, kis_client=None, config=cfg)
+    assert res.daily_seeded == 252
+    assert "005930" in eng.daily  # seed_daily_candles was called

@@ -109,6 +109,7 @@ async def warmup_engine(
     store: Any | None = None,
     kis_client: Any | None = None,
     config: StockPrewarmConfig | None = None,
+    seed_daily: bool = True,
 ) -> WarmupResult:
     """Warm one symbol: parquet minute → KIS REST minute (guarded), plus daily seed.
 
@@ -169,5 +170,5 @@ async def warmup_engine(
             source,
         )
 
-    daily_seeded = _seed_daily(engine, store, symbol, cfg)
+    daily_seeded = _seed_daily(engine, store, symbol, cfg) if seed_daily else 0
     return WarmupResult(minute_seeded, daily_seeded, source)
