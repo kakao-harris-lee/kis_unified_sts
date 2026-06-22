@@ -27,6 +27,14 @@ from shared.config.secrets import SecretsManager
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Pagination retry constants (per-page, not the whole-request retry)
+# ---------------------------------------------------------------------------
+# On HTTP 500 / rt_cd != "0" for page 2+, retry up to PAGE_MAX_RETRIES times
+# before breaking and returning whatever rows have been gathered so far.
+PAGE_MAX_RETRIES: int = 3
+PAGE_RETRY_BACKOFF_BASE: float = 2.0  # seconds; multiplied by attempt number
+
 
 # =============================================================================
 # Configuration
@@ -198,19 +206,25 @@ _rate_limiter_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_semaphore() -> asyncio.Semaphore:
+    # KIS allows ~5 req/s; bursting at 10-concurrent triggered the 500 cascade.
+    # Override via BACKFILL_CONCURRENCY env var (default: 3).
     global _semaphore, _semaphore_loop
     loop = asyncio.get_running_loop()
     if _semaphore is None or _semaphore_loop is not loop:
-        _semaphore = asyncio.Semaphore(10)
+        concurrency = int(os.getenv("BACKFILL_CONCURRENCY", "3"))
+        _semaphore = asyncio.Semaphore(concurrency)
         _semaphore_loop = loop
     return _semaphore
 
 
 def _get_rate_limiter() -> RateLimiter:
+    # KIS allows ~5 req/s; bursting at 20 rps triggered the 500 cascade.
+    # Override via BACKFILL_RPS env var (default: 5).
     global _rate_limiter, _rate_limiter_loop
     loop = asyncio.get_running_loop()
     if _rate_limiter is None or _rate_limiter_loop is not loop:
-        _rate_limiter = RateLimiter(20)
+        rps = int(os.getenv("BACKFILL_RPS", "5"))
+        _rate_limiter = RateLimiter(rps)
         _rate_limiter_loop = loop
     return _rate_limiter
 
@@ -312,28 +326,91 @@ async def fetch_minute_async(
                 while cursor_hour and pages_fetched < max_pages:
                     page_params = dict(params)
                     page_params["FID_INPUT_HOUR_1"] = cursor_hour
-                    await _get_rate_limiter().wait()
-                    page_resp = await client.get(
-                        url, headers=headers, params=page_params
-                    )
 
-                    if not page_resp.text or page_resp.text.strip() == "":
+                    # Per-page retry: on transient error (rt_cd != "0") OR network
+                    # exception (Timeout, ConnectError, etc.), retry the SAME cursor
+                    # up to PAGE_MAX_RETRIES times before giving up.
+                    # Genuinely terminal conditions (empty page, cursor non-advance)
+                    # are handled AFTER a successful (rt_cd == "0") response and are
+                    # NOT retried — they exit the while-loop normally.
+                    page_rows: list[dict] = []
+                    page_fetch_ok = False
+                    for page_attempt in range(PAGE_MAX_RETRIES):
+                        try:
+                            await _get_rate_limiter().wait()
+                            page_resp = await client.get(
+                                url, headers=headers, params=page_params
+                            )
+                        except (
+                            httpx.TimeoutException,
+                            httpx.ReadTimeout,
+                            httpx.ConnectError,
+                            httpx.RemoteProtocolError,
+                        ) as net_err:
+                            # Transient network error on this page — retry same cursor.
+                            if page_attempt < PAGE_MAX_RETRIES - 1:
+                                wait_s = PAGE_RETRY_BACKOFF_BASE * (page_attempt + 1)
+                                logger.warning(
+                                    "Page %d for %s %s network error (%s); "
+                                    "retry %d/%d in %.1fs",
+                                    pages_fetched + 1,
+                                    code,
+                                    date_str,
+                                    net_err,
+                                    page_attempt + 1,
+                                    PAGE_MAX_RETRIES,
+                                    wait_s,
+                                )
+                                await asyncio.sleep(wait_s)
+                            continue  # retry same cursor
+
+                        if not page_resp.text or page_resp.text.strip() == "":
+                            # Empty HTTP body — treat as terminal, not retryable.
+                            break
+
+                        try:
+                            page_data = page_resp.json()
+                        except Exception:
+                            # Unparseable response — treat as terminal.
+                            break
+
+                        if page_data.get("rt_cd") != "0":
+                            # Transient KIS error (e.g. HTTP 500 wrapper or EGW error).
+                            # Retry with backoff unless retries are exhausted.
+                            if page_attempt < PAGE_MAX_RETRIES - 1:
+                                wait_s = PAGE_RETRY_BACKOFF_BASE * (page_attempt + 1)
+                                logger.warning(
+                                    "Page %d for %s %s returned rt_cd=%s; "
+                                    "retry %d/%d in %.1fs",
+                                    pages_fetched + 1,
+                                    code,
+                                    date_str,
+                                    page_data.get("rt_cd"),
+                                    page_attempt + 1,
+                                    PAGE_MAX_RETRIES,
+                                    wait_s,
+                                )
+                                await asyncio.sleep(wait_s)
+                            continue  # retry same cursor
+
+                        # rt_cd == "0": parse rows and decide whether to continue
+                        page_rows_raw = page_data.get("output2", [])
+                        if not isinstance(page_rows_raw, list):
+                            break  # malformed — treat as terminal
+
+                        page_rows = [
+                            row for row in page_rows_raw if isinstance(row, dict)
+                        ]
+                        page_fetch_ok = True
+                        break  # successful fetch; exit retry loop
+
+                    if not page_fetch_ok:
+                        # All retries exhausted or a terminal condition hit.
+                        # Return whatever rows we have gathered so far (best-effort).
                         break
 
-                    try:
-                        page_data = page_resp.json()
-                    except Exception:
-                        break
-
-                    if page_data.get("rt_cd") != "0":
-                        break
-
-                    page_rows_raw = page_data.get("output2", [])
-                    if not isinstance(page_rows_raw, list):
-                        break
-
-                    page_rows = [row for row in page_rows_raw if isinstance(row, dict)]
                     if not page_rows:
+                        # rt_cd == "0" but no rows → genuine end-of-data.
                         break
 
                     # Drop overlapped first row if identical to previous page tail.

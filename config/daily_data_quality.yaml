@@ -12,3 +12,27 @@ repeated_ohlcv_run_min: 5
 
 # Drop rows with zero/negative volume before indicator calculation.
 reject_nonpositive_volume: true
+
+# Futures-minute coverage gate (post-backfill alert on shortfall).
+#
+# After the daily futures-minute backfill, the active mini front-month is
+# checked for >= the Task-3 completeness threshold of one-minute bars on each
+# closed trading day in the window.  On shortfall an operator Telegram alert is
+# emitted so a silent ~70%-loss never recurs.  READ-ONLY on parquet.
+futures_minute_coverage:
+  # Trading-day window to verify (calendar-aware; non-trading days ignored).
+  lookback_days: 5
+  # Minimum bars to call a closed day "covered".  Empty => reuse the Task-3
+  # parquet_backfill completeness threshold (MINUTE_COMPLETENESS_MIN_ROWS),
+  # the single source of truth for "expected bars".  Env override:
+  # FUTURES_MINUTE_COVERAGE_MIN_ROWS.
+  min_rows: null
+  # Lower floor below which a short day is treated as a real shortfall.
+  # Counts at/above this floor (but below min_rows) are tolerated as a plausible
+  # early-close / half-day.  Empty => MINUTE_SESSION_BARS // 2 - 52 ≈ 150, which
+  # sits below a genuine KRX half-day (~200 bars) so real early-closes pass, while
+  # a single-KIS-page-only fetch (~102 bars) is still flagged.
+  half_day_min_rows: null
+  # Front-month product to verify ("mini" or "kospi200").
+  product: "mini"
+  notify_on_shortfall: true

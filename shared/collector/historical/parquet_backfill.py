@@ -9,6 +9,8 @@ normal backfill, resume, or status checks.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -20,7 +22,41 @@ import httpx
 
 from shared.storage import ParquetMarketDataStore, StorageConfig
 
-from .calendar import get_trading_days_range, is_after_market_close, is_trading_day
+from .calendar import (
+    MARKET_CLOSE,
+    MARKET_OPEN,
+    get_trading_days_range,
+    is_after_market_close,
+    is_trading_day,
+)
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Completeness-gate constants (config-driven via env vars)
+# ---------------------------------------------------------------------------
+
+
+# Full KOSPI200-mini regular session bar count, derived from calendar hours:
+#   09:00 -> 15:45  = 405 one-minute bars.
+def _parse_hhmm(t: str) -> int:
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
+
+
+MINUTE_SESSION_BARS: int = _parse_hhmm(MARKET_CLOSE) - _parse_hhmm(MARKET_OPEN)
+
+# Fraction of the full session required to call a day "complete".
+# Default 0.75 → 303 bars.  Above the KIS single-page cap (102) so a one-page
+# fetch is always detected.  Below the full session to absorb late-opening /
+# early-closing edge cases (no half-day calendar currently available).
+# Override via BACKFILL_MINUTE_COMPLETENESS_FRACTION env var.
+_COMPLETENESS_FRACTION: float = float(
+    os.getenv("BACKFILL_MINUTE_COMPLETENESS_FRACTION", "0.75")
+)
+MINUTE_COMPLETENESS_MIN_ROWS: int = max(
+    1, int(MINUTE_SESSION_BARS * _COMPLETENESS_FRACTION)
+)
 
 AssetClass = Literal["stock", "futures"]
 Timeframe = Literal["minute", "daily"]
@@ -221,6 +257,16 @@ def _state_for_root(root: Path) -> ParquetBackfillState:
     return ParquetBackfillState(root / "_metadata" / "backfill_state.sqlite3")
 
 
+def _is_day_closed(d: date) -> bool:
+    """Check if a trading day is fully closed (past or today+after-close).
+
+    A day is closed if it is strictly before today, OR it is today AND the market
+    has closed after 15:45 KST.  Used by the completeness gate to decide whether
+    to apply the minimum-bar check.  Testable: can be patched.
+    """
+    return (d < date.today()) or (d == date.today() and is_after_market_close())
+
+
 def _ohlcv_dicts(rows: Iterable[tuple]) -> list[dict[str, Any]]:
     return [
         {
@@ -333,14 +379,41 @@ async def _write_minute_tasks(
         written = store.replace_minute_day(code, day, _ohlcv_dicts(rows))
         fetched_rows[code] = rows
         result.rows += written
-        state.mark_success(
-            asset_class=asset_class,
-            timeframe="minute",
-            dataset=dataset,
-            code=code,
-            trade_date=day,
-            rows=written,
-        )
+
+        # Completeness gate: only apply to fully closed past days.
+        # For in-progress days we cannot know the final bar count yet, so we only
+        # apply the gate to fully closed past days.
+        if _is_day_closed(day) and written < MINUTE_COMPLETENESS_MIN_ROWS:
+            log.warning(
+                "Completeness gate: %s %s %s has only %d/%d minute bars — "
+                "marking failed so resume re-attempts",
+                dataset,
+                code,
+                day,
+                written,
+                MINUTE_COMPLETENESS_MIN_ROWS,
+            )
+            result.failed += 1
+            state.mark_failed(
+                asset_class=asset_class,
+                timeframe="minute",
+                dataset=dataset,
+                code=code,
+                trade_date=day,
+                error=(
+                    f"completeness gate: {written} bars < "
+                    f"expected {MINUTE_COMPLETENESS_MIN_ROWS}"
+                ),
+            )
+        else:
+            state.mark_success(
+                asset_class=asset_class,
+                timeframe="minute",
+                dataset=dataset,
+                code=code,
+                trade_date=day,
+                rows=written,
+            )
         if verbose:
             print(f"Parquet wrote {dataset} {code} {day}: rows={written}")
 
