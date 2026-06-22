@@ -70,7 +70,9 @@ from shared.risk.config import RiskConfig
 from shared.risk.manager import RiskManager
 from shared.risk.models import DrawdownLevel
 from shared.storage.config import StorageConfig
+from shared.storage.market_data_store import ParquetMarketDataStore
 from shared.strategy.base import EntryContext, MarketStateAdapter
+from shared.streaming.candle_warmup import StockPrewarmConfig, warmup_engine
 from shared.utils.calc import calc_order_quantity
 
 try:
@@ -3812,6 +3814,11 @@ class TradingOrchestrator:
         """Seed indicator engine with historical candles.
 
         Priority: Redis candle cache -> Parquet market data -> KIS REST API.
+
+        Per-symbol parquet→REST→daily logic is delegated to the shared
+        ``warmup_engine`` (``shared.streaming.candle_warmup``).  Tier-0
+        (Redis candle cache) is handled here because warmup_engine does not
+        cover that tier.
         """
         logger.info(f"Prewarm starting for {len(symbols)} symbols")
 
@@ -3821,6 +3828,25 @@ class TradingOrchestrator:
 
         # 1st priority: Redis candle cache (instant, works for all assets)
         redis_hits = await self._load_candle_cache_from_redis()
+
+        # Build a single ParquetMarketDataStore for all symbols (reused per symbol).
+        parquet_root = StorageConfig.load_or_default().market_data.parquet.root
+        store = ParquetMarketDataStore(
+            parquet_root, asset_class=self.config.asset_class
+        )
+
+        # Map orchestrator knobs → shared warmup config.
+        # Futures need more minute candles for 15m resampling strategies
+        # (e.g. BB period=43 on 15m bars → 43*15=645 1-min candles).
+        parquet_minute_limit = 700 if self.config.asset_class == "futures" else 120
+        warmup_cfg = StockPrewarmConfig(
+            parquet_minute_limit=parquet_minute_limit,
+            rest_count=120,
+            rest_enabled=True,
+            min_candles=warmup_min_candles,
+        )
+        # Futures must NOT seed daily candles (preserve existing behaviour).
+        do_seed_daily = self.config.asset_class == "stock"
 
         parquet_hits = 0
         kis_hits = 0
@@ -3832,39 +3858,39 @@ class TradingOrchestrator:
             if symbol not in set(self.config.symbols):
                 continue
             try:
-                # Parquet first (no rate limit, fast, serverless).
-                # Futures need more candles for 15m resampling strategies
-                # (e.g. BB period=43 on 15m bars → 43*15=645 1-min candles).
-                parquet_limit = 700 if self.config.asset_class == "futures" else 120
-                candles = await self._fetch_candles_from_market_data_store(
-                    symbol, limit=parquet_limit
+                result = await warmup_engine(
+                    self._indicator_engine,
+                    symbol,
+                    store=store,
+                    kis_client=self._kis_client,
+                    config=warmup_cfg,
+                    seed_daily=do_seed_daily,
                 )
-                if candles:
+
+                # Map WarmupResult → existing counters and observability.
+                if result.source == "parquet":
                     parquet_hits += 1
-                elif self._kis_client.is_rate_limited:
-                    # Skip KIS REST when rate limiter is in penalty/cooldown
-                    logger.debug(f"Prewarm {symbol}: skipping KIS REST (rate limited)")
-                    continue
-                else:
-                    # Fallback to KIS REST
-                    candles = await asyncio.wait_for(
-                        self._kis_client.get_minute_bars(symbol, count=120),
-                        timeout=5.0,
+                elif result.source == "rest":
+                    kis_hits += 1
+
+                if result.daily_seeded:
+                    daily_parquet_hits += 1
+                    logger.info(
+                        f"Prewarm {symbol}: {result.daily_seeded} daily candles seeded"
                     )
-                    if candles:
-                        kis_hits += 1
-                    await asyncio.sleep(0.3)  # rate-limit protection
-                if candles:
-                    self._indicator_engine.seed_candles(symbol, candles)
-                    logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
-                    if len(candles) < warmup_min_candles:
+
+                if result.minute_seeded > 0:
+                    logger.info(
+                        f"Prewarm {symbol}: {result.minute_seeded} candles seeded"
+                    )
+                    if result.minute_seeded < warmup_min_candles:
                         # Not a hard miss (some bars returned) but below threshold —
                         # indicators may be under-initialised.
                         logger.warning(
                             "Prewarm %s: only %d candles returned "
                             "(asset=%s, min_expected=%d); indicators may be under-initialised",
                             symbol,
-                            len(candles),
+                            result.minute_seeded,
                             self.config.asset_class,
                             warmup_min_candles,
                         )
@@ -3881,19 +3907,6 @@ class TradingOrchestrator:
                         self.config.asset_class,
                         self._warmup_miss_count,
                     )
-
-                if self.config.asset_class == "stock":
-                    daily_candles = (
-                        await self._fetch_daily_candles_from_market_data_store(
-                            symbol, limit=252
-                        )
-                    )
-                    if daily_candles:
-                        daily_parquet_hits += 1
-                        self._indicator_engine.seed_daily_candles(symbol, daily_candles)
-                        logger.info(
-                            f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded"
-                        )
             except (TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
         logger.info(

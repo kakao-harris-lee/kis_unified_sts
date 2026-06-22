@@ -9,6 +9,13 @@ Tests verify:
 - B: _fetch_candles_from_market_data_store exception emits WARNING (not just debug).
 
 No hardcoded datetimes; no real network/Redis/Parquet connections used.
+
+After the DRY refactor (Task B) the per-symbol parquet→REST→daily block was
+delegated to ``shared.streaming.candle_warmup.warmup_engine``.  The prewarm
+tests now patch ``services.trading.orchestrator.warmup_engine`` at that new
+seam so they remain hermetic while still covering the observable behaviour
+the original tests guarded (miss counting, WARNING text, daily-seed for stock,
+Redis-cache tier consulted before the loop, futures no daily seed).
 """
 
 import logging
@@ -50,6 +57,7 @@ def _make_minimal_orchestrator(asset_class: str = "stock"):
         orch._indicator_engine = None
         orch._tick_stream_publisher = None
         orch._position_tracker = None
+        orch._kis_client = MagicMock()
         orch._feed_drop_last = {"stock": 0, "futures": 0}
         orch._warmup_miss_count = 0
         orch._feed_obs_cfg = None  # will be loaded lazily
@@ -239,32 +247,43 @@ class TestFeedDropWarnings:
 
 
 class TestWarmupMissWarnings:
-    """B: _prewarm_symbols warns when a symbol returns 0 or too few bars."""
+    """B: _prewarm_symbols warns when a symbol returns 0 or too few bars.
+
+    Since the DRY refactor delegated per-symbol parquet→REST→daily logic to
+    ``warmup_engine``, these tests patch ``warmup_engine`` at the new seam
+    (``services.trading.orchestrator.warmup_engine``) to return controlled
+    ``WarmupResult`` values.  The observable behaviour being tested is unchanged:
+    - 0 bars → WARNING + _warmup_miss_count increment + record_warmup_miss()
+    - bars < min_candles → WARNING + increment
+    - bars >= min_candles → no miss
+    - multiple symbols accumulate correctly
+    - Redis-cache tier is consulted before the per-symbol loop
+    - daily seed happens for stock, not for futures
+    """
 
     @pytest.mark.asyncio
     async def test_zero_bars_logs_warning_and_increments_counter(self, caplog):
-        """B: symbol returning 0 bars from all sources → WARNING + miss counter."""
+        """B: warmup_engine returning 0 minute bars → WARNING + miss counter."""
+        from shared.streaming.candle_warmup import WarmupResult
+
         orch = _make_minimal_orchestrator("stock")
         _patch_feed_obs_cfg(orch, {"warmup_min_candles": 20})
 
-        # Indicator engine says symbol is not warm.
         mock_ie = MagicMock()
         mock_ie.is_warm.return_value = False
         orch._indicator_engine = mock_ie
 
-        # KIS client not rate limited, but returns nothing.
-        mock_kis = MagicMock()
-        mock_kis.is_rate_limited = False
-        mock_kis.get_minute_bars = AsyncMock(return_value=[])
-        orch._kis_client = mock_kis
-
-        # Mock dependencies for _prewarm_symbols internals.
         orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
-        orch._fetch_candles_from_market_data_store = AsyncMock(return_value=[])
-        orch._fetch_daily_candles_from_market_data_store = AsyncMock(return_value=[])
 
-        with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
-            await orch._prewarm_symbols(["A000000"])
+        # warmup_engine returns 0 minute bars from all sources.
+        with patch(
+            "services.trading.orchestrator.warmup_engine",
+            new=AsyncMock(return_value=WarmupResult(0, 0, "none")),
+        ):
+            with caplog.at_level(
+                logging.WARNING, logger="services.trading.orchestrator"
+            ):
+                await orch._prewarm_symbols(["A000000"])
 
         assert (
             orch._warmup_miss_count == 1
@@ -279,35 +298,27 @@ class TestWarmupMissWarnings:
 
     @pytest.mark.asyncio
     async def test_below_min_candles_logs_warning(self, caplog):
-        """B: symbol returning fewer bars than warmup_min_candles warns + increments."""
+        """B: warmup_engine returning bars < warmup_min_candles warns + increments."""
+        from shared.streaming.candle_warmup import WarmupResult
+
         orch = _make_minimal_orchestrator("stock")
         _patch_feed_obs_cfg(orch, {"warmup_min_candles": 20})
 
         mock_ie = MagicMock()
         mock_ie.is_warm.return_value = False
-        mock_ie.seed_candles = MagicMock()
         orch._indicator_engine = mock_ie
 
-        # Parquet returns 5 bars (below min 20).
-        sparse_candles = [
-            {
-                "datetime": "2026-05-01 09:00",
-                "open": 1,
-                "high": 1,
-                "low": 1,
-                "close": 1,
-                "volume": 1,
-            }
-            for _ in range(5)
-        ]
         orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
-        orch._fetch_candles_from_market_data_store = AsyncMock(
-            return_value=sparse_candles
-        )
-        orch._fetch_daily_candles_from_market_data_store = AsyncMock(return_value=[])
 
-        with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
-            await orch._prewarm_symbols(["A000000"])
+        # 5 minute bars from parquet — below the min 20.
+        with patch(
+            "services.trading.orchestrator.warmup_engine",
+            new=AsyncMock(return_value=WarmupResult(5, 0, "parquet")),
+        ):
+            with caplog.at_level(
+                logging.WARNING, logger="services.trading.orchestrator"
+            ):
+                await orch._prewarm_symbols(["A000000"])
 
         assert orch._warmup_miss_count == 1
         warning_msgs = [
@@ -320,41 +331,40 @@ class TestWarmupMissWarnings:
 
     @pytest.mark.asyncio
     async def test_sufficient_candles_no_miss(self, caplog):
-        """B: symbol returning >= warmup_min_candles bars does NOT trigger miss."""
+        """B: warmup_engine returning >= warmup_min_candles bars → no miss."""
+        from shared.streaming.candle_warmup import WarmupResult
+
         orch = _make_minimal_orchestrator("stock")
         _patch_feed_obs_cfg(orch, {"warmup_min_candles": 5})
 
         mock_ie = MagicMock()
         mock_ie.is_warm.return_value = False
-        mock_ie.seed_candles = MagicMock()
         orch._indicator_engine = mock_ie
 
-        enough_candles = [
-            {
-                "datetime": "2026-05-01 09:00",
-                "open": 1,
-                "high": 1,
-                "low": 1,
-                "close": 1,
-                "volume": 1,
-            }
-            for _ in range(10)
-        ]
         orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
-        orch._fetch_candles_from_market_data_store = AsyncMock(
-            return_value=enough_candles
-        )
-        orch._fetch_daily_candles_from_market_data_store = AsyncMock(return_value=[])
 
-        with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
-            await orch._prewarm_symbols(["A000000"])
+        # 10 minute bars — at or above min 5.
+        with patch(
+            "services.trading.orchestrator.warmup_engine",
+            new=AsyncMock(return_value=WarmupResult(10, 0, "parquet")),
+        ):
+            with caplog.at_level(
+                logging.WARNING, logger="services.trading.orchestrator"
+            ):
+                await orch._prewarm_symbols(["A000000"])
 
         assert orch._warmup_miss_count == 0
         orch._metrics.record_warmup_miss.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_parquet_exception_emits_warning_not_debug(self, caplog, monkeypatch):
-        """B: _fetch_candles_from_market_data_store exception → WARNING (not just DEBUG)."""
+        """B: _fetch_candles_from_market_data_store exception → WARNING (not just DEBUG).
+
+        This method is still present in the orchestrator (kept to avoid bloating
+        the diff — it may be removed in a follow-up cleanup PR).  The test
+        exercises the method directly to ensure the exception-handling contract
+        (WARNING level, not DEBUG) has not regressed.
+        """
         orch = _make_minimal_orchestrator("stock")
 
         import shared.storage
@@ -378,6 +388,8 @@ class TestWarmupMissWarnings:
     @pytest.mark.asyncio
     async def test_multiple_symbols_accumulate_miss_count(self):
         """B: misses from multiple symbols accumulate in _warmup_miss_count."""
+        from shared.streaming.candle_warmup import WarmupResult
+
         symbols = ["A000001", "A000002", "A000003"]
         orch = _make_minimal_orchestrator("stock")
         # Override config.symbols so the eviction guard doesn't skip the test symbols.
@@ -390,19 +402,84 @@ class TestWarmupMissWarnings:
         mock_ie.is_warm.return_value = False
         orch._indicator_engine = mock_ie
 
-        mock_kis = MagicMock()
-        mock_kis.is_rate_limited = False
-        mock_kis.get_minute_bars = AsyncMock(return_value=[])
-
-        orch._kis_client = mock_kis
         orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
-        orch._fetch_candles_from_market_data_store = AsyncMock(return_value=[])
-        orch._fetch_daily_candles_from_market_data_store = AsyncMock(return_value=[])
 
-        await orch._prewarm_symbols(symbols)
+        # All symbols return 0 bars — each should be a miss.
+        with patch(
+            "services.trading.orchestrator.warmup_engine",
+            new=AsyncMock(return_value=WarmupResult(0, 0, "none")),
+        ):
+            await orch._prewarm_symbols(symbols)
 
         assert orch._warmup_miss_count == 3
         assert orch._metrics.record_warmup_miss.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_redis_cache_tier_consulted_before_per_symbol_loop(self):
+        """B: _load_candle_cache_from_redis is called before warmup_engine per symbol."""
+        from shared.streaming.candle_warmup import WarmupResult
+
+        orch = _make_minimal_orchestrator("stock")
+        _patch_feed_obs_cfg(orch)
+
+        mock_ie = MagicMock()
+        mock_ie.is_warm.return_value = False
+        orch._indicator_engine = mock_ie
+
+        redis_mock = AsyncMock(return_value=1)
+        orch._load_candle_cache_from_redis = redis_mock
+
+        call_order: list[str] = []
+        redis_mock.side_effect = lambda: call_order.append("redis") or 1
+
+        async def _fake_warmup_engine(*_a, **_kw):
+            call_order.append("warmup_engine")
+            return WarmupResult(30, 0, "parquet")
+
+        with patch(
+            "services.trading.orchestrator.warmup_engine", new=_fake_warmup_engine
+        ):
+            await orch._prewarm_symbols(["A000000"])
+
+        assert call_order[0] == "redis", (
+            "Redis cache tier must be consulted before warmup_engine; "
+            f"actual order: {call_order}"
+        )
+        assert "warmup_engine" in call_order
+
+    @pytest.mark.asyncio
+    async def test_stock_gets_daily_seed_futures_does_not(self):
+        """B: warmup_engine is called with seed_daily=True for stock, False for futures."""
+        from shared.streaming.candle_warmup import WarmupResult
+
+        for asset_class, expected_seed_daily in [("stock", True), ("futures", False)]:
+            orch = _make_minimal_orchestrator(asset_class)
+            _patch_feed_obs_cfg(orch)
+
+            mock_ie = MagicMock()
+            mock_ie.is_warm.return_value = False
+            orch._indicator_engine = mock_ie
+            orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
+
+            captured_kwargs: dict = {}
+
+            async def _fake_warmup_engine(*_a, **kw):
+                captured_kwargs.update(kw)
+                return WarmupResult(30, 0, "parquet")
+
+            symbol = "A000000" if asset_class == "stock" else "A05603"
+            orch.config.symbols = [symbol]
+
+            with patch(
+                "services.trading.orchestrator.warmup_engine",
+                new=_fake_warmup_engine,
+            ):
+                await orch._prewarm_symbols([symbol])
+
+            assert captured_kwargs.get("seed_daily") == expected_seed_daily, (
+                f"asset_class={asset_class}: expected seed_daily={expected_seed_daily}, "
+                f"got {captured_kwargs.get('seed_daily')}"
+            )
 
 
 # ---------------------------------------------------------------------------
