@@ -1,5 +1,11 @@
 # momentum_breakout Paper Trading Guide
 
+> **ARCHIVED 2026-06-22:** Historical per-strategy CLI guide from the
+> pre-decoupled stock runtime. `momentum_breakout` remains enabled for paper
+> observation, but current operation is through the decoupled Compose pipeline;
+> see [ROADMAP.md](../ROADMAP.md) and
+> [stock-pipeline-cutover-m5d.md](../runbooks/stock-pipeline-cutover-m5d.md).
+
 ## Overview
 
 This guide covers starting, monitoring, and managing paper trading for the `momentum_breakout` stock strategy.

@@ -25,6 +25,7 @@ import {
   BuilderActionBar,
   type StageRailItem,
 } from "@/components/builder";
+import { StrategyPromotionBoard } from "@/components/builder/StrategyPromotionBoard";
 import { useStrategyBuilder, INITIAL_STATE } from "@/hooks/useStrategyBuilder";
 import { useLocalStrategies } from "@/hooks/useLocalStrategies";
 import { listKisBuilderPresets, previewCodeFromState, registerPaperStrategy } from "@/lib/api";
@@ -477,7 +478,7 @@ export default function BuilderPage() {
               </div>
               {builder.state.assetClass === "futures" && (
                 <span className="text-xs text-amber-600 dark:text-amber-400">
-                  선물은 long-only (Phase 1) · EOD 15:15·하드스톱 자동 적용
+                  선물은 long/short 대칭 유지 · EOD 15:15·하드스톱 자동 적용
                 </span>
               )}
             </div>
@@ -566,6 +567,12 @@ export default function BuilderPage() {
           </div>
         </div>
       </div>
+
+      <StrategyPromotionBoard
+        localStrategies={localStrategies.strategies}
+        presetStrategies={presetStrategies}
+        refreshSignal={registeredRefresh}
+      />
     </div>
   );
 }

@@ -1,10 +1,19 @@
 # Daily Indicator Scanner Verification Guide
 
+> **Current scheduler model (2026-06-22):** KIS scheduled jobs run through the
+> Compose `scheduler` profile and `deploy/scheduler.crontab`, not host crontab.
+> The legacy `scripts/cron/daily_indicator_scanner.sh` wrapper is retained for
+> manual/rollback use only.
+
 ## Overview
 
-The daily indicator scanner (`scripts/daily_indicator_scanner.py`) is a critical component for paper trading strategies. It pre-computes daily indicators (SMA, RSI, ATR, Highest High) before market open and publishes them to Redis for consumption by the `TradingOrchestrator`.
+The daily indicator scanner (`scripts/daily_indicator_scanner.py`) is a critical
+component for stock paper strategies. It pre-computes daily indicators (SMA,
+RSI, ATR, Highest High) before market open and publishes them to Redis for the
+stock strategy pipeline.
 
-**Schedule:** 08:50 KST daily (Mon-Fri), 20 minutes before market open at 09:00 KST
+**Schedule:** 08:50 and 08:58 KST daily (Mon-Fri) from
+`deploy/scheduler.crontab`, after the 08:30 daily scanner.
 
 **Redis Key:** `system:daily_indicators:latest`
 
@@ -19,46 +28,52 @@ Run the automated verification script:
 ```
 
 This checks:
-- ✓ Cron script files exist
-- ✓ Crontab configuration (08:50 KST, Mon-Fri)
+- ✓ Redis DB policy
+- ✓ Parquet market data availability
+- ✓ Daily scanner module import/CLI readiness
+- ✓ Environment prerequisites
+
+Then verify the scheduled Compose job:
+
+```bash
+docker compose --env-file .env.paper --profile scheduler ps scheduler
+docker compose --env-file .env.paper logs --tail 50 scheduler | grep -i daily_indicator
+rg "daily_indicator_scanner" deploy/scheduler.crontab
+```
+
+This checks:
+- ✓ Scheduler service is running
+- ✓ `deploy/scheduler.crontab` includes the 08:50 and 08:58 KST jobs
 - ✓ Redis connectivity
 - ✓ Redis key exists and has data
 - ✓ Data freshness (< 24 hours)
-- ✓ Scanner script syntax
-- ✓ Environment variables
 
 ## Manual Verification Steps
 
-### 1. Verify Crontab Configuration
+### 1. Verify Compose Scheduler Configuration
 
-**Check if cron job is scheduled:**
+**Check if the scheduler job is registered:**
 
 ```bash
-crontab -l | grep daily_indicator_scanner
+rg "daily_indicator_scanner" deploy/scheduler.crontab
 ```
 
 **Expected output:**
 
 ```
-50 8 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/daily_indicator_scanner.sh
+50 8  * * 1-5  cd /app && python scripts/daily_indicator_scanner.py
+58 8  * * 1-5  cd /app && python scripts/daily_indicator_scanner.py
 ```
 
-**If not found, add to crontab:**
+**Check the scheduler container:**
 
 ```bash
-crontab -e
+docker compose --env-file .env.paper --profile scheduler ps scheduler
+docker compose --env-file .env.paper logs --tail 50 scheduler
 ```
 
-Add the following line:
-
-```
-50 8 * * 1-5 /path/to/project/kis_unified_sts/scripts/cron/daily_indicator_scanner.sh
-```
-
-**Important:**
-- Replace `/path/to/project` with your actual project path
-- Use absolute paths (not relative)
-- Ensure the shell script is executable: `chmod +x scripts/cron/daily_indicator_scanner.sh`
+If the job is missing from `deploy/scheduler.crontab`, update that file and
+redeploy the scheduler profile. Do not add new KIS host-crontab entries.
 
 ### 2. Verify Redis Key Exists
 
@@ -154,23 +169,12 @@ python scripts/daily_indicator_scanner.py
 python scripts/daily_indicator_scanner.py --symbols 005930,000660,373220
 ```
 
-### 4. Verify Cron Job Logs
+### 4. Verify Scheduler Logs
 
-**Check system logs for cron execution:**
+**Check scheduler logs for execution:**
 
-On macOS:
 ```bash
-log show --predicate 'process == "cron"' --last 1h | grep daily-indicator-scanner
-```
-
-On Linux (systemd):
-```bash
-journalctl -t daily-indicator-scanner --since "1 day ago"
-```
-
-On Linux (syslog):
-```bash
-grep daily-indicator-scanner /var/log/syslog
+docker compose --env-file .env.paper logs --since 24h scheduler | grep -i daily_indicator
 ```
 
 **Expected log entries (daily at 08:50):**
@@ -209,31 +213,21 @@ redis-cli -h localhost -p 6379 -n 1 GET system:daily_indicators:latest | \
 
 ## Troubleshooting
 
-### Issue: Cron job not executing
+### Issue: Scheduler job not executing
 
-**Check crontab syntax:**
+**Check scheduler registration:**
 ```bash
-crontab -l
+rg "daily_indicator_scanner" deploy/scheduler.crontab
 ```
 
-**Verify cron service is running:**
+**Verify scheduler service is running:**
 ```bash
-# macOS
-sudo launchctl list | grep cron
-
-# Linux
-sudo systemctl status cron
+docker compose --env-file .env.paper --profile scheduler ps scheduler
 ```
 
-**Check script permissions:**
+**Test scanner manually:**
 ```bash
-ls -la scripts/cron/daily_indicator_scanner.sh
-# Should show: -rwxr-xr-x (executable)
-```
-
-**Test script manually:**
-```bash
-./scripts/cron/daily_indicator_scanner.sh
+python scripts/daily_indicator_scanner.py
 ```
 
 ### Issue: Redis key not populated
@@ -262,14 +256,14 @@ python scripts/daily_indicator_scanner.py 2>&1 | tee scanner_debug.log
 
 ### Issue: Stale data (> 24 hours old)
 
-**Check cron job is running:**
+**Check scheduler job is registered:**
 ```bash
-crontab -l | grep daily_indicator_scanner
+rg "daily_indicator_scanner" deploy/scheduler.crontab
 ```
 
-**Check recent cron logs:**
+**Check recent scheduler logs:**
 ```bash
-journalctl -t daily-indicator-scanner --since "2 days ago"
+docker compose --env-file .env.paper logs --since 48h scheduler | grep -i daily_indicator
 ```
 
 **Force manual update:**

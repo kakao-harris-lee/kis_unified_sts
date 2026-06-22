@@ -2,6 +2,7 @@
 
 import os
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -27,6 +28,16 @@ class SignalResponse(BaseModel):
     timestamp: datetime
     executed: bool
     setup_type: str | None = None
+    status: str | None = None
+    reason: str | None = None
+    reject_stage: str | None = None
+    reject_reason: str | None = None
+    orderability_state: str | None = None
+    orderability_details: dict[str, Any] | None = None
+    order_id: str | None = None
+    fill_id: str | None = None
+    position_id: str | None = None
+    trade_id: str | None = None
 
 
 class SignalListResponse(BaseModel):
@@ -62,6 +73,35 @@ def _load_signals(asset_class: str) -> list[dict]:
         return []
 
 
+def _trace_source(s: dict) -> dict:
+    trace = s.get("trace")
+    if isinstance(trace, dict):
+        return trace
+    metadata = s.get("metadata")
+    if isinstance(metadata, dict):
+        nested_trace = metadata.get("trace")
+        if isinstance(nested_trace, dict):
+            return nested_trace
+    return {}
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _as_optional_str(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _as_optional_dict(value: Any) -> dict[str, Any] | None:
+    return value if isinstance(value, dict) else None
+
+
 def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
     try:
         # Always emit tz-aware UTC timestamps so callers (e.g.
@@ -73,6 +113,15 @@ def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
         else:
             ts = datetime.now(UTC)
         confidence = float(s.get("confidence", s.get("strength", 0)) or 0)
+        trace = _trace_source(s)
+        orderability = _first_present(s.get("orderability"), trace.get("orderability"))
+        orderability_details = _as_optional_dict(
+            _first_present(
+                s.get("orderability_details"),
+                trace.get("orderability_details"),
+                orderability,
+            )
+        )
         return SignalResponse(
             id=s.get("id", ""),
             asset_class=asset_class,
@@ -86,6 +135,38 @@ def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
             timestamp=ts,
             executed=bool(s.get("executed", False)),
             setup_type=s.get("setup_type") or s.get("stage") or None,
+            status=_as_optional_str(_first_present(s.get("status"), trace.get("status"))),
+            reason=_as_optional_str(_first_present(s.get("reason"), trace.get("reason"))),
+            reject_stage=_as_optional_str(
+                _first_present(
+                    s.get("reject_stage"),
+                    s.get("rejected_stage"),
+                    trace.get("reject_stage"),
+                    trace.get("rejected_stage"),
+                )
+            ),
+            reject_reason=_as_optional_str(
+                _first_present(
+                    s.get("reject_reason"),
+                    s.get("rejection_reason"),
+                    trace.get("reject_reason"),
+                    trace.get("rejection_reason"),
+                )
+            ),
+            orderability_state=_as_optional_str(
+                _first_present(
+                    s.get("orderability_state"),
+                    trace.get("orderability_state"),
+                    orderability.get("state") if isinstance(orderability, dict) else orderability,
+                )
+            ),
+            orderability_details=orderability_details,
+            order_id=_as_optional_str(_first_present(s.get("order_id"), trace.get("order_id"))),
+            fill_id=_as_optional_str(_first_present(s.get("fill_id"), trace.get("fill_id"))),
+            position_id=_as_optional_str(
+                _first_present(s.get("position_id"), trace.get("position_id"))
+            ),
+            trade_id=_as_optional_str(_first_present(s.get("trade_id"), trace.get("trade_id"))),
         )
     except (ValueError, TypeError, KeyError):
         # Invalid signal data - skip this record

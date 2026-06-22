@@ -1,6 +1,6 @@
 # Plans Index
 
-Last updated: 2026-06-20.
+Last updated: 2026-06-22.
 
 This index separates plans that still affect operational decisions from completed
 implementation records. For the current runtime snapshot, start with
@@ -12,6 +12,7 @@ scattered plan docs for "where is each asset headed".
 
 | Plan | Status |
 |---|---|
+| [2026-06-22-quant-ops-workbench-uiux.md](2026-06-22-quant-ops-workbench-uiux.md) | Active UI/UX roadmap for Quant Ops Workbench: P0 cockpit, signal trace, risk/exposure, backtest-vs-paper comparator; structured for multi-agent implementation lanes. |
 | [2026-06-02-stock-reopt-har-rv-followups.md](2026-06-02-stock-reopt-har-rv-followups.md) | Open domain follow-up recommendations: HAR-RV log-RV validation, stock strategy reactivation decisions, MLflow ops. |
 
 ## Current Decisions And Reference
@@ -36,8 +37,6 @@ scattered plan docs for "where is each asset headed".
 | [2026-04-20-futures-paradigm-phase3-implementation-plan.md](2026-04-20-futures-paradigm-phase3-implementation-plan.md) | Phase 3 implementation breakdown. |
 | [2026-04-20-futures-paradigm-phase4-implementation-plan.md](2026-04-20-futures-paradigm-phase4-implementation-plan.md) | Phase 4 implementation breakdown. |
 | [2026-04-20-futures-paradigm-phase5-implementation-plan.md](2026-04-20-futures-paradigm-phase5-implementation-plan.md) | Phase 5 implementation breakdown; cited by live-mode guard code. |
-| [2026-04-20-futures-trading-change-paradagms.md](2026-04-20-futures-trading-change-paradagms.md) | Original futures paradigm-change brief. |
-| [2026-04-15-paper-trading-quality-recovery.md](2026-04-15-paper-trading-quality-recovery.md) | Paper-trading quality fixes and investigation record. |
 | [2026-02-20-position-recovery-design.md](2026-02-20-position-recovery-design.md) | Position recovery and restart design. |
 | [2026-03-02-momentum-breakout-trend-mode-design.md](2026-03-02-momentum-breakout-trend-mode-design.md) | Stock momentum_breakout trend-mode design. |
 | [VR_Trading_Strategy_Design_Spec.md](VR_Trading_Strategy_Design_Spec.md) | VR composite stock strategy spec. |
@@ -53,6 +52,8 @@ Completed implementation records live under [archive/](archive/). Recent moves:
 | [archive/2026-06-06-compose-pipeline-services.md](archive/2026-06-06-compose-pipeline-services.md) | Stock pipeline Compose profile migration implemented. |
 | [archive/2026-06-09-cron-to-compose-scheduler.md](archive/2026-06-09-cron-to-compose-scheduler.md) | Scheduler/producers Compose migration implemented. |
 | [archive/2026-06-14-stock-strategy-experiment-backtest.md](archive/2026-06-14-stock-strategy-experiment-backtest.md) | Stock experiment runner/API/UI/scheduler implemented. |
+| [archive/2026-04-15-paper-trading-quality-recovery.md](archive/2026-04-15-paper-trading-quality-recovery.md) | Historical paper-quality investigation; RL/ClickHouse sections obsolete after 2026-06-03 removals. |
+| [archive/2026-04-20-futures-trading-change-paradagms.md](archive/2026-04-20-futures-trading-change-paradagms.md) | Original futures paradigm brief; superseded by Setup A/C + LLM-context roadmap and current rollout gates. |
 
 ### Historical / Archived — superseded 2026-06-20 (DO NOT REFERENCE for current work)
 

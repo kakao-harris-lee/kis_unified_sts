@@ -100,10 +100,66 @@ class PositionResponse(BaseModel):
     quantity: int
     entry_price: float
     current_price: float
+    market_value_krw: float | None = None
     unrealized_pnl: float
     pnl_pct: float
     entry_time: datetime
     strategy: str
+
+
+class RiskPortfolio(BaseModel):
+    """Portfolio-level risk and exposure snapshot."""
+
+    equity_krw: float | None
+    cash_krw: float | None
+    gross_exposure_krw: float
+    net_exposure_krw: float
+    unrealized_pnl_krw: float
+    realized_pnl_krw: float | None
+    daily_pnl_krw: float
+    daily_loss_krw: float
+    open_positions: int
+    exposure_to_equity_pct: float | None
+    last_update: datetime
+
+
+class RiskStrategyExposure(BaseModel):
+    """Strategy-level exposure group."""
+
+    asset_class: str
+    strategy: str
+    positions: int
+    gross_exposure_krw: float
+    net_exposure_krw: float
+    unrealized_pnl_krw: float
+    exposure_to_equity_pct: float | None
+
+
+class RiskSymbolExposure(BaseModel):
+    """Symbol-level exposure row for the dashboard risk board."""
+
+    asset_class: str
+    code: str
+    name: str
+    side: str
+    quantity: int
+    current_price: float
+    market_value_krw: float
+    signed_exposure_krw: float
+    unrealized_pnl_krw: float
+    pnl_pct: float
+    strategy: str
+
+
+class RiskExposureResponse(BaseModel):
+    """Risk board response model."""
+
+    asset_class: str
+    generated_at: datetime
+    portfolio: RiskPortfolio
+    by_strategy: list[RiskStrategyExposure]
+    by_symbol: list[RiskSymbolExposure]
+    notes: list[str]
 
 
 def _get_reader(asset_class: str | None = None):
@@ -159,6 +215,56 @@ def _read_status(asset_class: str) -> dict:
         return reader.get_status()
     except InfrastructureError:
         return {}
+
+
+def _read_positions(asset_class: str) -> list[PositionResponse]:
+    try:
+        reader = _get_reader(asset_class)
+        positions = reader.get_positions()
+    except InfrastructureError:
+        positions = []
+
+    result: list[PositionResponse] = []
+    for p in positions:
+        try:
+            market_value = (
+                p.get("market_value_krw")
+                or p.get("market_value")
+                or p.get("notional_value_krw")
+                or p.get("notional_value")
+            )
+            result.append(
+                PositionResponse(
+                    asset_class=asset_class,
+                    code=p.get("code", ""),
+                    name=p.get("name", ""),
+                    side=p.get("side", "long"),
+                    quantity=int(p.get("quantity", 0)),
+                    entry_price=float(p.get("entry_price", 0)),
+                    current_price=float(p.get("current_price", 0)),
+                    market_value_krw=(
+                        float(market_value) if market_value is not None else None
+                    ),
+                    unrealized_pnl=float(p.get("unrealized_pnl", 0)),
+                    pnl_pct=float(p.get("pnl_pct", 0)),
+                    entry_time=_parse_tz_aware(p.get("entry_time")),
+                    strategy=p.get("strategy", ""),
+                )
+            )
+        except (ValueError, TypeError, KeyError):
+            continue
+    return result
+
+
+def _side_sign(side: str) -> float:
+    """Return +1 for long/buy and -1 for short/sell positions."""
+    return -1.0 if str(side).strip().lower() in {"short", "sell"} else 1.0
+
+
+def _raw_position_value(position: PositionResponse) -> float:
+    if position.market_value_krw is not None:
+        return abs(float(position.market_value_krw))
+    return abs(float(position.current_price) * float(position.quantity))
 
 
 def _status_response_from_raw(asset_class: str, status: dict) -> TradingStatus:
@@ -289,6 +395,127 @@ def _aggregate_statuses(statuses: list[TradingStatus]) -> TradingStatus:
     )
 
 
+def _exposure_pct(value: float, equity: float | None) -> float | None:
+    if equity is None or equity <= 0:
+        return None
+    return value / equity * 100.0
+
+
+def _risk_response_from_state(
+    asset_class: str,
+    statuses: list[TradingStatus],
+    positions: list[PositionResponse],
+) -> RiskExposureResponse:
+    status = _aggregate_statuses(statuses) if asset_class == "all" else statuses[0]
+    account = status.account
+    equity = account.equity if account else None
+    cash = account.balance if account else None
+
+    by_symbol: list[RiskSymbolExposure] = []
+    strategy_rows: dict[tuple[str, str], dict[str, float | int | str]] = {}
+    gross_exposure = 0.0
+    net_exposure = 0.0
+    unrealized_pnl = 0.0
+    notes: list[str] = []
+
+    for position in positions:
+        market_value = _raw_position_value(position)
+        signed_exposure = market_value * _side_sign(position.side)
+        gross_exposure += market_value
+        net_exposure += signed_exposure
+        unrealized_pnl += position.unrealized_pnl
+
+        by_symbol.append(
+            RiskSymbolExposure(
+                asset_class=position.asset_class,
+                code=position.code,
+                name=position.name,
+                side=position.side,
+                quantity=position.quantity,
+                current_price=position.current_price,
+                market_value_krw=market_value,
+                signed_exposure_krw=signed_exposure,
+                unrealized_pnl_krw=position.unrealized_pnl,
+                pnl_pct=position.pnl_pct,
+                strategy=position.strategy or "unknown",
+            )
+        )
+
+        key = (position.asset_class, position.strategy or "unknown")
+        row = strategy_rows.setdefault(
+            key,
+            {
+                "asset_class": position.asset_class,
+                "strategy": position.strategy or "unknown",
+                "positions": 0,
+                "gross_exposure_krw": 0.0,
+                "net_exposure_krw": 0.0,
+                "unrealized_pnl_krw": 0.0,
+            },
+        )
+        row["positions"] = int(row["positions"]) + 1
+        row["gross_exposure_krw"] = float(row["gross_exposure_krw"]) + market_value
+        row["net_exposure_krw"] = float(row["net_exposure_krw"]) + signed_exposure
+        row["unrealized_pnl_krw"] = (
+            float(row["unrealized_pnl_krw"]) + position.unrealized_pnl
+        )
+
+    realized_pnl: float | None
+    if account:
+        realized_pnl = account.realized_pnl
+    else:
+        realized_pnl = status.closed_pnl
+        notes.append("account data is unavailable; realized PnL uses status.closed_pnl")
+
+    if any(
+        position.asset_class == "futures" and position.market_value_krw is None
+        for position in positions
+    ):
+        notes.append(
+            "futures exposure uses current_price * quantity when no explicit notional is published"
+        )
+
+    daily_pnl = (realized_pnl or 0.0) + unrealized_pnl
+    by_strategy = [
+        RiskStrategyExposure(
+            asset_class=str(row["asset_class"]),
+            strategy=str(row["strategy"]),
+            positions=int(row["positions"]),
+            gross_exposure_krw=float(row["gross_exposure_krw"]),
+            net_exposure_krw=float(row["net_exposure_krw"]),
+            unrealized_pnl_krw=float(row["unrealized_pnl_krw"]),
+            exposure_to_equity_pct=_exposure_pct(
+                float(row["gross_exposure_krw"]), equity
+            ),
+        )
+        for row in sorted(
+            strategy_rows.values(),
+            key=lambda r: (str(r["asset_class"]), str(r["strategy"])),
+        )
+    ]
+
+    return RiskExposureResponse(
+        asset_class=asset_class,
+        generated_at=datetime.now(UTC),
+        portfolio=RiskPortfolio(
+            equity_krw=equity,
+            cash_krw=cash,
+            gross_exposure_krw=gross_exposure,
+            net_exposure_krw=net_exposure,
+            unrealized_pnl_krw=unrealized_pnl,
+            realized_pnl_krw=realized_pnl,
+            daily_pnl_krw=daily_pnl,
+            daily_loss_krw=min(0.0, daily_pnl),
+            open_positions=len(positions),
+            exposure_to_equity_pct=_exposure_pct(gross_exposure, equity),
+            last_update=status.last_update,
+        ),
+        by_strategy=by_strategy,
+        by_symbol=sorted(by_symbol, key=lambda row: (row.asset_class, row.strategy, row.code)),
+        notes=notes,
+    )
+
+
 @router.get("/status", response_model=TradingStatus)
 async def get_trading_status(
     asset_class: str = Query(default="futures"),
@@ -310,32 +537,24 @@ async def get_positions(
     asset = _normalize_asset_class(asset_class)
     result: list[PositionResponse] = []
     for target in _target_assets(asset):
-        try:
-            reader = _get_reader(target)
-            positions = reader.get_positions()
-        except InfrastructureError:
-            positions = []
-
-        for p in positions:
-            try:
-                result.append(
-                    PositionResponse(
-                        asset_class=target,
-                        code=p.get("code", ""),
-                        name=p.get("name", ""),
-                        side=p.get("side", "long"),
-                        quantity=int(p.get("quantity", 0)),
-                        entry_price=float(p.get("entry_price", 0)),
-                        current_price=float(p.get("current_price", 0)),
-                        unrealized_pnl=float(p.get("unrealized_pnl", 0)),
-                        pnl_pct=float(p.get("pnl_pct", 0)),
-                        entry_time=_parse_tz_aware(p.get("entry_time")),
-                        strategy=p.get("strategy", ""),
-                    )
-                )
-            except (ValueError, TypeError, KeyError):
-                continue
+        result.extend(_read_positions(target))
     return result
+
+
+@router.get("/risk-exposure", response_model=RiskExposureResponse)
+async def get_risk_exposure(
+    asset_class: str = Query(default="all"),
+):
+    """Get risk/exposure snapshot for the dashboard risk board."""
+    asset = _normalize_asset_class(asset_class)
+    targets = _target_assets(asset)
+    statuses = [
+        _status_response_from_raw(target, _read_status(target)) for target in targets
+    ]
+    positions: list[PositionResponse] = []
+    for target in targets:
+        positions.extend(_read_positions(target))
+    return _risk_response_from_state(asset, statuses, positions)
 
 
 @router.post("/start")

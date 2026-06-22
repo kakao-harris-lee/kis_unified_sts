@@ -1,5 +1,13 @@
 # Paper Trading Quality Recovery Implementation Plan
 
+> **ARCHIVED 2026-06-22:** Historical implementation/investigation record. The
+> RL and ClickHouse portions are obsolete because futures ML/RL/TFT runtime
+> paths and ClickHouse runtime storage were removed on 2026-06-03. Current
+> runtime decisions live in
+> [2026-06-03-ml-rl-removal-llm-indicator-futures.md](../2026-06-03-ml-rl-removal-llm-indicator-futures.md),
+> [2026-06-03-runtime-storage-decoupling-implementation.md](../2026-06-03-runtime-storage-decoupling-implementation.md),
+> and [ROADMAP.md](../../ROADMAP.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** PR #119 머지 이후 남은 3개 미해결 이슈를 해결한다: (1) paper 진입 가격이 Redis 캐시된 전일 가격으로 체결되어 소형주가 비현실적 수익률을 낳는 문제, (2) 선물 RL이 학습 eval(Sharpe 3.19)과 실운용(최근 3주 승률 0%, 누적 -429) 사이의 큰 성능 괴리, (3) Redis 상태의 자본/PnL이 세션 단위로 리셋되어 장기 추적 불가.

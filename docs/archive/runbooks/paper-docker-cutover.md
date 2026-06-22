@@ -1,5 +1,12 @@
 # Runbook: Paper Trading Cutover — host-cron → Docker Compose
 
+> **ARCHIVED 2026-06-22:** Historical 2026-06-08 cutover runbook. It predates
+> the cron-to-Compose scheduler migration and the current stock decoupled
+> runtime. Use [stock-pipeline-cutover-m5d.md](../../runbooks/stock-pipeline-cutover-m5d.md),
+> [futures-pipeline-cutover-f9.md](../../runbooks/futures-pipeline-cutover-f9.md),
+> and [cron-to-compose-cutover.md](../../runbooks/cron-to-compose-cutover.md)
+> for current operation.
+
 Migrate the **currently-running** paper system from host crontab + host
 `redis-server` (6379) to the Docker Compose stack, for stock + futures paper
 verification. One runtime only — the two **cannot** coexist (same KIS app keys →

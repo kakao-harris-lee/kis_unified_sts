@@ -1,24 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
 import { tradingApi } from '@/lib/dashboard/api'
+import type { Position } from '@/lib/dashboard/types'
 import SideBadge from './SideBadge'
 import PositionCard from './PositionCard'
 import TableSkeleton from './TableSkeleton'
 import ErrorMessage from './ErrorMessage'
-
-interface Position {
-  asset_class: 'stock' | 'futures'
-  code: string
-  name: string
-  side: 'BUY' | 'SELL'
-  quantity: number
-  entry_price: number
-  current_price: number
-  unrealized_pnl: number
-  pnl_pct: number
-  strategy: string
-  entry_time: string
-}
 
 export default function PositionsTableLarge() {
   const { selectedAsset } = useAssetClass()

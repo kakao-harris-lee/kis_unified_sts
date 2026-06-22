@@ -1,5 +1,10 @@
 # Paper Trading Monitoring Guide (20+ Trading Days)
 
+> **ARCHIVED 2026-06-22:** Historical monitor guide for the earlier
+> `trend_pullback` / `momentum_breakout` validation loop. Current stock paper
+> trading uses the decoupled Compose pipeline and the current strategy set in
+> [ROADMAP.md](../ROADMAP.md).
+
 ## Overview
 
 This guide provides comprehensive instructions for monitoring paper trading performance of the **trend_pullback** and **momentum_breakout** strategies over a 20+ trading day validation period.

@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: 2026-06-20 (superseded RL/paradigm + stock validation docs archived; ROADMAP added).
+Last updated: 2026-06-22 (stale paper-trading guides and legacy plans archived).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
@@ -37,11 +37,11 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 
 | Doc | Use |
 |-----|-----|
-| [BACKTEST_PERFORMANCE_REVIEW.md](BACKTEST_PERFORMANCE_REVIEW.md) | 백테스트 성능 리뷰. |
-| [BACKTEST_RESULTS_INTERPRETATION_GUIDE.md](BACKTEST_RESULTS_INTERPRETATION_GUIDE.md) | 백테스트 결과 해석 + 배포 의사결정. |
-| [PAPER_TRADING_MONITORING_GUIDE.md](PAPER_TRADING_MONITORING_GUIDE.md) | trend_pullback / momentum_breakout 20+ 거래일 검증 모니터링. |
-| [TREND_PULLBACK_PAPER_TRADING.md](TREND_PULLBACK_PAPER_TRADING.md) | trend_pullback 페이퍼 트레이딩 운영. |
-| [MOMENTUM_BREAKOUT_PAPER_TRADING.md](MOMENTUM_BREAKOUT_PAPER_TRADING.md) | momentum_breakout 페이퍼 트레이딩 운영. |
+| [BACKTEST_RESULTS_INTERPRETATION_GUIDE.md](BACKTEST_RESULTS_INTERPRETATION_GUIDE.md) | 백테스트 지표 해석 가이드. 현재 전략/런타임 상태는 ROADMAP 기준. |
+| [runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md) | 현재 stock decoupled paper pipeline cutover/runbook. |
+| [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md) | futures decoupled pipeline F-9 shadow/cutover runbook. |
+| [plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md) | Quant Ops Workbench UI/UX 계획 — cockpit, signal trace, risk, backtest-vs-paper, promotion gates. |
+| [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md) | 현재 stock HAR-RV/strategy reactivation follow-up. |
 
 ## ⚙️ Operations
 
@@ -67,6 +67,13 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [archive/HYBRID_PIPELINE_TRUST_STATUS.md](archive/HYBRID_PIPELINE_TRUST_STATUS.md) | 2026-03-12 — 하이브리드 파이프라인 신뢰 상태 스냅샷 (점-시간 기록) |
 | [archive/STOCK_STRATEGY_DEPLOYMENT_STATUS.md](archive/STOCK_STRATEGY_DEPLOYMENT_STATUS.md) | 2026-03-09 — 주식 전략 배포 상태 스냅샷 (이미 다른 전략으로 진화) |
 | [archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md) | 2026-03-06 — 합성 데이터 기반 주식 전략 검증 요약 (현재 활성 상태와 불일치; archived 2026-06-20). 현재 상태는 [ROADMAP.md](ROADMAP.md) + [PROJECT_STATUS.md](PROJECT_STATUS.md). |
+| [archive/BACKTEST_PERFORMANCE_REVIEW.md](archive/BACKTEST_PERFORMANCE_REVIEW.md) | 2026-03-05 — trend_pullback/momentum_breakout validation placeholder; archived 2026-06-22. |
+| [archive/PAPER_TRADING_MONITORING_GUIDE.md](archive/PAPER_TRADING_MONITORING_GUIDE.md) | 2026-03 — pre-decoupled 20-day paper validation guide; archived 2026-06-22. |
+| [archive/TREND_PULLBACK_PAPER_TRADING.md](archive/TREND_PULLBACK_PAPER_TRADING.md) | 2026-03 — disabled strategy paper guide; archived 2026-06-22. |
+| [archive/MOMENTUM_BREAKOUT_PAPER_TRADING.md](archive/MOMENTUM_BREAKOUT_PAPER_TRADING.md) | 2026-03 — pre-decoupled per-strategy paper guide; archived 2026-06-22. |
+| [archive/operations/crontab.md](archive/operations/crontab.md) | Historical host-crontab registration reference; Compose scheduler/producers supersede it. |
+| [archive/runbooks/paper-docker-cutover.md](archive/runbooks/paper-docker-cutover.md) | 2026-06-08 host-cron → Compose cutover snapshot; superseded by current stock/futures/scheduler runbooks. |
+| [archive/runbooks/paper-trading-docker.md](archive/runbooks/paper-trading-docker.md) | Historical monolithic-orchestrator Compose paper runbook; superseded by decoupled pipeline runbooks. |
 | [archive/verification/](archive/verification/) | 2026-03 — 완료된 migration/security/performance 검증 스냅샷 |
 
 ## How to add a new doc

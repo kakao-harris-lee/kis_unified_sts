@@ -1,6 +1,7 @@
 """Health endpoints — process / data-freshness / kill-switch / summary."""
 
-from datetime import datetime, timedelta
+import json
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -8,6 +9,23 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.dashboard.app import create_app
+
+
+class FakeRedis:
+    def __init__(
+        self,
+        *,
+        values: dict[str, object] | None = None,
+        hashes: dict[str, dict[str, object]] | None = None,
+    ) -> None:
+        self.values = values or {}
+        self.hashes = hashes or {}
+
+    def get(self, key: str):
+        return self.values.get(key)
+
+    def hgetall(self, key: str):
+        return self.hashes.get(key, {})
 
 
 @pytest.fixture
@@ -122,6 +140,158 @@ class TestHealthSummary:
     def test_supports_asset_class_filter(self, client):
         res = client.get("/api/health/summary", params={"asset_class": "futures"})
         assert res.status_code == 200
+
+    def test_ops_summary_full_payload(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        now = datetime.now(UTC)
+        now_iso = now.isoformat()
+        fake_redis = FakeRedis(
+            values={
+                "trading:stock:data_freshness": json.dumps(
+                    {"symbol_count": 10, "fresh_count": 9, "last_tick_s": 8}
+                ),
+                "trading:futures:data_freshness": json.dumps(
+                    {"symbol_count": 1, "fresh_count": 1, "last_tick_s": 5}
+                ),
+                "system:universe:latest": json.dumps(
+                    {"generated_at": now_iso, "codes": ["005930", "000660"]}
+                ),
+                "system:trade_targets:latest": json.dumps(
+                    {"generated_at": now_iso, "codes": ["005930"]}
+                ),
+                "forecast:vol:current": json.dumps({"asof": now_iso}),
+                "forecast:vol:model": json.dumps(
+                    {"coefficients": {"fit_date": "2026-06-22", "r2_oos": 0.42}}
+                ),
+            },
+            hashes={
+                "trading:stock:status": {
+                    "state": "running",
+                    "source": "stock_monitor",
+                    "updated_at": now_iso,
+                    "publisher_pid": "111",
+                    "config": json.dumps(
+                        {"paper_trading": True, "strategy": "bb_reversion"}
+                    ),
+                    "positions": json.dumps(
+                        {"open_positions": 2, "unrealized_pnl": 1200}
+                    ),
+                    "strategies": json.dumps({"strategies": ["bb_reversion"]}),
+                    "pipeline": json.dumps(
+                        {"is_running": True, "stages": {"entry": {"status": "ok"}}}
+                    ),
+                },
+                "trading:futures:status": {
+                    "state": "running",
+                    "source": "futures_monitor",
+                    "updated_at": now_iso,
+                    "publisher_pid": "222",
+                    "config": json.dumps({"paper_trading": False}),
+                    "positions": json.dumps({"open_positions": 1}),
+                    "pipeline": json.dumps({"is_running": True}),
+                },
+                "scheduler:status": {
+                    "status": "ok",
+                    "last_success_at": now_iso,
+                    "jobs": json.dumps([{"name": "daily_indicator_scanner"}]),
+                },
+            },
+        )
+
+        async def fake_process_health():
+            return {
+                "processes": [
+                    {
+                        "asset_class": "stock",
+                        "pid": 111,
+                        "uptime_s": 90,
+                        "last_activity_s": 0,
+                        "alive": True,
+                    },
+                    {
+                        "asset_class": "futures",
+                        "pid": 222,
+                        "uptime_s": 120,
+                        "last_activity_s": 0,
+                        "alive": True,
+                    },
+                ],
+                "checked_at": now_iso,
+            }
+
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+        monkeypatch.setattr(health, "get_process_health", fake_process_health)
+        monkeypatch.setattr(
+            health,
+            "_today_pnl_krw",
+            lambda asset: {"stock": 1_000, "futures": 2_000, "all": 3_000}[asset],
+        )
+
+        res = client.get("/api/health/summary", params={"asset_class": "all"})
+
+        assert res.status_code == 200
+        body = res.json()
+        assert {"processes", "data_sources", "kill_switch", "today_pnl"} <= set(body)
+        assert body["today_pnl"] == 3_000
+
+        ops = body["ops_summary"]
+        assert ops["asset_class"] == "all"
+        assert set(ops["assets"]) == {"stock", "futures"}
+        assert ops["assets"]["stock"]["process"]["status"] == "ok"
+        assert ops["assets"]["stock"]["data_freshness"]["status"] == "ok"
+        assert ops["assets"]["stock"]["pipeline"]["status"] == "ok"
+        assert ops["assets"]["stock"]["pipeline"]["details"]["is_running"] is True
+        assert ops["assets"]["stock"]["mode"]["value"] == "paper"
+        assert ops["assets"]["futures"]["mode"]["value"] == "live"
+        assert ops["scheduler"]["status"] == "ok"
+        assert ops["scheduler"]["jobs"] == [{"name": "daily_indicator_scanner"}]
+        assert ops["producers"]["assets"]["stock"]["status"] == "ok"
+        assert ops["forecasting"]["status"] == "ok"
+        assert ops["mode"]["value"] == "mixed"
+        assert body["pipeline"] == ops["pipeline"]
+        assert body["mode"] == ops["mode"]
+
+    def test_ops_summary_defaults_to_unknown_when_unavailable(
+        self, client, monkeypatch
+    ):
+        from services.dashboard.routes import health
+
+        now_iso = datetime.now(UTC).isoformat()
+
+        async def fake_process_health():
+            return {
+                "processes": [
+                    {
+                        "asset_class": "stock",
+                        "pid": 0,
+                        "uptime_s": 0,
+                        "last_activity_s": -1,
+                        "alive": False,
+                    }
+                ],
+                "checked_at": now_iso,
+            }
+
+        monkeypatch.setattr(health, "_get_redis_client", lambda: None)
+        monkeypatch.setattr(health, "get_process_health", fake_process_health)
+        monkeypatch.setattr(health, "_today_pnl_krw", lambda _asset: 0)
+
+        res = client.get("/api/health/summary", params={"asset_class": "stock"})
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["today_pnl"] == 0
+
+        ops = body["ops_summary"]
+        assert ops["asset_class"] == "stock"
+        assert ops["process"]["status"] == "unknown"
+        assert ops["data_freshness"]["status"] == "unknown"
+        assert ops["scheduler"]["status"] == "unknown"
+        assert ops["forecasting"]["status"] == "unknown"
+        assert ops["pipeline"]["status"] == "unknown"
+        assert ops["mode"]["value"] == "unknown"
+        assert ops["producers"]["items"][0]["status"] == "unknown"
 
     def test_today_pnl_reads_runtime_ledger(self, client, monkeypatch, tmp_path):
         from services.dashboard.routes import health

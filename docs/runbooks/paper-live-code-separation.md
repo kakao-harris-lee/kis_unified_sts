@@ -94,5 +94,5 @@ For an immediate halt independent of code: set the kill switch
 
 - Live runs only clean, annotated-tag code (preflight refuses anything else).
 - paper (6381) and live (6382) use separate Redis instances — no position/state collision.
-- paper/dev checkout and its cron are unchanged; the existing live gates
+- paper/dev checkout and scheduler stack are unchanged; the existing live gates
   (`futures_live.enabled`, `futures:live:suspended`, `--yes-live`) still apply.

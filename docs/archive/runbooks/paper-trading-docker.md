@@ -1,5 +1,12 @@
 # Paper Trading via Docker Compose (stock + futures)
 
+> **ARCHIVED 2026-06-22:** Historical monolithic-orchestrator Compose runbook.
+> Current stock paper trading uses the decoupled stock pipeline, and futures
+> cutover is governed by F-9. Use
+> [deployment.md](../../deployment.md),
+> [stock-pipeline-cutover-m5d.md](../../runbooks/stock-pipeline-cutover-m5d.md),
+> and [futures-pipeline-cutover-f9.md](../../runbooks/futures-pipeline-cutover-f9.md).
+
 Operator runbook for running **stock and futures paper trading together** through the
 orchestrator using the docker-compose `trading` profile.
 

@@ -50,6 +50,57 @@ export interface ExperimentRunReport {
   status_by_strategy: StrategyStatus[];
 }
 
+export type ExperimentPaperComparisonStatus =
+  | "aligned"
+  | "watch"
+  | "fail"
+  | "insufficient_data";
+
+export interface ExperimentPaperComparisonRow {
+  strategy_id: string;
+  strategy_name?: string | null;
+  status: ExperimentPaperComparisonStatus;
+  missing_evidence: string[];
+  backtest: {
+    closed_trades: number;
+    win_rate_pct: number | null;
+    total_return_pct: number | null;
+    realized_pnl: number | null;
+    profit_factor: number | null;
+    max_drawdown_pct: number | null;
+    sharpe_ratio: number | null;
+  };
+  paper: {
+    trade_count: number;
+    winning_trades: number;
+    losing_trades: number;
+    win_rate_pct: number | null;
+    total_pnl: number;
+    avg_pnl: number | null;
+    avg_pnl_pct: number | null;
+    profit_factor: number | null;
+    symbols: string[];
+    latest_exit_time: string | null;
+  };
+  deltas: {
+    trade_count: number;
+    win_rate_pct: number | null;
+    pnl_vs_realized: number | null;
+  };
+}
+
+export interface ExperimentPaperComparison {
+  generated_at: string;
+  source: {
+    experiment_id: string | null;
+    experiment_generated_at: string | null;
+    ledger_available: boolean;
+    min_paper_trades: number;
+  };
+  comparisons: ExperimentPaperComparisonRow[];
+  missing_evidence: string[];
+}
+
 export interface ExperimentJob {
   job_id: string;
   status: "queued" | "running" | "done" | "failed";
@@ -88,6 +139,10 @@ export async function getLatestExperiment(): Promise<{
   report: ExperimentRunReport | null;
 }> {
   return apiGet("/api/experiments/latest");
+}
+
+export async function getLatestExperimentPaperComparison(): Promise<ExperimentPaperComparison> {
+  return apiGet<ExperimentPaperComparison>("/api/experiments/latest/compare-paper");
 }
 
 export async function runExperiment(

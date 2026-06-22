@@ -11,6 +11,46 @@
 
 - Dashboard API: `http://localhost:5080`
 
+## Current Dashboard Routes
+
+These are the current routes used by the Quant Ops Workbench and Strategy
+Builder UI. Historical `/api/v1/*` examples remain below for archived gateway
+reference only.
+
+### Quant Ops Workbench
+
+- `GET /api/health/summary?asset_class=all|stock|futures` - consolidated ops
+  state for dashboard health, runtime mode, data freshness, scheduler/producers,
+  forecasting, kill switch, pipeline state, and P&L.
+- `GET /api/signals?asset_class=stock|futures|all&limit=100` - enriched signal
+  rows with decision trace, reject/orderability state, and lifecycle ids when
+  available.
+- `GET /api/trading/risk-exposure?asset_class=stock|futures|all` - portfolio,
+  strategy, and symbol exposure with explicit warnings when limits or data are
+  unavailable.
+- `GET /api/trades/lifecycle?signal_id=...|order_id=...|fill_id=...|trade_id=...&symbol=...&asset_class=...`
+  - partial signal -> order -> fill -> position -> trade lineage for paper
+  lifecycle debugging.
+- `GET /api/coverage?asset_class=stock|futures|all` - screener, trade target,
+  daily indicator, and latest experiment coverage with missing-evidence notes.
+- `GET /api/event-context/diagnostics?asset_class=futures` - Setup C event-score
+  freshness, source timeline, candidate/block distribution, config warnings,
+  and no-signal diagnostics.
+
+### Strategy Builder And Experiments
+
+- `GET /api/kis-builder/*` - Strategy Builder compatibility API.
+- `GET /api/experiments/*` - UI/proxy alias for the KIS Builder experiment
+  compatibility endpoints where applicable.
+- `GET /api/strategies` - STS strategy registry route.
+- `GET /api/strategies/*` - Strategy Builder compatibility route alias.
+
+Same-origin frontend proxy behavior is intentionally degraded-safe: when the
+dashboard upstream is unavailable or returns 404/5xx for a safe GET/HEAD route,
+the proxy returns typed empty states with
+`x-kis-degraded: dashboard_api_unavailable`; mutating requests fail closed with
+HTTP 503 when the upstream is unavailable.
+
 ## Authentication
 
 모든 API 요청에는 API 키가 필요합니다:

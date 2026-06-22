@@ -615,5 +615,5 @@ position:
 ## 관련 문서 (Related Documentation)
 
 - [주식 전략 검증 요약 (archived, historical)](archive/STOCK_STRATEGY_VALIDATION_SUMMARY.md) - 2026-03 합성 데이터 백테스트 결과 (보관용)
-- [백테스트 성능 리뷰](BACKTEST_PERFORMANCE_REVIEW.md) - 상세 백테스트 분석
-- [페이퍼 트레이딩 모니터링 가이드](PAPER_TRADING_MONITORING_GUIDE.md) - 20일 검증 절차
+- [백테스트 성능 리뷰](archive/BACKTEST_PERFORMANCE_REVIEW.md) - 2026-03 historical snapshot
+- [페이퍼 트레이딩 모니터링 가이드](archive/PAPER_TRADING_MONITORING_GUIDE.md) - 2026-03 historical validation procedure

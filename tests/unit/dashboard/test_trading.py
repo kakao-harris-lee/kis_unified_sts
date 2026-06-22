@@ -253,6 +253,119 @@ async def test_positions_respect_asset_class_and_all():
 
 
 @pytest.mark.asyncio
+async def test_risk_exposure_aggregates_assets_with_short_symmetry():
+    """Risk board preserves cross-asset aggregation and short-side sign."""
+    from services.dashboard.app import create_app
+    from services.dashboard.routes import trading as _trading_route
+
+    readers = {
+        "futures": MagicMock(
+            get_status=MagicMock(
+                return_value={
+                    "state": "running",
+                    "config": {"strategy": "setup_a"},
+                    "stats": {"start_time": "2026-05-21T00:00:00+00:00"},
+                    "positions": {
+                        "open_positions": 1,
+                        "unrealized_pnl": 1000.0,
+                        "closed_pnl": 0.0,
+                    },
+                    "account": {
+                        "initial_balance": 50_000_000.0,
+                        "balance": 50_000_000.0,
+                        "equity": 50_001_000.0,
+                        "realized_pnl": 0.0,
+                        "unrealized_pnl": 1000.0,
+                        "open_positions": 1,
+                    },
+                }
+            ),
+            get_positions=MagicMock(
+                return_value=[
+                    {
+                        "code": "A05000",
+                        "name": "KOSPI200 mini",
+                        "side": "short",
+                        "quantity": 2,
+                        "entry_price": 390.0,
+                        "current_price": 388.0,
+                        "unrealized_pnl": 1000.0,
+                        "pnl_pct": 0.5,
+                        "entry_time": "2026-05-21T09:00:00+00:00",
+                        "strategy": "setup_a",
+                    }
+                ]
+            ),
+        ),
+        "stock": MagicMock(
+            get_status=MagicMock(
+                return_value={
+                    "state": "running",
+                    "config": {"strategy": "pattern_pullback"},
+                    "stats": {"start_time": "2026-05-21T00:00:00+00:00"},
+                    "positions": {
+                        "open_positions": 1,
+                        "unrealized_pnl": 50_000.0,
+                        "closed_pnl": 25_000.0,
+                    },
+                    "account": {
+                        "initial_balance": 100_000_000.0,
+                        "balance": 100_025_000.0,
+                        "equity": 100_075_000.0,
+                        "realized_pnl": 25_000.0,
+                        "unrealized_pnl": 50_000.0,
+                        "open_positions": 1,
+                    },
+                }
+            ),
+            get_positions=MagicMock(
+                return_value=[
+                    {
+                        "code": "086790",
+                        "name": "하나금융지주",
+                        "side": "long",
+                        "quantity": 10,
+                        "entry_price": 69_000.0,
+                        "current_price": 70_000.0,
+                        "unrealized_pnl": 50_000.0,
+                        "pnl_pct": 1.45,
+                        "entry_time": "2026-05-21T09:00:00+00:00",
+                        "strategy": "pattern_pullback",
+                    }
+                ]
+            ),
+        ),
+    }
+
+    with patch.object(
+        _trading_route, "_get_reader", side_effect=lambda asset: readers[asset]
+    ):
+        app = create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/api/trading/risk-exposure?asset_class=all")
+
+    assert response.status_code == 200
+    body = response.json()
+    portfolio = body["portfolio"]
+    assert portfolio["open_positions"] == 2
+    assert portfolio["gross_exposure_krw"] == pytest.approx(700_776.0)
+    assert portfolio["net_exposure_krw"] == pytest.approx(699_224.0)
+    assert portfolio["unrealized_pnl_krw"] == pytest.approx(51_000.0)
+    assert portfolio["daily_pnl_krw"] == pytest.approx(76_000.0)
+    assert portfolio["equity_krw"] == pytest.approx(150_076_000.0)
+
+    by_symbol = {row["code"]: row for row in body["by_symbol"]}
+    assert by_symbol["A05000"]["signed_exposure_krw"] == pytest.approx(-776.0)
+    assert by_symbol["086790"]["signed_exposure_krw"] == pytest.approx(700_000.0)
+    assert {row["strategy"] for row in body["by_strategy"]} == {
+        "setup_a",
+        "pattern_pullback",
+    }
+    assert any("futures exposure uses" in note for note in body["notes"])
+
+
+@pytest.mark.asyncio
 async def test_start_trading():
     """Test start trading endpoint."""
     from services.dashboard.app import create_app

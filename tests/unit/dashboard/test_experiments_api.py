@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -140,6 +141,149 @@ def test_latest_report_none_when_empty(monkeypatch, tmp_path):
     resp = client.get("/api/kis-builder/experiments/latest")
     assert resp.status_code == 200
     assert resp.json()["report"] is None
+
+
+def test_latest_paper_comparison_reports_missing_latest(monkeypatch, tmp_path):
+    client, _ = _client(monkeypatch, tmp_path)
+    resp = client.get("/api/kis-builder/experiments/latest/compare-paper")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["comparisons"] == []
+    assert body["missing_evidence"] == ["latest_experiment_report"]
+
+
+def test_latest_paper_comparison_aligned(monkeypatch, tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "stock_experiment_20260601_000000.json").write_text(
+        json.dumps(
+            {
+                "experiment": {
+                    "id": "disk_exp",
+                    "start_date": "2026-06-01",
+                    "end_date": "2026-06-30",
+                    "generated_at": "2026-06-01T00:00:00+00:00",
+                },
+                "summaries": [
+                    {
+                        "strategy_id": "pattern_pullback",
+                        "strategy_name": "Pattern Pullback",
+                        "closed_trades": 4,
+                        "win_rate_pct": 50.0,
+                        "total_return_pct": 3.0,
+                        "realized_pnl": 1000.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client, experiments = _client(monkeypatch, tmp_path)
+
+    def fake_paper_trades(strategy_id, strategy_name, *, start=None, end=None):
+        assert strategy_id == "pattern_pullback"
+        assert strategy_name == "Pattern Pullback"
+        assert start is not None
+        assert end is not None
+        return [
+            {"symbol": "005930", "pnl": 200.0, "pnl_pct": 1.0},
+            {"symbol": "005930", "pnl": -50.0, "pnl_pct": -0.2},
+            {"symbol": "000660", "pnl": 150.0, "pnl_pct": 0.8},
+        ], True
+
+    monkeypatch.setattr(experiments, "_load_stock_paper_trades", fake_paper_trades)
+    resp = client.get("/api/kis-builder/experiments/latest/compare-paper")
+    assert resp.status_code == 200
+    row = resp.json()["comparisons"][0]
+    assert row["status"] == "aligned"
+    assert row["missing_evidence"] == []
+    assert row["paper"]["trade_count"] == 3
+    assert row["paper"]["total_pnl"] == 300.0
+
+
+def test_latest_paper_comparison_insufficient_without_ledger(monkeypatch, tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "stock_experiment_20260601_000000.json").write_text(
+        json.dumps(
+            {
+                "experiment": {
+                    "id": "disk_exp",
+                    "start_date": "2026-06-01",
+                    "end_date": "2026-06-30",
+                },
+                "summaries": [
+                    {
+                        "strategy_id": "pattern_pullback",
+                        "closed_trades": 2,
+                        "win_rate_pct": 50.0,
+                        "total_return_pct": 2.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client, experiments = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        experiments,
+        "_load_stock_paper_trades",
+        lambda _strategy_id, _strategy_name, **_kwargs: ([], False),
+    )
+
+    resp = client.get("/api/kis-builder/experiments/latest/compare-paper")
+    assert resp.status_code == 200
+    row = resp.json()["comparisons"][0]
+    assert row["status"] == "insufficient_data"
+    assert row["paper"]["trade_count"] == 0
+    assert "runtime_ledger" in row["missing_evidence"]
+    assert "paper_trade_count" in row["missing_evidence"]
+
+
+def test_load_stock_paper_trades_filters_to_experiment_window(monkeypatch, tmp_path):
+    _client(monkeypatch, tmp_path)
+    from services.dashboard.routes import experiments
+    from services.dashboard.routes import trades as trades_route
+
+    def fake_runtime_trades(_asset_class, *, strategy, limit, **_kwargs):
+        assert strategy == "pattern_pullback"
+        assert limit == 0
+        return [
+            {
+                "id": "before",
+                "symbol": "005930",
+                "exit_time": "2026-05-31T15:00:00+09:00",
+                "pnl": 10.0,
+            },
+            {
+                "id": "inside",
+                "symbol": "005930",
+                "exit_time": "2026-06-15T15:00:00+09:00",
+                "pnl": 20.0,
+            },
+            {
+                "id": "after",
+                "symbol": "005930",
+                "exit_time": "2026-07-01T15:00:00+09:00",
+                "pnl": 30.0,
+            },
+        ], True
+
+    monkeypatch.setattr(
+        trades_route, "_load_runtime_ledger_trades", fake_runtime_trades
+    )
+    start = datetime(2026, 6, 1, tzinfo=UTC)
+    end = datetime(2026, 6, 30, 23, 59, 59, tzinfo=UTC)
+
+    rows, available = experiments._load_stock_paper_trades(
+        "pattern_pullback",
+        None,
+        start=start,
+        end=end,
+    )
+
+    assert available is True
+    assert [row["id"] for row in rows] == ["inside"]
 
 
 def test_run_endpoint_launches_job(monkeypatch, tmp_path):

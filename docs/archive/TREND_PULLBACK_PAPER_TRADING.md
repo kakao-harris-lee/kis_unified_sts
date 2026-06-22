@@ -1,5 +1,9 @@
 # trend_pullback Paper Trading Guide
 
+> **ARCHIVED 2026-06-22:** `trend_pullback` is disabled in the current stock
+> strategy config. This guide is retained only as a historical paper-trading
+> procedure. Use [ROADMAP.md](../ROADMAP.md) for the current strategy state.
+
 ## Overview
 
 This guide covers starting, monitoring, and managing paper trading for the `trend_pullback` stock strategy.

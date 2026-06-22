@@ -24,7 +24,9 @@ import {
   getExperimentJob,
   getExperimentStrategies,
   getLatestExperiment,
+  getLatestExperimentPaperComparison,
   runExperiment,
+  type ExperimentPaperComparisonRow,
   type ExperimentJob,
   type ExperimentRunReport,
   type RunStrategySummary,
@@ -45,12 +47,30 @@ function fmtNum(v: number | null | undefined, d = 2): string {
 function fmtKrw(v: number | null | undefined): string {
   return v === null || v === undefined ? "-" : `₩${Math.round(v).toLocaleString("ko-KR")}`;
 }
+function fmtSigned(v: number | null | undefined, d = 2): string {
+  if (v === null || v === undefined) return "-";
+  return `${v >= 0 ? "+" : ""}${v.toFixed(d)}`;
+}
 function fmtDateTime(v?: string | null): string {
   if (!v) return "-";
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? v : d.toLocaleString("ko-KR", {
     month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
   });
+}
+
+function CompareStatusChip({ status }: { status: ExperimentPaperComparisonRow["status"] }) {
+  const map = {
+    aligned: { label: "aligned", cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" },
+    watch: { label: "watch", cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" },
+    fail: { label: "fail", cls: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300" },
+    insufficient_data: { label: "insufficient", cls: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300" },
+  }[status];
+  return (
+    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${map.cls}`}>
+      {map.label}
+    </span>
+  );
 }
 
 function StatusChip({ status }: { status: "ok" | "skipped" | "error" }) {
@@ -66,45 +86,141 @@ function StatusChip({ status }: { status: "ok" | "skipped" | "error" }) {
   );
 }
 
-function SummaryTable({ summaries }: { summaries: RunStrategySummary[] }) {
+function ComparePanel({
+  row,
+  isLoading,
+  selectedStrategy,
+}: {
+  row?: ExperimentPaperComparisonRow;
+  isLoading: boolean;
+  selectedStrategy: string | null;
+}) {
+  if (isLoading) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+        paper 비교 로딩 중...
+      </div>
+    );
+  }
+  if (!row) {
+    if (!selectedStrategy) return null;
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+        <span className="font-semibold">{selectedStrategy}</span> missing_evidence: comparison_row
+      </div>
+    );
+  }
+
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
-        <thead className="bg-slate-50 dark:bg-slate-800/70">
-          <tr>
-            {["전략", "TF", "수익률", "Sharpe", "MDD", "승률", "거래", "평가자산"].map((h, i) => (
-              <th key={h} className={`px-3 py-2 font-semibold text-slate-600 dark:text-slate-300 ${i === 0 ? "text-left" : "text-right"}`}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-          {summaries.map((s) => {
-            const positive = (s.total_return_pct ?? 0) >= 0;
-            return (
-              <tr key={s.strategy_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                <td className="px-3 py-3">
-                  <div className="font-semibold text-slate-900 dark:text-slate-100">{s.strategy_id}</div>
-                  <div className="text-xs text-slate-500">{s.strategy_name}</div>
-                </td>
-                <td className="px-3 py-3 text-right text-xs text-slate-500">{s.timeframe}</td>
-                <td className={`px-3 py-3 text-right font-bold ${positive ? "text-profit" : "text-loss"}`}>{fmtPct(s.total_return_pct)}</td>
-                <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{fmtNum(s.sharpe_ratio)}</td>
-                <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{fmtPct(s.max_drawdown_pct)}</td>
-                <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{s.win_rate_pct.toFixed(0)}%</td>
-                <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{s.closed_trades}</td>
-                <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{fmtKrw(s.final_equity)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-wrap items-center gap-2">
+        <CompareStatusChip status={row.status} />
+        <span className="font-semibold text-slate-900 dark:text-slate-100">{row.strategy_id}</span>
+        <span className="text-xs text-slate-500">backtest vs paper</span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+        <div>
+          <div className="text-xs text-slate-500">Paper 거래</div>
+          <div className="font-semibold text-slate-900 dark:text-slate-100">{row.paper.trade_count}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">Paper 승률</div>
+          <div className="font-semibold text-slate-900 dark:text-slate-100">{fmtPct(row.paper.win_rate_pct)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">Paper PnL</div>
+          <div className={`font-semibold ${(row.paper.total_pnl ?? 0) >= 0 ? "text-profit" : "text-loss"}`}>{fmtKrw(row.paper.total_pnl)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">승률 차이</div>
+          <div className="font-semibold text-slate-900 dark:text-slate-100">
+            {row.deltas.win_rate_pct === null ? "-" : `${fmtSigned(row.deltas.win_rate_pct)}pp`}
+          </div>
+        </div>
+      </div>
+      {row.missing_evidence.length > 0 && (
+        <div className="mt-3 rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+          missing_evidence: {row.missing_evidence.join(", ")}
+        </div>
+      )}
+      {row.paper.latest_exit_time && (
+        <div className="mt-2 text-xs text-slate-500">최근 paper 종료: {fmtDateTime(row.paper.latest_exit_time)}</div>
+      )}
+    </div>
+  );
+}
+
+function SummaryTable({
+  summaries,
+  selectedCompare,
+  compareRows,
+  compareLoading,
+  onCompare,
+}: {
+  summaries: RunStrategySummary[];
+  selectedCompare: string | null;
+  compareRows: ExperimentPaperComparisonRow[];
+  compareLoading: boolean;
+  onCompare: (strategyId: string) => void;
+}) {
+  const selectedRow = compareRows.find((r) => r.strategy_id === selectedCompare);
+
+  return (
+    <div className="space-y-3">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+          <thead className="bg-slate-50 dark:bg-slate-800/70">
+            <tr>
+              {["전략", "TF", "수익률", "Sharpe", "MDD", "승률", "거래", "평가자산", "Paper"].map((h, i) => (
+                <th key={h} className={`px-3 py-2 font-semibold text-slate-600 dark:text-slate-300 ${i === 0 ? "text-left" : "text-right"}`}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {summaries.map((s) => {
+              const positive = (s.total_return_pct ?? 0) >= 0;
+              const compareRow = compareRows.find((r) => r.strategy_id === s.strategy_id);
+              return (
+                <tr key={s.strategy_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                  <td className="px-3 py-3">
+                    <div className="font-semibold text-slate-900 dark:text-slate-100">{s.strategy_id}</div>
+                    <div className="text-xs text-slate-500">{s.strategy_name}</div>
+                  </td>
+                  <td className="px-3 py-3 text-right text-xs text-slate-500">{s.timeframe}</td>
+                  <td className={`px-3 py-3 text-right font-bold ${positive ? "text-profit" : "text-loss"}`}>{fmtPct(s.total_return_pct)}</td>
+                  <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{fmtNum(s.sharpe_ratio)}</td>
+                  <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{fmtPct(s.max_drawdown_pct)}</td>
+                  <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{s.win_rate_pct.toFixed(0)}%</td>
+                  <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{s.closed_trades}</td>
+                  <td className="px-3 py-3 text-right text-slate-700 dark:text-slate-200">{fmtKrw(s.final_equity)}</td>
+                  <td className="px-3 py-3 text-right">
+                    <button
+                      onClick={() => onCompare(s.strategy_id)}
+                      className="inline-flex items-center gap-1 rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      {selectedCompare === s.strategy_id && compareLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      {compareRow ? <CompareStatusChip status={compareRow.status} /> : "비교"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <ComparePanel
+        row={selectedRow}
+        isLoading={compareLoading && !!selectedCompare && !selectedRow}
+        selectedStrategy={selectedCompare}
+      />
     </div>
   );
 }
 
 function ReportView({ report }: { report: ExperimentRunReport }) {
+  const [selectedCompare, setSelectedCompare] = useState<string | null>(null);
   const chartData = useMemo(() => {
     const byDate = new Map<string, Record<string, string | number>>();
     for (const [sid, points] of Object.entries(report.equity_curves)) {
@@ -116,6 +232,12 @@ function ReportView({ report }: { report: ExperimentRunReport }) {
     }
     return Array.from(byDate.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
   }, [report]);
+  const comparison = useQuery({
+    queryKey: ["experiment-paper-comparison", report.experiment.id],
+    queryFn: getLatestExperimentPaperComparison,
+    enabled: !!selectedCompare,
+    staleTime: 30000,
+  });
 
   const notOk = report.status_by_strategy.filter((s) => s.status !== "ok");
   const coverage = Object.entries(report.data_coverage ?? {});
@@ -176,7 +298,13 @@ function ReportView({ report }: { report: ExperimentRunReport }) {
           <span className="text-sm text-slate-500">{report.summaries.length} strategies</span>
         </div>
         {report.summaries.length ? (
-          <SummaryTable summaries={report.summaries} />
+          <SummaryTable
+            summaries={report.summaries}
+            selectedCompare={selectedCompare}
+            compareRows={comparison.data?.comparisons ?? []}
+            compareLoading={comparison.isLoading || comparison.isFetching}
+            onCompare={setSelectedCompare}
+          />
         ) : (
           <div className="card p-6 text-sm text-slate-500">정상 실행된 전략이 없습니다 (위 상태 참조).</div>
         )}

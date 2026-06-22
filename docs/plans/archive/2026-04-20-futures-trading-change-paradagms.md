@@ -1,5 +1,12 @@
 # KOSPI200 선물 자동매매 시스템 전환 지침서
 
+> **ARCHIVED 2026-06-22:** Original futures paradigm-change brief. It predates
+> the current Setup A/C + LLM-context runtime, RL/TFT removal, and ClickHouse
+> removal. Use [ROADMAP.md](../../ROADMAP.md),
+> [2026-06-03-ml-rl-removal-llm-indicator-futures.md](../2026-06-03-ml-rl-removal-llm-indicator-futures.md),
+> and [2026-04-20-futures-paradigm-phase5-rollout.md](../2026-04-20-futures-paradigm-phase5-rollout.md)
+> for current decisions and live rollout gates.
+
 **버전:** 1.0
 **대상:** Claude Code 또는 개발자가 직접 구현 시 참고
 **목표:** RL 중심 당일매매 → 뉴스 + 수급 + 규칙 기반 하이브리드 시스템

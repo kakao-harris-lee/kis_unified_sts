@@ -20,7 +20,12 @@ function StrategySelect({
   const filtered = assetClass ? byAssetClass(assetClass) : strategies;
 
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={className}>
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={className}
+      aria-label="Strategy filter"
+    >
       {allOption && <option value="">All Strategies</option>}
       {filtered.map((s) => (
         <option key={`${s.asset_class}/${s.name}`} value={s.name}>

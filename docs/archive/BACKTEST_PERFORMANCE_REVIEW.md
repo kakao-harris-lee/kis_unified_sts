@@ -1,4 +1,10 @@
 # Backtest Performance Review
+
+> **ARCHIVED 2026-06-22:** Historical March 2026 validation snapshot. It does
+> not describe the current active strategy set or paper runtime. Use
+> [ROADMAP.md](../ROADMAP.md) and [PROJECT_STATUS.md](../PROJECT_STATUS.md) for
+> current decisions.
+
 ## Stock Strategy Redesign - Validation Results
 
 **Task:** 007-stock-strategy-redesign-trend-pullback-momentum-br

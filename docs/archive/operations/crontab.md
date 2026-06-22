@@ -1,5 +1,11 @@
 # Crontab Operations
 
+> **ARCHIVED 2026-06-22:** Host crontab is no longer the current KIS scheduler
+> path. KIS one-shot jobs run through the Compose `scheduler` profile and
+> market-hours producers run through `producers`. Use
+> [cron-to-compose-cutover.md](../../runbooks/cron-to-compose-cutover.md) and
+> [deployment.md](../../deployment.md) for current operations.
+
 ## Required crontab entries (deploy user)
 
 Production crontab on the deploy server. Maintained manually via `crontab -e` — this document is the registration reference.

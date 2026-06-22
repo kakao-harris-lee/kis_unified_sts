@@ -1,18 +1,5 @@
 import SideBadge from './SideBadge'
-
-interface Position {
-  asset_class: 'stock' | 'futures'
-  code: string
-  name: string
-  side: 'BUY' | 'SELL'
-  quantity: number
-  entry_price: number
-  current_price: number
-  unrealized_pnl: number
-  pnl_pct: number
-  strategy: string
-  entry_time: string
-}
+import type { Position } from '@/lib/dashboard/types'
 
 export default function PositionCard({ position: p }: { position: Position }) {
   const positive = p.unrealized_pnl >= 0

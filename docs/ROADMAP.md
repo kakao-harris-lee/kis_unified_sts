@@ -1,6 +1,6 @@
 # Roadmap — KIS Unified Trading Platform
 
-> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-06-20 KST.**
+> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-06-22 KST.**
 
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
@@ -11,12 +11,64 @@ Trusted current sources cited below:
 [PROJECT_STATUS.md](PROJECT_STATUS.md),
 [plans/INDEX.md](plans/INDEX.md),
 [plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md),
+[plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md),
 [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md),
 [runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md).
 
 All times are KST (Asia/Seoul). Strategy `enabled` flags in
 `config/strategies/{stock,futures}/*.yaml` are the single source of truth for
 active/disabled state.
+
+---
+
+## UI/UX — Quant Ops Workbench
+
+### North Star
+
+Turn the existing dashboard and Strategy Lab into a **Quant Ops Workbench**:
+one operator surface that answers, in order, whether the system is healthy,
+why a signal happened or was rejected, how risk/exposure changed, whether paper
+behavior matches backtest evidence, and what gate is needed before promotion.
+
+The product model follows the standard quant workflow:
+
+```text
+Universe / data quality -> signal decision trace -> portfolio/risk ->
+execution lifecycle -> backtest-vs-paper comparison -> promotion gate
+```
+
+### Current operating state
+
+- Existing Next.js UI (`strategy-builder-ui/`) has Cockpit, positions, signals,
+  trades, experiments, builder, and execute pages.
+- Dashboard APIs already expose parts of the required state: health/process,
+  data freshness, kill switch, forecasting, positions, signals, trades/fills,
+  Strategy Lab preview/order-ticket endpoints, and stock experiment reports.
+- The main gap is not raw data availability. The gap is decision UX: current
+  pages do not yet merge health, data quality, risk, signal reasons, order/fill
+  lifecycle, backtest evidence, and promotion gates into operator workflows.
+
+### Phases
+
+| Phase / Milestone | Status | Gate / Owner |
+|---|---|---|
+| Quant Ops Workbench plan (multi-agent implementation lanes, contracts, gates) | ✅ done | [plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md) |
+| P0 Ops Cockpit 2.0 | ✅ done | `/api/health/summary` now exposes ops summary DTO with process/data freshness/scheduler/producers/forecasting/pipeline/mode |
+| P0 Signal Decision Trace | ✅ done | `/signals` shows trace summary, reject/orderability fields, and linked order/fill/position/trade ids when present |
+| P0 Risk & Exposure Board | ✅ done | `/risk` shows portfolio totals, strategy exposure, symbol exposure, daily loss, and futures long/short signed exposure |
+| P0 Backtest-vs-Paper Comparator | ✅ done | `/experiments` compares latest stock experiment evidence against RuntimeLedger paper trades |
+| P1 Signal -> Order -> Fill lifecycle blotter | ✅ done | `/api/trades/lifecycle` and `/trades` timeline panel show partial signal/order/fill/position/trade lineage |
+| P1 Strategy Promotion Kanban | ✅ done | `/builder` includes read-only Draft -> Live Gated board with explicit present/missing/not-available evidence |
+| P1 Universe & Data Coverage Explorer | ✅ done | `/coverage` and `/api/coverage` show screener universe, trade targets, daily indicator gaps, and latest experiment coverage |
+| P2 Setup C / Event Context diagnostics | ✅ done | `/event-context` and `/api/event-context/diagnostics` show Setup C latest eval, event-score freshness/sparsity, source timeline, config mismatch warnings, and no-signal root cause |
+| P2 Workbench UI/UX QA pass | ✅ done | Automated render/accessibility smoke checks plus desktop/mobile screenshot review cover `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context` |
+
+### Open next-steps
+
+- Maintain screenshot/accessibility QA artifacts when Workbench routes change,
+  especially `/risk`, `/coverage`, `/trades`, `/builder`, and `/event-context`.
+- Keep all new work paper-safe. UI may inspect paper order tickets, but must not
+  introduce live order controls or bypass futures live gates.
 
 ---
 
@@ -55,7 +107,7 @@ that shortens the design → backtest → paper → feedback loop.
 | HAR-RV log-RV forecast transition | 🔄 in-progress | backtest + ~1wk shadow before cutover; forecast model stale since 2026-05-31, daily refit failing |
 | `technical_consensus` reactivation | 🔄 in-progress | strong long-horizon backtest vs recent ~3wk live loss → regime-verify, then small |
 | `momentum_breakout` redesign / retune | 🔄 in-progress | retune still negative (recent Sharpe ≈ −5.24); observe in paper |
-| Strategy Lab Phase 1–7 (visual design → backtest → paper → feedback) | 🔄 in-progress | design done ([plans/2026-05-26-strategy-lab-extension-design.md](plans/2026-05-26-strategy-lab-extension-design.md)); build partial; UI is Next.js (`strategy-builder-ui/`) |
+| Strategy Lab Phase 1–7 (visual design → backtest → paper → feedback) | 🔄 in-progress | design done ([plans/2026-05-26-strategy-lab-extension-design.md](plans/2026-05-26-strategy-lab-extension-design.md)); Quant Ops Workbench UI/UX expansion complete ([plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md)); remaining Strategy Lab work is non-Workbench backtest/paper workflow depth |
 | Position-recovery drill + Redis/SQLite E2E smoke | ⏳ planned | after each cutover / process restart |
 | MLflow restart (localhost:5000 down) | ⏳ planned | ops |
 | Stock live trading | ⏳ planned (blocked) | requires margin/education approval on real accounts; separate promotion tier |
@@ -66,7 +118,8 @@ that shortens the design → backtest → paper → feedback loop.
   model over; see
   [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
 - Decide `technical_consensus` reactivation after regime verification (small size first).
-- Continue Strategy Lab build-out (signal → paper-order workflow is the center).
+- Continue non-Workbench Strategy Lab build-out for deeper design, backtest,
+  paper feedback, and reactivation-gate workflows.
 - Run the position-recovery drill and the Redis + SQLite E2E smoke.
 - Restart MLflow for experiment tracking.
 

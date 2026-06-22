@@ -13,6 +13,9 @@ import {
   Activity,
   Receipt,
   FlaskConical,
+  ShieldCheck,
+  DatabaseZap,
+  CalendarClock,
 } from "lucide-react";
 import { useAuth } from "@/hooks";
 import { SettingsModal } from "@/components/settings";
@@ -24,6 +27,9 @@ const navItems = [
   { href: "/", label: "Cockpit", icon: LayoutDashboard },
   { href: "/positions", label: "Positions", icon: Briefcase },
   { href: "/signals", label: "Signals", icon: Activity },
+  { href: "/risk", label: "Risk", icon: ShieldCheck },
+  { href: "/coverage", label: "Coverage", icon: DatabaseZap },
+  { href: "/event-context", label: "Events", icon: CalendarClock },
   { href: "/trades", label: "Trades", icon: Receipt },
   { href: "/experiments", label: "실험", icon: FlaskConical },
   { href: "/builder", label: "전략 빌더", icon: Sparkles },
@@ -67,7 +73,7 @@ export function Navigation() {
 
             {/* 네비게이션 */}
             <nav
-              className="flex max-w-[calc(100vw-128px)] flex-none items-center gap-1 overflow-x-auto px-1 [scrollbar-width:none] sm:max-w-none sm:flex-1 [&::-webkit-scrollbar]:hidden"
+              className="scrollbar-thin flex max-w-[calc(100vw-128px)] flex-none items-center gap-1 overflow-x-auto px-1 sm:max-w-none sm:flex-1"
               aria-label="메인 네비게이션"
             >
               {navItems.map((item) => {

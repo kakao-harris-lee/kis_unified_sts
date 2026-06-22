@@ -1,6 +1,6 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-06-20
+**Last updated**: 2026-06-22
 
 > Phased roadmap (Stock + Futures): [ROADMAP.md](ROADMAP.md) — authoritative.
 
@@ -20,6 +20,14 @@
   `scheduler` and `producers`.
 - Dashboard `/experiments` now supports stock strategy experiment reports and
   on-demand jobs backed by `shared/backtest/experiment_runner.py`.
+- Quant Ops Workbench P0/P1 UI is in place: `/risk`, `/coverage`, `/trades`
+  lifecycle timelines, `/builder` promotion Kanban, signal trace details, and
+  backtest-vs-paper comparison panels are read-only or paper-safe.
+- Quant Ops Workbench P2 Event Context is in place: `/event-context` and
+  `/api/event-context/diagnostics` expose Setup C latest eval, event-score
+  freshness, news/macro source timelines, and no-signal root causes. Workbench
+  UI/UX QA now covers loading/degraded render states plus desktop/mobile review
+  for the new operator pages.
 
 ## Storage And Runtime Decisions
 
@@ -44,6 +52,30 @@ Verified 2026-06-20 against `config/strategies/{stock,futures}/*.yaml` (`enabled
 | Futures | `llm_directed_indicator` | Deprecated | Not an active path without a separate redefinition gate. |
 
 ## Recent Decisions
+
+**2026-06-22** - Quant Ops Workbench P0/P1 implementation.
+Multi-agent lanes implemented the ops summary DTO, signal trace UI, risk and
+exposure board, backtest-vs-paper comparator, lifecycle blotter, strategy
+promotion Kanban, and universe/data coverage explorer. New read-only or
+paper-safe surfaces include `/risk`, `/coverage`, `/trades` lifecycle panels,
+and `/builder` promotion evidence. Backend additions include
+`/api/trading/risk-exposure`, `/api/trades/lifecycle`, `/api/coverage`, enriched
+`/api/signals`, `/api/health/summary`, and experiment paper comparison.
+
+**2026-06-22** - Quant Ops Workbench P2 Event Context diagnostics.
+`/api/event-context/diagnostics` and `/event-context` separate Setup C selectivity
+from missing event-source causes using `trading:futures:setup_eval`,
+`forecast:event:latest`, news/scored/macro streams, scheduled events, and Setup C
+config mismatch warnings. The UI is read-only and paper-safe.
+
+**2026-06-22** - Documentation cleanup and UI/UX roadmap update.
+Pre-decoupled stock paper guides, historical backtest-review placeholders,
+host-crontab registration docs, and obsolete RL/ClickHouse-era plans were
+archived or de-indexed. The roadmap now includes a cross-asset Quant Ops
+Workbench track with a multi-agent implementation plan:
+[plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md).
+Current operators should start from [ROADMAP.md](ROADMAP.md), this status page,
+and runbooks.
 
 **2026-06-20** - Documentation cleanup (this PR). Superseded RL/paradigm plans
 and the synthetic-data stock validation summary were archived with SUPERSEDED
@@ -81,7 +113,7 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
   daily refit failing — needs backtest + ~1wk shadow before cutover);
   `technical_consensus` reactivation decision (strong long-horizon backtest vs
   recent live loss); `momentum_breakout` redesign (retune still negative);
-  Strategy Lab build-out. See
+  non-Workbench Strategy Lab build-out. See
   [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
 - **Futures:** F9 decoupled cutover gates (shadow → Gate 2 → operator-gated
   cutover) before replacing the orchestrator path; Phase 5 Gate 1–3 to small

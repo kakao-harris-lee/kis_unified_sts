@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   LineChart,
@@ -13,6 +13,7 @@ import {
   BarChart,
   Bar,
 } from 'recharts';
+import { Clock3, RefreshCcw } from 'lucide-react';
 import { tradingApi, tradesApi } from '@/lib/dashboard/api';
 import TableSkeleton from '@/components/dashboard/TableSkeleton';
 import RefreshIndicator from '@/components/dashboard/RefreshIndicator';
@@ -21,7 +22,9 @@ import SideBadge from '@/components/dashboard/SideBadge';
 import StatCard from '@/components/dashboard/StatCard';
 import StrategySelect from '@/components/dashboard/StrategySelect';
 import HeaderBar from '@/components/dashboard/HeaderBar';
+import LifecycleTimeline from '@/components/dashboard/LifecycleTimeline';
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext';
+import type { TradeLifecycleResponse } from '@/lib/dashboard/trades';
 
 interface Trade {
   id: string;
@@ -92,10 +95,57 @@ interface DbOpenPosition {
 
 type TabType = 'live' | 'history';
 
+function LifecycleIconButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+    >
+      <Clock3 className="h-4 w-4" aria-hidden="true" />
+    </button>
+  );
+}
+
+function LifecycleTextButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="mt-3 inline-flex items-center gap-2 rounded border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+    >
+      <Clock3 className="h-4 w-4" aria-hidden="true" />
+      Lifecycle
+    </button>
+  );
+}
+
+function pnlTone(value: number | null | undefined): string {
+  return (value ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700';
+}
+
 function LiveTab() {
   const { selectedAsset } = useAssetClass();
   const [strategyFilter, setStrategyFilter] = useState<string>('');
   const [chartCollapsed, setChartCollapsed] = useState<boolean>(true);
+  const [selectedLifecycleTrade, setSelectedLifecycleTrade] = useState<Trade | null>(null);
+  const chartPanelId = 'live-trade-charts';
 
   const {
     data: tradesData,
@@ -109,6 +159,7 @@ function LiveTab() {
     queryFn: () =>
       tradesApi
         .getTrades({
+          asset_class: selectedAsset,
           strategy: strategyFilter || undefined,
           limit: 100,
         })
@@ -117,12 +168,36 @@ function LiveTab() {
   });
 
   const {
+    data: lifecycleData,
+    isLoading: lifecycleLoading,
+    error: lifecycleError,
+    refetch: refetchLifecycle,
+  } = useQuery<TradeLifecycleResponse>({
+    queryKey: [
+      'trade-lifecycle',
+      'live',
+      selectedAsset,
+      selectedLifecycleTrade?.id,
+      selectedLifecycleTrade?.symbol,
+    ],
+    queryFn: () =>
+      tradesApi
+        .getLifecycle({
+          asset_class: selectedAsset,
+          trade_id: selectedLifecycleTrade?.id,
+          symbol: selectedLifecycleTrade?.symbol,
+        })
+        .then((r) => r.data),
+    enabled: Boolean(selectedLifecycleTrade),
+  });
+
+  const {
     data: byStrategy,
     error: strategyError,
     refetch: refetchStrategy,
   } = useQuery<StrategyStats[]>({
     queryKey: ['trades-by-strategy', selectedAsset],
-    queryFn: () => tradesApi.getByStrategy().then((r) => r.data),
+    queryFn: () => tradesApi.getByStrategy({ asset_class: selectedAsset }).then((r) => r.data),
     refetchInterval: 10000,
   });
 
@@ -157,7 +232,11 @@ function LiveTab() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <StrategySelect value={strategyFilter} onChange={setStrategyFilter} />
+        <StrategySelect
+          value={strategyFilter}
+          onChange={setStrategyFilter}
+          assetClass={selectedAsset}
+        />
         <div className="flex items-center gap-4">
           <RefreshIndicator
             lastUpdated={tradesUpdatedAt}
@@ -165,6 +244,17 @@ function LiveTab() {
             showStaleWarning={true}
             staleThresholdSeconds={30}
           />
+          <button
+            type="button"
+            onClick={() => {
+              refetchTrades();
+              refetchStrategy();
+            }}
+            className="inline-flex h-9 w-9 items-center justify-center rounded border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+            aria-label="Refresh live trades"
+          >
+            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+          </button>
           <div className="text-sm text-slate-500">{tradesData?.total || 0} trade(s)</div>
         </div>
       </div>
@@ -172,7 +262,10 @@ function LiveTab() {
       {/* Mobile chart toggle */}
       <div className="sm:hidden">
         <button
+          type="button"
           onClick={() => setChartCollapsed((v) => !v)}
+          aria-expanded={!chartCollapsed}
+          aria-controls={chartPanelId}
           className="w-full px-4 py-2 bg-white border border-slate-300 rounded text-sm text-slate-800"
         >
           📊 {chartCollapsed ? '차트 보기' : '차트 숨기기'}
@@ -180,6 +273,7 @@ function LiveTab() {
       </div>
 
       <div
+        id={chartPanelId}
         className={`${chartCollapsed ? 'hidden' : 'block'} sm:block grid grid-cols-1 lg:grid-cols-2 gap-6`}
       >
         <div className="bg-white rounded-lg p-4 border border-slate-200">
@@ -208,7 +302,7 @@ function LiveTab() {
             <div className="h-[250px] flex items-center justify-center">
               {strategyError ? (
                 <div className="text-center">
-                  <div className="text-red-400 text-sm mb-2">Failed to load</div>
+                  <div className="text-rose-700 text-sm mb-2">Failed to load</div>
                   <button
                     onClick={() => refetchStrategy()}
                     className="text-xs text-blue-400 hover:text-blue-300"
@@ -236,8 +330,30 @@ function LiveTab() {
         </div>
       </div>
 
+      {selectedLifecycleTrade ? (
+        <LifecycleTimeline
+          title={`Lifecycle ${selectedLifecycleTrade.symbol}`}
+          data={lifecycleData}
+          isLoading={lifecycleLoading}
+          error={
+            lifecycleError instanceof Error
+              ? lifecycleError.message
+              : lifecycleError
+                ? 'Failed to load lifecycle'
+                : null
+          }
+          onRetry={() => refetchLifecycle()}
+          onClose={() => setSelectedLifecycleTrade(null)}
+        />
+      ) : null}
+
       {tradesLoading ? (
-        <TableSkeleton rows={10} columns={8} />
+        <>
+          <div role="status" aria-label="Loading live trades" className="sr-only">
+            Loading live trades
+          </div>
+          <TableSkeleton rows={10} columns={9} />
+        </>
       ) : tradesData?.trades.length === 0 ? (
         <div className="bg-white rounded-lg p-8 text-center text-slate-500">No trades found</div>
       ) : (
@@ -277,7 +393,7 @@ function LiveTab() {
                     <div className="text-slate-500">P&L</div>
                     <div
                       className={`font-medium ${
-                        (trade.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                        pnlTone(trade.pnl)
                       }`}
                     >
                       {(trade.pnl ?? 0) >= 0 ? '+' : ''}
@@ -288,7 +404,7 @@ function LiveTab() {
                     <div className="text-slate-500">P&L %</div>
                     <div
                       className={`font-medium ${
-                        (trade.pnl_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                        pnlTone(trade.pnl_pct)
                       }`}
                     >
                       {(trade.pnl_pct ?? 0) >= 0 ? '+' : ''}
@@ -296,6 +412,10 @@ function LiveTab() {
                     </div>
                   </div>
                 </div>
+                <LifecycleTextButton
+                  label={`View lifecycle for ${trade.symbol}`}
+                  onClick={() => setSelectedLifecycleTrade(trade)}
+                />
               </div>
             ))}
           </div>
@@ -303,17 +423,19 @@ function LiveTab() {
           {/* Desktop Table View with Horizontal Scroll */}
           <div className="hidden md:block bg-white rounded-lg overflow-hidden border border-slate-200">
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="min-w-[900px] w-full">
+                <caption className="sr-only">Live Redis trades and lifecycle links</caption>
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Exit Time</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Symbol</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Exit</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L %</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Exit Time</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Symbol</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
+                    <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry</th>
+                    <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">Exit</th>
+                    <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L</th>
+                    <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L %</th>
+                    <th scope="col" className="px-4 py-3 text-center text-sm font-medium text-slate-700">Lifecycle</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -331,7 +453,7 @@ function LiveTab() {
                       <td className="px-4 py-3 text-right">{(trade.exit_price ?? 0).toLocaleString()}</td>
                       <td
                         className={`px-4 py-3 text-right font-medium ${
-                          (trade.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                          pnlTone(trade.pnl)
                         }`}
                       >
                         {(trade.pnl ?? 0) >= 0 ? '+' : ''}
@@ -339,11 +461,17 @@ function LiveTab() {
                       </td>
                       <td
                         className={`px-4 py-3 text-right font-medium ${
-                          (trade.pnl_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                          pnlTone(trade.pnl_pct)
                         }`}
                       >
                         {(trade.pnl_pct ?? 0) >= 0 ? '+' : ''}
                         {(trade.pnl_pct ?? 0).toFixed(2)}%
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <LifecycleIconButton
+                          label={`View lifecycle for ${trade.symbol}`}
+                          onClick={() => setSelectedLifecycleTrade(trade)}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -359,6 +487,7 @@ function LiveTab() {
 
 function HistoryTab() {
   const { selectedAsset } = useAssetClass();
+  const [selectedLifecycleTrade, setSelectedLifecycleTrade] = useState<DbTrade | null>(null);
 
   const {
     data: stats,
@@ -404,6 +533,30 @@ function HistoryTab() {
     refetchInterval: 10000,
   });
 
+  const {
+    data: lifecycleData,
+    isLoading: lifecycleLoading,
+    error: lifecycleError,
+    refetch: refetchLifecycle,
+  } = useQuery<TradeLifecycleResponse>({
+    queryKey: [
+      'trade-lifecycle',
+      'history',
+      selectedAsset,
+      selectedLifecycleTrade?.id,
+      selectedLifecycleTrade?.code,
+    ],
+    queryFn: () =>
+      tradesApi
+        .getLifecycle({
+          asset_class: selectedAsset,
+          trade_id: selectedLifecycleTrade?.id,
+          symbol: selectedLifecycleTrade?.code,
+        })
+        .then((r) => r.data),
+    enabled: Boolean(selectedLifecycleTrade),
+  });
+
   const isLoading = statsLoading || tradesLoading;
   const hasError = statsError || tradesError || positionsError;
 
@@ -431,6 +584,9 @@ function HistoryTab() {
   if (isLoading) {
     return (
       <div className="space-y-6">
+        <div role="status" aria-label="Loading trade history" className="sr-only">
+          Loading trade history
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
           {Array.from({ length: 4 }).map((_, idx) => (
             <div key={idx} className="bg-white rounded-lg p-4 border border-slate-200">
@@ -439,7 +595,7 @@ function HistoryTab() {
             </div>
           ))}
         </div>
-        <TableSkeleton rows={10} columns={9} />
+        <TableSkeleton rows={10} columns={10} />
       </div>
     );
   }
@@ -448,12 +604,26 @@ function HistoryTab() {
     <div className="space-y-6">
       {/* Refresh Indicator */}
       <div className="flex justify-end">
-        <RefreshIndicator
-          lastUpdated={statsUpdatedAt}
-          isRefreshing={statsRefetching}
-          showStaleWarning={true}
-          staleThresholdSeconds={60}
-        />
+        <div className="flex items-center gap-2">
+          <RefreshIndicator
+            lastUpdated={statsUpdatedAt}
+            isRefreshing={statsRefetching}
+            showStaleWarning={true}
+            staleThresholdSeconds={60}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              refetchStats();
+              refetchTrades();
+              refetchPositions();
+            }}
+            className="inline-flex h-9 w-9 items-center justify-center rounded border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+            aria-label="Refresh trade history"
+          >
+            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -477,6 +647,23 @@ function HistoryTab() {
           />
         </div>
       )}
+
+      {selectedLifecycleTrade ? (
+        <LifecycleTimeline
+          title={`Lifecycle ${selectedLifecycleTrade.code}`}
+          data={lifecycleData}
+          isLoading={lifecycleLoading}
+          error={
+            lifecycleError instanceof Error
+              ? lifecycleError.message
+              : lifecycleError
+                ? 'Failed to load lifecycle'
+                : null
+          }
+          onRetry={() => refetchLifecycle()}
+          onClose={() => setSelectedLifecycleTrade(null)}
+        />
+      ) : null}
 
       {/* Open Positions */}
       {positionsLoading ? (
@@ -552,19 +739,20 @@ function HistoryTab() {
           {/* Desktop Table View with Horizontal Scroll */}
           <div className="hidden md:block bg-white rounded-lg overflow-hidden border border-slate-200">
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="min-w-[1100px] w-full">
+                <caption className="sr-only">Open database positions with risk state</caption>
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Code</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Name</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Entry Date</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry Price</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Qty</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">State</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">High</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Stop Loss</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Code</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Name</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Entry Date</th>
+                    <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry Price</th>
+                    <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">Qty</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">State</th>
+                    <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">High</th>
+                    <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">Stop Loss</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -651,7 +839,7 @@ function HistoryTab() {
                       <div className="text-slate-500">P&L</div>
                       <div
                         className={`font-medium text-lg ${
-                          (trade.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                          pnlTone(trade.pnl)
                         }`}
                       >
                         {trade.pnl != null
@@ -660,6 +848,10 @@ function HistoryTab() {
                       </div>
                     </div>
                   </div>
+                  <LifecycleTextButton
+                    label={`View lifecycle for ${trade.code}`}
+                    onClick={() => setSelectedLifecycleTrade(trade)}
+                  />
                 </div>
               ))}
             </div>
@@ -667,18 +859,20 @@ function HistoryTab() {
             {/* Desktop Table View with Horizontal Scroll */}
             <div className="hidden md:block bg-white rounded-lg overflow-hidden border border-slate-200">
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="min-w-[1100px] w-full">
+                  <caption className="sr-only">Closed database trades and lifecycle links</caption>
                   <thead className="bg-slate-100">
                     <tr>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Exit Date</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Code</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Name</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
-                      <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry</th>
-                      <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Exit</th>
-                      <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Reason</th>
+                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Exit Date</th>
+                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Code</th>
+                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Name</th>
+                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
+                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
+                      <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry</th>
+                      <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">Exit</th>
+                      <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L</th>
+                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Reason</th>
+                      <th scope="col" className="px-4 py-3 text-center text-sm font-medium text-slate-700">Lifecycle</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
@@ -699,7 +893,7 @@ function HistoryTab() {
                         </td>
                         <td
                           className={`px-4 py-3 text-right font-medium ${
-                            (trade.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                            pnlTone(trade.pnl)
                           }`}
                         >
                           {trade.pnl != null
@@ -707,6 +901,12 @@ function HistoryTab() {
                             : '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-slate-500">{trade.exit_reason || '-'}</td>
+                        <td className="px-4 py-3 text-center">
+                          <LifecycleIconButton
+                            label={`View lifecycle for ${trade.code}`}
+                            onClick={() => setSelectedLifecycleTrade(trade)}
+                          />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -722,31 +922,66 @@ function HistoryTab() {
 
 function Trades() {
   const [activeTab, setActiveTab] = useState<TabType>('live');
+  const selectTab = (tab: TabType) => {
+    setActiveTab(tab);
+    document.getElementById(tab === 'live' ? 'trades-live-tab' : 'trades-history-tab')?.focus();
+  };
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      selectTab(activeTab === 'live' ? 'history' : 'live');
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      selectTab(activeTab === 'history' ? 'live' : 'history');
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      selectTab('live');
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      selectTab('history');
+    }
+  };
 
   return (
     <>
       <HeaderBar />
       <div className="max-w-[1400px] mx-auto px-2 sm:px-4 lg:px-6 pt-2 pb-24 lg:pb-2">
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h1 className="text-2xl font-bold">Trade History</h1>
-            <div className="flex rounded-lg overflow-hidden border border-slate-300">
+            <div
+              role="tablist"
+              aria-label="Trade history data source"
+              onKeyDown={handleTabKeyDown}
+              className="flex w-fit rounded-lg overflow-hidden border border-slate-300"
+            >
               <button
-                onClick={() => setActiveTab('live')}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'live'}
+                aria-controls="trades-live-panel"
+                id="trades-live-tab"
+                onClick={() => selectTab('live')}
                 className={`px-4 py-2 text-sm font-medium transition-colors ${
                   activeTab === 'live'
                     ? 'bg-blue-600 text-white'
-                    : 'bg-white text-slate-500 hover:text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                 }`}
               >
                 Live (Redis)
               </button>
               <button
-                onClick={() => setActiveTab('history')}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'history'}
+                aria-controls="trades-history-panel"
+                id="trades-history-tab"
+                onClick={() => selectTab('history')}
                 className={`px-4 py-2 text-sm font-medium transition-colors ${
                   activeTab === 'history'
                     ? 'bg-blue-600 text-white'
-                    : 'bg-white text-slate-500 hover:text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                 }`}
               >
                 History (DB)
@@ -754,7 +989,13 @@ function Trades() {
             </div>
           </div>
 
-          {activeTab === 'live' ? <LiveTab /> : <HistoryTab />}
+          <div
+            id={activeTab === 'live' ? 'trades-live-panel' : 'trades-history-panel'}
+            role="tabpanel"
+            aria-labelledby={activeTab === 'live' ? 'trades-live-tab' : 'trades-history-tab'}
+          >
+            {activeTab === 'live' ? <LiveTab /> : <HistoryTab />}
+          </div>
         </div>
       </div>
     </>

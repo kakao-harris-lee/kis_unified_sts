@@ -11,21 +11,113 @@ import SideBadge from '@/components/dashboard/SideBadge';
 import HeaderBar from '@/components/dashboard/HeaderBar';
 import BottomSheet from '@/components/dashboard/BottomSheet';
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext';
+import type {
+  DashboardSignal,
+  DashboardSignalsResponse,
+  SignalTraceDetails,
+} from '@/lib/dashboard/signalTypes';
 
-interface Signal {
-  id: string;
-  strategy: string;
-  symbol: string;
-  side: 'BUY' | 'SELL';
-  strength: number;
-  price: number;
-  timestamp: string;
-  executed: boolean;
+function displayValue(value: unknown, fallback = 'not available') {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
 }
 
-interface SignalsResponse {
-  signals: Signal[];
-  total: number;
+function displayPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 'unknown';
+  }
+  return `${(value * 100).toFixed(0)}%`;
+}
+
+function strengthValue(signal: DashboardSignal) {
+  return Math.max(0, Math.min(1, signal.strength ?? signal.confidence ?? 0));
+}
+
+function formatTraceDetails(details?: SignalTraceDetails | null) {
+  if (!details || Object.keys(details).length === 0) {
+    return 'not available';
+  }
+
+  return Object.entries(details)
+    .map(([key, value]) => `${key}: ${displayValue(value, 'unknown')}`)
+    .join(' · ');
+}
+
+function TraceItem({
+  label,
+  value,
+  fallback = 'not available',
+}: {
+  label: string;
+  value: unknown;
+  fallback?: string;
+}) {
+  return (
+    <div>
+      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 break-words text-sm font-medium text-slate-900">
+        {displayValue(value, fallback)}
+      </div>
+    </div>
+  );
+}
+
+function SignalTraceCard({
+  signal,
+  onClose,
+}: {
+  signal: DashboardSignal;
+  onClose: () => void;
+}) {
+  return (
+    <section className="bg-white rounded-lg border border-slate-200 p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-sm text-slate-500">Signal Trace</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className="text-lg font-semibold text-slate-900">
+              {signal.symbol}
+            </span>
+            <SideBadge side={signal.side} />
+            <span className="text-sm text-slate-500">{signal.strategy}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <TraceItem label="Status" value={signal.status} fallback="unknown" />
+        <TraceItem label="Confidence" value={displayPercent(signal.confidence)} fallback="unknown" />
+        <TraceItem label="Strength" value={displayPercent(signal.strength)} fallback="unknown" />
+        <TraceItem label="Reason" value={signal.reason} />
+        <TraceItem label="Reject Stage" value={signal.reject_stage} fallback="unknown" />
+        <TraceItem label="Reject Reason" value={signal.reject_reason} />
+        <TraceItem label="Orderability" value={signal.orderability_state} fallback="unknown" />
+        <TraceItem
+          label="Orderability Details"
+          value={formatTraceDetails(signal.orderability_details)}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 sm:grid-cols-2 lg:grid-cols-4">
+        <TraceItem label="Order ID" value={signal.order_id} />
+        <TraceItem label="Fill ID" value={signal.fill_id} />
+        <TraceItem label="Position ID" value={signal.position_id} />
+        <TraceItem label="Trade ID" value={signal.trade_id} />
+      </div>
+    </section>
+  );
 }
 
 function Signals() {
@@ -33,6 +125,7 @@ function Signals() {
   const [strategyFilter, setStrategyFilter] = useState<string>('');
   const [sideFilter, setSideFilter] = useState<string>('');
   const [filterSheetOpen, setFilterSheetOpen] = useState<boolean>(false);
+  const [selectedSignal, setSelectedSignal] = useState<DashboardSignal | null>(null);
 
   // Reset filters when asset class changes - strategies are asset-specific.
   // Adjust state during render (React's recommended pattern) rather than in an
@@ -43,10 +136,11 @@ function Signals() {
     setPrevAsset(selectedAsset);
     setStrategyFilter('');
     setSideFilter('');
+    setSelectedSignal(null);
   }
 
   const { data, isLoading, errorMessage, refetch, isRefetching, dataUpdatedAt } =
-    useQueryWithError<SignalsResponse>({
+    useQueryWithError<DashboardSignalsResponse>({
       queryKey: ['signals', selectedAsset, strategyFilter, sideFilter],
       queryFn: () =>
         signalsApi
@@ -60,17 +154,27 @@ function Signals() {
       refetchInterval: 15000,
     });
 
+  const updateStrategyFilter = (value: string) => {
+    setStrategyFilter(value);
+    setSelectedSignal(null);
+  };
+
+  const updateSideFilter = (value: string) => {
+    setSideFilter(value);
+    setSelectedSignal(null);
+  };
+
   const filterControls = (
     <>
       <div>
         <label className="block text-sm text-slate-500 mb-1">Strategy</label>
-        <StrategySelect value={strategyFilter} onChange={setStrategyFilter} />
+        <StrategySelect value={strategyFilter} onChange={updateStrategyFilter} />
       </div>
       <div>
         <label className="block text-sm text-slate-500 mb-1">Side</label>
         <select
           value={sideFilter}
-          onChange={(e) => setSideFilter(e.target.value)}
+          onChange={(e) => updateSideFilter(e.target.value)}
           className="bg-white border border-slate-300 rounded px-3 py-2 text-sm w-full"
         >
           <option value="">All</option>
@@ -129,6 +233,13 @@ function Signals() {
             <div className="space-y-4">{filterControls}</div>
           </BottomSheet>
 
+          {selectedSignal ? (
+            <SignalTraceCard
+              signal={selectedSignal}
+              onClose={() => setSelectedSignal(null)}
+            />
+          ) : null}
+
           {/* Signals Table */}
           {isLoading ? (
             <TableSkeleton rows={10} columns={7} />
@@ -185,15 +296,22 @@ function Signals() {
                           <div className="flex-1 bg-slate-100 rounded-full h-2 mr-2">
                             <div
                               className="bg-blue-500 h-2 rounded-full"
-                              style={{ width: `${(signal.strength ?? 0) * 100}%` }}
+                              style={{ width: `${strengthValue(signal) * 100}%` }}
                             />
                           </div>
                           <span className="text-sm font-medium">
-                            {((signal.strength ?? 0) * 100).toFixed(0)}%
+                            {displayPercent(signal.strength ?? signal.confidence)}
                           </span>
                         </div>
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSignal(signal)}
+                      className="mt-4 w-full rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                    >
+                      View trace
+                    </button>
                   </div>
                 ))}
               </div>
@@ -229,7 +347,19 @@ function Signals() {
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                       {data?.signals.map((signal) => (
-                        <tr key={signal.id} className="hover:bg-slate-100">
+                        <tr
+                          key={signal.id}
+                          className="cursor-pointer hover:bg-slate-100"
+                          onClick={() => setSelectedSignal(signal)}
+                          tabIndex={0}
+                          role="button"
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              setSelectedSignal(signal);
+                            }
+                          }}
+                        >
                           <td className="px-4 py-3 text-sm text-slate-500">
                             {new Date(signal.timestamp).toLocaleString()}
                           </td>
@@ -246,11 +376,11 @@ function Signals() {
                               <div className="w-16 bg-slate-100 rounded-full h-2 mr-2">
                                 <div
                                   className="bg-blue-500 h-2 rounded-full"
-                                  style={{ width: `${(signal.strength ?? 0) * 100}%` }}
+                                  style={{ width: `${strengthValue(signal) * 100}%` }}
                                 />
                               </div>
                               <span className="text-sm">
-                                {((signal.strength ?? 0) * 100).toFixed(0)}%
+                                {displayPercent(signal.strength ?? signal.confidence)}
                               </span>
                             </div>
                           </td>

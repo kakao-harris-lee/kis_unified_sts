@@ -1,5 +1,11 @@
 # Backtest Results Interpretation Guide
 
+> **Current scope (2026-06-22):** This is a generic metric-interpretation guide,
+> not a source of truth for active strategies or runtime state. Use
+> [ROADMAP.md](ROADMAP.md) and [PROJECT_STATUS.md](PROJECT_STATUS.md) for current
+> decisions. Prefer `sts experiment run` and `/experiments` for current stock
+> experiment workflows; legacy examples below are retained as examples only.
+
 ## How to Review and Act on Backtest Results
 
 This guide provides step-by-step instructions for interpreting backtest results and making data-driven decisions about strategy deployment.
@@ -299,7 +305,9 @@ Based on validation results, follow this decision tree:
 **✅ GREEN LIGHT - Proceed to Paper Trading**
 
 Actions:
-1. Update `docs/BACKTEST_PERFORMANCE_REVIEW.md` with final metrics
+1. Update the current experiment report, or the archived example
+   `docs/archive/BACKTEST_PERFORMANCE_REVIEW.md` if you are preserving a
+   historical review.
 2. Enable strategies in production config (`enabled: true`)
 3. Start paper trading (Phase 2)
 4. Monitor for 20+ trading days
@@ -581,7 +589,7 @@ Once validation is complete, update the following:
 
 ### 1. Performance Review Document
 
-File: `docs/BACKTEST_PERFORMANCE_REVIEW.md`
+File: `docs/archive/BACKTEST_PERFORMANCE_REVIEW.md` (archived historical example)
 
 Fill in all TBD sections:
 - Actual metric values
