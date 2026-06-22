@@ -160,7 +160,9 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         return "track_a_exit"
 
     async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
-        signal = self._check_position(context.position, context.market_data or {})
+        signal = self._check_position(
+            context.position, context.market_data or {}, context.timestamp
+        )
         return (signal is not None, signal)
 
     async def scan_positions(
@@ -172,7 +174,7 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         signals: list[ExitSignal] = []
         for position in positions:
             snapshot = get_symbol_snapshot(market_data, position.code)
-            signal = self._check_position(position, snapshot)
+            signal = self._check_position(position, snapshot, None)
             if signal is not None:
                 signals.append(signal)
         return signals
@@ -212,7 +214,9 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         ]
         return parsed
 
-    def _check_position(self, position: Position, snapshot: dict[str, Any]) -> ExitSignal | None:
+    def _check_position(
+        self, position: Position, snapshot: dict[str, Any], bar_ts: datetime | None = None
+    ) -> ExitSignal | None:
         current_price = get_price_from_snapshot(snapshot)
         if current_price is None:
             current_price = position.current_price if position.current_price > 0 else None
@@ -220,6 +224,11 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
             return None
 
         now = now_kst()
+        # Crash window + history use the BAR timestamp (context.timestamp) when provided,
+        # so the rolling window is deterministic in backtest/replay/tests; fall back to
+        # wall-clock now_kst() only for live scanning (scan_positions passes None).
+        # holding_minutes / EOD intentionally keep now_kst().
+        crash_ts = to_kst(bar_ts) if bar_ts is not None else to_kst(now)
         atr = self._get_atr(snapshot, position)
         prev_price = float(position.metadata.get("prev_price", current_price))
         profit_pct = self._calc_profit_pct(position, current_price)
@@ -231,7 +240,7 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
 
         # Update prev_price and rolling crash history each tick before any early return.
         position.metadata["prev_price"] = current_price
-        crash_history = self._update_crash_history(position, current_price, now)
+        crash_history = self._update_crash_history(position, current_price, crash_ts)
 
         # p1: crash guard — single-tick OR windowed adverse move >= crash_atr_mult * ATR
         if atr > 0:
@@ -244,7 +253,7 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
                     current_price=current_price,
                     history=crash_history,
                     window_seconds=self.config.crash_window_seconds,
-                    current_ts=to_kst(now),
+                    current_ts=crash_ts,
                 )
                 >= self.config.crash_atr_mult * atr
             )
