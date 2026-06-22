@@ -19,7 +19,7 @@ import contextlib
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -55,6 +55,8 @@ class StockStrategyDaemon:
         max_symbols: int = 40,
         watchlist_reader: Callable[[], Any] | None = None,
         regime_config: StockRegimeConfig | None = None,
+        prewarm_fn: Callable[[str], Awaitable[Any]] | None = None,
+        max_prewarm_per_cycle: int = 5,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -69,15 +71,42 @@ class StockStrategyDaemon:
         self._max_symbols = max_symbols
         self._watchlist_reader = watchlist_reader
         self._regime_config = regime_config
+        self._prewarm_fn = prewarm_fn
+        self._max_prewarm_per_cycle = max_prewarm_per_cycle
         self._universe: list[str] = []
         self._stop = asyncio.Event()
 
-    def _apply_watchlist(self, raw: Any) -> None:
-        codes = parse_watchlist_codes(raw, max_symbols=self._max_symbols)
+    async def _apply_watchlist(self, raw: Any) -> None:
+        # Accept a pre-parsed list directly (e.g., from callers that already
+        # resolved the universe) as well as the JSON/dict payloads that
+        # parse_watchlist_codes handles.
+        if isinstance(raw, list):
+            codes = [str(c).strip() for c in raw if str(c).strip()][
+                : self._max_symbols
+            ]
+        else:
+            codes = parse_watchlist_codes(raw, max_symbols=self._max_symbols)
         if not codes:
             return  # keep prior universe
         self._universe = codes
         self.feed.update_symbols(codes)
+        await self._prewarm_cold()
+
+    async def _prewarm_cold(self) -> None:
+        """Warm universe symbols that are not yet warm (≤ cap per cycle).
+
+        Warmth-based, not membership-based: this naturally covers newly-added
+        symbols and earlier REST-missed/over-cap ones (they stay cold and are
+        retried next refresh until warm or dropped from the universe).
+        """
+        if self._prewarm_fn is None:
+            return
+        cold = [s for s in self._universe if not self.engine.is_warm(s)]
+        for symbol in cold[: self._max_prewarm_per_cycle]:
+            try:
+                await self._prewarm_fn(symbol)
+            except Exception:
+                logger.exception("prewarm failed symbol=%s", symbol)
 
     async def _publish_regime(self, now: datetime) -> dict[str, Any] | None:
         """Compute + publish the market regime; return the payload (None if off).
@@ -168,7 +197,7 @@ class StockStrategyDaemon:
         while not self._stop.is_set():
             if self._watchlist_reader is not None:
                 try:
-                    self._apply_watchlist(self._watchlist_reader())
+                    await self._apply_watchlist(self._watchlist_reader())
                 except Exception:
                     logger.exception("watchlist refresh failed; keeping prior universe")
             with contextlib.suppress(TimeoutError):
