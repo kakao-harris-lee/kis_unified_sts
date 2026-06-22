@@ -40,6 +40,9 @@
 5  16 * * 1-5  cd /app && python -m cli.main backfill run
 10 16 * * 1-5  cd /app && python scripts/analysis/stock_paper_daily_verification.py
 20 16 * * 1-5  cd /app && python -m cli.main stock-backfill daily
+# Futures-minute coverage gate — Telegram alert if the active front-month is
+# short vs expected bars (catches the ~70% loss class, PR #507). After 16:05 backfill.
+30 16 * * 1-5  cd /app && python scripts/analysis/futures_minute_coverage_gate.py
 
 # --- accumulation pattern scan (16:10) → system:accumulation:latest ---
 10 16 * * 1-5  cd /app && python scripts/run_accumulation_scan.py
