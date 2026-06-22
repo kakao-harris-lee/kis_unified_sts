@@ -471,3 +471,43 @@ async def test_bear_cycle_disabled_override_still_blocks(monkeypatch):
         daemon, "_publish_regime", _async_return(json.loads(_bear_payload()))
     )
     assert await daemon.evaluate_once() == 0  # unchanged blanket block
+
+
+@pytest.mark.asyncio
+async def test_bear_cycle_cap_reached_blocks_new_override_entries(monkeypatch):
+    """Bear + override enabled + cap reached: no new entries admitted."""
+    from shared.streaming.stock_bear_override import BearOverrideConfig
+
+    # 005930 is strong; an open position already exists in 005930; cap=1 → no new entries
+    daily = {
+        "indicators": {
+            "005930": {
+                "daily_close": 100,
+                "daily_sma_20": 90,
+                "daily_rsi_14": 70,
+                "daily_prev_rsi_14": 65,
+                "daily_macd_hist": 5,
+            },
+        }
+    }
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = json.dumps(daily)
+
+    # mock hkeys to return an open position in the strong symbol
+    async def _hkeys(_k):
+        return [b"005930"]
+
+    redis.hkeys = _hkeys  # type: ignore[assignment]
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",)),
+        manager=_FakeManager(fire_for=("005930",)),
+        regime_config=StockRegimeConfig(),
+        bear_override_config=BearOverrideConfig(enabled=True, max_override_positions=1),
+    )
+    daemon._universe = ["005930"]
+    monkeypatch.setattr(
+        daemon, "_publish_regime", _async_return(json.loads(_bear_payload()))
+    )
+    published = await daemon.evaluate_once()
+    assert published == 0  # cap reached → no new override entries
