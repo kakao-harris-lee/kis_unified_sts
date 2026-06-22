@@ -78,6 +78,12 @@ class _FakeRedis:
         self.kv[key] = value
         return True
 
+    async def get(self, k):
+        return self.kv.get(k)
+
+    async def hkeys(self, k):
+        return []
+
 
 def _daemon(**kw):
     defaults = {
@@ -196,9 +202,7 @@ async def test_bear_gate_disabled_publishes_but_does_not_block():
     d = _daemon(
         redis=redis,
         engine=_FakeEngine(mfi_values={"005930": 28.0, "000660": 30.0}),
-        regime_config=StockRegimeConfig(
-            min_mfi_symbols=2, block_entries_in_bear=False
-        ),
+        regime_config=StockRegimeConfig(min_mfi_symbols=2, block_entries_in_bear=False),
     )
     d._universe = ["005930"]
 
@@ -379,3 +383,91 @@ async def test_apply_watchlist_without_prewarm_fn_is_noop():
     daemon = _daemon(engine=_FakeEngine(warm=()), prewarm_fn=None)
     await daemon._apply_watchlist({"strategies": {"w": ["a", "b"]}})  # must not raise
     assert daemon._universe == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# Bear-gate override: strong-set publish + strong-only evaluation (Task 3)
+# ---------------------------------------------------------------------------
+
+
+def _async_return(v):
+    async def _f(*a, **k):
+        return v
+
+    return _f
+
+
+def _bear_payload():
+    return json.dumps(
+        {
+            "regime": "BEAR_STRONG",
+            "mfi": 28.0,
+            "mfi_symbols": 9,
+            "computed_at_ms": 1,
+            "low_confidence": False,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_bear_cycle_evaluates_only_strong_when_override_enabled(monkeypatch):
+    """Bear + override enabled: only strong symbols evaluated; strong set published."""
+    from shared.streaming.stock_bear_override import BearOverrideConfig
+
+    # daily indicators: 005930 is strong (above SMA20, RSI rising, MACD+, RSI>55)
+    #                   066570 is weak (close < SMA20, RSI<55, RSI falling, MACD-)
+    daily = {
+        "indicators": {
+            "005930": {
+                "daily_close": 100,
+                "daily_sma_20": 90,
+                "daily_rsi_14": 70,
+                "daily_prev_rsi_14": 65,
+                "daily_macd_hist": 5,
+            },
+            "066570": {
+                "daily_close": 80,
+                "daily_sma_20": 90,
+                "daily_rsi_14": 40,
+                "daily_prev_rsi_14": 45,
+                "daily_macd_hist": -3,
+            },
+        }
+    }
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = json.dumps(daily)
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930", "066570")),
+        manager=_FakeManager(fire_for=("005930", "066570")),
+        regime_config=StockRegimeConfig(),
+        bear_override_config=BearOverrideConfig(enabled=True),
+    )
+    daemon._universe = ["005930", "066570"]
+    # force bear regime (bypass MFI compute)
+    monkeypatch.setattr(
+        daemon, "_publish_regime", _async_return(json.loads(_bear_payload()))
+    )
+    published = await daemon.evaluate_once()
+    # only the strong symbol (005930) was evaluated/published, not 066570
+    assert published == 1
+    codes = [f.get("code") for _s, f in redis.added]
+    assert codes == ["005930"]
+    # strong set published to Redis
+    assert "stock:daemon:bear_override" in redis.kv
+
+
+@pytest.mark.asyncio
+async def test_bear_cycle_disabled_override_still_blocks(monkeypatch):
+    """Bear + override disabled: blanket block unchanged."""
+    from shared.streaming.stock_bear_override import BearOverrideConfig
+
+    daemon = _daemon(
+        regime_config=StockRegimeConfig(),
+        bear_override_config=BearOverrideConfig(enabled=False),
+    )
+    daemon._universe = ["005930"]
+    monkeypatch.setattr(
+        daemon, "_publish_regime", _async_return(json.loads(_bear_payload()))
+    )
+    assert await daemon.evaluate_once() == 0  # unchanged blanket block
