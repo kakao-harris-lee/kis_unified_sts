@@ -31,7 +31,7 @@ class StockPrewarmConfig:
     daily_lookback_days: int = 400
 
     @classmethod
-    def load(cls) -> "StockPrewarmConfig":
+    def load(cls) -> StockPrewarmConfig:
         try:
             from shared.config.loader import ConfigLoader
 
