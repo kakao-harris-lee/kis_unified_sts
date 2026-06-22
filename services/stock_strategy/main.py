@@ -20,9 +20,25 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from shared.streaming.parquet_warmup import warmup_engine_from_parquet
+from shared.streaming.candle_warmup import StockPrewarmConfig, warmup_engine
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Prewarm factory — module-level so tests can monkeypatch `warmup_engine`
+# ---------------------------------------------------------------------------
+
+
+def build_prewarm_fn(*, engine, store, kis_client, cfg: StockPrewarmConfig):
+    """Return an async ``prewarm_fn(symbol)`` bound to engine/store/kis_client/cfg."""
+
+    async def _prewarm(symbol: str):
+        return await warmup_engine(
+            engine, symbol, store=store, kis_client=kis_client, config=cfg
+        )
+
+    return _prewarm
 
 
 # ---------------------------------------------------------------------------
@@ -175,10 +191,26 @@ async def _build_and_run() -> int:
             max_symbols=_max_symbols,
         )
 
-    # Seed parquet warmup for the initial universe.
+    # Build KIS client for prewarm REST tier (stock-specific real creds).
+    from shared.kis import KISAuthConfig
+    from shared.kis.client import KISClient
+
+    kis_config = KISAuthConfig(
+        app_key=os.environ.get("KIS_STOCK_APP_KEY", ""),
+        app_secret=os.environ.get("KIS_STOCK_APP_SECRET", ""),
+        is_real=os.environ.get("KIS_STOCK_MARKET", "mock").lower() == "real",
+    )
+    kis_client = KISClient(kis_config)
+
+    prewarm_cfg = StockPrewarmConfig.load()
+    prewarm_fn = build_prewarm_fn(
+        engine=engine, store=store, kis_client=kis_client, cfg=prewarm_cfg
+    )
+
+    # Unified startup seed via prewarm_fn (same path as intraday prewarm).
     initial_codes = parse_watchlist_codes(_watchlist_reader(), max_symbols=_max_symbols)
     for sym in initial_codes:
-        warmup_engine_from_parquet(engine, store, sym)
+        await prewarm_fn(sym)
 
     # Market-regime publisher for M4-X's bear exit (None when disabled).
     regime_config = StockRegimeConfig.load()
@@ -197,6 +229,8 @@ async def _build_and_run() -> int:
         max_symbols=int(os.environ.get("STOCK_MAX_SYMBOLS", "40")),
         watchlist_reader=_watchlist_reader,
         regime_config=regime_config,
+        prewarm_fn=prewarm_fn,
+        max_prewarm_per_cycle=prewarm_cfg.max_prewarm_per_cycle,
     )
 
     loop = asyncio.get_running_loop()
