@@ -401,8 +401,8 @@ def resolve_domain_credentials(domain: Optional[str]) -> tuple[str, str]:
 def notifier_for_domain(
     domain: Optional[str],
     *,
-    notification_start: str = "08:30",
-    notification_end: str = "15:40",
+    notification_start: Optional[str] = None,
+    notification_end: Optional[str] = None,
     critical_always: bool = True,
 ) -> Optional[TelegramNotifier]:
     """도메인별 TelegramNotifier 생성 (legacy fallback 없음).
@@ -410,10 +410,20 @@ def notifier_for_domain(
     Args:
         domain: "stock", "futures", "briefing", or None for legacy generic token.
                 (None일 경우 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID 사용.)
+        notification_start/notification_end: 알림 활성 시간(HH:MM). 미지정 시 도메인
+            기본값 적용 — "briefing"은 24h(00:00~23:59), 그 외는 08:30~15:40.
+            브리핑은 명시적으로 트리거되는 예약 리포트이므로(프리마켓 06:30, 야간
+            21:00 등 인트라데이 알림창 밖에서 실행) 시간대와 무관하게 본문 전체가
+            발송돼야 한다. 인트라데이 알림 도메인은 기존 활성창을 그대로 유지.
 
     Returns:
         자격증명이 유효하면 TelegramNotifier, 아니면 None.
     """
+    if notification_start is None:
+        notification_start = "00:00" if domain == "briefing" else "08:30"
+    if notification_end is None:
+        notification_end = "23:59" if domain == "briefing" else "15:40"
+
     bot_token, chat_id = resolve_domain_credentials(domain)
 
     if not bot_token or not chat_id:
