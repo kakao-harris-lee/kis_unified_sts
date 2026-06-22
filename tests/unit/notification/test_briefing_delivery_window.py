@@ -106,22 +106,37 @@ class TestNotifierForDomainBriefingWindow:
                     f"Briefing notifier should be active at {test_time} (24h window)"
                 )
 
-    def test_default_briefing_notifier_blocks_body_at_0630(self, monkeypatch):
-        """Without the fix: default 08:30-15:40 window blocks at 06:30.
-
-        This documents the original bug — the default window is the wrong choice
-        for scheduled briefings.
+    def test_briefing_domain_defaults_to_24h_window(self, monkeypatch):
+        """The fix: notifier_for_domain("briefing") with NO explicit window now
+        defaults to 24h, so EVERY briefing entrypoint (premarket, nightly,
+        market-close, signal-timing, paper-obs digest) delivers in full —
+        without each call site having to opt in.
         """
         monkeypatch.setenv("TELEGRAM_BRIEFING_BOT_TOKEN", "BRF_TOK")
         monkeypatch.setenv("TELEGRAM_BRIEFING_CHAT_ID", "BRF_CHAT")
 
-        buggy_notifier = notifier_for_domain("briefing")  # default window
-        assert buggy_notifier is not None
+        notifier = notifier_for_domain("briefing")  # no explicit window
+        assert notifier is not None
 
         with patch("shared.notification.telegram.datetime") as mock_dt:
             mock_dt.now.return_value.time.return_value = time(6, 30)
-            # Old behaviour: inactive at 06:30 → body messages dropped
-            assert buggy_notifier.is_notification_active() is False, (
-                "Default window must still block at 06:30 — this is correct for "
-                "intraday alerts; scheduled briefings must opt in to 24h window."
+            assert notifier.is_notification_active() is True, (
+                "briefing domain must default to a 24h window (active at 06:30)"
+            )
+
+    def test_non_briefing_domain_default_still_gates_offhours(self, monkeypatch):
+        """The intraday-alert gate is preserved: a non-briefing domain with NO
+        explicit window keeps the 08:30-15:40 default and stays inactive at 06:30.
+        """
+        monkeypatch.setenv("TELEGRAM_STOCK_BOT_TOKEN", "STK_TOK")
+        monkeypatch.setenv("TELEGRAM_STOCK_CHAT_ID", "STK_CHAT")
+
+        notifier = notifier_for_domain("stock")  # no explicit window
+        if notifier is None:
+            pytest.skip("stock domain credentials not resolvable in this env")
+
+        with patch("shared.notification.telegram.datetime") as mock_dt:
+            mock_dt.now.return_value.time.return_value = time(6, 30)
+            assert notifier.is_notification_active() is False, (
+                "non-briefing domains must keep the 08:30-15:40 intraday gate"
             )
