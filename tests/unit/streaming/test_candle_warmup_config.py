@@ -19,6 +19,9 @@ def test_load_returns_defaults_when_section_missing(monkeypatch):
     monkeypatch.setattr(loader_mod.ConfigLoader, "load", staticmethod(lambda _f: {}))
     c = StockPrewarmConfig.load()
     assert c.rest_enabled is False
+    assert c.daily_lookback_days == 400
+    assert c.max_prewarm_per_cycle == 5
+    assert c.min_candles == 20
 
 
 def test_load_reads_overrides(monkeypatch):
