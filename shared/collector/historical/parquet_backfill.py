@@ -87,7 +87,8 @@ class ParquetBackfillState:
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS backfill_tasks (
                     asset_class TEXT NOT NULL,
                     timeframe TEXT NOT NULL,
@@ -102,7 +103,8 @@ class ParquetBackfillState:
                         asset_class, timeframe, dataset, code, trade_date
                     )
                 )
-                """)
+                """
+            )
 
     def is_completed(
         self,
@@ -257,6 +259,16 @@ def _state_for_root(root: Path) -> ParquetBackfillState:
     return ParquetBackfillState(root / "_metadata" / "backfill_state.sqlite3")
 
 
+def _is_day_closed(d: date) -> bool:
+    """Check if a trading day is fully closed (past or today+after-close).
+
+    A day is closed if it is strictly before today, OR it is today AND the market
+    has closed after 15:45 KST.  Used by the completeness gate to decide whether
+    to apply the minimum-bar check.  Testable: can be patched.
+    """
+    return (d < date.today()) or (d == date.today() and is_after_market_close())
+
+
 def _ohlcv_dicts(rows: Iterable[tuple]) -> list[dict[str, Any]]:
     return [
         {
@@ -371,9 +383,9 @@ async def _write_minute_tasks(
         result.rows += written
 
         # Completeness gate: only apply to fully closed past days.
-        # For the current (in-progress) day we cannot know the final bar count
-        # yet, so we always accept it.
-        if is_after_market_close() and written < MINUTE_COMPLETENESS_MIN_ROWS:
+        # For in-progress days we cannot know the final bar count yet, so we only
+        # apply the gate to fully closed past days.
+        if _is_day_closed(day) and written < MINUTE_COMPLETENESS_MIN_ROWS:
             log.warning(
                 "Completeness gate: %s %s %s has only %d/%d minute bars — "
                 "marking failed so resume re-attempts",

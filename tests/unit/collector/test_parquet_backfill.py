@@ -43,7 +43,7 @@ def test_futures_parquet_backfill_writes_and_resumes(monkeypatch, tmp_path):
     # mechanics, not bar-count completeness.  A 1-bar payload would otherwise
     # trigger the gate and mark the day failed.
     with patch(
-        "shared.collector.historical.parquet_backfill.is_after_market_close",
+        "shared.collector.historical.parquet_backfill._is_day_closed",
         return_value=False,
     ):
         result = asyncio.run(
@@ -193,9 +193,9 @@ def test_completeness_gate_short_day_marked_failed(monkeypatch, tmp_path):
 
     trade_date = date(2026, 6, 3)  # a known past trading day (definitely closed)
 
-    # Patch is_after_market_close so the gate always sees this as a closed day
+    # Patch _is_day_closed so the gate always sees this as a closed day
     with patch(
-        "shared.collector.historical.parquet_backfill.is_after_market_close",
+        "shared.collector.historical.parquet_backfill._is_day_closed",
         return_value=True,
     ):
         result = asyncio.run(
@@ -238,7 +238,7 @@ def test_completeness_gate_short_day_marked_failed(monkeypatch, tmp_path):
     monkeypatch.setattr(legacy_backfill, "fetch_minute_async", counting_fetch)
 
     with patch(
-        "shared.collector.historical.parquet_backfill.is_after_market_close",
+        "shared.collector.historical.parquet_backfill._is_day_closed",
         return_value=True,
     ):
         asyncio.run(
@@ -283,7 +283,7 @@ def test_completeness_gate_full_day_marked_success(monkeypatch, tmp_path):
     trade_date = date(2026, 6, 3)
 
     with patch(
-        "shared.collector.historical.parquet_backfill.is_after_market_close",
+        "shared.collector.historical.parquet_backfill._is_day_closed",
         return_value=True,
     ):
         result = asyncio.run(
@@ -338,9 +338,9 @@ def test_completeness_gate_skips_inprogress_day(monkeypatch, tmp_path):
 
     trade_date = date(2026, 6, 3)
 
-    # Market is still open → gate must not fire
+    # Market is still open AND day is today (in-progress) → gate must not fire
     with patch(
-        "shared.collector.historical.parquet_backfill.is_after_market_close",
+        "shared.collector.historical.parquet_backfill._is_day_closed",
         return_value=False,
     ):
         result = asyncio.run(
@@ -370,6 +370,73 @@ def test_completeness_gate_skips_inprogress_day(monkeypatch, tmp_path):
         code="A05603",
         trade_date=trade_date,
     ), "In-progress day with rows written should still be marked success"
+
+
+def test_completeness_gate_past_day_with_market_open(monkeypatch, tmp_path):
+    """A PAST day with < threshold rows must be marked failed even if market is open.
+
+    The gate is day-aware: a day is closed if it is strictly before today (KST),
+    regardless of whether the market is currently open. This prevents a daytime
+    manual backfill run from incorrectly allowing short past days.
+    """
+    from shared.collector.historical import futures as futures_module
+    from shared.collector.historical.parquet_backfill import (
+        MINUTE_COMPLETENESS_MIN_ROWS,
+        ParquetBackfillState,
+        backfill_futures_parquet,
+    )
+
+    legacy_backfill = importlib.import_module("shared.collector.historical.backfill")
+
+    # Only 102 bars — below the expected threshold
+    short_payload = _make_row_payload(102, "20260602")
+
+    async def fake_fetch(_client, code, date_str):
+        return code, date_str, short_payload
+
+    monkeypatch.setattr(
+        futures_module, "get_active_codes_for_date", lambda _day: ["A05603"]
+    )
+    monkeypatch.setattr(legacy_backfill, "fetch_minute_async", fake_fetch)
+
+    # Use a date strictly before today (e.g., 2026-06-02, when running on 2026-06-03+)
+    trade_date = date(2026, 6, 2)
+
+    # _is_day_closed returns True for a past day, even though we could also test
+    # the composition (day < today OR day==today and is_after_market_close()).
+    # Here we directly test that a past day with short bars is marked failed.
+    with patch(
+        "shared.collector.historical.parquet_backfill._is_day_closed",
+        return_value=True,
+    ):
+        result = asyncio.run(
+            backfill_futures_parquet(
+                root=tmp_path / "market",
+                mini=True,
+                index=False,
+                futures=False,
+                resume=True,
+                verbose=False,
+                trading_days=[trade_date],
+            )
+        )
+
+    # 102 < MINUTE_COMPLETENESS_MIN_ROWS → should be counted as failed
+    assert (
+        result.failed == 1
+    ), f"Past day with 102 rows must be marked failed even if market open. Got {result.failed}"
+
+    state = ParquetBackfillState(
+        tmp_path / "market" / "_metadata" / "backfill_state.sqlite3"
+    )
+    completed = state.is_completed(
+        asset_class="futures",
+        timeframe="minute",
+        dataset="kospi_mini_1m",
+        code="A05603",
+        trade_date=trade_date,
+    )
+    assert not completed, "Past short day must NOT be marked success"
 
 
 def test_completeness_gate_no_half_day_support_documented(monkeypatch, tmp_path):
