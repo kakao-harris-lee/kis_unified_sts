@@ -1,0 +1,9 @@
+stock_prewarm:
+  rest_enabled: false        # KIS REST minute backfill tier (paper env enables it)
+  parquet_minute_limit: 120  # most-recent 1-min bars seeded from parquet
+  daily_limit: 252           # ~1y daily bars seeded for daily indicators
+  rest_count: 30             # KIS stock minute API returns ~30 for current session
+  min_candles: 20            # WARN threshold for under-initialised symbols
+  max_prewarm_per_cycle: 5   # bound REST calls per universe refresh
+  minute_lookback_days: 5    # parquet minute start-bound window
+  daily_lookback_days: 400   # parquet daily start-bound window (covers 252 trading days)

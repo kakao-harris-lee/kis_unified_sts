@@ -137,12 +137,13 @@ async def test_per_symbol_failure_isolated():
     assert any(f["code"] == "000660" for _s, f in redis.added)
 
 
-def test_refresh_universe_updates_feed():
+@pytest.mark.asyncio
+async def test_refresh_universe_updates_feed():
     feed = _FakeFeed()
     d = _daemon(feed=feed)
     import json
 
-    d._apply_watchlist(json.dumps({"strategies": {"w": ["005930", "000660"]}}))
+    await d._apply_watchlist(json.dumps({"strategies": {"w": ["005930", "000660"]}}))
     assert set(feed.symbols) == {"005930", "000660"}
     assert set(d._universe) == {"005930", "000660"}
 
@@ -332,3 +333,49 @@ async def test_run_start_stop_lifecycle():
 
     assert feed.started is True, "run() must call feed.start()"
     assert feed.stopped is True, "run() finally block must call feed.stop()"
+
+
+# ---------------------------------------------------------------------------
+# Warmth-based prewarm on universe refresh (Task 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_watchlist_prewarms_only_cold_symbols(monkeypatch):
+    calls = []
+
+    async def _prewarm(symbol):
+        calls.append(symbol)
+
+    # engine warm for 005930 only; universe will add 000660 + 005930
+    # pass a realistic production-shape dict (parse_watchlist_codes path)
+    daemon = _daemon(
+        engine=_FakeEngine(warm=("005930",)),
+        prewarm_fn=_prewarm,
+        max_prewarm_per_cycle=5,
+    )
+    await daemon._apply_watchlist({"strategies": {"w": ["005930", "000660"]}})
+    assert calls == ["000660"]  # warm 005930 skipped; only cold prewarmed
+
+
+@pytest.mark.asyncio
+async def test_prewarm_respects_per_cycle_cap():
+    calls = []
+
+    async def _prewarm(symbol):
+        calls.append(symbol)
+
+    daemon = _daemon(
+        engine=_FakeEngine(warm=()),  # all cold
+        prewarm_fn=_prewarm,
+        max_prewarm_per_cycle=2,
+    )
+    await daemon._apply_watchlist({"strategies": {"w": ["a", "b", "c", "d"]}})
+    assert len(calls) == 2  # capped; remainder retried next refresh (still cold)
+
+
+@pytest.mark.asyncio
+async def test_apply_watchlist_without_prewarm_fn_is_noop():
+    daemon = _daemon(engine=_FakeEngine(warm=()), prewarm_fn=None)
+    await daemon._apply_watchlist({"strategies": {"w": ["a", "b"]}})  # must not raise
+    assert daemon._universe == ["a", "b"]

@@ -143,8 +143,9 @@ async def test_pipeline_integrity_market_ticks_to_shadow():
         now_fn=lambda: _NOW_UTC,
     )
 
-    # Apply watchlist (sets universe + feeds symbols to the feed)
-    daemon._apply_watchlist(_WATCHLIST_JSON)
+    # Apply watchlist (sets universe + feeds symbols to the feed).
+    # _apply_watchlist is async (it awaits warmth-based prewarm); await it.
+    await daemon._apply_watchlist(_WATCHLIST_JSON)
     assert (
         _SYMBOL in daemon._universe
     ), f"Expected {_SYMBOL} in daemon universe, got {daemon._universe}"
