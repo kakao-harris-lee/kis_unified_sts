@@ -348,12 +348,13 @@ async def test_apply_watchlist_prewarms_only_cold_symbols(monkeypatch):
         calls.append(symbol)
 
     # engine warm for 005930 only; universe will add 000660 + 005930
+    # pass a realistic production-shape dict (parse_watchlist_codes path)
     daemon = _daemon(
         engine=_FakeEngine(warm=("005930",)),
         prewarm_fn=_prewarm,
         max_prewarm_per_cycle=5,
     )
-    await daemon._apply_watchlist(["005930", "000660"])
+    await daemon._apply_watchlist({"strategies": {"w": ["005930", "000660"]}})
     assert calls == ["000660"]  # warm 005930 skipped; only cold prewarmed
 
 
@@ -369,12 +370,12 @@ async def test_prewarm_respects_per_cycle_cap():
         prewarm_fn=_prewarm,
         max_prewarm_per_cycle=2,
     )
-    await daemon._apply_watchlist(["a", "b", "c", "d"])
+    await daemon._apply_watchlist({"strategies": {"w": ["a", "b", "c", "d"]}})
     assert len(calls) == 2  # capped; remainder retried next refresh (still cold)
 
 
 @pytest.mark.asyncio
 async def test_apply_watchlist_without_prewarm_fn_is_noop():
     daemon = _daemon(engine=_FakeEngine(warm=()), prewarm_fn=None)
-    await daemon._apply_watchlist(["a", "b"])  # must not raise
+    await daemon._apply_watchlist({"strategies": {"w": ["a", "b"]}})  # must not raise
     assert daemon._universe == ["a", "b"]

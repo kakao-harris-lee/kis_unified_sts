@@ -77,15 +77,7 @@ class StockStrategyDaemon:
         self._stop = asyncio.Event()
 
     async def _apply_watchlist(self, raw: Any) -> None:
-        # Accept a pre-parsed list directly (e.g., from callers that already
-        # resolved the universe) as well as the JSON/dict payloads that
-        # parse_watchlist_codes handles.
-        if isinstance(raw, list):
-            codes = [str(c).strip() for c in raw if str(c).strip()][
-                : self._max_symbols
-            ]
-        else:
-            codes = parse_watchlist_codes(raw, max_symbols=self._max_symbols)
+        codes = parse_watchlist_codes(raw, max_symbols=self._max_symbols)
         if not codes:
             return  # keep prior universe
         self._universe = codes
