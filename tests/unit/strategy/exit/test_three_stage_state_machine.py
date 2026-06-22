@@ -285,9 +285,9 @@ async def test_bear_exit_skipped_for_override_symbol():
             market_data=market_data,
             market_state=bear_state,
         )
-    reasons_default = {s.code: s.reason for s in signals_default}
-    assert reasons_default.get("005930") == ExitReason.BEAR_EXIT
-    assert reasons_default.get("000660") == ExitReason.BEAR_EXIT
+        reasons_default = {s.code: s.reason for s in signals_default}
+        assert reasons_default.get("005930") == ExitReason.BEAR_EXIT
+        assert reasons_default.get("000660") == ExitReason.BEAR_EXIT
 
 
 @pytest.mark.asyncio
