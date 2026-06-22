@@ -50,7 +50,15 @@ async def main():
     try:
         from shared.notification import notifier_for_domain
 
-        notifier = notifier_for_domain("briefing")
+        # Briefing is an explicitly-triggered report and must deliver in full
+        # regardless of hour (it runs at 06:30 KST, before the 08:30 intraday
+        # alert window).  Use a 24h window so body messages are not gated.
+        # This does NOT affect intraday-alert notifiers.
+        notifier = notifier_for_domain(
+            "briefing",
+            notification_start="00:00",
+            notification_end="23:59",
+        )
         if notifier is None:
             logger.warning(
                 "Briefing Telegram channel not configured; running without notifications"
