@@ -1,5 +1,5 @@
 stock_prewarm:
-  rest_enabled: false        # KIS REST minute backfill tier (paper env enables it)
+  rest_enabled: true         # KIS REST minute backfill tier (ACTIVATED in paper 2026-06-22)
   parquet_minute_limit: 120  # most-recent 1-min bars seeded from parquet
   daily_limit: 252           # ~1y daily bars seeded for daily indicators
   rest_count: 30             # KIS stock minute API returns ~30 for current session
