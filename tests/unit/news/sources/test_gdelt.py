@@ -178,6 +178,27 @@ async def test_fetch_network_exception_yields_nothing():
     assert items == []
 
 
+@pytest.mark.asyncio
+async def test_fetch_zip_download_network_exception_yields_nothing():
+    """Connection error on zip download → yields nothing, no raise."""
+    with aioresponses() as m:
+        m.get(f"{_BASE}/lastupdate.txt", status=200, body=_LASTUPDATE_TEXT)
+        m.get(
+            _GKG_ZIP_URL,
+            exception=aiohttp.ClientConnectionError("simulated"),
+        )
+
+        async with aiohttp.ClientSession() as session:
+            src = GDELTNewsSource(
+                session=session,
+                gkg_base_url=_BASE,
+                match_keywords=["federal reserve"],
+            )
+            items = [it async for it in src.fetch()]
+
+    assert items == []
+
+
 # ---------------------------------------------------------------------------
 # Pure-helper tests (Task 2 — unchanged)
 # ---------------------------------------------------------------------------

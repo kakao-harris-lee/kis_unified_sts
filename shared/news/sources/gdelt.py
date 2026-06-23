@@ -114,8 +114,10 @@ def _decode_and_map(
 ) -> list[NewsItem]:
     """Unzip GKG CSV and map rows to NewsItems (runs in executor thread)."""
     with _zip.ZipFile(_io.BytesIO(raw)) as z:
-        name = z.namelist()[0]
-        csv_text = z.read(name).decode("utf-8", errors="replace")
+        names = z.namelist()
+        if not names:
+            return []
+        csv_text = z.read(names[0]).decode("utf-8", errors="replace")
     return _gkg_rows_to_items(
         csv_text,
         match_keywords=match_keywords,
