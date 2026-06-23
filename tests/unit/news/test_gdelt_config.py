@@ -1,6 +1,5 @@
 """Test GDELTSourceConfig GKG field structure."""
 
-
 from shared.news.config import GDELTSourceConfig
 
 
@@ -31,9 +30,19 @@ def test_gdelt_config_defaults():
     assert c.gkg_base_url == "http://data.gdeltproject.org/gdeltv2"
     assert c.match_keywords == [
         "federal reserve",
-        "bond yields",
-        "equity market",
+        "interest rate",
+        "rate cut",
+        "rate hike",
+        "inflation",
+        "treasury",
+        "bond yield",
         "semiconductor",
+        "tariff",
+        "recession",
+        "central bank",
+        "nasdaq",
+        "s&p 500",
+        "kospi",
     ]
     assert c.max_records == 20
     assert c.timeout_seconds == 20.0

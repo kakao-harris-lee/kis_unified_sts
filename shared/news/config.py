@@ -29,11 +29,25 @@ class GDELTSourceConfig(SourceCommon):
     poll_interval_seconds: int = Field(default=600, gt=0)
     gkg_base_url: str = "http://data.gdeltproject.org/gdeltv2"
     match_keywords: list[str] = Field(
+        # GKG is the unfiltered global firehose (~900 articles / 15-min slice),
+        # so a narrow set rarely matches a given slice. This market-impact set
+        # (macro/finance/geopolitics) restores meaningful coverage; max_records
+        # caps the per-poll yield.
         default_factory=lambda: [
             "federal reserve",
-            "bond yields",
-            "equity market",
+            "interest rate",
+            "rate cut",
+            "rate hike",
+            "inflation",
+            "treasury",
+            "bond yield",
             "semiconductor",
+            "tariff",
+            "recession",
+            "central bank",
+            "nasdaq",
+            "s&p 500",
+            "kospi",
         ]
     )
     max_records: int = Field(default=20, gt=0, le=100)

@@ -60,11 +60,24 @@ news_collector:
       enabled: true
       poll_interval_seconds: 600
       gkg_base_url: "http://data.gdeltproject.org/gdeltv2"
+      # GKG is the unfiltered global firehose (~900 articles / 15-min slice); the
+      # old 4 narrow terms matched ~0 per slice. Market-impact set restores
+      # coverage (max_records caps the per-poll yield).
       match_keywords:
         - "federal reserve"
-        - "bond yields"
-        - "equity market"
+        - "interest rate"
+        - "rate cut"
+        - "rate hike"
+        - "inflation"
+        - "treasury"
+        - "bond yield"
         - "semiconductor"
+        - "tariff"
+        - "recession"
+        - "central bank"
+        - "nasdaq"
+        - "s&p 500"
+        - "kospi"
       max_records: 20
       timeout_seconds: 20
     mk:
