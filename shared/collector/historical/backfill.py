@@ -550,6 +550,115 @@ def _first_present(item: dict[str, Any], keys: list[str], default: Any = None) -
     return default
 
 
+# Maximum tolerated close-to-close move between consecutive accepted bars when
+# resolving divergent-duplicate minutes.  A phantom parallel series sits a
+# sustained ~1.5-15% offset away from the real track; a candidate that would jump
+# more than this from the running anchor is treated as the phantom and rejected.
+# KOSPI200 futures rarely move >5% in one minute even on limit days, so 6% is a
+# safe ceiling that still admits genuine fast moves.  Override via env var.
+_DIVERGENCE_MAX_STEP_FRACTION: float = float(
+    os.getenv("KIS_MINUTE_DIVERGENCE_MAX_STEP", "0.06")
+)
+
+
+def _resolve_minute_bars(
+    minute_candidates: dict[datetime, dict[tuple[float, float, float, float], int]],
+) -> tuple[dict[datetime, tuple[float, float, float, float, int]], int]:
+    """Resolve one internally-consistent OHLCV bar per minute, dropping phantoms.
+
+    KIS ``inquire-time-fuopchartprice`` echoes each 1-minute bar several times in
+    ``output2`` (typically 5-7 identical rows).  On some sessions a *second*,
+    divergent-but-internally-consistent price series is interleaved with the real
+    one for the same minute timestamps — e.g. a real {o758.70, c758.40} bar plus a
+    phantom {o861.95, c862.00} bar carrying a sustained ~100-point offset.  The
+    legacy aggregator merged these with (open=first, high=max, low=min,
+    close=last), producing Frankenstein bars whose high/low straddle both series
+    (high 862 with close 753) and whose volume was summed across the echoed
+    duplicates (≈5x inflation).
+
+    Resolution walks minutes in time order, anchored on the previously *accepted*
+    bar's close, and:
+
+    * collapses byte-identical echoes to one candidate (so volume is the true
+      per-bar volume, never summed across duplicates);
+    * when divergent candidates remain, picks the one whose midpoint is nearest
+      the running anchor — continuity, not duplicate count, is the canonical
+      signal (the phantom track is a parallel offset; the duplicate count flips
+      intraday so it must not decide);
+    * drops a minute entirely when its *only* candidate is an absurd jump from the
+      anchor (a phantom-only minute, where the real bar is genuinely absent).
+      Emitting it would both corrupt the bar and poison the anchor for every
+      later minute.  A dropped minute leaves a 1-bar gap, which the downstream
+      completeness/price-sanity gates tolerate and which is far safer than a
+      ~100-point phantom spike.
+
+    The anchor is seeded from the first minute that has a single candidate (the
+    real, undivided open of the session); divergent leading minutes are resolved
+    against that seed.
+
+    Args:
+        minute_candidates: Map of minute -> {distinct (o,h,l,c): per-bar volume}.
+
+    Returns:
+        ``(minute_bars, dropped)`` where ``minute_bars`` maps minute ->
+        ``(open, high, low, close, volume)`` and ``dropped`` counts phantom-only
+        minutes that were discarded.
+    """
+
+    def _midpoint(ohlc: tuple[float, float, float, float]) -> float:
+        return (ohlc[0] + ohlc[3]) / 2.0
+
+    minutes = sorted(minute_candidates.keys())
+
+    # Seed the continuity anchor from the first non-divergent minute; fall back to
+    # the most-duplicated candidate of the first minute if every leading minute is
+    # divergent (rare).
+    anchor: float | None = None
+    for minute_dt in minutes:
+        cand = minute_candidates[minute_dt]
+        if len(cand) == 1:
+            anchor = _midpoint(next(iter(cand)))
+            break
+    if anchor is None and minutes:
+        first = minute_candidates[minutes[0]]
+        ohlc = max(first.items(), key=lambda kv: (kv[1], -kv[0][3]))[0]
+        anchor = _midpoint(ohlc)
+
+    minute_bars: dict[datetime, tuple[float, float, float, float, int]] = {}
+    dropped = 0
+    for minute_dt in minutes:
+        items = list(minute_candidates[minute_dt].items())
+        if len(items) == 1:
+            ohlc, vol = items[0]
+        else:
+            ohlc, vol = min(items, key=lambda kv: abs(_midpoint(kv[0]) - anchor))
+
+        midpoint = _midpoint(ohlc)
+        # Reject a candidate that is an absurd jump from the anchor.  With a single
+        # candidate this means a phantom-only minute → drop it (do not advance the
+        # anchor).  With multiple candidates the nearest was already chosen, so a
+        # rejection here means the real track is absent this minute too.
+        if anchor is not None and abs(anchor) > 1e-9:
+            step = abs(midpoint - anchor) / abs(anchor)
+            if step > _DIVERGENCE_MAX_STEP_FRACTION:
+                dropped += 1
+                logger.debug(
+                    "parse_ohlcv: dropped phantom-only minute %s "
+                    "(midpoint=%.2f, anchor=%.2f, step=%.1f%%)",
+                    minute_dt.isoformat(),
+                    midpoint,
+                    anchor,
+                    step * 100.0,
+                )
+                continue
+
+        o, h, l, c = ohlc
+        # Clamp so the emitted bar never violates OHLC ordering (defensive).
+        minute_bars[minute_dt] = (o, max(h, o, c), min(l, o, c), c, int(vol))
+        anchor = c
+    return minute_bars, dropped
+
+
 def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
     """
     Parse API response to OHLCV rows.
@@ -634,21 +743,31 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
     if not tick_rows:
         return []
 
-    # Normalize raw ticks/seconds to 1-minute OHLCV bars.
+    # KIS inquire-time-fuopchartprice returns each 1-minute bar already complete
+    # (seconds field is always 00) and echoes it 5-7 times; on some sessions a
+    # second, divergent price series is interleaved for the same minute.  Group
+    # rows by minute, collapse byte-identical echoes to a single candidate (so
+    # volume is never summed across duplicates), then resolve divergent minutes
+    # by price continuity.  See ``_resolve_minute_bars``.
     tick_rows.sort(key=lambda row: row[0])
-    minute_bars: dict[datetime, list[float | int]] = {}
+    minute_candidates: dict[datetime, dict[tuple[float, float, float, float], int]] = {}
     for dt, o, h, l, c, v in tick_rows:
         minute_dt = dt.replace(second=0, microsecond=0)
-        if minute_dt not in minute_bars:
-            minute_bars[minute_dt] = [o, h, l, c, int(v)]
-            continue
+        ohlc = (float(o), float(h), float(l), float(c))
+        candidates = minute_candidates.setdefault(minute_dt, {})
+        # Each distinct OHLC keeps the per-bar volume of its echoed rows (they
+        # all carry the same volume).  Keep the max in case of minor row noise;
+        # we never sum across the echoed duplicates.
+        candidates[ohlc] = max(candidates.get(ohlc, 0), int(v))
 
-        bar = minute_bars[minute_dt]
-        # open: keep first
-        bar[1] = max(float(bar[1]), h)  # high
-        bar[2] = min(float(bar[2]), l)  # low
-        bar[3] = c  # close: last tick in minute
-        bar[4] = int(bar[4]) + int(v)  # volume sum
+    minute_bars, phantom_dropped = _resolve_minute_bars(minute_candidates)
+    if phantom_dropped:
+        logger.debug(
+            "parse_ohlcv(%s, %s): dropped %d phantom-only minute(s)",
+            code,
+            date_str,
+            phantom_dropped,
+        )
 
     # Drop phantom-print bars before persistence. KIS's tick feed emits
     # off-market volume=2 quotes at recurring clock times (09:22, 11:01,
