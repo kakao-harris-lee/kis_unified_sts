@@ -27,13 +27,16 @@ class DartSourceConfig(SourceCommon):
 class GDELTSourceConfig(SourceCommon):
     enabled: bool = False
     poll_interval_seconds: int = Field(default=600, gt=0)
-    query: str = (
-        '("Federal Reserve" OR "bond yields" OR "equity market" OR '
-        '"semiconductor stocks")'
+    gkg_base_url: str = "http://data.gdeltproject.org/gdeltv2"
+    match_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "federal reserve",
+            "bond yields",
+            "equity market",
+            "semiconductor",
+        ]
     )
     max_records: int = Field(default=20, gt=0, le=100)
-    timespan: str = "6h"
-    sort: str = "datedesc"
     timeout_seconds: float = Field(default=20.0, gt=0)
 
 
