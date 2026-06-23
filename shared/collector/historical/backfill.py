@@ -592,9 +592,19 @@ def _resolve_minute_bars(
       completeness/price-sanity gates tolerate and which is far safer than a
       ~100-point phantom spike.
 
-    The anchor is seeded from the first minute that has a single candidate (the
-    real, undivided open of the session); divergent leading minutes are resolved
-    against that seed.
+    The anchor is seeded by *whole-session support* rather than by trusting the
+    first single-candidate minute: a phantom-only orphan minute (the real bar
+    absent that minute while a phantom appears) can sort before a divergent real
+    open and, if trusted, would lock the anchor onto the phantom track and drop
+    every real bar.  Instead each candidate midpoint (from single- AND divergent-
+    candidate minutes) is scored by how many distinct minutes carry a candidate
+    continuous with it (within ``_DIVERGENCE_MAX_STEP_FRACTION``).  The real track
+    spans the whole session, so it wins this support count; the phantom is a
+    bounded contamination window.  Ties break on the widest supporting time span
+    (again favouring the session-long real track), then earliest minute for
+    determinism.  Count here is *cross-minute level support* (continuity
+    evidence), NOT per-minute duplicate/echo count — the latter still never
+    decides, since the phantom can out-echo the real bar within a single minute.
 
     Args:
         minute_candidates: Map of minute -> {distinct (o,h,l,c): per-bar volume}.
@@ -608,23 +618,35 @@ def _resolve_minute_bars(
     def _midpoint(ohlc: tuple[float, float, float, float]) -> float:
         return (ohlc[0] + ohlc[3]) / 2.0
 
+    def _continuous(a: float, b: float) -> bool:
+        """True if midpoint ``b`` is within the continuity tolerance of ``a``."""
+        if abs(a) <= 1e-9:
+            return abs(b - a) <= 1e-9
+        return abs(b - a) / abs(a) <= _DIVERGENCE_MAX_STEP_FRACTION
+
     minutes = sorted(minute_candidates.keys())
 
-    # Seed the continuity anchor from the first non-divergent minute — KIS
-    # sessions open undivided, so in practice this always succeeds.  If every
-    # leading minute is divergent (no clean open at all), fall back to the
-    # lowest-close candidate of the first minute.  We deliberately do NOT seed by
-    # duplicate/volume count: the phantom track can carry the higher count, so
-    # counting would risk anchoring onto it (the whole point of this resolver is
-    # that count must not decide).  Lowest-close is an arbitrary-but-deterministic
-    # tie-break for this pathological, effectively-unreached case.
+    # (minute_index, midpoint) for every candidate across the day.
+    candidate_mids: list[tuple[int, float]] = [
+        (idx, _midpoint(ohlc))
+        for idx, minute_dt in enumerate(minutes)
+        for ohlc in minute_candidates[minute_dt]
+    ]
+
     anchor: float | None = None
-    for minute_dt in minutes:
-        cand = minute_candidates[minute_dt]
-        if len(cand) == 1:
-            anchor = _midpoint(next(iter(cand)))
-            break
+    best_key: tuple[int, int, int] | None = None
+    for idx0, mid0 in candidate_mids:
+        supporting = {idx1 for idx1, mid1 in candidate_mids if _continuous(mid0, mid1)}
+        # Maximise distinct-minute support, then supporting time span, then prefer
+        # the earliest minute (deterministic).  The session-long real track wins.
+        span = max(supporting) - min(supporting)
+        key = (-len(supporting), -span, idx0)
+        if best_key is None or key < best_key:
+            best_key = key
+            anchor = mid0
     if anchor is None and minutes:
+        # No candidates at all is impossible here (minute_candidates is non-empty
+        # only with rows), but keep a deterministic fallback.
         ohlc = min(minute_candidates[minutes[0]], key=lambda k: k[3])
         anchor = _midpoint(ohlc)
 

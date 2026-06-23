@@ -153,6 +153,51 @@ def test_phantom_only_minute_is_dropped_not_emitted() -> None:
     assert max(row[5] for row in rows) < 850.0
 
 
+def test_phantom_orphan_before_divergent_open_keeps_real_track() -> None:
+    """A phantom-only orphan that sorts BEFORE a divergent real open must not
+    seed the anchor onto the phantom track.
+
+    Regression for the anchor-seed fragility: the resolver used to seed from the
+    chronologically-first single-candidate minute.  If that minute is an isolated
+    phantom orphan (the real bar absent while a phantom prints) and the real
+    session-open minutes are themselves divergent, the anchor locked onto the
+    phantom (~+100pt) and every real bar was then dropped as a >6% jump, leaving a
+    clean-looking but WRONG-track day that passes the OHLC + price-sanity gates.
+
+    The seed is now chosen by whole-session continuity support, so the real track
+    (which spans the full session) wins and the phantom orphan is dropped.
+    """
+    out = [
+        # 09:00 — phantom-only orphan (single candidate, ~+100pt). Sorts FIRST.
+        _row("090000", 900.0, 901.0, 899.0, 900.0, 300),
+        # 09:01-09:03 — divergent real (~800) + phantom (~901).
+        _row("090100", 800.0, 801.0, 799.0, 800.5, 800),
+        _row("090100", 901.0, 902.0, 900.0, 901.5, 250),
+        _row("090200", 800.5, 802.0, 800.0, 801.5, 850),
+        _row("090200", 901.5, 903.0, 901.0, 902.5, 240),
+        _row("090300", 801.5, 803.0, 801.0, 802.5, 900),
+        _row("090300", 902.5, 904.0, 902.0, 903.5, 230),
+    ]
+    # 09:04..09:20 — the real track continues alone (the real-world structure: the
+    # phantom is a bounded window, the real track spans the whole session).
+    price = 803.5
+    for i in range(4, 21):
+        out.append(
+            _row(f"09{i:02d}00", price, price + 0.5, price - 0.5, price + 0.3, 900)
+        )
+        price += 0.3
+
+    rows = parse_ohlcv("A01603", "20260304", {"output2": out})
+    closes = [row[5] for row in rows]
+    assert closes, "expected emitted bars"
+    # Real track (~800) kept; phantom track (>=850) entirely dropped.
+    assert all(c < 850.0 for c in closes), f"phantom track leaked: {closes}"
+    assert any(795.0 <= c < 850.0 for c in closes), "real track was dropped"
+    # The phantom orphan minute itself is not emitted.
+    bars = _as_dict(rows)
+    assert "09:00" not in bars or bars["09:00"][5] < 850.0
+
+
 def test_single_row_per_minute_is_unchanged() -> None:
     """Index/clean paths return one row per minute: behaviour is preserved."""
     data = {
