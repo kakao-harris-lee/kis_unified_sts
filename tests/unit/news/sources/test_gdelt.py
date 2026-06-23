@@ -119,9 +119,27 @@ def test_parse_lastupdate_malformed():
 
 
 def test_extract_page_title():
-    assert _extract_page_title("<PAGE_TITLE>Fed holds rates</PAGE_TITLE>") == "Fed holds rates"
+    assert (
+        _extract_page_title("<PAGE_TITLE>Fed holds rates</PAGE_TITLE>")
+        == "Fed holds rates"
+    )
     assert _extract_page_title("<PAGE_LINKS>x</PAGE_LINKS>") is None
     assert _extract_page_title("") is None
+
+
+def test_extract_page_title_dotall_with_whitespace():
+    """Test DOTALL + whitespace stripping for multiline PAGE_TITLE."""
+    result = _extract_page_title("<PAGE_TITLE>\n  Multi\nline  \n</PAGE_TITLE>")
+    assert result == "Multi\nline"
+
+
+def test_parse_lastupdate_malformed_ts():
+    """Test malformed filename (non-digit prefix) returns (url, None)."""
+    url, ts = _parse_lastupdate(
+        "305551 ghi http://data.gdeltproject.org/gdeltv2/BADNAME.gkg.csv.zip"
+    )
+    assert url == "http://data.gdeltproject.org/gdeltv2/BADNAME.gkg.csv.zip"
+    assert ts is None
 
 
 def _row(
@@ -151,7 +169,9 @@ _EXPECTED_PUBLISHED_AT_MS = int(_parse_gdelt_date("20260623091500") * 1000)
 def test_gkg_rows_map_and_filter():
     rows = "\n".join(
         [
-            _row(url="https://r.com/fed", title="Federal Reserve signals cut"),  # matches title
+            _row(
+                url="https://r.com/fed", title="Federal Reserve signals cut"
+            ),  # matches title
             _row(
                 url="https://r.com/chip",
                 themes="WB_SEMICONDUCTOR",
@@ -191,7 +211,8 @@ def test_gkg_rows_map_and_filter():
 
 def test_gkg_rows_respects_max_records():
     rows = "\n".join(
-        _row(url=f"https://r.com/{i}", title=f"Federal Reserve item {i}") for i in range(10)
+        _row(url=f"https://r.com/{i}", title=f"Federal Reserve item {i}")
+        for i in range(10)
     )
     items = _gkg_rows_to_items(
         rows,
