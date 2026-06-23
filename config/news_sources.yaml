@@ -25,10 +25,10 @@ news_collector:
       rss_url: "https://news.google.com/rss/search?q=site:reuters.com/business%20OR%20site:reuters.com/markets&hl=en-US&gl=US&ceid=US:en"
     marketaux:
       enabled: true
-      poll_interval_seconds: 600
+      poll_interval_seconds: 900   # free plan ~100 req/day (resets 00:00 UTC); 600s=144/day exceeded quota → daily 402 tail. 900s=96/day stays under.
       api_token: "${MARKETAUX_API_TOKEN}"
       endpoint: "https://api.marketaux.com/v1/news/all"
-      limit: 20
+      limit: 3    # free plan caps articles/request at 3; limit>3 → 200 with "limit is higher than your plan allows" warning
       language: "en,ko"
       countries: "us,kr"
       symbols: ""
