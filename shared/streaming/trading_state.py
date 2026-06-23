@@ -41,7 +41,7 @@ _KEY_EQUITY_TIMELINE = "trading:{asset}:equity_timeline"
 MAX_TRADES = 500
 MAX_SIGNALS = 200
 STATUS_TTL_SECONDS = 86400  # 24h — auto-expire if orchestrator dies
-RUNNING_TOTALS_TTL_SECONDS = 60 * 60 * 24 * 30   # 30 days
+RUNNING_TOTALS_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 EQUITY_TIMELINE_TTL_SECONDS = 60 * 60 * 24 * 400  # ~13 months
 
 
@@ -57,6 +57,7 @@ def _key(template: str, asset: str) -> str:
 def _get_redis() -> redis.Redis:
     """Get the shared Redis client singleton."""
     from shared.streaming.client import RedisClient
+
     return RedisClient.get_client()
 
 
@@ -76,6 +77,7 @@ def _tz_aware_iso(dt: datetime | None) -> str:
 # ---------------------------------------------------------------------------
 # Publisher (used by orchestrator)
 # ---------------------------------------------------------------------------
+
 
 class TradingStatePublisher:
     """Publishes trading state to Redis.
@@ -153,7 +155,9 @@ class TradingStatePublisher:
         except Exception:
             logger.debug("Failed to publish position close", exc_info=True)
 
-    def publish_positions_update(self, positions: list[Any], throttle: float = 2.0) -> None:
+    def publish_positions_update(
+        self, positions: list[Any], throttle: float = 2.0
+    ) -> None:
         """Publish a full open-position snapshot (throttled).
 
         Replaces the entire positions hash to prevent stale position IDs
@@ -206,7 +210,9 @@ class TradingStatePublisher:
                 "side": signal_type,
                 "signal_type": signal_type,
                 "strategy": getattr(signal, "strategy", ""),
-                "price": float(getattr(signal, "price", 0) or getattr(signal, "exit_price", 0) or 0),
+                "price": float(
+                    getattr(signal, "price", 0) or getattr(signal, "exit_price", 0) or 0
+                ),
                 "confidence": float(getattr(signal, "confidence", 0) or 0),
                 "timestamp": _tz_aware_iso(getattr(signal, "timestamp", None)),
                 "executed": executed,
@@ -268,6 +274,21 @@ class TradingStatePublisher:
         except Exception:
             logger.debug("Failed to remove position", exc_info=True)
 
+    def reset_positions(self) -> None:
+        """Delete the entire positions hash (positions only — not trades/status).
+
+        Used by decoupled publishers at startup to reconcile the dashboard
+        positions hash against the daemon's authoritative open set: any stale
+        or foreign-keyed field (e.g. UUID-keyed leftovers from the retired
+        monolithic orchestrator, which the code-keyed decoupled pipeline never
+        rewrites) is purged before recovered positions are republished.
+        """
+        try:
+            r = _get_redis()
+            r.delete(_key(_KEY_POSITIONS, self._asset))
+        except Exception:
+            logger.debug("Failed to reset positions", exc_info=True)
+
     def publish_raw_trade(self, data: dict) -> None:
         """Push a trade record from a plain dict."""
         try:
@@ -301,7 +322,13 @@ class TradingStatePublisher:
         try:
             r = _get_redis()
             pipe = r.pipeline(transaction=False)
-            for tmpl in (_KEY_STATUS, _KEY_POSITIONS, _KEY_TRADES, _KEY_SIGNALS, _KEY_MARKET_CONTEXT):
+            for tmpl in (
+                _KEY_STATUS,
+                _KEY_POSITIONS,
+                _KEY_TRADES,
+                _KEY_SIGNALS,
+                _KEY_MARKET_CONTEXT,
+            ):
                 pipe.delete(_key(tmpl, self._asset))
             pipe.execute()
         except Exception:
@@ -346,7 +373,11 @@ class TradingStatePublisher:
             "current_price": pos.current_price,
             "unrealized_pnl": getattr(pos, "unrealized_pnl", 0.0),
             "pnl_pct": getattr(pos, "profit_pct", 0.0),
-            "entry_time": _tz_aware_iso(pos.entry_time) if isinstance(pos.entry_time, datetime) else str(pos.entry_time),
+            "entry_time": (
+                _tz_aware_iso(pos.entry_time)
+                if isinstance(pos.entry_time, datetime)
+                else str(pos.entry_time)
+            ),
             "strategy": getattr(pos, "strategy", ""),
             "state": pos.state.value if hasattr(pos.state, "value") else str(pos.state),
             "highest_price": getattr(pos, "highest_price", pos.entry_price),
@@ -369,7 +400,11 @@ class TradingStatePublisher:
             "pnl": getattr(pos, "unrealized_pnl", 0.0),
             "pnl_pct": getattr(pos, "profit_pct", 0.0),
             "strategy": getattr(pos, "strategy", ""),
-            "entry_time": _tz_aware_iso(pos.entry_time) if isinstance(pos.entry_time, datetime) else str(pos.entry_time),
+            "entry_time": (
+                _tz_aware_iso(pos.entry_time)
+                if isinstance(pos.entry_time, datetime)
+                else str(pos.entry_time)
+            ),
             "exit_time": _tz_aware_iso(getattr(pos, "exit_time", None)),
             "exit_reason": getattr(pos, "exit_reason", None) or "",
         }
@@ -422,9 +457,11 @@ class TradingStatePublisher:
                 "closed_pnl": closed_pnl,
                 "total_equity": total_equity,
             }
-            score = datetime.combine(as_of, datetime.min.time()).replace(
-                tzinfo=UTC
-            ).timestamp()
+            score = (
+                datetime.combine(as_of, datetime.min.time())
+                .replace(tzinfo=UTC)
+                .timestamp()
+            )
             r.zadd(key, {json.dumps(snapshot): score})
             r.expire(key, EQUITY_TIMELINE_TTL_SECONDS)
         except Exception:
@@ -434,6 +471,7 @@ class TradingStatePublisher:
 # ---------------------------------------------------------------------------
 # Reader (used by dashboard)
 # ---------------------------------------------------------------------------
+
 
 class TradingStateReader:
     """Reads trading state from Redis.
@@ -484,7 +522,9 @@ class TradingStateReader:
         """Read recent trades (most recent first)."""
         try:
             r = _get_redis()
-            raw_list = r.lrange(_key(_KEY_TRADES, self._asset), start, start + count - 1)
+            raw_list = r.lrange(
+                _key(_KEY_TRADES, self._asset), start, start + count - 1
+            )
             trades = []
             for raw in raw_list:
                 try:
@@ -508,7 +548,9 @@ class TradingStateReader:
         """Read recent signals (most recent first)."""
         try:
             r = _get_redis()
-            raw_list = r.lrange(_key(_KEY_SIGNALS, self._asset), start, start + count - 1)
+            raw_list = r.lrange(
+                _key(_KEY_SIGNALS, self._asset), start, start + count - 1
+            )
             signals = []
             for raw in raw_list:
                 try:
@@ -565,6 +607,7 @@ class TradingStateReader:
             data = json.loads(raw)
             # Import here to avoid circular dependency
             from shared.llm.market_context import MarketContext
+
             return MarketContext.from_dict(data)
         except Exception:
             logger.debug("Failed to read market context from Redis", exc_info=True)

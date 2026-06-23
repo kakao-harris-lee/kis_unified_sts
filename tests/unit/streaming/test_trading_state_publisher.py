@@ -68,6 +68,9 @@ class _FakeRedis:
     def hgetall(self, key: str) -> dict[str, str]:
         return dict(self._hashes.get(key, {}))
 
+    def delete(self, key: str) -> int:
+        return 1 if self._hashes.pop(key, None) is not None else 0
+
 
 def _make_position(position_id: str) -> Position:
     return Position(
@@ -108,6 +111,24 @@ def test_publish_positions_update_empty_snapshot_clears_hash(monkeypatch):
     publisher.publish_positions_update([], throttle=0.0)
 
     assert fake_redis.hgetall(key) == {}
+
+
+def test_reset_positions_deletes_only_positions_key(monkeypatch):
+    fake_redis = _FakeRedis()
+    # An orphan field (UUID-keyed, as the retired orchestrator wrote) plus a
+    # status hash that must survive the reset.
+    fake_redis._hashes["trading:stock:positions"] = {
+        "orphan-uuid": '{"id":"orphan-uuid"}'
+    }
+    fake_redis._hashes["trading:stock:status"] = {"state": "running"}
+
+    monkeypatch.setattr(trading_state, "_get_redis", lambda: fake_redis)
+    publisher = TradingStatePublisher("stock")
+
+    publisher.reset_positions()
+
+    assert "trading:stock:positions" not in fake_redis._hashes
+    assert fake_redis._hashes["trading:stock:status"] == {"state": "running"}
 
 
 def test_publish_status_adds_freshness_metadata(monkeypatch):

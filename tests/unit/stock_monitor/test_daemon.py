@@ -211,6 +211,45 @@ async def test_recover_open_from_positions_hash(wired) -> None:
 
 
 @pytest.mark.asyncio
+async def test_recover_reconciles_dashboard_clears_orphans(wired) -> None:
+    """Recovery purges a stale/foreign dashboard field, keeps the real one.
+
+    Reproduces the cutover-orphan case: a UUID-keyed position left in the
+    dashboard hash by the retired monolithic orchestrator (the code-keyed
+    decoupled pipeline never rewrites UUID fields) must be dropped, while the
+    position recovered from the authoritative working-store is republished.
+    """
+    daemon, redis, reader = wired
+    # Orphan UUID-keyed field already in the dashboard positions hash.
+    daemon.publisher.publish_raw_position(
+        "77f7c951-orphan",
+        {"id": "77f7c951-orphan", "code": "086520", "name": "에코프로"},
+    )
+    assert {p["id"] for p in reader.get_positions()} == {"77f7c951-orphan"}
+
+    # Authoritative working-store holds a different, valid (code-keyed) position.
+    await redis.hset(
+        "trading:stock:positions",
+        "005930",
+        json.dumps(
+            {
+                "code": "005930",
+                "entry_price": 71000.0,
+                "quantity": 10,
+                "opened_at_ms": 1_700_000_000_000,
+                "state": "SURVIVAL",
+                "signal_id": "sig-005930",
+            }
+        ),
+    )
+
+    await daemon.recover_open_positions()
+
+    # Orphan purged; only the recovered working-store position remains.
+    assert {p["id"] for p in reader.get_positions()} == {"005930"}
+
+
+@pytest.mark.asyncio
 async def test_recover_skips_foreign_records(wired) -> None:
     daemon, redis, reader = wired
     # orchestrator-style record: no opened_at_ms -> must be skipped
