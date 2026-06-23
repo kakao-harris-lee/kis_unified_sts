@@ -168,7 +168,13 @@ class StockMonitorDaemon:
         seeds the running high/low watermarks from the persisted
         ``high_water``/``low_water``, and republishes each recovered position.
         Read failures are logged and leave ``_open`` empty (non-fatal).
+
+        First reconciles the dashboard positions hash: clears it so any stale
+        or foreign-keyed field (e.g. UUID-keyed leftovers from the retired
+        monolithic orchestrator, which this code-keyed pipeline never rewrites)
+        is purged, then republishes exactly the positions recovered below.
         """
+        self.publisher.reset_positions()
         try:
             raw = await self.redis.hgetall(self.positions_key)
         except Exception:
