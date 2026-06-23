@@ -116,10 +116,9 @@ def _make_cfg(**source_enables):
     cfg.sources.naver_search.sort = "date"
     cfg.sources.naver_search.timeout_seconds = 10
     cfg.sources.gdelt.poll_interval_seconds = 600
-    cfg.sources.gdelt.query = '("Federal Reserve" OR "bond yields")'
+    cfg.sources.gdelt.gkg_base_url = "http://data.gdeltproject.org/gdeltv2"
+    cfg.sources.gdelt.match_keywords = ["Federal Reserve", "bond yields"]
     cfg.sources.gdelt.max_records = 10
-    cfg.sources.gdelt.timespan = "6h"
-    cfg.sources.gdelt.sort = "datedesc"
     cfg.sources.gdelt.timeout_seconds = 20
     cfg.sources.rss_feeds = []
     return cfg

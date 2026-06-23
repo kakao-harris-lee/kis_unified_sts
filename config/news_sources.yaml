@@ -59,11 +59,14 @@ news_collector:
     gdelt:
       enabled: true
       poll_interval_seconds: 600
+      gkg_base_url: "http://data.gdeltproject.org/gdeltv2"
+      match_keywords:
+        - "federal reserve"
+        - "bond yields"
+        - "equity market"
+        - "semiconductor"
       max_records: 20
-      timespan: "6h"
-      sort: "datedesc"
       timeout_seconds: 20
-      query: '("Federal Reserve" OR "bond yields" OR "equity market" OR "semiconductor stocks")'
     mk:
       enabled: true
       poll_interval_seconds: 180

@@ -59,10 +59,11 @@ news_collector:
     gdelt:
       enabled: true
       poll_interval_seconds: 600
-      query: '("Federal Reserve" OR "bond yields")'
+      gkg_base_url: "http://data.gdeltproject.org/gdeltv2"
+      match_keywords:
+        - "federal reserve"
+        - "bond yields"
       max_records: 10
-      timespan: "6h"
-      sort: "datedesc"
       timeout_seconds: 20
     rss_feeds:
       - name: "newsis_economy"
@@ -89,6 +90,8 @@ news_collector:
     ]
     assert cfg.sources.naver_search.display == 5
     assert cfg.sources.gdelt.max_records == 10
+    assert cfg.sources.gdelt.gkg_base_url == "http://data.gdeltproject.org/gdeltv2"
+    assert cfg.sources.gdelt.match_keywords == ["federal reserve", "bond yields"]
     assert cfg.sources.rss_feeds[0].name == "newsis_economy"
     assert cfg.dedupe.memory_size == 10
 
