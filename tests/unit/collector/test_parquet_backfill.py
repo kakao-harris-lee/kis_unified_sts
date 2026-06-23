@@ -142,6 +142,75 @@ def test_stock_minute_parquet_backfill_uses_ohlcv_subset(monkeypatch, tmp_path):
     ]
 
 
+def test_stock_minute_backfill_does_not_reject_large_single_bar_move(
+    monkeypatch, tmp_path
+):
+    """The futures-tuned single-bar-return gate must NOT apply to stocks.
+
+    Korean equities have ±30% daily limits and VI halts; a legitimate >8%
+    single-minute move must still be persisted (only OHLC ordering gates stocks).
+    """
+    from shared.collector.historical import stock as stock_module
+    from shared.collector.historical.parquet_backfill import (
+        backfill_stock_minute_parquet,
+    )
+    from shared.storage import ParquetMarketDataStore
+
+    async def fake_fetch(_client, code, date_str):
+        return (
+            code,
+            date_str,
+            {
+                "rt_cd": "0",
+                "output2": [
+                    {
+                        "stck_bsop_date": date_str,
+                        "stck_cntg_hour": "090000",
+                        "stck_oprc": "10000",
+                        "stck_hgpr": "10100",
+                        "stck_lwpr": "9990",
+                        "stck_prpr": "10000",
+                        "cntg_vol": "1000",
+                        "acml_tr_pbmn": "10000000",
+                    },
+                    {
+                        "stck_bsop_date": date_str,
+                        "stck_cntg_hour": "090100",
+                        "stck_oprc": "11500",  # +15% from prior close — legitimate
+                        "stck_hgpr": "11600",
+                        "stck_lwpr": "11480",
+                        "stck_prpr": "11500",
+                        "cntg_vol": "2000",
+                        "acml_tr_pbmn": "23000000",
+                    },
+                ],
+            },
+        )
+
+    monkeypatch.setattr(stock_module, "STOCK_UNIVERSE", [{"code": "005930"}])
+    monkeypatch.setattr(stock_module, "fetch_stock_minute_async", fake_fetch)
+
+    with patch(
+        "shared.collector.historical.parquet_backfill._is_day_closed",
+        return_value=False,
+    ):
+        result = asyncio.run(
+            backfill_stock_minute_parquet(
+                root=tmp_path / "market",
+                codes=["005930"],
+                resume=True,
+                verbose=False,
+                trading_days=[date(2026, 6, 3)],
+            )
+        )
+
+    assert result.failed == 0, "Stock day with a real >8% move must not be rejected"
+    assert result.rows == 2
+    store = ParquetMarketDataStore(tmp_path / "market", asset_class="stock")
+    df = store.get_minute_bars("005930", start=date(2026, 6, 3), end=date(2026, 6, 3))
+    assert len(df) == 2
+
+
 # ---------------------------------------------------------------------------
 # Task 3: Completeness gate — short days must not be marked success
 # ---------------------------------------------------------------------------
@@ -509,6 +578,38 @@ def test_check_price_sanity_tolerates_normal_volatility():
         ("A01603", _dt(2026, 3, 4, 9, 1), 800.0, 817.0, 800.0, 816.0, 600),  # +2%
     ]
     assert check_price_sanity(rows) is None
+
+
+def test_check_price_sanity_return_check_disabled_for_stocks():
+    """max_bar_return=None disables the return check (stocks: ±30% limits/VI)."""
+    from datetime import datetime as _dt
+
+    from shared.collector.historical.parquet_backfill import check_price_sanity
+
+    rows = [
+        # A real Korean small-cap minute jump (+15%) — legitimate, not corruption.
+        ("005930", _dt(2026, 3, 4, 9, 0), 1000.0, 1005.0, 999.0, 1000.0, 500),
+        ("005930", _dt(2026, 3, 4, 9, 1), 1150.0, 1155.0, 1148.0, 1150.0, 600),
+    ]
+    # Futures threshold would reject this; with the check disabled it passes.
+    assert check_price_sanity(rows, max_bar_return=0.08) is not None
+    assert check_price_sanity(rows, max_bar_return=None) is None
+
+
+def test_check_price_sanity_rejects_non_finite_ohlc():
+    """A NaN/inf OHLC field is rejected (comparisons against NaN are False)."""
+    from datetime import datetime as _dt
+
+    from shared.collector.historical.parquet_backfill import check_price_sanity
+
+    nan = float("nan")
+    rows = [
+        ("A01603", _dt(2026, 3, 4, 9, 0), 800.0, 801.0, 799.0, 800.0, 500),
+        ("A01603", _dt(2026, 3, 4, 9, 1), 800.0, nan, 799.0, 800.5, 600),
+    ]
+    err = check_price_sanity(rows)
+    assert err is not None
+    assert "non-finite" in err
 
 
 def test_price_sanity_gate_rejects_corrupt_day_and_does_not_persist(

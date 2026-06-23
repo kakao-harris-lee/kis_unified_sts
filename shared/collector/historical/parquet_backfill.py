@@ -306,7 +306,7 @@ def _ohlcv_dicts(rows: Iterable[tuple]) -> list[dict[str, Any]]:
 def check_price_sanity(
     rows: list[tuple],
     *,
-    max_bar_return: float = _MAX_SINGLE_BAR_RETURN,
+    max_bar_return: float | None = _MAX_SINGLE_BAR_RETURN,
 ) -> str | None:
     """Validate OHLC consistency and single-bar return for a day's minute bars.
 
@@ -314,37 +314,54 @@ def check_price_sanity(
     see — most importantly the KIS duplicate-timestamp divergence that produced
     internally-inconsistent bars on days with a full bar count.
 
-    Rows are ``(code, datetime, open, high, low, close, volume)`` and assumed to
-    be for a single (code, date).  They are sorted by timestamp before the
-    close-to-close return check so the result is order-independent.
+    Two checks:
+
+    * **OHLC ordering** (always applied): ``high >= max(open, close, low)`` and
+      ``low <= min(open, close, high)``.  This is universally valid for any asset
+      and also rejects NaN OHLC (NaN comparisons are False, so a NaN field fails
+      the explicit ``isfinite`` guard below).
+    * **Single-bar return** (only when ``max_bar_return`` is not ``None``): the
+      absolute close-to-close move between consecutive bars must not exceed
+      ``max_bar_return``.  This is the divergence signature on KOSPI200 futures
+      and is *disabled* for assets whose legitimate single-minute moves are wide
+      (Korean equities have ±30% daily limits / VI halts), by passing ``None``.
+
+    Rows are ``(code, datetime, open, high, low, close, volume[, value, ...])``;
+    the stock minute parser appends a trading-value column, so OHLC is indexed
+    positionally rather than unpacked at a fixed arity.  Rows are sorted by
+    timestamp first so the result is order-independent.
 
     Args:
         rows: Parsed OHLCV tuples for one (code, date).
-        max_bar_return: Maximum tolerated absolute close-to-close return between
-            consecutive bars before flagging the day.
+        max_bar_return: Maximum tolerated absolute close-to-close return, or
+            ``None`` to skip the return check (OHLC ordering still applies).
 
     Returns:
         ``None`` if the day is sane, else a short human-readable reason string
         describing the first violation found.
     """
+    import math
+
     if not rows:
         return None
 
-    # Rows are (code, datetime, open, high, low, close, volume[, value, ...]);
-    # the stock minute parser appends a trading-value column, so index the
-    # leading OHLC fields positionally rather than unpacking a fixed arity.
     ordered = sorted(rows, key=lambda r: r[1])
     prev_close: float | None = None
     for row in ordered:
         dt = row[1]
         o, h, l, c = float(row[2]), float(row[3]), float(row[4]), float(row[5])
+        # Reject non-finite OHLC (NaN/inf) — comparisons against NaN are False, so
+        # without this guard a NaN bar would silently pass both checks.
+        if not all(math.isfinite(x) for x in (o, h, l, c)):
+            return f"non-finite OHLC at {dt}: o={o} h={h} l={l} c={c}"
         # OHLC ordering: high must dominate open/close/low; low must be dominated.
         if h < max(o, c, l) - 1e-9 or l > min(o, c, h) + 1e-9:
-            return (
-                f"OHLC inconsistent at {dt}: "
-                f"o={o:.2f} h={h:.2f} l={l:.2f} c={c:.2f}"
-            )
-        if prev_close is not None and abs(prev_close) > _PRICE_SANITY_MIN_CLOSE:
+            return f"OHLC inconsistent at {dt}: o={o:.2f} h={h:.2f} l={l:.2f} c={c:.2f}"
+        if (
+            max_bar_return is not None
+            and prev_close is not None
+            and abs(prev_close) > _PRICE_SANITY_MIN_CLOSE
+        ):
             ret = abs(c - prev_close) / abs(prev_close)
             if ret > max_bar_return:
                 return (
@@ -453,8 +470,12 @@ async def _write_minute_tasks(
         # Price-sanity gate: reject value-corrupt days (OHLC ordering violations
         # or absurd single-bar returns) BEFORE persisting them.  This catches the
         # duplicate-timestamp divergence signature that the bar-count completeness
-        # gate cannot see (corrupt days had full bar counts).
-        sanity_error = check_price_sanity(rows)
+        # gate cannot see (corrupt days had full bar counts).  The single-bar
+        # return check is futures-only — Korean equities have ±30% daily limits /
+        # VI halts, so an >8% single-minute move is legitimate; for stocks only
+        # the universally-valid OHLC-ordering check applies.
+        max_bar_return = _MAX_SINGLE_BAR_RETURN if asset_class == "futures" else None
+        sanity_error = check_price_sanity(rows, max_bar_return=max_bar_return)
         if sanity_error is not None:
             log.warning(
                 "Price-sanity gate: %s %s %s rejected — %s",

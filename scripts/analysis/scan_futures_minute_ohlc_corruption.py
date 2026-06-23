@@ -153,9 +153,16 @@ def scan_store(
             med_big = (
                 float(row.med_big_wick) if row.med_big_wick == row.med_big_wick else 0.0
             )
-            flagged = bool(row.ohlc_viol) or (
-                int(row.big_wick) >= min_cluster and med_big >= threshold
-            )
+            # Flag on any literal OHLC ordering violation, or a *cluster* of bars
+            # whose wick exceeds the threshold.  The cluster size (min_cluster) is
+            # the real discriminator — a sustained phantom offset produces many
+            # large-wick bars, while genuine volatility produces scattered ones.
+            # (The cluster median is reported for human inspection but is not an
+            # extra gate: it is the median of bars already filtered to
+            # wick > threshold, so it is always > threshold and would be
+            # redundant.)  This scanner favours recall — see module docstring.
+            cluster = int(row.big_wick) >= min_cluster
+            flagged = bool(row.ohlc_viol) or cluster
             if not flagged:
                 continue
             trade_day = row.d

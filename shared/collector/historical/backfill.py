@@ -610,9 +610,14 @@ def _resolve_minute_bars(
 
     minutes = sorted(minute_candidates.keys())
 
-    # Seed the continuity anchor from the first non-divergent minute; fall back to
-    # the most-duplicated candidate of the first minute if every leading minute is
-    # divergent (rare).
+    # Seed the continuity anchor from the first non-divergent minute — KIS
+    # sessions open undivided, so in practice this always succeeds.  If every
+    # leading minute is divergent (no clean open at all), fall back to the
+    # lowest-close candidate of the first minute.  We deliberately do NOT seed by
+    # duplicate/volume count: the phantom track can carry the higher count, so
+    # counting would risk anchoring onto it (the whole point of this resolver is
+    # that count must not decide).  Lowest-close is an arbitrary-but-deterministic
+    # tie-break for this pathological, effectively-unreached case.
     anchor: float | None = None
     for minute_dt in minutes:
         cand = minute_candidates[minute_dt]
@@ -620,8 +625,7 @@ def _resolve_minute_bars(
             anchor = _midpoint(next(iter(cand)))
             break
     if anchor is None and minutes:
-        first = minute_candidates[minutes[0]]
-        ohlc = max(first.items(), key=lambda kv: (kv[1], -kv[0][3]))[0]
+        ohlc = min(minute_candidates[minutes[0]], key=lambda k: k[3])
         anchor = _midpoint(ohlc)
 
     minute_bars: dict[datetime, tuple[float, float, float, float, int]] = {}
@@ -631,7 +635,14 @@ def _resolve_minute_bars(
         if len(items) == 1:
             ohlc, vol = items[0]
         else:
-            ohlc, vol = min(items, key=lambda kv: abs(_midpoint(kv[0]) - anchor))
+            # Nearest midpoint to the anchor; tie-break on the lowest close so the
+            # choice is deterministic across re-fetches regardless of KIS row
+            # ordering (two candidates equidistant from the anchor are rare but
+            # must resolve identically every run).
+            ohlc, vol = min(
+                items,
+                key=lambda kv: (abs(_midpoint(kv[0]) - anchor), kv[0][3]),
+            )
 
         midpoint = _midpoint(ohlc)
         # Reject a candidate that is an absurd jump from the anchor.  With a single
