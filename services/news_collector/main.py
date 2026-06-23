@@ -186,10 +186,9 @@ async def _build_and_run_from_config() -> int:
         sources.append(
             GDELTNewsSource(
                 session=session,
-                query=cfg.sources.gdelt.query,
+                gkg_base_url=cfg.sources.gdelt.gkg_base_url,
+                match_keywords=cfg.sources.gdelt.match_keywords,
                 max_records=cfg.sources.gdelt.max_records,
-                timespan=cfg.sources.gdelt.timespan,
-                sort=cfg.sources.gdelt.sort,
                 poll_interval_seconds=cfg.sources.gdelt.poll_interval_seconds,
                 timeout=cfg.sources.gdelt.timeout_seconds,
             )

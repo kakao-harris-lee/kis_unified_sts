@@ -1,14 +1,15 @@
-"""GDELT news sources: DOC API source and GKG CSV helpers."""
+"""GDELT news source: GKG file pipeline."""
 
 from __future__ import annotations
 
+import asyncio
 import csv as _csv
 import hashlib
 import io as _io
-import json
 import logging
 import re as _re
 import time
+import zipfile as _zip
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -23,96 +24,105 @@ _USER_AGENT = "kis-unified-sts-news-collector/1.0"
 
 class GDELTNewsSource(NewsSource):
     name = "gdelt"
-    version = "gdelt-doc-v1"
+    version = "gdelt-gkg-v1"
     poll_interval_seconds = 600
+    _MAX_ZIP_BYTES = 50 * 1024 * 1024
 
     def __init__(
         self,
         *,
         session: aiohttp.ClientSession,
-        query: str,
+        gkg_base_url: str,
+        match_keywords: list[str],
         max_records: int = 20,
-        timespan: str = "6h",
-        sort: str = "datedesc",
         poll_interval_seconds: int | None = None,
         timeout: float = 20.0,
     ):
         self._session = session
-        self._query = _normalize_query(query)
+        self._base = gkg_base_url.rstrip("/")
+        self._match_keywords = list(match_keywords)
         self._max_records = max(1, min(max_records, 100))
-        self._timespan = timespan
-        self._sort = sort
         self._timeout = timeout
+        self._last_slice_ts: str | None = None
         self.poll_interval_seconds = poll_interval_seconds or self.poll_interval_seconds
 
     async def fetch(self) -> AsyncIterator[NewsItem]:
-        params = {
-            "query": self._query,
-            "mode": "artlist",
-            "format": "json",
-            "maxrecords": str(self._max_records),
-            "timespan": self._timespan,
-            "sort": self._sort,
-        }
         try:
             async with self._session.get(
-                "https://api.gdeltproject.org/api/v2/doc/doc",
-                params=params,
+                f"{self._base}/lastupdate.txt",
                 headers={"User-Agent": _USER_AGENT},
                 timeout=aiohttp.ClientTimeout(total=self._timeout),
             ) as resp:
-                if resp.status == 429:
-                    logger.warning("gdelt rate limited")
-                    return
                 if resp.status != 200:
-                    logger.warning("gdelt http %s", resp.status)
+                    logger.warning("gdelt lastupdate http %s", resp.status)
                     return
-                text = await resp.text()
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    logger.warning("gdelt invalid json response: %s", text[:160])
-                    return
-        except TimeoutError:
-            logger.warning("gdelt fetch timeout")
-            return
+                lastupdate = await resp.text()
         except Exception:
-            logger.exception("gdelt fetch failed")
+            logger.warning("gdelt lastupdate fetch failed", exc_info=True)
             return
 
-        received_ts_ms = int(time.time() * 1000)
-        for article in payload.get("articles", []):
-            url = article.get("url", "")
-            title = article.get("title", "")
-            if not url or not title:
-                continue
-            digest = hashlib.sha256(url.encode()).hexdigest()[:16]
-            published_ts_s = _parse_gdelt_date(article.get("seendate", ""))
-            domain = article.get("domain", "")
-            source_country = article.get("sourcecountry", "")
-            body = " ".join(
-                part
-                for part in (
-                    title,
-                    f"domain={domain}" if domain else "",
-                    f"source_country={source_country}" if source_country else "",
-                )
-                if part
+        url, slice_ts = _parse_lastupdate(lastupdate)
+        if not url:
+            logger.warning("gdelt: no gkg url in lastupdate")
+            return
+        if slice_ts and slice_ts == self._last_slice_ts:
+            return  # already processed this slice
+
+        try:
+            async with self._session.get(
+                url,
+                headers={"User-Agent": _USER_AGENT},
+                timeout=aiohttp.ClientTimeout(total=self._timeout),
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning("gdelt gkg http %s", resp.status)
+                    return
+                raw = await resp.read()
+        except Exception:
+            logger.warning("gdelt gkg download failed", exc_info=True)
+            return
+
+        if len(raw) > self._MAX_ZIP_BYTES:
+            logger.warning("gdelt gkg zip too large: %d", len(raw))
+            return
+
+        now_ms = int(time.time() * 1000)
+        try:
+            items = await asyncio.to_thread(
+                _decode_and_map,
+                raw,
+                self._match_keywords,
+                self._max_records,
+                self.version,
+                now_ms,
             )
-            yield NewsItem(
-                news_id=f"gdelt_{digest}",
-                source=self.name,
-                published_at_ms=(
-                    int(published_ts_s * 1000) if published_ts_s else received_ts_ms
-                ),
-                received_at_ms=received_ts_ms,
-                title=title,
-                body=body,
-                url=url,
-                source_version=self.version,
-                lang=article.get("language", "") or "unknown",
-                keywords=[kw for kw in ("gdelt", domain) if kw],
-            )
+        except Exception:
+            logger.warning("gdelt gkg parse failed", exc_info=True)
+            return
+
+        self._last_slice_ts = slice_ts or self._last_slice_ts
+        for it in items:
+            yield it
+
+
+def _decode_and_map(
+    raw: bytes,
+    match_keywords: list[str],
+    max_records: int,
+    version: str,
+    now_ms: int,
+) -> list[NewsItem]:
+    """Unzip GKG CSV and map rows to NewsItems (runs in executor thread)."""
+    with _zip.ZipFile(_io.BytesIO(raw)) as z:
+        name = z.namelist()[0]
+        csv_text = z.read(name).decode("utf-8", errors="replace")
+    return _gkg_rows_to_items(
+        csv_text,
+        match_keywords=match_keywords,
+        max_records=max_records,
+        version=version,
+        now_ms=now_ms,
+    )
 
 
 def _parse_gdelt_date(raw: str) -> float:
@@ -127,13 +137,6 @@ def _parse_gdelt_date(raw: str) -> float:
         return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return 0.0
-
-
-def _normalize_query(query: str) -> str:
-    normalized = query.strip()
-    if " OR " in normalized and not normalized.startswith("("):
-        return f"({normalized})"
-    return normalized
 
 
 # ---------------------------------------------------------------------------

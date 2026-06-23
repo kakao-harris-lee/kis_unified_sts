@@ -1,4 +1,5 @@
-import re
+import io
+import zipfile
 
 import aiohttp
 import pytest
@@ -13,91 +14,172 @@ from shared.news.sources.gdelt import (
 )
 
 # ---------------------------------------------------------------------------
-# Existing DOC-API tests (kept verbatim)
+# Helpers shared by async-fetch tests
+# ---------------------------------------------------------------------------
+
+_BASE = "http://data.gdeltproject.org/gdeltv2"
+_LASTUPDATE_TEXT = (
+    "201892 abc http://data.gdeltproject.org/gdeltv2/20260623091500.export.CSV.zip\n"
+    "88123 def http://data.gdeltproject.org/gdeltv2/20260623091500.mentions.CSV.zip\n"
+    "305551 ghi http://data.gdeltproject.org/gdeltv2/20260623091500.gkg.csv.zip\n"
+)
+_GKG_ZIP_URL = "http://data.gdeltproject.org/gdeltv2/20260623091500.gkg.csv.zip"
+_SLICE_TS = "20260623091500"
+
+
+def _row(
+    date="20260623091500",
+    domain="reuters.com",
+    url="https://reuters.com/a",
+    themes="ECON_INTEREST_RATE",
+    tone="-2.5,1,3,4",
+    title="Federal Reserve holds rates",
+):
+    """Build a single GKG 2.1 TSV row (27 columns)."""
+    cols = [""] * 27
+    cols[1] = date
+    cols[3] = domain
+    cols[4] = url
+    cols[8] = themes
+    cols[15] = tone
+    cols[26] = f"<PAGE_TITLE>{title}</PAGE_TITLE>" if title else ""
+    return "\t".join(cols)
+
+
+def _zip_bytes(csv_text: str) -> bytes:
+    """Build an in-memory ZIP containing one GKG CSV file."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("20260623091500.gkg.csv", csv_text)
+    return buf.getvalue()
+
+
+_CSV_TEXT = _row(
+    url="https://reuters.com/fed",
+    title="Federal Reserve signals cut",
+    themes="ECON_INTEREST_RATE",
+)
+_ZIP_PAYLOAD = _zip_bytes(_CSV_TEXT)
+
+
+# ---------------------------------------------------------------------------
+# Async fetch() tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_gdelt_parses_limited_doc_api_response():
-    payload = {
-        "articles": [
-            {
-                "url": "https://example.com/markets/1",
-                "title": "Global yields move equity markets",
-                "seendate": "20260515T010203Z",
-                "domain": "example.com",
-                "sourcecountry": "US",
-                "language": "English",
-            }
-        ]
-    }
+async def test_fetch_yields_mapped_news_items():
+    """Happy-path: lastupdate → zip → parsed NewsItem yielded."""
     with aioresponses() as m:
-        m.get(
-            re.compile(r"^https://api\.gdeltproject\.org/api/v2/doc/doc.*"),
-            payload=payload,
-        )
+        m.get(f"{_BASE}/lastupdate.txt", status=200, body=_LASTUPDATE_TEXT)
+        m.get(_GKG_ZIP_URL, status=200, body=_ZIP_PAYLOAD)
+
         async with aiohttp.ClientSession() as session:
             src = GDELTNewsSource(
                 session=session,
-                query='"stock market"',
+                gkg_base_url=_BASE,
+                match_keywords=["federal reserve"],
                 max_records=20,
-                timespan="6h",
                 poll_interval_seconds=300,
             )
             items = [it async for it in src.fetch()]
 
     assert len(items) == 1
-    assert items[0].source == "gdelt"
-    assert items[0].news_id.startswith("gdelt_")
-    assert items[0].published_at_ms == 1_778_806_923_000
-    assert "domain=example.com" in items[0].body
-    assert items[0].keywords == ["gdelt", "example.com"]
+    item = items[0]
+    assert item.source == "gdelt"
+    assert item.source_version == "gdelt-gkg-v1"
+    assert item.news_id.startswith("gdelt_")
+    assert item.url == "https://reuters.com/fed"
+    assert item.title == "Federal Reserve signals cut"
     assert src.poll_interval_seconds == 300
+    # slice-ts recorded
+    assert src._last_slice_ts == _SLICE_TS
 
 
 @pytest.mark.asyncio
-async def test_gdelt_parses_compact_seendate_response():
-    payload = {
-        "articles": [
-            {
-                "url": "https://example.com/markets/compact",
-                "title": "Compact GDELT timestamp",
-                "seendate": "20260515010203",
-                "domain": "example.com",
-                "sourcecountry": "US",
-                "language": "English",
-            }
-        ]
-    }
+async def test_fetch_skip_unchanged_slice():
+    """Second fetch with same slice_ts should yield nothing (already processed)."""
     with aioresponses() as m:
-        m.get(
-            re.compile(r"^https://api\.gdeltproject\.org/api/v2/doc/doc.*"),
-            payload=payload,
-        )
+        # Register both first-fetch mocks and a second lastupdate-only mock.
+        m.get(f"{_BASE}/lastupdate.txt", status=200, body=_LASTUPDATE_TEXT)
+        m.get(_GKG_ZIP_URL, status=200, body=_ZIP_PAYLOAD)
+        # Second call sees the same lastupdate → same slice_ts → early return.
+        m.get(f"{_BASE}/lastupdate.txt", status=200, body=_LASTUPDATE_TEXT)
+
         async with aiohttp.ClientSession() as session:
-            src = GDELTNewsSource(session=session, query='"stock market"')
+            src = GDELTNewsSource(
+                session=session,
+                gkg_base_url=_BASE,
+                match_keywords=["federal reserve"],
+            )
+            # First fetch → consumes items
+            first = [it async for it in src.fetch()]
+            assert len(first) == 1
+            assert src._last_slice_ts == _SLICE_TS
+
+            # Second fetch with same slice_ts → skip (no zip download)
+            second = [it async for it in src.fetch()]
+
+    assert second == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_lastupdate_non_200_yields_nothing():
+    """HTTP error on lastupdate.txt → yields nothing, no raise."""
+    with aioresponses() as m:
+        m.get(f"{_BASE}/lastupdate.txt", status=503)
+
+        async with aiohttp.ClientSession() as session:
+            src = GDELTNewsSource(
+                session=session,
+                gkg_base_url=_BASE,
+                match_keywords=["federal reserve"],
+            )
             items = [it async for it in src.fetch()]
 
-    assert len(items) == 1
-    assert items[0].published_at_ms == 1_778_806_923_000
+    assert items == []
 
 
 @pytest.mark.asyncio
-async def test_gdelt_rate_limit_returns_empty():
+async def test_fetch_zip_download_error_yields_nothing():
+    """HTTP error on zip download → yields nothing, no raise."""
+    with aioresponses() as m:
+        m.get(f"{_BASE}/lastupdate.txt", status=200, body=_LASTUPDATE_TEXT)
+        m.get(_GKG_ZIP_URL, status=500)
+
+        async with aiohttp.ClientSession() as session:
+            src = GDELTNewsSource(
+                session=session,
+                gkg_base_url=_BASE,
+                match_keywords=["federal reserve"],
+            )
+            items = [it async for it in src.fetch()]
+
+    assert items == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_network_exception_yields_nothing():
+    """Connection error on lastupdate fetch → yields nothing, no raise."""
     with aioresponses() as m:
         m.get(
-            re.compile(r"^https://api\.gdeltproject\.org/api/v2/doc/doc.*"),
-            status=429,
+            f"{_BASE}/lastupdate.txt",
+            exception=aiohttp.ClientConnectionError("simulated"),
         )
+
         async with aiohttp.ClientSession() as session:
-            src = GDELTNewsSource(session=session, query='"stock market"')
+            src = GDELTNewsSource(
+                session=session,
+                gkg_base_url=_BASE,
+                match_keywords=["federal reserve"],
+            )
             items = [it async for it in src.fetch()]
 
     assert items == []
 
 
 # ---------------------------------------------------------------------------
-# New pure-helper tests (Task 2)
+# Pure-helper tests (Task 2 — unchanged)
 # ---------------------------------------------------------------------------
 
 _LASTUPDATE = (
@@ -140,25 +222,6 @@ def test_parse_lastupdate_malformed_ts():
     )
     assert url == "http://data.gdeltproject.org/gdeltv2/BADNAME.gkg.csv.zip"
     assert ts is None
-
-
-def _row(
-    date="20260623091500",
-    domain="reuters.com",
-    url="https://reuters.com/a",
-    themes="ECON_INTEREST_RATE",
-    tone="-2.5,1,3,4",
-    title="Federal Reserve holds rates",
-):
-    # GKG 2.1: 27 tab-separated columns; fill only the ones we read.
-    cols = [""] * 27
-    cols[1] = date
-    cols[3] = domain
-    cols[4] = url
-    cols[8] = themes
-    cols[15] = tone
-    cols[26] = f"<PAGE_TITLE>{title}</PAGE_TITLE>" if title else ""
-    return "\t".join(cols)
 
 
 # Expected published_at_ms for GKG DATE 20260623091500 UTC.
