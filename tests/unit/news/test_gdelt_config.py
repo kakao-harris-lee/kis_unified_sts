@@ -1,6 +1,5 @@
 """Test GDELTSourceConfig GKG field structure."""
 
-import pytest
 
 from shared.news.config import GDELTSourceConfig
 
