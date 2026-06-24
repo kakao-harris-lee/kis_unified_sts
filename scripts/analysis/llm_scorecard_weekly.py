@@ -26,6 +26,46 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+def _build_calibration_section(cfg, ledger, window: int) -> str:
+    """Build a calibration section string for confidence-carrying facets.
+
+    Currently only the 'direction' facet carries per-prediction confidence.
+    Queries ledger.query_predictions(facet='direction') to build
+    pred_conf = {date_kst: confidence}, then calls calibration_bins and
+    format_calibration. Returns an empty string on any error (best-effort).
+    """
+    try:
+        from shared.llm_scorecard.aggregator import calibration_bins
+        from shared.llm_scorecard.reporter import format_calibration
+
+        # Facets that carry confidence values — currently only direction
+        confidence_facets = [f for f in cfg.enabled_facets if f == "direction"]
+        if not confidence_facets:
+            return ""
+
+        facet_name = confidence_facets[0]  # direction
+        score_rows = ledger.query_scores(facet=facet_name)
+        score_rows = score_rows[-window:] if window else score_rows
+
+        # Build pred_conf from query_predictions — mirrors query_scores shape
+        pred_rows = ledger.query_predictions(facet=facet_name)
+        pred_conf: dict[str, float] = {}
+        for row in pred_rows:
+            conf = row.get("confidence")
+            if conf is not None:
+                pred_conf[row["date_kst"]] = float(conf)
+
+        if not pred_conf:
+            logger.info("No prediction confidence data for calibration (facet=%s)", facet_name)
+            return ""
+
+        bins = calibration_bins(score_rows, pred_conf)
+        return format_calibration(bins)
+    except Exception as exc:
+        logger.warning("Calibration section failed (non-fatal): %s", exc)
+        return ""
+
+
 def build_by_facet(cfg, ledger) -> tuple[int, dict[str, dict]]:
     """Return (window, by_facet) for the largest configured rolling window.
 
@@ -85,6 +125,15 @@ async def main() -> None:
         return
 
     msg = format_weekly(window, by_facet)
+
+    # --- Task 14: calibration section for confidence-carrying facets ----------
+    # Direction is the only facet that stores per-prediction confidence values.
+    # Build pred_conf = {date_kst: confidence} via query_predictions, then
+    # append a calibration section to the weekly digest.
+    calib_section = _build_calibration_section(cfg, ledger, window)
+    if calib_section:
+        msg = msg + "\n" + calib_section
+
     print(msg)
 
     try:

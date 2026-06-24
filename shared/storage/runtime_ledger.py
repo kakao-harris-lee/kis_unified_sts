@@ -72,6 +72,15 @@ class RuntimeLedger(Protocol):
         """Return all LLM predictions recorded for the given trading date (KST)."""
         ...
 
+    def query_predictions(
+        self,
+        facet: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[dict]:
+        """Query LLM predictions with optional facet and date range filters."""
+        ...
+
     def save_score(self, s: dict) -> None:
         """Idempotent upsert of a prediction score (per date_kst+facet)."""
         ...
@@ -852,6 +861,33 @@ class SQLiteRuntimeLedger:
             rows = self._require_conn().execute(
                 "SELECT * FROM llm_predictions WHERE date_kst=?", (date_kst,)
             ).fetchall()
+        return [{**dict(r), "payload": json.loads(r["payload_json"])} for r in rows]
+
+    def query_predictions(
+        self,
+        facet: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[dict]:
+        """Query LLM predictions with optional facet and date range filters.
+
+        Mirrors query_scores but reads from llm_predictions. Rows include a
+        ``payload`` key with the deserialized JSON payload.
+        """
+        q = "SELECT * FROM llm_predictions WHERE 1=1"
+        p: list = []
+        if facet:
+            q += " AND facet=?"
+            p.append(facet)
+        if start:
+            q += " AND date_kst>=?"
+            p.append(start)
+        if end:
+            q += " AND date_kst<=?"
+            p.append(end)
+        q += " ORDER BY date_kst ASC"
+        with self._lock:
+            rows = self._require_conn().execute(q, p).fetchall()
         return [{**dict(r), "payload": json.loads(r["payload_json"])} for r in rows]
 
     def save_score(self, s: dict) -> None:

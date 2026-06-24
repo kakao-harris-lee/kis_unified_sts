@@ -8,6 +8,33 @@ def _mark(correct: Any) -> str:
     return "✅" if correct is True else ("❌" if correct is False else "⚪")
 
 
+def format_calibration(bins: list[dict]) -> str:
+    """Render confidence-calibration bins as a Telegram-ready section.
+
+    Each entry in ``bins`` is a dict with ``lo``, ``hi``, ``n``, ``hit_rate``
+    (as returned by ``aggregator.calibration_bins``). Empty bins (n=0) are
+    omitted.  Returns a section header + one line per populated bin.
+
+    Example output::
+
+        📐 <b>신뢰도 보정 (direction)</b>
+        conf 0.8–1.0: hit 70% (n=12)
+        conf 0.6–0.8: hit 55% (n=8)
+    """
+    populated = [b for b in bins if b.get("n", 0) > 0]
+    if not populated:
+        return "📐 <b>신뢰도 보정</b>\n(보정 데이터 없음)"
+    lines = ["📐 <b>신뢰도 보정</b>"]
+    for b in sorted(populated, key=lambda x: -x["lo"]):  # highest confidence first
+        hi = b["hi"]
+        # Clamp hi display to 1.0 (the last bin edge is often 1.01 internally)
+        hi_display = min(hi, 1.0)
+        hr = b["hit_rate"]
+        hr_s = f"{hr * 100:.0f}%" if hr is not None else "n/a"
+        lines.append(f"conf {b['lo']:.1f}–{hi_display:.1f}: hit {hr_s} (n={b['n']})")
+    return "\n".join(lines)
+
+
 def format_daily(date_kst: Any, day_scores: list[dict], rolling: dict) -> str:
     """Telegram-ready daily scorecard. Pure: receives a day's score rows + rolling.
 
