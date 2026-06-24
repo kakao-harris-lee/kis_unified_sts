@@ -80,9 +80,10 @@ async def main():
 
         # Best-effort scorecard prediction capture — never breaks the briefing
         try:
+            import json as _json
             from datetime import datetime
+            import shared.llm_scorecard.facets  # noqa: F401 — populates FACET_REGISTRY
             from shared.llm_scorecard.config import ScorecardConfig
-            import shared.llm_scorecard.facets.direction  # noqa: F401 — registers facet
             from shared.llm_scorecard.recorder import capture_predictions
             from shared.llm_scorecard.facets.base import CaptureContext
             from shared.storage.config import StorageConfig
@@ -97,14 +98,26 @@ async def main():
             # MarketContext lives in Redis, not on futures_plan (FuturesTradingPlan
             # has no market_context field): read the published futures state.
             _mc = None
+            _screener = None
             try:
                 _pub = TradingStatePublisher("futures")
                 _mc_obj = _pub.get_market_context()
                 if _mc_obj is not None:
                     _mc = _mc_obj.to_dict() if hasattr(_mc_obj, "to_dict") else _mc_obj
+                # Populate screener from system:trade_targets:latest for MoversFacet
+                _redis = _pub._redis if hasattr(_pub, "_redis") else None
+                if _redis is not None:
+                    _raw = _redis.get("system:trade_targets:latest")
+                    if _raw:
+                        _screener = _json.loads(_raw)
             except Exception:
                 pass
-            _ctx = CaptureContext(date_kst=_date_kst, now_kst=_now, market_context=_mc)
+            _ctx = CaptureContext(
+                date_kst=_date_kst,
+                now_kst=_now,
+                market_context=_mc,
+                screener=_screener,
+            )
             _n = capture_predictions(_ctx, _cfg, _ledger)
             logger.info("Scorecard: captured %d predictions for %s", _n, _date_kst)
         except Exception as _sc_exc:
