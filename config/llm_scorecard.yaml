@@ -24,4 +24,4 @@ llm_scorecard:
       base_rate: 0.5                  # unconditional follow-through baseline
     volume_surge:
       horizon: "flag_to_close"
-      base_rate: 0.5                  # random-entry intraday continuation baseline
+      base_rate: 0.0                  # random-entry intraday continuation baseline (flat = 0%)

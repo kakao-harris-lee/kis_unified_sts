@@ -1,10 +1,13 @@
 """Tests for MoversFacet (Task 11)."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
+from shared.llm_scorecard.config import ScorecardConfig
 from shared.llm_scorecard.facets.base import CaptureContext, FacetPrediction
 from shared.llm_scorecard.facets.movers import MoversFacet
+from shared.llm_scorecard.recorder import capture_predictions
 
 
 # ---------------------------------------------------------------------------
@@ -137,3 +140,61 @@ def test_score_partial_data_uses_available_symbols():
     s = f.score(pred, od)
     assert abs(s.value - 2.0) < 1e-9
     assert s.correct is True  # 2.0 > 0.5
+
+
+# ---------------------------------------------------------------------------
+# Briefing-hook capture-path test (review fix #1 regression guard)
+# ---------------------------------------------------------------------------
+
+class _FakeRedis:
+    """Minimal fake redis: returns the trade_targets JSON for the key."""
+
+    def __init__(self, payloads: dict[str, str]):
+        self._payloads = payloads
+
+    def get(self, key):
+        return self._payloads.get(key)
+
+
+def test_briefing_hook_capture_path_yields_movers_prediction():
+    """End-to-end shape: fake redis trade_targets JSON → parsed → screener →
+    capture_predictions produces a movers prediction (not None).
+
+    This is the regression guard for the original ``_pub._redis`` bug, which made
+    the screener None at runtime so MoversFacet.capture always returned None.
+    The hook now: client.get(key) → json.loads → CaptureContext(screener=parsed).
+    """
+    # The exact payload shape published to system:trade_targets:latest.
+    trade_targets = {
+        "codes": ["005930", "000660", "035420"],
+        "names": ["Samsung", "SK Hynix", "NAVER"],
+        "scores": [0.9, 0.8, 0.7],
+        "metadata": {},
+        "sources": ["fusion"],
+    }
+    fake_redis = _FakeRedis({"system:trade_targets:latest": json.dumps(trade_targets)})
+
+    # Mirror the briefing hook: fetch → parse → screener.
+    raw = fake_redis.get("system:trade_targets:latest")
+    assert raw is not None  # the bug made this branch unreachable
+    screener = json.loads(raw)
+
+    ctx = CaptureContext(
+        date_kst="2026-06-25",
+        now_kst=datetime(2026, 6, 25, 8, 40),
+        screener=screener,
+    )
+
+    class _Ledger:
+        def __init__(self):
+            self.saved = []
+
+        def save_prediction(self, date_kst, facet, captured_at, payload, confidence):
+            self.saved.append((facet, payload))
+
+    led = _Ledger()
+    n = capture_predictions(ctx, ScorecardConfig(enabled_facets=["movers"]), led)
+    assert n == 1
+    facet_name, payload = led.saved[0]
+    assert facet_name == "movers"
+    assert set(payload["codes"]) == {"005930", "000660", "035420"}

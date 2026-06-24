@@ -141,6 +141,28 @@ def test_score_correct_false_when_spread_negative():
     assert s.edge < 0
 
 
+def test_score_correct_false_when_spread_zero():
+    """Strict boundary: spread == 0 is a MISS (correct False), not a hit."""
+    f = _make_facet()
+    pred = _make_pred(strong_symbols=["005930", "000660", "010950"])
+    # strong = whole scorable universe → strong_mean == market_mean → spread == 0
+    od = _FakeOD({"005930": 2.0, "000660": 4.0, "010950": 6.0, "055550": None, "086790": None})
+    s = f.score(pred, od)
+    assert abs(s.edge) < 1e-9  # spread == 0
+    assert s.correct is False
+
+
+def test_baseline_returns_market_mean():
+    """baseline() computes the equal-weight market mean (== score baseline_value)."""
+    f = _make_facet()
+    pred = _make_pred(strong_symbols=["005930"])
+    od = _FakeOD({"005930": 5.0, "055550": 1.0, "086790": 1.0})  # mean=(5+1+1)/3
+    base = f.baseline(pred, od)
+    s = f.score(pred, od)
+    assert abs(base - 7.0 / 3.0) < 1e-9
+    assert abs(base - s.baseline_value) < 1e-9  # single source of truth
+
+
 def test_score_unscorable_when_no_symbol_data():
     f = _make_facet()
     pred = _make_pred(strong_symbols=["005930", "000660", "010950"])
@@ -149,6 +171,17 @@ def test_score_unscorable_when_no_symbol_data():
     assert s.correct is None
     assert s.value == 0.0
     assert s.edge == 0.0
+    assert s.baseline_value == 0.0  # no market data either → 0.0
+
+
+def test_score_unscorable_carries_market_mean_from_non_strong_symbols():
+    """Strong symbols have no data, but non-strong (market) symbols do → carry market mean."""
+    f = _make_facet()
+    pred = _make_pred(strong_symbols=["005930", "000660"])  # both None below
+    od = _FakeOD({"005930": None, "000660": None, "055550": 2.0, "086790": 4.0})
+    s = f.score(pred, od)
+    assert s.correct is None  # no strong-theme data → unscorable
+    assert abs(s.baseline_value - 3.0) < 1e-9  # market mean (2+4)/2 = 3.0
 
 
 def test_score_economic_proxy_equals_value():

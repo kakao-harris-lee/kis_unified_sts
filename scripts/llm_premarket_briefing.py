@@ -88,7 +88,7 @@ async def main():
             from shared.llm_scorecard.facets.base import CaptureContext
             from shared.storage.config import StorageConfig
             from shared.storage.runtime_ledger import SQLiteRuntimeLedger
-            from shared.streaming.trading_state import TradingStatePublisher
+            from shared.streaming.trading_state import TradingStatePublisher, _get_redis
 
             _cfg = ScorecardConfig.from_yaml()
             _storage = StorageConfig.load_or_default()
@@ -104,12 +104,15 @@ async def main():
                 _mc_obj = _pub.get_market_context()
                 if _mc_obj is not None:
                     _mc = _mc_obj.to_dict() if hasattr(_mc_obj, "to_dict") else _mc_obj
-                # Populate screener from system:trade_targets:latest for MoversFacet
-                _redis = _pub._redis if hasattr(_pub, "_redis") else None
-                if _redis is not None:
-                    _raw = _redis.get("system:trade_targets:latest")
-                    if _raw:
-                        _screener = _json.loads(_raw)
+                # Populate screener from system:trade_targets:latest for MoversFacet.
+                # TradingStatePublisher has no persistent client; use the shared
+                # Redis singleton helper (RedisClient.get_client()) like the rest
+                # of trading_state.py does. The trade_targets payload has a
+                # top-level "codes" key, which MoversFacet.capture reads directly.
+                _client = _get_redis()
+                _raw = _client.get("system:trade_targets:latest")
+                if _raw:
+                    _screener = _json.loads(_raw)
             except Exception:
                 pass
             _ctx = CaptureContext(

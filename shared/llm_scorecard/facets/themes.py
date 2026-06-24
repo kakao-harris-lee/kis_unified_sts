@@ -129,59 +129,67 @@ class ThemesFacet:
     # Score
     # ------------------------------------------------------------------
 
-    def baseline(self, pred: FacetPrediction, mkt: Any) -> float:
-        # Market mean over all tracked symbols (computed in score()).
-        # We return 0.0 here; the actual baseline is market_mean from score().
-        return 0.0
-
-    def score(self, pred: FacetPrediction, mkt: Any) -> FacetScore:
+    def _all_returns(self, pred: FacetPrediction, mkt: Any) -> dict[str, float]:
+        """Equal-weight session_return for every tracked theme symbol with data."""
         _, theme_symbols = self._params()
-
-        strong_symbols: list[str] = pred.payload.get("strong_symbols", [])
-
-        # Collect returns for every tracked symbol (market universe).
         all_tracked: list[str] = []
         for codes in theme_symbols.values():
             for c in codes:
                 if c not in all_tracked:
                     all_tracked.append(c)
 
-        # Fetch returns (no-look-ahead via session_return).
+        # No-look-ahead via session_return.
         all_returns: dict[str, float] = {}
         for code in all_tracked:
             r = mkt.session_return(code, pred.date_kst, pred.captured_at)
             if r is not None:
                 all_returns[code] = r
+        return all_returns
+
+    def baseline(self, pred: FacetPrediction, mkt: Any) -> float:
+        """Market mean = equal-weight session_return over the tracked universe.
+
+        Single source of truth for ``baseline_value`` in ``score()``. Returns
+        0.0 when no tracked symbol has data (the unscorable market mean).
+        """
+        market_returns = list(self._all_returns(pred, mkt).values())
+        return sum(market_returns) / len(market_returns) if market_returns else 0.0
+
+    def score(self, pred: FacetPrediction, mkt: Any) -> FacetScore:
+        strong_symbols: list[str] = pred.payload.get("strong_symbols", [])
+
+        all_returns = self._all_returns(pred, mkt)
+
+        # Market mean (baseline) — computed once, carried into both branches so it
+        # is correct even on the unscorable path (non-strong symbols may have data).
+        market_returns = list(all_returns.values())
+        market_mean = sum(market_returns) / len(market_returns) if market_returns else 0.0
 
         # Strong-theme returns (intersection with available data).
         strong_returns = [all_returns[c] for c in strong_symbols if c in all_returns]
 
         if not strong_returns:
-            # Unscorable — no outcome data for any strong-theme symbol.
+            # Unscorable — no outcome data for any strong-theme symbol. Carry the
+            # market mean (it may be computable from non-strong symbols).
             return FacetScore(
                 facet=self.name,
                 date_kst=pred.date_kst,
                 correct=None,
                 value=0.0,
                 economic_proxy=0.0,
-                baseline_value=0.0,
+                baseline_value=market_mean,
                 edge=0.0,
-                detail={"reason": "no_outcome_data"},
+                detail={"reason": "no_outcome_data", "market_mean": market_mean},
                 scored_at=datetime.now(),
             )
 
         strong_mean = sum(strong_returns) / len(strong_returns)
-
-        # Market mean: equal-weight over ALL tracked symbols with data.
-        market_returns = list(all_returns.values())
-        market_mean = sum(market_returns) / len(market_returns) if market_returns else 0.0
-
         spread = strong_mean - market_mean  # positive = strong themes outperformed
 
         return FacetScore(
             facet=self.name,
             date_kst=pred.date_kst,
-            correct=spread >= 0.0,
+            correct=spread > 0.0,  # strict: zero/negative spread is a miss
             value=strong_mean,
             economic_proxy=strong_mean,
             baseline_value=market_mean,
