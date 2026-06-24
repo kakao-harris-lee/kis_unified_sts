@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import shared.llm_scorecard.facets.direction  # noqa: F401  (register direction facet)
+import shared.llm_scorecard.facets  # noqa: F401  (populate FACET_REGISTRY)
 from shared.llm_scorecard.facets.base import CaptureContext, enabled_facets
 
 logger = logging.getLogger(__name__)

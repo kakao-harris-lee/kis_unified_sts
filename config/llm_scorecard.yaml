@@ -1,5 +1,5 @@
 llm_scorecard:
-  enabled_facets: ["direction"]   # add themes/movers/volume_surge as built
+  enabled_facets: ["direction", "themes"]   # add movers/volume_surge as built
   rolling_windows: [20, 60]
   report_daily: true
   report_weekly: true
@@ -10,7 +10,18 @@ llm_scorecard:
       neutral_band_pct: 0.15          # |return| below this = NEUTRAL outcome
     themes:
       top_n: 3
+      # theme → constituent stock codes (KRX).  Update as sector composition changes.
+      theme_symbols:
+        Technology:   ["005930", "000660", "035420"]   # Samsung, SK Hynix, NAVER
+        Finance:      ["055550", "086790", "105560"]   # Shinhan, Kakao Bank, KB
+        Energy:       ["010950", "096770"]             # S-Oil, SK Innovation
+        Healthcare:   ["207940", "068270"]             # Samsung Bio, Celltrion
+        Consumer:     ["051910", "009830"]             # LG Chem, Hanwha Solutions
+        Industrials:  ["006400", "012330"]             # Samsung SDI, Hyundai Mobis
+        Chemicals:    ["011170", "010130"]             # Lotte Chemical, Korea Zinc
+        Telecom:      ["030200", "017670"]             # KT, SK Telecom
     movers:
-      horizon: "session"
+      base_rate: 0.5                  # unconditional follow-through baseline
     volume_surge:
       horizon: "flag_to_close"
+      base_rate: 0.5                  # random-entry intraday continuation baseline
