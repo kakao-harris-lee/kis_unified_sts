@@ -1612,3 +1612,204 @@ def test_publish_setup_eval_logs_only_on_state_change(monkeypatch, caplog):
         sa._publish_setup_eval("setup_x", "reject", "no_event_in_window")
         again = [r for r in caplog.records if "no_event_in_window" in r.message]
         assert len(again) == 2
+
+
+# ---------------------------------------------------------------------------
+# Restart-survivable per-day setup-eval HISTORY (no-trade diagnosis #5)
+#   docs/plans/2026-06-24-no-trade-diagnosis.md
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _history_redis(monkeypatch):
+    """Fresh fakeredis wired into _publish_setup_eval, with module state reset.
+
+    Returns the ``(setup_adapters_module, fake_redis)`` pair. The in-process
+    throttle/log maps are cleared so each test starts from a clean slate, and a
+    real fakeredis instance gives genuine LIST + TTL semantics (rpush / lrange /
+    ttl) for the restart-survival assertions.
+    """
+    import fakeredis
+
+    from shared.strategy.entry import setup_adapters as sa
+
+    fake = fakeredis.FakeStrictRedis(decode_responses=True)
+    monkeypatch.setattr(sa, "acquire_infra_clients", lambda: (fake, None))
+    # Pin the KST day so the history key is deterministic.
+    fixed = datetime(2026, 6, 24, 9, 30, tzinfo=ZoneInfo("Asia/Seoul"))
+    monkeypatch.setattr(sa, "now_kst", lambda: fixed)
+    # Isolate module-level state across tests.
+    sa._history_state.clear()
+    sa._last_eval_log.clear()
+    return sa, fake, fixed
+
+
+def _history_key(fixed: datetime) -> str:
+    from shared.strategy.entry import setup_adapters as sa
+
+    return f"{sa.SETUP_EVAL_HISTORY_KEY_PREFIX}:{fixed.date().isoformat()}"
+
+
+def test_history_record_written_with_shape_and_ttl(_history_redis):
+    """An in-window eval appends a correctly-shaped record with a 7-day TTL."""
+    import json
+
+    sa, fake, fixed = _history_redis
+
+    sa._publish_setup_eval(
+        "setup_a_gap_reversion", "reject", "kr_gap_below_min(0.1<0.2)"
+    )
+
+    key = _history_key(fixed)
+    records = fake.lrange(key, 0, -1)
+    assert len(records) == 1, "one in-window eval → exactly one history record"
+
+    rec = json.loads(records[0])
+    assert rec == {
+        "date_kst": "2026-06-24",
+        "setup": "setup_a_gap_reversion",
+        "outcome": "reject",
+        "reason": "kr_gap_below_min(0.1<0.2)",
+        "ts_kst": fixed.isoformat(),
+    }
+
+    ttl = fake.ttl(key)
+    assert ttl > 0, "history key must carry a TTL (repo Redis convention)"
+    assert ttl <= sa.SETUP_EVAL_HISTORY_TTL_SECONDS
+    # Default TTL is 7 days; allow a small lower bound for clock slack.
+    assert sa.SETUP_EVAL_HISTORY_TTL_SECONDS == 7 * 24 * 60 * 60
+    assert ttl >= sa.SETUP_EVAL_HISTORY_TTL_SECONDS - 5
+
+
+def test_history_throttled_not_one_record_per_cycle(_history_redis):
+    """Repeated identical in-window rejects append ONE record, not one per cycle."""
+    sa, fake, fixed = _history_redis
+
+    for _ in range(50):  # simulate ~50 entry-loop cycles with a stable outcome
+        sa._publish_setup_eval("setup_c_event_reaction", "reject", "no_event_in_window")
+
+    records = fake.lrange(_history_key(fixed), 0, -1)
+    assert len(records) == 1, "stable in-window outcome must be throttled to one record"
+
+
+def test_history_appends_on_outcome_change_terminal_is_last(_history_redis):
+    """A changed in-window outcome appends a new record; the LAST is terminal."""
+    import json
+
+    sa, fake, fixed = _history_redis
+
+    # Morning: no event yet (in-window reject), held stable for several cycles.
+    for _ in range(5):
+        sa._publish_setup_eval("setup_c_event_reaction", "reject", "no_event_in_window")
+    # Later: the setup finally fires → terminal in-window outcome for the day.
+    sa._publish_setup_eval("setup_c_event_reaction", "fired", "long")
+
+    records = [json.loads(r) for r in fake.lrange(_history_key(fixed), 0, -1)]
+    assert len(records) == 2, "distinct in-window outcomes → distinct records"
+    assert records[0]["reason"] == "no_event_in_window"
+    assert (
+        records[-1]["outcome"] == "fired"
+    ), "last element is the day's terminal outcome"
+    assert records[-1]["reason"] == "long"
+
+
+def test_history_skips_out_of_window_rejects(_history_redis):
+    """Out-of-window noise (no context / pre-open / post-cutoff) is NOT recorded."""
+    sa, fake, fixed = _history_redis
+
+    sa._publish_setup_eval("setup_a_gap_reversion", "reject", "no_market_context")
+    sa._publish_setup_eval(
+        "setup_a_gap_reversion", "reject", "outside_time_window(5m∉[20,60])"
+    )
+    sa._publish_setup_eval("setup_c_event_reaction", "reject", "after_cutoff(400m>360)")
+
+    assert (
+        fake.exists(_history_key(fixed)) == 0
+    ), "out-of-window rejects must be skipped"
+    assert fake.lrange(_history_key(fixed), 0, -1) == []
+
+
+def test_history_survives_simulated_restart(_history_redis):
+    """The day's record survives a restart (in-process throttle reset, LIST persists)."""
+    import json
+
+    sa, fake, fixed = _history_redis
+
+    # Day's in-window reject recorded before the "restart".
+    sa._publish_setup_eval("setup_a_gap_reversion", "reject", "sp500_kr_gap_misaligned")
+    key = _history_key(fixed)
+    assert len(fake.lrange(key, 0, -1)) == 1
+
+    # Simulate a container restart: the in-process throttle map is wiped, but the
+    # Redis LIST (durable, TTL'd) is untouched — the day's reason is still there.
+    sa._history_state.clear()
+    sa._last_eval_log.clear()
+
+    surviving = [json.loads(r) for r in fake.lrange(key, 0, -1)]
+    assert surviving[-1]["reason"] == "sp500_kr_gap_misaligned"
+    assert surviving[-1]["setup"] == "setup_a_gap_reversion"
+
+    # A post-restart eval of the same stable outcome re-appends exactly once
+    # (throttle re-primed) — the terminal outcome remains correct as the last
+    # element and we do not regress to per-cycle spam.
+    for _ in range(10):
+        sa._publish_setup_eval(
+            "setup_a_gap_reversion", "reject", "sp500_kr_gap_misaligned"
+        )
+    after = [json.loads(r) for r in fake.lrange(key, 0, -1)]
+    assert len(after) == 2, "at most one re-append per setup per restart"
+    assert after[-1]["reason"] == "sp500_kr_gap_misaligned"
+
+
+def test_history_disabled_via_env(monkeypatch):
+    """SETUP_EVAL_HISTORY_ENABLED=false → no history records (latest HASH still set)."""
+    import importlib
+
+    import fakeredis
+
+    monkeypatch.setenv("SETUP_EVAL_HISTORY_ENABLED", "false")
+    from shared.strategy.entry import setup_adapters as sa
+
+    importlib.reload(sa)
+    try:
+        fake = fakeredis.FakeStrictRedis(decode_responses=True)
+        monkeypatch.setattr(sa, "acquire_infra_clients", lambda: (fake, None))
+        fixed = datetime(2026, 6, 24, 9, 30, tzinfo=ZoneInfo("Asia/Seoul"))
+        monkeypatch.setattr(sa, "now_kst", lambda: fixed)
+        sa._history_state.clear()
+        sa._last_eval_log.clear()
+
+        sa._publish_setup_eval("setup_a_gap_reversion", "reject", "kr_gap_below_min")
+
+        key = f"{sa.SETUP_EVAL_HISTORY_KEY_PREFIX}:{fixed.date().isoformat()}"
+        assert fake.exists(key) == 0, "disabled → no history LIST written"
+        # The latest-state HASH must still be refreshed.
+        assert fake.hget(sa.SETUP_EVAL_KEY, "setup_a_gap_reversion") is not None
+    finally:
+        # Restore module to env-default state for other tests.
+        monkeypatch.delenv("SETUP_EVAL_HISTORY_ENABLED", raising=False)
+        importlib.reload(sa)
+
+
+def test_history_best_effort_redis_failure_does_not_raise(monkeypatch):
+    """A redis failure during history append must never propagate to the entry loop."""
+    from shared.strategy.entry import setup_adapters as sa
+
+    class _BoomRedis:
+        def hset(self, *_args, **_kwargs):
+            return None
+
+        def expire(self, *_args, **_kwargs):
+            return None
+
+        def rpush(self, *_args, **_kwargs):
+            raise RuntimeError("redis down")
+
+    monkeypatch.setattr(sa, "acquire_infra_clients", lambda: (_BoomRedis(), None))
+    fixed = datetime(2026, 6, 24, 9, 30, tzinfo=ZoneInfo("Asia/Seoul"))
+    monkeypatch.setattr(sa, "now_kst", lambda: fixed)
+    sa._history_state.clear()
+    sa._last_eval_log.clear()
+
+    # Must not raise despite rpush blowing up (observability is best-effort).
+    sa._publish_setup_eval("setup_a_gap_reversion", "reject", "no_event_in_window")
