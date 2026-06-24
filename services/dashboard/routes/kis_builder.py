@@ -31,6 +31,8 @@ from shared.strategy_builder.kis_compat import (
     kis_state_to_builder_state,
     list_kis_strategy_infos,
 )
+from shared.strategy_builder.runtime_support import streaming_support_reason
+from shared.strategy_builder.schema import BuilderState
 from shared.strategy_builder.yaml_io import (
     builder_state_to_yaml,
     preview_python,
@@ -672,6 +674,27 @@ def _load_strategy_file(strategy_id: str) -> dict[str, Any]:
         return yaml.safe_load(fh) or {}
 
 
+def _streaming_unsupported_reason(strategy: dict[str, Any]) -> str | None:
+    """Return why a built strategy cannot fire in the streaming runtime.
+
+    Inspects the persisted ``builder_state`` (under entry.params) for
+    streaming-unsupported operators (cross_above/cross_below). Returns ``None``
+    when the strategy is safe to enable, or when the doc is not a builder_v1
+    strategy / has no parseable state (don't block non-builder strategies).
+    """
+    entry = strategy.get("entry", {})
+    if entry.get("type") != "builder_v1":
+        return None
+    raw_state = entry.get("params", {}).get("builder_state")
+    if not isinstance(raw_state, dict):
+        return None
+    try:
+        state = BuilderState.model_validate(raw_state)
+    except Exception:  # noqa: BLE001 — a corrupt state shouldn't block disabling
+        return None
+    return streaming_support_reason(state)
+
+
 def _validate_builder_state(payload: dict[str, Any]) -> dict[str, Any]:
     """Reuse the schema validator from shared.strategy_builder.
 
@@ -838,10 +861,22 @@ class EnableRequest(BaseModel):
 async def toggle_registered_strategy(
     strategy_id: str, body: EnableRequest
 ) -> RegisteredStrategy:
-    """Flip strategy.enabled and write back."""
+    """Flip strategy.enabled and write back.
+
+    Enabling is refused for builder_v1 strategies whose conditions use
+    cross_above/cross_below: the decoupled streaming runtime cannot detect
+    those (no cross-cycle history series), so the strategy would be enabled but
+    permanently silent. Disabling is always allowed.
+    """
     safe_id = _safe_id(strategy_id)
     doc = _load_strategy_file(safe_id)
     strategy = doc.setdefault("strategy", {})
+
+    if bool(body.enabled):
+        reason = _streaming_unsupported_reason(strategy)
+        if reason is not None:
+            raise HTTPException(status_code=400, detail=reason)
+
     strategy["enabled"] = bool(body.enabled)
     with _strategy_path(safe_id).open("w", encoding="utf-8") as fh:
         yaml.safe_dump(doc, fh, allow_unicode=True, sort_keys=False)

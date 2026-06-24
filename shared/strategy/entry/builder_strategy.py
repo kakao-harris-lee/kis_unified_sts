@@ -33,6 +33,7 @@ indicator id itself (e.g. alias=``rsi``, output=``value`` → series.indicators[
 Missing aliases surface as the evaluator's ``missing`` list, which makes
 the condition group fail safely (no signal).
 """
+
 from __future__ import annotations
 
 import logging
@@ -44,6 +45,7 @@ from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
+from shared.strategy_builder.runtime_support import streaming_support_reason
 from shared.strategy_builder.schema import BuilderState, SymbolSeries
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,19 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
         except Exception as exc:
             logger.error("builder_v1 entry failed to parse builder_state: %s", exc)
             self._state = None
+            return
+        # Surface structurally-dead strategies instead of silently no-opping.
+        # The streaming runtime cannot detect cross_above/cross_below (no
+        # cross-cycle history series, no arbitrary-period SMA), so such a
+        # strategy never fires. Log loudly so a manually-enabled YAML is obvious
+        # in the logs rather than masquerading as active-but-silent.
+        reason = streaming_support_reason(self._state)
+        if reason is not None:
+            logger.error(
+                "builder_v1 entry %s will NEVER fire in the streaming runtime: %s",
+                self._state.metadata.id,
+                reason,
+            )
 
     @property
     def name(self) -> str:
@@ -176,6 +191,7 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
         cannot fire on the first tick (correct: a fresh strategy has no
         crossover to detect yet).
         """
+
         def _dup(x: float | None) -> list[float]:
             if x is None:
                 return []

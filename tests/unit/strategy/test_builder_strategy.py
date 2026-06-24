@@ -79,6 +79,81 @@ def _make_state(asset_class: str = "stock") -> dict:
     }
 
 
+def _cross_state(asset_class: str = "stock") -> dict:
+    """golden_cross-shaped state: sma_fast cross_above/cross_below sma_slow.
+
+    Structurally dead in the streaming runtime (no cross-cycle history); used
+    to assert the runtime adapters warn instead of silently no-opping.
+    """
+    return {
+        "metadata": {
+            "id": "golden_cross",
+            "name": "Golden Cross",
+            "description": "",
+            "category": "trend",
+            "tags": ["ma", "crossover"],
+            "author": "test",
+        },
+        "asset_class": asset_class,
+        "indicators": [
+            {
+                "indicator_id": "sma",
+                "alias": "sma_fast",
+                "params": {"period": 5},
+                "output": "value",
+            },
+            {
+                "indicator_id": "sma",
+                "alias": "sma_slow",
+                "params": {"period": 20},
+                "output": "value",
+            },
+        ],
+        "entry": {
+            "logic": "AND",
+            "conditions": [
+                {
+                    "left": {
+                        "type": "indicator",
+                        "indicator_alias": "sma_fast",
+                        "indicator_output": "value",
+                    },
+                    "operator": "cross_above",
+                    "right": {
+                        "type": "indicator",
+                        "indicator_alias": "sma_slow",
+                        "indicator_output": "value",
+                    },
+                }
+            ],
+        },
+        "exit": {
+            "logic": "AND",
+            "conditions": [
+                {
+                    "left": {
+                        "type": "indicator",
+                        "indicator_alias": "sma_fast",
+                        "indicator_output": "value",
+                    },
+                    "operator": "cross_below",
+                    "right": {
+                        "type": "indicator",
+                        "indicator_alias": "sma_slow",
+                        "indicator_output": "value",
+                    },
+                }
+            ],
+        },
+        "risk": {
+            "order_amount": 1_000_000,
+            "stop_loss": {"enabled": True, "percent": 5.0},
+            "take_profit": {"enabled": False, "percent": 10.0},
+            "trailing_stop": {"enabled": False, "percent": 3.0},
+        },
+    }
+
+
 # --- Entry tests --------------------------------------------------------
 
 
@@ -475,3 +550,68 @@ async def test_futures_exit_take_profit_not_preempted_by_safety() -> None:
     assert triggered
     assert signal is not None
     assert signal.reason == ExitReason.TARGET_REACHED
+
+
+# --- Streaming cross-operator retirement (golden_cross is structurally dead) --
+
+
+def test_entry_warns_on_streaming_unsupported_cross(caplog) -> None:
+    """A cross-based builder entry (golden_cross) must log a loud error.
+
+    It can never fire in the streaming runtime; warn rather than silently
+    no-op. Parsing must still succeed so the operator can see the strategy.
+    """
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        entry = BuilderStrategyEntry(
+            BuilderStrategyConfig(builder_state=_cross_state())
+        )
+    assert entry._state is not None  # parsing succeeds
+    assert any(
+        "will NEVER fire" in rec.message and "golden_cross" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_entry_no_warn_for_supported_threshold_strategy(caplog) -> None:
+    """A threshold strategy (rsi > 30) must NOT trigger the never-fire warning."""
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        BuilderStrategyEntry(BuilderStrategyConfig(builder_state=_make_state()))
+    assert not any("will NEVER fire" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_entry_cross_strategy_produces_no_signal() -> None:
+    """Even with both SMA scalars present, a cross entry yields no signal.
+
+    The streaming context only carries a single scalar per indicator per cycle,
+    so the [x, x] series makes cross_above undetectable — confirming the
+    strategy is genuinely dead (the reason it is retired).
+    """
+    entry = BuilderStrategyEntry(BuilderStrategyConfig(builder_state=_cross_state()))
+    ctx = EntryContext(
+        market_data={"code": "005930", "name": "삼성전자", "close": 70000.0},
+        # fast already above slow — a threshold strategy would fire, a cross
+        # strategy must NOT (no transition is observable from a single tick).
+        indicators={"sma_fast.value": 100.0, "sma_slow.value": 90.0},
+        timestamp=datetime.now(UTC),
+    )
+    assert await entry.generate(ctx) is None
+
+
+def test_exit_warns_on_streaming_unsupported_cross(caplog) -> None:
+    """A cross-based builder exit condition must log a warning (SL/TP still work)."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        exit_strat = BuilderStrategyExit(
+            BuilderStrategyExitConfig(builder_state=_cross_state())
+        )
+    assert exit_strat._state is not None
+    assert any(
+        "will NEVER fire" in rec.message and "golden_cross" in rec.message
+        for rec in caplog.records
+    )
