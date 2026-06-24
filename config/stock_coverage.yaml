@@ -19,4 +19,4 @@ stock_coverage:
                             # walks backward within this window
   max_per_cycle: 8          # symbols deepened per worker cycle (bounds KIS load)
   throttle_seconds: 1.0     # polite pause between per-symbol backfills
-  redis_ttl_seconds: 86400  # 24h TTL on the pending/ensured Redis keys
+  redis_ttl_seconds: 86400  # 24h TTL on the pending + exhausted-today Redis keys

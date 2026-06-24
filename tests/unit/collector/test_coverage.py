@@ -9,6 +9,8 @@ import pytest
 
 from shared.collector.historical import coverage as cov
 from shared.collector.historical.coverage import (
+    ENSURED_KEY,
+    LOCK_KEY,
     PENDING_KEY,
     CoverageConfig,
     enqueue_symbols,
@@ -174,6 +176,114 @@ def test_ensure_one_failure_does_not_block_others(monkeypatch, redis_client):
     pending = redis_client.smembers(PENDING_KEY)
     assert "AAA" in pending
     assert "BBB" not in pending
+
+
+def _result(rows=0, page_errors=0):
+    return type("R", (), {"rows": rows, "page_errors": page_errors})()
+
+
+def test_transient_page_error_keeps_symbol_queued(monkeypatch, redis_client):
+    """A transient KIS page error (not exhaustion) must keep the symbol queued."""
+    redis_client.sadd(PENDING_KEY, "080220")
+    store = _FakeStore({"080220": 116})  # stays shallow
+
+    async def fake_collect(*, codes, days, **kwargs):
+        # depth does not improve; report a transient page error
+        return _result(rows=0, page_errors=1)
+
+    monkeypatch.setattr(
+        "shared.collector.historical.parquet_backfill.collect_stock_daily_parquet",
+        fake_collect,
+    )
+
+    summary = asyncio.run(
+        ensure_daily_coverage(redis_client=redis_client, store=store, config=_cfg())
+    )
+
+    assert summary["deepened"] == 0
+    assert summary["failed"] == 1
+    # Transient → stays queued for retry, NOT marked exhausted.
+    assert "080220" in redis_client.smembers(PENDING_KEY)
+    assert not redis_client.hexists(ENSURED_KEY, "080220")
+
+
+def test_genuine_exhaustion_marks_today_and_skips_refetch(monkeypatch, redis_client):
+    """KIS-exhausted symbol stays queued, marked exhausted-today, not re-fetched same day."""
+    redis_client.sadd(PENDING_KEY, "014950")
+    store = _FakeStore({"014950": 162})  # KIS has no deeper history
+
+    calls = {"n": 0}
+
+    async def fake_collect(*, codes, days, **kwargs):
+        calls["n"] += 1
+        return _result(rows=0, page_errors=0)  # no error, but still short
+
+    monkeypatch.setattr(
+        "shared.collector.historical.parquet_backfill.collect_stock_daily_parquet",
+        fake_collect,
+    )
+
+    s1 = asyncio.run(
+        ensure_daily_coverage(redis_client=redis_client, store=store, config=_cfg())
+    )
+    assert s1["exhausted"] == 1
+    assert calls["n"] == 1
+    # Stays queued (so a later day re-attempts as it accrues history)...
+    assert "014950" in redis_client.smembers(PENDING_KEY)
+    # ...but is marked exhausted-today.
+    assert redis_client.hexists(ENSURED_KEY, "014950")
+
+    # Second cycle SAME day must NOT re-fetch the exhausted symbol.
+    s2 = asyncio.run(
+        ensure_daily_coverage(redis_client=redis_client, store=store, config=_cfg())
+    )
+    assert calls["n"] == 1  # no extra KIS call
+    assert s2["skipped_exhausted"] == 1
+
+
+def test_overlap_lock_prevents_concurrent_drain(monkeypatch, redis_client):
+    """A held lock makes a second drain-mode cycle a no-op."""
+    redis_client.sadd(PENDING_KEY, "005930")
+    redis_client.set(LOCK_KEY, "1")  # simulate an in-flight cycle holding the lock
+    store = _FakeStore({"005930": 50})
+
+    async def fake_collect(*, codes, days, **kwargs):
+        raise AssertionError("must not run while another cycle holds the lock")
+
+    monkeypatch.setattr(
+        "shared.collector.historical.parquet_backfill.collect_stock_daily_parquet",
+        fake_collect,
+    )
+
+    summary = asyncio.run(
+        ensure_daily_coverage(redis_client=redis_client, store=store, config=_cfg())
+    )
+    assert summary.get("skipped_locked") is True
+    assert summary["checked"] == 0
+    # Queue untouched.
+    assert "005930" in redis_client.smembers(PENDING_KEY)
+
+
+def test_explicit_codes_bypass_lock(monkeypatch, redis_client):
+    """Manual CLI (explicit codes) must run even if the drain lock is held."""
+    redis_client.set(LOCK_KEY, "1")
+    store = _FakeStore({"005930": 50})
+
+    async def fake_collect(*, codes, days, **kwargs):
+        store._depths[codes[0]] = 250
+        return _result(rows=250)
+
+    monkeypatch.setattr(
+        "shared.collector.historical.parquet_backfill.collect_stock_daily_parquet",
+        fake_collect,
+    )
+
+    summary = asyncio.run(
+        ensure_daily_coverage(
+            codes=["005930"], redis_client=redis_client, store=store, config=_cfg()
+        )
+    )
+    assert summary["deepened"] == 1
 
 
 def test_ensure_explicit_codes_skips_queue(monkeypatch, redis_client):

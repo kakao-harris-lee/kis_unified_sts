@@ -107,6 +107,10 @@ class ParquetBackfillResult:
     skipped: int = 0
     rows: int = 0
     failed: int = 0
+    # Number of codes whose pagination stopped on a KIS *page error* (transient
+    # HTTP/network/rate-limit), as opposed to genuine history exhaustion. Callers
+    # use this to decide whether an under-depth result is retryable.
+    page_errors: int = 0
 
 
 class ParquetBackfillState:
@@ -569,6 +573,7 @@ def _merge_result(target: ParquetBackfillResult, source: ParquetBackfillResult) 
     target.skipped += source.skipped
     target.rows += source.rows
     target.failed += source.failed
+    target.page_errors += source.page_errors
 
 
 async def backfill_futures_parquet(
@@ -862,17 +867,20 @@ async def _collect_one_stock_daily(
     """
     from .daily_stock import fetch_daily_candles_async, parse_daily_ohlcv
 
-    result = ParquetBackfillResult()
+    # One task == one code attempt (regardless of how many pages it takes), so
+    # result.tasks stays "codes attempted" for CLI/metrics readability.
+    result = ParquetBackfillResult(tasks=1)
     seen_days: set[date] = set()
     page_end = end
-    wrote_any = False
+    had_progress = False
     for _ in range(DAILY_MAX_PAGES):
         if page_end < start:
             break
-        result.tasks += 1
         _, data = await fetch_daily_candles_async(client, code, start, page_end)
         if "error" in data:
-            result.failed += 1
+            # Transient (HTTP/network/rate-limit). Flag it so the caller knows the
+            # under-depth result is RETRYABLE rather than genuine exhaustion.
+            result.page_errors += 1
             state.mark_failed(
                 asset_class="stock",
                 timeframe="daily",
@@ -883,19 +891,18 @@ async def _collect_one_stock_daily(
             )
             break
 
+        # Raw page size BEFORE parse-drops (parse_daily_ohlcv silently drops
+        # zero-high halted days). Use this — not the filtered count — to decide
+        # whether KIS returned a full page, so a halt-heavy page is not mistaken
+        # for history exhaustion.
+        raw_count = len(data.get("output2") or data.get("output1") or [])
         rows = parse_daily_ohlcv(code, data)
+        # Bound to the requested window: never persist out-of-window or future
+        # bars even if KIS returns them (look-ahead / corruption guard).
+        rows = [r for r in rows if start <= r[1] <= end]
         if not rows:
-            # No older data available (e.g. recent listing) — stop cleanly.
-            if not wrote_any:
-                result.failed += 1
-                state.mark_failed(
-                    asset_class="stock",
-                    timeframe="daily",
-                    dataset="stock_daily",
-                    code=code,
-                    trade_date=page_end,
-                    error="no parsed rows",
-                )
+            # No (more) data in the window — genuine exhaustion (e.g. recent
+            # listing) or fully resumed. Not a failure; just stop paging.
             break
 
         page_days = sorted({row[1] for row in rows})
@@ -915,7 +922,7 @@ async def _collect_one_stock_daily(
                 continue
             written = store.replace_daily_day(code, row_day, [_ohlcv_dicts([row])[0]])
             result.rows += written
-            wrote_any = True
+            had_progress = True
             state.mark_success(
                 asset_class="stock",
                 timeframe="daily",
@@ -926,13 +933,28 @@ async def _collect_one_stock_daily(
             )
 
         oldest = page_days[0]
-        # KIS returned fewer than a full page → history is exhausted; stop.
-        if len(page_days) < DAILY_PAGE_MIN_FULL:
+        # Stop once the window is covered, or KIS returned a short *raw* page
+        # (genuine history exhaustion — distinct from a page_error stop, which the
+        # caller treats as retryable).
+        if oldest <= start or raw_count < DAILY_PAGE_MIN_FULL:
             break
         next_end = oldest - timedelta(days=1)
         if next_end >= page_end:  # guard against non-advancing windows
             break
         page_end = next_end
+
+    if not had_progress and result.skipped == 0 and result.page_errors == 0:
+        # Reached the window end without writing or skipping anything → the code
+        # has no daily history at all. Record it so resume can re-attempt later.
+        state.mark_failed(
+            asset_class="stock",
+            timeframe="daily",
+            dataset="stock_daily",
+            code=code,
+            trade_date=end,
+            error="no parsed rows",
+        )
+        result.failed += 1
 
     if verbose:
         print(f"Parquet wrote stock daily {code}: distinct_days={len(seen_days)}")

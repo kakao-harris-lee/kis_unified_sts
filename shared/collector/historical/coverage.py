@@ -32,8 +32,15 @@ _CONFIG_SECTION = "stock_coverage"
 
 # Redis set of codes awaiting a deep daily backfill (DB 1, TTL'd).
 PENDING_KEY = "stock:coverage:pending"
-# Hash of code -> ISO date last ensured, so we don't re-check on every cycle.
-ENSURED_KEY = "stock:coverage:ensured"
+# Hash of code -> ISO date a symbol was found KIS-history-exhausted (too few bars
+# but no transient error). Read to skip re-fetching the *same* exhausted symbol
+# again on the *same* KST day, while still re-attempting on a later day so a
+# recent listing eventually deepens as it accrues history.
+ENSURED_KEY = "stock:coverage:exhausted"
+# Worker overlap lock so two scheduler cron ticks never drain/backfill the same
+# symbols concurrently (which would double KIS load — the opposite of the intent).
+LOCK_KEY = "stock:coverage:lock"
+LOCK_TTL_SECONDS = 600  # one market-hours cron interval
 
 
 @dataclass(frozen=True)
@@ -51,7 +58,7 @@ class CoverageConfig:
     max_per_cycle: int = 8
     # Seconds to sleep between per-symbol backfills (polite KIS throttle).
     throttle_seconds: float = 1.0
-    # TTL for the pending/ensured Redis keys (seconds).
+    # TTL for the pending + exhausted-today Redis keys (seconds).
     redis_ttl_seconds: int = 86400
 
     @classmethod
@@ -193,8 +200,6 @@ async def ensure_daily_coverage(
 
     Returns a summary dict for logging/metrics.
     """
-    import asyncio
-
     cfg = config or CoverageConfig.load()
     summary: dict[str, Any] = {
         "enabled": cfg.enabled,
@@ -228,13 +233,59 @@ async def ensure_daily_coverage(
             asset_class="stock",
         )
 
+    if cfg.max_per_cycle <= 0:
+        logger.warning(
+            "coverage: max_per_cycle=%d <= 0 — no symbols will be deepened "
+            "(set STOCK_COVERAGE_ENABLED=false to pause instead)",
+            cfg.max_per_cycle,
+        )
+
+    # Overlap guard: a slow cycle must not run concurrently with the next cron
+    # tick (would double-drain + double-hit KIS). Drain mode only; explicit-codes
+    # (manual CLI) intentionally bypasses the lock.
+    drained = codes is None
+    if drained and redis_client is not None:
+        try:
+            if not redis_client.set(LOCK_KEY, "1", nx=True, ex=LOCK_TTL_SECONDS):
+                logger.info("coverage: another cycle holds the lock; skipping")
+                summary["skipped_locked"] = True
+                return summary
+        except Exception as exc:  # noqa: BLE001 - lock is best-effort
+            logger.debug("coverage: lock acquire failed (%s); proceeding", exc)
+
+    try:
+        return await _run_coverage_cycle(
+            cfg=cfg,
+            summary=summary,
+            redis_client=redis_client,
+            store=store,
+            explicit_codes=codes,
+            drained=drained,
+        )
+    finally:
+        if drained and redis_client is not None:
+            try:
+                redis_client.delete(LOCK_KEY)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("coverage: lock release failed: %s", exc)
+
+
+async def _run_coverage_cycle(
+    *,
+    cfg: CoverageConfig,
+    summary: dict[str, Any],
+    redis_client: Any | None,
+    store: Any,
+    explicit_codes: list[str] | None,
+    drained: bool,
+) -> dict[str, Any]:
+    import asyncio
+
     # Source the candidate set: explicit codes, else drain the pending Redis set.
-    if codes is not None:
-        candidates = _normalize(codes)
-        drained = False
+    if explicit_codes is not None:
+        candidates = _normalize(explicit_codes)
     else:
         candidates = []
-        drained = True
         if redis_client is not None:
             try:
                 candidates = _normalize(redis_client.smembers(PENDING_KEY))
@@ -248,13 +299,22 @@ async def ensure_daily_coverage(
         collect_stock_daily_parquet,
     )
 
+    today_iso = _today_kst_iso()
+    exhausted_today = _exhausted_today(redis_client) if drained else {}
+
     to_deepen: list[str] = []
-    done: list[str] = []
+    clear: list[str] = []  # remove from queue (deep enough)
+    exhausted_now: list[str] = []  # genuinely exhausted today (keep queued)
     for code in candidates:
         summary["checked"] += 1
         if _current_daily_bar_count(store, code) >= cfg.min_daily_bars:
             summary["already_deep"] += 1
-            done.append(code)  # idempotent: clear from queue
+            clear.append(code)  # idempotent: clear from queue
+            continue
+        # Already found exhausted today → don't re-fetch the same code again this
+        # KST day (but it stays queued so a later day re-attempts it as it grows).
+        if exhausted_today.get(code) == today_iso:
+            summary["skipped_exhausted"] = summary.get("skipped_exhausted", 0) + 1
             continue
         to_deepen.append(code)
 
@@ -271,16 +331,25 @@ async def ensure_daily_coverage(
             summary["rows"] += int(getattr(result, "rows", 0) or 0)
             if depth >= cfg.min_daily_bars:
                 summary["deepened"] += 1
-                done.append(code)
+                clear.append(code)
                 logger.info("coverage: %s deepened to %d daily bars", code, depth)
-            else:
-                # KIS has no deeper history (recent listing). Mark ensured so we
-                # don't retry forever, but log so it's visible.
+            elif int(getattr(result, "page_errors", 0) or 0) > 0:
+                # Transient KIS page error mid-pagination → RETRYABLE. Keep queued.
                 summary["failed"] += 1
-                done.append(code)
                 logger.warning(
-                    "coverage: %s only %d daily bars after backfill "
-                    "(KIS history exhausted)",
+                    "coverage: %s under depth (%d) after a transient KIS error; "
+                    "kept queued for retry",
+                    code,
+                    depth,
+                )
+            else:
+                # Genuine exhaustion (recent listing): KIS has no deeper history
+                # today. Keep queued but mark exhausted-today so we don't re-fetch
+                # it again this KST day; a later day re-attempts as it accrues bars.
+                summary["exhausted"] = summary.get("exhausted", 0) + 1
+                exhausted_now.append(code)
+                logger.warning(
+                    "coverage: %s only %d daily bars (KIS history exhausted today)",
                     code,
                     depth,
                 )
@@ -294,26 +363,47 @@ async def ensure_daily_coverage(
     # Anything beyond this cycle's batch stays queued for the next run.
     summary["requeued"] = max(0, len(to_deepen) - len(batch))
 
-    if drained and redis_client is not None and done:
+    if drained and redis_client is not None:
         try:
-            redis_client.srem(PENDING_KEY, *done)
-            now_iso = _today_kst_iso()
-            redis_client.hset(ENSURED_KEY, mapping=dict.fromkeys(done, now_iso))
-            redis_client.expire(ENSURED_KEY, cfg.redis_ttl_seconds)
+            if clear:
+                redis_client.srem(PENDING_KEY, *clear)
+            if exhausted_now:
+                redis_client.hset(
+                    ENSURED_KEY, mapping=dict.fromkeys(exhausted_now, today_iso)
+                )
+                redis_client.expire(ENSURED_KEY, cfg.redis_ttl_seconds)
         except Exception as exc:  # noqa: BLE001
             logger.warning("coverage: queue cleanup failed: %s", exc)
 
     logger.info(
         "coverage: cycle done checked=%d already_deep=%d deepened=%d "
-        "failed=%d requeued=%d rows=%d",
+        "exhausted=%d failed=%d requeued=%d rows=%d",
         summary["checked"],
         summary["already_deep"],
         summary["deepened"],
+        summary.get("exhausted", 0),
         summary["failed"],
         summary["requeued"],
         summary["rows"],
     )
     return summary
+
+
+def _exhausted_today(redis_client: Any | None) -> dict[str, str]:
+    """Return the code -> ISO-date map of symbols marked KIS-exhausted."""
+    if redis_client is None:
+        return {}
+    try:
+        raw = redis_client.hgetall(ENSURED_KEY) or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("coverage: exhausted-map read failed: %s", exc)
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        key = k.decode() if isinstance(k, bytes) else str(k)
+        val = v.decode() if isinstance(v, bytes) else str(v)
+        out[key] = val
+    return out
 
 
 def _today_kst_iso() -> str:

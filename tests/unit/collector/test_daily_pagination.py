@@ -153,3 +153,90 @@ def test_daily_backfill_resume_skips_completed_days(monkeypatch, tmp_path):
     )
     assert second.rows == 0, "resume must skip already-completed days"
     assert second.skipped > 0
+    assert second.failed == 0, "a fully-resumed run must not record spurious failures"
+    assert second.page_errors == 0
+
+
+def test_daily_backfill_flags_transient_page_error(monkeypatch, tmp_path):
+    """A KIS page error mid-pagination sets page_errors (retryable), not exhaustion."""
+    from shared.collector.historical import daily_stock as daily_module
+    from shared.collector.historical.parquet_backfill import collect_stock_daily_parquet
+
+    page = {"n": 0}
+
+    async def fake_fetch(_client, code, start_date, end_date):
+        page["n"] += 1
+        if page["n"] == 1:
+            rows = _make_daily_rows(end_date, 100)
+            rows = [
+                r
+                for r in rows
+                if datetime.strptime(r["stck_bsop_date"], "%Y%m%d").date() >= start_date
+            ]
+            return code, {"rt_cd": "0", "output2": rows}
+        # Second page: transient error
+        return code, {"error": "http 500"}
+
+    monkeypatch.setattr(daily_module, "fetch_daily_candles_async", fake_fetch)
+
+    result = asyncio.run(
+        collect_stock_daily_parquet(
+            root=tmp_path / "market",
+            codes=["005930"],
+            days=400,
+            resume=True,
+            verbose=False,
+        )
+    )
+
+    assert result.page_errors == 1, "transient page error must be flagged as retryable"
+    assert result.rows > 0, "the first good page must still be persisted"
+
+
+def test_daily_backfill_does_not_persist_future_dated_bars(monkeypatch, tmp_path):
+    """Bars outside the requested window (e.g. future-dated) must not be written."""
+    from datetime import timedelta as _td
+
+    from shared.collector.historical import daily_stock as daily_module
+    from shared.collector.historical.parquet_backfill import collect_stock_daily_parquet
+    from shared.storage import ParquetMarketDataStore
+
+    today = date.today()
+    future = today + _td(days=5)
+
+    async def fake_fetch(_client, code, start_date, end_date):
+        # KIS returns a stray future-dated bar alongside valid recent ones.
+        rows = _make_daily_rows(today, 30)
+        rows.insert(
+            0,
+            {
+                "stck_bsop_date": future.strftime("%Y%m%d"),
+                "stck_oprc": "1000",
+                "stck_hgpr": "1010",
+                "stck_lwpr": "990",
+                "stck_clpr": "1005",
+                "acml_vol": "1",
+                "acml_tr_pbmn": "1005",
+                "prdy_ctrt": "0.0",
+            },
+        )
+        return code, {"rt_cd": "0", "output2": rows}
+
+    monkeypatch.setattr(daily_module, "fetch_daily_candles_async", fake_fetch)
+
+    asyncio.run(
+        collect_stock_daily_parquet(
+            root=tmp_path / "market",
+            codes=["005930"],
+            days=60,
+            resume=True,
+            verbose=False,
+        )
+    )
+
+    store = ParquetMarketDataStore(tmp_path / "market", asset_class="stock")
+    df = store.get_daily_bars("005930", limit=0)
+    assert len(df) > 0
+    max_dt = df["datetime"].max()
+    max_day = max_dt.date() if hasattr(max_dt, "date") else max_dt
+    assert max_day <= today, "future-dated bar must not be persisted"
