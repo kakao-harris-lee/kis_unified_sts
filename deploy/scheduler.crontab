@@ -111,6 +111,8 @@
 0 18 * * 0  cd /app && python scripts/analysis/regime_gate_counterfactual.py
 # Setup A/C paper-observation WEEKLY rollup — Friday 16:30 KST after EOD tasks.
 30 16 * * 5  cd /app && python -m scripts.analysis.setup_ac_paper_observation --weekly >> /app/logs/setup_ac_paper_obs_$(date +\%Y\%m\%d)_weekly.log 2>&1
+# LLM scorecard weekly digest — Friday 16:37 KST (after daily scorer at 16:35).
+37 16 * * 5  cd /app && python -m scripts.analysis.llm_scorecard_weekly >> /app/logs/scorecard_weekly_$(date +\%Y\%m\%d).log 2>&1
 
 # --- DROPPED (PR-B): host crons that point at missing/stale scripts — NOT migrated ---
 #   phase2_daily_verification  — scripts/cron/phase2_daily_verification.sh is MISSING (dead cron)
