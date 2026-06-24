@@ -1,6 +1,12 @@
+from datetime import datetime, timedelta
+
 import pytest
 
-from shared.streaming.candle_warmup import StockPrewarmConfig, warmup_engine
+from shared.streaming.candle_warmup import (
+    StockPrewarmConfig,
+    _df_tail_to_candles,
+    warmup_engine,
+)
 
 
 class _Engine:
@@ -177,3 +183,99 @@ async def test_seed_daily_true_default_still_seeds_daily():
     res = await warmup_engine(eng, "005930", store=store, kis_client=None, config=cfg)
     assert res.daily_seeded == 252
     assert "005930" in eng.daily  # seed_daily_candles was called
+
+
+# ---------------------------------------------------------------------------
+# _df_tail_to_candles must carry datetime/minute so seed_candles can bucket
+# seeded 1m bars into the correct MTF timeframes (Fix #2).
+#
+# Without datetime/minute every seeded bar collapsed into MTF bucket 0
+# (minute=0), so no 5m bar ever closed → is_warm() stayed False all morning
+# (~100-min cold dead-zone) and no eval happened. The 1m datetime is what the
+# engine derives the HHMM minute from (mirroring the live tick path).
+# ---------------------------------------------------------------------------
+
+
+def _minute_bars(n, start=None, base=100.0):
+    """Minute bars shaped like the parquet store output (datetime column)."""
+    start = start or datetime(2026, 6, 24, 9, 0)
+    return [
+        {
+            "datetime": start + timedelta(minutes=i),
+            "open": base,
+            "high": base + 1,
+            "low": base - 1,
+            "close": base,
+            "volume": 10,
+        }
+        for i in range(n)
+    ]
+
+
+def test_df_tail_to_candles_carries_datetime():
+    """Seed dicts must include datetime (so seed_candles can derive HHMM minute)."""
+    df = _DF(_minute_bars(5))
+    out = _df_tail_to_candles(df, 5)
+
+    assert len(out) == 5
+    assert all("datetime" in c for c in out), "seed dicts must carry datetime"
+    # OHLCV still present and coerced to float (existing contract).
+    first = out[0]
+    assert first["open"] == 100.0 and first["close"] == 100.0
+    assert first["datetime"] == datetime(2026, 6, 24, 9, 0)
+
+
+def test_df_tail_to_candles_without_datetime_column_is_safe():
+    """Defensive: rows lacking a datetime column still produce OHLCV seeds."""
+    df = _DF(_bars(3))  # no datetime key
+    out = _df_tail_to_candles(df, 3)
+
+    assert len(out) == 3
+    assert all("datetime" not in c for c in out)
+    assert out[0]["open"] == 100.0
+
+
+def test_seeded_minute_bars_warm_the_engine_via_mtf_5m():
+    """The diagnosis repro: 120 seeded 1m bars must close 5m bars and warm.
+
+    Feeding _df_tail_to_candles output through seed_candles must advance the 5m
+    MTF accumulator (5m_closed > 0) and report is_warm()==True. Before the fix
+    the seeds had no datetime → minute=0 → 5m_closed=0 → is_warm()==False.
+    """
+    from services.trading.indicator_engine import StreamingIndicatorEngine
+
+    engine = StreamingIndicatorEngine(
+        bb_period=20,
+        mtf_timeframes=[5],
+        mtf_warmth_timeframe=5,
+        staleness_seconds=0,
+    )
+
+    df = _DF(_minute_bars(120))
+    candles = _df_tail_to_candles(df, 120)
+    engine.seed_candles("005930", candles)
+
+    closed_5m = engine.mtf_total_appended("005930", 5)
+    assert closed_5m > 0, "seeded 1m bars must roll up into closed 5m bars"
+    assert engine.is_warm("005930") is True, "120 seeded 1m bars must warm the engine"
+
+
+def test_seeded_minute_bars_collapse_to_bucket_zero_without_datetime():
+    """Regression contract: dropping datetime collapses every bar to bucket 0.
+
+    Documents the failure mode the fix prevents — same 120 bars with no
+    datetime/minute never close a 5m bar, so the engine stays cold.
+    """
+    from services.trading.indicator_engine import StreamingIndicatorEngine
+
+    engine = StreamingIndicatorEngine(
+        bb_period=20,
+        mtf_timeframes=[5],
+        mtf_warmth_timeframe=5,
+        staleness_seconds=0,
+    )
+    # Bars without datetime/minute (the pre-fix _df_tail_to_candles shape).
+    engine.seed_candles("005930", _bars(120))
+
+    assert engine.mtf_total_appended("005930", 5) == 0
+    assert engine.is_warm("005930") is False

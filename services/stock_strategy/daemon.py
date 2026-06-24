@@ -64,6 +64,7 @@ class StockStrategyDaemon:
         prewarm_fn: Callable[[str], Awaitable[Any]] | None = None,
         max_prewarm_per_cycle: int = 5,
         bear_override_config: BearOverrideConfig | None = None,
+        daily_indicators_key: str = "system:daily_indicators:latest",
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -81,7 +82,16 @@ class StockStrategyDaemon:
         self._prewarm_fn = prewarm_fn
         self._max_prewarm_per_cycle = max_prewarm_per_cycle
         self._bear_override_config = bear_override_config
+        # Redis key for the DailyScanner payload (per-symbol daily_-prefixed
+        # indicators: daily_volume_ratio, daily_closes, daily_rsi_14, ...). Same
+        # key the bear-override path reads; sourced here independently so the
+        # daily merge works even when the bear override is disabled.
+        self._daily_indicators_key = daily_indicators_key
         self._universe: list[str] = []
+        # Raw watchlist payload ({"strategies": {...}}) from the last refresh.
+        # Injected into EntryContext.metadata so daily-watchlist-gated strategies
+        # (e.g. momentum_breakout) see the same shape the orchestrator provides.
+        self._watchlist: dict[str, Any] = {}
         self._stop = asyncio.Event()
 
     async def _apply_watchlist(self, raw: Any) -> None:
@@ -89,8 +99,80 @@ class StockStrategyDaemon:
         if not codes:
             return  # keep prior universe
         self._universe = codes
+        # Retain the raw watchlist dict for EntryContext.metadata injection
+        # (daily-watchlist strategy gate). Non-dict payloads → empty dict so
+        # those strategies fall back to dynamic mode (bypass the gate).
+        self._watchlist = raw if isinstance(raw, dict) else {}
         self.feed.update_symbols(codes)
         await self._prewarm_cold()
+
+    async def _load_scanner_daily_indicators(self) -> dict[str, dict[str, Any]]:
+        """Load the DailyScanner per-symbol payload once (graceful on miss/stale).
+
+        Returns ``{symbol: {daily_*: value}}`` from ``system:daily_indicators:latest``.
+        The scanner fields are already ``daily_``-prefixed (daily_volume_ratio,
+        daily_closes, daily_rsi_14, ...). Any missing/stale/malformed payload
+        returns ``{}`` so the daily merge falls back to engine-only (no crash).
+        Read once per evaluation cycle, not per symbol.
+        """
+        try:
+            raw = await self.redis.get(self._daily_indicators_key)
+        except Exception:
+            logger.exception("daily-scanner read failed")
+            return {}
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            logger.warning("daily-scanner payload is not valid JSON; ignoring")
+            return {}
+        indicators = payload.get("indicators", {}) if isinstance(payload, dict) else {}
+        return indicators if isinstance(indicators, dict) else {}
+
+    def _merge_daily_indicators(
+        self,
+        symbol: str,
+        indicators: dict[str, Any],
+        scanner_indicators: dict[str, dict[str, Any]],
+    ) -> None:
+        """Merge both daily sources into ``indicators`` in place (orchestrator parity).
+
+        Mirrors the orchestrator hot path (orchestrator.py ~6221-6233), which
+        merges TWO sources so daily-gated strategies see the full field set:
+
+        1. DailyScanner Redis payload (already ``daily_``-prefixed) first — carries
+           the richer set the engine does not compute: ``daily_volume_ratio``
+           (momentum_breakout's risk filter), ``daily_closes`` (pattern_pullback
+           60d return), ``daily_sma_60_prev``, ``daily_rsi_14``, etc. Without it
+           those filters fail open / degrade to defaults.
+        2. Engine ``get_daily_indicators`` second (``daily_`` prefix), so live
+           recomputed values win on overlap — same precedence as the orchestrator.
+
+        ``PatternPullback._get`` resolves both ``sma_200`` and ``daily_sma_200``,
+        so the prefixed values satisfy its base-trend gate (the no-signal bug).
+
+        ``get_daily_indicators`` is cached per-symbol by daily candle count
+        (StreamingIndicatorEngine._momentum_cache), so repeated per-cycle calls
+        are cheap — it recomputes only when the daily candle count changes
+        (once per day).
+        """
+        # Source 1: DailyScanner payload (already daily_-prefixed) — merge raw.
+        scanner = scanner_indicators.get(symbol)
+        if isinstance(scanner, dict):
+            indicators.update(scanner)
+
+        # Source 2: engine daily indicators (daily_ prefix) — merged last (wins).
+        get_daily = getattr(self.engine, "get_daily_indicators", None)
+        if get_daily is None:
+            return
+        try:
+            daily = get_daily(symbol)
+        except Exception:
+            logger.exception("daily indicator fetch failed symbol=%s", symbol)
+            return
+        for key, value in (daily or {}).items():
+            indicators[f"daily_{key}"] = value
 
     async def _prewarm_cold(self) -> None:
         """Warm universe symbols that are not yet warm (≤ cap per cycle).
@@ -225,6 +307,9 @@ class StockStrategyDaemon:
                 len(strong),
                 sorted(strong),
             )
+        # Read the DailyScanner payload once for the whole cycle (not per symbol)
+        # so daily-gated strategies see the orchestrator's full daily field set.
+        scanner_indicators = await self._load_scanner_daily_indicators()
         for symbol in list(self._universe):
             try:
                 if is_bear and symbol not in override_codes:
@@ -235,12 +320,24 @@ class StockStrategyDaemon:
                 if not market_data:
                     continue
                 indicators = self.resolver.collect_entry_indicators(symbol)
+                # Inject both daily sources (scanner payload + engine) so
+                # daily-gated strategies (pattern_pullback sma_200,
+                # momentum_breakout daily_volume_ratio) can evaluate; without
+                # this every symbol is rejected (no_sma_200) and the configured
+                # daily-volume filter fails open — the decoupled no-signal root
+                # cause. Mirrors the orchestrator's two-source merge.
+                self._merge_daily_indicators(symbol, indicators, scanner_indicators)
                 ctx = EntryContext(
                     market_data=market_data,
                     indicators=indicators,
                     current_positions=[],
                     timestamp=now,
-                    metadata={"shadow": True},
+                    metadata={
+                        "shadow": True,
+                        # Per-strategy daily watchlist gate (e.g.
+                        # momentum_breakout). Empty → strategy runs dynamic mode.
+                        "daily_watchlist": self._watchlist,
+                    },
                 )
                 signals = await self.manager.check_entries(ctx)
                 for sig in signals or []:

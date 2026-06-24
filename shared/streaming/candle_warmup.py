@@ -66,20 +66,33 @@ class WarmupResult(NamedTuple):
 
 
 def _df_tail_to_candles(df: Any, tail: int) -> list[dict]:
-    """Convert the most-recent ``tail`` rows of a bars DataFrame to seed dicts."""
+    """Convert the most-recent ``tail`` rows of a bars DataFrame to seed dicts.
+
+    Carries the ``datetime`` column through when present so ``seed_candles`` can
+    derive each bar's HHMM minute and bucket it into the correct MTF timeframe
+    (mirroring the live tick path). Without it, every seeded 1m bar collapsed
+    into MTF bucket 0 (minute=0) and no 5m bar ever closed, leaving symbols
+    cold all morning despite a full parquet prewarm. Daily parquet bars also
+    carry a ``datetime`` column, but ``seed_daily_candles`` ignores the minute
+    (irrelevant for daily candles), so passing it through is harmless there.
+    """
     if df is None or len(df) == 0:
         return []
     df = df.iloc[-tail:]
-    return [
-        {
+    candles: list[dict] = []
+    for _, r in df.iterrows():
+        candle = {
             "open": float(r["open"]),
             "high": float(r["high"]),
             "low": float(r["low"]),
             "close": float(r["close"]),
             "volume": float(r.get("volume", 0) or 0),
         }
-        for _, r in df.iterrows()
-    ]
+        dt = r.get("datetime")
+        if dt is not None:
+            candle["datetime"] = dt
+        candles.append(candle)
+    return candles
 
 
 def _seed_daily(engine: Any, store: Any, symbol: str, cfg: StockPrewarmConfig) -> int:

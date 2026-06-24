@@ -220,6 +220,10 @@ async def _build_and_run() -> int:
 
     # Bear override config for M4-P entry override (None when disabled).
     bear_override_config = BearOverrideConfig.load()
+    # The DailyScanner Redis key is owned by the bear-override config but is also
+    # the source for the daily-indicator merge — capture it before the config is
+    # nulled so the merge works even when the bear override itself is disabled.
+    daily_indicators_key = bear_override_config.daily_indicators_key
     if not bear_override_config.enabled:
         bear_override_config = None
 
@@ -236,6 +240,7 @@ async def _build_and_run() -> int:
         watchlist_reader=_watchlist_reader,
         regime_config=regime_config,
         bear_override_config=bear_override_config,
+        daily_indicators_key=daily_indicators_key,
         prewarm_fn=prewarm_fn,
         max_prewarm_per_cycle=prewarm_cfg.max_prewarm_per_cycle,
     )
