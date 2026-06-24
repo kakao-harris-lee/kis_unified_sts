@@ -213,3 +213,31 @@ def test_offhours_backfill_rows_are_window_tagged():
     assert re.search(
         r"continuous off-hours backfill", text, re.IGNORECASE
     ), "missing the continuous off-hours backfill section header"
+
+
+def test_backfill_jobs_do_not_share_a_start_tick():
+    """No two bulk-backfill jobs may *start* on the same (hour, minute) KST tick.
+
+    Two heavy KIS-REST pulls firing on the same minute contend for the shared
+    rate limiter (the "don't hammer KIS" requirement). The hourly futures pass
+    (``0 19-23``) fires at :00, so the stock night jobs must be staggered off
+    :00. This guard catches any future regression that re-collides them.
+    """
+    # Map each (hour, minute) tick to the backfill rows that start there.
+    ticks: dict[tuple[int, int], list[str]] = {}
+    for row in _data_rows():
+        if not _is_backfill(row.command):
+            continue
+        if not row.runs_on_weekday():
+            continue
+        minutes = _expand_field(row.minute, 0, 59)
+        for h in sorted(row.hours()):
+            for m in sorted(minutes):
+                ticks.setdefault((h, m), []).append(row.command)
+    collisions = {
+        f"{h:02d}:{m:02d}": cmds for (h, m), cmds in ticks.items() if len(cmds) > 1
+    }
+    assert not collisions, (
+        "multiple bulk-backfill jobs share a start tick (KIS rate-limiter "
+        f"contention): {collisions}"
+    )

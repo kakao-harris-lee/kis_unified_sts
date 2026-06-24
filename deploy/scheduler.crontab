@@ -83,15 +83,18 @@
 
 # Stock minute top-up — keep the KIS-max 30-day minute window dense for the live
 # universe (heals failed days, denser intraday history). Resume skips done days.
+# Staggered off :00 so the night pass never shares a minute with the hourly
+# futures pass (0 19-23) and contends for the KIS rate limiter.
 # --- 야간 ---
-0 21 * * 1-5  cd /app && python -m cli.main stock-backfill run --days 30
+5 21 * * 1-5  cd /app && python -m cli.main stock-backfill run --days 30
 # --- 장전 ---
 20 7  * * 1-5  cd /app && python -m cli.main stock-backfill run --days 30
 
 # Stock daily top-up — keep SMA(200)-deep daily history for the universe.
-# Paginating fetch (>100 bars/code); resume keeps it cheap.
+# Paginating fetch (>100 bars/code); resume keeps it cheap. Staggered off :00 so
+# the night pass never collides with the hourly futures pass (0 19-23).
 # --- 야간 ---
-0 22 * * 1-5  cd /app && python -m cli.main stock-backfill daily --days 400
+25 22 * * 1-5  cd /app && python -m cli.main stock-backfill daily --days 400
 
 # --- accumulation pattern scan (16:10) → system:accumulation:latest ---
 10 16 * * 1-5  cd /app && python scripts/run_accumulation_scan.py
