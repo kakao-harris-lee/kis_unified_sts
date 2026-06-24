@@ -70,6 +70,7 @@ Design notes
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -932,11 +933,112 @@ SETUP_EVAL_KEY = "trading:futures:setup_eval"
 # live "what is it doing right now" inspection.
 _last_eval_log: dict[str, str] = {}
 
+# -- Per-day setup-eval HISTORY (restart-survivable; PR no-trade-diagnosis #5) --
+#
+# ``SETUP_EVAL_KEY`` is a HASH keeping only the LATEST state per setup; on a
+# container restart (with ~2 days of log retention) the daily in-window reject
+# reason ("why 0 entries today?") is lost.  We additionally append a per-KST-day
+# Redis LIST so the day's terminal in-window outcome survives a restart.
+#
+# Key: ``trading:futures:setup_eval:history:{date_kst}`` (one LIST per day).
+# Value (each element): JSON ``{date_kst, setup, outcome, reason, ts_kst}``.
+#
+# A record is appended ONLY for IN-WINDOW evaluation state-changes — out-of-window
+# rejects (no market context / before the open window / after the late-session
+# cutoff) are the day-long "nothing to do yet" noise and are skipped, so we keep
+# at most a handful of durable records per setup per day (one per distinct
+# in-window outcome), NOT one per ~1s cycle.
+SETUP_EVAL_HISTORY_KEY_PREFIX = os.environ.get(
+    "SETUP_EVAL_HISTORY_KEY_PREFIX", "trading:futures:setup_eval:history"
+)
+# TTL longer than the ~2-day log retention so the daily verdict survives a
+# restart-and-investigate cycle; default 7 days (repo Redis convention: every
+# new key needs an explicit TTL).
+SETUP_EVAL_HISTORY_TTL_SECONDS = int(
+    os.environ.get("SETUP_EVAL_HISTORY_TTL_SECONDS", str(7 * 24 * 60 * 60))
+)
+# Master enable switch (config-driven); set to "0"/"false" to disable history.
+SETUP_EVAL_HISTORY_ENABLED = os.environ.get(
+    "SETUP_EVAL_HISTORY_ENABLED", "true"
+).strip().lower() not in {"0", "false", "no", "off"}
+
+# Reject-reason PREFIXES that mean "the time-window gate has not (or no longer)
+# passed" — i.e. the eval never reached the actionable in-window checks.  These
+# dominate the day and are NOT recorded in the durable per-day history.
+_OUT_OF_WINDOW_REJECT_PREFIXES = (
+    "no_market_context",
+    "outside_time_window",  # Setup A pre/post valid-minutes window
+    "after_cutoff",  # Setup C late-session entry cutoff
+)
+
+# In-process throttle: last in-window history state appended per (date_kst, setup)
+# so a stable outcome is written once, not every cycle.  Resets on restart — by
+# design the Redis LIST is the durable record, so the first post-restart in-window
+# eval simply re-appends the current state (the terminal outcome stays correct as
+# the LAST list element).
+_history_state: dict[tuple[str, str], str] = {}
+
+
+def _is_in_window_eval(outcome: str, reason: str) -> bool:
+    """Return True when an eval reflects an in-window (actionable) outcome.
+
+    ``fired`` and any reject reason that is NOT a known out-of-window
+    time-gate prefix is treated as in-window — these are the reasons that
+    answer "why 0 entries today?" and deserve a durable per-day record.
+    """
+    if outcome != "reject":
+        return True
+    return not reason.startswith(_OUT_OF_WINDOW_REJECT_PREFIXES)
+
+
+def _append_setup_eval_history(
+    redis: Any, name: str, outcome: str, reason: str, ts_kst: datetime
+) -> None:
+    """Append an in-window eval to the per-day history LIST (throttled).
+
+    Best-effort and called from within the ``_publish_setup_eval`` try/except —
+    a failure here must never disrupt the entry loop.
+    """
+    if not SETUP_EVAL_HISTORY_ENABLED or redis is None:
+        return
+    if not _is_in_window_eval(outcome, reason):
+        return
+
+    import json
+
+    date_kst = ts_kst.date().isoformat()
+    state = f"{outcome}:{reason}"
+    # Throttle: only append when this (day, setup) in-window state CHANGES, so a
+    # stable terminal outcome is one record, not one-per-cycle.
+    if _history_state.get((date_kst, name)) == state:
+        return
+    _history_state[(date_kst, name)] = state
+
+    key = f"{SETUP_EVAL_HISTORY_KEY_PREFIX}:{date_kst}"
+    redis.rpush(
+        key,
+        json.dumps(
+            {
+                "date_kst": date_kst,
+                "setup": name,
+                "outcome": outcome,
+                "reason": reason,
+                "ts_kst": ts_kst.isoformat(),
+            }
+        ),
+    )
+    redis.expire(key, SETUP_EVAL_HISTORY_TTL_SECONDS)
+
 
 def _publish_setup_eval(name: str, outcome: str, reason: str) -> None:
     """Log (on change) + publish a setup's latest evaluation outcome.
 
     Observability only — never affects entry/exit decisions.
+
+    In addition to refreshing the latest-state HASH every cycle, the first
+    in-window state-change per KST day is appended to a per-day history LIST so
+    the day's reject reason ("why 0 entries today?") survives a container
+    restart (see ``_append_setup_eval_history``).
     """
     state = f"{outcome}:{reason}"
     if _last_eval_log.get(name) != state:
@@ -948,10 +1050,9 @@ def _publish_setup_eval(name: str, outcome: str, reason: str) -> None:
     try:
         import json
 
-        from shared.strategy.market_time import now_kst
-
         redis, _ = acquire_infra_clients()
         if redis is not None:
+            now = now_kst()
             redis.hset(
                 SETUP_EVAL_KEY,
                 name,
@@ -959,11 +1060,12 @@ def _publish_setup_eval(name: str, outcome: str, reason: str) -> None:
                     {
                         "outcome": outcome,
                         "reason": reason,
-                        "ts_kst": now_kst().isoformat(),
+                        "ts_kst": now.isoformat(),
                     }
                 ),
             )
             redis.expire(SETUP_EVAL_KEY, 86_400)
+            _append_setup_eval_history(redis, name, outcome, reason, now)
     except Exception:  # noqa: BLE001 — observability must never break entries
         logger.debug("[%s] setup-eval publish failed", name, exc_info=True)
 
