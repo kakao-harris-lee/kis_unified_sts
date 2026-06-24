@@ -1,0 +1,28 @@
+llm_scorecard:
+  enabled_facets: ["direction", "themes", "movers", "volume_surge"]
+  rolling_windows: [20, 60]
+  report_daily: true
+  report_weekly: true
+  telegram_domain: "briefing"
+  facet_params:
+    direction:
+      symbol: "101S6000"              # KOSPI200 futures continuous
+      neutral_band_pct: 0.15          # |return| below this = NEUTRAL outcome
+      has_confidence: true            # carries per-prediction confidence → calibration
+    themes:
+      top_n: 3
+      # theme → constituent stock codes (KRX).  Update as sector composition changes.
+      theme_symbols:
+        Technology:   ["005930", "000660", "035420"]   # Samsung, SK Hynix, NAVER
+        Finance:      ["055550", "086790", "105560"]   # Shinhan, Kakao Bank, KB
+        Energy:       ["010950", "096770"]             # S-Oil, SK Innovation
+        Healthcare:   ["207940", "068270"]             # Samsung Bio, Celltrion
+        Consumer:     ["051910", "009830"]             # LG Chem, Hanwha Solutions
+        Industrials:  ["006400", "012330"]             # Samsung SDI, Hyundai Mobis
+        Chemicals:    ["011170", "010130"]             # Lotte Chemical, Korea Zinc
+        Telecom:      ["030200", "017670"]             # KT, SK Telecom
+    movers:
+      base_rate: 0.5                  # unconditional follow-through baseline
+    volume_surge:
+      horizon: "flag_to_close"
+      base_rate: 0.0                  # random-entry intraday continuation baseline (flat = 0%)

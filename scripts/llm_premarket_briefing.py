@@ -39,7 +39,7 @@ def is_market_open_today() -> bool:
     return today.weekday() < 5
 
 
-async def main():
+async def main() -> None:
     logger.info("Pre-Market Briefing Started")
 
     if not is_market_open_today():
@@ -77,6 +77,53 @@ async def main():
 
         if futures_plan:
             logger.info(f"Futures: {futures_plan.direction}")
+
+        # Best-effort scorecard prediction capture — never breaks the briefing
+        try:
+            import json as _json
+            from datetime import datetime
+            import shared.llm_scorecard.facets  # noqa: F401 — populates FACET_REGISTRY
+            from shared.llm_scorecard.config import ScorecardConfig
+            from shared.llm_scorecard.recorder import capture_predictions
+            from shared.llm_scorecard.facets.base import CaptureContext
+            from shared.storage.config import StorageConfig
+            from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+            from shared.streaming.trading_state import TradingStateReader, _get_redis
+
+            _cfg = ScorecardConfig.from_yaml()
+            _storage = StorageConfig.load_or_default()
+            _ledger = SQLiteRuntimeLedger(_storage.runtime_storage.sqlite)
+            _now = datetime.now()
+            _date_kst = _now.strftime("%Y-%m-%d")
+            # MarketContext lives in Redis: read via TradingStateReader (not
+            # TradingStatePublisher, which only writes and has no get_market_context).
+            _mc = None
+            _screener = None
+            _redis = _get_redis()
+            try:
+                _reader = TradingStateReader("futures")
+                _mc_obj = _reader.get_market_context()
+                if _mc_obj is not None:
+                    _mc = _mc_obj.to_dict() if hasattr(_mc_obj, "to_dict") else _mc_obj
+                # Populate screener from system:trade_targets:latest for MoversFacet.
+                # The trade_targets payload has a top-level "codes" key, which
+                # MoversFacet.capture reads directly.
+                _raw = _redis.get("system:trade_targets:latest")
+                if _raw:
+                    _screener = _json.loads(_raw)
+            except Exception:
+                pass
+            _ctx = CaptureContext(
+                date_kst=_date_kst,
+                now_kst=_now,
+                market_context=_mc,
+                screener=_screener,
+                redis=_redis,
+            )
+            _n = capture_predictions(_ctx, _cfg, _ledger)
+            logger.info("Scorecard: captured %d predictions for %s", _n, _date_kst)
+        except Exception as _sc_exc:
+            logger.warning("Scorecard prediction capture failed (non-fatal): %s", _sc_exc)
 
     except TimeoutError:
         logger.error(
