@@ -1,56 +1,45 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
-from typing import Any
 
-from shared.llm_scorecard.config import ScorecardConfig
+def rolling_metrics(scores: list[dict], window: int) -> dict:
+    """Pure rolling metrics over a window of score rows (most-recent ``window``).
+
+    Public module-level API consumed by the reporter/cron (Task 9) and Phase 3/4.
+
+    - ``n``: total rows in the window.
+    - ``n_scored``: rows with a non-None ``correct`` (unscorable rows excluded).
+    - ``hit_rate``: hits / ``n_scored`` (None when nothing is scorable).
+    - ``mean_edge``: mean ``edge`` over ALL rows in the window.
+    - ``econ_proxy_sum``: sum of ``economic_proxy`` over all rows.
+    """
+    rows = scores[-window:] if window else list(scores)
+    scored = [r for r in rows if r.get("correct") is not None]
+    hits = sum(1 for r in scored if r["correct"])
+    edges = [r.get("edge", 0.0) for r in rows]
+    return {
+        "n": len(rows),
+        "n_scored": len(scored),
+        "hit_rate": (hits / len(scored)) if scored else None,
+        "mean_edge": (sum(edges) / len(edges)) if edges else 0.0,
+        "econ_proxy_sum": sum(r.get("economic_proxy", 0.0) for r in rows),
+    }
 
 
-class RollingAggregator:
-    def __init__(self, cfg: ScorecardConfig, ledger: Any) -> None:
-        self._cfg = cfg
-        self._ledger = ledger
+def calibration_bins(scores: list[dict], pred_conf: dict, n_bins: int = 5) -> list[dict]:
+    """Pure confidence-calibration bins.
 
-    def rolling_metrics(self, facet: str, window: int) -> dict:
-        end = date.today()
-        start = end - timedelta(days=window)
-        rows = self._ledger.query_scores(
-            facet=facet,
-            start=start.isoformat(),
-            end=end.isoformat(),
-        )
-        n = len(rows)
-        if n == 0:
-            return {"accuracy": 0.0, "edge": 0.0, "n": 0, "correct": 0}
-        correct_rows = [r for r in rows if r["correct"] is True]
-        correct = len(correct_rows)
-        accuracy = correct / n
-        baseline = sum(r["baseline_value"] for r in rows) / n
-        edge = accuracy - baseline
-        return {"accuracy": accuracy, "edge": edge, "n": n, "correct": correct}
-
-    def calibration_bins(self, facet: str, n_bins: int = 5) -> list[dict]:
-        rows = self._ledger.query_scores(facet=facet)
-        bins_data: list[tuple[float, bool]] = []
-        dates = {r["date_kst"] for r in rows}
-        score_by_date = {r["date_kst"]: r for r in rows}
-        for d in dates:
-            preds = self._ledger.load_predictions(d)
-            for p in preds:
-                if p["facet"] == facet and p.get("confidence") is not None:
-                    score_row = score_by_date.get(d)
-                    if score_row is not None and score_row["correct"] is not None:
-                        bins_data.append((float(p["confidence"]), bool(score_row["correct"])))
-        if not bins_data:
-            return []
-        bin_size = 1.0 / n_bins
-        result = []
-        for i in range(n_bins):
-            low = i * bin_size
-            high = (i + 1) * bin_size
-            in_bin = [(c, v) for c, v in bins_data if low <= c < high]
-            if not in_bin:
-                continue
-            acc = sum(1 for _, v in in_bin if v) / len(in_bin)
-            result.append({"bin_low": low, "bin_high": high, "accuracy": acc, "n": len(in_bin)})
-        return result
+    ``pred_conf`` maps ``date_kst -> confidence``. Returns one entry per bin with
+    ``lo``, ``hi``, ``n`` (scorable members), and ``hit_rate`` (None if empty).
+    """
+    edges = [(i / n_bins, (i + 1) / n_bins) for i in range(n_bins)]
+    out: list[dict] = []
+    for lo, hi in edges:
+        members = [
+            s
+            for s in scores
+            if s.get("correct") is not None
+            and lo <= (pred_conf.get(s["date_kst"], -1)) < (hi if hi < 1 else 1.01)
+        ]
+        hr = (sum(1 for s in members if s["correct"]) / len(members)) if members else None
+        out.append({"lo": lo, "hi": hi, "n": len(members), "hit_rate": hr})
+    return out

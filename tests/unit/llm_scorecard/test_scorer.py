@@ -1,18 +1,17 @@
-"""Tests for DayScorer."""
+"""Tests for the scorer (plan Task 7) — module-level score_day."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 
 import pytest
 
 from shared.llm_scorecard.config import ScorecardConfig
 from shared.llm_scorecard.facets.base import (
     FACET_REGISTRY,
-    FacetPrediction,
     FacetScore,
     register_facet,
 )
-from shared.llm_scorecard.scorer import DayScorer
+from shared.llm_scorecard.scorer import score_day
 
 
 @pytest.fixture
@@ -34,7 +33,7 @@ class FakeScoringFacet:
         return self._score_return
 
     def baseline(self, pred, mkt):
-        return 1.0 / 3.0
+        return 0.0
 
 
 def _pred_row(facet_name="test_facet", date_kst="2026-06-20"):
@@ -43,22 +42,34 @@ def _pred_row(facet_name="test_facet", date_kst="2026-06-20"):
         "date_kst": date_kst,
         "captured_at": "2026-06-20T09:00:00",
         "payload": {"direction": "BULL"},
-        "payload_json": '{"direction": "BULL"}',
         "confidence": 0.7,
-        "created_at": "2026-06-20T09:00:00",
     }
 
 
-def _make_score(facet="test_facet", date_kst="2026-06-20"):
+def _score(facet="test_facet", correct=True, date_kst="2026-06-20"):
     return FacetScore(
         facet=facet,
         date_kst=date_kst,
-        correct=True,
-        value=1.0,
+        correct=correct,
+        value=0.5,
         economic_proxy=0.5,
-        baseline_value=1.0 / 3.0,
-        edge=1.0 - 1.0 / 3.0,
-        detail={"predicted": "BULL", "actual": "BULL", "return_pct": 0.5},
+        baseline_value=0.0,
+        edge=0.5,
+        detail={"predicted": "BULL", "realized": "BULL", "ret_pct": 0.5},
+        scored_at=datetime(2026, 6, 20, 16, 0, 0),
+    )
+
+
+def _unscorable(facet="test_facet", date_kst="2026-06-20"):
+    return FacetScore(
+        facet=facet,
+        date_kst=date_kst,
+        correct=None,
+        value=0.0,
+        economic_proxy=0.0,
+        baseline_value=0.0,
+        edge=0.0,
+        detail={"reason": "no_outcome_data"},
         scored_at=datetime(2026, 6, 20, 16, 0, 0),
     )
 
@@ -79,45 +90,45 @@ class FakeOutcome:
     pass
 
 
-def test_score_day_returns_scores_and_saves(registry_snapshot):
-    score = _make_score()
-    facet = FakeScoringFacet("test_facet", score_return=score)
-    register_facet(facet)
-
-    ledger = FakeLedger(predictions=[_pred_row()])
-    scorer = DayScorer(ScorecardConfig(), ledger, FakeOutcome())
-    scores = scorer.score_day(date(2026, 6, 20))
-
-    assert len(scores) == 1
-    assert scores[0] is score
-    assert len(ledger.saved_scores) == 1
-    assert ledger.saved_scores[0]["facet"] == "test_facet"
+def test_score_day_writes_score_per_facet(registry_snapshot):
+    register_facet(FakeScoringFacet("direction", score_return=_score("direction")))
+    led = FakeLedger(predictions=[_pred_row("direction")])
+    n = score_day("2026-06-20", ScorecardConfig(enabled_facets=["direction"]), led, FakeOutcome())
+    assert n == 1
+    assert led.saved_scores[0]["facet"] == "direction"
+    assert led.saved_scores[0]["correct"] is True
 
 
-def test_score_day_skips_none_score(registry_snapshot):
-    facet = FakeScoringFacet("test_facet_none", score_return=None)
-    register_facet(facet)
-
-    ledger = FakeLedger(predictions=[_pred_row(facet_name="test_facet_none")])
-    scorer = DayScorer(ScorecardConfig(), ledger, FakeOutcome())
-    scores = scorer.score_day(date(2026, 6, 20))
-
-    assert scores == []
-    assert ledger.saved_scores == []
+def test_score_day_persists_unscorable_with_correct_none(registry_snapshot):
+    register_facet(FakeScoringFacet("direction", score_return=_unscorable("direction")))
+    led = FakeLedger(predictions=[_pred_row("direction")])
+    n = score_day("2026-06-20", ScorecardConfig(enabled_facets=["direction"]), led, FakeOutcome())
+    assert n == 1  # persisted, not skipped
+    assert len(led.saved_scores) == 1
+    assert led.saved_scores[0]["correct"] is None
 
 
-def test_score_day_skips_unknown_facet(registry_snapshot):
-    """A pred row with a facet name not in registry is skipped gracefully."""
-    ledger = FakeLedger(predictions=[_pred_row(facet_name="unknown_facet_xyz")])
-    scorer = DayScorer(ScorecardConfig(), ledger, FakeOutcome())
-    scores = scorer.score_day(date(2026, 6, 20))
+def test_score_day_filters_by_enabled_facets(registry_snapshot):
+    """A facet that has a stored prediction but is NOT enabled must not be scored."""
+    register_facet(FakeScoringFacet("direction", score_return=_score("direction")))
+    register_facet(FakeScoringFacet("themes", score_return=_score("themes")))
+    led = FakeLedger(predictions=[_pred_row("direction"), _pred_row("themes")])
+    n = score_day("2026-06-20", ScorecardConfig(enabled_facets=["direction"]), led, FakeOutcome())
+    assert n == 1
+    assert {s["facet"] for s in led.saved_scores} == {"direction"}
 
-    assert scores == []
+
+def test_score_day_skips_facet_with_no_prediction(registry_snapshot):
+    register_facet(FakeScoringFacet("direction", score_return=_score("direction")))
+    led = FakeLedger(predictions=[])
+    n = score_day("2026-06-20", ScorecardConfig(enabled_facets=["direction"]), led, FakeOutcome())
+    assert n == 0
+    assert led.saved_scores == []
 
 
 def test_score_day_swallows_score_exception(registry_snapshot):
     class ErrorFacet:
-        name = "error_facet"
+        name = "direction"
         outcome_horizon = "session"
         outcome_source = "test"
 
@@ -125,33 +136,16 @@ def test_score_day_swallows_score_exception(registry_snapshot):
             raise RuntimeError("score error")
 
         def baseline(self, pred, mkt):
-            return 1.0 / 3.0
+            return 0.0
 
     register_facet(ErrorFacet())
-    good_score = _make_score(facet="good_facet")
-    good_facet = FakeScoringFacet("good_facet", score_return=good_score)
-    register_facet(good_facet)
-
-    ledger = FakeLedger(predictions=[
-        _pred_row(facet_name="error_facet"),
-        _pred_row(facet_name="good_facet"),
-    ])
-    scorer = DayScorer(ScorecardConfig(), ledger, FakeOutcome())
-    scores = scorer.score_day(date(2026, 6, 20))
-
-    # error_facet raised, good_facet still ran
-    assert len(scores) == 1
-    assert scores[0].facet == "good_facet"
+    led = FakeLedger(predictions=[_pred_row("direction")])
+    n = score_day("2026-06-20", ScorecardConfig(enabled_facets=["direction"]), led, FakeOutcome())
+    assert n == 0  # raised, swallowed
 
 
 def test_score_day_scored_at_isoformat(registry_snapshot):
-    score = _make_score()
-    facet = FakeScoringFacet("iso_facet", score_return=score)
-    register_facet(facet)
-
-    ledger = FakeLedger(predictions=[_pred_row(facet_name="iso_facet")])
-    scorer = DayScorer(ScorecardConfig(), ledger, FakeOutcome())
-    scorer.score_day(date(2026, 6, 20))
-
-    saved = ledger.saved_scores[0]
-    assert saved["scored_at"] == "2026-06-20T16:00:00"
+    register_facet(FakeScoringFacet("direction", score_return=_score("direction")))
+    led = FakeLedger(predictions=[_pred_row("direction")])
+    score_day("2026-06-20", ScorecardConfig(enabled_facets=["direction"]), led, FakeOutcome())
+    assert led.saved_scores[0]["scored_at"] == "2026-06-20T16:00:00"

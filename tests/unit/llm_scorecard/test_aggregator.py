@@ -1,116 +1,61 @@
-"""Tests for RollingAggregator."""
+"""Tests for the aggregator (plan Task 7) — pure rolling_metrics / calibration_bins."""
 from __future__ import annotations
 
 import pytest
 
-from shared.llm_scorecard.aggregator import RollingAggregator
-from shared.llm_scorecard.config import ScorecardConfig
+from shared.llm_scorecard.aggregator import calibration_bins, rolling_metrics
 
 
-def _make_score_row(date_kst, correct, baseline=1.0 / 3.0, facet="direction"):
-    return {
-        "date_kst": date_kst,
-        "facet": facet,
-        "correct": correct,
-        "value": 1.0 if correct else 0.0,
-        "economic_proxy": 0.3,
-        "baseline_value": baseline,
-        "edge": (1.0 if correct else 0.0) - baseline,
-        "detail": {},
-        "scored_at": date_kst + "T16:00:00",
-    }
-
-
-def _pred_row(date_kst, confidence, facet="direction"):
-    return {
-        "date_kst": date_kst,
-        "facet": facet,
-        "captured_at": date_kst + "T09:00:00",
-        "payload": {"direction": "BULL"},
-        "payload_json": '{"direction": "BULL"}',
-        "confidence": confidence,
-        "created_at": date_kst + "T09:00:00",
-    }
-
-
-class FakeLedger:
-    def __init__(self, scores=None, predictions=None):
-        self._scores = scores or []
-        self._predictions = predictions or []
-
-    def query_scores(self, facet=None, start=None, end=None):
-        rows = self._scores
-        if facet:
-            rows = [r for r in rows if r["facet"] == facet]
-        if start:
-            rows = [r for r in rows if r["date_kst"] >= start]
-        if end:
-            rows = [r for r in rows if r["date_kst"] <= end]
-        return rows
-
-    def load_predictions(self, date_kst):
-        return [p for p in self._predictions if p["date_kst"] == date_kst]
-
-
-def test_rolling_metrics_basic():
+def test_rolling_metrics_ignores_unscorable():
+    # Ported verbatim from plan Task 7.
     scores = [
-        _make_score_row("2026-06-20", correct=True),
-        _make_score_row("2026-06-19", correct=False),
-        _make_score_row("2026-06-18", correct=True),
+        {"correct": True, "edge": 1.0, "economic_proxy": 1.0},
+        {"correct": None, "edge": 0.0, "economic_proxy": 0.0},
+        {"correct": False, "edge": -0.5, "economic_proxy": -0.5},
     ]
-    ledger = FakeLedger(scores=scores)
-    agg = RollingAggregator(ScorecardConfig(), ledger)
-    m = agg.rolling_metrics("direction", 30)
-
+    m = rolling_metrics(scores, window=60)
     assert m["n"] == 3
-    assert m["correct"] == 2
-    assert m["accuracy"] == pytest.approx(2 / 3)
-    baseline = 1.0 / 3.0
-    assert m["edge"] == pytest.approx(2 / 3 - baseline)
+    assert m["n_scored"] == 2
+    assert m["hit_rate"] == 0.5
+    assert round(m["mean_edge"], 3) == round((1.0 - 0.5 + 0.0) / 3, 3)  # edge over ALL rows
+    assert round(m["econ_proxy_sum"], 2) == 0.5
 
 
 def test_rolling_metrics_empty():
-    ledger = FakeLedger(scores=[])
-    agg = RollingAggregator(ScorecardConfig(), ledger)
-    m = agg.rolling_metrics("direction", 30)
-
-    assert m == {"accuracy": 0.0, "edge": 0.0, "n": 0, "correct": 0}
+    m = rolling_metrics([], window=30)
+    assert m == {"n": 0, "n_scored": 0, "hit_rate": None, "mean_edge": 0.0, "econ_proxy_sum": 0.0}
 
 
-def test_calibration_bins_groups_by_confidence():
+def test_rolling_metrics_all_unscorable_hit_rate_none():
+    scores = [{"correct": None, "edge": 0.0, "economic_proxy": 0.0}]
+    m = rolling_metrics(scores, window=30)
+    assert m["n_scored"] == 0
+    assert m["hit_rate"] is None
+
+
+def test_rolling_metrics_respects_window():
+    scores = [{"correct": i % 2 == 0, "edge": 0.0, "economic_proxy": 0.0} for i in range(10)]
+    m = rolling_metrics(scores, window=3)
+    assert m["n"] == 3  # only the last 3 rows
+
+
+def test_calibration_bins_group_by_confidence():
+    # Ported from plan Task 7.
+    scores = [{"date_kst": "d1", "correct": True}, {"date_kst": "d2", "correct": False}]
+    conf = {"d1": 0.9, "d2": 0.4}
+    bins = calibration_bins(scores, conf)
+    assert any(b["lo"] <= 0.9 < b["hi"] and b["hit_rate"] == 1.0 for b in bins)
+    assert any(b["lo"] <= 0.4 < b["hi"] and b["hit_rate"] == 0.0 for b in bins)
+
+
+def test_calibration_bins_excludes_unscorable_and_missing_conf():
     scores = [
-        _make_score_row("2026-06-20", correct=True),
-        _make_score_row("2026-06-19", correct=False),
+        {"date_kst": "d1", "correct": None},   # unscorable
+        {"date_kst": "d2", "correct": True},   # no conf entry
     ]
-    preds = [
-        _pred_row("2026-06-20", confidence=0.9),   # high bin (bin 4: 0.8–1.0)
-        _pred_row("2026-06-19", confidence=0.2),   # low bin (bin 1: 0.2–0.4)
-    ]
-    ledger = FakeLedger(scores=scores, predictions=preds)
-    agg = RollingAggregator(ScorecardConfig(), ledger)
-    cal = agg.calibration_bins("direction", n_bins=5)
-
-    assert len(cal) >= 1
-    high_bins = [b for b in cal if b["bin_low"] >= 0.8]
-    low_bins = [b for b in cal if b["bin_low"] >= 0.2 and b["bin_low"] < 0.4]
-    assert high_bins[0]["accuracy"] == 1.0   # 2026-06-20 correct=True at conf 0.9
-    assert low_bins[0]["accuracy"] == 0.0    # 2026-06-19 correct=False at conf 0.2
+    bins = calibration_bins(scores, {})
+    assert all(b["n"] == 0 and b["hit_rate"] is None for b in bins)
 
 
-def test_calibration_bins_returns_empty_when_no_data():
-    ledger = FakeLedger(scores=[], predictions=[])
-    agg = RollingAggregator(ScorecardConfig(), ledger)
-    cal = agg.calibration_bins("direction")
-
-    assert cal == []
-
-
-def test_calibration_bins_skips_no_confidence():
-    scores = [_make_score_row("2026-06-20", correct=True)]
-    # pred has no confidence
-    preds = [_pred_row("2026-06-20", confidence=None)]
-    ledger = FakeLedger(scores=scores, predictions=preds)
-    agg = RollingAggregator(ScorecardConfig(), ledger)
-    cal = agg.calibration_bins("direction")
-
-    assert cal == []
+def test_calibration_bins_count_default_five():
+    assert len(calibration_bins([], {})) == 5

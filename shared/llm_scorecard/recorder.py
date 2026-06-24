@@ -3,33 +3,34 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from shared.llm_scorecard.config import ScorecardConfig
-from shared.llm_scorecard.facets.base import CaptureContext, FacetPrediction, enabled_facets
+import shared.llm_scorecard.facets.direction  # noqa: F401  (register direction facet)
+from shared.llm_scorecard.facets.base import CaptureContext, enabled_facets
 
 logger = logging.getLogger(__name__)
 
 
-class PredictionRecorder:
-    def __init__(self, cfg: ScorecardConfig, ledger: Any, ctx: CaptureContext) -> None:
-        self._cfg = cfg
-        self._ledger = ledger
-        self._ctx = ctx
+def capture_predictions(ctx: CaptureContext, cfg: Any, ledger: Any) -> int:
+    """Capture predictions for every enabled facet (best-effort; never raises).
 
-    def capture_predictions(self) -> list[FacetPrediction]:
-        results: list[FacetPrediction] = []
-        for facet in enabled_facets(self._cfg):
-            try:
-                pred = facet.capture(self._ctx)
-                if pred is None:
-                    continue
-                self._ledger.save_prediction(
-                    date_kst=pred.date_kst,
-                    facet=pred.facet,
-                    captured_at=pred.captured_at.isoformat(),
-                    payload=pred.payload,
-                    confidence=pred.confidence,
-                )
-                results.append(pred)
-            except Exception as exc:
-                logger.warning("Facet %s capture failed: %s", facet.name, exc)
-        return results
+    Public module-level API consumed by the briefing hook (Task 9) and Phase 3/4.
+    Returns the count of predictions captured + persisted.
+    """
+    n = 0
+    for facet in enabled_facets(cfg):
+        try:
+            pred = facet.capture(ctx)
+            if pred is None:
+                continue
+            ledger.save_prediction(
+                pred.date_kst,
+                pred.facet,
+                pred.captured_at.isoformat(),
+                pred.payload,
+                pred.confidence,
+            )
+            n += 1
+        except Exception:
+            logger.exception(
+                "scorecard capture failed for facet=%s", getattr(facet, "name", "?")
+            )
+    return n
