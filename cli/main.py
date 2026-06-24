@@ -1402,30 +1402,50 @@ def stock_backfill_daily(sink: str, days: int, codes: tuple):
     multiple=True,
     help="Specific codes to ensure (default: drain the Redis pending queue)",
 )
-def stock_backfill_ensure_coverage(codes: tuple):
-    """Deepen daily history for shallow dynamic-universe symbols.
+@click.option(
+    "--universe",
+    is_flag=True,
+    default=False,
+    help="Seed the coverage queue from system:universe:latest before draining "
+    "(off-hours whole-universe top-up; ignored when --codes is given)",
+)
+def stock_backfill_ensure_coverage(codes: tuple, universe: bool):
+    """Deepen daily history (and minute-prewarm) shallow dynamic-universe symbols.
 
     Drains the on-entry coverage queue (Redis ``stock:coverage:pending``, filled
     by the market-ingest universe-change handler) and paginating-backfills any
     symbol below the configured ``min_daily_bars`` so SMA(200)/pattern_pullback
-    becomes available. Idempotent, throttled, and batched (config/env driven).
+    becomes available. Also fetches recent 1m bars into parquet so a newly-added
+    symbol is minute-warm the same cycle (config ``prewarm_minutes``). Idempotent,
+    throttled, and batched (config/env driven).
+
+    ``--universe`` first seeds the queue from ``system:universe:latest`` so an
+    off-hours pass tops up the whole current live universe (follow-up (b)).
 
     \b
     Example:
         sts stock-backfill ensure-coverage
+        sts stock-backfill ensure-coverage --universe
         sts stock-backfill ensure-coverage -c 005930 -c 000660
     """
     import asyncio
 
-    from shared.collector.historical.coverage import ensure_daily_coverage
+    from shared.collector.historical.coverage import (
+        ensure_daily_coverage,
+        seed_universe_queue,
+    )
 
     codes_list = list(codes) if codes else None
+    if universe and not codes_list:
+        seeded = seed_universe_queue()
+        click.echo(f"Seeded {seeded} universe codes into the coverage queue.")
     summary = asyncio.run(ensure_daily_coverage(codes=codes_list))
     click.echo(
         "Coverage ensure complete! "
         f"checked={summary['checked']}, already_deep={summary['already_deep']}, "
         f"deepened={summary['deepened']}, failed={summary['failed']}, "
-        f"requeued={summary['requeued']}, rows={summary['rows']}"
+        f"requeued={summary['requeued']}, "
+        f"prewarmed={summary.get('prewarmed', 0)}, rows={summary['rows']}"
     )
 
 

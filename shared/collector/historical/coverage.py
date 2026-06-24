@@ -60,6 +60,15 @@ class CoverageConfig:
     throttle_seconds: float = 1.0
     # TTL for the pending + exhausted-today Redis keys (seconds).
     redis_ttl_seconds: int = 86400
+    # --- on-entry MINUTE prewarm coordination (follow-up (c)) ---
+    # Also fetch recent 1m bars into parquet for newly-admitted symbols so the
+    # daemon's next warmup_engine (Tier-1 parquet) warms them immediately.
+    prewarm_minutes: bool = True
+    # KIS-max minute lookback (days) to fetch into parquet.
+    prewarm_minute_days: int = 5
+    # Skip prewarm if parquet already has >= this many recent 1m bars within the
+    # prewarm window (idempotent: don't re-fetch an already-warm symbol).
+    min_prewarm_minute_bars: int = 60
 
     @classmethod
     def load(cls) -> CoverageConfig:
@@ -122,6 +131,21 @@ class CoverageConfig:
                 "redis_ttl_seconds",
                 cls.redis_ttl_seconds,
             ),
+            prewarm_minutes=_flag(
+                "STOCK_COVERAGE_PREWARM_MINUTES",
+                "prewarm_minutes",
+                cls.prewarm_minutes,
+            ),
+            prewarm_minute_days=_int(
+                "STOCK_COVERAGE_PREWARM_MINUTE_DAYS",
+                "prewarm_minute_days",
+                cls.prewarm_minute_days,
+            ),
+            min_prewarm_minute_bars=_int(
+                "STOCK_COVERAGE_MIN_PREWARM_MINUTE_BARS",
+                "min_prewarm_minute_bars",
+                cls.min_prewarm_minute_bars,
+            ),
         )
 
 
@@ -182,6 +206,143 @@ def _current_daily_bar_count(store: Any, code: str) -> int:
     except Exception as exc:  # noqa: BLE001 - missing symbol dirs return 0, not crash
         logger.debug("coverage: bar count read failed for %s: %s", code, exc)
         return 0
+
+
+def _recent_minute_bar_count(store: Any, code: str, lookback_days: int) -> int:
+    """Return the count of 1m bars stored for ``code`` within the lookback window."""
+    from datetime import datetime, timedelta
+
+    try:
+        start = (datetime.now() - timedelta(days=max(lookback_days, 1))).date()
+        df = store.get_minute_bars(code, start=start)
+        return 0 if df is None else int(len(df))
+    except Exception as exc:  # noqa: BLE001 - missing symbol dirs return 0, not crash
+        logger.debug("coverage: minute count read failed for %s: %s", code, exc)
+        return 0
+
+
+async def ensure_minute_prewarm(
+    code: str,
+    *,
+    store: Any,
+    config: CoverageConfig | None = None,
+) -> dict[str, Any]:
+    """Fetch recent 1m bars into parquet so a new symbol is minute-warm.
+
+    On-entry minute prewarm coordination (follow-up (c)): a newly-admitted
+    intraday symbol needs MINUTE warmth immediately, not only at the next daemon
+    warmup.  The coverage worker has no live indicator engine, so prewarm here
+    means seeding the parquet store; the daemon's own ``warmup_engine`` (Tier-1
+    parquet, no rate limit) then warms the symbol on its next ``_prewarm_cold``
+    cycle with correct 5m buckets (the #517 fix).
+
+    Idempotent: skips a symbol that already has ``>= min_prewarm_minute_bars``
+    recent 1m bars in parquet.  Returns a small status dict; never raises (one
+    symbol must not abort a batch).
+    """
+    cfg = config or CoverageConfig.load()
+    result: dict[str, Any] = {"code": code, "prewarmed": False, "skipped": False}
+    if not cfg.prewarm_minutes:
+        result["disabled"] = True
+        return result
+
+    existing = _recent_minute_bar_count(store, code, cfg.prewarm_minute_days)
+    if existing >= cfg.min_prewarm_minute_bars:
+        result["skipped"] = True  # already warm
+        result["existing_bars"] = existing
+        return result
+
+    try:
+        from shared.collector.historical.parquet_backfill import (
+            backfill_stock_minute_parquet,
+        )
+
+        backfill_result = await backfill_stock_minute_parquet(
+            days=cfg.prewarm_minute_days,
+            codes=[code],
+            resume=True,
+            verbose=False,
+        )
+        result["rows"] = int(getattr(backfill_result, "rows", 0) or 0)
+        result["prewarmed"] = True
+        logger.info(
+            "coverage: %s minute-prewarmed (rows=%s, had=%d)",
+            code,
+            result["rows"],
+            existing,
+        )
+    except Exception as exc:  # noqa: BLE001 - prewarm is best-effort
+        result["error"] = str(exc)
+        logger.warning("coverage: minute prewarm failed for %s: %s", code, exc)
+    return result
+
+
+def seed_universe_queue(
+    *,
+    redis_client: Any | None = None,
+    config: CoverageConfig | None = None,
+    universe_key: str | None = None,
+) -> int:
+    """Enqueue the whole current live universe for an off-hours coverage top-up.
+
+    Reads ``system:universe:latest`` (DB 1) and enqueues every code so the
+    off-hours ``ensure-coverage`` pass covers the entire live universe (not just
+    on-entry adds).  Best-effort; returns the number of codes enqueued.
+    """
+    cfg = config or CoverageConfig.load()
+    key: str = (
+        universe_key
+        or os.getenv("UNIVERSE_LATEST_KEY")
+        or "system:universe:latest"
+    )
+    try:
+        if redis_client is None:
+            from shared.streaming.client import RedisClient
+
+            redis_client = RedisClient.get_client()
+        raw = redis_client.get(key)
+    except Exception as exc:  # noqa: BLE001 - never break the caller on Redis errors
+        logger.warning("coverage: universe read failed (%s): %s", key, exc)
+        return 0
+    if not raw:
+        logger.info("coverage: universe key %s empty; nothing to seed", key)
+        return 0
+
+    codes = _parse_universe_codes(raw)
+    if not codes:
+        logger.info("coverage: universe %s parsed to 0 codes", key)
+        return 0
+    return enqueue_symbols(codes, redis_client=redis_client, config=cfg)
+
+
+def _parse_universe_codes(raw: Any) -> list[str]:
+    """Extract stock codes from a ``system:universe:latest`` JSON snapshot.
+
+    Accepts a bare list (``["005930", ...]``) or a list of dicts carrying a
+    ``code``/``symbol`` key (the screener snapshot shape).
+    """
+    import json
+
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return []
+    items: Any = data
+    if isinstance(data, dict):
+        items = data.get("symbols") or data.get("universe") or data.get("codes") or []
+    if not isinstance(items, (list, tuple)):
+        return []
+    out: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            code = item.get("code") or item.get("symbol")
+        else:
+            code = item
+        if code:
+            out.append(str(code).strip())
+    return out
 
 
 async def ensure_daily_coverage(
@@ -305,11 +466,15 @@ async def _run_coverage_cycle(
     to_deepen: list[str] = []
     clear: list[str] = []  # remove from queue (deep enough)
     exhausted_now: list[str] = []  # genuinely exhausted today (keep queued)
+    # Symbols that are (or become) daily-deep — candidates for minute prewarm so
+    # they are trade-ready (daily depth + minute warmth) the same cycle.
+    prewarm_candidates: list[str] = []
     for code in candidates:
         summary["checked"] += 1
         if _current_daily_bar_count(store, code) >= cfg.min_daily_bars:
             summary["already_deep"] += 1
             clear.append(code)  # idempotent: clear from queue
+            prewarm_candidates.append(code)
             continue
         # Already found exhausted today → don't re-fetch the same code again this
         # KST day (but it stays queued so a later day re-attempts it as it grows).
@@ -332,6 +497,7 @@ async def _run_coverage_cycle(
             if depth >= cfg.min_daily_bars:
                 summary["deepened"] += 1
                 clear.append(code)
+                prewarm_candidates.append(code)
                 logger.info("coverage: %s deepened to %d daily bars", code, depth)
             elif int(getattr(result, "page_errors", 0) or 0) > 0:
                 # Transient KIS page error mid-pagination → RETRYABLE. Keep queued.
@@ -360,6 +526,24 @@ async def _run_coverage_cycle(
         if cfg.throttle_seconds > 0:
             await asyncio.sleep(cfg.throttle_seconds)
 
+    # On-entry MINUTE prewarm (follow-up (c)): make daily-deep symbols minute-warm
+    # the same cycle so an intraday-added symbol is fully trade-ready (daily depth
+    # + minute warmth) without waiting for the next daemon warmup. Idempotent
+    # (already-warm symbols are skipped), throttled, and bounded by max_per_cycle.
+    if cfg.prewarm_minutes and prewarm_candidates:
+        summary["prewarmed"] = 0
+        summary["prewarm_skipped"] = 0
+        prewarm_batch = prewarm_candidates[: max(0, cfg.max_per_cycle)]
+        for code in prewarm_batch:
+            pre = await ensure_minute_prewarm(code, store=store, config=cfg)
+            if pre.get("prewarmed"):
+                summary["prewarmed"] += 1
+                summary["rows"] += int(pre.get("rows", 0) or 0)
+            elif pre.get("skipped"):
+                summary["prewarm_skipped"] += 1
+            if cfg.throttle_seconds > 0:
+                await asyncio.sleep(cfg.throttle_seconds)
+
     # Anything beyond this cycle's batch stays queued for the next run.
     summary["requeued"] = max(0, len(to_deepen) - len(batch))
 
@@ -377,13 +561,14 @@ async def _run_coverage_cycle(
 
     logger.info(
         "coverage: cycle done checked=%d already_deep=%d deepened=%d "
-        "exhausted=%d failed=%d requeued=%d rows=%d",
+        "exhausted=%d failed=%d requeued=%d prewarmed=%d rows=%d",
         summary["checked"],
         summary["already_deep"],
         summary["deepened"],
         summary.get("exhausted", 0),
         summary["failed"],
         summary["requeued"],
+        summary.get("prewarmed", 0),
         summary["rows"],
     )
     return summary
