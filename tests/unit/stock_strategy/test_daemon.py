@@ -15,15 +15,21 @@ _NOW = datetime(2026, 6, 5, 0, 30, tzinfo=UTC)
 
 
 class _FakeEngine:
-    def __init__(self, warm=("005930",), mfi_values=None):
+    def __init__(self, warm=("005930",), mfi_values=None, daily=None):
         self._warm = set(warm)
         self._mfi_values = mfi_values
+        # Per-symbol daily indicator dicts (unprefixed keys, e.g. sma_200),
+        # mirroring StreamingIndicatorEngine.get_daily_indicators output.
+        self._daily = dict(daily or {})
 
     def is_warm(self, symbol):
         return symbol in self._warm
 
     def get_market_mfi_values(self, _active_symbols=None):
         return dict(self._mfi_values or {})
+
+    def get_daily_indicators(self, symbol):
+        return dict(self._daily.get(symbol, {}))
 
 
 class _FakeResolver:
@@ -60,6 +66,17 @@ class _FakeManager:
             return [
                 Signal(code=code, strategy="williams_r", price=71000.0, confidence=0.6)
             ]
+        return []
+
+
+class _CaptureManager:
+    """Records the EntryContext seen for each symbol (no signals emitted)."""
+
+    def __init__(self):
+        self.contexts = {}
+
+    async def check_entries(self, context):
+        self.contexts[context.market_data.get("code")] = context
         return []
 
 
@@ -511,3 +528,152 @@ async def test_bear_cycle_cap_reached_blocks_new_override_entries(monkeypatch):
     )
     published = await daemon.evaluate_once()
     assert published == 0  # cap reached → no new override entries
+
+
+# ---------------------------------------------------------------------------
+# Daily indicators injected into the decoupled EntryContext (Fix #1)
+#
+# The decoupled M4-P daemon must mirror the orchestrator: merge the engine's
+# daily indicators (sma_200, daily_*) into the per-symbol indicator dict so
+# daily-gated strategies (pattern_pullback needs sma_200; momentum_breakout
+# needs daily EMA/quality) can fire. Without this every symbol is rejected
+# with no_sma_200 and the daemon produces 0 valid signals.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_daily_indicators_merged_into_entry_context():
+    """get_daily_indicators output is merged (daily_ prefix) into ctx.indicators."""
+    manager = _CaptureManager()
+    daily = {
+        "005930": {
+            "sma_200": 60000.0,
+            "sma_20": 70000.0,
+            "ema_5": 71000.0,
+            "rsi_5": 40.0,
+        }
+    }
+    d = _daemon(
+        engine=_FakeEngine(warm=("005930",), daily=daily),
+        manager=manager,
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    ctx = manager.contexts["005930"]
+    # Daily fields are present under the daily_ prefix (orchestrator convention),
+    # alongside the base streaming indicators from the resolver.
+    assert ctx.indicators["daily_sma_200"] == 60000.0
+    assert ctx.indicators["daily_sma_20"] == 70000.0
+    assert ctx.indicators["daily_ema_5"] == 71000.0
+    assert ctx.indicators["rsi"] == 30.0  # base resolver indicators preserved
+
+
+@pytest.mark.asyncio
+async def test_daily_watchlist_injected_into_context_metadata():
+    """The raw watchlist dict is injected into ctx.metadata['daily_watchlist']."""
+    manager = _CaptureManager()
+    d = _daemon(engine=_FakeEngine(warm=("005930",)), manager=manager)
+    await d._apply_watchlist(
+        {"strategies": {"momentum_breakout": ["005930", "000660"]}}
+    )
+
+    await d.evaluate_once()
+
+    ctx = manager.contexts["005930"]
+    watchlist = ctx.metadata["daily_watchlist"]
+    assert watchlist["strategies"]["momentum_breakout"] == ["005930", "000660"]
+
+
+@pytest.mark.asyncio
+async def test_missing_daily_indicators_leaves_context_without_daily_fields():
+    """When the engine has no daily candles, no daily_ keys are injected (graceful)."""
+    manager = _CaptureManager()
+    d = _daemon(
+        engine=_FakeEngine(warm=("005930",), daily={}),  # no daily data
+        manager=manager,
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    ctx = manager.contexts["005930"]
+    assert not any(k.startswith("daily_") for k in ctx.indicators)
+    assert "sma_200" not in ctx.indicators  # genuinely absent → strategy rejects
+
+
+@pytest.mark.asyncio
+async def test_legacy_engine_without_daily_indicators_does_not_crash():
+    """Engines lacking get_daily_indicators must not break entry evaluation."""
+
+    class _LegacyEngine:
+        def is_warm(self, _symbol):
+            return True
+
+    manager = _CaptureManager()
+    d = _daemon(engine=_LegacyEngine(), manager=manager)
+    d._universe = ["005930"]
+
+    await d.evaluate_once()  # must not raise
+
+    ctx = manager.contexts["005930"]
+    assert not any(k.startswith("daily_") for k in ctx.indicators)
+
+
+@pytest.mark.asyncio
+async def test_pattern_pullback_fires_only_with_daily_sma_200_injected():
+    """End-to-end: pattern_pullback rejects without sma_200, fires once daily injected.
+
+    Reproduces the decoupled no-signal bug: the strategy needs a daily sma_200 to
+    pass its base-trend gate (close > sma_200). With the daily merge it can fire;
+    without it the symbol is rejected (no_sma_200) and never signals.
+    """
+    from datetime import datetime as _dt
+
+    from shared.strategy.base import EntryContext
+    from shared.strategy.entry.pattern_pullback import (
+        PatternPullbackConfig,
+        PatternPullbackEntry,
+    )
+
+    strat = PatternPullbackEntry(
+        PatternPullbackConfig(
+            min_confidence=0.0,
+            signal_cooldown_days=0,
+            patterns=[{"name": "p0", "rsi5_max": 100.0, "confidence": 0.9}],
+        )
+    )
+    now = _dt(2026, 6, 5, 0, 30, tzinfo=UTC)
+    market = {"code": "005930", "name": "SamsungElec", "close": 71000.0}
+    base_ind = {
+        "sma_20": 72000.0,  # close (71000) <= sma_20 → pullback condition holds
+        "sma_60": 65000.0,
+        "sma_60_prev": 64000.0,
+        "rsi_5": 30.0,
+        "atr": 700.0,
+        "highest_high": 72000.0,
+        "volume_ratio": 1.5,
+    }
+
+    # Without sma_200 the base-trend gate fails (sma_200 <= 0) → no signal.
+    ctx_no_daily = EntryContext(
+        market_data=market,
+        indicators=dict(base_ind),
+        current_positions=[],
+        timestamp=now,
+        metadata={},
+    )
+    assert await strat.generate(ctx_no_daily) is None
+
+    # With the daily sma_200 injected (close 71000 > sma_200 60000) → fires.
+    ctx_daily = EntryContext(
+        market_data=market,
+        indicators={**base_ind, "daily_sma_200": 60000.0},
+        current_positions=[],
+        timestamp=now,
+        metadata={},
+    )
+    sig = await strat.generate(ctx_daily)
+    assert sig is not None
+    assert sig.code == "005930"

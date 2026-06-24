@@ -82,6 +82,10 @@ class StockStrategyDaemon:
         self._max_prewarm_per_cycle = max_prewarm_per_cycle
         self._bear_override_config = bear_override_config
         self._universe: list[str] = []
+        # Raw watchlist payload ({"strategies": {...}}) from the last refresh.
+        # Injected into EntryContext.metadata so daily-watchlist-gated strategies
+        # (e.g. momentum_breakout) see the same shape the orchestrator provides.
+        self._watchlist: dict[str, Any] = {}
         self._stop = asyncio.Event()
 
     async def _apply_watchlist(self, raw: Any) -> None:
@@ -89,8 +93,37 @@ class StockStrategyDaemon:
         if not codes:
             return  # keep prior universe
         self._universe = codes
+        # Retain the raw watchlist dict for EntryContext.metadata injection
+        # (daily-watchlist strategy gate). Non-dict payloads → empty dict so
+        # those strategies fall back to dynamic mode (bypass the gate).
+        self._watchlist = raw if isinstance(raw, dict) else {}
         self.feed.update_symbols(codes)
         await self._prewarm_cold()
+
+    def _merge_daily_indicators(self, symbol: str, indicators: dict[str, Any]) -> None:
+        """Merge the engine's daily indicators into ``indicators`` in place.
+
+        Mirrors the orchestrator hot path: daily values (sma_200, ema_*, rsi_*)
+        are stored under a ``daily_`` prefix so multi-timeframe strategies can
+        disambiguate them from intraday values. ``PatternPullback._get`` resolves
+        both ``sma_200`` and ``daily_sma_200``, so this is what lets daily-gated
+        strategies fire in the decoupled path (absence was the no-signal bug).
+
+        ``get_daily_indicators`` is cached per-symbol by daily candle count
+        (StreamingIndicatorEngine._momentum_cache), so repeated per-cycle calls
+        are cheap once the daily buffer is seeded — it recomputes only when the
+        daily candle count changes (once per day).
+        """
+        get_daily = getattr(self.engine, "get_daily_indicators", None)
+        if get_daily is None:
+            return
+        try:
+            daily = get_daily(symbol)
+        except Exception:
+            logger.exception("daily indicator fetch failed symbol=%s", symbol)
+            return
+        for key, value in (daily or {}).items():
+            indicators[f"daily_{key}"] = value
 
     async def _prewarm_cold(self) -> None:
         """Warm universe symbols that are not yet warm (≤ cap per cycle).
@@ -235,12 +268,22 @@ class StockStrategyDaemon:
                 if not market_data:
                     continue
                 indicators = self.resolver.collect_entry_indicators(symbol)
+                # Inject daily indicators (sma_200, daily_*) so daily-gated
+                # strategies (pattern_pullback, momentum_breakout) can evaluate;
+                # without this every symbol is rejected (no_sma_200) — the
+                # decoupled no-signal root cause. Mirrors the orchestrator path.
+                self._merge_daily_indicators(symbol, indicators)
                 ctx = EntryContext(
                     market_data=market_data,
                     indicators=indicators,
                     current_positions=[],
                     timestamp=now,
-                    metadata={"shadow": True},
+                    metadata={
+                        "shadow": True,
+                        # Per-strategy daily watchlist gate (e.g.
+                        # momentum_breakout). Empty → strategy runs dynamic mode.
+                        "daily_watchlist": self._watchlist,
+                    },
                 )
                 signals = await self.manager.check_entries(ctx)
                 for sig in signals or []:
