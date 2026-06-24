@@ -1,5 +1,5 @@
 llm_scorecard:
-  enabled_facets: ["direction", "themes", "movers"]   # add volume_surge as built
+  enabled_facets: ["direction", "themes", "movers", "volume_surge"]
   rolling_windows: [20, 60]
   report_daily: true
   report_weekly: true
