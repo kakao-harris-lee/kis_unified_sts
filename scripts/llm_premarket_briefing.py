@@ -78,6 +78,38 @@ async def main():
         if futures_plan:
             logger.info(f"Futures: {futures_plan.direction}")
 
+        # Best-effort scorecard prediction capture — never breaks the briefing
+        try:
+            from datetime import datetime
+            from shared.llm_scorecard.config import ScorecardConfig
+            import shared.llm_scorecard.facets.direction  # noqa: F401 — registers facet
+            from shared.llm_scorecard.recorder import PredictionRecorder
+            from shared.llm_scorecard.facets.base import CaptureContext
+            from shared.storage.config import StorageConfig
+            from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+            from shared.streaming.trading_state import TradingStatePublisher
+
+            _cfg = ScorecardConfig.from_yaml()
+            _storage = StorageConfig.load_or_default()
+            _ledger = SQLiteRuntimeLedger(_storage.runtime_storage.sqlite)
+            _now = datetime.now()
+            _date_kst = _now.strftime("%Y-%m-%d")
+            # Attempt to get market_context from Redis
+            _mc = None
+            try:
+                _pub = TradingStatePublisher("futures")
+                _mc_obj = _pub.get_market_context()
+                if _mc_obj is not None:
+                    _mc = _mc_obj.to_dict() if hasattr(_mc_obj, "to_dict") else _mc_obj
+            except Exception:
+                pass
+            _ctx = CaptureContext(date_kst=_date_kst, now_kst=_now, market_context=_mc)
+            _recorder = PredictionRecorder(_cfg, _ledger, _ctx)
+            _preds = _recorder.capture_predictions()
+            logger.info("Scorecard: captured %d predictions for %s", len(_preds), _date_kst)
+        except Exception as _sc_exc:
+            logger.warning("Scorecard prediction capture failed (non-fatal): %s", _sc_exc)
+
     except TimeoutError:
         logger.error(
             f"Pre-market analysis exceeded {ANALYSIS_TIMEOUT_SECONDS}s timeout — aborting"
