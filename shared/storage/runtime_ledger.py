@@ -57,6 +57,34 @@ class RuntimeLedger(Protocol):
         """Record an LLM/market context snapshot and return record id."""
         ...
 
+    def save_prediction(
+        self,
+        date_kst: str,
+        facet: str,
+        captured_at: str,
+        payload: dict,
+        confidence: float | None,
+    ) -> None:
+        """Idempotent upsert of an LLM prediction (per date_kst+facet)."""
+        ...
+
+    def load_predictions(self, date_kst: str) -> list[dict]:
+        """Return all LLM predictions recorded for the given trading date (KST)."""
+        ...
+
+    def save_score(self, s: dict) -> None:
+        """Idempotent upsert of a prediction score (per date_kst+facet)."""
+        ...
+
+    def query_scores(
+        self,
+        facet: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[dict]:
+        """Query prediction scores with optional facet and date range filters."""
+        ...
+
     def load_open_positions(
         self, asset_class: str | None = None
     ) -> list[dict[str, Any]]:
@@ -814,7 +842,7 @@ class SQLiteRuntimeLedger:
                 " ON CONFLICT(date_kst,facet) DO UPDATE SET"
                 " captured_at=excluded.captured_at, payload_json=excluded.payload_json,"
                 " confidence=excluded.confidence",
-                (date_kst, facet, captured_at, json.dumps(payload), confidence, datetime.now().isoformat()),
+                (date_kst, facet, captured_at, json.dumps(payload), confidence, _utc_now_iso()),
             )
             self._require_conn().commit()
 

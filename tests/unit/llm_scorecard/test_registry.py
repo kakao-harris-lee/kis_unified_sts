@@ -1,7 +1,20 @@
 # tests/unit/llm_scorecard/test_registry.py
+import pytest
+
 from shared.llm_scorecard.facets.base import (
     register_facet, enabled_facets, FACET_REGISTRY, FacetScore)
 from shared.llm_scorecard.config import ScorecardConfig
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registry():
+    """Snapshot/restore the global FACET_REGISTRY so test entries don't leak."""
+    saved = dict(FACET_REGISTRY)
+    try:
+        yield
+    finally:
+        FACET_REGISTRY.clear()
+        FACET_REGISTRY.update(saved)
 
 
 class _Dummy:

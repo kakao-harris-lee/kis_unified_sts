@@ -1,5 +1,15 @@
 from __future__ import annotations
 from datetime import datetime
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+
+class _MinuteBarStore(Protocol):
+    def get_minute_bars(
+        self, symbol: str, start: Any = ..., end: Any = ...
+    ) -> "pd.DataFrame | None": ...
 
 
 class OutcomeData:
@@ -9,11 +19,13 @@ class OutcomeData:
     to prevent future-leakage into scoring.
     """
 
-    def __init__(self, store: object, now_kst: datetime) -> None:
+    def __init__(self, store: _MinuteBarStore, now_kst: datetime) -> None:
         self._store = store
         self._now = now_kst
 
-    def bars_after(self, symbol: str, date_kst: str, after: datetime):
+    def bars_after(
+        self, symbol: str, date_kst: str, after: datetime
+    ) -> "pd.DataFrame | None":
         """Return minute bars for `symbol` on `date_kst` at/after `after`."""
         try:
             df = self._store.get_minute_bars(symbol, start=date_kst, end=date_kst)
@@ -25,7 +37,10 @@ class OutcomeData:
         import pandas as pd
         if "datetime" in getattr(df, "columns", []):
             df = df.set_index("datetime")
-            df.index = pd.to_datetime(df.index)
+        df.index = pd.to_datetime(df.index)
+        # Drop tz so comparison against the tz-naive KST captured_at is valid
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_localize(None)
         # Now filter by after timestamp (tz-naive comparison)
         after_ts = pd.Timestamp(after)
         df = df[df.index >= after_ts]

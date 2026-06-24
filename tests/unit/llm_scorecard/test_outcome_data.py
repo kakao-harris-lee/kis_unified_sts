@@ -25,3 +25,35 @@ def test_missing_data_returns_none():
     class Empty:
         def get_minute_bars(self, *a, **k): return None
     assert OutcomeData(Empty(), now_kst=datetime(2026,6,25,16,0)).session_return("X","2026-06-25",datetime(2026,6,25,8,55)) is None
+
+
+def _df_with_datetime_column():
+    # Mirrors the real ParquetMarketDataStore.get_minute_bars shape:
+    # a "datetime" COLUMN (not an index), tz-naive KST.
+    return pd.DataFrame({
+        "code": ["X", "X", "X"],
+        "datetime": pd.to_datetime(["2026-06-25 08:50", "2026-06-25 09:00", "2026-06-25 15:20"]),
+        "open": [100, 101, 109],
+        "high": [100, 101, 110],
+        "low": [100, 101, 109],
+        "close": [100, 101, 110],
+        "volume": [1, 2, 3],
+    })
+
+
+def test_session_return_with_datetime_column_excludes_pre_capture_bars():
+    # Exercises the production path where get_minute_bars returns a datetime COLUMN.
+    od = OutcomeData(_Store(_df_with_datetime_column()), now_kst=datetime(2026, 6, 25, 16, 0))
+    cap = datetime(2026, 6, 25, 8, 55)  # after 08:50 pre-market print
+    r = od.session_return("X", "2026-06-25", cap)
+    assert round(r, 2) == round((110 - 101) / 101 * 100, 2)  # open=101 (09:00), close=110
+
+
+def test_session_return_with_tz_aware_datetime_column():
+    # tz-aware datetime column must not raise on comparison against tz-naive captured_at.
+    df = _df_with_datetime_column()
+    df["datetime"] = df["datetime"].dt.tz_localize("Asia/Seoul")
+    od = OutcomeData(_Store(df), now_kst=datetime(2026, 6, 25, 16, 0))
+    cap = datetime(2026, 6, 25, 8, 55)
+    r = od.session_return("X", "2026-06-25", cap)
+    assert round(r, 2) == round((110 - 101) / 101 * 100, 2)
