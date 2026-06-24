@@ -586,6 +586,178 @@ async def test_daily_watchlist_injected_into_context_metadata():
     assert watchlist["strategies"]["momentum_breakout"] == ["005930", "000660"]
 
 
+# ---------------------------------------------------------------------------
+# DailyScanner payload parity (Fix #1 fold-in)
+#
+# The orchestrator merges TWO daily sources: the DailyScanner Redis payload
+# (system:daily_indicators:latest, already daily_-prefixed: daily_volume_ratio,
+# daily_closes, daily_rsi_14, ...) AND the engine's get_daily_indicators.
+# Without the scanner source, momentum_breakout's daily_volume_ratio_min filter
+# fails open (admits low-volume breakouts the orchestrator rejects).
+# ---------------------------------------------------------------------------
+
+
+def _scanner_payload(indicators):
+    return json.dumps({"indicators": indicators})
+
+
+@pytest.mark.asyncio
+async def test_scanner_daily_payload_merged_into_context():
+    """DailyScanner fields (daily_volume_ratio, daily_closes) land in ctx.indicators."""
+    manager = _CaptureManager()
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {
+            "005930": {
+                "daily_volume_ratio": 2.1,
+                "daily_closes": [100.0, 101.0, 102.0],
+                "daily_sma_60_prev": 64000.0,
+                "daily_rsi_14": 62.0,
+            }
+        }
+    )
+    d = _daemon(redis=redis, engine=_FakeEngine(warm=("005930",)), manager=manager)
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    ctx = manager.contexts["005930"]
+    assert ctx.indicators["daily_volume_ratio"] == 2.1
+    assert ctx.indicators["daily_closes"] == [100.0, 101.0, 102.0]
+    assert ctx.indicators["daily_sma_60_prev"] == 64000.0
+    assert ctx.indicators["daily_rsi_14"] == 62.0
+
+
+@pytest.mark.asyncio
+async def test_engine_daily_wins_over_scanner_on_overlap():
+    """Engine get_daily_indicators is merged last (wins) — orchestrator order."""
+    manager = _CaptureManager()
+    redis = _FakeRedis()
+    # Scanner says sma_200=50000; engine (live) says 60000 → engine must win.
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"005930": {"daily_sma_200": 50000.0, "daily_volume_ratio": 1.8}}
+    )
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=manager,
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    ctx = manager.contexts["005930"]
+    assert ctx.indicators["daily_sma_200"] == 60000.0  # engine wins
+    assert ctx.indicators["daily_volume_ratio"] == 1.8  # scanner-only field kept
+
+
+@pytest.mark.asyncio
+async def test_missing_scanner_key_is_graceful():
+    """No scanner key → no scanner fields, no crash (engine path still works)."""
+    manager = _CaptureManager()
+    redis = _FakeRedis()  # no daily_indicators key set
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=manager,
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()  # must not raise
+
+    ctx = manager.contexts["005930"]
+    assert ctx.indicators["daily_sma_200"] == 60000.0
+    assert "daily_volume_ratio" not in ctx.indicators
+
+
+@pytest.mark.asyncio
+async def test_malformed_scanner_payload_is_graceful():
+    """Non-JSON / wrong-shaped scanner payload → ignored, no crash."""
+    manager = _CaptureManager()
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = "not-json{"
+    d = _daemon(redis=redis, engine=_FakeEngine(warm=("005930",)), manager=manager)
+    d._universe = ["005930"]
+
+    await d.evaluate_once()  # must not raise
+
+    ctx = manager.contexts["005930"]
+    assert not any(k.startswith("daily_") for k in ctx.indicators)
+
+
+@pytest.mark.asyncio
+async def test_scanner_read_once_per_cycle_not_per_symbol():
+    """The scanner payload is read once per evaluate_once, not per universe symbol."""
+    manager = _CaptureManager()
+
+    class _CountingRedis(_FakeRedis):
+        def __init__(self):
+            super().__init__()
+            self.daily_reads = 0
+
+        async def get(self, k):
+            if k == "system:daily_indicators:latest":
+                self.daily_reads += 1
+            return self.kv.get(k)
+
+    redis = _CountingRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"005930": {"daily_volume_ratio": 2.0}, "000660": {"daily_volume_ratio": 2.0}}
+    )
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930", "000660")),
+        manager=manager,
+    )
+    d._universe = ["005930", "000660"]
+
+    await d.evaluate_once()
+
+    assert redis.daily_reads == 1  # one read for the whole cycle, not per symbol
+
+
+@pytest.mark.asyncio
+async def test_momentum_breakout_daily_volume_filter_engages_with_scanner_payload():
+    """End-to-end: the scanner's daily_volume_ratio actually drives the filter.
+
+    momentum_breakout.daily_volume_ratio_min rejects when the daily volume ratio
+    is below the threshold and passes it when at/above — proving the decoupled
+    daemon no longer silently bypasses the configured risk filter (parity with
+    the orchestrator).
+    """
+    from datetime import datetime as _dt
+
+    from shared.strategy.base import EntryContext
+    from shared.strategy.entry.momentum_breakout import (
+        MomentumBreakoutConfig,
+        MomentumBreakoutEntry,
+    )
+
+    strat = MomentumBreakoutEntry(MomentumBreakoutConfig(daily_volume_ratio_min=1.5))
+    now = _dt(2026, 6, 24, 1, 0, tzinfo=UTC)  # 10:00 KST, mid-session
+    market = {"code": "005930", "name": "SamsungElec", "close": 71000.0}
+
+    # Below the configured min → filter must reject.
+    ctx_low = EntryContext(
+        market_data=market,
+        indicators={"daily_volume_ratio": 1.0},
+        current_positions=[],
+        timestamp=now,
+        metadata={},
+    )
+    assert strat._passes_daily_quality_filters(ctx_low, "005930") is False
+
+    # At/above the min → filter passes (other gates may still apply downstream).
+    ctx_ok = EntryContext(
+        market_data=market,
+        indicators={"daily_volume_ratio": 1.6},
+        current_positions=[],
+        timestamp=now,
+        metadata={},
+    )
+    assert strat._passes_daily_quality_filters(ctx_ok, "005930") is True
+
+
 @pytest.mark.asyncio
 async def test_missing_daily_indicators_leaves_context_without_daily_fields():
     """When the engine has no daily candles, no daily_ keys are injected (graceful)."""

@@ -72,8 +72,9 @@ def _df_tail_to_candles(df: Any, tail: int) -> list[dict]:
     derive each bar's HHMM minute and bucket it into the correct MTF timeframe
     (mirroring the live tick path). Without it, every seeded 1m bar collapsed
     into MTF bucket 0 (minute=0) and no 5m bar ever closed, leaving symbols
-    cold all morning despite a full parquet prewarm. Daily bars (no datetime
-    column) are unaffected — they keep their OHLCV-only shape.
+    cold all morning despite a full parquet prewarm. Daily parquet bars also
+    carry a ``datetime`` column, but ``seed_daily_candles`` ignores the minute
+    (irrelevant for daily candles), so passing it through is harmless there.
     """
     if df is None or len(df) == 0:
         return []

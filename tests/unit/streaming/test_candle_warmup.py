@@ -226,7 +226,7 @@ def test_df_tail_to_candles_carries_datetime():
 
 
 def test_df_tail_to_candles_without_datetime_column_is_safe():
-    """Bars lacking a datetime column (e.g. daily) still produce OHLCV seeds."""
+    """Defensive: rows lacking a datetime column still produce OHLCV seeds."""
     df = _DF(_bars(3))  # no datetime key
     out = _df_tail_to_candles(df, 3)
 
