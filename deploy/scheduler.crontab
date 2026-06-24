@@ -39,7 +39,18 @@
 50 15 * * 1-5  cd /app && python -m cli.main stock-backfill run --days 30
 5  16 * * 1-5  cd /app && python -m cli.main backfill run
 10 16 * * 1-5  cd /app && python scripts/analysis/stock_paper_daily_verification.py
-20 16 * * 1-5  cd /app && python -m cli.main stock-backfill daily
+# Deep daily backfill: --days 400 lets the paginating fetch fill >100 bars/code
+# (KIS caps a single call at ~100), so SMA(200) symbols stay deep. State-DB resume
+# keeps it cheap (only missing (code,date) are fetched).
+20 16 * * 1-5  cd /app && python -m cli.main stock-backfill daily --days 400
+
+# --- on-entry coverage worker (every 10 min, market hours 08:00–15:50 KST) ---
+# Drains the Redis coverage queue (filled by market-ingest when a symbol enters
+# the universe) and deepens any shallow symbol to >= 200 daily bars so newly
+# admitted LLM/screener symbols are trade-ready for pattern_pullback the same
+# session. Idempotent + throttled; no-op when the queue is empty.
+*/10 8-15 * * 1-5  cd /app && python -m cli.main stock-backfill ensure-coverage
+
 # Futures-minute coverage gate — Telegram alert if the active front-month is
 # short vs expected bars (catches the ~70% loss class, PR #507). After 16:05 backfill.
 30 16 * * 1-5  cd /app && python scripts/analysis/futures_minute_coverage_gate.py

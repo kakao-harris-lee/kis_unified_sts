@@ -110,6 +110,28 @@ class MarketIngestDaemon:
             self.feed.update_symbols(symbols)
         self._symbols = symbols
 
+    def _enqueue_new_symbol_coverage(self, new_symbols: list[str]) -> None:
+        """Queue newly-admitted stock symbols for on-entry deep daily backfill.
+
+        Best-effort: a freshly-admitted universe symbol needs >= 200 daily bars
+        for SMA(200)/pattern_pullback, but KIS serves only ~100 bars/call so it
+        starts shallow. We enqueue the *added* codes to Redis; a scheduler worker
+        (``sts stock-backfill ensure-coverage``) drains the queue and deepens
+        them. This container's data mount is read-only, so detection (here) is
+        decoupled from execution (scheduler). Never breaks the ingest loop.
+        """
+        if self.asset != "stock":
+            return
+        added = [s for s in new_symbols if s not in set(self._symbols)]
+        if not added:
+            return
+        try:
+            from shared.collector.historical.coverage import enqueue_symbols
+
+            enqueue_symbols(added)
+        except Exception as exc:  # noqa: BLE001 - never break ingest on coverage hook
+            logger.warning("coverage enqueue hook failed: %s", exc)
+
     def _feed_is_healthy(self) -> bool:
         """True if the WS feed is delivering fresh ticks.
 
@@ -243,6 +265,7 @@ class MarketIngestDaemon:
                         len(self._symbols),
                         len(new_symbols),
                     )
+                    self._enqueue_new_symbol_coverage(new_symbols)
                     await self._apply_symbols(new_symbols)
                 elif not new_symbols:
                     logger.debug(

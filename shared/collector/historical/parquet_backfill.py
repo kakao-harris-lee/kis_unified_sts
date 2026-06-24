@@ -59,6 +59,22 @@ MINUTE_COMPLETENESS_MIN_ROWS: int = max(
 )
 
 # ---------------------------------------------------------------------------
+# Daily-pagination constants (config-driven via env vars)
+# ---------------------------------------------------------------------------
+# The KIS daily-chart API (FHKST03010100) returns at most ~100 bars per call,
+# ending at the requested end-date and walking backward.  A single call therefore
+# caps history at ~100 daily bars — short of the 200 needed for SMA(200).  We
+# paginate the window backward, one page at a time, until the requested span is
+# covered or KIS returns no older data.
+DAILY_PAGE_MAX_ROWS: int = int(os.getenv("STOCK_DAILY_PAGE_MAX_ROWS", "100"))
+# A page returning fewer than this many bars is treated as "history exhausted"
+# (recent listing / no older data) and stops pagination for that code.
+DAILY_PAGE_MIN_FULL: int = int(os.getenv("STOCK_DAILY_PAGE_MIN_FULL", "90"))
+# Hard ceiling on pages per code so a misbehaving response can never loop forever.
+# 8 pages * ~100 bars covers >2 trading years, well above any SMA window.
+DAILY_MAX_PAGES: int = int(os.getenv("STOCK_DAILY_MAX_PAGES", "8"))
+
+# ---------------------------------------------------------------------------
 # Price-sanity gate constants (config-driven via env vars)
 # ---------------------------------------------------------------------------
 # The completeness gate counts bars but cannot see *value* corruption.  The KIS
@@ -825,6 +841,104 @@ async def collect_today_stock_minute_parquet(
     )
 
 
+async def _collect_one_stock_daily(
+    *,
+    client: httpx.AsyncClient,
+    store: ParquetMarketDataStore,
+    state: ParquetBackfillState,
+    code: str,
+    start: date,
+    end: date,
+    resume: bool,
+    verbose: bool,
+) -> ParquetBackfillResult:
+    """Paginate KIS daily bars backward for one code until ``start`` is covered.
+
+    The KIS daily-chart API (``FHKST03010100``) returns at most
+    :data:`DAILY_PAGE_MAX_ROWS` bars per call, ending at the requested end-date and
+    walking backward.  A single call therefore caps history at ~100 daily bars —
+    far short of the 200 bars SMA(200) needs.  This walks the window backward, one
+    page at a time, so a deep ``days`` request actually fills deep history.
+    """
+    from .daily_stock import fetch_daily_candles_async, parse_daily_ohlcv
+
+    result = ParquetBackfillResult()
+    seen_days: set[date] = set()
+    page_end = end
+    wrote_any = False
+    for _ in range(DAILY_MAX_PAGES):
+        if page_end < start:
+            break
+        result.tasks += 1
+        _, data = await fetch_daily_candles_async(client, code, start, page_end)
+        if "error" in data:
+            result.failed += 1
+            state.mark_failed(
+                asset_class="stock",
+                timeframe="daily",
+                dataset="stock_daily",
+                code=code,
+                trade_date=page_end,
+                error=str(data["error"]),
+            )
+            break
+
+        rows = parse_daily_ohlcv(code, data)
+        if not rows:
+            # No older data available (e.g. recent listing) — stop cleanly.
+            if not wrote_any:
+                result.failed += 1
+                state.mark_failed(
+                    asset_class="stock",
+                    timeframe="daily",
+                    dataset="stock_daily",
+                    code=code,
+                    trade_date=page_end,
+                    error="no parsed rows",
+                )
+            break
+
+        page_days = sorted({row[1] for row in rows})
+        for row in rows:
+            row_day = row[1]
+            if row_day in seen_days:
+                continue
+            seen_days.add(row_day)
+            if resume and state.is_completed(
+                asset_class="stock",
+                timeframe="daily",
+                dataset="stock_daily",
+                code=code,
+                trade_date=row_day,
+            ):
+                result.skipped += 1
+                continue
+            written = store.replace_daily_day(code, row_day, [_ohlcv_dicts([row])[0]])
+            result.rows += written
+            wrote_any = True
+            state.mark_success(
+                asset_class="stock",
+                timeframe="daily",
+                dataset="stock_daily",
+                code=code,
+                trade_date=row_day,
+                rows=written,
+            )
+
+        oldest = page_days[0]
+        # KIS returned fewer than a full page → history is exhausted; stop.
+        if len(page_days) < DAILY_PAGE_MIN_FULL:
+            break
+        next_end = oldest - timedelta(days=1)
+        if next_end >= page_end:  # guard against non-advancing windows
+            break
+        page_end = next_end
+
+    if verbose:
+        print(f"Parquet wrote stock daily {code}: distinct_days={len(seen_days)}")
+    return result
+
+
 async def collect_stock_daily_parquet(
     *,
     days: int = 100,
@@ -833,8 +947,11 @@ async def collect_stock_daily_parquet(
     resume: bool = True,
     verbose: bool = True,
 ) -> ParquetBackfillResult:
-    """Backfill stock daily bars directly into Parquet."""
-    from .daily_stock import fetch_daily_candles_async, parse_daily_ohlcv
+    """Backfill stock daily bars directly into Parquet.
+
+    Paginates the KIS daily-chart API backward per code so that a deep ``days``
+    request fills more than the single-page ~100-bar cap (required for SMA(200)).
+    """
     from .stock import STOCK_UNIVERSE
 
     root_path = _resolve_root(root)
@@ -847,71 +964,21 @@ async def collect_stock_daily_parquet(
     )
     end = date.today()
     start = end - timedelta(days=max(days, 1))
-    trading_days = get_trading_days_range(start, end)
-    if not trading_days:
-        return ParquetBackfillResult()
 
     result = ParquetBackfillResult()
     async with httpx.AsyncClient(timeout=30.0) as client:
-        responses = await asyncio.gather(
-            *[
-                fetch_daily_candles_async(
-                    client, code, trading_days[0], trading_days[-1]
-                )
-                for code in selected_codes
-            ]
-        )
-
-    for code, data in responses:
-        result.tasks += 1
-        if "error" in data:
-            result.failed += 1
-            state.mark_failed(
-                asset_class="stock",
-                timeframe="daily",
-                dataset="stock_daily",
+        for code in selected_codes:
+            partial = await _collect_one_stock_daily(
+                client=client,
+                store=store,
+                state=state,
                 code=code,
-                trade_date=trading_days[-1],
-                error=str(data["error"]),
+                start=start,
+                end=end,
+                resume=resume,
+                verbose=verbose,
             )
-            continue
-
-        rows = parse_daily_ohlcv(code, data)
-        if not rows:
-            result.failed += 1
-            state.mark_failed(
-                asset_class="stock",
-                timeframe="daily",
-                dataset="stock_daily",
-                code=code,
-                trade_date=trading_days[-1],
-                error="no parsed rows",
-            )
-            continue
-
-        for row in rows:
-            row_day = row[1]
-            if resume and state.is_completed(
-                asset_class="stock",
-                timeframe="daily",
-                dataset="stock_daily",
-                code=code,
-                trade_date=row_day,
-            ):
-                result.skipped += 1
-                continue
-            written = store.replace_daily_day(code, row_day, [_ohlcv_dicts([row])[0]])
-            result.rows += written
-            state.mark_success(
-                asset_class="stock",
-                timeframe="daily",
-                dataset="stock_daily",
-                code=code,
-                trade_date=row_day,
-                rows=written,
-            )
-        if verbose:
-            print(f"Parquet wrote stock daily {code}: rows={len(rows)}")
+            _merge_result(result, partial)
 
     return result
 

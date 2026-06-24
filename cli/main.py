@@ -1395,6 +1395,40 @@ def stock_backfill_daily(sink: str, days: int, codes: tuple):
     )
 
 
+@stock_backfill.command("ensure-coverage")
+@click.option(
+    "--codes",
+    "-c",
+    multiple=True,
+    help="Specific codes to ensure (default: drain the Redis pending queue)",
+)
+def stock_backfill_ensure_coverage(codes: tuple):
+    """Deepen daily history for shallow dynamic-universe symbols.
+
+    Drains the on-entry coverage queue (Redis ``stock:coverage:pending``, filled
+    by the market-ingest universe-change handler) and paginating-backfills any
+    symbol below the configured ``min_daily_bars`` so SMA(200)/pattern_pullback
+    becomes available. Idempotent, throttled, and batched (config/env driven).
+
+    \b
+    Example:
+        sts stock-backfill ensure-coverage
+        sts stock-backfill ensure-coverage -c 005930 -c 000660
+    """
+    import asyncio
+
+    from shared.collector.historical.coverage import ensure_daily_coverage
+
+    codes_list = list(codes) if codes else None
+    summary = asyncio.run(ensure_daily_coverage(codes=codes_list))
+    click.echo(
+        "Coverage ensure complete! "
+        f"checked={summary['checked']}, already_deep={summary['already_deep']}, "
+        f"deepened={summary['deepened']}, failed={summary['failed']}, "
+        f"requeued={summary['requeued']}, rows={summary['rows']}"
+    )
+
+
 @stock_backfill.command("daily-status")
 @click.option(
     "--sink",

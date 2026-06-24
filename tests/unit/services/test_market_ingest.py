@@ -106,6 +106,41 @@ async def test_universe_change_updates_symbols_live_for_stock():
 
 
 @pytest.mark.asyncio
+async def test_universe_change_enqueues_new_stock_symbols_for_coverage(monkeypatch):
+    """A stock universe addition queues only the *new* codes for deep backfill."""
+    import shared.collector.historical.coverage as cov
+
+    enqueued: list[list[str]] = []
+    monkeypatch.setattr(
+        cov, "enqueue_symbols", lambda codes, **_kw: enqueued.append(list(codes))
+    )
+
+    feed, pub = FakeFeed(), FakePublisher()
+    await _run_briefly(
+        _daemon(feed, pub, _provider([["A"], ["A", "B"]]), restart=False)
+    )
+    # Only the added symbol "B" is enqueued (not the pre-existing "A").
+    assert enqueued == [["B"]]
+
+
+@pytest.mark.asyncio
+async def test_universe_change_does_not_enqueue_for_futures(monkeypatch):
+    """Coverage backfill is stock-only; futures universe changes must not enqueue."""
+    import shared.collector.historical.coverage as cov
+
+    enqueued: list[list[str]] = []
+    monkeypatch.setattr(
+        cov, "enqueue_symbols", lambda codes, **_kw: enqueued.append(list(codes))
+    )
+
+    feed, pub = FakeFeed(), FakePublisher()
+    await _run_briefly(
+        _daemon(feed, pub, _provider([["A"], ["B"]]), asset="futures", restart=True)
+    )
+    assert enqueued == []
+
+
+@pytest.mark.asyncio
 async def test_universe_change_restarts_feed_for_futures():
     feed, pub = FakeFeed(), FakePublisher()
     await _run_briefly(
