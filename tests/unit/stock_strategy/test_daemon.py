@@ -849,3 +849,402 @@ async def test_pattern_pullback_fires_only_with_daily_sma_200_injected():
     sig = await strat.generate(ctx_daily)
     assert sig is not None
     assert sig.code == "005930"
+
+
+# ---------------------------------------------------------------------------
+# Per-(symbol, strategy) signal-eval observability (stock:daemon:signal_eval)
+#
+# Mirrors the futures trading:futures:setup_eval reject-reason pattern. The
+# daemon records, per evaluated (symbol, strategy), whether it fired or rejected
+# (and why), then publishes an aggregate hash so the operator can read
+# "for each strategy, how many symbols rejected and the dominant reason" — the
+# instrument missing from the 2026-06-24 no-trade diagnosis. Read-only telemetry:
+# it must not change the candidate stream the daemon already publishes.
+# ---------------------------------------------------------------------------
+
+from shared.streaming.stock_signal_eval import (  # noqa: E402
+    REJECT_BEAR_CAP_REACHED,
+    REJECT_BEAR_REGIME,
+    REJECT_COLD,
+    REJECT_CONDITIONS_NOT_MET,
+    REJECT_NO_DAILY_WATCHLIST,
+    REJECT_NO_MARKET_DATA,
+    REJECT_NO_SMA_200,
+    StockSignalEvalConfig,
+)
+
+_EVAL_CFG = StockSignalEvalConfig()
+
+
+class _RosterManager:
+    """Fake manager with a strategy roster (mirrors StrategyManager.strategies).
+
+    ``fire_map`` maps {strategy_name: set(symbols_that_fire)}; any roster
+    strategy not firing for a symbol is a reject the daemon must classify.
+    """
+
+    def __init__(self, fire_map=None, daily_gated=()):
+        self._fire_map = {k: set(v) for k, v in (fire_map or {}).items()}
+        roster = set(self._fire_map) | {"momentum_breakout", "pattern_pullback"}
+        # The daemon iterates manager.strategies (name -> object) and reads each
+        # object's required_indicators to decide sma_200 dependence. Only
+        # pattern_pullback gates on sma_200 (mirrors production); momentum_breakout
+        # and williams_r do not — so only pattern_pullback can reject no_sma_200.
+        self.strategies = {
+            name: _StratStub(
+                name,
+                required=(("sma_200",) if name == "pattern_pullback" else ()),
+            )
+            for name in roster
+        }
+        self._daily_gated = set(daily_gated)
+
+    async def check_entries(self, context):
+        code = context.market_data.get("code")
+        out = []
+        for name, fires in self._fire_map.items():
+            if code in fires:
+                out.append(Signal(code=code, strategy=name, price=71000.0))
+        return out
+
+
+class _StratStub:
+    def __init__(self, name, required=()):
+        self.name = name
+        self.required_indicators = list(required)
+
+
+def _eval_summary(redis):
+    """Decode the published stock:daemon:signal_eval hash → {strategy: dict}."""
+    raw = redis.hashes.get(_EVAL_CFG.redis_key, {})
+    return {k: json.loads(v) for k, v in raw.items()}
+
+
+class _HashRedis(_FakeRedis):
+    """_FakeRedis + hset/hgetall + expire tracking for the eval hash."""
+
+    def __init__(self):
+        super().__init__()
+        self.hashes = {}
+        self.expires = {}
+
+    async def hset(self, key, mapping=None, **_kw):
+        bucket = self.hashes.setdefault(key, {})
+        if mapping:
+            bucket.update(mapping)
+        return len(mapping or {})
+
+    async def hgetall(self, key):
+        return dict(self.hashes.get(key, {}))
+
+    async def expire(self, key, ttl):
+        self.expires[key] = ttl
+        return True
+
+
+def _eval_daemon(**kw):
+    defaults = {
+        "redis": _HashRedis(),
+        "feed": _FakeFeed(),
+        "engine": _FakeEngine(),
+        "resolver": _FakeResolver(),
+        "manager": _RosterManager(),
+        "candidate_stream": "signal.candidate.stock.shadow",
+        "candidate_maxlen": 10_000,
+        "now_fn": lambda: _NOW,
+        "signal_eval_config": _EVAL_CFG,
+    }
+    defaults.update(kw)
+    return StockStrategyDaemon(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_signal_for_firing_strategy():
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=_RosterManager(fire_map={"williams_r": {"005930"}}),
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    assert summary["williams_r"]["outcome"] == "signal"
+    assert summary["williams_r"]["signals"] == 1
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_reject_reason_for_non_firing_strategy():
+    redis = _HashRedis()
+    # daily sma_200 present → reject reason is the residual "conditions_not_met",
+    # NOT no_sma_200 (proves the daemon distinguishes them).
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=_RosterManager(fire_map={"williams_r": {"005930"}}),
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    # pattern_pullback is in the roster but did not fire → reject recorded.
+    assert summary["pattern_pullback"]["outcome"] == "reject"
+    assert summary["pattern_pullback"]["rejects"] == 1
+    assert summary["pattern_pullback"]["reason"] == REJECT_CONDITIONS_NOT_MET
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_no_sma_200_only_for_sma200_dependent_strategy():
+    redis = _HashRedis()
+    # No daily indicators at all. Only sma_200-dependent strategies (here
+    # pattern_pullback) reject no_sma_200; strategies that ignore SMA(200)
+    # (momentum_breakout) fall through to conditions_not_met — so the diagnosis's
+    # headline reject is never over-counted for non-SMA strategies.
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={}),
+        manager=_RosterManager(fire_map={}),  # nothing fires
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    assert summary["pattern_pullback"]["reason"] == REJECT_NO_SMA_200
+    assert summary["momentum_breakout"]["reason"] == REJECT_CONDITIONS_NOT_MET
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_cold_for_not_warm_symbol():
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),  # cold
+        manager=_RosterManager(fire_map={}),
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    # Cold symbols are skipped before generators run; recorded per roster strategy.
+    assert summary["pattern_pullback"]["reason"] == REJECT_COLD
+    assert summary["pattern_pullback"]["rejects"] == 1
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_no_market_data():
+    class _NoPriceFeed(_FakeFeed):
+        async def get_current_price(self, _symbol):
+            return None
+
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        feed=_NoPriceFeed(),
+        engine=_FakeEngine(warm=("005930",)),
+        manager=_RosterManager(fire_map={}),
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    assert summary["pattern_pullback"]["reason"] == REJECT_NO_MARKET_DATA
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_not_in_daily_watchlist():
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=_RosterManager(fire_map={}),
+    )
+    # momentum_breakout daily-gated to a DIFFERENT symbol → 005930 not in its list.
+    await d._apply_watchlist({"strategies": {"momentum_breakout": ["000660"]}})
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    assert summary["momentum_breakout"]["reason"] == REJECT_NO_DAILY_WATCHLIST
+    # pattern_pullback is NOT in the watchlist's strategies map → not daily-gated
+    # → it falls through to the generator-condition reason, not the watchlist one.
+    assert summary["pattern_pullback"]["reason"] == REJECT_CONDITIONS_NOT_MET
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_bear_regime_skip():
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(mfi_values={"005930": 28.0, "000660": 30.0}),
+        regime_config=_REGIME_CFG,
+        manager=_RosterManager(fire_map={}),
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()
+
+    assert published == 0  # bear gate still blocks entries (unchanged decision)
+    summary = _eval_summary(redis)
+    assert summary["pattern_pullback"]["reason"] == REJECT_BEAR_REGIME
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_bear_cap_reached(monkeypatch):
+    """Bear + override cap reached records bear_cap_reached (distinct from selectivity)."""
+    from shared.streaming.stock_bear_override import BearOverrideConfig
+
+    daily = {
+        "indicators": {
+            "005930": {
+                "daily_close": 100,
+                "daily_sma_20": 90,
+                "daily_rsi_14": 70,
+                "daily_prev_rsi_14": 65,
+                "daily_macd_hist": 5,
+            },
+        }
+    }
+    redis = _HashRedis()
+    redis.kv["system:daily_indicators:latest"] = json.dumps(daily)
+
+    async def _hkeys(_k):
+        return [b"005930"]  # an open position already in the strong symbol
+
+    redis.hkeys = _hkeys  # type: ignore[assignment]
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",)),
+        manager=_RosterManager(fire_map={"williams_r": {"005930"}}),
+        regime_config=StockRegimeConfig(),
+        bear_override_config=BearOverrideConfig(enabled=True, max_override_positions=1),
+    )
+    d._universe = ["005930"]
+    monkeypatch.setattr(
+        d, "_publish_regime", _async_return(json.loads(_bear_payload()))
+    )
+
+    published = await d.evaluate_once()
+
+    assert published == 0  # cap reached → no new override entries (unchanged decision)
+    summary = _eval_summary(redis)
+    assert summary["pattern_pullback"]["reason"] == REJECT_BEAR_CAP_REACHED
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_publishes_with_ttl():
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=_RosterManager(fire_map={"williams_r": {"005930"}}),
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    assert redis.expires.get(_EVAL_CFG.redis_key) == _EVAL_CFG.publish_ttl_seconds
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_disabled_publishes_nothing():
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=_RosterManager(fire_map={"williams_r": {"005930"}}),
+        signal_eval_config=StockSignalEvalConfig(enabled=False),
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    assert _EVAL_CFG.redis_key not in redis.hashes
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_no_config_is_inert():
+    """Without a signal_eval_config (None) the daemon publishes no eval hash."""
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=_RosterManager(fire_map={"williams_r": {"005930"}}),
+        signal_eval_config=None,
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    assert _EVAL_CFG.redis_key not in redis.hashes
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_does_not_change_candidate_publishing():
+    """Telemetry is read-only: the candidate stream is unaffected by eval on/off."""
+    engine = _FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}})
+    manager = _RosterManager(fire_map={"williams_r": {"005930"}})
+
+    redis_on = _HashRedis()
+    d_on = _eval_daemon(redis=redis_on, engine=engine, manager=manager)
+    d_on._universe = ["005930"]
+    await d_on.evaluate_once()
+
+    redis_off = _HashRedis()
+    d_off = _eval_daemon(
+        redis=redis_off,
+        engine=engine,
+        manager=manager,
+        signal_eval_config=None,
+    )
+    d_off._universe = ["005930"]
+    await d_off.evaluate_once()
+
+    on_codes = sorted(f["code"] for _s, f in redis_on.added)
+    off_codes = sorted(f["code"] for _s, f in redis_off.added)
+    assert on_codes == off_codes == ["005930"]
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_publish_failure_does_not_break_evaluation():
+    """A Redis failure in the eval publish must not affect signal publishing."""
+
+    class _HsetBoomRedis(_HashRedis):
+        async def hset(self, *_a, **_k):
+            raise RuntimeError("redis down")
+
+    redis = _HsetBoomRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=_RosterManager(fire_map={"williams_r": {"005930"}}),
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()  # must not raise
+
+    assert published == 1  # candidate still published despite eval publish failure
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_legacy_manager_without_roster_still_records_fired():
+    """A manager lacking .strategies still records fired strategies (graceful)."""
+    redis = _HashRedis()
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",), daily={"005930": {"sma_200": 60000.0}}),
+        manager=_FakeManager(fire_for=("005930",)),  # no .strategies attribute
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    # _FakeManager fires a williams_r signal → recorded as a signal outcome.
+    assert summary["williams_r"]["outcome"] == "signal"

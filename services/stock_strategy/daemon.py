@@ -38,6 +38,19 @@ from shared.streaming.stock_regime import (
     compute_regime_payload,
     is_bear_regime,
 )
+from shared.streaming.stock_signal_eval import (
+    OUTCOME_REJECT,
+    OUTCOME_SIGNAL,
+    REJECT_BEAR_CAP_REACHED,
+    REJECT_BEAR_REGIME,
+    REJECT_COLD,
+    REJECT_CONDITIONS_NOT_MET,
+    REJECT_NO_DAILY_WATCHLIST,
+    REJECT_NO_MARKET_DATA,
+    REJECT_NO_SMA_200,
+    SignalEvalCollector,
+    StockSignalEvalConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +78,7 @@ class StockStrategyDaemon:
         max_prewarm_per_cycle: int = 5,
         bear_override_config: BearOverrideConfig | None = None,
         daily_indicators_key: str = "system:daily_indicators:latest",
+        signal_eval_config: StockSignalEvalConfig | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -87,6 +101,10 @@ class StockStrategyDaemon:
         # key the bear-override path reads; sourced here independently so the
         # daily merge works even when the bear override is disabled.
         self._daily_indicators_key = daily_indicators_key
+        # Read-only per-(symbol, strategy) signal-evaluation observability
+        # (stock:daemon:signal_eval). None / disabled → fully inert; recording
+        # and publishing never influence the candidate stream.
+        self._signal_eval_config = signal_eval_config
         self._universe: list[str] = []
         # Raw watchlist payload ({"strategies": {...}}) from the last refresh.
         # Injected into EntryContext.metadata so daily-watchlist-gated strategies
@@ -273,6 +291,15 @@ class StockStrategyDaemon:
         """Build context + check_entries per warm symbol; publish. Returns #published."""
         published = 0
         now = self._now_fn()
+        # Read-only per-(symbol, strategy) eval collector for this cycle. None
+        # when observability is off; recording is a no-op via _eval_record so
+        # the entry path is identical whether or not it is enabled.
+        evaluator = (
+            SignalEvalCollector()
+            if (self._signal_eval_config and self._signal_eval_config.enabled)
+            else None
+        )
+        roster = self._strategy_roster()
         regime_payload = await self._publish_regime(now)
         is_bear = (
             regime_payload is not None
@@ -294,12 +321,16 @@ class StockStrategyDaemon:
                     regime_payload.get("mfi"),
                     regime_payload.get("mfi_symbols"),
                 )
+                self._record_blanket_reject(evaluator, roster, REJECT_BEAR_REGIME)
+                await self._publish_signal_eval(evaluator, now)
                 return 0
             cap = self._bear_override_config.max_override_positions  # type: ignore[union-attr]
             if await self._override_count(strong) >= cap:
                 logger.info(
                     "bear override: cap %d reached — no new override entries", cap
                 )
+                self._record_blanket_reject(evaluator, roster, REJECT_BEAR_CAP_REACHED)
+                await self._publish_signal_eval(evaluator, now)
                 return 0
             override_codes = strong
             logger.info(
@@ -313,11 +344,18 @@ class StockStrategyDaemon:
         for symbol in list(self._universe):
             try:
                 if is_bear and symbol not in override_codes:
+                    self._record_symbol_reject(
+                        evaluator, roster, symbol, REJECT_BEAR_REGIME
+                    )
                     continue
                 if not self.engine.is_warm(symbol):
+                    self._record_symbol_reject(evaluator, roster, symbol, REJECT_COLD)
                     continue
                 market_data = await self.feed.get_current_price(symbol)
                 if not market_data:
+                    self._record_symbol_reject(
+                        evaluator, roster, symbol, REJECT_NO_MARKET_DATA
+                    )
                     continue
                 indicators = self.resolver.collect_entry_indicators(symbol)
                 # Inject both daily sources (scanner payload + engine) so
@@ -340,17 +378,226 @@ class StockStrategyDaemon:
                     },
                 )
                 signals = await self.manager.check_entries(ctx)
+                fired_strategies: set[str] = set()
                 for sig in signals or []:
                     if is_bear:
                         with contextlib.suppress(Exception):
                             sig.metadata["bear_override"] = (
                                 True  # best-effort; tag is observability only
                             )
+                    fired_strategies.add(str(getattr(sig, "strategy", "") or ""))
+                    self._eval_record(
+                        evaluator,
+                        str(getattr(sig, "strategy", "") or ""),
+                        symbol,
+                        OUTCOME_SIGNAL,
+                        (
+                            str(
+                                getattr(sig, "metadata", {}).get(
+                                    "signal_direction", "long"
+                                )
+                            )
+                            if isinstance(getattr(sig, "metadata", None), dict)
+                            else "long"
+                        ),
+                    )
                     await self._publish(sig)
                     published += 1
+                # Classify the non-firing roster strategies for this symbol so
+                # "why 0 signals" is answerable per strategy. Read-only — derived
+                # entirely from observable state (no generator re-execution).
+                self._record_nonfiring_rejects(
+                    evaluator, roster, fired_strategies, symbol, indicators
+                )
             except Exception:
                 logger.exception("stock entry eval failed symbol=%s", symbol)
+        await self._publish_signal_eval(evaluator, now)
         return published
+
+    # ------------------------------------------------------------------
+    # Signal-eval observability (read-only; never affects the candidate stream)
+    # ------------------------------------------------------------------
+
+    def _strategy_roster(self) -> dict[str, Any]:
+        """Return the manager's strategy roster ({name: strategy}) if exposed.
+
+        Legacy/fake managers without ``.strategies`` return ``{}`` → only fired
+        strategies are recorded (graceful degradation).
+        """
+        roster = getattr(self.manager, "strategies", None)
+        return dict(roster) if isinstance(roster, dict) else {}
+
+    @staticmethod
+    def _eval_record(
+        evaluator: SignalEvalCollector | None,
+        strategy: str,
+        symbol: str,
+        outcome: str,
+        reason: str,
+    ) -> None:
+        """Record one outcome when observability is enabled (no-op otherwise)."""
+        if evaluator is None or not strategy:
+            return
+        evaluator.record(strategy, symbol, outcome, reason)
+
+    def _record_symbol_reject(
+        self,
+        evaluator: SignalEvalCollector | None,
+        roster: dict[str, Any],
+        symbol: str,
+        reason: str,
+    ) -> None:
+        """Record a single (skipped) symbol's reject across all roster strategies."""
+        if evaluator is None:
+            return
+        for name in roster:
+            evaluator.record(name, symbol, OUTCOME_REJECT, reason)
+
+    def _record_blanket_reject(
+        self,
+        evaluator: SignalEvalCollector | None,
+        roster: dict[str, Any],
+        reason: str,
+    ) -> None:
+        """Record the same reject for every universe symbol × roster strategy.
+
+        Used for early-return cycles (bear gate) so the operator still sees the
+        per-strategy count and the dominant reason for the whole cycle.
+        """
+        if evaluator is None:
+            return
+        for symbol in list(self._universe):
+            for name in roster:
+                evaluator.record(name, symbol, OUTCOME_REJECT, reason)
+
+    def _record_nonfiring_rejects(
+        self,
+        evaluator: SignalEvalCollector | None,
+        roster: dict[str, Any],
+        fired_strategies: set[str],
+        symbol: str,
+        indicators: dict[str, Any],
+    ) -> None:
+        """Classify each non-firing roster strategy's reject reason for a symbol.
+
+        Faithful daemon-boundary classification — derived purely from observable
+        state, never by re-running a generator (which would double-set firing
+        cooldowns). Reasons, in precedence order:
+
+        * ``no_daily_watchlist`` — the strategy is daily-gated (its name is a key
+          in ``watchlist["strategies"]``) and this symbol is not on its list.
+        * ``no_sma_200`` — the strategy *requires* ``sma_200`` (per its
+          ``required_indicators``) but neither ``sma_200`` nor ``daily_sma_200``
+          is present, so its base-trend gate is dead (the diagnosis's headline
+          reject). Only attributed to SMA(200)-dependent strategies so it never
+          over-counts for strategies that ignore SMA(200) (e.g. momentum_breakout,
+          williams_r).
+        * ``conditions_not_met`` — the residual: the strategy ran but no entry
+          condition matched (threshold / RVOL / breakout / etc.).
+        """
+        if evaluator is None or not roster:
+            return
+        has_sma_200 = self._has_sma_200(indicators)
+        gated = self._daily_gated_strategies()
+        sma200_dependent = self._sma200_dependent_strategies(roster)
+        for name in roster:
+            if name in fired_strategies:
+                continue
+            reason = self._reject_reason_for(
+                name, symbol, gated, has_sma_200, sma200_dependent
+            )
+            evaluator.record(name, symbol, OUTCOME_REJECT, reason)
+
+    @staticmethod
+    def _has_sma_200(indicators: dict[str, Any]) -> bool:
+        """True when a usable (>0) daily SMA(200) is present under either key."""
+        for key in ("sma_200", "daily_sma_200"):
+            value = indicators.get(key)
+            if value is None:
+                continue
+            try:
+                if float(value) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    def _daily_gated_strategies(self) -> dict[str, set[str]]:
+        """Map each daily-gated strategy → its allowed symbol set (this cycle).
+
+        A strategy is daily-gated when it appears as a key in the current
+        watchlist's ``strategies`` map (mirrors the per-strategy daily watchlist
+        gate that strategies such as momentum_breakout apply). An empty watchlist
+        → no gating (dynamic mode).
+        """
+        strategies = (
+            self._watchlist.get("strategies", {})
+            if isinstance(self._watchlist, dict)
+            else {}
+        )
+        if not isinstance(strategies, dict):
+            return {}
+        return {
+            name: {str(c) for c in (codes or [])}
+            for name, codes in strategies.items()
+            if isinstance(codes, list)
+        }
+
+    @staticmethod
+    def _sma200_dependent_strategies(roster: dict[str, Any]) -> set[str]:
+        """Names of roster strategies whose required_indicators include sma_200.
+
+        Used so ``no_sma_200`` is attributed only to strategies that actually
+        gate on SMA(200) (e.g. pattern_pullback), not to strategies that ignore
+        it (e.g. momentum_breakout, williams_r) — which would over-count the
+        diagnosis's headline reject. A strategy whose required keys cannot be
+        read is treated as non-dependent (falls through to conditions_not_met).
+        """
+        dependent: set[str] = set()
+        for name, strategy in roster.items():
+            try:
+                required = getattr(strategy, "required_indicators", None) or ()
+                keys = {str(k) for k in required}
+            except Exception:
+                continue
+            if "sma_200" in keys or "daily_sma_200" in keys:
+                dependent.add(name)
+        return dependent
+
+    @staticmethod
+    def _reject_reason_for(
+        name: str,
+        symbol: str,
+        gated: dict[str, set[str]],
+        has_sma_200: bool,
+        sma200_dependent: set[str],
+    ) -> str:
+        allowed = gated.get(name)
+        if allowed is not None and symbol not in allowed:
+            return REJECT_NO_DAILY_WATCHLIST
+        if name in sma200_dependent and not has_sma_200:
+            return REJECT_NO_SMA_200
+        return REJECT_CONDITIONS_NOT_MET
+
+    async def _publish_signal_eval(
+        self, evaluator: SignalEvalCollector | None, now: datetime
+    ) -> None:
+        """Publish the aggregated eval hash with TTL (best-effort; throttled 1/cycle).
+
+        Observability only — a publish failure logs at debug and never affects
+        the candidate stream.
+        """
+        cfg = self._signal_eval_config
+        if evaluator is None or cfg is None or not cfg.enabled or evaluator.is_empty():
+            return
+        try:
+            payload = evaluator.to_payload(now=now)
+            if not payload:
+                return
+            await self.redis.hset(cfg.redis_key, mapping=payload)
+            await self.redis.expire(cfg.redis_key, cfg.publish_ttl_seconds)
+        except Exception:
+            logger.debug("stock signal-eval publish failed", exc_info=True)
 
     async def _publish(self, signal: Signal) -> None:
         fields = stock_signal_to_stream_dict(signal, signal_id=uuid.uuid4().hex)

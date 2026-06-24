@@ -110,6 +110,7 @@ async def _build_and_run() -> int:
     from shared.streaming.client import RedisClient
     from shared.streaming.stock_bear_override import BearOverrideConfig
     from shared.streaming.stock_regime import StockRegimeConfig
+    from shared.streaming.stock_signal_eval import StockSignalEvalConfig
 
     candidate_stream = _candidate_stream_for(mode)
 
@@ -227,6 +228,10 @@ async def _build_and_run() -> int:
     if not bear_override_config.enabled:
         bear_override_config = None
 
+    # Per-(symbol, strategy) signal-eval observability (default ON). Read-only
+    # telemetry → publishes the "why 0 signals" table to stock:daemon:signal_eval.
+    signal_eval_config = StockSignalEvalConfig.load()
+
     daemon = StockStrategyDaemon(
         redis=redis_client,
         feed=feed,
@@ -241,6 +246,7 @@ async def _build_and_run() -> int:
         regime_config=regime_config,
         bear_override_config=bear_override_config,
         daily_indicators_key=daily_indicators_key,
+        signal_eval_config=signal_eval_config,
         prewarm_fn=prewarm_fn,
         max_prewarm_per_cycle=prewarm_cfg.max_prewarm_per_cycle,
     )

@@ -1,0 +1,25 @@
+# Per-(symbol, strategy) signal-evaluation observability for the decoupled
+# stock M4-P daemon (StockStrategyDaemon).
+#
+# The daemon logs only "Signal cycle: N signals from [...]" — there is NO
+# per-(symbol, strategy) reject visibility, so "why 0 signals" is invisible live
+# (the 2026-06-24 no-trade diagnosis had to reproduce it offline). This mirrors
+# the futures trading:futures:setup_eval reject-reason pattern (PR #483): each
+# eval cycle the daemon records, per evaluated (symbol, strategy), whether it
+# fired or rejected (and why), then publishes an aggregate hash to `redis_key`.
+#
+# It is READ-ONLY telemetry — it records what the daemon already decided and
+# never influences signal/entry decisions.
+#
+# Read the live table with (DB1):
+#   redis-cli -n 1 HGETALL stock:daemon:signal_eval
+# Each field is a strategy name; the value is JSON:
+#   {"strategy", "outcome", "reason", "reason_counts", "evaluated",
+#    "signals", "rejects", "ts_kst"}
+# so the operator reads, for each strategy, how many symbols rejected and the
+# dominant reason. Reject reasons: cold | no_market_data | bear_regime |
+# no_sma_200 | no_daily_watchlist | conditions_not_met.
+stock_signal_eval:
+  enabled: true                 # default ON; read-only, safe to leave enabled
+  redis_key: "stock:daemon:signal_eval"
+  publish_ttl_seconds: 86400    # 24h (repo default operational TTL); republished each cycle
