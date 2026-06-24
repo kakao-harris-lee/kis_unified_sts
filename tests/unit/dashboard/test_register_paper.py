@@ -64,6 +64,80 @@ def _minimal_state(asset_class: str = "stock", strategy_id: str = "test_built") 
     }
 
 
+def _cross_state(strategy_id: str = "golden_cross") -> dict:
+    """golden_cross-shaped state: sma_fast cross_above/cross_below sma_slow.
+
+    Streaming-unsupported (no cross-cycle history) → enabling must be refused.
+    """
+    return {
+        "metadata": {
+            "id": strategy_id,
+            "name": "Golden Cross",
+            "description": "",
+            "category": "trend",
+            "tags": ["crossover"],
+            "author": "test",
+        },
+        "asset_class": "stock",
+        "indicators": [
+            {
+                "indicator_id": "sma",
+                "alias": "sma_fast",
+                "params": {"period": 5},
+                "output": "value",
+            },
+            {
+                "indicator_id": "sma",
+                "alias": "sma_slow",
+                "params": {"period": 20},
+                "output": "value",
+            },
+        ],
+        "entry": {
+            "logic": "AND",
+            "conditions": [
+                {
+                    "left": {
+                        "type": "indicator",
+                        "indicator_alias": "sma_fast",
+                        "indicator_output": "value",
+                    },
+                    "operator": "cross_above",
+                    "right": {
+                        "type": "indicator",
+                        "indicator_alias": "sma_slow",
+                        "indicator_output": "value",
+                    },
+                }
+            ],
+        },
+        "exit": {
+            "logic": "AND",
+            "conditions": [
+                {
+                    "left": {
+                        "type": "indicator",
+                        "indicator_alias": "sma_fast",
+                        "indicator_output": "value",
+                    },
+                    "operator": "cross_below",
+                    "right": {
+                        "type": "indicator",
+                        "indicator_alias": "sma_slow",
+                        "indicator_output": "value",
+                    },
+                }
+            ],
+        },
+        "risk": {
+            "order_amount": 1_000_000,
+            "stop_loss": {"enabled": True, "percent": 5.0},
+            "take_profit": {"enabled": False, "percent": 10.0},
+            "trailing_stop": {"enabled": False, "percent": 3.0},
+        },
+    }
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """Spin a TestClient with the built-strategies dir pinned to tmp_path."""
@@ -243,6 +317,62 @@ def test_toggle_missing_strategy_returns_404(client) -> None:
     tc, _ = client
     resp = tc.post("/api/kis-builder/registered/nope/enable", json={"enabled": True})
     assert resp.status_code == 404
+
+
+def test_enable_refused_for_cross_strategy(client) -> None:
+    """A cross-based (golden_cross) builder strategy must not be enableable.
+
+    cross_above/cross_below can never fire in the streaming runtime, so the
+    enable endpoint refuses with 400 and the file stays disabled.
+    """
+    tc, built_dir = client
+    tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": _cross_state(strategy_id="golden_cross")},
+    )
+    resp = tc.post(
+        "/api/kis-builder/registered/golden_cross/enable", json={"enabled": True}
+    )
+    assert resp.status_code == 400, resp.text
+    assert "cross" in resp.json()["detail"].lower()
+    # File must remain disabled on disk (no partial write).
+    doc = yaml.safe_load((built_dir / "golden_cross.yaml").read_text(encoding="utf-8"))
+    assert doc["strategy"]["enabled"] is False
+
+
+def test_disable_allowed_for_cross_strategy(client) -> None:
+    """Disabling a cross strategy is always allowed (even if it was force-enabled)."""
+    tc, built_dir = client
+    tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": _cross_state(strategy_id="golden_cross")},
+    )
+    # Simulate a pre-existing enabled cross strategy on disk (e.g. a legacy
+    # registration), then confirm disabling it works.
+    path = built_dir / "golden_cross.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    doc["strategy"]["enabled"] = True
+    path.write_text(yaml.safe_dump(doc, allow_unicode=True), encoding="utf-8")
+
+    resp = tc.post(
+        "/api/kis-builder/registered/golden_cross/enable", json={"enabled": False}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["enabled"] is False
+
+
+def test_enable_allowed_for_non_cross_strategy(client) -> None:
+    """A threshold strategy (rsi > 30) is still enableable as before."""
+    tc, _ = client
+    tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": _minimal_state(strategy_id="rsi_thresh")},
+    )
+    resp = tc.post(
+        "/api/kis-builder/registered/rsi_thresh/enable", json={"enabled": True}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["enabled"] is True
 
 
 def test_unregister_deletes_file(client) -> None:

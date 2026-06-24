@@ -24,6 +24,7 @@ from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStatePr
 from shared.strategy.market_time import to_kst
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
 from shared.strategy_builder.futures_safety import FuturesSafety, load_futures_safety
+from shared.strategy_builder.runtime_support import streaming_support_reason
 from shared.strategy_builder.schema import BuilderState, SymbolSeries
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,19 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         except Exception as exc:
             logger.error("builder_v1_exit failed to parse builder_state: %s", exc)
             self._state = None
+            return
+        # SL/TP/trailing still work, but condition-based exits using
+        # cross_above/cross_below can never fire in the streaming runtime (no
+        # cross-cycle history). Warn so an operator relying on a cross exit
+        # condition is not silently left with SL/TP only.
+        reason = streaming_support_reason(self._state)
+        if reason is not None:
+            logger.warning(
+                "builder_v1_exit %s cross conditions will NEVER fire in the "
+                "streaming runtime (SL/TP/trailing still apply): %s",
+                self._state.metadata.id,
+                reason,
+            )
 
     @property
     def name(self) -> str:
