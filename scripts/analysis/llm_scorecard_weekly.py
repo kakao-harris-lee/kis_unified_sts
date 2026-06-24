@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import sys
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -26,7 +27,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
-def _build_calibration_section(cfg, ledger, window: int) -> str:
+def _build_calibration_section(cfg: Any, ledger: Any, window: int) -> str:
     """Build a calibration section string for confidence-carrying facets.
 
     Currently only the 'direction' facet carries per-prediction confidence.
@@ -66,7 +67,7 @@ def _build_calibration_section(cfg, ledger, window: int) -> str:
         return ""
 
 
-def build_by_facet(cfg, ledger) -> tuple[int, dict[str, dict]]:
+def build_by_facet(cfg: Any, ledger: Any) -> tuple[int, dict[str, dict]]:
     """Return (window, by_facet) for the largest configured rolling window.
 
     For each enabled facet, queries all score rows then computes rolling_metrics
