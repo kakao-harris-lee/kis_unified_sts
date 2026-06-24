@@ -1,0 +1,16 @@
+llm_scorecard:
+  enabled_facets: ["direction"]   # add themes/movers/volume_surge as built
+  rolling_windows: [20, 60]
+  report_daily: true
+  report_weekly: true
+  telegram_domain: "briefing"
+  facet_params:
+    direction:
+      symbol: "101S6000"              # KOSPI200 futures continuous
+      neutral_band_pct: 0.15          # |return| below this = NEUTRAL outcome
+    themes:
+      top_n: 3
+    movers:
+      horizon: "session"
+    volume_surge:
+      horizon: "flag_to_close"
