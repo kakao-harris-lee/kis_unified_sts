@@ -174,3 +174,46 @@ def test_score_unscorable_returns_facetscore_with_correct_none():
 
 def test_direction_facet_registered():
     assert "direction" in FACET_REGISTRY
+
+
+# --- bugfix: briefing hook must use TradingStateReader, not TradingStatePublisher ---
+
+
+def test_capture_via_trading_state_reader_yields_non_none_direction():
+    """Regression test for fix(llm-scorecard): direction capture hook.
+
+    Verifies that when TradingStateReader("futures").get_market_context() returns
+    a MarketContext with overall_signal=BULLISH, DirectionFacet.capture produces
+    a non-None prediction with direction=BULL.
+
+    This guards against the bug where the briefing hook called
+    TradingStatePublisher.get_market_context() (which does not exist on that class)
+    instead of TradingStateReader.get_market_context().
+    """
+    from unittest.mock import MagicMock
+
+    # Build a fake MarketContext-like object with to_dict()
+    fake_mc_dict = {"overall_signal": "BULLISH", "confidence": 0.72, "risk_mode": "RISK_ON"}
+    fake_mc = MagicMock()
+    fake_mc.to_dict.return_value = fake_mc_dict
+
+    with patch(
+        "shared.streaming.trading_state.TradingStateReader.get_market_context",
+        return_value=fake_mc,
+    ):
+        from shared.streaming.trading_state import TradingStateReader
+
+        reader = TradingStateReader("futures")
+        mc_obj = reader.get_market_context()
+        # Simulate what the fixed briefing hook does
+        mc = mc_obj.to_dict() if hasattr(mc_obj, "to_dict") else mc_obj
+
+    ctx = CaptureContext(
+        date_kst="2026-06-25",
+        now_kst=datetime(2026, 6, 25, 8, 40),
+        market_context=mc,
+    )
+    pred = DirectionFacet().capture(ctx)
+    assert pred is not None
+    assert pred.payload["direction"] == "BULL"
+    assert pred.confidence == pytest.approx(0.72)

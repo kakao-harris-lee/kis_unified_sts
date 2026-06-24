@@ -39,7 +39,7 @@ def is_market_open_today() -> bool:
     return today.weekday() < 5
 
 
-async def main():
+async def main() -> None:
     logger.info("Pre-Market Briefing Started")
 
     if not is_market_open_today():
@@ -88,29 +88,27 @@ async def main():
             from shared.llm_scorecard.facets.base import CaptureContext
             from shared.storage.config import StorageConfig
             from shared.storage.runtime_ledger import SQLiteRuntimeLedger
-            from shared.streaming.trading_state import TradingStatePublisher, _get_redis
+            from shared.streaming.trading_state import TradingStateReader, _get_redis
 
             _cfg = ScorecardConfig.from_yaml()
             _storage = StorageConfig.load_or_default()
             _ledger = SQLiteRuntimeLedger(_storage.runtime_storage.sqlite)
             _now = datetime.now()
             _date_kst = _now.strftime("%Y-%m-%d")
-            # MarketContext lives in Redis, not on futures_plan (FuturesTradingPlan
-            # has no market_context field): read the published futures state.
+            # MarketContext lives in Redis: read via TradingStateReader (not
+            # TradingStatePublisher, which only writes and has no get_market_context).
             _mc = None
             _screener = None
+            _redis = _get_redis()
             try:
-                _pub = TradingStatePublisher("futures")
-                _mc_obj = _pub.get_market_context()
+                _reader = TradingStateReader("futures")
+                _mc_obj = _reader.get_market_context()
                 if _mc_obj is not None:
                     _mc = _mc_obj.to_dict() if hasattr(_mc_obj, "to_dict") else _mc_obj
                 # Populate screener from system:trade_targets:latest for MoversFacet.
-                # TradingStatePublisher has no persistent client; use the shared
-                # Redis singleton helper (RedisClient.get_client()) like the rest
-                # of trading_state.py does. The trade_targets payload has a
-                # top-level "codes" key, which MoversFacet.capture reads directly.
-                _client = _get_redis()
-                _raw = _client.get("system:trade_targets:latest")
+                # The trade_targets payload has a top-level "codes" key, which
+                # MoversFacet.capture reads directly.
+                _raw = _redis.get("system:trade_targets:latest")
                 if _raw:
                     _screener = _json.loads(_raw)
             except Exception:
@@ -120,6 +118,7 @@ async def main():
                 now_kst=_now,
                 market_context=_mc,
                 screener=_screener,
+                redis=_redis,
             )
             _n = capture_predictions(_ctx, _cfg, _ledger)
             logger.info("Scorecard: captured %d predictions for %s", _n, _date_kst)
