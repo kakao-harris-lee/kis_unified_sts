@@ -382,6 +382,29 @@ class SQLiteRuntimeLedger:
                     created_at TEXT NOT NULL,
                     payload_json TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS llm_predictions (
+                    date_kst TEXT NOT NULL,
+                    facet TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    confidence REAL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (date_kst, facet)
+                );
+
+                CREATE TABLE IF NOT EXISTS prediction_scores (
+                    date_kst TEXT NOT NULL,
+                    facet TEXT NOT NULL,
+                    correct INTEGER,
+                    value REAL NOT NULL,
+                    economic_proxy REAL NOT NULL,
+                    baseline_value REAL NOT NULL,
+                    edge REAL NOT NULL,
+                    detail_json TEXT NOT NULL,
+                    scored_at TEXT NOT NULL,
+                    PRIMARY KEY (date_kst, facet)
+                );
                 """)
             self._upsert_metadata("schema_version", self.SCHEMA_VERSION)
             self._upsert_metadata("ledger_path", str(self.path))
@@ -781,6 +804,67 @@ class SQLiteRuntimeLedger:
             except json.JSONDecodeError:
                 data["payload"] = {}
         return data
+
+    def save_prediction(self, date_kst: str, facet: str, captured_at: str, payload: dict, confidence: float | None) -> None:
+        """Idempotent upsert of an LLM prediction (per date_kst+facet)."""
+        with self._lock:
+            self._require_conn().execute(
+                "INSERT INTO llm_predictions(date_kst,facet,captured_at,payload_json,confidence,created_at)"
+                " VALUES(?,?,?,?,?,?)"
+                " ON CONFLICT(date_kst,facet) DO UPDATE SET"
+                " captured_at=excluded.captured_at, payload_json=excluded.payload_json,"
+                " confidence=excluded.confidence",
+                (date_kst, facet, captured_at, json.dumps(payload), confidence, datetime.now().isoformat()),
+            )
+            self._require_conn().commit()
+
+    def load_predictions(self, date_kst: str) -> list[dict]:
+        """Return all LLM predictions recorded for the given trading date (KST)."""
+        with self._lock:
+            rows = self._require_conn().execute(
+                "SELECT * FROM llm_predictions WHERE date_kst=?", (date_kst,)
+            ).fetchall()
+        return [{**dict(r), "payload": json.loads(r["payload_json"])} for r in rows]
+
+    def save_score(self, s: dict) -> None:
+        """Idempotent upsert of a prediction score (per date_kst+facet)."""
+        correct = None if s["correct"] is None else (1 if s["correct"] else 0)
+        with self._lock:
+            self._require_conn().execute(
+                "INSERT INTO prediction_scores(date_kst,facet,correct,value,economic_proxy,"
+                "baseline_value,edge,detail_json,scored_at) VALUES(?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(date_kst,facet) DO UPDATE SET correct=excluded.correct,"
+                " value=excluded.value, economic_proxy=excluded.economic_proxy,"
+                " baseline_value=excluded.baseline_value, edge=excluded.edge,"
+                " detail_json=excluded.detail_json, scored_at=excluded.scored_at",
+                (s["date_kst"], s["facet"], correct, s["value"], s["economic_proxy"],
+                 s["baseline_value"], s["edge"], json.dumps(s["detail"]), s["scored_at"]),
+            )
+            self._require_conn().commit()
+
+    def query_scores(self, facet: str | None = None, start: str | None = None, end: str | None = None) -> list[dict]:
+        """Query prediction scores with optional facet and date range filters."""
+        q = "SELECT * FROM prediction_scores WHERE 1=1"
+        p: list = []
+        if facet:
+            q += " AND facet=?"
+            p.append(facet)
+        if start:
+            q += " AND date_kst>=?"
+            p.append(start)
+        if end:
+            q += " AND date_kst<=?"
+            p.append(end)
+        q += " ORDER BY date_kst ASC"
+        with self._lock:
+            rows = self._require_conn().execute(q, p).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["detail"] = json.loads(d.pop("detail_json"))
+            d["correct"] = None if d["correct"] is None else bool(d["correct"])
+            out.append(d)
+        return out
 
     def __enter__(self) -> SQLiteRuntimeLedger:
         return self
