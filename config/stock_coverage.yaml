@@ -20,3 +20,15 @@ stock_coverage:
   max_per_cycle: 8          # symbols deepened per worker cycle (bounds KIS load)
   throttle_seconds: 1.0     # polite pause between per-symbol backfills
   redis_ttl_seconds: 86400  # 24h TTL on the pending + exhausted-today Redis keys
+
+  # --- on-entry MINUTE prewarm coordination (follow-up (c)) ---
+  # A newly-admitted intraday symbol needs MINUTE warmth immediately, not only at
+  # the next daemon warmup. The coverage worker has no live indicator engine, so
+  # "minute prewarm" here means fetching recent 1m bars into the parquet store;
+  # the daemon's own warmup_engine (Tier-1 parquet, no rate limit) then consumes
+  # them on its next _prewarm_cold cycle and the symbol warms with correct 5m
+  # buckets (the #517 fix). Idempotent (skip already-warm), throttled, KST-native.
+  prewarm_minutes: true             # also fetch recent minutes for new symbols
+  prewarm_minute_days: 5            # KIS-max minute lookback to fetch into parquet
+  min_prewarm_minute_bars: 60       # skip if parquet already has >= this many
+                                    # recent 1m bars within prewarm_minute_days
