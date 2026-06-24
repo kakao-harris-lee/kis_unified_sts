@@ -41,6 +41,7 @@ from shared.streaming.stock_regime import (
 from shared.streaming.stock_signal_eval import (
     OUTCOME_REJECT,
     OUTCOME_SIGNAL,
+    REJECT_BEAR_CAP_REACHED,
     REJECT_BEAR_REGIME,
     REJECT_COLD,
     REJECT_CONDITIONS_NOT_MET,
@@ -328,7 +329,7 @@ class StockStrategyDaemon:
                 logger.info(
                     "bear override: cap %d reached — no new override entries", cap
                 )
-                self._record_blanket_reject(evaluator, roster, REJECT_BEAR_REGIME)
+                self._record_blanket_reject(evaluator, roster, REJECT_BEAR_CAP_REACHED)
                 await self._publish_signal_eval(evaluator, now)
                 return 0
             override_codes = strong
@@ -483,10 +484,14 @@ class StockStrategyDaemon:
         state, never by re-running a generator (which would double-set firing
         cooldowns). Reasons, in precedence order:
 
-        * ``not_in_daily_watchlist`` — the strategy is daily-gated (its name is a
-          key in ``watchlist["strategies"]``) and this symbol is not on its list.
-        * ``no_sma_200`` — neither ``sma_200`` nor ``daily_sma_200`` is present,
-          so the base-trend gate is dead (the diagnosis's headline reject).
+        * ``no_daily_watchlist`` — the strategy is daily-gated (its name is a key
+          in ``watchlist["strategies"]``) and this symbol is not on its list.
+        * ``no_sma_200`` — the strategy *requires* ``sma_200`` (per its
+          ``required_indicators``) but neither ``sma_200`` nor ``daily_sma_200``
+          is present, so its base-trend gate is dead (the diagnosis's headline
+          reject). Only attributed to SMA(200)-dependent strategies so it never
+          over-counts for strategies that ignore SMA(200) (e.g. momentum_breakout,
+          williams_r).
         * ``conditions_not_met`` — the residual: the strategy ran but no entry
           condition matched (threshold / RVOL / breakout / etc.).
         """
@@ -494,10 +499,13 @@ class StockStrategyDaemon:
             return
         has_sma_200 = self._has_sma_200(indicators)
         gated = self._daily_gated_strategies()
+        sma200_dependent = self._sma200_dependent_strategies(roster)
         for name in roster:
             if name in fired_strategies:
                 continue
-            reason = self._reject_reason_for(name, symbol, gated, has_sma_200)
+            reason = self._reject_reason_for(
+                name, symbol, gated, has_sma_200, sma200_dependent
+            )
             evaluator.record(name, symbol, OUTCOME_REJECT, reason)
 
     @staticmethod
@@ -536,16 +544,38 @@ class StockStrategyDaemon:
         }
 
     @staticmethod
+    def _sma200_dependent_strategies(roster: dict[str, Any]) -> set[str]:
+        """Names of roster strategies whose required_indicators include sma_200.
+
+        Used so ``no_sma_200`` is attributed only to strategies that actually
+        gate on SMA(200) (e.g. pattern_pullback), not to strategies that ignore
+        it (e.g. momentum_breakout, williams_r) — which would over-count the
+        diagnosis's headline reject. A strategy whose required keys cannot be
+        read is treated as non-dependent (falls through to conditions_not_met).
+        """
+        dependent: set[str] = set()
+        for name, strategy in roster.items():
+            try:
+                required = getattr(strategy, "required_indicators", None) or ()
+                keys = {str(k) for k in required}
+            except Exception:
+                continue
+            if "sma_200" in keys or "daily_sma_200" in keys:
+                dependent.add(name)
+        return dependent
+
+    @staticmethod
     def _reject_reason_for(
         name: str,
         symbol: str,
         gated: dict[str, set[str]],
         has_sma_200: bool,
+        sma200_dependent: set[str],
     ) -> str:
         allowed = gated.get(name)
         if allowed is not None and symbol not in allowed:
             return REJECT_NO_DAILY_WATCHLIST
-        if not has_sma_200:
+        if name in sma200_dependent and not has_sma_200:
             return REJECT_NO_SMA_200
         return REJECT_CONDITIONS_NOT_MET
 

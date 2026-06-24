@@ -863,6 +863,7 @@ async def test_pattern_pullback_fires_only_with_daily_sma_200_injected():
 # ---------------------------------------------------------------------------
 
 from shared.streaming.stock_signal_eval import (  # noqa: E402
+    REJECT_BEAR_CAP_REACHED,
     REJECT_BEAR_REGIME,
     REJECT_COLD,
     REJECT_CONDITIONS_NOT_MET,
@@ -885,9 +886,17 @@ class _RosterManager:
     def __init__(self, fire_map=None, daily_gated=()):
         self._fire_map = {k: set(v) for k, v in (fire_map or {}).items()}
         roster = set(self._fire_map) | {"momentum_breakout", "pattern_pullback"}
-        # The daemon iterates manager.strategies (name -> object); the object
-        # only needs to be truthy and carry the strategy name.
-        self.strategies = {name: _StratStub(name) for name in roster}
+        # The daemon iterates manager.strategies (name -> object) and reads each
+        # object's required_indicators to decide sma_200 dependence. Only
+        # pattern_pullback gates on sma_200 (mirrors production); momentum_breakout
+        # and williams_r do not — so only pattern_pullback can reject no_sma_200.
+        self.strategies = {
+            name: _StratStub(
+                name,
+                required=(("sma_200",) if name == "pattern_pullback" else ()),
+            )
+            for name in roster
+        }
         self._daily_gated = set(daily_gated)
 
     async def check_entries(self, context):
@@ -900,8 +909,9 @@ class _RosterManager:
 
 
 class _StratStub:
-    def __init__(self, name):
+    def __init__(self, name, required=()):
         self.name = name
+        self.required_indicators = list(required)
 
 
 def _eval_summary(redis):
@@ -987,9 +997,12 @@ async def test_signal_eval_records_reject_reason_for_non_firing_strategy():
 
 
 @pytest.mark.asyncio
-async def test_signal_eval_records_no_sma_200_when_daily_absent():
+async def test_signal_eval_records_no_sma_200_only_for_sma200_dependent_strategy():
     redis = _HashRedis()
-    # No daily indicators at all → every non-firing strategy rejects no_sma_200.
+    # No daily indicators at all. Only sma_200-dependent strategies (here
+    # pattern_pullback) reject no_sma_200; strategies that ignore SMA(200)
+    # (momentum_breakout) fall through to conditions_not_met — so the diagnosis's
+    # headline reject is never over-counted for non-SMA strategies.
     d = _eval_daemon(
         redis=redis,
         engine=_FakeEngine(warm=("005930",), daily={}),
@@ -1001,7 +1014,7 @@ async def test_signal_eval_records_no_sma_200_when_daily_absent():
 
     summary = _eval_summary(redis)
     assert summary["pattern_pullback"]["reason"] == REJECT_NO_SMA_200
-    assert summary["momentum_breakout"]["reason"] == REJECT_NO_SMA_200
+    assert summary["momentum_breakout"]["reason"] == REJECT_CONDITIONS_NOT_MET
 
 
 @pytest.mark.asyncio
@@ -1080,6 +1093,48 @@ async def test_signal_eval_records_bear_regime_skip():
     assert published == 0  # bear gate still blocks entries (unchanged decision)
     summary = _eval_summary(redis)
     assert summary["pattern_pullback"]["reason"] == REJECT_BEAR_REGIME
+
+
+@pytest.mark.asyncio
+async def test_signal_eval_records_bear_cap_reached(monkeypatch):
+    """Bear + override cap reached records bear_cap_reached (distinct from selectivity)."""
+    from shared.streaming.stock_bear_override import BearOverrideConfig
+
+    daily = {
+        "indicators": {
+            "005930": {
+                "daily_close": 100,
+                "daily_sma_20": 90,
+                "daily_rsi_14": 70,
+                "daily_prev_rsi_14": 65,
+                "daily_macd_hist": 5,
+            },
+        }
+    }
+    redis = _HashRedis()
+    redis.kv["system:daily_indicators:latest"] = json.dumps(daily)
+
+    async def _hkeys(_k):
+        return [b"005930"]  # an open position already in the strong symbol
+
+    redis.hkeys = _hkeys  # type: ignore[assignment]
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",)),
+        manager=_RosterManager(fire_map={"williams_r": {"005930"}}),
+        regime_config=StockRegimeConfig(),
+        bear_override_config=BearOverrideConfig(enabled=True, max_override_positions=1),
+    )
+    d._universe = ["005930"]
+    monkeypatch.setattr(
+        d, "_publish_regime", _async_return(json.loads(_bear_payload()))
+    )
+
+    published = await d.evaluate_once()
+
+    assert published == 0  # cap reached → no new override entries (unchanged decision)
+    summary = _eval_summary(redis)
+    assert summary["pattern_pullback"]["reason"] == REJECT_BEAR_CAP_REACHED
 
 
 @pytest.mark.asyncio
