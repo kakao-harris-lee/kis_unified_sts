@@ -1,0 +1,22 @@
+# On-entry daily-coverage backfill for dynamic-universe stock symbols.
+#
+# When a symbol enters the screener/fusion universe it must be immediately
+# trade-ready. Daily strategies (e.g. pattern_pullback) need SMA(200), which
+# requires >= 200 daily bars. KIS only serves ~100 daily bars per call, so newly
+# admitted symbols start shallow and the daily trend gate silently fails.
+#
+# The market-ingest universe-change handler enqueues new symbols into Redis
+# (stock:coverage:pending, DB 1); a scheduler cron drains the queue and runs a
+# paginating deep daily backfill for any symbol below min_daily_bars. The
+# mechanism is idempotent (already-deep symbols are skipped), throttled/batched
+# (max_per_cycle bounds KIS load on bulk LLM universe refreshes), and KST-native.
+#
+# All values are config-driven; env vars override (STOCK_COVERAGE_*).
+stock_coverage:
+  enabled: true
+  min_daily_bars: 200       # SMA(200) requirement (pattern_pullback trend gate)
+  backfill_days: 400        # calendar lookback (~270 trading days); pagination
+                            # walks backward within this window
+  max_per_cycle: 8          # symbols deepened per worker cycle (bounds KIS load)
+  throttle_seconds: 1.0     # polite pause between per-symbol backfills
+  redis_ttl_seconds: 86400  # 24h TTL on the pending + exhausted-today Redis keys
