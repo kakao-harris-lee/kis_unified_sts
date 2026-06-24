@@ -67,7 +67,7 @@ class MoversFacet:
             payload={
                 "codes": codes,
                 # Attach optional names/scores for logging; not used in scoring.
-                "names": screener.get("names", []),
+                "names": screener.get("names", {}),
                 "scores": screener.get("scores", []),
             },
             confidence=None,

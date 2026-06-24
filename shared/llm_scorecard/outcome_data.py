@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -28,7 +28,12 @@ class OutcomeData:
     ) -> "pd.DataFrame | None":
         """Return minute bars for `symbol` on `date_kst` at/after `after`."""
         try:
-            df = self._store.get_minute_bars(symbol, start=date_kst, end=date_kst)
+            _day = datetime.strptime(date_kst, "%Y-%m-%d")
+            df = self._store.get_minute_bars(
+                symbol,
+                start=_day,
+                end=_day + timedelta(days=1) - timedelta(microseconds=1),
+            )
         except Exception:
             return None
         if df is None or len(df) == 0:
