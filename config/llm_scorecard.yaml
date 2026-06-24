@@ -8,6 +8,7 @@ llm_scorecard:
     direction:
       symbol: "101S6000"              # KOSPI200 futures continuous
       neutral_band_pct: 0.15          # |return| below this = NEUTRAL outcome
+      has_confidence: true            # carries per-prediction confidence → calibration
     themes:
       top_n: 3
       # theme → constituent stock codes (KRX).  Update as sector composition changes.

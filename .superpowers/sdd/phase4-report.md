@@ -108,3 +108,62 @@ daily scorer at 16:35) so they don't race on the ledger.
    `RuntimeLedger` Protocol types from `shared/` — but the entry scripts use late imports
    (inside the `async def main()`) to avoid circular imports and slow module load, making
    `Any` the pragmatic choice for the module-level helpers.
+
+---
+
+## Phase 4 Review Fixes (post-review)
+
+A high-effort code review (self-review + coordinator-relayed) surfaced four
+issues; all fixed in a single follow-up commit. The direction-hook bugfix and
+the inline `save_prediction`/`save_score` `commit()` calls were adjudicated to
+keep and were not touched.
+
+### Fix 1 (CRITICAL — B2): `format_calibration` empty-bins → `""`
+- `shared/llm_scorecard/reporter.py`: when no bin is populated, return `""`
+  (was `"📐 신뢰도 보정\n(보정 데이터 없음)"`). The weekly entry's
+  `if calib_section:` guard now correctly suppresses the whole section instead
+  of appending a misleading "no data" notice on fresh / no-score deployments.
+- Test `test_format_calibration_all_empty_returns_empty_string` asserts `== ""`.
+
+### Fix 2 (IMPORTANT — A4): `--window` applied to metrics, not just header
+- `scripts/analysis/llm_scorecard_weekly.py`: added `_resolve_window(cfg, override)`
+  and gave `build_by_facet(cfg, ledger, window=None)` a `window` override param.
+  `main()` now passes `window=args.window` into `build_by_facet`, so the header
+  and the figures are computed against the same window. Previously the override
+  was applied to the local `window` AFTER metrics were already computed → header
+  said e.g. "10일" while figures were 60-day.
+- Test `test_window_override_applies_to_metrics_not_just_header` builds 60 rows
+  (first 50 losers, last 10 winners) and asserts `--window 10` yields `n=10`,
+  `hit_rate==1.0`, while the default (60) yields `hit_rate<1.0`.
+
+### Fix 3 (IMPORTANT — config-driven): drop hardcoded `"direction"`
+- `config/llm_scorecard.yaml`: added `has_confidence: true` under
+  `facet_params.direction`.
+- `scripts/analysis/llm_scorecard_weekly.py`: new `_confidence_facets(cfg)`
+  selects via `facet_params.<facet>.has_confidence` (was a literal
+  `f == "direction"` branch — a CLAUDE.md configuration-driven violation).
+  `_build_calibration_section` now loops over all flagged facets and joins
+  their sections, so a future confidence-carrying facet is picked up with no
+  code change.
+- Tests `test_confidence_facets_selected_by_config_flag` (direction +
+  hypothetical `future_conf` selected, `themes` excluded) and
+  `test_confidence_facets_empty_when_no_flag`.
+
+### Fix 4 (MINOR — test tautology): `test_format_calibration_renders_bins`
+- `tests/unit/llm_scorecard/test_reporter.py`: the assertion
+  `("0.8" in msg and "0.9" not in msg) or "1.0" in msg` was always True by
+  operator precedence. Rewritten to assert the exact rendered bin lines
+  (`"conf 0.8–1.0: hit 70% (n=12)"`, `"conf 0.6–0.8: hit 55% (n=8)"`) and that
+  empty bins are omitted (`"n=0" not in msg`).
+
+### Review-fix verification
+- `pytest tests/unit/llm_scorecard/ -p no:cacheprovider -q` → **106 passed**.
+- `mypy shared/llm_scorecard/ scripts/analysis/llm_scorecard_weekly.py
+  scripts/llm_premarket_briefing.py --ignore-missing-imports --no-error-summary`
+  → **exit 0 (clean)**.
+
+### Adjudicated NOT changed
+- Inline `commit()` in `save_prediction`/`save_score` (controller-adjudicated keep).
+- A3 (pred_conf not date-windowed): output is numerically correct
+  (`calibration_bins` iterates scores only; unmatched pred_conf keys are ignored).
+- The direction-capture hook fix (verified correct).

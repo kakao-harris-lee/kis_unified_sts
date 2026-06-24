@@ -13,7 +13,9 @@ def format_calibration(bins: list[dict]) -> str:
 
     Each entry in ``bins`` is a dict with ``lo``, ``hi``, ``n``, ``hit_rate``
     (as returned by ``aggregator.calibration_bins``). Empty bins (n=0) are
-    omitted.  Returns a section header + one line per populated bin.
+    omitted.  Returns a section header + one line per populated bin, or an
+    empty string when no bin is populated (so the caller's truthiness guard
+    suppresses the section entirely rather than appending a "no data" notice).
 
     Example output::
 
@@ -23,7 +25,7 @@ def format_calibration(bins: list[dict]) -> str:
     """
     populated = [b for b in bins if b.get("n", 0) > 0]
     if not populated:
-        return "📐 <b>신뢰도 보정</b>\n(보정 데이터 없음)"
+        return ""
     lines = ["📐 <b>신뢰도 보정</b>"]
     for b in sorted(populated, key=lambda x: -x["lo"]):  # highest confidence first
         hi = b["hi"]

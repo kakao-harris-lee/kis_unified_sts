@@ -85,6 +85,90 @@ def test_weekly_entry_build_by_facet_logic():
     assert m["mean_edge"] == 1.0
 
 
+# --- A4 regression: --window override reflected in BOTH header and metrics -----
+
+
+class _FakeLedger:
+    """Minimal ledger stub for build_by_facet — returns canned score rows."""
+
+    def __init__(self, scores_by_facet):
+        self._scores = scores_by_facet
+
+    def query_scores(self, facet=None, start=None, end=None):
+        return list(self._scores.get(facet, []))
+
+    def query_predictions(self, facet=None, start=None, end=None):
+        return []
+
+
+def test_window_override_applies_to_metrics_not_just_header(monkeypatch):
+    """--window must change BOTH the returned window AND the rolling metrics.
+
+    Regression for the bug where the override was applied to the local window
+    after build_by_facet had already computed metrics with the config window —
+    so the header said e.g. "10일" while the figures were 60-day.
+    """
+    import shared.llm_scorecard.facets  # noqa: F401 — populate FACET_REGISTRY
+    from scripts.analysis.llm_scorecard_weekly import build_by_facet
+    from shared.llm_scorecard.config import ScorecardConfig
+
+    cfg = ScorecardConfig(enabled_facets=["direction"], rolling_windows=[20, 60])
+
+    # 60 rows: the first 50 are losers, the last 10 are winners. A 10-day window
+    # sees only winners (hit_rate=1.0); a 60-day window sees a mix (hit_rate<1).
+    scores = [
+        {"facet": "direction", "correct": (i >= 50), "edge": (1.0 if i >= 50 else -1.0),
+         "economic_proxy": (1.0 if i >= 50 else -1.0), "date_kst": f"2026-04-{i + 1:02d}"}
+        for i in range(60)
+    ]
+    ledger = _FakeLedger({"direction": scores})
+
+    # No override → config window (60), mixed hit_rate.
+    win_default, by_default = build_by_facet(cfg, ledger)
+    assert win_default == 60
+    assert by_default["direction"]["hit_rate"] < 1.0
+
+    # Override → window AND metrics both reflect 10.
+    win_override, by_override = build_by_facet(cfg, ledger, window=10)
+    assert win_override == 10
+    assert by_override["direction"]["n"] == 10
+    assert by_override["direction"]["hit_rate"] == 1.0  # last-10 are all winners
+
+
+# --- config-driven has_confidence selection (replaces hardcoded "direction") --
+
+
+def test_confidence_facets_selected_by_config_flag():
+    """_confidence_facets picks facets flagged has_confidence:true, not a literal."""
+    from scripts.analysis.llm_scorecard_weekly import _confidence_facets
+    from shared.llm_scorecard.config import ScorecardConfig
+
+    cfg = ScorecardConfig(
+        enabled_facets=["direction", "themes", "future_conf"],
+        facet_params={
+            "direction": {"has_confidence": True},
+            "themes": {"top_n": 3},  # no flag → excluded
+            "future_conf": {"has_confidence": True},  # a hypothetical new facet → included
+        },
+    )
+    selected = _confidence_facets(cfg)
+    assert "direction" in selected
+    assert "future_conf" in selected  # config-driven: new facet picked up, no code change
+    assert "themes" not in selected  # not flagged → excluded
+
+
+def test_confidence_facets_empty_when_no_flag():
+    """No facet flagged has_confidence → empty selection (no calibration)."""
+    from scripts.analysis.llm_scorecard_weekly import _confidence_facets
+    from shared.llm_scorecard.config import ScorecardConfig
+
+    cfg = ScorecardConfig(
+        enabled_facets=["direction", "themes"],
+        facet_params={"direction": {"neutral_band_pct": 0.15}, "themes": {"top_n": 3}},
+    )
+    assert _confidence_facets(cfg) == []
+
+
 # --- Task 14: calibration path in the weekly entry ----------------------------
 
 

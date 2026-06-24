@@ -89,28 +89,24 @@ def test_format_calibration_renders_bins():
         {"lo": 0.0, "hi": 0.2, "n": 0,  "hit_rate": None},
     ]
     msg = format_calibration(bins)
-    # High-confidence bin
-    assert "0.8" in msg and "0.9" not in msg or "1.0" in msg   # range shown
-    assert "70%" in msg
-    assert "n=12" in msg
-    # Medium-confidence bin
-    assert "0.6" in msg
-    assert "55%" in msg
-    assert "n=8" in msg
-    # Empty bins should be omitted or clearly marked
-    assert "n=0" not in msg or "–" in msg or "n/a" in msg
+    # High-confidence bin: full 0.8–1.0 range line rendered.
+    assert "conf 0.8–1.0: hit 70% (n=12)" in msg
+    # Medium-confidence bin: full 0.6–0.8 range line rendered.
+    assert "conf 0.6–0.8: hit 55% (n=8)" in msg
+    # Empty bins (n=0) are omitted entirely — no n=0 line.
+    assert "n=0" not in msg
 
 
-def test_format_calibration_all_empty_returns_no_data():
-    """When all bins are empty, the output must signal no calibration data."""
+def test_format_calibration_all_empty_returns_empty_string():
+    """When all bins are empty, return "" so the caller's guard suppresses the section."""
     bins = [
         {"lo": lo / 5, "hi": (lo + 1) / 5, "n": 0, "hit_rate": None}
         for lo in range(5)
     ]
     msg = format_calibration(bins)
-    # Must not crash; should communicate absence
-    assert msg  # non-empty string
-    assert "n=0" not in msg or "no" in msg.lower() or "–" in msg or "n/a" in msg
+    # Empty string → the weekly entry's `if calib_section:` guard drops the section
+    # entirely instead of appending a misleading "no data" notice.
+    assert msg == ""
 
 
 def test_format_calibration_single_bin_renders():

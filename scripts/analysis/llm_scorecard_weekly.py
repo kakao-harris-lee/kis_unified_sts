@@ -27,56 +27,82 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+def _confidence_facets(cfg: Any) -> list[str]:
+    """Enabled facet names that carry per-prediction confidence (config-driven).
+
+    Selected via ``facet_params.<facet>.has_confidence: true`` in the YAML, so a
+    future confidence-carrying facet is picked up without a code change.
+    """
+    return [
+        f
+        for f in cfg.enabled_facets
+        if cfg.facet_params.get(f, {}).get("has_confidence", False)
+    ]
+
+
 def _build_calibration_section(cfg: Any, ledger: Any, window: int) -> str:
     """Build a calibration section string for confidence-carrying facets.
 
-    Currently only the 'direction' facet carries per-prediction confidence.
-    Queries ledger.query_predictions(facet='direction') to build
-    pred_conf = {date_kst: confidence}, then calls calibration_bins and
-    format_calibration. Returns an empty string on any error (best-effort).
+    For each facet flagged ``has_confidence`` in config, queries
+    ledger.query_predictions(facet=...) to build pred_conf = {date_kst:
+    confidence}, then calls calibration_bins and format_calibration over the
+    windowed score rows. Returns an empty string on any error (best-effort).
     """
     try:
         from shared.llm_scorecard.aggregator import calibration_bins
         from shared.llm_scorecard.reporter import format_calibration
 
-        # Facets that carry confidence values — currently only direction
-        confidence_facets = [f for f in cfg.enabled_facets if f == "direction"]
-        if not confidence_facets:
-            return ""
+        sections: list[str] = []
+        for facet_name in _confidence_facets(cfg):
+            score_rows = ledger.query_scores(facet=facet_name)
+            score_rows = score_rows[-window:] if window else score_rows
 
-        facet_name = confidence_facets[0]  # direction
-        score_rows = ledger.query_scores(facet=facet_name)
-        score_rows = score_rows[-window:] if window else score_rows
+            # Build pred_conf from query_predictions — mirrors query_scores shape
+            pred_rows = ledger.query_predictions(facet=facet_name)
+            pred_conf: dict[str, float] = {}
+            for row in pred_rows:
+                conf = row.get("confidence")
+                if conf is not None:
+                    pred_conf[row["date_kst"]] = float(conf)
 
-        # Build pred_conf from query_predictions — mirrors query_scores shape
-        pred_rows = ledger.query_predictions(facet=facet_name)
-        pred_conf: dict[str, float] = {}
-        for row in pred_rows:
-            conf = row.get("confidence")
-            if conf is not None:
-                pred_conf[row["date_kst"]] = float(conf)
+            if not pred_conf:
+                logger.info(
+                    "No prediction confidence data for calibration (facet=%s)", facet_name
+                )
+                continue
 
-        if not pred_conf:
-            logger.info("No prediction confidence data for calibration (facet=%s)", facet_name)
-            return ""
+            bins = calibration_bins(score_rows, pred_conf)
+            section = format_calibration(bins)
+            if section:
+                sections.append(section)
 
-        bins = calibration_bins(score_rows, pred_conf)
-        return format_calibration(bins)
+        return "\n".join(sections)
     except Exception as exc:
         logger.warning("Calibration section failed (non-fatal): %s", exc)
         return ""
 
 
-def build_by_facet(cfg: Any, ledger: Any) -> tuple[int, dict[str, dict]]:
-    """Return (window, by_facet) for the largest configured rolling window.
+def _resolve_window(cfg: Any, override: int | None = None) -> int:
+    """Resolve the rolling window: explicit override, else largest configured."""
+    if override is not None:
+        return override
+    return cfg.rolling_windows[-1] if cfg.rolling_windows else 60
 
-    For each enabled facet, queries all score rows then computes rolling_metrics
-    over ``window`` (the last N rows). Pure ledger reads — no I/O side effects.
+
+def build_by_facet(
+    cfg: Any, ledger: Any, window: int | None = None
+) -> tuple[int, dict[str, dict]]:
+    """Return (window, by_facet) for the resolved rolling window.
+
+    ``window`` overrides the largest configured window when provided, so the
+    header and the figures are computed against the same window. For each
+    enabled facet, queries all score rows then computes rolling_metrics over
+    ``window`` (the last N rows). Pure ledger reads — no I/O side effects.
     """
     from shared.llm_scorecard.aggregator import rolling_metrics
     from shared.llm_scorecard.facets.base import enabled_facets
 
-    window = cfg.rolling_windows[-1] if cfg.rolling_windows else 60
+    window = _resolve_window(cfg, window)
     by_facet: dict[str, dict] = {}
     for facet in enabled_facets(cfg):
         rows = ledger.query_scores(facet=facet.name)
@@ -117,9 +143,8 @@ async def main() -> None:
     storage_cfg = StorageConfig.load_or_default()
     ledger = SQLiteRuntimeLedger(storage_cfg.runtime_storage.sqlite)
 
-    window, by_facet = build_by_facet(cfg, ledger)
-    if args.window is not None:
-        window = args.window
+    # Resolve the window FIRST so the header and the metrics use the same value.
+    window, by_facet = build_by_facet(cfg, ledger, window=args.window)
 
     if not by_facet:
         logger.info("No enabled facets with score data; skipping weekly digest")
