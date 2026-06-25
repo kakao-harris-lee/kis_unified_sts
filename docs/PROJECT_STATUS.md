@@ -84,6 +84,18 @@ preserves RV history, supports log-RV fitting with bias correction, filters dail
 RV to the KST regular session by default, and has a local CSV/Parquet refit CLI;
 real-data refit/backtest + shadow validation remains open before config cutover.
 
+**2026-06-25** - Parallel readiness automation for remaining gates.
+Added offline/read-only gate helpers for the remaining high-priority development
+tracks: `scripts/forecasting/validate_har_rv.py` for raw-vs-log HAR-RV reports,
+`scripts/ops/setup_c_event_score_observe.py` for Setup C event-score readiness,
+`scripts/ops/futures_evidence_bundle.py` for F-9/Phase 5 evidence bundles,
+`scripts/ops/stock_strategy_readiness.py` for `technical_consensus` and
+`momentum_breakout` evidence review, and
+`scripts/ops/ops_readiness_check.py` for common Redis/SQLite, MLflow,
+position-recovery, Workbench QA, and Strategy Lab readiness checks. These tools
+do not replace real market data, shadow trading days, paper observation, or
+operator approval.
+
 **2026-06-22** - Quant Ops Workbench P0/P1 implementation.
 Multi-agent lanes implemented the ops summary DTO, signal trace UI, risk and
 exposure board, backtest-vs-paper comparator, lifecycle blotter, strategy
@@ -142,18 +154,21 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
 
 - **Stock:** HAR-RV log-RV transition (forecast model stale since 2026-05-31,
   daily refit failing — RV-history serialization and local file-backed log-RV
-  refit path are implemented, but real-data refit/backtest + ~1wk shadow are
-  still needed before switching default config from `rv_target: raw`);
+  refit/validation paths are implemented, but real-data refit/backtest + ~1wk
+  shadow are still needed before switching default config from `rv_target: raw`);
   `technical_consensus` reactivation decision (strong long-horizon backtest vs
-  recent live loss); `momentum_breakout` redesign (retune still negative);
+  recent live loss; use `scripts/ops/stock_strategy_readiness.py` with real
+  evidence); `momentum_breakout` redesign (retune still negative);
   non-Workbench Strategy Lab build-out. See
   [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
 - **Futures:** F9 decoupled cutover gates (shadow → Gate 2 → operator-gated
   cutover) before replacing the orchestrator path; Phase 5 Gate 1–3 to small
-  live; run the F-9 verifier with real Gate 1 evidence and written approval;
-  Setup C activation still needs scored-event production/observation even though
-  the runtime min-score gate and bounded history are in place.
+  live; run the F-9 verifier and evidence-bundle compiler with real Gate 1/Phase
+  5 evidence and written approval; Setup C activation still needs scored-event
+  production/observation even though the runtime min-score gate, bounded
+  history, and readiness observer are in place.
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
-  QA artifacts when those routes change.
+  QA artifacts when those routes change. Use `scripts/ops/ops_readiness_check.py`
+  as the offline checklist; live service confirmation remains external.

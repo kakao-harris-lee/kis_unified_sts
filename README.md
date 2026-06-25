@@ -181,9 +181,12 @@ docs/                architecture, plans, runbooks, operations docs
 
 | Runbook | Use |
 |---|---|
-| [paper-trading-docker.md](docs/runbooks/paper-trading-docker.md) | Docker paper stack operation |
 | [stock-pipeline-cutover-m5d.md](docs/runbooks/stock-pipeline-cutover-m5d.md) | Stock decoupled pipeline cutover/rollback |
 | [futures-pipeline-cutover-f9.md](docs/runbooks/futures-pipeline-cutover-f9.md) | Futures decoupled pipeline cutover |
+| [ops-readiness-checks.md](docs/runbooks/ops-readiness-checks.md) | Offline readiness checks for common post-cutover gates |
+| [har-rv-log-rv-validation.md](docs/runbooks/har-rv-log-rv-validation.md) | HAR-RV raw-vs-log validation before forecast config cutover |
+| [setup-c-event-score-observation.md](docs/runbooks/setup-c-event-score-observation.md) | Setup C event-score history readiness observation |
+| [stock-strategy-reactivation.md](docs/runbooks/stock-strategy-reactivation.md) | Stock strategy evidence review before reactivation |
 | [paper-live-code-separation.md](docs/runbooks/paper-live-code-separation.md) | Validated-code live clone and promotion |
 | [futures-paradigm-operations.md](docs/runbooks/futures-paradigm-operations.md) | Futures daily operations checklist |
 | [futures-paradigm-rollback.md](docs/runbooks/futures-paradigm-rollback.md) | Emergency futures rollback |

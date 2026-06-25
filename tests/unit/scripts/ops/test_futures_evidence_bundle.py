@@ -1,0 +1,147 @@
+"""F-9 evidence bundle validator/compiler tests."""
+
+from __future__ import annotations
+
+import importlib
+import json
+
+import yaml
+
+
+def test_complete_bundle_passes_and_reports_per_gate_sections(tmp_path, capsys) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    bundle_path = tmp_path / "complete-f9-evidence.yaml"
+    bundle = {
+        "trading_dates": ["2026-06-22", "2026-06-23", "2026-06-24"],
+        "restart_loop_ok": True,
+        "backlog_ok": True,
+        "dashboard_ok": True,
+        "direction_comparison_ok": True,
+        "kill_switch_drill_ok": True,
+        "signal_count": 117,
+        "backtest_tracking_error_pct": 2.4,
+        "max_drawdown_ok": True,
+        "slippage_ok": True,
+        "operator_approval_ref": "ops-approval-2026-06-24.md",
+    }
+    bundle_path.write_text(yaml.safe_dump(bundle), encoding="utf-8")
+
+    rc = module.main([str(bundle_path), "--json"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert report["status"] == "pass"
+    assert report["missing_evidence"] == []
+    assert report["f9_gate1"]["status"] == "pass"
+    assert report["f9_gate2"]["status"] == "pass"
+    assert report["phase5_small_live"]["status"] == "pass"
+    assert report["phase5_small_live"]["signal_count"] == 117
+    assert report["f9_gate1"]["trading_dates"] == [
+        "2026-06-22",
+        "2026-06-23",
+        "2026-06-24",
+    ]
+
+
+def test_incomplete_placeholder_bundle_fails_with_missing_evidence(
+    tmp_path, capsys
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    bundle_path = tmp_path / "incomplete-f9-evidence.json"
+    bundle = {
+        "trading_dates": ["2026-06-22"],
+        "restart_loop_ok": True,
+        "backlog_ok": False,
+        "dashboard_ok": "TODO",
+        "direction_comparison_ok": "placeholder",
+        "kill_switch_drill_ok": True,
+        "signal_count": 0,
+        "backtest_tracking_error_pct": "replace me",
+        "max_drawdown_ok": True,
+        "slippage_ok": True,
+        "operator_approval_ref": "TBD",
+    }
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    rc = module.main([str(bundle_path), "--json", "--strict"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert report["status"] == "fail"
+    assert (
+        "trading_dates: requires at least 3 trading dates" in report["missing_evidence"]
+    )
+    assert "backlog_ok: expected true" in report["missing_evidence"]
+    assert "dashboard_ok: placeholder value" in report["missing_evidence"]
+    assert "direction_comparison_ok: placeholder value" in report["missing_evidence"]
+    assert "signal_count: expected positive integer" in report["missing_evidence"]
+    assert (
+        "backtest_tracking_error_pct: placeholder value" in report["missing_evidence"]
+    )
+    assert "operator_approval_ref: placeholder value" in report["missing_evidence"]
+    assert report["f9_gate1"]["status"] == "fail"
+    assert report["f9_gate2"]["status"] == "fail"
+    assert report["phase5_small_live"]["status"] == "fail"
+
+
+def test_phase5_requires_100_signals_and_tracking_error_within_20pct(
+    tmp_path, capsys
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    bundle_path = tmp_path / "phase5-low-signal-evidence.yaml"
+    bundle = {
+        "trading_dates": ["2026-06-22", "2026-06-23", "2026-06-24"],
+        "restart_loop_ok": True,
+        "backlog_ok": True,
+        "dashboard_ok": True,
+        "direction_comparison_ok": True,
+        "kill_switch_drill_ok": True,
+        "signal_count": 99,
+        "backtest_tracking_error_pct": 21.0,
+        "max_drawdown_ok": True,
+        "slippage_ok": True,
+        "operator_approval_ref": "ops-approval-2026-06-24.md",
+    }
+    bundle_path.write_text(yaml.safe_dump(bundle), encoding="utf-8")
+
+    rc = module.main([str(bundle_path), "--json", "--strict"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert report["f9_gate1"]["status"] == "pass"
+    assert report["phase5_small_live"]["status"] == "fail"
+    assert (
+        "phase5_signal_count: requires at least 100 signals"
+        in report["missing_evidence"]
+    )
+    assert (
+        "backtest_tracking_error_pct: expected absolute value <= 20"
+        in report["missing_evidence"]
+    )
+
+
+def test_missing_signal_count_fails_phase5_section(tmp_path, capsys) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    bundle_path = tmp_path / "missing-signal-count.yaml"
+    bundle = {
+        "trading_dates": ["2026-06-22", "2026-06-23", "2026-06-24"],
+        "restart_loop_ok": True,
+        "backlog_ok": True,
+        "dashboard_ok": True,
+        "direction_comparison_ok": True,
+        "kill_switch_drill_ok": True,
+        "backtest_tracking_error_pct": 2.4,
+        "max_drawdown_ok": True,
+        "slippage_ok": True,
+        "operator_approval_ref": "ops-approval-2026-06-24.md",
+    }
+    bundle_path.write_text(yaml.safe_dump(bundle), encoding="utf-8")
+
+    rc = module.main([str(bundle_path), "--json", "--strict"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert "signal_count: missing" in report["missing_evidence"]
+    assert report["f9_gate1"]["status"] == "fail"
+    assert report["phase5_small_live"]["status"] == "fail"
+    assert "signal_count: missing" in report["phase5_small_live"]["missing_evidence"]

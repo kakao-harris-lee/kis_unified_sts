@@ -107,7 +107,7 @@ that shortens the design → backtest → paper → feedback loop.
 | Host-cron → Compose scheduler/producers migration | ✅ done | operator |
 | Bear-exit regime wiring (#458: M4-P publishes regime → M4-X bear-exit gate) | ✅ done | — |
 | Experiment runner Phase 1–5 (#473–#477: `sts experiment run` + nightly 16:40 KST + `/api/experiments` + `/experiments` UI + 30-day minute backfill) | ✅ done | — |
-| HAR-RV log-RV forecast transition | 🔄 in-progress | model JSON preserves RV history after reload; local CSV/Parquet refit CLI and log-RV target path exist; real-data refit/backtest + ~1wk shadow still required before switching config from `rv_target: raw` |
+| HAR-RV log-RV forecast transition | 🔄 in-progress | model JSON preserves RV history after reload; local CSV/Parquet refit and raw-vs-log validation CLIs exist; real-data refit/backtest + ~1wk shadow still required before switching config from `rv_target: raw` |
 | `technical_consensus` reactivation | 🔄 in-progress | strong long-horizon backtest vs recent ~3wk live loss → regime-verify, then small |
 | `momentum_breakout` redesign / retune | 🔄 in-progress | retune still negative (recent Sharpe ≈ −5.24); observe in paper |
 | Strategy Lab Phase 1–7 (visual design → backtest → paper → feedback) | 🔄 in-progress | design done ([plans/2026-05-26-strategy-lab-extension-design.md](plans/2026-05-26-strategy-lab-extension-design.md)); Quant Ops Workbench UI/UX expansion complete ([plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md)); remaining Strategy Lab work is non-Workbench backtest/paper workflow depth |
@@ -117,15 +117,20 @@ that shortens the design → backtest → paper → feedback loop.
 
 ### Open next-steps
 
-- Validate HAR-RV log-RV against real data (local file-backed refit + backtest
-  + 1-week shadow) before cutting the forecast model over; model serialization
-  preserves RV history and the log-RV/refit code path exists, but default config
-  remains `rv_target: raw` until the validation gate passes. See
+- Validate HAR-RV log-RV against real data with
+  `scripts/forecasting/validate_har_rv.py` (local file-backed raw-vs-log report),
+  then backtest + 1-week shadow before cutting the forecast model over. Model
+  serialization preserves RV history and the log-RV/refit code path exists, but
+  default config remains `rv_target: raw` until the validation gate passes. See
+  [runbooks/har-rv-log-rv-validation.md](runbooks/har-rv-log-rv-validation.md) and
   [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
-- Decide `technical_consensus` reactivation after regime verification (small size first).
+- Decide `technical_consensus` reactivation after regime verification (small size
+  first); use `scripts/ops/stock_strategy_readiness.py` with real backtest/paper
+  evidence before any YAML change.
 - Continue non-Workbench Strategy Lab build-out for deeper design, backtest,
   paper feedback, and reactivation-gate workflows.
-- Run the position-recovery drill and the Redis + SQLite E2E smoke.
+- Run the position-recovery drill and the Redis + SQLite E2E smoke; use
+  `scripts/ops/ops_readiness_check.py` as the offline checklist before/after cutovers.
 - Restart MLflow for experiment tracking.
 
 ---
@@ -174,20 +179,23 @@ paths are removed and must not be reintroduced
 | F-9 shadow validation (Gate 1: `--profile futures-pipeline`, 3–5 trading days) | 🔄 in-progress | operator-gated; [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md) |
 | F-9 Gate 2 → decoupled cutover (replace orchestrator path) | ⏳ planned | operator written approval; `trader` flag false + daemon-mode env |
 | Phase 5 Gate 1–3 → small live (100 signals + backtest ±20% + MDD/slippage + kill-switch drill) | ⏳ planned | [plans/2026-04-20-futures-paradigm-phase5-rollout.md](plans/2026-04-20-futures-paradigm-phase5-rollout.md) (procedure; RL/systemd/ClickHouse refs there are historical) |
-| Setup C activation | 🔄 in-progress | runtime enforces configured event-score minimum; `ForecastPublisher` now keeps bounded Redis event-score history and `/event-context` surfaces it; needs real scored-event production/observation to prove eligible signals |
+| Setup C activation | 🔄 in-progress | runtime enforces configured event-score minimum; `ForecastPublisher` keeps bounded Redis event-score history; `/event-context` and `scripts/ops/setup_c_event_score_observe.py` surface readiness; needs real scored-event production/observation to prove eligible signals |
 | Kill-switch sentinel → shared-volume path | ✅ done | default is `/app/data/runtime/kis_kill_switch.tripped`, shared by kill-switch/order-router containers |
-| Futures cutover verify/rollback automation script (stock analogue exists) | ✅ done | `scripts/ops/futures_cutover_verify.py` read-only audit/strict gate rejects placeholder evidence; env examples expose `FUTURES_ORCHESTRATOR_ENABLED`; rollback helper is dry-run-first |
-| HAR-RV log-RV validation (futures side) | 🔄 in-progress | log-RV model target, RV-history serialization, KST regular-session RV, and local file-backed refit CLI exist; real-data validation/shadow remains open |
+| Futures cutover verify/rollback automation script (stock analogue exists) | ✅ done | `scripts/ops/futures_cutover_verify.py` read-only audit/strict gate rejects placeholder evidence; `scripts/ops/futures_evidence_bundle.py` compiles F-9/Phase 5 evidence; env examples expose `FUTURES_ORCHESTRATOR_ENABLED`; rollback helper is dry-run-first |
+| HAR-RV log-RV validation (futures side) | 🔄 in-progress | log-RV model target, RV-history serialization, KST regular-session RV, and local file-backed refit/validation CLIs exist; real-data validation/shadow remains open |
 
 ### Open next-steps
 
 - Run F-9 Gate 1 shadow (`docker compose --profile futures-pipeline ...`,
   3–5 trading days), then Gate 2, then operator-gated cutover —
   [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md).
+  Use `scripts/ops/futures_evidence_bundle.py` to reject incomplete or placeholder
+  F-9/Phase 5 evidence before operator review.
 - Drive Phase 5 Gate 1–3 toward a small live allocation (procedure in the
   archived master is superseded; use the phase5-rollout doc's gate procedure).
 - Run/observe real event scoring so Setup C has enough fresh score history to
-  evaluate eligible signals; history plumbing is now in place.
+  evaluate eligible signals; use `scripts/ops/setup_c_event_score_observe.py` to
+  produce the readiness report.
 - Run `scripts/ops/futures_cutover_verify.py --strict` with Gate 1 evidence and
   written approval before cutover; repo-local sentinel/env checks are wired, so
   the remaining blockers are operator-supplied shadow evidence and approval.

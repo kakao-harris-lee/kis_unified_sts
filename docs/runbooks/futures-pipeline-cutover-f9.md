@@ -105,6 +105,22 @@ contain obvious template markers such as `TODO`, `TBD`, or `placeholder`.
 Include real trading dates and the observations above; automation cannot prove
 multi-day shadow operation without operator-supplied evidence.
 
+Optional bundle compiler: record the Gate 1 / Gate 2 / Phase 5 evidence metadata
+in JSON or YAML and run:
+
+```bash
+python scripts/ops/futures_evidence_bundle.py path/to/f9-evidence.yaml --json --strict
+```
+
+The bundle validator rejects missing fields and placeholder values, then emits a
+JSON report with `f9_gate1`, `f9_gate2`, and `phase5_small_live` sections. It
+expects real values for `trading_dates`, restart/backlog/dashboard/direction
+checks, kill-switch drill status, signal count, backtest tracking error,
+drawdown/slippage checks, and `operator_approval_ref`. For Phase 5, the bundle
+also enforces at least 100 signals and absolute backtest tracking error <= 20%.
+Passing the bundle check does **not** replace the actual shadow logs, Phase-5
+artifacts, or written operator approval.
+
 **DUAL-WS CAVEAT.** `futures-order-router` self-feeds a real KIS futures WebSocket
 even in paper mode (KIS 모의투자 serves no futures realtime feed). During shadow
 that is a 2nd futures WS alongside the orchestrator's = 2 concurrent on one KIS
