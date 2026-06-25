@@ -15,12 +15,18 @@ Logic overview
    no_entry_after_minutes_since_open``. Skips the opening-auction noise and
    avoids late entries that would be force-closed near the 15:45 KST session
    close.
-2. **High-vol regime gate**: ``atr_14 >= min_atr_ratio * atr_90th_percentile``.
-   ``atr_90th_percentile`` is the high-vol reference for the instrument (the
-   replay/orchestrator both populate it). A ratio near/above 1.0 means "this bar
-   is in the upper tail of the volatility distribution" — i.e. trade only when
-   the market is actually moving. This is the filter that keeps the setup quiet
-   on dead days.
+2. **High-vol regime gate**: ``atr_14 >= min_atr_ratio * vol_reference``, where
+   ``vol_reference`` is the **causal** ``vol_percentile`` (default 90th) of a
+   rolling window of recent ATRs that the setup computes **itself** from the
+   ``atr_14`` it receives each bar (``vol_window_bars``, reset per KST day). The
+   reference uses only ATRs observed at or BEFORE the current bar — no
+   look-ahead — and the gate is permissive during warmup (< ``vol_warmup_bars``
+   observations) so the setup is never silently dead. A ratio near/above 1.0
+   means "this bar is in the upper tail of the session's volatility" — trade
+   only when the market is actually moving; quiet on dead days. The setup owns
+   this computation end to end (it does NOT read the context's
+   ``atr_90th_percentile`` — that field is look-ahead in the backtest replay and
+   has no live producer), so the gate behaves identically in backtest and live.
 3. **VWAP extension extreme** (the fade trigger). Measure how far price has
    stretched from the session VWAP in ATR units::
 
@@ -71,9 +77,11 @@ is a non-negotiable repo rule).
 
 from __future__ import annotations
 
+from collections import deque
 from datetime import timedelta
 from typing import ClassVar
 
+import numpy as np
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
@@ -109,11 +117,41 @@ class SetupDConfig(ServiceConfigBase):
         ),
     )
     min_atr_ratio: float = Field(
-        default=0.7,
+        default=0.9,
         description=(
             "High-vol regime gate: require atr_14 >= min_atr_ratio * "
-            "atr_90th_percentile. Higher = more selective (only the most volatile "
-            "bars). 0 disables the gate."
+            "vol_reference, where vol_reference is the CAUSAL trailing "
+            "vol_percentile of recent ATRs (self-computed by the setup from the "
+            "atr_14 it receives each bar — see vol_window_bars / vol_warmup_bars). "
+            "Higher = more selective (only the most volatile bars). 0 disables "
+            "the gate."
+        ),
+    )
+    vol_window_bars: int = Field(
+        default=780,
+        description=(
+            "Causal trailing window (bars) over which the high-vol reference "
+            "percentile is computed from past ATRs. ~780 = two KOSPI day sessions. "
+            "The window holds only ATRs observed at or before the current bar "
+            "(no look-ahead) and is NOT reset per day (a per-day reset leaves too "
+            "few early-session observations to be a meaningful percentile)."
+        ),
+    )
+    vol_warmup_bars: int = Field(
+        default=120,
+        description=(
+            "Minimum past-ATR observations before the high-vol gate activates. "
+            "Below this the gate is PERMISSIVE (does not block) so the setup is "
+            "not silently dead during warmup."
+        ),
+    )
+    vol_percentile: float = Field(
+        default=90.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Percentile of the causal ATR window used as the high-vol reference "
+            "(90 = upper-tail volatility). Mirrors the legacy atr_90th_percentile."
         ),
     )
     extreme_atr_mult: float = Field(
@@ -171,14 +209,49 @@ class SetupDVWAPReversion(Setup):
 
     CONFIG_CLASS = SetupDConfig
 
-    # Why the last check() returned None (observability; None after a fired
-    # signal). Mirrors Setup A/C.
-    last_reject_reason: str | None = None
+    def __init__(self, *, config: SetupDConfig | None = None) -> None:
+        super().__init__(config=config)
+        # Why the last check() returned None (observability; None after a fired
+        # signal). Mirrors Setup A/C.
+        self.last_reject_reason: str | None = None
+        # Causal rolling ATR history for the self-computed high-vol reference.
+        # Holds only ATRs observed at or before the current bar (no look-ahead),
+        # as a trailing window that spans ~2 sessions so the reference is a
+        # stable recent-volatility baseline (a per-day reset leaves too few
+        # early-session observations to be a meaningful percentile).
+        self._atr_window: deque[float] = deque(maxlen=self.config.vol_window_bars)
 
     def _reject(self, reason: str) -> None:
         """Record the rejection reason and return None (early-return helper)."""
         self.last_reject_reason = reason
         return None
+
+    def _vol_reference(self, atr: float) -> float | None:
+        """Return the causal high-vol reference for the gate, or None during warmup.
+
+        Self-computes the ``vol_percentile`` (default 90th) of a trailing window
+        of recent ATRs built from PAST bars only (``vol_window_bars`` ≈ 2
+        sessions; no per-day reset — that leaves too few early-session
+        observations to be a meaningful percentile). During warmup (fewer than
+        ``vol_warmup_bars`` observations) returns ``None`` so the caller treats
+        the gate as permissive (does not block) rather than silently dead.
+
+        The current bar's ATR is appended AFTER reading the reference, so the
+        reference never includes the bar it is gating — strictly causal, and
+        identical in backtest and live (it does not read the context's
+        ``atr_90th_percentile``, which is look-ahead in the replay and has no
+        live producer; the setup owns this computation end to end).
+        """
+        if len(self._atr_window) >= self.config.vol_warmup_bars:
+            ref: float | None = float(
+                np.percentile(self._atr_window, self.config.vol_percentile)
+            )
+        else:
+            ref = None  # warmup — permissive
+
+        # Append AFTER reading (strictly causal: reference excludes this bar).
+        self._atr_window.append(atr)
+        return ref
 
     def check(self, ctx: MarketContext) -> Signal | None:  # noqa: PLR0911
         """Evaluate *ctx* and return a Signal when all conditions are met.
@@ -206,19 +279,15 @@ class SetupDVWAPReversion(Setup):
         if ctx.current_price <= 0:
             return self._reject("no_price")
 
-        # 3. High-vol regime gate
-        if c.min_atr_ratio > 0:
-            if ctx.atr_90th_percentile <= 0:
-                return self._reject("no_vol_reference")
-            vol_ratio = atr / ctx.atr_90th_percentile
-            if vol_ratio < c.min_atr_ratio:
-                return self._reject(
-                    f"vol_below_gate({vol_ratio:.2f}<{c.min_atr_ratio})"
-                )
-        else:
-            vol_ratio = (
-                atr / ctx.atr_90th_percentile if ctx.atr_90th_percentile > 0 else 0.0
-            )
+        # 3. High-vol regime gate (causal, self-computed — see _vol_reference).
+        #    _vol_reference is called on EVERY in-window bar so the rolling ATR
+        #    history stays continuous; it returns None during warmup (→ vol_ratio
+        #    0.0 and the gate is permissive, never silently dead).
+        vol_ref = self._vol_reference(atr)
+        gate_active = vol_ref is not None and vol_ref > 0
+        vol_ratio = atr / vol_ref if gate_active else 0.0
+        if c.min_atr_ratio > 0 and gate_active and vol_ratio < c.min_atr_ratio:
+            return self._reject(f"vol_below_gate({vol_ratio:.2f}<{c.min_atr_ratio})")
 
         # 4. VWAP extension extreme (the fade trigger)
         z = (ctx.current_price - ctx.vwap) / atr

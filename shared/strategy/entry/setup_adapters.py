@@ -341,8 +341,20 @@ class SetupDEntryConfig(ServiceConfigBase):
         description="No new entries after this many minutes since 09:00 KST (345=14:45)",
     )
     min_atr_ratio: float = Field(
-        default=0.7,
-        description="High-vol gate: atr_14 >= min_atr_ratio × atr_90th_percentile",
+        default=0.9,
+        description="High-vol gate: atr_14 >= min_atr_ratio × causal vol reference",
+    )
+    vol_window_bars: int = Field(
+        default=780,
+        description="Causal trailing window (bars) for the self-computed vol reference",
+    )
+    vol_warmup_bars: int = Field(
+        default=120,
+        description="Min past-ATR observations before the high-vol gate activates",
+    )
+    vol_percentile: float = Field(
+        default=90.0,
+        description="Percentile of the causal ATR window used as the vol reference",
     )
     extreme_atr_mult: float = Field(
         default=1.8,
@@ -1448,6 +1460,9 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
             valid_minutes_min=config.valid_minutes_min,
             no_entry_after_minutes_since_open=config.no_entry_after_minutes_since_open,
             min_atr_ratio=config.min_atr_ratio,
+            vol_window_bars=config.vol_window_bars,
+            vol_warmup_bars=config.vol_warmup_bars,
+            vol_percentile=config.vol_percentile,
             extreme_atr_mult=config.extreme_atr_mult,
             stall_buffer_atr_mult=config.stall_buffer_atr_mult,
             stop_atr_mult=config.stop_atr_mult,
@@ -1488,17 +1503,12 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
     def required_indicators(self) -> list[str]:
         """Indicators needed by Setup D.
 
-        Setup D requires ATR, the session VWAP, the volatility reference, and the
-        15-min price range — all populated on the MarketContext by the
-        orchestrator / replay.
+        Setup D requires ATR, the session VWAP, and the 15-min price range — all
+        populated on the MarketContext by the orchestrator / replay. The high-vol
+        reference is self-computed by the setup from the per-bar ATR (it does not
+        require a separate ``atr_90th_percentile`` indicator).
         """
-        return [
-            "atr",
-            "vwap",
-            "atr_90th_percentile",
-            "last_15min_high",
-            "last_15min_low",
-        ]
+        return ["atr", "vwap", "last_15min_high", "last_15min_low"]
 
     async def generate(self, context: EntryContext) -> OrchestratorSignal | None:
         """Generate an entry signal by delegating to :class:`SetupDVWAPReversion`.

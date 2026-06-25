@@ -42,10 +42,15 @@ strategy:
       valid_minutes_min: 15                    # skip the open auction (09:15 KST)
       no_entry_after_minutes_since_open: 345   # no entries after 14:45 KST (force-close avoidance)
 
-      # High-vol regime gate: require atr_14 >= min_atr_ratio × atr_90th_percentile.
-      # Higher = more selective (trade only the most volatile bars). This is the
-      # filter that keeps the setup quiet on dead days. 0 disables it.
-      min_atr_ratio: 0.7
+      # High-vol regime gate: require atr_14 >= min_atr_ratio × vol_reference,
+      # where vol_reference is a CAUSAL trailing ATR percentile the setup
+      # self-computes from the per-bar ATR (no look-ahead, no external
+      # indicator — identical in backtest and live). Higher = more selective.
+      # This is the filter that keeps the setup quiet on dead days. 0 disables it.
+      min_atr_ratio: 0.9
+      vol_window_bars: 780       # causal trailing window (~2 KOSPI sessions)
+      vol_warmup_bars: 120       # gate permissive until this many past ATRs observed
+      vol_percentile: 90.0       # percentile of the causal ATR window
 
       # Fade trigger: |(price - vwap) / atr_14| must reach this many ATRs.
       extreme_atr_mult: 1.8

@@ -107,9 +107,14 @@ class TestSetupDAdapterRejects:
 
     @pytest.mark.asyncio
     async def test_low_vol_bar_returns_none(self):
-        adapter = _adapter()
-        # vol_ratio = 1.0/2.0 = 0.5 < 0.7 gate
-        md = _md(current_price=103.6, vwap=100.0, atr=1.0, atr_90th=2.0)
+        # Small warmup so the causal gate activates within the test.
+        adapter = SetupDEntryAdapter(SetupDEntryConfig(vol_warmup_bars=30))
+        # Seed the causal window with high-ATR calm bars (reference ≈ 2.0).
+        for _i in range(30):
+            calm = _md(current_price=100.05, vwap=100.0, atr=2.0)
+            await adapter.generate(_context(calm, _utc(2, 0)))
+        # Now an extreme on a low-ATR bar: vol_ratio = 1.0/2.0 = 0.5 < 0.9 → gate.
+        md = _md(current_price=101.8, vwap=100.0, atr=1.0)
         assert await adapter.generate(_context(md, _utc(2, 0))) is None
 
     @pytest.mark.asyncio
@@ -118,6 +123,41 @@ class TestSetupDAdapterRejects:
         md = _md(current_price=103.6, vwap=100.0)
         md["close"] = 0.0  # unusable price → no MarketContext
         assert await adapter.generate(_context(md, _utc(2, 0))) is None
+
+    @pytest.mark.asyncio
+    async def test_live_default_atr90_does_not_silently_block(self):
+        """Regression for the review blocker: the live path supplies no
+        atr_90th_percentile (build_market_context defaults it to atr*1.5). The
+        gate must NOT read that default and must instead self-compute, so the
+        setup still fires on a genuine high-vol extreme.
+        """
+        adapter = SetupDEntryAdapter(SetupDEntryConfig(vol_warmup_bars=30))
+        # market_data WITHOUT atr_90th_percentile → adapter defaults it to atr*1.5.
+        for _i in range(30):
+            calm = {
+                "code": "101S6000",
+                "close": 100.05,
+                "open": 100.0,
+                "prev_close": 100.0,
+                "vwap": 100.0,
+                "atr": 1.0,
+                "last_15min_high": 100.15,
+                "last_15min_low": 99.95,
+            }
+            await adapter.generate(_context(calm, _utc(2, 0)))
+        spike = {
+            "code": "101S6000",
+            "close": 104.0,
+            "open": 100.0,
+            "prev_close": 100.0,
+            "vwap": 100.0,
+            "atr": 2.0,
+            "last_15min_high": 103.9,
+            "last_15min_low": 99.95,
+        }
+        sig = await adapter.generate(_context(spike, _utc(2, 0)))
+        assert sig is not None
+        assert sig.metadata["signal_direction"] == "short"
 
 
 class TestSetupDValidation:
@@ -145,6 +185,8 @@ class TestSetupDRegistryWiring:
         strat = StrategyFactory.create_from_file("futures", "setup_d_vwap_reversion")
         assert strat.name == "setup_d_vwap_reversion"
         assert strat.entry.name == "setup_d_vwap_reversion"
-        # required indicators expose the MR inputs
+        # required indicators expose the MR inputs (the vol reference is
+        # self-computed, so it is NOT a required external indicator)
         assert "vwap" in strat.entry.required_indicators
-        assert "atr_90th_percentile" in strat.entry.required_indicators
+        assert "atr" in strat.entry.required_indicators
+        assert "atr_90th_percentile" not in strat.entry.required_indicators

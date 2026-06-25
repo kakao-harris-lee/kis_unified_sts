@@ -71,6 +71,18 @@ def _setup() -> SetupDVWAPReversion:
     return SetupDVWAPReversion(config=SetupDConfig())
 
 
+def _warm(setup: SetupDVWAPReversion, atr: float, n: int) -> None:
+    """Feed ``n`` calm, near-VWAP bars at a fixed ATR to populate the causal
+    rolling vol window (so the high-vol gate becomes active).
+
+    Each bar is near VWAP (z≈0) so it does not fire — it only seeds the window.
+    """
+    for _i in range(n):
+        setup.check(
+            _ctx(current_price=100.05, vwap=100.0, atr_14=atr, atr_90th_percentile=2.0)
+        )
+
+
 # ---------------------------------------------------------------------------
 # Symmetry
 # ---------------------------------------------------------------------------
@@ -138,41 +150,48 @@ def test_long_short_bracket_is_symmetric():
 
 
 def test_quiet_bar_below_vol_gate_returns_none():
-    """Same extension but ATR below the high-vol gate → rejected."""
-    setup = _setup()
-    # atr_14=1.0, atr_90th=2.0 → vol_ratio=0.5 < min_atr_ratio(0.7) → reject
-    ctx = _ctx(current_price=103.6, vwap=100.0, atr_14=1.0, atr_90th_percentile=2.0)
+    """After warmup, an extreme on a LOW-vol bar (ATR below the causal
+    reference) is gated out."""
+    setup = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30))
+    # Seed the causal window with high ATRs (reference ≈ 2.0), then present an
+    # extreme on a low-ATR bar: vol_ratio = 1.0/2.0 = 0.5 < min_atr_ratio(0.9).
+    _warm(setup, atr=2.0, n=30)
+    ctx = _ctx(current_price=101.8, vwap=100.0, atr_14=1.0)
     assert setup.check(ctx) is None
     assert setup.last_reject_reason.startswith("vol_below_gate")
 
 
 def test_high_vol_bar_passes_gate():
-    """ATR at/above the gate fires (boundary at vol_ratio == min_atr_ratio)."""
-    setup = _setup()
-    # atr_14=1.4, atr_90th=2.0 → vol_ratio=0.7 == gate → passes.
-    # extension trigger at z>=1.8 → price >= 100 + 1.8*1.4 = 102.52
-    ctx = _ctx(
-        current_price=102.6,
-        vwap=100.0,
-        atr_14=1.4,
-        atr_90th_percentile=2.0,
-        last_15min_high=102.5,
-    )
+    """After warmup, an extreme on a HIGH-vol bar (ATR at/above the causal
+    reference) fires."""
+    setup = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30))
+    # Seed with low ATRs (reference ≈ 1.0), then an extreme on a high-ATR bar:
+    # vol_ratio = 2.0/1.0 = 2.0 >= 0.9. z = (104-100)/2 = 2.0 >= 1.8.
+    _warm(setup, atr=1.0, n=30)
+    ctx = _ctx(current_price=104.0, vwap=100.0, atr_14=2.0, last_15min_high=103.9)
+    sig = setup.check(ctx)
+    assert sig is not None
+    assert sig.direction == "short"
+
+
+def test_gate_permissive_during_warmup():
+    """Before vol_warmup_bars observations, the gate does not block (the setup is
+    not silently dead) — an extreme fires even though the reference is unknown."""
+    setup = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30))
+    # First call ever (window empty < warmup) → permissive; extreme fires.
+    ctx = _ctx(current_price=104.0, vwap=100.0, atr_14=2.0, last_15min_high=103.9)
     sig = setup.check(ctx)
     assert sig is not None
     assert sig.direction == "short"
 
 
 def test_vol_gate_disabled_when_ratio_zero():
-    """min_atr_ratio=0 disables the high-vol gate."""
-    setup = SetupDVWAPReversion(config=SetupDConfig(min_atr_ratio=0.0))
-    ctx = _ctx(
-        current_price=103.6,
-        vwap=100.0,
-        atr_14=0.5,
-        atr_90th_percentile=2.0,
-        last_15min_high=103.5,
+    """min_atr_ratio=0 disables the high-vol gate (fires regardless of vol)."""
+    setup = SetupDVWAPReversion(
+        config=SetupDConfig(min_atr_ratio=0.0, vol_warmup_bars=30)
     )
+    _warm(setup, atr=5.0, n=30)  # high reference, but gate disabled
+    ctx = _ctx(current_price=104.0, vwap=100.0, atr_14=2.0, last_15min_high=103.9)
     sig = setup.check(ctx)
     assert sig is not None  # vol gate off → fires on the extension alone
 
@@ -320,31 +339,26 @@ def test_confidence_increases_with_extension():
 
 
 def test_confidence_increases_with_vol_regime():
-    """Higher vol_ratio (same extension in ATR units) → higher confidence."""
-    setup = _setup()
-    # Both have z=2.0 (clear of the 1.8 boundary) but different vol regimes.
-    # low vol regime: atr=1.5, atr_90th=2.0 → ratio 0.75; price=100+2.0*1.5=103.0
-    low = setup.check(
-        _ctx(
-            current_price=103.0,
-            vwap=100.0,
-            atr_14=1.5,
-            atr_90th_percentile=2.0,
-            last_15min_high=102.9,
-        )
+    """Higher vol_ratio (same z extension) → higher confidence.
+
+    Both fire with z=2.0 but at different ATRs relative to the same causal
+    reference (seeded ≈ 1.0). The higher-ATR bar has the larger vol_ratio.
+    """
+    low = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30))
+    _warm(low, atr=1.0, n=30)  # reference ≈ 1.0
+    # atr=1.5 → vol_ratio 1.5; z=2.0 → price=100+2.0*1.5=103.0
+    sig_low = low.check(
+        _ctx(current_price=103.0, vwap=100.0, atr_14=1.5, last_15min_high=102.9)
     )
-    # high vol regime: atr=2.0, atr_90th=2.0 → ratio 1.0; price=100+2.0*2.0=104.0
-    high = setup.check(
-        _ctx(
-            current_price=104.0,
-            vwap=100.0,
-            atr_14=2.0,
-            atr_90th_percentile=2.0,
-            last_15min_high=103.9,
-        )
+
+    high = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30))
+    _warm(high, atr=1.0, n=30)  # same reference ≈ 1.0
+    # atr=2.0 → vol_ratio 2.0; z=2.0 → price=100+2.0*2.0=104.0
+    sig_high = high.check(
+        _ctx(current_price=104.0, vwap=100.0, atr_14=2.0, last_15min_high=103.9)
     )
-    assert low is not None and high is not None
-    assert high.confidence > low.confidence
+    assert sig_low is not None and sig_high is not None
+    assert sig_high.confidence > sig_low.confidence
 
 
 def test_config_defaults():
@@ -352,7 +366,10 @@ def test_config_defaults():
     assert cfg.enabled is True
     assert cfg.valid_minutes_min == 15
     assert cfg.no_entry_after_minutes_since_open == 345
-    assert cfg.min_atr_ratio == pytest.approx(0.7)
+    assert cfg.min_atr_ratio == pytest.approx(0.9)
+    assert cfg.vol_window_bars == 780
+    assert cfg.vol_warmup_bars == 120
+    assert cfg.vol_percentile == pytest.approx(90.0)
     assert cfg.extreme_atr_mult == pytest.approx(1.8)
     assert cfg.stall_buffer_atr_mult == pytest.approx(1.0)
     assert cfg.stop_atr_mult == pytest.approx(1.5)

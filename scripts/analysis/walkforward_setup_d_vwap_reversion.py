@@ -12,16 +12,17 @@ EOD exit, and reports:
   step 1 month). Each fold reports its OOS metrics so a curve-fit edge that does
   not generalize is visible.
 
-Setup D reads only OHLCV-derived context (VWAP, ATR, ATR-90th-pct, 15-min range)
-— no macro/event backfill needed, so this is a fully self-contained backtest.
+Setup D reads only OHLCV-derived context (VWAP, ATR, 15-min range) — no
+macro/event backfill needed, so this is a fully self-contained backtest.
 
 Look-ahead safety
 -----------------
 ``MarketContextReplay`` computes VWAP/ATR/range strictly from bars at or before
 the current index, and the intrabar exit only consults the entry bar's signal +
-subsequent bars. ``atr_90th_percentile`` is a full-series reference (a fixed
-scale constant), consistent with how the live engine seeds it; it is not a
-per-bar look-ahead into future prices for any trade decision.
+subsequent bars. The **high-vol gate reference is causal**: ``SetupDVWAPReversion``
+self-computes it from a trailing window of past ATRs (it does NOT read the
+replay's full-series ``atr_90th_percentile``, which would be look-ahead and has
+no live producer). The gate therefore behaves identically here and in live.
 
 Usage::
 
@@ -172,10 +173,13 @@ def collect_entries(df: pd.DataFrame, config: SetupDConfig) -> list[SimTrade]:
         idx = ts_to_idx.get(ts_naive)
         if idx is None:
             continue
+
+        # Always evaluate so the setup's causal rolling vol window stays
+        # continuous (in live, check() runs every bar). When still in a prior
+        # trade we evaluate-and-discard rather than skip.
+        signal = setup.check(ctx)
         if idx <= last_exit_idx:
             continue  # still in a prior trade — single-position model
-
-        signal = setup.check(ctx)
         if signal is None:
             continue
 
@@ -464,6 +468,11 @@ def main() -> None:
     print("  dominates; daily-stride gives a more stable read (default).")
     print(f"{'#'*62}")
 
+    # Single CONTINUOUS causal pass (``all_trades``) attributed to OOS folds by
+    # entry timestamp. This keeps the setup's rolling vol window continuously
+    # warmed across folds (matching live) instead of re-warming per fold, and
+    # avoids per-fold position-model resets — a cleaner OOS read than slicing +
+    # rebuilding a fresh replay per fold.
     fold_results: list[FoldResult] = []
     oos_all: list[SimTrade] = []
     print(
@@ -471,12 +480,7 @@ def main() -> None:
         f"{'win%':>5} {'tot_pts':>8} {'avg':>7} {'sharpe':>7} {'mdd_krw':>10}"
     )
     for fid, (is_s, is_e, oos_s, oos_e) in enumerate(folds):
-        oos_df = df[(df["timestamp"] >= oos_s) & (df["timestamp"] < oos_e)].reset_index(
-            drop=True
-        )
-        if oos_df.empty:
-            continue
-        oos_trades = collect_entries(oos_df, config)
+        oos_trades = [t for t in all_trades if oos_s <= pd.Timestamp(t.ts) < oos_e]
         m = compute_metrics(oos_trades)
         oos_all.extend(oos_trades)
         fr = FoldResult(

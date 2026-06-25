@@ -31,14 +31,18 @@ setup_c_event_reaction:
 
 # Setup D — High-Vol Intraday VWAP Reversion (Thesis A; paper-only, NEEDS-VALIDATION).
 # Fades ATR-scaled VWAP extremes throughout the session on high-vol bars
-# (long/short symmetric). Defaults are the Dec2025–Apr2026 research operating
-# point (edge distributed across months + balanced long/short).
+# (long/short symmetric). The high-vol reference is a CAUSAL trailing ATR
+# percentile the setup self-computes (no look-ahead, no external indicator).
+# Defaults are the Dec2025–Apr2026 research operating point.
 # See docs/superpowers/specs/2026-06-25-futures-mr-highvol-setup-d.md.
 setup_d_vwap_reversion:
-  enabled: true
+  enabled: false
   valid_minutes_min: 15                    # skip the 09:00 open auction (15 = 09:15 KST)
   no_entry_after_minutes_since_open: 345   # no entries after 14:45 KST (force-close avoidance)
-  min_atr_ratio: 0.7                       # high-vol gate: atr_14 >= 0.7 × atr_90th_percentile
+  min_atr_ratio: 0.9                       # high-vol gate: atr_14 >= 0.9 × causal vol reference
+  vol_window_bars: 780                     # causal trailing window (~2 sessions)
+  vol_warmup_bars: 120                     # gate permissive until this many past ATRs seen
+  vol_percentile: 90.0                     # percentile of the causal ATR window
   extreme_atr_mult: 1.8                    # fade trigger: |(price-vwap)/atr_14| >= 1.8
   stall_buffer_atr_mult: 1.0               # trend-day guard vs 15-min extreme
   stop_atr_mult: 1.5                       # hard stop = entry ± 1.5 × ATR14
