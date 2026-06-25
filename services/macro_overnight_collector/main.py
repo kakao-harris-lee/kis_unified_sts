@@ -10,6 +10,7 @@ import sys
 from typing import Any
 
 from services.monitoring.metrics import record_macro_collected
+from shared.config.runtime_defaults import redis_url_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,8 @@ async def collect_fx_session(
 async def _cli(session_kind: str) -> int:
     import aiohttp
     import os
-    import redis.asyncio as aioredis
 
+    import redis.asyncio as aioredis
     from shared.macro.config import MacroCollectorConfig
     from shared.macro.sources.ecos import ECOSSource
     from shared.macro.sources.yahoo import YahooMacroSource
@@ -80,7 +81,7 @@ async def _cli(session_kind: str) -> int:
     cfg = MacroCollectorConfig.from_yaml()
     stream = cfg.redis_stream
     maxlen = cfg.redis_maxlen
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     r = aioredis.from_url(redis_url)
 
     try:

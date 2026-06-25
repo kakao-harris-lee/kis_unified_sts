@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from services.risk_filter.main import _signal_from_stream_fields
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.execution.contract_spec import ContractSpec
 from shared.execution.live_mode_guard import LiveModeGuard
 from shared.execution.passive_maker import PassiveMaker
@@ -408,7 +409,7 @@ async def _build_and_run() -> int:
     from shared.storage import SQLiteRuntimeLedger
     from shared.storage.config import StorageConfig
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
     mode = _resolve_mode()

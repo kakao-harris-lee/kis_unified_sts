@@ -50,6 +50,7 @@ except ImportError:  # pragma: no cover — metrics module unavailable in minima
         pass
 
 
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.news.base import NewsItem
 from shared.scoring.base import Scorer
 from shared.scoring.budget import BudgetExceeded
@@ -268,7 +269,6 @@ async def _build_and_run() -> int:
 
     import redis.asyncio as aioredis
     from openai import AsyncOpenAI
-
     from shared.scoring.budget import DailyBudget
     from shared.scoring.config import NewsScorerConfig
     from shared.scoring.fallback import FallbackScorer
@@ -276,7 +276,7 @@ async def _build_and_run() -> int:
 
     cfg = NewsScorerConfig.from_yaml(apply_env_overrides=True)
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(
         redis_url,
         socket_connect_timeout=5.0,

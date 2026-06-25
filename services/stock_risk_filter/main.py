@@ -32,6 +32,7 @@ from services.stock_risk_filter.codec import (
     decode_fields,
     stock_signal_from_stream_fields,
 )
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.risk.layer import RiskFilterLayer
 from shared.risk.runtime_state import RuntimeRiskState
 from shared.streaming.stage import StreamStage
@@ -161,7 +162,7 @@ async def _build_and_run() -> int:
 
     import redis.asyncio as aioredis
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
     mode = _resolve_mode()

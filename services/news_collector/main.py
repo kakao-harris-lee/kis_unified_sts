@@ -13,6 +13,7 @@ from services.monitoring.metrics import (
     record_news_duplicate,
     record_news_error,
 )
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.news.base import NewsSource
 from shared.news.dedupe import NewsDedupe
 from shared.news.publisher import NewsArchiveNoopWriter, NewsStreamPublisher
@@ -111,7 +112,7 @@ async def _build_and_run_from_config() -> int:
     from shared.news.sources.yonhap import YonhapRSSSource
 
     cfg = NewsCollectorConfig.from_yaml()
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
     session = aiohttp.ClientSession()
