@@ -472,6 +472,15 @@ def register_builtin_components() -> None:
         logger.debug("PatternPullbackEntry not available")
 
     try:
+        from shared.strategy.entry.orb_trend_day import (
+            OpeningRangeBreakoutTrendEntry,
+        )
+
+        EntryRegistry.register_class("orb_trend_day", OpeningRangeBreakoutTrendEntry)
+    except ImportError:
+        logger.debug("OpeningRangeBreakoutTrendEntry not available")
+
+    try:
         from shared.strategy.entry.setup_adapters import (
             SetupAEntryAdapter,
             SetupCEntryAdapter,
@@ -565,6 +574,13 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("chandelier_exit", ChandelierExit)
     except ImportError:
         logger.debug("ChandelierExit not available")
+
+    try:
+        from shared.strategy.exit.trend_trail_exit import TrendTrailExit
+
+        ExitRegistry.register_class("trend_trail_exit", TrendTrailExit)
+    except ImportError:
+        logger.debug("TrendTrailExit not available")
 
     try:
         from shared.strategy.exit.technical_consensus_exit import TechnicalConsensusExit

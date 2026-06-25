@@ -1,0 +1,64 @@
+# Opening-Range Breakout trend-day strategy (KOSPI200 futures).
+#
+# Captures the rare strong intraday TREND day that Setup A (gap reversion) and
+# Setup C (event reaction) structurally miss, while staying flat on the many
+# chop days that bankrupted prior naive trend strategies. The GATE is the crux:
+# a triple filter (vol-expansion + Kaufman trend-efficiency + decisive break with
+# MFI/MACD direction agreement) must all pass before a contract is risked.
+#
+# Paper-only, long/short symmetric, config-driven, KST-native.
+# enabled:false by default — NEVER auto-enabled; opt-in per paper config only,
+# and only after the walk-forward evidence passes the paper-promotion gate.
+strategy:
+  name: orb_trend_day
+  asset_class: futures
+  enabled: false
+  timeframe: "5min"
+  description: >-
+    Regime/efficiency-gated opening-range breakout for intraday trend-day capture.
+
+  entry:
+    type: orb_trend_day
+    params:
+      timeframe_minutes: 5
+      # Opening range anchored to the session open (08:45 KST futures open),
+      # derived from the first bar of each day.
+      opening_range_minutes: 30
+      no_entry_after_minutes: 300        # ~13:45 KST for an 08:45 open
+      # Vol-expansion gate.
+      min_or_atr_mult: 0.8               # opening-range height >= 0.8 * ATR
+      min_atr_norm: 0.0008               # ATR/price floor (session must be alive)
+      # Trend-efficiency gate (Kaufman ER) — the chop-day filter.
+      efficiency_window: 12              # ~60 min on 5m bars
+      min_efficiency: 0.35
+      breakout_buffer_atr_mult: 0.25     # decisive break beyond the range edge
+      # Direction-agreement gates.
+      use_mfi_gate: true
+      long_blocked_states: ["BEAR_STRONG", "BEAR_MODERATE"]
+      short_blocked_states: ["BULL_STRONG", "BULL_MODERATE"]
+      use_macd_slope_gate: true
+      daily_bias_filter_enabled: false   # LLM bias currently null; permissive hook
+      market_open_hour: 8
+      market_open_minute: 45
+      stop_atr_mult: 1.5
+      allow_long: true
+      allow_short: true                  # long/short symmetry
+
+  exit:
+    type: trend_trail_exit
+    params:
+      atr_period: 14
+      stop_atr_mult: 1.5
+      breakeven_activation_atr: 1.0
+      trail_activation_atr: 1.5
+      trail_atr_mult: 2.0
+      eod_flatten_enabled: true
+      eod_flatten_hour: 15
+      eod_flatten_minute: 15
+      default_exit_confidence: 0.85
+
+  position:
+    type: fixed
+    params:
+      fixed_quantity: 1
+      max_positions: 1
