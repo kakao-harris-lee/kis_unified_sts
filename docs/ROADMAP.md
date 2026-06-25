@@ -95,9 +95,17 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 - Futures broker/ledger reconciliation is extracted from the 8k-line
   orchestrator into `services/trading/broker_verification.py` with isolated unit
   tests.
+- Open-position metrics synchronization is extracted into
+  `services/trading/metrics_sync.py`; the helper preserves the existing
+  `position_count` contract and falls back to list-style open-position counting.
+- `_verify_positions_with_broker` now has a focused delegation test that locks
+  the dependency handoff to `BrokerPositionVerifier`.
 - `LLMConfig.from_yaml` is split into private YAML loading/section/config-dict
   helpers with characterization tests for absolute/relative loading, legacy
   stock/futures fallbacks, and env overrides.
+- Strategy-level guardrail tests now lock `momentum_breakout` trend-mode
+  cooldown behavior and `opening_volume_surge` post-close behavior when no
+  explicit cutoff is configured.
 
 ### Completed maintainability milestones
 
@@ -111,22 +119,21 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Builder state/YAML serializer extraction | ✅ done | `strategy-builder-ui/src/lib/builder/` |
 | Trades page component/hook split | ✅ done | `strategy-builder-ui/src/app/trades/` |
 | Broker verification extraction | ✅ done | `services/trading/broker_verification.py` |
+| Orchestrator metrics sync helper | ✅ done | `services/trading/metrics_sync.py` |
+| Broker verifier delegation guard | ✅ done | `tests/unit/trading/test_orchestrator_broker_verifier_delegation.py` |
+| Strategy close/cooldown guardrails | ✅ done | `tests/unit/strategy/entry/test_entry_gate_integration_momentum_opening.py` |
+| `/trades` screenshot/interaction QA refresh | ✅ done | [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) |
 | LLM YAML loader helper split | ✅ done | `tests/unit/llm/test_config_yaml_loading.py` |
 
 ### Open next-steps
 
 - Continue decomposing `services/trading/orchestrator.py`; broker verification
-  is extracted, but initialization, recovery, execution setup, and metrics
-  remain high-complexity regions.
-- Add a narrow orchestrator delegation test that locks the
-  `_verify_positions_with_broker` dependency handoff to `BrokerPositionVerifier`.
-- Add optional guardrail tests for `momentum_breakout` trend-mode cooldown and
-  `opening_volume_surge` post-close behavior so the no-new-close-window contract
-  remains explicit at the strategy level.
+  and metrics sync are extracted, but initialization, recovery, and execution
+  setup remain high-complexity regions.
 - Keep extracting shared runtime defaults from remaining large runtime modules
   only when it does not blur ownership or change live/paper behavior.
-- Run browser/screenshot QA again after `/trades` changes are deployed or when
-  the Workbench visual surface changes materially.
+- Refresh browser/screenshot QA whenever the Workbench visual surface changes
+  materially.
 
 ---
 

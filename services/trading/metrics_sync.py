@@ -11,13 +11,17 @@ def sync_open_positions_metric(metrics: Any, position_tracker: Any) -> int | Non
     if metrics is None or position_tracker is None:
         return None
 
-    positions = getattr(position_tracker, "positions", None)
-    if not isinstance(positions, Iterable):
-        open_positions = 0
+    count = getattr(position_tracker, "position_count", None)
+    if isinstance(count, int):
+        open_positions = count
     else:
-        open_positions = sum(
-            1 for position in positions if getattr(position, "is_open", True)
-        )
+        positions = getattr(position_tracker, "positions", None)
+        if not isinstance(positions, Iterable):
+            open_positions = 0
+        else:
+            open_positions = sum(
+                1 for position in positions if getattr(position, "is_open", True)
+            )
 
     open_positions = max(0, open_positions)
     metrics.record_position_change(open_positions)
