@@ -12,16 +12,17 @@ Williams %R Formula:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from typing import Any, Optional
-from zoneinfo import ZoneInfo
-
-_KST = ZoneInfo("Asia/Seoul")
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
-from shared.strategy.market_time import to_kst
+from shared.strategy.entry.gates import (
+    MarketSessionWindow,
+    cooldown_elapsed,
+    is_in_entry_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -162,43 +163,25 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
             return None
 
         now = context.timestamp
-        # Market hour filters use KST; context.timestamp is UTC-aware (PR #159).
-        now_kst = to_kst(now)
-
-        # --- Time filters ---
-        open_dt = datetime.combine(
-            now_kst.date(),
-            time(self.config.market_open_hour, self.config.market_open_minute),
-            tzinfo=_KST,
-        )
-        close_dt = datetime.combine(
-            now_kst.date(),
-            time(self.config.market_close_hour, self.config.market_close_minute),
-            tzinfo=_KST,
+        window = MarketSessionWindow(
+            market_open_hour=self.config.market_open_hour,
+            market_open_minute=self.config.market_open_minute,
+            market_close_hour=self.config.market_close_hour,
+            market_close_minute=self.config.market_close_minute,
+            skip_market_open_minutes=self.config.skip_market_open_minutes,
+            skip_market_close_minutes=self.config.skip_market_close_minutes,
         )
 
-        if now_kst < open_dt:
+        if not is_in_entry_session(context.timestamp, window):
             return None
-        if self.config.skip_market_open_minutes > 0:
-            if now_kst < open_dt + timedelta(
-                minutes=self.config.skip_market_open_minutes
-            ):
-                return None
-        if self.config.skip_market_close_minutes > 0:
-            if now_kst >= close_dt - timedelta(
-                minutes=self.config.skip_market_close_minutes
-            ):
-                return None
 
         # --- Cooldown ---
-        if self.config.signal_cooldown_seconds > 0:
-            last_time = self._last_signal_at.get(code)
-            if (
-                last_time
-                and (now - last_time).total_seconds()
-                < self.config.signal_cooldown_seconds
-            ):
-                return None
+        if not cooldown_elapsed(
+            now=context.timestamp,
+            last_signal_at=self._last_signal_at.get(code),
+            cooldown_seconds=self.config.signal_cooldown_seconds,
+        ):
+            return None
 
         # --- Extract Williams %R from the timeframe-selected momentum bundle ---
         momentum = indicators.get(self._momentum_key, {})
