@@ -30,7 +30,12 @@ def _to_kst(timestamp: datetime) -> datetime:
 
 
 def is_in_entry_session(timestamp: datetime, window: MarketSessionWindow) -> bool:
-    """Return whether ``timestamp`` is inside the configured entry window."""
+    """Return whether ``timestamp`` passes same-day KST entry-session guards.
+
+    This helper intentionally mirrors the existing strategy gates: the market
+    close time is only enforced when ``skip_market_close_minutes`` is positive.
+    A zero close buffer does not add a new exact-close cutoff.
+    """
     timestamp_kst = _to_kst(timestamp)
     open_dt = datetime.combine(
         timestamp_kst.date(),
