@@ -73,6 +73,63 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 
 ---
 
+## Cross-Cutting Code Quality
+
+### Current operating state
+
+- Shared entry-session/cooldown gates now live in
+  `shared/strategy/entry/gates.py`; `mean_reversion`, `williams_r`,
+  `momentum_breakout`, and the compatible `opening_volume_surge` open gate use
+  the shared path with behavior-level regression coverage.
+- Builtin strategy registration is table-driven in `shared/strategy/registry.py`
+  and covered for idempotency plus restored entry/exit/sizer keys.
+- Runtime defaults are centralized in `shared/config/runtime_defaults.py`;
+  service entrypoints use Redis DB 1 by default, and operator docs now state
+  `DASHBOARD_HOST_PORT=5081` for paper/local while Caddy remains internal `:5080`.
+- Workbench frontend refresh intervals are centralized in
+  `strategy-builder-ui/src/lib/dashboard/queryIntervals.ts`.
+- Strategy Builder state logic is split into pure reducer and YAML serializer
+  modules with focused tests.
+- `/trades` is split into a shell, tab list, live/history tab components, and
+  query hooks without changing query keys, polling, or tab accessibility behavior.
+- Futures broker/ledger reconciliation is extracted from the 8k-line
+  orchestrator into `services/trading/broker_verification.py` with isolated unit
+  tests.
+- `LLMConfig.from_yaml` is split into private YAML loading/section/config-dict
+  helpers with characterization tests for absolute/relative loading, legacy
+  stock/futures fallbacks, and env overrides.
+
+### Completed maintainability milestones
+
+| Milestone | Status | Gate / Owner |
+|---|---|---|
+| Dead/stale docs and unused-code cleanup | ✅ done | `b8cec3d`; stale docs archived, dashboard host-port drift audited |
+| Multi-agent code-quality cleanup plan | ✅ done | [superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md) |
+| Shared strategy entry gates + behavior tests | ✅ done | `shared/strategy/entry/gates.py`, `tests/unit/strategy/entry/` |
+| Strategy registry table-driven registration | ✅ done | `tests/unit/strategy/test_registry_builtin_components.py` |
+| Runtime defaults centralization | ✅ done | `shared/config/runtime_defaults.py`, `CLAUDE.md` |
+| Builder state/YAML serializer extraction | ✅ done | `strategy-builder-ui/src/lib/builder/` |
+| Trades page component/hook split | ✅ done | `strategy-builder-ui/src/app/trades/` |
+| Broker verification extraction | ✅ done | `services/trading/broker_verification.py` |
+| LLM YAML loader helper split | ✅ done | `tests/unit/llm/test_config_yaml_loading.py` |
+
+### Open next-steps
+
+- Continue decomposing `services/trading/orchestrator.py`; broker verification
+  is extracted, but initialization, recovery, execution setup, and metrics
+  remain high-complexity regions.
+- Add a narrow orchestrator delegation test that locks the
+  `_verify_positions_with_broker` dependency handoff to `BrokerPositionVerifier`.
+- Add optional guardrail tests for `momentum_breakout` trend-mode cooldown and
+  `opening_volume_surge` post-close behavior so the no-new-close-window contract
+  remains explicit at the strategy level.
+- Keep extracting shared runtime defaults from remaining large runtime modules
+  only when it does not blur ownership or change live/paper behavior.
+- Run browser/screenshot QA again after `/trades` changes are deployed or when
+  the Workbench visual surface changes materially.
+
+---
+
 ## Stock
 
 ### North Star

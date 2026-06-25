@@ -62,6 +62,19 @@ futures `_futures` strategy names are now listed explicitly, and Workbench QA no
 longer claims committed browser/screenshot evidence. Audit note:
 [investigations/2026-06-25-roadmap-codebase-consistency.md](investigations/2026-06-25-roadmap-codebase-consistency.md).
 
+**2026-06-25** - Multi-agent code-quality cleanup completed.
+Implemented the high-priority cleanup plan in
+[superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md):
+shared strategy entry gates, table-driven registry registration, centralized
+runtime defaults, centralized dashboard query intervals, Strategy Builder
+reducer/YAML serializer extraction, `/trades` page componentization, broker
+position verification extraction, and `LLMConfig.from_yaml` helper extraction.
+Focused backend and frontend tests were added for each extracted surface. The
+remaining high-value maintainability work is further orchestrator decomposition,
+one broker-verifier delegation guard test, optional strategy-level cooldown/close
+guardrail tests, and refreshed Workbench screenshot/accessibility evidence after
+the `/trades` refactor is running.
+
 **2026-06-25** - Quant Ops Workbench UI/UX QA evidence captured.
 Playwright fallback verification covered `/risk`, `/coverage`, `/trades`,
 `/builder`, and `/event-context` at desktop `1440x1100` and mobile `390x844`.
@@ -170,5 +183,7 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
-  QA artifacts when those routes change. Use `scripts/ops/ops_readiness_check.py`
-  as the offline checklist; live service confirmation remains external.
+  QA artifacts when those routes change; continue decomposing the remaining
+  high-complexity orchestrator/runtime modules after the broker-verification
+  extraction. Use `scripts/ops/ops_readiness_check.py` as the offline checklist;
+  live service confirmation remains external.

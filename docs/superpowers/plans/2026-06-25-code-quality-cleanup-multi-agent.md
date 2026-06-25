@@ -1,6 +1,6 @@
 # Code Quality Cleanup Multi-Agent Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Reduce high-maintenance code by extracting repeated strategy gate logic, splitting oversized frontend builder/trades modules, centralizing runtime defaults, and preparing bounded orchestrator decompositions.
 
@@ -61,7 +61,7 @@ Expected:
 
 **Purpose:** Extract repeated KST session-window and cooldown checks used by `generate()` methods so strategy-specific files can later become smaller without changing behavior.
 
-- [ ] **Step 1: Create tests for session gate behavior**
+- [x] **Step 1: Create tests for session gate behavior**
 
 Add tests in `tests/unit/strategy/entry/test_entry_gates.py`:
 
@@ -116,7 +116,7 @@ def test_entry_session_blocks_close_buffer() -> None:
     assert is_in_entry_session(_utc(6, 25), window) is False
 ```
 
-- [ ] **Step 2: Run the new test and verify it fails**
+- [x] **Step 2: Run the new test and verify it fails**
 
 Run:
 
@@ -127,7 +127,7 @@ pytest tests/unit/strategy/entry/test_entry_gates.py -q
 Expected before implementation:
 - Fails with `ModuleNotFoundError` or missing function.
 
-- [ ] **Step 3: Implement the session and cooldown helpers**
+- [x] **Step 3: Implement the session and cooldown helpers**
 
 Create `shared/strategy/entry/gates.py`:
 
@@ -188,7 +188,7 @@ def cooldown_elapsed(
     return (now - last_signal_at).total_seconds() >= cooldown_seconds
 ```
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run:
 
@@ -198,7 +198,7 @@ pytest tests/unit/strategy/entry/test_entry_gates.py -q
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Run impact checks**
+- [x] **Step 5: Run impact checks**
 
 Run:
 
@@ -224,7 +224,7 @@ Expected: both pass.
 
 **Purpose:** Remove repeated time-window/cooldown code from two high-complexity strategies without changing signal behavior.
 
-- [ ] **Step 1: Add regression tests for helper-equivalent behavior**
+- [x] **Step 1: Add regression tests for helper-equivalent behavior**
 
 Create tests that instantiate the real strategy with a normal config and verify:
 - signal is blocked during open skip window.
@@ -233,7 +233,7 @@ Create tests that instantiate the real strategy with a normal config and verify:
 
 Use existing strategy config defaults where possible. Do not assert exact confidence unless already covered elsewhere.
 
-- [ ] **Step 2: Replace local time-window checks**
+- [x] **Step 2: Replace local time-window checks**
 
 In each strategy, import:
 
@@ -267,7 +267,7 @@ if not cooldown_elapsed(
     return None
 ```
 
-- [ ] **Step 3: Run focused tests**
+- [x] **Step 3: Run focused tests**
 
 Run:
 
@@ -294,22 +294,22 @@ Expected: all pass.
 
 **Purpose:** Reduce repeated gate code in two more complex entry strategies.
 
-- [ ] **Step 1: Add regression tests**
+- [x] **Step 1: Add regression tests**
 
 Cover:
 - `momentum_breakout` respects open/close skip windows.
 - `momentum_breakout` respects cooldown.
 - `opening_volume_surge` respects open and entry cutoff behavior.
 
-- [ ] **Step 2: Use the shared session helper in `momentum_breakout.py`**
+- [x] **Step 2: Use the shared session helper in `momentum_breakout.py`**
 
 Use the same `MarketSessionWindow` pattern from Task 2.
 
-- [ ] **Step 3: Use the shared session helper in `opening_volume_surge.py` where compatible**
+- [x] **Step 3: Use the shared session helper in `opening_volume_surge.py` where compatible**
 
 For `opening_volume_surge`, preserve `only_first_minutes` and `entry_cutoff_*` behavior. Only replace the common "before open" computation. Do not change score, spike-window, or volume-gate logic.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run:
 
@@ -333,7 +333,7 @@ Expected: all pass.
 
 **Purpose:** Replace repeated import/register/except blocks with small registration tables.
 
-- [ ] **Step 1: Add tests for idempotent registration**
+- [x] **Step 1: Add tests for idempotent registration**
 
 Create `tests/unit/strategy/test_registry_builtin_components.py`:
 
@@ -357,7 +357,7 @@ def test_register_builtin_components_is_idempotent() -> None:
     assert EntryRegistry.get("mean_reversion") is first
 ```
 
-- [ ] **Step 2: Run tests and verify current behavior**
+- [x] **Step 2: Run tests and verify current behavior**
 
 Run:
 
@@ -367,7 +367,7 @@ pytest tests/unit/strategy/test_registry_builtin_components.py -q
 
 Expected: pass before refactor.
 
-- [ ] **Step 3: Introduce table-driven registration**
+- [x] **Step 3: Introduce table-driven registration**
 
 Inside `shared/strategy/registry.py`, replace repeated blocks with:
 
@@ -393,7 +393,7 @@ def _register_class_from_path(registry, key: str, module_path: str, class_name: 
 
 Then iterate entry, exit, and position-sizer tables. Include all currently registered components before deleting old blocks.
 
-- [ ] **Step 4: Run registry and strategy tests**
+- [x] **Step 4: Run registry and strategy tests**
 
 Run:
 
@@ -418,7 +418,7 @@ Expected: all pass.
 
 **Purpose:** Keep Redis URL and dashboard host-port defaults in one code location and fix the remaining 5080 source-of-truth drift.
 
-- [ ] **Step 1: Add default tests**
+- [x] **Step 1: Add default tests**
 
 Create `tests/unit/config/test_runtime_defaults.py`:
 
@@ -443,7 +443,7 @@ def test_redis_url_from_env_prefers_override(monkeypatch) -> None:
     assert redis_url_from_env() == "redis://example:6379/1"
 ```
 
-- [ ] **Step 2: Create runtime defaults module**
+- [x] **Step 2: Create runtime defaults module**
 
 Create `shared/config/runtime_defaults.py`:
 
@@ -464,7 +464,7 @@ def dashboard_host_port_from_env() -> str:
     return os.environ.get("DASHBOARD_HOST_PORT", DEFAULT_DASHBOARD_HOST_PORT)
 ```
 
-- [ ] **Step 3: Replace repeated Redis default reads in runtime entrypoints**
+- [x] **Step 3: Replace repeated Redis default reads in runtime entrypoints**
 
 Change only service entrypoints in this task. Example replacement:
 
@@ -489,7 +489,7 @@ Prioritize:
 - `services/risk_filter/main.py`
 - `services/kill_switch/main.py`
 
-- [ ] **Step 4: Fix `CLAUDE.md` port drift**
+- [x] **Step 4: Fix `CLAUDE.md` port drift**
 
 Replace:
 
@@ -503,7 +503,7 @@ with:
 `DASHBOARD_HOST_PORT=5081` for paper/local; Caddy still listens on container `:5080`.
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -533,7 +533,7 @@ Expected:
 
 **Purpose:** Reduce `useStrategyBuilder.ts` responsibility and make reducer/YAML conversion independently testable.
 
-- [ ] **Step 1: Move reducer without behavior changes**
+- [x] **Step 1: Move reducer without behavior changes**
 
 Move `builderReducer` and `INITIAL_STATE` dependencies needed by the reducer into `src/lib/builder/reducer.ts`.
 
@@ -545,7 +545,7 @@ export { INITIAL_STATE, builderReducer };
 
 Do not move React hook action wrappers in this step.
 
-- [ ] **Step 2: Add reducer tests**
+- [x] **Step 2: Add reducer tests**
 
 Create `strategy-builder-ui/src/lib/builder/reducer.test.ts`:
 
@@ -566,7 +566,7 @@ describe("builderReducer", () => {
 });
 ```
 
-- [ ] **Step 3: Move YAML conversion**
+- [x] **Step 3: Move YAML conversion**
 
 Create `src/lib/builder/yamlSerializer.ts` with:
 
@@ -582,7 +582,7 @@ export function toYamlString(strategy: YamlStrategy): string {
 
 The hook should call these functions inside `useMemo`.
 
-- [ ] **Step 4: Add YAML serializer tests**
+- [x] **Step 4: Add YAML serializer tests**
 
 Create `strategy-builder-ui/src/lib/builder/yamlSerializer.test.ts`:
 
@@ -603,7 +603,7 @@ describe("yamlSerializer", () => {
 });
 ```
 
-- [ ] **Step 5: Run frontend checks**
+- [x] **Step 5: Run frontend checks**
 
 Run:
 
@@ -627,7 +627,7 @@ Expected: all pass.
 
 **Purpose:** Make dashboard refresh policy explicit and easy to tune.
 
-- [ ] **Step 1: Create constants**
+- [x] **Step 1: Create constants**
 
 Create `strategy-builder-ui/src/lib/dashboard/queryIntervals.ts`:
 
@@ -640,7 +640,7 @@ export const QUERY_INTERVALS_MS = {
 } as const;
 ```
 
-- [ ] **Step 2: Replace literals**
+- [x] **Step 2: Replace literals**
 
 Replace:
 - `10000` with `QUERY_INTERVALS_MS.fast`
@@ -657,7 +657,7 @@ Prioritize files:
 - `strategy-builder-ui/src/app/positions/page.tsx`
 - `strategy-builder-ui/src/components/dashboard/*.tsx`
 
-- [ ] **Step 3: Run checks**
+- [x] **Step 3: Run checks**
 
 Run:
 
@@ -687,7 +687,7 @@ Expected:
 
 **Purpose:** Reduce `trades/page.tsx` from a 1,000-line mixed data/render file to a shell plus focused tab components.
 
-- [ ] **Step 1: Move tab keyboard logic to `TradesTabList.tsx`**
+- [x] **Step 1: Move tab keyboard logic to `TradesTabList.tsx`**
 
 Export:
 
@@ -705,15 +705,15 @@ export function TradesTabList({
 }
 ```
 
-- [ ] **Step 2: Move `LiveTab` into `LiveTradesTab.tsx`**
+- [x] **Step 2: Move `LiveTab` into `LiveTradesTab.tsx`**
 
 Keep imports local to the new component. Do not change query keys or returned UI.
 
-- [ ] **Step 3: Move `HistoryTab` into `HistoryTradesTab.tsx`**
+- [x] **Step 3: Move `HistoryTab` into `HistoryTradesTab.tsx`**
 
 Keep imports local to the new component. Do not change lifecycle behavior.
 
-- [ ] **Step 4: Keep `page.tsx` as shell only**
+- [x] **Step 4: Keep `page.tsx` as shell only**
 
 `page.tsx` should only manage:
 - `activeTab`
@@ -721,7 +721,7 @@ Keep imports local to the new component. Do not change lifecycle behavior.
 - `TradesTabList`
 - active tab panel selection
 
-- [ ] **Step 5: Run focused checks**
+- [x] **Step 5: Run focused checks**
 
 Run:
 
@@ -746,7 +746,7 @@ Expected: all pass.
 
 **Purpose:** Move `_verify_positions_with_broker` out of the 8k-line orchestrator and make broker/ledger comparison independently testable.
 
-- [ ] **Step 1: Create pure comparison tests**
+- [x] **Step 1: Create pure comparison tests**
 
 Test cases:
 - no Redis positions and no broker positions returns no action.
@@ -754,7 +754,7 @@ Test cases:
 - missing KIS client skips verification.
 - mismatched positions produce a warning payload.
 
-- [ ] **Step 2: Create `BrokerPositionVerifier`**
+- [x] **Step 2: Create `BrokerPositionVerifier`**
 
 Create `services/trading/broker_verification.py` with a `BrokerPositionVerifier`
 class and move the body of `TradingOrchestrator._verify_positions_with_broker`
@@ -764,7 +764,7 @@ broker inquiry failure, and empty-on-both-sides short circuit. The verifier must
 receive the current trading config, KIS client, and position tracker as keyword
 arguments so the orchestrator keeps ownership of runtime dependencies.
 
-- [ ] **Step 3: Delegate from orchestrator**
+- [x] **Step 3: Delegate from orchestrator**
 
 In `TradingOrchestrator._verify_positions_with_broker`, delegate:
 
@@ -776,7 +776,7 @@ await self._broker_position_verifier.verify(
 )
 ```
 
-- [ ] **Step 4: Run backend checks**
+- [x] **Step 4: Run backend checks**
 
 Run:
 
@@ -799,14 +799,14 @@ Expected: all pass.
 
 **Purpose:** Reduce `LLMConfig.from_yaml` from a 400-line method into named helper functions while preserving provider and legacy format support.
 
-- [ ] **Step 1: Add behavior tests around current `from_yaml`**
+- [x] **Step 1: Add behavior tests around current `from_yaml`**
 
 Tests must cover:
 - absolute YAML path loading.
 - legacy `stock_screening` fallback.
 - env overrides when `apply_env_overrides=True`.
 
-- [ ] **Step 2: Extract helpers**
+- [x] **Step 2: Extract helpers**
 
 Create private helpers inside `shared/llm/config.py`:
 
@@ -836,7 +836,7 @@ private `_build_config_dict(...) -> dict` helper. Move the current keys and
 default values unchanged. `from_yaml` should only load data, derive sections,
 apply env overrides, and return `cls(**config_dict)`.
 
-- [ ] **Step 3: Run checks**
+- [x] **Step 3: Run checks**
 
 Run:
 
