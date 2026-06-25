@@ -6,6 +6,7 @@ Daily-level model with 1-day / 1-week / 1-month aggregates of past RV:
               + β_w * mean(RV_{t-1..t-5})
               + β_m * mean(RV_{t-1..t-22}) + ε
 """
+
 from __future__ import annotations
 
 import json
@@ -38,9 +39,9 @@ class HARRVCoefficients:
 def _build_har_regressors(rv: pd.Series) -> pd.DataFrame:
     """Construct daily/weekly/monthly RV regressors aligned with target."""
     df = pd.DataFrame({"rv": rv})
-    df["rv_d"] = df["rv"].shift(1)                            # t-1
-    df["rv_w"] = df["rv"].shift(1).rolling(5).mean()           # mean(t-1..t-5)
-    df["rv_m"] = df["rv"].shift(1).rolling(22).mean()          # mean(t-1..t-22)
+    df["rv_d"] = df["rv"].shift(1)  # t-1
+    df["rv_w"] = df["rv"].shift(1).rolling(5).mean()  # mean(t-1..t-5)
+    df["rv_m"] = df["rv"].shift(1).rolling(22).mean()  # mean(t-1..t-22)
     return df.dropna()
 
 
@@ -54,7 +55,9 @@ class VolatilityForecaster:
         self._coefficients: HARRVCoefficients | None = None
         self._last_fit_at: datetime | None = None
         self._rv_history: pd.Series | None = None
-        self._latest_components: tuple[float, float, float] | None = None  # (rv_d, rv_w, rv_m)
+        self._latest_components: tuple[float, float, float] | None = (
+            None  # (rv_d, rv_w, rv_m)
+        )
 
     def fit(self, history: pd.Series) -> None:
         """Refit OLS on daily RV series.
@@ -167,15 +170,16 @@ class VolatilityForecaster:
     def to_json(self) -> str:
         if self._coefficients is None or self._latest_components is None:
             raise RuntimeError("cannot serialize before fit()")
-        return json.dumps(
-            {
-                "coefficients": asdict(self._coefficients),
-                "latest_components": list(self._latest_components),
-                "last_fit_at": (
-                    self._last_fit_at.isoformat() if self._last_fit_at else None
-                ),
-            }
-        )
+        payload = {
+            "coefficients": asdict(self._coefficients),
+            "latest_components": list(self._latest_components),
+            "last_fit_at": (
+                self._last_fit_at.isoformat() if self._last_fit_at else None
+            ),
+        }
+        if self._rv_history is not None and len(self._rv_history) > 0:
+            payload["rv_history"] = self._rv_history.astype(float).tolist()
+        return json.dumps(payload)
 
     @classmethod
     def from_json(cls, blob: str | bytes, cfg: HARRVConfig) -> VolatilityForecaster:
@@ -188,4 +192,6 @@ class VolatilityForecaster:
         f._last_fit_at = (
             datetime.fromisoformat(d["last_fit_at"]) if d.get("last_fit_at") else None
         )
+        if "rv_history" in d:
+            f._rv_history = pd.Series(d["rv_history"], dtype=float, name="rv")
         return f

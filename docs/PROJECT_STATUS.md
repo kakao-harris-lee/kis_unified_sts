@@ -26,9 +26,9 @@
 - Quant Ops Workbench P2 Event Context is in place: `/event-context` and
   `/api/event-context/diagnostics` expose Setup C latest eval, event-score
   freshness, news/macro source timelines, and no-signal root causes. Workbench
-  UI/UX QA has committed Vitest smoke coverage for loading/degraded render
-  states; committed desktop/mobile screenshot artifacts are still an open
-  evidence gap.
+  UI/UX QA now has committed Vitest smoke coverage plus desktop/mobile
+  Playwright fallback screenshot evidence for degraded empty-state render paths:
+  [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md).
 
 ## Storage And Runtime Decisions
 
@@ -60,6 +60,23 @@ language. Enabled strategies still match config. Disabled stock variants and
 futures `_futures` strategy names are now listed explicitly, and Workbench QA no
 longer claims committed browser/screenshot evidence. Audit note:
 [investigations/2026-06-25-roadmap-codebase-consistency.md](investigations/2026-06-25-roadmap-codebase-consistency.md).
+
+**2026-06-25** - Quant Ops Workbench UI/UX QA evidence captured.
+Playwright fallback verification covered `/risk`, `/coverage`, `/trades`,
+`/builder`, and `/event-context` at desktop `1440x1100` and mobile `390x844`.
+The pass checked route headings, degraded empty states, refresh/tab
+interactions, console errors, visible interactive overlap, and retained
+screenshots under
+[testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md).
+
+**2026-06-25** - High-priority roadmap implementation slices.
+F-9 now has a read-only verifier and dry-run-first rollback helper:
+`scripts/ops/futures_cutover_verify.py` and
+`scripts/ops/futures_cutover_rollback.sh`. Setup C now suppresses entries when
+forecast integration is enabled but event scores are missing or below the
+configured minimum, without marking those events as traded. HAR-RV model JSON
+now preserves RV history so reloaded models keep non-default regime percentile
+behavior; log-RV/refit validation remains open.
 
 **2026-06-22** - Quant Ops Workbench P0/P1 implementation.
 Multi-agent lanes implemented the ops summary DTO, signal trace UI, risk and
@@ -118,16 +135,19 @@ default Python dependencies no longer include ClickHouse drivers.
 Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top items:
 
 - **Stock:** HAR-RV log-RV transition (forecast model stale since 2026-05-31,
-  daily refit failing — needs backtest + ~1wk shadow before cutover);
+  daily refit failing — RV-history serialization fixed, but refit/backtest +
+  ~1wk shadow still needed before cutover);
   `technical_consensus` reactivation decision (strong long-horizon backtest vs
   recent live loss); `momentum_breakout` redesign (retune still negative);
   non-Workbench Strategy Lab build-out. See
   [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
 - **Futures:** F9 decoupled cutover gates (shadow → Gate 2 → operator-gated
   cutover) before replacing the orchestrator path; Phase 5 Gate 1–3 to small
-  live; Setup C activation (event-sourcing fix); kill-switch sentinel →
-  shared-volume path (required before live).
+  live; run the F-9 verifier with Gate 1 evidence and written approval; Setup C
+  activation still needs event-score sourcing/history even though the runtime
+  min-score gate now applies; kill-switch sentinel → shared-volume path
+  (required before live).
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
-  (`localhost:5000` down); committed Workbench desktop/mobile
-  screenshot/accessibility QA artifacts.
+  (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
+  QA artifacts when those routes change.

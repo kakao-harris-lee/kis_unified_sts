@@ -1,8 +1,8 @@
 # Quant Ops Workbench UI/UX Plan
 
 - **작성일**: 2026-06-22 KST
-- **상태**: P0/P1/P2 diagnostics implemented; automated smoke QA committed;
-  browser screenshot artifact gate remains open
+- **상태**: P0/P1/P2 diagnostics implemented; automated smoke QA and
+  desktop/mobile screenshot evidence committed
 - **범위**: `strategy-builder-ui/` + `services/dashboard/routes/*` + existing
   runtime/experiment data sources
 - **목표**: Strategy Lab을 단순 builder가 아니라 운영 의사결정이 가능한
@@ -438,16 +438,17 @@ Acceptance:
 
 ### P2.1 Workbench UI/UX QA Pass
 
-Status: automated smoke coverage complete; browser visual evidence open.
+Status: complete.
 Automated smoke coverage exercises `/risk`, `/coverage`, `/trades`, `/builder`,
 and `/event-context` loading, empty, degraded, tab, and read-only states.
-Playwright desktop/mobile checks are still the required visual gate when these
+Playwright desktop/mobile checks remain the required visual gate when these
 routes change.
 
 Closure evidence (2026-06-25 KST): Vitest smoke coverage is committed in
-`strategy-builder-ui/src/app/quant-ops-workbench.smoke.test.tsx`. No committed
-Playwright suite/config, screenshots, or HAR files were found in the repository
-during the roadmap/codebase consistency audit. See
+`strategy-builder-ui/src/app/quant-ops-workbench.smoke.test.tsx`. Playwright
+fallback desktop/mobile screenshots and interaction checks are retained in
+[../testing/quant-ops-workbench-2026-06-25.md](../testing/quant-ops-workbench-2026-06-25.md).
+The earlier static audit that found the missing screenshot gap is preserved at
 [../investigations/2026-06-25-roadmap-codebase-consistency.md](../investigations/2026-06-25-roadmap-codebase-consistency.md).
 
 Goal: verify the new operator workflows render cleanly and remain paper-safe
@@ -455,11 +456,11 @@ across desktop/mobile states.
 
 Tasks:
 
-- Add automated smoke coverage for loading, empty, and degraded states using
+- [x] Add automated smoke coverage for loading, empty, and degraded states using
   the existing Vitest/Testing Library stack.
-- Run desktop/mobile visual checks for `/risk`, `/coverage`, `/trades`,
+- [x] Run desktop/mobile visual checks for `/risk`, `/coverage`, `/trades`,
   `/builder`, and `/event-context`.
-- Check interactive controls for accessible names and confirm no new surface can
+- [x] Check interactive controls for accessible names and confirm no new surface can
   submit live orders.
 
 Acceptance:

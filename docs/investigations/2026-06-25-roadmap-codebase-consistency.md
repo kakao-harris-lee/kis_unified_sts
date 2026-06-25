@@ -1,6 +1,7 @@
 # Roadmap-Codebase Consistency Check (2026-06-25)
 
-**Status**: Completed static audit; runtime/browser verification not run.
+**Status**: Completed static audit; follow-up UI evidence captured later on
+2026-06-25.
 **Source of truth checked**: [../ROADMAP.md](../ROADMAP.md),
 [../PROJECT_STATUS.md](../PROJECT_STATUS.md), strategy YAML, Compose profiles,
 dashboard route files, frontend route files, and committed tests.
@@ -98,3 +99,11 @@ This was a static repository audit. It did not start Docker services, run a
 market-session smoke, or perform live browser screenshots. The next evidence
 gap is a committed or linked desktop/mobile visual QA artifact set for the
 Workbench routes.
+
+## Follow-up UI Evidence
+
+Later on 2026-06-25 KST, the Workbench visual QA gap was closed with Playwright
+fallback browser verification and committed desktop/mobile screenshots for
+`/risk`, `/coverage`, `/trades`, `/builder`, and `/event-context`.
+
+Evidence: [../testing/quant-ops-workbench-2026-06-25.md](../testing/quant-ops-workbench-2026-06-25.md).

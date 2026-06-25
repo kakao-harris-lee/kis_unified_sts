@@ -1,18 +1,33 @@
 """Tests for Setup C adapter consuming ForecastClient."""
+
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from shared.forecasting.models import EventScore, VolForecast
+from shared.decision.context import ScheduledEvent
+from shared.strategy.base import EntryContext
 from shared.strategy.entry.setup_adapters import (
     SetupCEntryAdapter,
     SetupCEntryConfig,
     SetupCForecastIntegrationConfig,
 )
 
+KST = ZoneInfo("Asia/Seoul")
+
+
+class _FakeForecastClient:
+    def __init__(self, event_score: Any | None):
+        self._event_score = event_score
+
+    async def get_latest_event_score(self) -> Any | None:
+        return self._event_score
+
 
 def _vf(forecast_atr_eq=3.0):
-    return VolForecast(
+    return SimpleNamespace(
         asof=datetime.now(UTC),
         horizon_minutes=15,
         forecast_pct=18.0,
@@ -20,6 +35,25 @@ def _vf(forecast_atr_eq=3.0):
         regime_percentile=50.0,
         model_version="har_rv_v1",
         confidence=0.3,
+    )
+
+
+def _event_context(ts: datetime, event: ScheduledEvent) -> EntryContext:
+    return EntryContext(
+        market_data={
+            "code": "A05603",
+            "close": 350.2,
+            "prev_close": 349.0,
+            "open": 349.5,
+            "atr": 0.8,
+            "vwap": 349.8,
+            "last_15min_high": 350.0,
+            "last_15min_low": 349.0,
+            "spread_ticks": 1.0,
+        },
+        indicators={},
+        timestamp=ts,
+        metadata={"scheduled_events": [event]},
     )
 
 
@@ -71,7 +105,7 @@ def test_event_filter_uses_impact_score_when_enabled():
         )
     )
     adapter = SetupCEntryAdapter(cfg, forecast_client=None)
-    weak = EventScore(
+    weak = SimpleNamespace(
         asof=datetime.now(UTC),
         impact_score=50,
         event_type="X",
@@ -79,7 +113,7 @@ def test_event_filter_uses_impact_score_when_enabled():
         raw_text=None,
         ttl_minutes=30,
     )
-    strong = EventScore(
+    strong = SimpleNamespace(
         asof=datetime.now(UTC),
         impact_score=85,
         event_type="FOMC",
@@ -108,5 +142,40 @@ def test_event_filter_blocks_when_event_missing_but_forecast_enabled():
         )
     )
     adapter = SetupCEntryAdapter(cfg, forecast_client=None)
-    # No event score → no filter applied (lets tier filter handle it)
-    assert adapter._event_passes_filter(None) is True
+    # No event score → configured score constraint is unmet.
+    assert adapter._event_passes_filter(None) is False
+
+
+@pytest.mark.asyncio
+async def test_generate_rejects_entry_when_event_score_below_configured_minimum():
+    ts = datetime(2026, 4, 23, 9, 30, tzinfo=KST)
+    event = ScheduledEvent(
+        event_id="event_001",
+        event_type="CPI",
+        scheduled_at=datetime(2026, 4, 23, 9, 20, tzinfo=KST),
+        impact_tier=1,
+    )
+    weak_event_score = SimpleNamespace(
+        asof=datetime.now(UTC),
+        impact_score=50,
+        event_type="CPI",
+        source="rule",
+        raw_text=None,
+        ttl_minutes=30,
+    )
+    cfg = SetupCEntryConfig(
+        daily_bias_filter_enabled=False,
+        forecast_integration=SetupCForecastIntegrationConfig(
+            enabled=True,
+            min_event_impact_score=70,
+        ),
+    )
+    adapter = SetupCEntryAdapter(
+        cfg,
+        forecast_client=_FakeForecastClient(weak_event_score),
+    )
+
+    result = await adapter.generate(_event_context(ts, event))
+
+    assert result is None
+    assert not adapter._setup.tracker.already_traded(event.event_id)

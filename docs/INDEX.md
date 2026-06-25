@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: 2026-06-22 (stale paper-trading guides and legacy plans archived).
+Last updated: 2026-06-25 (Workbench UI/UX QA evidence added).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
@@ -49,6 +49,7 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 |-----|-----|
 | [DAILY_SCANNER_VERIFICATION.md](DAILY_SCANNER_VERIFICATION.md) | `scripts/daily_indicator_scanner.py` 검증 절차. |
 | [CI_PARALLEL_NOTES.md](CI_PARALLEL_NOTES.md) | `pytest-xdist` 병렬 실행 (#399로 CI 활성화: 병렬 패스 + `serial` 마커 직렬 패스) + parallel-unsafe 테스트 목록. |
+| [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) | Quant Ops Workbench desktop/mobile Playwright fallback screenshot QA evidence. |
 
 ## 📁 Sub-directories
 
@@ -58,6 +59,7 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [superpowers/plans/](superpowers/plans/) | Completed generated implementation plans → [superpowers/plans/INDEX.md](superpowers/plans/INDEX.md) |
 | [superpowers/specs/](superpowers/specs/) | Design specs paired with generated implementation plans |
 | [runbooks/](runbooks/) | 운영 런북 → [README.md § 운영 런북](../README.md#운영-런북-runbooks) |
+| [testing/](testing/) | Current QA evidence and screenshot artifacts |
 | [archive/](archive/) | 시간 의존적 stale snapshot 보존 (정보 보존 목적) |
 
 ## ⚪ Archive — completed-snapshot 보존

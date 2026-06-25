@@ -1463,13 +1463,30 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         Returns ``True`` when:
         * ``forecast_integration.enabled`` is False (legacy tier filter
           remains the gate); OR
-        * ``event_score`` is ``None`` (let the legacy tier filter decide); OR
         * ``event_score.impact_score >= min_event_impact_score``.
+
+        When forecast integration is enabled, a missing event score means the
+        configured score constraint is not satisfied.
         """
         fi = self.config.forecast_integration
-        if not fi.enabled or event_score is None:
+        if not fi.enabled:
             return True
+        if event_score is None:
+            return False
         return event_score.impact_score >= fi.min_event_impact_score
+
+    async def _latest_event_score(self) -> Any | None:
+        """Fetch the latest forecast event score, returning None on miss/error."""
+        if self._forecast_client is None:
+            return None
+        getter = getattr(self._forecast_client, "get_latest_event_score", None)
+        if getter is None:
+            return None
+        try:
+            return await getter()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("SetupCEntryAdapter: event score fetch failed: %s", exc)
+            return None
 
     def _validate_config(self) -> None:
         """Validate config fields.
@@ -1525,6 +1542,25 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
             logger.debug("SetupCEntryAdapter: unable to build MarketContext — skipping")
             _publish_setup_eval(self.name, "reject", "no_market_context")
             return None
+
+        recent_event = mc.find_recent_event(
+            window_minutes=self.config.window_minutes,
+            min_tier=self.config.min_impact_tier,
+        )
+        if recent_event is not None and not self._setup.tracker.already_traded(
+            recent_event.event_id
+        ):
+            event_score = await self._latest_event_score()
+            if not self._event_passes_filter(event_score):
+                reason = "forecast_event_score_missing"
+                if event_score is not None:
+                    reason = (
+                        "forecast_event_score_below_min"
+                        f"({event_score.impact_score:.0f}<"
+                        f"{self.config.forecast_integration.min_event_impact_score})"
+                    )
+                _publish_setup_eval(self.name, "reject", reason)
+                return None
 
         decision_signal = self._setup.check(mc)
         if decision_signal is None:

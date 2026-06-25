@@ -61,12 +61,12 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | P1 Strategy Promotion Kanban | ✅ done | `/builder` includes read-only Draft -> Live Gated board with explicit present/missing/not-available evidence |
 | P1 Universe & Data Coverage Explorer | ✅ done | `/coverage` and `/api/coverage` show screener universe, trade targets, daily indicator gaps, and latest experiment coverage |
 | P2 Setup C / Event Context diagnostics | ✅ done | `/event-context` and `/api/event-context/diagnostics` show Setup C latest eval, event-score freshness/sparsity, source timeline, config mismatch warnings, and no-signal root cause |
-| P2 Workbench UI/UX QA pass | 🔄 in-progress | Vitest/Testing Library smoke coverage covers `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context`; committed Playwright/screenshot artifacts are still missing |
+| P2 Workbench UI/UX QA pass | ✅ done | Vitest/Testing Library smoke coverage plus Playwright fallback desktop/mobile screenshots cover `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context`; evidence: [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) |
 
 ### Open next-steps
 
-- Capture and retain desktop/mobile screenshot/accessibility QA artifacts for
-  Workbench route changes, especially `/risk`, `/coverage`, `/trades`,
+- Refresh and retain desktop/mobile screenshot/accessibility QA artifacts when
+  Workbench routes change, especially `/risk`, `/coverage`, `/trades`,
   `/builder`, and `/event-context`.
 - Keep all new work paper-safe. UI may inspect paper order tickets, but must not
   introduce live order controls or bypass futures live gates.
@@ -107,7 +107,7 @@ that shortens the design → backtest → paper → feedback loop.
 | Host-cron → Compose scheduler/producers migration | ✅ done | operator |
 | Bear-exit regime wiring (#458: M4-P publishes regime → M4-X bear-exit gate) | ✅ done | — |
 | Experiment runner Phase 1–5 (#473–#477: `sts experiment run` + nightly 16:40 KST + `/api/experiments` + `/experiments` UI + 30-day minute backfill) | ✅ done | — |
-| HAR-RV log-RV forecast transition | 🔄 in-progress | backtest + ~1wk shadow before cutover; forecast model stale since 2026-05-31, daily refit failing |
+| HAR-RV log-RV forecast transition | 🔄 in-progress | model JSON now preserves RV history for regime percentile after reload; log-RV refit/backtest + ~1wk shadow still required before cutover; forecast model stale since 2026-05-31, daily refit failing |
 | `technical_consensus` reactivation | 🔄 in-progress | strong long-horizon backtest vs recent ~3wk live loss → regime-verify, then small |
 | `momentum_breakout` redesign / retune | 🔄 in-progress | retune still negative (recent Sharpe ≈ −5.24); observe in paper |
 | Strategy Lab Phase 1–7 (visual design → backtest → paper → feedback) | 🔄 in-progress | design done ([plans/2026-05-26-strategy-lab-extension-design.md](plans/2026-05-26-strategy-lab-extension-design.md)); Quant Ops Workbench UI/UX expansion complete ([plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md)); remaining Strategy Lab work is non-Workbench backtest/paper workflow depth |
@@ -117,8 +117,9 @@ that shortens the design → backtest → paper → feedback loop.
 
 ### Open next-steps
 
-- Validate HAR-RV log-RV (backtest + 1-week shadow) before cutting the forecast
-  model over; see
+- Validate HAR-RV log-RV (refit flow + backtest + 1-week shadow) before
+  cutting the forecast model over; model serialization now preserves RV history
+  across reloads, but the log-RV/refit work remains open. See
   [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
 - Decide `technical_consensus` reactivation after regime verification (small size first).
 - Continue non-Workbench Strategy Lab build-out for deeper design, backtest,
@@ -171,10 +172,10 @@ paths are removed and must not be reintroduced
 | F-9 shadow validation (Gate 1: `--profile futures-pipeline`, 3–5 trading days) | 🔄 in-progress | operator-gated; [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md) |
 | F-9 Gate 2 → decoupled cutover (replace orchestrator path) | ⏳ planned | operator written approval; `trader` flag false + daemon-mode env |
 | Phase 5 Gate 1–3 → small live (100 signals + backtest ±20% + MDD/slippage + kill-switch drill) | ⏳ planned | [plans/2026-04-20-futures-paradigm-phase5-rollout.md](plans/2026-04-20-futures-paradigm-phase5-rollout.md) (procedure; RL/systemd/ClickHouse refs there are historical) |
-| Setup C activation | ⏳ planned | needs event-sourcing fix (event scores currently empty) |
+| Setup C activation | 🔄 in-progress | runtime now enforces configured event-score minimum when forecast integration is enabled; still needs event-source production/history fix so scores are available |
 | Kill-switch sentinel → shared-volume path | ⏳ planned | required before live |
-| Futures cutover verify/rollback automation script (stock analogue exists) | ⏳ planned | — |
-| HAR-RV log-RV validation (futures side) | ⏳ planned | — |
+| Futures cutover verify/rollback automation script (stock analogue exists) | ✅ done | `scripts/ops/futures_cutover_verify.py` read-only audit/strict gate and `scripts/ops/futures_cutover_rollback.sh` dry-run-first helper |
+| HAR-RV log-RV validation (futures side) | ⏳ planned | RV-history serialization reliability fixed; log-RV model/refit validation remains open |
 
 ### Open next-steps
 
@@ -183,6 +184,10 @@ paths are removed and must not be reintroduced
   [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md).
 - Drive Phase 5 Gate 1–3 toward a small live allocation (procedure in the
   archived master is superseded; use the phase5-rollout doc's gate procedure).
-- Fix event sourcing so Setup C produces signals, then evaluate.
+- Fix event-score sourcing/history so Setup C can produce eligible signals, then
+  evaluate; runtime now rejects missing or below-threshold event scores when
+  forecast integration is enabled.
 - Move the kill-switch sentinel to a shared-volume path before any live run.
-- Build the futures cutover verify/rollback automation script.
+- Run `scripts/ops/futures_cutover_verify.py --strict` with Gate 1 evidence and
+  written approval before cutover; resolve its current kill-switch sentinel and
+  orchestrator-env warnings first.

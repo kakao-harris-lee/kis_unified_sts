@@ -1,4 +1,5 @@
 """Tests for HAR-RV model (Corsi 2009)."""
+
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -36,8 +37,12 @@ def test_fit_with_sufficient_data_returns_finite_coefficients():
     f = VolatilityForecaster(cfg)
     f.fit(history)
     assert f._coefficients is not None
-    for coef in (f._coefficients.beta_0, f._coefficients.beta_d,
-                  f._coefficients.beta_w, f._coefficients.beta_m):
+    for coef in (
+        f._coefficients.beta_0,
+        f._coefficients.beta_d,
+        f._coefficients.beta_w,
+        f._coefficients.beta_m,
+    ):
         assert np.isfinite(coef)
 
 
@@ -126,6 +131,21 @@ def test_serialization_roundtrip():
     vf1 = f.forecast(datetime.now(UTC), current_close=380.0)
     vf2 = f2.forecast(datetime.now(UTC), current_close=380.0)
     assert vf2.forecast_pct == pytest.approx(vf1.forecast_pct)
+
+
+def test_serialization_roundtrip_preserves_regime_percentile_history():
+    cfg = HARRVConfig()
+    history = _make_synthetic_rv_history(60)
+    f = VolatilityForecaster(cfg)
+    f.fit(history)
+    f._latest_components = (1e-2, 1e-2, 1e-2)
+
+    vf1 = f.forecast(datetime.now(UTC), current_close=380.0)
+    f2 = VolatilityForecaster.from_json(f.to_json(), cfg)
+    vf2 = f2.forecast(datetime.now(UTC), current_close=380.0)
+
+    assert vf1.regime_percentile > 90
+    assert vf2.regime_percentile == pytest.approx(vf1.regime_percentile)
 
 
 def test_regime_percentile_calculation():
