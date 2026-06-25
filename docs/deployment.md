@@ -21,7 +21,7 @@ See [ports.md](ports.md) for the canonical port allocation.
 
 | Port | Owner | Exposure |
 |---:|---|---|
-| `${DASHBOARD_HOST_PORT:-5080}` | Caddy | Host-published dashboard/UI/API/WebSocket entrypoint |
+| `${DASHBOARD_HOST_PORT:-5081}` | Caddy | Host-published dashboard/UI/API/WebSocket entrypoint |
 | `8001` | `dashboard` | Docker-network internal FastAPI API/metrics |
 | `3100` | `strategy-builder-ui` | Docker-network internal Next.js app |
 | `6379` | Redis | Internal or host-local, depending on env/runbook |
@@ -44,11 +44,11 @@ Important defaults:
 
 ```bash
 REDIS_URL=redis://localhost:6379/1
-DASHBOARD_HOST_PORT=5080
+DASHBOARD_HOST_PORT=5081
 ```
 
-Local/operator env files may override `DASHBOARD_HOST_PORT` (for example `5081`)
-when another local service already owns `5080`.
+`DASHBOARD_HOST_PORT` is the host side of the Caddy mapping. Caddy still listens
+on container port `5080` internally.
 
 ## Base Stack
 
@@ -60,7 +60,7 @@ Verify:
 
 ```bash
 docker compose ps
-curl -f "http://localhost:${DASHBOARD_HOST_PORT:-5080}/health"
+curl -f "http://localhost:${DASHBOARD_HOST_PORT:-5081}/health"
 ```
 
 ## Stock Paper Runtime
@@ -119,7 +119,7 @@ Runbook: [runbooks/cron-to-compose-cutover.md](runbooks/cron-to-compose-cutover.
 
 ## Monitoring
 
-- Dashboard/UI/API: `http://localhost:${DASHBOARD_HOST_PORT:-5080}`
+- Dashboard/UI/API: `http://localhost:${DASHBOARD_HOST_PORT:-5081}`
 - Prometheus: `http://localhost:9090` when exposed by the selected env/profile.
 - Metrics route: Caddy proxies dashboard metrics through the unified web entry.
 

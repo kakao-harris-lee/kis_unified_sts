@@ -4,7 +4,7 @@ This repository owns the KIS Unified STS runtime ports only.
 
 | Port | Owner | Purpose | Notes |
 |---:|---|---|---|
-| 5080 | `kis-caddy` | Single KIS web entrypoint | Default host mapping via `DASHBOARD_HOST_PORT=5080`; local env files may override the host side (for example 5081) when needed. |
+| 5081 | `kis-caddy` | Single KIS web entrypoint | Paper/local host mapping via `DASHBOARD_HOST_PORT=5081`; this maps to Caddy's internal container port `5080`. |
 
 Do not use host port 3000 in this repository. Port 3000 belongs to the separate `bid-vector` project on this host.
 

@@ -34,7 +34,7 @@ function ConfirmationModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose, onConfirm]);
+  }, [isOpen, onClose, onConfirm, confirmStyle]);
 
   if (!isOpen) return null;
 

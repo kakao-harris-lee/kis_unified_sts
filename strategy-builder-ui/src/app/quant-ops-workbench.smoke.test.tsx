@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import type { AxiosResponse } from "axios";
 
 import CoveragePage from "./coverage/page";
 import EventContextPage from "./event-context/page";
@@ -117,14 +118,24 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function axiosResponse<T>(data: T): AxiosResponse<T> {
+  return {
+    data,
+    status: 200,
+    statusText: "OK",
+    headers: {},
+    config: { headers: {} } as AxiosResponse<T>["config"],
+  };
+}
+
 describe("Quant Ops Workbench UI smoke coverage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("renders /risk empty exposure state with accessible refresh control", async () => {
-    vi.mocked(tradingApi.getRiskExposure).mockResolvedValue({
-      data: {
+    vi.mocked(tradingApi.getRiskExposure).mockResolvedValue(
+      axiosResponse({
         asset_class: "stock",
         generated_at: "2026-06-22T09:10:00+09:00",
         portfolio: {
@@ -143,8 +154,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
         by_strategy: [],
         by_symbol: [],
         notes: ["risk engine degraded but page should render"],
-      },
-    });
+      }),
+    );
 
     renderWithQueryClient(<RiskPage />);
 
@@ -168,8 +179,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
   });
 
   it("renders negative daily loss with loss tone on /risk", async () => {
-    vi.mocked(tradingApi.getRiskExposure).mockResolvedValue({
-      data: {
+    vi.mocked(tradingApi.getRiskExposure).mockResolvedValue(
+      axiosResponse({
         asset_class: "stock",
         generated_at: "2026-06-22T09:10:00+09:00",
         portfolio: {
@@ -188,8 +199,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
         by_strategy: [],
         by_symbol: [],
         notes: [],
-      },
-    });
+      }),
+    );
 
     renderWithQueryClient(<RiskPage />);
 
@@ -197,8 +208,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
   });
 
   it("renders /coverage missing-source evidence without live network", async () => {
-    vi.mocked(coverageApi.getCoverage).mockResolvedValue({
-      data: {
+    vi.mocked(coverageApi.getCoverage).mockResolvedValue(
+      axiosResponse({
         asset_class: "stock",
         generated_at: "2026-06-22T09:11:00+09:00",
         sources: [
@@ -216,8 +227,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
         experiment_coverage: [],
         missing_evidence: ["daily_indicators"],
         notes: ["coverage snapshot is partial"],
-      },
-    });
+      }),
+    );
 
     renderWithQueryClient(<CoveragePage />);
 
@@ -241,8 +252,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
   });
 
   it("renders /trades live lifecycle drill-in from mocked responses", async () => {
-    vi.mocked(tradesApi.getTrades).mockResolvedValue({
-      data: {
+    vi.mocked(tradesApi.getTrades).mockResolvedValue(
+      axiosResponse({
         total: 1,
         trades: [
           {
@@ -259,11 +270,11 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
             exit_time: "2026-06-22T09:20:00+09:00",
           },
         ],
-      },
-    });
-    vi.mocked(tradesApi.getByStrategy).mockResolvedValue({ data: [] });
-    vi.mocked(tradesApi.getLifecycle).mockResolvedValue({
-      data: {
+      }),
+    );
+    vi.mocked(tradesApi.getByStrategy).mockResolvedValue(axiosResponse([]));
+    vi.mocked(tradesApi.getLifecycle).mockResolvedValue(
+      axiosResponse({
         asset_class: "stock",
         as_of: "2026-06-22T09:21:00+09:00",
         filters: { trade_id: "trade-1" },
@@ -287,8 +298,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
           },
         ],
         warnings: [],
-      },
-    });
+      }),
+    );
 
     renderWithQueryClient(<TradesPage />);
 
@@ -302,10 +313,12 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
   });
 
   it("exposes /trades source tabs with accessible roles and switches to DB history", async () => {
-    vi.mocked(tradesApi.getTrades).mockResolvedValue({ data: { total: 0, trades: [] } });
-    vi.mocked(tradesApi.getByStrategy).mockResolvedValue({ data: [] });
-    vi.mocked(tradesApi.getClosedStatistics).mockResolvedValue({
-      data: {
+    vi.mocked(tradesApi.getTrades).mockResolvedValue(
+      axiosResponse({ total: 0, trades: [] }),
+    );
+    vi.mocked(tradesApi.getByStrategy).mockResolvedValue(axiosResponse([]));
+    vi.mocked(tradesApi.getClosedStatistics).mockResolvedValue(
+      axiosResponse({
         total_trades: 0,
         winning_trades: 0,
         losing_trades: 0,
@@ -315,10 +328,10 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
         max_win: 0,
         max_loss: 0,
         profit_factor: 0,
-      },
-    });
-    vi.mocked(tradesApi.getClosedTrades).mockResolvedValue({ data: [] });
-    vi.mocked(tradingApi.getPositions).mockResolvedValue({ data: [] });
+      }),
+    );
+    vi.mocked(tradesApi.getClosedTrades).mockResolvedValue(axiosResponse([]));
+    vi.mocked(tradingApi.getPositions).mockResolvedValue(axiosResponse([]));
 
     renderWithQueryClient(<TradesPage />);
 
@@ -343,7 +356,7 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
   it("exposes accessible loading status while /trades live data is pending", async () => {
     const tradesRequest = deferred<Awaited<ReturnType<typeof tradesApi.getTrades>>>();
     vi.mocked(tradesApi.getTrades).mockReturnValue(tradesRequest.promise);
-    vi.mocked(tradesApi.getByStrategy).mockResolvedValue({ data: [] });
+    vi.mocked(tradesApi.getByStrategy).mockResolvedValue(axiosResponse([]));
 
     renderWithQueryClient(<TradesPage />);
 
@@ -353,10 +366,12 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
   });
 
   it("supports keyboard navigation between /trades source tabs", async () => {
-    vi.mocked(tradesApi.getTrades).mockResolvedValue({ data: { total: 0, trades: [] } });
-    vi.mocked(tradesApi.getByStrategy).mockResolvedValue({ data: [] });
-    vi.mocked(tradesApi.getClosedStatistics).mockResolvedValue({
-      data: {
+    vi.mocked(tradesApi.getTrades).mockResolvedValue(
+      axiosResponse({ total: 0, trades: [] }),
+    );
+    vi.mocked(tradesApi.getByStrategy).mockResolvedValue(axiosResponse([]));
+    vi.mocked(tradesApi.getClosedStatistics).mockResolvedValue(
+      axiosResponse({
         total_trades: 0,
         winning_trades: 0,
         losing_trades: 0,
@@ -366,10 +381,10 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
         max_win: 0,
         max_loss: 0,
         profit_factor: 0,
-      },
-    });
-    vi.mocked(tradesApi.getClosedTrades).mockResolvedValue({ data: [] });
-    vi.mocked(tradingApi.getPositions).mockResolvedValue({ data: [] });
+      }),
+    );
+    vi.mocked(tradesApi.getClosedTrades).mockResolvedValue(axiosResponse([]));
+    vi.mocked(tradingApi.getPositions).mockResolvedValue(axiosResponse([]));
 
     renderWithQueryClient(<TradesPage />);
 
@@ -384,8 +399,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
   });
 
   it("renders /event-context sparse diagnostics and empty operator state", async () => {
-    vi.mocked(eventContextApi.getDiagnostics).mockResolvedValue({
-      data: {
+    vi.mocked(eventContextApi.getDiagnostics).mockResolvedValue(
+      axiosResponse({
         asset_class: "futures",
         generated_at: "2026-06-22T09:12:00+09:00",
         event_scores: {
@@ -419,8 +434,8 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
         },
         missing_evidence: ["macro_calendar"],
         notes: [],
-      },
-    });
+      }),
+    );
 
     renderWithQueryClient(<EventContextPage />);
 

@@ -3,7 +3,7 @@
 # This script requires the FastAPI server to be running
 
 # Dashboard FastAPI (the single STS API after the services/api consolidation).
-# Override with DASHBOARD_PORT or hit Caddy on :5080 in a full stack.
+# Override with DASHBOARD_PORT or hit Caddy on :5081 in a paper/local full stack.
 BASE_URL="http://localhost:${DASHBOARD_PORT:-8001}"
 
 echo "=========================================="

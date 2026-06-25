@@ -10,8 +10,8 @@
     "ghcr.io/devcontainers/features/node:1": { "version": "lts" }
   },
 
-  // Dev servers: UI (3100), dashboard API (8001), MLflow (5000), Caddy (5080).
-  "forwardPorts": [3100, 8001, 5000, 5080],
+  // Dev servers: UI (3100), dashboard API (8001), MLflow (5000), Caddy host (5081).
+  "forwardPorts": [3100, 8001, 5000, 5081],
 
   // One-time bootstrap: editable install of .[dev], seed .env, frontend deps.
   "postCreateCommand": "bash .devcontainer/post-create.sh",

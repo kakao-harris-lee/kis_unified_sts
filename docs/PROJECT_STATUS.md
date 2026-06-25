@@ -6,8 +6,8 @@
 
 ## Current Runtime
 
-- Frontend/API is consolidated behind Caddy. Default host entrypoint is
-  `DASHBOARD_HOST_PORT=5080`, with `dashboard:8001` and
+- Frontend/API is consolidated behind Caddy. Paper/local host entrypoint is
+  `DASHBOARD_HOST_PORT=5081`, with `dashboard:8001` and
   `strategy-builder-ui:3100` kept internal.
 - Stock paper flow uses the decoupled Compose pipeline:
   `stock-ingest` + `stock-pipeline`. The monolithic stock orchestrator is blocked

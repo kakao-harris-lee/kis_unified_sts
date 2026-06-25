@@ -5,9 +5,12 @@ to prevent marginal setups that erode capital through fees.
 """
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from shared.models.signal import Signal
 
 logger = logging.getLogger(__name__)
 

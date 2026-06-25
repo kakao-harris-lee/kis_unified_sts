@@ -71,7 +71,7 @@ ui-engineer: 영향 컴포넌트 일괄 반영
 ## 품질 게이트 (공통)
 - **단일 앱 유지**: 모든 UI는 `strategy-builder-ui/`. 새 SPA 분기 금지 (Next.js 통합 완료 상태)
 - **토큰 우선**: 색상/간격/타이포는 `globals.css` 토큰. 하드코딩 금지. 한국 관습(상승=빨강/하락=파랑) 준수
-- **포트 규약**: 외부 Caddy 5080 → Next 3100, FastAPI 8001 API-only. host 3000 사용 금지(별도 프로젝트)
+- **포트 규약**: 외부 `DASHBOARD_HOST_PORT`(paper/local 5081) → Caddy 내부 5080 → Next 3100, FastAPI 8001 API-only. host 3000 사용 금지(별도 프로젝트)
 - **실시간 단일 채널**: `/ws` WebSocket → React Query invalidation. SSE/폴링 추가 금지
 - **표현/로직 분리**: 컴포넌트는 hook 소비, 비즈니스 로직은 백엔드
 - **파괴적 액션 안전**: 킬스위치/stop은 확인 플로우(모바일 slide-to-confirm) 뒤에서만

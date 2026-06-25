@@ -1616,7 +1616,6 @@ def test_publish_setup_eval_logs_only_on_state_change(monkeypatch, caplog):
 
 # ---------------------------------------------------------------------------
 # Restart-survivable per-day setup-eval HISTORY (no-trade diagnosis #5)
-#   docs/plans/2026-06-24-no-trade-diagnosis.md
 # ---------------------------------------------------------------------------
 
 

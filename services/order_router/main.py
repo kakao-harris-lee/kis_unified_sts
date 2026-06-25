@@ -353,8 +353,6 @@ def _resolve_mode() -> str:
     to the safety-critical default ``off`` so the helper always returns one of
     the three documented modes.
     """
-    import os
-
     mode = os.getenv("FUTURES_ORDER_ROUTER", "off").strip().lower()
     return mode if mode in ("paper", "live") else "off"
 
@@ -365,16 +363,12 @@ def _final_stream_for(mode: str) -> str:
     paper → `.shadow` isolated stream (forms the shadow pipeline with
     risk_filter shadow); live → unsuffixed. Env-overridable.
     """
-    import os
-
     base = "signal.final.futures.shadow" if mode == "paper" else "signal.final.futures"
     return os.getenv("FUTURES_FINAL_STREAM", base)
 
 
 def _fill_stream_for(mode: str) -> str:
     """Fill stream FillLogger writes (F-1). paper → `.shadow`; live → unsuffixed."""
-    import os
-
     base = "order.fill.futures.shadow" if mode == "paper" else "order.fill.futures"
     return os.getenv("FUTURES_FILL_STREAM", base)
 
@@ -387,7 +381,6 @@ async def _build_and_run() -> int:
     KillSwitchConfig so the order_router refuses to start under the same
     path the kill_switch daemon writes to.
     """
-    import os
     import signal as signal_mod
     import socket
 

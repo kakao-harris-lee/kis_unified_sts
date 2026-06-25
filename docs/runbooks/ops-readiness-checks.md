@@ -35,7 +35,7 @@ Optional live HTTP probes are disabled unless explicitly requested:
 ```bash
 python -m scripts.ops.ops_readiness_check \
   --require-live-http \
-  --http-url http://127.0.0.1:5080/health
+  --http-url http://127.0.0.1:5081/health
 ```
 
 Only use live probes in an environment where the target service is expected to

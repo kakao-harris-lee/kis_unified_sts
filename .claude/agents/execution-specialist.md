@@ -32,7 +32,7 @@ incident-responder가 실행 장애를 사후 복구한다면, 당신은 실행 
 - KIS 어댑터: `shared/kis/` (`auth.py`, `client.py`)
 - 서비스: `services/order_router/`
 - 설정: `config/execution.yaml`, `config/futures_live.yaml`
-- 검증: `scripts/validate_slippage_model.py`
+- 검증: `scripts/analysis/validate_slippage_model.py`
 - MCP: `kis-trade-mcp` (주문/조회), `kis-code-assistant-mcp` (KIS API 레퍼런스 검색)
 
 ## 출력 형식

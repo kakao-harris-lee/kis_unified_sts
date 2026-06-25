@@ -2,7 +2,7 @@
 # API-only FastAPI service. The UI (Cockpit, Positions, Signals, Trades,
 # Strategy Lab, Strategy Builder, Strategy Execute) lives in the Next.js
 # app at strategy-builder-ui:3100 (see Dockerfile.strategy_builder_ui),
-# routed by Caddy at host :5080.
+# routed by Caddy through DASHBOARD_HOST_PORT.
 #
 # Before 2026-05-28 this image bundled a Vite SPA build stage. The Vite
 # SPA was merged into the Next.js app; the build stage is gone.

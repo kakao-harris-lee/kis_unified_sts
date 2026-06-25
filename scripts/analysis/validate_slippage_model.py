@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Backtest Comparison Script: RL Strategy with Old vs New Slippage Model
+Backtest Comparison Script: Setup A Strategy with Old vs New Slippage Model
 
 This script validates the SlippageModel implementation by running backtests
 with and without the new slippage model and comparing the results.

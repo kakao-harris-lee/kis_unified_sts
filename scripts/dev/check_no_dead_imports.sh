@@ -4,9 +4,7 @@ set -e
 
 DELETED=(
   "services.dashboard.routes.backtest"
-  "services.dashboard.routes.experiments"
   "from services.dashboard.routes import backtest"
-  "from services.dashboard.routes import experiments"
   "pages/Backtest"
   "pages/Experiments"
   "pages/StrategyConfig"
@@ -25,6 +23,7 @@ for pattern in "${DELETED[@]}"; do
     --include="*.py" \
     --include="*.ts" \
     --include="*.tsx" \
+    --exclude-dir=".history" \
     --exclude-dir="archive" \
     --exclude-dir="node_modules" \
     --exclude-dir="__pycache__" \

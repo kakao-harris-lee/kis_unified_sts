@@ -43,7 +43,7 @@ describe("strategy-builder-ui API catch-all proxy", () => {
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5080/api/health/summary?asset_class=futures",
+      "http://localhost:5081/api/health/summary?asset_class=futures",
     );
   });
 
@@ -59,7 +59,7 @@ describe("strategy-builder-ui API catch-all proxy", () => {
 
     expect(response.status).toBe(200);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5080/api/strategies",
+      "http://localhost:5081/api/strategies",
     );
   });
 
@@ -75,7 +75,7 @@ describe("strategy-builder-ui API catch-all proxy", () => {
 
     expect(response.status).toBe(200);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:5080/api/kis-builder/strategies/custom",
+      "http://localhost:5081/api/kis-builder/strategies/custom",
     );
   });
 

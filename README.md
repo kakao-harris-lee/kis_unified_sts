@@ -113,8 +113,8 @@ docker compose --profile futures-ingest --profile futures-pipeline up -d
 
 ### Access URLs
 
-- Dashboard/UI/API: `http://localhost:${DASHBOARD_HOST_PORT:-5080}`
-- If a local env overrides `DASHBOARD_HOST_PORT=5081`, use `http://localhost:5081`.
+- Dashboard/UI/API: `http://localhost:${DASHBOARD_HOST_PORT:-5081}`
+- Caddy listens on container port `5080`; `DASHBOARD_HOST_PORT` is the host side.
 - Internal only: `dashboard:8001`, `strategy-builder-ui:3100`.
 
 ## Common Commands

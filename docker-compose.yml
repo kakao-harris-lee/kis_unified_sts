@@ -495,8 +495,8 @@ services:
         NEXT_PUBLIC_API_KEY: "${NEXT_PUBLIC_API_KEY:-${DASHBOARD_API_KEY:-}}"
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-strategy-builder-ui
     restart: unless-stopped
-    # External access goes through caddy on host port 5080. Port 3100 is
-    # container-internal only and must not be published on the host.
+    # External access goes through caddy on DASHBOARD_HOST_PORT. Port 3100
+    # is container-internal only and must not be published on the host.
     expose:
       - "3100"
     environment:
@@ -523,7 +523,7 @@ services:
         max-file: "3"
 
   # =============================================================================
-  # Caddy reverse proxy — single external entry on host port 5080.
+  # Caddy reverse proxy — single external entry on DASHBOARD_HOST_PORT.
   # STS API → dashboard:8001 (FastAPI, API-only): /api/kis-builder/*,
   #   /api/{trading,signals,trades,strategies,strategy-lab,strategy-builder,
   #   metrics,health}*, plus /health, /docs, /openapi.json, /redoc, /metrics.
@@ -531,14 +531,14 @@ services:
   #   and the upstream-compat
   #   /api/{auth,account,orders,market,symbols,files,experiments} proxy handled
   #   by the Next.js catch-all.
-  # HTTP-only; operator constraint allows only port 5080 externally.
+  # HTTP-only; expose one host web port mapped to Caddy's internal :5080.
   # =============================================================================
   caddy:
     image: caddy:2
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-caddy
     restart: unless-stopped
     ports:
-      - "${DASHBOARD_HOST_PORT:-5080}:5080"
+      - "${DASHBOARD_HOST_PORT:-5081}:5080"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

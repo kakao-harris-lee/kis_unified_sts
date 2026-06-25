@@ -1,3 +1,7 @@
+> **ARCHIVED / HISTORICAL.** Research note retained for reference. Current
+> implementation and roadmap state live in [`../ROADMAP.md`](../ROADMAP.md) and
+> [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md).
+
 # 코스피200 특성을 모사한 가상 1분 OHLCV 생성 및 시각화 도구·모델 비교 연구
 
 ## Executive summary

@@ -124,7 +124,6 @@ export function OrderConfirmModal({
             <div className="w-64 border-r border-slate-200 dark:border-slate-700 p-4 bg-slate-50 dark:bg-slate-800/50 max-h-[600px] overflow-auto">
               <OrderbookPanel
                 stockCode={signal.code}
-                stockName={signal.name}
                 onPriceSelect={handlePriceSelect}
                 realtime={true}
               />

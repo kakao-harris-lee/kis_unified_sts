@@ -58,8 +58,8 @@
 30 16 * * 1-5  cd /app && python scripts/analysis/futures_minute_coverage_gate.py
 
 # =============================================================================
-# Continuous off-hours backfill — BOTH assets (data-engineer follow-up (b),
-# docs/plans/2026-06-24-no-trade-diagnosis.md). Backfill runs CONTINUOUSLY across
+# Continuous off-hours backfill — BOTH assets (data-engineer follow-up (b)).
+# Backfill runs CONTINUOUSLY across
 # the advantageous off-hours windows — 장전 (~07:00–08:50), 장후 (~15:40+), 야간
 # (overnight) — and NEVER inside the live session 09:00–15:30 KST (so it never
 # competes with the live feed). Each job is resume-based + gate-driven: state-DB
@@ -117,5 +117,4 @@
 # --- DROPPED (PR-B): host crons that point at missing/stale scripts — NOT migrated ---
 #   phase2_daily_verification  — scripts/cron/phase2_daily_verification.sh is MISSING (dead cron)
 #   counterfactual_weekly      — scripts/cron/counterfactual_weekly.sh is MISSING (dead cron)
-#   forecast_weekly_report     — forecast_vs_rl_comparison.py is RL-removed/stale
 # PR-D host-cron teardown removes these dead entries from the host crontab.

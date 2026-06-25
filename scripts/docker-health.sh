@@ -13,6 +13,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 FAILED=0
+DASHBOARD_HOST_PORT="${DASHBOARD_HOST_PORT:-5081}"
 
 check_service() {
     local name=$1
@@ -50,7 +51,7 @@ echo "Checking services..."
 echo ""
 
 # Check each host-exposed service
-check_service "Dashboard API" "http://localhost:8001/health" || true
+check_service "Dashboard API" "http://localhost:${DASHBOARD_HOST_PORT}/health" || true
 check_redis || true
 check_service "Prometheus" "http://localhost:9090/-/healthy" || true
 

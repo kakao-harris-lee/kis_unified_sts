@@ -3,8 +3,9 @@
 API-only service: provides trading-data endpoints under /api/* plus /health,
 /docs, /metrics, and the /ws WebSocket. The UI is served separately by the
 Next.js app (strategy-builder-ui) and reaches these endpoints through Caddy on
-:5080. (The Vite SPA that used to be served from here was removed in the
-Next.js consolidation — see docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md.)
+the host-published DASHBOARD_HOST_PORT. (The Vite SPA that used to be served
+from here was removed in the Next.js consolidation — see
+docs/plans/archive/2026-05-28-vite-dashboard-to-nextjs-migration.md.)
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ from shared.strategy.registry import register_builtin_components
 
 logger = logging.getLogger(__name__)
 
-# All dashboard UI is served through Caddy on host port 5080. Internally, Caddy
-# routes API traffic to this FastAPI service on dashboard:8001 and UI traffic
-# to strategy-builder-ui:3100. Neither internal service port is host-published.
+# All dashboard UI is served through Caddy on DASHBOARD_HOST_PORT. Internally,
+# Caddy routes API traffic to this FastAPI service on dashboard:8001 and UI
+# traffic to strategy-builder-ui:3100. Neither internal service port is
+# host-published.
 
 # OpenAPI tags for documentation organization
 OPENAPI_TAGS = [
@@ -244,11 +246,12 @@ def _register_routes(app: FastAPI) -> None:
 
     # Dashboard FastAPI is API-only after the Vite → Next.js migration.
     # Direct hits to / return a minimal pointer; UI traffic is served by
-    # strategy-builder-ui:3100 through Caddy on :5080.
+    # strategy-builder-ui:3100 through Caddy.
     @app.get("/")
     async def root():
+        dashboard_host_port = os.getenv("DASHBOARD_HOST_PORT", "5081")
         return {
             "service": "kis-dashboard",
-            "ui": "http://localhost:5080/",
+            "ui": f"http://localhost:{dashboard_host_port}/",
             "api_docs": "/docs",
         }

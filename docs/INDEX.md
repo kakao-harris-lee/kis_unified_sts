@@ -22,8 +22,8 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 
 | Doc | Use |
 |-----|-----|
-| [api.md](api.md) | API surface reference. |
-| [ports.md](ports.md) | Host port ownership: Caddy 5080 only; service ports stay internal. |
+| [api.md](api.md) | Current dashboard/Caddy API surface reference. |
+| [ports.md](ports.md) | Host port ownership: Caddy host 5081, internal service ports stay private. |
 | [strategies.md](strategies.md) | 설정 기반 전략 시스템 가이드 — YAML 정의, 레지스트리 패턴. |
 | [config_patterns.md](config_patterns.md) | `ServiceConfigBase` 기반 통합 설정 패턴. |
 | [deployment.md](deployment.md) | 플랫폼 배포 가이드. |
@@ -31,7 +31,7 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [exception_hierarchy.md](exception_hierarchy.md) | Typed exception hierarchy — broad `except Exception` 제거 정책. |
 | [error_handling_guide.md](error_handling_guide.md) | 에러 핸들링 베스트 프랙티스 + recovery 전략. |
 | [TLS_SETUP.md](TLS_SETUP.md) | Redis, reverse proxy, external API TLS 가이드. |
-| [performance_slas.md](performance_slas.md) | 성능 SLA 정의 (지연, 처리량, 가용성). |
+| [performance_slas.md](performance_slas.md) | Current runtime performance SLAs (Redis/SQLite/Parquet/DuckDB/dashboard/scheduler). |
 
 ## 🎯 Strategy & paper trading
 
@@ -81,6 +81,11 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [archive/runbooks/paper-docker-cutover.md](archive/runbooks/paper-docker-cutover.md) | 2026-06-08 host-cron → Compose cutover snapshot; superseded by current stock/futures/scheduler runbooks. |
 | [archive/runbooks/paper-trading-docker.md](archive/runbooks/paper-trading-docker.md) | Historical monolithic-orchestrator Compose paper runbook; superseded by decoupled pipeline runbooks. |
 | [archive/verification/](archive/verification/) | 2026-03 — 완료된 migration/security/performance 검증 스냅샷 |
+| [archive/api-legacy-services-api.md](archive/api-legacy-services-api.md) | Historical `services/api` gateway and `/api/v1/*` reference; superseded by current dashboard API. |
+| [archive/performance_slas-rl-era.md](archive/performance_slas-rl-era.md) | Historical RL-era performance SLA snapshot; superseded by current runtime SLA doc. |
+| [archive/MIGRATION_GUIDE.md](archive/MIGRATION_GUIDE.md) | Initial project migration strategy snapshot; superseded by current architecture docs. |
+| [archive/deep-research-report.md](archive/deep-research-report.md) | Historical KOSPI200 synthetic-data research note. |
+| [archive/unified_implementation.py](archive/unified_implementation.py) | Historical implementation sketch, not active runtime code. |
 
 ## How to add a new doc
 

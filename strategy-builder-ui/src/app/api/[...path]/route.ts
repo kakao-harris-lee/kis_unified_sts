@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:5080";
+const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:5081";
 const apiKey = process.env.KIS_BUILDER_API_KEY || process.env.DASHBOARD_API_KEY || "";
 const compatRoots = new Set([
   "auth",

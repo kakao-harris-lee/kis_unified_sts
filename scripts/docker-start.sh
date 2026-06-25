@@ -6,6 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+DASHBOARD_HOST_PORT="${DASHBOARD_HOST_PORT:-5081}"
 
 cd "$PROJECT_DIR"
 
@@ -45,7 +46,7 @@ echo ""
 echo "=== Platform Started Successfully ==="
 echo ""
 echo "Access points:"
-echo "  - Dashboard:    http://localhost:8001"
+echo "  - Dashboard:    http://localhost:${DASHBOARD_HOST_PORT}"
 echo "  - Prometheus:   http://localhost:9090"
 echo ""
 echo "View logs:"

@@ -1,4 +1,8 @@
-"""
+"""ARCHIVED / HISTORICAL implementation sketch.
+
+Current runtime rules live in CLAUDE.md and current implementation lives under
+shared/, services/, domains/, and cli/.
+
 KIS Unified Trading Platform - 핵심 구현체
 ==========================================
 

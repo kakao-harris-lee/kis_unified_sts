@@ -19,7 +19,6 @@ Either path fires the ``FORCE_CLOSE`` signal.  The price history is kept in
 pruned to the rolling window each tick.
 """
 from __future__ import annotations
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time

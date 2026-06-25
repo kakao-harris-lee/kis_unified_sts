@@ -8,7 +8,6 @@ import { getWsBase } from "@/lib/api/client";
 
 interface OrderbookPanelProps {
   stockCode: string;
-  stockName?: string;
   onPriceSelect?: (price: number) => void;
   className?: string;
   /** Enable WebSocket real-time updates */
@@ -17,7 +16,6 @@ interface OrderbookPanelProps {
 
 export function OrderbookPanel({
   stockCode,
-  stockName,
   onPriceSelect,
   className,
   realtime = true,

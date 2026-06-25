@@ -1,3 +1,7 @@
+> **ARCHIVED / HISTORICAL.** Initial project migration strategy. Current runtime
+> and architecture rules live in [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md),
+> [`../ROADMAP.md`](../ROADMAP.md), and [`../../CLAUDE.md`](../../CLAUDE.md).
+
 # 프로젝트 마이그레이션 전략
 
 ## ❌ 권장하지 않는 방식: 기존 프로젝트 하위 배치

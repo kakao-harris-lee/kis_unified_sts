@@ -15,9 +15,14 @@ Host systemd units are not part of the supported runtime. Do not install stock,
 futures, news, or LLM pipeline daemons through systemd; run both paper and live
 stacks with Docker Compose profiles instead.
 
-## Legacy Cron Deployment
+## Scheduler
 
-## Macro overnight
+One-shot scheduled jobs run through the Compose `scheduler` service with
+supercronic. The source of truth is [`scheduler.crontab`](scheduler.crontab).
 
-1. `bash scripts/cron/install_phase1_crontab.sh`
-2. Verify: `crontab -l | grep macro_overnight`
+```bash
+docker compose --env-file .env.paper --profile scheduler up -d scheduler
+```
+
+Do not install host crontab entries for the current paper/live runtime. Historical
+host-cron notes are kept under `docs/archive/operations/crontab.md`.

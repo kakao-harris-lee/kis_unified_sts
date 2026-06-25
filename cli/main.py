@@ -22,6 +22,9 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+DEFAULT_DASHBOARD_HOST_PORT = os.getenv("DASHBOARD_HOST_PORT", "5081")
+DEFAULT_DASHBOARD_URL = f"http://localhost:{DEFAULT_DASHBOARD_HOST_PORT}"
+
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
@@ -1987,7 +1990,7 @@ def trade_start(
 @click.option(
     "--url",
     "-u",
-    default="http://localhost:8001",
+    default=DEFAULT_DASHBOARD_URL,
     help="Dashboard API URL",
 )
 def trade_status(url: str):
@@ -1996,7 +1999,7 @@ def trade_status(url: str):
     \b
     Example:
         sts trade status
-        sts trade status --url http://localhost:8001
+        sts trade status --url http://localhost:5081
     """
     try:
         import httpx
@@ -2023,7 +2026,7 @@ def trade_status(url: str):
 @click.option(
     "--url",
     "-u",
-    default="http://localhost:8001",
+    default=DEFAULT_DASHBOARD_URL,
     help="Dashboard API URL",
 )
 def trade_stop(url: str):
@@ -2032,7 +2035,7 @@ def trade_stop(url: str):
     \b
     Example:
         sts trade stop
-        sts trade stop --url http://localhost:8001
+        sts trade stop --url http://localhost:5081
     """
     try:
         import httpx
@@ -2151,7 +2154,7 @@ def paper_start(strategy: str, asset: str, capital: float, max_positions: int):
 
 
 @paper.command("status")
-@click.option("--url", "-u", default="http://localhost:8001", help="Dashboard API URL")
+@click.option("--url", "-u", default=DEFAULT_DASHBOARD_URL, help="Dashboard API URL")
 def paper_status(url: str):
     """모의 거래 상태 조회
 
@@ -2204,7 +2207,7 @@ def paper_status(url: str):
 
 
 @paper.command("stop")
-@click.option("--url", "-u", default="http://localhost:8001", help="Dashboard API URL")
+@click.option("--url", "-u", default=DEFAULT_DASHBOARD_URL, help="Dashboard API URL")
 def paper_stop(url: str):
     """모의 거래 종료
 
@@ -2250,7 +2253,7 @@ def paper_history(_limit: int, _fmt: str):
 @click.option(
     "--url",
     "-u",
-    default="http://localhost:8001",
+    default=DEFAULT_DASHBOARD_URL,
     help="Dashboard API URL",
 )
 def health(url: str):
@@ -2259,7 +2262,7 @@ def health(url: str):
     \b
     Example:
         sts health
-        sts health --url http://localhost:8001
+        sts health --url http://localhost:5081
     """
     try:
         import httpx

@@ -1,4 +1,4 @@
-# KIS Unified STS — Single external entry on host port 5080.
+# KIS Unified STS — Single external entry through DASHBOARD_HOST_PORT.
 #
 # Routing (2026-05-29):
 #   /api/kis-builder/*  → dashboard:8001 (Phase 2 register-paper + KIS compat)
@@ -24,7 +24,7 @@
 #                            dashboard. Keeps the upstream UI working without
 #                            us editing every call site.
 #
-# HTTP-only on :5080 (operator constraint).
+# HTTP-only on container :5080; Docker maps DASHBOARD_HOST_PORT to this port.
 
 :5080 {
 	log {

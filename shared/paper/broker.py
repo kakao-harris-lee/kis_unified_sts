@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 if TYPE_CHECKING:
     from shared.execution.slippage_control import OrderBookSnapshot
     from shared.execution.slippage_model import SlippageModel
+    from shared.paper.config import PaperTradingConfig
 
 from .models import (
     InsufficientBalanceError,
@@ -40,7 +41,7 @@ class VirtualBroker:
         commission_rate: float = 0.00015,  # 0.015%
         slippage_rate: float = 0.0001,     # 0.01%
         slippage_model: Optional["SlippageModel"] = None,
-        config: Optional["PaperTradingConfig"] = None,  # type: ignore[name-defined]
+        config: Optional["PaperTradingConfig"] = None,
     ):
         # If a config is provided, its values take precedence
         if config is not None:

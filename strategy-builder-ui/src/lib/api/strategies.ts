@@ -2,8 +2,8 @@
  * Strategies API
  */
 
-import { apiGet, apiPost, apiDelete, type ApiResponse, type LogEntry } from "./client";
-import type { Signal, ExecuteRequest, ExecuteResponse, StrategyInfo } from "@/types/signal";
+import { apiGet, apiPost, apiDelete } from "./client";
+import type { ExecuteRequest, ExecuteResponse, StrategyInfo } from "@/types/signal";
 import type { BuilderState } from "@/types/builder";
 
 export interface StrategiesListResponse {

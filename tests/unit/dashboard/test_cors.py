@@ -82,13 +82,12 @@ async def test_cors_allows_localhost_origin_in_dev():
         response = await client.options(
             "/health",
             headers={
-                "Origin": "http://localhost:5080",
+                "Origin": "http://localhost:5081",
                 "Access-Control-Request-Method": "GET",
             },
         )
 
-        # Should allow localhost:5080 (canonical dashboard port; see CLAUDE.md)
-        assert response.headers.get("access-control-allow-origin") == "http://localhost:5080"
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:5081"
 
 
 @pytest.mark.asyncio

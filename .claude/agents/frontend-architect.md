@@ -14,12 +14,12 @@ description: "Next.js 프론트엔드 아키텍처 전문가. App Router 구조,
 2. **데이터 페칭 전략**: RSC vs CSR 판단, React Query(`@tanstack/react-query`) 캐시/invalidation 패턴, axios 클라이언트 구조
 3. **디자인 토큰 거버넌스**: Tailwind v4 `@theme` / CSS custom properties, KIS 브랜드(`#245bee`), 한국 관습(상승=빨강 `#ef4444`/하락=파랑 `#3b82f6`), 다크모드 토큰 일관성
 4. **프로젝트 구조**: `components/`·`hooks/`·`contexts/`·`lib/` 경계, 기능별 디렉토리 규칙, 공통 컴포넌트 추출(DRY)
-5. **빌드/배포**: `Dockerfile.strategy_builder_ui`(multi-stage, `--legacy-peer-deps`), Caddy(5080) 리버스 프록시 → Next(3100), FastAPI(8001) API-only 경계
+5. **빌드/배포**: `Dockerfile.strategy_builder_ui`(multi-stage, `--legacy-peer-deps`), Caddy(`DASHBOARD_HOST_PORT`, paper/local 5081) 리버스 프록시 → Next(3100), FastAPI(8001) API-only 경계
 6. **통합/확장 전략**: 신규 화면/기능을 단일 앱에 일관되게 흡수하는 패턴 정의 (별도 SPA 분기 금지)
 
 ## 작업 원칙
 - **단일 앱 원칙**: 모든 UI는 `strategy-builder-ui/` 한 곳. 새 Vite/CRA 분기 생성 금지 (통합 완료 상태 유지)
-- **포트 규약**: 사용자-facing 웹은 Caddy 5080(외부) → 3100(Next 내부). host 3000은 별도 `bid-vector` 프로젝트용, 사용 금지
+- **포트 규약**: 사용자-facing 웹은 `DASHBOARD_HOST_PORT`(paper/local 5081) → Caddy 내부 5080 → 3100(Next 내부). host 3000은 별도 `bid-vector` 프로젝트용, 사용 금지
 - **API 경계**: 프론트는 `/api/*`(FastAPI)와 `/ws`(WebSocket)만 소비. 비즈니스 로직은 백엔드, 프론트는 표현/상호작용
 - **React 19/Next 16 제약**: peer 범위 긴장으로 install 시 `--legacy-peer-deps` 필요 인지
 - **디자인 일관성**: 토큰 우선, 하드코딩 색상/간격 지양. 컴포넌트는 기존 패턴과 정합

@@ -3,8 +3,8 @@
 The upstream KIS Strategy Builder frontend is imported in `strategy-builder-ui/`.
 
 - Upstream source: `koreainvestment/open-trading-api/strategy_builder/frontend`
-- User-facing URL: `http://localhost:5080` by default
-  (`DASHBOARD_HOST_PORT` may override the host port locally).
+- User-facing URL: `http://localhost:5081` by default
+  (`DASHBOARD_HOST_PORT` controls the host-published Caddy port).
 - Internal container port: `strategy-builder-ui:3100`
 - Backend compatibility API: `services/dashboard/routes/kis_builder.py`
 
@@ -19,7 +19,7 @@ Run locally:
 ```bash
 cd strategy-builder-ui
 npm install
-KIS_BUILDER_API_BASE=http://localhost:5080 npm run dev
+KIS_BUILDER_API_BASE=http://localhost:5081 npm run dev
 ```
 
 The UI keeps upstream `/builder` and `/execute` routes. In this repository the
@@ -41,8 +41,9 @@ API routing:
   GET/HEAD route, the UI proxy returns a typed degraded empty state with
   `x-kis-degraded: dashboard_api_unavailable`. Mutating requests fail closed
   with HTTP 503 when the upstream is unavailable.
-- In Docker, Caddy is the only host-published web entry on port `5080`; the
-  Next.js `3100` port and dashboard `8001` port are internal only.
+- In Docker, Caddy is the only host-published web entry. Paper/local maps host
+  `5081` to Caddy's internal `5080`; the Next.js `3100` port and dashboard
+  `8001` port are internal only.
 - If dashboard API auth is enabled, set `KIS_BUILDER_API_KEY` to the same value
   as `DASHBOARD_API_KEY`; Docker Compose wires this automatically.
 
