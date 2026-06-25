@@ -14,6 +14,9 @@ def redis_mock():
     r = MagicMock()
     r.set = MagicMock(return_value=True)
     r.publish = MagicMock(return_value=1)
+    r.lpush = MagicMock(return_value=1)
+    r.ltrim = MagicMock(return_value=True)
+    r.expire = MagicMock(return_value=True)
     return r
 
 
@@ -105,6 +108,32 @@ def test_publish_event_publishes_pubsub_and_sets_latest(redis_mock, storage_mock
         c for c in redis_mock.set.call_args_list if c.args[0] == "forecast:event:latest"
     ]
     assert len(set_calls) == 1
+    storage_mock.execute.assert_not_called()
+
+
+def test_publish_event_retains_bounded_history_with_ttl(redis_mock, storage_mock):
+    pub = ForecastPublisher(
+        redis=redis_mock,
+        storage_client=storage_mock,
+        vol_ttl_s=120,
+        event_history_key="forecast:event:history",
+        event_history_maxlen=2,
+        event_history_ttl_s=86_400,
+    )
+    es = EventScore(
+        asof=datetime.now(UTC),
+        impact_score=85,
+        event_type="FOMC",
+        source="rule",
+        raw_text=None,
+        ttl_minutes=30,
+    )
+
+    pub.publish_event_score(es)
+
+    redis_mock.lpush.assert_called_once_with("forecast:event:history", es.to_json())
+    redis_mock.ltrim.assert_called_once_with("forecast:event:history", 0, 1)
+    redis_mock.expire.assert_called_once_with("forecast:event:history", 86_400)
     storage_mock.execute.assert_not_called()
 
 

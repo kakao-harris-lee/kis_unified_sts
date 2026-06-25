@@ -69,6 +69,16 @@ _REDIS_DB_ENV_KEYS = (
     "REDIS_SYSTEM_DB",
 )
 
+_EVIDENCE_PLACEHOLDER_MARKERS = (
+    "todo",
+    "tbd",
+    "placeholder",
+    "replace me",
+    "lorem ipsum",
+    "record 3-5 trading days",
+    "record 3\u20135 trading days",
+)
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -369,6 +379,33 @@ def _nonempty_file(path: Path) -> bool:
     return path.exists() and path.is_file() and bool(_read_text(path).strip())
 
 
+def _gate1_evidence_failure(path: Path) -> str | None:
+    """Return why a Gate 1 evidence file is not acceptable.
+
+    This is deliberately lightweight. The verifier cannot prove that operators
+    actually completed multi-day shadow validation, but it can reject empty
+    files and runbook templates that still contain obvious placeholder markers.
+    """
+
+    if not path.exists() or not path.is_file():
+        return f"missing: {path}"
+    text = _read_text(path).strip()
+    if not text:
+        return f"empty: {path}"
+    lowered = text.lower()
+    marker = next(
+        (
+            placeholder_marker
+            for placeholder_marker in _EVIDENCE_PLACEHOLDER_MARKERS
+            if placeholder_marker in lowered
+        ),
+        None,
+    )
+    if marker is not None:
+        return f"placeholder marker {marker!r}: {path}"
+    return None
+
+
 def _check_gate1_evidence(
     repo_root: Path, evidence_paths: tuple[Path, ...]
 ) -> CheckResult:
@@ -382,18 +419,26 @@ def _check_gate1_evidence(
             ),
             action="Provide 3-5 trading days of shadow-validation evidence.",
         )
-    missing = [str(path) for path in evidence_paths if not _nonempty_file(path)]
-    status = "fail" if missing else "pass"
+    failures = [
+        failure
+        for path in evidence_paths
+        if (failure := _gate1_evidence_failure(path)) is not None
+    ]
+    status = "fail" if failures else "pass"
     return CheckResult(
         name="gate 1 shadow evidence",
         status=status,
         detail=(
-            f"missing/empty: {', '.join(missing)}"
-            if missing
+            f"invalid evidence: {', '.join(failures)}"
+            if failures
             else f"evidence files={len(evidence_paths)}"
         ),
         source=", ".join(str(path) for path in evidence_paths),
-        action=None if status == "pass" else "Supply non-empty shadow evidence files.",
+        action=(
+            None
+            if status == "pass"
+            else "Supply real shadow evidence files without template placeholders."
+        ),
     )
 
 
@@ -493,7 +538,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="append",
         type=Path,
         default=[],
-        help="Non-empty Gate 1 shadow-validation evidence file (repeatable)",
+        help=(
+            "Gate 1 shadow-validation evidence file, repeatable; files must be "
+            "non-empty and free of obvious TODO/TBD/placeholder markers"
+        ),
     )
     parser.add_argument(
         "--operator-approval-file",

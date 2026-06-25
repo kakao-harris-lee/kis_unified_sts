@@ -24,6 +24,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FORECAST_EVENT_LATEST_KEY = os.environ.get(
     "FORECAST_EVENT_LATEST_KEY", "forecast:event:latest"
 )
+_FORECAST_EVENT_HISTORY_KEY = os.environ.get(
+    "FORECAST_EVENT_HISTORY_KEY", "forecast:event:history"
+)
 _NEWS_RAW_STREAM = os.environ.get("NEWS_RAW_STREAM", "stream:news.raw")
 _NEWS_SCORED_STREAM = os.environ.get("NEWS_SCORED_STREAM", "stream:news.scored")
 _MACRO_OVERNIGHT_STREAM = os.environ.get(
@@ -38,11 +41,18 @@ _SETUP_C_STRATEGY_CONFIG_PATH = os.environ.get(
 )
 _SETUP_EVAL_KEY = os.environ.get("SETUP_EVAL_KEY", "trading:futures:setup_eval")
 _SETUP_C_FIELD = "setup_c_event_reaction"
-_STALE_STREAM_SECONDS = int(os.environ.get("EVENT_CONTEXT_STALE_STREAM_SECONDS", "3600"))
+_STALE_STREAM_SECONDS = int(
+    os.environ.get("EVENT_CONTEXT_STALE_STREAM_SECONDS", "3600")
+)
 _SETUP_EVAL_STALE_SECONDS = int(
     os.environ.get("EVENT_CONTEXT_SETUP_EVAL_STALE_SECONDS", "900")
 )
 _SOURCE_SAMPLE_LIMIT = int(os.environ.get("EVENT_CONTEXT_SOURCE_SAMPLE_LIMIT", "3"))
+_EVENT_SCORE_HISTORY_SAMPLE_LIMIT = int(
+    os.environ.get(
+        "EVENT_CONTEXT_EVENT_SCORE_HISTORY_SAMPLE_LIMIT", str(_SOURCE_SAMPLE_LIMIT)
+    )
+)
 
 
 class EventScoreSummary(BaseModel):
@@ -237,7 +247,9 @@ def _age_seconds(now: datetime, ts: datetime | None) -> int | None:
     return max(0, int((now - ts.astimezone(UTC)).total_seconds()))
 
 
-def _latest_stream_entries(redis: Any, key: str, count: int) -> list[tuple[Any, dict[str, Any]]]:
+def _latest_stream_entries(
+    redis: Any, key: str, count: int
+) -> list[tuple[Any, dict[str, Any]]]:
     if redis is None:
         return []
     try:
@@ -254,6 +266,13 @@ def _latest_stream_entries(redis: Any, key: str, count: int) -> list[tuple[Any, 
 def _stream_count(redis: Any, key: str, fallback: int) -> int:
     try:
         return int(redis.xlen(key))
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
+def _list_count(redis: Any, key: str, fallback: int) -> int:
+    try:
+        return int(redis.llen(key))
     except Exception:  # noqa: BLE001
         return fallback
 
@@ -325,17 +344,114 @@ def _source_from_event_score(
         latest_at=score.latest_at,
         age_seconds=score.age_seconds,
         detail=score.event_type,
+        sample=(
+            [
+                {
+                    "event_type": score.event_type,
+                    "impact_score": score.impact_score,
+                    "impact_tier": score.impact_tier,
+                    "source": score.source,
+                    "ttl_minutes": score.ttl_minutes,
+                }
+            ]
+            if score.available
+            else []
+        ),
+    )
+
+
+def _event_score_history_source(
+    redis: Any,
+    *,
+    now: datetime,
+) -> EventSourceStatus:
+    if redis is None:
+        return EventSourceStatus(
+            name="forecast_event_history",
+            kind="redis_list",
+            key=_FORECAST_EVENT_HISTORY_KEY,
+            available=False,
+            status="unavailable",
+            detail="redis_unavailable",
+        )
+
+    limit = max(1, _EVENT_SCORE_HISTORY_SAMPLE_LIMIT)
+    try:
+        raw_entries = redis.lrange(_FORECAST_EVENT_HISTORY_KEY, 0, limit - 1)
+    except Exception:  # noqa: BLE001
+        return EventSourceStatus(
+            name="forecast_event_history",
+            kind="redis_list",
+            key=_FORECAST_EVENT_HISTORY_KEY,
+            available=False,
+            status="unavailable",
+            detail="redis_lrange_failed",
+        )
+
+    entries = list(raw_entries or [])
+    if not entries:
+        return EventSourceStatus(
+            name="forecast_event_history",
+            kind="redis_list",
+            key=_FORECAST_EVENT_HISTORY_KEY,
+            available=False,
+            status="empty",
+            count=0,
+        )
+
+    count = _list_count(redis, _FORECAST_EVENT_HISTORY_KEY, fallback=len(entries))
+    payloads = [
+        payload for raw in entries if (payload := _decode_json_object(raw)) is not None
+    ]
+    if not payloads:
+        return EventSourceStatus(
+            name="forecast_event_history",
+            kind="redis_list",
+            key=_FORECAST_EVENT_HISTORY_KEY,
+            available=False,
+            status="invalid",
+            count=count,
+        )
+
+    latest = payloads[0]
+    latest_at = _parse_datetime(latest.get("asof"))
+    age = _age_seconds(now, latest_at)
+    ttl_minutes = _coerce_int(latest.get("ttl_minutes"), default=0)
+    if latest_at is None or ttl_minutes <= 0:
+        status = "invalid"
+        available = False
+    else:
+        status = "fresh" if age is not None and age <= ttl_minutes * 60 else "stale"
+        available = True
+
+    return EventSourceStatus(
+        name="forecast_event_history",
+        kind="redis_list",
+        key=_FORECAST_EVENT_HISTORY_KEY,
+        available=available,
+        status=status,
+        count=count,
+        latest_at=latest_at,
+        age_seconds=age,
+        detail=str(latest.get("event_type")) if latest.get("event_type") else None,
         sample=[
             {
-                "event_type": score.event_type,
-                "impact_score": score.impact_score,
-                "impact_tier": score.impact_tier,
-                "source": score.source,
-                "ttl_minutes": score.ttl_minutes,
+                "index": idx,
+                "asof": _parse_datetime(payload.get("asof")),
+                "event_type": payload.get("event_type"),
+                "impact_score": _coerce_float(payload.get("impact_score")),
+                "impact_tier": (
+                    tier
+                    if (tier := _coerce_int(payload.get("impact_tier"), default=0))
+                    in (1, 2, 3)
+                    else None
+                ),
+                "source": payload.get("source"),
+                "ttl_minutes": _coerce_int(payload.get("ttl_minutes"), default=0)
+                or None,
             }
-        ]
-        if score.available
-        else [],
+            for idx, payload in enumerate(payloads)
+        ],
     )
 
 
@@ -350,19 +466,26 @@ def _source_from_setup_eval(setup_eval: SetupEvalSummary) -> EventSourceStatus:
         latest_at=setup_eval.latest_at,
         age_seconds=setup_eval.age_seconds,
         detail=setup_eval.reason,
-        sample=[
-            {
-                "field": _SETUP_C_FIELD,
-                "outcome": setup_eval.outcome,
-                "reason": setup_eval.reason,
-            }
-        ]
-        if setup_eval.available
-        else [],
+        sample=(
+            [
+                {
+                    "field": _SETUP_C_FIELD,
+                    "outcome": setup_eval.outcome,
+                    "reason": setup_eval.reason,
+                }
+            ]
+            if setup_eval.available
+            else []
+        ),
     )
 
 
-def _event_score_summary(redis: Any, now: datetime) -> EventScoreSummary:
+def _event_score_summary(
+    redis: Any,
+    now: datetime,
+    *,
+    history_source: EventSourceStatus | None = None,
+) -> EventScoreSummary:
     raw = None
     if redis is not None:
         try:
@@ -375,7 +498,11 @@ def _event_score_summary(redis: Any, now: datetime) -> EventScoreSummary:
             available=False,
             status="missing",
             sparse=True,
-            recent_count=0,
+            recent_count=(
+                history_source.count
+                if history_source and history_source.available and history_source.count
+                else 0
+            ),
             missing_evidence=["forecast_event_latest"],
         )
 
@@ -402,6 +529,11 @@ def _event_score_summary(redis: Any, now: datetime) -> EventScoreSummary:
         )
     ttl_seconds = ttl_minutes * 60
     status = "fresh" if age is not None and age <= ttl_seconds else "stale"
+    recent_count = (
+        history_source.count
+        if history_source and history_source.available and history_source.count
+        else 1
+    )
     # Surface the latest event's tier as a single-entry histogram. Pre-tier
     # payloads (impact_tier absent → 0) yield an empty histogram, leaving the
     # dashboard's "impact tiers unavailable" fallback intact.
@@ -416,10 +548,12 @@ def _event_score_summary(redis: Any, now: datetime) -> EventScoreSummary:
         ttl_minutes=ttl_minutes or None,
         impact_score=_coerce_float(payload.get("impact_score")),
         impact_tier=tier,
-        event_type=str(payload.get("event_type")) if payload.get("event_type") else None,
+        event_type=(
+            str(payload.get("event_type")) if payload.get("event_type") else None
+        ),
         source=str(payload.get("source")) if payload.get("source") else None,
-        sparse=True,
-        recent_count=1,
+        sparse=recent_count <= 1,
+        recent_count=recent_count,
         by_impact_tier=by_impact_tier,
         missing_evidence=[] if status == "fresh" else ["forecast_event_latest_stale"],
     )
@@ -561,9 +695,9 @@ def _event_row(
         event_type=event.event_type,
         scheduled_at=scheduled_kst,
         impact_tier=event.impact_tier,
-        elapsed_minutes=round(elapsed_minutes, 1)
-        if elapsed_minutes is not None
-        else None,
+        elapsed_minutes=(
+            round(elapsed_minutes, 1) if elapsed_minutes is not None else None
+        ),
         qualifies_window=qualifies,
     )
 
@@ -622,7 +756,12 @@ def _scheduled_source(
 def _missing_from_sources(sources: list[EventSourceStatus]) -> list[str]:
     missing: list[str] = []
     for source in sources:
-        if not source.available or source.status in {"missing", "invalid", "empty", "unavailable"}:
+        if not source.available or source.status in {
+            "missing",
+            "invalid",
+            "empty",
+            "unavailable",
+        }:
             missing.append(source.name)
         elif source.status == "stale":
             missing.append(f"{source.name}_stale")
@@ -665,9 +804,11 @@ def _setup_c_diagnostics(
     rows = [_event_row(event, now_kst=now_kst, cfg=cfg) for event in events]
     recent_rows = sorted(
         rows,
-        key=lambda row: abs(row.elapsed_minutes)
-        if row.elapsed_minutes is not None
-        else float("inf"),
+        key=lambda row: (
+            abs(row.elapsed_minutes)
+            if row.elapsed_minutes is not None
+            else float("inf")
+        ),
     )[:10]
     in_window = [row for row in rows if row.qualifies_window]
     missing_sources = _missing_from_sources(sources)
@@ -696,7 +837,9 @@ def _setup_c_diagnostics(
         elif setup_eval.status in {"not_published_yet", "malformed", "unavailable"}:
             add_block(f"setup_eval_{setup_eval.status}")
         if not in_window:
-            add_block(f"no_event_in_window({cfg.window_minutes}m,tier<={cfg.min_impact_tier})")
+            add_block(
+                f"no_event_in_window({cfg.window_minutes}m,tier<={cfg.min_impact_tier})"
+            )
         if event_score.status == "missing":
             add_block("event_score_missing")
         elif event_score.status == "stale":
@@ -752,13 +895,19 @@ async def get_event_context_diagnostics(
     cfg = _load_setup_c_config()
     strategy_params = _load_strategy_setup_c_params()
     config_warnings = _config_warnings(cfg, strategy_params)
-    event_score = _event_score_summary(redis, now)
+    event_history_source = _event_score_history_source(redis, now=now)
+    event_score = _event_score_summary(
+        redis,
+        now,
+        history_source=event_history_source,
+    )
     setup_eval = _setup_eval_summary(redis, now)
     events = _load_events()
 
     sources = [
         _source_from_setup_eval(setup_eval),
         _source_from_event_score(event_score),
+        event_history_source,
         _source_from_stream(redis, name="news_raw", key=_NEWS_RAW_STREAM, now=now),
         _source_from_stream(
             redis, name="news_scored", key=_NEWS_SCORED_STREAM, now=now
@@ -786,11 +935,13 @@ async def get_event_context_diagnostics(
     )
     notes = [
         "setup_c_latest_eval is the direct runtime reject/fired source when the adapter has published it.",
-        "event_score is latest-only because forecasting:events is pubsub, not durable history.",
+        "forecast_event_history is a bounded Redis list retained alongside the latest EventScore key.",
         "candidate_count counts scheduled events qualifying for the Setup C event window; breakout and risk gates are runtime-only unless setup_c_latest_eval is available.",
     ]
     if config_warnings:
-        notes.append("setup_c config mismatch detected between decision_engine.yaml and strategy YAML.")
+        notes.append(
+            "setup_c config mismatch detected between decision_engine.yaml and strategy YAML."
+        )
     if redis is None:
         notes.append("redis_unavailable: stream/key diagnostics are degraded.")
     status = "degraded" if missing or config_warnings else "ok"

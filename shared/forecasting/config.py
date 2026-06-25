@@ -1,5 +1,6 @@
 """Forecasting service configuration (ServiceConfigBase pattern)."""
-from typing import ClassVar
+
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,8 @@ class HARRVConfig(BaseModel):
     # regimes), and the canary needs to operate even when the fit is poor.
     min_r2_oos: float = Field(default=0.10, ge=-1.0, le=1.0)
     consecutive_fail_disable_threshold: int = Field(default=7, ge=1)
+    rv_target: Literal["raw", "log"] = Field(default="raw")
+    rv_floor: float = Field(default=1e-10, gt=0.0)
 
 
 class EventScorerConfig(BaseModel):

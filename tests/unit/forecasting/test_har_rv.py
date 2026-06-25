@@ -1,5 +1,6 @@
 """Tests for HAR-RV model (Corsi 2009)."""
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -146,6 +147,49 @@ def test_serialization_roundtrip_preserves_regime_percentile_history():
 
     assert vf1.regime_percentile > 90
     assert vf2.regime_percentile == pytest.approx(vf1.regime_percentile)
+
+
+def test_log_rv_target_forecasts_bias_corrected_positive_rv():
+    cfg = HARRVConfig(rv_target="log", min_r2_oos=-1.0)
+    history = _make_synthetic_rv_history(80)
+    f = VolatilityForecaster(cfg)
+    f.fit(history)
+
+    assert f._coefficients is not None
+    assert f._latest_components is not None
+    assert f._target_mode == "log"
+    assert f._residual_variance is not None
+    assert f._residual_variance > 0
+
+    rv_d, rv_w, rv_m = f._latest_components
+    c = f._coefficients
+    pred_log_rv = c.beta_0 + c.beta_d * rv_d + c.beta_w * rv_w + c.beta_m * rv_m
+    expected_rv = float(np.exp(pred_log_rv + 0.5 * f._residual_variance))
+
+    vf = f.forecast(datetime.now(UTC), current_close=380.0)
+    expected_pct = np.sqrt(expected_rv * 252) * 100
+    uncorrected_pct = np.sqrt(float(np.exp(pred_log_rv)) * 252) * 100
+
+    assert vf.forecast_pct == pytest.approx(expected_pct)
+    assert vf.forecast_pct > uncorrected_pct
+
+
+def test_log_rv_serialization_preserves_target_and_residual_variance():
+    cfg = HARRVConfig(rv_target="log", min_r2_oos=-1.0)
+    history = _make_synthetic_rv_history(80)
+    f = VolatilityForecaster(cfg)
+    f.fit(history)
+
+    payload = json.loads(f.to_json())
+    assert payload["target_mode"] == "log"
+    assert payload["residual_variance"] == pytest.approx(f._residual_variance)
+
+    loaded = VolatilityForecaster.from_json(f.to_json(), HARRVConfig())
+    assert loaded._target_mode == "log"
+    assert loaded._residual_variance == pytest.approx(f._residual_variance)
+    assert loaded.forecast(datetime.now(UTC), current_close=380.0).forecast_pct == (
+        pytest.approx(f.forecast(datetime.now(UTC), current_close=380.0).forecast_pct)
+    )
 
 
 def test_regime_percentile_calculation():

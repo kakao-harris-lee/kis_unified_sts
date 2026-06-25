@@ -27,7 +27,7 @@ kill_switch:
   enabled: true
   check_interval_seconds: 30
   force_flat_on_trigger: true
-  sentinel_path: "/var/run/kis_kill_switch.tripped"
+  sentinel_path: "/app/data/runtime/kis_kill_switch.tripped"
   conditions:
     daily_loss:
       enabled: true

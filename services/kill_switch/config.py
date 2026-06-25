@@ -55,7 +55,7 @@ class KillSwitchConfig(ServiceConfigBase):
     enabled: bool = Field(default=True)
     check_interval_seconds: float = Field(default=30.0, gt=0)
     force_flat_on_trigger: bool = Field(default=True)
-    sentinel_path: str = Field(default="/var/run/kis_kill_switch.tripped")
+    sentinel_path: str = Field(default="/app/data/runtime/kis_kill_switch.tripped")
     conditions: _ConditionsBlock = Field(default_factory=_ConditionsBlock)
 
 

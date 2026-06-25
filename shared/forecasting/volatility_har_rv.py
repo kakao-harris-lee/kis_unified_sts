@@ -55,9 +55,17 @@ class VolatilityForecaster:
         self._coefficients: HARRVCoefficients | None = None
         self._last_fit_at: datetime | None = None
         self._rv_history: pd.Series | None = None
+        self._target_mode: str = config.rv_target
+        self._residual_variance: float | None = None
         self._latest_components: tuple[float, float, float] | None = (
             None  # (rv_d, rv_w, rv_m)
         )
+
+    def _fit_series(self, history: pd.Series) -> pd.Series:
+        raw = history.astype(float)
+        if self.config.rv_target == "log":
+            return np.log(raw.clip(lower=self.config.rv_floor))
+        return raw
 
     def fit(self, history: pd.Series) -> None:
         """Refit OLS on daily RV series.
@@ -74,7 +82,8 @@ class VolatilityForecaster:
                 f"days, got {len(history)}"
             )
 
-        df = _build_har_regressors(history)
+        fit_series = self._fit_series(history)
+        df = _build_har_regressors(fit_series)
         holdout = self.config.holdout_days
         if len(df) <= holdout:
             raise ValueError(
@@ -103,6 +112,10 @@ class VolatilityForecaster:
             )
 
         params = model.params
+        residuals = model.resid
+        residual_variance = (
+            float(np.var(residuals, ddof=1)) if len(residuals) > 1 else 0.0
+        )
         self._coefficients = HARRVCoefficients(
             beta_0=float(params.iloc[0]),
             beta_d=float(params.iloc[1]),
@@ -114,11 +127,17 @@ class VolatilityForecaster:
             fit_date=datetime.now(UTC).date().isoformat(),
         )
         self._last_fit_at = datetime.now(UTC)
-        self._rv_history = history.copy()
+        self._rv_history = history.astype(float).copy()
+        self._target_mode = self.config.rv_target
+        self._residual_variance = (
+            residual_variance if self._target_mode == "log" else None
+        )
         # Latest components for prediction
-        last_d = float(history.iloc[-1])
-        last_w = float(history.iloc[-5:].mean()) if len(history) >= 5 else last_d
-        last_m = float(history.iloc[-22:].mean()) if len(history) >= 22 else last_w
+        last_d = float(fit_series.iloc[-1])
+        last_w = float(fit_series.iloc[-5:].mean()) if len(fit_series) >= 5 else last_d
+        last_m = (
+            float(fit_series.iloc[-22:].mean()) if len(fit_series) >= 22 else last_w
+        )
         self._latest_components = (last_d, last_w, last_m)
         logger.info(
             "HAR-RV refit complete: beta_d=%.3f beta_w=%.3f beta_m=%.3f R2_oos=%.3f",
@@ -139,7 +158,12 @@ class VolatilityForecaster:
 
         rv_d, rv_w, rv_m = self._latest_components
         c = self._coefficients
-        pred_rv = c.beta_0 + c.beta_d * rv_d + c.beta_w * rv_w + c.beta_m * rv_m
+        pred_target = c.beta_0 + c.beta_d * rv_d + c.beta_w * rv_w + c.beta_m * rv_m
+        if self._target_mode == "log":
+            residual_variance = self._residual_variance or 0.0
+            pred_rv = float(np.exp(pred_target + 0.5 * residual_variance))
+        else:
+            pred_rv = pred_target
         pred_rv = max(pred_rv, 1e-10)
         # Annualized % vol = sqrt(daily variance * 252) * 100
         forecast_pct = float(np.sqrt(pred_rv * 252) * 100)
@@ -176,6 +200,8 @@ class VolatilityForecaster:
             "last_fit_at": (
                 self._last_fit_at.isoformat() if self._last_fit_at else None
             ),
+            "target_mode": self._target_mode,
+            "residual_variance": self._residual_variance,
         }
         if self._rv_history is not None and len(self._rv_history) > 0:
             payload["rv_history"] = self._rv_history.astype(float).tolist()
@@ -189,6 +215,11 @@ class VolatilityForecaster:
         f = cls(cfg)
         f._coefficients = HARRVCoefficients(**d["coefficients"])
         f._latest_components = tuple(d["latest_components"])
+        f._target_mode = d.get("target_mode", "raw")
+        residual_variance = d.get("residual_variance")
+        f._residual_variance = (
+            float(residual_variance) if residual_variance is not None else None
+        )
         f._last_fit_at = (
             datetime.fromisoformat(d["last_fit_at"]) if d.get("last_fit_at") else None
         )

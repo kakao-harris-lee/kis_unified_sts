@@ -98,6 +98,13 @@ Each trading day, verify:
 - Sanity: compare shadow decisions with the orchestrator's paper trades for
   **direction**, not exact fill parity.
 
+When running `scripts/ops/futures_cutover_verify.py --strict`, pass one or more
+actual shadow-validation notes/logs with `--gate1-evidence`. The verifier only
+does a simple file check: evidence files must be non-empty and must not still
+contain obvious template markers such as `TODO`, `TBD`, or `placeholder`.
+Include real trading dates and the observations above; automation cannot prove
+multi-day shadow operation without operator-supplied evidence.
+
 **DUAL-WS CAVEAT.** `futures-order-router` self-feeds a real KIS futures WebSocket
 even in paper mode (KIS 모의투자 serves no futures realtime feed). During shadow
 that is a 2nd futures WS alongside the orchestrator's = 2 concurrent on one KIS
@@ -228,13 +235,14 @@ automatically — verify each before going live:
 
 2. **kill_switch → order_router sentinel must be on a shared volume.** The order_router's
    only kill-switch interlock is the filesystem sentinel at
-   `config/kill_switch.yaml::sentinel_path` (default `/var/run/kis_kill_switch.tripped`).
-   The kill_switch daemon and order_router run in **separate containers**; the default
-   `/var/run` path is container-local, so a trip written by `futures-kill-switch` is NOT
-   visible to `futures-order-router` and the "refuse to place new orders after a trip"
-   interlock is dead. **Before live**, set `config/kill_switch.yaml::sentinel_path` to a
-   path under the shared `data/runtime` mount, e.g. `data/runtime/kis_kill_switch.tripped`
-   (both containers mount `./data/runtime` and `./config`), so both share the sentinel.
+   `config/kill_switch.yaml::sentinel_path` (default
+   `/app/data/runtime/kis_kill_switch.tripped`). The kill_switch daemon and
+   order_router run in **separate containers**; container-local paths such as
+   `/var/run` are not shared, so a trip written by `futures-kill-switch` would
+   NOT be visible to `futures-order-router` and the "refuse to place new orders
+   after a trip" interlock would be dead. Keep the sentinel under the shared
+   `/app/data/runtime` mount (both containers mount host `./data/runtime` there),
+   so both services see the same file.
    (The kill_switch's Telegram alert + Redis `kill_switch:events` stream + force-flatten
    Redis key fire regardless; only the order_router *file* interlock needs the shared path.
    Wiring order_router to also honor the Redis `kill_switch:force_flatten:requested` key is

@@ -1,10 +1,12 @@
 """Tests for realized variance computation."""
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from shared.forecasting.realized_variance import (
     compute_intraday_realized_variance,
+    daily_rv_series,
     resample_to_5min,
 )
 
@@ -26,9 +28,7 @@ def test_resample_to_5min_aggregates_correctly(synthetic_1min_bars):
     df5 = resample_to_5min(synthetic_1min_bars)
     assert len(df5) == 390 // 5  # 78 bars
     # Each 5m close = last 1m close of that window
-    assert df5.iloc[0]["close"] == pytest.approx(
-        synthetic_1min_bars.iloc[4]["close"]
-    )
+    assert df5.iloc[0]["close"] == pytest.approx(synthetic_1min_bars.iloc[4]["close"])
 
 
 def test_resample_to_5min_with_missing_minutes_forward_fills():
@@ -56,3 +56,27 @@ def test_compute_realized_variance_single_bar_returns_zero():
     times = pd.date_range("2026-05-12 00:00:00", periods=1, freq="1min", tz="UTC")
     df = pd.DataFrame({"close": [100.0]}, index=times)
     assert compute_intraday_realized_variance(df) == 0.0
+
+
+def test_daily_rv_series_filters_to_kst_regular_session():
+    # UTC timestamps map to 2026-05-12 KST. The out-of-session bars contain
+    # intentionally large price moves that must not leak into the daily RV.
+    regular_idx = pd.date_range(
+        "2026-05-12 00:00:00", periods=12, freq="5min", tz="UTC"
+    )
+    pre_idx = pd.DatetimeIndex(["2026-05-11 23:55:00"], tz="UTC")
+    post_idx = pd.DatetimeIndex(["2026-05-12 06:35:00"], tz="UTC")
+
+    regular_closes = np.linspace(100.0, 101.1, len(regular_idx))
+    bars = pd.DataFrame(
+        {"close": [50.0, *regular_closes, 200.0]},
+        index=pre_idx.append(regular_idx).append(post_idx),
+    )
+
+    rv = daily_rv_series(bars)
+    expected = compute_intraday_realized_variance(
+        pd.DataFrame({"close": regular_closes}, index=regular_idx)
+    )
+
+    assert list(rv.index) == [pd.Timestamp("2026-05-12").date()]
+    assert rv.iloc[0] == pytest.approx(expected)

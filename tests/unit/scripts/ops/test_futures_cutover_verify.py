@@ -21,9 +21,10 @@ def test_json_audit_reports_futures_cutover_readiness(capsys) -> None:
     assert checks["compose futures profiles/services"]["status"] == "pass"
     assert "futures-pipeline" in checks["compose futures profiles/services"]["detail"]
     assert checks["futures daemon mode defaults"]["status"] == "pass"
-    assert checks["kill-switch sentinel path"]["status"] == "warn"
+    assert checks["futures orchestrator guard knob"]["status"] == "pass"
+    assert checks["kill-switch sentinel path"]["status"] == "pass"
     assert (
-        "/var/run/kis_kill_switch.tripped"
+        "/app/data/runtime/kis_kill_switch.tripped"
         in checks["kill-switch sentinel path"]["detail"]
     )
     assert checks["gate 1 shadow evidence"]["status"] == "fail"
@@ -34,6 +35,37 @@ def test_json_audit_reports_futures_cutover_readiness(capsys) -> None:
 
     assert strict_rc == 1
     assert strict_output["summary"]["fail"] >= 2
+
+
+def test_gate1_evidence_rejects_placeholder_content(tmp_path) -> None:
+    module = importlib.import_module("scripts.ops.futures_cutover_verify")
+    repo_root = Path.cwd()
+    evidence = tmp_path / "gate1-placeholder.md"
+    evidence.write_text(
+        "\n".join(
+            [
+                "# Gate 1 shadow validation evidence",
+                "TODO: record 3-5 trading days of shadow-validation evidence.",
+                "TODO: add restart loop, backlog, dashboard, and direction checks.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    approval = tmp_path / "approval.md"
+    approval.write_text("Operator approval: approved by desk lead.\n", encoding="utf-8")
+
+    report = module.run_checks(
+        repo_root=repo_root,
+        strict=True,
+        gate1_evidence=(evidence,),
+        operator_approval_file=approval,
+    )
+
+    checks = {check.name: check for check in report.checks}
+    assert checks["gate 1 shadow evidence"].status == "fail"
+    assert "placeholder" in checks["gate 1 shadow evidence"].detail
+    assert checks["operator approval"].status == "pass"
+    assert report.exit_code() == 1
 
 
 def test_rollback_helper_defaults_to_dry_run() -> None:

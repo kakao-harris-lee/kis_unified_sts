@@ -3,6 +3,7 @@
 import textwrap
 
 import pytest
+from pydantic import ValidationError
 
 from services.kill_switch.config import KillSwitchConfig
 
@@ -12,7 +13,7 @@ def test_loads_default_yaml():
     cfg = KillSwitchConfig.from_yaml()
     assert cfg.enabled is True
     assert cfg.check_interval_seconds == 30.0
-    assert cfg.sentinel_path == "/var/run/kis_kill_switch.tripped"
+    assert cfg.sentinel_path == "/app/data/runtime/kis_kill_switch.tripped"
     assert cfg.conditions.daily_loss.limit_pct == 0.03
     assert cfg.conditions.weekly_loss.limit_pct == 0.07
     assert cfg.conditions.consecutive_losses.threshold == 6
@@ -47,6 +48,12 @@ def test_loads_custom_yaml(tmp_path):
     assert cfg.conditions.consecutive_losses.threshold == 4
 
 
+def test_model_default_uses_shared_runtime_mount():
+    cfg = KillSwitchConfig()
+
+    assert cfg.sentinel_path == "/app/data/runtime/kis_kill_switch.tripped"
+
+
 def test_check_interval_must_be_positive():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         KillSwitchConfig(check_interval_seconds=0)

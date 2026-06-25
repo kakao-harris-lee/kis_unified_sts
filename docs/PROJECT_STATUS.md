@@ -25,8 +25,9 @@
   backtest-vs-paper comparison panels are read-only or paper-safe.
 - Quant Ops Workbench P2 Event Context is in place: `/event-context` and
   `/api/event-context/diagnostics` expose Setup C latest eval, event-score
-  freshness, news/macro source timelines, and no-signal root causes. Workbench
-  UI/UX QA now has committed Vitest smoke coverage plus desktop/mobile
+  freshness plus bounded history, news/macro source timelines, and no-signal
+  root causes. Workbench UI/UX QA now has committed Vitest smoke coverage plus
+  desktop/mobile
   Playwright fallback screenshot evidence for degraded empty-state render paths:
   [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md).
 
@@ -48,7 +49,7 @@ Verified 2026-06-25 against `config/strategies/{stock,futures}/*.yaml` (`enabled
 |---|---|---|---|
 | Stock | `momentum_breakout`, `pattern_pullback`, `williams_r` | Paper (enabled) | `momentum_breakout` re-enabled for paper observation (#443). Swing exits are signal-driven (three-stage); no blanket EOD liquidation. |
 | Stock | `bb_reversion`, `opening_volume_surge`, `volume_accumulation`, `trend_pullback`, `vr_composite`, `technical_consensus`, `trend_continuation_vwap`, `daily_pullback`, `trix_golden`, `llm_adaptive_sizing_example`, `opening_volume_surge_combo_balanced`, `opening_volume_surge_score_1p8`, `trend_pullback_consensus_exit` | Disabled | `enabled: false`. `technical_consensus` disabled after 0% win (2026-06-02); reactivation under review (see ROADMAP). |
-| Futures | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper primary (enabled) | Setup A fires live signals; Setup C coded but ~0 signals (event sourcing sparse). Uses Setup target exits, LLM context/veto/risk hooks, live-mode guards. |
+| Futures | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper primary (enabled) | Setup A fires live signals; Setup C coded but ~0 signals (needs real event-score production/observation; bounded history is now retained for diagnostics). Uses Setup target exits, LLM context/veto/risk hooks, live-mode guards. |
 | Futures | `williams_r_15m`, `bb_reversion_15m`, `macd_ema_crossover_15m`, `momentum_breakout_futures`, `trend_pullback_futures`, `trix_golden_futures` | Disabled | `enabled: false`. Trend strategies collapse in walk-forward; `bb_reversion_15m` disabled (triggered stock BEAR_EXIT, #479). `track_a_exit.yaml` is an exit config, not a strategy. |
 | Futures | `llm_directed_indicator` | Deprecated | Not an active path without a separate redefinition gate. |
 
@@ -72,11 +73,16 @@ screenshots under
 **2026-06-25** - High-priority roadmap implementation slices.
 F-9 now has a read-only verifier and dry-run-first rollback helper:
 `scripts/ops/futures_cutover_verify.py` and
-`scripts/ops/futures_cutover_rollback.sh`. Setup C now suppresses entries when
-forecast integration is enabled but event scores are missing or below the
-configured minimum, without marking those events as traded. HAR-RV model JSON
-now preserves RV history so reloaded models keep non-default regime percentile
-behavior; log-RV/refit validation remains open.
+`scripts/ops/futures_cutover_rollback.sh`; the verifier rejects placeholder Gate
+1 evidence, the kill-switch sentinel defaults to the shared
+`/app/data/runtime/kis_kill_switch.tripped` path, and paper/live env examples
+expose `FUTURES_ORCHESTRATOR_ENABLED` for the Gate 2 double-trade guard. Setup C
+now suppresses entries when forecast integration is enabled but event scores are
+missing or below the configured minimum, retains bounded event-score history in
+Redis, and surfaces that history in Event Context diagnostics. HAR-RV model JSON
+preserves RV history, supports log-RV fitting with bias correction, filters daily
+RV to the KST regular session by default, and has a local CSV/Parquet refit CLI;
+real-data refit/backtest + shadow validation remains open before config cutover.
 
 **2026-06-22** - Quant Ops Workbench P0/P1 implementation.
 Multi-agent lanes implemented the ops summary DTO, signal trace UI, risk and
@@ -135,18 +141,18 @@ default Python dependencies no longer include ClickHouse drivers.
 Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top items:
 
 - **Stock:** HAR-RV log-RV transition (forecast model stale since 2026-05-31,
-  daily refit failing — RV-history serialization fixed, but refit/backtest +
-  ~1wk shadow still needed before cutover);
+  daily refit failing — RV-history serialization and local file-backed log-RV
+  refit path are implemented, but real-data refit/backtest + ~1wk shadow are
+  still needed before switching default config from `rv_target: raw`);
   `technical_consensus` reactivation decision (strong long-horizon backtest vs
   recent live loss); `momentum_breakout` redesign (retune still negative);
   non-Workbench Strategy Lab build-out. See
   [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md).
 - **Futures:** F9 decoupled cutover gates (shadow → Gate 2 → operator-gated
   cutover) before replacing the orchestrator path; Phase 5 Gate 1–3 to small
-  live; run the F-9 verifier with Gate 1 evidence and written approval; Setup C
-  activation still needs event-score sourcing/history even though the runtime
-  min-score gate now applies; kill-switch sentinel → shared-volume path
-  (required before live).
+  live; run the F-9 verifier with real Gate 1 evidence and written approval;
+  Setup C activation still needs scored-event production/observation even though
+  the runtime min-score gate and bounded history are in place.
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility

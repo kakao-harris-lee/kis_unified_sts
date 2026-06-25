@@ -107,3 +107,19 @@ fallback browser verification and committed desktop/mobile screenshots for
 `/risk`, `/coverage`, `/trades`, `/builder`, and `/event-context`.
 
 Evidence: [../testing/quant-ops-workbench-2026-06-25.md](../testing/quant-ops-workbench-2026-06-25.md).
+
+## Follow-up High-priority Implementation
+
+Later on 2026-06-25 KST, the highest-priority roadmap gaps were advanced:
+
+- F-9 repo-local verification now covers the shared kill-switch sentinel path,
+  `FUTURES_ORCHESTRATOR_ENABLED` env examples, and non-placeholder Gate 1
+  evidence checks. Real Gate 1 shadow evidence and written approval remain
+  operator-supplied cutover blockers.
+- Setup C event-score plumbing now retains bounded Redis history and exposes it
+  through Event Context diagnostics. Runtime still needs real scored-event
+  production/observation before Setup C activation can be evaluated.
+- HAR-RV now has RV-history-preserving serialization, log-RV target support,
+  KST regular-session daily RV filtering, and a local CSV/Parquet refit CLI.
+  Real-data refit/backtest plus shadow validation remain required before
+  switching default config away from `rv_target: raw`.
