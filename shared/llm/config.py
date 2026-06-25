@@ -37,6 +37,340 @@ def default_stock_technical_consensus() -> dict[str, Any]:
     }
 
 
+def _load_yaml_mapping(path: str | Path) -> dict[str, Any]:
+    """Load YAML as a mapping, bypassing ConfigLoader for absolute paths."""
+    path_str = str(path)
+    if os.path.isabs(path_str):
+        import yaml
+
+        with open(path_str, encoding="utf-8") as yaml_file:
+            data = yaml.safe_load(yaml_file) or {}
+    else:
+        from shared.config.loader import ConfigLoader
+
+        data = ConfigLoader.load(path_str)
+
+    return data if isinstance(data, dict) else {}
+
+
+def _section(
+    data: dict[str, Any], primary: str, fallback: str | None = None
+) -> dict[str, Any]:
+    """Return a dict section, using fallback only when primary is absent."""
+    if primary in data:
+        value = data[primary]
+    elif fallback is not None:
+        value = data.get(fallback, {})
+    else:
+        value = data.get(primary, {})
+
+    return value if isinstance(value, dict) else {}
+
+
+def _build_config_dict(
+    *,
+    provider: str,
+    provider_config: dict[str, Any],
+    llm_common: dict[str, Any],
+    stock_config: dict[str, Any],
+    futures_config: dict[str, Any],
+    output_config: dict[str, Any],
+    krx_config: dict[str, Any],
+    default_model: str,
+    env_key_name: str,
+) -> dict[str, Any]:
+    """Build flattened LLMConfig keyword arguments from YAML sections."""
+
+    def get_value(env_key: str, yaml_keys: list[Any], default: Any) -> Any:
+        """Get value from env var or YAML (provider-specific -> common -> default)."""
+        env_val = os.environ.get(env_key)
+        if env_val is not None:
+            if isinstance(default, bool):
+                return env_val.strip().lower() == "true"
+            if isinstance(default, int):
+                return int(env_val)
+            if isinstance(default, float):
+                return float(env_val)
+            return env_val
+        for val in yaml_keys:
+            if val is not None:
+                return val
+        return default
+
+    return {
+        # LLM common settings
+        "llm_provider": provider,
+        "api_key": os.environ.get(
+            env_key_name,
+            provider_config.get("api_key", llm_common.get("api_key", "")),
+        ),
+        "model": get_value(
+            "LLM_MODEL",
+            [
+                provider_config.get("model"),
+                llm_common.get("model"),
+            ],
+            default_model,
+        ),
+        "max_tokens": get_value(
+            "LLM_MAX_TOKENS",
+            [
+                provider_config.get("max_tokens"),
+                llm_common.get("max_tokens"),
+            ],
+            1500,
+        ),
+        "temperature": get_value(
+            "LLM_TEMPERATURE",
+            [
+                provider_config.get("temperature"),
+                llm_common.get("temperature"),
+            ],
+            0.3,
+        ),
+        "enabled": get_value(
+            "LLM_ANALYSIS_ENABLED",
+            [
+                provider_config.get("enabled"),
+                llm_common.get("enabled"),
+            ],
+            True,
+        ),
+        "llm_strict_json_schema": get_value(
+            "LLM_STRICT_JSON_SCHEMA",
+            [
+                llm_common.get("strict_json_schema"),
+                provider_config.get("strict_json_schema"),
+            ],
+            True,
+        ),
+        "llm_prompt_cache_enabled": get_value(
+            "LLM_PROMPT_CACHE_ENABLED",
+            [
+                llm_common.get("prompt_cache_enabled"),
+                provider_config.get("prompt_cache_enabled"),
+            ],
+            True,
+        ),
+        "llm_prompt_cache_ttl_seconds": get_value(
+            "LLM_PROMPT_CACHE_TTL_SECONDS",
+            [
+                llm_common.get("prompt_cache_ttl_seconds"),
+                provider_config.get("prompt_cache_ttl_seconds"),
+            ],
+            21600,
+        ),
+        "llm_prompt_cache_prefix": get_value(
+            "LLM_PROMPT_CACHE_PREFIX",
+            [
+                llm_common.get("prompt_cache_prefix"),
+                provider_config.get("prompt_cache_prefix"),
+            ],
+            "llm:prompt_cache",
+        ),
+        "llm_batch_size": max(
+            1,
+            get_value(
+                "LLM_BATCH_SIZE",
+                [
+                    llm_common.get("batch_size"),
+                    provider_config.get("batch_size"),
+                ],
+                10,
+            ),
+        ),
+        # Output settings
+        "output_dir": output_config.get("dir", "./trading_reports"),
+        # Stock settings (all stock_* prefixed fields)
+        "stock_markets": stock_config.get("markets", ["KOSPI"]),
+        "stock_min_market_cap": stock_config.get("min_market_cap", 100_000_000_000),
+        "stock_max_market_cap": stock_config.get(
+            "max_market_cap", 50_000_000_000_000
+        ),
+        "stock_min_price": stock_config.get("min_price", 1000),
+        "stock_top_n_volume": stock_config.get("top_n_volume", 30),
+        "stock_final_selection": stock_config.get("final_selection", 5),
+        "stock_backtest_days": stock_config.get("backtest_days", 60),
+        "stock_history_days": stock_config.get("history_days", 252),
+        "stock_min_history_days": stock_config.get("min_history_days", 90),
+        "stock_new_listing_min_days": stock_config.get("new_listing_min_days", 20),
+        "stock_new_listing_penalty": stock_config.get("new_listing_penalty", 0.7),
+        "stock_volume_lookback_days": stock_config.get("volume_lookback_days", 20),
+        "stock_min_trade_value": stock_config.get("min_trade_value", 500_000_000),
+        "stock_min_turnover": stock_config.get("min_turnover", 0.003),
+        "stock_momentum_lookback_days": stock_config.get("momentum_lookback_days", 252),
+        "stock_max_atr_pct": stock_config.get("max_atr_pct", 0.08),
+        "stock_max_drawdown_pct": stock_config.get("max_drawdown_pct", 0.25),
+        "stock_min_backtest_trades": stock_config.get("min_backtest_trades", 10),
+        "stock_min_backtest_win_rate": stock_config.get("min_backtest_win_rate", 45.0),
+        "stock_min_recommendation_score": stock_config.get(
+            "min_recommendation_score", 5.0
+        ),
+        "stock_max_position": stock_config.get("max_position", 0.20),
+        "stock_stop_loss": stock_config.get("stop_loss", 0.05),
+        "stock_take_profit": stock_config.get("take_profit", 0.10),
+        "stock_blacklist": stock_config.get(
+            "blacklist", ["관리종목", "투자주의", "환기종목", "거래정지"]
+        ),
+        "stock_keyword_filter": stock_config.get(
+            "keyword_filter", ["횡령", "배임", "감자", "상장폐지", "회생절차"]
+        ),
+        "stock_exclude_name_keywords": stock_config.get(
+            "exclude_name_keywords", ["스팩", "SPAC", "리츠", "REIT"]
+        ),
+        "stock_exclude_preferred_shares": stock_config.get(
+            "exclude_preferred_shares", True
+        ),
+        "stock_risk_keywords": stock_config.get(
+            "risk_keywords",
+            [
+                "유상증자",
+                "전환사채",
+                "CB",
+                "BW",
+                "불성실공시",
+                "감사의견",
+                "실적부진",
+            ],
+        ),
+        "stock_enable_kis_target_price": stock_config.get(
+            "enable_kis_target_price", True
+        ),
+        "stock_target_lookback_days": stock_config.get("target_lookback_days", 180),
+        "stock_target_recent_days": stock_config.get("target_recent_days", 30),
+        "stock_target_stale_days": stock_config.get("target_stale_days", 90),
+        "stock_target_min_coverage": stock_config.get("target_min_coverage", 2),
+        "stock_target_high_dispersion_pct": stock_config.get(
+            "target_high_dispersion_pct", 40.0
+        ),
+        "stock_target_low_quality_multiplier": stock_config.get(
+            "target_low_quality_multiplier", 0.5
+        ),
+        "stock_target_high_dispersion_multiplier": stock_config.get(
+            "target_high_dispersion_multiplier", 0.7
+        ),
+        "stock_target_revision_score": stock_config.get("target_revision_score", 2.0),
+        "stock_target_revision_min_pct": stock_config.get(
+            "target_revision_min_pct", 3.0
+        ),
+        "stock_score_weight_momentum": stock_config.get("score_weight_momentum", 0.35),
+        "stock_score_weight_technical": stock_config.get(
+            "score_weight_technical", 0.15
+        ),
+        "stock_score_weight_backtest": stock_config.get("score_weight_backtest", 0.20),
+        "stock_score_weight_news": stock_config.get("score_weight_news", 0.10),
+        "stock_score_weight_liquidity": stock_config.get(
+            "score_weight_liquidity", 0.10
+        ),
+        "stock_score_weight_target_price": stock_config.get(
+            "score_weight_target_price", 0.10
+        ),
+        "stock_score_weight_risk": stock_config.get("score_weight_risk", 0.10),
+        "stock_score_weight_theme": stock_config.get("score_weight_theme", 0.15),
+        "stock_score_weight_nps_ownership": stock_config.get(
+            "score_weight_nps_ownership", 0.10
+        ),
+        "stock_scored_news_enabled": stock_config.get("scored_news_enabled", True),
+        "stock_scored_news_stream": stock_config.get(
+            "scored_news_stream", "stream:news.scored"
+        ),
+        "stock_scored_news_sources": stock_config.get(
+            "scored_news_sources", ["marketaux", "naver_search"]
+        ),
+        "stock_scored_news_lookback_seconds": stock_config.get(
+            "scored_news_lookback_seconds", 86400
+        ),
+        "stock_scored_news_max_entries": stock_config.get(
+            "scored_news_max_entries", 500
+        ),
+        "stock_scored_news_max_per_stock": stock_config.get(
+            "scored_news_max_per_stock", 3
+        ),
+        "stock_scored_news_min_impact_score": stock_config.get(
+            "scored_news_min_impact_score", 0.10
+        ),
+        "stock_scored_news_positive_sentiment_threshold": stock_config.get(
+            "scored_news_positive_sentiment_threshold", 0.20
+        ),
+        "stock_scored_news_negative_sentiment_threshold": stock_config.get(
+            "scored_news_negative_sentiment_threshold", -0.20
+        ),
+        "stock_nps_enabled": stock_config.get("nps_enabled", True),
+        "stock_nps_holder_keywords": stock_config.get(
+            "nps_holder_keywords", ["국민연금", "국민연금공단"]
+        ),
+        "stock_nps_holding_ratio_anchor_pct": stock_config.get(
+            "nps_holding_ratio_anchor_pct", 10.0
+        ),
+        "stock_nps_base_score_max": stock_config.get("nps_base_score_max", 10.0),
+        "stock_nps_change_pctp_multiplier": stock_config.get(
+            "nps_change_pctp_multiplier", 2.0
+        ),
+        "stock_nps_change_score_cap": stock_config.get("nps_change_score_cap", 5.0),
+        "stock_nps_score_cap": stock_config.get("nps_score_cap", 15.0),
+        "stock_nps_max_report_age_days": stock_config.get("nps_max_report_age_days", 90),
+        "stock_nps_stale_score_multiplier": stock_config.get(
+            "nps_stale_score_multiplier", 0.5
+        ),
+        "stock_llm_scoring_enabled": stock_config.get("llm_scoring_enabled", True),
+        "stock_llm_scoring_model": stock_config.get("llm_scoring_model", ""),
+        "stock_llm_scoring_max_tokens": stock_config.get("llm_scoring_max_tokens", 500),
+        "stock_llm_scoring_temperature": stock_config.get(
+            "llm_scoring_temperature", 0.2
+        ),
+        "stock_technical_consensus": stock_config.get(
+            "technical_consensus", default_stock_technical_consensus()
+        ),
+        # Futures settings
+        "futures_prompt_addendum": futures_config.get("prompt_addendum", ""),
+        "futures_weight_global": futures_config.get("weight_global", 0.35),
+        "futures_weight_flow": futures_config.get("weight_flow", 0.30),
+        "futures_weight_technical": futures_config.get("weight_technical", 0.20),
+        "futures_weight_event": futures_config.get("weight_event", 0.15),
+        "futures_stop_loss_pt": futures_config.get("stop_loss_pt", 3.0),
+        "futures_take_profit_pt": futures_config.get("take_profit_pt", 6.0),
+        "futures_tick_stream": futures_config.get("tick_stream", "raw_data"),
+        "futures_tick_lookback_seconds": futures_config.get(
+            "tick_lookback_seconds", 600
+        ),
+        "futures_tick_max": futures_config.get("tick_max", 2000),
+        "futures_tick_symbol": futures_config.get("tick_symbol", ""),
+        # KRX API settings
+        "krx_api_key": os.environ.get("KRX_API_KEY", krx_config.get("api_key", "")),
+        "krx_base_url": krx_config.get(
+            "base_url", "https://data-dbg.krx.co.kr/svc/apis"
+        ),
+        "krx_timeout": krx_config.get("timeout_seconds", 30),
+        "krx_analysis_days": krx_config.get("analysis_days", 20),
+        "sector_etfs": krx_config.get(
+            "sector_etfs",
+            {
+                "반도체": ["091160", "091170", "395160"],
+                "2차전지": ["305720", "371460", "394670"],
+                "바이오": ["244580", "261060"],
+                "금융": ["091180", "140700"],
+                "자동차": ["091170", "204450"],
+                "철강": ["117680"],
+                "조선": ["140710"],
+                "건설": ["117700"],
+                "에너지": ["117460", "261220"],
+                "인터넷": ["261110"],
+                "게임": ["251340"],
+            },
+        ),
+        "indices": krx_config.get(
+            "indices",
+            {
+                "KOSPI": "KS11",
+                "KOSDAQ": "KQ11",
+                "KOSPI200": "KS200",
+                "KOSPI_LARGE": "KS100",
+                "KOSDAQ150": "KQ150",
+            },
+        ),
+    }
+
+
 class LLMConfig(ServiceConfigBase):
     """LLM Analyzer Configuration"""
 
@@ -454,9 +788,6 @@ class LLMConfig(ServiceConfigBase):
         Supports both new format (llm/openai/claude sections) and legacy formats.
         """
         _ = section
-        # Use ConfigLoader to load YAML with env var substitution
-        from shared.config.loader import ConfigLoader
-
         if path is None:
             path = cls._default_config_file
             if path is None:
@@ -465,53 +796,16 @@ class LLMConfig(ServiceConfigBase):
                     "_default_config_file class attribute"
                 )
 
-        # ConfigLoader.load() expects a str (calls unquote internally).
-        # Convert Path objects and handle absolute paths directly.
-        path_str = str(path)
-        import os as _os
+        data = _load_yaml_mapping(path)
 
-        if _os.path.isabs(path_str):
-            import yaml as _yaml
+        llm_common = _section(data, "llm")
+        openai_config = _section(data, "openai")
+        claude_config = _section(data, "claude")
+        stock_config = _section(data, "stock", "stock_screening")
+        futures_config = _section(data, "futures", "futures_analysis")
+        output_config = _section(data, "output")
+        krx_config = _section(data, "krx_api")
 
-            with open(path_str, encoding="utf-8") as _f:
-                data = _yaml.safe_load(_f) or {}
-        else:
-            data = ConfigLoader.load(path_str)
-
-        # Extract sections (supports both new and legacy formats)
-        llm_common = data.get("llm", {}) if isinstance(data, dict) else {}
-        openai_config = data.get("openai", {}) if isinstance(data, dict) else {}
-        claude_config = data.get("claude", {}) if isinstance(data, dict) else {}
-        stock_config = (
-            data.get("stock", data.get("stock_screening", {}))
-            if isinstance(data, dict)
-            else {}
-        )
-        futures_config = (
-            data.get("futures", data.get("futures_analysis", {}))
-            if isinstance(data, dict)
-            else {}
-        )
-        output_config = data.get("output", {}) if isinstance(data, dict) else {}
-        krx_config = data.get("krx_api", {}) if isinstance(data, dict) else {}
-
-        # Ensure sections are dicts
-        if not isinstance(llm_common, dict):
-            llm_common = {}
-        if not isinstance(openai_config, dict):
-            openai_config = {}
-        if not isinstance(claude_config, dict):
-            claude_config = {}
-        if not isinstance(stock_config, dict):
-            stock_config = {}
-        if not isinstance(futures_config, dict):
-            futures_config = {}
-        if not isinstance(output_config, dict):
-            output_config = {}
-        if not isinstance(krx_config, dict):
-            krx_config = {}
-
-        # Determine provider (env var takes precedence)
         provider = (
             str(os.environ.get("LLM_PROVIDER", llm_common.get("provider", "openai")))
             .strip()
@@ -520,319 +814,23 @@ class LLMConfig(ServiceConfigBase):
         if provider not in ("openai", "claude"):
             provider = "openai"
 
-        # Select provider-specific config
         provider_config = claude_config if provider == "claude" else openai_config
         default_model = (
             "claude-3-5-haiku-latest" if provider == "claude" else "gpt-4o-mini"
         )
         env_key_name = "ANTHROPIC_API_KEY" if provider == "claude" else "OPENAI_API_KEY"
 
-        # Helper function to get value with env var override
-        def get_value(env_key: str, yaml_keys: list[Any], default: Any) -> Any:
-            """Get value from env var or YAML (provider-specific → common → default)."""
-            env_val = os.environ.get(env_key)
-            if env_val is not None:
-                # Convert env var to appropriate type
-                if isinstance(default, bool):
-                    return env_val.strip().lower() == "true"
-                elif isinstance(default, int):
-                    return int(env_val)
-                elif isinstance(default, float):
-                    return float(env_val)
-                return env_val
-            # Try YAML values in order
-            for val in yaml_keys:
-                if val is not None:
-                    return val
-            return default
-
-        # Build flattened config dict with all fields
-        config_dict = {
-            # LLM common settings
-            "llm_provider": provider,
-            "api_key": os.environ.get(
-                env_key_name,
-                provider_config.get("api_key", llm_common.get("api_key", "")),
-            ),
-            "model": get_value(
-                "LLM_MODEL",
-                [
-                    provider_config.get("model"),
-                    llm_common.get("model"),
-                ],
-                default_model,
-            ),
-            "max_tokens": get_value(
-                "LLM_MAX_TOKENS",
-                [
-                    provider_config.get("max_tokens"),
-                    llm_common.get("max_tokens"),
-                ],
-                1500,
-            ),
-            "temperature": get_value(
-                "LLM_TEMPERATURE",
-                [
-                    provider_config.get("temperature"),
-                    llm_common.get("temperature"),
-                ],
-                0.3,
-            ),
-            "enabled": get_value(
-                "LLM_ANALYSIS_ENABLED",
-                [
-                    provider_config.get("enabled"),
-                    llm_common.get("enabled"),
-                ],
-                True,
-            ),
-            "llm_strict_json_schema": get_value(
-                "LLM_STRICT_JSON_SCHEMA",
-                [
-                    llm_common.get("strict_json_schema"),
-                    provider_config.get("strict_json_schema"),
-                ],
-                True,
-            ),
-            "llm_prompt_cache_enabled": get_value(
-                "LLM_PROMPT_CACHE_ENABLED",
-                [
-                    llm_common.get("prompt_cache_enabled"),
-                    provider_config.get("prompt_cache_enabled"),
-                ],
-                True,
-            ),
-            "llm_prompt_cache_ttl_seconds": get_value(
-                "LLM_PROMPT_CACHE_TTL_SECONDS",
-                [
-                    llm_common.get("prompt_cache_ttl_seconds"),
-                    provider_config.get("prompt_cache_ttl_seconds"),
-                ],
-                21600,
-            ),
-            "llm_prompt_cache_prefix": get_value(
-                "LLM_PROMPT_CACHE_PREFIX",
-                [
-                    llm_common.get("prompt_cache_prefix"),
-                    provider_config.get("prompt_cache_prefix"),
-                ],
-                "llm:prompt_cache",
-            ),
-            "llm_batch_size": max(
-                1,
-                get_value(
-                    "LLM_BATCH_SIZE",
-                    [
-                        llm_common.get("batch_size"),
-                        provider_config.get("batch_size"),
-                    ],
-                    10,
-                ),
-            ),
-            # Output settings
-            "output_dir": output_config.get("dir", "./trading_reports"),
-            # Stock settings (all stock_* prefixed fields)
-            "stock_markets": stock_config.get("markets", ["KOSPI"]),
-            "stock_min_market_cap": stock_config.get("min_market_cap", 100_000_000_000),
-            "stock_max_market_cap": stock_config.get(
-                "max_market_cap", 50_000_000_000_000
-            ),
-            "stock_min_price": stock_config.get("min_price", 1000),
-            "stock_top_n_volume": stock_config.get("top_n_volume", 30),
-            "stock_final_selection": stock_config.get("final_selection", 5),
-            "stock_backtest_days": stock_config.get("backtest_days", 60),
-            "stock_history_days": stock_config.get("history_days", 252),
-            "stock_min_history_days": stock_config.get("min_history_days", 90),
-            "stock_new_listing_min_days": stock_config.get("new_listing_min_days", 20),
-            "stock_new_listing_penalty": stock_config.get("new_listing_penalty", 0.7),
-            "stock_volume_lookback_days": stock_config.get("volume_lookback_days", 20),
-            "stock_min_trade_value": stock_config.get("min_trade_value", 500_000_000),
-            "stock_min_turnover": stock_config.get("min_turnover", 0.003),
-            "stock_momentum_lookback_days": stock_config.get(
-                "momentum_lookback_days", 252
-            ),
-            "stock_max_atr_pct": stock_config.get("max_atr_pct", 0.08),
-            "stock_max_drawdown_pct": stock_config.get("max_drawdown_pct", 0.25),
-            "stock_min_backtest_trades": stock_config.get("min_backtest_trades", 10),
-            "stock_min_backtest_win_rate": stock_config.get(
-                "min_backtest_win_rate", 45.0
-            ),
-            "stock_min_recommendation_score": stock_config.get(
-                "min_recommendation_score", 5.0
-            ),
-            "stock_max_position": stock_config.get("max_position", 0.20),
-            "stock_stop_loss": stock_config.get("stop_loss", 0.05),
-            "stock_take_profit": stock_config.get("take_profit", 0.10),
-            "stock_blacklist": stock_config.get(
-                "blacklist", ["관리종목", "투자주의", "환기종목", "거래정지"]
-            ),
-            "stock_keyword_filter": stock_config.get(
-                "keyword_filter", ["횡령", "배임", "감자", "상장폐지", "회생절차"]
-            ),
-            "stock_exclude_name_keywords": stock_config.get(
-                "exclude_name_keywords", ["스팩", "SPAC", "리츠", "REIT"]
-            ),
-            "stock_exclude_preferred_shares": stock_config.get(
-                "exclude_preferred_shares", True
-            ),
-            "stock_risk_keywords": stock_config.get(
-                "risk_keywords",
-                [
-                    "유상증자",
-                    "전환사채",
-                    "CB",
-                    "BW",
-                    "불성실공시",
-                    "감사의견",
-                    "실적부진",
-                ],
-            ),
-            "stock_enable_kis_target_price": stock_config.get(
-                "enable_kis_target_price", True
-            ),
-            "stock_target_lookback_days": stock_config.get("target_lookback_days", 180),
-            "stock_target_recent_days": stock_config.get("target_recent_days", 30),
-            "stock_target_stale_days": stock_config.get("target_stale_days", 90),
-            "stock_target_min_coverage": stock_config.get("target_min_coverage", 2),
-            "stock_target_high_dispersion_pct": stock_config.get(
-                "target_high_dispersion_pct", 40.0
-            ),
-            "stock_target_low_quality_multiplier": stock_config.get(
-                "target_low_quality_multiplier", 0.5
-            ),
-            "stock_target_high_dispersion_multiplier": stock_config.get(
-                "target_high_dispersion_multiplier", 0.7
-            ),
-            "stock_target_revision_score": stock_config.get(
-                "target_revision_score", 2.0
-            ),
-            "stock_target_revision_min_pct": stock_config.get(
-                "target_revision_min_pct", 3.0
-            ),
-            "stock_score_weight_momentum": stock_config.get(
-                "score_weight_momentum", 0.35
-            ),
-            "stock_score_weight_technical": stock_config.get(
-                "score_weight_technical", 0.15
-            ),
-            "stock_score_weight_backtest": stock_config.get(
-                "score_weight_backtest", 0.20
-            ),
-            "stock_score_weight_news": stock_config.get("score_weight_news", 0.10),
-            "stock_score_weight_liquidity": stock_config.get(
-                "score_weight_liquidity", 0.10
-            ),
-            "stock_score_weight_target_price": stock_config.get(
-                "score_weight_target_price", 0.10
-            ),
-            "stock_score_weight_risk": stock_config.get("score_weight_risk", 0.10),
-            "stock_score_weight_theme": stock_config.get("score_weight_theme", 0.15),
-            "stock_score_weight_nps_ownership": stock_config.get(
-                "score_weight_nps_ownership", 0.10
-            ),
-            "stock_scored_news_enabled": stock_config.get("scored_news_enabled", True),
-            "stock_scored_news_stream": stock_config.get(
-                "scored_news_stream", "stream:news.scored"
-            ),
-            "stock_scored_news_sources": stock_config.get(
-                "scored_news_sources", ["marketaux", "naver_search"]
-            ),
-            "stock_scored_news_lookback_seconds": stock_config.get(
-                "scored_news_lookback_seconds", 86400
-            ),
-            "stock_scored_news_max_entries": stock_config.get(
-                "scored_news_max_entries", 500
-            ),
-            "stock_scored_news_max_per_stock": stock_config.get(
-                "scored_news_max_per_stock", 3
-            ),
-            "stock_scored_news_min_impact_score": stock_config.get(
-                "scored_news_min_impact_score", 0.10
-            ),
-            "stock_scored_news_positive_sentiment_threshold": stock_config.get(
-                "scored_news_positive_sentiment_threshold", 0.20
-            ),
-            "stock_scored_news_negative_sentiment_threshold": stock_config.get(
-                "scored_news_negative_sentiment_threshold", -0.20
-            ),
-            "stock_nps_enabled": stock_config.get("nps_enabled", True),
-            "stock_nps_holder_keywords": stock_config.get(
-                "nps_holder_keywords", ["국민연금", "국민연금공단"]
-            ),
-            "stock_nps_holding_ratio_anchor_pct": stock_config.get(
-                "nps_holding_ratio_anchor_pct", 10.0
-            ),
-            "stock_nps_base_score_max": stock_config.get("nps_base_score_max", 10.0),
-            "stock_nps_change_pctp_multiplier": stock_config.get(
-                "nps_change_pctp_multiplier", 2.0
-            ),
-            "stock_nps_change_score_cap": stock_config.get("nps_change_score_cap", 5.0),
-            "stock_nps_score_cap": stock_config.get("nps_score_cap", 15.0),
-            "stock_nps_max_report_age_days": stock_config.get(
-                "nps_max_report_age_days", 90
-            ),
-            "stock_nps_stale_score_multiplier": stock_config.get(
-                "nps_stale_score_multiplier", 0.5
-            ),
-            "stock_llm_scoring_enabled": stock_config.get("llm_scoring_enabled", True),
-            "stock_llm_scoring_model": stock_config.get("llm_scoring_model", ""),
-            "stock_llm_scoring_max_tokens": stock_config.get(
-                "llm_scoring_max_tokens", 500
-            ),
-            "stock_llm_scoring_temperature": stock_config.get(
-                "llm_scoring_temperature", 0.2
-            ),
-            "stock_technical_consensus": stock_config.get(
-                "technical_consensus", default_stock_technical_consensus()
-            ),
-            # Futures settings
-            "futures_prompt_addendum": futures_config.get("prompt_addendum", ""),
-            "futures_weight_global": futures_config.get("weight_global", 0.35),
-            "futures_weight_flow": futures_config.get("weight_flow", 0.30),
-            "futures_weight_technical": futures_config.get("weight_technical", 0.20),
-            "futures_weight_event": futures_config.get("weight_event", 0.15),
-            "futures_stop_loss_pt": futures_config.get("stop_loss_pt", 3.0),
-            "futures_take_profit_pt": futures_config.get("take_profit_pt", 6.0),
-            "futures_tick_stream": futures_config.get("tick_stream", "raw_data"),
-            "futures_tick_lookback_seconds": futures_config.get(
-                "tick_lookback_seconds", 600
-            ),
-            "futures_tick_max": futures_config.get("tick_max", 2000),
-            "futures_tick_symbol": futures_config.get("tick_symbol", ""),
-            # KRX API settings
-            "krx_api_key": os.environ.get("KRX_API_KEY", krx_config.get("api_key", "")),
-            "krx_base_url": krx_config.get(
-                "base_url", "https://data-dbg.krx.co.kr/svc/apis"
-            ),
-            "krx_timeout": krx_config.get("timeout_seconds", 30),
-            "krx_analysis_days": krx_config.get("analysis_days", 20),
-            "sector_etfs": krx_config.get(
-                "sector_etfs",
-                {
-                    "반도체": ["091160", "091170", "395160"],
-                    "2차전지": ["305720", "371460", "394670"],
-                    "바이오": ["244580", "261060"],
-                    "금융": ["091180", "140700"],
-                    "자동차": ["091170", "204450"],
-                    "철강": ["117680"],
-                    "조선": ["140710"],
-                    "건설": ["117700"],
-                    "에너지": ["117460", "261220"],
-                    "인터넷": ["261110"],
-                    "게임": ["251340"],
-                },
-            ),
-            "indices": krx_config.get(
-                "indices",
-                {
-                    "KOSPI": "KS11",
-                    "KOSDAQ": "KQ11",
-                    "KOSPI200": "KS200",
-                    "KOSPI_LARGE": "KS100",
-                    "KOSDAQ150": "KQ150",
-                },
-            ),
-        }
+        config_dict = _build_config_dict(
+            provider=provider,
+            provider_config=provider_config,
+            llm_common=llm_common,
+            stock_config=stock_config,
+            futures_config=futures_config,
+            output_config=output_config,
+            krx_config=krx_config,
+            default_model=default_model,
+            env_key_name=env_key_name,
+        )
 
         # Apply env var overrides if requested
         if apply_env_overrides:
