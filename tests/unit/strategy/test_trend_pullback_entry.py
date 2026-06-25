@@ -157,7 +157,7 @@ async def test_generates_signal_on_wr_reversal():
 
 @pytest.mark.asyncio
 async def test_rejects_not_in_watchlist():
-    """Code not in daily watchlist → None."""
+    """Code not in a NON-EMPTY daily watchlist → None (static mode)."""
     strategy = _make_strategy()
 
     ctx = _make_context(
@@ -169,6 +169,27 @@ async def test_rejects_not_in_watchlist():
     )
     signal = await strategy.generate(ctx)
     assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_empty_watchlist_falls_back_to_dynamic_mode():
+    """Empty per-strategy list → dynamic mode: fires on conditions, not gated.
+
+    Regression: a populated peer strategy made the whole daily_watchlist dict
+    truthy, gating trend_pullback (empty list) on every symbol.
+    """
+    strategy = _make_strategy()
+    ctx = _make_context(
+        code="000660",  # not pre-screened; empty list → no constraint
+        close=69200.0,
+        bb_lower=69000.0,
+        rsi=30.0,
+        atr=1400.0,
+        watchlist_codes=[],  # empty trend_pullback list
+    )
+    signal = await strategy.generate(ctx)
+    assert signal is not None
+    assert signal.code == "000660"
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ _KST = ZoneInfo("Asia/Seoul")
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.entry.daily_watchlist_gate import daily_watchlist_allows
 from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
@@ -146,12 +147,10 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
             return None
 
         # --- Layer 1: daily watchlist filter ---
-        daily_watchlist = context.metadata.get("daily_watchlist", {})
-        if daily_watchlist:
-            strategies = daily_watchlist.get("strategies", {})
-            watchlist_codes = strategies.get("trend_pullback", [])
-            if code not in watchlist_codes:
-                return None
+        # Empty/absent per-strategy list → dynamic mode (no daily constraint);
+        # gate only when a non-empty pre-screen list exists for this strategy.
+        if not daily_watchlist_allows(context.metadata, "trend_pullback", code):
+            return None
 
         # --- Trend filter: close > SMA(200) — 장기 상승 추세 ---
         sma_200 = _get("sma_200", 0)

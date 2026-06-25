@@ -525,10 +525,12 @@ class StockStrategyDaemon:
     def _daily_gated_strategies(self) -> dict[str, set[str]]:
         """Map each daily-gated strategy → its allowed symbol set (this cycle).
 
-        A strategy is daily-gated when it appears as a key in the current
-        watchlist's ``strategies`` map (mirrors the per-strategy daily watchlist
-        gate that strategies such as momentum_breakout apply). An empty watchlist
-        → no gating (dynamic mode).
+        A strategy is daily-gated only when it has a NON-EMPTY candidate list in
+        the current watchlist's ``strategies`` map — mirroring
+        ``daily_watchlist_allows`` (the per-strategy gate the entry strategies
+        apply). An empty/absent list → dynamic mode (no gating), so the reject
+        classifier attributes the real reason (e.g. ``no_sma_200`` /
+        ``conditions_not_met``) instead of masking it with ``no_daily_watchlist``.
         """
         strategies = (
             self._watchlist.get("strategies", {})
@@ -538,9 +540,9 @@ class StockStrategyDaemon:
         if not isinstance(strategies, dict):
             return {}
         return {
-            name: {str(c) for c in (codes or [])}
+            name: {str(c) for c in codes}
             for name, codes in strategies.items()
-            if isinstance(codes, list)
+            if isinstance(codes, list) and codes  # skip empty → dynamic, not gated
         }
 
     @staticmethod

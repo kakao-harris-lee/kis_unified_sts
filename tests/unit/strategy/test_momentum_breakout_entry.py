@@ -109,7 +109,7 @@ async def test_generates_signal_on_breakout(entry):
 
 @pytest.mark.asyncio
 async def test_rejects_not_in_watchlist(entry):
-    """Returns None when code is not in daily_watchlist."""
+    """Returns None when code is not in a NON-EMPTY daily_watchlist (static)."""
     ctx = _make_context(
         code="000660",  # not in watchlist
         watchlist_codes=("005930",),  # watchlist has 005930 only
@@ -118,6 +118,50 @@ async def test_rejects_not_in_watchlist(entry):
     )
     signal = await entry.generate(ctx)
     assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_empty_watchlist_falls_back_to_dynamic_mode(entry):
+    """Empty per-strategy list → dynamic mode: fires on conditions, not gated.
+
+    Regression for the decoupled-stock no-trade root cause: a populated peer
+    strategy made the whole daily_watchlist dict truthy, and the old whole-dict
+    gate then blocked momentum_breakout (empty list) on every symbol.
+    """
+    ctx = _make_context(
+        code="000660",  # not pre-screened, but empty list → no constraint
+        watchlist_codes=(),  # empty momentum_breakout list
+        close=50100.0,
+        high_5=49900.0,
+        rvol=2.0,
+        volume=150000.0,
+        volume_ma=100000.0,
+        atr=600.0,
+    )
+    signal = await entry.generate(ctx)
+    assert signal is not None
+    assert signal.code == "000660"
+
+
+@pytest.mark.asyncio
+async def test_populated_peer_does_not_gate_empty_strategy(entry):
+    """A populated peer strategy must not gate this (empty-list) strategy.
+
+    Reproduces the live payload {trend_pullback: [1], momentum_breakout: []}.
+    """
+    ctx = _make_context(
+        code="000660",
+        watchlist_codes=(),
+        close=50100.0,
+        high_5=49900.0,
+        rvol=2.0,
+        volume=150000.0,
+        volume_ma=100000.0,
+        atr=600.0,
+    )
+    ctx.metadata["daily_watchlist"]["strategies"]["trend_pullback"] = ["005930"]
+    signal = await entry.generate(ctx)
+    assert signal is not None
 
 
 @pytest.mark.asyncio
