@@ -1,0 +1,98 @@
+# Setup D — High-Vol Intraday VWAP Reversion (futures, intraday) — Thesis A.
+#
+# Extends the proven Setup A/C intraday mean-reversion edge to ALL-SESSION
+# volatility-extreme reversions: fades ATR-scaled stretches of price away from the
+# session VWAP, gated to high-volatility bars, long/short symmetric. Designed to
+# capture the large intraday reversions on high-vol days that Setup A's narrow
+# open-only gap window misses (e.g. a +3% semiconductor-led day with no overnight
+# gap → Setup A fires 0 trades).
+#
+# STATUS: paper-only, NEEDS-VALIDATION. enabled=false by default.
+#   Walk-forward on the clean Dec2025–Apr2026 101S6000 window:
+#     full-window Sharpe 3.78 (+413 pts); honest OOS (40d-IS/10d-OOS stride)
+#     Sharpe +1.97, +197 pts, 3/4 folds profitable (1 flat, 0 negative), both
+#     sides positive (L+149 / S+49). The coarse monthly 2-fold WF shows 1/2 —
+#     a calendar-boundary artifact on the short window (a volatility event split
+#     across folds); the finer daily-stride read is the honest one.
+#   Caveats: single ~5-month clean window; edge concentrated around volatility
+#     events; net-long-skewed sample (bull period). Validate in paper before any
+#     live consideration (full Gate 1–4 procedure, futures_live.enabled stays
+#     false).
+#
+# See: docs/superpowers/specs/2026-06-25-futures-mr-highvol-setup-d.md
+#      scripts/analysis/walkforward_setup_d_vwap_reversion.py
+# Rollback: this strategy is disabled by default; no rollback needed. To activate
+#   in paper, flip strategy.enabled: true (after paper-rollout validation).
+
+strategy:
+  name: setup_d_vwap_reversion
+  asset_class: futures
+  enabled: false  # paper-only, NEEDS-VALIDATION — operator flips after paper rollout
+  description: >
+    High-vol intraday VWAP reversion: on volatile bars, fade ATR-scaled price
+    extensions away from the session VWAP back toward it. All-session,
+    long/short symmetric. Most active on volatile days, quiet on dead days.
+
+  entry:
+    type: setup_d_vwap_reversion
+    params:
+      enabled: true  # inner setup flag; outer strategy.enabled guards activation
+
+      # Session window (minutes since 09:00 KST open).
+      valid_minutes_min: 15                    # skip the open auction (09:15 KST)
+      no_entry_after_minutes_since_open: 345   # no entries after 14:45 KST (force-close avoidance)
+
+      # High-vol regime gate: require atr_14 >= min_atr_ratio × atr_90th_percentile.
+      # Higher = more selective (trade only the most volatile bars). This is the
+      # filter that keeps the setup quiet on dead days. 0 disables it.
+      min_atr_ratio: 0.7
+
+      # Fade trigger: |(price - vwap) / atr_14| must reach this many ATRs.
+      extreme_atr_mult: 1.8
+
+      # Trend-day guard: the spike must be within this many ATRs of the prior
+      # 15-min extreme on its side (stalling near it, not blown clean through and
+      # still trending). Raise high to effectively disable.
+      stall_buffer_atr_mult: 1.0
+
+      # Risk bracket (ATR-scaled, symmetric).
+      stop_atr_mult: 1.5        # hard stop = entry ± 1.5 × ATR14
+      min_reward_risk: 1.0      # VWAP-revert target at least 1.0R away
+
+      # Signal validity.
+      signal_ttl_minutes: 10
+
+      # Confidence shaping (more extreme stretch / higher vol → higher confidence).
+      extension_conf_scale: 0.3
+      vol_conf_scale: 0.3
+
+      # Optional RegimeGate (consistent with Setup A/C). Default off — operator
+      # opt-in. When enabled, blocks entries that fail the live HAR-RV / event
+      # regime gate before signal emission.
+      regime_gate:
+        enabled: false
+        regime_percentile_max: 60.0
+        impact_score_max: 70
+        event_window_minutes: 15
+        require_overnight_us_direction: false
+        permissive_on_missing: true
+
+  exit:
+    # Bracket on the signal's own stop/target (Setup D emits ATR stop +
+    # VWAP-revert target). setup_target_exit honors signal stop/target and adds
+    # an EOD safety close. Same exit Setup A/C use after the 2026-06-21 revert.
+    type: setup_target_exit
+    params:
+      eod_close_enabled: true
+      eod_close_hour: 15
+      eod_close_minute: 15
+      default_exit_confidence: 0.9
+
+  position:
+    # Setup D consumes no LLM context, so a plain fixed 1-contract sizer is used
+    # (not the llm_adaptive tiered sizer). The order_router cap enforces the same
+    # max independently (defense in depth).
+    type: fixed
+    params:
+      fixed_quantity: 1
+      max_positions: 1

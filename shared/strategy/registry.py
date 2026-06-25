@@ -475,13 +475,16 @@ def register_builtin_components() -> None:
         from shared.strategy.entry.setup_adapters import (
             SetupAEntryAdapter,
             SetupCEntryAdapter,
+            SetupDEntryAdapter,
         )
 
         EntryRegistry.register_class("setup_a_gap_reversion", SetupAEntryAdapter)
         EntryRegistry.register_class("setup_c_event_reaction", SetupCEntryAdapter)
+        EntryRegistry.register_class("setup_d_vwap_reversion", SetupDEntryAdapter)
     except ImportError:
         logger.debug(
-            "Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter) not available"
+            "Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter, "
+            "SetupDEntryAdapter) not available"
         )
 
     # Exit 전략 등록

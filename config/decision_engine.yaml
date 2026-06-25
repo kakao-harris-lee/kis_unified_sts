@@ -28,3 +28,19 @@ setup_c_event_reaction:
   target_atr_mult: 2.5           # take-profit = entry ± target_atr_mult × ATR14
   signal_ttl_minutes: 30
   min_impact_tier: 2             # ignore events with impact_tier > this value (higher = less important)
+
+# Setup D — High-Vol Intraday VWAP Reversion (Thesis A; paper-only, NEEDS-VALIDATION).
+# Fades ATR-scaled VWAP extremes throughout the session on high-vol bars
+# (long/short symmetric). Defaults are the Dec2025–Apr2026 research operating
+# point (edge distributed across months + balanced long/short).
+# See docs/superpowers/specs/2026-06-25-futures-mr-highvol-setup-d.md.
+setup_d_vwap_reversion:
+  enabled: true
+  valid_minutes_min: 15                    # skip the 09:00 open auction (15 = 09:15 KST)
+  no_entry_after_minutes_since_open: 345   # no entries after 14:45 KST (force-close avoidance)
+  min_atr_ratio: 0.7                       # high-vol gate: atr_14 >= 0.7 × atr_90th_percentile
+  extreme_atr_mult: 1.8                    # fade trigger: |(price-vwap)/atr_14| >= 1.8
+  stall_buffer_atr_mult: 1.0               # trend-day guard vs 15-min extreme
+  stop_atr_mult: 1.5                       # hard stop = entry ± 1.5 × ATR14
+  min_reward_risk: 1.0                     # VWAP-revert target at least 1.0R away
+  signal_ttl_minutes: 10
