@@ -18,6 +18,7 @@ Usage:
 
 from __future__ import annotations
 
+import importlib
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+BuiltinComponentTable = tuple[tuple[str, tuple[tuple[str, str], ...], str], ...]
 
 
 class RegistryError(Exception):
@@ -341,267 +344,223 @@ class StrategyFactory:
         return strategies
 
 
+_BUILTIN_ENTRY_COMPONENTS: BuiltinComponentTable = (
+    (
+        "shared.strategy.entry.stochrsi_trend",
+        (("stochrsi_trend", "StochRSITrendEntry"),),
+        "StochRSITrendEntry",
+    ),
+    (
+        "shared.strategy.entry.mean_reversion",
+        (("mean_reversion", "MeanReversionEntry"),),
+        "MeanReversionEntry",
+    ),
+    (
+        "shared.strategy.entry.breakout",
+        (("breakout", "BreakoutEntry"),),
+        "BreakoutEntry",
+    ),
+    (
+        "shared.strategy.entry.opening_volume_surge",
+        (("opening_volume_surge", "OpeningVolumeSurgeEntry"),),
+        "OpeningVolumeSurgeEntry",
+    ),
+    (
+        "shared.strategy.entry.volume_accumulation",
+        (("volume_accumulation", "VolumeAccumulationBreakoutEntry"),),
+        "VolumeAccumulationBreakoutEntry",
+    ),
+    (
+        "shared.strategy.entry.trix_golden",
+        (("trix_golden", "TrixGoldenEntry"),),
+        "TrixGoldenEntry",
+    ),
+    (
+        "shared.strategy.entry.williams_r",
+        (("williams_r", "WilliamsREntry"),),
+        "WilliamsREntry",
+    ),
+    (
+        "shared.strategy.entry.macd_ema_crossover",
+        (("macd_ema_crossover", "MACDEMACrossoverEntry"),),
+        "MACDEMACrossoverEntry",
+    ),
+    (
+        "shared.strategy.entry.builder_strategy",
+        (("builder_v1", "BuilderStrategyEntry"),),
+        "BuilderStrategyEntry",
+    ),
+    (
+        "shared.strategy.entry.technical_consensus",
+        (("technical_consensus", "TechnicalConsensusEntry"),),
+        "TechnicalConsensusEntry",
+    ),
+    (
+        "shared.strategy.entry.llm_directed_indicator",
+        (("llm_directed_indicator", "LLMDirectedIndicatorEntry"),),
+        "LLMDirectedIndicatorEntry",
+    ),
+    (
+        "shared.strategy.entry.trend_pullback",
+        (("trend_pullback", "TrendPullbackEntry"),),
+        "TrendPullbackEntry",
+    ),
+    (
+        "shared.strategy.entry.momentum_breakout",
+        (("momentum_breakout", "MomentumBreakoutEntry"),),
+        "MomentumBreakoutEntry",
+    ),
+    (
+        "shared.strategy.entry.trend_continuation_vwap",
+        (("trend_continuation_vwap", "TrendContinuationVWAPEntry"),),
+        "TrendContinuationVWAPEntry",
+    ),
+    (
+        "shared.strategy.entry.daily_pullback",
+        (("daily_pullback", "DailyPullbackEntry"),),
+        "DailyPullbackEntry",
+    ),
+    (
+        "shared.strategy.entry.pattern_pullback",
+        (("pattern_pullback", "PatternPullbackEntry"),),
+        "PatternPullbackEntry",
+    ),
+    (
+        "shared.strategy.entry.setup_adapters",
+        (
+            ("setup_a_gap_reversion", "SetupAEntryAdapter"),
+            ("setup_c_event_reaction", "SetupCEntryAdapter"),
+        ),
+        "Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter)",
+    ),
+    (
+        "shared.strategy.entry.vr_composite",
+        (("vr_composite", "VRCompositeEntry"),),
+        "VRCompositeEntry",
+    ),
+)
+
+_BUILTIN_EXIT_COMPONENTS: BuiltinComponentTable = (
+    (
+        "shared.strategy.exit.three_stage",
+        (("three_stage", "ThreeStageExit"),),
+        "ThreeStageExit",
+    ),
+    (
+        "shared.strategy.exit.momentum_decay",
+        (("momentum_decay", "MomentumDecayExit"),),
+        "MomentumDecayExit",
+    ),
+    (
+        "shared.strategy.exit.builder_strategy_exit",
+        (("builder_v1_exit", "BuilderStrategyExit"),),
+        "BuilderStrategyExit",
+    ),
+    (
+        "shared.strategy.exit.trix_golden_exit",
+        (("trix_golden_exit", "TrixGoldenExit"),),
+        "TrixGoldenExit",
+    ),
+    (
+        "shared.strategy.exit.williams_r_exit",
+        (("williams_r_exit", "WilliamsRExit"),),
+        "WilliamsRExit",
+    ),
+    (
+        "shared.strategy.exit.llm_directed_indicator_exit",
+        (("llm_directed_indicator_exit", "LLMDirectedIndicatorExit"),),
+        "LLMDirectedIndicatorExit",
+    ),
+    (
+        "shared.strategy.exit.mean_reversion_exit",
+        (("mean_reversion_exit", "MeanReversionExit"),),
+        "MeanReversionExit",
+    ),
+    (
+        "shared.strategy.exit.atr_dynamic",
+        (("atr_dynamic", "ATRDynamicExit"),),
+        "ATRDynamicExit",
+    ),
+    (
+        "shared.strategy.exit.setup_target_exit",
+        (("setup_target_exit", "SetupTargetExit"),),
+        "SetupTargetExit",
+    ),
+    (
+        "shared.strategy.exit.track_a_exit",
+        (("track_a_exit", "TrackAExit"),),
+        "TrackAExit",
+    ),
+    (
+        "shared.strategy.exit.chandelier_exit",
+        (("chandelier_exit", "ChandelierExit"),),
+        "ChandelierExit",
+    ),
+    (
+        "shared.strategy.exit.technical_consensus_exit",
+        (("technical_consensus_exit", "TechnicalConsensusExit"),),
+        "TechnicalConsensusExit",
+    ),
+    (
+        "shared.strategy.exit.vr_composite_exit",
+        (("vr_composite_exit", "VRCompositeExit"),),
+        "VRCompositeExit",
+    ),
+)
+
+_BUILTIN_SIZER_COMPONENTS: BuiltinComponentTable = (
+    (
+        "shared.strategy.position.sizers",
+        (("fixed_fractional_futures", "FixedFractionalFuturesSizer"),),
+        "FixedFractionalFuturesSizer",
+    ),
+    (
+        "shared.strategy.position",
+        (
+            ("fixed", "FixedSizer"),
+            ("risk_based", "RiskBasedSizer"),
+        ),
+        "Position sizers",
+    ),
+    (
+        "shared.strategy.position.llm_adaptive_sizer",
+        (("llm_adaptive", "LLMAdaptiveSizer"),),
+        "LLMAdaptiveSizer",
+    ),
+)
+
+
+def _register_builtin_table(
+    registry: type[ComponentRegistry], table: BuiltinComponentTable
+) -> None:
+    for module_path, registrations, debug_label in table:
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            logger.debug("%s not available", debug_label)
+            continue
+
+        try:
+            component_classes = [
+                (name, getattr(module, class_name))
+                for name, class_name in registrations
+            ]
+        except AttributeError:
+            logger.debug("%s not available", debug_label)
+            continue
+
+        for name, component_class in component_classes:
+            registry.register_class(name, component_class)
+
+
 def register_builtin_components() -> None:
     """내장 컴포넌트 등록
 
     애플리케이션 시작 시 호출하여 기본 컴포넌트 등록.
     """
-    # Entry 전략 등록
-    try:
-        from shared.strategy.entry.stochrsi_trend import StochRSITrendEntry
-
-        EntryRegistry.register_class("stochrsi_trend", StochRSITrendEntry)
-    except ImportError:
-        logger.debug("StochRSITrendEntry not available")
-
-    try:
-        from shared.strategy.entry.mean_reversion import MeanReversionEntry
-
-        EntryRegistry.register_class("mean_reversion", MeanReversionEntry)
-    except ImportError:
-        logger.debug("MeanReversionEntry not available")
-
-    try:
-        from shared.strategy.entry.breakout import BreakoutEntry
-
-        EntryRegistry.register_class("breakout", BreakoutEntry)
-    except ImportError:
-        logger.debug("BreakoutEntry not available")
-
-    try:
-        from shared.strategy.entry.opening_volume_surge import OpeningVolumeSurgeEntry
-
-        EntryRegistry.register_class("opening_volume_surge", OpeningVolumeSurgeEntry)
-    except ImportError:
-        logger.debug("OpeningVolumeSurgeEntry not available")
-
-    try:
-        from shared.strategy.entry.volume_accumulation import (
-            VolumeAccumulationBreakoutEntry,
-        )
-
-        EntryRegistry.register_class(
-            "volume_accumulation", VolumeAccumulationBreakoutEntry
-        )
-    except ImportError:
-        logger.debug("VolumeAccumulationBreakoutEntry not available")
-
-    try:
-        from shared.strategy.entry.trix_golden import TrixGoldenEntry
-
-        EntryRegistry.register_class("trix_golden", TrixGoldenEntry)
-    except ImportError:
-        logger.debug("TrixGoldenEntry not available")
-
-    try:
-        from shared.strategy.entry.williams_r import WilliamsREntry
-
-        EntryRegistry.register_class("williams_r", WilliamsREntry)
-    except ImportError:
-        logger.debug("WilliamsREntry not available")
-
-    try:
-        from shared.strategy.entry.macd_ema_crossover import MACDEMACrossoverEntry
-
-        EntryRegistry.register_class("macd_ema_crossover", MACDEMACrossoverEntry)
-    except ImportError:
-        logger.debug("MACDEMACrossoverEntry not available")
-
-    try:
-        from shared.strategy.entry.builder_strategy import BuilderStrategyEntry
-
-        EntryRegistry.register_class("builder_v1", BuilderStrategyEntry)
-    except ImportError:
-        logger.debug("BuilderStrategyEntry not available")
-
-    try:
-        from shared.strategy.entry.technical_consensus import TechnicalConsensusEntry
-
-        EntryRegistry.register_class("technical_consensus", TechnicalConsensusEntry)
-    except ImportError:
-        logger.debug("TechnicalConsensusEntry not available")
-
-    try:
-        from shared.strategy.entry.llm_directed_indicator import (
-            LLMDirectedIndicatorEntry,
-        )
-
-        EntryRegistry.register_class(
-            "llm_directed_indicator", LLMDirectedIndicatorEntry
-        )
-    except ImportError:
-        logger.debug("LLMDirectedIndicatorEntry not available")
-
-    try:
-        from shared.strategy.entry.trend_pullback import TrendPullbackEntry
-
-        EntryRegistry.register_class("trend_pullback", TrendPullbackEntry)
-    except ImportError:
-        logger.debug("TrendPullbackEntry not available")
-
-    try:
-        from shared.strategy.entry.momentum_breakout import MomentumBreakoutEntry
-
-        EntryRegistry.register_class("momentum_breakout", MomentumBreakoutEntry)
-    except ImportError:
-        logger.debug("MomentumBreakoutEntry not available")
-
-    try:
-        from shared.strategy.entry.trend_continuation_vwap import (
-            TrendContinuationVWAPEntry,
-        )
-
-        EntryRegistry.register_class(
-            "trend_continuation_vwap", TrendContinuationVWAPEntry
-        )
-    except ImportError:
-        logger.debug("TrendContinuationVWAPEntry not available")
-
-    try:
-        from shared.strategy.entry.daily_pullback import DailyPullbackEntry
-
-        EntryRegistry.register_class("daily_pullback", DailyPullbackEntry)
-    except ImportError:
-        logger.debug("DailyPullbackEntry not available")
-
-    try:
-        from shared.strategy.entry.pattern_pullback import PatternPullbackEntry
-
-        EntryRegistry.register_class("pattern_pullback", PatternPullbackEntry)
-    except ImportError:
-        logger.debug("PatternPullbackEntry not available")
-
-    try:
-        from shared.strategy.entry.setup_adapters import (
-            SetupAEntryAdapter,
-            SetupCEntryAdapter,
-        )
-
-        EntryRegistry.register_class("setup_a_gap_reversion", SetupAEntryAdapter)
-        EntryRegistry.register_class("setup_c_event_reaction", SetupCEntryAdapter)
-    except ImportError:
-        logger.debug(
-            "Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter) not available"
-        )
-
-    # Exit 전략 등록
-    try:
-        from shared.strategy.exit.three_stage import ThreeStageExit
-
-        ExitRegistry.register_class("three_stage", ThreeStageExit)
-    except ImportError:
-        logger.debug("ThreeStageExit not available")
-
-    try:
-        from shared.strategy.exit.momentum_decay import MomentumDecayExit
-
-        ExitRegistry.register_class("momentum_decay", MomentumDecayExit)
-    except ImportError:
-        logger.debug("MomentumDecayExit not available")
-
-    try:
-        from shared.strategy.exit.builder_strategy_exit import BuilderStrategyExit
-
-        ExitRegistry.register_class("builder_v1_exit", BuilderStrategyExit)
-    except ImportError:
-        logger.debug("BuilderStrategyExit not available")
-
-    try:
-        from shared.strategy.exit.trix_golden_exit import TrixGoldenExit
-
-        ExitRegistry.register_class("trix_golden_exit", TrixGoldenExit)
-    except ImportError:
-        logger.debug("TrixGoldenExit not available")
-
-    try:
-        from shared.strategy.exit.williams_r_exit import WilliamsRExit
-
-        ExitRegistry.register_class("williams_r_exit", WilliamsRExit)
-    except ImportError:
-        logger.debug("WilliamsRExit not available")
-
-    try:
-        from shared.strategy.exit.llm_directed_indicator_exit import (
-            LLMDirectedIndicatorExit,
-        )
-
-        ExitRegistry.register_class(
-            "llm_directed_indicator_exit", LLMDirectedIndicatorExit
-        )
-    except ImportError:
-        logger.debug("LLMDirectedIndicatorExit not available")
-
-    try:
-        from shared.strategy.exit.mean_reversion_exit import MeanReversionExit
-
-        ExitRegistry.register_class("mean_reversion_exit", MeanReversionExit)
-    except ImportError:
-        logger.debug("MeanReversionExit not available")
-
-    try:
-        from shared.strategy.exit.atr_dynamic import ATRDynamicExit
-
-        ExitRegistry.register_class("atr_dynamic", ATRDynamicExit)
-    except ImportError:
-        logger.debug("ATRDynamicExit not available")
-
-    try:
-        from shared.strategy.exit.setup_target_exit import SetupTargetExit
-
-        ExitRegistry.register_class("setup_target_exit", SetupTargetExit)
-    except ImportError:
-        logger.debug("SetupTargetExit not available")
-
-    try:
-        from shared.strategy.exit.track_a_exit import TrackAExit
-
-        ExitRegistry.register_class("track_a_exit", TrackAExit)
-    except ImportError:
-        logger.debug("TrackAExit not available")
-
-    try:
-        from shared.strategy.exit.chandelier_exit import ChandelierExit
-
-        ExitRegistry.register_class("chandelier_exit", ChandelierExit)
-    except ImportError:
-        logger.debug("ChandelierExit not available")
-
-    try:
-        from shared.strategy.exit.technical_consensus_exit import TechnicalConsensusExit
-
-        ExitRegistry.register_class("technical_consensus_exit", TechnicalConsensusExit)
-    except ImportError:
-        logger.debug("TechnicalConsensusExit not available")
-
-    try:
-        from shared.strategy.entry.vr_composite import VRCompositeEntry
-
-        EntryRegistry.register_class("vr_composite", VRCompositeEntry)
-    except ImportError:
-        logger.debug("VRCompositeEntry not available")
-
-    try:
-        from shared.strategy.exit.vr_composite_exit import VRCompositeExit
-
-        ExitRegistry.register_class("vr_composite_exit", VRCompositeExit)
-    except ImportError:
-        logger.debug("VRCompositeExit not available")
-
-    # Position Sizer 등록
-    try:
-        from shared.strategy.position import FixedSizer, RiskBasedSizer
-
-        SizerRegistry.register_class("fixed", FixedSizer)
-        SizerRegistry.register_class("risk_based", RiskBasedSizer)
-    except ImportError:
-        logger.debug("Position sizers not available")
-
-    try:
-        from shared.strategy.position.llm_adaptive_sizer import LLMAdaptiveSizer
-
-        SizerRegistry.register_class("llm_adaptive", LLMAdaptiveSizer)
-    except ImportError:
-        logger.debug("LLMAdaptiveSizer not available")
+    _register_builtin_table(EntryRegistry, _BUILTIN_ENTRY_COMPONENTS)
+    _register_builtin_table(ExitRegistry, _BUILTIN_EXIT_COMPONENTS)
+    _register_builtin_table(SizerRegistry, _BUILTIN_SIZER_COMPONENTS)
 
     logger.info(
         f"Registered components - "
