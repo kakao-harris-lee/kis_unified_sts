@@ -29,6 +29,8 @@ def _momentum_strategy(
     skip_market_open_minutes: int = 30,
     skip_market_close_minutes: int = 15,
     signal_cooldown_seconds: int = 600,
+    trend_mode_enabled: bool = False,
+    trend_signal_cooldown_seconds: int = 60,
 ) -> MomentumBreakoutEntry:
     return MomentumBreakoutEntry(
         MomentumBreakoutConfig(
@@ -40,11 +42,24 @@ def _momentum_strategy(
             skip_market_open_minutes=skip_market_open_minutes,
             skip_market_close_minutes=skip_market_close_minutes,
             signal_cooldown_seconds=signal_cooldown_seconds,
+            trend_mode_enabled=trend_mode_enabled,
+            trend_signal_cooldown_seconds=trend_signal_cooldown_seconds,
         )
     )
 
 
-def _momentum_context(timestamp: datetime, *, close: float = 101.0) -> EntryContext:
+def _momentum_context(
+    timestamp: datetime,
+    *,
+    close: float = 101.0,
+    regime: str | None = None,
+) -> EntryContext:
+    metadata = {
+        "daily_watchlist": {"strategies": {"momentum_breakout": ["005930"]}}
+    }
+    if regime is not None:
+        metadata["regime"] = regime
+
     return EntryContext(
         market_data={
             "code": "005930",
@@ -58,9 +73,7 @@ def _momentum_context(timestamp: datetime, *, close: float = 101.0) -> EntryCont
             "atr": 2.0,
         },
         timestamp=timestamp,
-        metadata={
-            "daily_watchlist": {"strategies": {"momentum_breakout": ["005930"]}}
-        },
+        metadata=metadata,
     )
 
 
@@ -134,6 +147,34 @@ async def test_momentum_breakout_respects_cooldown() -> None:
 
 
 @pytest.mark.asyncio
+async def test_momentum_breakout_uses_trend_cooldown_in_trend_mode() -> None:
+    strategy = _momentum_strategy(
+        signal_cooldown_seconds=0,
+        trend_mode_enabled=True,
+        trend_signal_cooldown_seconds=600,
+    )
+
+    first_signal = await strategy.generate(
+        _momentum_context(_kst(10, 0), regime="BULL")
+    )
+
+    assert first_signal is not None
+    assert first_signal.metadata["trend_mode"] is True
+    assert (
+        await strategy.generate(
+            _momentum_context(_kst(10, 5), close=102.0, regime="BULL")
+        )
+        is None
+    )
+    assert (
+        await strategy.generate(
+            _momentum_context(_kst(10, 10), close=103.0, regime="BULL")
+        )
+        is not None
+    )
+
+
+@pytest.mark.asyncio
 async def test_opening_volume_surge_blocks_before_market_open() -> None:
     strategy = _opening_strategy()
 
@@ -155,3 +196,10 @@ async def test_opening_volume_surge_preserves_entry_cutoff() -> None:
 
     assert await strategy.generate(_opening_context(_kst(9, 10))) is not None
     assert await strategy.generate(_opening_context(_kst(9, 11))) is None
+
+
+@pytest.mark.asyncio
+async def test_opening_volume_surge_allows_post_close_without_cutoff() -> None:
+    strategy = _opening_strategy(only_first_minutes=0, entry_cutoff_hour=-1)
+
+    assert await strategy.generate(_opening_context(_kst(16, 0))) is not None
