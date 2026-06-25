@@ -59,7 +59,6 @@ def is_in_entry_session(timestamp: datetime, window: MarketSessionWindow) -> boo
 
 
 def cooldown_elapsed(
-    *,
     now: datetime,
     last_signal_at: datetime | None,
     cooldown_seconds: float,

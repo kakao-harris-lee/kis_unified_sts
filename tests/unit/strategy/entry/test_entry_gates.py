@@ -40,6 +40,10 @@ def test_cooldown_elapsed_returns_true_without_last_signal() -> None:
     )
 
 
+def test_cooldown_elapsed_accepts_positional_arguments() -> None:
+    assert cooldown_elapsed(_kst(10, 5), _kst(10, 0), 300) is True
+
+
 def test_cooldown_elapsed_blocks_before_cooldown_seconds_elapsed() -> None:
     now = _kst(10, 4)
     last_signal_at = _kst(10, 0)
@@ -113,3 +117,9 @@ def test_is_in_entry_session_blocks_inside_skip_market_close_minutes() -> None:
     window = _window(skip_market_close_minutes=15)
 
     assert is_in_entry_session(_kst(15, 0), window) is False
+
+
+def test_is_in_entry_session_zero_close_buffer_does_not_add_close_cutoff() -> None:
+    window = _window(skip_market_close_minutes=0)
+
+    assert is_in_entry_session(_kst(15, 15), window) is True
