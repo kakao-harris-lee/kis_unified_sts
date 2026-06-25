@@ -261,7 +261,6 @@ async def _build_and_run() -> int:
     The producer is ungated (emits candidates, not orders — order_router is the
     gated, wallet-authority stage).
     """
-    import os
     import signal as signal_mod
 
     import redis.asyncio as aioredis

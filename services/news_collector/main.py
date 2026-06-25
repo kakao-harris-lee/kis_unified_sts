@@ -98,8 +98,6 @@ async def _build_and_run_from_config() -> int:
     News archive persistence is disabled until a Parquet/RuntimeLedger archive
     target is introduced.
     """
-    import os
-
     import aiohttp
     import redis.asyncio as aioredis
 
