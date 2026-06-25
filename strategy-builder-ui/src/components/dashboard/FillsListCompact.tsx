@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
 import { fillsApi } from '@/lib/dashboard/api'
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
 
 interface Fill {
   signal_id: string
@@ -21,7 +22,7 @@ export default function FillsListCompact() {
     queryKey: ['fills', selectedAsset, 'compact'],
     queryFn: () =>
       fillsApi.getRecent({ asset_class: selectedAsset, limit: MAX_ITEMS }).then((r) => r.data),
-    refetchInterval: 15000,
+    refetchInterval: QUERY_INTERVALS_MS.normal,
   })
 
   return (

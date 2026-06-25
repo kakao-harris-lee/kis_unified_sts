@@ -24,6 +24,7 @@ import StrategySelect from '@/components/dashboard/StrategySelect';
 import HeaderBar from '@/components/dashboard/HeaderBar';
 import LifecycleTimeline from '@/components/dashboard/LifecycleTimeline';
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext';
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals';
 import type { TradeLifecycleResponse } from '@/lib/dashboard/trades';
 
 interface Trade {
@@ -164,7 +165,7 @@ function LiveTab() {
           limit: 100,
         })
         .then((r) => r.data),
-    refetchInterval: 10000,
+    refetchInterval: QUERY_INTERVALS_MS.fast,
   });
 
   const {
@@ -198,7 +199,7 @@ function LiveTab() {
   } = useQuery<StrategyStats[]>({
     queryKey: ['trades-by-strategy', selectedAsset],
     queryFn: () => tradesApi.getByStrategy({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 10000,
+    refetchInterval: QUERY_INTERVALS_MS.fast,
   });
 
   const cumulativePnlData =
@@ -502,7 +503,7 @@ function HistoryTab() {
       const r = await tradesApi.getClosedStatistics({ asset_class: selectedAsset });
       return r.data;
     },
-    refetchInterval: 30000,
+    refetchInterval: QUERY_INTERVALS_MS.slow,
   });
 
   const {
@@ -516,7 +517,7 @@ function HistoryTab() {
       const r = await tradesApi.getClosedTrades({ asset_class: selectedAsset, limit: 100 });
       return Array.isArray(r.data) ? r.data : [];
     },
-    refetchInterval: 30000,
+    refetchInterval: QUERY_INTERVALS_MS.slow,
   });
 
   const {
@@ -530,7 +531,7 @@ function HistoryTab() {
       tradingApi
         .getPositions({ asset_class: selectedAsset })
         .then((r) => (Array.isArray(r.data) ? r.data : [])),
-    refetchInterval: 10000,
+    refetchInterval: QUERY_INTERVALS_MS.fast,
   });
 
   const {

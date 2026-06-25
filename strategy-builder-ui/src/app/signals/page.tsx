@@ -11,6 +11,7 @@ import SideBadge from '@/components/dashboard/SideBadge';
 import HeaderBar from '@/components/dashboard/HeaderBar';
 import BottomSheet from '@/components/dashboard/BottomSheet';
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext';
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals';
 import type {
   DashboardSignal,
   DashboardSignalsResponse,
@@ -151,7 +152,7 @@ function Signals() {
             limit: 50,
           })
           .then((r) => r.data),
-      refetchInterval: 15000,
+      refetchInterval: QUERY_INTERVALS_MS.normal,
     });
 
   const updateStrategyFilter = (value: string) => {

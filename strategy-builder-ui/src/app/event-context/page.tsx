@@ -28,6 +28,7 @@ import {
   type SetupCReasonBucket,
   type SourceTimelineItem,
 } from "@/lib/dashboard/eventContext";
+import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 
 function fmtDateTime(v?: string | null): string {
   if (!v) return "-";
@@ -454,7 +455,7 @@ export default function EventContextPage() {
       eventContextApi
         .getDiagnostics({ asset_class: "futures" })
         .then((r) => normalizeEventContextDiagnostics(r.data)),
-    refetchInterval: 30000,
+    refetchInterval: QUERY_INTERVALS_MS.slow,
   });
 
   const eventScores = data?.event_scores;

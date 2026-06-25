@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { tradingApi } from '@/lib/dashboard/api'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
 
 interface AccountSummary {
   initial_balance: number
@@ -33,7 +34,7 @@ export default function EquityCashCard() {
     queryKey: ['trading-status-account', selectedAsset],
     queryFn: () =>
       tradingApi.getStatus({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 15000,
+    refetchInterval: QUERY_INTERVALS_MS.normal,
   })
 
   if (isLoading) {

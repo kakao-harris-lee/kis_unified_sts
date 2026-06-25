@@ -10,6 +10,7 @@ import MobileKillSwitchBar from '@/components/dashboard/MobileKillSwitchBar'
 import EquityCashCard from '@/components/dashboard/EquityCashCard'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
 import { healthApi } from '@/lib/dashboard/api'
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
 
 interface HealthSummary {
   today_pnl: number
@@ -20,7 +21,7 @@ export default function CockpitPage() {
   const { data: summary } = useQuery<HealthSummary>({
     queryKey: ['health-summary', selectedAsset],
     queryFn: () => healthApi.getSummary({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 15000,
+    refetchInterval: QUERY_INTERVALS_MS.normal,
   })
 
   return (
