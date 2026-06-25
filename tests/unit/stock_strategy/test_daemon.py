@@ -1266,3 +1266,119 @@ async def test_signal_eval_legacy_manager_without_roster_still_records_fired():
     summary = _eval_summary(redis)
     # _FakeManager fires a williams_r signal → recorded as a signal outcome.
     assert summary["williams_r"]["outcome"] == "signal"
+
+
+# ---------------------------------------------------------------------------
+# Prewarm-on-eval: evaluate_once calls _prewarm_cold for cold symbols
+#
+# Root cause (2026-06-25 surge day): _prewarm_cold was called only from
+# _apply_watchlist (universe refresh, ~30s).  evaluate_once just skipped cold
+# symbols and recorded REJECT_COLD without retrying prewarm.  Intraday screener
+# adds with no parquet data stayed cold for many eval cycles while REST prewarm
+# was only attempted once per 30s refresh, not on every 60s eval pass.
+#
+# Fix: evaluate_once calls _prewarm_cold at the start of every cycle so cold
+# symbols get a prewarm attempt each time they are encountered.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_evaluate_once_prewarmsold_cold_symbols_before_eval():
+    """evaluate_once triggers prewarm for cold symbols, not just universe refresh."""
+    prewarm_calls = []
+
+    async def _prewarm(symbol: str):
+        prewarm_calls.append(symbol)
+
+    d = _daemon(
+        engine=_FakeEngine(warm=()),  # all cold
+        prewarm_fn=_prewarm,
+        max_prewarm_per_cycle=5,
+    )
+    d._universe = ["005930", "000660"]
+
+    await d.evaluate_once()
+
+    # Both cold symbols must have been prewarmed during the eval cycle.
+    assert "005930" in prewarm_calls
+    assert "000660" in prewarm_calls
+
+
+@pytest.mark.asyncio
+async def test_evaluate_once_prewarm_respects_cap():
+    """Per-cycle cap on prewarm is respected inside evaluate_once."""
+    prewarm_calls = []
+
+    async def _prewarm(symbol: str):
+        prewarm_calls.append(symbol)
+
+    d = _daemon(
+        engine=_FakeEngine(warm=()),  # all cold
+        prewarm_fn=_prewarm,
+        max_prewarm_per_cycle=2,
+    )
+    d._universe = ["a", "b", "c", "d"]
+
+    await d.evaluate_once()
+
+    assert len(prewarm_calls) == 2  # capped at max_prewarm_per_cycle
+
+
+@pytest.mark.asyncio
+async def test_evaluate_once_skips_prewarm_when_all_warm():
+    """No prewarm calls when every universe symbol is already warm."""
+    prewarm_calls = []
+
+    async def _prewarm(symbol: str):
+        prewarm_calls.append(symbol)
+
+    d = _daemon(
+        engine=_FakeEngine(warm=("005930", "000660")),
+        prewarm_fn=_prewarm,
+        max_prewarm_per_cycle=5,
+    )
+    d._universe = ["005930", "000660"]
+
+    await d.evaluate_once()
+
+    assert prewarm_calls == []  # all warm → prewarm not invoked
+
+
+@pytest.mark.asyncio
+async def test_evaluate_once_prewarm_failure_does_not_abort_eval():
+    """A prewarm failure inside evaluate_once must not stop entry evaluation."""
+
+    async def _boom(symbol: str):
+        raise RuntimeError("prewarm exploded")
+
+    redis = _FakeRedis()
+    d = _daemon(
+        redis=redis,
+        # 005930 warm (can produce signals), 000660 cold → prewarm attempted
+        engine=_FakeEngine(warm=("005930",)),
+        prewarm_fn=_boom,
+        max_prewarm_per_cycle=5,
+    )
+    d._universe = ["005930", "000660"]
+
+    # Must not raise; 005930 (warm) still fires its signal.
+    published = await d.evaluate_once()
+    assert published == 1
+    assert any(f["code"] == "005930" for _s, f in redis.added)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_once_prewarm_called_even_when_no_prewarm_fn():
+    """When prewarm_fn is None, evaluate_once completes without error."""
+    redis = _FakeRedis()
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",)),
+        prewarm_fn=None,
+    )
+    d._universe = ["005930", "000660"]
+
+    published = await d.evaluate_once()
+
+    # 005930 warm → signal published; 000660 cold → skipped (no prewarm_fn, silent)
+    assert published == 1

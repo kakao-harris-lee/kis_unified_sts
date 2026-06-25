@@ -4,6 +4,6 @@ stock_prewarm:
   daily_limit: 252           # ~1y daily bars seeded for daily indicators
   rest_count: 30             # KIS stock minute API returns ~30 for current session
   min_candles: 20            # WARN threshold for under-initialised symbols
-  max_prewarm_per_cycle: 5   # bound REST calls per universe refresh
+  max_prewarm_per_cycle: 10  # raised from 5: handle burst intraday screener adds (surge days)
   minute_lookback_days: 5    # parquet minute start-bound window
   daily_lookback_days: 400   # parquet daily start-bound window (covers 252 trading days)

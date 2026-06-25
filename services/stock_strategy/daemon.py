@@ -198,10 +198,22 @@ class StockStrategyDaemon:
         Warmth-based, not membership-based: this naturally covers newly-added
         symbols and earlier REST-missed/over-cap ones (they stay cold and are
         retried next refresh until warm or dropped from the universe).
+
+        Called from both ``_apply_watchlist`` (universe refresh, ~30s) and
+        ``evaluate_once`` (each eval cycle, ~60s) so intraday screener adds
+        that missed parquet data get a prewarm attempt every cycle, not only on
+        universe changes.
         """
         if self._prewarm_fn is None:
             return
         cold = [s for s in self._universe if not self.engine.is_warm(s)]
+        if cold:
+            logger.debug(
+                "prewarm: %d cold symbol(s) in universe (cap=%d): %s",
+                len(cold),
+                self._max_prewarm_per_cycle,
+                cold[: self._max_prewarm_per_cycle],
+            )
         for symbol in cold[: self._max_prewarm_per_cycle]:
             try:
                 await self._prewarm_fn(symbol)
@@ -291,6 +303,12 @@ class StockStrategyDaemon:
         """Build context + check_entries per warm symbol; publish. Returns #published."""
         published = 0
         now = self._now_fn()
+        # Prewarm any cold universe symbols before evaluation — mirrors
+        # ``_apply_watchlist`` but runs every eval cycle so intraday-added
+        # symbols (screener surge adds, not in parquet) get a prewarm attempt
+        # on every evaluation pass, not only when the universe changes.  Best-
+        # effort: failures are logged inside ``_prewarm_cold``.
+        await self._prewarm_cold()
         # Read-only per-(symbol, strategy) eval collector for this cycle. None
         # when observability is off; recording is a no-op via _eval_record so
         # the entry path is identical whether or not it is enabled.
