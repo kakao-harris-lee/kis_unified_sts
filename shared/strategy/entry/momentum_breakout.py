@@ -27,6 +27,7 @@ _KST = ZoneInfo("Asia/Seoul")
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.entry.daily_watchlist_gate import daily_watchlist_allows
 from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
@@ -197,14 +198,12 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             return None
 
         # --- Layer 1: daily watchlist gate ---
-        # In static mode, only symbols approved by DailyScanner pass.
-        # In dynamic mode (daily_watchlist empty), bypass the check.
-        daily_watchlist = context.metadata.get("daily_watchlist", {})
-        if daily_watchlist:
-            strategies_watchlist = daily_watchlist.get("strategies", {})
-            momentum_list = strategies_watchlist.get("momentum_breakout", [])
-            if code not in momentum_list:
-                return None
+        # Static mode (non-empty pre-screen list) → only approved symbols pass.
+        # Empty/absent list → dynamic mode: evaluate the live universe against
+        # the intraday gates below. Per-strategy, so a populated peer strategy
+        # never gates this one to zero.
+        if not daily_watchlist_allows(context.metadata, "momentum_breakout", code):
+            return None
 
         now = context.timestamp
         # Market hour filters use KST; context.timestamp is UTC-aware (PR #159).

@@ -586,6 +586,24 @@ async def test_daily_watchlist_injected_into_context_metadata():
     assert watchlist["strategies"]["momentum_breakout"] == ["005930", "000660"]
 
 
+@pytest.mark.asyncio
+async def test_empty_strategy_list_is_not_daily_gated():
+    """An empty per-strategy list → dynamic (not gated), so an empty-list peer
+    never yields spurious no_daily_watchlist rejects in the eval classifier.
+
+    Regression for the decoupled-stock no-trade root cause: the live payload
+    {trend_pullback: [1], momentum_breakout: []} gated momentum_breakout to
+    no_daily_watchlist on every symbol.
+    """
+    d = _daemon()
+    await d._apply_watchlist(
+        {"strategies": {"trend_pullback": ["005930"], "momentum_breakout": []}}
+    )
+    gated = d._daily_gated_strategies()
+    assert gated == {"trend_pullback": {"005930"}}
+    assert "momentum_breakout" not in gated  # empty → dynamic, not gated
+
+
 # ---------------------------------------------------------------------------
 # DailyScanner payload parity (Fix #1 fold-in)
 #
