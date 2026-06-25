@@ -49,6 +49,54 @@ def _is_today(iso_str: str | None) -> bool:
         return False
 
 
+def capture_volume_surge_predictions() -> int:
+    """Capture the day's volume-surge flags into the scorecard ledger.
+
+    Reads ``system:volume_surge:latest`` (Redis DB1, published by the screener)
+    and, when present and non-empty, captures ONLY the ``volume_surge`` facet so
+    the 16:35 post-close scorer can score flag-to-close returns. Best-effort and
+    observation-only: returns the number of predictions captured (0 on any
+    missing feed / error). Never raises.
+    """
+    try:
+        import json as _json
+
+        import shared.llm_scorecard.facets  # noqa: F401 — populates FACET_REGISTRY
+        from shared.llm_scorecard.config import ScorecardConfig
+        from shared.llm_scorecard.facets.base import CaptureContext
+        from shared.llm_scorecard.recorder import capture_predictions
+        from shared.storage.config import StorageConfig
+        from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+        from shared.streaming.trading_state import _get_redis
+
+        redis = _get_redis()
+        raw = redis.get("system:volume_surge:latest")
+        if not raw:
+            return 0
+        payload = _json.loads(raw)
+        surges = payload.get("surges") if isinstance(payload, dict) else None
+        if not isinstance(surges, list) or not surges:
+            return 0
+
+        now = datetime.now()
+        ctx = CaptureContext(
+            date_kst=now.strftime("%Y-%m-%d"),
+            now_kst=now,
+            market_context=None,
+            screener={"volume_surge": surges},
+            redis=redis,
+        )
+        cfg = ScorecardConfig.from_yaml()
+        storage = StorageConfig.load_or_default()
+        ledger = SQLiteRuntimeLedger(storage.runtime_storage.sqlite)
+        n = capture_predictions(ctx, cfg, ledger, only_facets={"volume_surge"})
+        logger.info("Scorecard: captured %d volume_surge predictions", n)
+        return n
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Volume-surge scorecard capture failed (non-fatal): %s", exc)
+        return 0
+
+
 def _build_stock_report(reader) -> str | None:
     """Build stock trading section of the report."""
     status = reader.get_status()
@@ -189,6 +237,10 @@ async def main():
     if not is_market_open_today():
         logger.info("Market closed today. Skipping.")
         return
+
+    # Best-effort scorecard capture of the day's volume-surge flags.
+    # Independent of the briefing report content; no-op if the feed is empty.
+    capture_volume_surge_predictions()
 
     from shared.notification import notifier_for_domain
     from shared.streaming.trading_state import TradingStateReader

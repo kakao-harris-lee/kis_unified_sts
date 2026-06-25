@@ -117,3 +117,43 @@ def test_is_best_effort_on_ledger_error():
         market_context={"overall_signal": "BULLISH", "confidence": 0.7},
     )
     assert capture_predictions(ctx, ScorecardConfig(enabled_facets=["direction"]), Boom()) == 0
+
+
+def test_only_facets_captures_subset(registry_snapshot):
+    register_facet(FakeFacet(name="alpha", return_val=_make_prediction("alpha")))
+    register_facet(FakeFacet(name="beta", return_val=_make_prediction("beta")))
+    led = FakeLedger()
+    n = capture_predictions(
+        _make_ctx(),
+        ScorecardConfig(enabled_facets=["alpha", "beta"]),
+        led,
+        only_facets={"beta"},
+    )
+    assert n == 1
+    assert [s["facet"] for s in led.saved] == ["beta"]
+
+
+def test_only_facets_none_is_unchanged(registry_snapshot):
+    register_facet(FakeFacet(name="alpha", return_val=_make_prediction("alpha")))
+    register_facet(FakeFacet(name="beta", return_val=_make_prediction("beta")))
+    led = FakeLedger()
+    n = capture_predictions(
+        _make_ctx(),
+        ScorecardConfig(enabled_facets=["alpha", "beta"]),
+        led,
+    )
+    assert n == 2
+    assert {s["facet"] for s in led.saved} == {"alpha", "beta"}
+
+
+def test_only_facets_empty_set_captures_nothing(registry_snapshot):
+    register_facet(FakeFacet(name="alpha", return_val=_make_prediction("alpha")))
+    led = FakeLedger()
+    n = capture_predictions(
+        _make_ctx(),
+        ScorecardConfig(enabled_facets=["alpha"]),
+        led,
+        only_facets=set(),
+    )
+    assert n == 0
+    assert led.saved == []

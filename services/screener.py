@@ -164,6 +164,24 @@ class ScreenerConfig(ServiceConfigBase):
         default=True, description="Keep original universe if all codes rejected"
     )
 
+    # Volume-surge feed (LLM scorecard volume_surge facet producer)
+    volume_surge_enabled: bool = Field(
+        default=True,
+        description="Publish intraday volume-surge flags for the scorecard facet",
+    )
+    volume_surge_key: str = Field(
+        default="system:volume_surge:latest",
+        description="Redis key for the latest volume-surge flag snapshot",
+    )
+    volume_surge_ttl_seconds: int = Field(
+        default=172800,
+        description="TTL for the volume-surge snapshot (48h accumulation policy)",
+    )
+    volume_surge_min_volume_power: float = Field(
+        default=0.0,
+        description="Minimum volume_power to flag a code (0 = any volume_power hit)",
+    )
+
     @classmethod
     def from_env(
         cls, env_prefix: str | None = None, **overrides: Any
@@ -259,6 +277,77 @@ def _add_swing_metadata(
         metadata["new_high"] = _safe_float(row.get("new_high"))
         metadata["bid_quantity"] = _safe_int(row.get("bid_quantity"))
         metadata["ask_quantity"] = _safe_int(row.get("ask_quantity"))
+
+
+def extract_surge_swing_metadata(
+    priority_metadata: dict[str, dict],
+) -> dict[str, dict]:
+    """Unwrap ``priority_metadata[code]["swing_discovery"]`` → flat per-code dict.
+
+    ``_select_top_codes`` nests the KIS swing-discovery fields (``volume_power``,
+    ``volume_power_rank``, ...) under a ``swing_discovery`` key; the volume-surge
+    helper expects that flat inner dict. Entries lacking a dict ``swing_discovery``
+    (e.g. a code surfaced only via a non-swing source) are skipped — never raised.
+
+    Extracted as a pure function so the shape assumption is unit-tested: if a
+    future ``_select_top_codes`` refactor drops/renames ``swing_discovery`` the
+    test fails loudly instead of the surge feed going silently empty.
+    """
+    return {
+        code: meta["swing_discovery"]
+        for code, meta in priority_metadata.items()
+        if isinstance(meta, dict) and isinstance(meta.get("swing_discovery"), dict)
+    }
+
+
+def update_volume_surge_flags(
+    existing: dict[str, dict],
+    *,
+    info_by_code: dict[str, dict],
+    swing_metadata: dict[str, dict],
+    now_kst_iso: str,
+    min_volume_power: float,
+) -> dict[str, dict]:
+    """Accumulate first-seen intraday volume-surge flags (pure; no Redis/clock).
+
+    A code qualifies when its ``swing_metadata`` entry was actually hit by the KIS
+    ``volume_power`` ranking source (``volume_power_rank`` present) and its
+    ``volume_power`` value is ``>= min_volume_power``. First-flag-wins: a code
+    already in ``existing`` is never overwritten, preserving the original
+    ``flag_time``/``flag_price`` (no-look-ahead is anchored on this first flag).
+
+    Codes with a non-positive ``flag_price`` are skipped. ``existing`` is mutated
+    in place and returned.
+
+    Args:
+        existing: Accumulator ``code -> {code, flag_time, flag_price}``.
+        info_by_code: ``code -> {name, price, change_pct, ...}``.
+        swing_metadata: ``code -> {... possibly volume_power/volume_power_rank}``.
+        now_kst_iso: ISO-8601 KST timestamp to stamp newly flagged codes.
+        min_volume_power: Inclusive volume_power threshold (0 = any hit).
+
+    Returns:
+        The mutated ``existing`` dict.
+    """
+    for code, meta in swing_metadata.items():
+        if code in existing:
+            continue  # first-flag-wins
+        if "volume_power_rank" not in meta:
+            continue
+        volume_power = meta.get("volume_power")
+        if volume_power is None:
+            continue
+        if float(volume_power) < min_volume_power:
+            continue
+        flag_price = float(info_by_code.get(code, {}).get("price", 0) or 0)
+        if flag_price <= 0:
+            continue
+        existing[code] = {
+            "code": code,
+            "flag_time": now_kst_iso,
+            "flag_price": flag_price,
+        }
+    return existing
 
 
 def _code_set_signature(codes: list[str]) -> str:
@@ -745,6 +834,8 @@ async def run_screener(config: ScreenerConfig) -> None:
     last_universe_publish_time: float = 0.0
     last_dip_signature: str | None = None
     last_dip_publish_time: float = 0.0
+    surge_flags: dict[str, dict] = {}
+    surge_date_kst: str | None = None
     notifier: TelegramNotifier | None = None
     if config.telegram_enabled:
         # Screener is stock-only: route explicitly to TELEGRAM_STOCK_*.
@@ -933,6 +1024,45 @@ async def run_screener(config: ScreenerConfig) -> None:
                         last_notify_time = now
 
                     last_codes = codes
+
+                    # Volume-surge flag feed for the LLM scorecard facet.
+                    # Best-effort: must never break the screener loop.
+                    if config.volume_surge_enabled:
+                        try:
+                            now_kst_dt = datetime.now(tz=KST)
+                            now_kst_iso = now_kst_dt.isoformat()
+                            date_kst = now_kst_dt.strftime("%Y-%m-%d")
+                            if date_kst != surge_date_kst:
+                                # New trading day — reset the accumulator.
+                                surge_flags = {}
+                                surge_date_kst = date_kst
+                            # priority_metadata nests swing fields under
+                            # "swing_discovery"; unwrap to the flat shape the
+                            # helper expects (volume_power / volume_power_rank).
+                            surge_swing_meta = extract_surge_swing_metadata(
+                                priority_metadata
+                            )
+                            update_volume_surge_flags(
+                                surge_flags,
+                                info_by_code=info,
+                                swing_metadata=surge_swing_meta,
+                                now_kst_iso=now_kst_iso,
+                                min_volume_power=config.volume_surge_min_volume_power,
+                            )
+                            surge_payload = {
+                                "generated_at": now_kst_iso,
+                                "date_kst": date_kst,
+                                "surges": list(surge_flags.values()),
+                            }
+                            redis_client.set(
+                                config.volume_surge_key,
+                                json.dumps(surge_payload, ensure_ascii=False),
+                                ex=config.volume_surge_ttl_seconds,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Volume-surge feed publish failed (non-fatal): %s", e
+                            )
 
                 # Dip candidates (for mean-reversion strategies)
                 dip_codes, dip_scores, dip_info = _select_dip_candidates(
