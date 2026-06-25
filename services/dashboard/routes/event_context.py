@@ -54,10 +54,15 @@ class EventScoreSummary(BaseModel):
     age_seconds: int | None = None
     ttl_minutes: int | None = None
     impact_score: float | None = None
+    impact_tier: int | None = None
     event_type: str | None = None
     source: str | None = None
     sparse: bool
     recent_count: int
+    # Tier → count histogram for the latest event (single-entry off the
+    # `:latest` key). Surfaces "T2: 1" on the dashboard instead of
+    # "impact tiers unavailable".
+    by_impact_tier: dict[str, int] = Field(default_factory=dict)
     missing_evidence: list[str] = Field(default_factory=list)
 
 
@@ -324,6 +329,7 @@ def _source_from_event_score(
             {
                 "event_type": score.event_type,
                 "impact_score": score.impact_score,
+                "impact_tier": score.impact_tier,
                 "source": score.source,
                 "ttl_minutes": score.ttl_minutes,
             }
@@ -396,6 +402,12 @@ def _event_score_summary(redis: Any, now: datetime) -> EventScoreSummary:
         )
     ttl_seconds = ttl_minutes * 60
     status = "fresh" if age is not None and age <= ttl_seconds else "stale"
+    # Surface the latest event's tier as a single-entry histogram. Pre-tier
+    # payloads (impact_tier absent → 0) yield an empty histogram, leaving the
+    # dashboard's "impact tiers unavailable" fallback intact.
+    impact_tier = _coerce_int(payload.get("impact_tier"), default=0)
+    tier = impact_tier if impact_tier in (1, 2, 3) else None
+    by_impact_tier = {str(tier): 1} if tier is not None else {}
     return EventScoreSummary(
         available=True,
         status=status,
@@ -403,10 +415,12 @@ def _event_score_summary(redis: Any, now: datetime) -> EventScoreSummary:
         age_seconds=age,
         ttl_minutes=ttl_minutes or None,
         impact_score=_coerce_float(payload.get("impact_score")),
+        impact_tier=tier,
         event_type=str(payload.get("event_type")) if payload.get("event_type") else None,
         source=str(payload.get("source")) if payload.get("source") else None,
         sparse=True,
         recent_count=1,
+        by_impact_tier=by_impact_tier,
         missing_evidence=[] if status == "fresh" else ["forecast_event_latest_stale"],
     )
 

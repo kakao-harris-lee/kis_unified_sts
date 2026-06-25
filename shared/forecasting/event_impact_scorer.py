@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from shared.forecasting.config import EventScorerConfig
 from shared.forecasting.event_taxonomy import EventTaxonomy
 from shared.forecasting.llm_event_scorer import LLMScorerClient
-from shared.forecasting.models import EventScore
+from shared.forecasting.models import EventScore, tier_for_impact_score
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,14 @@ class EventImpactScorer:
         self.taxonomy = taxonomy
         self._llm = llm_client
 
+    def _tier(self, impact_score: float) -> int:
+        """Config-driven impact tier for a 0-100 score."""
+        return tier_for_impact_score(
+            impact_score,
+            tier1_min=self.config.tier1_min_score,
+            tier2_min=self.config.tier2_min_score,
+        )
+
     async def score(
         self, event_text: str, event_type: str | None = None
     ) -> EventScore:
@@ -40,6 +48,7 @@ class EventImpactScorer:
                         source="rule",
                         raw_text=None,
                         ttl_minutes=self.config.default_ttl_minutes,
+                        impact_tier=self._tier(float(entry.impact_score)),
                     )
         # 2. Try alias match (rule-based)
         if self.config.rule_first:
@@ -52,6 +61,7 @@ class EventImpactScorer:
                     source="rule",
                     raw_text=None,
                     ttl_minutes=self.config.default_ttl_minutes,
+                    impact_tier=self._tier(float(match.impact_score)),
                 )
         # 3. LLM fallback (or neutral if disabled / failed)
         if self.config.llm_fallback_enabled and self._llm is not None:
@@ -64,6 +74,7 @@ class EventImpactScorer:
                     source="llm",
                     raw_text=event_text[:500],
                     ttl_minutes=self.config.default_ttl_minutes,
+                    impact_tier=self._tier(float(score)),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
@@ -76,6 +87,9 @@ class EventImpactScorer:
                     source="llm",
                     raw_text=event_text[:500],
                     ttl_minutes=self.config.default_ttl_minutes,
+                    impact_tier=self._tier(
+                        float(self.config.neutral_score_on_failure)
+                    ),
                 )
         # 4. LLM disabled and unmatched → unknown_match_score
         return EventScore(
@@ -85,4 +99,5 @@ class EventImpactScorer:
             source="rule",
             raw_text=None,
             ttl_minutes=self.config.default_ttl_minutes,
+            impact_tier=self._tier(float(self.taxonomy.unknown_match_score)),
         )

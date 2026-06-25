@@ -1,9 +1,14 @@
 """Tests for forecasting dataclasses."""
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from shared.forecasting.models import EventScore, VolForecast
+from shared.forecasting.models import (
+    EventScore,
+    VolForecast,
+    tier_for_impact_score,
+)
 
 
 def test_vol_forecast_is_fresh_within_max_age():
@@ -88,3 +93,88 @@ def test_event_score_to_json_roundtrip():
     assert e2.impact_score == e.impact_score
     assert e2.source == e.source
     assert e2.raw_text == e.raw_text
+    assert e2.impact_tier == e.impact_tier == 2  # 70 → tier 2 (default bands)
+
+
+@pytest.mark.parametrize(
+    ("score", "expected_tier"),
+    [
+        (100.0, 1),
+        (75.0, 1),  # boundary inclusive
+        (74.9, 2),
+        (50.0, 2),  # boundary inclusive
+        (49.9, 3),
+        (0.0, 3),
+    ],
+)
+def test_tier_for_impact_score_default_bands(score, expected_tier):
+    assert tier_for_impact_score(score) == expected_tier
+
+
+def test_tier_for_impact_score_custom_bands():
+    # With tighter bands, a 60 score that is tier 2 under defaults becomes
+    # tier 1 when tier1_min drops to 55.
+    assert tier_for_impact_score(60.0, tier1_min=55, tier2_min=40) == 1
+    assert tier_for_impact_score(45.0, tier1_min=55, tier2_min=40) == 2
+    assert tier_for_impact_score(30.0, tier1_min=55, tier2_min=40) == 3
+
+
+@pytest.mark.parametrize(
+    ("score", "expected_tier"),
+    [(90.0, 1), (60.0, 2), (20.0, 3)],
+)
+def test_event_score_derives_tier_when_omitted(score, expected_tier):
+    e = EventScore(
+        asof=datetime.now(UTC),
+        impact_score=score,
+        event_type="FOMC",
+        source="rule",
+        raw_text=None,
+        ttl_minutes=30,
+    )
+    assert e.impact_tier == expected_tier
+
+
+def test_event_score_respects_explicit_tier():
+    # An explicit tier is NOT overridden by score-based derivation, so the
+    # scorer's config-driven tier survives construction.
+    e = EventScore(
+        asof=datetime.now(UTC),
+        impact_score=90.0,  # would derive tier 1
+        event_type="FOMC",
+        source="rule",
+        raw_text=None,
+        ttl_minutes=30,
+        impact_tier=2,
+    )
+    assert e.impact_tier == 2
+
+
+def test_event_score_to_json_includes_impact_tier():
+    e = EventScore(
+        asof=datetime(2026, 5, 13, 9, 0, 0, tzinfo=UTC),
+        impact_score=85.0,
+        event_type="FOMC",
+        source="rule",
+        raw_text=None,
+        ttl_minutes=30,
+    )
+    payload = json.loads(e.to_json())
+    assert payload["impact_tier"] == 1
+
+
+def test_event_score_from_json_backward_compat_derives_tier():
+    # Pre-tier payloads (no impact_tier key) must load and derive the tier
+    # from impact_score rather than raising.
+    legacy = json.dumps(
+        {
+            "asof": datetime(2026, 5, 13, 9, 0, 0, tzinfo=UTC).isoformat(),
+            "impact_score": 88.0,
+            "event_type": "BOK_rate_decision",
+            "source": "rule",
+            "raw_text": None,
+            "ttl_minutes": 30,
+        }
+    )
+    e = EventScore.from_json(legacy)
+    assert e.impact_tier == 1  # 88 → tier 1

@@ -82,3 +82,43 @@ def test_ttl_uses_config_default(cfg, taxonomy):
     scorer = EventImpactScorer(cfg, taxonomy=taxonomy, llm_client=None)
     result = asyncio.run(scorer.score("FOMC release"))
     assert result.ttl_minutes == cfg.default_ttl_minutes
+
+
+def test_rule_match_assigns_tier(cfg, taxonomy):
+    # FOMC impact_score 90 → tier 1 under default bands (>=75).
+    scorer = EventImpactScorer(cfg, taxonomy=taxonomy, llm_client=None)
+    result = asyncio.run(scorer.score("FOMC raises rates"))
+    assert result.impact_score == 90
+    assert result.impact_tier == 1
+
+
+def test_llm_score_assigns_tier(cfg, taxonomy):
+    fake_llm = AsyncMock()
+    fake_llm.score_event_text = AsyncMock(return_value=72)
+    scorer = EventImpactScorer(cfg, taxonomy=taxonomy, llm_client=fake_llm)
+    # 72 is >=50 and <75 → tier 2.
+    result = asyncio.run(scorer.score("Unrelated headline text"))
+    assert result.impact_tier == 2
+
+
+def test_unknown_match_score_assigns_minor_tier(cfg, taxonomy):
+    cfg.llm_fallback_enabled = False
+    scorer = EventImpactScorer(cfg, taxonomy=taxonomy, llm_client=None)
+    # unknown_match_score 40 < 50 → tier 3.
+    result = asyncio.run(scorer.score("Some random text"))
+    assert result.impact_score == taxonomy.unknown_match_score
+    assert result.impact_tier == 3
+
+
+def test_tier_bands_are_config_driven(taxonomy):
+    # Lowering tier1_min_score to 60 promotes a 72-score LLM event to tier 1.
+    cfg = EventScorerConfig(
+        default_ttl_minutes=30,
+        tier1_min_score=60,
+        tier2_min_score=40,
+    )
+    fake_llm = AsyncMock()
+    fake_llm.score_event_text = AsyncMock(return_value=72)
+    scorer = EventImpactScorer(cfg, taxonomy=taxonomy, llm_client=fake_llm)
+    result = asyncio.run(scorer.score("Unrelated headline text"))
+    assert result.impact_tier == 1

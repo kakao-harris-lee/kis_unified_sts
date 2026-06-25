@@ -23,6 +23,10 @@ class EventScorerConfig(BaseModel):
     rule_first: bool = Field(default=True)
     llm_fallback_enabled: bool = Field(default=True)
     neutral_score_on_failure: int = Field(default=50, ge=0, le=100)
+    # Impact-score band edges for tier assignment (1=top, 3=minor):
+    # score >= tier1_min_score → tier 1, >= tier2_min_score → tier 2, else 3.
+    tier1_min_score: int = Field(default=75, ge=0, le=100)
+    tier2_min_score: int = Field(default=50, ge=0, le=100)
 
 
 class ForecastingConfig(ServiceConfigBase):

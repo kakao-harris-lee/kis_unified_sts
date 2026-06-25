@@ -187,3 +187,58 @@ def test_event_context_marks_malformed_runtime_payloads(monkeypatch, tmp_path):
     assert body["setup_eval"]["status"] == "malformed"
     assert "forecast_event_latest_invalid" in body["missing_evidence"]
     assert "setup_c_latest_eval_malformed" in body["missing_evidence"]
+
+
+def test_event_score_surfaces_impact_tier(monkeypatch, tmp_path):
+    now = datetime.now(UTC)
+    redis = _FakeRedis(
+        values={
+            "forecast:event:latest": json.dumps(
+                {
+                    "asof": (now - timedelta(minutes=1)).isoformat(),
+                    "impact_score": 88.0,
+                    "impact_tier": 1,
+                    "event_type": "BOK_rate_decision",
+                    "source": "rule",
+                    "raw_text": None,
+                    "ttl_minutes": 30,
+                }
+            )
+        },
+    )
+    client, scheduled_path = _client(monkeypatch, tmp_path, redis)
+    scheduled_path.write_text("events: []\n", encoding="utf-8")
+
+    body = client.get("/api/event-context/diagnostics?asset_class=futures").json()
+
+    assert body["event_score"]["impact_tier"] == 1
+    assert body["event_score"]["by_impact_tier"] == {"1": 1}
+    sources = {row["name"]: row for row in body["source_timeline"]}
+    assert sources["forecast_event_latest"]["sample"][0]["impact_tier"] == 1
+
+
+def test_event_score_without_tier_omits_histogram(monkeypatch, tmp_path):
+    # Pre-tier payloads (no impact_tier key) must not fabricate a tier; the
+    # histogram stays empty so the dashboard keeps its fallback text.
+    now = datetime.now(UTC)
+    redis = _FakeRedis(
+        values={
+            "forecast:event:latest": json.dumps(
+                {
+                    "asof": (now - timedelta(minutes=1)).isoformat(),
+                    "impact_score": 88.0,
+                    "event_type": "BOK_rate_decision",
+                    "source": "rule",
+                    "raw_text": None,
+                    "ttl_minutes": 30,
+                }
+            )
+        },
+    )
+    client, scheduled_path = _client(monkeypatch, tmp_path, redis)
+    scheduled_path.write_text("events: []\n", encoding="utf-8")
+
+    body = client.get("/api/event-context/diagnostics?asset_class=futures").json()
+
+    assert body["event_score"]["impact_tier"] is None
+    assert body["event_score"]["by_impact_tier"] == {}
