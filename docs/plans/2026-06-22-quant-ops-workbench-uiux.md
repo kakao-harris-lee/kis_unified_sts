@@ -1,7 +1,8 @@
 # Quant Ops Workbench UI/UX Plan
 
 - **작성일**: 2026-06-22 KST
-- **상태**: P0/P1/P2 diagnostics implemented; UI/UX QA pass complete
+- **상태**: P0/P1/P2 diagnostics implemented; automated smoke QA committed;
+  browser screenshot artifact gate remains open
 - **범위**: `strategy-builder-ui/` + `services/dashboard/routes/*` + existing
   runtime/experiment data sources
 - **목표**: Strategy Lab을 단순 builder가 아니라 운영 의사결정이 가능한
@@ -437,15 +438,17 @@ Acceptance:
 
 ### P2.1 Workbench UI/UX QA Pass
 
-Status: complete. Automated smoke coverage exercises `/risk`, `/coverage`,
-`/trades`, `/builder`, and `/event-context` loading, empty, degraded, tab, and
-read-only states; Playwright desktop/mobile checks are the required visual gate
-when these routes change.
+Status: automated smoke coverage complete; browser visual evidence open.
+Automated smoke coverage exercises `/risk`, `/coverage`, `/trades`, `/builder`,
+and `/event-context` loading, empty, degraded, tab, and read-only states.
+Playwright desktop/mobile checks are still the required visual gate when these
+routes change.
 
-Closure evidence (2026-06-22 KST): Vitest smoke coverage is committed. Manual
-Playwright desktop/mobile checks were run against `localhost:3100`; screenshots
-and HAR files were captured under `/private/tmp`. A committed Playwright suite
-is still optional future QA hardening.
+Closure evidence (2026-06-25 KST): Vitest smoke coverage is committed in
+`strategy-builder-ui/src/app/quant-ops-workbench.smoke.test.tsx`. No committed
+Playwright suite/config, screenshots, or HAR files were found in the repository
+during the roadmap/codebase consistency audit. See
+[../investigations/2026-06-25-roadmap-codebase-consistency.md](../investigations/2026-06-25-roadmap-codebase-consistency.md).
 
 Goal: verify the new operator workflows render cleanly and remain paper-safe
 across desktop/mobile states.

@@ -1,6 +1,6 @@
 # Roadmap — KIS Unified Trading Platform
 
-> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-06-22 KST.**
+> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-06-25 KST.**
 
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
@@ -61,12 +61,13 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | P1 Strategy Promotion Kanban | ✅ done | `/builder` includes read-only Draft -> Live Gated board with explicit present/missing/not-available evidence |
 | P1 Universe & Data Coverage Explorer | ✅ done | `/coverage` and `/api/coverage` show screener universe, trade targets, daily indicator gaps, and latest experiment coverage |
 | P2 Setup C / Event Context diagnostics | ✅ done | `/event-context` and `/api/event-context/diagnostics` show Setup C latest eval, event-score freshness/sparsity, source timeline, config mismatch warnings, and no-signal root cause |
-| P2 Workbench UI/UX QA pass | ✅ done | Automated render/accessibility smoke checks plus desktop/mobile screenshot review cover `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context` |
+| P2 Workbench UI/UX QA pass | 🔄 in-progress | Vitest/Testing Library smoke coverage covers `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context`; committed Playwright/screenshot artifacts are still missing |
 
 ### Open next-steps
 
-- Maintain screenshot/accessibility QA artifacts when Workbench routes change,
-  especially `/risk`, `/coverage`, `/trades`, `/builder`, and `/event-context`.
+- Capture and retain desktop/mobile screenshot/accessibility QA artifacts for
+  Workbench route changes, especially `/risk`, `/coverage`, `/trades`,
+  `/builder`, and `/event-context`.
 - Keep all new work paper-safe. UI may inspect paper order tickets, but must not
   introduce live order controls or bypass futures live gates.
 
@@ -89,12 +90,14 @@ that shortens the design → backtest → paper → feedback loop.
   M4-R (risk) → M4-O (order) → M4-X (three-stage, signal-driven exit; **no
   blanket EOD liquidation**) → M5a (monitor). The monolithic stock orchestrator
   is blocked after cutover (`STOCK_ORCHESTRATOR_ENABLED=false`).
-- **Enabled strategies (2026-06-20):** `momentum_breakout` (re-enabled for paper
+- **Enabled strategies (2026-06-25):** `momentum_breakout` (re-enabled for paper
   observation, #443), `pattern_pullback`, `williams_r`.
 - **Disabled:** `bb_reversion`, `opening_volume_surge` (+variants),
   `volume_accumulation`, `trend_pullback`, `vr_composite`,
   `technical_consensus` (0% win 2026-06-02), `trend_continuation_vwap`,
-  `daily_pullback`, `trix_golden`.
+  `daily_pullback`, `trix_golden`, `llm_adaptive_sizing_example`,
+  `opening_volume_surge_combo_balanced`, `opening_volume_surge_score_1p8`,
+  `trend_pullback_consensus_exit`.
 
 ### Phases
 
@@ -144,13 +147,15 @@ paths are removed and must not be reintroduced
   **dormant** (pre-F-9): profiles `futures-ingest`, `futures-pipeline`,
   `futures-killswitch` exist with a double-trade guard, but the daemons are not
   registered in the running Compose stack.
-- **Enabled strategies (2026-06-20):** `setup_a_gap_reversion` (fires live
+- **Enabled strategies (2026-06-25):** `setup_a_gap_reversion` (fires live
   signals), `setup_c_event_reaction` (coded but ~0 signals — event scores sparse).
 - **Disabled / deprecated:** `williams_r_15m` (reference), `bb_reversion_15m`
   (disabled — triggered a stock BEAR_EXIT, #479), `macd_ema_crossover_15m`,
-  `momentum_breakout`, `trend_pullback`, `trix_golden`; `llm_directed_indicator`
-  deprecated. All trend strategies collapse in walk-forward (intraday futures are
-  mean-reverting) — do not enable.
+  `momentum_breakout_futures`, `trend_pullback_futures`,
+  `trix_golden_futures`; `llm_directed_indicator` deprecated.
+  `track_a_exit.yaml` is a reusable exit config, not a top-level strategy. All
+  trend strategies collapse in walk-forward (intraday futures are mean-reverting)
+  — do not enable.
 
 ### Phases
 

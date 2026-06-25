@@ -1,6 +1,6 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-06-22
+**Last updated**: 2026-06-25
 
 > Phased roadmap (Stock + Futures): [ROADMAP.md](ROADMAP.md) — authoritative.
 
@@ -26,8 +26,9 @@
 - Quant Ops Workbench P2 Event Context is in place: `/event-context` and
   `/api/event-context/diagnostics` expose Setup C latest eval, event-score
   freshness, news/macro source timelines, and no-signal root causes. Workbench
-  UI/UX QA now covers loading/degraded render states plus desktop/mobile review
-  for the new operator pages.
+  UI/UX QA has committed Vitest smoke coverage for loading/degraded render
+  states; committed desktop/mobile screenshot artifacts are still an open
+  evidence gap.
 
 ## Storage And Runtime Decisions
 
@@ -41,17 +42,24 @@
 
 ## Active Strategies
 
-Verified 2026-06-20 against `config/strategies/{stock,futures}/*.yaml` (`enabled` flag is the single source of truth).
+Verified 2026-06-25 against `config/strategies/{stock,futures}/*.yaml` (`enabled` flag is the single source of truth).
 
 | Asset | Strategy | Mode | Note |
 |---|---|---|---|
 | Stock | `momentum_breakout`, `pattern_pullback`, `williams_r` | Paper (enabled) | `momentum_breakout` re-enabled for paper observation (#443). Swing exits are signal-driven (three-stage); no blanket EOD liquidation. |
-| Stock | `bb_reversion`, `opening_volume_surge`, `volume_accumulation`, `trend_pullback`, `vr_composite`, `technical_consensus`, `trend_continuation_vwap`, `daily_pullback`, `trix_golden` | Disabled | `enabled: false`. `technical_consensus` disabled after 0% win (2026-06-02); reactivation under review (see ROADMAP). |
+| Stock | `bb_reversion`, `opening_volume_surge`, `volume_accumulation`, `trend_pullback`, `vr_composite`, `technical_consensus`, `trend_continuation_vwap`, `daily_pullback`, `trix_golden`, `llm_adaptive_sizing_example`, `opening_volume_surge_combo_balanced`, `opening_volume_surge_score_1p8`, `trend_pullback_consensus_exit` | Disabled | `enabled: false`. `technical_consensus` disabled after 0% win (2026-06-02); reactivation under review (see ROADMAP). |
 | Futures | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper primary (enabled) | Setup A fires live signals; Setup C coded but ~0 signals (event sourcing sparse). Uses Setup target exits, LLM context/veto/risk hooks, live-mode guards. |
-| Futures | `williams_r_15m`, `bb_reversion_15m`, `macd_ema_crossover_15m`, `momentum_breakout`, `trend_pullback`, `trix_golden` | Disabled | `enabled: false`. Trend strategies collapse in walk-forward; `bb_reversion_15m` disabled (triggered stock BEAR_EXIT, #479). |
+| Futures | `williams_r_15m`, `bb_reversion_15m`, `macd_ema_crossover_15m`, `momentum_breakout_futures`, `trend_pullback_futures`, `trix_golden_futures` | Disabled | `enabled: false`. Trend strategies collapse in walk-forward; `bb_reversion_15m` disabled (triggered stock BEAR_EXIT, #479). `track_a_exit.yaml` is an exit config, not a strategy. |
 | Futures | `llm_directed_indicator` | Deprecated | Not an active path without a separate redefinition gate. |
 
 ## Recent Decisions
+
+**2026-06-25** - Roadmap/codebase consistency check.
+Static audit refreshed the exact strategy roster and Workbench QA evidence
+language. Enabled strategies still match config. Disabled stock variants and
+futures `_futures` strategy names are now listed explicitly, and Workbench QA no
+longer claims committed browser/screenshot evidence. Audit note:
+[investigations/2026-06-25-roadmap-codebase-consistency.md](investigations/2026-06-25-roadmap-codebase-consistency.md).
 
 **2026-06-22** - Quant Ops Workbench P0/P1 implementation.
 Multi-agent lanes implemented the ops summary DTO, signal trace UI, risk and
@@ -121,4 +129,5 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
   shared-volume path (required before live).
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
-  (`localhost:5000` down).
+  (`localhost:5000` down); committed Workbench desktop/mobile
+  screenshot/accessibility QA artifacts.
