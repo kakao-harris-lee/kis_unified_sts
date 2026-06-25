@@ -44,10 +44,12 @@ import yaml
 from services.monitoring.metrics import get_metrics_collector
 from services.trading.broker_verification import BrokerPositionVerifier
 from services.trading.data_provider import DataProviderConfig, MarketDataProvider
+from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from shared.config.loader import ConfigLoader
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.exceptions import (
     APIError,
     ConfigurationError,
@@ -1393,9 +1395,7 @@ class TradingOrchestrator:
                 from services.trading.stream_consumer_feed import StreamConsumerFeed
 
                 stream_name = os.getenv("MARKET_TICK_STREAM", "market:ticks")
-                self._stream_redis = aioredis.from_url(
-                    os.environ.get("REDIS_URL", "redis://localhost:6379/1")
-                )
+                self._stream_redis = aioredis.from_url(redis_url_from_env())
                 self._stream_consumer_feed = StreamConsumerFeed(
                     redis=self._stream_redis,
                     stream=stream_name,
@@ -2074,9 +2074,7 @@ class TradingOrchestrator:
             from shared.execution.live_mode_guard import LiveModeGuard
 
             self._live_mode_guard = LiveModeGuard.from_yaml()
-            self._guard_redis = aioredis.from_url(
-                os.environ.get("REDIS_URL", "redis://localhost:6379/1")
-            )
+            self._guard_redis = aioredis.from_url(redis_url_from_env())
             logger.info(
                 "futures live-mode guard active (enabled=%s, suspend_key=%s)",
                 self._live_mode_guard.enabled,
@@ -5260,19 +5258,10 @@ class TradingOrchestrator:
 
     def _sync_open_positions_metric(self) -> None:
         """Synchronize open position gauge with current tracker state."""
-        open_positions = 0
-        if self._position_tracker:
-            count = getattr(self._position_tracker, "position_count", None)
-            if isinstance(count, int):
-                open_positions = count
-            else:
-                positions = getattr(self._position_tracker, "positions", None)
-                if positions is not None:
-                    try:
-                        open_positions = len(positions)
-                    except TypeError:
-                        open_positions = 0
-        self._metrics.record_position_change(max(0, open_positions))
+        sync_open_positions_metric(
+            getattr(self, "_metrics", None),
+            getattr(self, "_position_tracker", None),
+        )
 
     async def _get_market_data_snapshot(
         self, symbols: list[str] | None = None
