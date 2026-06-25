@@ -1,0 +1,28 @@
+# Default ConvictionHoldGate config (THESIS C — high-conviction directional HOLD).
+#
+# STATUS: DISABLED. The conjunction this gate encodes is FALSIFIED on the clean
+# window (KOSPI200 futures 101S6000, Dec2025-Apr2026): it is anti-predictive —
+# arms into reversals (65% false-start rate, EOD-proxy PnL ~-12% over the window,
+# out-of-sample true-positive rate 0%). It ships disabled as a tested,
+# reproducible building block and a guard against re-deriving the same negative.
+# See docs/superpowers/plans/2026-06-25-futures-conviction-hold-strategy.md and
+# scripts/analysis/conviction_hold_counterfactual.py.
+#
+# Units:
+#   - min_morning_disp_pct / min_semi_leadership_pct are % of price / daily %.
+#   - min_morning_efficiency is a Kaufman efficiency ratio in [0, 1] computed on
+#     1-minute bars over the morning path (structurally small at this granularity
+#     — a full-day path tops out near ~0.20; 0.10 is a *relative* separator).
+#   - PERMISSIVE on missing (§9) governs ONLY the optional LLM-bias arm; the
+#     three structural arms (morning move / MFI / semiconductor leadership) are
+#     required by definition of the conjunction.
+enabled: false
+min_morning_disp_pct: 0.30  # morning displacement from open (% of price)
+min_morning_efficiency: 0.10  # Kaufman ER over the morning path
+require_mfi_strong: true  # require BULL_STRONG / BEAR_STRONG
+min_semi_leadership_pct: 0.50  # prior-session 반도체 basket daily change %
+use_llm_bias: false  # optional LLM daily-bias arm (permissive)
+permissive_on_missing: true  # §9 — never silently block on a missing LLM bias
+decision_hour: 10  # KST — ask once mid-morning
+decision_minute: 0
+allow_short: true  # futures long/short symmetry
