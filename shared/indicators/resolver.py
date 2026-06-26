@@ -61,6 +61,24 @@ class StreamingIndicatorResolver:
                 # plain keys so mean_reversion.generate() is unchanged.
                 result.update(tf_base)
 
+        # Post-event trading-range high/low (Setup C's N-minute breakout range).
+        # The orchestrator entry path otherwise never populates these keys, so
+        # the decision-engine MarketContext defaults both to current_price and
+        # Setup C's strict ``current_price > last_15min_high`` breakout becomes
+        # unreachable live (backtest/live parity break). Fulfil it here from the
+        # live candle history — ``get_recent_range`` reads only COMPLETED candles,
+        # i.e. the causal ``[now-N, now-1]`` window (current bar excluded), which
+        # matches MarketContextReplay's ``highs[i-N:i]`` backtest window.
+        range_minutes = self.contract.recent_range_minutes
+        if range_minutes is not None:
+            get_recent_range = getattr(self.engine, "get_recent_range", None)
+            if callable(get_recent_range):
+                rng = get_recent_range(symbol, range_minutes)
+                if rng is not None:
+                    high, low = rng
+                    result[f"last_{range_minutes}min_high"] = float(high)
+                    result[f"last_{range_minutes}min_low"] = float(low)
+
         return result
 
     def collect_exit_indicators(self, symbol: str) -> dict[str, Any]:
