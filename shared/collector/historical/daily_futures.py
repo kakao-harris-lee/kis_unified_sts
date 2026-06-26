@@ -18,6 +18,20 @@ Key design decisions
   the production backfill convention.
 * **Idempotent writes**: Uses ``replace_daily_day`` from ParquetMarketDataStore
   so re-running the collector never creates duplicate bars.
+
+.. warning::
+
+   **This partition is RAW, MULTI-CONTRACT, NOT back-adjusted.** Bars are
+   stitched from successive discrete-expiry A-codes (A01609 → A01606 → A01612).
+   At each contract roll the settlement levels differ by the carry spread, so
+   the series carries step discontinuities that look like single-day returns
+   (carry spreads are far below the 25% return gate, so they pass ungated; the
+   gate also resets across symbols). Downstream consumers that compute returns
+   or momentum across roll dates (e.g. a CTA walk-forward) MUST account for
+   this — either roll-/back-adjust first, or restrict windows within a single
+   contract. Treat ``code=101S6000`` daily as a raw settlement series, not a
+   clean continuous instrument. Follow-up: a ratio-adjusted column / sidecar
+   metadata (``is_adjusted=False``) before this feeds any production backtest.
 * **OHLC sanity gate**: A day is rejected if the bar violates open ≤ high,
   low ≤ close, or shows an extreme single-day return (>25%), consistent with
   the minute-bar price-sanity gate in ``parquet_backfill.py``.
@@ -129,19 +143,6 @@ class _RateLimiter:
 
         self._min_interval = 1.0 / max(rps, 1e-6)
         self._last = time.monotonic() - self._min_interval
-
-    def wait(self) -> None:
-        import time
-
-        elapsed = time.monotonic() - self._last
-        gap = self._min_interval - elapsed
-        if gap > 0:
-            import asyncio
-
-            # Use asyncio.sleep when in an async context, else time.sleep
-            return gap
-        self._last = time.monotonic()
-        return 0
 
 
 _limiter = _RateLimiter()

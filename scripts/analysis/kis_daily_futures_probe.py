@@ -33,7 +33,10 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://openapi.koreainvestment.com:9443"
 DAILY_CHART_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-daily-fuopchartprice"
 TR_ID = "FHKIF03020100"
-SYMBOL = "101S6000"
+# The daily futures API requires a LEGACY A-code (e.g. A01612 continuous near-
+# month). The auto-rolling short-code "101S6000" returns rt_cd=0 with an EMPTY
+# output2 (silent failure) → would print a false GATE=FAIL. Override via argv[1].
+SYMBOL = sys.argv[1] if len(sys.argv) > 1 else "A01612"
 RPS_CEIL = 2  # stay well below 5 rps limit; probe only
 _MIN_INTERVAL = 1.0 / RPS_CEIL
 
@@ -280,7 +283,7 @@ def probe() -> int:
 
         print()
         print("PAGINATION ANALYSIS:")
-        print(f"  Per-call cap       : 100 bars")
+        print("  Per-call cap       : 100 bars")
 
         if oldest_5y_date_str:
             oldest_dt = date(
@@ -295,7 +298,6 @@ def probe() -> int:
             print(f"  Est. total bars    : ~{total_bdays_estimate} business days")
             print(f"  Pages needed       : ~{pages_needed} calls @ 100/call @ ≤2 rps")
             print(f"  Est. collect time  : ~{pages_needed/RPS_CEIL:.0f}s")
-            total_bars_accessible_estimate = total_bdays_estimate
             span_years_found = span_years
         else:
             span_years_found = 0
