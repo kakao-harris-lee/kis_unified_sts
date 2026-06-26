@@ -20,7 +20,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy source files needed for installation
 COPY pyproject.toml README.md ./
 COPY shared/ ./shared/
-COPY domains/ ./domains/
 COPY services/ ./services/
 COPY cli/ ./cli/
 
@@ -50,7 +49,6 @@ WORKDIR /app
 
 # Copy application code
 COPY shared/ ./shared/
-COPY domains/ ./domains/
 COPY services/ ./services/
 COPY cli/ ./cli/
 COPY config/ ./config/
