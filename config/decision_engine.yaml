@@ -36,7 +36,7 @@ setup_c_event_reaction:
 # Defaults are the Dec2025–Apr2026 research operating point.
 # See docs/superpowers/specs/2026-06-25-futures-mr-highvol-setup-d.md.
 setup_d_vwap_reversion:
-  enabled: false
+  enabled: true                            # paper rollout activated 2026-06-26 (PAPER only; futures_live.enabled stays false). Rollback: flip to false.
   valid_minutes_min: 15                    # skip the 09:00 open auction (15 = 09:15 KST)
   no_entry_after_minutes_since_open: 345   # no entries after 14:45 KST (force-close avoidance)
   min_atr_ratio: 0.9                       # high-vol gate: atr_14 >= 0.9 × causal vol reference

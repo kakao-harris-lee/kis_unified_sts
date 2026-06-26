@@ -27,7 +27,7 @@
 strategy:
   name: setup_d_vwap_reversion
   asset_class: futures
-  enabled: false  # paper-only, NEEDS-VALIDATION — operator flips after paper rollout
+  enabled: true  # PAPER rollout activated 2026-06-26 (futures_live.enabled stays false; rollback = flip to false / revert)
   description: >
     High-vol intraday VWAP reversion: on volatile bars, fade ATR-scaled price
     extensions away from the session VWAP back toward it. All-session,
