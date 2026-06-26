@@ -803,7 +803,7 @@ class TestFiredOutcomeZeroTrades:
         """Production bug: Setup D fired a short with 0 closed trades.
         The warning must not say 'possibly suppressed'."""
         warnings = self._warnings_for_fired_setup_d(reason="short")
-        d_warnings = [w for w in warnings if "D" in w and "0" in w]
+        d_warnings = [w for w in warnings if "D" in w and "0 closed trades" in w]
         assert len(d_warnings) == 1
         w = d_warnings[0]
         # Must mention FIRED / fired
@@ -814,7 +814,7 @@ class TestFiredOutcomeZeroTrades:
     def test_fired_long_produces_fired_info_not_suppressed(self):
         """Same check with direction='long'."""
         warnings = self._warnings_for_fired_setup_d(reason="long")
-        d_warnings = [w for w in warnings if "D" in w and "0" in w]
+        d_warnings = [w for w in warnings if "D" in w and "0 closed trades" in w]
         assert len(d_warnings) == 1
         w = d_warnings[0]
         assert "FIRED" in w or "fired" in w
@@ -823,7 +823,7 @@ class TestFiredOutcomeZeroTrades:
     def test_fired_warning_mentions_monitor(self):
         """Fired 0-trade warning should include 'monitor' guidance."""
         warnings = self._warnings_for_fired_setup_d(reason="short")
-        d_warnings = [w for w in warnings if "D" in w and "0" in w]
+        d_warnings = [w for w in warnings if "D" in w and "0 closed trades" in w]
         assert any("monitor" in w.lower() for w in d_warnings)
 
     # ------------------------------------------------------------------
