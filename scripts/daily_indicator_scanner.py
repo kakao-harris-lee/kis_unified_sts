@@ -79,6 +79,28 @@ def _load_strategy_watchlist_size(default: int = 40) -> int:
         return default
 
 
+def _load_dynamic_only_strategies() -> frozenset[str]:
+    """Load strategy names that must bypass daily pre-screening.
+
+    Strategies in this set are designed to evaluate the live surge universe
+    (screener ``trade_targets``) in dynamic mode.  The scanner skips them so
+    their per-strategy entry in ``system:daily_watchlist:latest.strategies``
+    stays absent/empty — causing ``daily_watchlist_allows`` to return True
+    (dynamic) for every symbol rather than restricting them to a tiny
+    pre-screened list.
+    """
+    try:
+        from shared.config.loader import ConfigLoader
+
+        cfg = ConfigLoader.load("daily_scanner.yaml")
+        names = cfg.get("dynamic_only_strategies", [])
+        if isinstance(names, list):
+            return frozenset(str(n).strip() for n in names if str(n).strip())
+    except Exception as exc:  # noqa: BLE001 - standalone cron must keep running
+        logger.debug("dynamic_only_strategies fallback: %s", exc)
+    return frozenset()
+
+
 def _load_repo_env() -> None:
     """Load repo-local .env for standalone cron/manual runs."""
     load_dotenv(_REPO_ROOT / ".env", override=False)
@@ -217,8 +239,20 @@ def load_redis_candidate_symbols(
     return _dedupe_symbols(codes)
 
 
-def load_enabled_daily_strategies() -> list[Any]:
-    """Create enabled stock strategies whose configured timeframe is daily."""
+def load_enabled_daily_strategies(
+    dynamic_only: frozenset[str] | None = None,
+) -> list[Any]:
+    """Create enabled stock strategies whose configured timeframe is daily.
+
+    Strategies listed in ``dynamic_only`` (loaded from
+    ``daily_scanner.yaml::dynamic_only_strategies`` when *None*) are skipped so
+    no per-strategy candidate list is emitted for them.  An absent list causes
+    ``daily_watchlist_allows`` to return True (dynamic mode) — the strategy's
+    own intraday conditions remain the sole gate.
+    """
+    if dynamic_only is None:
+        dynamic_only = _load_dynamic_only_strategies()
+
     try:
         from shared.config.loader import ConfigLoader
         from shared.strategy.registry import (
@@ -237,10 +271,15 @@ def load_enabled_daily_strategies() -> list[Any]:
         strategy_cfg = config.get("strategy", {}) if isinstance(config, dict) else {}
         if str(strategy_cfg.get("timeframe", "")).lower() != "daily":
             continue
+        name = str(strategy_cfg.get("name", "")).strip()
+        if name in dynamic_only:
+            logger.debug(
+                "Skipping daily pre-screen for dynamic-only strategy: %s", name
+            )
+            continue
         try:
             strategies.append(StrategyFactory.create(config))
         except Exception as exc:  # noqa: BLE001 - skip one bad strategy
-            name = strategy_cfg.get("name", "unknown")
             logger.warning("Failed to create daily strategy %s: %s", name, exc)
     return strategies
 
