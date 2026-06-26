@@ -138,6 +138,8 @@ def _setup_display(name: str) -> SetupDisplay:
 # Setup D (high-vol VWAP-reversion) gates — calm/low-vol days are expected
 # selectivity; these fire only when vol is insufficient or price is not
 # stretched far enough from VWAP:
+#   before_window    — opening-warmup gate (fires before valid_minutes_min
+#                      after open; same class as after_cutoff)
 #   vol_below_gate   — ATR ratio below min_atr_ratio threshold
 #   not_extreme      — VWAP z-score inside ±extreme_atr_mult band
 #   still_trending   — price still trending (still_trending_up / _down prefix)
@@ -152,6 +154,7 @@ _LEGITIMATE_NO_SETUP_REASONS: frozenset[str] = frozenset(
         "no_sp500_data",
         "no_prev_close",
         # Setup D selectivity gates
+        "before_window",
         "vol_below_gate",
         "not_extreme",
         "still_trending",

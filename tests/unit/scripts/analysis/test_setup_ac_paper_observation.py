@@ -640,6 +640,15 @@ class TestSetupDLegitimateReasons:
         assert "expected" in d_warnings[0]
         assert "suppressed" not in d_warnings[0]
 
+    def test_before_window_is_legitimate(self):
+        """before_window(...) is Setup D's opening-warmup gate — NOT suppression."""
+        warnings = self._warnings_for_setup_d("before_window(3m<10)")
+        d_warnings = [w for w in warnings if "0 trades" in w and "D" in w]
+        assert len(d_warnings) == 1
+        assert "no qualifying setup" in d_warnings[0]
+        assert "expected" in d_warnings[0]
+        assert "suppressed" not in d_warnings[0]
+
     def test_setup_d_selectivity_note_is_high_vol_specific(self):
         """Setup D 0-trade message must reference high-vol gate, not A/C rate."""
         warnings = self._warnings_for_setup_d("vol_below_gate(0.80<1.00)")
@@ -647,6 +656,9 @@ class TestSetupDLegitimateReasons:
         assert "high-vol" in d_warnings[0]
         # Must NOT show the A/C rate note for Setup D
         assert "4.8 setups/mo" not in d_warnings[0]
+
+    def test_is_legitimate_before_window(self):
+        assert _mod._is_legitimate_no_setup("before_window(3m<10)") is True
 
     def test_is_legitimate_vol_below_gate(self):
         assert _mod._is_legitimate_no_setup("vol_below_gate(0.80<1.00)") is True
