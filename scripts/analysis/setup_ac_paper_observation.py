@@ -424,19 +424,31 @@ def _build_early_warnings(
     today = now_kst().date()
     days_observed = max(1, (today - since).days + 1)
 
-    # Build a name→reason lookup from eval snapshots for the 0-trade classifier.
-    reason_by_name: dict[str, str] = {}
+    # Build a name→(outcome, reason) lookup from eval snapshots for the
+    # 0-trade classifier.  Outcome must be checked first: when a setup fired a
+    # signal the reason field carries the direction ("short"/"long"), not a
+    # rejection reason, so the existing three-way reject logic must not run.
+    eval_by_name: dict[str, tuple[str, str]] = {}
     if eval_snapshots:
         for snap in eval_snapshots:
-            reason_by_name[snap.name] = snap.reason
+            eval_by_name[snap.name] = (snap.outcome, snap.reason)
 
     for name, s in stats.items():
         display = _setup_display(name)
         short = display.short_label
 
         if s.trade_count == 0:
-            reason = reason_by_name.get(name, "")
-            if not reason:
+            outcome, reason = eval_by_name.get(name, ("", ""))
+            if outcome == "fired":
+                # Setup fired a signal but no closed trade exists yet.  The
+                # position may be open, or the ledger window doesn't include
+                # the close.  This is NOT suppression.
+                warnings.append(
+                    f"{short}: latest eval FIRED ({reason}) with 0 closed trades "
+                    f"over {days_observed} day(s) — "
+                    "position may be open or close not yet recorded; monitor"
+                )
+            elif not reason:
                 # No eval data at all — cannot confirm the strategy is evaluating.
                 warnings.append(
                     f"{short}: 0 trades over {days_observed} day(s) — "

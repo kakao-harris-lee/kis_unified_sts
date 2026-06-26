@@ -765,3 +765,113 @@ class TestRegressionAC:
     def test_setups_tuple_has_three_entries(self):
         assert len(_mod.SETUPS) == 3
         assert SETUP_D in _mod.SETUPS
+
+
+# ---------------------------------------------------------------------------
+# Fired-outcome 0-trade early-warning (outcome-aware classification)
+# ---------------------------------------------------------------------------
+
+
+class TestFiredOutcomeZeroTrades:
+    """When outcome=='fired' and trade_count==0, the warning must say FIRED
+    (position may be open / close not yet recorded) — NOT 'possibly suppressed'.
+    """
+
+    def _warnings_for_fired_setup_d(self, reason: str = "short") -> list[str]:
+        snap_a = _mod.SetupEvalSnapshot(
+            name=SETUP_A, outcome="reject", reason="outside_time_window", ts_kst=""
+        )
+        snap_c = _mod.SetupEvalSnapshot(
+            name=SETUP_C, outcome="reject", reason="outside_time_window", ts_kst=""
+        )
+        snap_d = _mod.SetupEvalSnapshot(
+            name=SETUP_D, outcome="fired", reason=reason, ts_kst="2026-06-26T18:41:00"
+        )
+        return _mod._build_early_warnings(
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=3),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=2),
+                SETUP_D: _mod.SetupStats(name=SETUP_D, trade_count=0),
+            },
+            since=date(2026, 6, 21),
+            fast_stopout_minutes=30,
+            catastrophic_loss_pct=-3.0,
+            eval_snapshots=[snap_a, snap_c, snap_d],
+        )
+
+    def test_fired_short_produces_fired_info_not_suppressed(self):
+        """Production bug: Setup D fired a short with 0 closed trades.
+        The warning must not say 'possibly suppressed'."""
+        warnings = self._warnings_for_fired_setup_d(reason="short")
+        d_warnings = [w for w in warnings if "D" in w and "0" in w]
+        assert len(d_warnings) == 1
+        w = d_warnings[0]
+        # Must mention FIRED / fired
+        assert "FIRED" in w or "fired" in w
+        # Must NOT say 'possibly suppressed'
+        assert "possibly suppressed" not in w
+
+    def test_fired_long_produces_fired_info_not_suppressed(self):
+        """Same check with direction='long'."""
+        warnings = self._warnings_for_fired_setup_d(reason="long")
+        d_warnings = [w for w in warnings if "D" in w and "0" in w]
+        assert len(d_warnings) == 1
+        w = d_warnings[0]
+        assert "FIRED" in w or "fired" in w
+        assert "possibly suppressed" not in w
+
+    def test_fired_warning_mentions_monitor(self):
+        """Fired 0-trade warning should include 'monitor' guidance."""
+        warnings = self._warnings_for_fired_setup_d(reason="short")
+        d_warnings = [w for w in warnings if "D" in w and "0" in w]
+        assert any("monitor" in w.lower() for w in d_warnings)
+
+    # ------------------------------------------------------------------
+    # Regression: reject-outcome paths must be unchanged
+    # ------------------------------------------------------------------
+
+    def test_regression_reject_llm_veto_still_suppressed(self):
+        """outcome='reject', reason='llm_veto:...' must still say 'possibly suppressed'."""
+        snap_d = _mod.SetupEvalSnapshot(
+            name=SETUP_D, outcome="reject", reason="llm_veto:bearish", ts_kst=""
+        )
+        warnings = _mod._build_early_warnings(
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=3),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=3),
+                SETUP_D: _mod.SetupStats(name=SETUP_D, trade_count=0),
+            },
+            since=date(2026, 6, 21),
+            fast_stopout_minutes=30,
+            catastrophic_loss_pct=-3.0,
+            eval_snapshots=[snap_d],
+        )
+        d_warnings = [w for w in warnings if "D" in w and "0 trades" in w]
+        assert len(d_warnings) == 1
+        assert "possibly suppressed" in d_warnings[0]
+        assert "fired" not in d_warnings[0].lower()
+
+    def test_regression_reject_legitimate_selectivity_still_expected(self):
+        """outcome='reject', reason='vol_below_gate(0.8<1.0)' must still say 'expected'."""
+        snap_d = _mod.SetupEvalSnapshot(
+            name=SETUP_D,
+            outcome="reject",
+            reason="vol_below_gate(0.8<1.0)",
+            ts_kst="",
+        )
+        warnings = _mod._build_early_warnings(
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=3),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=3),
+                SETUP_D: _mod.SetupStats(name=SETUP_D, trade_count=0),
+            },
+            since=date(2026, 6, 21),
+            fast_stopout_minutes=30,
+            catastrophic_loss_pct=-3.0,
+            eval_snapshots=[snap_d],
+        )
+        d_warnings = [w for w in warnings if "D" in w and "0 trades" in w]
+        assert len(d_warnings) == 1
+        assert "expected" in d_warnings[0]
+        assert "possibly suppressed" not in d_warnings[0]
+        assert "fired" not in d_warnings[0].lower()
