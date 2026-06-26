@@ -430,8 +430,9 @@ _BUILTIN_ENTRY_COMPONENTS: BuiltinComponentTable = (
         (
             ("setup_a_gap_reversion", "SetupAEntryAdapter"),
             ("setup_c_event_reaction", "SetupCEntryAdapter"),
+            ("setup_d_vwap_reversion", "SetupDEntryAdapter"),
         ),
-        "Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter)",
+        "Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter, SetupDEntryAdapter)",
     ),
     (
         "shared.strategy.entry.vr_composite",

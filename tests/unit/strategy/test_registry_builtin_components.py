@@ -29,6 +29,7 @@ EXPECTED_ENTRY_NAMES = {
     "pattern_pullback",
     "setup_a_gap_reversion",
     "setup_c_event_reaction",
+    "setup_d_vwap_reversion",
     "vr_composite",
 }
 

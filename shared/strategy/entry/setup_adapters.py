@@ -315,6 +315,80 @@ class SetupAEntryConfig(ServiceConfigBase):
     )
 
 
+class SetupDEntryConfig(ServiceConfigBase):
+    """Configuration for :class:`SetupDEntryAdapter`.
+
+    Mirrors :class:`~shared.decision.setups.vwap_reversion.SetupDConfig` field
+    names 1:1 so the adapter is driven purely from
+    ``config/strategies/futures/setup_d_vwap_reversion.yaml`` without referencing
+    the decision-engine config file. Setup D is a self-contained indicator setup
+    (no macro/event/LLM inputs), so this config intentionally has no
+    ``llm_tuning`` / ``forecast_integration`` / ``daily_bias`` sections — keeping
+    it thin (DRY: no dead config knobs).
+    """
+
+    _default_config_file: ClassVar[str] = (
+        "strategies/futures/setup_d_vwap_reversion.yaml"
+    )
+    _default_section: ClassVar[str] = "strategy.entry.params"
+
+    enabled: bool = Field(default=True, description="Enable/disable the adapter")
+    valid_minutes_min: int = Field(
+        default=15, description="Earliest minutes after open to fire (skip auction)"
+    )
+    no_entry_after_minutes_since_open: int = Field(
+        default=345,
+        description="No new entries after this many minutes since 09:00 KST (345=14:45)",
+    )
+    min_atr_ratio: float = Field(
+        default=0.9,
+        description="High-vol gate: atr_14 >= min_atr_ratio × causal vol reference",
+    )
+    vol_window_bars: int = Field(
+        default=780,
+        description="Causal trailing window (bars) for the self-computed vol reference",
+    )
+    vol_warmup_bars: int = Field(
+        default=120,
+        description="Min past-ATR observations before the high-vol gate activates",
+    )
+    vol_percentile: float = Field(
+        default=90.0,
+        description="Percentile of the causal ATR window used as the vol reference",
+    )
+    extreme_atr_mult: float = Field(
+        default=1.8,
+        description="Fade trigger: |(price-vwap)/atr_14| must reach this many ATRs",
+    )
+    stall_buffer_atr_mult: float = Field(
+        default=1.0,
+        description="Trend-day guard: spike must be within this many ATRs of 15-min extreme",
+    )
+    stop_atr_mult: float = Field(
+        default=1.5, description="Hard stop = entry ± stop_atr_mult × ATR14"
+    )
+    min_reward_risk: float = Field(
+        default=1.0, description="Floor on reward/risk of the VWAP-revert target"
+    )
+    signal_ttl_minutes: int = Field(
+        default=10, description="Signal validity window in minutes"
+    )
+    range_window_bars: int = Field(
+        default=15,
+        description="Prior closes used for the self-computed recent-range (stall guard)",
+    )
+    range_warmup_bars: int = Field(
+        default=5,
+        description="Min prior closes before the stall guard activates",
+    )
+    extension_conf_scale: float = Field(
+        default=0.3, description="Confidence slope per extra ATR of extension"
+    )
+    vol_conf_scale: float = Field(
+        default=0.3, description="Confidence slope per unit of vol_ratio above gate"
+    )
+
+
 class SetupCEntryConfig(ServiceConfigBase):
     """Configuration for :class:`SetupCEntryAdapter`.
 
@@ -1354,6 +1428,161 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
             strategy_name=self.name,
             timestamp=ts,
             confidence_override=confidence_override,
+            entry_atr=_atr_14,
+        )
+
+
+class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
+    """EntrySignalGenerator adapter wrapping :class:`SetupDVWAPReversion`.
+
+    Bridges the ``TradingOrchestrator`` entry pipeline to the Thesis-A high-vol
+    intraday VWAP-reversion logic (Setup D) without duplicating any threshold or
+    business logic.
+
+    Registered as ``"setup_d_vwap_reversion"`` in
+    :func:`register_builtin_components`.
+
+    Unlike Setup A/C, Setup D consumes no macro / event / LLM context — it fades
+    ATR-scaled VWAP extremes on volatile intraday bars. The adapter therefore has
+    no LLM-tuning / veto / forecast / daily-bias gating; it only optionally
+    applies a :class:`RegimeGate` (P2-③ pattern) when ``gate_cfg`` is supplied,
+    keeping the entry path consistent with Setup A/C wiring.
+    """
+
+    CONFIG_CLASS = SetupDEntryConfig
+
+    def __init__(
+        self,
+        config: SetupDEntryConfig,
+        gate_cfg: GateConfig | None = None,
+    ) -> None:
+        super().__init__(config)
+        from shared.decision.setups.vwap_reversion import (
+            SetupDConfig,
+            SetupDVWAPReversion,
+        )
+
+        # Build a SetupDConfig from our config fields (mirrors field names 1:1).
+        setup_cfg = SetupDConfig(
+            enabled=config.enabled,
+            valid_minutes_min=config.valid_minutes_min,
+            no_entry_after_minutes_since_open=config.no_entry_after_minutes_since_open,
+            min_atr_ratio=config.min_atr_ratio,
+            vol_window_bars=config.vol_window_bars,
+            vol_warmup_bars=config.vol_warmup_bars,
+            vol_percentile=config.vol_percentile,
+            extreme_atr_mult=config.extreme_atr_mult,
+            stall_buffer_atr_mult=config.stall_buffer_atr_mult,
+            stop_atr_mult=config.stop_atr_mult,
+            min_reward_risk=config.min_reward_risk,
+            signal_ttl_minutes=config.signal_ttl_minutes,
+            range_window_bars=config.range_window_bars,
+            range_warmup_bars=config.range_warmup_bars,
+            extension_conf_scale=config.extension_conf_scale,
+            vol_conf_scale=config.vol_conf_scale,
+        )
+        self._setup = SetupDVWAPReversion(config=setup_cfg)
+        self._gate_cfg = gate_cfg
+
+    def _validate_config(self) -> None:
+        """Validate config fields.
+
+        Raises:
+            AssertionError: When any numeric param is out of valid range.
+        """
+        assert (
+            0
+            <= self.config.valid_minutes_min
+            < self.config.no_entry_after_minutes_since_open
+        ), "valid_minutes_min must be >= 0 and < no_entry_after_minutes_since_open"
+        assert self.config.min_atr_ratio >= 0.0, "min_atr_ratio must be >= 0"
+        assert self.config.extreme_atr_mult > 0.0, "extreme_atr_mult must be > 0"
+        assert (
+            self.config.stall_buffer_atr_mult >= 0.0
+        ), "stall_buffer_atr_mult must be >= 0"
+        assert self.config.stop_atr_mult > 0.0, "stop_atr_mult must be > 0"
+        assert self.config.min_reward_risk > 0.0, "min_reward_risk must be > 0"
+        assert self.config.signal_ttl_minutes > 0, "signal_ttl_minutes must be > 0"
+
+    @property
+    def name(self) -> str:
+        """Strategy registry name."""
+        return "setup_d_vwap_reversion"
+
+    @property
+    def required_indicators(self) -> list[str]:
+        """Indicators needed by Setup D.
+
+        Setup D requires only ATR and the session VWAP (both populated on the
+        MarketContext by the orchestrator / replay). Two references are
+        self-computed by the setup from the per-bar inputs, so they are NOT
+        required external indicators: the high-vol reference (from per-bar ATR)
+        and the recent price range used by the stall guard (from per-bar close).
+        Neither ``atr_90th_percentile`` nor ``last_15min_high/low`` has a live
+        producer in the orchestrator path, which is why they are not depended on.
+        """
+        return ["atr", "vwap"]
+
+    async def generate(self, context: EntryContext) -> OrchestratorSignal | None:
+        """Generate an entry signal by delegating to :class:`SetupDVWAPReversion`.
+
+        Args:
+            context: Orchestrator entry context for the current tick.
+
+        Returns:
+            A tz-aware UTC :class:`shared.models.signal.Signal` when Setup D
+            fires (and passes the optional RegimeGate), or ``None`` otherwise.
+        """
+        mc = _build_market_context(context)
+        if mc is None:
+            logger.debug("SetupDEntryAdapter: unable to build MarketContext — skipping")
+            _publish_setup_eval(self.name, "reject", "no_market_context")
+            return None
+
+        decision_signal = self._setup.check(mc)
+        if decision_signal is None:
+            _publish_setup_eval(
+                self.name, "reject", self._setup.last_reject_reason or "setup_rejected"
+            )
+            return None
+
+        ts = context.timestamp
+        if ts is None:
+            ts = datetime.now(UTC)
+
+        # Optional RegimeGate check (consistent with Setup A/C wiring).
+        if self._gate_cfg is not None:
+            _redis, _event_reader = acquire_infra_clients()
+            if _redis is not None:
+                blocked = apply_regime_gate(
+                    gate_cfg=self._gate_cfg,
+                    decision_signal=decision_signal,
+                    context=context,
+                    strategy_name=self.name,
+                    redis=_redis,
+                    event_reader=_event_reader,
+                )
+                if blocked:
+                    _publish_setup_eval(self.name, "reject", "regime_gate_blocked")
+                    return None
+
+        _publish_setup_eval(self.name, "fired", decision_signal.direction)
+        md = context.market_data or {}
+        _atr_14 = 0.0
+        for _atr_key in ("atr", "atr_14", "atr14"):
+            _v = md.get(_atr_key)
+            if _v is not None:
+                try:
+                    _f = float(_v)
+                    if _f > 0:
+                        _atr_14 = _f
+                        break
+                except (TypeError, ValueError):
+                    pass
+        return _decision_signal_to_orchestrator_signal(
+            decision_signal,
+            strategy_name=self.name,
+            timestamp=ts,
             entry_atr=_atr_14,
         )
 
