@@ -93,7 +93,9 @@ def _env_int(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class LLMDiscoverySignalConfig:
-    enabled: bool = True
+    # Ships disabled by default (operator opt-in via env var).
+    # Set STOCK_LLM_DISCOVERY_SIGNALS_ENABLED=true to activate.
+    enabled: bool = False
     strategy_name: str = "llm_discovered"
     min_llm_quality: float = 0.5
     min_llm_confidence: float = 0.8
@@ -104,7 +106,9 @@ class LLMDiscoverySignalConfig:
     @classmethod
     def from_env(cls) -> LLMDiscoverySignalConfig:
         return cls(
-            enabled=_env_bool("STOCK_LLM_DISCOVERY_SIGNALS_ENABLED", True),
+            # Opt-in gate: default False — set STOCK_LLM_DISCOVERY_SIGNALS_ENABLED=true
+            # to enable LLM-discovery signal emission from the stock strategy daemon.
+            enabled=_env_bool("STOCK_LLM_DISCOVERY_SIGNALS_ENABLED", False),
             strategy_name=os.getenv(
                 "STOCK_LLM_DISCOVERY_STRATEGY", "llm_discovered"
             ).strip()
@@ -175,7 +179,11 @@ class StockStrategyDaemon:
         # (e.g. momentum_breakout) see the same shape the orchestrator provides.
         self._watchlist: dict[str, Any] = {}
         self._trade_targets_payload: dict[str, Any] = {}
-        self._llm_last_published: dict[str, float] = {}
+        # Redis hash key for LLM-discovery cooldown (symbol → last_published_epoch).
+        # Persisted to Redis DB1 so daemon restarts honour the 24h cooldown.
+        # In-memory fast-path kept as _llm_last_published_cache; Redis is source of truth.
+        self._llm_cooldown_key = "stock:daemon:llm_cooldown"
+        self._llm_last_published_cache: dict[str, float] = {}
         self._stop = asyncio.Event()
 
     async def _apply_watchlist(self, raw: Any) -> None:
@@ -452,17 +460,52 @@ class StockStrategyDaemon:
             if quality is None or quality < cfg.min_llm_quality:
                 continue
 
+            # NOTE on the confidence gate: for LLM-only symbols the fused
+            # ``llm_confidence`` is typically 1.0 (no screener risk flags elevate
+            # the penalty), so ``min_llm_confidence`` is a weak filter here.
+            # ``min_llm_quality`` is the operative gate for LLM-only admissions.
+            # The missing-confidence → 1.0 default is intentional best-effort
+            # (treats no risk-flag information as full confidence).
             confidence = self._as_float(metadata.get("llm_confidence"))
             if confidence is None:
                 confidence = 1.0
             if confidence < cfg.min_llm_confidence:
                 continue
 
-            last_published = self._llm_last_published.get(symbol)
-            if (
-                last_published is not None
-                and now_ts - last_published < cfg.cooldown_seconds
-            ):
+            # Cooldown check — Redis-backed so a daemon restart does not reset
+            # the 24h cooldown and cause duplicate emissions for the same symbol.
+            # Redis DB1 hash stock:daemon:llm_cooldown maps symbol → epoch float.
+            # In-memory cache is a fast-path for the same process; Redis is the
+            # source of truth (survives restarts).
+            in_cooldown = False
+            try:
+                stored_raw = await self.redis.hget(self._llm_cooldown_key, symbol)
+                if stored_raw is not None:
+                    stored_ts = float(stored_raw)
+                    if now_ts - stored_ts < cfg.cooldown_seconds:
+                        in_cooldown = True
+                    else:
+                        # Stale entry in Redis — also clear local cache
+                        self._llm_last_published_cache.pop(symbol, None)
+                elif symbol in self._llm_last_published_cache:
+                    # Local cache hit (same process, Redis missed write earlier)
+                    if (
+                        now_ts - self._llm_last_published_cache[symbol]
+                        < cfg.cooldown_seconds
+                    ):
+                        in_cooldown = True
+            except Exception:
+                # Redis read failed — fall back to in-memory cache (best-effort).
+                # Log at warning so ops can diagnose but do NOT crash the loop.
+                logger.warning(
+                    "llm cooldown redis read failed for symbol=%s; using in-memory fallback",
+                    symbol,
+                    exc_info=True,
+                )
+                cached = self._llm_last_published_cache.get(symbol)
+                if cached is not None and now_ts - cached < cfg.cooldown_seconds:
+                    in_cooldown = True
+            if in_cooldown:
                 continue
 
             price = self._llm_reference_price(symbol, metadata, scanner_indicators)
@@ -500,7 +543,23 @@ class StockStrategyDaemon:
             )
 
             await self._publish(signal)
-            self._llm_last_published[symbol] = now_ts
+            # Persist cooldown to Redis (source of truth) and local cache.
+            # TTL on the hash is refreshed to cooldown_seconds so stale entries
+            # self-expire if the daemon stops emitting for a symbol.
+            self._llm_last_published_cache[symbol] = now_ts
+            try:
+                await self.redis.hset(self._llm_cooldown_key, symbol, str(now_ts))
+                await self.redis.expire(
+                    self._llm_cooldown_key,
+                    int(cfg.cooldown_seconds) + 60,
+                )
+            except Exception:
+                logger.warning(
+                    "llm cooldown redis write failed for symbol=%s; "
+                    "in-memory fallback active until restart",
+                    symbol,
+                    exc_info=True,
+                )
             self._eval_record(
                 evaluator,
                 cfg.strategy_name,

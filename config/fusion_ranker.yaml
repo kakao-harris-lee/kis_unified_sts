@@ -13,7 +13,9 @@ redis_keys:
 ranking:
   interval_seconds: 15
   top_n: 30
-  llm_only_top_n: 5
+  # Opt-in: set >0 to admit LLM-only high-quality symbols into the fused targets.
+  # Default 0 = dormant (no LLM-only admissions until operator enables).
+  llm_only_top_n: 0
 
 weights:
   realtime: 0.50
