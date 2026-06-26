@@ -24,7 +24,6 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY shared/ ./shared/
-COPY domains/ ./domains/
 COPY services/ ./services/
 COPY cli/ ./cli/
 
