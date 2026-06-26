@@ -13,6 +13,7 @@ redis_keys:
 ranking:
   interval_seconds: 15
   top_n: 30
+  llm_only_top_n: 5
 
 weights:
   realtime: 0.50
@@ -29,4 +30,5 @@ llm_adjustments:
   risk_penalty_per_hit: 0.08
   final_bonus: 0.12
   min_quality: 0.0
+  llm_only_min_quality: 0.5
   block_negative: true

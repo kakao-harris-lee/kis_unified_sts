@@ -7,7 +7,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from services.stock_strategy.daemon import StockStrategyDaemon
+from services.stock_strategy.daemon import LLMDiscoverySignalConfig, StockStrategyDaemon
+from services.stock_strategy.universe import _SCREENER_PAYLOAD_KEY
 from shared.models.signal import Signal
 from shared.streaming.stock_regime import StockRegimeConfig
 
@@ -617,6 +618,98 @@ async def test_empty_strategy_list_is_not_daily_gated():
 
 def _scanner_payload(indicators):
     return json.dumps({"indicators": indicators})
+
+
+@pytest.mark.asyncio
+async def test_llm_discovered_target_publishes_without_technical_warmth():
+    """LLM-only trade targets can emit candidates without strategy warmup data."""
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 111700.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(
+            min_llm_quality=0.5,
+            min_llm_confidence=0.8,
+            max_per_cycle=5,
+            cooldown_seconds=86400.0,
+        ),
+    )
+
+    await daemon._apply_watchlist(
+        {
+            "strategies": {"_screener_trade_targets": ["080220"]},
+            _SCREENER_PAYLOAD_KEY: {
+                "codes": ["080220"],
+                "names": {"080220": "제주반도체"},
+                "scores": {"080220": 0.62},
+                "metadata": {
+                    "080220": {
+                        "llm_quality": 0.61859,
+                        "llm_confidence": 1.0,
+                        "llm_effective_quality": 0.61859,
+                        "llm_only": True,
+                        "entry_price": 112900.0,
+                        "stop_loss": 104997.0,
+                        "take_profit": 126448.0,
+                    }
+                },
+            },
+        }
+    )
+
+    published = await daemon.evaluate_once()
+
+    assert published == 1
+    stream, fields = redis.added[0]
+    assert stream == "signal.candidate.stock.shadow"
+    assert fields["code"] == "080220"
+    assert fields["name"] == "제주반도체"
+    assert fields["strategy"] == "llm_discovered"
+    assert fields["price"] == "112900.0"
+    assert fields["confidence"] == "1.0"
+    metadata = json.loads(fields["metadata_json"])
+    assert metadata["source"] == "trade_targets_llm"
+    assert metadata["llm_quality"] == 0.61859
+    assert metadata["llm_only"] is True
+    assert metadata["stop_loss"] == 104997.0
+    assert metadata["take_profit"] == 126448.0
+
+
+@pytest.mark.asyncio
+async def test_llm_discovered_target_respects_cooldown():
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 111700.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(cooldown_seconds=86400.0),
+    )
+    await daemon._apply_watchlist(
+        {
+            "strategies": {"_screener_trade_targets": ["080220"]},
+            _SCREENER_PAYLOAD_KEY: {
+                "codes": ["080220"],
+                "names": {"080220": "제주반도체"},
+                "metadata": {
+                    "080220": {
+                        "llm_quality": 0.9,
+                        "llm_confidence": 1.0,
+                    }
+                },
+            },
+        }
+    )
+
+    assert await daemon.evaluate_once() == 1
+    assert await daemon.evaluate_once() == 0
+    assert len(redis.added) == 1
 
 
 @pytest.mark.asyncio

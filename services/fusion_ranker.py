@@ -72,6 +72,11 @@ class FusionRankerConfig(ServiceConfigBase):
         default=30,
         description="Number of top targets to publish",
     )
+    llm_only_top_n: int = Field(
+        default=5,
+        ge=0,
+        description="Number of LLM-only high-quality symbols to admit per cycle",
+    )
 
     # Fusion weights
     weight_realtime: float = Field(
@@ -117,6 +122,10 @@ class FusionRankerConfig(ServiceConfigBase):
     min_llm_quality: float = Field(
         default=0.0,
         description="Minimum LLM quality threshold",
+    )
+    llm_only_min_quality: float = Field(
+        default=0.5,
+        description="Minimum LLM quality for LLM-only target admission",
     )
     block_negative: bool = Field(
         default=True,
@@ -173,6 +182,7 @@ class FusionRankerConfig(ServiceConfigBase):
             # Ranking
             "interval_seconds": ranking.get("interval_seconds"),
             "top_n": ranking.get("top_n"),
+            "llm_only_top_n": ranking.get("llm_only_top_n"),
             # Weights
             "weight_realtime": weights.get("realtime"),
             "weight_llm": weights.get("llm"),
@@ -186,6 +196,7 @@ class FusionRankerConfig(ServiceConfigBase):
             "llm_risk_penalty_per_hit": llm_adj.get("risk_penalty_per_hit"),
             "llm_final_bonus": llm_adj.get("final_bonus"),
             "min_llm_quality": llm_adj.get("min_quality"),
+            "llm_only_min_quality": llm_adj.get("llm_only_min_quality"),
             "block_negative": llm_adj.get("block_negative"),
         }
 
@@ -280,9 +291,14 @@ class FusionRanker:
 
         return codes, scores, names, metadata
 
-    def _extract_llm(
-        self, payload: dict[str, Any]
-    ) -> tuple[dict[str, float], dict[str, list[str]], set[str], dict[str, str], str]:
+    def _extract_llm(self, payload: dict[str, Any]) -> tuple[
+        dict[str, float],
+        dict[str, list[str]],
+        set[str],
+        dict[str, str],
+        str,
+        dict[str, dict[str, Any]],
+    ]:
         quality_raw = payload.get("quality", {})
         quality = (
             {
@@ -331,7 +347,14 @@ class FusionRanker:
         )
 
         snapshot_id = str(payload.get("snapshot_id", "")).strip()
-        return quality, risk_flags, excluded, names, snapshot_id
+        metadata_raw = payload.get("metadata", {})
+        metadata: dict[str, dict[str, Any]] = {}
+        if isinstance(metadata_raw, dict):
+            for k, v in metadata_raw.items():
+                if isinstance(k, str) and isinstance(v, dict):
+                    metadata[k] = dict(v)
+
+        return quality, risk_flags, excluded, names, snapshot_id, metadata
 
     @staticmethod
     def _extract_swing_score(metadata: dict[str, Any]) -> float:
@@ -369,6 +392,40 @@ class FusionRanker:
         if not isinstance(indicators, dict):
             return set()
         return {str(code).strip() for code in indicators if str(code).strip()}
+
+    def _select_llm_only_codes(
+        self,
+        llm_quality: dict[str, float],
+        *,
+        realtime_codes: list[str],
+        final_codes: list[str],
+        excluded: set[str],
+    ) -> list[str]:
+        """Return high-quality LLM-only candidates not already in realtime/final.
+
+        ``final_codes`` remains the strongest LLM selection signal. This helper
+        adds the next-best LLM quality names so an LLM-discovered symbol with
+        daily coverage can reach the trading pipeline even when the realtime
+        screener did not rank it yet.
+        """
+        limit = max(0, int(self.config.llm_only_top_n))
+        if limit <= 0:
+            return []
+
+        existing = set(realtime_codes) | set(final_codes)
+        ranked = sorted(llm_quality.items(), key=lambda item: item[1], reverse=True)
+        selected: list[str] = []
+        for code, quality in ranked:
+            if code in existing:
+                continue
+            if self.config.block_negative and code in excluded:
+                continue
+            if float(quality) < float(self.config.llm_only_min_quality):
+                continue
+            selected.append(code)
+            if len(selected) >= limit:
+                break
+        return selected
 
     @staticmethod
     def _apply_daily_indicator_coverage(
@@ -413,20 +470,26 @@ class FusionRanker:
 
     def run_once(self) -> bool:
         realtime_payload = _parse_json(self.redis.get(self.config.realtime_key))
-        if not realtime_payload:
-            logger.debug("Fusion skipped: realtime universe not available")
-            return False
-
         llm_payload = _parse_json(self.redis.get(self.config.llm_quality_key))
+        if not realtime_payload and not llm_payload:
+            logger.debug(
+                "Fusion skipped: realtime universe and LLM snapshot unavailable"
+            )
+            return False
 
         realtime_codes, realtime_scores, realtime_names, realtime_metadata = (
             self._extract_realtime(realtime_payload)
         )
-        llm_quality, llm_risk_flags, llm_excluded, llm_names, llm_snapshot_id = (
-            self._extract_llm(llm_payload)
-        )
+        (
+            llm_quality,
+            llm_risk_flags,
+            llm_excluded,
+            llm_names,
+            llm_snapshot_id,
+            llm_metadata,
+        ) = self._extract_llm(llm_payload)
 
-        if not realtime_codes:
+        if not realtime_codes and not llm_quality:
             return False
 
         now = time.time()
@@ -437,7 +500,14 @@ class FusionRanker:
         llm_final = llm_payload.get("final_codes", [])
         llm_final_codes = [str(c).strip() for c in llm_final if str(c).strip()]
         llm_final_set = set(llm_final_codes)
-        union = list(dict.fromkeys(realtime_codes + llm_final_codes))
+        llm_only_codes = self._select_llm_only_codes(
+            llm_quality,
+            realtime_codes=realtime_codes,
+            final_codes=llm_final_codes,
+            excluded=llm_excluded,
+        )
+        llm_only_set = set(llm_only_codes)
+        union = list(dict.fromkeys(realtime_codes + llm_final_codes + llm_only_codes))
 
         llm_generated_at = self._parse_generated_at(llm_payload)
         llm_age_seconds = None
@@ -485,6 +555,7 @@ class FusionRanker:
                     code,
                     round(final_score, 6),
                     {
+                        **llm_metadata.get(code, {}),
                         "realtime_score": round(rt, 6),
                         "llm_quality": round(lq, 6),
                         "llm_effective_quality": round(effective_lq, 6),
@@ -499,6 +570,8 @@ class FusionRanker:
                         "recency_component": round(rec, 6),
                         "swing_discovery_score": round(swing_score, 6),
                         "risk_flags": risk_hits,
+                        "llm_only": code in llm_only_set,
+                        "llm_final": code in llm_final_set,
                     },
                 )
             )
@@ -534,6 +607,8 @@ class FusionRanker:
                 "daily_indicators_key": self.config.daily_indicators_key,
                 "daily_indicator_coverage": coverage_stats,
                 "coverage_filtered_count": coverage_stats["coverage_filtered_count"],
+                "llm_only_top_n": self.config.llm_only_top_n,
+                "llm_only_min_quality": self.config.llm_only_min_quality,
                 "weights": {
                     "realtime": self.config.weight_realtime,
                     "llm": self.config.weight_llm,
