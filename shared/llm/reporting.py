@@ -117,10 +117,7 @@ def _stock_empty_message(stock_analysis: dict[str, Any] | None) -> str:
         "no_candidates_after_analysis": "개별 분석 통과 후보 없음",
         "no_candidates_after_final_filters": "최종 점수 필터 통과 후보 없음",
     }
-    return (
-        "⚠️ <b>주식 추천 없음</b>\n"
-        f"{reason_labels.get(reason, reason)}"
-    )
+    return "⚠️ <b>주식 추천 없음</b>\n" f"{reason_labels.get(reason, reason)}"
 
 
 # ------------------------------------------------------------------
@@ -174,6 +171,7 @@ def build_llm_quality_snapshot(
     quality = _build_quality_scores(screening_scores)
     excluded_map = _build_excluded_map(stock_analysis)
     names = _build_plan_names(stock_plans)
+    metadata = _build_plan_metadata(stock_plans)
     final_codes = [p.code for p in stock_plans]
 
     return {
@@ -186,6 +184,7 @@ def build_llm_quality_snapshot(
         "risk_flags": risk_flags,
         "excluded": excluded_map,
         "names": names,
+        "metadata": metadata,
     }
 
 
@@ -216,13 +215,14 @@ def _collect_screening_scores(
 def _build_quality_scores(screening_scores: dict[str, float]) -> dict[str, float]:
     if not screening_scores:
         return {}
+    if len(screening_scores) == 1:
+        code = next(iter(screening_scores))
+        return {code: 1.0}
 
     min_score = min(screening_scores.values())
     max_score = max(screening_scores.values())
     span = max(max_score - min_score, 1e-9)
-    return {
-        c: round((s - min_score) / span, 6) for c, s in screening_scores.items()
-    }
+    return {c: round((s - min_score) / span, 6) for c, s in screening_scores.items()}
 
 
 def _build_excluded_map(stock_analysis: dict[str, Any]) -> dict[str, list[str]]:
@@ -237,6 +237,23 @@ def _build_excluded_map(stock_analysis: dict[str, Any]) -> dict[str, list[str]]:
 
 def _build_plan_names(stock_plans: list[StockTradingPlan]) -> dict[str, str]:
     return {p.code: p.name for p in stock_plans}
+
+
+def _build_plan_metadata(
+    stock_plans: list[StockTradingPlan],
+) -> dict[str, dict[str, Any]]:
+    return {
+        p.code: {
+            "llm_plan_strategy": p.strategy,
+            "entry_price": p.entry_price,
+            "stop_loss": p.stop_loss,
+            "take_profit": p.take_profit,
+            "position_size": p.position_size,
+            "plan_confidence": p.confidence,
+            "news_sentiment": p.news_sentiment,
+        }
+        for p in stock_plans
+    }
 
 
 def publish_llm_quality_snapshot(
@@ -327,7 +344,9 @@ def _build_training_rows(
             final_codes,
         )
     )
-    rows.extend(_build_training_rows_for_excluded(analyzer, snapshot_id, stock_analysis))
+    rows.extend(
+        _build_training_rows_for_excluded(analyzer, snapshot_id, stock_analysis)
+    )
 
     return rows
 

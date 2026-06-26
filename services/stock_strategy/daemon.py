@@ -18,13 +18,18 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from services.stock_strategy.candidate import stock_signal_to_stream_dict
-from services.stock_strategy.universe import parse_watchlist_codes
+from services.stock_strategy.universe import (
+    _SCREENER_PAYLOAD_KEY,
+    parse_watchlist_codes,
+)
 from shared.models.signal import Signal
 from shared.strategy.base import EntryContext
 from shared.strategy.symbol_strength import compute_strong_symbols
@@ -57,6 +62,67 @@ logger = logging.getLogger(__name__)
 _STREAM_TTL_SECONDS = 86400
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("invalid float env %s=%r; using default=%s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("invalid int env %s=%r; using default=%s", name, raw, default)
+        return default
+
+
+@dataclass(frozen=True)
+class LLMDiscoverySignalConfig:
+    # Ships disabled by default (operator opt-in via env var).
+    # Set STOCK_LLM_DISCOVERY_SIGNALS_ENABLED=true to activate.
+    enabled: bool = False
+    strategy_name: str = "llm_discovered"
+    min_llm_quality: float = 0.5
+    min_llm_confidence: float = 0.8
+    max_per_cycle: int = 5
+    cooldown_seconds: float = 86400.0
+    quantity: int = 1
+
+    @classmethod
+    def from_env(cls) -> LLMDiscoverySignalConfig:
+        return cls(
+            # Opt-in gate: default False — set STOCK_LLM_DISCOVERY_SIGNALS_ENABLED=true
+            # to enable LLM-discovery signal emission from the stock strategy daemon.
+            enabled=_env_bool("STOCK_LLM_DISCOVERY_SIGNALS_ENABLED", False),
+            strategy_name=os.getenv(
+                "STOCK_LLM_DISCOVERY_STRATEGY", "llm_discovered"
+            ).strip()
+            or "llm_discovered",
+            min_llm_quality=_env_float("STOCK_LLM_DISCOVERY_MIN_QUALITY", 0.5),
+            min_llm_confidence=_env_float("STOCK_LLM_DISCOVERY_MIN_CONFIDENCE", 0.8),
+            max_per_cycle=max(0, _env_int("STOCK_LLM_DISCOVERY_MAX_PER_CYCLE", 5)),
+            cooldown_seconds=max(
+                0.0, _env_float("STOCK_LLM_DISCOVERY_COOLDOWN_SECONDS", 86400.0)
+            ),
+            quantity=max(1, _env_int("STOCK_LLM_DISCOVERY_QUANTITY", 1)),
+        )
+
+
 class StockStrategyDaemon:
     def __init__(
         self,
@@ -79,6 +145,7 @@ class StockStrategyDaemon:
         bear_override_config: BearOverrideConfig | None = None,
         daily_indicators_key: str = "system:daily_indicators:latest",
         signal_eval_config: StockSignalEvalConfig | None = None,
+        llm_signal_config: LLMDiscoverySignalConfig | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -105,11 +172,18 @@ class StockStrategyDaemon:
         # (stock:daemon:signal_eval). None / disabled → fully inert; recording
         # and publishing never influence the candidate stream.
         self._signal_eval_config = signal_eval_config
+        self._llm_signal_config = llm_signal_config or LLMDiscoverySignalConfig()
         self._universe: list[str] = []
         # Raw watchlist payload ({"strategies": {...}}) from the last refresh.
         # Injected into EntryContext.metadata so daily-watchlist-gated strategies
         # (e.g. momentum_breakout) see the same shape the orchestrator provides.
         self._watchlist: dict[str, Any] = {}
+        self._trade_targets_payload: dict[str, Any] = {}
+        # Redis hash key for LLM-discovery cooldown (symbol → last_published_epoch).
+        # Persisted to Redis DB1 so daemon restarts honour the 24h cooldown.
+        # In-memory fast-path kept as _llm_last_published_cache; Redis is source of truth.
+        self._llm_cooldown_key = "stock:daemon:llm_cooldown"
+        self._llm_last_published_cache: dict[str, float] = {}
         self._stop = asyncio.Event()
 
     async def _apply_watchlist(self, raw: Any) -> None:
@@ -121,6 +195,12 @@ class StockStrategyDaemon:
         # (daily-watchlist strategy gate). Non-dict payloads → empty dict so
         # those strategies fall back to dynamic mode (bypass the gate).
         self._watchlist = raw if isinstance(raw, dict) else {}
+        payload = (
+            self._watchlist.get(_SCREENER_PAYLOAD_KEY)
+            if isinstance(self._watchlist, dict)
+            else None
+        )
+        self._trade_targets_payload = payload if isinstance(payload, dict) else {}
         self.feed.update_symbols(codes)
         await self._prewarm_cold()
 
@@ -299,6 +379,200 @@ class StockStrategyDaemon:
         }
         return len(decoded & strong)
 
+    @staticmethod
+    def _as_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _llm_reference_price(
+        self,
+        symbol: str,
+        metadata: dict[str, Any],
+        scanner_indicators: dict[str, dict[str, Any]],
+    ) -> float | None:
+        for key in (
+            "reference_price",
+            "entry_price",
+            "current_price",
+            "price",
+            "close",
+            "daily_close",
+        ):
+            price = self._as_float(metadata.get(key))
+            if price is not None and price > 0:
+                return price
+
+        scanner = scanner_indicators.get(symbol)
+        if isinstance(scanner, dict):
+            price = self._as_float(scanner.get("daily_close"))
+            if price is not None and price > 0:
+                return price
+        return None
+
+    async def _publish_llm_discovery_signals(
+        self,
+        *,
+        scanner_indicators: dict[str, dict[str, Any]],
+        now: datetime,
+        evaluator: SignalEvalCollector | None,
+        allowed_codes: set[str] | None = None,
+        excluded_codes: set[str] | None = None,
+    ) -> int:
+        cfg = self._llm_signal_config
+        if not cfg.enabled or cfg.max_per_cycle <= 0:
+            return 0
+
+        payload = self._trade_targets_payload
+        if not payload:
+            return 0
+
+        codes_raw = payload.get("codes", [])
+        metadata_raw = payload.get("metadata", {})
+        names_raw = payload.get("names", {})
+        scores_raw = payload.get("scores", {})
+        if not isinstance(codes_raw, list) or not isinstance(metadata_raw, dict):
+            return 0
+
+        names = names_raw if isinstance(names_raw, dict) else {}
+        scores = scores_raw if isinstance(scores_raw, dict) else {}
+        excluded = excluded_codes or set()
+        published = 0
+        now_ts = now.timestamp()
+
+        for raw_code in codes_raw:
+            symbol = str(raw_code).strip()
+            if not symbol:
+                continue
+            if allowed_codes is not None and symbol not in allowed_codes:
+                continue
+            if symbol in excluded:
+                continue
+
+            metadata = metadata_raw.get(symbol, {})
+            if not isinstance(metadata, dict):
+                continue
+
+            quality = self._as_float(metadata.get("llm_quality"))
+            if quality is None or quality < cfg.min_llm_quality:
+                continue
+
+            # NOTE on the confidence gate: for LLM-only symbols the fused
+            # ``llm_confidence`` is typically 1.0 (no screener risk flags elevate
+            # the penalty), so ``min_llm_confidence`` is a weak filter here.
+            # ``min_llm_quality`` is the operative gate for LLM-only admissions.
+            # The missing-confidence → 1.0 default is intentional best-effort
+            # (treats no risk-flag information as full confidence).
+            confidence = self._as_float(metadata.get("llm_confidence"))
+            if confidence is None:
+                confidence = 1.0
+            if confidence < cfg.min_llm_confidence:
+                continue
+
+            # Cooldown check — Redis-backed so a daemon restart does not reset
+            # the 24h cooldown and cause duplicate emissions for the same symbol.
+            # Redis DB1 hash stock:daemon:llm_cooldown maps symbol → epoch float.
+            # In-memory cache is a fast-path for the same process; Redis is the
+            # source of truth (survives restarts).
+            in_cooldown = False
+            try:
+                stored_raw = await self.redis.hget(self._llm_cooldown_key, symbol)
+                if stored_raw is not None:
+                    stored_ts = float(stored_raw)
+                    if now_ts - stored_ts < cfg.cooldown_seconds:
+                        in_cooldown = True
+                    else:
+                        # Stale entry in Redis — also clear local cache
+                        self._llm_last_published_cache.pop(symbol, None)
+                elif symbol in self._llm_last_published_cache:
+                    # Local cache hit (same process, Redis missed write earlier)
+                    if (
+                        now_ts - self._llm_last_published_cache[symbol]
+                        < cfg.cooldown_seconds
+                    ):
+                        in_cooldown = True
+            except Exception:
+                # Redis read failed — fall back to in-memory cache (best-effort).
+                # Log at warning so ops can diagnose but do NOT crash the loop.
+                logger.warning(
+                    "llm cooldown redis read failed for symbol=%s; using in-memory fallback",
+                    symbol,
+                    exc_info=True,
+                )
+                cached = self._llm_last_published_cache.get(symbol)
+                if cached is not None and now_ts - cached < cfg.cooldown_seconds:
+                    in_cooldown = True
+            if in_cooldown:
+                continue
+
+            price = self._llm_reference_price(symbol, metadata, scanner_indicators)
+            if price is None:
+                continue
+
+            score = self._as_float(scores.get(symbol))
+            signal = Signal(
+                code=symbol,
+                name=str(names.get(symbol, "")),
+                strategy=cfg.strategy_name,
+                price=price,
+                quantity=cfg.quantity,
+                confidence=max(0.0, min(1.0, confidence)),
+                timestamp=now,
+                metadata={
+                    "source": "trade_targets_llm",
+                    "signal_direction": "long",
+                    "llm_quality": quality,
+                    "llm_confidence": confidence,
+                    "llm_effective_quality": metadata.get("llm_effective_quality"),
+                    "llm_snapshot_id": metadata.get("llm_snapshot_id"),
+                    "llm_only": bool(metadata.get("llm_only")),
+                    "llm_final": bool(metadata.get("llm_final")),
+                    "risk_flags": metadata.get("risk_flags", []),
+                    "trade_target_score": score,
+                    "entry_price": metadata.get("entry_price"),
+                    "stop_loss": metadata.get("stop_loss"),
+                    "take_profit": metadata.get("take_profit"),
+                    "position_size": metadata.get("position_size"),
+                    "plan_confidence": metadata.get("plan_confidence"),
+                    "llm_plan_strategy": metadata.get("llm_plan_strategy"),
+                    "reference_price_source": "target_metadata_or_daily_close",
+                },
+            )
+
+            await self._publish(signal)
+            # Persist cooldown to Redis (source of truth) and local cache.
+            # TTL on the hash is refreshed to cooldown_seconds so stale entries
+            # self-expire if the daemon stops emitting for a symbol.
+            self._llm_last_published_cache[symbol] = now_ts
+            try:
+                await self.redis.hset(self._llm_cooldown_key, symbol, str(now_ts))
+                await self.redis.expire(
+                    self._llm_cooldown_key,
+                    int(cfg.cooldown_seconds) + 60,
+                )
+            except Exception:
+                logger.warning(
+                    "llm cooldown redis write failed for symbol=%s; "
+                    "in-memory fallback active until restart",
+                    symbol,
+                    exc_info=True,
+                )
+            self._eval_record(
+                evaluator,
+                cfg.strategy_name,
+                symbol,
+                OUTCOME_SIGNAL,
+                "long",
+            )
+            published += 1
+            if published >= cfg.max_per_cycle:
+                break
+
+        return published
+
     async def evaluate_once(self) -> int:
         """Build context + check_entries per warm symbol; publish. Returns #published."""
         published = 0
@@ -359,6 +633,7 @@ class StockStrategyDaemon:
         # Read the DailyScanner payload once for the whole cycle (not per symbol)
         # so daily-gated strategies see the orchestrator's full daily field set.
         scanner_indicators = await self._load_scanner_daily_indicators()
+        technical_published_symbols: set[str] = set()
         for symbol in list(self._universe):
             try:
                 if is_bear and symbol not in override_codes:
@@ -420,6 +695,7 @@ class StockStrategyDaemon:
                         ),
                     )
                     await self._publish(sig)
+                    technical_published_symbols.add(symbol)
                     published += 1
                 # Classify the non-firing roster strategies for this symbol so
                 # "why 0 signals" is answerable per strategy. Read-only — derived
@@ -429,6 +705,16 @@ class StockStrategyDaemon:
                 )
             except Exception:
                 logger.exception("stock entry eval failed symbol=%s", symbol)
+        try:
+            published += await self._publish_llm_discovery_signals(
+                scanner_indicators=scanner_indicators,
+                now=now,
+                evaluator=evaluator,
+                allowed_codes=override_codes if is_bear else None,
+                excluded_codes=technical_published_symbols,
+            )
+        except Exception:
+            logger.exception("LLM discovery signal publish failed")
         await self._publish_signal_eval(evaluator, now)
         return published
 

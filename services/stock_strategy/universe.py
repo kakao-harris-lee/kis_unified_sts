@@ -80,6 +80,7 @@ def parse_trade_targets_codes(raw: Any, *, max_symbols: int) -> list[str]:
 # watchlist payload. Underscore-prefixed so it can't collide with a real
 # scanner strategy name.
 _SCREENER_GROUP = "_screener_trade_targets"
+_SCREENER_PAYLOAD_KEY = "_screener_trade_targets_payload"
 
 
 def merge_screener_universe(
@@ -104,8 +105,28 @@ def merge_screener_universe(
         except (TypeError, ValueError):
             payload = {}
     strategies = dict(payload.get("strategies") or {})
-    targets = parse_trade_targets_codes(trade_targets_raw, max_symbols=max_symbols)
+    trade_targets_payload: dict[str, Any] = {}
+    if trade_targets_raw:
+        try:
+            decoded_targets = (
+                trade_targets_raw
+                if isinstance(trade_targets_raw, dict)
+                else json.loads(trade_targets_raw)
+            )
+            if isinstance(decoded_targets, dict):
+                trade_targets_payload = dict(decoded_targets)
+        except (TypeError, ValueError):
+            trade_targets_payload = {}
+
+    targets = parse_trade_targets_codes(
+        trade_targets_payload or trade_targets_raw,
+        max_symbols=max_symbols,
+    )
     if targets:
         strategies[_SCREENER_GROUP] = targets
+        # Preserve the fused target metadata for downstream signal generation.
+        # The strategy gate still sees a normal watchlist-shaped payload; the
+        # extra key is ignored by parse_watchlist_codes and daily strategy gates.
+        payload[_SCREENER_PAYLOAD_KEY] = trade_targets_payload
     payload["strategies"] = strategies
     return payload

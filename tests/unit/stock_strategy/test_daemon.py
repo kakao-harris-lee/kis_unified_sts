@@ -7,7 +7,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from services.stock_strategy.daemon import StockStrategyDaemon
+from services.stock_strategy.daemon import LLMDiscoverySignalConfig, StockStrategyDaemon
+from services.stock_strategy.universe import _SCREENER_PAYLOAD_KEY
 from shared.models.signal import Signal
 from shared.streaming.stock_regime import StockRegimeConfig
 
@@ -84,6 +85,7 @@ class _FakeRedis:
     def __init__(self):
         self.added = []
         self.kv = {}
+        self.hashes: dict[str, dict[str, str]] = {}
 
     async def xadd(self, stream, fields, **_kw):
         self.added.append((stream, fields))
@@ -100,6 +102,17 @@ class _FakeRedis:
 
     async def hkeys(self, k):
         return []
+
+    async def hget(self, key, field):
+        return self.hashes.get(key, {}).get(field)
+
+    async def hset(self, key, field=None, value=None, mapping=None, **_kw):
+        bucket = self.hashes.setdefault(key, {})
+        if mapping:
+            bucket.update({str(k): str(v) for k, v in mapping.items()})
+        elif field is not None:
+            bucket[str(field)] = str(value) if value is not None else ""
+        return 1
 
 
 def _daemon(**kw):
@@ -620,6 +633,101 @@ def _scanner_payload(indicators):
 
 
 @pytest.mark.asyncio
+async def test_llm_discovered_target_publishes_without_technical_warmth():
+    """LLM-only trade targets can emit candidates without strategy warmup data."""
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 111700.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(
+            enabled=True,
+            min_llm_quality=0.5,
+            min_llm_confidence=0.8,
+            max_per_cycle=5,
+            cooldown_seconds=86400.0,
+        ),
+    )
+
+    await daemon._apply_watchlist(
+        {
+            "strategies": {"_screener_trade_targets": ["080220"]},
+            _SCREENER_PAYLOAD_KEY: {
+                "codes": ["080220"],
+                "names": {"080220": "제주반도체"},
+                "scores": {"080220": 0.62},
+                "metadata": {
+                    "080220": {
+                        "llm_quality": 0.61859,
+                        "llm_confidence": 1.0,
+                        "llm_effective_quality": 0.61859,
+                        "llm_only": True,
+                        "entry_price": 112900.0,
+                        "stop_loss": 104997.0,
+                        "take_profit": 126448.0,
+                    }
+                },
+            },
+        }
+    )
+
+    published = await daemon.evaluate_once()
+
+    assert published == 1
+    stream, fields = redis.added[0]
+    assert stream == "signal.candidate.stock.shadow"
+    assert fields["code"] == "080220"
+    assert fields["name"] == "제주반도체"
+    assert fields["strategy"] == "llm_discovered"
+    assert fields["price"] == "112900.0"
+    assert fields["confidence"] == "1.0"
+    metadata = json.loads(fields["metadata_json"])
+    assert metadata["source"] == "trade_targets_llm"
+    assert metadata["llm_quality"] == 0.61859
+    assert metadata["llm_only"] is True
+    assert metadata["stop_loss"] == 104997.0
+    assert metadata["take_profit"] == 126448.0
+
+
+@pytest.mark.asyncio
+async def test_llm_discovered_target_respects_cooldown():
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 111700.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(
+            enabled=True, cooldown_seconds=86400.0
+        ),
+    )
+    await daemon._apply_watchlist(
+        {
+            "strategies": {"_screener_trade_targets": ["080220"]},
+            _SCREENER_PAYLOAD_KEY: {
+                "codes": ["080220"],
+                "names": {"080220": "제주반도체"},
+                "metadata": {
+                    "080220": {
+                        "llm_quality": 0.9,
+                        "llm_confidence": 1.0,
+                    }
+                },
+            },
+        }
+    )
+
+    assert await daemon.evaluate_once() == 1
+    assert await daemon.evaluate_once() == 0
+    assert len(redis.added) == 1
+
+
+@pytest.mark.asyncio
 async def test_scanner_daily_payload_merged_into_context():
     """DailyScanner fields (daily_volume_ratio, daily_closes) land in ctx.indicators."""
     manager = _CaptureManager()
@@ -939,18 +1047,24 @@ def _eval_summary(redis):
 
 
 class _HashRedis(_FakeRedis):
-    """_FakeRedis + hset/hgetall + expire tracking for the eval hash."""
+    """_FakeRedis + hset/hget/hgetall + expire tracking for the eval hash."""
 
     def __init__(self):
         super().__init__()
-        self.hashes = {}
-        self.expires = {}
+        # Override parent's hashes dict with same name — both paths share it.
+        self.hashes: dict[str, dict[str, str]] = {}
+        self.expires: dict[str, int] = {}
 
-    async def hset(self, key, mapping=None, **_kw):
+    async def hset(self, key, field=None, value=None, mapping=None, **_kw):
         bucket = self.hashes.setdefault(key, {})
         if mapping:
-            bucket.update(mapping)
-        return len(mapping or {})
+            bucket.update({str(k): str(v) for k, v in mapping.items()})
+        elif field is not None:
+            bucket[str(field)] = str(value) if value is not None else ""
+        return len(mapping or ({"x": "x"} if field is not None else {}))
+
+    async def hget(self, key, field):
+        return self.hashes.get(key, {}).get(str(field))
 
     async def hgetall(self, key):
         return dict(self.hashes.get(key, {}))
@@ -1382,3 +1496,197 @@ async def test_evaluate_once_prewarm_called_even_when_no_prewarm_fn():
 
     # 005930 warm → signal published; 000660 cold → skipped (no prewarm_fn, silent)
     assert published == 1
+
+
+# ---------------------------------------------------------------------------
+# C1: LLM-discovery ships dormant (enabled=False is the new default)
+# ---------------------------------------------------------------------------
+
+
+def _llm_watchlist_payload():
+    return {
+        "strategies": {"_screener_trade_targets": ["080220"]},
+        _SCREENER_PAYLOAD_KEY: {
+            "codes": ["080220"],
+            "names": {"080220": "TestCo"},
+            "metadata": {
+                "080220": {
+                    "llm_quality": 0.9,
+                    "llm_confidence": 1.0,
+                    "llm_only": True,
+                    "entry_price": 10000.0,
+                }
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_llm_discovery_disabled_by_default_emits_nothing():
+    """LLMDiscoverySignalConfig.enabled defaults to False — no signals emitted.
+
+    Matches the project convention that new features ship dormant and require
+    explicit operator opt-in (same as Setup D / bear-override).
+    """
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 10000.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        # Default LLMDiscoverySignalConfig() — enabled is False
+        llm_signal_config=LLMDiscoverySignalConfig(),
+    )
+    await daemon._apply_watchlist(_llm_watchlist_payload())
+
+    published = await daemon.evaluate_once()
+
+    assert published == 0
+    assert redis.added == []  # no candidate stream messages
+
+
+@pytest.mark.asyncio
+async def test_llm_discovery_enabled_true_emits_signal():
+    """Sanity: enabled=True opts back in and emits the expected signal."""
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 10000.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(enabled=True),
+    )
+    await daemon._apply_watchlist(_llm_watchlist_payload())
+
+    published = await daemon.evaluate_once()
+
+    assert published == 1
+    assert redis.added[0][1]["code"] == "080220"
+
+
+# ---------------------------------------------------------------------------
+# C2: LLM-discovery cooldown persisted to Redis (survives daemon restart)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_llm_cooldown_written_to_redis_on_emit():
+    """After emitting a signal the cooldown timestamp is written to the Redis hash."""
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 10000.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(
+            enabled=True, cooldown_seconds=86400.0
+        ),
+    )
+    await daemon._apply_watchlist(_llm_watchlist_payload())
+
+    published = await daemon.evaluate_once()
+
+    assert published == 1
+    # Cooldown hash must contain the symbol with a float-parseable timestamp.
+    stored = redis.hashes.get("stock:daemon:llm_cooldown", {}).get("080220")
+    assert stored is not None
+    assert float(stored) == _NOW.timestamp()
+
+
+@pytest.mark.asyncio
+async def test_llm_cooldown_read_from_redis_pre_seeded():
+    """Pre-seeding the cooldown hash blocks emission for that symbol.
+
+    Simulates the case where Redis already holds a recent timestamp from a
+    previous daemon run — the cooldown is honoured across restarts.
+    """
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 10000.0}}
+    )
+    # Pre-seed: 1 hour ago — still within 24h cooldown
+    recent_ts = _NOW.timestamp() - 3600.0
+    redis.hashes["stock:daemon:llm_cooldown"] = {"080220": str(recent_ts)}
+
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(
+            enabled=True, cooldown_seconds=86400.0
+        ),
+    )
+    await daemon._apply_watchlist(_llm_watchlist_payload())
+
+    published = await daemon.evaluate_once()
+
+    assert published == 0  # cooldown from Redis prevents emission
+    assert redis.added == []
+
+
+@pytest.mark.asyncio
+async def test_llm_cooldown_survives_daemon_restart():
+    """A fresh daemon sharing the same Redis still honours the cooldown.
+
+    The first daemon emits and writes to Redis.  A second daemon (simulating a
+    restart) is constructed with the same Redis instance but a fresh in-memory
+    state — it must still skip the symbol due to the persisted Redis entry.
+    """
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 10000.0}}
+    )
+    cfg = LLMDiscoverySignalConfig(enabled=True, cooldown_seconds=86400.0)
+
+    # First daemon: emits signal, writes cooldown to Redis.
+    d1 = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=cfg,
+    )
+    await d1._apply_watchlist(_llm_watchlist_payload())
+    assert await d1.evaluate_once() == 1
+
+    # Second daemon: fresh in-memory state, same Redis → cooldown persisted.
+    d2 = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=cfg,
+    )
+    await d2._apply_watchlist(_llm_watchlist_payload())
+    assert await d2.evaluate_once() == 0  # cooldown from Redis blocks re-emit
+
+
+@pytest.mark.asyncio
+async def test_llm_cooldown_redis_read_failure_falls_back_gracefully():
+    """A Redis HGET failure degrades to allow-on-error (best-effort), no crash."""
+
+    class _HgetBoomRedis(_FakeRedis):
+        async def hget(self, _key, _field):
+            raise RuntimeError("redis down")
+
+    redis = _HgetBoomRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 10000.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(
+            enabled=True, cooldown_seconds=86400.0
+        ),
+    )
+    await daemon._apply_watchlist(_llm_watchlist_payload())
+
+    # Must not raise; best-effort allows emission when Redis is unreachable.
+    published = await daemon.evaluate_once()
+    assert published == 1  # degraded to allow-on-error

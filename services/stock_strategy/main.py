@@ -99,7 +99,10 @@ async def _build_and_run() -> int:
         return 0
 
     # active mode: wire everything up.
-    from services.stock_strategy.daemon import StockStrategyDaemon
+    from services.stock_strategy.daemon import (
+        LLMDiscoverySignalConfig,
+        StockStrategyDaemon,
+    )
     from services.trading.indicator_engine import StreamingIndicatorEngine
     from services.trading.strategy_manager import StrategyManager
     from services.trading.stream_consumer_feed import StreamConsumerFeed
@@ -232,6 +235,7 @@ async def _build_and_run() -> int:
     # Per-(symbol, strategy) signal-eval observability (default ON). Read-only
     # telemetry → publishes the "why 0 signals" table to stock:daemon:signal_eval.
     signal_eval_config = StockSignalEvalConfig.load()
+    llm_signal_config = LLMDiscoverySignalConfig.from_env()
 
     daemon = StockStrategyDaemon(
         redis=redis_client,
@@ -248,6 +252,7 @@ async def _build_and_run() -> int:
         bear_override_config=bear_override_config,
         daily_indicators_key=daily_indicators_key,
         signal_eval_config=signal_eval_config,
+        llm_signal_config=llm_signal_config,
         prewarm_fn=prewarm_fn,
         max_prewarm_per_cycle=prewarm_cfg.max_prewarm_per_cycle,
     )

@@ -178,6 +178,50 @@ class TestFusionDailyIndicatorCoverage:
         assert coverage["coverage_filtered_count"] == 2
         assert coverage["missing_sample"] == ["123456", "999999"]
 
+    def test_run_once_admits_llm_only_quality_code_with_daily_coverage(self):
+        ranker = self._make_ranker(
+            {
+                "system:llm_quality:latest": {
+                    "quality": {"080220": 0.9, "001740": 0.4},
+                    "names": {"080220": "제주반도체", "001740": "SK네트웍스"},
+                    "metadata": {
+                        "080220": {
+                            "entry_price": 112900.0,
+                            "stop_loss": 104997.0,
+                            "take_profit": 126448.0,
+                        }
+                    },
+                    "final_codes": [],
+                    "risk_flags": {},
+                    "excluded": {},
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"080220": {"daily_close": 111700.0}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=0.0,
+                weight_llm=1.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                llm_only_top_n=5,
+                llm_only_min_quality=0.5,
+            ),
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+
+        assert payload["codes"] == ["080220"]
+        assert payload["names"]["080220"] == "제주반도체"
+        assert payload["metadata"]["080220"]["llm_only"] is True
+        assert payload["metadata"]["080220"]["llm_final"] is False
+        assert payload["metadata"]["080220"]["entry_price"] == 112900.0
+        assert payload["metadata"]["080220"]["stop_loss"] == 104997.0
+        assert payload["metadata"]["080220"]["take_profit"] == 126448.0
+        assert payload["sources"]["llm_only_top_n"] == 5
+        assert payload["sources"]["llm_only_min_quality"] == 0.5
+
     def test_daily_coverage_missing_key_is_fail_open(self):
         rows = [
             ("005930", 0.9, {}),
