@@ -31,6 +31,7 @@ EXPECTED_ENTRY_NAMES = {
     "setup_c_event_reaction",
     "setup_d_vwap_reversion",
     "vr_composite",
+    "cta_momentum",
 }
 
 EXPECTED_EXIT_NAMES = {
@@ -47,10 +48,12 @@ EXPECTED_EXIT_NAMES = {
     "chandelier_exit",
     "technical_consensus_exit",
     "vr_composite_exit",
+    "cta_momentum_exit",
 }
 
 EXPECTED_SIZER_NAMES = {
     "fixed_fractional_futures",
+    "volatility_target_futures",
     "fixed",
     "risk_based",
     "llm_adaptive",

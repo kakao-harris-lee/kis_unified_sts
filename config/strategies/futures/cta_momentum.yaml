@@ -1,0 +1,98 @@
+# CTA daily/swing time-series momentum (futures, daily) — THESIS B.
+#
+# Managed-futures (CTA) style DAILY-bar time-series momentum on KOSPI200 index
+# futures, long/short symmetric, with volatility-targeted sizing and an ATR
+# chandelier trailing exit. This is a DIFFERENT timeframe than the falsified
+# intraday trend-following (THESIS A): it holds across days in a confirmed
+# multi-day trend regime. Validated on the 16-year KRX daily settlement series
+# (krx_kospi200f_continuous, 2010-06 .. 2026-06, 3,933 bars, multi-regime).
+#
+# Roll-aware (unadjusted-series caveat): the continuous series is RAW
+# volume-weighted front-month, NOT back-adjusted, so quarterly rolls (2nd
+# Thursday of Mar/Jun/Sep/Dec) step the level by the carry spread. The entry
+# NEUTRALISES the roll-day return inside the momentum lookback and blocks roll
+# days as entry days, so a roll gap can never masquerade as momentum.
+#
+# STATUS: paper-only, NEEDS-VALIDATION. enabled=false by default.
+#   See WF numbers + ship/no-ship verdict in:
+#     docs/superpowers/plans/2026-06-25-futures-cta-swing-momentum.md
+#     scripts/analysis/cta_daily_walkforward.py  (reproduce)
+# Rollback: disabled by default; no rollback needed. To paper-activate, flip
+#   strategy.enabled: true (only after a positive WF verdict + paper rollout).
+
+strategy:
+  name: cta_momentum
+  asset_class: futures
+  enabled: false  # paper-only, NEEDS-VALIDATION — operator flips after validation
+  description: >
+    Daily time-series momentum + MA-cross regime filter, long/short symmetric,
+    roll-aware. Holds KOSPI200 futures across days in a confirmed trend with
+    volatility-targeted sizing and an ATR chandelier trailing exit.
+
+  entry:
+    type: cta_momentum
+    params:
+      # TS-momentum lookback in trading days (the trend horizon). 60d ≈ a
+      # quarter; a round, standard CTA medium-term horizon.
+      momentum_lookback: 60
+      # Dead-band on cumulative log-return (|sum| must exceed to signal). 0 = sign.
+      momentum_deadband: 0.0
+
+      # MA-cross regime confirmation (fast > slow → long-only, etc.).
+      use_ma_filter: true
+      ma_fast_period: 20
+      ma_slow_period: 100
+
+      # Long/short symmetry (futures are bidirectional).
+      allow_long: true
+      allow_short: true
+
+      # ATR (Wilder, daily) for the initial protective stop + downstream trail.
+      atr_period: 20
+      initial_stop_atr_mult: 3.0
+
+      # Minimum daily bars before evaluating (covers lookback / slow MA / ATR).
+      min_bars: 120
+
+      # Trailing daily series keys carried on the per-symbol snapshot.
+      close_series_key: daily_closes
+      high_series_key: daily_highs
+      low_series_key: daily_lows
+      date_series_key: daily_dates
+
+      # Optional LLM/regime market_state filter (off by default; paper-only).
+      market_state_filter:
+        enabled: false
+        allowed_states: []
+        blocked_states: []
+
+  exit:
+    type: cta_momentum_exit
+    params:
+      # ATR chandelier trailing stop (primary profit-locking exit). Wide trail
+      # (4 ATR) suits a daily swing horizon — it must survive 1-bar noise.
+      trail_atr_mult: 4.0
+      trail_activate_atr_mult: 1.0
+      # Hard catastrophic backstop from entry.
+      catastrophic_atr_mult: 5.0
+      # Momentum-flip exit: stand aside when the TS-momentum sign reverses.
+      use_momentum_flip: true
+      momentum_lookback: 60
+      momentum_flip_deadband: 0.0
+      # Time cap in trading days (bounds a flat, signal-less drift).
+      max_holding_days: 60
+      close_series_key: daily_closes
+      date_series_key: daily_dates
+      default_exit_confidence: 0.85
+      enabled: true
+
+  position:
+    # Volatility-targeted sizing: contracts scaled so ex-ante annualised vol ≈
+    # target. KOSPI200 futures point value = 50,000 KRW/point.
+    type: volatility_target_futures
+    params:
+      target_annual_vol: 0.15
+      point_value_krw: 50000
+      max_contracts: 2
+      min_contracts: 0
+      trading_days_per_year: 252

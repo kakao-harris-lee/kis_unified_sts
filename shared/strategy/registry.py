@@ -439,6 +439,11 @@ _BUILTIN_ENTRY_COMPONENTS: BuiltinComponentTable = (
         (("vr_composite", "VRCompositeEntry"),),
         "VRCompositeEntry",
     ),
+    (
+        "shared.strategy.entry.cta_momentum",
+        (("cta_momentum", "CTAMomentumEntry"),),
+        "CTAMomentumEntry",
+    ),
 )
 
 _BUILTIN_EXIT_COMPONENTS: BuiltinComponentTable = (
@@ -507,13 +512,21 @@ _BUILTIN_EXIT_COMPONENTS: BuiltinComponentTable = (
         (("vr_composite_exit", "VRCompositeExit"),),
         "VRCompositeExit",
     ),
+    (
+        "shared.strategy.exit.cta_momentum_exit",
+        (("cta_momentum_exit", "CTAMomentumExit"),),
+        "CTAMomentumExit",
+    ),
 )
 
 _BUILTIN_SIZER_COMPONENTS: BuiltinComponentTable = (
     (
         "shared.strategy.position.sizers",
-        (("fixed_fractional_futures", "FixedFractionalFuturesSizer"),),
-        "FixedFractionalFuturesSizer",
+        (
+            ("fixed_fractional_futures", "FixedFractionalFuturesSizer"),
+            ("volatility_target_futures", "VolatilityTargetFuturesSizer"),
+        ),
+        "Futures sizers (FixedFractional, VolatilityTarget)",
     ),
     (
         "shared.strategy.position",

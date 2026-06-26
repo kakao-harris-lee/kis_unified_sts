@@ -15,12 +15,14 @@ Usage:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
+from shared.config.mixins import ConfigMixin
 from shared.strategy.base import PositionSizer
 from shared.strategy.registry import SizerRegistry
 
@@ -361,3 +363,141 @@ class FixedFractionalFuturesSizer(PositionSizer["FixedFractionalFuturesConfig"])
             f"raw={raw_size:.2f} → size={size}"
         )
         return size
+
+
+# =============================================================================
+# Volatility-Target Futures Sizer (CTA)
+# =============================================================================
+
+
+@dataclass
+class VolatilityTargetFuturesConfig(ConfigMixin):
+    """Volatility-targeted futures sizer settings (CTA / managed-futures).
+
+    Sizes contracts so the position's *ex-ante* annualised volatility matches a
+    target, the canonical CTA risk-normalisation. A trending instrument with low
+    vol gets more contracts; a choppy high-vol instrument gets fewer — equalising
+    risk per position across regimes.
+
+    Attributes:
+        target_annual_vol: Target annualised volatility as a fraction of equity
+            (0.15 = 15%). The notional is scaled so realised vol ≈ this.
+        point_value_krw: Futures multiplier (KRW per index point). KOSPI200
+            futures = 50,000. Overridable so other contracts can reuse the sizer.
+        max_contracts: Hard cap on contracts regardless of equity (paper safety).
+        min_contracts: Floor; 0 means "no trade" is allowed when vol too high.
+        trading_days_per_year: Annualisation factor for daily vol → annual.
+        vol_floor: Minimum daily-return vol to divide by (0-vol guard).
+    """
+
+    target_annual_vol: float = 0.15
+    point_value_krw: float = 50_000.0
+    max_contracts: int = 5
+    min_contracts: int = 0
+    trading_days_per_year: int = 252
+    vol_floor: float = 1e-6
+
+    def validate(self) -> None:
+        if self.target_annual_vol <= 0:
+            raise ValueError("target_annual_vol must be positive")
+        if self.point_value_krw <= 0:
+            raise ValueError("point_value_krw must be positive")
+        if self.max_contracts < 1:
+            raise ValueError("max_contracts must be >= 1")
+        if self.min_contracts < 0 or self.min_contracts > self.max_contracts:
+            raise ValueError("require 0 <= min_contracts <= max_contracts")
+        if self.trading_days_per_year <= 0:
+            raise ValueError("trading_days_per_year must be positive")
+        if self.vol_floor <= 0:
+            raise ValueError("vol_floor must be positive")
+
+
+@SizerRegistry.register("volatility_target_futures")
+class VolatilityTargetFuturesSizer(PositionSizer["VolatilityTargetFuturesConfig"]):
+    """Volatility-targeted contract sizing for daily CTA futures strategies.
+
+    Reads the instrument's daily-return volatility from ``signal.metadata``
+    (``daily_return_vol`` annualised, or ``daily_return_vol_daily`` per-day which
+    is annualised here). Falls back to an ATR-implied vol
+    (``entry_atr`` / price × sqrt(trading_days_per_year)) when no explicit vol is
+    present, so the sizer degrades gracefully.
+
+    Formula::
+
+        ann_vol      = max(daily_return_vol, vol_floor)        # annualised
+        target_krw   = equity × target_annual_vol               # risk budget
+        notional/ct  = price × point_value_krw
+        raw          = target_krw / (ann_vol × notional_per_contract)
+        size         = clamp(round(raw), min_contracts, max_contracts)
+
+    Direction is carried by the signal (``signal_direction``); the sizer returns a
+    non-negative contract count and is fully long/short symmetric.
+    """
+
+    CONFIG_CLASS = VolatilityTargetFuturesConfig
+
+    def calculate(
+        self,
+        signal: Signal,
+        account_balance: float,
+        current_positions: list[Position],  # noqa: ARG002
+        market_context: MarketContext | None = None,  # noqa: ARG002
+    ) -> int:
+        c = self.config
+        meta = signal.metadata or {}
+        price = float(signal.price or meta.get("entry_price", 0.0) or 0.0)
+        if price <= 0 or account_balance <= 0:
+            return 0
+
+        ann_vol = self._annualised_vol(meta, price)
+        if ann_vol <= 0:
+            return 0
+
+        notional_per_contract = price * c.point_value_krw
+        if notional_per_contract <= 0:
+            return 0
+
+        target_risk_krw = account_balance * c.target_annual_vol
+        raw = target_risk_krw / (ann_vol * notional_per_contract)
+        size = int(round(raw))
+        size = max(c.min_contracts, min(size, c.max_contracts))
+
+        logger.debug(
+            "VolatilityTargetFuturesSizer: ann_vol=%.4f price=%.2f "
+            "notional/ct=%.0f target_risk=%.0f raw=%.2f → size=%d",
+            ann_vol,
+            price,
+            notional_per_contract,
+            target_risk_krw,
+            raw,
+            size,
+        )
+        return size
+
+    def _annualised_vol(self, meta: dict[str, Any], price: float) -> float:
+        """Resolve annualised return vol from metadata, ATR-implied as fallback."""
+        c = self.config
+        ann = _coerce_float(meta.get("daily_return_vol"))
+        if ann is not None and ann > 0:
+            return max(ann, c.vol_floor)
+
+        daily = _coerce_float(meta.get("daily_return_vol_daily"))
+        if daily is not None and daily > 0:
+            return max(daily * math.sqrt(c.trading_days_per_year), c.vol_floor)
+
+        atr = _coerce_float(meta.get("entry_atr"))
+        if atr is not None and atr > 0 and price > 0:
+            daily_implied = atr / price
+            return max(daily_implied * math.sqrt(c.trading_days_per_year), c.vol_floor)
+
+        return 0.0
+
+
+def _coerce_float(value: Any) -> float | None:
+    """Best-effort float coercion; None on failure."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
