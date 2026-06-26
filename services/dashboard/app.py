@@ -19,6 +19,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from shared.api.cors import get_cors_config, load_api_config
+from shared.config.runtime_defaults import dashboard_host_port_from_env
 from shared.strategy.registry import register_builtin_components
 
 logger = logging.getLogger(__name__)
@@ -249,7 +250,7 @@ def _register_routes(app: FastAPI) -> None:
     # strategy-builder-ui:3100 through Caddy.
     @app.get("/")
     async def root():
-        dashboard_host_port = os.getenv("DASHBOARD_HOST_PORT", "5081")
+        dashboard_host_port = dashboard_host_port_from_env()
         return {
             "service": "kis-dashboard",
             "ui": f"http://localhost:{dashboard_host_port}/",

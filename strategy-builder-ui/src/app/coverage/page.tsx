@@ -18,6 +18,7 @@ import type {
   CoverageSource,
   ExperimentCoverageRow,
 } from "@/lib/dashboard/coverage";
+import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 
 function fmtDateTime(v?: string | null): string {
   if (!v) return "-";
@@ -199,7 +200,7 @@ export default function CoveragePage() {
     queryKey: ["coverage", selectedAsset],
     queryFn: () =>
       coverageApi.getCoverage({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 30000,
+    refetchInterval: QUERY_INTERVALS_MS.slow,
   });
 
   const availableSources = data?.sources.filter((s) => s.available).length ?? 0;

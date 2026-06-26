@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
 import { signalsApi } from '@/lib/dashboard/api'
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
 
 interface Signal {
   id: string
@@ -24,7 +25,7 @@ export default function SignalsListCompact() {
     queryKey: ['signals', selectedAsset, 'compact'],
     queryFn: () =>
       signalsApi.getSignals({ asset_class: selectedAsset, limit: MAX_ITEMS }).then((r) => r.data),
-    refetchInterval: 15000,
+    refetchInterval: QUERY_INTERVALS_MS.normal,
   })
 
   return (

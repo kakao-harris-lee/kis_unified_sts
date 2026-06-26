@@ -8,6 +8,7 @@ import ErrorMessage from '@/components/dashboard/ErrorMessage';
 import RefreshIndicator from '@/components/dashboard/RefreshIndicator';
 import useQueryWithError from '@/hooks/dashboard/useQueryWithError';
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext';
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals';
 import type { Position } from '@/lib/dashboard/types';
 
 function Positions() {
@@ -24,7 +25,7 @@ function Positions() {
     queryKey: ['positions', selectedAsset],
     queryFn: () =>
       tradingApi.getPositions({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 15000,
+    refetchInterval: QUERY_INTERVALS_MS.normal,
   });
 
   return (

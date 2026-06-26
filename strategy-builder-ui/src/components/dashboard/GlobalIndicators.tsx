@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
 import { healthApi } from '@/lib/dashboard/api'
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
 
 interface HealthSummary {
   processes: Array<{ asset_class: string; alive: boolean }>
@@ -14,7 +15,7 @@ export default function GlobalIndicators() {
   const { data } = useQuery<HealthSummary>({
     queryKey: ['health-summary', selectedAsset],
     queryFn: () => healthApi.getSummary({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 15000,
+    refetchInterval: QUERY_INTERVALS_MS.normal,
   })
 
   if (!data) {

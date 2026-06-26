@@ -28,6 +28,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
 from shared.streaming.parquet_warmup import (
@@ -163,7 +164,7 @@ async def _build_context_provider(
     import os
     from datetime import UTC, datetime
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
 
     from services.decision_engine.context_provider import FuturesContextProvider
     from services.decision_engine.daily_reference import FuturesDailyReference
@@ -260,12 +261,11 @@ async def _build_and_run() -> int:
     The producer is ungated (emits candidates, not orders — order_router is the
     gated, wallet-authority stage).
     """
-    import os
     import signal as signal_mod
 
     import redis.asyncio as aioredis
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
     from shared.decision.setups.event_reaction import SetupCEventReaction

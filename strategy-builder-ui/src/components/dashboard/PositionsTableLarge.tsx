@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
 import { tradingApi } from '@/lib/dashboard/api'
+import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
 import type { Position } from '@/lib/dashboard/types'
 import SideBadge from './SideBadge'
 import PositionCard from './PositionCard'
@@ -13,7 +14,7 @@ export default function PositionsTableLarge() {
     queryKey: ['positions', selectedAsset],
     queryFn: () =>
       tradingApi.getPositions({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 15000,
+    refetchInterval: QUERY_INTERVALS_MS.normal,
   })
 
   if (isLoading) return <TableSkeleton rows={3} />

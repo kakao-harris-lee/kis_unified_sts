@@ -73,6 +73,70 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 
 ---
 
+## Cross-Cutting Code Quality
+
+### Current operating state
+
+- Shared entry-session/cooldown gates now live in
+  `shared/strategy/entry/gates.py`; `mean_reversion`, `williams_r`,
+  `momentum_breakout`, and the compatible `opening_volume_surge` open gate use
+  the shared path with behavior-level regression coverage.
+- Builtin strategy registration is table-driven in `shared/strategy/registry.py`
+  and covered for idempotency plus restored entry/exit/sizer keys.
+- Runtime defaults are centralized in `shared/config/runtime_defaults.py`;
+  service entrypoints use Redis DB 1 by default, and operator docs now state
+  `DASHBOARD_HOST_PORT=5081` for paper/local while Caddy remains internal `:5080`.
+- Workbench frontend refresh intervals are centralized in
+  `strategy-builder-ui/src/lib/dashboard/queryIntervals.ts`.
+- Strategy Builder state logic is split into pure reducer and YAML serializer
+  modules with focused tests.
+- `/trades` is split into a shell, tab list, live/history tab components, and
+  query hooks without changing query keys, polling, or tab accessibility behavior.
+- Futures broker/ledger reconciliation is extracted from the 8k-line
+  orchestrator into `services/trading/broker_verification.py` with isolated unit
+  tests.
+- Open-position metrics synchronization is extracted into
+  `services/trading/metrics_sync.py`; the helper preserves the existing
+  `position_count` contract and falls back to list-style open-position counting.
+- `_verify_positions_with_broker` now has a focused delegation test that locks
+  the dependency handoff to `BrokerPositionVerifier`.
+- `LLMConfig.from_yaml` is split into private YAML loading/section/config-dict
+  helpers with characterization tests for absolute/relative loading, legacy
+  stock/futures fallbacks, and env overrides.
+- Strategy-level guardrail tests now lock `momentum_breakout` trend-mode
+  cooldown behavior and `opening_volume_surge` post-close behavior when no
+  explicit cutoff is configured.
+
+### Completed maintainability milestones
+
+| Milestone | Status | Gate / Owner |
+|---|---|---|
+| Dead/stale docs and unused-code cleanup | ✅ done | `b8cec3d`; stale docs archived, dashboard host-port drift audited |
+| Multi-agent code-quality cleanup plan | ✅ done | [superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md) |
+| Shared strategy entry gates + behavior tests | ✅ done | `shared/strategy/entry/gates.py`, `tests/unit/strategy/entry/` |
+| Strategy registry table-driven registration | ✅ done | `tests/unit/strategy/test_registry_builtin_components.py` |
+| Runtime defaults centralization | ✅ done | `shared/config/runtime_defaults.py`, `CLAUDE.md` |
+| Builder state/YAML serializer extraction | ✅ done | `strategy-builder-ui/src/lib/builder/` |
+| Trades page component/hook split | ✅ done | `strategy-builder-ui/src/app/trades/` |
+| Broker verification extraction | ✅ done | `services/trading/broker_verification.py` |
+| Orchestrator metrics sync helper | ✅ done | `services/trading/metrics_sync.py` |
+| Broker verifier delegation guard | ✅ done | `tests/unit/trading/test_orchestrator_broker_verifier_delegation.py` |
+| Strategy close/cooldown guardrails | ✅ done | `tests/unit/strategy/entry/test_entry_gate_integration_momentum_opening.py` |
+| `/trades` screenshot/interaction QA refresh | ✅ done | [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) |
+| LLM YAML loader helper split | ✅ done | `tests/unit/llm/test_config_yaml_loading.py` |
+
+### Open next-steps
+
+- Continue decomposing `services/trading/orchestrator.py`; broker verification
+  and metrics sync are extracted, but initialization, recovery, and execution
+  setup remain high-complexity regions.
+- Keep extracting shared runtime defaults from remaining large runtime modules
+  only when it does not blur ownership or change live/paper behavior.
+- Refresh browser/screenshot QA whenever the Workbench visual surface changes
+  materially.
+
+---
+
 ## Stock
 
 ### North Star

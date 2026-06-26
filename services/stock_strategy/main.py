@@ -20,6 +20,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.streaming.candle_warmup import StockPrewarmConfig, warmup_engine
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ async def _build_and_run() -> int:
 
     import redis.asyncio as aioredis
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
     mode = _resolve_mode()

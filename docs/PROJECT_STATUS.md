@@ -62,6 +62,32 @@ futures `_futures` strategy names are now listed explicitly, and Workbench QA no
 longer claims committed browser/screenshot evidence. Audit note:
 [investigations/2026-06-25-roadmap-codebase-consistency.md](investigations/2026-06-25-roadmap-codebase-consistency.md).
 
+**2026-06-25** - Multi-agent code-quality cleanup completed.
+Implemented the high-priority cleanup plan in
+[superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md):
+shared strategy entry gates, table-driven registry registration, centralized
+runtime defaults, centralized dashboard query intervals, Strategy Builder
+reducer/YAML serializer extraction, `/trades` page componentization, broker
+position verification extraction, and `LLMConfig.from_yaml` helper extraction.
+Focused backend and frontend tests were added for each extracted surface. At
+that checkpoint, the remaining high-value maintainability work was further
+orchestrator decomposition, one broker-verifier delegation guard test, optional
+strategy-level cooldown/close guardrail tests, and refreshed Workbench
+screenshot/accessibility evidence after the `/trades` refactor was running.
+
+**2026-06-25** - Follow-up code-quality roadmap priorities completed.
+The remaining high-priority follow-ups from the Cross-Cutting Code Quality
+section are implemented: open-position metric synchronization moved to
+`services/trading/metrics_sync.py` while preserving the `position_count`
+contract, `_verify_positions_with_broker` now has a delegation guard test,
+`momentum_breakout` trend-mode cooldown and `opening_volume_surge` post-close
+behavior are covered by strategy-level guardrail tests, and `/trades`
+desktop/mobile Playwright screenshots were refreshed after the component/hook
+split. The remaining maintainability backlog is further decomposition of the
+orchestrator initialization, recovery, and execution setup regions plus careful
+runtime-default extraction only where ownership and paper/live behavior remain
+unchanged.
+
 **2026-06-25** - Quant Ops Workbench UI/UX QA evidence captured.
 Playwright fallback verification covered `/risk`, `/coverage`, `/trades`,
 `/builder`, and `/event-context` at desktop `1440x1100` and mobile `390x844`.
@@ -170,5 +196,8 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
-  QA artifacts when those routes change. Use `scripts/ops/ops_readiness_check.py`
-  as the offline checklist; live service confirmation remains external.
+  QA artifacts when those routes change; continue decomposing the orchestrator
+  initialization, recovery, and execution setup regions after the
+  broker-verification and metrics-sync extractions. Use
+  `scripts/ops/ops_readiness_check.py` as the offline checklist; live service
+  confirmation remains external.

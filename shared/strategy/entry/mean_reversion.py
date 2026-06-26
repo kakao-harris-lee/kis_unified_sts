@@ -9,21 +9,22 @@ Migrated from kospi_mini_sts.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
-
-_KST = ZoneInfo("Asia/Seoul")
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.entry.gates import (
+    MarketSessionWindow,
+    cooldown_elapsed,
+    is_in_entry_session,
+)
 from shared.strategy.gates.adapter_helper import (
     acquire_infra_clients,
     apply_regime_gate,
 )
 from shared.strategy.gates.regime_gate import GateConfig
-from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
 
@@ -199,45 +200,26 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
             if float(market_cap) < self.config.min_market_cap:
                 return None
 
-        # Time filters
         now = context.timestamp
-        # Market hour filters use KST; context.timestamp is UTC-aware (PR #159).
-        now_kst = to_kst(now)
-        open_dt = datetime.combine(
-            now_kst.date(),
-            time(self.config.market_open_hour, self.config.market_open_minute),
-            tzinfo=_KST,
-        )
-        close_dt = datetime.combine(
-            now_kst.date(),
-            time(self.config.market_close_hour, self.config.market_close_minute),
-            tzinfo=_KST,
+        window = MarketSessionWindow(
+            market_open_hour=self.config.market_open_hour,
+            market_open_minute=self.config.market_open_minute,
+            market_close_hour=self.config.market_close_hour,
+            market_close_minute=self.config.market_close_minute,
+            skip_market_open_minutes=self.config.skip_market_open_minutes,
+            skip_market_close_minutes=self.config.skip_market_close_minutes,
         )
 
-        if now_kst < open_dt:
+        if not is_in_entry_session(context.timestamp, window):
             return None
 
-        if self.config.skip_market_open_minutes > 0:
-            open_cutoff = open_dt + timedelta(
-                minutes=self.config.skip_market_open_minutes
-            )
-            if now_kst < open_cutoff:
-                return None
-
-        if self.config.skip_market_close_minutes > 0:
-            close_cutoff = close_dt - timedelta(
-                minutes=self.config.skip_market_close_minutes
-            )
-            if now_kst >= close_cutoff:
-                return None
-
         # Cooldown by symbol
-        if self.config.signal_cooldown_seconds > 0:
-            last_time = self._last_signal_at.get(code)
-            if last_time:
-                elapsed = (now - last_time).total_seconds()
-                if elapsed < self.config.signal_cooldown_seconds:
-                    return None
+        if not cooldown_elapsed(
+            now=context.timestamp,
+            last_signal_at=self._last_signal_at.get(code),
+            cooldown_seconds=self.config.signal_cooldown_seconds,
+        ):
+            return None
 
         # Market state filter
         market_state = context.metadata.get("market_state")

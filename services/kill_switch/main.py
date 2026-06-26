@@ -46,6 +46,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.risk.runtime_state import RuntimeRiskState
 
 logger = logging.getLogger(__name__)
@@ -264,7 +265,6 @@ async def _build_and_run() -> int:
     import signal as signal_mod
 
     import redis.asyncio as aioredis
-
     from services.kill_switch.config import KillSwitchConfig
     from shared.notification.telegram import TelegramNotifier
     from shared.risk.runtime_state import RuntimeRiskState
@@ -274,7 +274,7 @@ async def _build_and_run() -> int:
         logger.info("kill_switch disabled in config; refusing to start.")
         return 0
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
     runtime_state = RuntimeRiskState(redis=redis_client, asset_class="futures")
 

@@ -11,6 +11,12 @@ visual pass used the installed Playwright CLI/runtime as the fallback browser
 automation path. Chromium was installed locally with `playwright install
 chromium` before the run.
 
+The `/trades` screenshots were refreshed after the page was split into shell,
+tab-list, live/history components, and hooks. The focused refresh used the
+Python Playwright runtime to verify both desktop and mobile route rendering,
+keyboard navigation from `Live (Redis)` to `History (DB)`, focus movement to the
+selected tab, and zero captured browser console errors.
+
 ## Viewports
 
 | Name | Size |

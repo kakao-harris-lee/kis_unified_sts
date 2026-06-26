@@ -28,6 +28,7 @@ except ImportError:
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.entry.gates import MarketSessionWindow, is_in_entry_session
 from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,17 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             return None
 
         now: datetime = context.timestamp
+        window = MarketSessionWindow(
+            market_open_hour=self.config.market_open_hour,
+            market_open_minute=self.config.market_open_minute,
+            market_close_hour=23,
+            market_close_minute=59,
+            skip_market_open_minutes=0,
+            skip_market_close_minutes=0,
+        )
+        if not is_in_entry_session(now, window):
+            return None
+
         now = to_kst(now)
 
         open_dt = datetime.combine(
@@ -160,8 +172,6 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
         )
         minutes_since_open = (now - open_dt).total_seconds() / 60.0
 
-        if minutes_since_open < 0:
-            return None
         if (
             self.config.only_first_minutes > 0
             and minutes_since_open > float(self.config.only_first_minutes)

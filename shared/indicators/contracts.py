@@ -6,8 +6,15 @@ strings (e.g. ``momentum_5m``) into explicit request objects.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
+
+# Required-key pattern for the post-event trading-range high/low (Setup C's
+# 15-minute breakout range). The minutes are encoded in the key itself
+# (``last_15min_high`` → 15) so the window stays self-describing and config /
+# contract-driven rather than a hardcoded constant in the resolver.
+_RECENT_RANGE_KEY_RE = re.compile(r"^last_(\d+)min_(high|low)$")
 
 
 class IndicatorKind(str, Enum):
@@ -99,6 +106,27 @@ class IndicatorContract:
                 }
             )
         )
+
+    @property
+    def recent_range_minutes(self) -> int | None:
+        """Window (minutes) for the post-event trading-range high/low, or None.
+
+        Setup C declares ``last_15min_high`` / ``last_15min_low`` in its
+        ``required_indicators``; the window is encoded in the key name so the
+        resolver can fulfil it from the live candle history via
+        ``engine.get_recent_range(symbol, minutes)`` — matching the causal
+        ``[i-N, i-1]`` (current bar excluded) window the backtest replay uses.
+
+        Returns the largest declared window when several are present (defensive;
+        in practice a strategy declares a single high/low pair). Returns ``None``
+        when no range key is required.
+        """
+        windows = [
+            int(m.group(1))
+            for key in self.required_keys
+            if (m := _RECENT_RANGE_KEY_RE.match(str(key or "").strip()))
+        ]
+        return max(windows) if windows else None
 
     @property
     def warmth_timeframe(self) -> int | None:

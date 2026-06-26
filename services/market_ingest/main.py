@@ -17,6 +17,8 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
+from shared.config.runtime_defaults import redis_url_from_env
+
 logger = logging.getLogger(__name__)
 
 SymbolProvider = Callable[[], Awaitable[list[str]]]
@@ -334,7 +336,7 @@ async def _build_and_run() -> int:
             rest_price_fetcher = kis_client.get_current_price
             session_gate = is_regular_session_open
             rest_rate_limited = lambda: kis_client.is_rate_limited  # noqa: E731
-        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+        redis_url = redis_url_from_env()
         redis_client = aioredis.from_url(redis_url)
         cleanup_redis = redis_client
         from services.stock_strategy.universe import parse_watchlist_codes

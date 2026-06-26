@@ -54,7 +54,8 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
 ## Web/API Surface
 
 - Caddy is the only host-published web entry. Default host port is
-  `DASHBOARD_HOST_PORT=5080`; local/operator env files may override it.
+  `DASHBOARD_HOST_PORT=5081`; local/operator env files may override it. Caddy
+  still listens on container/internal `:5080`.
 - Internal Docker ports stay private: `dashboard:8001` and
   `strategy-builder-ui:3100`.
 - Do not resurrect the old `services/api` REST gateway or host `:8000` route.

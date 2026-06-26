@@ -27,6 +27,7 @@ import time
 from typing import Any
 
 from services.stock_risk_filter.codec import stock_signal_from_stream_fields
+from shared.config.runtime_defaults import redis_url_from_env
 from shared.execution.fill_logger import FillLogger
 from shared.paper.broker import VirtualBroker
 from shared.paper.models import OrderSide, OrderType
@@ -237,7 +238,7 @@ async def _build_and_run() -> int:
 
     import redis.asyncio as aioredis
 
-    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_url = redis_url_from_env()
     redis_client = aioredis.from_url(redis_url)
 
     mode = _resolve_mode()

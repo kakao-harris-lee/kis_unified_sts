@@ -19,10 +19,12 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
+from shared.config.runtime_defaults import dashboard_host_port_from_env
+
 # Load environment variables from .env file
 load_dotenv()
 
-DEFAULT_DASHBOARD_HOST_PORT = os.getenv("DASHBOARD_HOST_PORT", "5081")
+DEFAULT_DASHBOARD_HOST_PORT = dashboard_host_port_from_env()
 DEFAULT_DASHBOARD_URL = f"http://localhost:{DEFAULT_DASHBOARD_HOST_PORT}"
 
 # 로깅 설정

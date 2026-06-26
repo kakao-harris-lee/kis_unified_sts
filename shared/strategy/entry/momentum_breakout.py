@@ -18,17 +18,18 @@ Entry Conditions:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from typing import Any, Dict, Optional
-from zoneinfo import ZoneInfo
-
-_KST = ZoneInfo("Asia/Seoul")
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.entry.daily_watchlist_gate import daily_watchlist_allows
-from shared.strategy.market_time import to_kst
+from shared.strategy.entry.gates import (
+    MarketSessionWindow,
+    cooldown_elapsed,
+    is_in_entry_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,8 +207,6 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             return None
 
         now = context.timestamp
-        # Market hour filters use KST; context.timestamp is UTC-aware (PR #159).
-        now_kst = to_kst(now)
 
         # --- Detect trend mode ---
         is_trend_mode = (
@@ -243,41 +242,23 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             return None
 
         # --- Time filters ---
-        open_dt = datetime.combine(
-            now_kst.date(),
-            time(self.config.market_open_hour, self.config.market_open_minute),
-            tzinfo=_KST,
+        window = MarketSessionWindow(
+            market_open_hour=self.config.market_open_hour,
+            market_open_minute=self.config.market_open_minute,
+            market_close_hour=self.config.market_close_hour,
+            market_close_minute=self.config.market_close_minute,
+            skip_market_open_minutes=self.config.skip_market_open_minutes,
+            skip_market_close_minutes=self.config.skip_market_close_minutes,
         )
-        close_dt = datetime.combine(
-            now_kst.date(),
-            time(self.config.market_close_hour, self.config.market_close_minute),
-            tzinfo=_KST,
-        )
-
-        if now_kst < open_dt:
+        if not is_in_entry_session(now, window):
+            logger.debug("%s: Outside entry session", code)
             return None
-        if self.config.skip_market_open_minutes > 0:
-            if now_kst < open_dt + timedelta(
-                minutes=self.config.skip_market_open_minutes
-            ):
-                logger.debug(f"{code}: Skipping market open window")
-                return None
-        if self.config.skip_market_close_minutes > 0:
-            if now_kst >= close_dt - timedelta(
-                minutes=self.config.skip_market_close_minutes
-            ):
-                logger.debug(f"{code}: Skipping market close window")
-                return None
 
         # --- Cooldown ---
-        if effective_cooldown > 0:
-            last_time = self._last_signal_time.get(code)
-            if last_time and (now - last_time).total_seconds() < effective_cooldown:
-                logger.debug(
-                    f"{code}: Cooldown active "
-                    f"({(now - last_time).total_seconds():.0f}s / {effective_cooldown}s)"
-                )
-                return None
+        last_time = self._last_signal_time.get(code)
+        if not cooldown_elapsed(now, last_time, effective_cooldown):
+            logger.debug("%s: Cooldown active (%ss)", code, effective_cooldown)
+            return None
 
         # --- Minimum edge filter: ATR / close >= round_trip_cost * min_atr_cost_ratio ---
         atr = _get("atr", 0.0)

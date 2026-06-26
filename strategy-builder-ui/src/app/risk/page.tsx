@@ -13,6 +13,7 @@ import RefreshIndicator from "@/components/dashboard/RefreshIndicator";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
 import { useAssetClass } from "@/contexts/dashboard/AssetClassContext";
 import { tradingApi } from "@/lib/dashboard/api";
+import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 import type {
   RiskExposure,
   RiskStrategyExposure,
@@ -209,7 +210,7 @@ export default function RiskPage() {
     queryKey: ["risk-exposure", selectedAsset],
     queryFn: () =>
       tradingApi.getRiskExposure({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 15000,
+    refetchInterval: QUERY_INTERVALS_MS.normal,
   });
 
   const portfolio = data?.portfolio;

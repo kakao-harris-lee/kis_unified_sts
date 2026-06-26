@@ -32,6 +32,7 @@ import {
   type RunStrategySummary,
   type StrategyStatus,
 } from "@/lib/api/experiments";
+import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 
 const chartColors = [
   "#ef4444", "#2563eb", "#16a34a", "#ca8a04", "#9333ea",
@@ -343,7 +344,7 @@ export default function ExperimentsPage() {
   const latest = useQuery({
     queryKey: ["experiment-latest"],
     queryFn: getLatestExperiment,
-    refetchInterval: 60000,
+    refetchInterval: QUERY_INTERVALS_MS.experiments,
   });
   const catalog = useQuery({
     queryKey: ["experiment-strategies"],
