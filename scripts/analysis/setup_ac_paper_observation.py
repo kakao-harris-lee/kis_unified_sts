@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Setup A/C paper-observation digest.
+"""Setup A/C/D paper-observation digest.
 
 Generates a cumulative validation-accumulation digest for the futures
-Setup A (gap_reversion) and Setup C (event_reaction) strategies.  The
-purpose is to track whether enough paper trades have accumulated for a
-statistically meaningful re-validation holdout backtest.
+Setup A (gap_reversion), Setup C (event_reaction), and Setup D
+(vwap_reversion) strategies.  The purpose is to track whether enough
+paper trades have accumulated for a statistically meaningful re-validation
+holdout backtest.
 
 The digest surfaces three data sources:
   1. RuntimeLedger trades table — closed futures trades since
@@ -53,7 +54,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -67,7 +68,8 @@ _REPORTS_DIR = _REPO_ROOT / "reports" / "setup_ac_paper_obs"
 # Canonical setup names matching setup_adapters.py registration.
 SETUP_A = "setup_a_gap_reversion"
 SETUP_C = "setup_c_event_reaction"
-SETUPS = (SETUP_A, SETUP_C)
+SETUP_D = "setup_d_vwap_reversion"
+SETUPS = (SETUP_A, SETUP_C, SETUP_D)
 
 # Redis key published by _publish_setup_eval (PR #483).
 SETUP_EVAL_KEY = "trading:futures:setup_eval"
@@ -78,13 +80,72 @@ _DEFAULT_START_DATE = date(2026, 6, 21)  # restored-config deploy
 _DEFAULT_FAST_STOPOUT_MINUTES = 30
 _DEFAULT_CATASTROPHIC_LOSS_PCT = -3.0
 
+# ---------------------------------------------------------------------------
+# Per-setup display metadata — single source of truth for labels and notes.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SetupDisplay:
+    """Display metadata for a single setup strategy."""
+
+    short_code: str  # "A" / "C" / "D"
+    full_label: str  # "Setup A (gap_reversion)"
+    short_label: str  # "Setup A"
+    expected_note: str  # appended when 0 trades is legitimate selectivity
+
+
+_SETUP_DISPLAY: dict[str, SetupDisplay] = {
+    SETUP_A: SetupDisplay(
+        "A",
+        "Setup A (gap_reversion)",
+        "Setup A",
+        "expected, A/C avg ~4.8 setups/mo",
+    ),
+    SETUP_C: SetupDisplay(
+        "C",
+        "Setup C (event_reaction)",
+        "Setup C",
+        "expected, A/C avg ~4.8 setups/mo",
+    ),
+    SETUP_D: SetupDisplay(
+        "D",
+        "Setup D (vwap_reversion)",
+        "Setup D",
+        "expected — high-vol VWAP-stretch gate, fires only on high-vol days",
+    ),
+}
+
+
+def _setup_display(name: str) -> SetupDisplay:
+    """Return :class:`SetupDisplay` for *name*, with a safe fallback for unknown names."""
+    if name in _SETUP_DISPLAY:
+        return _SETUP_DISPLAY[name]
+    # Safe fallback so a future setup never KeyErrors the digest.
+    slug = name.replace("setup_", "").replace("_", " ").title()
+    return SetupDisplay("?", slug, slug, "unknown setup — verify config")
+
+
 # Reject reasons that indicate *legitimate selectivity* (no qualifying setup
 # today), not a suppression or config problem.  Matched by prefix so that
 # reasons with embedded values like ``outside_time_window(91m∉[10,60])`` are
-# covered.  A/C average ~4.8 qualifying setups/month, so 0 trades over a few
-# days is expected under these gates.
+# covered.
+#
+# A/C gates (avg ~4.8 qualifying setups/month):
+#   outside_time_window, no_event_in_window, after_cutoff,
+#   sp500_kr_gap_misaligned, no_macro_overnight, no_sp500_data, no_prev_close
+#
+# Setup D (high-vol VWAP-reversion) gates — calm/low-vol days are expected
+# selectivity; these fire only when vol is insufficient or price is not
+# stretched far enough from VWAP:
+#   before_window    — opening-warmup gate (fires before valid_minutes_min
+#                      after open; same class as after_cutoff)
+#   vol_below_gate   — ATR ratio below min_atr_ratio threshold
+#   not_extreme      — VWAP z-score inside ±extreme_atr_mult band
+#   still_trending   — price still trending (still_trending_up / _down prefix)
 _LEGITIMATE_NO_SETUP_REASONS: frozenset[str] = frozenset(
     [
+        # Setup A / C selectivity gates
         "outside_time_window",
         "no_event_in_window",
         "after_cutoff",
@@ -92,6 +153,11 @@ _LEGITIMATE_NO_SETUP_REASONS: frozenset[str] = frozenset(
         "no_macro_overnight",
         "no_sp500_data",
         "no_prev_close",
+        # Setup D selectivity gates
+        "before_window",
+        "vol_below_gate",
+        "not_extreme",
+        "still_trending",
     ]
 )
 
@@ -100,8 +166,8 @@ def _is_legitimate_no_setup(reason: str) -> bool:
     """Return True when *reason* is a selectivity gate (expected 0 trades).
 
     The comparison is prefix-based so that reasons with embedded runtime
-    values (e.g. ``outside_time_window(91m∉[10,60])``) are matched by their
-    base name.
+    values (e.g. ``outside_time_window(91m∉[10,60])``, ``vol_below_gate(0.80<1.00)``,
+    ``still_trending_up(px=350.0-340.0)``) are matched by their base name.
     """
     reason_lower = reason.lower()
     return any(
@@ -287,15 +353,12 @@ def _compute_setup_stats(
     catastrophic_loss_pct: float,
 ) -> dict[str, SetupStats]:
     """Compute per-setup statistics from a list of closed trade rows."""
-    stats: dict[str, SetupStats] = {
-        SETUP_A: SetupStats(name=SETUP_A),
-        SETUP_C: SetupStats(name=SETUP_C),
-    }
+    stats: dict[str, SetupStats] = {name: SetupStats(name=name) for name in SETUPS}
 
     for row in trades:
         strategy = str(row.get("strategy") or "")
         if strategy not in stats:
-            continue  # ignore non-Setup-A/C trades
+            continue  # ignore non-Setup-A/C/D trades
 
         s = stats[strategy]
         pnl = float(row.get("pnl") or 0.0)
@@ -368,11 +431,8 @@ def _build_early_warnings(
             reason_by_name[snap.name] = snap.reason
 
     for name, s in stats.items():
-        short = (
-            name.replace("setup_", "")
-            .replace("_gap_reversion", " A")
-            .replace("_event_reaction", " C")
-        )
+        display = _setup_display(name)
+        short = display.short_label
 
         if s.trade_count == 0:
             reason = reason_by_name.get(name, "")
@@ -383,11 +443,11 @@ def _build_early_warnings(
                     "possibly suppressed (no eval data); verify config/veto"
                 )
             elif _is_legitimate_no_setup(reason):
-                # Selectivity gate fired — this is expected given A/C avg ~4.8 setups/mo.
+                # Selectivity gate fired — show the per-setup expected note.
                 warnings.append(
                     f"{short}: 0 trades over {days_observed} day(s) — "
                     f"no qualifying setup (reason: {reason}); "
-                    "expected, A/C avg ~4.8 setups/mo"
+                    f"{display.expected_note}"
                 )
             else:
                 # Suppression or config-error reason.
@@ -442,9 +502,9 @@ def _format_telegram(digest: ObservationDigest) -> str:
     lines: list[str] = []
 
     if digest.is_weekly:
-        lines.append("<b>Setup A/C Paper Observation — Weekly Rollup</b>")
+        lines.append("<b>Setup A/C/D Paper Observation — Weekly Rollup</b>")
     else:
-        lines.append("<b>Setup A/C Paper Observation</b>")
+        lines.append("<b>Setup A/C/D Paper Observation</b>")
 
     lines.append(
         f"Observation period: {digest.observation_start} to {digest.generated_kst[:10]}"
@@ -453,11 +513,7 @@ def _format_telegram(digest: ObservationDigest) -> str:
     lines.append("━" * 22)
 
     for s in digest.setup_stats:
-        short = (
-            "Setup A (gap_reversion)"
-            if s.name == SETUP_A
-            else "Setup C (event_reaction)"
-        )
+        short = _setup_display(s.name).full_label
         n = s.trade_count
         threshold = digest.validation_n_threshold
         progress_bar = _n_bar(n, threshold)
@@ -494,7 +550,7 @@ def _format_telegram(digest: ObservationDigest) -> str:
     if any(es.outcome != "unknown" for es in digest.eval_snapshots):
         lines.append("\n<b>Latest setup eval (Redis)</b>")
         for es in digest.eval_snapshots:
-            short = "Setup A" if es.name == SETUP_A else "Setup C"
+            short = _setup_display(es.name).short_label
             ts_label = f" @ {es.ts_kst[:16]}" if es.ts_kst else ""
             lines.append(f"  {short}: {es.outcome} / {es.reason}{ts_label}")
 
