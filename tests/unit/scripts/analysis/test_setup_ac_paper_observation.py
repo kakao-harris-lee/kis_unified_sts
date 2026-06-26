@@ -7,11 +7,12 @@ Covers:
 - Silent-setup (0 trades) early-warning.
 - Eval snapshot building from Redis hash data.
 - Telegram message formatting: key fields present, weekly banner, progress bar.
+- Setup D (vwap_reversion) extension: stats, eval snapshot, formatting, selectivity.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -23,6 +24,7 @@ import scripts.analysis.setup_ac_paper_observation as _mod
 
 SETUP_A = _mod.SETUP_A
 SETUP_C = _mod.SETUP_C
+SETUP_D = _mod.SETUP_D
 
 
 def _trade(
@@ -426,7 +428,7 @@ class TestFormatTelegram:
 
     def test_header_present(self):
         msg = _mod._format_telegram(self._make_digest())
-        assert "Setup A/C Paper Observation" in msg
+        assert "Setup A/C/D Paper Observation" in msg
 
     def test_weekly_banner_in_weekly_mode(self):
         digest = self._make_digest(is_weekly=True)
@@ -515,3 +517,239 @@ class TestNBar:
         bar = _mod._n_bar(2, 4)
         assert "2/4" in bar
         assert "50%" in bar
+
+
+# ---------------------------------------------------------------------------
+# Setup D — new tests (extend coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestSetupDStats:
+    """_compute_setup_stats now includes a SETUP_D bucket."""
+
+    def test_setup_d_bucket_exists_when_no_trades(self):
+        stats = _mod._compute_setup_stats([], 30, -3.0)
+        assert SETUP_D in stats
+        assert stats[SETUP_D].trade_count == 0
+
+    def test_setup_d_trade_counted_separately(self):
+        trades = [
+            _trade(strategy=SETUP_A, pnl=100),
+            _trade(strategy=SETUP_D, pnl=200),
+            _trade(strategy=SETUP_D, pnl=-50),
+        ]
+        stats = _mod._compute_setup_stats(trades, 30, -3.0)
+        assert stats[SETUP_D].trade_count == 2
+        assert stats[SETUP_A].trade_count == 1
+        assert stats[SETUP_C].trade_count == 0
+
+    def test_setup_d_win_loss_tracked(self):
+        trades = [
+            _trade(strategy=SETUP_D, pnl=300),
+            _trade(strategy=SETUP_D, pnl=-100),
+        ]
+        stats = _mod._compute_setup_stats(trades, 30, -3.0)
+        assert stats[SETUP_D].win_count == 1
+        assert stats[SETUP_D].loss_count == 1
+
+    def test_all_three_setups_in_stats(self):
+        stats = _mod._compute_setup_stats([], 30, -3.0)
+        assert set(stats.keys()) == {SETUP_A, SETUP_C, SETUP_D}
+
+
+class TestSetupDEvalSnapshots:
+    """_build_eval_snapshots includes Setup D when present in Redis hash."""
+
+    def test_setup_d_present_in_snapshots_even_if_redis_empty(self):
+        snapshots = _mod._build_eval_snapshots({})
+        names = {s.name for s in snapshots}
+        assert SETUP_D in names
+
+    def test_setup_d_outcome_populated_from_redis(self):
+        raw = {
+            SETUP_D: {
+                "outcome": "reject",
+                "reason": "vol_below_gate(0.80<1.00)",
+                "ts_kst": "2026-06-26T10:30:00",
+            }
+        }
+        snapshots = _mod._build_eval_snapshots(raw)
+        snap_d = next(s for s in snapshots if s.name == SETUP_D)
+        assert snap_d.outcome == "reject"
+        assert snap_d.reason == "vol_below_gate(0.80<1.00)"
+        assert snap_d.ts_kst == "2026-06-26T10:30:00"
+
+    def test_all_three_setups_in_snapshots(self):
+        snapshots = _mod._build_eval_snapshots({})
+        names = {s.name for s in snapshots}
+        assert names == {SETUP_A, SETUP_C, SETUP_D}
+
+
+class TestSetupDLegitimateReasons:
+    """Setup D calm-day rejects are expected selectivity (not suppression)."""
+
+    def _warnings_for_setup_d(self, reason: str) -> list[str]:
+        snap_a = _mod.SetupEvalSnapshot(
+            name=SETUP_A, outcome="fired", reason="", ts_kst=""
+        )
+        snap_c = _mod.SetupEvalSnapshot(
+            name=SETUP_C, outcome="fired", reason="", ts_kst=""
+        )
+        snap_d = _mod.SetupEvalSnapshot(
+            name=SETUP_D, outcome="reject", reason=reason, ts_kst="2026-06-26T10:00:00"
+        )
+        return _mod._build_early_warnings(
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=1),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=1),
+                SETUP_D: _mod.SetupStats(name=SETUP_D, trade_count=0),
+            },
+            since=date(2026, 6, 21),
+            fast_stopout_minutes=30,
+            catastrophic_loss_pct=-3.0,
+            eval_snapshots=[snap_a, snap_c, snap_d],
+        )
+
+    def test_vol_below_gate_is_legitimate(self):
+        warnings = self._warnings_for_setup_d("vol_below_gate(0.80<1.00)")
+        d_warnings = [w for w in warnings if "0 trades" in w and "D" in w]
+        assert len(d_warnings) == 1
+        assert "no qualifying setup" in d_warnings[0]
+        assert "expected" in d_warnings[0]
+        assert "suppressed" not in d_warnings[0]
+
+    def test_not_extreme_is_legitimate(self):
+        warnings = self._warnings_for_setup_d("not_extreme(z=+0.50,need±1.80)")
+        d_warnings = [w for w in warnings if "0 trades" in w and "D" in w]
+        assert len(d_warnings) == 1
+        assert "no qualifying setup" in d_warnings[0]
+        assert "expected" in d_warnings[0]
+        assert "suppressed" not in d_warnings[0]
+
+    def test_still_trending_up_is_legitimate(self):
+        warnings = self._warnings_for_setup_d("still_trending_up(px=350.0-340.0)")
+        d_warnings = [w for w in warnings if "0 trades" in w and "D" in w]
+        assert len(d_warnings) == 1
+        assert "no qualifying setup" in d_warnings[0]
+        assert "expected" in d_warnings[0]
+
+    def test_still_trending_down_is_legitimate(self):
+        warnings = self._warnings_for_setup_d("still_trending_down(lo=340.0-335.0)")
+        d_warnings = [w for w in warnings if "0 trades" in w and "D" in w]
+        assert len(d_warnings) == 1
+        assert "expected" in d_warnings[0]
+        assert "suppressed" not in d_warnings[0]
+
+    def test_setup_d_selectivity_note_is_high_vol_specific(self):
+        """Setup D 0-trade message must reference high-vol gate, not A/C rate."""
+        warnings = self._warnings_for_setup_d("vol_below_gate(0.80<1.00)")
+        d_warnings = [w for w in warnings if "0 trades" in w and "D" in w]
+        assert "high-vol" in d_warnings[0]
+        # Must NOT show the A/C rate note for Setup D
+        assert "4.8 setups/mo" not in d_warnings[0]
+
+    def test_is_legitimate_vol_below_gate(self):
+        assert _mod._is_legitimate_no_setup("vol_below_gate(0.80<1.00)") is True
+
+    def test_is_legitimate_not_extreme(self):
+        assert _mod._is_legitimate_no_setup("not_extreme(z=+0.50,need±1.80)") is True
+
+    def test_is_legitimate_still_trending(self):
+        assert _mod._is_legitimate_no_setup("still_trending_up(px=350.0-340.0)") is True
+        assert _mod._is_legitimate_no_setup("still_trending_down(lo=340.0)") is True
+
+
+class TestSetupDFormatTelegram:
+    """_format_telegram renders Setup D block and updated title."""
+
+    def _make_digest_with_d(self, trade_rows=None, redis_eval=None, is_weekly=False):
+        return _mod.build_digest(
+            since=date(2026, 6, 21),
+            is_weekly=is_weekly,
+            validation_n_threshold=30,
+            trade_rows=trade_rows or [],
+            redis_eval=redis_eval or {},
+        )
+
+    def test_title_shows_setup_acd(self):
+        msg = _mod._format_telegram(self._make_digest_with_d())
+        assert "Setup A/C/D Paper Observation" in msg
+
+    def test_weekly_title_shows_setup_acd(self):
+        msg = _mod._format_telegram(self._make_digest_with_d(is_weekly=True))
+        assert "Setup A/C/D Paper Observation" in msg
+        assert "Weekly Rollup" in msg
+
+    def test_setup_d_label_present(self):
+        msg = _mod._format_telegram(self._make_digest_with_d())
+        assert "Setup D (vwap_reversion)" in msg
+
+    def test_setup_d_eval_shown_when_data_present(self):
+        digest = self._make_digest_with_d(
+            redis_eval={
+                SETUP_D: {
+                    "outcome": "reject",
+                    "reason": "vol_below_gate(0.80<1.00)",
+                    "ts_kst": "2026-06-26T10:30:00",
+                }
+            }
+        )
+        msg = _mod._format_telegram(digest)
+        assert "Latest setup eval" in msg
+        assert "Setup D" in msg
+        assert "vol_below_gate" in msg
+
+    def test_setup_d_no_trades_recorded_when_empty(self):
+        msg = _mod._format_telegram(self._make_digest_with_d())
+        # There will be 3 "No trades recorded yet" sections (one per setup)
+        assert msg.count("No trades recorded yet") == 3
+
+    def test_setup_d_trade_shows_win_rate(self):
+        trades = [_trade(strategy=SETUP_D, pnl=500)]
+        msg = _mod._format_telegram(self._make_digest_with_d(trade_rows=trades))
+        assert "Win rate:" in msg
+
+
+class TestRegressionAC:
+    """Regression: A/C behaviour must be unchanged after the D extension."""
+
+    def test_ac_labels_unchanged(self):
+        msg = _mod._format_telegram(
+            _mod.build_digest(
+                since=date(2026, 6, 21),
+                trade_rows=[],
+                redis_eval={},
+            )
+        )
+        assert "Setup A (gap_reversion)" in msg
+        assert "Setup C (event_reaction)" in msg
+
+    def test_ac_expected_note_still_shows_rate(self):
+        snap_a = _mod.SetupEvalSnapshot(
+            name=SETUP_A, outcome="reject", reason="outside_time_window", ts_kst=""
+        )
+        snap_c = _mod.SetupEvalSnapshot(
+            name=SETUP_C, outcome="reject", reason="outside_time_window", ts_kst=""
+        )
+        snap_d = _mod.SetupEvalSnapshot(
+            name=SETUP_D, outcome="fired", reason="", ts_kst=""
+        )
+        warnings = _mod._build_early_warnings(
+            {
+                SETUP_A: _mod.SetupStats(name=SETUP_A, trade_count=0),
+                SETUP_C: _mod.SetupStats(name=SETUP_C, trade_count=0),
+                SETUP_D: _mod.SetupStats(name=SETUP_D, trade_count=1),
+            },
+            since=date(2026, 6, 21),
+            fast_stopout_minutes=30,
+            catastrophic_loss_pct=-3.0,
+            eval_snapshots=[snap_a, snap_c, snap_d],
+        )
+        ac_warnings = [w for w in warnings if "0 trades" in w]
+        assert all(
+            "4.8 setups/mo" in w for w in ac_warnings
+        ), "A/C selectivity warnings should still reference the ~4.8 setups/mo note"
+
+    def test_setups_tuple_has_three_entries(self):
+        assert len(_mod.SETUPS) == 3
+        assert SETUP_D in _mod.SETUPS
