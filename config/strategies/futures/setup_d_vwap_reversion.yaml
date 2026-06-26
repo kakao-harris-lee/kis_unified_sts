@@ -55,10 +55,15 @@ strategy:
       # Fade trigger: |(price - vwap) / atr_14| must reach this many ATRs.
       extreme_atr_mult: 1.8
 
-      # Trend-day guard: the spike must be within this many ATRs of the prior
-      # 15-min extreme on its side (stalling near it, not blown clean through and
-      # still trending). Raise high to effectively disable.
+      # Trend-day guard: the spike must be within this many ATRs of the recent
+      # extreme on its side (stalling near it, not blown clean through and still
+      # trending). The recent extreme is self-computed by the setup from the last
+      # range_window_bars closes (NOT the context's last_15min_high/low, which has
+      # no live producer in the orchestrator path). Raise stall_buffer high to
+      # effectively disable the guard.
       stall_buffer_atr_mult: 1.0
+      range_window_bars: 15     # prior closes for the self-computed recent range
+      range_warmup_bars: 5      # stall guard permissive until this many prior closes
 
       # Risk bracket (ATR-scaled, symmetric).
       stop_atr_mult: 1.5        # hard stop = entry ± 1.5 × ATR14

@@ -373,6 +373,14 @@ class SetupDEntryConfig(ServiceConfigBase):
     signal_ttl_minutes: int = Field(
         default=10, description="Signal validity window in minutes"
     )
+    range_window_bars: int = Field(
+        default=15,
+        description="Prior closes used for the self-computed recent-range (stall guard)",
+    )
+    range_warmup_bars: int = Field(
+        default=5,
+        description="Min prior closes before the stall guard activates",
+    )
     extension_conf_scale: float = Field(
         default=0.3, description="Confidence slope per extra ATR of extension"
     )
@@ -1468,6 +1476,8 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
             stop_atr_mult=config.stop_atr_mult,
             min_reward_risk=config.min_reward_risk,
             signal_ttl_minutes=config.signal_ttl_minutes,
+            range_window_bars=config.range_window_bars,
+            range_warmup_bars=config.range_warmup_bars,
             extension_conf_scale=config.extension_conf_scale,
             vol_conf_scale=config.vol_conf_scale,
         )
@@ -1503,12 +1513,15 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
     def required_indicators(self) -> list[str]:
         """Indicators needed by Setup D.
 
-        Setup D requires ATR, the session VWAP, and the 15-min price range — all
-        populated on the MarketContext by the orchestrator / replay. The high-vol
-        reference is self-computed by the setup from the per-bar ATR (it does not
-        require a separate ``atr_90th_percentile`` indicator).
+        Setup D requires only ATR and the session VWAP (both populated on the
+        MarketContext by the orchestrator / replay). Two references are
+        self-computed by the setup from the per-bar inputs, so they are NOT
+        required external indicators: the high-vol reference (from per-bar ATR)
+        and the recent price range used by the stall guard (from per-bar close).
+        Neither ``atr_90th_percentile`` nor ``last_15min_high/low`` has a live
+        producer in the orchestrator path, which is why they are not depended on.
         """
-        return ["atr", "vwap", "last_15min_high", "last_15min_low"]
+        return ["atr", "vwap"]
 
     async def generate(self, context: EntryContext) -> OrchestratorSignal | None:
         """Generate an entry signal by delegating to :class:`SetupDVWAPReversion`.

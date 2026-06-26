@@ -39,10 +39,16 @@ Logic overview
    - otherwise → no signal.
 4. **Stall confirmation** (avoid the falling knife / trend-day runaway). Require
    that the spike has *paused* rather than still extending: the current price
-   must be within ``stall_buffer_atr_mult * atr_14`` of the prior 15-minute
-   extreme on the spike side (``last_15min_high`` for a short, ``last_15min_low``
-   for a long). A bar that has blown clean through the 15-min extreme by more
-   than the buffer is still trending — we skip it.
+   must be within ``stall_buffer_atr_mult * atr_14`` of the prior recent extreme
+   on the spike side (the recent high for a short, the recent low for a long). A
+   bar that has blown clean through that extreme by more than the buffer is still
+   trending — we skip it. The recent extreme is a **causal self-computed** range
+   over the last ``range_window_bars`` closes (``_self_range``) — the setup does
+   NOT read ``ctx.last_15min_high/low``, which has no producer in the live
+   orchestrator path (it would default to ``current_price`` → the guard would
+   silently never fire live while it was active in backtest). Closes are used
+   rather than bar highs/lows because the ``MarketContext`` carries no per-bar
+   high/low; this keeps the guard identical in backtest and live.
 5. **Risk bracket** (ATR-scaled, symmetric):
 
    - stop  = ``entry ± stop_atr_mult * atr_14``     (long ``-``, short ``+``)
@@ -183,6 +189,26 @@ class SetupDConfig(ServiceConfigBase):
     signal_ttl_minutes: int = Field(
         default=10, description="Signal validity window in minutes"
     )
+    range_window_bars: int = Field(
+        default=15,
+        description=(
+            "Number of PRIOR 1-min closes used for the self-computed recent-range "
+            "(stall guard). ~15 = a 15-minute range. The setup self-computes this "
+            "from the per-bar close (current_price) — it does NOT read the "
+            "context's last_15min_high/low, which has no live producer in the "
+            "orchestrator path. Closes (not bar highs/lows) are used because the "
+            "MarketContext carries no per-bar high/low; this keeps the guard "
+            "identical in backtest and live."
+        ),
+    )
+    range_warmup_bars: int = Field(
+        default=5,
+        description=(
+            "Minimum prior closes before the stall guard activates. Below this "
+            "the guard is PERMISSIVE (does not block) — there is no meaningful "
+            "recent range yet (e.g. first minutes after the open)."
+        ),
+    )
     extension_conf_scale: float = Field(
         default=0.3,
         description="Confidence slope per extra ATR of extension beyond the trigger",
@@ -220,6 +246,14 @@ class SetupDVWAPReversion(Setup):
         # stable recent-volatility baseline (a per-day reset leaves too few
         # early-session observations to be a meaningful percentile).
         self._atr_window: deque[float] = deque(maxlen=self.config.vol_window_bars)
+        # Causal rolling window of recent CLOSES for the self-computed recent
+        # range (stall guard). Holds only closes observed at or before the
+        # current bar — the current close is appended AFTER reading the range, so
+        # the range never includes the bar it is evaluating (strictly causal).
+        # Closes are used (not bar high/low) because the MarketContext exposes no
+        # per-bar high/low; this is the only range definition reproducible in the
+        # orchestrator path, where last_15min_high/low has no live producer.
+        self._close_window: deque[float] = deque(maxlen=self.config.range_window_bars)
 
     def _reject(self, reason: str) -> None:
         """Record the rejection reason and return None (early-return helper)."""
@@ -253,6 +287,32 @@ class SetupDVWAPReversion(Setup):
         self._atr_window.append(atr)
         return ref
 
+    def _self_range(self, close: float) -> tuple[float, float] | None:
+        """Return the causal recent (high, low) from prior closes, or None during warmup.
+
+        Computes max/min over the trailing ``range_window_bars`` closes seen at or
+        before the current bar (the current close is appended AFTER reading, so
+        the range excludes it). Returns ``None`` until ``range_warmup_bars`` prior
+        closes exist — there is no meaningful recent range yet (e.g. the first
+        minutes after the open), and the caller treats the stall guard as
+        permissive in that case.
+
+        This is the live-reproducible replacement for ``ctx.last_15min_high/low``,
+        which has no producer in the orchestrator path (so it defaults to
+        ``current_price`` live → the stall guard would silently never fire).
+        """
+        if len(self._close_window) >= self.config.range_warmup_bars:
+            rng: tuple[float, float] | None = (
+                max(self._close_window),
+                min(self._close_window),
+            )
+        else:
+            rng = None  # warmup — permissive
+
+        # Append AFTER reading (strictly causal: range excludes the current bar).
+        self._close_window.append(close)
+        return rng
+
     def check(self, ctx: MarketContext) -> Signal | None:  # noqa: PLR0911
         """Evaluate *ctx* and return a Signal when all conditions are met.
 
@@ -280,10 +340,12 @@ class SetupDVWAPReversion(Setup):
             return self._reject("no_price")
 
         # 3. High-vol regime gate (causal, self-computed — see _vol_reference).
-        #    _vol_reference is called on EVERY in-window bar so the rolling ATR
-        #    history stays continuous; it returns None during warmup (→ vol_ratio
-        #    0.0 and the gate is permissive, never silently dead).
+        #    _vol_reference and _self_range are called on EVERY in-window bar (and
+        #    BEFORE any later early-return) so the rolling ATR/close histories stay
+        #    continuous. Both return None during warmup → the corresponding gate is
+        #    permissive (never silently dead).
         vol_ref = self._vol_reference(atr)
+        recent_range = self._self_range(ctx.current_price)
         gate_active = vol_ref is not None and vol_ref > 0
         vol_ratio = atr / vol_ref if gate_active else 0.0
         if c.min_atr_ratio > 0 and gate_active and vol_ratio < c.min_atr_ratio:
@@ -299,21 +361,23 @@ class SetupDVWAPReversion(Setup):
             return self._reject(f"not_extreme(z={z:+.2f},need±{c.extreme_atr_mult})")
 
         # 5. Stall confirmation — spike must be near (not blown through) the
-        #    prior 15-min extreme on its side, so we fade a stalling spike, not
-        #    a still-trending runaway.
-        buffer = c.stall_buffer_atr_mult * atr
-        if direction == "short":
-            # price above the band; require it to be within `buffer` ABOVE the
-            # prior 15-min high (close to it / just poking through, not far past)
-            if ctx.current_price - ctx.last_15min_high > buffer:
+        #    self-computed recent extreme on its side, so we fade a stalling
+        #    spike, not a still-trending runaway. recent_range is the causal
+        #    (high, low) of prior closes (None during warmup → guard permissive).
+        if recent_range is not None:
+            recent_high, recent_low = recent_range
+            buffer = c.stall_buffer_atr_mult * atr
+            if direction == "short":
+                # require price within `buffer` ABOVE the prior recent high
+                # (close to it / just poking through, not far past = still trending)
+                if ctx.current_price - recent_high > buffer:
+                    return self._reject(
+                        f"still_trending_up(px={ctx.current_price:.2f}-"
+                        f"hi={recent_high:.2f}>{buffer:.2f})"
+                    )
+            elif recent_low - ctx.current_price > buffer:
                 return self._reject(
-                    f"still_trending_up(px={ctx.current_price:.2f}-"
-                    f"hi={ctx.last_15min_high:.2f}>{buffer:.2f})"
-                )
-        else:
-            if ctx.last_15min_low - ctx.current_price > buffer:
-                return self._reject(
-                    f"still_trending_down(lo={ctx.last_15min_low:.2f}-"
+                    f"still_trending_down(lo={recent_low:.2f}-"
                     f"px={ctx.current_price:.2f}>{buffer:.2f})"
                 )
 

@@ -42,14 +42,18 @@ def _ctx(
 ) -> MarketContext:
     """Build a MarketContext for Setup D tests.
 
-    By default the 15-min extreme is placed so the stall guard passes (the spike
-    price sits within the buffer of the relevant 15-min edge).
+    ``last_15min_high/low`` are accepted for back-compat but are IGNORED by the
+    setup (it self-computes the recent range from prior closes — see
+    ``_self_range``). The MarketContext requires them, so they default to
+    ``current_price`` (the same value the live orchestrator path would default
+    to). The stall guard is exercised by warming the close window, not by these
+    fields.
     """
     h, m = now_hhmm
     if last_15min_high is None:
-        last_15min_high = current_price + 0.1
+        last_15min_high = current_price
     if last_15min_low is None:
-        last_15min_low = current_price - 0.1
+        last_15min_low = current_price
     return MarketContext(
         now=datetime(2026, 3, 10, h, m, tzinfo=KST),
         symbol="101S6000",
@@ -71,16 +75,31 @@ def _setup() -> SetupDVWAPReversion:
     return SetupDVWAPReversion(config=SetupDConfig())
 
 
-def _warm(setup: SetupDVWAPReversion, atr: float, n: int) -> None:
-    """Feed ``n`` calm, near-VWAP bars at a fixed ATR to populate the causal
-    rolling vol window (so the high-vol gate becomes active).
+def _warm(
+    setup: SetupDVWAPReversion, atr: float, n: int, *, close: float = 100.0
+) -> None:
+    """Feed ``n`` calm bars at a fixed ATR to populate BOTH the causal vol window
+    and the causal close (recent-range) window.
 
-    Each bar is near VWAP (z≈0) so it does not fire — it only seeds the window.
+    Each bar sits at ``close`` (default = VWAP, z≈0) so it does not fire — it only
+    seeds the windows. After warming, the recent range is ~``close``; a fire-test
+    bar whose price is within ``stall_buffer_atr_mult × atr`` of ``close`` passes
+    the stall guard, and a runaway far beyond it is rejected.
     """
     for _i in range(n):
-        setup.check(
-            _ctx(current_price=100.05, vwap=100.0, atr_14=atr, atr_90th_percentile=2.0)
-        )
+        setup.check(_ctx(current_price=close, vwap=100.0, atr_14=atr))
+
+
+def _warm_ramp(
+    setup: SetupDVWAPReversion, atr: float, start: float, stop: float, n: int
+) -> None:
+    """Feed ``n`` bars whose close ramps linearly start→stop, seeding the close
+    window so the recent high tracks just below a building spike (the realistic
+    'spike built up over ~15 bars, now stalling near its high' shape)."""
+    step = (stop - start) / max(n - 1, 1)
+    for i in range(n):
+        px = start + step * i
+        setup.check(_ctx(current_price=px, vwap=100.0, atr_14=atr))
 
 
 # ---------------------------------------------------------------------------
@@ -164,11 +183,15 @@ def test_quiet_bar_below_vol_gate_returns_none():
 def test_high_vol_bar_passes_gate():
     """After warmup, an extreme on a HIGH-vol bar (ATR at/above the causal
     reference) fires."""
-    setup = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30))
+    # stall_buffer high → isolate the VOL gate (the stall guard is tested
+    # separately; the flat warm closes would otherwise trip it here).
+    setup = SetupDVWAPReversion(
+        config=SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0)
+    )
     # Seed with low ATRs (reference ≈ 1.0), then an extreme on a high-ATR bar:
     # vol_ratio = 2.0/1.0 = 2.0 >= 0.9. z = (104-100)/2 = 2.0 >= 1.8.
     _warm(setup, atr=1.0, n=30)
-    ctx = _ctx(current_price=104.0, vwap=100.0, atr_14=2.0, last_15min_high=103.9)
+    ctx = _ctx(current_price=104.0, vwap=100.0, atr_14=2.0)
     sig = setup.check(ctx)
     assert sig is not None
     assert sig.direction == "short"
@@ -187,11 +210,14 @@ def test_gate_permissive_during_warmup():
 
 def test_vol_gate_disabled_when_ratio_zero():
     """min_atr_ratio=0 disables the high-vol gate (fires regardless of vol)."""
+    # stall_buffer high → isolate the vol gate from the stall guard.
     setup = SetupDVWAPReversion(
-        config=SetupDConfig(min_atr_ratio=0.0, vol_warmup_bars=30)
+        config=SetupDConfig(
+            min_atr_ratio=0.0, vol_warmup_bars=30, stall_buffer_atr_mult=10.0
+        )
     )
     _warm(setup, atr=5.0, n=30)  # high reference, but gate disabled
-    ctx = _ctx(current_price=104.0, vwap=100.0, atr_14=2.0, last_15min_high=103.9)
+    ctx = _ctx(current_price=104.0, vwap=100.0, atr_14=2.0)
     sig = setup.check(ctx)
     assert sig is not None  # vol gate off → fires on the extension alone
 
@@ -216,33 +242,46 @@ def test_price_near_vwap_no_signal():
 
 
 def test_still_trending_up_rejected():
-    """Up-spike that blew clean THROUGH the 15-min high (still trending) → reject."""
+    """Up-spike that blew clean THROUGH the self-computed recent high (still
+    trending) → reject. The recent range is self-computed from prior closes."""
     setup = _setup()
-    # price extreme above vwap, but 15-min high far below price (>1 ATR away) →
-    # the move is still extending, not stalling → skip.
-    ctx = _ctx(
-        current_price=104.0,
-        vwap=100.0,
-        atr_14=2.0,
-        atr_90th_percentile=2.0,
-        last_15min_high=101.0,
-    )  # 104 - 101 = 3.0 > stall_buffer(2.0)
+    # Seed flat closes at 100 → recent high ≈ 100. Then a bar at 104 (z=2.0,
+    # atr=2.0): 104 - 100 = 4.0 > stall_buffer(1.0×2.0=2.0) → still trending.
+    _warm(setup, atr=2.0, n=10, close=100.0)
+    ctx = _ctx(current_price=104.0, vwap=100.0, atr_14=2.0)
     assert setup.check(ctx) is None
     assert setup.last_reject_reason.startswith("still_trending_up")
 
 
 def test_still_trending_down_rejected():
-    """Mirror: down-spike still trending below the 15-min low → reject."""
+    """Mirror: down-spike still trending below the self-computed recent low → reject."""
     setup = _setup()
-    ctx = _ctx(
-        current_price=96.0,
-        vwap=100.0,
-        atr_14=2.0,
-        atr_90th_percentile=2.0,
-        last_15min_low=99.0,
-    )  # 99 - 96 = 3.0 > 2.0
+    _warm(setup, atr=2.0, n=10, close=100.0)  # recent low ≈ 100
+    ctx = _ctx(current_price=96.0, vwap=100.0, atr_14=2.0)  # 100 - 96 = 4.0 > 2.0
     assert setup.check(ctx) is None
     assert setup.last_reject_reason.startswith("still_trending_down")
+
+
+def test_stalling_spike_passes_guard():
+    """A spike that BUILT UP over recent bars (recent high near the price) is a
+    stalling spike → passes the guard and fires."""
+    setup = _setup()
+    # Ramp closes 100 → 103.5 (recent high ≈ 103.5), then a bar at 104 (z=2.0):
+    # 104 - 103.5 = 0.5 < stall_buffer(2.0) → not still trending → fires short.
+    _warm_ramp(setup, atr=2.0, start=100.0, stop=103.5, n=10)
+    sig = setup.check(_ctx(current_price=104.0, vwap=100.0, atr_14=2.0))
+    assert sig is not None
+    assert sig.direction == "short"
+
+
+def test_stall_guard_permissive_during_warmup():
+    """Before range_warmup_bars prior closes exist, the stall guard is permissive
+    (no meaningful recent range yet) — a fresh setup fires on the first extreme."""
+    setup = SetupDVWAPReversion(config=SetupDConfig(range_warmup_bars=5))
+    # First call ever (close window empty < warmup) → guard permissive.
+    sig = setup.check(_ctx(current_price=104.0, vwap=100.0, atr_14=2.0))
+    assert sig is not None
+    assert sig.direction == "short"
 
 
 # ---------------------------------------------------------------------------
@@ -344,19 +383,17 @@ def test_confidence_increases_with_vol_regime():
     Both fire with z=2.0 but at different ATRs relative to the same causal
     reference (seeded ≈ 1.0). The higher-ATR bar has the larger vol_ratio.
     """
-    low = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30))
+    # stall_buffer high → isolate the vol-driven confidence from the stall guard.
+    cfg = SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0)
+    low = SetupDVWAPReversion(config=cfg)
     _warm(low, atr=1.0, n=30)  # reference ≈ 1.0
     # atr=1.5 → vol_ratio 1.5; z=2.0 → price=100+2.0*1.5=103.0
-    sig_low = low.check(
-        _ctx(current_price=103.0, vwap=100.0, atr_14=1.5, last_15min_high=102.9)
-    )
+    sig_low = low.check(_ctx(current_price=103.0, vwap=100.0, atr_14=1.5))
 
-    high = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30))
+    high = SetupDVWAPReversion(config=cfg)
     _warm(high, atr=1.0, n=30)  # same reference ≈ 1.0
     # atr=2.0 → vol_ratio 2.0; z=2.0 → price=100+2.0*2.0=104.0
-    sig_high = high.check(
-        _ctx(current_price=104.0, vwap=100.0, atr_14=2.0, last_15min_high=103.9)
-    )
+    sig_high = high.check(_ctx(current_price=104.0, vwap=100.0, atr_14=2.0))
     assert sig_low is not None and sig_high is not None
     assert sig_high.confidence > sig_low.confidence
 
@@ -375,3 +412,5 @@ def test_config_defaults():
     assert cfg.stop_atr_mult == pytest.approx(1.5)
     assert cfg.min_reward_risk == pytest.approx(1.0)
     assert cfg.signal_ttl_minutes == 10
+    assert cfg.range_window_bars == 15
+    assert cfg.range_warmup_bars == 5

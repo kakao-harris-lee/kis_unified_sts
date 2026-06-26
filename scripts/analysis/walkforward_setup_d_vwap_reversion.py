@@ -12,17 +12,22 @@ EOD exit, and reports:
   step 1 month). Each fold reports its OOS metrics so a curve-fit edge that does
   not generalize is visible.
 
-Setup D reads only OHLCV-derived context (VWAP, ATR, 15-min range) — no
-macro/event backfill needed, so this is a fully self-contained backtest.
+Setup D reads only OHLCV-derived context (VWAP, ATR) — no macro/event backfill
+needed, so this is a fully self-contained backtest.
 
-Look-ahead safety
------------------
-``MarketContextReplay`` computes VWAP/ATR/range strictly from bars at or before
-the current index, and the intrabar exit only consults the entry bar's signal +
-subsequent bars. The **high-vol gate reference is causal**: ``SetupDVWAPReversion``
-self-computes it from a trailing window of past ATRs (it does NOT read the
-replay's full-series ``atr_90th_percentile``, which would be look-ahead and has
-no live producer). The gate therefore behaves identically here and in live.
+Look-ahead safety + live parity
+-------------------------------
+``MarketContextReplay`` computes VWAP/ATR strictly from bars at or before the
+current index, and the intrabar exit only consults the entry bar's signal +
+subsequent bars. BOTH of Setup D's gate references are **causal and
+self-computed** by ``SetupDVWAPReversion`` from the per-bar inputs, so they
+behave identically here and in the live orchestrator path:
+  * the high-vol reference from a trailing window of past ATRs (NOT the replay's
+    full-series ``atr_90th_percentile`` — look-ahead, no live producer), and
+  * the stall-guard recent range from a trailing window of past closes (NOT the
+    replay's ``last_15min_high/low`` — no producer in the orchestrator path, so
+    it would default to ``current_price`` live and the guard would never fire).
+This parity is why the OOS numbers are reproducible as wired.
 
 Usage::
 

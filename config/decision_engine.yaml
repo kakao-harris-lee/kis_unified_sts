@@ -44,7 +44,9 @@ setup_d_vwap_reversion:
   vol_warmup_bars: 120                     # gate permissive until this many past ATRs seen
   vol_percentile: 90.0                     # percentile of the causal ATR window
   extreme_atr_mult: 1.8                    # fade trigger: |(price-vwap)/atr_14| >= 1.8
-  stall_buffer_atr_mult: 1.0               # trend-day guard vs 15-min extreme
+  stall_buffer_atr_mult: 1.0               # trend-day guard vs self-computed recent range
+  range_window_bars: 15                    # prior closes for the self-computed recent range
+  range_warmup_bars: 5                     # stall guard permissive until this many prior closes
   stop_atr_mult: 1.5                       # hard stop = entry ± 1.5 × ATR14
   min_reward_risk: 1.0                     # VWAP-revert target at least 1.0R away
   signal_ttl_minutes: 10

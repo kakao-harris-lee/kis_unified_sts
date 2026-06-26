@@ -131,7 +131,11 @@ class TestSetupDAdapterRejects:
         gate must NOT read that default and must instead self-compute, so the
         setup still fires on a genuine high-vol extreme.
         """
-        adapter = SetupDEntryAdapter(SetupDEntryConfig(vol_warmup_bars=30))
+        # stall_buffer high → isolate the vol gate (the stall guard is covered by
+        # its own regression test below).
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0)
+        )
         # market_data WITHOUT atr_90th_percentile → adapter defaults it to atr*1.5.
         for _i in range(30):
             calm = {
@@ -141,8 +145,6 @@ class TestSetupDAdapterRejects:
                 "prev_close": 100.0,
                 "vwap": 100.0,
                 "atr": 1.0,
-                "last_15min_high": 100.15,
-                "last_15min_low": 99.95,
             }
             await adapter.generate(_context(calm, _utc(2, 0)))
         spike = {
@@ -152,12 +154,53 @@ class TestSetupDAdapterRejects:
             "prev_close": 100.0,
             "vwap": 100.0,
             "atr": 2.0,
-            "last_15min_high": 103.9,
-            "last_15min_low": 99.95,
         }
         sig = await adapter.generate(_context(spike, _utc(2, 0)))
         assert sig is not None
         assert sig.metadata["signal_direction"] == "short"
+
+    @pytest.mark.asyncio
+    async def test_live_default_15min_range_stall_guard_still_fires(self):
+        """Regression for the 2nd review blocker: the live orchestrator path
+        supplies NO last_15min_high/low (build_market_context defaults both to
+        current_price → the stall guard would silently never fire live while it
+        was active in backtest). The setup must self-compute the recent range, so
+        a runaway-trend bar is STILL rejected with NO 15-min keys present.
+        """
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(vol_warmup_bars=10, range_warmup_bars=5)
+        )
+
+        def bar(close: float, atr: float) -> dict:
+            # Live-shaped market_data: NO last_15min_high/low keys at all.
+            return {
+                "code": "101S6000",
+                "close": close,
+                "open": 100.0,
+                "prev_close": 100.0,
+                "vwap": 100.0,
+                "atr": atr,
+            }
+
+        # Warm with flat closes at 100 → self-computed recent high/low ≈ 100.
+        for _i in range(12):
+            await adapter.generate(_context(bar(100.0, 1.0), _utc(2, 0)))
+
+        # Runaway up: close 110, recent high ≈ 100 → 110-100=10 >> buffer → REJECT
+        # even though the build_market_context default would put 15-min high=110.
+        runaway = await adapter.generate(_context(bar(110.0, 2.0), _utc(2, 0)))
+        assert runaway is None  # stall guard fired (still_trending_up)
+
+        # A stalling spike (price near the recent high) still fires: ramp the
+        # recent high up to ~103.5, then a bar at 104 within buffer.
+        adapter2 = SetupDEntryAdapter(
+            SetupDEntryConfig(vol_warmup_bars=10, range_warmup_bars=5)
+        )
+        for i in range(12):
+            await adapter2.generate(_context(bar(100.0 + i * 0.35, 2.0), _utc(2, 0)))
+        spike = await adapter2.generate(_context(bar(104.0, 2.0), _utc(2, 0)))
+        assert spike is not None
+        assert spike.metadata["signal_direction"] == "short"
 
 
 class TestSetupDValidation:
@@ -185,8 +228,12 @@ class TestSetupDRegistryWiring:
         strat = StrategyFactory.create_from_file("futures", "setup_d_vwap_reversion")
         assert strat.name == "setup_d_vwap_reversion"
         assert strat.entry.name == "setup_d_vwap_reversion"
-        # required indicators expose the MR inputs (the vol reference is
-        # self-computed, so it is NOT a required external indicator)
+        # required indicators expose only the live-available MR inputs. The vol
+        # reference AND the recent range are self-computed, so neither
+        # atr_90th_percentile nor last_15min_high/low is a required external
+        # indicator (neither has a live producer in the orchestrator path).
         assert "vwap" in strat.entry.required_indicators
         assert "atr" in strat.entry.required_indicators
         assert "atr_90th_percentile" not in strat.entry.required_indicators
+        assert "last_15min_high" not in strat.entry.required_indicators
+        assert "last_15min_low" not in strat.entry.required_indicators
