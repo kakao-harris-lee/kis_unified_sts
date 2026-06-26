@@ -7,6 +7,7 @@ import pandas as pd
 
 import scripts.daily_indicator_scanner as scanner
 from scripts.daily_indicator_scanner import (
+    _load_dynamic_only_strategies,
     backfill_missing_candidate_candles,
     build_strategy_candidate_watchlist,
     compute_futures_daily_indicators,
@@ -16,6 +17,7 @@ from scripts.daily_indicator_scanner import (
     is_fresh_daily_data,
     latest_candle_date,
     load_daily_candles,
+    load_enabled_daily_strategies,
     load_redis_candidate_symbols,
     load_symbol_indicators,
     publish_to_redis,
@@ -482,3 +484,164 @@ def test_scan_futures_symbols_aggregates_per_symbol():
     assert "101S6000" in out
     assert "daily_ema_20" in out["101S6000"]
     assert client.calls == ["101S6000"]
+
+
+# ---------------------------------------------------------------------------
+# dynamic_only_strategies exclusion tests (fix/momentum-breakout-dynamic-prescreen)
+# ---------------------------------------------------------------------------
+
+
+def test_load_dynamic_only_strategies_reads_config(monkeypatch):
+    """_load_dynamic_only_strategies returns names from daily_scanner.yaml."""
+
+    def fake_load(path):
+        assert path == "daily_scanner.yaml"
+        return {"dynamic_only_strategies": ["momentum_breakout", "other_strategy"]}
+
+    monkeypatch.setattr(scanner, "_load_dynamic_only_strategies", lambda: frozenset())
+    # Bypass the scanner module-level cache by calling the real function with a
+    # monkeypatched ConfigLoader instead.
+    import shared.config.loader as loader_mod
+
+    monkeypatch.setattr(loader_mod.ConfigLoader, "load", staticmethod(fake_load))
+    result = _load_dynamic_only_strategies()
+    assert result == frozenset({"momentum_breakout", "other_strategy"})
+
+
+def test_load_dynamic_only_strategies_fallback_on_error(monkeypatch):
+    """_load_dynamic_only_strategies returns empty frozenset when config missing."""
+    import shared.config.loader as loader_mod
+
+    def bad_load(path):
+        raise FileNotFoundError("no config")
+
+    monkeypatch.setattr(loader_mod.ConfigLoader, "load", staticmethod(bad_load))
+    result = _load_dynamic_only_strategies()
+    assert result == frozenset()
+
+
+def test_load_enabled_daily_strategies_excludes_dynamic_only(monkeypatch):
+    """A strategy listed in dynamic_only is NOT returned, so no key is emitted."""
+
+    class _FakeStrategy:
+        def __init__(self, name):
+            self.name = name
+
+    # Patch StrategyFactory and ConfigLoader so no filesystem I/O is needed.
+    # Two configs: trend_pullback (daily) and momentum_breakout (daily).
+    fake_configs = [
+        {"strategy": {"name": "trend_pullback", "timeframe": "daily"}},
+        {"strategy": {"name": "momentum_breakout", "timeframe": "daily"}},
+    ]
+
+    monkeypatch.setattr(
+        scanner,
+        "load_enabled_daily_strategies",
+        scanner.load_enabled_daily_strategies,  # keep real function; patch internals
+    )
+
+    import shared.config.loader as loader_mod
+    import shared.strategy.registry as registry_mod
+
+    monkeypatch.setattr(
+        loader_mod.ConfigLoader,
+        "load_all_strategies",
+        staticmethod(lambda *_a, **_kw: fake_configs),
+    )
+    monkeypatch.setattr(registry_mod, "register_builtin_components", lambda: None)
+    monkeypatch.setattr(
+        registry_mod.StrategyFactory,
+        "create",
+        staticmethod(
+            lambda cfg: _FakeStrategy(cfg["strategy"]["name"])
+        ),
+    )
+
+    strategies = load_enabled_daily_strategies(
+        dynamic_only=frozenset({"momentum_breakout"})
+    )
+    names = [s.name for s in strategies]
+    assert "momentum_breakout" not in names
+    assert "trend_pullback" in names
+
+
+def test_load_enabled_daily_strategies_keeps_non_excluded(monkeypatch):
+    """A strategy NOT in dynamic_only passes through normally."""
+
+    class _FakeStrategy:
+        def __init__(self, name):
+            self.name = name
+
+    fake_configs = [
+        {"strategy": {"name": "trend_pullback", "timeframe": "daily"}},
+        {"strategy": {"name": "pattern_pullback", "timeframe": "daily"}},
+    ]
+
+    import shared.config.loader as loader_mod
+    import shared.strategy.registry as registry_mod
+
+    monkeypatch.setattr(
+        loader_mod.ConfigLoader,
+        "load_all_strategies",
+        staticmethod(lambda *_a, **_kw: fake_configs),
+    )
+    monkeypatch.setattr(registry_mod, "register_builtin_components", lambda: None)
+    monkeypatch.setattr(
+        registry_mod.StrategyFactory,
+        "create",
+        staticmethod(lambda cfg: _FakeStrategy(cfg["strategy"]["name"])),
+    )
+
+    # Neither strategy is in dynamic_only → both returned
+    strategies = load_enabled_daily_strategies(dynamic_only=frozenset())
+    names = [s.name for s in strategies]
+    assert "trend_pullback" in names
+    assert "pattern_pullback" in names
+
+
+def test_excluded_strategy_absent_key_yields_dynamic_gate():
+    """End-to-end: excluded strategy → no key in strategies dict → gate dynamic.
+
+    When the scanner emits no key for momentum_breakout, the
+    daily_watchlist_allows gate returns True for any code, confirming the
+    strategy runs in dynamic mode against the full live universe.
+    """
+    from shared.strategy.entry.daily_watchlist_gate import daily_watchlist_allows
+
+    # Payload that the scanner produces when momentum_breakout is excluded:
+    # trend_pullback has a non-empty list, momentum_breakout key is absent.
+    metadata = {
+        "daily_watchlist": {
+            "strategies": {
+                "trend_pullback": ["005930"],
+                # momentum_breakout intentionally absent
+            }
+        }
+    }
+
+    # trend_pullback in static mode: only 005930 allowed
+    assert daily_watchlist_allows(metadata, "trend_pullback", "005930") is True
+    assert daily_watchlist_allows(metadata, "trend_pullback", "000660") is False
+
+    # momentum_breakout absent → dynamic mode → any code passes
+    assert daily_watchlist_allows(metadata, "momentum_breakout", "005930") is True
+    assert daily_watchlist_allows(metadata, "momentum_breakout", "000660") is True
+    assert daily_watchlist_allows(metadata, "momentum_breakout", "066570") is True
+
+
+def test_excluded_strategy_empty_list_also_yields_dynamic_gate():
+    """Absent and empty list are both dynamic mode per daily_watchlist_allows."""
+    from shared.strategy.entry.daily_watchlist_gate import daily_watchlist_allows
+
+    metadata = {
+        "daily_watchlist": {
+            "strategies": {
+                "trend_pullback": ["005930"],
+                "momentum_breakout": [],  # explicit empty list
+            }
+        }
+    }
+
+    # Empty list → dynamic (same as absent)
+    assert daily_watchlist_allows(metadata, "momentum_breakout", "000660") is True
+    assert daily_watchlist_allows(metadata, "momentum_breakout", "066570") is True

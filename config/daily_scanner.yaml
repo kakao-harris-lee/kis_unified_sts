@@ -1,6 +1,15 @@
 # Daily Scanner Configuration
 # Controls universe filtering for trend_pullback and momentum_breakout watchlists.
 
+# Strategies that must run in dynamic mode (evaluate the live surge universe).
+# The scanner emits NO per-strategy candidate list for these names, so the
+# daily_watchlist_allows gate returns True (dynamic) for every symbol — the
+# strategy's own intraday conditions still apply.
+# Add any strategy that is designed for live screener/trade_targets evaluation
+# and should NOT be pre-screened on daily data.
+dynamic_only_strategies:
+  - momentum_breakout
+
 # Trend-pullback filter
 tp_sma_period: 20
 tp_rsi_period: 14
