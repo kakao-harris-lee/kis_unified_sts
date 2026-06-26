@@ -269,7 +269,6 @@ def probe() -> int:
 
     # Determine if pagination gives enough coverage
     per_call_cap = 100
-    total_bars_accessible_estimate = None
 
     # If 5y returned < 100 bars, the API limit is less than 5y
     # If 3y returned 100 (capped), there's more data behind it
