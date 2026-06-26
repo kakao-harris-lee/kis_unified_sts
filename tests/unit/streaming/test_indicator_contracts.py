@@ -34,6 +34,30 @@ def test_indicator_contract_normalizes_required_keys():
         "momentum_1h",
     )
 
-    malformed = next(req for req in contract.requests if req.source_key == "momentum_xx")
+    malformed = next(
+        req for req in contract.requests if req.source_key == "momentum_xx"
+    )
     assert malformed.kind == IndicatorKind.BASE
     assert malformed.key == "momentum_xx"
+
+
+def test_recent_range_minutes_derived_from_setup_c_keys():
+    """Setup C's range keys encode the window in the key name (→ 15)."""
+    contract = IndicatorContract.from_required_keys(
+        ["atr", "last_15min_high", "last_15min_low"]
+    )
+    assert contract.recent_range_minutes == 15
+
+
+def test_recent_range_minutes_none_without_range_keys():
+    """Strategies that don't declare a range high/low yield no window."""
+    contract = IndicatorContract.from_required_keys(["atr", "vwap", "prev_close"])
+    assert contract.recent_range_minutes is None
+
+
+def test_recent_range_minutes_picks_largest_declared_window():
+    """Defensive: when several windows are declared, the largest is used."""
+    contract = IndicatorContract.from_required_keys(
+        ["last_15min_high", "last_30min_low"]
+    )
+    assert contract.recent_range_minutes == 30

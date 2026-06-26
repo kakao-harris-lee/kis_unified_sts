@@ -69,3 +69,79 @@ def test_collect_exit_indicators_adds_features_even_without_ohlcv_requirement():
 
     assert indicators["rsi"] == 55.0
     assert indicators["feature_score"] == 0.5
+
+
+class _RangeEngine(_FakeEngine):
+    """Fake engine that also exposes ``get_recent_range`` (Setup C wiring)."""
+
+    def __init__(self, *, recent_range: tuple[float, float] | None = (100.0, 99.0)):
+        super().__init__()
+        self._recent_range = recent_range
+        self.range_calls: list[tuple[str, int]] = []
+
+    def get_recent_range(self, symbol: str, minutes: int = 15):
+        self.range_calls.append((symbol, minutes))
+        return self._recent_range
+
+
+def test_collect_entry_indicators_injects_recent_range_for_setup_c():
+    """Setup C's ``last_15min_high/low`` are fulfilled from ``get_recent_range``.
+
+    Without this the orchestrator entry context never carries the 15-min range
+    and Setup C's strict ``current_price > last_15min_high`` breakout is
+    unreachable live (backtest/live parity break).
+    """
+    engine = _RangeEngine(recent_range=(100.0, 99.0))
+    resolver = StreamingIndicatorResolver(
+        engine=engine,
+        required_keys=["atr", "last_15min_high", "last_15min_low"],
+    )
+
+    indicators = resolver.collect_entry_indicators("A05603")
+
+    assert indicators["last_15min_high"] == 100.0
+    assert indicators["last_15min_low"] == 99.0
+    # Window derived from the key name, not a hardcoded constant.
+    assert engine.range_calls == [("A05603", 15)]
+
+
+def test_collect_entry_indicators_skips_recent_range_when_engine_lacks_method():
+    """No ``get_recent_range`` → range keys are simply absent (no crash)."""
+    engine = _FakeEngine()  # base fake has no get_recent_range
+    resolver = StreamingIndicatorResolver(
+        engine=engine,
+        required_keys=["atr", "last_15min_high", "last_15min_low"],
+    )
+
+    indicators = resolver.collect_entry_indicators("A05603")
+
+    assert "last_15min_high" not in indicators
+    assert "last_15min_low" not in indicators
+
+
+def test_collect_entry_indicators_skips_recent_range_when_history_empty():
+    """``get_recent_range`` returning None (cold symbol) injects nothing."""
+    engine = _RangeEngine(recent_range=None)
+    resolver = StreamingIndicatorResolver(
+        engine=engine,
+        required_keys=["atr", "last_15min_high", "last_15min_low"],
+    )
+
+    indicators = resolver.collect_entry_indicators("A05603")
+
+    assert "last_15min_high" not in indicators
+    assert "last_15min_low" not in indicators
+
+
+def test_collect_entry_indicators_no_range_call_when_keys_not_required():
+    """Strategies without range keys never trigger a get_recent_range call."""
+    engine = _RangeEngine(recent_range=(100.0, 99.0))
+    resolver = StreamingIndicatorResolver(
+        engine=engine,
+        required_keys=["rsi"],
+    )
+
+    indicators = resolver.collect_entry_indicators("A05603")
+
+    assert engine.range_calls == []
+    assert "last_15min_high" not in indicators
