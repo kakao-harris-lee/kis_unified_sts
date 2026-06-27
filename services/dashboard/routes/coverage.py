@@ -23,6 +23,9 @@ _UNIVERSE_KEY = os.environ.get("UNIVERSE_LATEST_KEY", "system:universe:latest")
 _TRADE_TARGETS_KEY = os.environ.get(
     "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
 )
+_THEME_TARGETS_KEY = os.environ.get(
+    "THEME_TARGETS_LATEST_KEY", "system:theme_targets:latest"
+)
 _DAILY_INDICATORS_KEY = os.environ.get(
     "DAILY_INDICATORS_LATEST_KEY", "system:daily_indicators:latest"
 )
@@ -132,9 +135,17 @@ def _source_from_redis(redis: Any, name: str, key: str) -> CoverageSource:
     payload = _decode_json(raw)
     symbols = _extract_symbols(payload)
     updated_at = None
+    metadata: dict[str, Any] = {}
     if payload:
         updated_at_raw = payload.get("generated_at") or payload.get("updated_at")
         updated_at = str(updated_at_raw) if updated_at_raw else None
+        metadata = {
+            "snapshot_id": payload.get("snapshot_id"),
+            "source_keys": sorted(payload.keys()),
+        }
+        for key_name in ("themes", "state_counts"):
+            if key_name in payload:
+                metadata[key_name] = payload[key_name]
     return CoverageSource(
         name=name,
         key=key,
@@ -142,14 +153,7 @@ def _source_from_redis(redis: Any, name: str, key: str) -> CoverageSource:
         count=len(symbols) if payload is not None else None,
         updated_at=updated_at,
         symbols=symbols[:200],
-        metadata=(
-            {
-                "snapshot_id": payload.get("snapshot_id"),
-                "source_keys": sorted(payload.keys()),
-            }
-            if payload
-            else {}
-        ),
+        metadata=metadata,
     )
 
 
@@ -215,12 +219,14 @@ async def get_coverage(
     if asset in {"stock", "all"}:
         universe = _source_from_redis(redis, "screener_universe", _UNIVERSE_KEY)
         trade_targets = _source_from_redis(redis, "trade_targets", _TRADE_TARGETS_KEY)
+        theme_targets = _source_from_redis(redis, "theme_targets", _THEME_TARGETS_KEY)
         daily = _source_from_redis(redis, "daily_indicators", _DAILY_INDICATORS_KEY)
         daily_symbols = set(daily.symbols) if daily.available else None
         sources.extend(
             [
                 _with_daily_missing(universe, daily_symbols),
                 _with_daily_missing(trade_targets, daily_symbols),
+                _with_daily_missing(theme_targets, daily_symbols),
                 daily,
             ]
         )

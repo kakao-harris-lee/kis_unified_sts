@@ -24,9 +24,7 @@ def _client(monkeypatch, tmp_path: Path, payloads: dict[str, object]):
     from services.dashboard.routes import coverage
 
     importlib.reload(coverage)
-    monkeypatch.setattr(
-        coverage, "_get_redis_client", lambda: _FakeRedis(payloads)
-    )
+    monkeypatch.setattr(coverage, "_get_redis_client", lambda: _FakeRedis(payloads))
     app = FastAPI()
     app.include_router(coverage.router)
     return TestClient(app), coverage
@@ -55,6 +53,16 @@ def test_coverage_reports_daily_indicator_gaps(monkeypatch, tmp_path):
                 "generated_at": "2026-06-22T00:00:00+00:00",
             },
             "system:trade_targets:latest": {"codes": ["123456"]},
+            "system:theme_targets:latest": {
+                "codes": ["005930", "222222"],
+                "metadata": {
+                    "005930": {"theme_id": "ai_hbm", "state": "active"},
+                    "222222": {"theme_id": "physical_ai", "state": "watch"},
+                },
+                "themes": {"ai_hbm": {"label": "AI/HBM"}},
+                "state_counts": {"active": 1, "watch": 1},
+                "generated_at": "2026-06-22T00:01:00+00:00",
+            },
             "system:daily_indicators:latest": {"indicators": {"005930": {}}},
         },
     )
@@ -68,6 +76,15 @@ def test_coverage_reports_daily_indicator_gaps(monkeypatch, tmp_path):
     assert sources["screener_universe"]["count"] == 2
     assert sources["screener_universe"]["missing_symbols"] == ["123456"]
     assert sources["trade_targets"]["missing_symbols"] == ["123456"]
+    assert sources["theme_targets"]["count"] == 2
+    assert sources["theme_targets"]["missing_symbols"] == ["222222"]
+    assert sources["theme_targets"]["metadata"]["themes"] == {
+        "ai_hbm": {"label": "AI/HBM"}
+    }
+    assert sources["theme_targets"]["metadata"]["state_counts"] == {
+        "active": 1,
+        "watch": 1,
+    }
     assert sources["daily_indicators"]["count"] == 1
     assert body["experiment_coverage"][0]["symbol"] == "005930"
     assert body["experiment_coverage"][1]["error"] == "no_minute_data"
@@ -82,6 +99,7 @@ def test_coverage_is_explicit_when_sources_missing(monkeypatch, tmp_path):
     assert response.status_code == 200
     body = response.json()
     assert "screener_universe" in body["missing_evidence"]
+    assert "theme_targets" in body["missing_evidence"]
     assert "daily_indicators" in body["missing_evidence"]
     assert "futures_data_coverage" in body["missing_evidence"]
     assert "latest_experiment_coverage" in body["missing_evidence"]
