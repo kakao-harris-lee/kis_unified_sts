@@ -10,6 +10,14 @@ def _reader_with_signals(signals: list[object]) -> MagicMock:
     return MagicMock(get_signals=MagicMock(return_value=signals))
 
 
+def _missing_lifecycle(signals_route):
+    return signals_route.DecisionTraceLifecycle(
+        status="missing",
+        steps=[],
+        warnings=["no_lifecycle_evidence"],
+    )
+
+
 async def _get(path: str):
     from services.dashboard.app import create_app
 
@@ -48,6 +56,11 @@ async def test_signal_trace_returns_basic_signal_and_explicit_missing_gaps():
     with (
         patch.object(signals_route, "_get_reader", return_value=reader),
         patch.object(signals_route, "_get_trace_ledger", return_value=None),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
+        ),
     ):
         response = await _get("/api/signals/sig-basic-1/trace?asset_class=futures")
 
@@ -92,6 +105,11 @@ async def test_signal_trace_skips_malformed_rows_and_finds_valid_signal():
     with (
         patch.object(signals_route, "_get_reader", return_value=reader),
         patch.object(signals_route, "_get_trace_ledger", return_value=None),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
+        ),
     ):
         response = await _get(
             "/api/signals/sig-after-malformed/trace?asset_class=futures"
@@ -127,6 +145,11 @@ async def test_signal_trace_lineage_summary_does_not_claim_lifecycle_loaded():
     with (
         patch.object(signals_route, "_get_reader", return_value=reader),
         patch.object(signals_route, "_get_trace_ledger", return_value=None),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
+        ),
     ):
         response = await _get("/api/signals/sig-filled-1/trace?asset_class=futures")
 
@@ -218,6 +241,11 @@ async def test_signal_trace_enriches_llm_context_and_scorecard_from_ledger(tmp_p
             "_get_trace_ledger",
             side_effect=lambda: SQLiteRuntimeLedger(db_path),
         ),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
+        ),
     ):
         response = await _get("/api/signals/sig-ledger-1/trace?asset_class=futures")
 
@@ -287,6 +315,11 @@ async def test_signal_trace_scorecard_uses_no_future_trading_date(tmp_path):
             signals_route,
             "_get_trace_ledger",
             side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
         ),
     ):
         response = await _get("/api/signals/sig-no-lookahead/trace?asset_class=futures")
@@ -359,6 +392,11 @@ async def test_signal_trace_market_context_finds_prior_row_past_future_rows(tmp_
             signals_route,
             "_get_trace_ledger",
             side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
         ),
     ):
         response = await _get(
@@ -436,6 +474,11 @@ async def test_signal_trace_scorecard_maps_setup_ac_shorthand_to_direction(
             signals_route,
             "_get_trace_ledger",
             side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
         ),
     ):
         response = await _get(
