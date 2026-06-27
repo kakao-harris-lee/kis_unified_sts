@@ -219,6 +219,9 @@ def _as_optional_dict(value: Any) -> dict[str, Any] | None:
 
 
 def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
+    if not isinstance(s, dict):
+        return None
+
     try:
         # Always emit tz-aware UTC timestamps so callers (e.g.
         # /history's cutoff comparison) can mix freely without
@@ -337,8 +340,10 @@ def _trace_summary_text(signal: SignalResponse, state: str) -> str:
     if signal.orderability_state:
         parts.append(f"orderability {signal.orderability_state}")
     if state in {"filled", "closed"}:
-        parts.append("fill evidence is available")
-    elif state in {"submitted", "orderable"}:
+        parts.append("lineage id is present; lifecycle evidence is not loaded yet")
+    elif state == "submitted":
+        parts.append("order lineage id is present; fill evidence is not available")
+    elif state == "orderable":
         parts.append("fill evidence is not available")
     return " ".join(parts) + "."
 
