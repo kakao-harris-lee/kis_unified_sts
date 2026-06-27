@@ -10,6 +10,7 @@ redis_keys:
 interval_seconds: 15
 ttl_seconds: 86400
 top_n: 20
+max_universe_age_seconds: 1800
 
 thresholds:
   minimum_screener_score: 0.0

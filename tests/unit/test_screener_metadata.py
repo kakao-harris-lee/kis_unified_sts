@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from typing import Any
 
 from services.fusion_ranker import FusionRanker, FusionRankerConfig
@@ -312,7 +313,7 @@ class TestFusionThemeTargets:
         ranker = self._make_ranker(
             {
                 "system:theme_targets:latest": {
-                    "generated_at": "2026-06-27T09:05:00",
+                    "generated_at": datetime.now().isoformat(),
                     "codes": ["000660"],
                     "scores": {"000660": 0.82},
                     "names": {"000660": "SK하이닉스"},
@@ -350,9 +351,7 @@ class TestFusionThemeTargets:
         assert payload["metadata"]["000660"]["theme_label"] == "AI/HBM"
         assert payload["metadata"]["000660"]["theme_active"] is True
         assert payload["sources"]["theme_targets"]["active_count"] == 1
-        assert (
-            payload["sources"]["theme_targets"]["generated_at"] == "2026-06-27T09:05:00"
-        )
+        assert payload["sources"]["theme_targets"]["generated_at"]
         assert payload["sources"]["weights"]["theme"] == 1.0
 
     def test_run_once_excludes_quarantined_theme_code_from_final_rows(self):
@@ -434,6 +433,79 @@ class TestFusionThemeTargets:
         assert payload["codes"] == ["000660"]
         assert "005930" not in payload["metadata"]
         assert payload["sources"]["theme_targets"]["quarantine_count"] == 1
+
+    def test_run_once_ignores_stale_theme_target_snapshot(self):
+        ranker = self._make_ranker(
+            {
+                "system:theme_targets:latest": {
+                    "generated_at": (
+                        datetime.now() - timedelta(seconds=120)
+                    ).isoformat(),
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.82},
+                    "names": {"000660": "SK하이닉스"},
+                    "metadata": {
+                        "000660": {
+                            "state": "active",
+                            "theme_id": "ai_hbm",
+                            "leader_score": 0.82,
+                        }
+                    },
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"000660": {"daily_close": 284500.0}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=0.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=1.0,
+                theme_stale_seconds=60.0,
+            ),
+        )
+
+        assert ranker.run_once() is False
+        assert ranker.publisher.payloads == []
+
+    def test_run_once_ignores_theme_snapshot_with_stale_source_universe(self):
+        ranker = self._make_ranker(
+            {
+                "system:theme_targets:latest": {
+                    "generated_at": datetime.now().isoformat(),
+                    "source": {
+                        "universe_generated_at": (
+                            datetime.now() - timedelta(seconds=120)
+                        ).isoformat()
+                    },
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.82},
+                    "names": {"000660": "SK하이닉스"},
+                    "metadata": {
+                        "000660": {
+                            "state": "active",
+                            "theme_id": "ai_hbm",
+                            "leader_score": 0.82,
+                        }
+                    },
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"000660": {"daily_close": 284500.0}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=0.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=1.0,
+                theme_stale_seconds=60.0,
+            ),
+        )
+
+        assert ranker.run_once() is False
+        assert ranker.publisher.payloads == []
 
     def test_run_once_missing_theme_key_preserves_existing_realtime_behavior(self):
         ranker = self._make_ranker(

@@ -132,6 +132,10 @@ class FusionRankerConfig(ServiceConfigBase):
         default=43200.0,
         description="Staleness threshold for LLM data (seconds)",
     )
+    theme_stale_seconds: float = Field(
+        default=1800.0,
+        description="Staleness threshold for theme target snapshots (seconds)",
+    )
 
     # LLM adjustments
     llm_risk_penalty_per_hit: float = Field(
@@ -219,6 +223,7 @@ class FusionRankerConfig(ServiceConfigBase):
             "fresh_window_seconds": staleness.get("fresh_window_seconds"),
             "stale_seconds": staleness.get("stale_seconds"),
             "llm_stale_seconds": staleness.get("llm_stale_seconds"),
+            "theme_stale_seconds": staleness.get("theme_stale_seconds"),
             # LLM adjustments
             "llm_risk_penalty_per_hit": llm_adj.get("risk_penalty_per_hit"),
             "llm_final_bonus": llm_adj.get("final_bonus"),
@@ -288,10 +293,39 @@ class FusionRanker:
         if not raw:
             return None
         try:
-            return datetime.fromisoformat(str(raw))
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
         except (ValueError, TypeError) as exc:
             logger.debug("Failed to parse generated_at timestamp: %s", exc)
             return None
+
+    @staticmethod
+    def _age_seconds_since(timestamp: datetime) -> float:
+        now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.now()
+        return max(0.0, (now - timestamp).total_seconds())
+
+    def _theme_payload_is_stale(self, payload: dict[str, Any]) -> bool:
+        max_age = max(0.0, float(self.config.theme_stale_seconds))
+        generated_at = self._parse_generated_at(payload)
+        if generated_at is not None and self._age_seconds_since(generated_at) > max_age:
+            return True
+
+        source = payload.get("source", {})
+        if not isinstance(source, dict):
+            return False
+        source_generated_at = source.get("universe_generated_at")
+        try:
+            source_timestamp = (
+                datetime.fromisoformat(str(source_generated_at).replace("Z", "+00:00"))
+                if source_generated_at
+                else None
+            )
+        except (TypeError, ValueError) as exc:
+            logger.debug("Failed to parse theme source timestamp: %s", exc)
+            return False
+        return (
+            source_timestamp is not None
+            and self._age_seconds_since(source_timestamp) > max_age
+        )
 
     def _extract_realtime(
         self, payload: dict[str, Any]
@@ -668,6 +702,9 @@ class FusionRanker:
             if self.config.theme_enabled
             else {}
         )
+        if theme_payload and self._theme_payload_is_stale(theme_payload):
+            logger.debug("Fusion ignored stale theme targets")
+            theme_payload = {}
         if not realtime_payload and not llm_payload and not theme_payload:
             logger.debug(
                 "Fusion skipped: realtime universe, LLM snapshot, and theme targets unavailable"
@@ -735,9 +772,7 @@ class FusionRanker:
         llm_age_seconds = None
         llm_freshness = 1.0
         if llm_generated_at is not None:
-            llm_age_seconds = max(
-                0.0, (datetime.now() - llm_generated_at).total_seconds()
-            )
+            llm_age_seconds = self._age_seconds_since(llm_generated_at)
             llm_freshness = max(
                 0.0,
                 1.0 - (llm_age_seconds / max(self.config.llm_stale_seconds, 1.0)),

@@ -63,6 +63,11 @@ class ThemeDiscoveryConfig(ServiceConfigBase):
         gt=0,
         description="Maximum non-quarantined theme targets to publish",
     )
+    max_universe_age_seconds: float = Field(
+        default=1800.0,
+        gt=0.0,
+        description="Maximum accepted age for the upstream universe snapshot",
+    )
     thresholds: dict[str, float] = Field(
         default_factory=lambda: {
             "minimum_screener_score": 0.0,
@@ -102,6 +107,24 @@ def _parse_json(raw: Any) -> dict[str, Any]:
         logger.debug("Failed to parse theme discovery input JSON: %s", exc)
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_timestamp(raw: Any) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        logger.debug("Failed to parse timestamp: %s", exc)
+        return None
+
+
+def _age_seconds(raw: Any) -> float | None:
+    timestamp = _parse_timestamp(raw)
+    if timestamp is None:
+        return None
+    now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.now()
+    return max(0.0, (now - timestamp).total_seconds())
 
 
 def _clamp01(value: Any) -> float:
@@ -370,12 +393,21 @@ class ThemeDiscoveryService:
         universe_key: str,
         universe: dict[str, Any],
         input_count: int,
+        source_status: str,
+        universe_age_seconds: float | None = None,
     ) -> dict[str, Any]:
         return {
             "generated_at": generated_at,
             "source": {
                 "universe_key": universe_key,
                 "universe_generated_at": universe.get("generated_at"),
+                "universe_age_seconds": (
+                    round(universe_age_seconds, 2)
+                    if universe_age_seconds is not None
+                    else None
+                ),
+                "max_universe_age_seconds": self.config.max_universe_age_seconds,
+                "status": source_status,
                 "input_count": input_count,
                 "matched_count": 0,
                 "top_n": self.config.top_n,
@@ -409,6 +441,37 @@ class ThemeDiscoveryService:
         if not codes:
             logger.debug("Theme discovery skipped: universe snapshot has no codes")
             return False
+
+        universe_age_seconds = _age_seconds(universe.get("generated_at"))
+        if (
+            universe_age_seconds is not None
+            and universe_age_seconds > self.config.max_universe_age_seconds
+        ):
+            generated_at = datetime.now().isoformat()
+            state_counts = {"active": 0, "watch": 0, "quarantine": 0}
+            theme_payload = self._build_theme_payload(
+                generated_at=generated_at,
+                candidates=[],
+                target_metadata={},
+                target_themes={},
+                state_counts=state_counts,
+                universe_key=universe_key,
+            )
+            target_payload = self._build_empty_target_payload(
+                generated_at=generated_at,
+                universe_key=universe_key,
+                universe=universe,
+                input_count=len(codes),
+                source_status="stale_universe",
+                universe_age_seconds=universe_age_seconds,
+            )
+            self._publish(target_payload=target_payload, theme_payload=theme_payload)
+            logger.info(
+                "Published empty theme targets: stale universe age=%.1fs max=%.1fs",
+                universe_age_seconds,
+                self.config.max_universe_age_seconds,
+            )
+            return True
 
         scores = _extract_scores(universe, codes)
         names = _extract_string_map(universe, "names")
@@ -446,6 +509,8 @@ class ThemeDiscoveryService:
                 universe_key=universe_key,
                 universe=universe,
                 input_count=len(codes),
+                source_status="no_matches",
+                universe_age_seconds=universe_age_seconds,
             )
             self._publish(target_payload=target_payload, theme_payload=theme_payload)
             logger.info("Published empty theme targets: no keyword theme matches")
@@ -543,6 +608,13 @@ class ThemeDiscoveryService:
             "source": {
                 "universe_key": universe_key,
                 "universe_generated_at": universe.get("generated_at"),
+                "universe_age_seconds": (
+                    round(universe_age_seconds, 2)
+                    if universe_age_seconds is not None
+                    else None
+                ),
+                "max_universe_age_seconds": self.config.max_universe_age_seconds,
+                "status": "matched",
                 "input_count": len(codes),
                 "matched_count": len(candidates),
                 "top_n": self.config.top_n,

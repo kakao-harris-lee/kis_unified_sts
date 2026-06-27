@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from datetime import datetime, timedelta
 from typing import Any
 
 
@@ -86,7 +87,7 @@ def test_run_once_publishes_theme_targets_and_theme_summary() -> None:
     service, publisher = _service(module, redis)
     redis.values["system:universe:latest"] = json.dumps(
         {
-            "generated_at": "2026-06-27T09:00:00",
+            "generated_at": datetime.now().isoformat(),
             "codes": ["000660", "034020", "010140", "999999"],
             "scores": {
                 "000660": 0.95,
@@ -196,6 +197,36 @@ def test_run_once_publishes_empty_snapshot_when_no_themes_match() -> None:
     }
     assert target_payload["source"]["matched_count"] == 0
     assert target_payload["theme_catalog"]["ai_hbm"]["label"] == "AI HBM"
+    assert publisher.published == [target_payload]
+
+
+def test_run_once_publishes_empty_snapshot_when_universe_is_stale() -> None:
+    module = _load_theme_discovery()
+    redis = FakeRedis()
+    service, publisher = _service(module, redis)
+    service.config.max_universe_age_seconds = 60.0
+    redis.values["system:universe:latest"] = json.dumps(
+        {
+            "generated_at": (datetime.now() - timedelta(seconds=120)).isoformat(),
+            "codes": ["000660"],
+            "scores": {"000660": 0.95},
+            "names": {"000660": "SK Hynix HBM AI memory"},
+        }
+    )
+
+    assert service.run_once() is True
+
+    target_payload = json.loads(redis.values["system:theme_targets:latest"])
+    assert target_payload["codes"] == []
+    assert target_payload["metadata"] == {}
+    assert target_payload["state_counts"] == {
+        "active": 0,
+        "watch": 0,
+        "quarantine": 0,
+    }
+    assert target_payload["source"]["status"] == "stale_universe"
+    assert target_payload["source"]["universe_age_seconds"] >= 60.0
+    assert target_payload["source"]["max_universe_age_seconds"] == 60.0
     assert publisher.published == [target_payload]
 
 
