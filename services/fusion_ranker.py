@@ -3,6 +3,7 @@
 Combines:
   - real-time screener universe (`system:universe:latest`)
   - batch LLM quality snapshot (`system:llm_quality:latest`)
+  - theme leader targets (`system:theme_targets:latest`)
 
 Publishes fused targets to:
   - Stream: `system:trade_targets`
@@ -50,6 +51,10 @@ class FusionRankerConfig(ServiceConfigBase):
         default="system:llm_quality:latest",
         description="Redis key for LLM quality snapshot",
     )
+    theme_targets_key: str = Field(
+        default="system:theme_targets:latest",
+        description="Redis key for theme leader targets",
+    )
     output_key: str = Field(
         default="system:trade_targets:latest",
         description="Redis key for fused trade targets",
@@ -94,6 +99,24 @@ class FusionRankerConfig(ServiceConfigBase):
     weight_swing: float = Field(
         default=0.10,
         description="Weight for swing discovery metadata from the screener",
+    )
+    weight_theme: float = Field(
+        default=0.15,
+        description="Weight for theme leader targets",
+    )
+
+    # Theme target adjustments
+    theme_enabled: bool = Field(
+        default=True,
+        description="Whether to fuse theme leader target payloads",
+    )
+    theme_active_state_bonus: float = Field(
+        default=0.10,
+        description="Bonus applied to active theme target scores",
+    )
+    theme_quarantine_penalty: float = Field(
+        default=1.0,
+        description="Penalty applied to quarantined theme targets before exclusion",
     )
 
     # Staleness parameters
@@ -171,12 +194,14 @@ class FusionRankerConfig(ServiceConfigBase):
         weights = raw.get("weights", {})
         staleness = raw.get("staleness", {})
         llm_adj = raw.get("llm_adjustments", {})
+        theme = raw.get("theme", {})
 
         # Build flat config dict
         config_data = {
             # Redis keys
             "realtime_key": keys.get("realtime"),
             "llm_quality_key": keys.get("llm_quality"),
+            "theme_targets_key": keys.get("theme_targets"),
             "output_key": keys.get("output"),
             "output_stream": keys.get("output_stream"),
             "daily_indicators_key": keys.get("daily_indicators"),
@@ -189,6 +214,7 @@ class FusionRankerConfig(ServiceConfigBase):
             "weight_llm": weights.get("llm"),
             "weight_recency": weights.get("recency"),
             "weight_swing": weights.get("swing"),
+            "weight_theme": weights.get("theme"),
             # Staleness
             "fresh_window_seconds": staleness.get("fresh_window_seconds"),
             "stale_seconds": staleness.get("stale_seconds"),
@@ -199,6 +225,10 @@ class FusionRankerConfig(ServiceConfigBase):
             "min_llm_quality": llm_adj.get("min_quality"),
             "llm_only_min_quality": llm_adj.get("llm_only_min_quality"),
             "block_negative": llm_adj.get("block_negative"),
+            # Theme targets
+            "theme_enabled": theme.get("enabled"),
+            "theme_active_state_bonus": theme.get("active_state_bonus"),
+            "theme_quarantine_penalty": theme.get("quarantine_penalty"),
         }
 
         # Remove None values to use defaults
@@ -233,6 +263,14 @@ def _normalize_scores_by_rank(codes: list[str]) -> dict[str, float]:
     if n == 1:
         return {codes[0]: 1.0}
     return {code: round((n - i - 1) / (n - 1), 6) for i, code in enumerate(codes)}
+
+
+def _clamp01(value: Any) -> float:
+    try:
+        numeric = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, numeric))
 
 
 class FusionRanker:
@@ -357,6 +395,83 @@ class FusionRanker:
 
         return quality, risk_flags, excluded, names, snapshot_id, metadata
 
+    def _extract_theme(self, payload: dict[str, Any]) -> tuple[
+        list[str],
+        dict[str, float],
+        dict[str, str],
+        dict[str, dict[str, Any]],
+        dict[str, dict[str, Any]],
+        str | None,
+    ]:
+        codes_raw = payload.get("codes", [])
+        seen: set[str] = set()
+        codes: list[str] = []
+        if isinstance(codes_raw, list):
+            for raw_code in codes_raw:
+                code = str(raw_code).strip()
+                if code and code not in seen:
+                    codes.append(code)
+                    seen.add(code)
+
+        themes_raw = payload.get("themes", {})
+        themes: dict[str, dict[str, Any]] = {}
+        if isinstance(themes_raw, dict):
+            for key, value in themes_raw.items():
+                if isinstance(value, dict):
+                    themes[str(key)] = dict(value)
+
+        metadata_raw = payload.get("metadata", {})
+        metadata: dict[str, dict[str, Any]] = {}
+        if isinstance(metadata_raw, dict):
+            for code in codes:
+                raw_value = metadata_raw.get(code, {})
+                meta = dict(raw_value) if isinstance(raw_value, dict) else {}
+                state = str(meta.get("state", "watch")).strip().lower()
+                if state not in {"active", "watch", "quarantine"}:
+                    state = "watch"
+                meta["state"] = state
+
+                theme_id = str(meta.get("theme_id", "")).strip()
+                if theme_id:
+                    meta["theme_id"] = theme_id
+                    theme_info = themes.get(theme_id, {})
+                    label = (
+                        theme_info.get("label")
+                        if isinstance(theme_info, dict)
+                        else None
+                    )
+                    if label and not meta.get("theme_label"):
+                        meta["theme_label"] = str(label)
+                metadata[code] = meta
+        else:
+            metadata = {code: {"state": "watch"} for code in codes}
+
+        raw_scores = payload.get("scores", {})
+        rank_scores = _normalize_scores_by_rank(codes)
+        scores: dict[str, float] = {}
+        for code in codes:
+            raw_score = raw_scores.get(code) if isinstance(raw_scores, dict) else None
+            if not isinstance(raw_score, (int, float)):
+                raw_score = metadata.get(code, {}).get("leader_score")
+            if not isinstance(raw_score, (int, float)):
+                raw_score = rank_scores.get(code, 0.0)
+            scores[code] = _clamp01(raw_score)
+
+        names_raw = payload.get("names", {})
+        names = (
+            {
+                str(k): str(v)
+                for k, v in names_raw.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
+            if isinstance(names_raw, dict)
+            else {}
+        )
+
+        generated_at_raw = payload.get("generated_at")
+        generated_at = str(generated_at_raw).strip() if generated_at_raw else None
+        return codes, scores, names, metadata, themes, generated_at
+
     @staticmethod
     def _extract_swing_score(metadata: dict[str, Any]) -> float:
         swing = metadata.get("swing_discovery")
@@ -428,6 +543,20 @@ class FusionRanker:
                 break
         return selected
 
+    def _theme_effective_score(
+        self,
+        code: str,
+        theme_scores: dict[str, float],
+        theme_metadata: dict[str, dict[str, Any]],
+    ) -> float:
+        score = _clamp01(theme_scores.get(code, 0.0))
+        state = str(theme_metadata.get(code, {}).get("state", "watch")).strip().lower()
+        if state == "active":
+            score += max(0.0, float(self.config.theme_active_state_bonus))
+        elif state == "quarantine":
+            score -= max(0.0, float(self.config.theme_quarantine_penalty))
+        return _clamp01(score)
+
     @staticmethod
     def _apply_daily_indicator_coverage(
         rows: list[tuple[str, float, dict[str, Any]]],
@@ -472,9 +601,14 @@ class FusionRanker:
     def run_once(self) -> bool:
         realtime_payload = _parse_json(self.redis.get(self.config.realtime_key))
         llm_payload = _parse_json(self.redis.get(self.config.llm_quality_key))
-        if not realtime_payload and not llm_payload:
+        theme_payload = (
+            _parse_json(self.redis.get(self.config.theme_targets_key))
+            if self.config.theme_enabled
+            else {}
+        )
+        if not realtime_payload and not llm_payload and not theme_payload:
             logger.debug(
-                "Fusion skipped: realtime universe and LLM snapshot unavailable"
+                "Fusion skipped: realtime universe, LLM snapshot, and theme targets unavailable"
             )
             return False
 
@@ -489,12 +623,33 @@ class FusionRanker:
             llm_snapshot_id,
             llm_metadata,
         ) = self._extract_llm(llm_payload)
+        (
+            theme_codes,
+            theme_scores,
+            theme_names,
+            theme_metadata,
+            theme_catalog,
+            theme_generated_at,
+        ) = self._extract_theme(theme_payload)
 
-        if not realtime_codes and not llm_quality:
+        if not realtime_codes and not llm_quality and not theme_scores:
             return False
 
         now = time.time()
         for c in realtime_codes:
+            self._last_seen[c] = now
+
+        active_theme_codes = [
+            code
+            for code in theme_codes
+            if theme_metadata.get(code, {}).get("state") == "active"
+        ]
+        theme_quarantine_codes = {
+            code
+            for code in theme_codes
+            if theme_metadata.get(code, {}).get("state") == "quarantine"
+        }
+        for c in active_theme_codes:
             self._last_seen[c] = now
 
         # include a small number of final LLM picks even if they are not yet in realtime ranking
@@ -508,7 +663,11 @@ class FusionRanker:
             excluded=llm_excluded,
         )
         llm_only_set = set(llm_only_codes)
-        union = list(dict.fromkeys(realtime_codes + llm_final_codes + llm_only_codes))
+        union = list(
+            dict.fromkeys(
+                realtime_codes + llm_final_codes + llm_only_codes + active_theme_codes
+            )
+        )
 
         llm_generated_at = self._parse_generated_at(llm_payload)
         llm_age_seconds = None
@@ -524,6 +683,9 @@ class FusionRanker:
 
         rows: list[tuple[str, float, dict[str, Any]]] = []
         for code in union:
+            if code in theme_quarantine_codes:
+                continue
+
             rt = float(realtime_scores.get(code, 0.0))
             lq = float(llm_quality.get(code, 0.0))
             if lq < self.config.min_llm_quality:
@@ -543,37 +705,55 @@ class FusionRanker:
 
             rec = self._recency_component(code, now)
             swing_score = self._extract_swing_score(realtime_metadata.get(code, {}))
+            has_theme = code in theme_scores
+            theme_score = float(theme_scores.get(code, 0.0)) if has_theme else 0.0
+            theme_effective_score = (
+                self._theme_effective_score(code, theme_scores, theme_metadata)
+                if has_theme
+                else 0.0
+            )
             score = (
                 self.config.weight_realtime * rt
                 + self.config.weight_llm * effective_lq
                 + self.config.weight_recency * rec
                 + self.config.weight_swing * swing_score
+                + self.config.weight_theme * theme_effective_score
             )
             final_score = max(0.0, min(1.0, score))
+
+            row_metadata = {
+                **llm_metadata.get(code, {}),
+                "realtime_score": round(rt, 6),
+                "llm_quality": round(lq, 6),
+                "llm_effective_quality": round(effective_lq, 6),
+                "llm_confidence": round(llm_confidence, 6),
+                "llm_freshness": round(llm_freshness, 6),
+                "llm_age_seconds": (
+                    round(llm_age_seconds, 2) if llm_age_seconds is not None else None
+                ),
+                "llm_snapshot_id": llm_snapshot_id,
+                "recency_component": round(rec, 6),
+                "swing_discovery_score": round(swing_score, 6),
+                "risk_flags": risk_hits,
+                "llm_only": code in llm_only_set,
+                "llm_final": code in llm_final_set,
+            }
+            if has_theme:
+                row_metadata.update(theme_metadata.get(code, {}))
+                row_metadata.update(
+                    {
+                        "theme_score": round(theme_score, 6),
+                        "theme_effective_score": round(theme_effective_score, 6),
+                        "theme_active": code in active_theme_codes,
+                        "theme_quarantine": code in theme_quarantine_codes,
+                    }
+                )
 
             rows.append(
                 (
                     code,
                     round(final_score, 6),
-                    {
-                        **llm_metadata.get(code, {}),
-                        "realtime_score": round(rt, 6),
-                        "llm_quality": round(lq, 6),
-                        "llm_effective_quality": round(effective_lq, 6),
-                        "llm_confidence": round(llm_confidence, 6),
-                        "llm_freshness": round(llm_freshness, 6),
-                        "llm_age_seconds": (
-                            round(llm_age_seconds, 2)
-                            if llm_age_seconds is not None
-                            else None
-                        ),
-                        "llm_snapshot_id": llm_snapshot_id,
-                        "recency_component": round(rec, 6),
-                        "swing_discovery_score": round(swing_score, 6),
-                        "risk_flags": risk_hits,
-                        "llm_only": code in llm_only_set,
-                        "llm_final": code in llm_final_set,
-                    },
+                    row_metadata,
                 )
             )
 
@@ -594,7 +774,10 @@ class FusionRanker:
         scores = {r[0]: r[1] for r in rows}
         # Merge screener metadata (e.g. prev_day_volume) under fusion scores
         metadata = {r[0]: {**realtime_metadata.get(r[0], {}), **r[2]} for r in rows}
-        names = {c: realtime_names.get(c, llm_names.get(c, "")) for c in codes}
+        names = {
+            c: realtime_names.get(c, llm_names.get(c, theme_names.get(c, "")))
+            for c in codes
+        }
 
         payload = {
             "generated_at": datetime.now().isoformat(),
@@ -605,9 +788,24 @@ class FusionRanker:
             "sources": {
                 "realtime_key": self.config.realtime_key,
                 "llm_quality_key": self.config.llm_quality_key,
+                "theme_targets_key": self.config.theme_targets_key,
                 "daily_indicators_key": self.config.daily_indicators_key,
                 "daily_indicator_coverage": coverage_stats,
                 "coverage_filtered_count": coverage_stats["coverage_filtered_count"],
+                "theme_targets": {
+                    "enabled": self.config.theme_enabled,
+                    "key": self.config.theme_targets_key,
+                    "candidate_count": len(theme_codes),
+                    "active_count": len(active_theme_codes),
+                    "quarantine_count": len(theme_quarantine_codes),
+                    "admitted_count": len(
+                        [c for c in codes if c in active_theme_codes]
+                    ),
+                    "generated_at": theme_generated_at,
+                    "theme_count": len(theme_catalog),
+                    "active_state_bonus": self.config.theme_active_state_bonus,
+                    "quarantine_penalty": self.config.theme_quarantine_penalty,
+                },
                 "llm_only_top_n": self.config.llm_only_top_n,
                 "llm_only_min_quality": self.config.llm_only_min_quality,
                 "weights": {
@@ -615,6 +813,7 @@ class FusionRanker:
                     "llm": self.config.weight_llm,
                     "recency": self.config.weight_recency,
                     "swing": self.config.weight_swing,
+                    "theme": self.config.weight_theme,
                 },
             },
         }
