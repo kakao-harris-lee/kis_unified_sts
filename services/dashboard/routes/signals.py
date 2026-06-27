@@ -597,15 +597,17 @@ def _build_trace_lifecycle(signal: SignalResponse) -> DecisionTraceLifecycle:
 
     ledger_rows, ledger_available = _load_lifecycle_ledger_rows(
         signal.asset_class,
-        symbol=signal.symbol or None,
+        symbol=None,
         signal_id=signal.id or None,
         order_id=signal.order_id,
         fill_id=signal.fill_id,
         trade_id=signal.trade_id,
+        position_id=signal.position_id,
+        allow_symbol_lookup=False,
     )
     redis_rows = _load_lifecycle_redis_rows(
         signal.asset_class,
-        symbol=signal.symbol or None,
+        symbol=None,
     )
     response = _build_lifecycle_response(
         asset_class=signal.asset_class,
@@ -613,10 +615,12 @@ def _build_trace_lifecycle(signal: SignalResponse) -> DecisionTraceLifecycle:
         order_id=signal.order_id,
         fill_id=signal.fill_id,
         trade_id=signal.trade_id,
-        symbol=signal.symbol or None,
+        position_id=signal.position_id,
+        symbol=None,
         ledger_rows=ledger_rows,
         redis_rows=redis_rows,
         ledger_available=ledger_available,
+        allow_symbol_fallback=False,
     )
     steps = [step.model_dump(mode="json") for step in response.steps]
     return DecisionTraceLifecycle(

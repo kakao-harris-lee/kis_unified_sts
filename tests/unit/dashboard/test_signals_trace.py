@@ -27,6 +27,94 @@ async def _get(path: str):
         return await client.get(path)
 
 
+def _record_complete_lifecycle(
+    ledger,
+    *,
+    signal_id: str,
+    symbol: str,
+    order_id: str,
+    fill_id: str,
+    position_id: str,
+    trade_id: str,
+) -> None:
+    ledger.record_signal_decision(
+        {
+            "decision_id": f"{signal_id}-decision",
+            "signal_id": signal_id,
+            "asset_class": "futures",
+            "code": symbol,
+            "strategy": "setup_a_gap_reversion",
+            "decision": "accepted",
+            "created_at": "2026-06-27T00:19:00+00:00",
+            "side": "BUY",
+        }
+    )
+    ledger.record_order(
+        {
+            "id": order_id,
+            "idempotency_key": order_id,
+            "signal_id": signal_id,
+            "asset_class": "futures",
+            "code": symbol,
+            "side": "BUY",
+            "order_type": "limit",
+            "quantity": 1,
+            "price": 390.25,
+            "status": "submitted",
+            "strategy": "setup_a_gap_reversion",
+        }
+    )
+    ledger.record_fill(
+        {
+            "id": fill_id,
+            "idempotency_key": fill_id,
+            "signal_id": signal_id,
+            "order_id": order_id,
+            "asset_class": "futures",
+            "code": symbol,
+            "side": "BUY",
+            "filled_qty": 1,
+            "filled_price": 390.25,
+            "filled_at": "2026-06-27T00:21:00+00:00",
+            "trade_role": "entry",
+        }
+    )
+    ledger.record_position_snapshot(
+        {
+            "id": position_id,
+            "idempotency_key": f"{position_id}-snapshot",
+            "asset_class": "futures",
+            "code": symbol,
+            "side": "long",
+            "strategy": "setup_a_gap_reversion",
+            "quantity": 1,
+            "entry_time": "2026-06-27T00:21:00+00:00",
+            "entry_price": 390.25,
+            "snapshot_time": "2026-06-27T00:22:00+00:00",
+        }
+    )
+    ledger.record_trade(
+        {
+            "id": trade_id,
+            "idempotency_key": trade_id,
+            "signal_id": signal_id,
+            "order_id": order_id,
+            "fill_id": fill_id,
+            "position_id": position_id,
+            "asset_class": "futures",
+            "code": symbol,
+            "side": "long",
+            "strategy": "setup_a_gap_reversion",
+            "entry_time": "2026-06-27T00:21:00+00:00",
+            "entry_price": 390.25,
+            "exit_time": "2026-06-27T00:45:00+00:00",
+            "exit_price": 392.0,
+            "quantity": 1,
+            "exit_reason": "target",
+        }
+    )
+
+
 @pytest.mark.asyncio
 async def test_signal_trace_returns_basic_signal_and_explicit_missing_gaps():
     from services.dashboard.routes import signals as signals_route
@@ -543,3 +631,141 @@ async def test_signal_trace_embeds_lifecycle_and_removes_lifecycle_gap():
     assert body["lifecycle"]["steps"][0]["stage"] == "signal"
     assert "partial_legacy_lineage" in body["summary"]["warnings"]
     assert "no_lifecycle_evidence" not in {gap["code"] for gap in body["evidence_gaps"]}
+
+
+@pytest.mark.asyncio
+async def test_signal_trace_lifecycle_does_not_attach_stale_same_symbol_rows(tmp_path):
+    from services.dashboard.routes import signals as signals_route
+    from services.dashboard.routes import trades as trades_route
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    db_path = tmp_path / "runtime.db"
+    ledger = SQLiteRuntimeLedger(db_path)
+    _record_complete_lifecycle(
+        ledger,
+        signal_id="old-sig",
+        symbol="101S6000",
+        order_id="old-order",
+        fill_id="old-fill",
+        position_id="old-position",
+        trade_id="old-trade",
+    )
+    ledger.close()
+
+    reader = _reader_with_signals(
+        [
+            {
+                "id": "current-sig",
+                "symbol": "101S6000",
+                "side": "BUY",
+                "signal_type": "entry",
+                "strategy": "setup_a_gap_reversion",
+                "price": 390.25,
+                "confidence": 0.72,
+                "timestamp": "2026-06-27T00:20:00+00:00",
+                "executed": False,
+            }
+        ]
+    )
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(signals_route, "_get_trace_ledger", return_value=None),
+        patch.object(
+            trades_route,
+            "_get_runtime_ledger",
+            side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+        patch.object(
+            trades_route,
+            "_load_lifecycle_redis_rows",
+            return_value=trades_route._empty_lifecycle_rows(),
+        ),
+    ):
+        response = await _get("/api/signals/current-sig/trace?asset_class=futures")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["lifecycle"]["status"] == "missing"
+    stale_ids = {"old-order", "old-fill", "old-position", "old-trade"}
+    assert stale_ids.isdisjoint({step["id"] for step in body["lifecycle"]["steps"]})
+    assert stale_ids.isdisjoint(set(body["lineage"].values()))
+
+
+@pytest.mark.asyncio
+async def test_signal_trace_lifecycle_uses_exact_position_id_without_symbol_fallback(
+    tmp_path,
+):
+    from services.dashboard.routes import signals as signals_route
+    from services.dashboard.routes import trades as trades_route
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    db_path = tmp_path / "runtime.db"
+    ledger = SQLiteRuntimeLedger(db_path)
+    _record_complete_lifecycle(
+        ledger,
+        signal_id="old-sig",
+        symbol="101S6000",
+        order_id="old-order",
+        fill_id="old-fill",
+        position_id="old-position",
+        trade_id="old-trade",
+    )
+    ledger.record_position_snapshot(
+        {
+            "id": "pos-current",
+            "idempotency_key": "pos-current-snapshot",
+            "asset_class": "futures",
+            "code": "DIFFERENT",
+            "side": "long",
+            "strategy": "setup_a_gap_reversion",
+            "quantity": 1,
+            "entry_time": "2026-06-27T00:21:00+00:00",
+            "entry_price": 390.25,
+            "snapshot_time": "2026-06-27T00:22:00+00:00",
+        }
+    )
+    ledger.close()
+
+    reader = _reader_with_signals(
+        [
+            {
+                "id": "current-position-sig",
+                "symbol": "101S6000",
+                "side": "BUY",
+                "signal_type": "entry",
+                "strategy": "setup_a_gap_reversion",
+                "price": 390.25,
+                "confidence": 0.72,
+                "timestamp": "2026-06-27T00:20:00+00:00",
+                "executed": True,
+                "trace": {"position_id": "pos-current"},
+            }
+        ]
+    )
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(signals_route, "_get_trace_ledger", return_value=None),
+        patch.object(
+            trades_route,
+            "_get_runtime_ledger",
+            side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+        patch.object(
+            trades_route,
+            "_load_lifecycle_redis_rows",
+            return_value=trades_route._empty_lifecycle_rows(),
+        ),
+    ):
+        response = await _get(
+            "/api/signals/current-position-sig/trace?asset_class=futures"
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    by_stage = {step["stage"]: step for step in body["lifecycle"]["steps"]}
+    assert by_stage["position"]["id"] == "pos-current"
+    assert by_stage["position"]["source"] == "runtime_ledger"
+    stale_ids = {"old-order", "old-fill", "old-position", "old-trade"}
+    assert stale_ids.isdisjoint({step["id"] for step in body["lifecycle"]["steps"]})

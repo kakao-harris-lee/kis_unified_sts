@@ -592,14 +592,15 @@ def _derive_lifecycle_lookup(
     order_id: str | None,
     fill_id: str | None,
     trade_id: str | None,
-    symbol: str | None,
+    position_id: str | None = None,
+    symbol: str | None = None,
 ) -> dict[str, str | None]:
     lookup: dict[str, str | None] = {
         "signal_id": _clean_text(signal_id),
         "order_id": _clean_text(order_id),
         "fill_id": _clean_text(fill_id),
         "trade_id": _clean_text(trade_id),
-        "position_id": None,
+        "position_id": _clean_text(position_id),
         "symbol": _clean_text(symbol),
     }
     for trade in rows["trades"]:
@@ -736,6 +737,7 @@ def _query_lifecycle_batch(
     asset_class: str,
     lookup: dict[str, str | None],
     broad: bool = False,
+    allow_symbol_lookup: bool = True,
     limit: int,
 ) -> bool:
     table_map = (
@@ -814,7 +816,7 @@ def _query_lifecycle_batch(
                 ),
             )
 
-        if lookup.get("symbol"):
+        if allow_symbol_lookup and lookup.get("symbol"):
             added |= _append_lifecycle_rows(
                 rows,
                 kind,
@@ -837,6 +839,8 @@ def _load_lifecycle_ledger_rows(
     order_id: str | None = None,
     fill_id: str | None = None,
     trade_id: str | None = None,
+    position_id: str | None = None,
+    allow_symbol_lookup: bool = True,
     limit: int = 500,
 ) -> tuple[dict[str, list[dict]], bool]:
     ledger = _get_runtime_ledger()
@@ -851,6 +855,7 @@ def _load_lifecycle_ledger_rows(
             order_id=order_id,
             fill_id=fill_id,
             trade_id=trade_id,
+            position_id=position_id,
             symbol=symbol,
         )
         if not _has_lifecycle_lookup(lookup):
@@ -870,6 +875,7 @@ def _load_lifecycle_ledger_rows(
                     order_id=order_id,
                     fill_id=fill_id,
                     trade_id=trade_id,
+                    position_id=position_id,
                     symbol=symbol,
                 )
                 if not _query_lifecycle_batch(
@@ -877,6 +883,7 @@ def _load_lifecycle_ledger_rows(
                     rows,
                     asset_class=asset_class,
                     lookup=lookup,
+                    allow_symbol_lookup=allow_symbol_lookup,
                     limit=limit,
                 ):
                     break
@@ -1171,10 +1178,12 @@ def _build_lifecycle_response(
     order_id: str | None = None,
     fill_id: str | None = None,
     trade_id: str | None = None,
+    position_id: str | None = None,
     symbol: str | None = None,
     ledger_rows: dict[str, list[dict]] | None = None,
     redis_rows: dict[str, list[dict]] | None = None,
     ledger_available: bool = True,
+    allow_symbol_fallback: bool = True,
 ) -> TradeLifecycleResponse:
     ledger_rows = ledger_rows or _empty_lifecycle_rows()
     redis_rows = redis_rows or _empty_lifecycle_rows()
@@ -1185,11 +1194,13 @@ def _build_lifecycle_response(
             "order_id": order_id,
             "fill_id": fill_id,
             "trade_id": trade_id,
+            "position_id": position_id,
             "symbol": symbol,
         }.items()
         if _clean_text(value)
     }
     has_request_filters = bool(filters)
+    symbol_selector = symbol if allow_symbol_fallback else None
 
     all_trades = ledger_rows["trades"] + redis_rows["trades"]
     all_fills = ledger_rows["fills"] + redis_rows["fills"]
@@ -1204,7 +1215,7 @@ def _build_lifecycle_response(
             (fill_id, ("fill_id", "entry_fill_id", "exit_fill_id")),
             (order_id, ("order_id", "entry_order_id", "exit_order_id")),
             (signal_id, ("signal_id",)),
-            (symbol, ("symbol", "code")),
+            (symbol_selector, ("symbol", "code")),
         ],
         allow_fallback=not has_request_filters,
     )
@@ -1214,7 +1225,7 @@ def _build_lifecycle_response(
         "order_id": _clean_text(order_id),
         "fill_id": _clean_text(fill_id),
         "trade_id": _clean_text(trade_id),
-        "position_id": None,
+        "position_id": _clean_text(position_id),
     }
     _maybe_set_lineage(lineage, "trade_id", _row_value(trade, "id", "trade_id"))
     _maybe_set_lineage(lineage, "position_id", _row_value(trade, "position_id"))
@@ -1232,7 +1243,15 @@ def _build_lifecycle_response(
             (lineage["fill_id"], ("id", "fill_id", "broker_fill_id")),
             (lineage["order_id"], ("order_id",)),
             (lineage["signal_id"], ("signal_id",)),
-            (symbol or _row_text(trade, "symbol", "code"), ("symbol", "code")),
+            (
+                symbol_selector
+                or (
+                    _row_text(trade, "symbol", "code")
+                    if allow_symbol_fallback
+                    else None
+                ),
+                ("symbol", "code"),
+            ),
         ],
         allow_fallback=not any(
             (lineage["fill_id"], lineage["order_id"], lineage["signal_id"])
@@ -1251,7 +1270,13 @@ def _build_lifecycle_response(
                 ("id", "order_id", "client_order_id", "broker_order_id"),
             ),
             (lineage["signal_id"], ("signal_id",)),
-            (symbol or _row_text(fill, "symbol", "code"), ("symbol", "code")),
+            (
+                symbol_selector
+                or (
+                    _row_text(fill, "symbol", "code") if allow_symbol_fallback else None
+                ),
+                ("symbol", "code"),
+            ),
         ],
         allow_fallback=not any((lineage["order_id"], lineage["signal_id"]))
         and not has_request_filters,
@@ -1268,7 +1293,15 @@ def _build_lifecycle_response(
         [
             (lineage["signal_id"], ("signal_id", "id")),
             (lineage["order_id"], ("order_id", "client_order_id", "broker_order_id")),
-            (symbol or _row_text(order, "symbol", "code"), ("symbol", "code")),
+            (
+                symbol_selector
+                or (
+                    _row_text(order, "symbol", "code")
+                    if allow_symbol_fallback
+                    else None
+                ),
+                ("symbol", "code"),
+            ),
         ],
         allow_fallback=not any((lineage["signal_id"], lineage["order_id"]))
         and not has_request_filters,
@@ -1301,9 +1334,13 @@ def _build_lifecycle_response(
             (lineage["position_id"], ("position_id", "id")),
             (lineage["trade_id"], ("trade_id",)),
             (
-                symbol
-                or _row_text(trade, "symbol", "code")
-                or _row_text(fill, "symbol", "code"),
+                symbol_selector
+                or (
+                    _row_text(trade, "symbol", "code")
+                    or _row_text(fill, "symbol", "code")
+                    if allow_symbol_fallback
+                    else None
+                ),
                 ("symbol", "code"),
             ),
         ],
