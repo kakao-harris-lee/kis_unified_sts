@@ -303,10 +303,17 @@ class FusionRanker:
         now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.now()
         return max(0.0, (now - timestamp).total_seconds())
 
+    def _payload_is_stale(
+        self, payload: dict[str, Any], max_age_seconds: float
+    ) -> bool:
+        generated_at = self._parse_generated_at(payload)
+        return generated_at is not None and self._age_seconds_since(generated_at) > max(
+            0.0, float(max_age_seconds)
+        )
+
     def _theme_payload_is_stale(self, payload: dict[str, Any]) -> bool:
         max_age = max(0.0, float(self.config.theme_stale_seconds))
-        generated_at = self._parse_generated_at(payload)
-        if generated_at is not None and self._age_seconds_since(generated_at) > max_age:
+        if self._payload_is_stale(payload, max_age):
             return True
 
         source = payload.get("source", {})
@@ -702,6 +709,12 @@ class FusionRanker:
             if self.config.theme_enabled
             else {}
         )
+        if realtime_payload and self._payload_is_stale(
+            realtime_payload,
+            self.config.stale_seconds,
+        ):
+            logger.debug("Fusion ignored stale realtime universe")
+            realtime_payload = {}
         if theme_payload and self._theme_payload_is_stale(theme_payload):
             logger.debug("Fusion ignored stale theme targets")
             theme_payload = {}

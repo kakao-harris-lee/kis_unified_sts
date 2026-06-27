@@ -179,6 +179,32 @@ class TestFusionDailyIndicatorCoverage:
         assert coverage["coverage_filtered_count"] == 2
         assert coverage["missing_sample"] == ["123456", "999999"]
 
+    def test_run_once_ignores_stale_realtime_universe_snapshot(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "generated_at": (
+                        datetime.now() - timedelta(seconds=120)
+                    ).isoformat(),
+                    "codes": ["005930"],
+                    "scores": {"005930": 0.99},
+                    "names": {"005930": "삼성전자"},
+                },
+                "system:daily_indicators:latest": {"indicators": {"005930": {}}},
+            },
+            FusionRankerConfig(
+                stale_seconds=60.0,
+                weight_realtime=1.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=0.0,
+            ),
+        )
+
+        assert ranker.run_once() is False
+        assert ranker.publisher.payloads == []
+
     def test_run_once_admits_llm_only_quality_code_with_daily_coverage(self):
         ranker = self._make_ranker(
             {
