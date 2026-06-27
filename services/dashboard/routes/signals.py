@@ -471,42 +471,58 @@ def _load_market_context(
     if from_payload is not None:
         return from_payload
 
-    signal_ts = _parse_dt(signal.timestamp)
     try:
-        rows = (
-            ledger._require_conn()  # noqa: SLF001
-            .execute(
-                "SELECT * FROM market_context_history "
-                "WHERE asset_class = ? "
-                "ORDER BY created_at DESC LIMIT 50",
-                (signal.asset_class,),
+        signal_ts = _parse_dt(signal.timestamp)
+        if signal_ts is not None:
+            row = (
+                ledger._require_conn()  # noqa: SLF001
+                .execute(
+                    "SELECT * FROM market_context_history "
+                    "WHERE asset_class = ? AND created_at <= ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (signal.asset_class, signal_ts.isoformat()),
+                )
+                .fetchone()
             )
-            .fetchall()
-        )
+        else:
+            row = (
+                ledger._require_conn()  # noqa: SLF001
+                .execute(
+                    "SELECT * FROM market_context_history "
+                    "WHERE asset_class = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (signal.asset_class,),
+                )
+                .fetchone()
+            )
     except Exception:
         return None
 
-    for row in rows:
-        data = dict(row)
-        context = _json_payload(row)
-        context.setdefault("created_at", data.get("created_at"))
-        created_at = _parse_dt(context.get("created_at"))
-        if signal_ts is not None:
-            if created_at is None or created_at > signal_ts:
-                continue
-        loaded = _llm_context_from_payload(context)
-        if loaded is not None:
-            return loaded
-    return None
+    if row is None:
+        return None
+    data = dict(row)
+    context = _json_payload(row)
+    context.setdefault("created_at", data.get("created_at"))
+    return _llm_context_from_payload(context)
+
+
+def _is_futures_setup_ac_value(value: Any) -> bool:
+    raw = _as_optional_str(value)
+    if raw is None:
+        return False
+    normalized = raw.strip().lower().replace("-", "_")
+    return normalized in {"a", "c", "setup_a", "setup_c"} or normalized.startswith(
+        ("a_", "c_", "setup_a_", "setup_c_")
+    )
 
 
 def _scorecard_facet(signal: SignalResponse) -> str | None:
-    if signal.asset_class == "futures" and signal.strategy in {
-        "setup_a_gap_reversion",
-        "setup_c_event_reaction",
-        "setup_a",
-        "setup_c",
-    }:
+    if (signal.asset_class or "").lower() != "futures":
+        return None
+    if any(
+        _is_futures_setup_ac_value(value)
+        for value in (signal.strategy, signal.setup_type)
+    ):
         return "direction"
     return None
 

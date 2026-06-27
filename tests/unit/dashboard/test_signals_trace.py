@@ -287,3 +287,155 @@ async def test_signal_trace_scorecard_uses_no_future_trading_date(tmp_path):
     assert body["scorecard"]["status"] == "missing"
     assert body["scorecard"]["date_kst"] is None
     assert "scorecard_missing" in {gap["code"] for gap in body["evidence_gaps"]}
+
+
+@pytest.mark.asyncio
+async def test_signal_trace_market_context_finds_prior_row_past_future_rows(tmp_path):
+    from services.dashboard.routes import signals as signals_route
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    db_path = tmp_path / "runtime.db"
+    ledger = SQLiteRuntimeLedger(db_path)
+    ledger.record_market_context(
+        {
+            "asset_class": "futures",
+            "context_type": "premarket",
+            "created_at": "2026-06-27T00:10:00+00:00",
+            "overall_signal": "BULLISH_PRIOR",
+            "confidence": 0.67,
+            "risk_mode": "risk_on",
+            "regime": "trend",
+            "risk_score": 0.25,
+            "source": "prior_context",
+        }
+    )
+    for offset in range(60):
+        total_minutes = 21 + offset
+        hour = total_minutes // 60
+        minute = total_minutes % 60
+        ledger.record_market_context(
+            {
+                "asset_class": "futures",
+                "context_type": "intraday",
+                "created_at": f"2026-06-27T{hour:02d}:{minute:02d}:00+00:00",
+                "overall_signal": "FUTURE",
+                "confidence": 0.99,
+                "risk_mode": "risk_off",
+                "regime": "future",
+                "risk_score": 0.99,
+                "source": f"future_context_{offset}",
+            }
+        )
+    ledger.close()
+
+    reader = _reader_with_signals(
+        [
+            {
+                "id": "sig-context-prior",
+                "symbol": "101S6000",
+                "side": "BUY",
+                "signal_type": "entry",
+                "strategy": "setup_a_gap_reversion",
+                "price": 390.25,
+                "confidence": 0.72,
+                "timestamp": "2026-06-27T00:20:00+00:00",
+                "executed": False,
+            }
+        ]
+    )
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(
+            signals_route,
+            "_get_trace_ledger",
+            side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+    ):
+        response = await _get(
+            "/api/signals/sig-context-prior/trace?asset_class=futures"
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["llm_context"]["status"] == "ok"
+    assert body["llm_context"]["overall_signal"] == "BULLISH_PRIOR"
+    assert "llm_context_not_available" not in {
+        gap["code"] for gap in body["evidence_gaps"]
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("strategy", "setup_type"),
+    [
+        ("A_gap_reversion", None),
+        ("futures_monitor", "A"),
+    ],
+)
+async def test_signal_trace_scorecard_maps_setup_ac_shorthand_to_direction(
+    tmp_path,
+    strategy,
+    setup_type,
+):
+    from services.dashboard.routes import signals as signals_route
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    db_path = tmp_path / "runtime.db"
+    ledger = SQLiteRuntimeLedger(db_path)
+    ledger.save_prediction(
+        "2026-06-27",
+        "direction",
+        "2026-06-27T00:05:00+00:00",
+        {"overall_signal": "BULLISH"},
+        0.71,
+    )
+    ledger.save_score(
+        {
+            "date_kst": "2026-06-27",
+            "facet": "direction",
+            "correct": True,
+            "value": 0.28,
+            "economic_proxy": 0.18,
+            "baseline_value": 0.10,
+            "edge": 0.18,
+            "detail": {"outcome": "up"},
+            "scored_at": "2026-06-27T07:00:00+00:00",
+        }
+    )
+    ledger.close()
+
+    raw_signal = {
+        "id": f"sig-scorecard-{strategy}-{setup_type or 'none'}",
+        "symbol": "101S6000",
+        "side": "BUY",
+        "signal_type": "entry",
+        "strategy": strategy,
+        "price": 390.25,
+        "confidence": 0.72,
+        "timestamp": "2026-06-27T00:20:00+00:00",
+        "executed": False,
+    }
+    if setup_type is not None:
+        raw_signal["setup_type"] = setup_type
+
+    reader = _reader_with_signals([raw_signal])
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(
+            signals_route,
+            "_get_trace_ledger",
+            side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+    ):
+        response = await _get(
+            f"/api/signals/{raw_signal['id']}/trace?asset_class=futures"
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scorecard"]["status"] == "ok"
+    assert body["scorecard"]["facet"] == "direction"
+    assert body["scorecard"]["edge"] == 0.18
+    assert "scorecard_missing" not in {gap["code"] for gap in body["evidence_gaps"]}
