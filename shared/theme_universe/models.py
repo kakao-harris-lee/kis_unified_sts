@@ -125,16 +125,57 @@ def build_theme_targets_payload(
         for candidate in candidate_payloads
         if candidate["state"] == "active" and candidate["code"]
     ]
-    themes = sorted(
-        {candidate["theme"] for candidate in candidate_payloads if candidate["theme"]}
-    )
+    quarantined_codes = [
+        candidate["code"]
+        for candidate in candidate_payloads
+        if candidate["state"] == "quarantine" and candidate["code"]
+    ]
+    themes = {
+        candidate["code"]: [candidate["theme"]]
+        for candidate in candidate_payloads
+        if candidate["code"] and candidate["theme"]
+    }
+    theme_catalog = {
+        candidate["theme"]: {"label": candidate["theme"]}
+        for candidate in candidate_payloads
+        if candidate["theme"]
+    }
+    names = {
+        candidate["code"]: candidate["name"]
+        for candidate in candidate_payloads
+        if candidate["code"] and candidate["name"]
+    }
+    scores = {
+        candidate["code"]: candidate["leader_score"]
+        for candidate in candidate_payloads
+        if candidate["code"] and candidate["state"] != "quarantine"
+    }
+    metadata = {}
+    for candidate in candidate_payloads:
+        code = candidate["code"]
+        theme_id = candidate["theme"]
+        metadata[code] = {
+            **candidate["metadata"],
+            "state": candidate["state"],
+            "leader_score": candidate["leader_score"],
+            "theme_id": theme_id,
+            "theme_label": theme_id,
+            "risk_flags": candidate["risk_flags"],
+            "market_signal_count": candidate["market_signal_count"],
+            "catalyst_signal_count": candidate["catalyst_signal_count"],
+        }
     return {
         "codes": active_codes,
+        "scores": scores,
+        "names": names,
         "candidates": candidate_payloads,
         "themes": themes,
+        "theme_catalog": theme_catalog,
         "state_counts": state_counts,
-        "metadata": {
+        "metadata": metadata,
+        "summary": {
             "candidate_count": len(candidate_payloads),
             "active_count": state_counts["active"],
         },
+        "quarantined_codes": quarantined_codes,
     }

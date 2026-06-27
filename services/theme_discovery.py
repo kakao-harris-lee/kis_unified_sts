@@ -363,6 +363,39 @@ class ThemeDiscoveryService:
         )
         self.publisher.publish(target_payload)
 
+    def _build_empty_target_payload(
+        self,
+        *,
+        generated_at: str,
+        universe_key: str,
+        universe: dict[str, Any],
+        input_count: int,
+    ) -> dict[str, Any]:
+        return {
+            "generated_at": generated_at,
+            "source": {
+                "universe_key": universe_key,
+                "universe_generated_at": universe.get("generated_at"),
+                "input_count": input_count,
+                "matched_count": 0,
+                "top_n": self.config.top_n,
+            },
+            "codes": [],
+            "scores": {},
+            "names": {},
+            "metadata": {},
+            "themes": {},
+            "theme_catalog": {
+                theme_id: {
+                    "label": theme.label or theme_id,
+                    "keywords": list(theme.keywords),
+                }
+                for theme_id, theme in self.config.keyword_themes.items()
+            },
+            "state_counts": {"active": 0, "watch": 0, "quarantine": 0},
+            "quarantined_codes": [],
+        }
+
     def run_once(self) -> bool:
         """Read the latest universe snapshot and publish derived theme targets."""
 
@@ -398,8 +431,25 @@ class ThemeDiscoveryService:
                 raw_matches[code] = matches
 
         if not raw_matches:
-            logger.debug("Theme discovery skipped: no keyword theme matches")
-            return False
+            generated_at = datetime.now().isoformat()
+            state_counts = {"active": 0, "watch": 0, "quarantine": 0}
+            theme_payload = self._build_theme_payload(
+                generated_at=generated_at,
+                candidates=[],
+                target_metadata={},
+                target_themes={},
+                state_counts=state_counts,
+                universe_key=universe_key,
+            )
+            target_payload = self._build_empty_target_payload(
+                generated_at=generated_at,
+                universe_key=universe_key,
+                universe=universe,
+                input_count=len(codes),
+            )
+            self._publish(target_payload=target_payload, theme_payload=theme_payload)
+            logger.info("Published empty theme targets: no keyword theme matches")
+            return True
 
         theme_counts: dict[str, int] = {}
         for matches in raw_matches.values():
@@ -436,12 +486,21 @@ class ThemeDiscoveryService:
             if hard_blocked:
                 state = "quarantine"
             state_counts[state] += 1
+            primary_theme_id = matched_themes[0] if matched_themes else ""
+            primary_theme = self.config.keyword_themes.get(primary_theme_id)
+            primary_theme_label = (
+                primary_theme.label if primary_theme is not None else primary_theme_id
+            )
 
             enriched_metadata = {
                 **metadata,
                 "screener_score": scores.get(code, 0.0),
                 "matched_themes": matched_themes,
                 "theme_keyword_hits": matches,
+                "state": state,
+                "leader_score": leader_score,
+                "theme_id": primary_theme_id,
+                "theme_label": primary_theme_label,
                 "theme_state": state,
                 "theme_leader_score": leader_score,
                 "hard_blocked": hard_blocked,
@@ -493,6 +552,7 @@ class ThemeDiscoveryService:
             "names": all_names,
             "metadata": target_metadata,
             "themes": target_themes,
+            "theme_catalog": theme_payload["themes"],
             "state_counts": dict(state_counts),
             "quarantined_codes": quarantined_codes,
         }

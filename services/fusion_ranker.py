@@ -429,24 +429,57 @@ class FusionRanker:
                     codes.append(code)
                     seen.add(code)
 
+        code_themes: dict[str, list[str]] = {}
         themes_raw = payload.get("themes", {})
         themes: dict[str, dict[str, Any]] = {}
         if isinstance(themes_raw, dict):
             for key, value in themes_raw.items():
                 if isinstance(value, dict):
                     themes[str(key)] = dict(value)
+                elif isinstance(value, list):
+                    parsed = [str(item).strip() for item in value if str(item).strip()]
+                    if parsed:
+                        code_themes[str(key)] = parsed
+
+        theme_catalog_raw = payload.get("theme_catalog", {})
+        if isinstance(theme_catalog_raw, dict):
+            for key, value in theme_catalog_raw.items():
+                if isinstance(value, dict):
+                    themes[str(key)] = dict(value)
+
+        quarantined_codes = set()
+        if isinstance(quarantined_raw, list):
+            quarantined_codes = {
+                str(raw_code).strip()
+                for raw_code in quarantined_raw
+                if str(raw_code).strip()
+            }
 
         metadata: dict[str, dict[str, Any]] = {}
         if isinstance(metadata_raw, dict):
             for code in codes:
                 raw_value = metadata_raw.get(code, {})
                 meta = dict(raw_value) if isinstance(raw_value, dict) else {}
-                state = str(meta.get("state", "watch")).strip().lower()
+                state = (
+                    str(meta.get("state") or meta.get("theme_state") or "watch")
+                    .strip()
+                    .lower()
+                )
+                if code in quarantined_codes:
+                    state = "quarantine"
                 if state not in {"active", "watch", "quarantine"}:
                     state = "watch"
                 meta["state"] = state
+                if "leader_score" not in meta and "theme_leader_score" in meta:
+                    meta["leader_score"] = meta["theme_leader_score"]
 
                 theme_id = str(meta.get("theme_id", "")).strip()
+                if not theme_id:
+                    matched = meta.get("matched_themes")
+                    if isinstance(matched, list) and matched:
+                        theme_id = str(matched[0]).strip()
+                if not theme_id and code_themes.get(code):
+                    theme_id = code_themes[code][0]
                 if theme_id:
                     meta["theme_id"] = theme_id
                     theme_info = themes.get(theme_id, {})
@@ -459,7 +492,10 @@ class FusionRanker:
                         meta["theme_label"] = str(label)
                 metadata[code] = meta
         else:
-            metadata = {code: {"state": "watch"} for code in codes}
+            metadata = {
+                code: {"state": "quarantine" if code in quarantined_codes else "watch"}
+                for code in codes
+            }
 
         raw_scores = payload.get("scores", {})
         rank_scores = _normalize_scores_by_rank(codes)
@@ -468,6 +504,8 @@ class FusionRanker:
             raw_score = raw_scores.get(code) if isinstance(raw_scores, dict) else None
             if not isinstance(raw_score, (int, float)):
                 raw_score = metadata.get(code, {}).get("leader_score")
+            if not isinstance(raw_score, (int, float)):
+                raw_score = metadata.get(code, {}).get("theme_leader_score")
             if not isinstance(raw_score, (int, float)):
                 raw_score = rank_scores.get(code, 0.0)
             scores[code] = _clamp01(raw_score)
@@ -599,7 +637,16 @@ class FusionRanker:
         }
 
     def _publish_payload(self, payload: dict[str, Any]) -> bool:
-        fingerprint = json.dumps(payload.get("codes", []), ensure_ascii=False)
+        fingerprint = json.dumps(
+            {
+                "codes": payload.get("codes", []),
+                "scores": payload.get("scores", {}),
+                "names": payload.get("names", {}),
+                "metadata": payload.get("metadata", {}),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         if fingerprint == self._last_payload_fingerprint:
             return False
 

@@ -118,9 +118,15 @@ def test_theme_candidate_payload_helpers_round_trip_json_friendly_contract():
     payload = build_theme_targets_payload([candidate])
 
     assert payload["codes"] == ["005930"]
-    assert payload["themes"] == ["HBM"]
+    assert payload["scores"] == {"005930": 0.812346}
+    assert payload["names"] == {"005930": "Samsung Electronics"}
+    assert payload["themes"] == {"005930": ["HBM"]}
+    assert payload["theme_catalog"] == {"HBM": {"label": "HBM"}}
     assert payload["state_counts"] == {"active": 1, "watch": 0, "quarantine": 0}
-    assert payload["metadata"]["candidate_count"] == 1
+    assert payload["summary"]["candidate_count"] == 1
+    assert payload["metadata"]["005930"]["state"] == "active"
+    assert payload["metadata"]["005930"]["leader_score"] == 0.812346
+    assert payload["quarantined_codes"] == []
     assert payload["candidates"] == [
         {
             "code": "005930",

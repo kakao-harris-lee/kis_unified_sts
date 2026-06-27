@@ -395,6 +395,15 @@ services:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
       TZ: "Asia/Seoul"
 
+  theme-discovery:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-theme-discovery
+    profiles: ["producers"]
+    command: ["python", "-m", "services.theme_discovery"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
+      TZ: "Asia/Seoul"
+
   fusion-ranker:
     <<: *pipeline-service
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-fusion-ranker
