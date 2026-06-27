@@ -4,36 +4,18 @@ import json
 import os
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from services.dashboard.domain import assets as asset_domain
 from shared.exceptions import InfrastructureError
 
-VALID_ASSET = {"stock", "futures", "all"}
-ASSET_CLASSES = ("futures", "stock")
-
-
-def _normalize_asset_class(value: str | None) -> str:
-    """Validate and normalize the ``asset_class`` query parameter.
-
-    Returns the lowercase value. Raises HTTP 400 if the value is not in
-    :data:`VALID_ASSET`. ``None`` falls back to ``"futures"`` (the dashboard
-    default — futures is the primary live-traded asset class).
-    """
-    if value is None:
-        return "futures"
-    normalized = value.strip().lower()
-    if normalized not in VALID_ASSET:
-        raise HTTPException(
-            status_code=400,
-            detail="asset_class must be stock, futures, or all",
-        )
-    return normalized
-
-
-def _target_assets(asset_class: str) -> tuple[str, ...]:
-    """Return concrete asset classes to read for a normalized selector."""
-    return ASSET_CLASSES if asset_class == "all" else (asset_class,)
+VALID_ASSET = asset_domain.VALID_ASSET
+ASSET_CLASSES = asset_domain.ASSET_CLASSES
+normalize_asset_class = asset_domain.normalize_asset_class
+target_assets = asset_domain.target_assets
+_normalize_asset_class = asset_domain.normalize_asset_class
+_target_assets = asset_domain.target_assets
 
 
 def _parse_tz_aware(value: str | None) -> datetime:
@@ -511,7 +493,9 @@ def _risk_response_from_state(
             last_update=status.last_update,
         ),
         by_strategy=by_strategy,
-        by_symbol=sorted(by_symbol, key=lambda row: (row.asset_class, row.strategy, row.code)),
+        by_symbol=sorted(
+            by_symbol, key=lambda row: (row.asset_class, row.strategy, row.code)
+        ),
         notes=notes,
     )
 

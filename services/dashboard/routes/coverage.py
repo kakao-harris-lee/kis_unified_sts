@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from services.dashboard.routes.trading import _normalize_asset_class
+from services.dashboard.domain.assets import normalize_asset_class
 
 router = APIRouter(prefix="/api/coverage", tags=["coverage"])
 
@@ -142,12 +142,14 @@ def _source_from_redis(redis: Any, name: str, key: str) -> CoverageSource:
         count=len(symbols) if payload is not None else None,
         updated_at=updated_at,
         symbols=symbols[:200],
-        metadata={
-            "snapshot_id": payload.get("snapshot_id"),
-            "source_keys": sorted(payload.keys()),
-        }
-        if payload
-        else {},
+        metadata=(
+            {
+                "snapshot_id": payload.get("snapshot_id"),
+                "source_keys": sorted(payload.keys()),
+            }
+            if payload
+            else {}
+        ),
     )
 
 
@@ -204,7 +206,7 @@ async def get_coverage(
     asset_class: str = Query(default="stock"),
 ) -> CoverageResponse:
     """Return universe, indicator, and experiment coverage for triage."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     redis = _get_redis_client()
     missing: list[str] = []
     notes: list[str] = []
@@ -212,12 +214,8 @@ async def get_coverage(
 
     if asset in {"stock", "all"}:
         universe = _source_from_redis(redis, "screener_universe", _UNIVERSE_KEY)
-        trade_targets = _source_from_redis(
-            redis, "trade_targets", _TRADE_TARGETS_KEY
-        )
-        daily = _source_from_redis(
-            redis, "daily_indicators", _DAILY_INDICATORS_KEY
-        )
+        trade_targets = _source_from_redis(redis, "trade_targets", _TRADE_TARGETS_KEY)
+        daily = _source_from_redis(redis, "daily_indicators", _DAILY_INDICATORS_KEY)
         daily_symbols = set(daily.symbols) if daily.available else None
         sources.extend(
             [

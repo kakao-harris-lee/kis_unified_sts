@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 
-from shared.collector.historical.futures import get_front_month_code
+from shared.instruments.futures import get_front_month_code
 
 DEFAULT_FUTURES_PRODUCT = "mini"
 SUPPORTED_FUTURES_PRODUCTS = frozenset({"mini", "kospi200"})

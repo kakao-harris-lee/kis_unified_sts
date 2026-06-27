@@ -13,7 +13,7 @@ import yaml
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from services.dashboard.routes.trading import _normalize_asset_class
+from services.dashboard.domain.assets import normalize_asset_class
 from shared.decision.context import ScheduledEvent, load_scheduled_events
 from shared.decision.setups.event_reaction import SetupCConfig
 
@@ -889,7 +889,7 @@ async def get_event_context_diagnostics(
 ) -> EventContextDiagnosticsResponse:
     """Return event-score/source diagnostics for Setup C no-signal triage."""
 
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     now = datetime.now(UTC)
     redis = _get_redis_client()
     cfg = _load_setup_c_config()

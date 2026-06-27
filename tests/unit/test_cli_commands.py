@@ -230,6 +230,11 @@ class TestCollectCommands:
 class TestDataCommands:
     """Test research data commands."""
 
+    def test_data_command_group_is_importable_from_command_module(self):
+        from cli.commands.data import data_cmd
+
+        assert data_cmd.name == "data"
+
     def test_validate_parquet_allows_empty_dataset(self, runner, tmp_path):
         """Empty dataset validation can be used as a smoke check."""
         from cli.main import cli

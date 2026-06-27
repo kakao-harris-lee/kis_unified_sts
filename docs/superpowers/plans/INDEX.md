@@ -17,6 +17,7 @@ Active plans:
 |---|---|---|
 | 2026-06-27 | [architecture audit parallel plan](2026-06-27-architecture-audit-parallel-plan.md) | Parallel read-only architecture audit of orchestrator, stock pipeline, futures pipeline, and shared streaming boundaries. |
 | 2026-06-27 | [architecture hardening phase 1](2026-06-27-architecture-hardening-phase1.md) | Implementation plan for shared futures instrument resolution and a reusable multi-input Redis stream stage. |
+| 2026-06-27 | [modularization phase 1](2026-06-27-modularization-phase1.md) | First low-risk module boundary extractions for instruments, dashboard asset helpers, frontend builder auto-conditions, and CLI data commands. |
 
 Completed records are retained under [archive/](archive/), including:
 

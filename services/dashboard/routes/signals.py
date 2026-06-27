@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from services.dashboard.routes.trading import _normalize_asset_class, _target_assets
+from services.dashboard.domain.assets import normalize_asset_class, target_assets
 from shared.exceptions import InfrastructureError
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -135,8 +135,12 @@ def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
             timestamp=ts,
             executed=bool(s.get("executed", False)),
             setup_type=s.get("setup_type") or s.get("stage") or None,
-            status=_as_optional_str(_first_present(s.get("status"), trace.get("status"))),
-            reason=_as_optional_str(_first_present(s.get("reason"), trace.get("reason"))),
+            status=_as_optional_str(
+                _first_present(s.get("status"), trace.get("status"))
+            ),
+            reason=_as_optional_str(
+                _first_present(s.get("reason"), trace.get("reason"))
+            ),
             reject_stage=_as_optional_str(
                 _first_present(
                     s.get("reject_stage"),
@@ -157,16 +161,26 @@ def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
                 _first_present(
                     s.get("orderability_state"),
                     trace.get("orderability_state"),
-                    orderability.get("state") if isinstance(orderability, dict) else orderability,
+                    (
+                        orderability.get("state")
+                        if isinstance(orderability, dict)
+                        else orderability
+                    ),
                 )
             ),
             orderability_details=orderability_details,
-            order_id=_as_optional_str(_first_present(s.get("order_id"), trace.get("order_id"))),
-            fill_id=_as_optional_str(_first_present(s.get("fill_id"), trace.get("fill_id"))),
+            order_id=_as_optional_str(
+                _first_present(s.get("order_id"), trace.get("order_id"))
+            ),
+            fill_id=_as_optional_str(
+                _first_present(s.get("fill_id"), trace.get("fill_id"))
+            ),
             position_id=_as_optional_str(
                 _first_present(s.get("position_id"), trace.get("position_id"))
             ),
-            trade_id=_as_optional_str(_first_present(s.get("trade_id"), trace.get("trade_id"))),
+            trade_id=_as_optional_str(
+                _first_present(s.get("trade_id"), trace.get("trade_id"))
+            ),
         )
     except (ValueError, TypeError, KeyError):
         # Invalid signal data - skip this record
@@ -182,10 +196,10 @@ async def get_signals(
     asset_class: str = Query(default="futures"),
 ):
     """Get list of signals with optional filters."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     raw_by_asset = [
         (target, signal)
-        for target in _target_assets(asset)
+        for target in target_assets(asset)
         for signal in _load_signals(target)
     ]
     signals = [_to_signal_response(s, target) for target, s in raw_by_asset]
@@ -211,10 +225,10 @@ async def get_signal_history(
     asset_class: str = Query(default="futures"),
 ):
     """Get signal history statistics."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     raw_by_asset = [
         (target, signal)
-        for target in _target_assets(asset)
+        for target in target_assets(asset)
         for signal in _load_signals(target)
     ]
     signals = [_to_signal_response(s, target) for target, s in raw_by_asset]

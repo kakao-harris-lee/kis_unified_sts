@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from services.dashboard.routes.trading import _normalize_asset_class, _target_assets
+from services.dashboard.domain.assets import normalize_asset_class, target_assets
 from shared.exceptions import InfrastructureError
 from shared.storage.config import StorageConfig
 from shared.storage.runtime_ledger import RuntimeLedgerError, SQLiteRuntimeLedger
@@ -202,7 +202,7 @@ def _load_runtime_ledger_trades(
 
     try:
         rows: list[dict] = []
-        for target in _target_assets(asset_class):
+        for target in target_assets(asset_class):
             filters: dict = {"asset_class": target, "limit": limit}
             if strategy:
                 filters["strategy"] = strategy
@@ -248,7 +248,7 @@ async def get_trades(
     asset_class: str = Query(default="futures"),
 ):
     """Get list of trades with optional filters."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_runtime_ledger_trades(
         asset,
         strategy=strategy,
@@ -263,7 +263,7 @@ async def get_trades(
     else:
         raw_by_asset = [
             (target, trade)
-            for target in _target_assets(asset)
+            for target in target_assets(asset)
             for trade in _load_trades(target)
         ]
     trades = [_to_trade_response(t, target) for target, t in raw_by_asset]
@@ -286,7 +286,7 @@ async def get_trades(
 @router.get("/statistics", response_model=TradeStatistics)
 async def get_trade_statistics():
     """Get overall trade statistics."""
-    asset = _normalize_asset_class(os.environ.get("TRADING_ASSET_CLASS", "stock"))
+    asset = normalize_asset_class(os.environ.get("TRADING_ASSET_CLASS", "stock"))
     ledger_rows, ledger_available = _load_runtime_ledger_trades(asset)
     raw = ledger_rows if ledger_available else _load_trades(asset)
     trades = [
@@ -334,13 +334,15 @@ async def get_trades_by_strategy(
     asset_class: str | None = Query(default=None, description="stock, futures, or all"),
 ):
     """Get trade performance grouped by strategy."""
-    asset = _normalize_asset_class(asset_class or os.environ.get("TRADING_ASSET_CLASS", "stock"))
+    asset = normalize_asset_class(
+        asset_class or os.environ.get("TRADING_ASSET_CLASS", "stock")
+    )
     ledger_rows, ledger_available = _load_runtime_ledger_trades(asset)
     if ledger_available:
         raw = ledger_rows
     else:
         raw = []
-        for target in _target_assets(asset):
+        for target in target_assets(asset):
             raw.extend(_load_trades(target))
     trades = [
         _to_trade_response(
@@ -459,7 +461,7 @@ def _load_runtime_ledger_fills(
         return [], False
     try:
         rows: list[dict] = []
-        for target in _target_assets(asset_class):
+        for target in target_assets(asset_class):
             rows.extend(ledger.query_fills({"asset_class": target, "limit": limit}))
         fills = [_ledger_fill_to_dict(row) for row in rows]
         fills.sort(key=lambda f: _parse_tz_aware(f.get("filled_at")), reverse=True)
@@ -695,7 +697,7 @@ def _query_lifecycle_table(
 
     sql = f"SELECT * FROM {table} WHERE 1=1"
     params: list[Any] = []
-    targets = _target_assets(asset_class)
+    targets = target_assets(asset_class)
     if targets:
         placeholders = ", ".join("?" for _ in targets)
         sql += f" AND asset_class IN ({placeholders})"
@@ -893,7 +895,7 @@ def _load_lifecycle_redis_rows(
     symbol: str | None = None,
 ) -> dict[str, list[dict]]:
     rows = _empty_lifecycle_rows()
-    for target in _target_assets(asset_class):
+    for target in target_assets(asset_class):
         try:
             reader = _get_reader(target)
             trades = reader.get_trades(start=0, count=500)
@@ -1351,7 +1353,7 @@ async def get_trade_lifecycle(
     asset_class: str = Query(default="futures"),
 ) -> TradeLifecycleResponse:
     """Return a read-only signal/order/fill/trade lifecycle timeline."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_lifecycle_ledger_rows(
         asset,
         symbol=symbol,
@@ -1380,7 +1382,7 @@ async def get_db_closed_statistics(
     strategy: str | None = Query(None),
 ):
     """Aggregate statistics from RuntimeLedger."""
-    asset_class = _normalize_asset_class(asset_class)
+    asset_class = normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_runtime_ledger_trades(
         asset_class,
         strategy=strategy,
@@ -1397,7 +1399,7 @@ async def get_recent_fills(
     limit: int = Query(default=10, ge=1, le=100),
 ) -> dict:
     """Recent order fills from RuntimeLedger."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     ledger_fills, ledger_available = _load_runtime_ledger_fills(asset, limit=limit)
     if ledger_available:
         return {"fills": ledger_fills}
@@ -1412,7 +1414,7 @@ async def get_db_closed_trades(
     limit: int = Query(100, ge=1, le=500),
 ):
     """Recent closed trades from RuntimeLedger."""
-    asset_class = _normalize_asset_class(asset_class)
+    asset_class = normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_runtime_ledger_trades(
         asset_class,
         strategy=strategy,
