@@ -45,7 +45,10 @@ async def test_signal_trace_returns_basic_signal_and_explicit_missing_gaps():
         ]
     )
 
-    with patch.object(signals_route, "_get_reader", return_value=reader):
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(signals_route, "_get_trace_ledger", return_value=None),
+    ):
         response = await _get("/api/signals/sig-basic-1/trace?asset_class=futures")
 
     assert response.status_code == 200
@@ -86,7 +89,10 @@ async def test_signal_trace_skips_malformed_rows_and_finds_valid_signal():
         ]
     )
 
-    with patch.object(signals_route, "_get_reader", return_value=reader):
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(signals_route, "_get_trace_ledger", return_value=None),
+    ):
         response = await _get(
             "/api/signals/sig-after-malformed/trace?asset_class=futures"
         )
@@ -118,7 +124,10 @@ async def test_signal_trace_lineage_summary_does_not_claim_lifecycle_loaded():
         ]
     )
 
-    with patch.object(signals_route, "_get_reader", return_value=reader):
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(signals_route, "_get_trace_ledger", return_value=None),
+    ):
         response = await _get("/api/signals/sig-filled-1/trace?asset_class=futures")
 
     assert response.status_code == 200
