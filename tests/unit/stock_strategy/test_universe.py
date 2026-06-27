@@ -51,14 +51,50 @@ def test_parse_trade_targets_codes():
     assert parse_trade_targets_codes(json.dumps({}), max_symbols=40) == []
 
 
+def test_select_stock_universe_prioritizes_sources_under_cap():
+    from shared.stock_universe.selection import select_stock_universe
+
+    assert select_stock_universe(
+        trade_targets=["005930", "000660", "035720"],
+        watchlist=["000660", "035420", "051910"],
+        existing=["051910", "068270"],
+        max_symbols=5,
+    ) == ["005930", "000660", "035720", "035420", "051910"]
+
+
 def test_merge_screener_universe_unions_watchlist_and_targets():
     wl = json.dumps({"strategies": {"pattern_pullback": ["105560"]}})
     tt = json.dumps({"codes": ["005930", "000660", "105560"]})
     merged = merge_screener_universe(wl, tt, max_symbols=40)
     codes = parse_watchlist_codes(merged, max_symbols=40)
-    # watchlist candidate kept first, then screener targets, de-duped.
-    assert codes[0] == "105560"
+    # Screener targets lead the capped strategy universe, then watchlist-only codes.
+    assert codes[:3] == ["005930", "000660", "105560"]
     assert set(codes) == {"105560", "005930", "000660"}
+
+
+def test_merge_screener_universe_applies_trade_targets_first_cap_order():
+    wl = json.dumps(
+        {
+            "strategies": {
+                "opening_volume_surge": [
+                    "105560",
+                    "035420",
+                    "051910",
+                    "068270",
+                ]
+            }
+        }
+    )
+    tt = json.dumps({"codes": ["005930", "000660", "105560"]})
+
+    merged = merge_screener_universe(wl, tt, max_symbols=4)
+
+    assert parse_watchlist_codes(merged, max_symbols=4) == [
+        "005930",
+        "000660",
+        "105560",
+        "035420",
+    ]
 
 
 def test_merge_screener_universe_preserves_trade_target_payload():
@@ -78,7 +114,7 @@ def test_merge_screener_universe_preserves_trade_target_payload():
 
     merged = merge_screener_universe(wl, json.dumps(trade_targets), max_symbols=40)
 
-    assert parse_watchlist_codes(merged, max_symbols=40) == ["105560", "080220"]
+    assert parse_watchlist_codes(merged, max_symbols=40) == ["080220", "105560"]
     assert merged[_SCREENER_PAYLOAD_KEY]["metadata"]["080220"]["llm_only"] is True
 
 

@@ -20,6 +20,8 @@ import json
 import logging
 from typing import Any
 
+from shared.stock_universe import select_stock_universe
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +75,11 @@ def parse_trade_targets_codes(raw: Any, *, max_symbols: int) -> list[str]:
         code = str(c).strip()
         if code:
             seen.setdefault(code, None)
-    return list(seen)[:max_symbols]
+    return select_stock_universe(
+        trade_targets=list(seen),
+        watchlist=[],
+        max_symbols=max_symbols,
+    )
 
 
 # Synthetic group key under which screener trade-targets are folded into the
@@ -88,9 +94,10 @@ def merge_screener_universe(
 ) -> dict:
     """Fold screener trade-targets into the daily-watchlist payload.
 
-    Returns a watchlist-shaped dict whose ``strategies`` map carries the scanner
-    candidates FIRST (kept ahead in the cap) plus a ``_screener_trade_targets``
-    group, so ``parse_watchlist_codes`` yields ``daily_watchlist ∪ trade_targets``.
+    Returns a watchlist-shaped dict whose ``strategies`` map carries selected
+    screener trade-targets first plus the scanner candidates, so
+    ``parse_watchlist_codes`` yields ``trade_targets ∪ daily_watchlist`` under
+    the same cap order market-ingest uses.
     """
     payload: dict = {}
     if watchlist_raw:
@@ -104,7 +111,11 @@ def merge_screener_universe(
                 payload = dict(decoded)
         except (TypeError, ValueError):
             payload = {}
-    strategies = dict(payload.get("strategies") or {})
+    strategies = {
+        key: value
+        for key, value in dict(payload.get("strategies") or {}).items()
+        if key != _SCREENER_GROUP
+    }
     trade_targets_payload: dict[str, Any] = {}
     if trade_targets_raw:
         try:
@@ -122,8 +133,19 @@ def merge_screener_universe(
         trade_targets_payload or trade_targets_raw,
         max_symbols=max_symbols,
     )
+    watchlist_codes = parse_watchlist_codes(
+        {"strategies": strategies},
+        max_symbols=max_symbols,
+    )
+    selected = select_stock_universe(
+        trade_targets=targets,
+        watchlist=watchlist_codes,
+        max_symbols=max_symbols,
+    )
     if targets:
-        strategies[_SCREENER_GROUP] = targets
+        target_set = set(targets)
+        selected_targets = [code for code in selected if code in target_set]
+        strategies = {_SCREENER_GROUP: selected_targets, **strategies}
         # Preserve the fused target metadata for downstream signal generation.
         # The strategy gate still sees a normal watchlist-shaped payload; the
         # extra key is ignored by parse_watchlist_codes and daily strategy gates.

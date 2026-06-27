@@ -18,10 +18,25 @@ from datetime import datetime
 from typing import Any
 
 from shared.config.runtime_defaults import redis_url_from_env
+from shared.stock_universe import select_stock_universe
 
 logger = logging.getLogger(__name__)
 
 SymbolProvider = Callable[[], Awaitable[list[str]]]
+
+
+def _load_trade_target_codes(raw: str | None) -> list[str]:
+    """Parse a trade-target payload into an uncapped code list."""
+
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    return [str(c).strip() for c in payload.get("codes", []) if str(c).strip()]
 
 
 def _parse_trade_targets(raw: str | None, max_symbols: int) -> list[str]:
@@ -31,16 +46,30 @@ def _parse_trade_targets(raw: str | None, max_symbols: int) -> list[str]:
     Returns ``[]`` on missing/invalid input so the daemon keeps its current
     subscription rather than crashing.
     """
-    if not raw:
-        return []
-    try:
-        payload = json.loads(raw)
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(payload, dict):
-        return []
-    codes = [str(c).strip() for c in payload.get("codes", []) if str(c).strip()]
-    return codes[:max_symbols]
+    return select_stock_universe(
+        trade_targets=_load_trade_target_codes(raw),
+        watchlist=[],
+        max_symbols=max_symbols,
+    )
+
+
+def _select_stock_symbols_from_payloads(
+    trade_targets_raw: str | None,
+    watchlist_raw: str | None,
+    *,
+    max_symbols: int,
+    existing: list[str] | None = None,
+) -> list[str]:
+    """Select the stock ingest universe using the shared cap order."""
+
+    from services.stock_strategy.universe import parse_watchlist_codes
+
+    return select_stock_universe(
+        trade_targets=_load_trade_target_codes(trade_targets_raw),
+        watchlist=parse_watchlist_codes(watchlist_raw, max_symbols=max_symbols),
+        existing=existing,
+        max_symbols=max_symbols,
+    )
 
 
 class MarketIngestDaemon:
@@ -339,7 +368,6 @@ async def _build_and_run() -> int:
         redis_url = redis_url_from_env()
         redis_client = aioredis.from_url(redis_url)
         cleanup_redis = redis_client
-        from services.stock_strategy.universe import parse_watchlist_codes
 
         target_key = os.environ.get(
             "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
@@ -360,14 +388,11 @@ async def _build_and_run() -> int:
             # daily-watchlist universe. The two sources read different keys and
             # can diverge intraday; ticking only trade_targets starves the
             # strategy of data for watchlist-only symbols (no signals).
-            merged: dict[str, None] = {}
-            for code in _parse_trade_targets(await _get_text(target_key), max_symbols):
-                merged.setdefault(code, None)
-            for code in parse_watchlist_codes(
-                await _get_text(watchlist_key), max_symbols=max_symbols
-            ):
-                merged.setdefault(code, None)
-            return list(merged)[:max_symbols]
+            return _select_stock_symbols_from_payloads(
+                await _get_text(target_key),
+                await _get_text(watchlist_key),
+                max_symbols=max_symbols,
+            )
 
         refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "30"))
         restart_on_change = False

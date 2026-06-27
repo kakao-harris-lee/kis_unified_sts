@@ -321,3 +321,19 @@ def test_parse_trade_targets_handles_none_and_bad_json():
     assert _parse_trade_targets(None, max_symbols=40) == []
     assert _parse_trade_targets("not json", max_symbols=40) == []
     assert _parse_trade_targets("{}", max_symbols=40) == []
+
+
+def test_stock_symbol_selection_prioritizes_trade_targets_then_watchlist_then_existing():
+    from services.market_ingest.main import _select_stock_symbols_from_payloads
+
+    trade_targets = '{"codes": ["005930", "000660", "035720"]}'
+    watchlist = (
+        '{"strategies": {"opening_volume_surge": ' '["000660", "035420", "051910"]}}'
+    )
+
+    assert _select_stock_symbols_from_payloads(
+        trade_targets,
+        watchlist,
+        max_symbols=5,
+        existing=["051910", "068270"],
+    ) == ["005930", "000660", "035720", "035420", "051910"]
