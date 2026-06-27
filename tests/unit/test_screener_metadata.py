@@ -393,6 +393,48 @@ class TestFusionThemeTargets:
         assert "005930" not in payload["metadata"]
         assert payload["sources"]["theme_targets"]["quarantine_count"] == 1
 
+    def test_run_once_excludes_producer_shape_quarantine_metadata(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "codes": ["005930", "000660"],
+                    "scores": {"005930": 0.99, "000660": 0.6},
+                },
+                "system:theme_targets:latest": {
+                    # ThemeDiscoveryService excludes quarantined codes from
+                    # tradable codes but keeps them visible in metadata.
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.7},
+                    "metadata": {
+                        "000660": {"state": "active", "theme_id": "ai_hbm"},
+                        "005930": {
+                            "state": "quarantine",
+                            "theme_id": "risk_theme",
+                            "risk_flags": ["investment_warning"],
+                        },
+                    },
+                    "quarantined_codes": ["005930"],
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"005930": {}, "000660": {}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=1.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=0.0,
+            ),
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+
+        assert payload["codes"] == ["000660"]
+        assert "005930" not in payload["metadata"]
+        assert payload["sources"]["theme_targets"]["quarantine_count"] == 1
+
     def test_run_once_missing_theme_key_preserves_existing_realtime_behavior(self):
         ranker = self._make_ranker(
             {

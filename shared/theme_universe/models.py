@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
-
+from typing import Any
 
 THEME_CANDIDATE_STATES = ("active", "watch", "quarantine")
 _STATE_SET = set(THEME_CANDIDATE_STATES)
@@ -54,7 +54,7 @@ class ThemeCandidate:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, Any]) -> "ThemeCandidate":
+    def from_mapping(cls, payload: Mapping[str, Any]) -> ThemeCandidate:
         """Parse a candidate from a JSON-like mapping."""
         metadata = payload.get("metadata", {})
         if not isinstance(metadata, Mapping):
@@ -116,7 +116,7 @@ def build_theme_targets_payload(
     """Build the shared latest-payload shape for theme target publication."""
     parsed = parse_theme_candidates(candidates)
     candidate_payloads = [candidate.to_dict() for candidate in parsed]
-    state_counts = {state: 0 for state in THEME_CANDIDATE_STATES}
+    state_counts = dict.fromkeys(THEME_CANDIDATE_STATES, 0)
     for candidate in candidate_payloads:
         state_counts[_coerce_state(candidate["state"])] += 1
 

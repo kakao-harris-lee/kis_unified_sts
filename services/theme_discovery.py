@@ -125,7 +125,9 @@ def _extract_codes(payload: dict[str, Any]) -> list[str]:
     raw_codes = payload.get("codes", [])
     if not isinstance(raw_codes, list):
         return []
-    return list(dict.fromkeys(str(code).strip() for code in raw_codes if str(code).strip()))
+    return list(
+        dict.fromkeys(str(code).strip() for code in raw_codes if str(code).strip())
+    )
 
 
 def _extract_scores(payload: dict[str, Any], codes: list[str]) -> dict[str, float]:
@@ -230,7 +232,9 @@ class ThemeDiscoveryService:
         publisher: Any | None = None,
     ) -> None:
         self.config = config
-        self.redis = redis_client if redis_client is not None else RedisClient.get_client()
+        self.redis = (
+            redis_client if redis_client is not None else RedisClient.get_client()
+        )
         self.publisher = (
             publisher
             if publisher is not None
@@ -255,9 +259,7 @@ class ThemeDiscoveryService:
                 if keyword and str(keyword).casefold() in haystack
             ]
             specific_hits = [
-                hit
-                for hit in hits
-                if str(hit).casefold() not in GENERIC_THEME_KEYWORDS
+                hit for hit in hits if str(hit).casefold() not in GENERIC_THEME_KEYWORDS
             ]
             if hits and not specific_hits:
                 continue
@@ -279,7 +281,9 @@ class ThemeDiscoveryService:
         market_signal_count += len(source_hits)
         if metadata.get("trend_confirmed") is True:
             market_signal_count += 1
-        if any(key in metadata for key in ("volume_power", "trading_value", "trade_value")):
+        if any(
+            key in metadata for key in ("volume_power", "trading_value", "trade_value")
+        ):
             market_signal_count += 1
 
         volume_surge_score = _metadata_score(
@@ -299,7 +303,10 @@ class ThemeDiscoveryService:
             self.config.threshold("theme_breadth_full_count", 3.0),
         )
         theme_breadth_score = max(
-            (_clamp01(theme_counts.get(theme_id, 0) / breadth_full_count) for theme_id in matched_themes),
+            (
+                _clamp01(theme_counts.get(theme_id, 0) / breadth_full_count)
+                for theme_id in matched_themes
+            ),
             default=0.0,
         )
 
@@ -455,9 +462,9 @@ class ThemeDiscoveryService:
             )
 
         candidates.sort(key=lambda row: row["score"], reverse=True)
-        target_candidates = [
-            row for row in candidates if row["state"] != "quarantine"
-        ][: self.config.top_n]
+        target_candidates = [row for row in candidates if row["state"] != "quarantine"][
+            : self.config.top_n
+        ]
         target_codes = [str(row["code"]) for row in target_candidates]
         target_scores = {str(row["code"]): row["score"] for row in target_candidates}
         quarantined_codes = [
@@ -541,11 +548,17 @@ class ThemeDiscoveryService:
                 else:
                     summary["codes"].append(code)
                 summary["scores"][code] = candidate["score"]
-                summary["state_counts"][state] = summary["state_counts"].get(state, 0) + 1
-                summary["keyword_hits"][code] = target_metadata[code].get(
-                    "theme_keyword_hits",
-                    {},
-                ).get(theme_id, [])
+                summary["state_counts"][state] = (
+                    summary["state_counts"].get(state, 0) + 1
+                )
+                summary["keyword_hits"][code] = (
+                    target_metadata[code]
+                    .get(
+                        "theme_keyword_hits",
+                        {},
+                    )
+                    .get(theme_id, [])
+                )
 
         for summary in themes.values():
             summary["codes"].sort(

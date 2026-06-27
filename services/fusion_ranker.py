@@ -413,6 +413,22 @@ class FusionRanker:
                     codes.append(code)
                     seen.add(code)
 
+        metadata_raw = payload.get("metadata", {})
+        if isinstance(metadata_raw, dict):
+            for raw_code in metadata_raw:
+                code = str(raw_code).strip()
+                if code and code not in seen:
+                    codes.append(code)
+                    seen.add(code)
+
+        quarantined_raw = payload.get("quarantined_codes", [])
+        if isinstance(quarantined_raw, list):
+            for raw_code in quarantined_raw:
+                code = str(raw_code).strip()
+                if code and code not in seen:
+                    codes.append(code)
+                    seen.add(code)
+
         themes_raw = payload.get("themes", {})
         themes: dict[str, dict[str, Any]] = {}
         if isinstance(themes_raw, dict):
@@ -420,7 +436,6 @@ class FusionRanker:
                 if isinstance(value, dict):
                     themes[str(key)] = dict(value)
 
-        metadata_raw = payload.get("metadata", {})
         metadata: dict[str, dict[str, Any]] = {}
         if isinstance(metadata_raw, dict):
             for code in codes:
