@@ -765,7 +765,9 @@ async def test_signal_trace_lifecycle_uses_exact_position_id_without_symbol_fall
     assert response.status_code == 200
     body = response.json()
     by_stage = {step["stage"]: step for step in body["lifecycle"]["steps"]}
+    assert body["lifecycle"]["status"] == "partial"
     assert by_stage["position"]["id"] == "pos-current"
     assert by_stage["position"]["source"] == "runtime_ledger"
+    assert "partial_lifecycle" in {gap["code"] for gap in body["evidence_gaps"]}
     stale_ids = {"old-order", "old-fill", "old-position", "old-trade"}
     assert stale_ids.isdisjoint({step["id"] for step in body["lifecycle"]["steps"]})

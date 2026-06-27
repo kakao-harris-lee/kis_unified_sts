@@ -583,6 +583,21 @@ def _lifecycle_status(warnings: list[str], steps: list[dict[str, Any]]) -> str:
         return "missing"
     if "no_lifecycle_evidence" in warnings:
         return "missing"
+    evidence_steps = [step for step in steps if step.get("source") != "not_available"]
+    if not evidence_steps:
+        return "missing"
+    downstream_evidence = [
+        step for step in evidence_steps if step.get("stage") != "signal"
+    ]
+    if not downstream_evidence:
+        return "missing"
+    has_unavailable_step = any(
+        step.get("source") == "not_available"
+        or step.get("status") in {"unknown", "not_available"}
+        for step in steps
+    )
+    if has_unavailable_step:
+        return "partial"
     if warnings:
         return "partial"
     return "ok"
