@@ -8,13 +8,13 @@ from scripts.analysis.scan_futures_minute_ohlc_corruption import scan_store
 from shared.storage.market_data_store import ParquetMarketDataStore
 
 
-def _bar(dt: datetime, o: float, h: float, l: float, c: float, v: int = 500) -> dict:
+def _bar(dt: datetime, o: float, h: float, low: float, c: float, v: int = 500) -> dict:
     return {
         "code": "A01603",
         "datetime": dt,
         "open": o,
         "high": h,
-        "low": l,
+        "low": low,
         "close": c,
         "volume": v,
     }

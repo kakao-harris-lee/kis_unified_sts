@@ -352,10 +352,10 @@ def run_optimization(
             "FakeTrial",
             (),
             {
-                "suggest_float": lambda self, name, *a, **kw: _get_current(
+                "suggest_float": lambda _self, name, *_args, **_kwargs: _get_current(
                     strategy_name, name
                 ),
-                "suggest_int": lambda self, name, *a, **kw: _get_current(
+                "suggest_int": lambda _self, name, *_args, **_kwargs: _get_current(
                     strategy_name, name
                 ),
             },

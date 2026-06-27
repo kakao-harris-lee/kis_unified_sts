@@ -9,9 +9,9 @@ the futures briefing channel.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
 from pydantic import Field

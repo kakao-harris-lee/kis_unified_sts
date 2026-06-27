@@ -20,8 +20,6 @@ from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-_KST = ZoneInfo("Asia/Seoul")
-
 import pandas as pd
 
 from shared.config.mixins import ConfigMixin
@@ -30,6 +28,7 @@ from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
+_KST = ZoneInfo("Asia/Seoul")
 
 
 @dataclass

@@ -675,7 +675,7 @@ class TestCacheInvalidation:
         orch.config.symbols = symbols
         orch._daily_indicators = {code: {"daily_close": 100.0} for code in symbols}
         engine = MagicMock()
-        engine.get_market_mfi_values.return_value = {code: 30.0 for code in symbols[:8]}
+        engine.get_market_mfi_values.return_value = dict.fromkeys(symbols[:8], 30.0)
         orch._indicator_engine = engine
 
         regime = orch._classify_market({code: {"change": -0.05} for code in symbols})

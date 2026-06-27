@@ -1,6 +1,8 @@
 """Shared fixtures for KIS WebSocket tests."""
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from shared.kis.auth import KISAuthConfig
 
 

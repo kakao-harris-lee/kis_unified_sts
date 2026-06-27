@@ -9,7 +9,6 @@ cockpit/positions/signals/trades pages.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -32,20 +31,20 @@ class StrategyInfo(BaseModel):
     entry_type: str
     exit_type: str
     position_type: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class StrategyListResponse(BaseModel):
     """Strategy list response."""
 
-    strategies: List[StrategyInfo]
+    strategies: list[StrategyInfo]
     total: int
-    asset_class: Optional[str] = None
+    asset_class: str | None = None
 
 
 @router.get("", response_model=StrategyListResponse)
 async def list_strategies(
-    asset_class: Optional[str] = Query(
+    asset_class: str | None = Query(
         None, description="Filter by asset class (stock, futures)"
     ),
     enabled_only: bool = Query(True, description="Return only enabled strategies"),
@@ -111,16 +110,16 @@ async def list_strategies(
         raise HTTPException(
             status_code=404,
             detail=f"Configuration not found: {str(e)}",
-        )
+        ) from e
     except ConfigError as e:
         logger.error(f"Config error: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Configuration error: {str(e)}",
-        )
+        ) from e
     except Exception as e:
         logger.exception(f"Unexpected error listing strategies: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}",
-        )
+        ) from e

@@ -1,7 +1,8 @@
 """Test StockRegimeDetector."""
-import pandas as pd
-import numpy as np
 from datetime import datetime
+
+import numpy as np
+import pandas as pd
 
 
 def test_detector_bull_regime():
@@ -43,7 +44,7 @@ def test_detector_bear_regime():
 def test_detector_sideways_regime():
     """Test detection of sideways market (range-bound)."""
     from shared.regime.detector import StockRegimeDetector
-    from shared.regime.models import RegimeState, RegimeConfig
+    from shared.regime.models import RegimeConfig, RegimeState
 
     config = RegimeConfig(sma_fast=10, sma_slow=20, trend_threshold=0.02)
     detector = StockRegimeDetector(config)

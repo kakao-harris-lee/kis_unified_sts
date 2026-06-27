@@ -1,8 +1,8 @@
 """Tests for TrendPullbackEntry multi-timeframe (daily) functionality."""
-import pytest
 from datetime import datetime
 from typing import Any
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,7 +77,10 @@ def _make_strategy(
     signal_cooldown_seconds: int = 300,
     confidence_base: float = 0.6,
 ):
-    from shared.strategy.entry.trend_pullback import TrendPullbackEntry, TrendPullbackConfig
+    from shared.strategy.entry.trend_pullback import (
+        TrendPullbackConfig,
+        TrendPullbackEntry,
+    )
 
     config = TrendPullbackConfig(
         bb_touch_buffer=bb_touch_buffer,

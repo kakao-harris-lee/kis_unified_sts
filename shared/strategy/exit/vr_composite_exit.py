@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from shared.config.mixins import ConfigMixin
 from shared.indicators.volume_ratio import (
@@ -30,7 +30,12 @@ from shared.indicators.volume_ratio import (
     VolumeRatioCalculator,
 )
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol, get_series_from_context
+from shared.strategy.base import (
+    ExitContext,
+    ExitSignalGenerator,
+    MarketStateProtocol,
+    get_series_from_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +109,7 @@ class VRCompositeExit(ExitSignalGenerator[VRCompositeExitConfig]):
 
     async def should_exit(
         self, context: ExitContext
-    ) -> tuple[bool, Optional[ExitSignal]]:
+    ) -> tuple[bool, ExitSignal | None]:
         """청산 여부 판단."""
         position = context.position
         data = context.market_data or {}
@@ -319,7 +324,7 @@ class VRCompositeExit(ExitSignalGenerator[VRCompositeExitConfig]):
         self,
         positions: list,
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 VR 기반 청산 시그널 스캔."""
         exit_signals: list[ExitSignal] = []

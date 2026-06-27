@@ -7,9 +7,11 @@ For integration tests with real Redis, see tests/integration/test_position_recov
 """
 
 import json
-import pytest
 from datetime import datetime
 from unittest.mock import MagicMock, call
+
+import pytest
+
 from shared.models.position import PositionSide, PositionState
 
 
@@ -1054,7 +1056,7 @@ class TestRedisPositionLoad:
 
             loaded_count = 0
 
-            for position_id, position_json in positions_data.items():
+            for _position_id, position_json in positions_data.items():
                 try:
                     # Decode and parse JSON
                     if isinstance(position_json, bytes):

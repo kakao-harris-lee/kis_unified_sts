@@ -6,7 +6,6 @@ from datetime import datetime
 from shared.llm_scorecard.facets.base import CaptureContext, FacetPrediction
 from shared.llm_scorecard.facets.themes import ThemesFacet
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

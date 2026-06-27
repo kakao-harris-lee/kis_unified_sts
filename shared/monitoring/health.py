@@ -1,9 +1,9 @@
 """Health checking service."""
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Union, Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class ComponentHealth:
     healthy: bool
     timestamp: datetime
     latency_ms: float = 0.0
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class HealthChecker:
@@ -30,12 +30,12 @@ class HealthChecker:
 
     def __init__(self, timeout_seconds: float = 5.0):
         self.timeout = timeout_seconds
-        self._checks: Dict[str, Callable] = {}
+        self._checks: dict[str, Callable] = {}
 
     def register(
         self,
         name: str,
-        check_fn: Union[Callable[[], bool], Callable[[], Awaitable[bool]]],
+        check_fn: Callable[[], bool] | Callable[[], Awaitable[bool]],
     ) -> None:
         """Register health check function."""
         self._checks[name] = check_fn
@@ -75,7 +75,7 @@ class HealthChecker:
                 latency_ms=latency,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ComponentHealth(
                 name=name,
                 healthy=False,
@@ -91,7 +91,7 @@ class HealthChecker:
                 message=str(e),
             )
 
-    async def check_all(self) -> List[ComponentHealth]:
+    async def check_all(self) -> list[ComponentHealth]:
         """Check health of all components.
 
         Returns:
@@ -100,11 +100,11 @@ class HealthChecker:
         tasks = [self.check(name) for name in self._checks]
         return await asyncio.gather(*tasks)
 
-    def is_healthy(self, results: List[ComponentHealth]) -> bool:
+    def is_healthy(self, results: list[ComponentHealth]) -> bool:
         """Check if all components are healthy."""
         return all(r.healthy for r in results)
 
-    def get_summary(self, results: List[ComponentHealth]) -> Dict:
+    def get_summary(self, results: list[ComponentHealth]) -> dict:
         """Get health summary."""
         return {
             "healthy": self.is_healthy(results),

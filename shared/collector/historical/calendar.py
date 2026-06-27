@@ -4,7 +4,6 @@ KRX 시장 거래일 및 시간 관련 유틸리티.
 """
 import functools
 from datetime import date, datetime, timedelta
-from typing import List
 
 import pytz
 
@@ -59,13 +58,10 @@ def is_trading_day(d: date = None) -> bool:
         return False
 
     # Holiday check
-    if d in KOREAN_HOLIDAYS:
-        return False
-
-    return True
+    return d not in KOREAN_HOLIDAYS
 
 
-def _get_weekdays_with_holidays(year: int, month: int) -> List[date]:
+def _get_weekdays_with_holidays(year: int, month: int) -> list[date]:
     """Return weekdays excluding Korean holidays for a month."""
     from calendar import monthrange
 
@@ -81,7 +77,7 @@ def _get_weekdays_with_holidays(year: int, month: int) -> List[date]:
 
 
 @functools.lru_cache(maxsize=16)
-def get_trading_days_from_krx(year: int, month: int) -> List[date]:
+def get_trading_days_from_krx(year: int, month: int) -> list[date]:
     """
     Get trading days for a specific month.
 
@@ -95,7 +91,7 @@ def get_trading_days_from_krx(year: int, month: int) -> List[date]:
     return _get_weekdays_with_holidays(year, month)
 
 
-def get_trading_days_range(start: date, end: date) -> List[date]:
+def get_trading_days_range(start: date, end: date) -> list[date]:
     """
     Get trading days between start and end dates.
 
@@ -123,7 +119,7 @@ def get_trading_days_range(start: date, end: date) -> List[date]:
     return sorted(trading_days)
 
 
-def get_past_trading_days(days: int, from_date: date = None) -> List[date]:
+def get_past_trading_days(days: int, from_date: date = None) -> list[date]:
     """
     Get trading days for the past N days.
 

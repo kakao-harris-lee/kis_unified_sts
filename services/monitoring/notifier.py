@@ -55,7 +55,7 @@ class Notifier(ABC):
 
     async def close(self) -> None:
         """리소스 정리"""
-        pass
+        return None
 
 
 # =============================================================================
@@ -120,13 +120,14 @@ class TelegramConfig(ServiceConfigBase):
     _env_prefix = "TELEGRAM_"
 
     @classmethod
-    def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> "TelegramConfig":
+    def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> TelegramConfig:
         """환경변수에서 설정 로드
 
         Handles non-standard env var names:
         - TELEGRAM_BOT_TOKEN → token
         - TELEGRAM_CHAT_ID → chat_id
         """
+        _ = env_prefix
         # Custom env var mapping for Telegram (non-standard naming)
         env_data = {}
 
@@ -206,7 +207,7 @@ class TelegramNotifier(Notifier):
         logger.info(f"TelegramNotifier initialized (chat_id: {masked_id})")
 
     @classmethod
-    def from_env(cls) -> "TelegramNotifier":
+    def from_env(cls) -> TelegramNotifier:
         """환경변수에서 설정 로드하여 인스턴스 생성"""
         return cls(TelegramConfig.from_env())
 

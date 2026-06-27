@@ -279,11 +279,10 @@ class TestWarmupMissWarnings:
         with patch(
             "services.trading.orchestrator.warmup_engine",
             new=AsyncMock(return_value=WarmupResult(0, 0, "none")),
+        ), caplog.at_level(
+            logging.WARNING, logger="services.trading.orchestrator"
         ):
-            with caplog.at_level(
-                logging.WARNING, logger="services.trading.orchestrator"
-            ):
-                await orch._prewarm_symbols(["A000000"])
+            await orch._prewarm_symbols(["A000000"])
 
         assert (
             orch._warmup_miss_count == 1
@@ -314,11 +313,10 @@ class TestWarmupMissWarnings:
         with patch(
             "services.trading.orchestrator.warmup_engine",
             new=AsyncMock(return_value=WarmupResult(5, 0, "parquet")),
+        ), caplog.at_level(
+            logging.WARNING, logger="services.trading.orchestrator"
         ):
-            with caplog.at_level(
-                logging.WARNING, logger="services.trading.orchestrator"
-            ):
-                await orch._prewarm_symbols(["A000000"])
+            await orch._prewarm_symbols(["A000000"])
 
         assert orch._warmup_miss_count == 1
         warning_msgs = [
@@ -347,11 +345,10 @@ class TestWarmupMissWarnings:
         with patch(
             "services.trading.orchestrator.warmup_engine",
             new=AsyncMock(return_value=WarmupResult(10, 0, "parquet")),
+        ), caplog.at_level(
+            logging.WARNING, logger="services.trading.orchestrator"
         ):
-            with caplog.at_level(
-                logging.WARNING, logger="services.trading.orchestrator"
-            ):
-                await orch._prewarm_symbols(["A000000"])
+            await orch._prewarm_symbols(["A000000"])
 
         assert orch._warmup_miss_count == 0
         orch._metrics.record_warmup_miss.assert_not_called()
@@ -519,7 +516,7 @@ class TestWarmupMissWarnings:
 
             captured_kwargs: dict = {}
 
-            async def _fake_warmup_engine(*_a, **kw):
+            async def _fake_warmup_engine(*_a, captured_kwargs=captured_kwargs, **kw):
                 captured_kwargs.update(kw)
                 return WarmupResult(30, 0, "parquet")
 

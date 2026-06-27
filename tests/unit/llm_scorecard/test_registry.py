@@ -1,9 +1,12 @@
 # tests/unit/llm_scorecard/test_registry.py
 import pytest
 
-from shared.llm_scorecard.facets.base import (
-    register_facet, enabled_facets, FACET_REGISTRY, FacetScore)
 from shared.llm_scorecard.config import ScorecardConfig
+from shared.llm_scorecard.facets.base import (
+    FACET_REGISTRY,
+    enabled_facets,
+    register_facet,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +21,9 @@ def _isolate_registry():
 
 
 class _Dummy:
-    name = "dummy"; outcome_horizon = "same_session"; outcome_source = "stock_daily"
+    name = "dummy"
+    outcome_horizon = "same_session"
+    outcome_source = "stock_daily"
     def capture(self, ctx): return None
     def score(self, pred, mkt): ...
     def baseline(self, pred, mkt): return 0.0

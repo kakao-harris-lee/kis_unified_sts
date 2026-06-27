@@ -5,12 +5,8 @@ Tests the new partial_close path in services/trading/position_tracker.py.
 
 from __future__ import annotations
 
-from datetime import datetime
-
-import pytest
-
 from services.trading.position_tracker import PositionTracker
-from shared.models.position import Position, PositionSide, PositionState
+from shared.models.position import Position
 
 # =============================================================================
 # Helpers

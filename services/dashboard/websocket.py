@@ -2,10 +2,9 @@
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
-
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +20,13 @@ class WebSocketManager:
     MAX_TOTAL_CONNECTIONS = 100
 
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
-        self._subscriptions: Dict[str, List[WebSocket]] = {}
-        self._client_connections: Dict[str, int] = defaultdict(int)
-        self._websocket_clients: Dict[WebSocket, str] = {}
+        self.active_connections: list[WebSocket] = []
+        self._subscriptions: dict[str, list[WebSocket]] = {}
+        self._client_connections: dict[str, int] = defaultdict(int)
+        self._websocket_clients: dict[WebSocket, str] = {}
 
     async def connect(
-        self, websocket: WebSocket, client_id: Optional[str] = None
+        self, websocket: WebSocket, client_id: str | None = None
     ) -> bool:
         """Accept and track a new WebSocket connection.
 
@@ -96,7 +95,7 @@ class WebSocketManager:
         if channel in self._subscriptions and websocket in self._subscriptions[channel]:
             self._subscriptions[channel].remove(websocket)
 
-    def get_subscriptions(self, websocket: WebSocket) -> List[str]:
+    def get_subscriptions(self, websocket: WebSocket) -> list[str]:
         """Get list of channels a WebSocket is subscribed to."""
         return [
             channel
@@ -104,7 +103,7 @@ class WebSocketManager:
             if websocket in subs
         ]
 
-    async def send_personal(self, websocket: WebSocket, message: Dict[str, Any]):
+    async def send_personal(self, websocket: WebSocket, message: dict[str, Any]):
         """Send a message to a specific connection."""
         try:
             await websocket.send_json(message)
@@ -113,7 +112,7 @@ class WebSocketManager:
             logger.error(f"Error sending message: {e}")
             self.disconnect(websocket)
 
-    async def broadcast(self, message: Dict[str, Any]):
+    async def broadcast(self, message: dict[str, Any]):
         """Broadcast a message to all connections."""
         disconnected = []
         for connection in self.active_connections:
@@ -127,7 +126,7 @@ class WebSocketManager:
         for conn in disconnected:
             self.disconnect(conn)
 
-    async def broadcast_to_channel(self, channel: str, message: Dict[str, Any]):
+    async def broadcast_to_channel(self, channel: str, message: dict[str, Any]):
         """Broadcast a message to all connections subscribed to a channel."""
         if channel not in self._subscriptions:
             return
@@ -145,7 +144,7 @@ class WebSocketManager:
             self.disconnect(conn)
 
     async def broadcast_topic(
-        self, topic: str, payload: Dict[str, Any], asset_class: str = "all"
+        self, topic: str, payload: dict[str, Any], asset_class: str = "all"
     ) -> None:
         """Send a {topic, asset_class, payload} message to all subscribers of `topic`."""
         message = {"topic": topic, "asset_class": asset_class, "payload": payload}

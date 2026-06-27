@@ -279,7 +279,7 @@ class MultiStreamConsumer(ABC):
     def _read_pending(self) -> list[StreamMessage]:
         """미처리(Pending) 메시지 읽기"""
         messages: list[StreamMessage] = []
-        stream_ids = {s: "0" for s in self.streams.keys()}
+        stream_ids = dict.fromkeys(self.streams.keys(), "0")
         pending = self.client.xreadgroup(
             self.group,
             self.consumer,
@@ -298,7 +298,7 @@ class MultiStreamConsumer(ABC):
     def _read_new(self) -> list[StreamMessage]:
         """새 메시지 읽기"""
         messages: list[StreamMessage] = []
-        stream_ids = {s: ">" for s in self.streams.keys()}
+        stream_ids = dict.fromkeys(self.streams.keys(), ">")
         result = self.client.xreadgroup(
             self.group,
             self.consumer,

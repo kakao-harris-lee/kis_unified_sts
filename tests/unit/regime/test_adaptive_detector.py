@@ -1,13 +1,14 @@
 """Test AdaptiveRegimeDetector with multi-metric classification."""
-import pandas as pd
-import numpy as np
-import pytest
 from datetime import datetime
 
+import numpy as np
+import pandas as pd
+import pytest
+
 from shared.regime.adaptive_detector import (
+    AdaptiveRegimeConfig,
     AdaptiveRegimeDetector,
     AdaptiveRegimeState,
-    AdaptiveRegimeConfig,
 )
 
 

@@ -2,9 +2,9 @@
 
 from dataclasses import dataclass
 
-from hypothesis import given, settings, strategies as st
-
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from shared.config.mixins import ConfigMixin
 

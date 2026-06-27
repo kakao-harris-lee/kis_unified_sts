@@ -1,8 +1,7 @@
 """Strategy router based on market regime."""
 import logging
-from typing import Dict, List, Optional
 
-from .models import RegimeState, RegimeSignal
+from .models import RegimeSignal, RegimeState
 
 logger = logging.getLogger(__name__)
 
@@ -16,23 +15,23 @@ class StrategyRouter:
     - Strategy activation tracking
     """
 
-    def __init__(self, default_strategy: Optional[str] = None):
+    def __init__(self, default_strategy: str | None = None):
         self.default_strategy = default_strategy
-        self._regime_map: Dict[RegimeState, str] = {}
-        self._current_strategy: Optional[str] = None
+        self._regime_map: dict[RegimeState, str] = {}
+        self._current_strategy: str | None = None
 
-    def register(self, strategy_name: str, regimes: List[RegimeState]) -> None:
+    def register(self, strategy_name: str, regimes: list[RegimeState]) -> None:
         """Register strategy for given regimes."""
         for regime in regimes:
             self._regime_map[regime] = strategy_name
             logger.debug(f"Registered {strategy_name} for {regime.value}")
 
-    def get_strategy(self, state: RegimeState) -> Optional[str]:
+    def get_strategy(self, state: RegimeState) -> str | None:
         """Get strategy for given regime state."""
         strategy = self._regime_map.get(state, self.default_strategy)
         return strategy
 
-    def update(self, signal: RegimeSignal) -> Optional[str]:
+    def update(self, signal: RegimeSignal) -> str | None:
         """Update router with new regime signal.
 
         Returns:
@@ -56,10 +55,10 @@ class StrategyRouter:
         return None
 
     @property
-    def current_strategy(self) -> Optional[str]:
+    def current_strategy(self) -> str | None:
         """Get current active strategy."""
         return self._current_strategy
 
-    def get_routing_table(self) -> Dict[str, str]:
+    def get_routing_table(self) -> dict[str, str]:
         """Get regime to strategy mapping."""
         return {k.value: v for k, v in self._regime_map.items()}

@@ -1,7 +1,8 @@
 """Tests for async HTTP session management utilities."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 class TestAsyncSessionMixin:
@@ -243,6 +244,7 @@ class TestAsyncSessionWithTimeoutMixin:
     async def test_session_created_with_timeout(self):
         """Test that session is created with configured timeout."""
         from unittest.mock import ANY
+
         from shared.http.session import AsyncSessionWithTimeoutMixin
 
         class TestClient(AsyncSessionWithTimeoutMixin):
@@ -350,6 +352,7 @@ class TestAsyncSessionMixinLogging:
     async def test_logs_session_creation(self, caplog):
         """Test that session creation is logged."""
         import logging
+
         from shared.http.session import AsyncSessionMixin
 
         class TestClient(AsyncSessionMixin):
@@ -371,6 +374,7 @@ class TestAsyncSessionMixinLogging:
     async def test_logs_session_closure(self, caplog):
         """Test that session closure is logged."""
         import logging
+
         from shared.http.session import AsyncSessionMixin
 
         class TestClient(AsyncSessionMixin):
@@ -419,6 +423,7 @@ class TestAsyncSessionSSLConfiguration:
     def test_custom_ssl_context(self):
         """Test custom SSL context."""
         import ssl
+
         from shared.http.session import AsyncSessionMixin
 
         custom_context = ssl.create_default_context()
@@ -432,6 +437,7 @@ class TestAsyncSessionSSLConfiguration:
     def test_ssl_context_takes_precedence_over_verify(self):
         """Test that custom SSL context takes precedence over _ssl_verify."""
         import ssl
+
         from shared.http.session import AsyncSessionMixin
 
         custom_context = ssl.create_default_context()

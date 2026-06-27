@@ -359,10 +359,7 @@ def is_trading_day(d: date | None = None, holidays: set[date] | None = None) -> 
     if holidays is None:
         holidays = _get_holidays()
 
-    if d in holidays:
-        return False
-
-    return True
+    return d not in holidays
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -1245,10 +1242,7 @@ class TradingOrchestrator:
         try:
             exec_cfg = ConfigLoader.load("execution.yaml")
             raw = exec_cfg.get("futures_slippage_control", {})
-            if not isinstance(raw, dict):
-                raw = {}
-            else:
-                raw = dict(raw)
+            raw = {} if not isinstance(raw, dict) else dict(raw)
 
             paper_override = raw.pop("paper_override", None)
             if self.config.paper_trading and isinstance(paper_override, dict):
@@ -1785,7 +1779,7 @@ class TradingOrchestrator:
             required_keys = (
                 tuple(self._strategy_manager.required_indicators)
                 if self._strategy_manager
-                else tuple()
+                else ()
             )
             self._indicator_resolver = StreamingIndicatorResolver(
                 engine=self._indicator_engine,  # Can be None
@@ -2881,7 +2875,7 @@ class TradingOrchestrator:
         if not active_names:
             return False
 
-        daily_strategy_names = {str(name) for name in strategies.keys()}
+        daily_strategy_names = {str(name) for name in strategies}
         if not active_names.issubset(daily_strategy_names):
             return False
 
@@ -5577,7 +5571,7 @@ class TradingOrchestrator:
 
         # Fallback: simple avg-change heuristic (used during warmup)
         changes = []
-        for symbol, data in market_data.items():
+        for _symbol, data in market_data.items():
             if isinstance(data, dict):
                 change = data.get("change", 0)
                 if change:
@@ -7351,6 +7345,7 @@ class TradingOrchestrator:
         self, position, signal, fill_price, exit_quantity, close_is_buy
     ):
         """Handle post-exit logic: tracker update, logging, telemetry."""
+        _ = position
         reason_str = (
             signal.reason.value
             if hasattr(signal.reason, "value")

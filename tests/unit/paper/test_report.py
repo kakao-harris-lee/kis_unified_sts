@@ -1,8 +1,9 @@
 """Test paper trading report generation."""
-import pytest
 from datetime import datetime, timedelta
 
-from shared.paper.models import TradeRecord, OrderSide
+import pytest
+
+from shared.paper.models import OrderSide, TradeRecord
 from shared.paper.report import PaperTradingReport
 
 

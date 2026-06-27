@@ -1,11 +1,10 @@
 """Arbitrage Engine for Mode A Sniper Basis Trading."""
 import logging
 import time
-from typing import Optional, Tuple
 
+from .basis_calculator import BasisCalculator
 from .config import ArbitrageConfig
 from .models import ArbitrageSignal, BasisData
-from .basis_calculator import BasisCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,7 @@ class ArbitrageEngine:
         spot_index: float,
         futures_price: float,
         days_to_expiry: int,
-        timestamp: Optional[float] = None
+        timestamp: float | None = None
     ) -> BasisData:
         """Update basis calculation."""
         return self.basis_calculator.update(
@@ -53,7 +52,7 @@ class ArbitrageEngine:
         self,
         best_bid: float,
         best_ask: float
-    ) -> Tuple[bool, Optional[ArbitrageSignal], str]:
+    ) -> tuple[bool, ArbitrageSignal | None, str]:
         """Check spread filter."""
         spread = best_ask - best_bid
         spread_ticks = int(spread / self.config.tick_size + 0.5)
@@ -77,8 +76,8 @@ class ArbitrageEngine:
         best_ask: float,
         bid_qty: float,
         ask_qty: float,
-        timestamp: Optional[float] = None
-    ) -> Tuple[bool, Optional[ArbitrageSignal], str]:
+        timestamp: float | None = None
+    ) -> tuple[bool, ArbitrageSignal | None, str]:
         """Check if entry conditions are met.
 
         Returns:

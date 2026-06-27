@@ -1,20 +1,20 @@
 """Order execution configuration."""
 import re
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .tr_ids import tr_id
 
 
-class TradingMode(str, Enum):
+class TradingMode(StrEnum):
     """Trading mode enumeration."""
     PAPER = "PAPER"   # Local simulation (no API calls)
     MOCK = "MOCK"     # KIS 모의투자 API
     REAL = "REAL"     # KIS 실전투자 API
 
 
-class ExecutionVenuePreference(str, Enum):
+class ExecutionVenuePreference(StrEnum):
     """Execution venue preference for time-of-day routing."""
     KRX = "KRX"       # Prefer KRX
     ATS = "ATS"       # Prefer ATS (넥스트레이드)

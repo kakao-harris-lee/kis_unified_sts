@@ -6,11 +6,14 @@ import importlib
 
 def test_public_module_level_api_imports():
     """Phase 3/4 depend on these exact module-level functions existing."""
-    from shared.llm_scorecard.recorder import capture_predictions  # noqa: F401
-    from shared.llm_scorecard.scorer import score_day  # noqa: F401
-    from shared.llm_scorecard.aggregator import calibration_bins, rolling_metrics  # noqa: F401
-    from shared.llm_scorecard.reporter import format_daily, format_weekly  # noqa: F401
+    from shared.llm_scorecard.aggregator import (  # noqa: F401
+        calibration_bins,
+        rolling_metrics,
+    )
     from shared.llm_scorecard.facets.direction import DirectionFacet  # noqa: F401
+    from shared.llm_scorecard.recorder import capture_predictions  # noqa: F401
+    from shared.llm_scorecard.reporter import format_daily, format_weekly  # noqa: F401
+    from shared.llm_scorecard.scorer import score_day  # noqa: F401
 
 
 def test_direction_facet_registered():
@@ -44,7 +47,11 @@ def test_scorer_to_reporter_seam():
 
     from shared.llm_scorecard.aggregator import rolling_metrics
     from shared.llm_scorecard.config import ScorecardConfig
-    from shared.llm_scorecard.facets.base import FACET_REGISTRY, FacetScore, register_facet
+    from shared.llm_scorecard.facets.base import (
+        FACET_REGISTRY,
+        FacetScore,
+        register_facet,
+    )
     from shared.llm_scorecard.reporter import format_daily
     from shared.llm_scorecard.scorer import score_day
 

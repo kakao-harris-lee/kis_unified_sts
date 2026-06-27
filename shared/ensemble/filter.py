@@ -1,12 +1,11 @@
 """Ensemble filter for combining DL predictions with technical filters."""
 import logging
 import time
-from typing import List, Optional, Tuple
 
-from .config import EnsembleConfig
-from .models import FilterResult, EnsembleSignal, HorizonResult
-from .calibrator import ProbabilityCalibrator
 from ..trend.models import TechnicalData
+from .calibrator import ProbabilityCalibrator
+from .config import EnsembleConfig
+from .models import EnsembleSignal, FilterResult, HorizonResult
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ class EnsembleFilter:
         dl_probability: float,
         technical_data: TechnicalData,
         volume_ratio: float = 1.0,
-        timestamp: Optional[float] = None
+        timestamp: float | None = None
     ) -> FilterResult:
         """Check long entry conditions.
 
@@ -101,7 +100,7 @@ class EnsembleFilter:
         dl_probability: float,
         technical_data: TechnicalData,
         volume_ratio: float = 1.0,
-        timestamp: Optional[float] = None
+        timestamp: float | None = None
     ) -> FilterResult:
         """Check short entry conditions.
 
@@ -185,9 +184,9 @@ class EnsembleFilter:
 
     def check_multi_horizon(
         self,
-        horizon_results: List[HorizonResult],
+        horizon_results: list[HorizonResult],
         direction: str
-    ) -> Tuple[bool, float]:
+    ) -> tuple[bool, float]:
         """Check multi-horizon confirmation.
 
         Args:
@@ -218,8 +217,8 @@ class EnsembleFilter:
         technical_data: TechnicalData,
         current_price: float,
         volume_ratio: float = 1.0,
-        timestamp: Optional[float] = None
-    ) -> Optional[EnsembleSignal]:
+        timestamp: float | None = None
+    ) -> EnsembleSignal | None:
         """Generate trading signal with stop/target levels.
 
         Args:

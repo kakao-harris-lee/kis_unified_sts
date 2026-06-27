@@ -2,7 +2,6 @@
 import logging
 import time
 from collections import deque
-from typing import Deque, Optional, Tuple
 
 import numpy as np
 
@@ -26,8 +25,8 @@ class BasisCalculator:
 
     def __init__(self, config: ArbitrageConfig):
         self.config = config
-        self.basis_history: Deque[float] = deque(maxlen=config.rolling_window)
-        self._last_data: Optional[BasisData] = None
+        self.basis_history: deque[float] = deque(maxlen=config.rolling_window)
+        self._last_data: BasisData | None = None
 
     def calculate_fair_value(self, spot_index: float, days_to_expiry: int) -> float:
         """Calculate theoretical fair value of futures."""
@@ -39,7 +38,7 @@ class BasisCalculator:
         spot_index: float,
         futures_price: float,
         days_to_expiry: int,
-        timestamp: Optional[float] = None
+        timestamp: float | None = None
     ) -> BasisData:
         """Update basis calculation with new prices."""
         timestamp = timestamp or time.time()
@@ -74,7 +73,7 @@ class BasisCalculator:
 
         return self._last_data
 
-    def _get_rolling_stats(self) -> Tuple[float, float]:
+    def _get_rolling_stats(self) -> tuple[float, float]:
         """Calculate rolling mean and std of basis."""
         if len(self.basis_history) < 2:
             return 0.0, 0.0
@@ -86,7 +85,7 @@ class BasisCalculator:
         """Check if calculator has enough samples."""
         return len(self.basis_history) >= self.config.min_samples
 
-    def is_signal(self, threshold: float = None) -> Tuple[bool, Optional[str]]:
+    def is_signal(self, threshold: float = None) -> tuple[bool, str | None]:
         """Check if current basis is a trading signal.
 
         Returns:

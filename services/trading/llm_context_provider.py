@@ -21,7 +21,6 @@ from __future__ import annotations
 import logging
 import time
 from threading import Lock
-from typing import Optional
 
 from shared.streaming.trading_state import TradingStateReader
 
@@ -71,11 +70,11 @@ class LLMContextProvider:
 
         # Thread-safe cache
         self._lock = Lock()
-        self._cached_context: Optional[object] = None
+        self._cached_context: object | None = None
         self._cache_timestamp: float = 0.0
 
         # Redis reader (lazy initialization)
-        self._reader: Optional[object] = None
+        self._reader: object | None = None
 
         logger.debug(
             f"LLMContextProvider initialized for {asset_class} "
@@ -104,7 +103,7 @@ class LLMContextProvider:
         age = time.monotonic() - self._cache_timestamp
         return age > self._cache_ttl_seconds
 
-    def _refresh_from_redis(self) -> Optional[object]:
+    def _refresh_from_redis(self) -> object | None:
         """Refresh context from Redis.
 
         Returns:
@@ -132,7 +131,7 @@ class LLMContextProvider:
             )
             return None
 
-    def get_context(self, force_refresh: bool = False) -> Optional[object]:
+    def get_context(self, force_refresh: bool = False) -> object | None:
         """Get LLM market context with caching.
 
         Returns cached context if fresh, otherwise refreshes from Redis.
@@ -175,7 +174,7 @@ class LLMContextProvider:
             self._cache_timestamp = 0.0
             logger.debug(f"Cleared LLM context cache for {self._asset_class}")
 
-    def get_cache_age(self) -> Optional[float]:
+    def get_cache_age(self) -> float | None:
         """Get the age of cached context in seconds.
 
         Returns:

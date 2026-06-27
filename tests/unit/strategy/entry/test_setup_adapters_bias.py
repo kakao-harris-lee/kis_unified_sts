@@ -13,10 +13,11 @@ Pattern mirrors test_setup_adapters_regime_gate.py:
 from __future__ import annotations
 
 import datetime as dt
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
+from shared.strategy.base import EntryContext
 from shared.strategy.entry import setup_adapters
 from shared.strategy.entry.setup_adapters import (
     SetupAEntryAdapter,
@@ -24,14 +25,13 @@ from shared.strategy.entry.setup_adapters import (
     SetupCEntryAdapter,
     SetupCEntryConfig,
 )
-from shared.strategy.base import EntryContext
 
 
 def _ctx() -> EntryContext:
     """Minimal EntryContext that lets _build_market_context return a mock."""
     return EntryContext(
         market_data={"code": "A05603", "close": 348.8, "atr": 1.0},
-        timestamp=dt.datetime(2026, 6, 21, 9, 30, tzinfo=dt.timezone.utc),
+        timestamp=dt.datetime(2026, 6, 21, 9, 30, tzinfo=dt.UTC),
     )
 
 
@@ -220,7 +220,10 @@ async def test_setup_c_misaligned_bias_blocks_entry(monkeypatch):
 
 def test_setup_a_adapter_wires_bias_refresh_minutes():
     """SetupAEntryAdapter passes daily_bias_refresh_minutes to DailyBiasProvider."""
-    from shared.strategy.entry.setup_adapters import SetupAEntryAdapter, SetupAEntryConfig
+    from shared.strategy.entry.setup_adapters import (
+        SetupAEntryAdapter,
+        SetupAEntryConfig,
+    )
 
     cfg = SetupAEntryConfig()
     cfg.daily_bias_refresh_minutes = 90
@@ -230,7 +233,10 @@ def test_setup_a_adapter_wires_bias_refresh_minutes():
 
 def test_setup_c_adapter_wires_bias_refresh_minutes():
     """SetupCEntryAdapter passes daily_bias_refresh_minutes to DailyBiasProvider."""
-    from shared.strategy.entry.setup_adapters import SetupCEntryAdapter, SetupCEntryConfig
+    from shared.strategy.entry.setup_adapters import (
+        SetupCEntryAdapter,
+        SetupCEntryConfig,
+    )
 
     cfg = SetupCEntryConfig()
     cfg.daily_bias_refresh_minutes = 45
@@ -240,7 +246,10 @@ def test_setup_c_adapter_wires_bias_refresh_minutes():
 
 def test_bias_refresh_default_is_60():
     """daily_bias_refresh_minutes defaults to 60 in both adapter configs."""
-    from shared.strategy.entry.setup_adapters import SetupAEntryConfig, SetupCEntryConfig
+    from shared.strategy.entry.setup_adapters import (
+        SetupAEntryConfig,
+        SetupCEntryConfig,
+    )
 
     assert SetupAEntryConfig().daily_bias_refresh_minutes == 60
     assert SetupCEntryConfig().daily_bias_refresh_minutes == 60

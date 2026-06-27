@@ -1,9 +1,12 @@
 """Unit tests for DailyBiasProvider."""
 from __future__ import annotations
+
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
+
 from shared.decision.daily_bias import DailyBiasProvider, bias_from_context
+
 
 def test_strong_bullish_maps_to_long(): assert bias_from_context("STRONG_BULLISH", confidence=0.7) == "long"
 def test_bullish_maps_to_long(): assert bias_from_context("BULLISH", confidence=0.7) == "long"
@@ -17,23 +20,43 @@ def test_non_long_regime_does_not_affect_short(): assert bias_from_context("STRO
 def test_non_long_regime_not_matching_passes_through(): assert bias_from_context("BULLISH", confidence=0.8, non_long_regimes=["BEAR_STRONG"], regime="BULL_STRONG") == "long"
 
 def _fake_context(name="BULLISH", confidence=0.7):
-    ctx = MagicMock(); ctx.confidence = confidence; ctx.overall_signal.name = name; ctx.regime = "NEUTRAL"; return ctx
+    ctx = MagicMock()
+    ctx.confidence = confidence
+    ctx.overall_signal.name = name
+    ctx.regime = "NEUTRAL"
+    return ctx
+
+
 def _now_kst(): return datetime(2026, 6, 21, 10, 0, 0, tzinfo=ZoneInfo("Asia/Seoul"))
 
 def test_compute_and_persist_first_call():
-    import fakeredis, json
-    r = fakeredis.FakeRedis(); p = DailyBiasProvider(bias_min_confidence=0.5)
+    import json
+
+    import fakeredis
+    r = fakeredis.FakeRedis()
+    p = DailyBiasProvider(bias_min_confidence=0.5)
     with patch("shared.decision.daily_bias.acquire_infra_clients", return_value=(r, None)):
         assert p.get_or_compute_bias(_fake_context("BULLISH", 0.8), _now_kst()) == "long"
-    stored = json.loads(r.get("trading:futures:daily_bias")); assert stored["bias"] == "long" and "computed_at" in stored
+    stored = json.loads(r.get("trading:futures:daily_bias"))
+    assert stored["bias"] == "long" and "computed_at" in stored
+
+
 def test_idempotent_second_call_reads_redis():
-    import fakeredis, json
-    r = fakeredis.FakeRedis(); r.set("trading:futures:daily_bias", json.dumps({"bias": "short", "computed_at": "2026-06-21T10:00:00+09:00", "date": "2026-06-21"}), ex=3600)
+    import json
+
+    import fakeredis
+    r = fakeredis.FakeRedis()
+    r.set("trading:futures:daily_bias", json.dumps({"bias": "short", "computed_at": "2026-06-21T10:00:00+09:00", "date": "2026-06-21"}), ex=3600)
     with patch("shared.decision.daily_bias.acquire_infra_clients", return_value=(r, None)):
         assert DailyBiasProvider(0.5).get_or_compute_bias(_fake_context("BULLISH", 0.9), _now_kst()) == "short"
+
+
 def test_stale_date_forces_recompute():
-    import fakeredis, json
-    r = fakeredis.FakeRedis(); r.set("trading:futures:daily_bias", json.dumps({"bias": "short", "computed_at": "2026-06-20T10:00:00+09:00", "date": "2026-06-20"}), ex=3600)
+    import json
+
+    import fakeredis
+    r = fakeredis.FakeRedis()
+    r.set("trading:futures:daily_bias", json.dumps({"bias": "short", "computed_at": "2026-06-20T10:00:00+09:00", "date": "2026-06-20"}), ex=3600)
     with patch("shared.decision.daily_bias.acquire_infra_clients", return_value=(r, None)):
         assert DailyBiasProvider(0.5).get_or_compute_bias(_fake_context("STRONG_BULLISH", 0.9), _now_kst()) == "long"
 def test_redis_unavailable_falls_back_to_flat():
@@ -59,7 +82,6 @@ def _stale_flat_payload(minutes_old: int = 65, date_str: str = "2026-06-21") -> 
     """Return a Redis JSON payload representing a stale flat bias."""
     import json
     from datetime import timedelta
-    from zoneinfo import ZoneInfo
     computed_at = _now_kst() - timedelta(minutes=minutes_old)
     return json.dumps({"bias": "flat", "computed_at": computed_at.isoformat(), "date": date_str})
 
@@ -74,7 +96,9 @@ def _non_flat_payload(bias: str = "long", minutes_old: int = 10, date_str: str =
 
 def test_flat_bias_refreshes_after_window():
     """Stale flat bias (> bias_refresh_minutes ago) is re-evaluated when context upgrades."""
-    import fakeredis, json
+    import json
+
+    import fakeredis
     r = fakeredis.FakeRedis()
     # Seed a flat bias computed 65 minutes ago.
     r.set("trading:futures:daily_bias", _stale_flat_payload(minutes_old=65), ex=3600)
@@ -105,7 +129,9 @@ def test_flat_bias_within_refresh_window_is_not_recomputed():
 
 def test_non_flat_bias_never_refreshed():
     """A non-flat directional bias (long/short) is sticky: never re-evaluated intraday."""
-    import fakeredis, json
+    import json
+
+    import fakeredis
     r = fakeredis.FakeRedis()
     # Seed a 'long' bias computed 3 hours ago.
     r.set("trading:futures:daily_bias", _non_flat_payload(bias="long", minutes_old=180), ex=3600)

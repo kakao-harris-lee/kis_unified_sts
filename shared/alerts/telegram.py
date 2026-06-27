@@ -2,7 +2,6 @@
 import logging
 import re
 from datetime import UTC, datetime
-from typing import Optional
 
 from shared.http import AsyncSessionMixin
 
@@ -32,7 +31,7 @@ class TelegramAlertService(AsyncSessionMixin):
 
     def __init__(self, config: AlertConfig):
         self.config = config
-        self._last_sent: Optional[datetime] = None
+        self._last_sent: datetime | None = None
         self._enabled = bool(config.telegram_token and config.telegram_chat_id)
 
     @property

@@ -9,9 +9,7 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from threading import Thread
-from unittest.mock import MagicMock, Mock, patch
-
-import pytest
+from unittest.mock import Mock, patch
 
 from services.trading.llm_context_provider import (
     DEFAULT_CACHE_TTL_SECONDS,
@@ -19,7 +17,6 @@ from services.trading.llm_context_provider import (
 )
 from shared.llm.data_classes import MarketSignal, RiskMode
 from shared.llm.market_context import MarketContext
-
 
 # =============================================================================
 # Helpers

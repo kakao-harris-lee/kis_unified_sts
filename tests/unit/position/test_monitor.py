@@ -1,6 +1,7 @@
 """Test PositionMonitor class."""
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -17,8 +18,8 @@ async def test_monitor_creation():
 @pytest.mark.asyncio
 async def test_monitor_add_position():
     """Test adding position to monitor."""
-    from shared.position.monitor import PositionMonitor
     from shared.models.position import Position, PositionSide
+    from shared.position.monitor import PositionMonitor
 
     monitor = PositionMonitor()
 
@@ -42,8 +43,8 @@ async def test_monitor_add_position():
 @pytest.mark.asyncio
 async def test_monitor_update_prices():
     """Test price update for all positions."""
-    from shared.position.monitor import PositionMonitor
     from shared.models.position import Position, PositionSide
+    from shared.position.monitor import PositionMonitor
 
     monitor = PositionMonitor()
 

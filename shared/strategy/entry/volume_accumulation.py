@@ -16,7 +16,6 @@ Entry Signal Generation:
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Dict, Optional
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -82,7 +81,7 @@ class VolumeAccumulationBreakoutEntry(EntrySignalGenerator[VolumeAccumulationCon
 
     def __init__(self, config: VolumeAccumulationConfig):
         super().__init__(config)
-        self._last_signal_times: Dict[str, datetime] = {}
+        self._last_signal_times: dict[str, datetime] = {}
 
     def _validate_config(self):
         """Validate configuration parameters."""
@@ -105,7 +104,7 @@ class VolumeAccumulationBreakoutEntry(EntrySignalGenerator[VolumeAccumulationCon
             indicators.extend(["volume_velocity", "volume_acceleration"])
         return indicators
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """Generate entry signal based on volume accumulation breakout conditions."""
         data = context.market_data
         code = data.get("code", "")
@@ -166,10 +165,9 @@ class VolumeAccumulationBreakoutEntry(EntrySignalGenerator[VolumeAccumulationCon
                 return None
 
         # Check VWAP position if required
-        if self.config.require_above_vwap:
-            if vwap <= 0 or close <= vwap:
-                logger.debug(f"{code}: Price {close} not above VWAP {vwap}")
-                return None
+        if self.config.require_above_vwap and (vwap <= 0 or close <= vwap):
+            logger.debug(f"{code}: Price {close} not above VWAP {vwap}")
+            return None
 
         # Calculate confidence
         confidence = self._calculate_confidence(

@@ -1,6 +1,8 @@
-import pytest
 import numpy as np
+import pytest
+
 from shared.backtest.lookahead_guard import LookaheadGuard, LookaheadGuardMode
+
 
 @pytest.mark.parametrize("mode,should_raise", [
     (LookaheadGuardMode.OFF, False),

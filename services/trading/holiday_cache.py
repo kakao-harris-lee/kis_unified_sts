@@ -6,9 +6,10 @@ in async contexts.
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import date
 from pathlib import Path
-from typing import Awaitable, Callable, Protocol
+from typing import Protocol
 
 import yaml
 
@@ -61,7 +62,7 @@ async def async_holiday_loader(
 
         # Load content asynchronously
         if HAS_AIOFILES:
-            async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            async with aiofiles.open(path, encoding="utf-8") as f:
                 content = await f.read()
         else:
             # NOTE: In some constrained environments, asyncio's default executor can
@@ -83,7 +84,7 @@ async def async_holiday_loader(
                     holidays.add(h)
             except (ValueError, TypeError) as e:
                 logger.debug(f"Skipping invalid holiday: {h} - {e}")
-    except (OSError, IOError, yaml.YAMLError, ValueError, TypeError) as e:
+    except (OSError, yaml.YAMLError, ValueError, TypeError) as e:
         logger.error(f"Failed to load holidays: {e}", exc_info=True)
 
     return holidays

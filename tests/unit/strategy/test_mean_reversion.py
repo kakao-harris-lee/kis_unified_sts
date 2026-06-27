@@ -1,13 +1,17 @@
 """Test Mean Reversion entry strategy."""
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 @pytest.mark.asyncio
 async def test_mean_reversion_buy_signal():
     """Test mean reversion BUY signal when price below lower band."""
-    from shared.strategy.entry.mean_reversion import MeanReversionEntry, MeanReversionConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.mean_reversion import (
+        MeanReversionConfig,
+        MeanReversionEntry,
+    )
 
     config = MeanReversionConfig(
         bb_period=20,
@@ -43,8 +47,11 @@ async def test_mean_reversion_buy_signal():
 @pytest.mark.asyncio
 async def test_mean_reversion_sell_signal():
     """Test mean reversion SELL signal when price above upper band."""
-    from shared.strategy.entry.mean_reversion import MeanReversionEntry, MeanReversionConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.mean_reversion import (
+        MeanReversionConfig,
+        MeanReversionEntry,
+    )
 
     config = MeanReversionConfig(allow_short=True)
     strategy = MeanReversionEntry(config)
@@ -70,8 +77,11 @@ async def test_mean_reversion_sell_signal():
 @pytest.mark.asyncio
 async def test_mean_reversion_no_signal_in_range():
     """Test mean reversion returns None when price is within bands."""
-    from shared.strategy.entry.mean_reversion import MeanReversionEntry, MeanReversionConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.mean_reversion import (
+        MeanReversionConfig,
+        MeanReversionEntry,
+    )
 
     config = MeanReversionConfig()
     strategy = MeanReversionEntry(config)
@@ -95,8 +105,11 @@ async def test_mean_reversion_no_signal_in_range():
 @pytest.mark.asyncio
 async def test_mean_reversion_no_signal_rsi_not_extreme():
     """Test mean reversion returns None when RSI not confirming."""
-    from shared.strategy.entry.mean_reversion import MeanReversionEntry, MeanReversionConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.mean_reversion import (
+        MeanReversionConfig,
+        MeanReversionEntry,
+    )
 
     config = MeanReversionConfig()
     strategy = MeanReversionEntry(config)
@@ -119,7 +132,10 @@ async def test_mean_reversion_no_signal_rsi_not_extreme():
 
 def test_mean_reversion_required_indicators():
     """Test mean reversion reports required indicators."""
-    from shared.strategy.entry.mean_reversion import MeanReversionEntry, MeanReversionConfig
+    from shared.strategy.entry.mean_reversion import (
+        MeanReversionConfig,
+        MeanReversionEntry,
+    )
 
     config = MeanReversionConfig()
     strategy = MeanReversionEntry(config)

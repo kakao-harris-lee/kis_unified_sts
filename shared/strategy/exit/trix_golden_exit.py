@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -170,7 +170,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals."""
         if not positions:
@@ -232,7 +232,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         self,
         position: Position,
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol],  # noqa: ARG002
+        market_state: MarketStateProtocol | None,  # noqa: ARG002
         now: datetime,
     ) -> ExitSignal | None:
         """Check individual position for exit conditions.

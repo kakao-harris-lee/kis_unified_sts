@@ -22,8 +22,8 @@ def test_exit_checker_creation():
 
 def test_survival_stage_hard_stop():
     """Test hard stop in SURVIVAL stage."""
-    from shared.position.exit_checker import ExitChecker, ExitConfig
     from shared.models.position import Position, PositionSide
+    from shared.position.exit_checker import ExitChecker, ExitConfig
 
     config = ExitConfig(hard_stop_pct=2.0)
     checker = ExitChecker(config)
@@ -50,8 +50,8 @@ def test_survival_stage_hard_stop():
 
 def test_survival_to_breakeven_transition():
     """Test state transition from SURVIVAL to BREAKEVEN."""
-    from shared.position.exit_checker import ExitChecker, ExitConfig
     from shared.models.position import Position, PositionSide, PositionState
+    from shared.position.exit_checker import ExitChecker, ExitConfig
 
     config = ExitConfig(
         hard_stop_pct=2.0,
@@ -80,8 +80,8 @@ def test_survival_to_breakeven_transition():
 
 def test_maximize_stage_trailing_stop():
     """Test trailing stop in MAXIMIZE stage."""
-    from shared.position.exit_checker import ExitChecker, ExitConfig
     from shared.models.position import Position, PositionSide, PositionState
+    from shared.position.exit_checker import ExitChecker, ExitConfig
 
     config = ExitConfig(
         hard_stop_pct=2.0,

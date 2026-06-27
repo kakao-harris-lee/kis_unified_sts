@@ -29,7 +29,7 @@ from scripts.analysis.backtest_macro_setup_ac import (
     simulate_setup_target_exit,
 )
 from shared.backtest.market_context_replay import MarketContextReplay
-from shared.decision.setups.gap_reversion import SetupAConfig, SetupAGapReversion
+from shared.decision.setups.gap_reversion import SetupAConfig
 from shared.execution.contract_spec import ContractSpec
 from shared.macro.base import MacroSnapshot
 
@@ -243,7 +243,7 @@ def main() -> None:
     macro_snapshots = build_sp500_daily_snapshots(start_date, end_date)
 
     # ── Matrix arms ─────────────────────────────────────────────────────────
-    base_kwargs = dict(df=df, macro_snapshots=macro_snapshots)
+    base_kwargs = {"df": df, "macro_snapshots": macro_snapshots}
 
     results = []
 

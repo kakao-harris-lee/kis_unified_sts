@@ -46,7 +46,7 @@ import os
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -70,10 +70,10 @@ class TradeRecord:
     code: str
     entry_price: float
     entry_timestamp: datetime
-    exit_price: Optional[float] = None
-    exit_timestamp: Optional[datetime] = None
-    pnl: Optional[float] = None
-    model_name: Optional[str] = None
+    exit_price: float | None = None
+    exit_timestamp: datetime | None = None
+    pnl: float | None = None
+    model_name: str | None = None
     side: str = "LONG"  # "LONG" or "SHORT"
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -311,7 +311,7 @@ class RegimePerformanceTracker:
     For multi-threaded use, external synchronization required.
     """
 
-    def __init__(self, config: Optional[RegimePerformanceConfig] = None):
+    def __init__(self, config: RegimePerformanceConfig | None = None):
         """Initialize tracker.
 
         Args:
@@ -332,7 +332,7 @@ class RegimePerformanceTracker:
         self._cache_dirty: set[str] = set()
 
         # Redis client (optional, lazy-initialized)
-        self._redis_client: Optional[Any] = None
+        self._redis_client: Any | None = None
 
         logger.info(
             f"RegimePerformanceTracker initialized "
@@ -346,8 +346,8 @@ class RegimePerformanceTracker:
         code: str,
         price: float,
         timestamp: datetime,
-        model_name: Optional[str] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        model_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> TradeRecord:
         """Record a trade entry.
 
@@ -413,8 +413,8 @@ class RegimePerformanceTracker:
         price: float,
         timestamp: datetime,
         pnl: float,
-        model_name: Optional[str] = None,
-    ) -> Optional[TradeRecord]:
+        model_name: str | None = None,
+    ) -> TradeRecord | None:
         """Record a trade exit.
 
         Args:
@@ -521,7 +521,7 @@ class RegimePerformanceTracker:
             Dictionary mapping regime name to stats dictionary
         """
         result = {}
-        for regime in self._closed_trades.keys():
+        for regime in self._closed_trades:
             result[regime] = self.get_regime_stats(regime)
         return result
 
@@ -529,7 +529,7 @@ class RegimePerformanceTracker:
         """Get count of open positions."""
         return len(self._open_positions)
 
-    def get_closed_trades_count(self, regime: Optional[str] = None) -> int:
+    def get_closed_trades_count(self, regime: str | None = None) -> int:
         """Get count of closed trades.
 
         Args:

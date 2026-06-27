@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 def test_detect_price_outlier():
     """Test detection of price outliers."""
-    from shared.monitoring.anomaly import AnomalyDetector, AnomalyConfig
+    from shared.monitoring.anomaly import AnomalyConfig, AnomalyDetector
 
     # Use smaller min_samples and window for testing
     config = AnomalyConfig(min_samples=5, outlier_std_threshold=2.0)

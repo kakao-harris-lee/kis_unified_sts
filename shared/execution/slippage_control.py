@@ -15,20 +15,20 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class RetryPolicy(str, Enum):
+class RetryPolicy(StrEnum):
     """Retry behavior after passive timeout."""
 
     MARKET_ONCE = "market_once"
     ABORT = "abort"
 
 
-class ExecutionState(str, Enum):
+class ExecutionState(StrEnum):
     """State machine states for entry execution."""
 
     NEW = "new"
@@ -41,7 +41,7 @@ class ExecutionState(str, Enum):
     CANCELLED = "cancelled"
 
 
-class ExecutionAction(str, Enum):
+class ExecutionAction(StrEnum):
     """Next action from state evaluation."""
 
     BLOCK = "block"
@@ -271,10 +271,7 @@ class FuturesSlippageController:
         # `_cooldown_until` is later compared against UTC-aware ts in
         # `evaluate_entry`. Normalize here so a naive caller doesn't poison
         # the dict with mixed-tz values.
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
-        else:
-            ts = ts.astimezone(UTC)
+        ts = ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
 
         previous = self._last_trade_price.get(symbol)
         self._last_trade_price[symbol] = price
@@ -316,10 +313,7 @@ class FuturesSlippageController:
         # `datetime.now()` for the `now` arg and naive `signal_timestamp`s.
         # All arithmetic happens in UTC; naive inputs are interpreted as UTC.
         ts = now or datetime.now(UTC)
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
-        else:
-            ts = ts.astimezone(UTC)
+        ts = ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
         transitions = [
             StateTransition(state=ExecutionState.NEW, at=ts),
             StateTransition(state=ExecutionState.FILTERING, at=ts),
@@ -609,10 +603,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
     if isinstance(value, str):
         try:
             dt = datetime.fromisoformat(value)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-            else:
-                dt = dt.astimezone(UTC)
+            dt = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
             return dt
         except ValueError:
             return None

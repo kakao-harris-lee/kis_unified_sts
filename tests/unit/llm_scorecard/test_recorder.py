@@ -7,8 +7,8 @@ import pytest
 
 from shared.llm_scorecard.config import ScorecardConfig
 from shared.llm_scorecard.facets.base import (
-    CaptureContext,
     FACET_REGISTRY,
+    CaptureContext,
     FacetPrediction,
     register_facet,
 )

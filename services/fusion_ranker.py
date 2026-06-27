@@ -157,6 +157,7 @@ class FusionRankerConfig(ServiceConfigBase):
         Returns:
             Config instance with values from YAML
         """
+        _ = section
         # Determine config file path
         if path is None:
             path = cls._default_config_file

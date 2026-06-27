@@ -44,7 +44,7 @@ from typing import Any, ClassVar
 try:
     from typing import Self  # Python 3.11+
 except ImportError:
-    from typing_extensions import Self  # Python 3.10 backport
+    from typing import Self  # Python 3.10 backport
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -163,7 +163,7 @@ class ServiceConfigBase(BaseModel):
             abs_path = str(path)
             if not os.path.exists(abs_path):
                 raise ConfigNotFoundError(f"Config file not found: {abs_path}")
-            with open(abs_path, "r", encoding="utf-8") as f:
+            with open(abs_path, encoding="utf-8") as f:
                 raw_data = yaml.safe_load(f) or {}
         else:
             # If KIS_CONFIG_DIR env var is set and differs from ConfigLoader's

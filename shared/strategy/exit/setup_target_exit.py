@@ -79,6 +79,7 @@ class SetupTargetExit(ExitSignalGenerator[SetupTargetExitConfig]):
         market_data: dict[str, Any],
         market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
+        _ = market_state
         signals: list[ExitSignal] = []
         for position in positions:
             snapshot = get_symbol_snapshot(market_data, position.code)

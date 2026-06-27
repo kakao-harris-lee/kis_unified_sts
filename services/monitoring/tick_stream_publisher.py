@@ -108,7 +108,7 @@ class TickStreamPublisherConfig(ServiceConfigBase):
     _env_prefix = "MONITOR_TICK_STREAM_"
 
     @classmethod
-    def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> "TickStreamPublisherConfig":
+    def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> TickStreamPublisherConfig:
         """Load configuration from environment variables.
 
         Handles non-standard env var names with mixed prefixes:
@@ -116,6 +116,7 @@ class TickStreamPublisherConfig(ServiceConfigBase):
         - MONITOR_STOCK_TICK_* for stock-specific fields
         - MONITOR_FUTURES_TICK_* for futures-specific fields
         """
+        _ = env_prefix
         env_data = {}
 
         # Standard MONITOR_TICK_STREAM_* fields

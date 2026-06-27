@@ -2,7 +2,7 @@
 import logging
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram, generate_latest, REGISTRY
+    from prometheus_client import REGISTRY, Counter, Gauge, Histogram, generate_latest
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False
@@ -28,6 +28,7 @@ class TradingMetrics:
     # services.monitoring.metrics (which also defines "trading_*" series).
     def __new__(cls, prefix: str = "internal_trading"):
         """Singleton pattern to avoid duplicate metric registration."""
+        _ = prefix
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance

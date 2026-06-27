@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from shared.resilience import CircuitBreaker, CircuitBreakerConfig
 
@@ -127,7 +127,7 @@ class KISAuthConfig:
     app_key: str = ""
     app_secret: str = ""
     is_real: bool = True
-    token_cache_dir: Optional[str] = None
+    token_cache_dir: str | None = None
     token_expiry_buffer_seconds: int = 600  # 10분 전 갱신
     request_timeout_seconds: int = 30
 
@@ -286,7 +286,7 @@ class KISAuthManager:
     def __init__(
         self,
         config: KISAuthConfig,
-        circuit_breaker: Optional[CircuitBreaker] = None,
+        circuit_breaker: CircuitBreaker | None = None,
         use_singleton: bool = True,
     ):
         """
@@ -298,13 +298,13 @@ class KISAuthManager:
         self.config = config
         _ = use_singleton
         self._circuit = circuit_breaker
-        self._token: Optional[str] = None
+        self._token: str | None = None
         self._expires_at: float = 0
         self._lock = threading.Lock()
-        self._async_lock: Optional[asyncio.Lock] = None
+        self._async_lock: asyncio.Lock | None = None
 
         # Async session (lazy init)
-        self._async_session: Optional[aiohttp.ClientSession] = None
+        self._async_session: aiohttp.ClientSession | None = None
 
         # 파일 캐시에서 토큰 로드
         self._load_from_cache()
@@ -313,7 +313,7 @@ class KISAuthManager:
     def get_instance(
         cls,
         config: KISAuthConfig,
-        circuit_breaker: Optional[CircuitBreaker] = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ) -> KISAuthManager:
         """싱글톤 인스턴스 반환 (app_key + is_real 기준)"""
         key = f"{config.app_key}_{config.is_real}"
@@ -341,7 +341,7 @@ class KISAuthManager:
             return False
 
         try:
-            with open(cache_path, "r") as f:
+            with open(cache_path) as f:
                 data = json.load(f)
 
             cache = TokenCache.from_dict(data)
@@ -366,7 +366,7 @@ class KISAuthManager:
             )
             return True
 
-        except (json.JSONDecodeError, IOError, KeyError) as e:
+        except (OSError, json.JSONDecodeError, KeyError) as e:
             logger.warning(f"[KISAuth] Failed to load token cache: {e}")
             return False
 
@@ -390,7 +390,7 @@ class KISAuthManager:
 
             logger.debug(f"[KISAuth] Token cached to {cache_path}")
 
-        except IOError as e:
+        except OSError as e:
             logger.warning(f"[KISAuth] Failed to save token cache: {e}")
 
     def invalidate(self):
@@ -623,8 +623,8 @@ class KISAuthManager:
 
 
 def create_auth_manager(
-    app_key: Optional[str] = None,
-    app_secret: Optional[str] = None,
+    app_key: str | None = None,
+    app_secret: str | None = None,
     is_real: bool = True,
     use_circuit_breaker: bool = False,
     use_singleton: bool = True,

@@ -1,6 +1,7 @@
 # tests/unit/llm_scorecard/test_config.py
 from shared.llm_scorecard.config import ScorecardConfig
 
+
 def test_loads_defaults_from_yaml():
     cfg = ScorecardConfig.from_yaml("config/llm_scorecard.yaml")
     assert "direction" in cfg.enabled_facets

@@ -1,13 +1,14 @@
 """Test Breakout entry strategy."""
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 @pytest.mark.asyncio
 async def test_breakout_long_signal():
     """Test breakout LONG signal when price breaks N-period high."""
-    from shared.strategy.entry.breakout import BreakoutEntry, BreakoutConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.breakout import BreakoutConfig, BreakoutEntry
 
     config = BreakoutConfig(
         lookback_period=20,
@@ -41,8 +42,8 @@ async def test_breakout_long_signal():
 @pytest.mark.asyncio
 async def test_breakout_short_signal():
     """Test breakout SHORT signal when price breaks N-period low."""
-    from shared.strategy.entry.breakout import BreakoutEntry, BreakoutConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.breakout import BreakoutConfig, BreakoutEntry
 
     config = BreakoutConfig()
     strategy = BreakoutEntry(config)
@@ -68,8 +69,8 @@ async def test_breakout_short_signal():
 @pytest.mark.asyncio
 async def test_breakout_no_signal_in_range():
     """Test breakout returns None when price is within range."""
-    from shared.strategy.entry.breakout import BreakoutEntry, BreakoutConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.breakout import BreakoutConfig, BreakoutEntry
 
     config = BreakoutConfig()
     strategy = BreakoutEntry(config)
@@ -93,8 +94,8 @@ async def test_breakout_no_signal_in_range():
 @pytest.mark.asyncio
 async def test_breakout_no_signal_low_volume():
     """Test breakout returns None when volume is low."""
-    from shared.strategy.entry.breakout import BreakoutEntry, BreakoutConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.breakout import BreakoutConfig, BreakoutEntry
 
     config = BreakoutConfig(volume_confirm=True, volume_threshold=1.5)
     strategy = BreakoutEntry(config)
@@ -117,7 +118,7 @@ async def test_breakout_no_signal_low_volume():
 
 def test_breakout_required_indicators():
     """Test breakout reports required indicators."""
-    from shared.strategy.entry.breakout import BreakoutEntry, BreakoutConfig
+    from shared.strategy.entry.breakout import BreakoutConfig, BreakoutEntry
 
     config = BreakoutConfig()
     strategy = BreakoutEntry(config)

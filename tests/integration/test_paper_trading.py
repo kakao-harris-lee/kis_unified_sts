@@ -1,14 +1,15 @@
 """Integration tests for paper trading system."""
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_paper_trading_full_cycle():
     """Test complete paper trading cycle."""
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
     from shared.paper.models import OrderSide
 
     config = PaperTradingConfig(
@@ -48,12 +49,12 @@ async def test_paper_trading_full_cycle():
 @pytest.mark.asyncio
 async def test_regime_detection_pipeline():
     """Test regime detection integration."""
-    import pandas as pd
     import numpy as np
+    import pandas as pd
 
     from shared.regime.detector import StockRegimeDetector
-    from shared.regime.router import StrategyRouter
     from shared.regime.models import RegimeState
+    from shared.regime.router import StrategyRouter
 
     # Create test data
     dates = pd.date_range(end=datetime.now(), periods=60, freq="D")
@@ -95,15 +96,15 @@ async def test_full_trading_pipeline_flow():
     - Position tracking
     - Trade recording
     """
-    import pandas as pd
     import numpy as np
+    import pandas as pd
 
-    from shared.regime.detector import StockRegimeDetector
-    from shared.regime.router import StrategyRouter
-    from shared.regime.models import RegimeState, RegimeConfig
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
     from shared.paper.models import OrderSide, PositionSide
+    from shared.regime.detector import StockRegimeDetector
+    from shared.regime.models import RegimeConfig, RegimeState
+    from shared.regime.router import StrategyRouter
 
     # ============================================
     # Phase 1: Market Regime Detection
@@ -223,7 +224,7 @@ async def test_full_trading_pipeline_flow():
 @pytest.mark.asyncio
 async def test_pipeline_circuit_breaker_integration():
     """Test circuit breaker integration with pipeline."""
-    from services.trading.pipeline import TradingPipeline, PipelineStage
+    from services.trading.pipeline import PipelineStage, TradingPipeline
     from shared.resilience import CircuitState
 
     # Create pipeline with handlers that fail
@@ -261,8 +262,8 @@ async def test_pipeline_circuit_breaker_integration():
 @pytest.mark.asyncio
 async def test_multi_symbol_trading():
     """Test trading multiple symbols simultaneously."""
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
     from shared.paper.models import OrderSide
 
     config = PaperTradingConfig(
@@ -306,12 +307,12 @@ async def test_multi_symbol_trading():
 @pytest.mark.asyncio
 async def test_regime_change_strategy_switch():
     """Test strategy switching when regime changes."""
-    import pandas as pd
     import numpy as np
+    import pandas as pd
 
     from shared.regime.detector import StockRegimeDetector
+    from shared.regime.models import RegimeConfig, RegimeState
     from shared.regime.router import StrategyRouter
-    from shared.regime.models import RegimeState, RegimeConfig
 
     config = RegimeConfig(sma_fast=10, sma_slow=20, trend_threshold=0.02)
     detector = StockRegimeDetector(config)
@@ -351,8 +352,8 @@ async def test_regime_change_strategy_switch():
 @pytest.mark.asyncio
 async def test_equity_curve_tracking():
     """Test equity curve is tracked during trading."""
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
     from shared.paper.models import OrderSide
 
     config = PaperTradingConfig(

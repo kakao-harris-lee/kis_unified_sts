@@ -2,9 +2,10 @@
 import logging
 import uuid
 from collections import defaultdict, deque
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from statistics import median
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from shared.execution.slippage_control import OrderBookSnapshot
@@ -58,13 +59,13 @@ class VirtualBroker:
         self.slippage_model = slippage_model
         self.config = config  # May be None for legacy callers
 
-        self.positions: Dict[str, VirtualPosition] = {}
-        self.orders: List[VirtualOrder] = []
-        self.trades: List[TradeRecord] = []
+        self.positions: dict[str, VirtualPosition] = {}
+        self.orders: list[VirtualOrder] = []
+        self.trades: list[TradeRecord] = []
 
         # Callbacks
-        self.on_fill: Optional[Callable] = None
-        self.on_trade_close: Optional[Callable] = None
+        self.on_fill: Callable | None = None
+        self.on_trade_close: Callable | None = None
 
         # Price observation history for deviation guard (maxlen caps memory usage)
         self._price_history: dict[str, deque[tuple[datetime, float]]] = defaultdict(
@@ -123,7 +124,7 @@ class VirtualBroker:
         order_type: OrderType = OrderType.MARKET,
         market_price: float | None = None,
         orderbook: Optional["OrderBookSnapshot"] = None,
-        price_source_time: Optional[datetime] = None,
+        price_source_time: datetime | None = None,
     ) -> VirtualOrder:
         """Submit and execute order.
 
@@ -475,7 +476,7 @@ class VirtualBroker:
         if self.on_trade_close:
             await self.on_trade_close(trade)
 
-    def get_position(self, symbol: str) -> Optional[VirtualPosition]:
+    def get_position(self, symbol: str) -> VirtualPosition | None:
         """Get current position for symbol."""
         return self.positions.get(symbol)
 

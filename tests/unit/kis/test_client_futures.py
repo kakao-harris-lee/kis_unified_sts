@@ -6,6 +6,7 @@ import pytest
 
 from shared.kis.client import KISAuthConfig, KISClient
 
+
 @pytest.fixture
 def mock_auth_manager():
     with patch("shared.kis.client.KISAuthManager") as MockManager:

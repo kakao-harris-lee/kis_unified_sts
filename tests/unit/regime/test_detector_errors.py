@@ -1,11 +1,12 @@
 """Test error handling in StockRegimeDetector."""
-import pytest
-import pandas as pd
-import numpy as np
 from datetime import datetime
 
+import numpy as np
+import pandas as pd
+import pytest
+
 from shared.regime.detector import StockRegimeDetector
-from shared.regime.models import RegimeState, RegimeConfig
+from shared.regime.models import RegimeConfig, RegimeState
 
 
 def test_detector_insufficient_data():

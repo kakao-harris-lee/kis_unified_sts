@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from shared.calendar import is_market_open_today
 from shared.llm import run_unified_analysis
@@ -21,7 +20,7 @@ def configure_logger(name: str) -> logging.Logger:
 async def run_unified_job(
     logger: logging.Logger,
     start_message: str,
-    pre_telegram_message: Optional[str] = None,
+    pre_telegram_message: str | None = None,
 ) -> None:
     logger.info(start_message)
 

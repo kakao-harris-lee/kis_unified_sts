@@ -15,13 +15,13 @@ import asyncio
 import json
 import os
 from datetime import datetime
-from unittest.mock import MagicMock, patch, AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 import redis
 
-from shared.models.position import Position, PositionSide, PositionState
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+from shared.models.position import Position, PositionSide, PositionState
 from shared.streaming.trading_state import TradingStatePublisher, TradingStateReader
 
 _LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
@@ -998,8 +998,8 @@ class TestCrossAssetTrading:
         - Risk state blocks new positions when limit exceeded
         - Block reason correctly reported
         """
-        from shared.risk.manager import RiskManager
         from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
 
         # Step 1: Test cross-asset position count enforcement
         # Set up risk manager with low position limit (5 total)
@@ -1482,6 +1482,9 @@ class TestCrossAssetTrading:
         - Futures: intraday only, force-close at 15:15
         - Stocks: swing positions allowed, no forced EOD close
         """
+        from zoneinfo import ZoneInfo
+
+        from shared.models.signal import ExitReason
         from shared.strategy.base import ExitContext
         from shared.strategy.exit.setup_target_exit import (
             SetupTargetExit,
@@ -1491,8 +1494,6 @@ class TestCrossAssetTrading:
             ThreeStageExit,
             ThreeStageExitConfig,
         )
-        from shared.models.signal import ExitReason
-        from zoneinfo import ZoneInfo
 
         # ============================================
         # Phase 1: Create Test Positions
@@ -1605,27 +1606,26 @@ class TestCrossAssetTrading:
         with patch("shared.strategy.exit.three_stage.now_kst", return_value=eod_time):
             with patch(
                 "shared.strategy.exit.three_stage.is_trading_day_kst", return_value=True
+            ), patch(
+                "shared.strategy.exit.three_stage.to_kst", return_value=eod_time
             ):
-                with patch(
-                    "shared.strategy.exit.three_stage.to_kst", return_value=eod_time
-                ):
-                    # Create exit context for stock
-                    stock_exit_ctx = ExitContext(
-                        position=stock_position,
-                        market_data=mock_market_data,
-                        timestamp=eod_time,
-                        metadata={"is_backtest": False},  # Real trading mode
-                    )
+                # Create exit context for stock
+                stock_exit_ctx = ExitContext(
+                    position=stock_position,
+                    market_data=mock_market_data,
+                    timestamp=eod_time,
+                    metadata={"is_backtest": False},  # Real trading mode
+                )
 
-                    # Mock market data for stock
-                    with patch.object(
-                        stock_exit_strategy,
-                        "_get_current_price",
-                        return_value=73500.0,
-                    ):
-                        stock_should_exit, stock_signal = (
-                            await stock_exit_strategy.should_exit(stock_exit_ctx)
-                        )
+                # Mock market data for stock
+                with patch.object(
+                    stock_exit_strategy,
+                    "_get_current_price",
+                    return_value=73500.0,
+                ):
+                    stock_should_exit, stock_signal = (
+                        await stock_exit_strategy.should_exit(stock_exit_ctx)
+                    )
 
             # Verify stock does NOT exit at 15:15
             # Stock EOD is configured at 23:59, so it should hold

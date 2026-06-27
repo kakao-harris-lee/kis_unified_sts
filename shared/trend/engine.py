@@ -1,12 +1,11 @@
 """Trend Engine for Mode B trend following strategy."""
 import logging
 import time
-from typing import Optional, Tuple, List
 
 from .config import TrendConfig
-from .models import TrendSignal, TechnicalData
+from .models import TechnicalData, TrendSignal
+from .position_manager import TrendPosition, TrendPositionManager
 from .technical_calculator import TechnicalCalculator
-from .position_manager import TrendPositionManager, TrendPosition
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ class TrendEngine:
         self.position_manager = TrendPositionManager(config)
 
         # Volume tracking
-        self._volume_history: List[float] = []
+        self._volume_history: list[float] = []
         self._volume_ma_period = 20
 
         # Statistics
@@ -54,7 +53,7 @@ class TrendEngine:
         high: float,
         low: float,
         volume: float,
-        timestamp: Optional[float] = None  # noqa: ARG002
+        timestamp: float | None = None  # noqa: ARG002
     ) -> None:
         """Update engine with new price data.
 
@@ -90,7 +89,7 @@ class TrendEngine:
 
         return self._volume_history[-1] / avg_volume
 
-    def get_technical_data(self, timestamp: Optional[float] = None) -> Optional[TechnicalData]:
+    def get_technical_data(self, timestamp: float | None = None) -> TechnicalData | None:
         """Get current technical indicator snapshot."""
         timestamp = timestamp or time.time()
         return self.technical_calculator.get_technical_data(timestamp)
@@ -99,8 +98,8 @@ class TrendEngine:
         self,
         dl_probability: float,
         direction: str,
-        timestamp: Optional[float] = None
-    ) -> Tuple[bool, Optional[TrendSignal]]:
+        timestamp: float | None = None
+    ) -> tuple[bool, TrendSignal | None]:
         """Check if entry conditions are met.
 
         Args:
@@ -176,8 +175,8 @@ class TrendEngine:
         direction: str,
         entry_price: float,
         size: float,
-        timestamp: Optional[float] = None
-    ) -> Optional[TrendPosition]:
+        timestamp: float | None = None
+    ) -> TrendPosition | None:
         """Open a new position.
 
         Args:
@@ -208,7 +207,7 @@ class TrendEngine:
 
         return position
 
-    def manage_positions(self, current_price: float) -> List[TrendPosition]:
+    def manage_positions(self, current_price: float) -> list[TrendPosition]:
         """Manage open positions - update trailing stops and check exits.
 
         Args:
@@ -239,7 +238,7 @@ class TrendEngine:
 
         return closed
 
-    def get_open_positions(self) -> List[TrendPosition]:
+    def get_open_positions(self) -> list[TrendPosition]:
         """Get all open positions."""
         return self.position_manager.get_open_positions()
 

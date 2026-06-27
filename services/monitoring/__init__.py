@@ -14,17 +14,17 @@ Usage:
     await notifier.send("Trading started!")
 """
 
+from services.monitoring.health import (
+    HealthChecker,
+    HealthStatus,
+)
 from services.monitoring.metrics import (
     MetricsCollector,
     TradingMetrics,
 )
 from services.monitoring.notifier import (
-    TelegramNotifier,
     Notifier,
-)
-from services.monitoring.health import (
-    HealthChecker,
-    HealthStatus,
+    TelegramNotifier,
 )
 
 __all__ = [

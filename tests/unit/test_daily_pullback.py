@@ -19,7 +19,11 @@ import pytest
 from shared.backtest.engine import SignalType
 from shared.models.signal import (
     ExitReason as ModelExitReason,
+)
+from shared.models.signal import (
     Signal,
+)
+from shared.models.signal import (
     SignalType as ModelSignalType,
 )
 from shared.strategy.base import EntryContext, ExitContext

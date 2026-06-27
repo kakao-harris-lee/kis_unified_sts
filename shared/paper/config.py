@@ -1,7 +1,7 @@
 """Paper trading configuration."""
-from pydantic import BaseModel, Field
-from typing import Optional
+
 import yaml
+from pydantic import BaseModel, Field
 
 
 class PaperTradingConfig(BaseModel):
@@ -14,7 +14,7 @@ class PaperTradingConfig(BaseModel):
     max_positions: int = Field(default=5, description="Maximum concurrent positions")
 
     # Strategy settings
-    strategy_name: Optional[str] = Field(default=None)
+    strategy_name: str | None = Field(default=None)
     asset_class: str = Field(default="stock")
 
     # Execution settings
@@ -44,7 +44,7 @@ class PaperTradingConfig(BaseModel):
     @classmethod
     def from_yaml(cls, path: str) -> "PaperTradingConfig":
         """Load config from YAML file."""
-        with open(path, "r") as f:
+        with open(path) as f:
             data = yaml.safe_load(f)
         return cls(**data)
 

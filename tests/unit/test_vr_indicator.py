@@ -9,7 +9,6 @@
   - VolumeRatioCalculator.check_volume_warning() - 거래량 급감 경고
 """
 
-import math
 
 import numpy as np
 import pytest

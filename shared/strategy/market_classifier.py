@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class MarketClassifier:
         "adx_moderate_trend": 18,
     }
 
-    def __init__(self, config: Optional[dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Args:
             config: MFI/ADX 임계값 설정
@@ -86,9 +86,9 @@ class MarketClassifier:
         self,
         mfi: float,
         adx: float,
-        rsi: Optional[float] = None,
-        macd: Optional[float] = None,
-        macd_signal: Optional[float] = None,
+        rsi: float | None = None,
+        macd: float | None = None,
+        macd_signal: float | None = None,
     ) -> MarketState:
         """시장 상태 분류
 

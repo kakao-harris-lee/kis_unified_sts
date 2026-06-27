@@ -1,5 +1,6 @@
 """Tests for forecast_integration config blocks on Setup A/C."""
 import pytest
+from pydantic import ValidationError
 
 from shared.strategy.entry.setup_adapters import (
     SetupAEntryConfig,
@@ -37,7 +38,7 @@ def test_setup_c_forecast_enabled_loads():
 
 
 def test_invalid_min_event_impact_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         SetupCEntryConfig(
             forecast_integration={"enabled": True, "min_event_impact_score": 150}
         )

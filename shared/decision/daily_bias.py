@@ -20,11 +20,13 @@ All fail-safe semantics are preserved: Redis unavailable, bad context, or
 low-confidence context all return ``flat``.
 """
 from __future__ import annotations
+
 import json
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
+
 from shared.strategy.gates.adapter_helper import acquire_infra_clients
 
 logger = logging.getLogger(__name__)

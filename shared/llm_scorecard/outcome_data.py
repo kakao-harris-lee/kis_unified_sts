@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -9,7 +10,7 @@ if TYPE_CHECKING:
 class _MinuteBarStore(Protocol):
     def get_minute_bars(
         self, symbol: str, start: Any = ..., end: Any = ...
-    ) -> "pd.DataFrame | None": ...
+    ) -> pd.DataFrame | None: ...
 
 
 class OutcomeData:
@@ -25,7 +26,7 @@ class OutcomeData:
 
     def bars_after(
         self, symbol: str, date_kst: str, after: datetime
-    ) -> "pd.DataFrame | None":
+    ) -> pd.DataFrame | None:
         """Return minute bars for `symbol` on `date_kst` at/after `after`."""
         try:
             _day = datetime.strptime(date_kst, "%Y-%m-%d")

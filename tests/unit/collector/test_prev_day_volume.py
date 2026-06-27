@@ -68,12 +68,11 @@ class TestPrevDayVolumeCache:
         cache._date = "20260216"
         kosdaq_only = {"123456": 3_000_000}
 
-        with patch(f"{MODULE}._get_krx_client", return_value=object()):
-            with patch(
-                f"{MODULE}._fetch_market_volumes",
-                side_effect=_market_volume_side_effect({}, kosdaq_only),
-            ):
-                filled = cache.ensure(["123456"])
+        with patch(f"{MODULE}._get_krx_client", return_value=object()), patch(
+            f"{MODULE}._fetch_market_volumes",
+            side_effect=_market_volume_side_effect({}, kosdaq_only),
+        ):
+            filled = cache.ensure(["123456"])
 
         assert filled == 1
         assert cache.get("123456") == 3_000_000
@@ -135,12 +134,11 @@ class TestPrevDayVolumeCacheAsync:
         cache = PrevDayVolumeCache()
         cache._date = "20260216"
 
-        with patch(f"{MODULE}._get_krx_client", return_value=object()):
-            with patch(
-                f"{MODULE}._fetch_market_volumes",
-                side_effect=_market_volume_side_effect({}, {"123456": 3_000_000}),
-            ):
-                filled = await cache.ensure_async(["123456"])
+        with patch(f"{MODULE}._get_krx_client", return_value=object()), patch(
+            f"{MODULE}._fetch_market_volumes",
+            side_effect=_market_volume_side_effect({}, {"123456": 3_000_000}),
+        ):
+            filled = await cache.ensure_async(["123456"])
 
         assert filled == 1
         assert cache.get("123456") == 3_000_000

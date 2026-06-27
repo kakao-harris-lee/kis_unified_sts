@@ -34,10 +34,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
-from shared.config.mixins import ConfigMixin
 from shared.calendar import get_market_calendar
+from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
@@ -239,7 +239,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
 
     async def should_exit(
         self, context: ExitContext
-    ) -> tuple[bool, Optional[ExitSignal]]:
+    ) -> tuple[bool, ExitSignal | None]:
         """Check if single position should exit
 
         Args:
@@ -261,7 +261,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals
 
@@ -305,9 +305,9 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         self,
         position: Position,
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol],
+        market_state: MarketStateProtocol | None,
         now: datetime,
-    ) -> Optional[ExitSignal]:
+    ) -> ExitSignal | None:
         """Check individual position for exit conditions
 
         Priority:
@@ -460,7 +460,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
 
     def _get_current_price(
         self, position: Position, market_data: dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         """Get current price from market data"""
         snapshot = get_symbol_snapshot(market_data, position.code)
         price = get_price_from_snapshot(snapshot)
@@ -563,7 +563,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         profit_amount: float,
         high_since_entry: float,
         holding_minutes: int,
-    ) -> Optional[ExitSignal]:
+    ) -> ExitSignal | None:
         """Check trailing stop
 
         Two-tier trailing:

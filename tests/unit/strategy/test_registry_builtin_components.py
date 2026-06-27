@@ -9,7 +9,6 @@ import pytest
 from shared.strategy import registry as registry_module
 from shared.strategy.registry import EntryRegistry, ExitRegistry, SizerRegistry
 
-
 EXPECTED_ENTRY_NAMES = {
     "stochrsi_trend",
     "mean_reversion",

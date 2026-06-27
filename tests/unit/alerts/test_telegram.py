@@ -1,14 +1,15 @@
 """Test TelegramAlertService."""
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock
+
+import pytest
 
 
 @pytest.mark.asyncio
 async def test_telegram_format_message():
     """Test message formatting."""
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
     from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -34,8 +35,8 @@ async def test_telegram_format_message():
 @pytest.mark.asyncio
 async def test_telegram_emoji_mapping():
     """Test that all alert levels have correct emoji mappings."""
-    from shared.alerts.telegram import TelegramAlertService
     from shared.alerts.models import AlertLevel
+    from shared.alerts.telegram import TelegramAlertService
 
     # Verify all levels are mapped
     assert AlertLevel.INFO in TelegramAlertService.LEVEL_EMOJIS
@@ -61,8 +62,8 @@ async def test_telegram_emoji_mapping():
 @pytest.mark.asyncio
 async def test_telegram_send_disabled():
     """Test sending when disabled."""
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
     from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
 
     config = AlertConfig()  # No token = disabled
     service = TelegramAlertService(config)
@@ -81,8 +82,8 @@ async def test_telegram_send_disabled():
 @pytest.mark.asyncio
 async def test_telegram_session_lifecycle():
     """Test session creation and closure."""
-    from shared.alerts.telegram import TelegramAlertService
     from shared.alerts.models import AlertConfig
+    from shared.alerts.telegram import TelegramAlertService
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -110,9 +111,10 @@ async def test_telegram_session_lifecycle():
 @pytest.mark.asyncio
 async def test_telegram_session_reuse():
     """Test that session is reused across multiple sends."""
-    from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
     from unittest.mock import MagicMock
+
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
+    from shared.alerts.telegram import TelegramAlertService
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -151,8 +153,8 @@ async def test_telegram_session_reuse():
 @pytest.mark.asyncio
 async def test_telegram_close_already_closed():
     """Test closing an already closed session is safe."""
-    from shared.alerts.telegram import TelegramAlertService
     from shared.alerts.models import AlertConfig
+    from shared.alerts.telegram import TelegramAlertService
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -172,9 +174,10 @@ async def test_telegram_close_already_closed():
 @pytest.mark.asyncio
 async def test_telegram_rate_limiting_blocks_second_alert():
     """Test that rate limiting blocks alerts within the limit window."""
-    from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
     from unittest.mock import MagicMock
+
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
+    from shared.alerts.telegram import TelegramAlertService
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -222,9 +225,10 @@ async def test_telegram_rate_limiting_blocks_second_alert():
 @pytest.mark.asyncio
 async def test_telegram_critical_bypasses_rate_limit():
     """Test that CRITICAL alerts bypass rate limiting."""
-    from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
     from unittest.mock import MagicMock
+
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
+    from shared.alerts.telegram import TelegramAlertService
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -271,9 +275,10 @@ async def test_telegram_critical_bypasses_rate_limit():
 @pytest.mark.asyncio
 async def test_telegram_info_level_rate_limited():
     """Test that INFO level alerts are subject to rate limiting."""
-    from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
     from unittest.mock import MagicMock
+
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
+    from shared.alerts.telegram import TelegramAlertService
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -317,8 +322,8 @@ async def test_telegram_info_level_rate_limited():
 @pytest.mark.asyncio
 async def test_telegram_should_send_first_alert():
     """Test _should_send allows first alert without rate limit."""
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
     from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -341,9 +346,10 @@ async def test_telegram_should_send_first_alert():
 @pytest.mark.asyncio
 async def test_telegram_rate_limit_updates_last_sent():
     """Test that successful send updates _last_sent timestamp."""
-    from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
     from unittest.mock import MagicMock
+
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
+    from shared.alerts.telegram import TelegramAlertService
 
     config = AlertConfig(
         telegram_token="test_token",
@@ -381,9 +387,10 @@ async def test_telegram_rate_limit_updates_last_sent():
 @pytest.mark.asyncio
 async def test_telegram_custom_rate_limit_seconds():
     """Test custom rate limit configuration."""
-    from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
     from unittest.mock import MagicMock
+
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
+    from shared.alerts.telegram import TelegramAlertService
 
     # Very short rate limit
     config = AlertConfig(
@@ -427,9 +434,10 @@ async def test_telegram_custom_rate_limit_seconds():
 @pytest.mark.asyncio
 async def test_telegram_failed_send_does_not_update_last_sent():
     """Test that failed sends do not update _last_sent timestamp."""
-    from shared.alerts.telegram import TelegramAlertService
-    from shared.alerts.models import Alert, AlertLevel, AlertConfig
     from unittest.mock import MagicMock
+
+    from shared.alerts.models import Alert, AlertConfig, AlertLevel
+    from shared.alerts.telegram import TelegramAlertService
 
     config = AlertConfig(
         telegram_token="test_token",

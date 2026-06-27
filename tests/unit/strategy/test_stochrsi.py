@@ -1,13 +1,14 @@
 """Test StochRSI trend entry strategy."""
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 @pytest.mark.asyncio
 async def test_stochrsi_entry_signal_buy():
     """Test StochRSI entry signal generation for BUY (oversold)."""
-    from shared.strategy.entry.stochrsi_trend import StochRSITrendEntry, StochRSIConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.stochrsi_trend import StochRSIConfig, StochRSITrendEntry
 
     config = StochRSIConfig(
         rsi_period=14,
@@ -45,8 +46,8 @@ async def test_stochrsi_entry_signal_buy():
 @pytest.mark.asyncio
 async def test_stochrsi_entry_signal_sell():
     """Test StochRSI entry signal generation for SELL (overbought)."""
-    from shared.strategy.entry.stochrsi_trend import StochRSITrendEntry, StochRSIConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.stochrsi_trend import StochRSIConfig, StochRSITrendEntry
 
     config = StochRSIConfig()
     strategy = StochRSITrendEntry(config)
@@ -73,8 +74,8 @@ async def test_stochrsi_entry_signal_sell():
 @pytest.mark.asyncio
 async def test_stochrsi_no_signal_in_neutral_zone():
     """Test StochRSI returns None in neutral zone."""
-    from shared.strategy.entry.stochrsi_trend import StochRSITrendEntry, StochRSIConfig
     from shared.strategy.base import EntryContext
+    from shared.strategy.entry.stochrsi_trend import StochRSIConfig, StochRSITrendEntry
 
     config = StochRSIConfig()
     strategy = StochRSITrendEntry(config)
@@ -96,7 +97,7 @@ async def test_stochrsi_no_signal_in_neutral_zone():
 
 def test_stochrsi_required_indicators():
     """Test StochRSI reports required indicators."""
-    from shared.strategy.entry.stochrsi_trend import StochRSITrendEntry, StochRSIConfig
+    from shared.strategy.entry.stochrsi_trend import StochRSIConfig, StochRSITrendEntry
 
     config = StochRSIConfig()
     strategy = StochRSITrendEntry(config)

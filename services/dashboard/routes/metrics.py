@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, Response
 
@@ -15,7 +15,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _empty_venue_metrics() -> Dict[str, Any]:
+def _empty_venue_metrics() -> dict[str, Any]:
     """Return empty venue metrics payload.
 
     The frontend expects these exact keys.
@@ -30,7 +30,7 @@ def _empty_venue_metrics() -> Dict[str, Any]:
     }
 
 
-def _collect_venue_metrics_sync() -> Dict[str, Any]:
+def _collect_venue_metrics_sync() -> dict[str, Any]:
     """Collect venue metrics from RuntimeLedger fills.
 
     Only persisted execution venue counts are currently stored durably.
@@ -70,7 +70,7 @@ def _collect_venue_metrics_sync() -> Dict[str, Any]:
 
 
 @router.get("/api/metrics/venue")
-async def get_venue_metrics() -> Dict[str, Any]:
+async def get_venue_metrics() -> dict[str, Any]:
     """
     Get execution venue distribution and performance metrics.
 

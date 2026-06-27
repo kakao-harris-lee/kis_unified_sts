@@ -14,8 +14,9 @@ def test_paper_config_defaults():
 
 def test_paper_config_from_yaml(tmp_path):
     """Test loading config from YAML."""
-    from shared.paper.config import PaperTradingConfig
     import yaml
+
+    from shared.paper.config import PaperTradingConfig
 
     config_file = tmp_path / "paper.yaml"
     config_file.write_text(yaml.dump({

@@ -91,7 +91,7 @@ def read_latest_macro_snapshot(
     if not entries:
         return None
 
-    merged: dict[str, Any] = {f: None for f in _FLOAT_FIELDS}
+    merged: dict[str, Any] = dict.fromkeys(_FLOAT_FIELDS)
     newest_ts_ms: int | None = None
     newest_session = ""
     newest_collected: list[str] = []

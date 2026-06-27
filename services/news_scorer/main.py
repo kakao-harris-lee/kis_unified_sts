@@ -269,6 +269,7 @@ async def _build_and_run() -> int:
 
     import redis.asyncio as aioredis
     from openai import AsyncOpenAI
+
     from shared.scoring.budget import DailyBudget
     from shared.scoring.config import NewsScorerConfig
     from shared.scoring.fallback import FallbackScorer

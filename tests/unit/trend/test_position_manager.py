@@ -4,8 +4,8 @@ import pytest
 
 def test_position_manager_creation():
     """Test TrendPositionManager instantiation."""
-    from shared.trend.position_manager import TrendPositionManager
     from shared.trend.config import TrendConfig
+    from shared.trend.position_manager import TrendPositionManager
 
     config = TrendConfig()
     manager = TrendPositionManager(config)
@@ -15,8 +15,8 @@ def test_position_manager_creation():
 
 def test_open_long_position():
     """Test opening a long position."""
-    from shared.trend.position_manager import TrendPositionManager
     from shared.trend.config import TrendConfig
+    from shared.trend.position_manager import TrendPositionManager
 
     config = TrendConfig(
         atr_stop_multiplier=2.0,
@@ -42,8 +42,8 @@ def test_open_long_position():
 
 def test_open_short_position():
     """Test opening a short position."""
-    from shared.trend.position_manager import TrendPositionManager
     from shared.trend.config import TrendConfig
+    from shared.trend.position_manager import TrendPositionManager
 
     config = TrendConfig(
         atr_stop_multiplier=2.0,
@@ -65,8 +65,8 @@ def test_open_short_position():
 
 def test_trailing_stop_update_long():
     """Test trailing stop updates for long position."""
-    from shared.trend.position_manager import TrendPositionManager
     from shared.trend.config import TrendConfig
+    from shared.trend.position_manager import TrendPositionManager
 
     config = TrendConfig(atr_stop_multiplier=2.0)
     manager = TrendPositionManager(config)
@@ -90,8 +90,8 @@ def test_trailing_stop_update_long():
 
 def test_trailing_stop_no_decrease_long():
     """Test trailing stop never decreases for long."""
-    from shared.trend.position_manager import TrendPositionManager
     from shared.trend.config import TrendConfig
+    from shared.trend.position_manager import TrendPositionManager
 
     config = TrendConfig(atr_stop_multiplier=2.0)
     manager = TrendPositionManager(config)
@@ -115,8 +115,8 @@ def test_trailing_stop_no_decrease_long():
 
 def test_check_stop_hit():
     """Test stop loss detection."""
-    from shared.trend.position_manager import TrendPositionManager
     from shared.trend.config import TrendConfig
+    from shared.trend.position_manager import TrendPositionManager
 
     config = TrendConfig(atr_stop_multiplier=2.0)
     manager = TrendPositionManager(config)
@@ -140,8 +140,8 @@ def test_check_stop_hit():
 
 def test_check_target_hit():
     """Test take profit detection."""
-    from shared.trend.position_manager import TrendPositionManager
     from shared.trend.config import TrendConfig
+    from shared.trend.position_manager import TrendPositionManager
 
     config = TrendConfig(atr_target_multiplier=3.0)
     manager = TrendPositionManager(config)
@@ -162,8 +162,8 @@ def test_check_target_hit():
 
 def test_close_position():
     """Test closing a position."""
-    from shared.trend.position_manager import TrendPositionManager
     from shared.trend.config import TrendConfig
+    from shared.trend.position_manager import TrendPositionManager
 
     config = TrendConfig()
     manager = TrendPositionManager(config)

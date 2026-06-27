@@ -7,7 +7,6 @@ Market Analyzers
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import List, Optional
 
 import numpy as np
 import pandas as pd
@@ -35,7 +34,7 @@ except ImportError:
 class BaseAnalyzer(ABC):
     """분석기 기본 클래스"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: LLMConfig | None = None):
         self.config = config or LLMConfig.from_env()
 
     @abstractmethod
@@ -47,12 +46,12 @@ class BaseAnalyzer(ABC):
 class ETFFlowAnalyzer(BaseAnalyzer):
     """ETF 자금흐름 분석기 (FinanceDataReader 기반)"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: LLMConfig | None = None):
         super().__init__(config)
         self.end_date = datetime.now()
         self.start_date = self.end_date - timedelta(days=60)
 
-    def analyze(self) -> List[ETFFlowData]:
+    def analyze(self) -> list[ETFFlowData]:
         """섹터별 ETF 자금흐름 분석"""
         results = []
 
@@ -75,7 +74,7 @@ class ETFFlowAnalyzer(BaseAnalyzer):
 
         return results
 
-    def _analyze_etf(self, sector: str, code: str) -> Optional[ETFFlowData]:
+    def _analyze_etf(self, sector: str, code: str) -> ETFFlowData | None:
         """개별 ETF 분석"""
         try:
             df = fdr.DataReader(code, self.start_date, self.end_date)
@@ -127,7 +126,7 @@ class ETFFlowAnalyzer(BaseAnalyzer):
         else:
             return "중립"
 
-    def _get_sample_data(self) -> List[ETFFlowData]:
+    def _get_sample_data(self) -> list[ETFFlowData]:
         """샘플 데이터"""
         np.random.seed(int(datetime.now().timestamp()) % 1000)
 
@@ -293,12 +292,12 @@ class BondAnalyzer(BaseAnalyzer):
 class IndexAnalyzer(BaseAnalyzer):
     """주요 지수 분석기"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: LLMConfig | None = None):
         super().__init__(config)
         self.end_date = datetime.now()
         self.start_date = self.end_date - timedelta(days=60)
 
-    def analyze(self) -> List[IndexData]:
+    def analyze(self) -> list[IndexData]:
         """지수 분석"""
         results = []
 
@@ -318,7 +317,7 @@ class IndexAnalyzer(BaseAnalyzer):
 
         return results
 
-    def _analyze_index(self, name: str, code: str) -> Optional[IndexData]:
+    def _analyze_index(self, name: str, code: str) -> IndexData | None:
         """개별 지수 분석"""
         try:
             df = fdr.DataReader(code, self.start_date, self.end_date)
@@ -365,7 +364,7 @@ class IndexAnalyzer(BaseAnalyzer):
         except Exception:
             return None
 
-    def _get_sample_data(self) -> List[IndexData]:
+    def _get_sample_data(self) -> list[IndexData]:
         """샘플 데이터"""
         np.random.seed(int(datetime.now().timestamp()) % 1000 + 4)
 

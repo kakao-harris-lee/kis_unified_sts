@@ -218,12 +218,7 @@ class TrendContinuationVWAPEntry(EntrySignalGenerator[TrendContinuationVWAPConfi
             return False
         if not (self.config.daily_rsi_min <= daily_rsi <= self.config.daily_rsi_max):
             return False
-        if (
-            self.config.daily_volume_ratio_min > 0
-            and daily_volume_ratio < self.config.daily_volume_ratio_min
-        ):
-            return False
-        return True
+        return not (self.config.daily_volume_ratio_min > 0 and daily_volume_ratio < self.config.daily_volume_ratio_min)
 
     def _inside_time_window(self, now_kst: datetime) -> bool:
         open_dt = datetime.combine(
@@ -238,11 +233,7 @@ class TrendContinuationVWAPEntry(EntrySignalGenerator[TrendContinuationVWAPConfi
         )
         if now_kst < open_dt + timedelta(minutes=self.config.skip_market_open_minutes):
             return False
-        if now_kst >= close_dt - timedelta(
-            minutes=self.config.skip_market_close_minutes
-        ):
-            return False
-        return True
+        return not now_kst >= close_dt - timedelta(minutes=self.config.skip_market_close_minutes)
 
     def _is_cooling_down(self, code: str, now: datetime) -> bool:
         if self.config.signal_cooldown_seconds <= 0:

@@ -40,11 +40,10 @@ Usage
 from __future__ import annotations
 
 import argparse
-import math
 import sys
 from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -466,10 +465,7 @@ def _make_trade(
 ) -> SimTrade:
     side = entry.side
     entry_price = entry.entry_price
-    if side == "BUY":
-        pnl_pts = exit_price - entry_price
-    else:
-        pnl_pts = entry_price - exit_price
+    pnl_pts = exit_price - entry_price if side == "BUY" else entry_price - exit_price
     pnl_pct = pnl_pts / entry_price * 100.0
     holding_bars = exit_idx - entry.bar_idx
     holding_minutes = (exit_time - entry_time).total_seconds() / 60.0
@@ -512,7 +508,7 @@ def compute_metrics(trades: list[SimTrade]) -> dict:
 
     n = len(trades)
     wins = [t for t in trades if t.pnl_pts > 0]
-    losses = [t for t in trades if t.pnl_pts <= 0]
+    [t for t in trades if t.pnl_pts <= 0]
     returns = [t.pnl_pct for t in trades]
     holds = [t.holding_minutes for t in trades]
 
@@ -605,7 +601,7 @@ def print_report(label: str, m: dict, gb: dict) -> None:
     print(f"  Hold (mean)     : {m['mean_hold_min']:.1f} min")
     print(f"  Hold (P25/P75)  : {m['p25_hold_min']:.1f} / {m['p75_hold_min']:.1f} min")
     if m['exit_reasons']:
-        print(f"  Exit Reasons    :")
+        print("  Exit Reasons    :")
         for k, v in sorted(m['exit_reasons'].items(), key=lambda x: -x[1]):
             print(f"    {k:<22}: {v}")
     if gb:

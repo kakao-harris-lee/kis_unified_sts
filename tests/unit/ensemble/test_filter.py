@@ -4,8 +4,8 @@ import pytest
 
 def test_filter_creation():
     """Test EnsembleFilter instantiation."""
-    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.config import EnsembleConfig
+    from shared.ensemble.filter import EnsembleFilter
 
     config = EnsembleConfig()
     filter = EnsembleFilter(config)
@@ -15,8 +15,8 @@ def test_filter_creation():
 
 def test_check_long_entry():
     """Test long entry conditions."""
-    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.config import EnsembleConfig
+    from shared.ensemble.filter import EnsembleFilter
     from shared.trend.models import TechnicalData
 
     config = EnsembleConfig(dl_threshold=0.6, min_confidence=0.5)
@@ -49,8 +49,8 @@ def test_check_long_entry():
 
 def test_check_short_entry():
     """Test short entry conditions."""
-    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.config import EnsembleConfig
+    from shared.ensemble.filter import EnsembleFilter
     from shared.trend.models import TechnicalData
 
     config = EnsembleConfig(dl_threshold=0.6, min_confidence=0.5)
@@ -82,8 +82,8 @@ def test_check_short_entry():
 
 def test_filter_rejects_misaligned():
     """Test filter rejects when MA not aligned."""
-    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.config import EnsembleConfig
+    from shared.ensemble.filter import EnsembleFilter
     from shared.trend.models import TechnicalData
 
     config = EnsembleConfig()
@@ -114,8 +114,8 @@ def test_filter_rejects_misaligned():
 
 def test_multi_horizon_confirmation():
     """Test multi-horizon confirmation logic."""
-    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.config import EnsembleConfig
+    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.models import HorizonResult
 
     config = EnsembleConfig(
@@ -138,8 +138,8 @@ def test_multi_horizon_confirmation():
 
 def test_multi_horizon_fails_without_consensus():
     """Test multi-horizon fails without consensus."""
-    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.config import EnsembleConfig
+    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.models import HorizonResult
 
     config = EnsembleConfig(
@@ -161,8 +161,8 @@ def test_multi_horizon_fails_without_consensus():
 
 def test_generate_signal():
     """Test signal generation with stop/target calculation."""
-    from shared.ensemble.filter import EnsembleFilter
     from shared.ensemble.config import EnsembleConfig
+    from shared.ensemble.filter import EnsembleFilter
     from shared.trend.models import TechnicalData
 
     config = EnsembleConfig(

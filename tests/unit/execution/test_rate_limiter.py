@@ -1,7 +1,8 @@
 """Test Redis rate limiter."""
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 class TestRedisRateLimiter:
@@ -347,8 +348,8 @@ class TestOrderExecutorWithRateLimiter:
     @pytest.mark.asyncio
     async def test_executor_acquires_before_order(self):
         """Test executor calls rate limiter before sending order."""
-        from shared.execution.executor import OrderExecutor
         from shared.execution.config import ExecutionConfig
+        from shared.execution.executor import OrderExecutor
         from shared.execution.models import OrderRequest, OrderSide, OrderType
 
         with patch("shared.execution.rate_limiter.RedisRateLimiter") as MockLimiter:
@@ -381,10 +382,10 @@ class TestOrderExecutorWithRateLimiter:
     @pytest.mark.asyncio
     async def test_executor_rate_limit_error_returns_failure(self):
         """Test executor returns failure when rate limited."""
-        from shared.execution.executor import OrderExecutor
         from shared.execution.config import ExecutionConfig
-        from shared.execution.models import OrderRequest, OrderSide, OrderType
         from shared.execution.exceptions import RateLimitExceeded
+        from shared.execution.executor import OrderExecutor
+        from shared.execution.models import OrderRequest, OrderSide, OrderType
 
         with patch("shared.execution.rate_limiter.RedisRateLimiter") as MockLimiter:
             mock_limiter = AsyncMock()
@@ -418,8 +419,8 @@ class TestOrderExecutorWithRateLimiter:
     @pytest.mark.asyncio
     async def test_executor_works_without_redis_configured(self):
         """Test executor works normally when redis_url is empty."""
-        from shared.execution.executor import OrderExecutor
         from shared.execution.config import ExecutionConfig
+        from shared.execution.executor import OrderExecutor
         from shared.execution.models import OrderRequest, OrderSide, OrderType
 
         config = ExecutionConfig(
@@ -623,8 +624,8 @@ class TestExecutorWarmup:
     @pytest.mark.asyncio
     async def test_warmup_paper_mode_skips(self):
         """Test warmup is skipped in PAPER mode."""
-        from shared.execution.executor import OrderExecutor
         from shared.execution.config import ExecutionConfig
+        from shared.execution.executor import OrderExecutor
 
         config = ExecutionConfig(trading_mode="PAPER")
         executor = OrderExecutor(config)
@@ -637,8 +638,8 @@ class TestExecutorWarmup:
     @pytest.mark.asyncio
     async def test_warmup_mock_mode_makes_request(self):
         """Test warmup makes HEAD request in MOCK mode."""
-        from shared.execution.executor import OrderExecutor
         from shared.execution.config import ExecutionConfig
+        from shared.execution.executor import OrderExecutor
 
         config = ExecutionConfig(trading_mode="MOCK")
         executor = OrderExecutor(config)
@@ -662,8 +663,8 @@ class TestExecutorWarmup:
     @pytest.mark.asyncio
     async def test_warmup_handles_connection_error(self):
         """Test warmup returns False on connection error."""
-        from shared.execution.executor import OrderExecutor
         from shared.execution.config import ExecutionConfig
+        from shared.execution.executor import OrderExecutor
 
         config = ExecutionConfig(trading_mode="MOCK")
         executor = OrderExecutor(config)

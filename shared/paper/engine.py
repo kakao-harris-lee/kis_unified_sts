@@ -1,11 +1,12 @@
 """Paper trading engine."""
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Optional, Dict, List, Callable, Any
+from typing import Any
 
 from .broker import VirtualBroker
 from .config import PaperTradingConfig
-from .models import VirtualOrder, OrderSide, TradeRecord
+from .models import OrderSide, TradeRecord, VirtualOrder
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class PaperTradingEngine:
     def __init__(
         self,
         config: PaperTradingConfig,
-        on_trade: Optional[Callable[[TradeRecord], Any]] = None,
+        on_trade: Callable[[TradeRecord], Any] | None = None,
     ):
         self.config = config
         self.broker = VirtualBroker(
@@ -34,8 +35,8 @@ class PaperTradingEngine:
         self.on_trade = on_trade
 
         self.is_running = False
-        self.equity_curve: List[Dict] = []
-        self.start_time: Optional[datetime] = None
+        self.equity_curve: list[dict] = []
+        self.start_time: datetime | None = None
 
         # Wire up broker callbacks
         self.broker.on_trade_close = self._on_trade_closed
@@ -59,7 +60,7 @@ class PaperTradingEngine:
         side: OrderSide,
         price: float,
         quantity: int,
-    ) -> Optional[VirtualOrder]:
+    ) -> VirtualOrder | None:
         """Process trading signal."""
         # Check position limits
         if not self._can_open_position(symbol, side, price, quantity):
@@ -92,10 +93,7 @@ class PaperTradingEngine:
         # Check position size limit
         position_value = price * quantity
         max_position_value = self.broker.get_equity() * self.config.max_position_pct
-        if position_value > max_position_value:
-            return False
-
-        return True
+        return not position_value > max_position_value
 
     async def _on_trade_closed(self, trade: TradeRecord) -> None:
         """Handle trade closure."""
@@ -122,7 +120,7 @@ class PaperTradingEngine:
         if len(self.equity_curve) > self.config.max_equity_points:
             self.equity_curve.pop(0)
 
-    def get_performance(self) -> Dict:
+    def get_performance(self) -> dict:
         """Get performance metrics."""
         summary = self.broker.get_summary()
 

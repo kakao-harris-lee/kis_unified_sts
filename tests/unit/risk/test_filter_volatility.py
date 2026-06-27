@@ -9,8 +9,6 @@ The filter accepts a ``current_atr_provider`` callable.  Tests supply a
 
 from __future__ import annotations
 
-import pytest
-
 from shared.decision.signal import Signal
 from shared.risk.filters.volatility import VolatilityFilter
 from shared.risk.state import RiskStateSnapshot

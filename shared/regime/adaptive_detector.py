@@ -6,19 +6,19 @@ to classify market into enhanced regime states.
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 import numpy as np
 import pandas as pd
 
-from .models import RegimeSignal
 from shared.utils.math import safe_divide
+
+from .models import RegimeSignal
 
 logger = logging.getLogger(__name__)
 
 
-class AdaptiveRegimeState(str, Enum):
+class AdaptiveRegimeState(StrEnum):
     """Enhanced market regime states with multi-metric classification."""
 
     TRENDING_BULL = "TRENDING_BULL"
@@ -123,14 +123,14 @@ class AdaptiveRegimeDetector:
             print(f"Regime: {signal.state} (confidence: {signal.confidence})")
     """
 
-    def __init__(self, config: Optional[AdaptiveRegimeConfig] = None):
+    def __init__(self, config: AdaptiveRegimeConfig | None = None):
         """Initialize detector.
 
         Args:
             config: Adaptive regime configuration. Uses defaults if None.
         """
         self.config = config or AdaptiveRegimeConfig()
-        self._last_signal: Optional[RegimeSignal] = None
+        self._last_signal: RegimeSignal | None = None
 
     def detect(self, df: pd.DataFrame) -> RegimeSignal:
         """Detect current market regime.
@@ -488,6 +488,6 @@ class AdaptiveRegimeDetector:
         )
 
     @property
-    def last_signal(self) -> Optional[RegimeSignal]:
+    def last_signal(self) -> RegimeSignal | None:
         """Get last detected signal."""
         return self._last_signal

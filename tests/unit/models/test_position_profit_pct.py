@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pytest
 
-from shared.models.position import Position, PositionSide, PositionState
+from shared.models.position import Position, PositionSide
 
 
 def _make_position(

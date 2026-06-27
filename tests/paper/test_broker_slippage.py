@@ -21,16 +21,17 @@ Expected Behavior:
 - Time-of-day multipliers: slippage varies by trading time
 - Overall: P&L is lower with slippage (more realistic paper trading)
 """
+from datetime import datetime
+
 import pytest
-from datetime import datetime, time
 
 
 @pytest.mark.asyncio
 async def test_market_order_with_slippage_model():
     """Test market order uses slippage model when available."""
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
 
     # Create slippage model with known configuration
     config = SlippageModelConfig(
@@ -78,9 +79,9 @@ async def test_market_order_with_slippage_model():
 @pytest.mark.asyncio
 async def test_market_order_sell_with_slippage_model():
     """Test SELL market order uses slippage model."""
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
 
     config = SlippageModelConfig(
         enabled=True,
@@ -135,9 +136,9 @@ async def test_market_order_sell_with_slippage_model():
 @pytest.mark.asyncio
 async def test_market_order_without_slippage_model():
     """Test market order falls back to slippage_rate when model is disabled."""
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
 
     # Create disabled slippage model
     config = SlippageModelConfig(enabled=False)
@@ -192,10 +193,11 @@ async def test_market_order_no_slippage_model():
 async def test_submit_order_with_orderbook():
     """Test submit_order() uses orderbook data for slippage calculation."""
     from datetime import datetime
+
+    from shared.execution.slippage_control import OrderBookSnapshot
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
-    from shared.execution.slippage_control import OrderBookSnapshot
 
     # Create slippage model with known configuration
     config = SlippageModelConfig(
@@ -297,9 +299,9 @@ async def test_slippage_comparison_buy_order():
     2. Position entry price is higher with slippage
     3. Balance decrease is larger with slippage (including slippage cost)
     """
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
 
     initial_balance = 10_000_000
     market_price = 330.50
@@ -389,9 +391,9 @@ async def test_slippage_comparison_sell_order():
     2. Position exit receives less money with slippage
     3. Total proceeds are lower with slippage
     """
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
 
     initial_balance = 10_000_000
     entry_price = 330.00
@@ -484,10 +486,10 @@ async def test_large_order_depth_impact():
 
     Verifies that order size relative to available depth affects slippage calculation.
     """
+    from shared.execution.slippage_control import OrderBookSnapshot
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
-    from shared.execution.slippage_control import OrderBookSnapshot
 
     slippage_config = SlippageModelConfig(
         enabled=True,
@@ -561,10 +563,10 @@ async def test_wide_spread_penalty():
 
     Verifies that spread width affects slippage calculation.
     """
+    from shared.execution.slippage_control import OrderBookSnapshot
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
-    from shared.execution.slippage_control import OrderBookSnapshot
 
     slippage_config = SlippageModelConfig(
         enabled=True,
@@ -639,7 +641,7 @@ async def test_wide_spread_penalty():
     narrow_spread = narrow_orderbook.spread  # 0.02
     wide_spread = wide_orderbook.spread  # 0.40
 
-    spread_ratio = wide_spread / narrow_spread  # 20x wider
+    wide_spread / narrow_spread  # 20x wider
     slippage_ratio = wide_slippage / narrow_slippage
 
     # Slippage should increase with spread, but not necessarily linearly
@@ -654,10 +656,10 @@ async def test_time_of_day_multiplier():
 
     Verifies that slippage varies based on trading time (market open/close).
     """
+
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
-    from unittest.mock import Mock
 
     # Create config with time-of-day multipliers using "HH:MM-HH:MM" format
     slippage_config = SlippageModelConfig(
@@ -686,7 +688,7 @@ async def test_time_of_day_multiplier():
     # Mock timestamp for normal hours
     normal_time = datetime(2024, 1, 15, 10, 30)  # 10:30 AM
 
-    normal_order = await broker.submit_order(
+    await broker.submit_order(
         symbol="A05603",
         side=OrderSide.BUY,
         quantity=1,
@@ -704,7 +706,7 @@ async def test_time_of_day_multiplier():
     # Mock timestamp for market open
     open_time = datetime(2024, 1, 15, 9, 15)  # 9:15 AM
 
-    open_order = await broker.submit_order(
+    await broker.submit_order(
         symbol="A05603",
         side=OrderSide.BUY,
         quantity=1,
@@ -739,10 +741,10 @@ async def test_multi_order_cumulative_slippage():
     Verifies that multiple orders accumulate slippage costs over time,
     and the total P&L impact is measurable.
     """
+    from shared.execution.slippage_control import OrderBookSnapshot
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
-    from shared.execution.slippage_control import OrderBookSnapshot
 
     initial_balance = 10_000_000
 
@@ -856,9 +858,9 @@ async def test_position_pnl_accuracy_with_slippage():
     Verifies that the VirtualBroker correctly tracks position P&L
     including realistic slippage on both entry and exit.
     """
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
 
     initial_balance = 10_000_000
     entry_market_price = 330.00
@@ -950,10 +952,10 @@ async def test_slippage_model_edge_cases():
     2. Very large spreads (should cap at max slippage)
     3. Fractional order quantities
     """
+    from shared.execution.slippage_control import OrderBookSnapshot
+    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from shared.paper.broker import VirtualBroker
     from shared.paper.models import OrderSide
-    from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
-    from shared.execution.slippage_control import OrderBookSnapshot
 
     slippage_config = SlippageModelConfig(
         enabled=True,
@@ -995,7 +997,7 @@ async def test_slippage_model_edge_cases():
     # Should apply max slippage
     max_fill_price = market_price * (1 + slippage_config.max_slippage_bps / 10000.0)
     assert zero_depth_order.fill_price <= max_fill_price, (
-        f"Fill price with zero depth should not exceed max slippage cap"
+        "Fill price with zero depth should not exceed max slippage cap"
     )
 
     # ========== Test 2: Very large spread ==========
@@ -1020,7 +1022,7 @@ async def test_slippage_model_edge_cases():
     assert large_spread_order.filled is True
     # Should be capped at max slippage
     assert large_spread_order.fill_price <= max_fill_price, (
-        f"Fill price with large spread should be capped at max slippage"
+        "Fill price with large spread should be capped at max slippage"
     )
 
     # ========== Test 3: Fractional quantity ==========
@@ -1059,9 +1061,9 @@ async def test_slippage_with_insufficient_balance():
     Verifies that the broker correctly calculates required balance including slippage,
     and rejects orders that would exceed available balance.
     """
-    from shared.paper.broker import VirtualBroker, InsufficientBalanceError
-    from shared.paper.models import OrderSide
     from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
+    from shared.paper.broker import InsufficientBalanceError, VirtualBroker
+    from shared.paper.models import OrderSide
 
     slippage_config = SlippageModelConfig(
         enabled=True,

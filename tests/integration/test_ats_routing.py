@@ -8,8 +8,9 @@ This test validates the complete end-to-end flow of ATS order routing:
 5. Paper trading integration with venue logging
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 def _build_paper_execution_config():
@@ -18,8 +19,8 @@ def _build_paper_execution_config():
     Integration tests should not depend on externally configured account
     placeholders. PAPER mode allows an empty account number.
     """
-    from shared.execution.config import ExecutionConfig
     from shared.config.loader import ConfigLoader
+    from shared.execution.config import ExecutionConfig
 
     config_dict = ConfigLoader.load("execution.yaml")
     execution = dict(config_dict["execution"])
@@ -56,10 +57,10 @@ def test_ats_config_loading():
 @pytest.mark.integration
 def test_venue_router_selection():
     """Test VenueRouter makes routing decisions correctly."""
-    from shared.execution.venue_router import VenueRouter, MarketData
+    from shared.config.loader import ConfigLoader
     from shared.execution.config import ATSRoutingConfig
     from shared.execution.models import ExecutionVenue, OrderRequest, OrderSide
-    from shared.config.loader import ConfigLoader
+    from shared.execution.venue_router import MarketData, VenueRouter
 
     # Load ATS config
     config_dict = ConfigLoader.load("execution.yaml")
@@ -138,7 +139,7 @@ def test_venue_router_selection():
 async def test_order_executor_venue_routing():
     """Test OrderExecutor routes to correct venue."""
     from shared.execution.executor import OrderExecutor
-    from shared.execution.models import OrderRequest, OrderSide, ExecutionVenue
+    from shared.execution.models import ExecutionVenue, OrderRequest, OrderSide
 
     exec_config = _build_paper_execution_config()
 
@@ -179,8 +180,9 @@ async def test_order_executor_venue_routing():
 @pytest.mark.integration
 def test_backtest_trade_model_venue():
     """Test BacktestTrade model includes execution_venue."""
-    from shared.backtest.result import BacktestTrade
     from datetime import datetime
+
+    from shared.backtest.result import BacktestTrade
 
     # Create trade with ATS venue
     trade = BacktestTrade(
@@ -251,9 +253,9 @@ async def test_position_tracker_venue_logging():
 @pytest.mark.asyncio
 async def test_orchestrator_venue_integration():
     """Test TradingOrchestrator integrates VenueRouter correctly."""
-    from shared.execution.venue_router import VenueRouter
-    from shared.execution.config import ATSRoutingConfig
     from shared.config.loader import ConfigLoader
+    from shared.execution.config import ATSRoutingConfig
+    from shared.execution.venue_router import VenueRouter
 
     # This test verifies that:
     # 1. Orchestrator loads ATS config
@@ -279,7 +281,7 @@ async def test_orchestrator_venue_integration():
 @pytest.mark.integration
 def test_ats_simulator_backtest_integration():
     """Test ATSSimulator integration with backtest framework."""
-    from shared.backtest.ats_simulator import ATSSimulator, ATSSimulationConfig
+    from shared.backtest.ats_simulator import ATSSimulationConfig, ATSSimulator
 
     # Create simulator
     config = ATSSimulationConfig(
@@ -337,12 +339,12 @@ async def test_e2e_paper_trading_with_ats():
     4. Verify OrderExecutor routes to venue
     5. Verify execution_venue is logged
     """
-    from shared.execution.executor import OrderExecutor
-    from shared.execution.models import OrderRequest, OrderSide, ExecutionVenue
-    from shared.execution.config import ATSRoutingConfig
-    from shared.execution.venue_router import VenueRouter
-    from shared.config.loader import ConfigLoader
     from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+    from shared.config.loader import ConfigLoader
+    from shared.execution.config import ATSRoutingConfig
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.models import ExecutionVenue, OrderRequest, OrderSide
+    from shared.execution.venue_router import VenueRouter
 
     # Load configs
     config_dict = ConfigLoader.load("execution.yaml")

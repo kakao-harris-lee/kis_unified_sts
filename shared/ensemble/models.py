@@ -1,6 +1,5 @@
 """Ensemble filter data models."""
 from dataclasses import dataclass
-from typing import Optional, List
 
 
 @dataclass
@@ -24,8 +23,8 @@ class FilterResult:
     volume_confirmed: bool  # Volume confirms the move
 
     # Optional multi-horizon data
-    horizon_results: Optional[List[HorizonResult]] = None
-    rejection_reason: Optional[str] = None
+    horizon_results: list[HorizonResult] | None = None
+    rejection_reason: str | None = None
 
     def is_valid(self) -> bool:
         """Check if all filters are aligned for a valid signal."""
@@ -42,4 +41,4 @@ class EnsembleSignal:
     take_profit: float
     position_size: float
     filter_result: FilterResult
-    rejection_reason: Optional[str] = None
+    rejection_reason: str | None = None

@@ -40,9 +40,10 @@ def test_basis_update():
 
 def test_zscore_after_warmup():
     """Test z-score calculation after warmup."""
+    import random
+
     from shared.arbitrage.basis_calculator import BasisCalculator
     from shared.arbitrage.config import ArbitrageConfig
-    import random
 
     config = ArbitrageConfig(min_samples=10)
     calc = BasisCalculator(config)

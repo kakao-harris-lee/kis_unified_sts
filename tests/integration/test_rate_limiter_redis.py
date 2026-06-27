@@ -7,9 +7,9 @@ To skip these tests when Redis is unavailable:
     pytest -m "not integration"
 """
 import asyncio
-import pytest
 import os
 
+import pytest
 
 # Skip all tests in this module if Redis is not available
 pytestmark = [pytest.mark.integration]

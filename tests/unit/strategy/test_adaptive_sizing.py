@@ -1,11 +1,10 @@
 """Tests for adaptive position sizing based on strategy win rate."""
 
-import pytest
 
 from shared.strategy.adaptive_sizing import (
+    DEFAULT_TIERS,
     AdaptiveSizingConfig,
     AdaptiveSizingManager,
-    DEFAULT_TIERS,
     _lookup_multiplier,
 )
 
@@ -100,7 +99,7 @@ class TestAdaptiveSizingManager:
 
     def test_below_min_trades(self, monkeypatch):
         """When trade count < min_trades, multiplier should be 1.0."""
-        trades = [self._make_trade("tp", 100)] * 3  # Only 3 trades
+        [self._make_trade("tp", 100)] * 3  # Only 3 trades
 
         monkeypatch.setattr(
             "shared.strategy.adaptive_sizing.AdaptiveSizingManager.refresh",

@@ -9,7 +9,7 @@ Modules:
     client: REST API 클라이언트
 """
 
-from shared.kis.auth import KISAuthManager, KISAuthConfig
+from shared.kis.auth import KISAuthConfig, KISAuthManager
 from shared.kis.ranking_client import KISRankingClient
 from shared.kis.stock_feed import KISStockPriceFeed
 

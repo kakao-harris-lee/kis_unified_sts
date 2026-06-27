@@ -1,11 +1,10 @@
 """Alert models."""
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import Optional, Dict, List
+from enum import StrEnum
 
 
-class AlertLevel(str, Enum):
+class AlertLevel(StrEnum):
     """Alert severity levels."""
     INFO = "INFO"
     WARNING = "WARNING"
@@ -20,7 +19,7 @@ class Alert:
     message: str
     timestamp: datetime
     source: str = "system"
-    metadata: Optional[Dict] = None
+    metadata: dict | None = None
     sent: bool = False
 
 
@@ -31,19 +30,19 @@ class AlertConfig:
     Credentials should be loaded from environment variables for security.
     Use AlertConfig.from_env() to automatically load credentials.
     """
-    telegram_token: Optional[str] = None
-    telegram_chat_id: Optional[str] = None
-    email_smtp_host: Optional[str] = None
+    telegram_token: str | None = None
+    telegram_chat_id: str | None = None
+    email_smtp_host: str | None = None
     email_smtp_port: int = 587
-    email_username: Optional[str] = None
-    email_password: Optional[str] = None
-    email_recipients: List[str] = field(default_factory=list)
+    email_username: str | None = None
+    email_password: str | None = None
+    email_recipients: list[str] = field(default_factory=list)
     min_level: AlertLevel = AlertLevel.WARNING
     rate_limit_seconds: int = 60
 
     @classmethod
     def from_env(
-        cls, *, domain: Optional[str] = None, **overrides
+        cls, *, domain: str | None = None, **overrides
     ) -> "AlertConfig":
         """Create config loading credentials from environment variables.
 

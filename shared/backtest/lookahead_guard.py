@@ -10,10 +10,10 @@ Modes:
 Default: 'assert' for backtest/optimize, 'off' for live/paper
 """
 import logging
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
-class LookaheadGuardMode(str, Enum):
+
+class LookaheadGuardMode(StrEnum):
     OFF = "off"
     WARN = "warn"
     ASSERT = "assert"
@@ -23,7 +23,7 @@ class LookaheadGuard:
         self.mode = mode
         self.logger = logging.getLogger("LookaheadGuard")
 
-    def check(self, arr, timestamps, ctx_timestamp, context_info: Optional[str] = None):
+    def check(self, arr, timestamps, ctx_timestamp, context_info: str | None = None):
         """
         arr: array-like (values)
         timestamps: array-like (same length as arr)

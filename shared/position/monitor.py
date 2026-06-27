@@ -1,7 +1,8 @@
 """Position monitor for real-time position tracking."""
 import asyncio
+import contextlib
 import logging
-from typing import Dict, Optional, Callable, List
+from collections.abc import Callable
 
 from shared.models.position import Position
 
@@ -21,7 +22,7 @@ class PositionMonitor:
     def __init__(
         self,
         check_interval: float = 1.0,
-        on_exit_triggered: Optional[Callable[[Position, str], None]] = None,
+        on_exit_triggered: Callable[[Position, str], None] | None = None,
     ):
         """Initialize position monitor.
 
@@ -32,9 +33,9 @@ class PositionMonitor:
         self.check_interval = check_interval
         self.on_exit_triggered = on_exit_triggered
 
-        self.positions: Dict[str, Position] = {}
+        self.positions: dict[str, Position] = {}
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     def add_position(self, position: Position) -> None:
         """Add position to monitor.
@@ -45,7 +46,7 @@ class PositionMonitor:
         self.positions[position.id] = position
         logger.info(f"Added position to monitor: {position.id} ({position.code})")
 
-    def remove_position(self, position_id: str) -> Optional[Position]:
+    def remove_position(self, position_id: str) -> Position | None:
         """Remove position from monitor.
 
         Args:
@@ -59,11 +60,11 @@ class PositionMonitor:
             logger.info(f"Removed position from monitor: {position_id}")
         return position
 
-    def get_position(self, position_id: str) -> Optional[Position]:
+    def get_position(self, position_id: str) -> Position | None:
         """Get position by ID."""
         return self.positions.get(position_id)
 
-    def get_positions_by_code(self, code: str) -> List[Position]:
+    def get_positions_by_code(self, code: str) -> list[Position]:
         """Get all positions for a stock code."""
         return [p for p in self.positions.values() if p.code == code]
 
@@ -78,7 +79,7 @@ class PositionMonitor:
             if position.code == code:
                 position.update_price(price)
 
-    def update_prices(self, prices: Dict[str, float]) -> None:
+    def update_prices(self, prices: dict[str, float]) -> None:
         """Batch update prices.
 
         Args:
@@ -102,10 +103,8 @@ class PositionMonitor:
         self._running = False
         if self._task:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("Position monitor stopped")
 
     async def _monitor_loop(self) -> None:
@@ -150,7 +149,7 @@ class PositionMonitor:
         # Real exit logic is in ExitChecker class (Task 12)
         return False, ""
 
-    def get_summary(self) -> Dict:
+    def get_summary(self) -> dict:
         """Get monitor summary."""
         total_pnl = sum(p.unrealized_pnl for p in self.positions.values())
         return {

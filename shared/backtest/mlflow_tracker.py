@@ -22,10 +22,11 @@ from __future__ import annotations
 import logging
 import subprocess
 import tempfile
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 import pandas as pd
 
@@ -198,7 +199,7 @@ class MLflowTracker:
         ax.grid(True, alpha=0.3)
 
         ax.yaxis.set_major_formatter(
-            plt.FuncFormatter(lambda x, p: format(int(x), ","))
+            plt.FuncFormatter(lambda x, _p: format(int(x), ","))
         )
 
         plt.tight_layout()

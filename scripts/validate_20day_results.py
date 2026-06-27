@@ -19,7 +19,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any
 
 
 class PaperTradingValidator:
@@ -35,14 +35,14 @@ class PaperTradingValidator:
             "recommendations": []
         }
 
-    def load_daily_snapshots(self, log_file: Path) -> List[Dict[str, Any]]:
+    def load_daily_snapshots(self, log_file: Path) -> list[dict[str, Any]]:
         """Load daily snapshots from JSONL file"""
         snapshots = []
         if not log_file.exists():
             print(f"Warning: Daily snapshots file not found: {log_file}")
             return snapshots
 
-        with open(log_file, 'r') as f:
+        with open(log_file) as f:
             for line in f:
                 try:
                     snapshot = json.loads(line.strip())
@@ -52,7 +52,7 @@ class PaperTradingValidator:
 
         return snapshots
 
-    def validate_trading_days(self, snapshots: List[Dict]) -> bool:
+    def validate_trading_days(self, snapshots: list[dict]) -> bool:
         """Criterion: 20+ trading days of data"""
         unique_days = set()
         for snapshot in snapshots:
@@ -73,7 +73,7 @@ class PaperTradingValidator:
 
         return passed
 
-    def validate_cumulative_pnl(self, snapshots: List[Dict]) -> bool:
+    def validate_cumulative_pnl(self, snapshots: list[dict]) -> bool:
         """Criterion: Cumulative P&L is positive"""
         if not snapshots:
             self.validation_results['criteria']['cumulative_pnl'] = {
@@ -127,7 +127,7 @@ class PaperTradingValidator:
 
         return passed
 
-    def validate_runtime_stability(self, snapshots: List[Dict]) -> bool:
+    def validate_runtime_stability(self, snapshots: list[dict]) -> bool:
         """Criterion: No runtime errors or crashes"""
         # Check for consistent data collection
         if len(snapshots) < 2:
@@ -155,7 +155,7 @@ class PaperTradingValidator:
 
         return passed
 
-    def validate_position_management(self, snapshots: List[Dict], history_output: str) -> bool:
+    def validate_position_management(self, snapshots: list[dict], history_output: str) -> bool:
         """Criterion: Position management working (entries and exits)"""
         # Check for position activity
         has_entries = 'entry' in history_output.lower() or 'buy' in history_output.lower()
@@ -248,7 +248,7 @@ class PaperTradingValidator:
         print()
         print("─── Validation Results ───")
         print()
-        for criterion, result in self.validation_results['criteria'].items():
+        for _criterion, result in self.validation_results['criteria'].items():
             print(f"  {result['message']}")
         print()
 
@@ -311,7 +311,7 @@ def main():
     # Load history if provided
     history_output = ""
     if args.history_file and args.history_file.exists():
-        with open(args.history_file, 'r') as f:
+        with open(args.history_file) as f:
             history_output = f.read()
 
     # Run validation

@@ -23,7 +23,7 @@ pytestmark = pytest.mark.serial
 
 
 class _FakePipeline:
-    def __init__(self, redis_client: "_FakeRedis") -> None:
+    def __init__(self, redis_client: _FakeRedis) -> None:
         self._r = redis_client
         self._ops: list[tuple] = []
 
@@ -109,10 +109,7 @@ class _FakeRedis:
         # Convert negative indices (Python-like)
         if start < 0:
             start = max(n + start, 0)
-        if end < 0:
-            end = n + end
-        else:
-            end = min(end, n - 1)
+        end = n + end if end < 0 else min(end, n - 1)
         if start > end:
             return []
         return members[start : end + 1]
@@ -122,10 +119,7 @@ class _FakeRedis:
     def lrange(self, key: str, start: int, end: int) -> list[str]:
         lst = self._lists.get(key, [])
         n = len(lst)
-        if end < 0:
-            end = n + end
-        else:
-            end = min(end, n - 1)
+        end = n + end if end < 0 else min(end, n - 1)
         if start > end:
             return []
         return lst[start : end + 1]
@@ -301,7 +295,7 @@ def test_publish_signal_uses_signal_timestamp(publisher, redis_client):
     )
     publisher.publish_signal(sig, signal_type="entry", executed=True)
 
-    key = f"trading:stock:signals"
+    key = "trading:stock:signals"
     raw = redis_client.lrange(key, 0, 0)
     assert raw, "publish_signal should push to signals LIST"
     payload = json.loads(raw[0])

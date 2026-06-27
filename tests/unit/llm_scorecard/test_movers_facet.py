@@ -9,7 +9,6 @@ from shared.llm_scorecard.facets.base import CaptureContext, FacetPrediction
 from shared.llm_scorecard.facets.movers import MoversFacet
 from shared.llm_scorecard.recorder import capture_predictions
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

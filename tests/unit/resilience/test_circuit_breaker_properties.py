@@ -1,8 +1,9 @@
 """Property-based tests for CircuitBreaker using Hypothesis."""
 
 import time
-from hypothesis import given, settings, strategies as st, assume
 
+from hypothesis import assume, given, settings
+from hypothesis import strategies as st
 
 from shared.resilience import CircuitBreaker, CircuitBreakerConfig, CircuitState
 

@@ -1,6 +1,10 @@
 """Tests for Korean-market identifier helpers."""
 
-from shared.llm.identifiers import calculate_isin_check_digit, krx_stock_code_to_isin, to_isin
+from shared.llm.identifiers import (
+    calculate_isin_check_digit,
+    krx_stock_code_to_isin,
+    to_isin,
+)
 
 
 def test_calculate_isin_check_digit_known_example():

@@ -57,9 +57,7 @@ import argparse
 import json
 import logging
 import sys
-import time
-from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -72,7 +70,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from shared.backtest.market_context_replay import MarketContextReplay
-from shared.decision.context import MarketContext, load_scheduled_events
+from shared.decision.context import load_scheduled_events
 from shared.decision.setups.event_reaction import SetupCConfig, SetupCEventReaction
 from shared.decision.setups.gap_reversion import SetupAConfig, SetupAGapReversion
 from shared.execution.contract_spec import ContractSpec
@@ -223,7 +221,7 @@ def collect_real_setup_a_entries(
 
     # Build a fast bar_idx from the df index aligned with replay context timestamps
     ts_col = df["timestamp"].tolist()
-    ts_to_idx: dict = {ts_col[i]: i for i in range(len(ts_col))}
+    {ts_col[i]: i for i in range(len(ts_col))}
 
     for ctx in replay.iter_contexts():
         ts_kst = ctx.now
@@ -732,8 +730,8 @@ def run_backtest(
     print(f"  Bars : {len(df)}  |  Days: {df['timestamp'].dt.date.nunique()}")
     if label:
         print(f"  Label: {label}")
-    print(f"  LLM context: DISABLED (macro-only, deterministic indicator+macro core)")
-    print(f"  Macro source: yfinance SP500 backfill (LookaheadGuard-safe)")
+    print("  LLM context: DISABLED (macro-only, deterministic indicator+macro core)")
+    print("  Macro source: yfinance SP500 backfill (LookaheadGuard-safe)")
     min_volume: int = kwargs.get("min_volume", 30)
     print(f"  TrackA params: trail_atr_mult={TRAIL_ATR_MULT_TUNED}, "
           f"trail_activate={TRAIL_ACTIVATE_ATR_MULT_TUNED}")

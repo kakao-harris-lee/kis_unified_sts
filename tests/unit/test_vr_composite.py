@@ -15,8 +15,10 @@ from shared.indicators.volume_ratio import VolumeRatioCalculator
 from shared.models.signal import ExitReason, SignalType
 from shared.strategy.base import EntryContext, ExitContext
 from shared.strategy.entry.vr_composite import VRCompositeConfig, VRCompositeEntry
-from shared.strategy.exit.vr_composite_exit import VRCompositeExitConfig, VRCompositeExit
-
+from shared.strategy.exit.vr_composite_exit import (
+    VRCompositeExit,
+    VRCompositeExitConfig,
+)
 
 # ---- Helpers ----
 
@@ -37,7 +39,7 @@ def _make_daily_data(
     closes = [base_price]
     volumes = [base_volume]
 
-    for i in range(1, n):
+    for _i in range(1, n):
         if trend == "up":
             change = abs(np.random.randn()) * 0.5
         elif trend == "down":
@@ -218,7 +220,7 @@ class TestVRCompositeEntry:
         # 4일 전 시그널 (cooldown = 3일)
         self.entry._last_signal_at["005930"] = datetime.now() - timedelta(days=4)
 
-        ctx = EntryContext(
+        EntryContext(
             market_data={"code": "005930", "name": "삼성전자"},
             indicators={
                 "daily_closes": closes,

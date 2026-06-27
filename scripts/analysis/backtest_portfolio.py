@@ -25,6 +25,8 @@ if str(REPO_ROOT) not in sys.path:
 
 load_dotenv(REPO_ROOT / ".env")
 
+import contextlib
+
 from shared.backtest import BacktestConfig, BacktestEngine  # noqa: E402
 from shared.backtest.adapter import BacktestStrategyAdapter  # noqa: E402
 from shared.backtest.config import RiskConfig  # noqa: E402
@@ -179,10 +181,8 @@ def _daily_indicator_periods_from_keys(keys: list[str] | tuple[str, ...]) -> lis
         key = str(raw or "")
         for prefix in ("daily_sma_", "daily_ema_", "daily_rsi_"):
             if key.startswith(prefix):
-                try:
+                with contextlib.suppress(ValueError):
                     periods.append(int(key.removeprefix(prefix)))
-                except ValueError:
-                    pass
     return periods
 
 

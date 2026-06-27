@@ -1,3 +1,5 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from shared.news.base import NewsItem, NewsSource
@@ -33,7 +35,7 @@ def test_news_item_is_frozen():
         lang="ko",
         keywords=[],
     )
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         item.title = "changed"  # type: ignore[misc]
 
 

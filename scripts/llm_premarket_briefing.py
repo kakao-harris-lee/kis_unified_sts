@@ -82,10 +82,11 @@ async def main() -> None:
         try:
             import json as _json
             from datetime import datetime
+
             import shared.llm_scorecard.facets  # noqa: F401 — populates FACET_REGISTRY
             from shared.llm_scorecard.config import ScorecardConfig
-            from shared.llm_scorecard.recorder import capture_predictions
             from shared.llm_scorecard.facets.base import CaptureContext
+            from shared.llm_scorecard.recorder import capture_predictions
             from shared.storage.config import StorageConfig
             from shared.storage.runtime_ledger import SQLiteRuntimeLedger
             from shared.streaming.trading_state import TradingStateReader, _get_redis

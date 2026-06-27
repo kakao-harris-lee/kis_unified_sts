@@ -2,7 +2,6 @@
 import asyncio
 import hmac
 import logging
-from typing import Optional
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -82,7 +81,7 @@ class APIKeyMiddleware:
             # We attempt a best-effort receive with a short timeout to avoid deadlock.
             try:
                 await asyncio.wait_for(receive(), timeout=0.2)
-            except (asyncio.TimeoutError, OSError, RuntimeError):
+            except (TimeoutError, OSError, RuntimeError):
                 # Timeout or connection errors are expected during WebSocket close
                 pass
 
@@ -91,7 +90,7 @@ class APIKeyMiddleware:
 
         await self.app(scope, receive, send)
 
-    def _parse_query_param(self, query_string: str, param_name: str) -> Optional[str]:
+    def _parse_query_param(self, query_string: str, param_name: str) -> str | None:
         """Parse a specific query parameter from query string."""
         from urllib.parse import parse_qs
         params = parse_qs(query_string)
@@ -102,11 +101,9 @@ class APIKeyMiddleware:
         """Check if path is public (no auth required)."""
         if path in PUBLIC_PATHS:
             return True
-        if path.startswith("/docs") or path.startswith("/redoc"):
-            return True
-        return False
+        return bool(path.startswith("/docs") or path.startswith("/redoc"))
 
-    def _validate_api_key(self, api_key: Optional[str]) -> bool:
+    def _validate_api_key(self, api_key: str | None) -> bool:
         """Validate API key using timing-safe comparison.
 
         Uses hmac.compare_digest to prevent timing attacks.

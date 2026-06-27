@@ -1,6 +1,7 @@
 """Test WebSocket manager."""
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 @pytest.fixture
@@ -119,7 +120,7 @@ async def test_websocket_per_client_limit(websocket_manager):
 
     # Create more connections than allowed for a single client
     websockets = []
-    for i in range(WebSocketManager.MAX_CONNECTIONS_PER_CLIENT + 1):
+    for _i in range(WebSocketManager.MAX_CONNECTIONS_PER_CLIENT + 1):
         ws = create_mock_websocket()
         websockets.append(ws)
 

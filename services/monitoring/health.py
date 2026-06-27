@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from shared.exceptions import (
     APIError,
@@ -173,7 +174,7 @@ class HealthChecker:
             result.latency_ms = (datetime.now() - start_time).total_seconds() * 1000
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ComponentHealth(
                 name=name,
                 status=ComponentStatus.UNHEALTHY,

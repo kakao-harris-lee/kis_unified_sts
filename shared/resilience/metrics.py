@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram, REGISTRY
+    from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
     PROMETHEUS_AVAILABLE = True
 except ImportError:
@@ -46,6 +46,7 @@ class CircuitBreakerMetrics:
 
     def __new__(cls, prefix: str = "circuit_breaker"):
         """Singleton pattern to avoid duplicate metric registration."""
+        _ = prefix
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -181,7 +182,7 @@ class CircuitBreakerMetrics:
 
 
 # Global metrics instance (lazy initialization)
-_metrics: Optional[CircuitBreakerMetrics] = None
+_metrics: CircuitBreakerMetrics | None = None
 
 
 def get_circuit_breaker_metrics() -> CircuitBreakerMetrics:

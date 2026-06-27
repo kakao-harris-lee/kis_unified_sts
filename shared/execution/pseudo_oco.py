@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from shared.decision.signal import Signal
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class OCOState(str, Enum):
+class OCOState(StrEnum):
     ACTIVE = "active"
     STOP_HIT = "stop_hit"
     TARGET_HIT = "target_hit"

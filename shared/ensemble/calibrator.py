@@ -1,7 +1,6 @@
 """Probability calibrator for z-score normalization."""
 import logging
 from collections import deque
-from typing import Deque, Optional
 
 import numpy as np
 from scipy import stats
@@ -21,9 +20,9 @@ class ProbabilityCalibrator:
 
     def __init__(self, config: EnsembleConfig):
         self.config = config
-        self._history: Deque[float] = deque(maxlen=config.calibration_lookback)
-        self._mean: Optional[float] = None
-        self._std: Optional[float] = None
+        self._history: deque[float] = deque(maxlen=config.calibration_lookback)
+        self._mean: float | None = None
+        self._std: float | None = None
 
     def update(self, probability: float) -> None:
         """Update calibrator with new probability observation.

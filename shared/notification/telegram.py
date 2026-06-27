@@ -8,7 +8,6 @@ Includes trading hours awareness to avoid notifications outside market hours.
 import logging
 import os
 from datetime import datetime, time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +28,8 @@ class TelegramNotifier:
 
     def __init__(
         self,
-        bot_token: Optional[str] = None,
-        chat_id: Optional[str] = None,
+        bot_token: str | None = None,
+        chat_id: str | None = None,
         notification_start: str = "08:30",
         notification_end: str = "15:40",
         critical_always: bool = True,
@@ -164,7 +163,7 @@ class TelegramNotifier:
             confidence: 신뢰도 (0.0 ~ 1.0)
             reason: 추가 사유
         """
-        msg = f"🟢 <b>매수 시그널</b>\n"
+        msg = "🟢 <b>매수 시그널</b>\n"
         msg += f"종목: {name} ({code})\n"
         msg += f"가격: {price:,}원\n"
         msg += f"전략: {strategy}\n"
@@ -198,7 +197,7 @@ class TelegramNotifier:
             amount: 체결 금액
             strategy: 전략명
         """
-        msg = f"✅ <b>매수 체결</b>\n"
+        msg = "✅ <b>매수 체결</b>\n"
         msg += f"종목: {name} ({code})\n"
         msg += f"체결가: {price:,}원\n"
         msg += f"수량: {quantity}주\n"
@@ -325,11 +324,11 @@ class TelegramNotifier:
         emoji = "📈" if total_unrealized_pnl >= 0 else "📉"
 
         msg = f"💰 <b>계좌 잔고</b> ({datetime.now().strftime('%H:%M')})\n"
-        msg += f"━━━━━━━━━━━━━━━\n"
+        msg += "━━━━━━━━━━━━━━━\n"
         msg += f"총 자산: {total_asset:,}원\n"
         msg += f"  ├ 예수금: {cash_balance:,}원\n"
         msg += f"  └ 주식: {total_eval_amount:,}원\n"
-        msg += f"━━━━━━━━━━━━━━━\n"
+        msg += "━━━━━━━━━━━━━━━\n"
         msg += f"보유종목: {position_count}개\n"
         msg += f"매입금액: {total_purchase_amount:,}원\n"
         msg += f"{emoji} 평가손익: {sign}{total_unrealized_pnl:,}원 ({sign}{total_unrealized_pnl_pct:.2f}%)"
@@ -342,7 +341,7 @@ class TelegramNotifier:
 # ============================================================
 
 
-_default_notifier: Optional[TelegramNotifier] = None
+_default_notifier: TelegramNotifier | None = None
 
 
 def get_telegram_notifier() -> TelegramNotifier:
@@ -378,7 +377,7 @@ _DOMAIN_ENV_KEYS: dict[str, tuple[str, str]] = {
 }
 
 
-def resolve_domain_credentials(domain: Optional[str]) -> tuple[str, str]:
+def resolve_domain_credentials(domain: str | None) -> tuple[str, str]:
     """도메인별 Telegram 자격증명을 엄격하게 조회한다(legacy fallback 없음).
 
     의도적으로 SecretsManager의 legacy fallback을 사용하지 않는다 —
@@ -399,12 +398,12 @@ def resolve_domain_credentials(domain: Optional[str]) -> tuple[str, str]:
 
 
 def notifier_for_domain(
-    domain: Optional[str],
+    domain: str | None,
     *,
-    notification_start: Optional[str] = None,
-    notification_end: Optional[str] = None,
+    notification_start: str | None = None,
+    notification_end: str | None = None,
     critical_always: bool = True,
-) -> Optional[TelegramNotifier]:
+) -> TelegramNotifier | None:
     """도메인별 TelegramNotifier 생성 (legacy fallback 없음).
 
     Args:

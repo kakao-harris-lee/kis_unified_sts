@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
+
 import yaml
 
 
@@ -13,7 +15,7 @@ class ScorecardConfig:
     telegram_domain: str = "briefing"
 
     @classmethod
-    def from_yaml(cls, path: str | None = None) -> "ScorecardConfig":
+    def from_yaml(cls, path: str | None = None) -> ScorecardConfig:
         data: dict = {}
         try:
             with open(path or "config/llm_scorecard.yaml") as f:

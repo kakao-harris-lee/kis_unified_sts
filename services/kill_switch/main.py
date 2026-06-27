@@ -265,6 +265,7 @@ async def _build_and_run() -> int:
     import signal as signal_mod
 
     import redis.asyncio as aioredis
+
     from services.kill_switch.config import KillSwitchConfig
     from shared.notification.telegram import TelegramNotifier
     from shared.risk.runtime_state import RuntimeRiskState

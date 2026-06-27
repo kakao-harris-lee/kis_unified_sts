@@ -45,8 +45,7 @@ class _DF:
         return _ILoc()
 
     def iterrows(self):
-        for i, r in enumerate(self._rows):
-            yield i, r
+        yield from enumerate(self._rows)
 
 
 def _bars(n, base=100.0):

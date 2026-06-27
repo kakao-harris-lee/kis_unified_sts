@@ -1,15 +1,15 @@
 """Tests for CLI validators."""
 
-import pytest
 import pandas as pd
+import pytest
 
 from shared.validation.cli_validators import (
-    validate_csv_file,
+    ValidationError,
     validate_capital,
+    validate_csv_file,
+    validate_port,
     validate_strategy_name,
     validate_symbol,
-    validate_port,
-    ValidationError,
 )
 
 

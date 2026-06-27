@@ -7,7 +7,6 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -50,7 +49,7 @@ class StockTechnicalAnalyzer:
         return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
 
     @staticmethod
-    def calculate_macd(prices: pd.Series) -> Tuple[float, float, float]:
+    def calculate_macd(prices: pd.Series) -> tuple[float, float, float]:
         """MACD 계산"""
         ema12 = prices.ewm(span=12, adjust=False).mean()
         ema26 = prices.ewm(span=26, adjust=False).mean()
@@ -228,12 +227,12 @@ class StockTechnicalAnalyzer:
 class FuturesTechnicalAnalyzer:
     """선물 기술적 분석"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: LLMConfig | None = None):
         self.config = config or LLMConfig.from_env()
         self._calendar = MarketCalendar()
         self._krx_client = KRXOpenAPIClient(self.config)
 
-    def analyze(self) -> Dict:
+    def analyze(self) -> dict:
         """선물 기술적 분석 (실제 데이터 우선, 실패 시 샘플)"""
         df = self._build_price_frame()
         if df is None or len(df) < 2:
@@ -397,7 +396,7 @@ class FuturesTechnicalAnalyzer:
         trend_long: str,
         score: float,
         bias: MarketBias,
-    ) -> Dict:
+    ) -> dict:
         return {
             "index_price": round(index_price, 2),
             "index_change": round(index_change, 2),
@@ -416,7 +415,7 @@ class FuturesTechnicalAnalyzer:
             "bias": bias.value,
         }
 
-    def _build_price_frame(self) -> Optional[pd.DataFrame]:
+    def _build_price_frame(self) -> pd.DataFrame | None:
         """KRX 일봉 + KIS 분봉(가능 시)로 가격 프레임 구성"""
         history = self._fetch_krx_history()
         intraday = self._fetch_kis_intraday()
@@ -439,7 +438,7 @@ class FuturesTechnicalAnalyzer:
             df.iloc[-1, df.columns.get_loc("close")] = float(last["close"])
         return df
 
-    def _fetch_krx_history(self) -> Optional[pd.DataFrame]:
+    def _fetch_krx_history(self) -> pd.DataFrame | None:
         """KRX Open API로 KOSPI200 선물 일봉 히스토리 수집"""
         if not self.config.krx_api_key:
             return None
@@ -472,7 +471,7 @@ class FuturesTechnicalAnalyzer:
         df = df.sort_values("date").reset_index(drop=True)
         return df[["open", "high", "low", "close"]]
 
-    def _fetch_kis_intraday(self) -> Optional[pd.DataFrame]:
+    def _fetch_kis_intraday(self) -> pd.DataFrame | None:
         """KIS 선물 분봉(근월물) 수집"""
         app_key = SecretsManager.kis_app_key("futures") or ""
         app_secret = SecretsManager.kis_app_secret("futures") or ""
@@ -536,7 +535,7 @@ class FuturesTechnicalAnalyzer:
 
         return target.strftime("%Y%m%d")
 
-    def _get_recent_trading_dates(self, days: int) -> List[str]:
+    def _get_recent_trading_dates(self, days: int) -> list[str]:
         dates = []
         current = datetime.strptime(self._get_last_trading_date(), "%Y%m%d").date()
         while len(dates) < days:
@@ -545,13 +544,13 @@ class FuturesTechnicalAnalyzer:
         return dates
 
     @staticmethod
-    def _parse_kis_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
+    def _parse_kis_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
         rows = []
         output = data.get("output2", []) or data.get("output1", []) or data.get("output", [])
         if not output:
             return rows
 
-        def _first_present(item: dict, keys: List[str], default: float = 0.0):
+        def _first_present(item: dict, keys: list[str], default: float = 0.0):
             for k in keys:
                 v = item.get(k)
                 if v is not None and (not isinstance(v, str) or v.strip()):
@@ -577,7 +576,7 @@ class FuturesTechnicalAnalyzer:
 
             o = _first_present(item, ["futs_oprc", "open", "stck_oprc", "oprc"], 0)
             h = _first_present(item, ["futs_hgpr", "high", "stck_hgpr", "hgpr"], 0)
-            l = _first_present(item, ["futs_lwpr", "low", "stck_lwpr", "lwpr"], 0)
+            low = _first_present(item, ["futs_lwpr", "low", "stck_lwpr", "lwpr"], 0)
             c = _first_present(
                 item, ["futs_prpr", "close", "stck_prpr", "stck_clpr", "prpr"], 0
             )
@@ -590,7 +589,7 @@ class FuturesTechnicalAnalyzer:
                         dt,
                         float(o or 0),
                         float(h or 0),
-                        float(l or 0),
+                        float(low or 0),
                         float(c or 0),
                         int(v or 0),
                     )
@@ -685,11 +684,10 @@ class StockBacktester:
                 if prev['rsi'] < 30 and curr['rsi'] >= 30:
                     entry_price = curr['종가']
                     position = 1
-            elif position > 0:
-                if curr['rsi'] >= 70:
-                    pnl = (curr['종가'] - entry_price) / entry_price * 100
-                    trades.append(pnl)
-                    position = 0
+            elif position > 0 and curr['rsi'] >= 70:
+                pnl = (curr['종가'] - entry_price) / entry_price * 100
+                trades.append(pnl)
+                position = 0
 
         if position > 0:
             pnl = (df.iloc[-1]['종가'] - entry_price) / entry_price * 100
@@ -697,7 +695,7 @@ class StockBacktester:
 
         return self._calculate_metrics("RSI역추세", trades)
 
-    def run_all_strategies(self, df: pd.DataFrame) -> List[BacktestResult]:
+    def run_all_strategies(self, df: pd.DataFrame) -> list[BacktestResult]:
         """모든 전략 백테스트"""
         results = []
 
@@ -710,7 +708,7 @@ class StockBacktester:
 
         return results
 
-    def _calculate_metrics(self, strategy_name: str, trades: List[float]) -> BacktestResult:
+    def _calculate_metrics(self, strategy_name: str, trades: list[float]) -> BacktestResult:
         """백테스트 메트릭 계산"""
         if len(trades) == 0:
             return BacktestResult(strategy_name, 0, 0, 0, 0, 0, 0, 0)
@@ -758,7 +756,7 @@ class StockNewsAnalyzer:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
 
-    def analyze(self, _code: str, _name: str) -> Dict:
+    def analyze(self, _code: str, _name: str) -> dict:
         """뉴스 분석"""
         return {
             "sentiment": "중립",

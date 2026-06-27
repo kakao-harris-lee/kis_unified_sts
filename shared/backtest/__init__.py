@@ -14,25 +14,25 @@ Usage:
         tracker.log_result(result, strategy_config)
 """
 
-from shared.backtest.result import (
-    BacktestResult,
-    BacktestTrade,
-)
+from shared.backtest.adapter import BacktestStrategyAdapter
 from shared.backtest.config import (
     BacktestConfig,
     CostConfig,
     RiskConfig,
 )
-from shared.backtest.adapter import BacktestStrategyAdapter
 from shared.backtest.engine import BacktestEngine
 from shared.backtest.mlflow_tracker import (
     MLflowTracker,
     track_backtest,
 )
 from shared.backtest.optimizer import (
-    StrategyOptimizer,
     ParamSpec,
+    StrategyOptimizer,
     quick_optimize,
+)
+from shared.backtest.result import (
+    BacktestResult,
+    BacktestTrade,
 )
 
 __all__ = [

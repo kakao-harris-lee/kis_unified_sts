@@ -1,11 +1,11 @@
 """Main data collector class."""
-import time
 import logging
-from typing import List, Optional
+import time
+
+from shared.streaming.publisher import StreamPublisher
 
 from .adapter import BaseAPIAdapter
 from .models import TickData
-from shared.streaming.publisher import StreamPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class DataCollector:
         self.stream_maxlen = stream_maxlen
 
         # Publisher created lazily on start
-        self.publisher: Optional[StreamPublisher] = None
+        self.publisher: StreamPublisher | None = None
 
         self._running = False
         self._message_count = 0
@@ -57,7 +57,7 @@ class DataCollector:
         except Exception as e:
             logger.error(f"Error publishing tick: {e}")
 
-    def start(self, symbols: List[str]) -> None:
+    def start(self, symbols: list[str]) -> None:
         """Start data collection.
 
         Args:

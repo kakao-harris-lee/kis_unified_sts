@@ -25,15 +25,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-class VRZone(str, Enum):
+class VRZone(StrEnum):
     """VR 구간 분류"""
 
     EXTREME_OVERHEAT = "extreme_overheat"  # >= 400%
@@ -46,7 +45,7 @@ class VRZone(str, Enum):
     EXTREME_BOTTOM = "extreme_bottom"  # < 40%
 
 
-class VRSignal(str, Enum):
+class VRSignal(StrEnum):
     """VR 기반 매매 신호"""
 
     STRONG_BUY = "strong_buy"
@@ -56,7 +55,7 @@ class VRSignal(str, Enum):
     STRONG_SELL = "strong_sell"
 
 
-class MATrend(str, Enum):
+class MATrend(StrEnum):
     """이동평균선 추세 분류"""
 
     STRONG_UPTREND = "strong_uptrend"  # close > ma5 > ma20 > ma60 (정배열)
@@ -127,7 +126,7 @@ class VolumeRatioCalculator:
         context_timestamp = None,
         lookahead_guard = None,
         context_info: str = None,
-    ) -> list[Optional[float]]:
+    ) -> list[float | None]:
         """VR 값 시계열 계산.
 
         Args:
@@ -154,7 +153,7 @@ class VolumeRatioCalculator:
         changes = np.diff(closes_arr)  # length = n - 1
 
         n = len(closes_arr)
-        vr_values: list[Optional[float]] = [None] * n
+        vr_values: list[float | None] = [None] * n
 
         for i in range(n):
             # VR을 계산하려면 changes 인덱스 기준으로 period 개의 변화가 필요.
@@ -188,7 +187,7 @@ class VolumeRatioCalculator:
 
         return vr_values
 
-    def get_zone(self, vr_value: Optional[float]) -> Optional[VRZoneInfo]:
+    def get_zone(self, vr_value: float | None) -> VRZoneInfo | None:
         """VR 값의 구간을 판별한다.
 
         Args:
@@ -240,7 +239,7 @@ class VolumeRatioCalculator:
     def calculate_sma(
         closes: np.ndarray | list[float],
         period: int,
-    ) -> list[Optional[float]]:
+    ) -> list[float | None]:
         """단순 이동평균(SMA) 계산.
 
         Args:
@@ -252,7 +251,7 @@ class VolumeRatioCalculator:
         """
         arr = np.asarray(closes, dtype=float)
         n = len(arr)
-        result: list[Optional[float]] = [None] * n
+        result: list[float | None] = [None] * n
 
         if n < period or period < 1:
             return result
@@ -271,7 +270,7 @@ class VolumeRatioCalculator:
     def calculate_rsi(
         closes: np.ndarray | list[float],
         period: int = 14,
-    ) -> list[Optional[float]]:
+    ) -> list[float | None]:
         """RSI (Relative Strength Index) - Wilder's smoothing 방식.
 
         Args:
@@ -283,7 +282,7 @@ class VolumeRatioCalculator:
         """
         arr = np.asarray(closes, dtype=float)
         n = len(arr)
-        result: list[Optional[float]] = [None] * n
+        result: list[float | None] = [None] * n
 
         if n < period + 1:
             return result

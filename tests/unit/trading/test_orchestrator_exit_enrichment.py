@@ -18,7 +18,7 @@ MODULE = "services.trading.orchestrator"
 
 def _make_orchestrator(**kwargs):
     """Create a minimal TradingOrchestrator with mocked internals."""
-    from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+    from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
     config = TradingConfig.stock()
     for k, v in kwargs.items():
@@ -160,7 +160,7 @@ class TestIndicatorEngineHighPeriodWiring:
         """high_period should default to 5 when no strategy has breakout_period."""
         from services.trading.indicator_engine import StreamingIndicatorEngine
 
-        bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5
+        _bb_period, _bb_std, _rsi_period, high_period = 20, 2.0, 14, 5
 
         cfg = {"bb_period": 20, "rsi_period": 14}
         high_period = cfg.get("breakout_period", high_period)
@@ -367,8 +367,8 @@ class TestOvsLogLevel:
         """prev_day_volume <= 0 should log at WARNING level."""
         from shared.strategy.base import EntryContext
         from shared.strategy.entry.opening_volume_surge import (
-            OpeningVolumeSurgeEntry,
             OpeningVolumeSurgeConfig,
+            OpeningVolumeSurgeEntry,
         )
 
         entry = OpeningVolumeSurgeEntry(OpeningVolumeSurgeConfig())

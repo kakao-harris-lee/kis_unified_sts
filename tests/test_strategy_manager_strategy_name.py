@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from shared.models.signal import Signal, SignalType
-from shared.strategy.base import EntryContext, EntrySignalGenerator, ExitSignalGenerator, PositionSizer, TradingStrategy
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
+from shared.models.signal import Signal, SignalType
+from shared.strategy.base import (
+    EntryContext,
+    EntrySignalGenerator,
+    ExitSignalGenerator,
+    PositionSizer,
+    TradingStrategy,
+)
 
 
 class _DummyEntry(EntrySignalGenerator[dict]):

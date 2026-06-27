@@ -1,7 +1,11 @@
 """Tests for the reporter (plan Task 8 / Task 14) — pure format_daily / format_weekly / format_calibration."""
 from __future__ import annotations
 
-from shared.llm_scorecard.reporter import format_daily, format_weekly, format_calibration
+from shared.llm_scorecard.reporter import (
+    format_calibration,
+    format_daily,
+    format_weekly,
+)
 
 
 def _score_row(facet="direction", correct=True, edge=1.2, predicted="BULL", realized="BULL", ret=1.2):

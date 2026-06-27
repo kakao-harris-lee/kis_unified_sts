@@ -8,7 +8,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Optional, Protocol, TypeVar, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Protocol,
+    TypeVar,
+    runtime_checkable,
+)
 
 if TYPE_CHECKING:
     from shared.llm.market_context import MarketContext
@@ -107,9 +114,9 @@ class EntryContext:
 
     market_data: dict[str, Any] = field(default_factory=dict)
     indicators: dict[str, Any] = field(default_factory=dict)
-    current_positions: list["Position"] = field(default_factory=list)
+    current_positions: list[Position] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
-    market_context: Optional["MarketContext"] = None
+    market_context: MarketContext | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -137,12 +144,12 @@ class ExitContext:
             guard.check(arr, arr_timestamps, context.timestamp, context_info='my_indicator')
     """
 
-    position: "Position"
+    position: Position
     market_data: dict[str, Any] = field(default_factory=dict)
     indicators: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
-    market_state: Optional[MarketStateProtocol] = None
-    market_context: Optional["MarketContext"] = None
+    market_state: MarketStateProtocol | None = None
+    market_context: MarketContext | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -150,7 +157,7 @@ def get_series_from_context(
     indicators: dict[str, Any],
     data: dict[str, Any],
     key: str,
-) -> Optional[list]:
+) -> list | None:
     """indicators 또는 data에서 시계열 데이터를 추출.
 
     Args:
@@ -196,7 +203,7 @@ class EntrySignalGenerator(ABC, Generic[TConfig]):
         pass
 
     @abstractmethod
-    async def generate(self, context: EntryContext) -> Optional["Signal"]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """진입 시그널 생성
 
         Returns:
@@ -240,7 +247,7 @@ class ExitSignalGenerator(ABC, Generic[TConfig]):
     @abstractmethod
     async def should_exit(
         self, context: ExitContext
-    ) -> tuple[bool, Optional["ExitSignal"]]:
+    ) -> tuple[bool, ExitSignal | None]:
         """청산 여부 판단
 
         Returns:
@@ -251,10 +258,10 @@ class ExitSignalGenerator(ABC, Generic[TConfig]):
     @abstractmethod
     async def scan_positions(
         self,
-        positions: list["Position"],
+        positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
-    ) -> list["ExitSignal"]:
+        market_state: MarketStateProtocol | None = None,
+    ) -> list[ExitSignal]:
         """여러 포지션에 대해 청산 시그널 스캔
 
         Returns:
@@ -282,10 +289,10 @@ class PositionSizer(ABC, Generic[TConfig]):
     @abstractmethod
     def calculate(
         self,
-        signal: "Signal",
+        signal: Signal,
         account_balance: float,
-        current_positions: list["Position"],
-        market_context: Optional["MarketContext"] = None,
+        current_positions: list[Position],
+        market_context: MarketContext | None = None,
     ) -> int:
         """포지션 크기 계산
 
@@ -325,22 +332,22 @@ class TradingStrategy:
         """필요한 모든 지표"""
         return self.entry.required_indicators
 
-    async def check_entry(self, context: EntryContext) -> Optional["Signal"]:
+    async def check_entry(self, context: EntryContext) -> Signal | None:
         """진입 조건 확인"""
         return await self.entry.generate(context)
 
     async def check_exit(
         self, context: ExitContext
-    ) -> tuple[bool, Optional["ExitSignal"]]:
+    ) -> tuple[bool, ExitSignal | None]:
         """청산 조건 확인"""
         return await self.exit.should_exit(context)
 
     def calculate_position_size(
         self,
-        signal: "Signal",
+        signal: Signal,
         account_balance: float,
-        current_positions: list["Position"],
-        market_context: Optional["MarketContext"] = None,
+        current_positions: list[Position],
+        market_context: MarketContext | None = None,
     ) -> int:
         """포지션 크기 계산"""
         return self.position_sizer.calculate(

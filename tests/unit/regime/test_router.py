@@ -3,8 +3,8 @@
 
 def test_router_strategy_selection():
     """Test regime-based strategy selection."""
-    from shared.regime.router import StrategyRouter
     from shared.regime.models import RegimeState
+    from shared.regime.router import StrategyRouter
 
     router = StrategyRouter()
 
@@ -20,8 +20,8 @@ def test_router_strategy_selection():
 
 def test_router_default_strategy():
     """Test default strategy fallback."""
-    from shared.regime.router import StrategyRouter
     from shared.regime.models import RegimeState
+    from shared.regime.router import StrategyRouter
 
     router = StrategyRouter(default_strategy="balanced")
 

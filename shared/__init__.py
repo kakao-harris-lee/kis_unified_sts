@@ -10,7 +10,7 @@
 - exceptions: 통합 예외 계층 구조 (import from shared.exceptions directly)
 """
 
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("kis-unified-sts")

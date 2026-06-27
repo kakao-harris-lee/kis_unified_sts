@@ -1,11 +1,12 @@
 """Unit tests for WebSocket parsing functions."""
 import time
+
 from shared.kis.websocket import (
     ORDERBOOK_FIELDS,
     ORDERBOOK_MIN_FIELDS,
+    _safe_float,
     parse_futures_orderbook,
     parse_futures_trade,
-    _safe_float,
 )
 
 

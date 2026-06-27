@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import time
-from typing import Any, Optional
+from typing import Any
 
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
@@ -111,7 +111,7 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
 
     async def should_exit(
         self, context: ExitContext
-    ) -> tuple[bool, Optional[ExitSignal]]:
+    ) -> tuple[bool, ExitSignal | None]:
         signal = self._check_position(context)
         return (signal is not None, signal)
 
@@ -119,7 +119,7 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 청산 시그널 스캔."""
         if not positions:
@@ -148,7 +148,7 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
             )
         return signals
 
-    def _check_position(self, context: ExitContext) -> Optional[ExitSignal]:
+    def _check_position(self, context: ExitContext) -> ExitSignal | None:
         """개별 포지션 청산 조건 체크.
 
         Priority:
@@ -297,7 +297,7 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
     @staticmethod
     def _get_current_price(
         position: Position, market_data: dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         snapshot = get_symbol_snapshot(market_data, position.code)
         price = get_price_from_snapshot(snapshot)
         if price is not None:
@@ -330,7 +330,7 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         return max(position.highest_price or position.entry_price, current_price)
 
     @staticmethod
-    def _is_bear_market(market_state: Optional[MarketStateProtocol]) -> bool:
+    def _is_bear_market(market_state: MarketStateProtocol | None) -> bool:
         """BEAR 시장 여부 체크 (단일 소스: market_classifier.BEAR_REGIMES)"""
         if market_state is None:
             return False

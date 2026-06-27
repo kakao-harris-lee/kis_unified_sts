@@ -1,5 +1,7 @@
 """Unit tests for WebSocket AES encryption/decryption."""
 import base64
+import binascii
+
 import pytest
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
@@ -81,7 +83,7 @@ class TestAESDecryption:
         mock_adapter._aes_key = b"0123456789abcdef"
         mock_adapter._aes_iv = b"fedcba9876543210"
 
-        with pytest.raises(Exception):  # binascii.Error or ValueError
+        with pytest.raises((binascii.Error, ValueError)):
             mock_adapter._decrypt("not_valid_base64!!!")
 
     def test_decrypt_wrong_key_raises(self, mock_adapter):
@@ -96,7 +98,7 @@ class TestAESDecryption:
         mock_adapter._aes_iv = iv
 
         # Should raise due to padding error or produce garbage
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             mock_adapter._decrypt(encrypted)
 
     def test_decrypt_empty_data(self, mock_adapter):
@@ -104,7 +106,7 @@ class TestAESDecryption:
         mock_adapter._aes_key = b"0123456789abcdef"
         mock_adapter._aes_iv = b"fedcba9876543210"
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             mock_adapter._decrypt("")
 
 

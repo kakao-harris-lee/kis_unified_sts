@@ -453,7 +453,7 @@ class TestWebSocketLoad:
         print(f"Throughput:         {result['throughput']:8.2f} msg/s")
         print(f"Processed:          {result['processed_count']}/{num_messages}")
         print(f"\n{_format_latency_stats(result['latencies'], 'End-to-End Latency')}")
-        print(f"\nLatency Stability:")
+        print("\nLatency Stability:")
         print(f"  First quartile mean: {mean_first:8.2f} μs")
         print(f"  Last quartile mean:  {mean_last:8.2f} μs")
         print(f"  Degradation:         {degradation_pct:8.2f}%")

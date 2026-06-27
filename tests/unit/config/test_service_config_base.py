@@ -1,12 +1,10 @@
 """Tests for ServiceConfigBase."""
-import os
+
 import pytest
-import tempfile
-from pathlib import Path
 from pydantic import Field
 
-from shared.config.base import ServiceConfigBase
 from shared.config import ConfigNotFoundError
+from shared.config.base import ServiceConfigBase
 
 
 class SimpleConfig(ServiceConfigBase):
@@ -521,7 +519,7 @@ services:
 """)
 
         # Load the 'services' section which contains nested configs
-        config = SimpleConfig.from_yaml(str(yaml_file), section="services")
+        SimpleConfig.from_yaml(str(yaml_file), section="services")
 
         # The section extraction gets the 'services' dict, which isn't
         # directly a valid config. This tests that Pydantic uses defaults
@@ -555,7 +553,7 @@ threshold: 0.6
 
         # Without trailing underscore (will match PREFIXNAME)
         # This tests that the implementation handles both cases
-        config2 = SimpleConfig.from_env(env_prefix="PREFIX")
+        SimpleConfig.from_env(env_prefix="PREFIX")
         # Should match PREFIX_NAME when looking for PREFIXNAME
         # (depends on implementation)
 

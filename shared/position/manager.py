@@ -1,11 +1,13 @@
 """Position manager for managing multiple positions."""
-import uuid
 import logging
+import uuid
 from collections import deque
+from collections.abc import Callable
 from datetime import datetime
-from typing import Dict, List, Optional, Callable, Any, Deque
+from typing import Any
 
-from shared.models.position import Position, PositionState, PositionSide
+from shared.models.position import Position, PositionSide, PositionState
+
 from .exit_checker import ExitChecker, ExitConfig
 from .monitor import PositionMonitor
 
@@ -28,10 +30,10 @@ class PositionManager:
     def __init__(
         self,
         exit_config: ExitConfig,
-        on_position_opened: Optional[Callable[[Position], None]] = None,
-        on_position_closed: Optional[Callable[[Position], None]] = None,
-        on_exit_triggered: Optional[Callable[[Position, str], None]] = None,
-        order_executor: Optional[Any] = None,
+        on_position_opened: Callable[[Position], None] | None = None,
+        on_position_closed: Callable[[Position], None] | None = None,
+        on_exit_triggered: Callable[[Position, str], None] | None = None,
+        order_executor: Any | None = None,
         max_closed_history: int = DEFAULT_MAX_CLOSED_HISTORY,
     ):
         """Initialize position manager.
@@ -55,8 +57,8 @@ class PositionManager:
         self.on_exit_triggered = on_exit_triggered
 
         # Position storage
-        self.positions: Dict[str, Position] = {}
-        self._closed_positions: Deque[Position] = deque(maxlen=max_closed_history)
+        self.positions: dict[str, Position] = {}
+        self._closed_positions: deque[Position] = deque(maxlen=max_closed_history)
 
         # Monitor
         self.monitor = PositionMonitor(
@@ -64,7 +66,7 @@ class PositionManager:
         )
 
     @property
-    def closed_positions(self) -> List[Position]:
+    def closed_positions(self) -> list[Position]:
         """Get closed positions (backward compatible list).
 
         Returns:
@@ -80,7 +82,7 @@ class PositionManager:
         entry_price: float,
         quantity: int,
         strategy: str,
-        position_id: Optional[str] = None,
+        position_id: str | None = None,
     ) -> Position:
         """Open a new position.
 
@@ -128,7 +130,7 @@ class PositionManager:
         position_id: str,
         exit_price: float,
         reason: str,
-    ) -> Optional[Position]:
+    ) -> Position | None:
         """Close a position.
 
         Args:
@@ -183,15 +185,15 @@ class PositionManager:
         if self.on_exit_triggered:
             self.on_exit_triggered(position, reason)
 
-    def get_position(self, position_id: str) -> Optional[Position]:
+    def get_position(self, position_id: str) -> Position | None:
         """Get position by ID."""
         return self.positions.get(position_id)
 
-    def get_positions_by_code(self, code: str) -> List[Position]:
+    def get_positions_by_code(self, code: str) -> list[Position]:
         """Get all positions for a stock code."""
         return [p for p in self.positions.values() if p.code == code]
 
-    def get_positions_by_strategy(self, strategy: str) -> List[Position]:
+    def get_positions_by_strategy(self, strategy: str) -> list[Position]:
         """Get all positions for a strategy."""
         return [p for p in self.positions.values() if p.strategy == strategy]
 
@@ -214,7 +216,7 @@ class PositionManager:
                 position.exit_reason = reason
                 self._handle_exit_triggered(position, reason)
 
-    def update_prices(self, prices: Dict[str, float]) -> None:
+    def update_prices(self, prices: dict[str, float]) -> None:
         """Batch update prices."""
         for code, price in prices.items():
             self.update_price(code, price)
@@ -227,7 +229,7 @@ class PositionManager:
         """Stop position monitoring."""
         await self.monitor.stop()
 
-    def get_summary(self) -> Dict:
+    def get_summary(self) -> dict:
         """Get manager summary."""
         total_pnl = sum(p.unrealized_pnl for p in self.positions.values())
         closed_pnl = sum(
@@ -258,7 +260,7 @@ class PositionManager:
             ],
         }
 
-    async def restore_positions(self, positions: List[Position]) -> None:
+    async def restore_positions(self, positions: list[Position]) -> None:
         """Restore positions from a list.
 
         Used for recovering positions after restart.
@@ -273,9 +275,9 @@ class PositionManager:
 
     async def close_all_positions(
         self,
-        prices: Dict[str, float],
+        prices: dict[str, float],
         reason: str,
-    ) -> List[Position]:
+    ) -> list[Position]:
         """Close all open positions.
 
         Args:

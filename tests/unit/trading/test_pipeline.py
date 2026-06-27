@@ -1,7 +1,8 @@
 """Trading Pipeline 테스트"""
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 
 class TestCircuitBreaker:
@@ -120,7 +121,7 @@ class TestTradingPipeline:
 
     def test_init_with_default_config(self):
         """기본 설정으로 초기화"""
-        from services.trading.pipeline import TradingPipeline, PipelineStage
+        from services.trading.pipeline import PipelineStage, TradingPipeline
 
         pipeline = TradingPipeline()
 
@@ -131,7 +132,7 @@ class TestTradingPipeline:
 
     def test_init_with_custom_config(self):
         """커스텀 설정으로 초기화"""
-        from services.trading.pipeline import TradingPipeline, PipelineStage
+        from services.trading.pipeline import PipelineStage, TradingPipeline
 
         # Mock config
         mock_config = MagicMock()

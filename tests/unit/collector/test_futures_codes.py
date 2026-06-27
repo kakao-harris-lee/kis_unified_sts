@@ -2,12 +2,9 @@
 
 from datetime import date
 
-import pytest
-
 from shared.collector.historical.futures import (
     get_expiry_date,
     get_front_month_code,
-    make_code,
 )
 
 

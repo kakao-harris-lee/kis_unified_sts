@@ -9,12 +9,12 @@ Tests the complete shutdown flow:
 
 import asyncio
 from datetime import datetime
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from shared.models.position import Position, PositionSide, PositionState
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+from shared.models.position import Position, PositionSide, PositionState
 from shared.streaming.trading_state import TradingStatePublisher, TradingStateReader
 
 # serial: these tests read/write the shared Redis DB 1 key space
@@ -125,8 +125,8 @@ async def test_sigterm_during_trading():
     5. Simulate restart and verify 100% position recovery
     """
     from services.trading.orchestrator import (
-        TradingOrchestrator,
         TradingConfig,
+        TradingOrchestrator,
         TradingState,
     )
 
@@ -312,7 +312,7 @@ async def test_state_transition_during_shutdown():
     - State persists correctly through shutdown
     - All position fields preserved (not just state)
     """
-    from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+    from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
     config = TradingConfig.stock(
         strategy_name="bb_reversion",
@@ -451,8 +451,8 @@ async def test_redis_failure_during_shutdown():
     - Timeout enforcement: prevents indefinite hangs
     """
     from services.trading.orchestrator import (
-        TradingOrchestrator,
         TradingConfig,
+        TradingOrchestrator,
         TradingState,
     )
 
@@ -586,7 +586,7 @@ async def test_full_position_recovery():
     - All fields: id, code, side, quantity, entry_price, state,
       highest_price, lowest_price, stop_price, fee_rate
     """
-    from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+    from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
     config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
 
@@ -721,12 +721,13 @@ async def test_redis_graceful_degradation_on_publish_failure():
 
     This tests graceful degradation: persistence failure != shutdown failure.
     """
+    import time
+
     from services.trading.orchestrator import (
-        TradingOrchestrator,
         TradingConfig,
+        TradingOrchestrator,
         TradingState,
     )
-    import time
 
     config = TradingConfig.stock(strategy_name="bb_reversion", symbols=["005930"])
 

@@ -1,15 +1,23 @@
 """Unit tests for TrackAExit pure math helpers and generator."""
 from __future__ import annotations
-from datetime import UTC, datetime, timedelta, timezone
+
+from datetime import UTC, datetime, timedelta
+
 import pytest
+
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason
 from shared.strategy.base import ExitContext
 from shared.strategy.exit.track_a_exit import (
-    TrackAExit, TrackAExitConfig,
-    catastrophic_stop_hit, crash_triggered, trail_activated, trail_stop_price,
+    TrackAExit,
+    TrackAExitConfig,
+    catastrophic_stop_hit,
+    crash_triggered,
     max_adverse_move_in_window,
+    trail_activated,
+    trail_stop_price,
 )
+
 
 def test_trail_stop_long():
     assert trail_stop_price(PositionSide.LONG, favorable_extreme=105.0, atr=2.0, trail_atr_mult=3.0) == pytest.approx(99.0)
@@ -63,8 +71,8 @@ def _short_position(entry_price=100.0, lowest_price=None, stop_price=0.0, **md):
         lowest_price=lowest_price if lowest_price is not None else entry_price, metadata=meta)
 
 def _cfg(**kw):
-    d = dict(trail_atr_mult=3.0, trail_activate_atr_mult=1.0, crash_atr_mult=3.5, crash_cooldown_minutes=30,
-        catastrophic_atr_mult=6.0, eod_close_enabled=False, default_exit_confidence=0.9, enabled=True)
+    d = {"trail_atr_mult": 3.0, "trail_activate_atr_mult": 1.0, "crash_atr_mult": 3.5, "crash_cooldown_minutes": 30,
+        "catastrophic_atr_mult": 6.0, "eod_close_enabled": False, "default_exit_confidence": 0.9, "enabled": True}
     d.update(kw)
     return TrackAExitConfig(**d)
 
@@ -134,7 +142,8 @@ async def test_catastrophic_beats_trail():
 
 @pytest.mark.asyncio
 async def test_no_atr_skips_all_atr_exits():
-    pos = _long_position(prev_price=70.0); pos.metadata.pop("entry_atr", None)
+    pos = _long_position(prev_price=70.0)
+    pos.metadata.pop("entry_atr", None)
     fired, _ = await TrackAExit(_cfg(eod_close_enabled=False)).should_exit(_ctx(pos, close=70.0, atr=0.0))
     assert fired is False
 
@@ -148,6 +157,7 @@ async def test_scan_positions_returns_signals_for_triggered():
 async def test_eod_fires_when_atr_zero(monkeypatch):
     """I1: ATR=0 skips ATR-based exits but EOD_CLOSE must still fire."""
     from zoneinfo import ZoneInfo
+
     import shared.strategy.exit.track_a_exit as _mod
 
     KST = ZoneInfo("Asia/Seoul")

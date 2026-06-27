@@ -2,7 +2,7 @@
 import logging
 import time
 from collections import deque
-from typing import Deque, Dict, Optional, Any
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,25 +54,25 @@ class FeatureProcessor:
         self.ofi_calculator = OFICalculator(ofi_config)
 
         # Trade tracking
-        self._trades: Deque[Dict[str, Any]] = deque(maxlen=config.vwap_window)
+        self._trades: deque[dict[str, Any]] = deque(maxlen=config.vwap_window)
         self._trade_count = 0
         self._buy_volume = 0.0
         self._sell_volume = 0.0
 
         # Orderbook tracking
-        self._spreads: Deque[float] = deque(maxlen=config.spread_window)
-        self._last_mid: Optional[float] = None
-        self._last_spread: Optional[float] = None
-        self._last_bid_depth: Optional[float] = None
-        self._last_ask_depth: Optional[float] = None
+        self._spreads: deque[float] = deque(maxlen=config.spread_window)
+        self._last_mid: float | None = None
+        self._last_spread: float | None = None
+        self._last_bid_depth: float | None = None
+        self._last_ask_depth: float | None = None
 
     def process_trade(
         self,
         price: float,
         size: float,
         side: str,
-        timestamp: Optional[float] = None
-    ) -> Dict[str, Any]:
+        timestamp: float | None = None
+    ) -> dict[str, Any]:
         """Process a trade event.
 
         Args:
@@ -131,8 +131,8 @@ class FeatureProcessor:
         bid_qty: float,
         best_ask: float,
         ask_qty: float,
-        timestamp: Optional[float] = None
-    ) -> Dict[str, Any]:
+        timestamp: float | None = None
+    ) -> dict[str, Any]:
         """Process an orderbook update.
 
         Args:
@@ -171,7 +171,7 @@ class FeatureProcessor:
             "ask_depth": ask_qty,
         }
 
-    def get_features(self) -> Dict[str, Any]:
+    def get_features(self) -> dict[str, Any]:
         """Get current feature snapshot.
 
         Returns:

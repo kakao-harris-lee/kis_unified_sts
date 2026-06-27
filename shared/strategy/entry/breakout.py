@@ -8,7 +8,6 @@ Migrated from kospi_mini_sts.
 """
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -55,7 +54,7 @@ class BreakoutEntry(EntrySignalGenerator[BreakoutConfig]):
         period = self.config.lookback_period
         return [f"high_{period}", f"low_{period}", "volume", "volume_ma"]
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """Generate entry signal based on breakout conditions."""
         data = context.market_data
         period = self.config.lookback_period
@@ -128,10 +127,7 @@ class BreakoutEntry(EntrySignalGenerator[BreakoutConfig]):
         breakout_score = min(1, max(0, breakout_pct * self.config.breakout_scale_factor))
 
         # Volume strength - guard against division by zero
-        if volume_ma <= 0:
-            volume_ratio = 1.0
-        else:
-            volume_ratio = volume / volume_ma
+        volume_ratio = 1.0 if volume_ma <= 0 else volume / volume_ma
 
         # Guard against division by zero in volume_threshold
         if self.config.volume_threshold <= 0:

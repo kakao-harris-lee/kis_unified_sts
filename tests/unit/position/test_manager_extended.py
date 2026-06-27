@@ -1,15 +1,16 @@
 """Test PositionManager extended features."""
-import pytest
 from datetime import datetime
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 
 @pytest.mark.asyncio
 async def test_manager_restore_positions():
     """Test restoring positions from list."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import Position, PositionSide
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)
@@ -48,9 +49,9 @@ async def test_manager_restore_positions():
 @pytest.mark.asyncio
 async def test_manager_with_executor():
     """Test manager with order executor integration."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import PositionSide
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
 
@@ -85,9 +86,9 @@ async def test_manager_with_executor():
 @pytest.mark.asyncio
 async def test_manager_close_all_positions():
     """Test closing all positions."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import PositionSide
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)

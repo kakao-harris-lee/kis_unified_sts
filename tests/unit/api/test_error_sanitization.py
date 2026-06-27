@@ -1,7 +1,7 @@
 """API 에러 메시지 sanitization 테스트"""
 
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 class TestSanitizeErrorMessage:
@@ -370,7 +370,6 @@ class TestGlobalExceptionHandler:
     async def test_handler_development_mode(self):
         """개발 모드: sanitized 상세 메시지"""
         pytest.importorskip("fastapi")
-        from unittest.mock import AsyncMock
 
         # Create a simple test to verify handler behavior
         # Since we can't easily mock the whole FastAPI app, we test the logic

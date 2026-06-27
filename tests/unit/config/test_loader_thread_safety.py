@@ -72,7 +72,7 @@ class TestConfigLoaderThreadSafety:
             assert result == first_result, "Results differ across threads"
 
         # Cache should have exactly one entry for this file
-        cache_keys = [k for k in ConfigLoader._cache.keys() if k.startswith("test1.yaml:")]
+        cache_keys = [k for k in ConfigLoader._cache if k.startswith("test1.yaml:")]
         assert len(cache_keys) == 1, f"Expected 1 cache entry, got {len(cache_keys)}"
 
     def test_concurrent_load_different_files(self):

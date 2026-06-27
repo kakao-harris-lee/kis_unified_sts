@@ -1,7 +1,6 @@
 """Technical indicator calculator for trend analysis."""
 import logging
 from collections import deque
-from typing import Deque, Optional
 
 import numpy as np
 
@@ -30,21 +29,21 @@ class TechnicalCalculator:
             config.ichimoku_senkou_b_period,
             config.atr_period * 2
         )
-        self._prices: Deque[float] = deque(maxlen=max_period + 52)  # Extra buffer for Ichimoku displacement
-        self._highs: Deque[float] = deque(maxlen=max_period + 52)
-        self._lows: Deque[float] = deque(maxlen=max_period + 52)
+        self._prices: deque[float] = deque(maxlen=max_period + 52)  # Extra buffer for Ichimoku displacement
+        self._highs: deque[float] = deque(maxlen=max_period + 52)
+        self._lows: deque[float] = deque(maxlen=max_period + 52)
 
         # EMA state
-        self._ema_short: Optional[float] = None
-        self._ema_long: Optional[float] = None
+        self._ema_short: float | None = None
+        self._ema_long: float | None = None
         self._ema_short_multiplier = 2 / (config.ma_short_period + 1)
         self._ema_long_multiplier = 2 / (config.ma_long_period + 1)
 
         # ATR state
-        self._atr: Optional[float] = None
-        self._prev_close: Optional[float] = None
+        self._atr: float | None = None
+        self._prev_close: float | None = None
 
-    def update(self, close: float, high: Optional[float] = None, low: Optional[float] = None) -> None:
+    def update(self, close: float, high: float | None = None, low: float | None = None) -> None:
         """Update calculator with new price data.
 
         Args:
@@ -115,27 +114,27 @@ class TechnicalCalculator:
             # Wilder's smoothing
             self._atr = (self._atr * (self.config.atr_period - 1) + tr) / self.config.atr_period
 
-    def get_ma_short(self) -> Optional[float]:
+    def get_ma_short(self) -> float | None:
         """Get short-period simple moving average."""
         if len(self._prices) < self.config.ma_short_period:
             return None
         return float(np.mean(list(self._prices)[-self.config.ma_short_period:]))
 
-    def get_ma_long(self) -> Optional[float]:
+    def get_ma_long(self) -> float | None:
         """Get long-period simple moving average."""
         if len(self._prices) < self.config.ma_long_period:
             return None
         return float(np.mean(list(self._prices)[-self.config.ma_long_period:]))
 
-    def get_ema_short(self) -> Optional[float]:
+    def get_ema_short(self) -> float | None:
         """Get short-period exponential moving average."""
         return self._ema_short
 
-    def get_ema_long(self) -> Optional[float]:
+    def get_ema_long(self) -> float | None:
         """Get long-period exponential moving average."""
         return self._ema_long
 
-    def get_atr(self) -> Optional[float]:
+    def get_atr(self) -> float | None:
         """Get Average True Range."""
         return self._atr
 
@@ -145,7 +144,7 @@ class TechnicalCalculator:
 
     # Ichimoku Cloud methods
 
-    def _calc_midpoint(self, period: int) -> Optional[float]:
+    def _calc_midpoint(self, period: int) -> float | None:
         """Calculate (highest high + lowest low) / 2 over period."""
         if len(self._highs) < period:
             return None
@@ -153,7 +152,7 @@ class TechnicalCalculator:
         lows = list(self._lows)[-period:]
         return (max(highs) + min(lows)) / 2
 
-    def get_ichimoku(self) -> Optional[IchimokuData]:
+    def get_ichimoku(self) -> IchimokuData | None:
         """Get Ichimoku cloud indicator values.
 
         Ichimoku Components:
@@ -240,7 +239,7 @@ class TechnicalCalculator:
 
     # Snapshot methods
 
-    def get_technical_data(self, timestamp: float) -> Optional[TechnicalData]:
+    def get_technical_data(self, timestamp: float) -> TechnicalData | None:
         """Get complete technical data snapshot.
 
         Args:

@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Any, Optional
+from typing import Any
 
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
@@ -115,7 +115,7 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
 
     async def should_exit(
         self, context: ExitContext
-    ) -> tuple[bool, Optional[ExitSignal]]:
+    ) -> tuple[bool, ExitSignal | None]:
         """단일 포지션 청산 여부 판단 (scan_positions가 primary)."""
         signal = self._check_position(context.position, context.market_data, context.timestamp)
         return (signal is not None, signal)
@@ -124,9 +124,10 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 ATR 동적 청산 시그널 스캔."""
+        _ = market_state
         if not positions:
             return []
 
@@ -151,7 +152,7 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
         position: Position,
         market_data_for_symbol: dict[str, Any],
         now: datetime,
-    ) -> Optional[ExitSignal]:
+    ) -> ExitSignal | None:
         """개별 포지션 청산 조건 체크.
 
         Priority:
@@ -365,7 +366,7 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
     @staticmethod
     def _get_current_price(
         position: Position, snapshot: dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         price = get_price_from_snapshot(snapshot)
         if price is not None:
             return price

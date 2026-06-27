@@ -18,13 +18,13 @@ from __future__ import annotations
 from shared.collector.historical.backfill import parse_ohlcv
 
 
-def _row(time_str: str, o: float, h: float, l: float, c: float, v: int) -> dict:
+def _row(time_str: str, o: float, h: float, low: float, c: float, v: int) -> dict:
     """Build a single KIS futures ``output2`` row (a complete 1-minute bar)."""
     return {
         "stck_cntg_hour": time_str,
         "futs_oprc": f"{o:.2f}",
         "futs_hgpr": f"{h:.2f}",
-        "futs_lwpr": f"{l:.2f}",
+        "futs_lwpr": f"{low:.2f}",
         "futs_prpr": f"{c:.2f}",
         "cntg_vol": str(v),
     }
@@ -40,8 +40,8 @@ def test_identical_echoes_collapse_without_volume_inflation() -> None:
     data = {"output2": [_row("084500", 821.15, 822.55, 815.70, 819.95, 1779)] * 5}
     rows = parse_ohlcv("A01603", "20260304", data)
     assert len(rows) == 1
-    _code, _dt, o, h, l, c, v = rows[0]
-    assert (o, h, l, c) == (821.15, 822.55, 815.70, 819.95)
+    _code, _dt, o, h, low, c, v = rows[0]
+    assert (o, h, low, c) == (821.15, 822.55, 815.70, 819.95)
     # Volume is the single bar's volume (1779), never 5 * 1779 == 8895.
     assert v == 1779
 
@@ -70,14 +70,14 @@ def test_divergent_six_row_minute_picks_continuous_series() -> None:
     rows = parse_ohlcv("A01603", "20260304", data)
     bars = _as_dict(rows)
     assert "15:32" in bars
-    _code, _dt, o, h, l, c, v = bars["15:32"]
+    _code, _dt, o, h, low, c, v = bars["15:32"]
     # Real 758-series chosen, not the phantom 862-series.
-    assert (o, h, l, c) == (758.70, 759.85, 758.15, 758.40)
+    assert (o, h, low, c) == (758.70, 759.85, 758.15, 758.40)
     assert v == 1009
     # Never a Frankenstein bar: high == max(o,c) region, no 862 spike.
     assert h < 800.0
     assert h >= max(o, c)
-    assert l <= min(o, c)
+    assert low <= min(o, c)
 
 
 def test_no_bar_violates_ohlc_consistency() -> None:
@@ -94,9 +94,9 @@ def test_no_bar_violates_ohlc_consistency() -> None:
     }
     rows = parse_ohlcv("A01603", "20260101", data)
     assert rows, "expected at least one parsed bar"
-    for _code, _dt, o, h, l, c, _v in rows:
+    for _code, _dt, o, h, low, c, _v in rows:
         assert h >= max(o, c) - 1e-9, f"high {h} < max(open {o}, close {c})"
-        assert l <= min(o, c) + 1e-9, f"low {l} > min(open {o}, close {c})"
+        assert low <= min(o, c) + 1e-9, f"low {low} > min(open {o}, close {c})"
     # All bars track the continuous ~800 series, none jumped to the 900 phantom.
     closes = [row[5] for row in rows]
     assert max(closes) < 850.0
@@ -121,7 +121,7 @@ def test_divergence_count_flip_does_not_decide() -> None:
     }
     rows = parse_ohlcv("A01603", "20260101", data)
     bars = _as_dict(rows)
-    _code, _dt, o, h, l, c, _v = bars["14:07"]
+    _code, _dt, o, h, _low, c, _v = bars["14:07"]
     assert (o, c) == (770.5, 771.0), "continuity must beat duplicate-count majority"
     assert h < 800.0
 

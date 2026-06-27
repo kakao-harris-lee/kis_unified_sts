@@ -1,9 +1,9 @@
 """API adapter interfaces for data collection."""
-import time
-import random
 import logging
+import random
+import time
 from abc import ABC, abstractmethod
-from typing import Callable, List
+from collections.abc import Callable
 
 from .models import TickData
 
@@ -22,7 +22,7 @@ class BaseAPIAdapter(ABC):
         pass
 
     @abstractmethod
-    def subscribe(self, symbols: List[str], callback: Callable[[TickData], None]) -> None:
+    def subscribe(self, symbols: list[str], callback: Callable[[TickData], None]) -> None:
         """Subscribe to symbols and register tick callback.
 
         Args:
@@ -51,7 +51,7 @@ class MockAPIAdapter(BaseAPIAdapter):
     def connect(self) -> None:
         logger.info("Mock API connected")
 
-    def subscribe(self, symbols: List[str], callback: Callable[[TickData], None]) -> None:
+    def subscribe(self, symbols: list[str], callback: Callable[[TickData], None]) -> None:
         self._callback = callback
         self._running = True
 

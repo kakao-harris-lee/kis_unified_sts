@@ -19,7 +19,7 @@ async def test_async_holiday_loader_is_coroutine():
 @pytest.mark.asyncio
 async def test_async_holiday_loader_with_aiofiles(tmp_path):
     """Test loading with aiofiles."""
-    from services.trading.holiday_cache import async_holiday_loader, HAS_AIOFILES
+    from services.trading.holiday_cache import HAS_AIOFILES, async_holiday_loader
 
     if not HAS_AIOFILES:
         pytest.skip("aiofiles not installed")

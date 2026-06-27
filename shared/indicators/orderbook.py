@@ -142,10 +142,7 @@ class OrderBookAnalyzer:
 
         # Imbalance 계산
         total = bid_sum + ask_sum
-        if total == 0:
-            imbalance = 0.0
-        else:
-            imbalance = (bid_sum - ask_sum) / total
+        imbalance = 0.0 if total == 0 else (bid_sum - ask_sum) / total
 
         # Bid/Ask Ratio
         bid_ask_ratio = bid_sum / ask_sum if ask_sum > 0 else float("inf")

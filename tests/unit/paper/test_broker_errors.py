@@ -2,7 +2,7 @@
 import pytest
 
 from shared.paper.broker import VirtualBroker
-from shared.paper.models import OrderSide, PositionSide, InsufficientBalanceError
+from shared.paper.models import InsufficientBalanceError, OrderSide, PositionSide
 
 
 @pytest.mark.asyncio

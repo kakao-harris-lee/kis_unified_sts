@@ -94,6 +94,7 @@ class FixedSizer(PositionSizer[FixedSizerConfig]):
         Returns:
             매매 수량
         """
+        _ = market_context
         c = self.config
 
         # 최대 포지션 수 체크
@@ -198,6 +199,7 @@ class RiskBasedSizer(PositionSizer[RiskBasedSizerConfig]):
         Returns:
             매매 수량
         """
+        _ = market_context
         c = self.config
 
         # 최대 포지션 수 체크

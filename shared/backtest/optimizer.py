@@ -21,8 +21,9 @@ Usage:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 
@@ -222,7 +223,7 @@ class StrategyOptimizer:
         best_params = self.study.best_params
         best_value = self.study.best_value
 
-        logger.info(f"Optimization complete!")
+        logger.info("Optimization complete!")
         logger.info(f"Best {metric}: {best_value:.4f}")
         logger.info(f"Best params: {best_params}")
 

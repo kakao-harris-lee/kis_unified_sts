@@ -561,6 +561,7 @@ class TestConcurrentOperations:
     async def test_concurrent_close_same_position(self):
         """Test that concurrent close of same position is handled safely"""
         import asyncio
+
         from services.trading.position_tracker import PositionTracker
 
         tracker = PositionTracker()
@@ -591,6 +592,7 @@ class TestConcurrentOperations:
     async def test_concurrent_add_and_close(self):
         """Test concurrent add and close operations"""
         import asyncio
+
         from services.trading.position_tracker import PositionTracker
 
         tracker = PositionTracker()

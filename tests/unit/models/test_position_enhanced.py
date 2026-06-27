@@ -1,11 +1,12 @@
 """Test enhanced Position model."""
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 def test_position_state_transitions():
     """Test position state transitions."""
-    from shared.models.position import Position, PositionState, PositionSide
+    from shared.models.position import Position, PositionSide, PositionState
 
     pos = Position(
         id="pos-001",

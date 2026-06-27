@@ -2,10 +2,8 @@
 LLM 분석 데이터 클래스
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Dict, List
-
 
 # ============================================================
 # Enums
@@ -168,21 +166,21 @@ class MarketAnalysis:
     date: str
 
     # 각 분석 결과
-    etf_flows: List["ETFFlowData"] = field(default_factory=list)
+    etf_flows: list["ETFFlowData"] = field(default_factory=list)
     futures: "FuturesData" = None
     options: "OptionsData" = None
     bonds: "BondData" = None
-    indices: List["IndexData"] = field(default_factory=list)
+    indices: list["IndexData"] = field(default_factory=list)
 
     # 종합 판단
     overall_signal: MarketSignal = MarketSignal.NEUTRAL
     risk_mode: RiskMode = RiskMode.NEUTRAL
-    sector_rotation: Dict[str, str] = field(default_factory=dict)  # 섹터별 강세/약세
+    sector_rotation: dict[str, str] = field(default_factory=dict)  # 섹터별 강세/약세
 
     # LLM 분석
     llm_summary: str = ""
     llm_strategy: str = ""
-    key_points: List[str] = field(default_factory=list)
+    key_points: list[str] = field(default_factory=list)
 
 
 # ============================================================
@@ -340,14 +338,14 @@ class AnalysisResult:
     overall_score: int  # -100 ~ +100
     recommendation: str  # "강력매수", "매수", "관망", "매도", "강력매도"
     confidence: str  # "높음", "중간", "낮음"
-    key_reasons: List[str]  # 주요 매매 근거
-    risk_factors: List[str]  # 리스크 요인
+    key_reasons: list[str]  # 주요 매매 근거
+    risk_factors: list[str]  # 리스크 요인
     entry_strategy: str  # 진입 전략
     exit_strategy: str  # 손절/익절 전략
     position_size: float  # 추천 포지션 비중 (0~1)
     time_horizon: str  # "단기(1-3일)", "중기(1-2주)"
 
-    def as_dict(self) -> Dict:
+    def as_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
         return asdict(self)
 
@@ -396,9 +394,9 @@ class StockTradingPlan:
     take_profit: float
     position_size: float
     confidence: str
-    reasons: List[str]
+    reasons: list[str]
     news_sentiment: str = ""
-    key_events: List[str] = field(default_factory=list)
+    key_events: list[str] = field(default_factory=list)
 
     def to_telegram_message(self) -> str:
         """텔레그램 메시지 변환"""
@@ -431,9 +429,9 @@ class FuturesTradingPlan:
     take_profit: float
     position_size: str
     time_horizon: str
-    key_levels: List[float] = field(default_factory=list)
-    risk_factors: List[str] = field(default_factory=list)
-    catalysts: List[str] = field(default_factory=list)
+    key_levels: list[float] = field(default_factory=list)
+    risk_factors: list[str] = field(default_factory=list)
+    catalysts: list[str] = field(default_factory=list)
 
     def to_telegram_message(self) -> str:
         """텔레그램 메시지 변환"""
@@ -503,13 +501,13 @@ class StockDetailedBriefing:
     time_horizon: str
 
     # 선정 이유
-    selection_reasons: List[str] = field(default_factory=list)
-    risk_factors: List[str] = field(default_factory=list)
+    selection_reasons: list[str] = field(default_factory=list)
+    risk_factors: list[str] = field(default_factory=list)
 
     # 데이터 소스 정보
     news_sentiment: str = "중립"
-    news_headlines: List[str] = field(default_factory=list)
-    dart_disclosures: List[str] = field(default_factory=list)
+    news_headlines: list[str] = field(default_factory=list)
+    dart_disclosures: list[str] = field(default_factory=list)
     short_selling_status: str = ""
     investor_trend: str = ""
 
@@ -572,6 +570,6 @@ MACD: {'🔺상승' if self.macd_hist > 0 else '🔻하락'}
 <i>생성: {self.generated_at}</i>
 """
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """JSON 직렬화용 딕셔너리"""
         return asdict(self)

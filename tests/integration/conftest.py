@@ -3,8 +3,9 @@
 Provides fixtures to isolate tests from external dependencies and prevent
 Prometheus metric registry pollution across tests.
 """
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture(autouse=True)

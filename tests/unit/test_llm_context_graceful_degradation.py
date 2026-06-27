@@ -10,7 +10,7 @@ optional and should never break core trading functionality.
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -30,7 +30,6 @@ from shared.strategy.position.sizers import (
     RiskBasedSizer,
     RiskBasedSizerConfig,
 )
-
 
 # =============================================================================
 # Helpers
@@ -458,7 +457,10 @@ class TestExitStrategyGracefulDegradation:
         tests for graceful degradation if they use market_context.
         """
         from shared.models.position import Position, PositionSide
-        from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+        from shared.strategy.exit.three_stage import (
+            ThreeStageExit,
+            ThreeStageExitConfig,
+        )
 
         config = ThreeStageExitConfig()
         exit_strategy = ThreeStageExit(config)
@@ -598,7 +600,10 @@ class TestGracefulDegradationSummary:
 
         # 3. Exit strategy evaluates without market_context
         from shared.models.position import Position, PositionSide
-        from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+        from shared.strategy.exit.three_stage import (
+            ThreeStageExit,
+            ThreeStageExitConfig,
+        )
 
         position = Position(
             id="test-pos-003",

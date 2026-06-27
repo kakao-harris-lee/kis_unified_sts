@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -164,13 +163,13 @@ class TestTrixGoldenEntryInit:
 
 def _crossover_config(**kwargs) -> TrixGoldenConfig:
     """Create a config in legacy crossover mode for backward-compat tests."""
-    defaults = dict(
-        trix_entry_mode="crossover",
-        use_uncorrelated_filters=False,
-        cci_upper=200.0,
-        cci_lower=-999.0,
-        min_candles=10,
-    )
+    defaults = {
+        "trix_entry_mode": "crossover",
+        "use_uncorrelated_filters": False,
+        "cci_upper": 200.0,
+        "cci_lower": -999.0,
+        "min_candles": 10,
+    }
     defaults.update(kwargs)
     return TrixGoldenConfig(**defaults)
 

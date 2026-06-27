@@ -12,14 +12,18 @@ out-of-session US events (FOMC/CPI/NFP) do NOT fire Setup C during KR hours.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from shared.decision.context import ScheduledEvent, build_market_context, load_scheduled_events
-from shared.decision.setups.event_reaction import SetupCConfig, SetupCEventReaction
+from shared.decision.context import (
+    ScheduledEvent,
+    build_market_context,
+    load_scheduled_events,
+)
+from shared.decision.setups.event_reaction import SetupCEventReaction
 
 KST = ZoneInfo("Asia/Seoul")
 UTC = ZoneInfo("UTC")
@@ -313,7 +317,7 @@ def test_setup_c_filters_kr_cpi_tier3():
 def test_setup_c_cutoff_after_15h00_kst():
     """Setup C rejects entries after 15:00 KST even with a valid in-session event."""
     bok_at = datetime(2026, 1, 16, 10, 0, 0, tzinfo=KST)
-    evt = _evt("bok_2026_jan", "BOK_rate_decision", bok_at, impact_tier=1)
+    _evt("bok_2026_jan", "BOK_rate_decision", bok_at, impact_tier=1)
     # Put the event 5 min before now so it's in window
     now = datetime(2026, 1, 16, 15, 5, 0, tzinfo=KST)
     # Re-anchor the event to be within 5 minutes of now (but still after 09:00)

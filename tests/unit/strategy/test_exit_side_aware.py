@@ -391,7 +391,7 @@ class TestThreeStageShortTrailingStop:
         """
         entry = 50000.0
         lowest = 48000.0  # 4% gain, no overshoot (< 7%)
-        trailing_stop = lowest * (1 + 0.03)  # 49440
+        lowest * (1 + 0.03)  # 49440
 
         strategy = _make_three_stage_exit(
             trailing_stop_pct=-0.03,
@@ -502,7 +502,7 @@ class TestThreeStageBreakevenToMaximizePromotion:
         entry = 50000.0
         highest = 52000.0  # previous high
         # Trailing stop = 52000 * (1 - 0.03) = 50440
-        trailing_stop = highest * (1 - 0.03)  # 50440
+        highest * (1 - 0.03)  # 50440
 
         strategy = _make_three_stage_exit(
             breakeven_threshold_pct=0.015,
@@ -546,7 +546,7 @@ class TestThreeStageBreakevenToMaximizePromotion:
             state=PositionState.BREAKEVEN,
             highest_price=high2,
         )
-        trailing_stop2 = high2 * (1 - 0.03)  # 53350
+        high2 * (1 - 0.03)  # 53350
         current2 = 53300.0  # just below trailing stop... wait, LONG: current<=stop triggers
         # 53300 <= 53350 → triggers
         context2 = _make_context(position2, current2)
@@ -579,7 +579,7 @@ class TestThreeStageLongUnchanged:
         trailing_pct = -0.03
         entry = 50000.0
         highest = 55000.0
-        trailing_stop = highest * (1 - abs(trailing_pct))  # 53350
+        highest * (1 - abs(trailing_pct))  # 53350
 
         strategy = _make_three_stage_exit(
             trailing_stop_pct=trailing_pct,
@@ -606,21 +606,20 @@ class TestThreeStageLongUnchanged:
         """LONG BREAKEVEN: price retraces to breakeven stop → exit."""
         fee_rate = 0.003
         entry = 50000.0
-        breakeven_stop = entry * (1 + fee_rate)  # 50150
+        entry * (1 + fee_rate)  # 50150
 
         strategy = _make_three_stage_exit(
             fee_rate=fee_rate,
             breakeven_threshold_pct=0.015,
             maximize_threshold_pct=0.03,
         )
-        position = _make_position(
+        _make_position(
             PositionSide.LONG,
             entry_price=entry,
             state=PositionState.BREAKEVEN,
         )
 
         # price at exactly breakeven stop
-        current = breakeven_stop  # 50150 → profit_pct = 0.003 = fee_rate
         # profit_pct = 0.3% < 1.5% breakeven → SURVIVAL stage → stop_loss check
         # Wait: 50150/50000 - 1 = 0.003 = 0.3% which is SURVIVAL stage...
         # BREAKEVEN stop only fires in BREAKEVEN stage.
@@ -836,7 +835,7 @@ class TestMomentumDecayShortTrailing:
         entry = 50000.0
         lowest = 47500.0  # 5% favorable
         trailing_gap = 0.05
-        trailing_stop = lowest * (1 + trailing_gap)  # 49875
+        lowest * (1 + trailing_gap)  # 49875
 
         strategy = _make_momentum_exit(
             trailing_activation_pct=0.05,
@@ -863,7 +862,7 @@ class TestMomentumDecayShortTrailing:
         entry = 50000.0
         lowest = 47500.0  # 5% favorable move
         trailing_gap = 0.05
-        trailing_stop = lowest * (1 + trailing_gap)  # 49875
+        lowest * (1 + trailing_gap)  # 49875
 
         strategy = _make_momentum_exit(
             trailing_activation_pct=0.05,
@@ -878,7 +877,6 @@ class TestMomentumDecayShortTrailing:
         )
 
         # current = 50000 > 49875 → SHORT: current >= stop → triggered
-        current = 50000.0
         # profit_pct = (50000 - 50000) / 50000 = 0.0 → but stop_loss check: 0.0 > -3% → no stop
         # Actually profit_pct = (entry - current) / entry = 0 → no stop loss (-3% threshold)
         # Trailing: profit_pct for trailing check uses _calc_profit_pct with lowest
@@ -910,7 +908,7 @@ class TestMomentumDecayShortTrailing:
 
         # Scenario: lowest achieved 45000 (10% profit), now price retraced to 47500 (5% profit)
         lowest3 = 45000.0  # 10% favorable
-        tight_trailing_stop = lowest3 * (1 + 0.03)  # tight trail = 46350
+        lowest3 * (1 + 0.03)  # tight trail = 46350
         # profit at 47500 = (50000-47500)/50000 = 5% → triggers trailing (>= 5%)
         # But 47500 > 46350 → SHORT: current >= stop → trailing triggered!
 

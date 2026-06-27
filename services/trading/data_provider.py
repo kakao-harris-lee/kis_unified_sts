@@ -732,7 +732,7 @@ class MarketDataProvider:
 
             # Create tasks with staggered start to avoid KIS API rate limit
             async def fetch_single(
-                symbol: str, idx: int
+                symbol: str, idx: int, instant: bool = instant
             ) -> tuple[str, dict[str, Any] | None]:
                 try:
                     if idx > 0 and not instant:

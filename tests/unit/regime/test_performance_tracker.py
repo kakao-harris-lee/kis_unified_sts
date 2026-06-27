@@ -1,14 +1,14 @@
 """Test RegimePerformanceTracker."""
-import pytest
 from datetime import datetime
 
-from shared.regime.performance_tracker import (
-    RegimePerformanceTracker,
-    RegimePerformanceConfig,
-    TradeRecord,
-    RegimeStats,
-)
+import pytest
+
 from shared.exceptions import ValidationError
+from shared.regime.performance_tracker import (
+    RegimePerformanceConfig,
+    RegimePerformanceTracker,
+    TradeRecord,
+)
 
 
 class TestTradeRecord:

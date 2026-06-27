@@ -9,19 +9,19 @@ Usage:
     await orchestrator.start()
 """
 
+from services.trading.data_provider import (
+    DataProviderConfig,
+    MarketDataProvider,
+)
 from services.trading.orchestrator import (
-    TradingOrchestrator,
     TradingConfig,
+    TradingOrchestrator,
     TradingState,
 )
 from services.trading.pipeline import (
-    TradingPipeline,
-    PipelineStage,
     CircuitBreaker,
-)
-from services.trading.data_provider import (
-    MarketDataProvider,
-    DataProviderConfig,
+    PipelineStage,
+    TradingPipeline,
 )
 from services.trading.position_tracker import (
     PositionTracker,

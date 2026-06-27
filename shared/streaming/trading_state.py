@@ -13,6 +13,7 @@ Redis Keys (all in DB1):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -509,10 +510,8 @@ class TradingStateReader:
                 return []
             positions = []
             for _pid, v in raw.items():
-                try:
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
                     positions.append(json.loads(v))
-                except (json.JSONDecodeError, TypeError):
-                    pass
             return positions
         except Exception:
             logger.debug("Failed to read positions from Redis", exc_info=True)
@@ -527,10 +526,8 @@ class TradingStateReader:
             )
             trades = []
             for raw in raw_list:
-                try:
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
                     trades.append(json.loads(raw))
-                except (json.JSONDecodeError, TypeError):
-                    pass
             return trades
         except Exception:
             logger.debug("Failed to read trades from Redis", exc_info=True)
@@ -553,10 +550,8 @@ class TradingStateReader:
             )
             signals = []
             for raw in raw_list:
-                try:
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
                     signals.append(json.loads(raw))
-                except (json.JSONDecodeError, TypeError):
-                    pass
             return signals
         except Exception:
             logger.debug("Failed to read signals from Redis", exc_info=True)

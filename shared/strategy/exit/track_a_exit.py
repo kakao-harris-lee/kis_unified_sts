@@ -19,16 +19,23 @@ Either path fires the ``FORCE_CLOSE`` signal.  The price history is kept in
 pruned to the rolling window each tick.
 """
 from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
 from typing import Any
+
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
-from shared.strategy.market_time import effective_close_time, is_trading_day_kst, now_kst, to_kst
+from shared.strategy.market_time import (
+    effective_close_time,
+    is_trading_day_kst,
+    now_kst,
+    to_kst,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +177,7 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         market_data: dict[str, Any],
         market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
+        _ = market_state
         signals: list[ExitSignal] = []
         for position in positions:
             snapshot = get_symbol_snapshot(market_data, position.code)

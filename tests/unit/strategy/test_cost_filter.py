@@ -1,9 +1,10 @@
 """Test cost-aware signal filtering."""
-import pytest
 from datetime import datetime
 
-from shared.strategy.filters import CostFilter, CostFilterConfig
+import pytest
+
 from shared.models.signal import Signal, SignalType
+from shared.strategy.filters import CostFilter, CostFilterConfig
 
 
 class TestCostFilterConfig:

@@ -14,7 +14,6 @@ KOSPI Mini futures code generation utilities.
    - KOSPI200 선물: 101, 미니 KOSPI200 선물: 105
 """
 from datetime import date, timedelta
-from typing import List, Tuple
 
 # ============================================================
 # 상품 코드 접두사
@@ -122,7 +121,7 @@ def make_code_legacy(year: int, month: int, prefix: str = None) -> str:
     return f"{prefix}{year_digit}{month:02d}"
 
 
-def parse_code(code: str) -> Tuple[int, int]:
+def parse_code(code: str) -> tuple[int, int]:
     """
     Parse futures code to year and month.
 
@@ -166,7 +165,7 @@ def get_listing_start(expiry: date) -> date:
     return date(year, month, 1)
 
 
-def get_active_codes_for_date(target_date: date) -> List[str]:
+def get_active_codes_for_date(target_date: date) -> list[str]:
     """
     Get all active (tradeable) futures codes for a specific date.
 
@@ -255,7 +254,7 @@ def get_front_month_code(
     return make_code(y, m, prefix=prefix, legacy=legacy)
 
 
-def get_all_codes_in_range(start: date, end: date) -> List[str]:
+def get_all_codes_in_range(start: date, end: date) -> list[str]:
     """
     Get all futures codes that were traded during a date range.
 
@@ -299,7 +298,7 @@ def get_all_codes_in_range(start: date, end: date) -> List[str]:
     return codes
 
 
-def get_past_year_codes(from_date: date = None) -> List[str]:
+def get_past_year_codes(from_date: date = None) -> list[str]:
     """Get all futures codes for the past year."""
     if from_date is None:
         from_date = date.today()

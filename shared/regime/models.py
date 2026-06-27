@@ -1,14 +1,14 @@
 """Regime detection models."""
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import Optional, Dict, Union, TYPE_CHECKING
+from enum import StrEnum
+from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     from .adaptive_detector import AdaptiveRegimeState
 
 
-class RegimeState(str, Enum):
+class RegimeState(StrEnum):
     """Market regime states."""
     BULL = "BULL"
     BEAR = "BEAR"
@@ -27,7 +27,7 @@ class RegimeSignal:
     state: Union[RegimeState, "AdaptiveRegimeState"]
     confidence: float
     timestamp: datetime
-    indicators: Optional[Dict] = None  # Multi-metric details: MFI, ADX, volatility, trend
+    indicators: dict | None = None  # Multi-metric details: MFI, ADX, volatility, trend
     confidence_threshold: float = 0.7  # Default from RegimeConfig.confidence_threshold
 
     @property

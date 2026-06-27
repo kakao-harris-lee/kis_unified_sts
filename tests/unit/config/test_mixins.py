@@ -1,6 +1,7 @@
 """Tests for config mixins."""
-import pytest
 from dataclasses import dataclass
+
+import pytest
 
 from shared.config.mixins import ConfigMixin
 

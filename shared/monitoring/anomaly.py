@@ -1,8 +1,7 @@
 """Anomaly detection for data quality."""
 import logging
-from datetime import datetime
-from typing import List, Dict, Optional
 from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -27,14 +26,14 @@ class AnomalyDetector:
     - Volume anomaly detection
     """
 
-    def __init__(self, config: Optional[AnomalyConfig] = None):
+    def __init__(self, config: AnomalyConfig | None = None):
         self.config = config or AnomalyConfig()
 
     def detect_outliers(
         self,
-        values: List[float],
+        values: list[float],
         window: int = 20,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Detect outliers using vectorized rolling z-score.
 
         Uses pandas rolling operations for O(n) complexity instead of
@@ -92,9 +91,9 @@ class AnomalyDetector:
 
     def detect_gaps(
         self,
-        timestamps: List[datetime],
+        timestamps: list[datetime],
         expected_interval_seconds: int = 60,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Detect gaps in time series data.
 
         Args:
@@ -131,9 +130,9 @@ class AnomalyDetector:
 
     def detect_volume_anomaly(
         self,
-        volumes: List[float],
+        volumes: list[float],
         threshold_factor: float = 5.0,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Detect abnormal trading volumes.
 
         Args:

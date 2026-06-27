@@ -17,9 +17,9 @@ import json
 import logging
 import math
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from shared.llm.collectors import (
     MKStockNewsCollector,
@@ -30,7 +30,7 @@ from shared.llm.collectors import (
 logger = logging.getLogger(__name__)
 
 
-def _get_col(df, candidates: list[str]) -> Optional[str]:
+def _get_col(df, candidates: list[str]) -> str | None:
     for c in candidates:
         if c in df.columns:
             return c
@@ -88,9 +88,9 @@ class WatchlistItem:
 class WatchlistGenerator:
     def __init__(
         self,
-        stock_collector: Optional[StockDataCollector] = None,
-        mk_news: Optional[MKStockNewsCollector] = None,
-        naver_news: Optional[NaverFinanceNewsCollector] = None,
+        stock_collector: StockDataCollector | None = None,
+        mk_news: MKStockNewsCollector | None = None,
+        naver_news: NaverFinanceNewsCollector | None = None,
     ):
         self.stock_collector = stock_collector or StockDataCollector()
         self.mk_news = mk_news or MKStockNewsCollector()
@@ -176,7 +176,7 @@ class WatchlistGenerator:
 
         return pd.concat(frames, axis=0) if len(frames) > 1 else frames[0]
 
-    def _resolve_columns(self, market_df) -> Optional[tuple[str, str, str, str, str]]:
+    def _resolve_columns(self, market_df) -> tuple[str, str, str, str, str] | None:
         price_col = _get_col(market_df, ["종가", "close"])
         open_col = _get_col(market_df, ["시가", "open"])
         vol_col = _get_col(market_df, ["거래량", "volume"])

@@ -99,7 +99,7 @@ class TradeTrendPriorityConfig(ServiceConfigBase):
     sector_aliases: dict[str, str] = Field(default_factory=dict)
 
     @classmethod
-    def load_or_default(cls) -> "TradeTrendPriorityConfig":
+    def load_or_default(cls) -> TradeTrendPriorityConfig:
         try:
             return cls.from_yaml()
         except ConfigNotFoundError:
@@ -413,7 +413,7 @@ class TradeTrendPriorityRanker:
         self._loaded_at: float = 0.0
 
     @classmethod
-    def from_default_config(cls) -> "TradeTrendPriorityRanker":
+    def from_default_config(cls) -> TradeTrendPriorityRanker:
         return cls(TradeTrendPriorityConfig.load_or_default())
 
     def snapshot(self) -> TradeTrendSnapshot:

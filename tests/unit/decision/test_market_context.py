@@ -8,21 +8,21 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 def _ctx(**overrides):
-    base = dict(
-        now=datetime(2026, 4, 23, 9, 30, tzinfo=KST),
-        symbol="A05603",
-        current_price=350.25,
-        prev_close=348.00,
-        today_open=352.50,
-        vwap=351.10,
-        atr_14=0.85,
-        atr_90th_percentile=1.20,
-        last_15min_high=351.00,
-        last_15min_low=349.20,
-        current_spread_ticks=1.0,
-        macro_overnight=None,
-        scheduled_events=[],
-    )
+    base = {
+        "now": datetime(2026, 4, 23, 9, 30, tzinfo=KST),
+        "symbol": "A05603",
+        "current_price": 350.25,
+        "prev_close": 348.00,
+        "today_open": 352.50,
+        "vwap": 351.10,
+        "atr_14": 0.85,
+        "atr_90th_percentile": 1.20,
+        "last_15min_high": 351.00,
+        "last_15min_low": 349.20,
+        "current_spread_ticks": 1.0,
+        "macro_overnight": None,
+        "scheduled_events": [],
+    }
     base.update(overrides)
     return MarketContext(**base)
 

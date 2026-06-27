@@ -1,6 +1,5 @@
 """Arbitrage data models."""
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -26,4 +25,4 @@ class ArbitrageSignal:
     entry_price: float          # Best bid (BUY) or best ask (SELL)
     order_size: float
     basis_data: BasisData
-    rejection_reason: Optional[str] = None
+    rejection_reason: str | None = None

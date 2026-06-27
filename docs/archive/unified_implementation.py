@@ -11,19 +11,20 @@ Claude Code로 작업 시 이 패턴을 따라 구현하세요.
 """
 
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Generic, Type, TypeVar
-import yaml
+from typing import Any, Generic, TypeVar
 
+import yaml
 
 # =============================================================================
 # 1. 설정 스키마 (Pydantic 기반)
 # =============================================================================
-
 from pydantic import BaseModel, Field, validator
 
 
@@ -82,7 +83,7 @@ class ThreeStageExitParams(BaseModel):
     trailing_stop_pct: float = 3.0
     tight_trailing_pct: float = 1.5
     tight_trailing_trigger_pct: float = 10.0
-    
+
     @validator('maximize_threshold_pct')
     def maximize_must_be_greater(cls, v, values):
         if 'breakeven_threshold_pct' in values and v <= values['breakeven_threshold_pct']:
@@ -130,22 +131,22 @@ class ConfigLoader:
     모든 설정은 이 클래스를 통해 로드
     하드코딩된 값 사용 금지!
     """
-    
+
     _instance = None
     _config_dir: Path = Path("config")
     _cache: dict = {}
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     @classmethod
     def set_config_dir(cls, path: str | Path):
         """설정 디렉토리 변경"""
         cls._config_dir = Path(path)
         cls._cache.clear()
-    
+
     @classmethod
     def load_yaml(cls, path: str) -> dict:
         """YAML 파일 로드 (캐시됨)"""
@@ -153,26 +154,26 @@ class ConfigLoader:
             full_path = cls._config_dir / path
             if not full_path.exists():
                 raise FileNotFoundError(f"Config not found: {full_path}")
-            
-            with open(full_path, 'r', encoding='utf-8') as f:
+
+            with open(full_path, encoding='utf-8') as f:
                 cls._cache[path] = yaml.safe_load(f)
-        
+
         return cls._cache[path]
-    
+
     @classmethod
     def load_strategy(cls, asset_class: str, strategy_name: str) -> StrategyConfig:
         """전략 설정 로드"""
         path = f"strategies/{asset_class}/{strategy_name}.yaml"
         data = cls.load_yaml(path)
         return StrategyConfig(**data)
-    
+
     @classmethod
     def load_all_strategies(cls, asset_class: str = None) -> list[StrategyConfig]:
         """모든 활성화된 전략 로드"""
         strategies = []
-        
+
         asset_classes = [asset_class] if asset_class else ["stock", "futures"]
-        
+
         for ac in asset_classes:
             strategy_dir = cls._config_dir / "strategies" / ac
             if strategy_dir.exists():
@@ -182,7 +183,7 @@ class ConfigLoader:
                     config = StrategyConfig(**data)
                     if config.strategy.enabled:
                         strategies.append(config)
-        
+
         return strategies
 
 
@@ -218,7 +219,7 @@ class Signal:
     asset_class: AssetClass
     entry_type: str
     metadata: dict = field(default_factory=dict)
-    
+
     def __post_init__(self):
         if not 0.0 <= self.strength <= 1.0:
             raise ValueError(f"Signal strength must be 0.0-1.0, got {self.strength}")
@@ -240,14 +241,14 @@ class Position:
     lowest_price: float = float('inf')
     exit_state: ExitState = ExitState.SURVIVAL
     metadata: dict = field(default_factory=dict)
-    
+
     @property
     def pnl(self) -> float:
         """절대 손익"""
         if self.side == "BUY":
             return (self.current_price - self.entry_price) * self.quantity
         return (self.entry_price - self.current_price) * self.quantity
-    
+
     @property
     def pnl_pct(self) -> float:
         """손익률"""
@@ -300,26 +301,26 @@ class EntrySignalGenerator(ABC, Generic[TConfig]):
     
     모든 진입 로직은 이 인터페이스를 구현해야 함
     """
-    
-    CONFIG_CLASS: Type[TConfig] = dict  # 서브클래스에서 오버라이드
-    
+
+    CONFIG_CLASS: type[TConfig] = dict  # 서브클래스에서 오버라이드
+
     def __init__(self, config: TConfig | dict):
-        if isinstance(config, dict) and self.CONFIG_CLASS != dict:
+        if isinstance(config, dict) and dict != self.CONFIG_CLASS:
             self.config = self.CONFIG_CLASS(**config)
         else:
             self.config = config
         self._validate_config()
-    
+
     def _validate_config(self):
         """설정 유효성 검증 - 필요시 오버라이드"""
         pass
-    
+
     @property
     @abstractmethod
     def required_indicators(self) -> list[str]:
         """필요한 지표 목록"""
         pass
-    
+
     @abstractmethod
     async def generate(self, context: EntryContext) -> Signal | None:
         """진입 시그널 생성"""
@@ -332,30 +333,30 @@ class ExitSignalGenerator(ABC, Generic[TConfig]):
     
     모든 청산 로직은 이 인터페이스를 구현해야 함
     """
-    
-    CONFIG_CLASS: Type[TConfig] = dict
-    
+
+    CONFIG_CLASS: type[TConfig] = dict
+
     def __init__(self, config: TConfig | dict):
-        if isinstance(config, dict) and self.CONFIG_CLASS != dict:
+        if isinstance(config, dict) and dict != self.CONFIG_CLASS:
             self.config = self.CONFIG_CLASS(**config)
         else:
             self.config = config
         self._validate_config()
-    
+
     def _validate_config(self):
         """설정 유효성 검증"""
         pass
-    
+
     @abstractmethod
     async def check_exit(self, context: ExitContext) -> ExitSignal:
         """청산 여부 판단"""
         pass
-    
+
     @abstractmethod
     def update_state(self, position: Position, current_price: float):
         """포지션 상태 업데이트"""
         pass
-    
+
     def cleanup(self, position_id: str):
         """포지션 종료 시 정리"""
         pass
@@ -363,15 +364,15 @@ class ExitSignalGenerator(ABC, Generic[TConfig]):
 
 class PositionSizer(ABC, Generic[TConfig]):
     """포지션 사이징 추상 클래스"""
-    
-    CONFIG_CLASS: Type[TConfig] = dict
-    
+
+    CONFIG_CLASS: type[TConfig] = dict
+
     def __init__(self, config: TConfig | dict):
-        if isinstance(config, dict) and self.CONFIG_CLASS != dict:
+        if isinstance(config, dict) and dict != self.CONFIG_CLASS:
             self.config = self.CONFIG_CLASS(**config)
         else:
             self.config = config
-    
+
     @abstractmethod
     def calculate(
         self,
@@ -389,26 +390,26 @@ class PositionSizer(ABC, Generic[TConfig]):
 
 class ComponentRegistry:
     """컴포넌트 레지스트리 기본 클래스"""
-    
-    _components: dict[str, Type] = {}
-    
+
+    _components: dict[str, type] = {}
+
     @classmethod
     def register(cls, name: str) -> Callable:
         """데코레이터로 컴포넌트 등록"""
-        def decorator(component_class: Type) -> Type:
+        def decorator(component_class: type) -> type:
             cls._components[name] = component_class
             return component_class
         return decorator
-    
+
     @classmethod
     def create(cls, name: str, params: dict) -> Any:
         """이름으로 컴포넌트 생성"""
         if name not in cls._components:
             available = list(cls._components.keys())
             raise ValueError(f"Unknown: {name}. Available: {available}")
-        
+
         return cls._components[name](params)
-    
+
     @classmethod
     def list_all(cls) -> list[str]:
         return list(cls._components.keys())
@@ -436,9 +437,9 @@ class SizerRegistry(ComponentRegistry):
 @EntryRegistry.register("bb_lower_reentry")
 class BBLowerReentryEntry(EntrySignalGenerator[BBEntryParams]):
     """볼린저 밴드 하단 재진입 전략"""
-    
+
     CONFIG_CLASS = BBEntryParams
-    
+
     @property
     def required_indicators(self) -> list[str]:
         c = self.config
@@ -447,32 +448,32 @@ class BBLowerReentryEntry(EntrySignalGenerator[BBEntryParams]):
             f"RSI_{c.rsi_period}",
             f"VOLUME_MA_{c.volume_ma_period}" if c.volume_confirm else None,
         ]
-    
+
     async def generate(self, context: EntryContext) -> Signal | None:
         c = self.config
         indicators = context.indicators
         data = context.market_data
-        
+
         # 지표 가져오기
         bb_key = f"BB_{c.bb_period}_{c.bb_std}"
         rsi_key = f"RSI_{c.rsi_period}"
-        
+
         bb = indicators.get(bb_key)
         rsi = indicators.get(rsi_key)
-        
+
         if bb is None or rsi is None:
             return None
-        
+
         close = data.get('close', 0)
         prev_close = data.get('prev_close', 0)
-        
+
         # 조건 1: BB 하단 이탈 후 재진입
         bb_lower = bb.get('lower', 0)
         reentry_condition = prev_close < bb_lower and close > bb_lower
-        
+
         # 조건 2: RSI 과매도
         rsi_condition = rsi < c.rsi_oversold
-        
+
         # 조건 3: 거래량 확인 (선택)
         volume_condition = True
         if c.volume_confirm:
@@ -480,11 +481,11 @@ class BBLowerReentryEntry(EntrySignalGenerator[BBEntryParams]):
             vol_ma = indicators.get(vol_ma_key, 0)
             current_volume = data.get('volume', 0)
             volume_condition = current_volume > vol_ma * c.volume_threshold
-        
+
         # 모든 조건 충족 시 시그널 생성
         if reentry_condition and rsi_condition and volume_condition:
             strength = self._calculate_strength(rsi, bb, close)
-            
+
             return Signal(
                 symbol=context.symbol,
                 direction=SignalDirection.BUY,
@@ -499,16 +500,16 @@ class BBLowerReentryEntry(EntrySignalGenerator[BBEntryParams]):
                     "close": close,
                 }
             )
-        
+
         return None
-    
+
     def _calculate_strength(self, rsi: float, bb: dict, close: float) -> float:
         """시그널 강도 계산"""
         c = self.config
-        
+
         # RSI 강도 (낮을수록 강함)
         rsi_score = max(0, (c.rsi_oversold - rsi) / c.rsi_oversold)
-        
+
         # BB 이탈 강도
         bb_lower = bb.get('lower', close)
         bb_middle = bb.get('middle', close)
@@ -516,34 +517,34 @@ class BBLowerReentryEntry(EntrySignalGenerator[BBEntryParams]):
             bb_score = max(0, min(1, (bb_lower - close) / (bb_middle - bb_lower)))
         else:
             bb_score = 0.5
-        
+
         return min(1.0, (rsi_score + bb_score) / 2)
 
 
 @EntryRegistry.register("ofi_imbalance")
 class OFIImbalanceEntry(EntrySignalGenerator[OFIEntryParams]):
     """OFI 기반 호가 불균형 진입 전략"""
-    
+
     CONFIG_CLASS = OFIEntryParams
-    
+
     @property
     def required_indicators(self) -> list[str]:
         return ["OFI", "ORDERBOOK_IMBALANCE", "LIQUIDITY_SCORE"]
-    
+
     async def generate(self, context: EntryContext) -> Signal | None:
         c = self.config
         indicators = context.indicators
-        
+
         ofi = indicators.get("OFI", {})
         imbalance = indicators.get("ORDERBOOK_IMBALANCE", 0)
         liquidity = indicators.get("LIQUIDITY_SCORE", 0)
-        
+
         ofi_z = ofi.get("z_score", 0)
-        
+
         # 유동성 조건
         if liquidity < c.liquidity_min:
             return None
-        
+
         # 매수 시그널
         if ofi_z > c.ofi_threshold and imbalance > c.imbalance_threshold:
             return Signal(
@@ -556,7 +557,7 @@ class OFIImbalanceEntry(EntrySignalGenerator[OFIEntryParams]):
                 entry_type="ofi_imbalance",
                 metadata={"ofi_z": ofi_z, "imbalance": imbalance}
             )
-        
+
         # 매도 시그널
         if ofi_z < -c.ofi_threshold and imbalance < -c.imbalance_threshold:
             return Signal(
@@ -569,7 +570,7 @@ class OFIImbalanceEntry(EntrySignalGenerator[OFIEntryParams]):
                 entry_type="ofi_imbalance",
                 metadata={"ofi_z": ofi_z, "imbalance": imbalance}
             )
-        
+
         return None
 
 
@@ -584,14 +585,14 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitParams]):
     
     모든 임계값은 설정에서 로드 - 하드코딩 절대 금지!
     """
-    
+
     CONFIG_CLASS = ThreeStageExitParams
-    
+
     def __init__(self, config: ThreeStageExitParams | dict):
         super().__init__(config)
         self._states: dict[str, ExitState] = {}
         self._highest_prices: dict[str, float] = {}
-    
+
     def _validate_config(self):
         c = self.config
         assert c.hard_stop_pct > 0
@@ -599,17 +600,17 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitParams]):
         assert c.maximize_threshold_pct > c.breakeven_threshold_pct
         assert c.trailing_stop_pct > 0
         assert c.tight_trailing_pct < c.trailing_stop_pct
-    
+
     async def check_exit(self, context: ExitContext) -> ExitSignal:
         position = context.position
         current_price = context.market_data.get('close', position.current_price)
-        
+
         # 현재 가격 업데이트
         position.current_price = current_price
         pnl_pct = position.pnl_pct
-        
+
         state = self._states.get(position.id, ExitState.SURVIVAL)
-        
+
         # 상태별 처리
         if state == ExitState.SURVIVAL:
             return self._check_survival(position, pnl_pct)
@@ -617,11 +618,11 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitParams]):
             return self._check_breakeven(position, pnl_pct, current_price)
         else:  # MAXIMIZE
             return self._check_maximize(position, pnl_pct, current_price)
-    
+
     def _check_survival(self, position: Position, pnl_pct: float) -> ExitSignal:
         """Stage 1: Survival - Hard Stop"""
         c = self.config
-        
+
         if pnl_pct <= -c.hard_stop_pct:
             return ExitSignal(
                 should_exit=True,
@@ -629,17 +630,17 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitParams]):
                 exit_price=position.current_price,
                 metadata={"pnl_pct": pnl_pct, "state": "SURVIVAL"}
             )
-        
+
         # 상태 전환 체크
         if pnl_pct >= c.breakeven_threshold_pct:
             self._states[position.id] = ExitState.BREAKEVEN
-        
+
         return ExitSignal(should_exit=False, reason="HOLDING")
-    
+
     def _check_breakeven(self, position: Position, pnl_pct: float, current_price: float) -> ExitSignal:
         """Stage 2: Breakeven - 본전 보장"""
         c = self.config
-        
+
         if pnl_pct <= c.breakeven_buffer_pct:
             return ExitSignal(
                 should_exit=True,
@@ -647,32 +648,32 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitParams]):
                 exit_price=current_price,
                 metadata={"pnl_pct": pnl_pct, "state": "BREAKEVEN"}
             )
-        
+
         # 상태 전환 체크
         if pnl_pct >= c.maximize_threshold_pct:
             self._states[position.id] = ExitState.MAXIMIZE
             self._highest_prices[position.id] = current_price
-        
+
         return ExitSignal(should_exit=False, reason="HOLDING")
-    
+
     def _check_maximize(self, position: Position, pnl_pct: float, current_price: float) -> ExitSignal:
         """Stage 3: Maximize - Trailing Stop"""
         c = self.config
-        
+
         # 고점 갱신
         highest = self._highest_prices.get(position.id, current_price)
         if current_price > highest:
             self._highest_prices[position.id] = current_price
             highest = current_price
-        
+
         # 동적 트레일링 폭
         trailing_pct = c.trailing_stop_pct
         if pnl_pct >= c.tight_trailing_trigger_pct:
             trailing_pct = c.tight_trailing_pct
-        
+
         # 고점 대비 하락률
         drop_pct = (highest - current_price) / highest * 100
-        
+
         if drop_pct >= trailing_pct:
             return ExitSignal(
                 should_exit=True,
@@ -685,19 +686,19 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitParams]):
                     "state": "MAXIMIZE"
                 }
             )
-        
+
         return ExitSignal(should_exit=False, reason="HOLDING")
-    
+
     def update_state(self, position: Position, current_price: float):
         """상태 업데이트 (외부 호출용)"""
         position.current_price = current_price
-        
+
         # 고점/저점 업데이트
         if current_price > position.highest_price:
             position.highest_price = current_price
         if current_price < position.lowest_price:
             position.lowest_price = current_price
-    
+
     def cleanup(self, position_id: str):
         """포지션 종료 시 정리"""
         self._states.pop(position_id, None)
@@ -707,24 +708,24 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitParams]):
 @ExitRegistry.register("scalping")
 class ScalpingExit(ExitSignalGenerator[ScalpingExitParams]):
     """스캘핑 청산 전략 (선물용)"""
-    
+
     CONFIG_CLASS = ScalpingExitParams
-    
+
     def __init__(self, config: ScalpingExitParams | dict):
         super().__init__(config)
         self._entry_times: dict[str, datetime] = {}
-    
+
     async def check_exit(self, context: ExitContext) -> ExitSignal:
         c = self.config
         position = context.position
         current_price = context.market_data.get('close', 0)
-        
+
         # 틱 손익 계산 (선물 기준)
         tick_size = context.market_data.get('tick_size', 0.05)
         tick_pnl = (current_price - position.entry_price) / tick_size
         if position.side == "SELL":
             tick_pnl = -tick_pnl
-        
+
         # Stop Loss
         if tick_pnl <= -c.stop_ticks:
             return ExitSignal(
@@ -732,7 +733,7 @@ class ScalpingExit(ExitSignalGenerator[ScalpingExitParams]):
                 reason=f"TICK_STOP ({tick_pnl:.0f} ticks)",
                 exit_price=current_price
             )
-        
+
         # Take Profit
         if tick_pnl >= c.target_ticks:
             return ExitSignal(
@@ -740,7 +741,7 @@ class ScalpingExit(ExitSignalGenerator[ScalpingExitParams]):
                 reason=f"TICK_TARGET ({tick_pnl:.0f} ticks)",
                 exit_price=current_price
             )
-        
+
         # Time Stop
         entry_time = self._entry_times.get(position.id, position.entry_time)
         elapsed = (context.timestamp - entry_time).total_seconds()
@@ -750,12 +751,12 @@ class ScalpingExit(ExitSignalGenerator[ScalpingExitParams]):
                 reason=f"TIME_STOP ({elapsed:.0f}s)",
                 exit_price=current_price
             )
-        
+
         # OFI 반전 청산
         if c.ofi_reversal_exit:
             ofi = context.indicators.get("OFI", {})
             ofi_z = ofi.get("z_score", 0)
-            
+
             if position.side == "BUY" and ofi_z < -1.0:
                 return ExitSignal(
                     should_exit=True,
@@ -768,14 +769,14 @@ class ScalpingExit(ExitSignalGenerator[ScalpingExitParams]):
                     reason=f"OFI_REVERSAL ({ofi_z:.2f})",
                     exit_price=current_price
                 )
-        
+
         return ExitSignal(should_exit=False, reason="HOLDING")
-    
+
     def update_state(self, position: Position, current_price: float):
         position.current_price = current_price
         if position.id not in self._entry_times:
             self._entry_times[position.id] = position.entry_time
-    
+
     def cleanup(self, position_id: str):
         self._entry_times.pop(position_id, None)
 
@@ -787,9 +788,9 @@ class ScalpingExit(ExitSignalGenerator[ScalpingExitParams]):
 @SizerRegistry.register("risk_based")
 class RiskBasedSizer(PositionSizer[RiskBasedSizerParams]):
     """리스크 기반 포지션 사이징"""
-    
+
     CONFIG_CLASS = RiskBasedSizerParams
-    
+
     def calculate(
         self,
         signal: Signal,
@@ -797,43 +798,43 @@ class RiskBasedSizer(PositionSizer[RiskBasedSizerParams]):
         current_positions: list[Position]
     ) -> int:
         c = self.config
-        
+
         # 최대 포지션 수 체크
         if len(current_positions) >= c.max_positions:
             return 0
-        
+
         # 이미 해당 종목 포지션이 있는지 체크
         existing = [p for p in current_positions if p.symbol == signal.symbol]
         if existing:
             return 0
-        
+
         # 리스크 금액 계산
         risk_amount = account_balance * (c.risk_per_trade_pct / 100)
-        
+
         # 최대 포지션 금액
         max_position_amount = account_balance * (c.max_position_pct / 100)
-        
+
         # 가격 정보로 수량 계산 (signal metadata에서)
         price = signal.metadata.get('close', 0)
         if price <= 0:
             return 0
-        
+
         # 손절폭 기준 수량 (예: 2% 손절 기준)
         stop_pct = signal.metadata.get('stop_pct', 2.0)
         quantity_by_risk = int(risk_amount / (price * stop_pct / 100))
-        
+
         # 최대 금액 기준 수량
         quantity_by_max = int(max_position_amount / price)
-        
+
         return min(quantity_by_risk, quantity_by_max)
 
 
 @SizerRegistry.register("fixed")
 class FixedSizer(PositionSizer[FixedSizerParams]):
     """고정 수량 포지션 사이징 (선물용)"""
-    
+
     CONFIG_CLASS = FixedSizerParams
-    
+
     def calculate(
         self,
         signal: Signal,
@@ -841,17 +842,17 @@ class FixedSizer(PositionSizer[FixedSizerParams]):
         current_positions: list[Position]
     ) -> int:
         c = self.config
-        
+
         # 현재 포지션 합계
         current_contracts = sum(
-            p.quantity for p in current_positions 
+            p.quantity for p in current_positions
             if p.symbol == signal.symbol
         )
-        
+
         # 최대 계약 수 체크
         if current_contracts >= c.max_contracts:
             return 0
-        
+
         return min(c.contracts, c.max_contracts - current_contracts)
 
 
@@ -865,7 +866,7 @@ class TradingStrategy:
     
     구체적 로직 없이 주입받은 컴포넌트만 사용
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -879,21 +880,21 @@ class TradingStrategy:
         self.entry = entry
         self.exit = exit
         self.position_sizer = position_sizer
-    
+
     @property
     def required_indicators(self) -> list[str]:
         """필요한 모든 지표"""
         indicators = self.entry.required_indicators
         return [i for i in indicators if i is not None]
-    
+
     async def check_entry(self, context: EntryContext) -> Signal | None:
         """진입 조건 확인"""
         return await self.entry.generate(context)
-    
+
     async def check_exit(self, context: ExitContext) -> ExitSignal:
         """청산 조건 확인"""
         return await self.exit.check_exit(context)
-    
+
     def calculate_size(
         self,
         signal: Signal,
@@ -910,16 +911,16 @@ class StrategyFactory:
     
     이 팩토리를 통해 YAML 설정만으로 전략이 생성됨
     """
-    
+
     @classmethod
     def create(cls, config: StrategyConfig) -> TradingStrategy:
         """설정으로부터 전략 생성"""
         s = config.strategy
-        
+
         entry = EntryRegistry.create(s.entry.type, s.entry.params)
         exit = ExitRegistry.create(s.exit.type, s.exit.params)
         sizer = SizerRegistry.create(s.position.type, s.position.params)
-        
+
         return TradingStrategy(
             name=s.name,
             asset_class=AssetClass(s.asset_class),
@@ -927,13 +928,13 @@ class StrategyFactory:
             exit=exit,
             position_sizer=sizer,
         )
-    
+
     @classmethod
     def create_from_file(cls, asset_class: str, strategy_name: str) -> TradingStrategy:
         """파일로부터 전략 생성"""
         config = ConfigLoader.load_strategy(asset_class, strategy_name)
         return cls.create(config)
-    
+
     @classmethod
     def create_all(cls, asset_class: str = None) -> list[TradingStrategy]:
         """모든 활성화된 전략 생성"""
@@ -947,7 +948,7 @@ class StrategyFactory:
 
 async def example_usage():
     """사용 예시"""
-    
+
     # 1. 설정 기반 전략 생성
     config_data = {
         "strategy": {
@@ -985,14 +986,14 @@ async def example_usage():
             }
         }
     }
-    
+
     config = StrategyConfig(**config_data)
     strategy = StrategyFactory.create(config)
-    
+
     print(f"Strategy: {strategy.name}")
     print(f"Asset Class: {strategy.asset_class}")
     print(f"Required Indicators: {strategy.required_indicators}")
-    
+
     # 2. 진입 시그널 체크
     context = EntryContext(
         symbol="005930",
@@ -1010,15 +1011,15 @@ async def example_usage():
         timestamp=datetime.now(),
         asset_class=AssetClass.STOCK,
     )
-    
+
     signal = await strategy.check_entry(context)
     if signal:
         print(f"\n🎯 Entry Signal: {signal}")
-        
+
         # 3. 포지션 사이즈 계산
         size = strategy.calculate_size(signal, 10_000_000, [])
         print(f"Position Size: {size} shares")
-    
+
     # 4. 청산 체크 (포지션이 있다고 가정)
     position = Position(
         id="pos_001",
@@ -1032,14 +1033,14 @@ async def example_usage():
         current_price=67000,  # +3%
         highest_price=67000,
     )
-    
+
     exit_context = ExitContext(
         position=position,
         market_data={"close": 67000},
         indicators={},
         timestamp=datetime.now(),
     )
-    
+
     exit_signal = await strategy.check_exit(exit_context)
     print(f"\n📊 Exit Check: {exit_signal}")
 

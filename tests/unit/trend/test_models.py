@@ -23,7 +23,7 @@ def test_technical_data_creation():
 
 def test_trend_signal_creation():
     """Test TrendSignal dataclass."""
-    from shared.trend.models import TrendSignal, TechnicalData
+    from shared.trend.models import TechnicalData, TrendSignal
 
     tech_data = TechnicalData(
         timestamp=1705300800.0,

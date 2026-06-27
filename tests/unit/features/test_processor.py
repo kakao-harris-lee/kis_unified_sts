@@ -93,10 +93,10 @@ def test_trade_imbalance():
     processor = FeatureProcessor(config)
 
     # More buys than sells
-    for i in range(10):
+    for _i in range(10):
         processor.process_trade(price=330.0, size=10, side="BUY")
 
-    for i in range(5):
+    for _i in range(5):
         processor.process_trade(price=330.0, size=10, side="SELL")
 
     imbalance = processor.get_trade_imbalance()

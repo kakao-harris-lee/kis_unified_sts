@@ -20,7 +20,6 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Optional
 
 import numpy as np
 
@@ -113,13 +112,13 @@ class TechnicalCalculator:
 
         # 가장 긴 기간 + 여유분
         max_period = max(ma_slow_period, self.SENKOU_B_PERIOD)
-        self.price_history: Deque[BarInput] = deque(maxlen=max_period + 10)
+        self.price_history: deque[BarInput] = deque(maxlen=max_period + 10)
 
         # ATR 계산용
-        self._prev_close: Optional[float] = None
-        self._atr_values: Deque[float] = deque(maxlen=atr_period)
+        self._prev_close: float | None = None
+        self._atr_values: deque[float] = deque(maxlen=atr_period)
 
-        self._last_data: Optional[TechnicalData] = None
+        self._last_data: TechnicalData | None = None
 
     def update(self, high: float, low: float, close: float) -> TechnicalData:
         """새 바 데이터로 업데이트
@@ -230,7 +229,7 @@ class TechnicalCalculator:
 
         return float(np.mean(list(self._atr_values)))
 
-    def get_current_data(self) -> Optional[TechnicalData]:
+    def get_current_data(self) -> TechnicalData | None:
         """현재 지표 데이터"""
         return self._last_data
 

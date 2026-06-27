@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 # Required-key pattern for the post-event trading-range high/low (Setup C's
 # 15-minute breakout range). The minutes are encoded in the key itself
@@ -17,7 +17,7 @@ from enum import Enum
 _RECENT_RANGE_KEY_RE = re.compile(r"^last_(\d+)min_(high|low)$")
 
 
-class IndicatorKind(str, Enum):
+class IndicatorKind(StrEnum):
     """High-level indicator families."""
 
     BASE = "base"

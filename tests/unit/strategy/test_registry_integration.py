@@ -55,8 +55,8 @@ def test_create_entry_from_registry():
 @pytest.mark.asyncio
 async def test_entry_strategy_generate_signal():
     """Test that created strategies can generate signals."""
-    from shared.strategy.registry import EntryRegistry, register_builtin_components
     from shared.strategy.base import EntryContext
+    from shared.strategy.registry import EntryRegistry, register_builtin_components
 
     EntryRegistry.clear()
     register_builtin_components()
@@ -86,12 +86,12 @@ async def test_entry_strategy_generate_signal():
 def test_import_all_entries_from_module():
     """Test that all entries can be imported from the module."""
     from shared.strategy.entry import (
-        StochRSITrendEntry,
-        StochRSIConfig,
-        MeanReversionEntry,
-        MeanReversionConfig,
-        BreakoutEntry,
         BreakoutConfig,
+        BreakoutEntry,
+        MeanReversionConfig,
+        MeanReversionEntry,
+        StochRSIConfig,
+        StochRSITrendEntry,
     )
 
     # Verify all classes are importable

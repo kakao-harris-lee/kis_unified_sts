@@ -39,9 +39,10 @@ def test_calibrator_zscore_normalization():
 
 def test_calibrator_calibrated_probability():
     """Test calibrated probability output."""
+    import random
+
     from shared.ensemble.calibrator import ProbabilityCalibrator
     from shared.ensemble.config import EnsembleConfig
-    import random
 
     config = EnsembleConfig(calibration_lookback=100)
     calibrator = ProbabilityCalibrator(config)
@@ -62,9 +63,10 @@ def test_calibrator_calibrated_probability():
 
 def test_calibrator_not_ready():
     """Test calibrator before warmup."""
+    import random
+
     from shared.ensemble.calibrator import ProbabilityCalibrator
     from shared.ensemble.config import EnsembleConfig
-    import random
 
     config = EnsembleConfig(calibration_lookback=100)
     calibrator = ProbabilityCalibrator(config)

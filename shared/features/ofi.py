@@ -1,7 +1,6 @@
 """Order Flow Imbalance (OFI) Calculator."""
 import logging
 from collections import deque
-from typing import Deque, Optional, Tuple
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,13 +43,13 @@ class OFICalculator:
         self.config = config
 
         # Order book state
-        self._prev_bid: Optional[float] = None
-        self._prev_bid_qty: Optional[float] = None
-        self._prev_ask: Optional[float] = None
-        self._prev_ask_qty: Optional[float] = None
+        self._prev_bid: float | None = None
+        self._prev_bid_qty: float | None = None
+        self._prev_ask: float | None = None
+        self._prev_ask_qty: float | None = None
 
         # OFI history
-        self._ofi_history: Deque[float] = deque(maxlen=config.lookback)
+        self._ofi_history: deque[float] = deque(maxlen=config.lookback)
         self._cumulative_ofi: float = 0.0
 
     def update(
@@ -107,7 +106,7 @@ class OFICalculator:
             return 0.0
         return sum(self._ofi_history)
 
-    def get_ofi_zscore(self) -> Optional[float]:
+    def get_ofi_zscore(self) -> float | None:
         """Get z-score of the latest tick OFI.
 
         The z-score measures how extreme the most recent tick OFI is
@@ -130,7 +129,7 @@ class OFICalculator:
         latest_tick_ofi = self._ofi_history[-1]
         return (latest_tick_ofi - mean) / std
 
-    def is_signal(self) -> Tuple[bool, Optional[str]]:
+    def is_signal(self) -> tuple[bool, str | None]:
         """Check if OFI indicates a trading signal.
 
         Returns:

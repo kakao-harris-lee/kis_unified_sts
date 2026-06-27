@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import math
 
-
 from services.trading.indicator_engine import Candle, StreamingIndicatorEngine
 
 
@@ -855,7 +854,7 @@ class TestIndicatorFeatures:
         features1 = engine.get_indicator_features("005930")
         features2 = engine.get_indicator_features("005930")
 
-        for key in features1.keys():
+        for key in features1:
             assert (
                 features1[key] == features2[key]
             ), f"Feature '{key}' not deterministic"

@@ -11,8 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, time as dt_time, timedelta
-from typing import Optional
+from datetime import datetime, timedelta
+from datetime import time as dt_time
 
 import requests
 
@@ -97,13 +97,13 @@ def _last_known_target_date() -> str:
     return _CALENDAR.get_previous_market_day(today).strftime("%Y%m%d")
 
 
-def _get_krx_client() -> Optional[object]:
+def _get_krx_client() -> object | None:
     if not _get_krx_api_key():
         return None
     return object()
 
 
-def _last_trading_date_str(client: Optional[object] = None) -> str:
+def _last_trading_date_str(client: object | None = None) -> str:
     """Return most recent date with market snapshots in ``YYYYMMDD`` format."""
     _ = client
     if not _get_krx_api_key():
@@ -130,7 +130,7 @@ class PrevDayVolumeCache:
 
     def __init__(self) -> None:
         self._volumes: dict[str, int] = {}
-        self._date: Optional[str] = None
+        self._date: str | None = None
 
     def warm_all(self) -> int:
         """Bulk-load previous-day volumes for all KOSPI + KOSDAQ stocks."""
@@ -215,7 +215,7 @@ class PrevDayVolumeCache:
         return result
 
     @property
-    def date(self) -> Optional[str]:
+    def date(self) -> str | None:
         return self._date
 
     def __len__(self) -> int:

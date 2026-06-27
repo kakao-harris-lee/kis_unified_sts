@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Dict, Optional
 
 from shared.execution.config import ATSRoutingConfig, ExecutionVenuePreference
 from shared.execution.models import ExecutionVenue, OrderRequest, OrderSide
@@ -142,7 +141,7 @@ class VenueRouter:
             config: ATS routing configuration
         """
         self.config = config
-        self._time_windows: Dict[tuple[time, time], ExecutionVenuePreference] = {}
+        self._time_windows: dict[tuple[time, time], ExecutionVenuePreference] = {}
         self._parse_time_preferences()
 
     def _parse_time_preferences(self) -> None:
@@ -162,8 +161,8 @@ class VenueRouter:
     def select_venue(
         self,
         order: OrderRequest,
-        market_data: Optional[MarketData] = None,
-        current_time: Optional[datetime] = None,
+        market_data: MarketData | None = None,
+        current_time: datetime | None = None,
     ) -> RoutingDecision:
         """Select execution venue for order.
 
@@ -331,10 +330,7 @@ class VenueRouter:
                 return False
 
         # Sector exclusion filter
-        if market_data.sector and market_data.sector in self.config.excluded_sectors:
-            return False
-
-        return True
+        return not (market_data.sector and market_data.sector in self.config.excluded_sectors)
 
     def _check_liquidity(self, order: OrderRequest, market_data: MarketData) -> bool:
         """Check if ATS has sufficient liquidity for order.
@@ -354,10 +350,7 @@ class VenueRouter:
 
         # Check relative to order size
         required_depth = order.quantity * self.config.min_depth_multiplier
-        if ats_depth < required_depth:
-            return False
-
-        return True
+        return not ats_depth < required_depth
 
     def _estimate_fill_rate(
         self, market_data: MarketData, order: OrderRequest

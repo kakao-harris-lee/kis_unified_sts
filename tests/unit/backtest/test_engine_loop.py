@@ -11,7 +11,6 @@ import pytest
 from shared.backtest.config import BacktestConfig
 from shared.backtest.engine import BacktestEngine, SignalType, SimpleMAStrategy
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

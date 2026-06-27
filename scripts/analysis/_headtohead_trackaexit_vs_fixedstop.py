@@ -41,10 +41,8 @@ import argparse
 import json
 import sys
 from dataclasses import replace
-from datetime import date
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent

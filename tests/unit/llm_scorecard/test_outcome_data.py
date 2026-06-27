@@ -1,6 +1,8 @@
 # tests/unit/llm_scorecard/test_outcome_data.py
-import pandas as pd
 from datetime import datetime
+
+import pandas as pd
+
 from shared.llm_scorecard.outcome_data import OutcomeData
 
 

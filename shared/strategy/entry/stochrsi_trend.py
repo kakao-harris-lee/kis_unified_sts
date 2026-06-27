@@ -6,7 +6,6 @@ Entry strategy based on StochRSI indicator:
 """
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -55,7 +54,7 @@ class StochRSITrendEntry(EntrySignalGenerator[StochRSIConfig]):
     def required_indicators(self) -> list[str]:
         return ["stochrsi_k", "stochrsi_d", "stochrsi_k_prev"]
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """Generate entry signal based on StochRSI crossover."""
         data = context.market_data
 

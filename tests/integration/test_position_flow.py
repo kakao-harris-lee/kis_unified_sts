@@ -3,17 +3,18 @@
 Tests the complete flow from position opening through exit condition
 monitoring and closing.
 """
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_position_lifecycle():
     """Test complete position lifecycle: open -> monitor -> close."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import PositionSide, PositionState
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     # Setup
     exit_config = ExitConfig(
@@ -64,9 +65,9 @@ async def test_position_lifecycle():
 @pytest.mark.asyncio
 async def test_multiple_positions():
     """Test managing multiple positions simultaneously."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import PositionSide
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)
@@ -109,9 +110,9 @@ async def test_multiple_positions():
 @pytest.mark.asyncio
 async def test_position_restore():
     """Test position restoration after restart."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import Position, PositionSide, PositionState
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)

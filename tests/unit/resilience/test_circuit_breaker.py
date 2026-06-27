@@ -3,7 +3,6 @@
 import threading
 import time
 
-
 from shared.resilience import CircuitBreaker, CircuitBreakerConfig, CircuitState
 
 

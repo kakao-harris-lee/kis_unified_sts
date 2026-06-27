@@ -35,7 +35,7 @@ import socket
 import threading
 import time
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import websocket
@@ -124,7 +124,7 @@ MAX_PRICE = 1e9
 MIN_PRICE = -1e9
 
 
-class WSMessageType(str, Enum):
+class WSMessageType(StrEnum):
     """WebSocket message types."""
 
     SUBSCRIBE = "1"
@@ -772,10 +772,9 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         # whose app-level PINGPONG is not echoed back verbatim. The frame is
         # keyed by header.tr_id (not tr_cd); is_pingpong checks both so a missed
         # echo can't silently regress and re-cause the periodic-drop incident.
-        if is_pingpong(header):
-            if self.ws and self.is_connected:
-                self.ws.send(json.dumps(data))
-                logger.debug("[KIS WS] PINGPONG echoed")
+        if is_pingpong(header) and self.ws and self.is_connected:
+            self.ws.send(json.dumps(data))
+            logger.debug("[KIS WS] PINGPONG echoed")
 
         msg_code = body.get("msg_cd", "")
         if msg_code and msg_code != "OPSP0000":

@@ -37,7 +37,7 @@ class MarketDataStore(Protocol):
         start: date | datetime | None = None,
         end: date | datetime | None = None,
         limit: int | None = None,
-    ) -> "Any":
+    ) -> Any:
         """Load minute bars as a pandas DataFrame."""
         ...
 
@@ -47,15 +47,15 @@ class MarketDataStore(Protocol):
         start: date | datetime | None = None,
         end: date | datetime | None = None,
         limit: int | None = None,
-    ) -> "Any":
+    ) -> Any:
         """Load daily bars as a pandas DataFrame."""
         ...
 
-    def append_minute_bars(self, rows: Iterable[Mapping[str, Any]] | "Any") -> int:
+    def append_minute_bars(self, rows: Iterable[Mapping[str, Any]] | Any) -> int:
         """Append minute bars and return the row count written."""
         ...
 
-    def append_daily_bars(self, rows: Iterable[Mapping[str, Any]] | "Any") -> int:
+    def append_daily_bars(self, rows: Iterable[Mapping[str, Any]] | Any) -> int:
         """Append daily bars and return the row count written."""
         ...
 
@@ -89,7 +89,7 @@ def _empty_frame():
     return pd.DataFrame(columns=_BAR_COLUMNS)
 
 
-def _normalize_frame(rows: Iterable[Mapping[str, Any]] | "Any") -> "Any":
+def _normalize_frame(rows: Iterable[Mapping[str, Any]] | Any) -> Any:
     pd = _require_pandas()
     if hasattr(rows, "copy") and hasattr(rows, "columns"):
         df = rows.copy()
@@ -155,7 +155,7 @@ class ParquetMarketDataStore:
         start: date | datetime | None = None,
         end: date | datetime | None = None,
         limit: int | None = None,
-    ) -> "Any":
+    ) -> Any:
         return self._query_bars("minute", symbol, start=start, end=end, limit=limit)
 
     def get_daily_bars(
@@ -164,13 +164,13 @@ class ParquetMarketDataStore:
         start: date | datetime | None = None,
         end: date | datetime | None = None,
         limit: int | None = None,
-    ) -> "Any":
+    ) -> Any:
         return self._query_bars("daily", symbol, start=start, end=end, limit=limit)
 
-    def append_minute_bars(self, rows: Iterable[Mapping[str, Any]] | "Any") -> int:
+    def append_minute_bars(self, rows: Iterable[Mapping[str, Any]] | Any) -> int:
         return self._append_bars("minute", rows)
 
-    def append_daily_bars(self, rows: Iterable[Mapping[str, Any]] | "Any") -> int:
+    def append_daily_bars(self, rows: Iterable[Mapping[str, Any]] | Any) -> int:
         return self._append_bars("daily", rows)
 
     def dataset_manifest(self) -> dict[str, Any]:
@@ -220,7 +220,7 @@ class ParquetMarketDataStore:
         start: date | datetime | None,
         end: date | datetime | None,
         limit: int | None,
-    ) -> "Any":
+    ) -> Any:
         files = self._files(timeframe, symbol)
         if not files:
             return _empty_frame()
@@ -259,7 +259,7 @@ class ParquetMarketDataStore:
     def _append_bars(
         self,
         timeframe: Timeframe,
-        rows: Iterable[Mapping[str, Any]] | "Any",
+        rows: Iterable[Mapping[str, Any]] | Any,
     ) -> int:
         df = _normalize_frame(rows)
         if df.empty:
@@ -286,7 +286,7 @@ class ParquetMarketDataStore:
         self,
         symbol: str,
         trading_day: date | datetime,
-        rows: Iterable[Mapping[str, Any]] | "Any",
+        rows: Iterable[Mapping[str, Any]] | Any,
     ) -> int:
         """Replace one symbol/day of minute bars with an idempotent file write."""
         return self._replace_day("minute", symbol, trading_day, rows)
@@ -295,7 +295,7 @@ class ParquetMarketDataStore:
         self,
         symbol: str,
         trading_day: date | datetime,
-        rows: Iterable[Mapping[str, Any]] | "Any",
+        rows: Iterable[Mapping[str, Any]] | Any,
     ) -> int:
         """Replace one symbol/day of daily bars with an idempotent file write."""
         return self._replace_day("daily", symbol, trading_day, rows)
@@ -305,7 +305,7 @@ class ParquetMarketDataStore:
         timeframe: Timeframe,
         symbol: str,
         trading_day: date | datetime,
-        rows: Iterable[Mapping[str, Any]] | "Any",
+        rows: Iterable[Mapping[str, Any]] | Any,
     ) -> int:
         import shutil
 
@@ -375,7 +375,7 @@ def _date_only(value: date | datetime | None) -> date | None:
     return value
 
 
-def _limit_frame(df: "Any", limit: int | None) -> "Any":
+def _limit_frame(df: Any, limit: int | None) -> Any:
     if limit is not None and limit > 0:
         return df.head(int(limit)).reset_index(drop=True)
     return df
@@ -408,7 +408,7 @@ def load_market_bars_for_backtest(
     end: date | datetime | None = None,
     config: StorageConfig | None = None,
     futures_table: str | None = None,
-) -> "Any":
+) -> Any:
     """Load configured market data for backtest symbol mode."""
     store = create_market_data_store(
         config,

@@ -12,7 +12,7 @@ import re
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -434,12 +434,12 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
 
     def _fallback_score_components(
         self,
-        technical: Optional[Dict],
-        backtest: Optional[Dict],
-    ) -> tuple[int, List[str], List[str]]:
+        technical: dict | None,
+        backtest: dict | None,
+    ) -> tuple[int, list[str], list[str]]:
         score = 0
-        reasons: List[str] = []
-        risks: List[str] = []
+        reasons: list[str] = []
+        risks: list[str] = []
         if technical:
             score += self._fallback_score_technical(technical, reasons, risks)
         if backtest:
@@ -448,7 +448,7 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
 
     @staticmethod
     def _fallback_score_technical(
-        technical: Dict, reasons: List[str], risks: List[str]
+        technical: dict, reasons: list[str], risks: list[str]
     ) -> int:
         score = 0
         rsi = technical.get("rsi", 50)
@@ -470,7 +470,7 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
 
     @staticmethod
     def _fallback_score_backtest(
-        backtest: Dict, reasons: List[str], risks: List[str]
+        backtest: dict, reasons: list[str], risks: list[str]
     ) -> int:
         score = 0
         win_rate = backtest.get("win_rate", 50)
@@ -502,8 +502,8 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
 
     @staticmethod
     def _fallback_defaults(
-        reasons: List[str], risks: List[str]
-    ) -> tuple[List[str], List[str]]:
+        reasons: list[str], risks: list[str]
+    ) -> tuple[list[str], list[str]]:
         if not reasons:
             reasons = ["분석 데이터 부족"]
         if not risks:
@@ -692,7 +692,7 @@ class UnifiedTradingAnalyzer:
     def _collect_market_frames(self) -> tuple[list["pd.DataFrame"], list[str]]:
         market_kospi = self.stock_collector.collect("KOSPI")
         market_kosdaq = self.stock_collector.collect("KOSDAQ")
-        frames: list["pd.DataFrame"] = []
+        frames: list[pd.DataFrame] = []
         markets: list[str] = []
         if market_kospi is not None and len(market_kospi) > 0:
             frames.append(market_kospi)
@@ -716,7 +716,7 @@ class UnifiedTradingAnalyzer:
     def _prepare_market_df(
         self,
         market_df: "pd.DataFrame",
-    ) -> tuple[Optional["pd.DataFrame"], bool, Optional[Dict[str, Any]]]:
+    ) -> tuple[Optional["pd.DataFrame"], bool, dict[str, Any] | None]:
         if market_df is None or len(market_df) == 0:
             logger.error("Failed to collect market data")
             return None, False, None
@@ -765,9 +765,9 @@ class UnifiedTradingAnalyzer:
     def _build_screened_stocks(
         self,
         top_volume: "pd.DataFrame",
-    ) -> tuple[list[StockInfo], Dict[str, List[str]]]:
+    ) -> tuple[list[StockInfo], dict[str, list[str]]]:
         stocks: list[StockInfo] = []
-        excluded: Dict[str, List[str]] = {}
+        excluded: dict[str, list[str]] = {}
         for code in top_volume.index:
             row = top_volume.loc[code]
             name = self.stock_collector.get_stock_name(code)
@@ -794,7 +794,7 @@ class UnifiedTradingAnalyzer:
         self,
         stock: StockInfo,
         history_days: int,
-    ) -> tuple[Optional["pd.DataFrame"], Optional[List[str]]]:
+    ) -> tuple[Optional["pd.DataFrame"], list[str] | None]:
         df = self.stock_collector.get_stock_history(stock.code, history_days)
         if df is None or len(df) < int(self.config.stock_min_history_days):
             reason = [f"history_insufficient:{0 if df is None else len(df)}"]
@@ -814,7 +814,7 @@ class UnifiedTradingAnalyzer:
         self,
         df: "pd.DataFrame",
         stock: StockInfo,
-    ) -> tuple[Optional[Dict[str, Any]], Optional[List[str]]]:
+    ) -> tuple[dict[str, Any] | None, list[str] | None]:
         lookback = max(1, int(self.config.stock_volume_lookback_days))
         vol_window = df["거래량"].tail(lookback + 1)
         avg_volume = (
@@ -842,7 +842,7 @@ class UnifiedTradingAnalyzer:
             "avg_trade_value": avg_trade_value,
         }, None
 
-    def _compute_risk_metrics(self, df: "pd.DataFrame") -> Dict[str, Any]:
+    def _compute_risk_metrics(self, df: "pd.DataFrame") -> dict[str, Any]:
         close = df["종가"].astype(float)
         returns = close.pct_change()
         momentum = self._calc_momentum_metrics(
@@ -863,8 +863,8 @@ class UnifiedTradingAnalyzer:
     def _collect_external_sources(
         self,
         stock: StockInfo,
-    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-        mk_news: Dict[str, Any] = {}
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        mk_news: dict[str, Any] = {}
         try:
             mk_news = self.mk_news_collector.collect(stock.code)
             all_news = mk_news.get("market_news", []) + mk_news.get("stock_news", [])
@@ -874,7 +874,7 @@ class UnifiedTradingAnalyzer:
         except Exception as e:
             logger.debug(f"MK news failed for {stock.code}: {e}")
 
-        dart_data: Dict[str, Any] = {}
+        dart_data: dict[str, Any] = {}
         try:
             corp_code = self._dart_corp_mapper.get_corp_code(stock.code)
             dart_data = (
@@ -885,13 +885,13 @@ class UnifiedTradingAnalyzer:
         except Exception as e:
             logger.debug(f"DART data failed for {stock.code}: {e}")
 
-        ksd_data: Dict[str, Any] = {}
+        ksd_data: dict[str, Any] = {}
         try:
             ksd_data = self.ksd_collector.collect(stock.code)
         except Exception as e:
             logger.debug(f"KSD data failed for {stock.code}: {e}")
 
-        krx_stock_info: Dict[str, Any] = {}
+        krx_stock_info: dict[str, Any] = {}
         try:
             krx_stock_info = self.krx_collector.get_stock_info(stock.code) or {}
         except Exception as e:
@@ -902,10 +902,10 @@ class UnifiedTradingAnalyzer:
     def _build_screening_metrics(
         self,
         stock: StockInfo,
-        liquidity: Dict[str, Any],
-        risk: Dict[str, Any],
-        risk_hits: List[str],
-    ) -> Dict[str, Any]:
+        liquidity: dict[str, Any],
+        risk: dict[str, Any],
+        risk_hits: list[str],
+    ) -> dict[str, Any]:
         return {
             "avg_volume": round(float(liquidity.get("avg_volume", 0.0)), 2),
             "avg_trade_value": round(float(liquidity.get("avg_trade_value", 0.0)), 2),
@@ -1148,7 +1148,7 @@ class UnifiedTradingAnalyzer:
     def _collect_futures_global(
         self,
         record_missing,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         try:
             return self.futures_global_collector.collect()
         except DataUnavailableError as e:
@@ -1158,7 +1158,7 @@ class UnifiedTradingAnalyzer:
     def _collect_futures_events(
         self,
         record_missing,
-    ) -> tuple[List[Any], List[Any]]:
+    ) -> tuple[list[Any], list[Any]]:
         try:
             events = self.futures_event_collector.collect()
             high_events = [e for e in events if e.importance == "높음"]
@@ -1170,8 +1170,8 @@ class UnifiedTradingAnalyzer:
     def _collect_futures_flow(
         self,
         record_missing,
-        missing_sources: List[str],
-    ) -> Optional[Any]:
+        missing_sources: list[str],
+    ) -> Any | None:
         try:
             flow_data, flow_missing = self.futures_flow_collector.collect()
             missing_sources.extend([f"futures_flow:{m}" for m in flow_missing])
@@ -1183,7 +1183,7 @@ class UnifiedTradingAnalyzer:
     def _collect_futures_technical(
         self,
         record_missing,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         try:
             return self.futures_tech_analyzer.analyze()
         except DataUnavailableError as e:
@@ -1195,9 +1195,9 @@ class UnifiedTradingAnalyzer:
         global_data,
         flow_data,
         technical,
-        high_events: List[Any],
+        high_events: list[Any],
     ) -> float:
-        score_components: List[Tuple[float, float]] = []
+        score_components: list[tuple[float, float]] = []
         if global_data is not None:
             score_components.append(
                 (global_data.global_score, self.config.futures_weight_global)
@@ -1236,7 +1236,7 @@ class UnifiedTradingAnalyzer:
     def _build_futures_strategy(
         self,
         overall_score: float,
-        technical: Optional[Dict[str, Any]],
+        technical: dict[str, Any] | None,
     ) -> tuple[str, str, float, float, float, str]:
         insufficient_data = technical is None
         entry = technical["index_price"] if technical else 0.0
@@ -1263,12 +1263,12 @@ class UnifiedTradingAnalyzer:
         self,
         global_data,
         flow_data,
-        high_events: List[Any],
-        technical: Optional[Dict[str, Any]],
-        missing_sources: List[str],
-    ) -> tuple[List[str], List[str]]:
-        catalysts: List[str] = []
-        risks: List[str] = []
+        high_events: list[Any],
+        technical: dict[str, Any] | None,
+        missing_sources: list[str],
+    ) -> tuple[list[str], list[str]]:
+        catalysts: list[str] = []
+        risks: list[str] = []
 
         self._append_global_catalysts(global_data, catalysts)
         self._append_flow_catalysts(flow_data, catalysts)
@@ -1279,12 +1279,12 @@ class UnifiedTradingAnalyzer:
         return catalysts, risks
 
     @staticmethod
-    def _append_global_catalysts(global_data, catalysts: List[str]) -> None:
+    def _append_global_catalysts(global_data, catalysts: list[str]) -> None:
         if global_data and global_data.sp500_change_pct > 0.5:
             catalysts.append(f"미국 증시 강세 ({global_data.sp500_change_pct:+.1f}%)")
 
     @staticmethod
-    def _append_flow_catalysts(flow_data, catalysts: List[str]) -> None:
+    def _append_flow_catalysts(flow_data, catalysts: list[str]) -> None:
         if (
             flow_data
             and flow_data.foreign_futures_5d is not None
@@ -1297,7 +1297,7 @@ class UnifiedTradingAnalyzer:
             catalysts.append(f"선물 저평가 (베이시스 {flow_data.basis:.2f}pt)")
 
     @staticmethod
-    def _append_flow_risks(flow_data, risks: List[str]) -> None:
+    def _append_flow_risks(flow_data, risks: list[str]) -> None:
         if not flow_data or flow_data.microstructure_score is None:
             return
         if flow_data.microstructure_score <= -6:
@@ -1308,9 +1308,9 @@ class UnifiedTradingAnalyzer:
     @staticmethod
     def _append_market_risks(
         global_data,
-        high_events: List[Any],
-        technical: Optional[Dict[str, Any]],
-        risks: List[str],
+        high_events: list[Any],
+        technical: dict[str, Any] | None,
+        risks: list[str],
     ) -> None:
         if global_data and global_data.vix > 20:
             risks.append(f"VIX {global_data.vix:.1f} 상승")
@@ -1323,14 +1323,14 @@ class UnifiedTradingAnalyzer:
 
     @staticmethod
     def _append_missing_source_risks(
-        missing_sources: List[str], risks: List[str]
+        missing_sources: list[str], risks: list[str]
     ) -> None:
         if missing_sources:
             risks.append(f"데이터 누락: {', '.join(missing_sources)}")
 
     def _build_futures_plan(
         self,
-        technical: Optional[Dict[str, Any]],
+        technical: dict[str, Any] | None,
         direction: str,
         confidence: str,
         entry_cond: str,
@@ -1339,9 +1339,9 @@ class UnifiedTradingAnalyzer:
         take_profit: float,
         position: str,
         time_horizon: str,
-        risks: List[str],
-        catalysts: List[str],
-    ) -> Optional[FuturesTradingPlan]:
+        risks: list[str],
+        catalysts: list[str],
+    ) -> FuturesTradingPlan | None:
         if technical is None:
             return None
         return FuturesTradingPlan(
@@ -1369,9 +1369,9 @@ class UnifiedTradingAnalyzer:
         global_data,
         flow_data,
         technical,
-        events: List[Any],
-        missing_sources: List[str],
-    ) -> Dict[str, Any]:
+        events: list[Any],
+        missing_sources: list[str],
+    ) -> dict[str, Any]:
         return {
             "overall_score": round(overall_score, 1),
             "overall_bias": overall_bias.value,

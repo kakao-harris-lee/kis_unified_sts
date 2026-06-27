@@ -22,8 +22,8 @@ class TestClosedPositionsBounded:
     @pytest.mark.asyncio
     async def test_closed_positions_bounded(self, exit_config):
         """closed_positions should not grow beyond max_closed_history."""
-        from shared.position.manager import PositionManager
         from shared.models.position import PositionSide
+        from shared.position.manager import PositionManager
 
         manager = PositionManager(
             exit_config=exit_config,
@@ -56,8 +56,8 @@ class TestClosedPositionsBounded:
     @pytest.mark.asyncio
     async def test_closed_positions_fifo(self, exit_config):
         """Older positions should be removed first (FIFO)."""
-        from shared.position.manager import PositionManager
         from shared.models.position import PositionSide
+        from shared.position.manager import PositionManager
 
         manager = PositionManager(
             exit_config=exit_config,

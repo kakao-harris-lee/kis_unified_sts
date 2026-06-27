@@ -17,7 +17,7 @@ import asyncio
 import logging
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -27,8 +27,9 @@ from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_meta
 from shared.config import ConfigLoader
 from shared.indicators.contracts import IndicatorContract
 from shared.indicators.resolver import StreamingIndicatorResolver
-from shared.models.position import Position as ModelPosition, PositionSide
-from shared.regime.adaptive_detector import AdaptiveRegimeDetector, AdaptiveRegimeConfig
+from shared.models.position import Position as ModelPosition
+from shared.models.position import PositionSide
+from shared.regime.adaptive_detector import AdaptiveRegimeConfig, AdaptiveRegimeDetector
 from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 from shared.strategy.decision_cadence import DecisionCadenceGate
 
@@ -314,7 +315,7 @@ class BacktestStrategyAdapter:
         self._regime_detection_enabled = bool(
             strategy_config.get("backtest", {}).get("regime_detection_enabled", False)
         )
-        self._regime_detector: Optional[AdaptiveRegimeDetector] = None
+        self._regime_detector: AdaptiveRegimeDetector | None = None
         self._regime_history: dict[str, deque] = defaultdict(
             lambda: deque(maxlen=100)  # Keep last 100 bars for regime detection
         )
@@ -334,7 +335,7 @@ class BacktestStrategyAdapter:
         # Regime tracking for backtest results
         self._regime_distribution: dict[str, int] = {}
         self._model_switches: list[dict[str, Any]] = []
-        self._current_model_name: Optional[str] = None
+        self._current_model_name: str | None = None
 
         # Decision-cadence gate: ensure on_bar+check_exit only fire when a new
         # closed N-min bar has appeared (parity with probe's 15m-bar engine run).
@@ -370,8 +371,8 @@ class BacktestStrategyAdapter:
         market_state: str = "UNKNOWN",
         code: str = "",
         raw_code: Any = None,
-        regime: Optional[str] = None,
-        regime_confidence: Optional[float] = None,
+        regime: str | None = None,
+        regime_confidence: float | None = None,
     ) -> dict[str, Any]:
         """Build metadata payload aligned with live orchestrator context.
 
@@ -674,8 +675,8 @@ class BacktestStrategyAdapter:
             market_state = "UNKNOWN"
 
         # Detect adaptive regime if enabled
-        regime: Optional[str] = None
-        regime_confidence: Optional[float] = None
+        regime: str | None = None
+        regime_confidence: float | None = None
         if self._regime_detection_enabled and self._regime_detector is not None:
             # Store bar in regime history for building DataFrame
             self._regime_history[code].append(

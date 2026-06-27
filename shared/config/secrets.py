@@ -7,10 +7,10 @@
 - LLM: OPENAI_*, KRX_*, TELEGRAM_BRIEFING_*
 """
 
-import os
 import logging
-from typing import Literal, Optional
+import os
 from functools import lru_cache
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class SecretsManager:
 
     @staticmethod
     @lru_cache
-    def get(key: str, default: Optional[str] = None) -> Optional[str]:
+    def get(key: str, default: str | None = None) -> str | None:
         """Get secret from environment.
 
         Args:
@@ -56,10 +56,10 @@ class SecretsManager:
     @classmethod
     def _domain_fallback(
         cls,
-        domain: Optional[Domain],
+        domain: Domain | None,
         domain_key_map: dict[str, str],
         legacy_key: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Return domain-specific secret with legacy fallback."""
         if domain and domain in domain_key_map:
             return cls.get(domain_key_map[domain]) or cls.get(legacy_key)
@@ -68,7 +68,7 @@ class SecretsManager:
     @classmethod
     def _domain_value(
         cls,
-        domain: Optional[Domain],
+        domain: Domain | None,
         domain_key_map: dict[str, str],
         legacy_key: str,
         default: str,
@@ -83,7 +83,7 @@ class SecretsManager:
     # =========================================================================
 
     @classmethod
-    def telegram_token(cls, domain: Optional[Domain] = None) -> Optional[str]:
+    def telegram_token(cls, domain: Domain | None = None) -> str | None:
         """Get Telegram bot token.
 
         Args:
@@ -100,7 +100,7 @@ class SecretsManager:
         )
 
     @classmethod
-    def telegram_chat_id(cls, domain: Optional[Domain] = None) -> Optional[str]:
+    def telegram_chat_id(cls, domain: Domain | None = None) -> str | None:
         """Get Telegram chat ID.
 
         Args:
@@ -121,7 +121,7 @@ class SecretsManager:
     # =========================================================================
 
     @classmethod
-    def kis_app_key(cls, domain: Optional[Domain] = None) -> Optional[str]:
+    def kis_app_key(cls, domain: Domain | None = None) -> str | None:
         """Get KIS API app key.
 
         Args:
@@ -137,7 +137,7 @@ class SecretsManager:
         )
 
     @classmethod
-    def kis_app_secret(cls, domain: Optional[Domain] = None) -> Optional[str]:
+    def kis_app_secret(cls, domain: Domain | None = None) -> str | None:
         """Get KIS API app secret.
 
         Args:
@@ -153,7 +153,7 @@ class SecretsManager:
         )
 
     @classmethod
-    def kis_account_no(cls, domain: Optional[Domain] = None) -> Optional[str]:
+    def kis_account_no(cls, domain: Domain | None = None) -> str | None:
         """Get KIS account number.
 
         Args:
@@ -169,7 +169,7 @@ class SecretsManager:
         )
 
     @classmethod
-    def kis_market(cls, domain: Optional[Domain] = None) -> str:
+    def kis_market(cls, domain: Domain | None = None) -> str:
         """Get KIS market type (real/mock).
 
         Args:
@@ -190,7 +190,7 @@ class SecretsManager:
     # =========================================================================
 
     @classmethod
-    def redis_url(cls, domain: Optional[Domain] = None) -> str:
+    def redis_url(cls, domain: Domain | None = None) -> str:
         """Get Redis URL.
 
         Args:
@@ -227,17 +227,17 @@ class SecretsManager:
     # =========================================================================
 
     @classmethod
-    def openai_api_key(cls) -> Optional[str]:
+    def openai_api_key(cls) -> str | None:
         """Get OpenAI API key."""
         return cls.get("OPENAI_API_KEY")
 
     @classmethod
-    def krx_api_key(cls) -> Optional[str]:
+    def krx_api_key(cls) -> str | None:
         """Get KRX Open API key."""
         return cls.get("KRX_API_KEY")
 
     @classmethod
-    def dart_api_key(cls) -> Optional[str]:
+    def dart_api_key(cls) -> str | None:
         """Get DART API key."""
         return cls.get("DART_API_KEY")
 
@@ -256,7 +256,7 @@ class SecretsManager:
     # =========================================================================
 
     @classmethod
-    def email_password(cls) -> Optional[str]:
+    def email_password(cls) -> str | None:
         """Get email password."""
         return cls.get("EMAIL_PASSWORD")
 
@@ -280,5 +280,5 @@ def require_secret(key: str) -> str:
     """
     value = SecretsManager.get(key)
     if value is None:
-        raise EnvironmentError(f"Required secret {key} not set in environment")
+        raise OSError(f"Required secret {key} not set in environment")
     return value

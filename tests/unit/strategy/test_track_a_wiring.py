@@ -2,9 +2,10 @@
 
 TDD: write failing tests → implement → pass.
 """
-import yaml
-import pytest
 from pathlib import Path
+
+import pytest
+import yaml
 
 CONFIG_DIR = Path(__file__).parents[3] / "config"
 
@@ -32,8 +33,8 @@ def test_track_a_exit_registered_after_builtin():
 
 def test_track_a_exit_creatable():
     """ExitRegistry.create('track_a_exit', {}) returns a TrackAExit with correct name."""
-    from shared.strategy.registry import ExitRegistry, register_builtin_components
     from shared.strategy.exit.track_a_exit import TrackAExit
+    from shared.strategy.registry import ExitRegistry, register_builtin_components
 
     ExitRegistry.clear()
     register_builtin_components()
@@ -149,8 +150,8 @@ def test_setup_c_via_loader_exit_type():
 def test_strategy_factory_setup_a_exit_is_setup_target_exit():
     """setup_a_gap_reversion assembles with SetupTargetExit (reverted from track_a_exit
     2026-06-21 per PR #495 real-signal backtest). TrackAExit stays registered/available."""
-    from shared.strategy.registry import StrategyFactory, register_builtin_components
     from shared.strategy.exit.setup_target_exit import SetupTargetExit
+    from shared.strategy.registry import StrategyFactory, register_builtin_components
 
     register_builtin_components()
 
@@ -165,6 +166,7 @@ def test_strategy_factory_setup_a_exit_is_setup_target_exit():
 async def test_track_a_exit_crash_guard_smoke():
     """TrackAExit.scan_positions crash smoke: prev 370 → close 362 = 8pt drop fires FORCE_CLOSE."""
     from datetime import UTC, datetime
+
     from shared.models.position import Position, PositionSide
     from shared.models.signal import ExitReason
     from shared.strategy.exit.track_a_exit import TrackAExit, TrackAExitConfig

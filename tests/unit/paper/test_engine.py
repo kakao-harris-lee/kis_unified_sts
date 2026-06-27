@@ -5,8 +5,8 @@ import pytest
 @pytest.mark.asyncio
 async def test_engine_initialization():
     """Test engine initialization."""
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
 
     config = PaperTradingConfig(initial_balance=5_000_000)
     engine = PaperTradingEngine(config)
@@ -18,8 +18,8 @@ async def test_engine_initialization():
 @pytest.mark.asyncio
 async def test_engine_start_stop():
     """Test engine lifecycle."""
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
 
     config = PaperTradingConfig()
     engine = PaperTradingEngine(config)
@@ -34,8 +34,8 @@ async def test_engine_start_stop():
 @pytest.mark.asyncio
 async def test_engine_process_signal():
     """Test signal processing."""
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
     from shared.paper.models import OrderSide
 
     config = PaperTradingConfig()
@@ -56,8 +56,8 @@ async def test_engine_process_signal():
 @pytest.mark.asyncio
 async def test_engine_equity_curve_circular_buffer():
     """Test equity curve respects max_equity_points limit."""
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
     from shared.paper.models import OrderSide
 
     # Create config with small buffer size for testing
@@ -82,8 +82,8 @@ async def test_engine_equity_curve_circular_buffer():
 @pytest.mark.asyncio
 async def test_engine_equity_curve_records_on_start():
     """Test that equity is recorded on engine start."""
-    from shared.paper.engine import PaperTradingEngine
     from shared.paper.config import PaperTradingConfig
+    from shared.paper.engine import PaperTradingEngine
 
     config = PaperTradingConfig()
     engine = PaperTradingEngine(config)

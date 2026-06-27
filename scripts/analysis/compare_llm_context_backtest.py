@@ -185,7 +185,7 @@ def _write_comparison_csv(
         result_b: Results with LLM context
     """
     rows = []
-    for key in result_a.keys():
+    for key in result_a:
         if key == "use_llm_context":
             continue
         val_a = result_a[key]

@@ -369,14 +369,14 @@ def check_price_sanity(
     prev_close: float | None = None
     for row in ordered:
         dt = row[1]
-        o, h, l, c = float(row[2]), float(row[3]), float(row[4]), float(row[5])
+        o, h, low, c = float(row[2]), float(row[3]), float(row[4]), float(row[5])
         # Reject non-finite OHLC (NaN/inf) — comparisons against NaN are False, so
         # without this guard a NaN bar would silently pass both checks.
-        if not all(math.isfinite(x) for x in (o, h, l, c)):
-            return f"non-finite OHLC at {dt}: o={o} h={h} l={l} c={c}"
+        if not all(math.isfinite(x) for x in (o, h, low, c)):
+            return f"non-finite OHLC at {dt}: o={o} h={h} l={low} c={c}"
         # OHLC ordering: high must dominate open/close/low; low must be dominated.
-        if h < max(o, c, l) - 1e-9 or l > min(o, c, h) + 1e-9:
-            return f"OHLC inconsistent at {dt}: o={o:.2f} h={h:.2f} l={l:.2f} c={c:.2f}"
+        if h < max(o, c, low) - 1e-9 or low > min(o, c, h) + 1e-9:
+            return f"OHLC inconsistent at {dt}: o={o:.2f} h={h:.2f} l={low:.2f} c={c:.2f}"
         if (
             max_bar_return is not None
             and prev_close is not None

@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
-
 from services.trading.indicator_engine import StreamingIndicatorEngine
 
 

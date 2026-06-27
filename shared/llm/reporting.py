@@ -290,10 +290,7 @@ def should_publish_llm_quality_snapshot(
         return False
 
     status = stock_analysis.get("_analysis_status")
-    if isinstance(status, dict) and status.get("status") == "failed":
-        return False
-
-    return True
+    return not (isinstance(status, dict) and status.get("status") == "failed")
 
 
 # ------------------------------------------------------------------

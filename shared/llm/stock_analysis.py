@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -54,11 +54,11 @@ logger = logging.getLogger(__name__)
 
 
 def _collect_market_frames(
-    analyzer: "UnifiedTradingAnalyzer",
-) -> tuple[list["pd.DataFrame"], list[str]]:
+    analyzer: UnifiedTradingAnalyzer,
+) -> tuple[list[pd.DataFrame], list[str]]:
     market_kospi = analyzer.stock_collector.collect("KOSPI")
     market_kosdaq = analyzer.stock_collector.collect("KOSDAQ")
-    frames: list["pd.DataFrame"] = []
+    frames: list[pd.DataFrame] = []
     markets: list[str] = []
     if market_kospi is not None and len(market_kospi) > 0:
         frames.append(market_kospi)
@@ -70,8 +70,8 @@ def _collect_market_frames(
 
 
 def _merge_market_frames(
-    frames: list["pd.DataFrame"],
-) -> Optional["pd.DataFrame"]:
+    frames: list[pd.DataFrame],
+) -> pd.DataFrame | None:
     if not frames:
         return None
     if len(frames) == 1:
@@ -104,8 +104,8 @@ def _analysis_failure_meta(reason: str, detail: Any | None = None) -> dict[str, 
 
 
 def _prepare_market_df(
-    market_df: "pd.DataFrame",
-) -> tuple[Optional["pd.DataFrame"], bool, Optional[dict]]:
+    market_df: pd.DataFrame,
+) -> tuple[pd.DataFrame | None, bool, dict | None]:
     if market_df is None or len(market_df) == 0:
         logger.error("Failed to collect market data")
         return None, False, _analysis_failure_meta("market_data_unavailable")
@@ -139,9 +139,9 @@ def _prepare_market_df(
 
 
 def _filter_market_df(
-    market_df: "pd.DataFrame",
+    market_df: pd.DataFrame,
     config,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     filtered = market_df[
         (market_df["종가"] >= config.stock_min_price)
         & (market_df["시가총액"] >= config.stock_min_market_cap)
@@ -158,7 +158,7 @@ def _filter_market_df(
 
 
 def _load_sector_theme_data(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     markets: list[str],
 ) -> tuple[dict[str, str], dict[str, str]]:
     sector_classifications: dict[str, str] = {}
@@ -177,7 +177,7 @@ def _load_sector_theme_data(
     return sector_classifications, sector_rotation
 
 
-def _collect_krx_market_data(analyzer: "UnifiedTradingAnalyzer") -> dict[str, Any]:
+def _collect_krx_market_data(analyzer: UnifiedTradingAnalyzer) -> dict[str, Any]:
     krx_data: dict[str, Any] = {}
     try:
         krx_data = analyzer.krx_collector.collect()
@@ -188,8 +188,8 @@ def _collect_krx_market_data(analyzer: "UnifiedTradingAnalyzer") -> dict[str, An
 
 
 def _build_screened_stocks(
-    analyzer: "UnifiedTradingAnalyzer",
-    top_volume: "pd.DataFrame",
+    analyzer: UnifiedTradingAnalyzer,
+    top_volume: pd.DataFrame,
     config,
 ) -> tuple[list[StockInfo], dict[str, list[str]], dict[str, dict[str, Any]]]:
     stocks: list[StockInfo] = []
@@ -227,7 +227,7 @@ def _build_screened_stocks(
 
 
 def _compute_liquidity_metrics(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     stock: StockInfo,
     config,
 ) -> tuple[float, float]:
@@ -252,7 +252,7 @@ def _compute_liquidity_metrics(
 
 
 def _collect_mk_news(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     stock: StockInfo,
     intraday: bool,
 ) -> dict[str, Any]:
@@ -281,7 +281,7 @@ def _collect_mk_news(
 
 
 def _collect_dart_data(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     stock: StockInfo,
     intraday: bool,
 ) -> dict[str, Any]:
@@ -301,7 +301,7 @@ def _collect_dart_data(
 
 
 def _collect_ksd_data(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     stock: StockInfo,
     intraday: bool,
 ) -> dict[str, Any]:
@@ -316,7 +316,7 @@ def _collect_ksd_data(
 
 
 def _collect_krx_stock_info(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     stock: StockInfo,
 ) -> dict[str, Any]:
     try:
@@ -348,7 +348,7 @@ def _build_texts_to_scan(
 
 
 def _build_news_payload(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     stock: StockInfo,
     mk_news: dict[str, Any],
     intraday: bool,
@@ -420,7 +420,7 @@ def _compact_scored_news_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _build_target_signal(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     stock: StockInfo,
     intraday: bool,
 ) -> dict[str, Any]:
@@ -449,7 +449,7 @@ async def _build_target_signal(
 
 
 def _build_technical_consensus_metrics(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     config,
 ) -> dict[str, Any]:
     try:
@@ -527,7 +527,7 @@ def _build_screening_metrics(
 
 
 async def _analyze_stock_candidate(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     stock: StockInfo,
     config,
     intraday: bool,
@@ -535,10 +535,10 @@ async def _analyze_stock_candidate(
     sector_rotation: dict[str, str],
     scored_news: list[dict[str, Any]] | None = None,
 ) -> tuple[
-    Optional[tuple],
-    Optional[dict[str, Any]],
-    Optional[list[str]],
-    Optional[dict[str, Any]],
+    tuple | None,
+    dict[str, Any] | None,
+    list[str] | None,
+    dict[str, Any] | None,
 ]:
     history_days = max(
         int(config.stock_backtest_days),
@@ -730,7 +730,7 @@ async def _analyze_stock_candidate(
 
 
 async def _run_llm_scoring(
-    analyzer: "UnifiedTradingAnalyzer",
+    analyzer: UnifiedTradingAnalyzer,
     candidates: list[tuple],
 ) -> list[Any]:
     scoring_tasks = [
@@ -1316,7 +1316,7 @@ def generate_detailed_briefing(
 def _get_briefing_history(
     analyzer: UnifiedTradingAnalyzer,
     code: str,
-) -> tuple[str, Optional["pd.DataFrame"]]:
+) -> tuple[str, pd.DataFrame | None]:
     name = analyzer.stock_collector.get_stock_name(code)
     if not name:
         logger.warning(f"Could not find stock name for {code}")
@@ -1330,7 +1330,7 @@ def _get_briefing_history(
 
 
 def _get_briefing_price_stats(
-    hist_df: "pd.DataFrame",
+    hist_df: pd.DataFrame,
 ) -> tuple[float, float, int, float]:
     current_price = float(hist_df["종가"].iloc[-1])
     prev_price = float(hist_df["종가"].iloc[-2])
@@ -1358,7 +1358,7 @@ def _get_briefing_market_cap(
 
 def _get_briefing_best_backtest(
     analyzer: UnifiedTradingAnalyzer,
-    hist_df: "pd.DataFrame",
+    hist_df: pd.DataFrame,
 ) -> BacktestResult | None:
     bt_results = analyzer.stock_backtester.run_all_strategies(hist_df)
     return max(bt_results, key=lambda x: x.total_return) if bt_results else None

@@ -13,7 +13,7 @@ Williams %R Formula:
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -136,7 +136,7 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
         return indicators
 
     @staticmethod
-    def _state_name(state: Any) -> Optional[str]:
+    def _state_name(state: Any) -> str | None:
         if state is None:
             return None
         if hasattr(state, "regime"):
@@ -145,7 +145,7 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
             state = state.value
         return str(state).upper()
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """Generate entry signal based on Williams %R oversold reversal."""
         data = context.market_data or {}
         indicators = context.indicators or {}
@@ -333,6 +333,7 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
         reversal depth measured from the overbought line, trend distance
         rewards price *below* BB middle.
         """
+        _ = current_wr
         if direction == "short":
             reversal_depth = abs(prev_wr - self.config.overbought_threshold)
         else:

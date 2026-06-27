@@ -5,8 +5,9 @@ in the correct order and dependencies are properly established.
 """
 
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @pytest.mark.integration
@@ -16,7 +17,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_component_initialization_order(self):
         """Verify components initialize in the correct order during startup."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         # Track initialization order
         init_order = []
@@ -121,7 +122,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_kis_client_initializes_first(self):
         """Verify KIS client initializes before dependent components."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -179,7 +180,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_strategy_infrastructure_before_indicator_engine(self):
         """Verify strategy infrastructure initializes before indicator engine."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -241,7 +242,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_data_provider_initializes_after_price_feeds(self):
         """Verify data provider initializes after price feeds."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -308,7 +309,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_market_data_loop_starts_before_pipeline(self):
         """Verify market data loop starts before pipeline."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -366,7 +367,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_execution_layer_initializes_before_position_recovery(self):
         """Verify execution layer initializes before position recovery."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -422,7 +423,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_pipeline_starts_after_all_components(self):
         """Verify pipeline starts only after all components are initialized."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -522,7 +523,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_futures_config_initializes_slippage_controller(self):
         """Verify futures configuration initializes slippage controller."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.futures(
             strategy_name="setup_a_gap_reversion",
@@ -579,7 +580,7 @@ class TestStartupSequence:
     @pytest.mark.asyncio
     async def test_stock_config_skips_slippage_controller(self):
         """Verify stock configuration skips slippage controller initialization."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -647,7 +648,7 @@ class TestComponentDependencies:
     @pytest.mark.asyncio
     async def test_indicator_engine_uses_strategy_config(self):
         """Verify indicator engine reads parameters from strategy configuration."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -713,7 +714,7 @@ class TestComponentDependencies:
     @pytest.mark.asyncio
     async def test_execution_layer_uses_paper_broker_when_configured(self):
         """Verify execution layer initializes paper broker when paper_trading=True."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -775,8 +776,8 @@ class TestStartupState:
     async def test_state_transitions_on_successful_start(self):
         """Verify state transitions from IDLE to RUNNING on successful startup."""
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
 
@@ -829,8 +830,9 @@ class TestStartupState:
     @pytest.mark.asyncio
     async def test_start_time_recorded_on_startup(self):
         """Verify start_time is recorded when orchestrator starts."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         from datetime import datetime
+
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -884,7 +886,7 @@ class TestStartupState:
     @pytest.mark.asyncio
     async def test_prometheus_starts_after_pipeline(self):
         """Verify Prometheus server starts after pipeline initialization."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -950,8 +952,9 @@ class TestTradingLoop:
     @pytest.mark.asyncio
     async def test_trading_loop_starts_and_runs(self):
         """Verify trading loop starts and runs after orchestrator start."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         import asyncio
+
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1011,7 +1014,7 @@ class TestTradingLoop:
     @pytest.mark.asyncio
     async def test_market_data_processing(self):
         """Verify market data is processed through the loop."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1084,7 +1087,7 @@ class TestTradingLoop:
     @pytest.mark.asyncio
     async def test_loop_processes_multiple_symbols(self):
         """Verify loop processes market data for multiple symbols."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1141,8 +1144,9 @@ class TestTradingLoop:
     @pytest.mark.asyncio
     async def test_loop_stops_gracefully(self):
         """Verify trading loop stops gracefully when orchestrator stops."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         import asyncio
+
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1225,8 +1229,9 @@ class TestTradingLoop:
     @pytest.mark.asyncio
     async def test_loop_continues_after_processing_error(self):
         """Verify loop continues running even if individual data processing fails."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         import asyncio
+
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1291,7 +1296,7 @@ class TestTradingLoop:
     @pytest.mark.asyncio
     async def test_futures_loop_processes_continuous_data(self):
         """Verify futures trading loop processes continuous market data."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.futures(
             strategy_name="setup_a_gap_reversion",
@@ -1361,8 +1366,8 @@ class TestPauseResume:
     async def test_basic_pause_resume_state_transitions(self):
         """Verify basic pause/resume state transitions work correctly."""
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
 
@@ -1425,7 +1430,7 @@ class TestPauseResume:
     @pytest.mark.asyncio
     async def test_pause_resume_preserves_positions(self):
         """Verify positions are preserved during pause/resume."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from services.trading.position_tracker import PositionTracker
         from shared.models.position import Position, PositionSide
 
@@ -1518,7 +1523,7 @@ class TestPauseResume:
     @pytest.mark.asyncio
     async def test_pause_resume_preserves_statistics(self):
         """Verify trading statistics are preserved during pause/resume."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1589,7 +1594,7 @@ class TestPauseResume:
     @pytest.mark.asyncio
     async def test_pause_stops_pipeline_resume_restarts(self):
         """Verify pause stops pipeline and resume restarts it."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1648,7 +1653,8 @@ class TestPauseResume:
     async def test_market_data_continuity_after_resume(self):
         """Verify market data processing continues correctly after resume."""
         import asyncio
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.futures(
             strategy_name="setup_a_gap_reversion",
@@ -1757,7 +1763,7 @@ class TestPauseResume:
     @pytest.mark.asyncio
     async def test_no_duplicate_orders_after_resume(self):
         """Verify no duplicate orders are placed after resume."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.signal import Signal, SignalType
 
         config = TradingConfig.stock(
@@ -1850,8 +1856,8 @@ class TestPauseResume:
     async def test_multiple_pause_resume_cycles(self):
         """Verify orchestrator handles multiple pause/resume cycles correctly."""
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
 
@@ -1897,7 +1903,7 @@ class TestPauseResume:
             orchestrator.total_trades = 10
 
             # Multiple pause/resume cycles
-            for i in range(5):
+            for _i in range(5):
                 # Pause
                 await orchestrator.pause()
                 assert orchestrator.state == TradingState.PAUSED
@@ -1918,8 +1924,8 @@ class TestPauseResume:
     async def test_pause_from_non_running_state_is_noop(self):
         """Verify pause from non-RUNNING state is a no-op."""
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
 
@@ -1949,8 +1955,8 @@ class TestPauseResume:
     async def test_resume_from_non_paused_state_is_noop(self):
         """Verify resume from non-PAUSED state is a no-op."""
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
 
@@ -1984,7 +1990,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_websocket_close_on_shutdown(self):
         """Verify WebSocket connections are properly closed during shutdown."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -2045,7 +2051,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_redis_flush_on_shutdown(self):
         """Verify positions are flushed to Redis during shutdown."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.position import Position, PositionSide
 
         config = TradingConfig.stock(
@@ -2144,7 +2150,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_position_serialization_on_shutdown(self):
         """Verify positions are properly serialized before Redis flush."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.position import Position, PositionSide
 
         config = TradingConfig.futures(
@@ -2246,7 +2252,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_timeout_handling_forces_redis_flush(self):
         """Verify timeout triggers forced Redis flush as last resort."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.position import Position, PositionSide
 
         config = TradingConfig.stock(
@@ -2333,7 +2339,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_cleanup_resources_releases_all_components(self):
         """Verify all components are properly released during cleanup."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -2416,7 +2422,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_redis_flush_retry_on_connection_error(self):
         """Verify Redis flush retries on connection errors."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.position import Position, PositionSide
 
         config = TradingConfig.stock(

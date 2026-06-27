@@ -4,8 +4,9 @@ Covers the change_pct=0 fix: previously `data.get("change_pct") or data.get("cha
 treated 0 as falsy and fell through to the change_percent/change fallback.
 The fix uses an explicit `is None` check so that 0 is honoured as a real value.
 """
-import pytest
 from datetime import datetime
+
+import pytest
 
 try:
     from zoneinfo import ZoneInfo
@@ -17,8 +18,8 @@ KST = ZoneInfo("Asia/Seoul")
 
 def _make_strategy(*, min_change_pct: float = 1.0, **kwargs):
     from shared.strategy.entry.opening_volume_surge import (
-        OpeningVolumeSurgeEntry,
         OpeningVolumeSurgeConfig,
+        OpeningVolumeSurgeEntry,
     )
 
     config = OpeningVolumeSurgeConfig(

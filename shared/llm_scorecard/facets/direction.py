@@ -93,6 +93,7 @@ class DirectionFacet:
 
     def baseline(self, pred: FacetPrediction, mkt: Any) -> float:
         # Always-flat directional PnL: doing nothing earns 0.
+        _ = (pred, mkt)
         return 0.0
 
     def score(self, pred: FacetPrediction, mkt: Any) -> FacetScore:

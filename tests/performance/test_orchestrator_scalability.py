@@ -33,13 +33,9 @@ This allows us to identify orchestrator-specific bottlenecks.
 from __future__ import annotations
 
 import gc
-import sys
 import time
-from dataclasses import asdict
 from datetime import datetime
 from typing import Any
-
-import pytest
 
 from shared.models.position import Position, PositionSide, PositionState
 
@@ -131,7 +127,7 @@ def _simulate_entry_signal_cycle(market_data: dict[str, dict[str, Any]]) -> int:
     """
     signals_generated = 0
 
-    for symbol, data in market_data.items():
+    for _symbol, data in market_data.items():
         # Simulate indicator access and enrichment (like orchestrator does)
         price = data.get("price", 0)
         bb_lower = data.get("bb_lower", 0)
@@ -275,7 +271,7 @@ class TestOrchestratorScalability:
         )
 
         print(f"\n{'='*60}")
-        print(f"Orchestrator Cycle Time - 1 Position (Baseline)")
+        print("Orchestrator Cycle Time - 1 Position (Baseline)")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
         print(f"Memory delta: {memory_delta_mb:.2f} MB")
@@ -301,7 +297,7 @@ class TestOrchestratorScalability:
         )
 
         print(f"\n{'='*60}")
-        print(f"Orchestrator Cycle Time - 5 Positions")
+        print("Orchestrator Cycle Time - 5 Positions")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
         print(f"Memory delta: {memory_delta_mb:.2f} MB")
@@ -329,12 +325,12 @@ class TestOrchestratorScalability:
         )
 
         print(f"\n{'='*60}")
-        print(f"Orchestrator Cycle Time - 10 Positions (SLA Target)")
+        print("Orchestrator Cycle Time - 10 Positions (SLA Target)")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
         print(f"Memory delta: {memory_delta_mb:.2f} MB")
         print(f"Iterations: {iterations}")
-        print(f"SLA Requirement: < 5000 ms (5 seconds)")
+        print("SLA Requirement: < 5000 ms (5 seconds)")
         print(f"SLA Status: {'✓ PASS' if avg_cycle_time_ms < 5000 else '✗ FAIL'}")
         print(f"{'='*60}\n")
 
@@ -357,7 +353,7 @@ class TestOrchestratorScalability:
         )
 
         print(f"\n{'='*60}")
-        print(f"Orchestrator Cycle Time - 20 Positions (Stress Test)")
+        print("Orchestrator Cycle Time - 20 Positions (Stress Test)")
         print(f"{'='*60}")
         print(f"Average cycle time: {avg_cycle_time_ms:.2f} ms")
         print(f"Memory delta: {memory_delta_mb:.2f} MB")
@@ -384,7 +380,7 @@ class TestOrchestratorScalability:
         results = []
 
         print(f"\n{'='*60}")
-        print(f"Orchestrator Scalability Analysis")
+        print("Orchestrator Scalability Analysis")
         print(f"{'='*60}")
 
         for count in position_counts:
@@ -405,11 +401,11 @@ class TestOrchestratorScalability:
         max_time = results[-1]["cycle_time_ms"]
         scaling_factor = max_time / baseline_time if baseline_time > 0 else 0
 
-        print(f"\nScalability Analysis:")
+        print("\nScalability Analysis:")
         print(f"  Baseline (1 pos): {baseline_time:.2f} ms")
         print(f"  Maximum (20 pos): {max_time:.2f} ms")
         print(f"  Scaling factor: {scaling_factor:.2f}x")
-        print(f"  Target: <= 20x (linear)")
+        print("  Target: <= 20x (linear)")
         print(f"  Status: {'✓ Linear/Sub-linear' if scaling_factor <= 20 else '✗ Super-linear'}")
         print(f"{'='*60}\n")
 
@@ -427,7 +423,7 @@ class TestOrchestratorScalability:
         iterations = 100
 
         print(f"\n{'='*70}")
-        print(f"Orchestrator Scalability Summary Report")
+        print("Orchestrator Scalability Summary Report")
         print(f"{'='*70}")
         print(f"{'Positions':<12} {'Cycle Time (ms)':<20} {'Status':<15}")
         print(f"{'-'*70}")
@@ -463,13 +459,13 @@ class TestOrchestratorScalability:
             max_time = results[-1]["cycle_time_ms"]
             scaling_factor = max_time / baseline_time if baseline_time > 0 else 0
 
-            print(f"\nScalability Metrics:")
+            print("\nScalability Metrics:")
             print(f"  Actual scaling factor: {scaling_factor:.2f}x")
-            print(f"  Linear baseline: 20x (for 20 positions)")
+            print("  Linear baseline: 20x (for 20 positions)")
             print(f"  Efficiency: {(20.0 / scaling_factor * 100) if scaling_factor > 0 else 0:.1f}% of linear scaling")
 
-        print(f"\nPerformance Summary:")
-        print(f"  Maximum sustainable positions: >= 20")
+        print("\nPerformance Summary:")
+        print("  Maximum sustainable positions: >= 20")
         print(f"  SLA compliance (10 pos < 5s): {'✓ PASS' if results[2]['cycle_time_ms'] < 5000 else '✗ FAIL'}")
         print(f"  Stress test (20 pos < 10s): {'✓ PASS' if results[3]['cycle_time_ms'] < 10000 else '✗ FAIL'}")
         print(f"  Scaling behavior: {'✓ Linear/Sub-linear' if scaling_factor <= 20 else '✗ Super-linear'}")

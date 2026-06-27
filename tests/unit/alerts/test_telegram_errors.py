@@ -1,11 +1,12 @@
 """Test error handling in TelegramAlertService."""
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 from datetime import datetime
-import aiohttp
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
+import pytest
+
+from shared.alerts.models import Alert, AlertConfig, AlertLevel
 from shared.alerts.telegram import TelegramAlertService
-from shared.alerts.models import Alert, AlertLevel, AlertConfig
 
 
 @pytest.fixture

@@ -21,35 +21,10 @@ Usage:
     imbalance = ob.calculate(bid_prices, ask_prices, bid_volumes, ask_volumes)
 """
 
-from shared.indicators.technical import (
-    BarInput,
-    TechnicalCalculator,
-    TechnicalData,
-)
-from shared.indicators.orderbook import (
-    OrderBookAnalyzer,
-    OrderBookImbalance,
-)
-from shared.indicators.volume import (
-    VolumeAcceleration,
-    VolumeAccelerationCalculator,
-    VWAPCalculator,
-    VWAPData,
-)
 from shared.indicators.composite import (
     CompositeScoreCalculator,
     IndicatorConfig,
     ScoreResult,
-)
-from shared.indicators.momentum import (
-    TRIXCalculator,
-    CCICalculator,
-    MACDCalculator,
-    StochasticCalculator,
-    RSICalculator,
-    OBVDataFrameCalculator,
-    DivergenceDetector,
-    calculate_all_momentum,
 )
 from shared.indicators.contracts import (
     IndicatorContract,
@@ -57,7 +32,32 @@ from shared.indicators.contracts import (
     IndicatorRequest,
     Timeframe,
 )
+from shared.indicators.momentum import (
+    CCICalculator,
+    DivergenceDetector,
+    MACDCalculator,
+    OBVDataFrameCalculator,
+    RSICalculator,
+    StochasticCalculator,
+    TRIXCalculator,
+    calculate_all_momentum,
+)
+from shared.indicators.orderbook import (
+    OrderBookAnalyzer,
+    OrderBookImbalance,
+)
 from shared.indicators.resolver import StreamingIndicatorResolver
+from shared.indicators.technical import (
+    BarInput,
+    TechnicalCalculator,
+    TechnicalData,
+)
+from shared.indicators.volume import (
+    VolumeAcceleration,
+    VolumeAccelerationCalculator,
+    VWAPCalculator,
+    VWAPData,
+)
 
 __all__ = [
     # Technical

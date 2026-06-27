@@ -9,7 +9,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -29,7 +29,7 @@ class StreamMessage:
     data: dict[str, Any]
     stream: str
     correlation_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    parent_id: Optional[str] = None
+    parent_id: str | None = None
     timestamp: float = field(default_factory=time.time)
 
     @classmethod

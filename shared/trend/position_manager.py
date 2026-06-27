@@ -1,9 +1,8 @@
 """Trend position manager with ATR-based trailing stops."""
 import logging
 import time
-from dataclasses import dataclass
-from typing import Optional, List
 import uuid
+from dataclasses import dataclass
 
 from .config import TrendConfig
 
@@ -23,14 +22,14 @@ class TrendPosition:
 
     # Mutable state
     is_open: bool = True
-    exit_price: Optional[float] = None
-    exit_time: Optional[float] = None
-    exit_reason: Optional[str] = None
-    pnl: Optional[float] = None
+    exit_price: float | None = None
+    exit_time: float | None = None
+    exit_reason: str | None = None
+    pnl: float | None = None
 
     # Tracking
-    highest_price: Optional[float] = None
-    lowest_price: Optional[float] = None
+    highest_price: float | None = None
+    lowest_price: float | None = None
 
 
 class TrendPositionManager:
@@ -45,7 +44,7 @@ class TrendPositionManager:
 
     def __init__(self, config: TrendConfig):
         self.config = config
-        self._positions: List[TrendPosition] = []
+        self._positions: list[TrendPosition] = []
 
     def open_position(
         self,
@@ -53,7 +52,7 @@ class TrendPositionManager:
         entry_price: float,
         atr: float,
         size: float,
-        timestamp: Optional[float] = None
+        timestamp: float | None = None
     ) -> TrendPosition:
         """Open a new position with ATR-based stops.
 
@@ -176,7 +175,7 @@ class TrendPositionManager:
         position: TrendPosition,
         exit_price: float,
         reason: str,
-        timestamp: Optional[float] = None
+        timestamp: float | None = None
     ) -> None:
         """Close a position and calculate P&L.
 
@@ -207,11 +206,11 @@ class TrendPositionManager:
             f"reason={reason}, PnL={position.pnl:.2f}"
         )
 
-    def get_open_positions(self) -> List[TrendPosition]:
+    def get_open_positions(self) -> list[TrendPosition]:
         """Get all open positions."""
         return [p for p in self._positions if p.is_open]
 
-    def get_all_positions(self) -> List[TrendPosition]:
+    def get_all_positions(self) -> list[TrendPosition]:
         """Get all positions (open and closed)."""
         return self._positions.copy()
 

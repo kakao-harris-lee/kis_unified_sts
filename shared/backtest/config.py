@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from shared.execution.slippage_model import SlippageModel
     from shared.backtest.ats_simulator import ATSSimulator
+    from shared.execution.slippage_model import SlippageModel
 
 
 @dataclass
@@ -205,8 +205,8 @@ class BacktestConfig:
         ats_enabled = data.get("ats_enabled", False)
         if ats_enabled and "ats_simulation" in data:
             from shared.backtest.ats_simulator import (
-                ATSSimulator,
                 ATSSimulationConfig,
+                ATSSimulator,
             )
 
             ats_config = ATSSimulationConfig.model_validate(data["ats_simulation"])

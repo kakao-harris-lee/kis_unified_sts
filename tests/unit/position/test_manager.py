@@ -5,8 +5,8 @@ import pytest
 @pytest.mark.asyncio
 async def test_manager_creation():
     """Test PositionManager instantiation."""
-    from shared.position.manager import PositionManager
     from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)
@@ -18,9 +18,9 @@ async def test_manager_creation():
 @pytest.mark.asyncio
 async def test_manager_open_position():
     """Test opening a new position."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import PositionSide
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)
@@ -42,9 +42,9 @@ async def test_manager_open_position():
 @pytest.mark.asyncio
 async def test_manager_close_position():
     """Test closing a position."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import PositionSide
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)
@@ -69,9 +69,9 @@ async def test_manager_close_position():
 @pytest.mark.asyncio
 async def test_manager_get_positions_by_code():
     """Test getting positions by stock code."""
-    from shared.position.manager import PositionManager
-    from shared.position.exit_checker import ExitConfig
     from shared.models.position import PositionSide
+    from shared.position.exit_checker import ExitConfig
+    from shared.position.manager import PositionManager
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)

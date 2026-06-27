@@ -4,8 +4,8 @@ from unittest.mock import Mock
 
 def test_collector_creation():
     """Test DataCollector instantiation."""
-    from shared.collector.collector import DataCollector
     from shared.collector.adapter import MockAPIAdapter
+    from shared.collector.collector import DataCollector
 
     adapter = MockAPIAdapter()
     collector = DataCollector(adapter)
@@ -16,8 +16,8 @@ def test_collector_creation():
 
 def test_collector_tick_callback():
     """Test tick callback publishes to stream."""
-    from shared.collector.collector import DataCollector
     from shared.collector.adapter import MockAPIAdapter
+    from shared.collector.collector import DataCollector
     from shared.collector.models import TickData
 
     adapter = MockAPIAdapter()

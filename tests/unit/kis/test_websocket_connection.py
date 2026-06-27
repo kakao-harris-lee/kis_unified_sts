@@ -1,6 +1,7 @@
 """Unit tests for WebSocket connection lifecycle."""
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestKISWebSocketAdapterInit:
@@ -31,7 +32,7 @@ class TestKISWebSocketAdapterInit:
     def test_init_bounded_queue(self, mock_config):
         """Test message queue is bounded."""
         with patch('shared.kis.websocket.websocket.WebSocketApp'):
-            from shared.kis.websocket import KISWebSocketAdapter, MESSAGE_QUEUE_MAXSIZE
+            from shared.kis.websocket import MESSAGE_QUEUE_MAXSIZE, KISWebSocketAdapter
             adapter = KISWebSocketAdapter(mock_config)
 
             assert adapter._message_queue.maxsize == MESSAGE_QUEUE_MAXSIZE

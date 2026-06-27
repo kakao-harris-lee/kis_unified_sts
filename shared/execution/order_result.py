@@ -8,11 +8,11 @@ method (passive maker, force-close, OCO, etc.) so callers can branch on
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class OrderState(str, Enum):
+class OrderState(StrEnum):
     FILLED = "filled"
     MISSED = "missed"
     CANCELLED = "cancelled"

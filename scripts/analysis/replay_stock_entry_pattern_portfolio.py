@@ -13,10 +13,11 @@ import argparse
 import itertools
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -476,10 +477,7 @@ def replay_pattern_set(
         (str(row.code), row.date): float(row.close)
         for row in data[["code", "date", "close"]].itertuples(index=False)
     }
-    signals_by_date = {
-        day: group
-        for day, group in signals.groupby(pd.to_datetime(signals["datetime"]).dt.date)
-    }
+    signals_by_date = dict(signals.groupby(pd.to_datetime(signals["datetime"]).dt.date))
     trading_dates = sorted(data["date"].unique())
 
     cash = float(spec.initial_capital)

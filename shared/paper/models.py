@@ -1,8 +1,7 @@
 """Paper trading models."""
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from shared.utils.math import safe_divide
 
@@ -12,17 +11,17 @@ class InsufficientBalanceError(Exception):
     pass
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     MARKET = "MARKET"
     LIMIT = "LIMIT"
 
 
-class PositionSide(str, Enum):
+class PositionSide(StrEnum):
     LONG = "LONG"
     SHORT = "SHORT"
     FLAT = "FLAT"
@@ -36,11 +35,11 @@ class VirtualOrder:
     side: OrderSide
     order_type: OrderType
     quantity: int
-    price: Optional[float]
+    price: float | None
     timestamp: datetime
     filled: bool = False
-    fill_price: Optional[float] = None
-    fill_time: Optional[datetime] = None
+    fill_price: float | None = None
+    fill_time: datetime | None = None
     rejection_reason: str = ""
 
     @property

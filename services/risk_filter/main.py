@@ -195,6 +195,7 @@ async def _build_and_run() -> int:
     import socket
 
     import redis.asyncio as aioredis
+
     from shared.backtest.signals_writer import SignalsAllWriter
     from shared.risk.config import FuturesRiskConfig, load_trading_windows
     from shared.risk.layer import RiskFilterLayer

@@ -118,7 +118,7 @@ def apply_cost_filter(
     """Apply cost filter to signals and return filtered signals + stats."""
     filtered_signals = []
 
-    for idx, signal in signals_df.iterrows():
+    for _idx, signal in signals_df.iterrows():
         indicators = {'atr': signal['atr']}
         passed, reason = cost_filter.check_signal(
             signal={'code': signal['code']},
@@ -157,7 +157,7 @@ def simulate_trade_outcomes(
     trades = []
     round_trip_cost = commission_rate + (slippage_bps / 10000)
 
-    for idx, signal in signals_df.iterrows():
+    for _idx, signal in signals_df.iterrows():
         entry_price = signal['price']
         atr = signal['atr']
 
@@ -335,31 +335,31 @@ def run_validation():
 
     # Check 1: Trade reduction
     if trade_reduction > 5:
-        print("✅ Trade reduction: PASS (reduced by {:.1f}%)".format(trade_reduction))
+        print(f"✅ Trade reduction: PASS (reduced by {trade_reduction:.1f}%)")
         checks_passed += 1
     else:
-        print("❌ Trade reduction: FAIL (expected >5%, got {:.1f}%)".format(trade_reduction))
+        print(f"❌ Trade reduction: FAIL (expected >5%, got {trade_reduction:.1f}%)")
 
     # Check 2: Win rate improvement
     if win_rate_improvement > 0:
-        print("✅ Win rate improvement: PASS (+{:.1f}% points)".format(win_rate_improvement))
+        print(f"✅ Win rate improvement: PASS (+{win_rate_improvement:.1f}% points)")
         checks_passed += 1
     else:
-        print("❌ Win rate improvement: FAIL ({:+.1f}% points)".format(win_rate_improvement))
+        print(f"❌ Win rate improvement: FAIL ({win_rate_improvement:+.1f}% points)")
 
     # Check 3: Avg P&L improvement
     if avg_pnl_improvement > 0:
-        print("✅ Avg P&L improvement: PASS (+{:.2f}% points)".format(avg_pnl_improvement))
+        print(f"✅ Avg P&L improvement: PASS (+{avg_pnl_improvement:.2f}% points)")
         checks_passed += 1
     else:
-        print("❌ Avg P&L improvement: FAIL ({:+.2f}% points)".format(avg_pnl_improvement))
+        print(f"❌ Avg P&L improvement: FAIL ({avg_pnl_improvement:+.2f}% points)")
 
     # Check 4: Net return improvement or similar
     if net_return_improvement >= -0.5:  # Allow slight decrease if trade quality improves
-        print("✅ Net return: PASS ({:+.2f}% points)".format(net_return_improvement))
+        print(f"✅ Net return: PASS ({net_return_improvement:+.2f}% points)")
         checks_passed += 1
     else:
-        print("❌ Net return: FAIL ({:+.2f}% points)".format(net_return_improvement))
+        print(f"❌ Net return: FAIL ({net_return_improvement:+.2f}% points)")
 
     print()
     print(f"Overall: {checks_passed}/{total_checks} checks passed")

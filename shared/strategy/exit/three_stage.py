@@ -487,6 +487,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
 
     def _determine_stage(self, position: Position, profit_pct: float) -> PositionState:
         """현재 수익률에 따른 Stage 결정 (항상 profit_pct 기준으로 승격)"""
+        _ = position
         if profit_pct >= self.config.maximize_threshold_pct:
             return PositionState.MAXIMIZE
         elif profit_pct >= self.config.breakeven_threshold_pct:

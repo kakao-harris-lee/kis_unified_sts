@@ -6,14 +6,13 @@ correct identifier types (e.g., stock_code vs ISIN vs DART corp_code).
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
-import io
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 from xml.etree import ElementTree
 
 import requests
@@ -21,7 +20,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-def normalize_krx_stock_code(code: str) -> Optional[str]:
+def normalize_krx_stock_code(code: str) -> str | None:
     """Normalize KRX stock code to 6 digits."""
     c = (code or "").strip()
     if not c:
@@ -60,7 +59,7 @@ def calculate_isin_check_digit(isin_without_check_digit: str) -> str:
     return str((10 - (total % 10)) % 10)
 
 
-def krx_stock_code_to_isin(stock_code: str) -> Optional[str]:
+def krx_stock_code_to_isin(stock_code: str) -> str | None:
     """Convert 6-digit KRX stock code to ISIN (best-effort).
 
     For most KRX-listed equities/ETFs, ISIN format is:
@@ -74,7 +73,7 @@ def krx_stock_code_to_isin(stock_code: str) -> Optional[str]:
     return body + calculate_isin_check_digit(body)
 
 
-def to_isin(code_or_isin: str) -> Optional[str]:
+def to_isin(code_or_isin: str) -> str | None:
     """Accept either ISIN or 6-digit stock code and return ISIN."""
     s = (code_or_isin or "").strip()
     if not s:
@@ -123,7 +122,7 @@ class DARTCorpCodeMapper:
         finally:
             self._loaded = True
 
-    def get_corp_code(self, stock_code: str) -> Optional[str]:
+    def get_corp_code(self, stock_code: str) -> str | None:
         self._load_cache()
         code = normalize_krx_stock_code(stock_code)
         if code is None:

@@ -21,7 +21,7 @@ ALLOWED_BASE_FILES = {
 def check_extends_service_config_base(file_path: str) -> bool:
     """Check if a file's config class extends ServiceConfigBase."""
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path) as f:
             content = f.read()
             # Check for ServiceConfigBase in class definition or imports
             if 'ServiceConfigBase' in content:
@@ -55,7 +55,7 @@ def find_configs_with_methods():
 
                 # Check if file has from_yaml or from_env
                 try:
-                    with open(file_path, 'r') as f:
+                    with open(file_path) as f:
                         content = f.read()
                         if re.search(r'def from_yaml\s*\(|def from_env\s*\(', content):
                             configs_with_methods.append(relative_path)
@@ -89,7 +89,7 @@ def main():
             print(f"  ❌ {config_path} (has boilerplate - should extend ServiceConfigBase)")
 
     print(f"\n{'='*70}")
-    print(f"Summary:")
+    print("Summary:")
     print(f"  Migrated configs (override allowed): {len(migrated_configs)}")
     print(f"  Configs with boilerplate: {len(boilerplate_configs)}")
     print(f"{'='*70}\n")

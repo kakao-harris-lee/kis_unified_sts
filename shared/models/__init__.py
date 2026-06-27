@@ -4,7 +4,7 @@
 """
 
 from shared.models.position import Position, PositionState
-from shared.models.signal import ExitSignal, ExitReason, Signal, SignalType
+from shared.models.signal import ExitReason, ExitSignal, Signal, SignalType
 
 __all__ = [
     "Position",

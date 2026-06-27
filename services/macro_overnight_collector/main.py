@@ -70,10 +70,11 @@ async def collect_fx_session(
 
 
 async def _cli(session_kind: str) -> int:
-    import aiohttp
     import os
 
+    import aiohttp
     import redis.asyncio as aioredis
+
     from shared.macro.config import MacroCollectorConfig
     from shared.macro.sources.ecos import ECOSSource
     from shared.macro.sources.yahoo import YahooMacroSource

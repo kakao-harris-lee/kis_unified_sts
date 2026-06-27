@@ -8,11 +8,9 @@ Run with: pytest tests/integration/test_redis_tls.py -v
 To skip these tests when Redis is unavailable:
     pytest -m "not integration"
 """
-import asyncio
 import os
-import pytest
-from unittest.mock import patch
 
+import pytest
 
 # Skip all tests in this module if Redis is not available.
 # serial: connects to a real Redis with short socket timeouts; under the
@@ -214,8 +212,9 @@ def test_redis_client_non_tls_connection(clean_env, monkeypatch):
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_redis_client_tls_settings_applied(clean_env, monkeypatch):
     """Test RedisClient applies TLS settings when enabled."""
-    from shared.streaming.client import RedisClient
     import ssl
+
+    from shared.streaming.client import RedisClient
 
     monkeypatch.setenv("REDIS_TLS_ENABLED", "true")
     monkeypatch.setenv("REDIS_TLS_CERT_REQS", "none")  # Use "none" for testing without certs
@@ -252,8 +251,9 @@ def test_redis_client_tls_settings_applied(clean_env, monkeypatch):
 
 def test_redis_client_cert_reqs_mapping(clean_env, monkeypatch):
     """Test RedisClient maps cert_reqs string to ssl.CERT_* constants."""
-    from shared.streaming.client import RedisClient
     import ssl
+
+    from shared.streaming.client import RedisClient
 
     test_cases = [
         ("none", ssl.CERT_NONE),
@@ -529,8 +529,8 @@ async def test_backward_compatibility_existing_code(clean_env, monkeypatch, redi
 async def test_e2e_all_redis_clients_respect_tls_disabled(clean_env, monkeypatch, redis_url):
     """End-to-end test: all Redis clients work with TLS disabled."""
     from shared.config.secrets import SecretsManager
-    from shared.streaming.client import RedisClient
     from shared.execution.rate_limiter import RedisRateLimiter
+    from shared.streaming.client import RedisClient
 
     # Explicitly disable TLS
     monkeypatch.setenv("REDIS_TLS_ENABLED", "false")

@@ -2,7 +2,7 @@
 import logging
 import time
 from collections import defaultdict
-from typing import Callable, Dict, List
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.requests_per_window = requests_per_window
         self.window_seconds = window_seconds
-        self._request_times: Dict[str, List[float]] = defaultdict(list)
+        self._request_times: dict[str, list[float]] = defaultdict(list)
         self._last_cleanup = time.time()
         self._cleanup_interval = 300  # 5 minutes
 

@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque
+from typing import Any
 
 import numpy as np
 
@@ -118,7 +118,7 @@ class VolumeAccelerationCalculator:
             config: 설정 (기본값 사용 시 None)
         """
         self.config = config or VolumeConfig()
-        self._volume_windows: dict[str, Deque[tuple[float, int]]] = {}
+        self._volume_windows: dict[str, deque[tuple[float, int]]] = {}
         self._prev_velocities: dict[str, float] = {}
 
     def add_tick(self, code: str, volume: int, timestamp: float):
@@ -185,10 +185,7 @@ class VolumeAccelerationCalculator:
         )
 
         # Velocity (1차 도함수)
-        if prev_vol == 0:
-            velocity = 0.0
-        else:
-            velocity = (current_vol - prev_vol) / prev_vol
+        velocity = 0.0 if prev_vol == 0 else (current_vol - prev_vol) / prev_vol
 
         # Acceleration (2차 도함수)
         prev_velocity = self._prev_velocities.get(code, 0.0)
@@ -348,10 +345,7 @@ class VWAPCalculator:
         vwap = data["pv"] / data["volume"]
 
         # 현재가 vs VWAP
-        if vwap > 0:
-            price_vs_vwap = (current_price - vwap) / vwap * 100
-        else:
-            price_vs_vwap = 0.0
+        price_vs_vwap = (current_price - vwap) / vwap * 100 if vwap > 0 else 0.0
 
         return VWAPData(
             vwap=vwap,

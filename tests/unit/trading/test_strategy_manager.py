@@ -126,17 +126,16 @@ class TestStrategyManager:
         """Test initialization registers built-in components"""
         with patch(
             "services.trading.strategy_manager.register_builtin_components"
-        ) as mock_register:
-            with patch(
-                "services.trading.strategy_manager.StrategyFactory"
-            ) as mock_factory:
-                mock_factory.create_all.return_value = []
+        ) as mock_register, patch(
+            "services.trading.strategy_manager.StrategyFactory"
+        ) as mock_factory:
+            mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+            from services.trading.strategy_manager import StrategyManager
 
-                _ = StrategyManager(asset_class="stock")
+            _ = StrategyManager(asset_class="stock")
 
-                mock_register.assert_called_once()
+            mock_register.assert_called_once()
 
     def test_add_strategy(self, mock_strategy):
         """Test adding strategy manually"""

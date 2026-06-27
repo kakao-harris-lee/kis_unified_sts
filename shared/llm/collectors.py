@@ -12,6 +12,7 @@ Data Sources:
 - MK Stock (stock.mk.co.kr): 증권뉴스, 테마, 분석
 """
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 import requests
@@ -34,15 +35,14 @@ from shared.streaming.client import RedisClient
 from shared.streaming.message import StreamMessage
 
 from .config import LLMConfig
-from .errors import DataUnavailableError
-from .krx_api_client import KRXOpenAPIClient
-
 from .data_classes import (
     EconomicEvent,
     FlowData,
     GlobalMarketData,
     NewsSentiment,
 )
+from .errors import DataUnavailableError
+from .krx_api_client import KRXOpenAPIClient
 
 # Optional imports (used for global markets)
 try:
@@ -70,7 +70,7 @@ class DataCollector(ABC):
         })
 
     @abstractmethod
-    def collect(self, *args, **kwargs) -> Dict:
+    def collect(self, *args, **kwargs) -> dict:
         """데이터 수집"""
         pass
 
@@ -85,23 +85,23 @@ class StockDataCollector(DataCollector):
 
     SUPPORTED_MARKETS = ("KOSPI", "KOSDAQ")
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: LLMConfig | None = None):
         super().__init__()
         self._config = config or LLMConfig.from_env()
         self._krx_client = KRXOpenAPIClient(self._config)
         self._calendar = MarketCalendar()
-        self._kis_auth_manager: Optional[KISAuthManager] = None
+        self._kis_auth_manager: KISAuthManager | None = None
         self._kis_auth_initialized: bool = False
         # 종목명 캐시 (daily 데이터에서 수집)
-        self._name_cache: Dict[str, str] = {}
+        self._name_cache: dict[str, str] = {}
         self._name_cache_warmed: bool = False
-        self._code_market_cache: Dict[str, str] = {}
+        self._code_market_cache: dict[str, str] = {}
 
     def _get_last_trading_date(self) -> str:
         """가장 최근 거래일 반환 (KRX API 데이터 게시 시간 고려)."""
         return self._krx_client._get_last_trading_date()
 
-    def collect(self, market: str = "KOSPI") -> Optional[pd.DataFrame]:
+    def collect(self, market: str = "KOSPI") -> pd.DataFrame | None:
         """전체 시장 데이터 수집 (단일 시장)
 
         KRX Open API 오류에 대비해 최대 3영업일까지 fallback 시도.
@@ -154,7 +154,7 @@ class StockDataCollector(DataCollector):
     def _attach_market_column(df: pd.DataFrame, market: str) -> None:
         df["시장"] = market
 
-    def get_stock_history(self, code: str, days: int = 60) -> Optional[pd.DataFrame]:
+    def get_stock_history(self, code: str, days: int = 60) -> pd.DataFrame | None:
         """개별 종목 과거 일봉 수집 (KIS 우선, KRX Open API 폴백)."""
         code = str(code).strip()
         if not code:
@@ -172,7 +172,7 @@ class StockDataCollector(DataCollector):
         logger.debug("Failed to get history for %s (days=%s)", code, days)
         return None
 
-    def _get_kis_auth_manager(self) -> Optional[KISAuthManager]:
+    def _get_kis_auth_manager(self) -> KISAuthManager | None:
         if self._kis_auth_initialized:
             return self._kis_auth_manager
         self._kis_auth_initialized = True
@@ -192,7 +192,7 @@ class StockDataCollector(DataCollector):
         self._kis_auth_manager = KISAuthManager.get_instance(config)
         return self._kis_auth_manager
 
-    def _fetch_stock_history_via_kis(self, code: str, days: int) -> Optional[pd.DataFrame]:
+    def _fetch_stock_history_via_kis(self, code: str, days: int) -> pd.DataFrame | None:
         auth = self._get_kis_auth_manager()
         if auth is None:
             return None
@@ -285,7 +285,7 @@ class StockDataCollector(DataCollector):
             logger.debug("KIS history fetch failed for %s: %s", code, e)
             return None
 
-    def _resolve_market_for_code(self, code: str) -> Optional[str]:
+    def _resolve_market_for_code(self, code: str) -> str | None:
         cached = self._code_market_cache.get(code)
         if cached:
             return cached
@@ -306,7 +306,7 @@ class StockDataCollector(DataCollector):
             attempt_date = self._previous_date(attempt_date)
         return None
 
-    def _fetch_stock_history_via_krx(self, code: str, days: int) -> Optional[pd.DataFrame]:
+    def _fetch_stock_history_via_krx(self, code: str, days: int) -> pd.DataFrame | None:
         market = self._resolve_market_for_code(code)
         if market is None:
             return None
@@ -331,7 +331,7 @@ class StockDataCollector(DataCollector):
                 market_rows = {str(idx): row for idx, row in df.iterrows()}
                 row = market_rows.get(code)
                 if row is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         rows.append(
                             {
                                 "date": pd.to_datetime(date_str, format="%Y%m%d"),
@@ -344,8 +344,6 @@ class StockDataCollector(DataCollector):
                                 "등락률": float(row.get("등락률", 0)),
                             }
                         )
-                    except Exception:
-                        pass
 
             cursor = self._calendar.get_previous_market_day(cursor)
 
@@ -413,7 +411,7 @@ class KRXDataCollector(DataCollector):
 
         return self._calendar.get_previous_market_day(today).strftime("%Y%m%d")
 
-    def collect(self) -> Dict:
+    def collect(self) -> dict:
         """KRX 데이터 수집"""
         data = {
             "market_overview": self._get_market_overview(),
@@ -423,7 +421,7 @@ class KRXDataCollector(DataCollector):
         }
         return data
 
-    def get_stock_info(self, code: str) -> Dict:
+    def get_stock_info(self, code: str) -> dict:
         """개별 종목 정보 조회"""
         try:
             payload = {
@@ -439,7 +437,7 @@ class KRXDataCollector(DataCollector):
             logger.debug(f"KRX stock info failed for {code}: {e}")
         return {}
 
-    def _get_market_overview(self) -> Dict:
+    def _get_market_overview(self) -> dict:
         """시장 개요"""
         try:
             payload = {
@@ -453,7 +451,7 @@ class KRXDataCollector(DataCollector):
             logger.debug(f"KRX market overview failed: {e}")
         return {}
 
-    def _get_investor_trading(self) -> Dict:
+    def _get_investor_trading(self) -> dict:
         """투자자별 매매동향"""
         try:
             today = self._get_last_trading_date()
@@ -471,7 +469,7 @@ class KRXDataCollector(DataCollector):
             logger.debug(f"KRX investor trading failed: {e}")
         return {}
 
-    def _parse_investor_trading(self, data: Dict) -> Dict:
+    def _parse_investor_trading(self, data: dict) -> dict:
         """투자자별 데이터 파싱"""
         result = {}
         try:
@@ -489,7 +487,7 @@ class KRXDataCollector(DataCollector):
             logger.debug(f"Failed to parse investor trading: {e}")
         return result
 
-    def _get_program_trading(self) -> Dict:
+    def _get_program_trading(self) -> dict:
         """프로그램 매매"""
         try:
             today = self._get_last_trading_date()
@@ -506,7 +504,7 @@ class KRXDataCollector(DataCollector):
             logger.debug(f"KRX program trading failed: {e}")
         return {}
 
-    def _get_index_data(self) -> Dict:
+    def _get_index_data(self) -> dict:
         """지수 데이터"""
         try:
             payload = {
@@ -532,7 +530,7 @@ class SEIBRODataCollector(DataCollector):
 
     BASE_URL = "https://seibro.or.kr"
 
-    def collect(self, code: str = None) -> Dict:
+    def collect(self, code: str = None) -> dict:
         """SEIBRO 데이터 수집"""
         isin = None
         if code:
@@ -550,7 +548,7 @@ class SEIBRODataCollector(DataCollector):
         }
         return data
 
-    def _get_company_info(self, isin: str) -> Dict:
+    def _get_company_info(self, isin: str) -> dict:
         """기업 기본정보"""
         try:
             url = f"{self.BASE_URL}/websquare/engine/pro498.do"
@@ -561,7 +559,7 @@ class SEIBRODataCollector(DataCollector):
             logger.debug(f"SEIBRO company info failed: {e}")
         return {}
 
-    def _get_dividend_info(self, isin: str) -> Dict:
+    def _get_dividend_info(self, isin: str) -> dict:
         """배당 정보"""
         try:
             url = f"{self.BASE_URL}/websquare/engine/proq11.do"
@@ -572,7 +570,7 @@ class SEIBRODataCollector(DataCollector):
             logger.debug(f"SEIBRO dividend info failed: {e}")
         return {}
 
-    def _get_shareholder_info(self, isin: str) -> Dict:
+    def _get_shareholder_info(self, isin: str) -> dict:
         """주주 현황"""
         try:
             url = f"{self.BASE_URL}/websquare/engine/proq21.do"
@@ -599,7 +597,7 @@ class DARTDataCollector(DataCollector):
         super().__init__()
         self.api_key = api_key or os.environ.get("DART_API_KEY", "")
 
-    def collect(self, corp_code: str = None) -> Dict:
+    def collect(self, corp_code: str = None) -> dict:
         """DART 데이터 수집"""
         if not self.api_key:
             logger.debug("DART API key not configured")
@@ -620,7 +618,7 @@ class DARTDataCollector(DataCollector):
         *,
         lookback_days: int = 3,
         page_count: int = 100,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Fetch recent filings for the streaming news pipeline."""
         return await asyncio.to_thread(
             self._fetch_recent_filings_sync,
@@ -633,7 +631,7 @@ class DARTDataCollector(DataCollector):
         *,
         lookback_days: int = 3,
         page_count: int = 100,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """최근 전체 공시 목록."""
         if not self.api_key:
             logger.debug("DART API key not configured")
@@ -667,7 +665,7 @@ class DARTDataCollector(DataCollector):
             logger.debug(f"DART recent filings failed: {e}")
         return []
 
-    def _get_disclosures(self, corp_code: str) -> List[Dict]:
+    def _get_disclosures(self, corp_code: str) -> list[dict]:
         """최근 공시 목록"""
         try:
             url = f"{self.BASE_URL}/list.json"
@@ -689,7 +687,7 @@ class DARTDataCollector(DataCollector):
             logger.debug(f"DART disclosures failed: {e}")
         return []
 
-    def _get_financial_info(self, corp_code: str) -> Dict:
+    def _get_financial_info(self, corp_code: str) -> dict:
         """재무정보"""
         try:
             url = f"{self.BASE_URL}/fnlttSinglAcnt.json"
@@ -709,7 +707,7 @@ class DARTDataCollector(DataCollector):
             logger.debug(f"DART financial info failed: {e}")
         return {}
 
-    def _get_major_shareholders(self, corp_code: str) -> Dict:
+    def _get_major_shareholders(self, corp_code: str) -> dict:
         """대주주 현황"""
         try:
             url = f"{self.BASE_URL}/majorstock.json"
@@ -726,7 +724,7 @@ class DARTDataCollector(DataCollector):
             logger.debug(f"DART major shareholders failed: {e}")
         return {}
 
-    def _get_executive_major_shareholders(self, corp_code: str) -> Dict:
+    def _get_executive_major_shareholders(self, corp_code: str) -> dict:
         """임원ㆍ주요주주 특정증권등 소유상황."""
         try:
             url = f"{self.BASE_URL}/elestock.json"
@@ -755,7 +753,7 @@ class KSDDataCollector(DataCollector):
 
     BASE_URL = "https://www.ksd.or.kr"
 
-    def collect(self, code: str = None) -> Dict:
+    def collect(self, code: str = None) -> dict:
         """KSD 데이터 수집"""
         isin = None
         if code:
@@ -773,7 +771,7 @@ class KSDDataCollector(DataCollector):
         }
         return data
 
-    def _get_short_selling(self, isin: str) -> Dict:
+    def _get_short_selling(self, isin: str) -> dict:
         """공매도 현황"""
         try:
             url = f"{self.BASE_URL}/kor/market/shortsel.do"
@@ -784,7 +782,7 @@ class KSDDataCollector(DataCollector):
             logger.debug(f"KSD short selling failed: {e}")
         return {}
 
-    def _get_stock_lending(self, isin: str) -> Dict:
+    def _get_stock_lending(self, isin: str) -> dict:
         """대차잔고"""
         try:
             url = f"{self.BASE_URL}/kor/market/sllending.do"
@@ -795,7 +793,7 @@ class KSDDataCollector(DataCollector):
             logger.debug(f"KSD stock lending failed: {e}")
         return {}
 
-    def _get_large_holdings(self, isin: str) -> Dict:
+    def _get_large_holdings(self, isin: str) -> dict:
         """대량보유 현황"""
         try:
             url = f"{self.BASE_URL}/kor/market/largeholding.do"
@@ -824,7 +822,7 @@ class KOFIADataCollector(DataCollector):
             'Referer': 'https://freesis.kofia.or.kr/',
         })
 
-    def collect(self) -> Dict:
+    def collect(self) -> dict:
         """KOFIA 데이터 수집"""
         data = {
             "fund_overview": self._get_fund_overview(),
@@ -833,7 +831,7 @@ class KOFIADataCollector(DataCollector):
         }
         return data
 
-    def _get_fund_overview(self) -> Dict:
+    def _get_fund_overview(self) -> dict:
         """펀드 현황"""
         try:
             url = f"{self.BASE_URL}/stat/FreeSIS/info/fsis/fsis0100/fsis010001.do"
@@ -846,7 +844,7 @@ class KOFIADataCollector(DataCollector):
             logger.debug(f"KOFIA fund overview failed: {e}")
         return {}
 
-    def _get_bond_evaluation(self) -> Dict:
+    def _get_bond_evaluation(self) -> dict:
         """채권 시가평가"""
         try:
             url = f"{self.BASE_URL}/stat/FreeSIS/info/bond/bond0100/bond010001.do"
@@ -857,7 +855,7 @@ class KOFIADataCollector(DataCollector):
             logger.debug(f"KOFIA bond evaluation failed: {e}")
         return {}
 
-    def _get_investor_trend(self) -> Dict:
+    def _get_investor_trend(self) -> dict:
         """투자자 동향"""
         try:
             url = f"{self.BASE_URL}/stat/FreeSIS/info/stat/stat0100/stat010001.do"
@@ -886,11 +884,11 @@ class MKStockNewsCollector(DataCollector):
         self.session.headers.update({
             'Referer': 'https://stock.mk.co.kr/',
         })
-        self._market_news_cache: List[Dict] = []
+        self._market_news_cache: list[dict] = []
         self._market_news_cached_at: float = 0.0
         self._market_news_ttl_seconds: float = 60.0
 
-    def collect(self, code: str = None) -> Dict:
+    def collect(self, code: str = None) -> dict:
         """MK 뉴스 데이터 수집"""
         data = {
             "market_news": self._get_market_news(),
@@ -900,7 +898,7 @@ class MKStockNewsCollector(DataCollector):
         }
         return data
 
-    def _get_market_news(self) -> List[Dict]:
+    def _get_market_news(self) -> list[dict]:
         """시장 뉴스 — ul.news_list > li.news_node > a 구조 (2026-03~)"""
         now_ts = time.time()
         if (
@@ -934,9 +932,9 @@ class MKStockNewsCollector(DataCollector):
                 return [dict(item) for item in self._market_news_cache]
         return news_list
 
-    def _get_stock_news(self, code: str) -> List[Dict]:
+    def _get_stock_news(self, code: str) -> list[dict]:
         """종목별 뉴스 — MK 종목 페이지 폐기, Naver Finance로 fallback"""
-        news_list: List[Dict] = []
+        news_list: list[dict] = []
         try:
             naver = NaverFinanceNewsCollector()
             naver_news = naver._get_stock_news(code)
@@ -947,15 +945,15 @@ class MKStockNewsCollector(DataCollector):
             logger.debug(f"MK stock news fallback failed for {code}: {e}")
         return news_list
 
-    def _get_analysis_news(self) -> List[Dict]:
+    def _get_analysis_news(self) -> list[dict]:
         """증권사 분석 — MK 분석 페이지 폐기, 시장 뉴스에서 추출"""
         return []
 
-    def _get_theme_news(self) -> List[Dict]:
+    def _get_theme_news(self) -> list[dict]:
         """테마 뉴스 — MK 테마 페이지 폐기, 시장 뉴스에서 추출"""
         return []
 
-    def analyze_sentiment(self, news_list: List[Dict]) -> NewsSentiment:
+    def analyze_sentiment(self, news_list: list[dict]) -> NewsSentiment:
         """뉴스 감성 분석 (키워드 기반)"""
         if not news_list:
             return NewsSentiment.NEUTRAL
@@ -1009,12 +1007,12 @@ class NaverFinanceNewsCollector(DataCollector):
             }
         )
 
-    def collect(self, code: str) -> Dict:
+    def collect(self, code: str) -> dict:
         """종목 뉴스 데이터 수집"""
         return {"stock_news": self._get_stock_news(code)}
 
-    def _get_stock_news(self, code: str) -> List[Dict]:
-        news_list: List[Dict] = []
+    def _get_stock_news(self, code: str) -> list[dict]:
+        news_list: list[dict] = []
         try:
             url = f"{self.BASE_URL}/item/news_news.nhn"
             response = self.session.get(url, params={"code": code}, timeout=10)
@@ -1057,7 +1055,7 @@ class NaverFinanceNewsCollector(DataCollector):
 class FuturesGlobalCollector(DataCollector):
     """글로벌 시장 데이터 수집"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: LLMConfig | None = None):
         super().__init__()
         self.config = config or LLMConfig.from_env()
 
@@ -1078,7 +1076,7 @@ class FuturesGlobalCollector(DataCollector):
 
         raise DataUnavailableError("global_market_data", "fdr_not_available")
 
-    def _load_snapshot(self) -> Optional[GlobalMarketData]:
+    def _load_snapshot(self) -> GlobalMarketData | None:
         """외부 스냅샷(JSON)에서 글로벌 데이터 로드 (선택)"""
         snapshot_json = os.environ.get("LLM_GLOBAL_SNAPSHOT_JSON", "").strip()
         snapshot_path = os.environ.get("LLM_GLOBAL_SNAPSHOT_PATH", "").strip()
@@ -1092,7 +1090,7 @@ class FuturesGlobalCollector(DataCollector):
                 payload = None
         elif snapshot_path:
             try:
-                with open(snapshot_path, "r", encoding="utf-8") as f:
+                with open(snapshot_path, encoding="utf-8") as f:
                     payload = json.load(f)
             except Exception as e:
                 logger.debug(f"Failed to load snapshot file: {e}")
@@ -1111,7 +1109,7 @@ class FuturesGlobalCollector(DataCollector):
             result.global_score = self._compute_global_score(result)
         return result
 
-    def _collect_from_fdr(self) -> Optional[GlobalMarketData]:
+    def _collect_from_fdr(self) -> GlobalMarketData | None:
         """FinanceDataReader 기반 글로벌 지표 수집 (Investing.com/TradingView 연계)"""
         end_date = datetime.now()
         start_date = end_date - timedelta(days=7)
@@ -1128,7 +1126,7 @@ class FuturesGlobalCollector(DataCollector):
             "usd_krw": os.environ.get("LLM_TICKER_USDKRW", "USDKRW"),
         }
 
-        def _fetch_last(ticker: str) -> Optional[tuple[float, float]]:
+        def _fetch_last(ticker: str) -> tuple[float, float] | None:
             if not ticker:
                 return None
             df = fdr.DataReader(ticker, start_date, end_date)
@@ -1185,15 +1183,15 @@ class FuturesGlobalCollector(DataCollector):
 class FuturesFlowCollector(DataCollector):
     """수급 데이터 수집"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: LLMConfig | None = None):
         super().__init__()
         self.config = config or LLMConfig.from_env()
         self._calendar = MarketCalendar()
         self._krx_client = KRXOpenAPIClient(self.config)
 
-    def collect(self) -> tuple[FlowData | None, List[str]]:
+    def collect(self) -> tuple[FlowData | None, list[str]]:
         """수급 데이터 수집 (투자자별 수급 제외, 실제 데이터만 사용)"""
-        missing: List[str] = ["investor_flow_excluded"]
+        missing: list[str] = ["investor_flow_excluded"]
         base_date = self._get_last_trading_date()
 
         basis, put_call = self._collect_basis_putcall(base_date, missing)
@@ -1211,7 +1209,7 @@ class FuturesFlowCollector(DataCollector):
     def _collect_basis_putcall(
         self,
         base_date: str,
-        missing: List[str],
+        missing: list[str],
     ) -> tuple[float | None, float | None]:
         basis: float | None = None
         put_call: float | None = None
@@ -1238,14 +1236,14 @@ class FuturesFlowCollector(DataCollector):
         return basis, put_call
 
     @staticmethod
-    def _dedupe_missing(missing: List[str]) -> List[str]:
+    def _dedupe_missing(missing: list[str]) -> list[str]:
         return list(dict.fromkeys(missing)) if missing else missing
 
     @staticmethod
     def _compute_flow_score(
         basis: float | None,
         put_call: float | None,
-        micro_data: Dict[str, Any],
+        micro_data: dict[str, Any],
     ) -> float:
         flow_score = 0.0
         if basis is not None:
@@ -1265,7 +1263,7 @@ class FuturesFlowCollector(DataCollector):
     def _build_flow_data(
         basis: float | None,
         put_call: float | None,
-        micro_data: Dict[str, Any],
+        micro_data: dict[str, Any],
         flow_score: float,
     ) -> FlowData:
         micro_score = micro_data.get("microstructure_score") if micro_data else None
@@ -1288,7 +1286,7 @@ class FuturesFlowCollector(DataCollector):
         )
 
     @staticmethod
-    def _to_float(value: Any) -> Optional[float]:
+    def _to_float(value: Any) -> float | None:
         if value is None or value == "":
             return None
         try:
@@ -1296,8 +1294,8 @@ class FuturesFlowCollector(DataCollector):
         except (TypeError, ValueError):
             return None
 
-    def _load_recent_ticks(self) -> tuple[List[StreamMessage], List[str]]:
-        missing: List[str] = []
+    def _load_recent_ticks(self) -> tuple[list[StreamMessage], list[str]]:
+        missing: list[str] = []
         stream_name = self.config.futures_tick_stream or "raw_data"
         lookback_seconds = max(60, int(self.config.futures_tick_lookback_seconds))
         max_entries = max(100, int(self.config.futures_tick_max))
@@ -1311,7 +1309,7 @@ class FuturesFlowCollector(DataCollector):
             return [], missing
 
         now = time.time()
-        parsed: List[StreamMessage] = []
+        parsed: list[StreamMessage] = []
         for msg_id, fields in raw_msgs:
             try:
                 msg = StreamMessage.from_raw(stream_name, msg_id, dict(fields))
@@ -1327,14 +1325,14 @@ class FuturesFlowCollector(DataCollector):
         return parsed, missing
 
     @staticmethod
-    def _resolve_symbol(ticks: List[StreamMessage], explicit: str | None) -> Optional[str]:
+    def _resolve_symbol(ticks: list[StreamMessage], explicit: str | None) -> str | None:
         if explicit:
             for msg in ticks:
                 if msg.data.get("symbol") == explicit:
                     return explicit
             return None
 
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
         for msg in ticks:
             symbol = msg.data.get("symbol")
             if symbol:
@@ -1343,7 +1341,7 @@ class FuturesFlowCollector(DataCollector):
             return None
         return max(counts.items(), key=lambda item: item[1])[0]
 
-    def _extract_orderbook_levels(self, data: Dict[str, Any]) -> tuple[list[float], list[float], list[float], list[float]]:
+    def _extract_orderbook_levels(self, data: dict[str, Any]) -> tuple[list[float], list[float], list[float], list[float]]:
         bid_prices: list[float] = []
         bid_qtys: list[float] = []
         ask_prices: list[float] = []
@@ -1363,7 +1361,7 @@ class FuturesFlowCollector(DataCollector):
 
     @dataclass
     class _MicrostructureState:
-        last_orderbook: Dict[str, Any] | None = None
+        last_orderbook: dict[str, Any] | None = None
         last_bid: float | None = None
         last_ask: float | None = None
         last_mid: float | None = None
@@ -1380,7 +1378,7 @@ class FuturesFlowCollector(DataCollector):
 
     def _update_state_from_orderbook(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         state: "FuturesFlowCollector._MicrostructureState",
         ofi_calc: OFICalculator,
     ) -> None:
@@ -1394,14 +1392,12 @@ class FuturesFlowCollector(DataCollector):
             state.last_ask = ask
             state.last_mid = (bid + ask) / 2
             state.last_orderbook = data
-            try:
+            with contextlib.suppress(Exception):
                 ofi_calc.update(bid, bid_qty, ask, ask_qty)
-            except Exception:
-                pass
 
     def _update_state_from_trade(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         state: "FuturesFlowCollector._MicrostructureState",
     ) -> None:
         price = self._extract_trade_price(data)
@@ -1416,13 +1412,13 @@ class FuturesFlowCollector(DataCollector):
         side = self._infer_trade_side(state, price)
         self._apply_trade_side(state, side, size)
 
-    def _extract_trade_price(self, data: Dict[str, Any]) -> float | None:
+    def _extract_trade_price(self, data: dict[str, Any]) -> float | None:
         price = self._to_float(data.get("current_price"))
         if price is None or price <= 0:
             return None
         return price
 
-    def _extract_trade_size(self, data: Dict[str, Any]) -> float:
+    def _extract_trade_size(self, data: dict[str, Any]) -> float:
         return self._to_float(data.get("tick_volume")) or 1.0
 
     @staticmethod
@@ -1437,7 +1433,7 @@ class FuturesFlowCollector(DataCollector):
     def _update_open_interest(
         self,
         state: "FuturesFlowCollector._MicrostructureState",
-        data: Dict[str, Any],
+        data: dict[str, Any],
     ) -> None:
         oi = self._to_float(data.get("open_interest"))
         if oi is None:
@@ -1481,8 +1477,8 @@ class FuturesFlowCollector(DataCollector):
         state: "FuturesFlowCollector._MicrostructureState",
         ofi_calc: OFICalculator,
         orderbook_analyzer: OrderBookAnalyzer,
-        missing: List[str],
-    ) -> tuple[Dict[str, Any], List[str]]:
+        missing: list[str],
+    ) -> tuple[dict[str, Any], list[str]]:
         orderbook_imbalance = self._compute_orderbook_imbalance(
             state,
             orderbook_analyzer,
@@ -1518,7 +1514,7 @@ class FuturesFlowCollector(DataCollector):
         self,
         state: "FuturesFlowCollector._MicrostructureState",
         orderbook_analyzer: OrderBookAnalyzer,
-        missing: List[str],
+        missing: list[str],
     ) -> float | None:
         if not state.last_orderbook:
             missing.append("orderbook_imbalance")
@@ -1541,7 +1537,7 @@ class FuturesFlowCollector(DataCollector):
             return None
 
     @staticmethod
-    def _compute_ofi_zscore(ofi_calc: OFICalculator, missing: List[str]) -> float | None:
+    def _compute_ofi_zscore(ofi_calc: OFICalculator, missing: list[str]) -> float | None:
         ofi_zscore = ofi_calc.get_ofi_zscore()
         if ofi_zscore is None:
             missing.append("ofi_zscore")
@@ -1550,7 +1546,7 @@ class FuturesFlowCollector(DataCollector):
     @staticmethod
     def _compute_aggressor_metrics(
         state: "FuturesFlowCollector._MicrostructureState",
-        missing: List[str],
+        missing: list[str],
     ) -> tuple[float | None, float | None]:
         total_vol = state.buy_volume + state.sell_volume
         if total_vol <= 0:
@@ -1563,7 +1559,7 @@ class FuturesFlowCollector(DataCollector):
     @staticmethod
     def _compute_oi_price_change(
         state: "FuturesFlowCollector._MicrostructureState",
-        missing: List[str],
+        missing: list[str],
     ) -> tuple[float | None, float | None]:
         oi_change: float | None = None
         if state.first_oi is not None and state.last_oi is not None and state.trade_count >= 2:
@@ -1620,7 +1616,7 @@ class FuturesFlowCollector(DataCollector):
         oi_change: float | None,
         price_change: float | None,
         micro_score: float,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return {
             "orderbook_imbalance": round(orderbook_imbalance, 3) if orderbook_imbalance is not None else None,
             "ofi_zscore": round(ofi_zscore, 2) if ofi_zscore is not None else None,
@@ -1631,8 +1627,8 @@ class FuturesFlowCollector(DataCollector):
             "microstructure_score": round(micro_score, 1),
         }
 
-    def _collect_microstructure(self) -> tuple[Dict[str, Any], List[str]]:
-        missing: List[str] = []
+    def _collect_microstructure(self) -> tuple[dict[str, Any], list[str]]:
+        missing: list[str] = []
         ticks, tick_missing = self._load_recent_ticks()
         missing.extend(tick_missing)
         if not ticks:
@@ -1672,7 +1668,7 @@ class FuturesFlowCollector(DataCollector):
 
         return target.strftime("%Y%m%d")
 
-    def _get_kospi200_index_price(self, base_date: str) -> Optional[float]:
+    def _get_kospi200_index_price(self, base_date: str) -> float | None:
         data = self._krx_client.get_kospi_index(base_date)
         for item in data or []:
             name = str(item.get("IDX_NM", ""))
@@ -1683,7 +1679,7 @@ class FuturesFlowCollector(DataCollector):
 class FuturesEventCollector(DataCollector):
     """경제 이벤트 수집"""
 
-    def collect(self, days_ahead: int = 3) -> List[EconomicEvent]:
+    def collect(self, days_ahead: int = 3) -> list[EconomicEvent]:
         """경제 이벤트 수집 (외부 스냅샷 사용)"""
         snapshot_json = os.environ.get("LLM_EVENT_SNAPSHOT_JSON", "").strip()
         snapshot_path = os.environ.get("LLM_EVENT_SNAPSHOT_PATH", "").strip()
@@ -1696,7 +1692,7 @@ class FuturesEventCollector(DataCollector):
                 logger.debug(f"Invalid LLM_EVENT_SNAPSHOT_JSON: {e}")
         elif snapshot_path:
             try:
-                with open(snapshot_path, "r", encoding="utf-8") as f:
+                with open(snapshot_path, encoding="utf-8") as f:
                     payload = json.load(f)
             except Exception as e:
                 logger.debug(f"Failed to load event snapshot file: {e}")
@@ -1735,37 +1731,37 @@ class FuturesEventCollector(DataCollector):
 # ============================================================
 
 
-def collect_krx_data() -> Dict:
+def collect_krx_data() -> dict:
     """KRX 데이터 수집 (data.krx.co.kr)"""
     collector = KRXDataCollector()
     return collector.collect()
 
 
-def collect_seibro_data(code: str = None) -> Dict:
+def collect_seibro_data(code: str = None) -> dict:
     """SEIBRO 데이터 수집 (seibro.or.kr)"""
     collector = SEIBRODataCollector()
     return collector.collect(code)
 
 
-def collect_dart_data(corp_code: str = None, api_key: str = None) -> Dict:
+def collect_dart_data(corp_code: str = None, api_key: str = None) -> dict:
     """DART 데이터 수집 (dart.fss.or.kr)"""
     collector = DARTDataCollector(api_key=api_key)
     return collector.collect(corp_code)
 
 
-def collect_ksd_data(code: str = None) -> Dict:
+def collect_ksd_data(code: str = None) -> dict:
     """KSD 데이터 수집 (ksd.or.kr)"""
     collector = KSDDataCollector()
     return collector.collect(code)
 
 
-def collect_kofia_data() -> Dict:
+def collect_kofia_data() -> dict:
     """KOFIA 데이터 수집 (freesis.kofia.or.kr)"""
     collector = KOFIADataCollector()
     return collector.collect()
 
 
-def collect_mk_news(code: str = None) -> Dict:
+def collect_mk_news(code: str = None) -> dict:
     """매일경제 증권뉴스 수집 (stock.mk.co.kr)"""
     collector = MKStockNewsCollector()
     data = collector.collect(code)

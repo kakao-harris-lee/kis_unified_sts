@@ -53,8 +53,9 @@ def test_account_no_validation_empty():
 
 def test_account_no_validation_invalid_length():
     """Test invalid account number (wrong length) raises error."""
-    from shared.execution.config import ExecutionConfig
     from pydantic import ValidationError
+
+    from shared.execution.config import ExecutionConfig
 
     with pytest.raises(ValidationError) as exc_info:
         ExecutionConfig(account_no="12345")
@@ -64,8 +65,9 @@ def test_account_no_validation_invalid_length():
 
 def test_account_no_validation_invalid_characters():
     """Test invalid account number (non-digits) raises error."""
-    from shared.execution.config import ExecutionConfig
     from pydantic import ValidationError
+
+    from shared.execution.config import ExecutionConfig
 
     with pytest.raises(ValidationError) as exc_info:
         ExecutionConfig(account_no="123456789a")

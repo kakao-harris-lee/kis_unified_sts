@@ -117,8 +117,9 @@ class TestTradeRecordPnlPct:
 
     def test_pnl_pct_normal_case(self):
         """Test normal pnl_pct calculation."""
-        from shared.paper.models import TradeRecord, OrderSide
         from datetime import datetime
+
+        from shared.paper.models import OrderSide, TradeRecord
 
         trade = TradeRecord(
             trade_id="test",
@@ -137,8 +138,9 @@ class TestTradeRecordPnlPct:
 
     def test_pnl_pct_zero_entry_price(self):
         """Test pnl_pct with zero entry price returns 0."""
-        from shared.paper.models import TradeRecord, OrderSide
         from datetime import datetime
+
+        from shared.paper.models import OrderSide, TradeRecord
 
         trade = TradeRecord(
             trade_id="test",
@@ -156,8 +158,9 @@ class TestTradeRecordPnlPct:
 
     def test_pnl_pct_zero_quantity(self):
         """Test pnl_pct with zero quantity returns 0."""
-        from shared.paper.models import TradeRecord, OrderSide
         from datetime import datetime
+
+        from shared.paper.models import OrderSide, TradeRecord
 
         trade = TradeRecord(
             trade_id="test",
@@ -180,6 +183,7 @@ class TestRegimeDetectorSafeDivision:
     def test_detect_with_zero_sma(self):
         """Test detection handles zero SMA values gracefully."""
         import pandas as pd
+
         from shared.regime.detector import StockRegimeDetector
         from shared.regime.models import RegimeConfig, RegimeState
 
@@ -207,6 +211,7 @@ class TestRegimeDetectorSafeDivision:
     def test_detect_with_near_zero_prices(self):
         """Test detection with very small prices."""
         import pandas as pd
+
         from shared.regime.detector import StockRegimeDetector
         from shared.regime.models import RegimeConfig
 

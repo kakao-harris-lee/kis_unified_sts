@@ -1,10 +1,9 @@
 """Math utilities with safety checks."""
 import logging
-from typing import Union
 
 logger = logging.getLogger(__name__)
 
-Number = Union[int, float]
+Number = int | float
 
 
 def safe_divide(

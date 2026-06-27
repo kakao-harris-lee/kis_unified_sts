@@ -11,11 +11,10 @@ These tests verify that RiskManager integrates correctly with TradingOrchestrato
 and enforces risk limits across the entire trading system.
 """
 
-import asyncio
 import os
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from datetime import datetime, date
-from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
 
 @pytest.fixture
@@ -48,7 +47,7 @@ class TestRiskManagerIntegrationWithOrchestrator:
     @pytest.mark.asyncio
     async def test_orchestrator_initializes_risk_manager(self):
         """Test that orchestrator initializes RiskManager correctly."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.risk.manager import RiskManager
 
         config = TradingConfig(
@@ -79,11 +78,10 @@ class TestRiskManagerIntegrationWithOrchestrator:
     @pytest.mark.asyncio
     async def test_position_entry_blocked_by_daily_loss_limit(self, redis_cleanup):
         """Test that position entry is blocked when daily loss limit is breached."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.risk.manager import RiskManager
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
         from shared.risk.models import BlockReason
-        from shared.models.position import Position, PositionSide
 
         config = TradingConfig(
             asset_class="stock",
@@ -123,11 +121,10 @@ class TestRiskManagerIntegrationWithOrchestrator:
     @pytest.mark.asyncio
     async def test_cross_asset_position_count_enforcement(self):
         """Test that maximum position count is enforced across assets."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.risk.manager import RiskManager
-        from shared.risk.config import RiskConfig
-        from shared.risk.models import BlockReason
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.position import Position, PositionSide
+        from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
 
         config = TradingConfig(
             asset_class="stock",
@@ -209,9 +206,9 @@ class TestRiskManagerIntegrationWithOrchestrator:
     @pytest.mark.asyncio
     async def test_drawdown_monitoring_and_alerts(self, redis_cleanup):
         """Test drawdown calculation and Telegram alert triggering."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.risk.manager import RiskManager
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
         from shared.risk.models import DrawdownLevel
 
         config = TradingConfig(
@@ -262,10 +259,10 @@ class TestRiskManagerIntegrationWithOrchestrator:
     @pytest.mark.asyncio
     async def test_risk_state_recovery_on_restart(self, redis_cleanup):
         """Test that risk state is recovered from Redis on orchestrator restart."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.risk.manager import RiskManager
-        from shared.risk.config import RiskConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.position import Position, PositionSide
+        from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
 
         config = TradingConfig(
             asset_class="stock",
@@ -330,9 +327,9 @@ class TestRiskManagerEdgeCases:
     @pytest.mark.asyncio
     async def test_risk_manager_handles_empty_positions(self):
         """Test that risk manager handles empty position list gracefully."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.risk.manager import RiskManager
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
 
         config = TradingConfig(
             asset_class="stock",
@@ -360,9 +357,9 @@ class TestRiskManagerEdgeCases:
     @pytest.mark.asyncio
     async def test_risk_manager_handles_redis_failure(self):
         """Test that risk manager handles Redis failures gracefully."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.risk.manager import RiskManager
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
 
         config = TradingConfig(
             asset_class="stock",

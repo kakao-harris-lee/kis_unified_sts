@@ -19,10 +19,7 @@ Entry Conditions (Long):
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Optional
 from zoneinfo import ZoneInfo
-
-_KST = ZoneInfo("Asia/Seoul")
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -31,6 +28,7 @@ from shared.strategy.entry.daily_watchlist_gate import daily_watchlist_allows
 from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
+_KST = ZoneInfo("Asia/Seoul")
 
 
 @dataclass
@@ -123,7 +121,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
     def required_indicators(self) -> list[str]:
         return ["bb_lower", "bb_middle", "rsi", "volume", "volume_ma", "atr", "momentum_5m", "daily_sma_200"]
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """Generate entry signal based on trend pullback conditions."""
         data = context.market_data or {}
         indicators = context.indicators or {}
@@ -213,7 +211,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
         rsi = _get("rsi", 50)
 
         # --- Intraday triggers ---
-        trigger_type: Optional[str] = None
+        trigger_type: str | None = None
 
         # Trigger 1: BB touch + RSI confirm
         if bb_lower > 0 and close <= bb_lower * self.config.bb_touch_buffer:

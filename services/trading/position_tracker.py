@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -636,18 +637,14 @@ class PositionTracker:
             return None
 
         if position.code in self._by_symbol:
-            try:
+            with contextlib.suppress(ValueError):
                 self._by_symbol[position.code].remove(position_id)
-            except ValueError:
-                pass
             if not self._by_symbol[position.code]:
                 del self._by_symbol[position.code]
 
         if position.strategy in self._by_strategy:
-            try:
+            with contextlib.suppress(ValueError):
                 self._by_strategy[position.strategy].remove(position_id)
-            except ValueError:
-                pass
             if not self._by_strategy[position.strategy]:
                 del self._by_strategy[position.strategy]
 

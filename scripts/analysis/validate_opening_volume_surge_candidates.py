@@ -27,6 +27,7 @@ from typing import Any
 import matplotlib
 import numpy as np
 import pandas as pd
+
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
 

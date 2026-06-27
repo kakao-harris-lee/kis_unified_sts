@@ -7,7 +7,6 @@ Ensures that concurrent updates to the same position don't corrupt state.
 
 import asyncio
 from datetime import datetime
-from typing import List
 
 import pytest
 
@@ -208,7 +207,7 @@ async def test_stress_test_many_concurrent_updates(
     상태가 corrupt되지 않아야 함.
     """
     # 50개의 가격 시퀀스 (SURVIVAL → BREAKEVEN → MAXIMIZE)
-    prices: List[float] = []
+    prices: list[float] = []
     for i in range(50):
         # 점진적으로 가격 상승 (0% → 5%)
         pct_gain = (i / 50) * 0.05

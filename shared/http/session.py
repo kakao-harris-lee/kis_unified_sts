@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import ssl
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import aiohttp
@@ -93,10 +93,10 @@ class AsyncSessionMixin:
 
     # SSL configuration (can be overridden in subclasses)
     _ssl_verify: bool = True
-    _ssl_context: Optional[ssl.SSLContext] = None
+    _ssl_context: ssl.SSLContext | None = None
 
     # Connection pool configuration (can be overridden in subclasses)
-    _pool_config: Optional[ConnectionPoolConfig] = None
+    _pool_config: ConnectionPoolConfig | None = None
     _pool_limit: int = 100
     _pool_limit_per_host: int = 0
     _pool_keepalive_timeout: float = 15.0
@@ -129,7 +129,7 @@ class AsyncSessionMixin:
             keepalive_timeout=self._pool_keepalive_timeout,
         )
 
-    async def _get_session(self) -> "aiohttp.ClientSession":
+    async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session.
 
         Returns:
@@ -192,7 +192,7 @@ class AsyncSessionWithTimeoutMixin(AsyncSessionMixin):
 
     _session_timeout: float = 30.0
 
-    async def _get_session(self) -> "aiohttp.ClientSession":
+    async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create session with timeout configuration."""
         import aiohttp
 

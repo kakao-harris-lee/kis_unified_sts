@@ -50,11 +50,10 @@ def is_in_entry_session(timestamp: datetime, window: MarketSessionWindow) -> boo
 
     if timestamp_kst < open_dt:
         return False
-    if window.skip_market_open_minutes > 0:
-        if timestamp_kst < open_dt + timedelta(
-            minutes=window.skip_market_open_minutes
-        ):
-            return False
+    if window.skip_market_open_minutes > 0 and timestamp_kst < open_dt + timedelta(
+        minutes=window.skip_market_open_minutes
+    ):
+        return False
     if window.skip_market_close_minutes > 0:
         if timestamp_kst >= close_dt - timedelta(
             minutes=window.skip_market_close_minutes

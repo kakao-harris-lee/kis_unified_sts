@@ -1,7 +1,6 @@
 """Paper trading report generation."""
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List
 
 from .models import TradeRecord
 
@@ -23,7 +22,7 @@ class PaperTradingReport:
 
     initial_capital: float
     final_capital: float
-    trades: List[TradeRecord]
+    trades: list[TradeRecord]
     start_time: datetime
     end_time: datetime
 

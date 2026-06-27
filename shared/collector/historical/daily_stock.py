@@ -13,20 +13,21 @@ Usage:
     await collect_daily_candles(days=100)
 """
 
-import os
 import asyncio
 import logging
+import os
 from datetime import date, datetime
-from typing import List, Tuple, Dict, Any
+from typing import Any
 
 import httpx
 
 from shared.config.secrets import SecretsManager
+
 from .stock import (
+    STOCK_UNIVERSE,
     StockKISToken,
     _get_rate_limiter,
     _get_semaphore,
-    STOCK_UNIVERSE,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ def ensure_daily_candles_table():
 
 
 def insert_daily_candles_batch(
-    db_client, rows: List[Tuple], table_name: str = "daily_candles"
+    db_client, rows: list[tuple], table_name: str = "daily_candles"
 ):
     """Legacy DB sink entrypoint removed; use Parquet stock daily collection."""
     raise RuntimeError("Legacy DB sink removed; use Parquet stock daily collection")
@@ -64,7 +65,7 @@ def delete_daily_candles_range(
 
 
 def delete_daily_candles_batch(
-    db_client, codes: List[str], start_date: date, end_date: date
+    db_client, codes: list[str], start_date: date, end_date: date
 ) -> None:
     """Legacy DB sink entrypoint removed; use Parquet stock daily collection."""
     raise RuntimeError("Legacy DB sink removed; use Parquet stock daily collection")
@@ -81,7 +82,7 @@ async def fetch_daily_candles_async(
     start_date: date,
     end_date: date,
     max_retries: int = 3,
-) -> Tuple[str, dict]:
+) -> tuple[str, dict]:
     """
     Fetch stock daily candles asynchronously.
 
@@ -164,7 +165,7 @@ async def fetch_daily_candles_async(
     return (code, {"error": str(last_error)})
 
 
-def parse_daily_ohlcv(code: str, data: dict) -> List[Tuple]:
+def parse_daily_ohlcv(code: str, data: dict) -> list[tuple]:
     """
     Parse API response to daily OHLCV rows.
 
@@ -191,14 +192,14 @@ def parse_daily_ohlcv(code: str, data: dict) -> List[Tuple]:
 
             o = float(item.get("stck_oprc", 0))
             h = float(item.get("stck_hgpr", 0))
-            l = float(item.get("stck_lwpr", 0))
+            low = float(item.get("stck_lwpr", 0))
             c = float(item.get("stck_clpr", 0))
             v = int(item.get("acml_vol", 0))
             val = int(item.get("acml_tr_pbmn", 0))
             change_rate = float(item.get("prdy_ctrt", 0))
 
             if h > 0:
-                rows.append((code, dt, o, h, l, c, v, val, change_rate))
+                rows.append((code, dt, o, h, low, c, v, val, change_rate))
 
         except (ValueError, KeyError) as e:
             logger.debug(f"Parse error for {code}: {e}")
@@ -213,7 +214,7 @@ def parse_daily_ohlcv(code: str, data: dict) -> List[Tuple]:
 
 
 async def collect_daily_candles(
-    codes: List[str] = None, days: int = 100, verbose: bool = True
+    codes: list[str] = None, days: int = 100, verbose: bool = True
 ) -> int:
     """
     Collect daily candles for stock universe.
@@ -236,13 +237,13 @@ async def collect_daily_candles(
     return result.rows
 
 
-def _select_daily_codes(codes: List[str] | None) -> List[str]:
+def _select_daily_codes(codes: list[str] | None) -> list[str]:
     if codes:
         return list(dict.fromkeys(codes))
     return [s["code"] for s in STOCK_UNIVERSE]
 
 
-def _log_daily_collection_header(trading_days: List[date]) -> None:
+def _log_daily_collection_header(trading_days: list[date]) -> None:
     print("Stock Daily Candles Collection")
     print(f"Trading days: {len(trading_days)}")
     print(f"Date range: {trading_days[0]} ~ {trading_days[-1]}")
@@ -250,19 +251,19 @@ def _log_daily_collection_header(trading_days: List[date]) -> None:
 
 async def _collect_daily_rows(
     client: httpx.AsyncClient,
-    selected_codes: List[str],
+    selected_codes: list[str],
     start_date: date,
     end_date: date,
-) -> Tuple[List[Tuple], List[str], List[str]]:
+) -> tuple[list[tuple], list[str], list[str]]:
     coros = [
         fetch_daily_candles_async(client, code, start_date, end_date)
         for code in selected_codes
     ]
     results = await asyncio.gather(*coros)
 
-    batch_rows: List[Tuple] = []
-    succeeded_codes: List[str] = []
-    failed_codes: List[str] = []
+    batch_rows: list[tuple] = []
+    succeeded_codes: list[str] = []
+    failed_codes: list[str] = []
 
     for code, data in results:
         if "error" in data:
@@ -284,8 +285,8 @@ async def _collect_daily_rows(
 
 def _persist_daily_rows(
     db_client,
-    batch_rows: List[Tuple],
-    succeeded_codes: List[str],
+    batch_rows: list[tuple],
+    succeeded_codes: list[str],
     start_date: date,
     end_date: date,
     verbose: bool,
@@ -293,7 +294,7 @@ def _persist_daily_rows(
     raise RuntimeError("Legacy DB sink removed; use Parquet stock daily collection")
 
 
-def get_daily_collection_status(days: int = 100) -> Dict[str, Any]:
+def get_daily_collection_status(days: int = 100) -> dict[str, Any]:
     """Get daily candles collection status."""
     from .parquet_backfill import get_parquet_backfill_status
 

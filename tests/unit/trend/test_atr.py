@@ -4,8 +4,8 @@ import pytest
 
 def test_atr_calculation():
     """Test Average True Range calculation."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(atr_period=14)
     calc = TechnicalCalculator(config)
@@ -26,14 +26,14 @@ def test_atr_calculation():
 
 def test_atr_increases_with_volatility():
     """Test ATR increases when volatility increases."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(atr_period=5)
     calc = TechnicalCalculator(config)
 
     # Feed low volatility data first
-    for i in range(10):
+    for _i in range(10):
         high = 100 + 0.5
         low = 100 - 0.5
         calc.update(close=100, high=high, low=low)
@@ -41,7 +41,7 @@ def test_atr_increases_with_volatility():
     atr_low = calc.get_atr()
 
     # Now feed high volatility data
-    for i in range(10):
+    for _i in range(10):
         high = 100 + 5
         low = 100 - 5
         calc.update(close=100, high=high, low=low)
@@ -53,14 +53,14 @@ def test_atr_increases_with_volatility():
 
 def test_atr_gap_handling():
     """Test ATR handles gaps correctly (True Range includes gaps)."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(atr_period=5)
     calc = TechnicalCalculator(config)
 
     # Start with stable prices
-    for i in range(5):
+    for _i in range(5):
         calc.update(close=100, high=101, low=99)
 
     atr_before = calc.get_atr()
@@ -76,8 +76,8 @@ def test_atr_gap_handling():
 
 def test_get_technical_data():
     """Test getting complete TechnicalData snapshot."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(
         ma_short_period=5,
@@ -108,20 +108,20 @@ def test_get_technical_data():
 
 def test_volatility_regime():
     """Test volatility regime detection."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(atr_period=5)
     calc = TechnicalCalculator(config)
 
     # Low volatility period (0.5% ATR)
-    for i in range(10):
+    for _i in range(10):
         calc.update(close=100, high=100.25, low=99.75)
 
     assert calc.get_volatility_regime() == "LOW"
 
     # High volatility period (20% ATR)
-    for i in range(20):
+    for _i in range(20):
         calc.update(close=100, high=110, low=90)
 
     assert calc.get_volatility_regime() == "HIGH"

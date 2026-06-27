@@ -8,8 +8,8 @@ receive normal JSON responses unchanged.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from html import escape
-from typing import Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -47,9 +47,7 @@ def _wants_html(request: Request) -> bool:
     if "text/html" not in accept:
         return False
     # API clients typically send application/json
-    if accept.startswith("application/json"):
-        return False
-    return True
+    return not accept.startswith("application/json")
 
 
 def _get_page_meta(path: str) -> tuple[str, str] | None:

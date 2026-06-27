@@ -254,16 +254,10 @@ class CompositeScoreCalculator:
 
         # 호가 불균형
         total_qty = bid_total + ask_total
-        if total_qty > 0:
-            imbalance = (bid_total - ask_total) / total_qty
-        else:
-            imbalance = 0.0
+        imbalance = (bid_total - ask_total) / total_qty if total_qty > 0 else 0.0
 
         # VWAP 대비 가격
-        if vwap > 0:
-            price_vs_vwap = (current_price - vwap) / vwap * 100
-        else:
-            price_vs_vwap = 0.0
+        price_vs_vwap = (current_price - vwap) / vwap * 100 if vwap > 0 else 0.0
 
         return self.calculate(
             volume_velocity=volume_velocity,

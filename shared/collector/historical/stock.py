@@ -18,17 +18,18 @@ Usage:
     await backfill_stock_minute(days=7)
 """
 
-import os
 import asyncio
 import json
 import logging
+import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
+from typing import Any, Optional
 
 import httpx
 
 from shared.config.secrets import SecretsManager
+
 from .stock_universe import STOCK_UNIVERSE
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ class StockKISToken:
     def __init__(self):
         import threading
 
-        self._token: Optional[str] = None
+        self._token: str | None = None
         self._expires_at: float = 0
         self._cache_path = os.path.expanduser("~/.cache/kis_token_stock.json")
         self._refresh_lock = threading.Lock()
@@ -111,7 +112,7 @@ class StockKISToken:
         try:
             if not os.path.exists(self._cache_path):
                 return
-            with open(self._cache_path, "r", encoding="utf-8") as f:
+            with open(self._cache_path, encoding="utf-8") as f:
                 data = json.load(f)
                 import time
 
@@ -198,12 +199,12 @@ class RateLimiter:
             self._last_call = time.time()
 
 
-_rate_limiter: Optional[RateLimiter] = None
+_rate_limiter: RateLimiter | None = None
 _rate_limit_per_sec = int(os.getenv("STOCK_RATE_LIMIT", "5"))
 _max_concurrent_requests = int(os.getenv("STOCK_MAX_CONCURRENCY", "3"))
-_semaphore: Optional[asyncio.Semaphore] = None
-_rate_limiter_loop: Optional[asyncio.AbstractEventLoop] = None
-_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
+_semaphore: asyncio.Semaphore | None = None
+_rate_limiter_loop: asyncio.AbstractEventLoop | None = None
+_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_rate_limiter() -> RateLimiter:
@@ -240,7 +241,7 @@ def ensure_stock_database() -> None:
 
 
 def insert_stock_minute_batch(
-    db_client, rows: List[Tuple], table_name: str = "minute_candles"
+    db_client, rows: list[tuple], table_name: str = "minute_candles"
 ) -> int:
     """Insert stock minute data batch."""
     if not rows:
@@ -355,7 +356,7 @@ async def _request_stock_minute_page(
 
 async def fetch_stock_minute_async(
     client: httpx.AsyncClient, code: str, date_str: str, max_retries: int = 3
-) -> Tuple[str, str, dict]:
+) -> tuple[str, str, dict]:
     """
     Fetch stock minute data asynchronously.
 
@@ -442,7 +443,7 @@ async def fetch_stock_minute_async(
     return (code, date_str, base_data)
 
 
-def parse_stock_minute_ohlcv(code: str, _date_str: str, data: dict) -> List[Tuple]:
+def parse_stock_minute_ohlcv(code: str, _date_str: str, data: dict) -> list[tuple]:
     """
     Parse API response to OHLCV rows.
 
@@ -474,13 +475,13 @@ def parse_stock_minute_ohlcv(code: str, _date_str: str, data: dict) -> List[Tupl
 
             o = float(item.get("stck_oprc", 0))
             h = float(item.get("stck_hgpr", 0))
-            l = float(item.get("stck_lwpr", 0))
+            low = float(item.get("stck_lwpr", 0))
             c = float(item.get("stck_prpr", 0))
             v = int(item.get("cntg_vol", 0))
             val = int(item.get("acml_tr_pbmn", 0))
 
             if h > 0:
-                rows.append((code, dt, o, h, l, c, v, val))
+                rows.append((code, dt, o, h, low, c, v, val))
 
         except (ValueError, KeyError) as e:
             logger.debug(f"Parse error for {code}: {e}")
@@ -494,18 +495,18 @@ def parse_stock_minute_ohlcv(code: str, _date_str: str, data: dict) -> List[Tupl
 # =============================================================================
 
 
-def load_collection_state() -> Dict:
+def load_collection_state() -> dict:
     """Load collection state from file."""
     if STATE_FILE.exists():
         try:
-            with open(STATE_FILE, "r") as f:
+            with open(STATE_FILE) as f:
                 return json.load(f)
         except Exception as e:
             logger.warning(f"Failed to load state file: {e}")
     return {"completed_days": {}, "last_run": None}
 
 
-def save_collection_state(state: Dict) -> None:
+def save_collection_state(state: dict) -> None:
     """Save collection state to file."""
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -523,7 +524,7 @@ def save_collection_state(state: Dict) -> None:
 async def collect_stock_batch(
     client: httpx.AsyncClient,
     db_client,
-    tasks: List[Tuple[str, date]],
+    tasks: list[tuple[str, date]],
     retry_rounds: int = 2,
     retry_delay: float = 1.0,
 ) -> int:
@@ -537,8 +538,8 @@ async def collect_stock_batch(
         return 0
 
     async def _run(
-        task_list: List[Tuple[str, date]],
-    ) -> Tuple[List[Tuple], List[Tuple[str, date]], List[Tuple[str, date]]]:
+        task_list: list[tuple[str, date]],
+    ) -> tuple[list[tuple], list[tuple[str, date]], list[tuple[str, date]]]:
         coros = [
             fetch_stock_minute_async(client, code, dt.strftime("%Y%m%d"))
             for code, dt in task_list
@@ -546,9 +547,9 @@ async def collect_stock_batch(
 
         results = await asyncio.gather(*coros)
 
-        batch_rows: List[Tuple] = []
-        failed: List[Tuple[str, date]] = []
-        succeeded: List[Tuple[str, date]] = []
+        batch_rows: list[tuple] = []
+        failed: list[tuple[str, date]] = []
+        succeeded: list[tuple[str, date]] = []
         for code, date_str, data in results:
             if "error" in data:
                 logger.warning(f"Fetch failed for {code} {date_str}: {data['error']}")
@@ -612,7 +613,7 @@ async def collect_stock_minute_today(verbose: bool = True) -> int:
 
 async def backfill_stock_minute(
     days: int = 30,
-    codes: List[str] = None,
+    codes: list[str] = None,
     verbose: bool = True,
     resume: bool = True,
 ) -> int:
@@ -630,13 +631,13 @@ async def backfill_stock_minute(
     return result.rows
 
 
-def get_stock_codes_from_db(days: Optional[int] = None) -> List[str]:
+def get_stock_codes_from_db(days: int | None = None) -> list[str]:
     """Return configured stock universe codes."""
     _ = days
     return [str(item["code"]) for item in STOCK_UNIVERSE]
 
 
-def get_stock_collection_status(days: int = 30) -> Dict:
+def get_stock_collection_status(days: int = 30) -> dict:
     """Get Parquet stock minute collection status."""
     from shared.collector.historical.parquet_backfill import (
         get_parquet_backfill_status,

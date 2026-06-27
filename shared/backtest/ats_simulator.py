@@ -166,6 +166,7 @@ class ATSSimulator:
         Returns:
             VenueSelection with chosen venue and reasoning
         """
+        _ = (order_size, market_data)
         # If routing_score provided, use it directly
         if routing_score is not None:
             if routing_score >= 0.5:

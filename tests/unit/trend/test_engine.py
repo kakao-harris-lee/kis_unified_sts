@@ -3,8 +3,8 @@
 
 def test_engine_creation():
     """Test TrendEngine instantiation."""
-    from shared.trend.engine import TrendEngine
     from shared.trend.config import TrendConfig
+    from shared.trend.engine import TrendEngine
 
     config = TrendConfig()
     engine = TrendEngine(config)
@@ -16,8 +16,8 @@ def test_engine_creation():
 
 def test_engine_update():
     """Test engine update with price data."""
+    from shared.trend.config import TechnicalConfig, TrendConfig
     from shared.trend.engine import TrendEngine
-    from shared.trend.config import TrendConfig, TechnicalConfig
 
     # Use shorter periods for test
     tech_config = TechnicalConfig(ma_short_period=5, ma_long_period=10)
@@ -39,8 +39,8 @@ def test_engine_update():
 
 def test_check_long_signal():
     """Test long signal generation."""
+    from shared.trend.config import TechnicalConfig, TrendConfig
     from shared.trend.engine import TrendEngine
-    from shared.trend.config import TrendConfig, TechnicalConfig
 
     tech_config = TechnicalConfig(
         ma_short_period=5,
@@ -73,8 +73,8 @@ def test_check_long_signal():
 
 def test_manage_positions():
     """Test position management loop."""
+    from shared.trend.config import TechnicalConfig, TrendConfig
     from shared.trend.engine import TrendEngine
-    from shared.trend.config import TrendConfig, TechnicalConfig
 
     tech_config = TechnicalConfig(
         ma_short_period=5,
@@ -114,8 +114,8 @@ def test_manage_positions():
 
 def test_engine_stats():
     """Test engine statistics."""
-    from shared.trend.engine import TrendEngine
     from shared.trend.config import TrendConfig
+    from shared.trend.engine import TrendEngine
 
     config = TrendConfig()
     engine = TrendEngine(config)
@@ -128,8 +128,8 @@ def test_engine_stats():
 
 def test_engine_reset():
     """Test engine reset."""
-    from shared.trend.engine import TrendEngine
     from shared.trend.config import TrendConfig
+    from shared.trend.engine import TrendEngine
 
     config = TrendConfig()
     engine = TrendEngine(config)

@@ -191,7 +191,7 @@ class TestVolumeIndicators:
         assert "bb_lower" in indicators
         assert "rsi" in indicators
         assert "rvol" in indicators
-        assert f"high_5" in indicators
+        assert "high_5" in indicators
 
         # VWAP is 0.0 after seeding (no ticks fed to VWAPCalculator)
         assert indicators["vwap"] == 0.0, (
@@ -525,9 +525,12 @@ class TestMomentumDecayEodGuard:
     @patch("shared.strategy.exit.momentum_decay.effective_close_time", return_value=time(15, 15))
     def test_eod_close_triggers_when_enabled(self, _mock_ect, _mock_td):
         """With eod_close_enabled=True on a trading day past EOD time, signal MUST be EOD_CLOSE."""
-        from shared.strategy.exit.momentum_decay import MomentumDecayConfig, MomentumDecayExit
         from shared.models.position import Position, PositionSide
         from shared.models.signal import ExitReason
+        from shared.strategy.exit.momentum_decay import (
+            MomentumDecayConfig,
+            MomentumDecayExit,
+        )
 
         config = MomentumDecayConfig(
             eod_close_enabled=True,
@@ -566,9 +569,12 @@ class TestMomentumDecayEodGuard:
     @patch("shared.strategy.exit.momentum_decay.effective_close_time", return_value=time(15, 15))
     def test_eod_close_skipped_when_disabled(self, _mock_ect, _mock_td):
         """With eod_close_enabled=False, no EOD_CLOSE signal even past EOD time on trading day."""
-        from shared.strategy.exit.momentum_decay import MomentumDecayConfig, MomentumDecayExit
         from shared.models.position import Position, PositionSide
         from shared.models.signal import ExitReason
+        from shared.strategy.exit.momentum_decay import (
+            MomentumDecayConfig,
+            MomentumDecayExit,
+        )
 
         config = MomentumDecayConfig(
             eod_close_enabled=False,

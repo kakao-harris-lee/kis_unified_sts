@@ -122,7 +122,7 @@ def _build_stock_report(reader) -> str | None:
     combined_pct = (combined_pnl / capital * 100) if capital > 0 else 0
 
     lines = [
-        f"<b>\U0001f4ca \uc8fc\uc2dd \ud2b8\ub808\uc774\ub529 \uc131\uacfc</b>",
+        "<b>\U0001f4ca \uc8fc\uc2dd \ud2b8\ub808\uc774\ub529 \uc131\uacfc</b>",
         f"\u2022 \uc6b4\uc6a9 \uc790\ubcf8: {capital / 1e8:.1f}\uc5b5\uc6d0 ({mode_str})",
         f"\u2022 \uc2dc\uc7a5 \uad6d\uba74: {regime}",
         f"\u2022 \ucd1d \uac70\ub798: {total_trades}\uac74 (\uccad\uc0b0 {closed_count}, \ubcf4\uc720 {open_count})",
@@ -206,7 +206,7 @@ def _build_futures_report(reader) -> str | None:
     combined_pnl = total_pnl + unrealized_pnl
 
     lines = [
-        f"<b>\U0001f916 \uc120\ubb3c \ud2b8\ub808\uc774\ub529 \uc131\uacfc</b>",
+        "<b>\U0001f916 \uc120\ubb3c \ud2b8\ub808\uc774\ub529 \uc131\uacfc</b>",
         f"\u2022 \uc0c1\ud0dc: {state}",
         f"\u2022 \ucd1d \uac70\ub798: {total_trades}\uac74 (\uc2b9\ub960 {win_rate:.1f}%)",
         f"\u2022 \uc2e4\ud604 \uc190\uc775: {_pnl_emoji(total_pnl)} {_fmt_pnl(total_pnl)}\uc6d0",
@@ -258,7 +258,7 @@ async def main():
         return
 
     parts = [
-        f"<b>\U0001f514 \uc7a5 \ub9c8\uac10 \uc885\ud569 \ub9ac\ud3ec\ud2b8</b>",
+        "<b>\U0001f514 \uc7a5 \ub9c8\uac10 \uc885\ud569 \ub9ac\ud3ec\ud2b8</b>",
         "\u2501" * 20,
         f"\U0001f4c5 {today}",
         "",

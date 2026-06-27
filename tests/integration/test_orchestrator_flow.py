@@ -2,8 +2,9 @@
 
 Tests the orchestrator lifecycle and component integration.
 """
-import pytest
 from datetime import date, time
+
+import pytest
 
 
 @pytest.mark.integration
@@ -45,8 +46,8 @@ class TestOrchestratorFlow:
     async def test_orchestrator_lifecycle(self):
         """Test orchestrator start/pause/resume/stop lifecycle."""
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
 
@@ -91,7 +92,7 @@ class TestOrchestratorFlow:
 
     def test_get_status(self):
         """Test orchestrator status retrieval."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock(
             strategy_name="test_strategy",
@@ -142,7 +143,7 @@ class TestPipelineFlow:
 
     def test_pipeline_metrics(self):
         """Test pipeline metrics tracking."""
-        from services.trading.pipeline import TradingPipeline, PipelineMetrics
+        from services.trading.pipeline import PipelineMetrics, TradingPipeline
 
         async def dummy_handler():
             return None

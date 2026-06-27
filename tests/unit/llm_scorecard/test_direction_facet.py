@@ -7,8 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
-from shared.llm_scorecard.facets.base import CaptureContext, FACET_REGISTRY, FacetPrediction
 import shared.llm_scorecard.facets.direction  # noqa: F401 — ensures registration
+from shared.llm_scorecard.facets.base import (
+    FACET_REGISTRY,
+    CaptureContext,
+    FacetPrediction,
+)
 from shared.llm_scorecard.facets.direction import DirectionFacet
 
 

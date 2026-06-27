@@ -30,7 +30,6 @@ from .data_classes import (
     StockTradingPlan,
     TechnicalAnalysis,
 )
-from .market_context import MarketContext
 from .krx_api_client import KRXOpenAPIClient
 from .llm_analyzer import (
     LLMAnalyzer,
@@ -51,6 +50,7 @@ from .market_analyzers import (
     OptionsAnalyzer,
     TechnicalAnalyzerForFutures,
 )
+from .market_context import MarketContext
 from .unified_market_analyzer import (
     UnifiedMarketAnalyzer,
     run_market_analysis,

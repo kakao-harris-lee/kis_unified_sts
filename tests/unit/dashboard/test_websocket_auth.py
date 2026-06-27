@@ -1,7 +1,8 @@
 """Test WebSocket authentication."""
-import pytest
-from unittest.mock import AsyncMock, MagicMock
 import os
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 @pytest.fixture(autouse=True)

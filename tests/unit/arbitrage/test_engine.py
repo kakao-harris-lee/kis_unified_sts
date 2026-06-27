@@ -3,8 +3,8 @@
 
 def test_engine_creation():
     """Test ArbitrageEngine instantiation."""
-    from shared.arbitrage.engine import ArbitrageEngine
     from shared.arbitrage.config import ArbitrageConfig
+    from shared.arbitrage.engine import ArbitrageEngine
 
     config = ArbitrageConfig()
     engine = ArbitrageEngine(config)
@@ -15,8 +15,8 @@ def test_engine_creation():
 
 def test_engine_spread_filter():
     """Test spread filter rejects wide spreads."""
-    from shared.arbitrage.engine import ArbitrageEngine
     from shared.arbitrage.config import ArbitrageConfig
+    from shared.arbitrage.engine import ArbitrageEngine
 
     config = ArbitrageConfig(max_spread_ticks=2)
     engine = ArbitrageEngine(config)
@@ -33,8 +33,8 @@ def test_engine_spread_filter():
 
 def test_engine_depth_filter():
     """Test depth filter requires sufficient liquidity."""
-    from shared.arbitrage.engine import ArbitrageEngine
     from shared.arbitrage.config import ArbitrageConfig
+    from shared.arbitrage.engine import ArbitrageEngine
 
     config = ArbitrageConfig(order_size=5.0, depth_multiplier=5.0)
     engine = ArbitrageEngine(config)
@@ -50,8 +50,8 @@ def test_engine_depth_filter():
 
 def test_engine_full_entry_check():
     """Test full entry check flow."""
-    from shared.arbitrage.engine import ArbitrageEngine
     from shared.arbitrage.config import ArbitrageConfig
+    from shared.arbitrage.engine import ArbitrageEngine
 
     config = ArbitrageConfig(
         min_samples=5,

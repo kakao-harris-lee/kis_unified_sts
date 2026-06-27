@@ -28,9 +28,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_daily_scanner")
 
-from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 from services.daily_scanner import DailyScanner, DailyScannerConfig
-
+from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 
 DEFAULT_SYMBOLS = [item["code"] for item in STOCK_UNIVERSE]
 

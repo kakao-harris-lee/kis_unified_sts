@@ -15,9 +15,9 @@ Usage:
     >>> collector.start(["101V01"])  # KOSPI200 Mini
 """
 
-from shared.collector.models import TickData
 from shared.collector.adapter import BaseAPIAdapter, MockAPIAdapter
 from shared.collector.collector import DataCollector
+from shared.collector.models import TickData
 
 __all__ = [
     "TickData",

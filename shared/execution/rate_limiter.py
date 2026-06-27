@@ -266,11 +266,11 @@ class RedisRateLimiter:
                 self._script_sha = await self._redis.script_load(RATE_LIMIT_SCRIPT)
                 logger.debug(f"Redis connected: {_sanitize_redis_url(self._redis_url)}")
 
-            except ImportError:
+            except ImportError as e:
                 raise ImportError(
                     "redis package required for rate limiting. "
                     "Install with: pip install redis"
-                )
+                ) from e
         return self._redis
 
     async def acquire(self, timeout: float = 5.0) -> bool:

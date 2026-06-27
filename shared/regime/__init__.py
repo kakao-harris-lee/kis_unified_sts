@@ -20,26 +20,26 @@ Example:
 
 # Core adaptive components (main exports)
 from .adaptive_detector import (
+    AdaptiveRegimeConfig,
     AdaptiveRegimeDetector,
     AdaptiveRegimeState,
-    AdaptiveRegimeConfig,
-)
-from .performance_tracker import (
-    RegimePerformanceTracker,
-    RegimePerformanceConfig,
-    TradeRecord,
-    RegimeStats,
-)
-
-# Base models and types
-from .models import (
-    RegimeState,
-    RegimeSignal,
-    RegimeConfig,
 )
 
 # Traditional detectors
 from .detector import StockRegimeDetector
+
+# Base models and types
+from .models import (
+    RegimeConfig,
+    RegimeSignal,
+    RegimeState,
+)
+from .performance_tracker import (
+    RegimePerformanceConfig,
+    RegimePerformanceTracker,
+    RegimeStats,
+    TradeRecord,
+)
 
 # Strategy routing
 from .router import StrategyRouter

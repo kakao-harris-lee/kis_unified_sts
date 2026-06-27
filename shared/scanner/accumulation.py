@@ -22,7 +22,6 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -217,10 +216,7 @@ def _calculate_compression_score(df: pd.DataFrame) -> tuple[float, float]:
     low = recent_data["low"].min()
     close = df["close"].iloc[-1]
 
-    if close == 0:
-        price_range_pct = 0.0
-    else:
-        price_range_pct = (high - low) / close * 100
+    price_range_pct = 0.0 if close == 0 else (high - low) / close * 100
 
     # Score based on compression (lower ratio = tighter range = higher score)
     # Strong compression: ratio < 0.8 → 20 pts
@@ -288,7 +284,7 @@ class AccumulationScanner:
 
     def __init__(
         self,
-        db_config: Optional[dict] = None,
+        db_config: dict | None = None,
         min_score: int = 60,
         lookback_days: int = 30,
     ):
@@ -307,7 +303,7 @@ class AccumulationScanner:
         self.lookback_days = lookback_days
 
     async def _fetch_daily_candles(
-        self, codes: Optional[list[str]] = None
+        self, codes: list[str] | None = None
     ) -> dict[str, pd.DataFrame]:
         """Fetch daily candles from Parquet market-data files.
 
@@ -369,7 +365,7 @@ class AccumulationScanner:
 
     def _score_candidate(
         self, code: str, df: pd.DataFrame, market_df: pd.DataFrame
-    ) -> Optional[AccumulationCandidate]:
+    ) -> AccumulationCandidate | None:
         """Score a single stock for accumulation pattern.
 
         Args:
@@ -413,7 +409,7 @@ class AccumulationScanner:
         )
 
     async def scan(
-        self, codes: Optional[list[str]] = None, min_score: Optional[int] = None
+        self, codes: list[str] | None = None, min_score: int | None = None
     ) -> list[AccumulationCandidate]:
         """Scan all stocks for accumulation patterns.
 
@@ -483,7 +479,7 @@ class AccumulationScanner:
         )
 
     async def run(
-        self, codes: Optional[list[str]] = None
+        self, codes: list[str] | None = None
     ) -> list[AccumulationCandidate]:
         """Run full scan: scan + publish + notify.
 

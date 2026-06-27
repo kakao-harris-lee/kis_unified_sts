@@ -56,22 +56,22 @@ def _entry_ctx(
 
 
 def _futures_entry_config(**overrides) -> WilliamsRConfig:
-    base = dict(
-        williams_r_period=14,
-        oversold_threshold=-80.0,
-        reversal_threshold=-80.0,
-        overbought_threshold=-20.0,
-        overbought_reversal_threshold=-20.0,
-        allow_short=True,
-        trend_filter=True,
-        volume_confirm=True,
-        volume_threshold=1.0,
-        signal_cooldown_seconds=0,
-        skip_market_open_minutes=15,
-        skip_market_close_minutes=30,
-        market_close_hour=15,
-        market_close_minute=45,
-    )
+    base = {
+        "williams_r_period": 14,
+        "oversold_threshold": -80.0,
+        "reversal_threshold": -80.0,
+        "overbought_threshold": -20.0,
+        "overbought_reversal_threshold": -20.0,
+        "allow_short": True,
+        "trend_filter": True,
+        "volume_confirm": True,
+        "volume_threshold": 1.0,
+        "signal_cooldown_seconds": 0,
+        "skip_market_open_minutes": 15,
+        "skip_market_close_minutes": 30,
+        "market_close_hour": 15,
+        "market_close_minute": 45,
+    }
     base.update(overrides)
     return WilliamsRConfig(**base)
 

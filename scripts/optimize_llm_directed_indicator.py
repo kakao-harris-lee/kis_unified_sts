@@ -48,20 +48,34 @@ import yaml
 from shared.backtest.adapter import BacktestStrategyAdapter
 from shared.backtest.config import BacktestConfig
 from shared.backtest.engine import BacktestEngine
+from shared.backtest.robust_gate import (
+    FLOOR_BASIN_FRAC as _FLOOR_BASIN_FRAC,
+)
+from shared.backtest.robust_gate import (
+    FLOOR_PF as _FLOOR_PF,
+)
+from shared.backtest.robust_gate import (
+    FLOOR_SHARPE as _FLOOR_SHARPE,
+)
+from shared.backtest.robust_gate import (
+    OOS_MDD_MAX as _OOS_MDD_MAX,
+)
+from shared.backtest.robust_gate import (
+    OOS_RET_MIN as _OOS_RET_MIN,
+)
+from shared.backtest.robust_gate import (
+    SENTINEL as _SENTINEL,
+)
+from shared.backtest.robust_gate import (
+    objective_value as _objective_value,
+)
+from shared.backtest.robust_gate import (
+    rescoped_gate as _rescoped_gate,
+)
 from shared.config.loader import ConfigLoader
 from shared.strategy.registry import (
     StrategyFactory,
     register_builtin_components,
-)
-from shared.backtest.robust_gate import (
-    rescoped_gate as _rescoped_gate,
-    objective_value as _objective_value,
-    SENTINEL as _SENTINEL,
-    FLOOR_SHARPE as _FLOOR_SHARPE,
-    FLOOR_PF as _FLOOR_PF,
-    FLOOR_BASIN_FRAC as _FLOOR_BASIN_FRAC,
-    OOS_MDD_MAX as _OOS_MDD_MAX,
-    OOS_RET_MIN as _OOS_RET_MIN,
 )
 from shared.validation.cli_validators import validate_csv_file
 

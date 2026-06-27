@@ -26,7 +26,6 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -54,18 +53,18 @@ class StrategyValidation:
     """Complete validation results for a strategy"""
     strategy_name: str
     passed: bool
-    results: List[ValidationResult]
+    results: list[ValidationResult]
     summary: str
 
 
-def load_backtest_results(results_path: Path) -> Optional[Dict]:
+def load_backtest_results(results_path: Path) -> dict | None:
     """Load backtest results from JSON file"""
     try:
         if not results_path.exists():
             print(f"❌ Results file not found: {results_path}")
             return None
 
-        with open(results_path, 'r') as f:
+        with open(results_path) as f:
             data = json.load(f)
 
         print(f"✓ Loaded results from {results_path}")
@@ -81,7 +80,7 @@ def load_backtest_results(results_path: Path) -> Optional[Dict]:
 
 def validate_strategy_results(
     strategy_name: str,
-    results: Dict,
+    results: dict,
     criteria: AcceptanceCriteria
 ) -> StrategyValidation:
     """Validate backtest results against acceptance criteria"""
@@ -155,7 +154,7 @@ def validate_strategy_results(
     )
 
 
-def print_validation_report(validations: List[StrategyValidation]) -> None:
+def print_validation_report(validations: list[StrategyValidation]) -> None:
     """Print detailed validation report"""
 
     print("\n" + "="*80)
@@ -191,7 +190,7 @@ def print_validation_report(validations: List[StrategyValidation]) -> None:
     print("="*80 + "\n")
 
 
-def generate_performance_summary(results: Dict) -> str:
+def generate_performance_summary(results: dict) -> str:
     """Generate human-readable performance summary"""
 
     metrics = results.get('metrics', {})

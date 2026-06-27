@@ -4,8 +4,8 @@ import pytest
 
 def test_ichimoku_tenkan_calculation():
     """Test Tenkan-sen (conversion line) calculation."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     # Use shorter periods for test
     config = TechnicalConfig(
@@ -30,8 +30,8 @@ def test_ichimoku_tenkan_calculation():
 
 def test_ichimoku_kijun_calculation():
     """Test Kijun-sen (base line) calculation."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(ichimoku_kijun_period=26)
     calc = TechnicalCalculator(config)
@@ -51,8 +51,8 @@ def test_ichimoku_kijun_calculation():
 
 def test_ichimoku_cloud_calculation():
     """Test Senkou Span A and B calculations."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(
         ichimoku_tenkan_period=9,
@@ -78,8 +78,8 @@ def test_ichimoku_cloud_calculation():
 
 def test_ichimoku_bullish_cloud():
     """Test detection of bullish (green) cloud."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig()
     calc = TechnicalCalculator(config)
@@ -98,8 +98,8 @@ def test_ichimoku_bullish_cloud():
 
 def test_ichimoku_price_above_cloud():
     """Test if price is above the cloud."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig()
     calc = TechnicalCalculator(config)

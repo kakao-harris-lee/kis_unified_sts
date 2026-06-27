@@ -1,11 +1,12 @@
 """Test paper trading models."""
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 def test_virtual_order_creation():
     """Test VirtualOrder model."""
-    from shared.paper.models import VirtualOrder, OrderSide, OrderType
+    from shared.paper.models import OrderSide, OrderType, VirtualOrder
 
     order = VirtualOrder(
         order_id="ORD-001",
@@ -24,7 +25,7 @@ def test_virtual_order_creation():
 
 def test_trade_record_pnl():
     """Test TradeRecord P&L calculation."""
-    from shared.paper.models import TradeRecord, OrderSide
+    from shared.paper.models import OrderSide, TradeRecord
 
     record = TradeRecord(
         trade_id="TRD-001",

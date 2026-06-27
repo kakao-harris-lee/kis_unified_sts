@@ -1,6 +1,5 @@
 """Trend data models."""
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -33,8 +32,8 @@ class TechnicalData:
     atr: float
 
     # Optional extended data
-    ma_trend: Optional[float] = None  # MA slope
-    volume_ratio: Optional[float] = None
+    ma_trend: float | None = None  # MA slope
+    volume_ratio: float | None = None
 
 
 @dataclass
@@ -47,4 +46,4 @@ class TrendSignal:
     stop_loss: float
     take_profit: float
     technical_data: TechnicalData
-    rejection_reason: Optional[str] = None
+    rejection_reason: str | None = None

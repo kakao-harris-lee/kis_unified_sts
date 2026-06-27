@@ -149,7 +149,7 @@ class StreamExporter:
     def __init__(self, config: ExporterConfig) -> None:
         self.config = config
         self.client = RedisClient.get_client()
-        self.offsets: dict[str, str] = {stream: "$" for stream in config.streams}
+        self.offsets: dict[str, str] = dict.fromkeys(config.streams, "$")
 
         self._bars: dict[tuple[str, str], MinuteBarState] = {}
         self._last_seen: dict[tuple[str, str], float] = {}

@@ -1,7 +1,6 @@
 """Tests for the weekly digest cron entry (plan Task 13 + Task 14)."""
 from __future__ import annotations
 
-
 # --- Smoke test: module imports cleanly ----------------------------------------
 
 

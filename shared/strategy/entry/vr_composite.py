@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from shared.config.mixins import ConfigMixin
 from shared.indicators.volume_ratio import (
@@ -30,7 +30,11 @@ from shared.indicators.volume_ratio import (
     VRZone,
 )
 from shared.models.signal import Signal, SignalType
-from shared.strategy.base import EntryContext, EntrySignalGenerator, get_series_from_context
+from shared.strategy.base import (
+    EntryContext,
+    EntrySignalGenerator,
+    get_series_from_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +130,7 @@ class VRCompositeEntry(EntrySignalGenerator[VRCompositeConfig]):
     def required_indicators(self) -> list[str]:
         return ["daily_closes", "daily_volumes"]
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """VR 복합 진입 신호 생성.
 
         indicators dict에 일봉 시계열 데이터가 있어야 한다:

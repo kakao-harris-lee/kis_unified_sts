@@ -85,6 +85,7 @@ class VolumeSurgeFacet:
     # ------------------------------------------------------------------
 
     def baseline(self, pred: FacetPrediction, mkt: Any) -> float:
+        _ = (pred, mkt)
         return self._params()
 
     def score(self, pred: FacetPrediction, mkt: Any) -> FacetScore:

@@ -1,14 +1,13 @@
 """Tests for ATRDynamicExit strategy."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch
 
-from shared.strategy.exit.atr_dynamic import ATRDynamicExit, ATRDynamicExitConfig
-from shared.models.position import Position, PositionSide, PositionState
+from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason
-
+from shared.strategy.exit.atr_dynamic import ATRDynamicExit, ATRDynamicExitConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

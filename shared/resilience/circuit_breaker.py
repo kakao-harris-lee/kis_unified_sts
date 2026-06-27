@@ -31,11 +31,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Generator, Optional
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from shared.resilience.metrics import CircuitBreakerMetrics
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class CircuitState(str, Enum):
+class CircuitState(StrEnum):
     """Circuit breaker states."""
 
     CLOSED = "closed"
@@ -93,7 +94,7 @@ class CircuitBreaker:
         *,
         config: CircuitBreakerConfig | None = None,
         thread_safe: bool = True,
-        metrics: Optional["CircuitBreakerMetrics"] = None,
+        metrics: CircuitBreakerMetrics | None = None,
     ):
         """Initialize circuit breaker.
 

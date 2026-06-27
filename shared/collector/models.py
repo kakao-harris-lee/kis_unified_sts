@@ -1,6 +1,6 @@
 """Data collector models."""
-from dataclasses import dataclass, asdict
-from typing import Dict, Any, Optional
+from dataclasses import asdict, dataclass
+from typing import Any
 
 
 @dataclass
@@ -26,38 +26,38 @@ class TickData:
     ask_qty_1: float
 
     # L5 orderbook (optional)
-    bid_price_2: Optional[float] = None
-    bid_qty_2: Optional[float] = None
-    bid_price_3: Optional[float] = None
-    bid_qty_3: Optional[float] = None
-    bid_price_4: Optional[float] = None
-    bid_qty_4: Optional[float] = None
-    bid_price_5: Optional[float] = None
-    bid_qty_5: Optional[float] = None
+    bid_price_2: float | None = None
+    bid_qty_2: float | None = None
+    bid_price_3: float | None = None
+    bid_qty_3: float | None = None
+    bid_price_4: float | None = None
+    bid_qty_4: float | None = None
+    bid_price_5: float | None = None
+    bid_qty_5: float | None = None
 
-    ask_price_2: Optional[float] = None
-    ask_qty_2: Optional[float] = None
-    ask_price_3: Optional[float] = None
-    ask_qty_3: Optional[float] = None
-    ask_price_4: Optional[float] = None
-    ask_qty_4: Optional[float] = None
-    ask_price_5: Optional[float] = None
-    ask_qty_5: Optional[float] = None
+    ask_price_2: float | None = None
+    ask_qty_2: float | None = None
+    ask_price_3: float | None = None
+    ask_qty_3: float | None = None
+    ask_price_4: float | None = None
+    ask_qty_4: float | None = None
+    ask_price_5: float | None = None
+    ask_qty_5: float | None = None
 
     # Trade data
-    current_price: Optional[float] = None
-    tick_volume: Optional[float] = None
-    cumulative_volume: Optional[float] = None
+    current_price: float | None = None
+    tick_volume: float | None = None
+    cumulative_volume: float | None = None
 
     # OHLC (for day)
-    open_price: Optional[float] = None
-    high_price: Optional[float] = None
-    low_price: Optional[float] = None
+    open_price: float | None = None
+    high_price: float | None = None
+    low_price: float | None = None
 
     # Futures specific
-    open_interest: Optional[float] = None
+    open_interest: float | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to dict, excluding None values."""
         return {k: v for k, v in asdict(self).items() if v is not None}
 

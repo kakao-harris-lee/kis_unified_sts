@@ -3,7 +3,13 @@
 from shared.llm.analyzers import StockTechnicalAnalyzer
 from shared.llm.collectors import FuturesFlowCollector
 from shared.llm.config import LLMConfig
-from shared.llm.data_classes import BondData, ETFFlowData, FuturesData, OptionsData, RiskMode
+from shared.llm.data_classes import (
+    BondData,
+    ETFFlowData,
+    FuturesData,
+    OptionsData,
+    RiskMode,
+)
 from shared.llm.llm_analyzer import LLMAnalyzer
 from shared.llm.unified_market_analyzer import UnifiedMarketAnalyzer
 

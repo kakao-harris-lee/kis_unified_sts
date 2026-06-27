@@ -10,13 +10,15 @@ This module tests all risk management checks:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
-import pytest
+from datetime import datetime
 
 from shared.backtest.config import BacktestConfig, RiskConfig
-from shared.backtest.engine import BacktestEngine, ExitReason, Position, SimpleMAStrategy
-
+from shared.backtest.engine import (
+    BacktestEngine,
+    ExitReason,
+    Position,
+    SimpleMAStrategy,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers

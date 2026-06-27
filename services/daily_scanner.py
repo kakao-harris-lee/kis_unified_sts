@@ -20,7 +20,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 from pydantic import Field
 
@@ -135,7 +135,7 @@ class DailyScannerConfig(ServiceConfigBase):
 # ---------------------------------------------------------------------------
 
 
-def _sma(values: list[float], period: int) -> Optional[float]:
+def _sma(values: list[float], period: int) -> float | None:
     """Simple moving average of the last ``period`` values.
 
     Args:
@@ -151,7 +151,7 @@ def _sma(values: list[float], period: int) -> Optional[float]:
     return sum(window) / period
 
 
-def _rsi(closes: list[float], period: int) -> Optional[float]:
+def _rsi(closes: list[float], period: int) -> float | None:
     """Wilder's RSI over the last ``period + 1`` closes.
 
     Args:
@@ -186,7 +186,7 @@ def _rsi(closes: list[float], period: int) -> Optional[float]:
     return 100.0 - (100.0 / (1.0 + rs))
 
 
-def _atr(bars: list[DailyBar], period: int) -> Optional[float]:
+def _atr(bars: list[DailyBar], period: int) -> float | None:
     """Average True Range over the last ``period`` bars.
 
     Args:
@@ -232,7 +232,7 @@ class DailyScanner:
         result = scanner.scan_and_publish(["005930", "000660"])
     """
 
-    def __init__(self, config: Optional[DailyScannerConfig] = None) -> None:
+    def __init__(self, config: DailyScannerConfig | None = None) -> None:
         self.config = config or DailyScannerConfig()
         self._trade_trend_ranker = TradeTrendPriorityRanker.from_default_config()
         self._last_watchlist_metadata: dict[str, dict[str, object]] = {}

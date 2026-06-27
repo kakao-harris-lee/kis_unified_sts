@@ -1,8 +1,9 @@
 """Test API pagination."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import patch
+
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 

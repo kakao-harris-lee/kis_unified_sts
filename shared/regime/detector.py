@@ -1,12 +1,12 @@
 """Stock regime detector."""
 import logging
 from datetime import datetime
-from typing import Optional
 
 import pandas as pd
 
-from .models import RegimeState, RegimeSignal, RegimeConfig
 from shared.utils.math import safe_divide
+
+from .models import RegimeConfig, RegimeSignal, RegimeState
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +20,9 @@ class StockRegimeDetector:
     - Volatility
     """
 
-    def __init__(self, config: Optional[RegimeConfig] = None):
+    def __init__(self, config: RegimeConfig | None = None):
         self.config = config or RegimeConfig()
-        self._last_signal: Optional[RegimeSignal] = None
+        self._last_signal: RegimeSignal | None = None
 
     def detect(self, df: pd.DataFrame) -> RegimeSignal:
         """Detect current market regime.
@@ -99,6 +99,6 @@ class StockRegimeDetector:
         return signal
 
     @property
-    def last_signal(self) -> Optional[RegimeSignal]:
+    def last_signal(self) -> RegimeSignal | None:
         """Get last detected signal."""
         return self._last_signal

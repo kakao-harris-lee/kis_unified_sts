@@ -32,7 +32,6 @@ the real-world benefit of this optimization.
 from __future__ import annotations
 
 import time
-from typing import Any
 
 
 def _simulate_old_entry_path(symbols: list[str], symbol_metadata: dict, daily_indicators: dict) -> list[dict]:
@@ -211,7 +210,7 @@ class TestOrchestratorHotPathBenchmark:
         improvement_pct = ((old_time_us - new_time_us) / old_time_us) * 100
 
         print(f"\n{'='*80}")
-        print(f"Entry Path Benchmark - 100 Symbols")
+        print("Entry Path Benchmark - 100 Symbols")
         print(f"{'='*80}")
         print(f"Old path (repeated dict ops): {old_time_us:,.2f} μs/iteration")
         print(f"New path (cache lookup):      {new_time_us:,.2f} μs/iteration")
@@ -255,7 +254,7 @@ class TestOrchestratorHotPathBenchmark:
         improvement_pct = ((old_time_us - new_time_us) / old_time_us) * 100
 
         print(f"\n{'='*80}")
-        print(f"Exit Path Benchmark - 50 Symbols")
+        print("Exit Path Benchmark - 50 Symbols")
         print(f"{'='*80}")
         print(f"Old path (repeated dict ops): {old_time_us:,.2f} μs/iteration")
         print(f"New path (cache lookup):      {new_time_us:,.2f} μs/iteration")
@@ -300,7 +299,7 @@ class TestOrchestratorHotPathBenchmark:
         improvement_pct = ((old_time_us - new_time_us) / old_time_us) * 100
 
         print(f"\n{'='*80}")
-        print(f"Entry Path Scalability - 200 Symbols")
+        print("Entry Path Scalability - 200 Symbols")
         print(f"{'='*80}")
         print(f"Old path (repeated dict ops): {old_time_us:,.2f} μs/iteration")
         print(f"New path (cache lookup):      {new_time_us:,.2f} μs/iteration")
@@ -336,7 +335,7 @@ class TestOrchestratorHotPathBenchmark:
         reduction_pct = ((old_total_ops - new_total_ops) / old_total_ops) * 100
 
         print(f"\n{'='*80}")
-        print(f"Dict Operations Count Analysis - 100 Symbols")
+        print("Dict Operations Count Analysis - 100 Symbols")
         print(f"{'='*80}")
         print(f"Old path operations: {old_total_ops:,} ({old_ops_per_symbol} ops/symbol)")
         print(f"New path operations: {new_total_ops:,} ({new_ops_per_symbol} ops/symbol)")
@@ -368,7 +367,7 @@ class TestOrchestratorHotPathBenchmark:
         overhead_pct = ((cache_size - expected_size) / expected_size) * 100
 
         print(f"\n{'='*80}")
-        print(f"Cache Memory Overhead - 100 Symbols")
+        print("Cache Memory Overhead - 100 Symbols")
         print(f"{'='*80}")
         print(f"Symbol metadata size:  {metadata_size:,} bytes")
         print(f"Daily indicators size: {daily_size:,} bytes")
@@ -411,19 +410,19 @@ class TestOrchestratorHotPathBenchmark:
         total_improvement_pct = ((old_total_time_us - new_total_time_us) / old_total_time_us) * 100
 
         print(f"\n{'='*80}")
-        print(f"Realistic Production Throughput")
+        print("Realistic Production Throughput")
         print(f"{'='*80}")
-        print(f"Entry Path (100 symbols):")
+        print("Entry Path (100 symbols):")
         print(f"  Old: {entry_old_us:,.2f} μs → {entry_old_throughput:,.0f} checks/sec")
         print(f"  New: {entry_new_us:,.2f} μs → {entry_new_throughput:,.0f} checks/sec")
         print(f"  Improvement: {((entry_new_throughput - entry_old_throughput) / entry_old_throughput) * 100:.1f}%")
-        print(f"")
-        print(f"Exit Path (50 symbols):")
+        print("")
+        print("Exit Path (50 symbols):")
         print(f"  Old: {exit_old_us:,.2f} μs → {exit_old_throughput:,.0f} checks/sec")
         print(f"  New: {exit_new_us:,.2f} μs → {exit_new_throughput:,.0f} checks/sec")
         print(f"  Improvement: {((exit_new_throughput - exit_old_throughput) / exit_old_throughput) * 100:.1f}%")
-        print(f"")
-        print(f"Combined (entry + exit):")
+        print("")
+        print("Combined (entry + exit):")
         print(f"  Old total: {old_total_time_us:,.2f} μs")
         print(f"  New total: {new_total_time_us:,.2f} μs")
         print(f"  Overall improvement: {total_improvement_pct:.1f}%")

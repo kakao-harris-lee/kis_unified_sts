@@ -1,7 +1,7 @@
 """Test EMA indicator additions to StreamingIndicatorEngine."""
 
-import pytest
 from datetime import datetime, timedelta
+
 from services.trading.indicator_engine import StreamingIndicatorEngine
 
 

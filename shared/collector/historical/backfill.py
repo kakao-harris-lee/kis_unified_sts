@@ -685,9 +685,9 @@ def _resolve_minute_bars(
                 )
                 continue
 
-        o, h, l, c = ohlc
+        o, h, low, c = ohlc
         # Clamp so the emitted bar never violates OHLC ordering (defensive).
-        minute_bars[minute_dt] = (o, max(h, o, c), min(l, o, c), c, int(vol))
+        minute_bars[minute_dt] = (o, max(h, o, c), min(low, o, c), c, int(vol))
         anchor = c
     return minute_bars, dropped
 
@@ -741,7 +741,7 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
                 ["futs_hgpr", "high", "stck_hgpr", "bstp_nmix_hgpr", "hgpr"],
                 0,
             )
-            l = _first_present(
+            low = _first_present(
                 item,
                 ["futs_lwpr", "low", "stck_lwpr", "bstp_nmix_lwpr", "lwpr"],
                 0,
@@ -765,7 +765,7 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
                     dt,
                     float(o or 0),
                     float(h or 0),
-                    float(l or 0),
+                    float(low or 0),
                     float(c or 0),
                     int(v or 0),
                 )
@@ -784,9 +784,9 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
     # by price continuity.  See ``_resolve_minute_bars``.
     tick_rows.sort(key=lambda row: row[0])
     minute_candidates: dict[datetime, dict[tuple[float, float, float, float], int]] = {}
-    for dt, o, h, l, c, v in tick_rows:
+    for dt, o, h, low, c, v in tick_rows:
         minute_dt = dt.replace(second=0, microsecond=0)
-        ohlc = (float(o), float(h), float(l), float(c))
+        ohlc = (float(o), float(h), float(low), float(c))
         candidates = minute_candidates.setdefault(minute_dt, {})
         # Each distinct OHLC keeps the per-bar volume of its echoed rows (they
         # all carry the same volume).  Keep the max in case of minor row noise;
@@ -813,11 +813,11 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
     rows: list[tuple] = []
     dropped = 0
     for minute_dt in sorted(minute_bars.keys()):
-        o, h, l, c, v = minute_bars[minute_dt]
+        o, h, low, c, v = minute_bars[minute_dt]
         if int(v) < min_ingest_volume:
             dropped += 1
             continue
-        rows.append((code, minute_dt, float(o), float(h), float(l), float(c), int(v)))
+        rows.append((code, minute_dt, float(o), float(h), float(low), float(c), int(v)))
     if dropped > 0:
         logger.debug(
             "parse_ohlcv(%s, %s): dropped %d phantom bars (volume < %d)",

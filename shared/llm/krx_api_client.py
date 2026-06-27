@@ -8,14 +8,11 @@ KRX Open API를 통해 시장 데이터를 수집하는 클라이언트.
 import json
 import logging
 from datetime import datetime, time, timedelta
-from typing import List, Optional
 
 import pandas as pd
 import requests
 
 from shared.calendar import MarketCalendar
-
-logger = logging.getLogger(__name__)
 
 from .config import LLMConfig
 from .data_classes import (
@@ -26,11 +23,13 @@ from .data_classes import (
     OptionsData,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class KRXOpenAPIClient:
     """KRX Open API 클라이언트"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
+    def __init__(self, config: LLMConfig | None = None):
         """
         초기화
 
@@ -41,7 +40,7 @@ class KRXOpenAPIClient:
         self.session = requests.Session()
         self._calendar = MarketCalendar()
 
-    def _request(self, endpoint: str, params: Optional[dict] = None) -> list:
+    def _request(self, endpoint: str, params: dict | None = None) -> list:
         """API 요청 수행 — AUTH_KEY를 query param으로 전송 (openkrx 표준)."""
         url = f"{self.config.krx_base_url}/{endpoint}"
         request_params = {"AUTH_KEY": self.config.krx_api_key}
@@ -82,7 +81,7 @@ class KRXOpenAPIClient:
     # 지수 데이터
     # ============================================================
 
-    def get_kospi_index(self, base_date: Optional[str] = None) -> List[dict]:
+    def get_kospi_index(self, base_date: str | None = None) -> list[dict]:
         """KOSPI 시리즈 일별시세"""
         if base_date is None:
             base_date = self._get_last_trading_date()
@@ -90,7 +89,7 @@ class KRXOpenAPIClient:
         params = {"basDd": base_date}
         return self._request("idx/kospi_dd_trd", params)
 
-    def get_kosdaq_index(self, base_date: Optional[str] = None) -> List[dict]:
+    def get_kosdaq_index(self, base_date: str | None = None) -> list[dict]:
         """KOSDAQ 시리즈 일별시세"""
         if base_date is None:
             base_date = self._get_last_trading_date()
@@ -98,7 +97,7 @@ class KRXOpenAPIClient:
         params = {"basDd": base_date}
         return self._request("idx/kosdaq_dd_trd", params)
 
-    def get_krx_index(self, base_date: Optional[str] = None) -> List[dict]:
+    def get_krx_index(self, base_date: str | None = None) -> list[dict]:
         """KRX 시리즈 일별시세"""
         if base_date is None:
             base_date = self._get_last_trading_date()
@@ -106,7 +105,7 @@ class KRXOpenAPIClient:
         params = {"basDd": base_date}
         return self._request("idx/krx_dd_trd", params)
 
-    def get_indices(self, base_date: Optional[str] = None) -> dict[str, IndexData]:
+    def get_indices(self, base_date: str | None = None) -> dict[str, IndexData]:
         """주요 지수 조회 (종합)"""
         results = {}
 
@@ -144,7 +143,7 @@ class KRXOpenAPIClient:
     # ETF 데이터
     # ============================================================
 
-    def get_etf_daily(self, base_date: Optional[str] = None) -> List[dict]:
+    def get_etf_daily(self, base_date: str | None = None) -> list[dict]:
         """ETF 일별매매정보"""
         if base_date is None:
             base_date = self._get_last_trading_date()
@@ -152,7 +151,7 @@ class KRXOpenAPIClient:
         params = {"basDd": base_date}
         return self._request("etp/etf_bydd_trd", params)
 
-    def get_etf_by_sector(self, base_date: Optional[str] = None) -> List[ETFData]:
+    def get_etf_by_sector(self, base_date: str | None = None) -> list[ETFData]:
         """섹터별 ETF 데이터 조회"""
         etf_data = self.get_etf_daily(base_date)
         results = []
@@ -194,7 +193,7 @@ class KRXOpenAPIClient:
     # 선물 데이터
     # ============================================================
 
-    def get_futures_daily(self, base_date: Optional[str] = None) -> List[dict]:
+    def get_futures_daily(self, base_date: str | None = None) -> list[dict]:
         """선물 일별매매정보 (주식선물 外)"""
         if base_date is None:
             base_date = self._get_last_trading_date()
@@ -202,7 +201,7 @@ class KRXOpenAPIClient:
         params = {"basDd": base_date}
         return self._request("drv/fut_bydd_trd", params)
 
-    def get_kospi200_futures(self, base_date: Optional[str] = None) -> List[FuturesData]:
+    def get_kospi200_futures(self, base_date: str | None = None) -> list[FuturesData]:
         """KOSPI200 선물 데이터 조회"""
         futures_data = self.get_futures_daily(base_date)
         results = []
@@ -233,7 +232,7 @@ class KRXOpenAPIClient:
     # 옵션 데이터
     # ============================================================
 
-    def get_options_daily(self, base_date: Optional[str] = None) -> List[dict]:
+    def get_options_daily(self, base_date: str | None = None) -> list[dict]:
         """옵션 일별매매정보 (주식옵션 外)"""
         if base_date is None:
             base_date = self._get_last_trading_date()
@@ -241,7 +240,7 @@ class KRXOpenAPIClient:
         params = {"basDd": base_date}
         return self._request("drv/opt_bydd_trd", params)
 
-    def get_kospi200_options(self, base_date: Optional[str] = None) -> OptionsData:
+    def get_kospi200_options(self, base_date: str | None = None) -> OptionsData:
         """KOSPI200 옵션 데이터 조회 (풋콜비율)"""
         options_data = self.get_options_daily(base_date)
 
@@ -280,7 +279,7 @@ class KRXOpenAPIClient:
     # 채권 데이터
     # ============================================================
 
-    def get_bond_index(self, base_date: Optional[str] = None) -> List[dict]:
+    def get_bond_index(self, base_date: str | None = None) -> list[dict]:
         """채권지수 시세정보"""
         if base_date is None:
             base_date = self._get_last_trading_date()
@@ -288,7 +287,7 @@ class KRXOpenAPIClient:
         params = {"basDd": base_date}
         return self._request("idx/bon_dd_trd", params)
 
-    def get_bond_indices(self, base_date: Optional[str] = None) -> List[BondIndexData]:
+    def get_bond_indices(self, base_date: str | None = None) -> list[BondIndexData]:
         """채권지수 데이터 조회"""
         bond_data = self.get_bond_index(base_date)
         results = []
@@ -401,7 +400,7 @@ class KRXOpenAPIClient:
         target = self._calendar.get_previous_market_day(today)
         return target.strftime("%Y%m%d")
 
-    def get_date_range(self, days: Optional[int] = None) -> List[str]:
+    def get_date_range(self, days: int | None = None) -> list[str]:
         """과거 N 거래일 리스트"""
         if days is None:
             days = self.config.krx_analysis_days

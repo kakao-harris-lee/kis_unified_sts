@@ -1,8 +1,10 @@
 """Tests for services/trading/data_provider.py"""
 
 import asyncio
-import pytest
+import contextlib
 from datetime import datetime, timedelta
+
+import pytest
 
 
 class TestDataProviderConfig:
@@ -202,8 +204,8 @@ class TestMarketDataProvider:
     async def test_get_data_caching(self):
         """Test data is cached and reused"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
+            MarketDataProvider,
         )
 
         config = DataProviderConfig(cache_ttl_seconds=10.0, mock_seed=42)
@@ -353,8 +355,8 @@ class TestMarketDataProvider:
     async def test_mock_seed_reproducibility(self):
         """Test mock data is reproducible with seed"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
+            MarketDataProvider,
         )
 
         config1 = DataProviderConfig(mock_seed=42)
@@ -394,8 +396,8 @@ class TestMarketDataSourceProtocol:
     async def test_parallel_fetching(self):
         """Test parallel fetching from data source"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
+            MarketDataProvider,
         )
 
         call_times = []
@@ -429,7 +431,7 @@ class TestFailoverLogic:
 
     def test_initial_mode_is_websocket(self):
         """Test provider initializes in WebSocket mode"""
-        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+        from services.trading.data_provider import DataSourceMode, MarketDataProvider
 
         provider = MarketDataProvider()
         assert provider.current_mode == DataSourceMode.WEBSOCKET
@@ -438,8 +440,8 @@ class TestFailoverLogic:
     def test_failover_state_properties(self):
         """Test failover state properties are readable"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
+            MarketDataProvider,
         )
 
         config = DataProviderConfig(
@@ -459,7 +461,7 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_failover_to_rest(self):
         """Test failover from WebSocket to REST mode"""
-        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+        from services.trading.data_provider import DataSourceMode, MarketDataProvider
 
         provider = MarketDataProvider(symbols=["005930"])
 
@@ -476,7 +478,7 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_failover_idempotency(self):
         """Test failover is idempotent (calling twice has no effect)"""
-        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+        from services.trading.data_provider import DataSourceMode, MarketDataProvider
 
         provider = MarketDataProvider()
 
@@ -491,7 +493,7 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_recovery_to_websocket(self):
         """Test recovery from REST fallback to WebSocket mode"""
-        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+        from services.trading.data_provider import DataSourceMode, MarketDataProvider
 
         class HealthySource:
             async def get_current_price(self, symbol: str) -> dict:
@@ -517,7 +519,7 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_recovery_requires_healthy_source(self):
         """Test recovery only happens if data source is healthy"""
-        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+        from services.trading.data_provider import DataSourceMode, MarketDataProvider
 
         class UnhealthySource:
             async def get_current_price(self, symbol: str) -> dict:
@@ -543,7 +545,7 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_recovery_idempotency(self):
         """Test recovery is idempotent (calling twice has no effect)"""
-        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+        from services.trading.data_provider import DataSourceMode, MarketDataProvider
 
         class HealthySource:
             def is_healthy(self) -> bool:
@@ -561,11 +563,12 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_failover_telegram_alert_removed_even_when_configured(self):
         """Failover no longer sends Telegram noise even if legacy config is true."""
-        from services.trading.data_provider import (
-            MarketDataProvider,
-            DataProviderConfig,
-        )
         from unittest.mock import AsyncMock
+
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
 
         telegram_notifier = AsyncMock()
         config = DataProviderConfig(send_telegram_alerts=True)
@@ -582,11 +585,12 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_recovery_telegram_alert_removed_even_when_configured(self):
         """Recovery no longer sends Telegram noise even if legacy config is true."""
-        from services.trading.data_provider import (
-            MarketDataProvider,
-            DataProviderConfig,
-        )
         from unittest.mock import AsyncMock
+
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
 
         class HealthySource:
             def is_healthy(self) -> bool:
@@ -612,11 +616,12 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_telegram_alerts_disabled(self):
         """Test Telegram alerts are not sent when disabled"""
-        from services.trading.data_provider import (
-            MarketDataProvider,
-            DataProviderConfig,
-        )
         from unittest.mock import AsyncMock
+
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
 
         telegram_notifier = AsyncMock()
         config = DataProviderConfig(send_telegram_alerts=False)
@@ -634,12 +639,13 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_legacy_telegram_alert_failure_cannot_break_failover(self):
         """Legacy notifier is not called, so Telegram errors cannot affect failover."""
+        from unittest.mock import AsyncMock
+
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             DataSourceMode,
+            MarketDataProvider,
         )
-        from unittest.mock import AsyncMock
 
         telegram_notifier = AsyncMock()
         telegram_notifier.send_message.side_effect = Exception("Telegram API error")
@@ -660,9 +666,9 @@ class TestFailoverLogic:
     async def test_health_check_loop_triggers_failover(self):
         """Test health check loop triggers failover when source becomes unhealthy"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             DataSourceMode,
+            MarketDataProvider,
         )
 
         class ToggleHealthSource:
@@ -694,18 +700,16 @@ class TestFailoverLogic:
 
         # Cleanup
         health_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await health_task
-        except asyncio.CancelledError:
-            pass
 
     @pytest.mark.asyncio
     async def test_health_check_requires_consecutive_unhealthy_checks(self):
         """One transient low-fresh check should not immediately fail over."""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             DataSourceMode,
+            MarketDataProvider,
         )
 
         class UnhealthySource:
@@ -733,10 +737,8 @@ class TestFailoverLogic:
         assert provider.current_mode == DataSourceMode.REST_FALLBACK
 
         health_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await health_task
-        except asyncio.CancelledError:
-            pass
 
     @pytest.mark.asyncio
     async def test_start_background_tasks_starts_health_monitoring(self):
@@ -793,9 +795,9 @@ class TestFailoverLogic:
     async def test_health_check_loop_triggers_recovery(self):
         """Test health check loop triggers recovery when source becomes healthy again"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             DataSourceMode,
+            MarketDataProvider,
         )
 
         class ToggleHealthSource:
@@ -831,17 +833,15 @@ class TestFailoverLogic:
 
         # Cleanup
         health_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await health_task
-        except asyncio.CancelledError:
-            pass
 
     @pytest.mark.asyncio
     async def test_rest_poll_loop_fetches_data(self):
         """Test REST polling loop fetches data at regular intervals"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
+            MarketDataProvider,
         )
 
         fetch_count = []
@@ -870,18 +870,16 @@ class TestFailoverLogic:
         # Cleanup
         if provider._fallback_poll_task:
             provider._fallback_poll_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await provider._fallback_poll_task
-            except asyncio.CancelledError:
-                pass
 
     @pytest.mark.asyncio
     async def test_rest_poll_loop_stops_after_recovery(self):
         """Test REST polling loop stops when recovering to WebSocket"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             DataSourceMode,
+            MarketDataProvider,
         )
 
         class HealthySource:
@@ -921,8 +919,8 @@ class TestFailoverLogic:
     async def test_rest_poll_loop_handles_fetch_errors(self):
         """Test REST polling loop continues despite fetch errors"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
+            MarketDataProvider,
         )
         from shared.exceptions import NetworkError
 
@@ -962,18 +960,16 @@ class TestFailoverLogic:
         # Cleanup
         if provider._fallback_poll_task:
             provider._fallback_poll_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await provider._fallback_poll_task
-            except asyncio.CancelledError:
-                pass
 
     @pytest.mark.asyncio
     async def test_health_check_with_no_data_source(self):
         """Test health check handles case with no data source gracefully"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             DataSourceMode,
+            MarketDataProvider,
         )
 
         config = DataProviderConfig(
@@ -992,18 +988,16 @@ class TestFailoverLogic:
 
         # Cleanup
         health_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await health_task
-        except asyncio.CancelledError:
-            pass
 
     @pytest.mark.asyncio
     async def test_async_is_healthy_method(self):
         """Test health check handles async is_healthy() method"""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             DataSourceMode,
+            MarketDataProvider,
         )
 
         class AsyncHealthSource:
@@ -1026,18 +1020,16 @@ class TestFailoverLogic:
 
         # Cleanup
         health_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await health_task
-        except asyncio.CancelledError:
-            pass
 
     @pytest.mark.asyncio
     async def test_health_check_uses_provider_staleness_threshold(self):
         """Feed health should respect the failover threshold configured on the provider."""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             DataSourceMode,
+            MarketDataProvider,
         )
 
         class NearStaleSource:
@@ -1067,10 +1059,8 @@ class TestFailoverLogic:
         assert provider.current_mode == DataSourceMode.WEBSOCKET
 
         health_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await health_task
-        except asyncio.CancelledError:
-            pass
 
     @pytest.mark.asyncio
     async def test_sequential_fetch_continues_after_generic_symbol_error(self):
@@ -1099,8 +1089,8 @@ class TestFailoverLogic:
         """REST/source failures should keep the last real cache instead of generating mock data."""
         from services.trading.data_provider import (
             DataSourceMode,
-            MarketDataProvider,
             MarketDataCache,
+            MarketDataProvider,
         )
 
         class FailingClient:
@@ -1124,9 +1114,9 @@ class TestFailoverLogic:
     def test_select_rest_poll_symbols_prefers_oldest_cache_and_limit(self):
         """REST fallback should poll the stalest symbols first when capped."""
         from services.trading.data_provider import (
-            MarketDataProvider,
             DataProviderConfig,
             MarketDataCache,
+            MarketDataProvider,
         )
 
         provider = MarketDataProvider(

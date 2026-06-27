@@ -1,7 +1,7 @@
 """Test ATRDynamicExit position.metadata overrides for trend mode."""
 
-import pytest
 from datetime import datetime, timedelta, timezone
+
 from shared.models.position import Position, PositionSide, PositionState
 from shared.strategy.exit.atr_dynamic import ATRDynamicExit, ATRDynamicExitConfig
 

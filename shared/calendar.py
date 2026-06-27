@@ -14,7 +14,7 @@ Usage:
 """
 import logging
 from datetime import date, datetime, time, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ class MarketCalendar:
 
     def __init__(self):
         """Initialize market calendar."""
-        self._holidays_by_year: Dict[int, List[date]] = {
+        self._holidays_by_year: dict[int, list[date]] = {
             2025: self.HOLIDAYS_2025,
             2026: self.HOLIDAYS_2026,
             2027: self.HOLIDAYS_2027,
@@ -168,7 +168,7 @@ class MarketCalendar:
         }
         logger.info("MarketCalendar initialized")
 
-    def get_holidays(self, year: int) -> List[date]:
+    def get_holidays(self, year: int) -> list[date]:
         """Get list of holidays for a specific year.
 
         Args:
@@ -218,9 +218,7 @@ class MarketCalendar:
         """
         if self.is_weekend(check_date):
             return False
-        if self.is_holiday(check_date):
-            return False
-        return True
+        return not self.is_holiday(check_date)
 
     def is_market_open_today(self) -> bool:
         """Check if market is open today.
@@ -230,7 +228,7 @@ class MarketCalendar:
         """
         return self.is_market_day(date.today())
 
-    def is_market_hours(self, check_time: Optional[datetime] = None) -> bool:
+    def is_market_hours(self, check_time: datetime | None = None) -> bool:
         """Check if current time is within market trading hours.
 
         Args:
@@ -248,7 +246,7 @@ class MarketCalendar:
         current_time = check_time.time()
         return self.MARKET_OPEN_TIME <= current_time <= self.MARKET_CLOSE_TIME
 
-    def is_premarket_hours(self, check_time: Optional[datetime] = None) -> bool:
+    def is_premarket_hours(self, check_time: datetime | None = None) -> bool:
         """Check if current time is within pre-market hours.
 
         Args:
@@ -266,7 +264,7 @@ class MarketCalendar:
         current_time = check_time.time()
         return self.PREMARKET_START_TIME <= current_time <= self.PREMARKET_END_TIME
 
-    def get_next_market_day(self, from_date: Optional[date] = None) -> date:
+    def get_next_market_day(self, from_date: date | None = None) -> date:
         """Get the next trading day.
 
         Args:
@@ -284,7 +282,7 @@ class MarketCalendar:
 
         return next_day
 
-    def get_previous_market_day(self, from_date: Optional[date] = None) -> date:
+    def get_previous_market_day(self, from_date: date | None = None) -> date:
         """Get the previous trading day.
 
         Args:
@@ -302,7 +300,7 @@ class MarketCalendar:
 
         return prev_day
 
-    def get_market_status(self) -> Dict[str, Any]:
+    def get_market_status(self) -> dict[str, Any]:
         """Get current market status summary.
 
         Returns:
@@ -328,7 +326,7 @@ class MarketCalendar:
         self,
         start_date: date,
         end_date: date
-    ) -> List[date]:
+    ) -> list[date]:
         """Get all trading days in a date range.
 
         Args:
@@ -352,7 +350,7 @@ class MarketCalendar:
 # ============================================================
 
 
-_calendar_instance: Optional[MarketCalendar] = None
+_calendar_instance: MarketCalendar | None = None
 
 
 def get_market_calendar() -> MarketCalendar:

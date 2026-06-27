@@ -7,19 +7,19 @@ from shared.scoring.base import ScoredItem
 
 
 def _valid_kwargs():
-    return dict(
-        news_id="n1",
-        scorer_version="gpt-4o-mini-v1",
-        scored_at_ms=1_700_000_000_000,
-        category="macro_us",
-        sentiment=0.4,
-        impact_score=0.8,
-        direction_bias="long",
-        confidence=0.85,
-        keywords=["fomc", "rate"],
-        reasoning="FOMC statement hawkish-neutral",
-        raw_ref="1700000000000-0",
-    )
+    return {
+        "news_id": "n1",
+        "scorer_version": "gpt-4o-mini-v1",
+        "scored_at_ms": 1_700_000_000_000,
+        "category": "macro_us",
+        "sentiment": 0.4,
+        "impact_score": 0.8,
+        "direction_bias": "long",
+        "confidence": 0.85,
+        "keywords": ["fomc", "rate"],
+        "reasoning": "FOMC statement hawkish-neutral",
+        "raw_ref": "1700000000000-0",
+    }
 
 
 def test_scored_item_accepts_valid_input():

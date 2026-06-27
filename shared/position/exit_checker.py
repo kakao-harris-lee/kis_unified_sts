@@ -1,9 +1,9 @@
 """Exit condition checker implementing 3-Stage state machine."""
 import logging
-from typing import Tuple
+
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.models.position import Position, PositionState, PositionSide
+from shared.models.position import Position, PositionSide, PositionState
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class ExitChecker:
         ), "maximize_threshold_pct must be > breakeven_threshold_pct"
         assert c.trailing_stop_pct > 0, "trailing_stop_pct must be positive"
 
-    def check(self, position: Position) -> Tuple[bool, str]:
+    def check(self, position: Position) -> tuple[bool, str]:
         """Check if position should exit.
 
         Args:
@@ -123,7 +123,7 @@ class ExitChecker:
                     f"(profit: {profit_pct:.2f}%)"
                 )
 
-    def _check_survival(self, position: Position) -> Tuple[bool, str]:
+    def _check_survival(self, position: Position) -> tuple[bool, str]:
         """Check SURVIVAL stage exit conditions.
 
         Exit if: loss >= hard_stop_pct
@@ -141,7 +141,7 @@ class ExitChecker:
 
         return False, ""
 
-    def _check_breakeven(self, position: Position) -> Tuple[bool, str]:
+    def _check_breakeven(self, position: Position) -> tuple[bool, str]:
         """Check BREAKEVEN stage exit conditions.
 
         Exit if: profit drops below breakeven_buffer
@@ -153,7 +153,7 @@ class ExitChecker:
 
         return False, ""
 
-    def _check_maximize(self, position: Position) -> Tuple[bool, str]:
+    def _check_maximize(self, position: Position) -> tuple[bool, str]:
         """Check MAXIMIZE stage exit conditions.
 
         Exit if: price drops trailing_stop_pct from highest

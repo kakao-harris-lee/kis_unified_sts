@@ -18,12 +18,12 @@ Expected Behavior:
 - Overall: P&L is lower with slippage (more realistic backtest results)
 """
 
-import pandas as pd
-import pytest
 from datetime import datetime, timedelta
 
-from shared.backtest.engine import BacktestEngine, SignalType
+import pandas as pd
+
 from shared.backtest.config import BacktestConfig
+from shared.backtest.engine import BacktestEngine, SignalType
 from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
 
 

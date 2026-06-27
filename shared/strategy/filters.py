@@ -5,7 +5,7 @@ to prevent marginal setups that erode capital through fees.
 """
 
 import logging
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -70,7 +70,7 @@ class CostFilter:
         self._round_trip_cost = config.commission_rate + (config.slippage_bps / 10000.0)
 
         # Statistics tracking
-        self._stats: Dict[str, float] = {
+        self._stats: dict[str, float] = {
             "total_checks": 0,
             "passed": 0,
             "rejected_insufficient_edge": 0,
@@ -88,9 +88,9 @@ class CostFilter:
     def check_signal(
         self,
         signal: "Signal",  # Forward reference to avoid circular import
-        indicators: Dict[str, float],
+        indicators: dict[str, float],
         price: float,
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """Check if signal has sufficient edge to justify entry.
 
         Args:
@@ -153,7 +153,7 @@ class CostFilter:
         )
         return True, None
 
-    def get_stats(self) -> Dict[str, float]:
+    def get_stats(self) -> dict[str, float]:
         """Get filter statistics.
 
         Returns:

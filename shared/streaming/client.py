@@ -5,10 +5,10 @@ Redis 연결 관리 싱글톤.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
-from typing import Optional
 
 import redis
 
@@ -25,7 +25,7 @@ class RedisClient:
         client.ping()
     """
 
-    _instance: Optional[redis.Redis] = None
+    _instance: redis.Redis | None = None
     _lock: threading.Lock = threading.Lock()
 
     @classmethod
@@ -70,10 +70,8 @@ class RedisClient:
                 return cls._instance
             except (redis.ConnectionError, redis.TimeoutError, OSError):
                 logger.warning("Redis 연결 끊김, 재연결 시도...")
-                try:
+                with contextlib.suppress(Exception):
                     cls._instance.close()
-                except Exception:
-                    pass
                 cls._instance = None
 
         with cls._lock:
@@ -83,10 +81,8 @@ class RedisClient:
                     cls._instance.ping()
                     return cls._instance
                 except (redis.ConnectionError, redis.TimeoutError, OSError):
-                    try:
+                    with contextlib.suppress(Exception):
                         cls._instance.close()
-                    except Exception:
-                        pass
                     cls._instance = None
 
             cls._instance = cls._create_client()

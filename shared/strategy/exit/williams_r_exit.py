@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import time
-from typing import Any, Optional
+from typing import Any
 
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
@@ -90,7 +90,7 @@ class WilliamsRExit(ExitSignalGenerator[WilliamsRExitConfig]):
 
     async def should_exit(
         self, context: ExitContext
-    ) -> tuple[bool, Optional[ExitSignal]]:
+    ) -> tuple[bool, ExitSignal | None]:
         signal = self._check_position(context)
         return (signal is not None, signal)
 
@@ -98,7 +98,7 @@ class WilliamsRExit(ExitSignalGenerator[WilliamsRExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals."""
         if not positions:
@@ -126,7 +126,7 @@ class WilliamsRExit(ExitSignalGenerator[WilliamsRExitConfig]):
             )
         return signals
 
-    def _check_position(self, context: ExitContext) -> Optional[ExitSignal]:
+    def _check_position(self, context: ExitContext) -> ExitSignal | None:
         """Check exit conditions for a single position."""
         position = context.position
         market_data = context.market_data
@@ -228,7 +228,7 @@ class WilliamsRExit(ExitSignalGenerator[WilliamsRExitConfig]):
     @staticmethod
     def _get_current_price(
         position: Position, market_data: dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         snapshot = get_symbol_snapshot(market_data, position.code)
         price = get_price_from_snapshot(snapshot)
         if price is not None:

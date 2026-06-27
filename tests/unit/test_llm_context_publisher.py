@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -17,7 +16,6 @@ from services.trading.llm_context_publisher import LLMContextPublisher
 from shared.llm.config import LLMConfig
 from shared.llm.data_classes import MarketSignal, RiskMode
 from shared.llm.market_context import MarketContext
-
 
 # =============================================================================
 # Helpers
@@ -201,6 +199,7 @@ class TestAnalysisIntervalConfig:
     def test_config_yaml_interval_is_60_minutes(self):
         """config/llm.yaml::market_context_publisher.analysis_interval_minutes == 60."""
         from pathlib import Path
+
         import yaml
 
         config_path = (
@@ -210,7 +209,7 @@ class TestAnalysisIntervalConfig:
         )
         assert config_path.exists(), f"config/llm.yaml not found at {config_path}"
 
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         publisher_config = data.get("market_context_publisher", {})
@@ -223,6 +222,7 @@ class TestAnalysisIntervalConfig:
     def test_config_yaml_futures_prompt_addendum_present(self):
         """config/llm.yaml::futures.prompt_addendum is non-empty."""
         from pathlib import Path
+
         import yaml
 
         config_path = (
@@ -230,7 +230,7 @@ class TestAnalysisIntervalConfig:
             / "config"
             / "llm.yaml"
         )
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         futures_config = data.get("futures", {})
@@ -297,7 +297,7 @@ class TestRequestRefresh:
         # Track how many times run_analysis was called
         call_count = 0
 
-        async def slow_analysis(mode: str = "all") -> Optional[MarketContext]:
+        async def slow_analysis(mode: str = "all") -> MarketContext | None:
             nonlocal call_count
             call_count += 1
             await asyncio.sleep(0.05)  # Simulate slow analysis

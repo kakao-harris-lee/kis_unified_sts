@@ -4,8 +4,8 @@ import pytest
 
 def test_calculator_creation():
     """Test TechnicalCalculator instantiation."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig()
     calc = TechnicalCalculator(config)
@@ -15,8 +15,8 @@ def test_calculator_creation():
 
 def test_sma_calculation():
     """Test simple moving average calculation."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(ma_short_period=5)
     calc = TechnicalCalculator(config)
@@ -32,8 +32,8 @@ def test_sma_calculation():
 
 def test_ema_calculation():
     """Test exponential moving average calculation."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(ma_short_period=5)
     calc = TechnicalCalculator(config)
@@ -50,8 +50,8 @@ def test_ema_calculation():
 
 def test_ma_crossover_detection():
     """Test MA crossover signal detection."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(ma_short_period=3, ma_long_period=5)
     calc = TechnicalCalculator(config)
@@ -75,8 +75,8 @@ def test_ma_crossover_detection():
 
 def test_is_ready():
     """Test readiness check based on warmup period."""
-    from shared.trend.technical_calculator import TechnicalCalculator
     from shared.trend.config import TechnicalConfig
+    from shared.trend.technical_calculator import TechnicalCalculator
 
     config = TechnicalConfig(ma_long_period=10)
     calc = TechnicalCalculator(config)

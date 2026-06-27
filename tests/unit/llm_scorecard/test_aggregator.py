@@ -1,8 +1,6 @@
 """Tests for the aggregator (plan Task 7) — pure rolling_metrics / calibration_bins."""
 from __future__ import annotations
 
-import pytest
-
 from shared.llm_scorecard.aggregator import calibration_bins, rolling_metrics
 
 

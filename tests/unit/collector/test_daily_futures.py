@@ -10,9 +10,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from unittest.mock import patch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -164,7 +162,7 @@ class TestCollectFuturesDaily:
         store = ParquetMarketDataStore(tmp_path, asset_class="futures")
 
         # Build fake responses dict: {symbol: [page1_bars, page2_bars, ...]}
-        call_counts: dict[str, int] = {sym: 0 for sym in pages_by_symbol}
+        call_counts: dict[str, int] = dict.fromkeys(pages_by_symbol, 0)
 
         async def fake_fetch_page(client, symbol, start_date, end_date, app_key, app_secret, max_retries=3):
             idx = call_counts.get(symbol, 0)

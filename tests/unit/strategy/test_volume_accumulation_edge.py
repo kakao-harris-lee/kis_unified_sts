@@ -7,8 +7,7 @@ Covers the minute-overflow fix in _check_time_filter:
     open_minute = 30 + 45 = 75 → hour += 75//60 = 1, minute = 75%60 = 15
     → time(10, 15)  (i.e. 09:00 + 1h15m = 10:15)
 """
-import pytest
-from datetime import datetime, time
+from datetime import datetime
 
 try:
     from zoneinfo import ZoneInfo

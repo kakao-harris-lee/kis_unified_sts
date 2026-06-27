@@ -299,9 +299,7 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
         allowed = [s.upper() for s in cfg.get("allowed_states", [])]
         if blocked and state_name in blocked:
             return False
-        if allowed and state_name not in allowed:
-            return False
-        return True
+        return not (allowed and state_name not in allowed)
 
     def _gate_allows(self, context: EntryContext, direction: str) -> bool:
         if self._gate_cfg is None:

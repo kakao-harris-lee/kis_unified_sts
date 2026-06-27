@@ -19,7 +19,7 @@ Entry Conditions:
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -149,7 +149,7 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
 
     def __init__(self, config: MomentumBreakoutConfig):
         super().__init__(config)
-        self._last_signal_time: Dict[str, datetime] = {}
+        self._last_signal_time: dict[str, datetime] = {}
 
     def _validate_config(self):
         self.config.validate()
@@ -175,17 +175,14 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             "mfi",
         ]
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """Generate entry signal based on momentum breakout conditions."""
         data = context.market_data or {}
         indicators = context.indicators or {}
 
         def _get(key: str, default: float = 0.0) -> float:
             """Prefer indicators dict, fall back to market_data."""
-            if key in indicators:
-                val = indicators[key]
-            else:
-                val = data.get(key, default)
+            val = indicators[key] if key in indicators else data.get(key, default)
             try:
                 return float(val) if val is not None else default
             except (TypeError, ValueError):
@@ -302,7 +299,7 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
         if intrabar_breakout:
             required_rvol = max(required_rvol, self.config.intrabar_min_rvol)
 
-        trigger_type: Optional[str] = None
+        trigger_type: str | None = None
 
         if not close_breakout and not intrabar_breakout:
             # No breakout — try EMA pullback in trend mode
@@ -488,10 +485,7 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
 
         # RSI health check
         rsi = float(indicators.get("rsi", 50) or 50)
-        if rsi < self.config.trend_rsi_min:
-            return False
-
-        return True
+        return not rsi < self.config.trend_rsi_min
 
     def _calculate_confidence(
         self,
@@ -508,6 +502,7 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
         - RVOL above threshold: up to +0.15 (scales with extra RVOL above threshold)
         - Accumulation score available and >= min: +0.10 flat bonus
         """
+        _ = (close, high_5)
         confidence = self.config.confidence_base
 
         # RVOL bonus: scale linearly, cap at +0.15 for rvol = threshold + 3

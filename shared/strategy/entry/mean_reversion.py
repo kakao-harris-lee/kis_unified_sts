@@ -268,11 +268,10 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
                 return None
 
         # 3) BB Bandwidth 필터: 밴드 좁으면 (squeeze) 진입 안함
-        if self.config.bbw_filter:
-            if bb_middle > 0:
-                bbw = (bb_upper - bb_lower) / bb_middle
-                if bbw < self.config.bbw_min_threshold:
-                    return None
+        if self.config.bbw_filter and bb_middle > 0:
+            bbw = (bb_upper - bb_lower) / bb_middle
+            if bbw < self.config.bbw_min_threshold:
+                return None
 
         # 4) %B 깊이 필터: 밴드 스침이 아닌 의미있는 침투 요구
         if self.config.percent_b_filter:

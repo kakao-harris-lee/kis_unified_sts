@@ -10,9 +10,9 @@ Usage:
 """
 
 from shared.streaming.client import RedisClient
-from shared.streaming.consumer import StreamConsumer, MultiStreamConsumer
-from shared.streaming.publisher import StreamPublisher
+from shared.streaming.consumer import MultiStreamConsumer, StreamConsumer
 from shared.streaming.message import StreamMessage
+from shared.streaming.publisher import StreamPublisher
 
 __all__ = [
     "RedisClient",

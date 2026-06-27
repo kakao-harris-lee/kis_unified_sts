@@ -9,11 +9,9 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from shared.backtest.config import BacktestConfig, RiskConfig
 from shared.backtest.engine import BacktestEngine, SignalType
-
 
 # ---------------------------------------------------------------------------
 # Helpers

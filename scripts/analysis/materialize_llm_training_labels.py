@@ -115,7 +115,7 @@ def _fetch_forward_returns(
     end = base_date + timedelta(days=max(horizons) * 3 + 10)
     closes = _load_daily_closes_from_parquet(code, start, end)
     if not closes:
-        return {h: None for h in horizons}
+        return dict.fromkeys(horizons)
 
     base_idx = None
     for i, (ts, _) in enumerate(closes):
@@ -124,11 +124,11 @@ def _fetch_forward_returns(
         else:
             break
     if base_idx is None:
-        return {h: None for h in horizons}
+        return dict.fromkeys(horizons)
 
     base_price = float(closes[base_idx][1])
     if base_price <= 0:
-        return {h: None for h in horizons}
+        return dict.fromkeys(horizons)
 
     out: dict[int, float | None] = {}
     for h in horizons:

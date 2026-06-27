@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Optional
 
 from shared.llm.data_classes import MarketSignal, RiskMode
 
@@ -46,9 +45,9 @@ class MarketContext:
     risk_mode: RiskMode = RiskMode.NEUTRAL
     risk_score: float = 50.0  # 0-100 scale
     confidence: float = 0.5  # 0.0-1.0 scale
-    sector_rotation: Dict[str, str] = field(default_factory=dict)
+    sector_rotation: dict[str, str] = field(default_factory=dict)
     generated_at: datetime = field(default_factory=datetime.now)
-    metadata: Optional[Dict[str, str]] = field(default_factory=dict)
+    metadata: dict[str, str] | None = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Serialize to dictionary for Redis storage.

@@ -9,6 +9,7 @@ Phase 3 is backtest-only: no order placement, `executed` is always 0.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
 import pytest
 
 from shared.backtest.market_context_replay import MarketContextReplay

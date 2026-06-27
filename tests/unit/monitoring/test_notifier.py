@@ -1,8 +1,9 @@
 """알림 서비스 테스트"""
 
 import os
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 
 class TestTelegramConfig:

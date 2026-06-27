@@ -209,12 +209,12 @@ class ConfigLoader:
             full_path = (config_dir / normalized_path).resolve()
             # 4. 해결된 경로가 config_dir 내부에 있는지 확인
             full_path.relative_to(config_dir)
-        except (ValueError, RuntimeError):
+        except (ValueError, RuntimeError) as e:
             # ValueError: relative_to() 실패 (경로가 config_dir 외부)
             # RuntimeError: 무한 루프 (심볼릭 링크 순환)
             raise ConfigError(
                 f"Path traversal detected: {path} resolves outside config directory"
-            )
+            ) from e
 
         return full_path
 

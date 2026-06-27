@@ -7,15 +7,16 @@ Tests cover:
 - Edge cases and boundary conditions
 """
 
-import pytest
 from datetime import datetime, time
+
+import pytest
 
 from shared.execution.slippage_model import (
     SlippageModel,
     SlippageModelConfig,
-    _to_bool,
-    _time_in_window,
     _parse_time,
+    _time_in_window,
+    _to_bool,
 )
 
 

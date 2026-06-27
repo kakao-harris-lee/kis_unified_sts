@@ -7,7 +7,6 @@ Provides validation for user inputs to prevent:
 """
 import logging
 from pathlib import Path
-from typing import Set, Optional
 
 import pandas as pd
 
@@ -75,10 +74,10 @@ def validate_csv_file(
     # Load with row limit check
     try:
         df = pd.read_csv(path, nrows=max_rows + 1)
-    except pd.errors.EmptyDataError:
-        raise ValidationError("CSV file is empty")
+    except pd.errors.EmptyDataError as e:
+        raise ValidationError("CSV file is empty") from e
     except pd.errors.ParserError as e:
-        raise ValidationError(f"Failed to parse CSV: {e}")
+        raise ValidationError(f"Failed to parse CSV: {e}") from e
 
     if len(df) > max_rows:
         raise ValidationError(f"CSV has too many rows: >{max_rows:,}")
@@ -95,7 +94,7 @@ def validate_csv_file(
     try:
         df["datetime"] = pd.to_datetime(df["datetime"])
     except Exception as e:
-        raise ValidationError(f"Failed to parse 'datetime' column: {e}")
+        raise ValidationError(f"Failed to parse 'datetime' column: {e}") from e
 
     # Datetime integrity checks
     if reject_duplicate_datetime:
@@ -111,20 +110,18 @@ def validate_csv_file(
     # Validate numeric columns
     numeric_columns = ["open", "high", "low", "close", "volume"]
     for col in numeric_columns:
-        if col in df.columns:
-            if not pd.api.types.is_numeric_dtype(df[col]):
-                # Try to convert
-                try:
-                    df[col] = pd.to_numeric(df[col])
-                except ValueError:
-                    raise ValidationError(f"Column '{col}' must be numeric")
+        if col in df.columns and not pd.api.types.is_numeric_dtype(df[col]):
+            # Try to convert
+            try:
+                df[col] = pd.to_numeric(df[col])
+            except ValueError as e:
+                raise ValidationError(f"Column '{col}' must be numeric") from e
 
     # Check for negative prices
     price_columns = ["open", "high", "low", "close"]
     for col in price_columns:
-        if col in df.columns:
-            if (df[col] < 0).any():
-                raise ValidationError(f"Column '{col}' contains negative values")
+        if col in df.columns and (df[col] < 0).any():
+            raise ValidationError(f"Column '{col}' contains negative values")
 
     # Optional volume quality gate (useful for futures RL datasets)
     if max_zero_volume_ratio is not None and "volume" in df.columns:
@@ -187,7 +184,7 @@ def validate_capital(value: float, max_value: float = MAX_CAPITAL) -> float:
     return value
 
 
-def validate_strategy_name(name: str, allowed_chars: Optional[Set[str]] = None) -> str:
+def validate_strategy_name(name: str, allowed_chars: set[str] | None = None) -> str:
     """Validate strategy name.
 
     Args:

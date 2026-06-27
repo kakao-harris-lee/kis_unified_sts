@@ -14,7 +14,6 @@ import pandas as pd
 from shared.llm_scorecard.facets.base import CaptureContext, FacetPrediction
 from shared.llm_scorecard.facets.volume_surge import VolumeSurgeFacet
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

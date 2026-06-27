@@ -47,7 +47,7 @@ def test_token_cache_file_created_with_secure_permissions():
         assert file_mode == 0o600, f"Expected 0o600, got {oct(file_mode)}"
 
         # Verify content is correct
-        with open(cache_path, "r") as f:
+        with open(cache_path) as f:
             data = json.load(f)
 
         assert data["app_key"] == "test_key"

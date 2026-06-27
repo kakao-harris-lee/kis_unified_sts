@@ -7,18 +7,18 @@ from shared.decision.signal import Signal
 
 
 def _kwargs(**overrides):
-    base = dict(
-        setup_type="A_gap_reversion",
-        direction="long",
-        symbol="A05603",
-        entry_price=350.25,
-        stop_loss=349.25,
-        take_profit=352.00,
-        confidence=0.7,
-        reason_tags=["sp500_gap_+1.20%"],
-        valid_until=datetime.now(UTC) + timedelta(minutes=10),
-        generated_at=datetime.now(UTC),
-    )
+    base = {
+        "setup_type": "A_gap_reversion",
+        "direction": "long",
+        "symbol": "A05603",
+        "entry_price": 350.25,
+        "stop_loss": 349.25,
+        "take_profit": 352.00,
+        "confidence": 0.7,
+        "reason_tags": ["sp500_gap_+1.20%"],
+        "valid_until": datetime.now(UTC) + timedelta(minutes=10),
+        "generated_at": datetime.now(UTC),
+    }
     base.update(overrides)
     return base
 

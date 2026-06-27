@@ -1,5 +1,6 @@
 """Tests for secrets management module."""
 import os
+
 import pytest
 
 
@@ -45,7 +46,7 @@ def test_secrets_manager_get_none():
 
 def test_require_secret_raises():
     """Test require_secret raises when env var not set."""
-    from shared.config.secrets import require_secret, SecretsManager
+    from shared.config.secrets import SecretsManager, require_secret
 
     SecretsManager.clear_cache()
 
@@ -58,7 +59,7 @@ def test_require_secret_raises():
 
 def test_require_secret_returns_value():
     """Test require_secret returns value when set."""
-    from shared.config.secrets import require_secret, SecretsManager
+    from shared.config.secrets import SecretsManager, require_secret
 
     SecretsManager.clear_cache()
     os.environ["REQUIRED_SECRET"] = "secret_value"
