@@ -578,6 +578,54 @@ def _load_scorecard(ledger: Any, signal: SignalResponse) -> DecisionTraceScoreca
     )
 
 
+def _lifecycle_status(warnings: list[str], steps: list[dict[str, Any]]) -> str:
+    if not steps:
+        return "missing"
+    if "no_lifecycle_evidence" in warnings:
+        return "missing"
+    if warnings:
+        return "partial"
+    return "ok"
+
+
+def _build_trace_lifecycle(signal: SignalResponse) -> DecisionTraceLifecycle:
+    from services.dashboard.routes.trades import (
+        _build_lifecycle_response,
+        _load_lifecycle_ledger_rows,
+        _load_lifecycle_redis_rows,
+    )
+
+    ledger_rows, ledger_available = _load_lifecycle_ledger_rows(
+        signal.asset_class,
+        symbol=signal.symbol or None,
+        signal_id=signal.id or None,
+        order_id=signal.order_id,
+        fill_id=signal.fill_id,
+        trade_id=signal.trade_id,
+    )
+    redis_rows = _load_lifecycle_redis_rows(
+        signal.asset_class,
+        symbol=signal.symbol or None,
+    )
+    response = _build_lifecycle_response(
+        asset_class=signal.asset_class,
+        signal_id=signal.id or None,
+        order_id=signal.order_id,
+        fill_id=signal.fill_id,
+        trade_id=signal.trade_id,
+        symbol=signal.symbol or None,
+        ledger_rows=ledger_rows,
+        redis_rows=redis_rows,
+        ledger_available=ledger_available,
+    )
+    steps = [step.model_dump(mode="json") for step in response.steps]
+    return DecisionTraceLifecycle(
+        status=_lifecycle_status(response.warnings, steps),
+        steps=steps,
+        warnings=response.warnings,
+    )
+
+
 def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
     state = _trace_state(signal)
     gaps: list[EvidenceGap] = []
@@ -639,14 +687,30 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
             )
         )
 
-    lifecycle = _empty_lifecycle()
-    gaps.append(
-        _gap(
-            "no_lifecycle_evidence",
-            "info",
-            "No order, fill, position, or closed-trade lifecycle evidence is available.",
+    lifecycle = _build_trace_lifecycle(signal)
+    if lifecycle.status == "missing":
+        gaps.append(
+            _gap(
+                "no_lifecycle_evidence",
+                "info",
+                "No order, fill, position, or closed-trade lifecycle evidence is available.",
+            )
         )
-    )
+    elif lifecycle.status == "partial":
+        gaps.append(
+            _gap(
+                "partial_lifecycle",
+                "warning",
+                "Lifecycle evidence is present but one or more steps are missing.",
+            )
+        )
+
+    summary_warnings = [gap.code for gap in gaps if gap.severity != "info"]
+    for warning in lifecycle.warnings:
+        if warning == "no_lifecycle_evidence":
+            continue
+        if warning not in summary_warnings:
+            summary_warnings.append(warning)
 
     return DecisionTraceResponse(
         signal=DecisionTraceSignal(
@@ -666,7 +730,7 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
         summary=DecisionTraceSummary(
             state=state,
             text=_trace_summary_text(signal, state),
-            warnings=[gap.code for gap in gaps if gap.severity != "info"],
+            warnings=summary_warnings,
         ),
         llm_context=llm_context,
         strategy_inputs=DecisionTraceStrategyInputs(

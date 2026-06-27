@@ -448,3 +448,55 @@ async def test_signal_trace_scorecard_maps_setup_ac_shorthand_to_direction(
     assert body["scorecard"]["facet"] == "direction"
     assert body["scorecard"]["edge"] == 0.18
     assert "scorecard_missing" not in {gap["code"] for gap in body["evidence_gaps"]}
+
+
+@pytest.mark.asyncio
+async def test_signal_trace_embeds_lifecycle_and_removes_lifecycle_gap():
+    from services.dashboard.routes import signals as signals_route
+
+    reader = _reader_with_signals(
+        [
+            {
+                "id": "sig-life-1",
+                "symbol": "101S6000",
+                "side": "BUY",
+                "signal_type": "entry",
+                "strategy": "setup_a_gap_reversion",
+                "price": 390.25,
+                "confidence": 0.72,
+                "timestamp": "2026-06-27T00:20:00+00:00",
+                "executed": True,
+                "trace": {"order_id": "ord-1", "fill_id": "fill-1"},
+            }
+        ]
+    )
+    lifecycle = signals_route.DecisionTraceLifecycle(
+        status="partial",
+        steps=[
+            {
+                "stage": "signal",
+                "label": "Signal",
+                "status": "generated",
+                "id": "sig-life-1",
+                "timestamp": "2026-06-27T00:20:00+00:00",
+                "source": "runtime_ledger",
+                "summary": "BUY 101S6000",
+                "details": {"strategy": "setup_a_gap_reversion"},
+            }
+        ],
+        warnings=["partial_legacy_lineage"],
+    )
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(signals_route, "_get_trace_ledger", return_value=None),
+        patch.object(signals_route, "_build_trace_lifecycle", return_value=lifecycle),
+    ):
+        response = await _get("/api/signals/sig-life-1/trace?asset_class=futures")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["lifecycle"]["status"] == "partial"
+    assert body["lifecycle"]["steps"][0]["stage"] == "signal"
+    assert "partial_legacy_lineage" in body["summary"]["warnings"]
+    assert "no_lifecycle_evidence" not in {gap["code"] for gap in body["evidence_gaps"]}
