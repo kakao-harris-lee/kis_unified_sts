@@ -1,0 +1,69 @@
+# Theme Discovery Producer Configuration
+# Converts the screener universe snapshot into paper-safe theme targets.
+
+redis_keys:
+  universe: "${UNIVERSE_LATEST_KEY:system:universe:latest}"
+  themes_latest: "${THEMES_LATEST_KEY:system:themes:latest}"
+  targets_latest: "${THEME_TARGETS_LATEST_KEY:system:theme_targets:latest}"
+  targets_stream: "${THEME_TARGETS_STREAM:system:theme_targets}"
+
+interval_seconds: 15
+ttl_seconds: 86400
+top_n: 20
+
+thresholds:
+  minimum_screener_score: 0.0
+  theme_breadth_full_count: 3
+  keyword_catalyst_score: 0.85
+  default_intraday_persistence: 0.6
+  default_freshness_score: 1.0
+
+keyword_themes:
+  ai_hbm:
+    label: "AI/HBM"
+    keywords:
+      - "ai"
+      - "artificial intelligence"
+      - "hbm"
+      - "high bandwidth memory"
+      - "memory"
+      - "semiconductor"
+      - "반도체"
+      - "인공지능"
+  ai_power_infra:
+    label: "AI Power Infra"
+    keywords:
+      - "data center"
+      - "power infra"
+      - "power grid"
+      - "transformer"
+      - "electric equipment"
+      - "cooling"
+      - "datacenter"
+      - "전력"
+      - "변압기"
+      - "데이터센터"
+  shipbuilding_defense:
+    label: "Shipbuilding/Defense"
+    keywords:
+      - "shipbuilding"
+      - "shipyard"
+      - "naval"
+      - "defense"
+      - "warship"
+      - "marine engine"
+      - "조선"
+      - "방산"
+      - "방위산업"
+  physical_ai:
+    label: "Physical AI"
+    keywords:
+      - "physical ai"
+      - "robot"
+      - "robotics"
+      - "humanoid"
+      - "automation"
+      - "actuator"
+      - "sensor"
+      - "로봇"
+      - "자동화"
