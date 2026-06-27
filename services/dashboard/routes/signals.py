@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.dashboard.domain.assets import normalize_asset_class, target_assets
 from shared.exceptions import InfrastructureError
@@ -55,6 +55,122 @@ class SignalHistoryResponse(BaseModel):
     history: list[dict]
     total_signals: int
     days: int
+
+
+class EvidenceGap(BaseModel):
+    """One missing or degraded evidence source for the decision trace."""
+
+    code: str
+    severity: str
+    message: str
+
+
+class DecisionTraceSignal(BaseModel):
+    """Signal identity and basic decision fields."""
+
+    id: str
+    asset_class: str
+    symbol: str
+    strategy: str
+    side: str
+    signal_type: str | None = None
+    status: str | None = None
+    reason: str | None = None
+    confidence: float | None = None
+    strength: float | None = None
+    price: float | None = None
+    timestamp: datetime | None = None
+
+
+class DecisionTraceSummary(BaseModel):
+    """Deterministic operator summary."""
+
+    state: str
+    text: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DecisionTraceLlmContext(BaseModel):
+    """Market context associated with the signal decision."""
+
+    status: str
+    overall_signal: str | None = None
+    confidence: float | None = None
+    risk_mode: str | None = None
+    regime: str | None = None
+    risk_score: float | None = None
+    captured_at: datetime | None = None
+    source: str | None = None
+
+
+class DecisionTraceStrategyInputs(BaseModel):
+    """Strategy-native inputs available for the signal."""
+
+    setup_type: str | None = None
+    indicators: dict[str, Any] = Field(default_factory=dict)
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    event_evidence: dict[str, Any] = Field(default_factory=dict)
+    raw_reason: str | None = None
+
+
+class DecisionTraceRiskOrderability(BaseModel):
+    """Risk and orderability status for the signal."""
+
+    reject_stage: str | None = None
+    reject_reason: str | None = None
+    orderability_state: str | None = None
+    orderability_details: dict[str, Any] = Field(default_factory=dict)
+    risk_state: str | None = None
+    risk_details: dict[str, Any] = Field(default_factory=dict)
+
+
+class DecisionTraceLineage(BaseModel):
+    """Known downstream runtime identifiers."""
+
+    signal_id: str | None = None
+    order_id: str | None = None
+    fill_id: str | None = None
+    position_id: str | None = None
+    trade_id: str | None = None
+
+
+class DecisionTraceLifecycle(BaseModel):
+    """Compact lifecycle block embedded in the signal trace."""
+
+    status: str
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DecisionTraceScorecard(BaseModel):
+    """LLM prediction scorecard evidence linked to the signal."""
+
+    status: str
+    facet: str | None = None
+    date_kst: str | None = None
+    captured_at: datetime | None = None
+    confidence: float | None = None
+    correct: bool | None = None
+    value: float | None = None
+    economic_proxy: float | None = None
+    baseline_value: float | None = None
+    edge: float | None = None
+    scored_at: datetime | None = None
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class DecisionTraceResponse(BaseModel):
+    """Read-only signal decision trace for the dashboard."""
+
+    signal: DecisionTraceSignal
+    summary: DecisionTraceSummary
+    llm_context: DecisionTraceLlmContext
+    strategy_inputs: DecisionTraceStrategyInputs
+    risk_orderability: DecisionTraceRiskOrderability
+    lineage: DecisionTraceLineage
+    lifecycle: DecisionTraceLifecycle
+    scorecard: DecisionTraceScorecard
+    evidence_gaps: list[EvidenceGap] = Field(default_factory=list)
 
 
 def _get_reader(asset_class: str | None = None):
@@ -187,6 +303,130 @@ def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
         return None
 
 
+def _gap(code: str, severity: str, message: str) -> EvidenceGap:
+    return EvidenceGap(code=code, severity=severity, message=message)
+
+
+def _trace_state(signal: SignalResponse) -> str:
+    status = (signal.status or "").lower()
+    orderable = (signal.orderability_state or "").lower()
+    if signal.trade_id:
+        return "closed"
+    if signal.fill_id:
+        return "filled"
+    if signal.order_id:
+        return "submitted"
+    if status in {"rejected", "blocked"} or signal.reject_reason:
+        return "rejected"
+    if orderable in {"paper_orderable", "orderable", "passed"}:
+        return "orderable"
+    if status:
+        return status
+    return "generated"
+
+
+def _trace_summary_text(signal: SignalResponse, state: str) -> str:
+    parts = [
+        signal.strategy or "unknown_strategy",
+        "generated",
+        signal.side or "unknown_side",
+        signal.symbol or "unknown_symbol",
+    ]
+    if signal.reason:
+        parts.append(f"from {signal.reason}")
+    if signal.orderability_state:
+        parts.append(f"orderability {signal.orderability_state}")
+    if state in {"filled", "closed"}:
+        parts.append("fill evidence is available")
+    elif state in {"submitted", "orderable"}:
+        parts.append("fill evidence is not available")
+    return " ".join(parts) + "."
+
+
+def _empty_lifecycle() -> DecisionTraceLifecycle:
+    return DecisionTraceLifecycle(
+        status="missing",
+        steps=[],
+        warnings=["no_lifecycle_evidence"],
+    )
+
+
+def _empty_scorecard() -> DecisionTraceScorecard:
+    return DecisionTraceScorecard(status="missing")
+
+
+def _basic_trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
+    state = _trace_state(signal)
+    gaps = [
+        _gap(
+            "llm_context_not_available",
+            "warning",
+            "No LLM market context is linked to this signal.",
+        ),
+        _gap(
+            "scorecard_missing",
+            "info",
+            "No LLM scorecard prediction or score is linked to this signal.",
+        ),
+        _gap(
+            "no_lifecycle_evidence",
+            "info",
+            "No order, fill, position, or closed-trade lifecycle evidence is available.",
+        ),
+    ]
+    return DecisionTraceResponse(
+        signal=DecisionTraceSignal(
+            id=signal.id,
+            asset_class=signal.asset_class,
+            symbol=signal.symbol,
+            strategy=signal.strategy,
+            side=signal.side,
+            signal_type=signal.signal_type,
+            status=signal.status,
+            reason=signal.reason,
+            confidence=signal.confidence,
+            strength=signal.strength,
+            price=signal.price,
+            timestamp=signal.timestamp,
+        ),
+        summary=DecisionTraceSummary(
+            state=state,
+            text=_trace_summary_text(signal, state),
+            warnings=[gap.code for gap in gaps if gap.severity != "info"],
+        ),
+        llm_context=DecisionTraceLlmContext(status="not_available"),
+        strategy_inputs=DecisionTraceStrategyInputs(
+            setup_type=signal.setup_type,
+            raw_reason=signal.reason,
+        ),
+        risk_orderability=DecisionTraceRiskOrderability(
+            reject_stage=signal.reject_stage,
+            reject_reason=signal.reject_reason,
+            orderability_state=signal.orderability_state,
+            orderability_details=signal.orderability_details or {},
+        ),
+        lineage=DecisionTraceLineage(
+            signal_id=signal.id,
+            order_id=signal.order_id,
+            fill_id=signal.fill_id,
+            position_id=signal.position_id,
+            trade_id=signal.trade_id,
+        ),
+        lifecycle=_empty_lifecycle(),
+        scorecard=_empty_scorecard(),
+        evidence_gaps=gaps,
+    )
+
+
+def _find_signal_for_trace(signal_id: str, asset_class: str) -> SignalResponse | None:
+    for target in target_assets(asset_class):
+        for raw_signal in _load_signals(target):
+            signal = _to_signal_response(raw_signal, target)
+            if signal is not None and signal.id == signal_id:
+                return signal
+    return None
+
+
 @router.get("", response_model=SignalListResponse)
 async def get_signals(
     strategy: str | None = Query(None, description="Filter by strategy"),
@@ -254,3 +494,42 @@ async def get_signal_history(
         total_signals=len(recent),
         days=days,
     )
+
+
+@router.get("/{signal_id}/trace", response_model=DecisionTraceResponse)
+async def get_signal_trace(
+    signal_id: str,
+    asset_class: str = Query(default="futures"),
+) -> DecisionTraceResponse:
+    """Return a read-only decision trace for a single signal."""
+    asset = normalize_asset_class(asset_class)
+    signal = _find_signal_for_trace(signal_id, asset)
+    if signal is None:
+        return DecisionTraceResponse(
+            signal=DecisionTraceSignal(
+                id=signal_id,
+                asset_class=asset,
+                symbol="",
+                strategy="",
+                side="",
+            ),
+            summary=DecisionTraceSummary(
+                state="unknown",
+                text=f"Signal {signal_id} was not found in current Redis signal state.",
+                warnings=["signal_not_found"],
+            ),
+            llm_context=DecisionTraceLlmContext(status="unknown"),
+            strategy_inputs=DecisionTraceStrategyInputs(),
+            risk_orderability=DecisionTraceRiskOrderability(),
+            lineage=DecisionTraceLineage(signal_id=signal_id),
+            lifecycle=_empty_lifecycle(),
+            scorecard=_empty_scorecard(),
+            evidence_gaps=[
+                _gap(
+                    "signal_not_found",
+                    "error",
+                    "The selected signal is not present in current signal state.",
+                )
+            ],
+        )
+    return _basic_trace_from_signal(signal)
