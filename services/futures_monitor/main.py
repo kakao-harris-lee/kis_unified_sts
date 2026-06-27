@@ -55,12 +55,12 @@ async def _build_and_run() -> int:
     from services.futures_monitor.daemon import FuturesMonitorDaemon
     from services.stock_monitor.alerts import AlertSink
     from services.trading.stream_consumer_feed import StreamConsumerFeed
-    from shared.collector.historical.futures import get_front_month_code
     from shared.config.loader import ConfigLoader
     from shared.execution.contract_spec import (
         ContractSpecRegistry,
         resolve_contract_spec,
     )
+    from shared.execution.futures_instrument import resolve_futures_instrument_from_env
     from shared.notification.telegram import notifier_for_domain
     from shared.streaming.trading_state import TradingStatePublisher
 
@@ -74,7 +74,8 @@ async def _build_and_run() -> int:
     tick_stream = os.environ.get("FUTURES_TICK_STREAM", "raw_data")
 
     specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
-    symbol = get_front_month_code(product="mini")
+    instrument = resolve_futures_instrument_from_env()
+    symbol = instrument.symbol
     spec = resolve_contract_spec(symbol, specs)
 
     tg = (

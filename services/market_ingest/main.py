@@ -372,7 +372,9 @@ async def _build_and_run() -> int:
         refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "30"))
         restart_on_change = False
     else:
-        from shared.collector.historical.futures import get_front_month_code
+        from shared.execution.futures_instrument import (
+            resolve_futures_instrument_from_env,
+        )
         from shared.kis.futures_feed import KISFuturesPriceFeed
 
         auth = KISAuthConfig(
@@ -383,7 +385,7 @@ async def _build_and_run() -> int:
         feed = KISFuturesPriceFeed(config=auth)
 
         async def symbol_provider() -> list[str]:
-            return [get_front_month_code(product="mini")]
+            return [resolve_futures_instrument_from_env().symbol]
 
         # Re-resolve hourly so a quarterly rollover triggers a restart-on-change.
         refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "3600"))

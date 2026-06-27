@@ -1,6 +1,6 @@
 # Superpowers Plans Index
 
-Last updated: 2026-06-17.
+Last updated: 2026-06-27.
 
 `docs/superpowers/plans/` contains generated implementation plans. The completed
 plans have been moved to [archive/](archive/) so this directory does not look
@@ -11,7 +11,12 @@ and use `docs/runbooks/` for current operational procedures.
 
 ## Status
 
-There are no active superpowers implementation plans at this level.
+Active plans:
+
+| Date | Plan | Purpose |
+|---|---|---|
+| 2026-06-27 | [architecture audit parallel plan](2026-06-27-architecture-audit-parallel-plan.md) | Parallel read-only architecture audit of orchestrator, stock pipeline, futures pipeline, and shared streaming boundaries. |
+| 2026-06-27 | [architecture hardening phase 1](2026-06-27-architecture-hardening-phase1.md) | Implementation plan for shared futures instrument resolution and a reusable multi-input Redis stream stage. |
 
 Completed records are retained under [archive/](archive/), including:
 

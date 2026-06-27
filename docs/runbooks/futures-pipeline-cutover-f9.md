@@ -55,9 +55,12 @@ decoupled chain reuses the orchestrator's `raw_data` stream instead.
 - `FUTURES_ORDER_ROUTER_MODE` (default `paper`): drives order_router
   (`paper` | `live`). Separate knob — order_router uses `paper` (synthetic fills,
   `.shadow` streams) where the others use `shadow`.
-- `FUTURES_STRATEGY_SYMBOL`: KOSPI200 mini front-month code (required for
-  shadow/live; update at each quarterly rollover). Must match what the
-  orchestrator / ingest publishes.
+- `FUTURES_TRADING_PRODUCT` (default `mini`): futures front-month product
+  (`mini` | `kospi200`). All decoupled futures services and the orchestrator
+  resolve the same current contract through `shared.execution.futures_instrument`.
+- `FUTURES_STRATEGY_SYMBOL`: optional explicit contract-code override. Leave it
+  empty for automatic quarterly rollover; set it only when deliberately pinning
+  shadow/live to a specific contract. If set, it must match what ingest publishes.
 
 ## Gate 0 — Prerequisites
 
@@ -70,7 +73,9 @@ decoupled chain reuses the orchestrator's `raw_data` stream instead.
   `docker compose --env-file .env.paper --profile trading up -d trader-futures`.
 - `FUTURES_PIPELINE_MODE=shadow` and `FUTURES_ORDER_ROUTER_MODE=paper` in the env
   file, or unset so compose defaults to shadow/paper.
-- `FUTURES_STRATEGY_SYMBOL` set to the current KOSPI200 mini front-month code.
+- `FUTURES_TRADING_PRODUCT=mini`, or unset to use the same default. Leave
+  `FUTURES_STRATEGY_SYMBOL` empty unless the validation intentionally pins a
+  specific contract.
 - Review `config/kill_switch.yaml::enabled` (kill_switch is live-only; it is NOT
   started during shadow).
 
@@ -264,10 +269,12 @@ automatically — verify each before going live:
    Wiring order_router to also honor the Redis `kill_switch:force_flatten:requested` key is
    a documented follow-up.)
 
-3. **`FUTURES_STRATEGY_SYMBOL` must be set.** decision_engine raises and crash-loops
-   (`restart: unless-stopped`) in shadow/live if `FUTURES_STRATEGY_SYMBOL` is empty. If
-   `futures-decision-engine` restart-loops, check its log for the missing-symbol error and
-   set the current KOSPI200 mini front-month code.
+3. **Instrument resolution must match across services.** The default path is
+   `FUTURES_TRADING_PRODUCT=mini` plus empty `FUTURES_STRATEGY_SYMBOL`, which
+   auto-resolves the current front-month contract. If `FUTURES_STRATEGY_SYMBOL`
+   is set, every futures service will use that explicit contract; confirm ingest,
+   decision_engine, order_router, and futures_monitor are all reading the same
+   symbol before promoting shadow evidence.
 
 ## Notes
 

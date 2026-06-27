@@ -726,20 +726,18 @@ class TradingConfig:
           for paper signal validation (the mini's low liquidity blocks most
           entries on the wide-spread guard).
         """
-        from shared.collector.historical.futures import get_front_month_code
-
-        product = os.getenv("FUTURES_TRADING_PRODUCT", "mini").strip().lower()
-        if product not in {"mini", "kospi200"}:
-            logger.warning(
-                "Invalid FUTURES_TRADING_PRODUCT=%r; falling back to 'mini'", product
-            )
-            product = "mini"
-
-        code = get_front_month_code(product=product)
-        logger.info(
-            "Futures default symbol (auto-detected): %s (product=%s)", code, product
+        from shared.execution.futures_instrument import (
+            resolve_futures_instrument_from_env,
         )
-        return [code]
+
+        instrument = resolve_futures_instrument_from_env()
+        logger.info(
+            "Futures default symbol (resolved): %s (product=%s source=%s)",
+            instrument.symbol,
+            instrument.product,
+            instrument.source,
+        )
+        return [instrument.symbol]
 
 
 class TradingOrchestrator:

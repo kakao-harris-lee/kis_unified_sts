@@ -389,7 +389,6 @@ async def _build_and_run() -> int:
 
     from services.kill_switch.config import KillSwitchConfig
     from services.order_router.config import Phase4ExecutionConfig
-    from shared.collector.historical.futures import get_front_month_code
     from shared.config.loader import ConfigLoader
     from shared.execution.config import ExecutionConfig
     from shared.execution.contract_spec import (
@@ -398,6 +397,7 @@ async def _build_and_run() -> int:
     )
     from shared.execution.executor import OrderExecutor
     from shared.execution.fill_logger import FillLogger
+    from shared.execution.futures_instrument import resolve_futures_instrument_from_env
     from shared.execution.kis_futures_adapter import KISFuturesAdapter
     from shared.execution.live_exit_executor import LiveExitExecutor
     from shared.execution.live_mode_guard import LiveModeGuard
@@ -428,14 +428,8 @@ async def _build_and_run() -> int:
     live_guard = LiveModeGuard.from_yaml()
 
     contract_specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
-    # Auto-detect front-month contract — handles quarterly rollover without code
-    # change. Product is env-selectable (FUTURES_TRADING_PRODUCT): "mini" (default,
-    # live A05…) or "kospi200" (full F200 A01…, paper validation). Mirrors the
-    # orchestrator path (TradingOrchestrator._get_futures_default_symbols).
-    product = os.getenv("FUTURES_TRADING_PRODUCT", "mini").strip().lower()
-    if product not in {"mini", "kospi200"}:
-        product = "mini"
-    symbol = get_front_month_code(product=product)
+    instrument = resolve_futures_instrument_from_env()
+    symbol = instrument.symbol
     spec = resolve_contract_spec(symbol, contract_specs)
 
     fill_logger = FillLogger(

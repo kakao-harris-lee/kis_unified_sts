@@ -171,13 +171,13 @@ async def _build_context_provider(
     from services.trading.indicator_engine import StreamingIndicatorEngine
     from services.trading.stream_consumer_feed import StreamConsumerFeed
     from shared.decision.context import load_scheduled_events
+    from shared.execution.futures_instrument import resolve_futures_instrument_from_env
     from shared.macro.base import read_latest_macro_snapshot
     from shared.storage.config import StorageConfig
     from shared.storage.market_data_store import ParquetMarketDataStore
 
-    symbol = os.environ.get("FUTURES_STRATEGY_SYMBOL", "").strip()
-    if not symbol:
-        raise RuntimeError("FUTURES_STRATEGY_SYMBOL must be set for shadow/live mode")
+    instrument = resolve_futures_instrument_from_env()
+    symbol = instrument.symbol
 
     engine = StreamingIndicatorEngine()
 
