@@ -234,6 +234,26 @@ describe("strategy-builder-ui API catch-all proxy", () => {
     expect(body.notes[0]).toContain("Dashboard API unavailable");
   });
 
+  it("returns explicit degraded signal trace payload when the dashboard is offline", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),
+    );
+
+    const response = await GET(
+      requestFor("/api/signals/sig-1/trace?asset_class=futures"),
+      contextFor(["signals", "sig-1", "trace"]),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-kis-degraded")).toBe("dashboard_api_unavailable");
+    expect(body.signal.id).toBe("sig-1");
+    expect(body.summary.state).toBe("unknown");
+    expect(body.llm_context.status).toBe("unknown");
+    expect(body.lifecycle.status).toBe("not_available");
+    expect(body.evidence_gaps[0].code).toBe("dashboard_api_unavailable");
+  });
+
   it("returns explicit degraded lifecycle payload when the dashboard is offline", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(
       Object.assign(new Error("fetch failed"), { code: "ECONNREFUSED" }),

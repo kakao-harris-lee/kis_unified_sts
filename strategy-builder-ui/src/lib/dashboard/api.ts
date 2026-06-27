@@ -7,6 +7,7 @@
 export { apiClient } from './client';
 export { tradingApi } from './trading';
 export { signalsApi } from './signals';
+export { decisionTraceApi } from './decisionTrace';
 export { tradesApi } from './trades';
 export { strategiesApi } from './strategies';
 export { strategyLabApi } from './strategyLab';

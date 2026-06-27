@@ -233,6 +233,79 @@ function degradedLifecycle(asset: "stock" | "futures" | "all", targetPath: strin
   };
 }
 
+function degradedSignalTrace(asset: "stock" | "futures" | "all", targetPath: string, signalId: string) {
+  return {
+    signal: {
+      id: signalId,
+      asset_class: asset,
+      symbol: "",
+      strategy: "",
+      side: "",
+      signal_type: null,
+      status: null,
+      reason: null,
+      confidence: null,
+      strength: null,
+      price: null,
+      timestamp: null,
+    },
+    summary: {
+      state: "unknown",
+      text: unavailableNote(targetPath),
+      warnings: ["dashboard_api_unavailable"],
+    },
+    llm_context: { status: "unknown" },
+    strategy_inputs: {
+      setup_type: null,
+      indicators: {},
+      thresholds: {},
+      event_evidence: {},
+      raw_reason: null,
+    },
+    risk_orderability: {
+      reject_stage: null,
+      reject_reason: null,
+      orderability_state: null,
+      orderability_details: {},
+      risk_state: null,
+      risk_details: {},
+    },
+    lineage: {
+      signal_id: signalId,
+      order_id: null,
+      fill_id: null,
+      position_id: null,
+      trade_id: null,
+    },
+    lifecycle: {
+      status: "not_available",
+      steps: [],
+      warnings: ["dashboard_api_unavailable"],
+    },
+    scorecard: {
+      status: "unknown",
+      facet: null,
+      date_kst: null,
+      captured_at: null,
+      confidence: null,
+      correct: null,
+      value: null,
+      economic_proxy: null,
+      baseline_value: null,
+      edge: null,
+      scored_at: null,
+      detail: {},
+    },
+    evidence_gaps: [
+      {
+        code: "dashboard_api_unavailable",
+        severity: "warning",
+        message: unavailableNote(targetPath),
+      },
+    ],
+  };
+}
+
 function degradedExperimentComparison(targetPath: string) {
   return {
     generated_at: new Date().toISOString(),
@@ -322,6 +395,9 @@ function degradedResponse(path: string[], targetPath: string, request: NextReque
   }
   if (root === "signals" && !second) {
     return degradedJson({ signals: [], total: 0, asset_class: asset, notes: [unavailableNote(targetPath)] });
+  }
+  if (root === "signals" && second && third === "trace") {
+    return degradedJson(degradedSignalTrace(asset, targetPath, second));
   }
   if (root === "signals" && second === "history") {
     return degradedJson({ history: [], total_signals: 0, days, notes: [unavailableNote(targetPath)] });
