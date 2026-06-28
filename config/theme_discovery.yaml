@@ -22,6 +22,8 @@ thresholds:
   volume_power_source_floor: 0.8
 
 # Keywords that must not, on their own, admit a theme match.
+# Treat these as broad-match terms: raise weights only after the
+# theme/fusion quality report shows reviewed false-positive evidence is clean.
 generic_keywords:
   - "ai"
 
