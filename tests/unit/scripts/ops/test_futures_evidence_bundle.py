@@ -293,7 +293,7 @@ def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
     module = importlib.import_module("scripts.ops.futures_evidence_bundle")
     now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
     _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
-    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    monkeypatch.setattr(module, "_now_kst", lambda: now, raising=False)
     _write_setup_d_report(tmp_path, _valid_setup_d_payload(now))
     bundle_path = _write_bundle(tmp_path)
 
@@ -356,7 +356,7 @@ def test_strict_bundle_rejects_invalid_setup_d_observation(
     module = importlib.import_module("scripts.ops.futures_evidence_bundle")
     now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
     _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
-    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    monkeypatch.setattr(module, "_now_kst", lambda: now, raising=False)
     _write_setup_d_report(tmp_path, payload)
     bundle_path = _write_bundle(tmp_path)
 
@@ -395,7 +395,7 @@ def test_strict_bundle_rejects_malformed_setup_d_counts_or_timestamp(
     module = importlib.import_module("scripts.ops.futures_evidence_bundle")
     now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
     _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
-    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    monkeypatch.setattr(module, "_now_kst", lambda: now, raising=False)
     payload = _valid_setup_d_payload(now)
     payload.update(payload_update)
     _write_setup_d_report(tmp_path, payload)
@@ -416,7 +416,7 @@ def test_strict_bundle_rejects_stale_setup_d_observation(
     module = importlib.import_module("scripts.ops.futures_evidence_bundle")
     now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
     _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
-    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    monkeypatch.setattr(module, "_now_kst", lambda: now, raising=False)
     _write_setup_d_report(
         tmp_path,
         _valid_setup_d_payload(now - timedelta(seconds=345601)),
@@ -438,7 +438,7 @@ def test_strict_bundle_rejects_future_setup_d_observation(
     module = importlib.import_module("scripts.ops.futures_evidence_bundle")
     now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
     _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
-    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    monkeypatch.setattr(module, "_now_kst", lambda: now, raising=False)
     _write_setup_d_report(
         tmp_path,
         _valid_setup_d_payload(now + timedelta(seconds=301)),
@@ -463,7 +463,7 @@ def test_strict_bundle_rejects_zero_observation_setup_d_payload(
     module = importlib.import_module("scripts.ops.futures_evidence_bundle")
     now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
     _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
-    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    monkeypatch.setattr(module, "_now_kst", lambda: now, raising=False)
     payload = _valid_setup_d_payload(now)
     payload.update({"signals": 0, "accepted": 0, "rejected": 0})
     _write_setup_d_report(tmp_path, payload)

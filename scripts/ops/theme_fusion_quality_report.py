@@ -7,9 +7,13 @@ import argparse
 import json
 from collections import Counter
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
+# This project is KST-native (Korea); all time math uses Asia/Seoul, not UTC.
+KST = ZoneInfo("Asia/Seoul")
 
 DEFAULT_MAX_AGE_SECONDS = 1800.0
 DEFAULT_MAX_FUTURE_SKEW_SECONDS = 300.0
@@ -99,20 +103,20 @@ def _parse_generated_at(raw: Any) -> datetime | None:
         parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    # A tz-naive producer timestamp is interpreted as UTC so cross-timezone
-    # comparisons stay correct (the producer now emits aware UTC timestamps).
+    # A tz-naive producer timestamp is interpreted as KST (this project is
+    # KST-native) so cross-timezone comparisons stay correct.
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        parsed = parsed.replace(tzinfo=KST)
     return parsed
 
 
 def _comparison_now(timestamp: datetime, now: datetime | None) -> datetime:
     if now is None:
-        # Always compare against an aware UTC clock so freshness is timezone-safe.
-        return datetime.now(UTC)
+        # Always compare against an aware KST clock so freshness is timezone-safe.
+        return datetime.now(KST)
     if now.tzinfo is None:
-        # A naive injected now is treated as UTC.
-        now = now.replace(tzinfo=UTC)
+        # A naive injected now is treated as KST.
+        now = now.replace(tzinfo=KST)
     # An aware injected now is converted to the snapshot's timezone (legacy path).
     return now.astimezone(timestamp.tzinfo)
 

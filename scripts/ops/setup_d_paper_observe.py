@@ -7,11 +7,15 @@ import argparse
 import json
 import sys
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 STRATEGY_ID = "setup_d_vwap_reversion"
+
+# This project is KST-native (Korea); evidence timestamps are Asia/Seoul, not UTC.
+KST = ZoneInfo("Asia/Seoul")
 
 # Statuses that mean the signal was resolved as accepted (passed risk/order).
 ACCEPTED_STATUSES = {
@@ -81,11 +85,11 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
-def _utc_iso(value: datetime | None = None) -> str:
-    dt = value or datetime.now(UTC)
+def _kst_iso(value: datetime | None = None) -> str:
+    dt = value or datetime.now(KST)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC).isoformat()
+        dt = dt.replace(tzinfo=KST)
+    return dt.astimezone(KST).isoformat()
 
 
 def build_setup_d_report(
@@ -105,7 +109,7 @@ def build_setup_d_report(
     contributing_pnl = [value for value in pnl_values if value is not None]
     return {
         "strategy": STRATEGY_ID,
-        "generated_at": _utc_iso(generated_at),
+        "generated_at": _kst_iso(generated_at),
         "source_path": str(path),
         # Validator invariant: signals == accepted + rejected (resolved signals).
         "signals": len(accepted) + len(rejected),

@@ -27,7 +27,8 @@ def test_build_setup_d_report_summarizes_long_short_and_rejections(
     report = build_setup_d_report(ledger, generated_at=generated_at)
 
     assert report["strategy"] == "setup_d_vwap_reversion"
-    assert report["generated_at"] == "2026-06-28T12:00:00+00:00"
+    # KST-native: the UTC instant is emitted in Asia/Seoul (+09:00).
+    assert report["generated_at"] == "2026-06-28T21:00:00+09:00"
     assert report["source_path"] == str(ledger)
     assert report["accepted"] == 2
     assert report["rejected"] == 1

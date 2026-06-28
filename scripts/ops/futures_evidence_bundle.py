@@ -12,11 +12,15 @@ import argparse
 import json
 import os
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
+
+# This project is KST-native (Korea); all time math uses Asia/Seoul, not UTC.
+KST = ZoneInfo("Asia/Seoul")
 
 _PLACEHOLDER_MARKERS = (
     "todo",
@@ -270,13 +274,14 @@ def _parse_datetime(raw: Any) -> datetime | None:
         dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
+    # A tz-naive timestamp is interpreted as KST (this project is KST-native).
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
+        return dt.replace(tzinfo=KST)
+    return dt.astimezone(KST)
 
 
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
+def _now_kst() -> datetime:
+    return datetime.now(KST)
 
 
 def _setup_d_max_age_seconds() -> float:
@@ -335,7 +340,7 @@ def _validate_setup_d_payload(path: Path) -> list[str]:
     elif generated_at is None:
         failures.append("generated_at invalid ISO datetime")
     else:
-        now = _utc_now()
+        now = _now_kst()
         if (generated_at - now).total_seconds() > _setup_d_max_future_skew_seconds():
             failures.append("generated_at is in the future")
         elif (now - generated_at).total_seconds() > _setup_d_max_age_seconds():

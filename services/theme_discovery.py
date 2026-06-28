@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
@@ -26,7 +26,7 @@ from shared.payloads import (
 from shared.payloads import (
     parse_json_dict as _parse_json,
 )
-from shared.strategy.market_time import is_regular_session_open
+from shared.strategy.market_time import is_regular_session_open, now_kst
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
 from shared.theme_universe.scoring import (
@@ -186,8 +186,8 @@ class ThemeDiscoveryConfig(ServiceConfigBase):
 
 
 def _now_iso() -> str:
-    """Return the current time as a timezone-aware ISO-8601 string (UTC)."""
-    return datetime.now(UTC).isoformat()
+    """Return the current time as a KST (Asia/Seoul) tz-aware ISO-8601 string."""
+    return now_kst().isoformat()
 
 
 def _parse_timestamp(raw: Any) -> datetime | None:
