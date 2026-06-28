@@ -61,6 +61,10 @@ Verified 2026-06-28 against `config/strategies/{stock,futures}/*.yaml`
 
 ## Recent Decisions
 
+**2026-06-28** - Expert execution board opened.
+Created `reports/quant-gap/2026-06-28-execution-board.md` to coordinate market-structure,
+futures, stock, Workbench, and QA expert lanes from the 2026-06-28 gap research.
+
 **2026-06-28** - Roadmap and quant-system gap research refreshed.
 Roadmap/status docs now reflect Setup D paper enablement, the enriched Signal
 Decision Trace endpoint, PR #547 hardening, and the split gap list for KOSPI 200
