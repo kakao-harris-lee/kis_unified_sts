@@ -4200,6 +4200,26 @@ class TradingOrchestrator:
                 return
             await asyncio.sleep(min(remaining, 1.0))
 
+    @staticmethod
+    def _next_session_wake(
+        now: datetime, open_time: dt_time, offset_minutes: int
+    ) -> datetime:
+        """Next day's pre-open wake instant.
+
+        Wakes ``offset_minutes`` before the configured market open so the daemon
+        is ready when the session begins; ``run_session`` gates on the precise
+        open. Naive datetimes (container TZ=Asia/Seoul → KST wall clock), matching
+        the surrounding loop. Asset-class-aware via ``open_time`` (futures 08:45 /
+        stock 09:00), replacing the prior hardcoded 08:55.
+        """
+        base = (now + timedelta(days=1)).replace(
+            hour=open_time.hour,
+            minute=open_time.minute,
+            second=0,
+            microsecond=0,
+        )
+        return base - timedelta(minutes=offset_minutes)
+
     async def run(self):
         """데몬 모드 실행 (매일 반복)"""
         logger.info("Starting trading orchestrator (daemon mode)")
@@ -4219,13 +4239,15 @@ class TradingOrchestrator:
                 if self._stop_requested or not self._running:
                     break
 
-                # 다음 날까지 대기
+                # 다음 날까지 대기 — 설정된 개장(자산별) 기준 service_start_offset
+                # 분 전에 기상한다 (선물 08:45-5=08:40, 주식 09:00-5=08:55).
+                # run_session()이 실제 개장 시각까지 내부 게이팅하므로 여유 기상이 안전.
                 now = datetime.now()
-                tomorrow = (now + timedelta(days=1)).replace(
-                    hour=8,
-                    minute=55,
-                    second=0,
-                    microsecond=0,
+                schedule = self.config.schedule
+                tomorrow = self._next_session_wake(
+                    now,
+                    schedule.get_open_time(self.config.asset_class),
+                    schedule.service_start_offset_minutes,
                 )
 
                 wait_seconds = (tomorrow - now).total_seconds()

@@ -199,6 +199,43 @@ class TestRiskCapitalAlignment:
         assert params["initial_capital"] == 100_000_000
 
 
+class TestNextSessionWake:
+    """데몬 다음-세션 기상 = 설정된 개장 − service_start_offset (자산별)."""
+
+    def test_futures_wake_0840(self):
+        """선물 08:45 개장 − 5분 offset → 08:40 기상 (구 하드코딩 08:55 대체)."""
+        from datetime import datetime
+
+        from services.trading.orchestrator import TradingOrchestrator
+
+        now = datetime(2026, 6, 28, 23, 43)  # naive (container TZ=KST)
+        wake = TradingOrchestrator._next_session_wake(now, time(8, 45), 5)
+        assert wake == datetime(2026, 6, 29, 8, 40)
+
+    def test_stock_wake_0855_unchanged(self):
+        """주식 09:00 개장 − 5분 → 08:55 (기존 동작 보존)."""
+        from datetime import datetime
+
+        from services.trading.orchestrator import TradingOrchestrator
+
+        now = datetime(2026, 6, 28, 23, 43)
+        wake = TradingOrchestrator._next_session_wake(now, time(9, 0), 5)
+        assert wake == datetime(2026, 6, 29, 8, 55)
+
+    def test_wake_uses_schedule_open(self):
+        """실제 MarketSchedule 개장 시각을 따른다 (08:45 선물)."""
+        from datetime import datetime
+
+        from services.trading.orchestrator import MarketSchedule, TradingOrchestrator
+
+        sched = MarketSchedule()
+        now = datetime(2026, 6, 28, 23, 43)
+        wake = TradingOrchestrator._next_session_wake(
+            now, sched.get_open_time("futures"), sched.service_start_offset_minutes
+        )
+        assert wake == datetime(2026, 6, 29, 8, 40)
+
+
 class TestTradingOrchestrator:
     """TradingOrchestrator 클래스 테스트"""
 
