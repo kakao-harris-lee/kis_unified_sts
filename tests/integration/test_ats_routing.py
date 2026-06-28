@@ -29,6 +29,7 @@ def _build_paper_execution_config():
     return ExecutionConfig(**execution)
 
 
+@pytest.mark.integration
 def test_stock_order_router_policy_defaults_to_krx_only():
     from shared.execution.config import ATSRoutingConfig
     from shared.execution.models import ExecutionVenue, OrderRequest, OrderSide, OrderType
