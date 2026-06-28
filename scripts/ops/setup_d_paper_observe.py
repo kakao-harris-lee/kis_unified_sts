@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -45,11 +46,14 @@ def build_setup_d_report(path: Path) -> dict[str, Any]:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if not args.input.exists():
+        print(f"missing input: {args.input}", file=sys.stderr)
+        return 1
     report = build_setup_d_report(args.input)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

@@ -208,7 +208,8 @@ def _validate_bundle(
     return missing, failures_by_field
 
 
-def _setup_d_enabled(config_path: Path = _SETUP_D_CONFIG_PATH) -> bool:
+def _setup_d_enabled(config_path: Path | None = None) -> bool:
+    config_path = config_path or _SETUP_D_CONFIG_PATH
     if not config_path.exists():
         return False
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -222,17 +223,58 @@ def _setup_d_enabled(config_path: Path = _SETUP_D_CONFIG_PATH) -> bool:
     ) is True
 
 
+def _is_int_compatible(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return value.is_integer()
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return False
+        try:
+            return float(stripped).is_integer()
+        except ValueError:
+            return False
+    return False
+
+
+def _validate_setup_d_payload(path: Path) -> list[str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ["invalid JSON"]
+    if not isinstance(payload, dict):
+        return ["expected JSON object"]
+
+    failures: list[str] = []
+    if payload.get("strategy") != "setup_d_vwap_reversion":
+        failures.append("expected strategy setup_d_vwap_reversion")
+    if not _is_int_compatible(payload.get("signals")):
+        failures.append("signals expected numeric integer")
+    for field in ("accepted", "rejected"):
+        if field not in payload:
+            failures.append(f"{field} missing")
+    return failures
+
+
 def _validate_setup_d_observation(
     failures_by_field: dict[str, list[str]],
 ) -> list[str]:
     if not _setup_d_enabled():
         return []
     observation_path = _REPO_ROOT / _SETUP_D_OBSERVATION["path"]
-    if observation_path.exists():
+    if not observation_path.exists():
+        reason = f"missing {_SETUP_D_OBSERVATION['path']}"
+        failures_by_field.setdefault("setup_d_observation", []).append(reason)
+        return [f"setup_d_observation: {reason}"]
+    reasons = _validate_setup_d_payload(observation_path)
+    if not reasons:
         return []
-    reason = f"missing {_SETUP_D_OBSERVATION['path']}"
-    failures_by_field.setdefault("setup_d_observation", []).append(reason)
-    return [f"setup_d_observation: {reason}"]
+    failures_by_field.setdefault("setup_d_observation", []).extend(reasons)
+    return [f"setup_d_observation: {reason}" for reason in reasons]
 
 
 def _gate_section(

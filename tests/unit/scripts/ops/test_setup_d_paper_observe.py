@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.ops.setup_d_paper_observe import build_setup_d_report
+from scripts.ops.setup_d_paper_observe import build_setup_d_report, main
 
 
 def test_build_setup_d_report_summarizes_long_short_and_rejections(
@@ -30,3 +30,19 @@ def test_build_setup_d_report_summarizes_long_short_and_rejections(
     assert report["short_signals"] == 1
     assert report["total_pnl"] == 9000
     assert report["top_reject_reasons"] == {"risk:spread": 1}
+
+
+def test_main_returns_nonzero_when_input_path_is_missing(tmp_path: Path) -> None:
+    output = tmp_path / "report.json"
+
+    rc = main(
+        [
+            "--input",
+            str(tmp_path / "missing-signals.jsonl"),
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert rc == 1
+    assert not output.exists()
