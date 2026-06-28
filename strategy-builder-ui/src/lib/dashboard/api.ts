@@ -17,3 +17,4 @@ export { healthApi } from './health';
 export { coverageApi } from './coverage';
 export { eventContextApi } from './eventContext';
 export { killSwitchApi } from './killSwitch';
+export { evidenceApi } from './evidence';

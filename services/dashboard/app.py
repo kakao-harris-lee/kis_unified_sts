@@ -71,6 +71,10 @@ OPENAPI_TAGS = [
         "name": "event-context",
         "description": "Event score, news, macro, and Setup C diagnostics",
     },
+    {
+        "name": "evidence",
+        "description": "Per-asset strategy evidence and promotion-readiness diagnostics",
+    },
 ]
 
 
@@ -204,6 +208,7 @@ def _register_routes(app: FastAPI) -> None:
     """Register API routers, the /ws WebSocket, and the root pointer endpoint."""
     from services.dashboard.routes import (
         coverage,
+        evidence,
         event_context,
         experiments,
         health,
@@ -225,6 +230,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(kis_builder.router)
     app.include_router(experiments.router)
     app.include_router(coverage.router)
+    app.include_router(evidence.router)
     app.include_router(event_context.router)
     app.include_router(strategy_lab.router)
     app.include_router(trades.router)
