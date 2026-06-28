@@ -61,6 +61,12 @@ Verified 2026-06-28 against `config/strategies/{stock,futures}/*.yaml`
 
 ## Recent Decisions
 
+**2026-06-28** - Quant gap expert lanes verified.
+Completed the focused verification bundle for market-structure policy, futures
+product/session contract, Setup C/D evidence, stock venue policy, theme/fusion
+quality, and Workbench evidence UX. Evidence:
+[testing/quant-gap-execution-2026-06-28.md](testing/quant-gap-execution-2026-06-28.md).
+
 **2026-06-28** - Expert execution board opened.
 Created `reports/quant-gap/2026-06-28-execution-board.md` to coordinate market-structure,
 futures, stock, Workbench, and QA expert lanes from the 2026-06-28 gap research.

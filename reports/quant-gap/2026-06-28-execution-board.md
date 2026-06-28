@@ -10,26 +10,27 @@
 
 | Gate | Owner | Required Input | Decision | Status |
 |---|---|---|---|---|
-| G0 Stock venue policy | Market-structure policy expert | KRX-only vs ATS/SOR memo | Pending | Open |
-| G1 Futures session policy | Market-structure policy expert | 08:45 regular + night session policy | Pending | Open |
-| G2 Futures product policy | Futures platform engineer | Mini vs full KOSPI 200 contract policy | Pending | Open |
-| G3 Setup C/D promotion evidence | Futures strategy researcher | Paper evidence reports | Pending | Open |
-| G4 Stock strategy/theme evidence | Stock strategy + theme researcher | Readiness and theme quality reports | Pending | Open |
+| G0 Stock venue policy | Market-structure policy expert | KRX-only vs ATS/SOR memo | KRX-only until explicit ATS/SOR approval | Verified 2026-06-28 |
+| G1 Futures session policy | Market-structure policy expert | 08:45 regular + night session policy | Keep 09:00 regular-session default; keep night disabled | Verified 2026-06-28 |
+| G2 Futures product policy | Futures platform engineer | Mini vs full KOSPI 200 contract policy | Product/symbol/tick-size contract validated by config and tests | Verified 2026-06-28 |
+| G3 Setup C/D promotion evidence | Futures strategy researcher | Paper evidence reports | Evidence observers validated; real paper evidence still required | Verified 2026-06-28 |
+| G4 Stock strategy/theme evidence | Stock strategy + theme researcher | Readiness and theme quality reports | Theme/fusion quality tooling validated; real operator evidence still required | Verified 2026-06-28 |
 
 ## Active Lanes
 
 | Lane | Expert | Status | Blocked By | Next Evidence |
 |---|---|---|---|---|
-| 1 Market structure policy | Unassigned | Open | None | Policy memo |
-| 2 Futures platform | Unassigned | Open | G1, G2 | Contract tests |
-| 3 Futures strategy evidence | Unassigned | Open | None | Setup C/D reports |
-| 4 Stock venue / ATS | Unassigned | Open | G0 | SOR or KRX-only implementation note |
-| 5 Stock strategy / theme | Unassigned | Open | None | Strategy and theme quality reports |
-| 6 Workbench evidence UX | Unassigned | Open | Report schemas from lanes 3/5 | Dashboard contract |
-| 7 Ops/QA | Unassigned | Open | Lanes 1-6 | Verification bundle |
+| 1 Market structure policy | Market-structure policy expert | Complete | None | `docs/runbooks/market-structure-policy.md` |
+| 2 Futures platform | Futures platform engineer | Complete | None | Focused product/session contract pytest bundle |
+| 3 Futures strategy evidence | Futures strategy researcher | Complete | None | Setup C/D observer and evidence-bundle tests |
+| 4 Stock venue / ATS | Stock venue / ATS engineer | Complete | None | KRX-only policy and ATS-routing integration test |
+| 5 Stock strategy / theme | Stock strategy + theme researcher | Complete | None | Theme/fusion quality-report tests |
+| 6 Workbench evidence UX | Workbench UX/observability engineer | Complete | None | `/evidence` backend/frontend verification |
+| 7 Ops/QA | Ops/QA lead | Complete | None | `docs/testing/quant-gap-execution-2026-06-28.md` |
 
 ## Evidence Links
 
 - Gap research: `docs/investigations/2026-06-28-quant-system-gap-research.md`
 - Roadmap: `docs/ROADMAP.md`
 - Runtime status: `docs/PROJECT_STATUS.md`
+- Final QA evidence: `docs/testing/quant-gap-execution-2026-06-28.md`
