@@ -161,6 +161,17 @@ def _load_futures_open_from_config(
         return _DEFAULT
 
 
+def _reset_futures_open_cache() -> None:
+    """Clear the cached futures-open lookups.
+
+    Intended for test isolation: an autouse fixture clears this between tests so
+    a value cached by one test (e.g. via a temp config path) cannot leak into
+    another, especially under pytest-xdist where module-level state is shared
+    within a worker process.
+    """
+    _FUTURES_OPEN_CACHE.clear()
+
+
 def build_market_context(
     *,
     now: datetime,

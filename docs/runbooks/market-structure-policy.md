@@ -57,6 +57,18 @@ Before enabling `ats_routing.enabled=true`, all of these must be present:
 - `time_of_day_multipliers` early-session key: `"09:00-09:15" → "08:45-09:15"`
 - `ats_routing.time_of_day_preferences["09:00-09:30"]` (dormant ATS block): left unchanged (out-of-scope dormant routing)
 
+**Backtest parity — historical data anchor**
+
+`MarketContextReplay` now stamps `market_open_hour`/`market_open_minute` onto every
+replayed `MarketContext`, defaulting to 08:45 (current production). **Historical
+backtests on pre-08:45 data (the futures day session opened at 09:00 before
+2026-06-28) MUST pass `market_open_hour=9, market_open_minute=0`** — otherwise every
+setup's open-relative window is shifted 15 min earlier and the replay no longer
+matches the regime that produced the historical research numbers. In particular,
+**Setup D OOS Sharpe 1.77 and the Setup A profitability numbers were computed at the
+09:00 anchor and require re-validation under the 08:45 anchor** before any
+08:45-conditioned conclusions are drawn.
+
 **Paper observation**
 
 09:00-only vs 08:45-inclusive behavior will accumulate in paper trading evidence as sessions run with the new anchor.

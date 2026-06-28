@@ -51,11 +51,11 @@ class TestMarketSchedule:
         assert schedule.stock_close == time(15, 30)
 
     def test_default_futures_hours(self):
-        """기본 선물 거래 시간"""
+        """기본 선물 거래 시간 (08:45 KRX 정규장 개장)"""
         from services.trading.orchestrator import MarketSchedule
 
         schedule = MarketSchedule()
-        assert schedule.futures_open == time(9, 0)
+        assert schedule.futures_open == time(8, 45)
         assert schedule.futures_close == time(15, 45)
 
     def test_get_open_time(self):
@@ -64,7 +64,7 @@ class TestMarketSchedule:
 
         schedule = MarketSchedule()
         assert schedule.get_open_time("stock") == time(9, 0)
-        assert schedule.get_open_time("futures") == time(9, 0)
+        assert schedule.get_open_time("futures") == time(8, 45)
 
     def test_get_close_time(self):
         """폐장 시간 조회"""

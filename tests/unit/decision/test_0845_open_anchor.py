@@ -8,7 +8,8 @@ Coverage
 --------
 - minutes_since_open() accuracy at key boundary times (0, 10, 15, 375 min).
 - Setup A: rejected before 08:55, eligible at 08:56, rejected after 10:15.
-- Setup C: eligible at 14:59 (375 min boundary), rejected at / after 15:00.
+- Setup C: eligible at 14:59 (374 min, 1 min before the 375-min ≡ 15:00 boundary),
+  rejected strictly after 15:00 (376 min at 15:01).
 - Setup D: rejected at 08:55 (before_window < 15), rejected after 14:45 (> 360).
 - Regression: a MarketContext constructed with no explicit open fields uses the
   08:45 default safely.

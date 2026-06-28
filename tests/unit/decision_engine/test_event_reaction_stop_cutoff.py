@@ -4,8 +4,8 @@ Two behaviours added 2026-06-14 to curb 3-5 min stop-outs and late-session churn
 - `stop_buffer_atr_mult`: protective stop is pushed BEYOND the opposite 15-min
   range edge by stop_buffer_atr_mult * ATR (was placed exactly at the edge → ~1.3×
   1-min ATR away → whipsawed out).
-- `no_entry_after_minutes_since_open`: no new entries after 15:00 KST (360 min
-  since the 09:00 open).
+- `no_entry_after_minutes_since_open`: no new entries after 15:00 KST (375 min
+  since the 08:45 open).
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _ctx(now: datetime, current_price: float):
 
 
 def test_short_stop_is_buffered_beyond_range_high():
-    now = datetime(2026, 6, 11, 10, 0, tzinfo=KST)  # 60 min since open
+    now = datetime(2026, 6, 11, 10, 0, tzinfo=KST)  # 75 min since 08:45 open
     # price just below the 15-min low → short breakout
     ctx = _ctx(now, current_price=_LOW - 1.0)
     sig = SetupCEventReaction(config=SetupCConfig()).check(ctx)
@@ -65,22 +65,22 @@ def test_long_stop_is_buffered_beyond_range_low():
 
 
 def test_no_entry_after_cutoff():
-    # 15:30 KST = 390 min since open > 360 cutoff → no entry even with a valid event/breakout
+    # 15:30 KST = 405 min since 08:45 open > 375 cutoff → no entry even with a valid event/breakout
     now = datetime(2026, 6, 11, 15, 30, tzinfo=KST)
     ctx = _ctx(now, current_price=_LOW - 1.0)
     assert SetupCEventReaction(config=SetupCConfig()).check(ctx) is None
 
 
 def test_entry_allowed_just_before_cutoff():
-    # 14:59 KST = 359 min < 360 → still fires
+    # 14:59 KST = 374 min < 375 → still fires
     now = datetime(2026, 6, 11, 14, 59, tzinfo=KST)
     ctx = _ctx(now, current_price=_LOW - 1.0)
     assert SetupCEventReaction(config=SetupCConfig()).check(ctx) is not None
 
 
 def test_cutoff_is_configurable():
-    now = datetime(2026, 6, 11, 14, 0, tzinfo=KST)  # 300 min since open
+    now = datetime(2026, 6, 11, 14, 0, tzinfo=KST)  # 315 min since 08:45 open
     ctx = _ctx(now, current_price=_LOW - 1.0)
-    # tighten cutoff to 240 min (13:00 KST) → 300 > 240 → blocked
+    # tighten cutoff to 240 min (12:45 KST) → 315 > 240 → blocked
     cfg = SetupCConfig(no_entry_after_minutes_since_open=240)
     assert SetupCEventReaction(config=cfg).check(ctx) is None
