@@ -189,7 +189,7 @@ that shortens the design → backtest → paper → feedback loop.
 | `technical_consensus` reactivation | 🔄 in-progress | strong long-horizon backtest vs recent ~3wk live loss → regime-verify, then small |
 | `momentum_breakout` redesign / retune | 🔄 in-progress | retune still negative (recent Sharpe ≈ −5.24); observe in paper |
 | Strategy Lab Phase 1–7 (visual design → backtest → paper → feedback) | 🔄 in-progress | design done ([plans/2026-05-26-strategy-lab-extension-design.md](plans/2026-05-26-strategy-lab-extension-design.md)); Quant Ops Workbench UI/UX expansion complete ([plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md)); remaining Strategy Lab work is non-Workbench backtest/paper workflow depth |
-| Nextrade/ATS best-execution readiness | ⏳ planned | decide KRX-only v1 vs ATS/SOR track; if SOR, add venue quote ingestion, best-execution audit logs, midpoint/stop-limit policy, schedule guards, and paper simulator calibration |
+| Nextrade/ATS best-execution readiness | ⏳ planned | follow [runbooks/market-structure-policy.md](runbooks/market-structure-policy.md); decide KRX-only v1 vs ATS/SOR track; if SOR, add venue quote ingestion, best-execution audit logs, midpoint/stop-limit policy, schedule guards, and paper simulator calibration |
 | Position-recovery drill + Redis/SQLite E2E smoke | ⏳ planned | after each cutover / process restart |
 | MLflow restart (localhost:5000 down) | ⏳ planned | ops |
 | Stock live trading | ⏳ planned (blocked) | requires margin/education approval on real accounts; separate promotion tier |

@@ -41,6 +41,7 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [BACKTEST_RESULTS_INTERPRETATION_GUIDE.md](BACKTEST_RESULTS_INTERPRETATION_GUIDE.md) | 백테스트 지표 해석 가이드. 현재 전략/런타임 상태는 ROADMAP 기준. |
 | [runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md) | 현재 stock decoupled paper pipeline cutover/runbook. |
 | [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md) | futures decoupled pipeline F-9 shadow/cutover runbook. |
+| [runbooks/market-structure-policy.md](runbooks/market-structure-policy.md) | Operator policy for stock ATS/SOR, futures 08:45 regular session, night session, and KOSPI 200 product governance. |
 | [runbooks/har-rv-log-rv-validation.md](runbooks/har-rv-log-rv-validation.md) | HAR-RV raw-vs-log validation report workflow before `rv_target: log` cutover. |
 | [runbooks/setup-c-event-score-observation.md](runbooks/setup-c-event-score-observation.md) | Setup C event-score history readiness observation. |
 | [runbooks/stock-strategy-reactivation.md](runbooks/stock-strategy-reactivation.md) | `technical_consensus` / `momentum_breakout` evidence review before reactivation changes. |
