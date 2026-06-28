@@ -13,7 +13,7 @@ product/session handling, and what must be true before changing runtime windows.
 |---|---|---|
 | Stock venue | KRX-only until operator approves ATS/SOR readiness | `ats_routing.enabled=false`; `stock_order_router` remains KRX-only |
 | Stock extended hours | No automated extended-hours trading until ATS feed/routing evidence exists | `market_schedule.stock.extended` is non-authoritative for automation |
-| Futures regular session | Current runtime keeps conservative configured session until 08:45 policy is implemented and tested | `market_schedule.futures.regular.open` currently `09:00` |
+| Futures regular session | **IMPLEMENTED 2026-06-28** — regular open moved to 08:45 KST (day-only; night stays disabled) | `market_schedule.futures.regular.open` now `08:45` |
 | Futures night session | Disabled fail-closed | `market_schedule.futures.night.enabled=false` |
 | Futures product | Product must be explicit in env and evidence reports before promotion | `FUTURES_TRADING_PRODUCT`, `FUTURES_STRATEGY_SYMBOL`, `FUTURES_SLIPPAGE_TICK_SIZE` |
 
@@ -30,14 +30,38 @@ Before enabling `ats_routing.enabled=true`, all of these must be present:
 - Workbench venue evidence panel.
 - Integration test proving KRX fallback when ATS quote is missing.
 
-### Futures 08:45 Regular Session Gate
+### Futures 08:45 Regular Session Gate — IMPLEMENTED 2026-06-28
 
-Before changing `market_schedule.futures.regular.open` from `09:00` to `08:45`:
+`market_schedule.futures.regular.open` changed from `09:00` to `08:45` (PR feat/futures-0845-open).
 
-- Strategy entry windows must be reviewed for Setup A/C/D.
-- Slippage blocked windows must be reviewed for 08:45-09:00.
-- Backtest/session filters must state whether 08:45-09:00 is included.
-- Paper evidence must compare 09:00-only vs 08:45-inclusive behavior.
+**What was changed**
+
+- `config/market_schedule.yaml`: `futures.regular.open: "08:45"`
+- `shared/decision/context.py`: `market_open_hour/market_open_minute` fields added to `MarketContext` (defaults 8/45); `market_open_time()` / `minutes_since_open()` are now anchor-configurable.
+- `shared/decision/context.py`: `build_market_context()` reads the open from config; module-level cache avoids per-tick I/O.
+- `services/trading/orchestrator.py`: `MarketSchedule.futures_open` default updated to 08:45; `MarketSchedule.load_from_yaml()` added; `TradingConfig.futures()` now calls it.
+
+**Per-setup window decisions (open-relative windows auto-shift; close-relative cutoffs re-valued)**
+
+| Setup | Parameter | Old value | New value | Resulting clock time | Rationale |
+|-------|-----------|-----------|-----------|----------------------|-----------|
+| Setup A | `valid_minutes_min` | 10 | 10 | 08:55 KST | open-relative — auto-shifts |
+| Setup A | `valid_minutes_max` | 90 | 90 | 10:15 KST | open-relative — auto-shifts |
+| Setup C | `no_entry_after_minutes_since_open` | 360 | 375 | 15:00 KST | close-relative — re-valued to preserve 15:00 KST |
+| Setup D | `valid_minutes_min` | 15 | 15 | 09:00 KST | open-relative — auto-shifts (skips open auction) |
+| Setup D | `no_entry_after_minutes_since_open` | 345 | 360 | 14:45 KST | close-relative — re-valued to preserve 14:45 KST |
+
+**Slippage**
+
+- `blocked_time_windows` early-open block: `09:00–09:05 → 08:45–08:50`
+- `time_of_day_multipliers` early-session key: `"09:00-09:15" → "08:45-09:15"`
+- `ats_routing.time_of_day_preferences["09:00-09:30"]` (dormant ATS block): left unchanged (out-of-scope dormant routing)
+
+**Paper observation**
+
+09:00-only vs 08:45-inclusive behavior will accumulate in paper trading evidence as sessions run with the new anchor.
+
+**To roll back**: revert `market_schedule.yaml::futures.regular.open` to `"09:00"` and revert the per-setup parameter values above. The code path is config-driven so no code change is needed for rollback.
 
 ### Futures Night Session Gate
 

@@ -327,13 +327,63 @@ class MarketSchedule:
     stock_open: dt_time = field(default_factory=lambda: dt_time(9, 0))
     stock_close: dt_time = field(default_factory=lambda: dt_time(15, 30))
 
-    # 선물
-    futures_open: dt_time = field(default_factory=lambda: dt_time(9, 0))
+    # 선물 — default 08:45 matches market_schedule.yaml::futures.regular.open.
+    # NOT hardcoded to 09:00; populated by load_from_yaml() below.
+    futures_open: dt_time = field(default_factory=lambda: dt_time(8, 45))
     futures_close: dt_time = field(default_factory=lambda: dt_time(15, 45))
 
     # 서비스 시작/종료 (장 시작 전/후 여유)
     service_start_offset_minutes: int = 5
     service_end_offset_minutes: int = 5
+
+    @classmethod
+    def load_from_yaml(
+        cls, config_path: str = "config/market_schedule.yaml"
+    ) -> MarketSchedule:
+        """Load a MarketSchedule from *config_path*.
+
+        Reads ``market_schedule.{stock,futures}.regular.{open,close}`` and
+        constructs a schedule.  Falls back to the dataclass defaults when the
+        file is absent or a key is missing.
+        """
+        import yaml as _yaml
+
+        schedule = cls()
+        path = Path(config_path)
+        if not path.exists():
+            logger.warning(
+                "market_schedule config not found: %s; using defaults", config_path
+            )
+            return schedule
+        try:
+            data = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            ms = data.get("market_schedule", {})
+
+            def _parse_time(section: dict, key: str, default: dt_time) -> dt_time:
+                raw = section.get(key)
+                if not raw:
+                    return default
+                parts = str(raw).strip().split(":")
+                if len(parts) < 2:
+                    return default
+                return dt_time(int(parts[0]), int(parts[1]))
+
+            stock_reg = ms.get("stock", {}).get("regular", {})
+            futures_reg = ms.get("futures", {}).get("regular", {})
+
+            schedule = cls(
+                stock_open=_parse_time(stock_reg, "open", dt_time(9, 0)),
+                stock_close=_parse_time(stock_reg, "close", dt_time(15, 30)),
+                futures_open=_parse_time(futures_reg, "open", dt_time(8, 45)),
+                futures_close=_parse_time(futures_reg, "close", dt_time(15, 45)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to load market_schedule from %s: %s; using defaults",
+                config_path,
+                exc,
+            )
+        return schedule
 
     def get_open_time(self, asset_class: str) -> dt_time:
         return self.stock_open if asset_class == "stock" else self.futures_open
@@ -710,6 +760,10 @@ class TradingConfig:
         """선물용 설정"""
         # Auto-detect KOSPI200 mini futures front-month code
         symbols = symbols or cls._get_futures_default_symbols()
+        # Load the market schedule from config so that the session open/close
+        # anchors (including the 08:45 futures open) reflect the YAML source of
+        # truth rather than the old hardcoded 09:00 default.
+        schedule = MarketSchedule.load_from_yaml()
         return cls(
             asset_class="futures",
             strategy_name=strategy_name,
@@ -718,6 +772,7 @@ class TradingConfig:
             symbols=symbols,
             telegram_token=os.getenv("TELEGRAM_FUTURES_BOT_TOKEN", ""),
             telegram_chat_id=os.getenv("TELEGRAM_FUTURES_CHAT_ID", ""),
+            schedule=schedule,
         )
 
     @staticmethod
@@ -1319,7 +1374,11 @@ class TradingOrchestrator:
             "Futures product contract invalid (%s); %s mode will %s",
             validation.message,
             "paper" if self.config.paper_trading else "live",
-            "continue for observation" if self.config.paper_trading else "block entries",
+            (
+                "continue for observation"
+                if self.config.paper_trading
+                else "block entries"
+            ),
         )
 
     def _init_kis_client(self):

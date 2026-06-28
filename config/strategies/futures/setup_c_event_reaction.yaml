@@ -44,10 +44,10 @@ strategy:
       # stop this many ATRs BEYOND the edge so a normal pullback survives.
       stop_buffer_atr_mult: 0.5
 
-      # Late-session entry cutoff (minutes since 09:00 KST; 360 = 15:00 KST).
+      # Late-session entry cutoff (minutes since 08:45 KST; 375 = 15:00 KST).
       # No new entries after this → no churn from positions opened right before
       # the 15:45 force-close.
-      no_entry_after_minutes_since_open: 360
+      no_entry_after_minutes_since_open: 375
 
       # Signal validity
       signal_ttl_minutes: 30

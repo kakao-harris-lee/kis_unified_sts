@@ -3,7 +3,7 @@
 Thesis (extends the proven Setup A/C mean-reversion edge)
 ---------------------------------------------------------
 Intraday KOSPI200 futures mean-revert (Setup A/C work). Setup A only fires in a
-narrow open-only window (10–60 min after 09:00 KST) and requires an overnight
+narrow open-only window (10–90 min after 08:45 KST) and requires an overnight
 gap, so on a high-volatility *intraday* day with no overnight gap it produces 0
 trades while large intraday reversions go uncaptured. Setup D fades volatility
 extremes **throughout the session** (long/short symmetric) and is gated to be
@@ -12,9 +12,9 @@ most active on volatile days and quiet on dead days.
 Logic overview
 --------------
 1. **Session window**: ``valid_minutes_min <= minutes_since_open <=
-   no_entry_after_minutes_since_open``. Skips the opening-auction noise and
-   avoids late entries that would be force-closed near the 15:45 KST session
-   close.
+   no_entry_after_minutes_since_open``. Skips the opening-auction noise (first
+   15 min = 08:45–09:00 KST) and avoids late entries that would be force-closed
+   near the 15:45 KST session close.
 2. **High-vol regime gate**: ``atr_14 >= min_atr_ratio * vol_reference``, where
    ``vol_reference`` is the **causal** ``vol_percentile`` (default 90th) of a
    rolling window of recent ATRs that the setup computes **itself** from the
@@ -113,13 +113,13 @@ class SetupDConfig(ServiceConfigBase):
     enabled: bool = Field(default=True, description="Enable/disable this setup")
     valid_minutes_min: int = Field(
         default=15,
-        description="Earliest minutes after 09:00 KST open to fire (skip open auction)",
+        description="Earliest minutes after 08:45 KST open to fire (15 = 09:00 KST; skip open auction)",
     )
     no_entry_after_minutes_since_open: int = Field(
-        default=345,
+        default=360,
         description=(
-            "No new entries after this many minutes since 09:00 KST "
-            "(345 = 14:45). Avoids late entries force-closed near the 15:45 close."
+            "No new entries after this many minutes since 08:45 KST "
+            "(360 = 14:45 KST). Avoids late entries force-closed near the 15:45 close."
         ),
     )
     min_atr_ratio: float = Field(

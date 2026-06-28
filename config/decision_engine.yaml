@@ -4,8 +4,8 @@
 
 setup_a_gap_reversion:
   enabled: true
-  valid_minutes_min: 10          # minutes after 09:00 KST open (inclusive)
-  valid_minutes_max: 90
+  valid_minutes_min: 10          # minutes after 08:45 KST open (inclusive; 08:55 KST)
+  valid_minutes_max: 90          # minutes after 08:45 KST open (10:15 KST)
   min_sp500_gap_pct: 0.5         # minimum absolute S&P 500 overnight gap (%)
   min_kr_gap_pct: 0.3            # minimum absolute Korean open gap vs prev close (%)
   retrace_min: 0.30              # minimum retrace fraction of the gap
@@ -37,8 +37,8 @@ setup_c_event_reaction:
 # See docs/superpowers/specs/2026-06-25-futures-mr-highvol-setup-d.md.
 setup_d_vwap_reversion:
   enabled: true                            # paper rollout activated 2026-06-26 (PAPER only; futures_live.enabled stays false). Rollback: flip to false.
-  valid_minutes_min: 15                    # skip the 09:00 open auction (15 = 09:15 KST)
-  no_entry_after_minutes_since_open: 345   # no entries after 14:45 KST (force-close avoidance)
+  valid_minutes_min: 15                    # skip the 08:45 open auction (15 = 09:00 KST)
+  no_entry_after_minutes_since_open: 360   # no entries after 14:45 KST (08:45+360=14:45; force-close avoidance)
   min_atr_ratio: 0.9                       # high-vol gate: atr_14 >= 0.9 × causal vol reference
   vol_window_bars: 780                     # causal trailing window (~2 sessions)
   vol_warmup_bars: 120                     # gate permissive until this many past ATRs seen

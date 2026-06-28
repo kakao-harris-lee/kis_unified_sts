@@ -292,8 +292,8 @@ def test_stall_guard_permissive_during_warmup():
 def test_before_window_returns_none():
     setup = _setup()
     ctx = _ctx(
-        now_hhmm=(9, 5), current_price=103.6, vwap=100.0, last_15min_high=103.5
-    )  # 5 min after open < 15
+        now_hhmm=(8, 55), current_price=103.6, vwap=100.0, last_15min_high=103.5
+    )  # 10 min after 08:45 open < valid_minutes_min=15
     assert setup.check(ctx) is None
     assert setup.last_reject_reason.startswith("before_window")
 
@@ -301,8 +301,8 @@ def test_before_window_returns_none():
 def test_after_cutoff_returns_none():
     setup = _setup()
     ctx = _ctx(
-        now_hhmm=(15, 0), current_price=103.6, vwap=100.0, last_15min_high=103.5
-    )  # 360 min > 345 cutoff
+        now_hhmm=(14, 50), current_price=103.6, vwap=100.0, last_15min_high=103.5
+    )  # 365 min since 08:45 open > no_entry_after=360 (14:45 KST)
     assert setup.check(ctx) is None
     assert setup.last_reject_reason.startswith("after_cutoff")
 
@@ -402,7 +402,7 @@ def test_config_defaults():
     cfg = SetupDConfig()
     assert cfg.enabled is True
     assert cfg.valid_minutes_min == 15
-    assert cfg.no_entry_after_minutes_since_open == 345
+    assert cfg.no_entry_after_minutes_since_open == 360
     assert cfg.min_atr_ratio == pytest.approx(0.9)
     assert cfg.vol_window_bars == 780
     assert cfg.vol_warmup_bars == 120
