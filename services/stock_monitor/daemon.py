@@ -416,6 +416,7 @@ class StockMonitorDaemon:
                 )
                 await asyncio.sleep(_CONSUME_ERROR_SLEEP_SECONDS)
                 continue
+            self._xreadgroup_error_log.reset()
             if not messages:
                 continue
             for stream, msgs in messages:

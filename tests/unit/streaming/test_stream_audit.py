@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 
 import pytest
 
@@ -56,6 +57,24 @@ def test_format_audit_kv_renders_stable_tokens_and_omits_empty_values():
     )
 
 
+def test_format_audit_kv_escapes_values_that_would_break_token_parsing():
+    message = format_audit_kv(
+        event="stream_message_processed",
+        code="005930\nforged=true",
+        strategy="setup c",
+        signal_id="sig=1",
+    )
+
+    assert "\n" not in message
+    tokens = dict(token.split("=", 1) for token in shlex.split(message))
+    assert tokens == {
+        "event": "stream_message_processed",
+        "code": "005930\\nforged=true",
+        "strategy": "setup c",
+        "signal_id": "sig=1",
+    }
+
+
 def test_rate_limited_log_emits_first_exception_then_cooldown_summary(caplog):
     times = iter([0.0, 1.0, 2.0, 11.0])
     rate_limit = RateLimitedLog(cooldown_seconds=10.0, clock=lambda: next(times))
@@ -92,6 +111,31 @@ def test_rate_limited_log_logs_sparse_exceptions_with_traceback(caplog):
     assert [record.getMessage() for record in caplog.records] == [
         "xautoclaim error",
         "xautoclaim error",
+    ]
+    assert all(record.exc_info is not None for record in caplog.records)
+
+
+def test_rate_limited_log_reset_makes_next_exception_visible(caplog):
+    times = iter([0.0, 1.0])
+    rate_limit = RateLimitedLog(cooldown_seconds=10.0, clock=lambda: next(times))
+    logger = logging.getLogger("tests.stream_audit.reset")
+    caplog.set_level(logging.ERROR, logger=logger.name)
+
+    try:
+        raise RuntimeError("redis down")
+    except RuntimeError:
+        rate_limit.exception(logger, "xreadgroup error")
+
+    rate_limit.reset()
+
+    try:
+        raise RuntimeError("redis down again")
+    except RuntimeError:
+        rate_limit.exception(logger, "xreadgroup error")
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "xreadgroup error",
+        "xreadgroup error",
     ]
     assert all(record.exc_info is not None for record in caplog.records)
 

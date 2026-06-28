@@ -227,6 +227,7 @@ class StreamConsumerFeed:
                 )
                 await asyncio.sleep(_READ_ERROR_SLEEP_SECONDS)
                 continue
+            self._xread_error_log.reset()
             if not resp:
                 continue
             for _stream, entries in resp:

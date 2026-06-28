@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 
 import pytest
 
@@ -97,7 +98,7 @@ def _audit_records(caplog, event: str) -> list[dict[str, str]]:
     for record in caplog.records:
         values = dict(
             token.split("=", 1)
-            for token in record.getMessage().split()
+            for token in shlex.split(record.getMessage())
             if "=" in token
         )
         if values.get("event") == event:
@@ -167,6 +168,30 @@ async def test_no_ack_when_handle_returns_false():
 
     assert stage.handled == [("s:a", b"1-0")]
     assert redis.acked == []
+
+
+@pytest.mark.asyncio
+async def test_audit_log_for_acked_message_requires_successful_xack(caplog):
+    class FailingAckRedis(FakeRedis):
+        async def xack(self, _stream, _group, _msg_id):
+            raise ConnectionError("xack down")
+
+    caplog.set_level(logging.INFO, logger="shared.streaming.stage")
+    redis = FailingAckRedis([("s:a", [(b"1-0", {b"code": b"005930"})])])
+    stage = _stage(redis)
+
+    task = asyncio.create_task(stage.run())
+    with pytest.raises(ConnectionError):
+        await asyncio.wait_for(task, timeout=1.0)
+
+    assert _audit_records(caplog, "stream_message_processed") == []
+    records = _audit_records(caplog, "stream_message_ack_failed")
+    assert len(records) == 1
+    assert records[0]["stream"] == "s:a"
+    assert records[0]["consumer_group"] == "g"
+    assert records[0]["worker_id"] == "w"
+    assert records[0]["msg_id"] == "1-0"
+    assert records[0]["code"] == "005930"
 
 
 @pytest.mark.asyncio
@@ -243,6 +268,33 @@ async def test_handle_message_exception_logs_failure_source_stream(caplog):
     assert records[0]["worker_id"] == "w"
     assert records[0]["msg_id"] == "1-0"
     assert records[0]["signal_id"] == "sig-fail"
+
+
+@pytest.mark.asyncio
+async def test_xreadgroup_error_logs_again_after_success(caplog):
+    class ErrorSuccessErrorRedis(FakeRedis):
+        def __init__(self):
+            super().__init__([("s:a", [(b"9-0", {})])])
+            self._calls = 0
+
+        async def xreadgroup(self, **kw):
+            self._calls += 1
+            if self._calls in {1, 3}:
+                raise ConnectionError("transient")
+            return await super().xreadgroup(**kw)
+
+    caplog.set_level(logging.ERROR, logger="shared.streaming.stage")
+    redis = ErrorSuccessErrorRedis()
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=0.0)
+
+    await _run_briefly(stage, seconds=0.02)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "xreadgroup error" in record.getMessage()
+    ]
+    assert len(messages) == 2
 
 
 @pytest.mark.asyncio

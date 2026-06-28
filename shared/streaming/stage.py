@@ -85,6 +85,31 @@ def _log_failed_message(
     )
 
 
+def _log_ack_failed_message(
+    *,
+    stream: str | bytes,
+    consumer_group: str,
+    worker_id: str,
+    msg_id: bytes,
+    fields: dict[bytes, bytes],
+    claimed: bool,
+    duration_ms: int,
+) -> None:
+    logger.error(
+        format_audit_kv(
+            event="stream_message_ack_failed",
+            stream=decode_stream_id(stream),
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            msg_id=decode_stream_id(msg_id),
+            claimed=claimed,
+            duration_ms=duration_ms,
+            **extract_audit_fields(fields),
+        ),
+        exc_info=True,
+    )
+
+
 class StreamStage(ABC):
     """Abstract base for a Redis consumer-group daemon stage."""
 
@@ -198,6 +223,7 @@ class StreamStage(ABC):
             )
             await asyncio.sleep(self._xreadgroup_error_sleep)
             return []
+        self._xautoclaim_error_log.reset()
 
         if not isinstance(result, (list, tuple)) or len(result) < 2:
             return []
@@ -229,6 +255,20 @@ class StreamStage(ABC):
                     duration_ms=_duration_ms(started_at),
                 )
                 raise
+            if should_ack:
+                try:
+                    await self.redis.xack(self.input_stream, self.consumer_group, msg_id)
+                except Exception:
+                    _log_ack_failed_message(
+                        stream=self.input_stream,
+                        consumer_group=self.consumer_group,
+                        worker_id=self.worker_id,
+                        msg_id=msg_id,
+                        fields=data,
+                        claimed=claimed,
+                        duration_ms=_duration_ms(started_at),
+                    )
+                    raise
             _log_processed_message(
                 stream=self.input_stream,
                 consumer_group=self.consumer_group,
@@ -239,8 +279,6 @@ class StreamStage(ABC):
                 claimed=claimed,
                 duration_ms=_duration_ms(started_at),
             )
-            if should_ack:
-                await self.redis.xack(self.input_stream, self.consumer_group, msg_id)
 
     @final
     async def run(self) -> None:
@@ -278,6 +316,7 @@ class StreamStage(ABC):
                     )
                     await asyncio.sleep(self._xreadgroup_error_sleep)
                     continue
+                self._xreadgroup_error_log.reset()
 
                 count = sum(len(msgs) for _stream, msgs in messages) if messages else 0
                 await self.post_poll(count)
@@ -397,6 +436,7 @@ class MultiStreamStage(ABC):
             )
             await asyncio.sleep(self._xreadgroup_error_sleep)
             return []
+        self._xautoclaim_error_log.reset()
 
         if not isinstance(result, (list, tuple)) or len(result) < 2:
             return []
@@ -439,6 +479,20 @@ class MultiStreamStage(ABC):
                     duration_ms=_duration_ms(started_at),
                 )
                 raise
+            if should_ack:
+                try:
+                    await self.redis.xack(stream, self.consumer_group, msg_id)
+                except Exception:
+                    _log_ack_failed_message(
+                        stream=stream,
+                        consumer_group=self.consumer_group,
+                        worker_id=self.worker_id,
+                        msg_id=msg_id,
+                        fields=data,
+                        claimed=claimed,
+                        duration_ms=_duration_ms(started_at),
+                    )
+                    raise
             _log_processed_message(
                 stream=stream,
                 consumer_group=self.consumer_group,
@@ -449,8 +503,6 @@ class MultiStreamStage(ABC):
                 claimed=claimed,
                 duration_ms=_duration_ms(started_at),
             )
-            if should_ack:
-                await self.redis.xack(stream, self.consumer_group, msg_id)
 
     @final
     async def run(self) -> None:
@@ -493,6 +545,7 @@ class MultiStreamStage(ABC):
                     )
                     await asyncio.sleep(self._xreadgroup_error_sleep)
                     continue
+                self._xreadgroup_error_log.reset()
 
                 count = sum(len(msgs) for _stream, msgs in messages) if messages else 0
                 await self.post_poll(count)

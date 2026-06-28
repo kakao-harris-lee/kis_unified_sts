@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -15,6 +17,8 @@ SAFE_AUDIT_FIELDS = (
     "setup_type",
     "direction",
 )
+
+_SAFE_VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@+-]+$")
 
 
 def decode_stream_id(value: Any) -> str:
@@ -54,6 +58,8 @@ def format_audit_kv(**items: Any) -> str:
             rendered = decode_stream_id(value)
         else:
             rendered = str(value)
+        if not _SAFE_VALUE_RE.fullmatch(rendered):
+            rendered = json.dumps(rendered, ensure_ascii=True)
         tokens.append(f"{key}={rendered}")
     return " ".join(tokens)
 
@@ -99,3 +105,8 @@ class RateLimitedLog:
         else:
             logger.exception(message, *args, **kwargs)
         self._last_emit_at = now
+
+    def reset(self) -> None:
+        """Mark the guarded operation as recovered so the next error is visible."""
+        self._last_emit_at = None
+        self._suppressed_count = 0
