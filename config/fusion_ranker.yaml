@@ -15,9 +15,10 @@ redis_keys:
 ranking:
   interval_seconds: 15
   top_n: 30
-  # Opt-in: set >0 to admit LLM-only high-quality symbols into the fused targets.
-  # Default 0 = dormant (no LLM-only admissions until operator enables).
-  llm_only_top_n: 0
+  # Admit up to N LLM-only high-quality symbols (beyond the LLM final picks)
+  # into the fused trade targets so the stock LLM-discovery fast path has a feed.
+  # Gated downstream by llm_only_min_quality. Set 0 to disable LLM-only admission.
+  llm_only_top_n: 5
 
 outputs:
   # TTL (seconds) for the fused trade-targets latest key.

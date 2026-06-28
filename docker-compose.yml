@@ -213,6 +213,9 @@ services:
       STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
       STOCK_WATCHLIST_KEY: "${STOCK_WATCHLIST_KEY:-system:daily_watchlist:latest}"
       STOCK_MAX_SYMBOLS: "${STOCK_MAX_SYMBOLS:-40}"
+      # Emit buy signals directly from LLM-discovered trade targets (fast path).
+      # Default on here so LLM picks trade in paper/shadow; override per env.
+      STOCK_LLM_DISCOVERY_SIGNALS_ENABLED: "${STOCK_LLM_DISCOVERY_SIGNALS_ENABLED:-true}"
 
   stock-risk-filter:
     <<: *pipeline-service

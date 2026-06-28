@@ -510,6 +510,22 @@ class StockStrategyDaemon:
                 continue
 
             price = self._llm_reference_price(symbol, metadata, scanner_indicators)
+            # Prefer a live tick when one is available so the (paper) fill is
+            # anchored to the current market rather than a possibly-stale plan
+            # entry_price / prior-day daily_close. Falls back to the reference
+            # price when the symbol has no live tick yet (e.g. not yet warmed).
+            price_source = "target_metadata_or_daily_close"
+            try:
+                live_md = await self.feed.get_current_price(symbol)
+            except Exception:
+                live_md = None
+            if isinstance(live_md, dict):
+                live_price = self._as_float(live_md.get("close")) or self._as_float(
+                    live_md.get("price")
+                )
+                if live_price is not None and live_price > 0:
+                    price = live_price
+                    price_source = "live_tick"
             if price is None:
                 continue
 
@@ -539,7 +555,7 @@ class StockStrategyDaemon:
                     "position_size": metadata.get("position_size"),
                     "plan_confidence": metadata.get("plan_confidence"),
                     "llm_plan_strategy": metadata.get("llm_plan_strategy"),
-                    "reference_price_source": "target_metadata_or_daily_close",
+                    "reference_price_source": price_source,
                 },
             )
 
@@ -659,6 +675,11 @@ class StockStrategyDaemon:
                 # daily-volume filter fails open — the decoupled no-signal root
                 # cause. Mirrors the orchestrator's two-source merge.
                 self._merge_daily_indicators(symbol, indicators, scanner_indicators)
+                regime_value = (
+                    regime_payload.get("regime")
+                    if isinstance(regime_payload, dict)
+                    else None
+                )
                 ctx = EntryContext(
                     market_data=market_data,
                     indicators=indicators,
@@ -669,6 +690,15 @@ class StockStrategyDaemon:
                         # Per-strategy daily watchlist gate (e.g.
                         # momentum_breakout). Empty → strategy runs dynamic mode.
                         "daily_watchlist": self._watchlist,
+                        # Inject the computed market regime so regime-gated
+                        # strategies can evaluate instead of fail-closing every
+                        # cycle on a missing key: momentum_breakout's trend-mode
+                        # gate reads metadata["regime"]; williams_r's
+                        # market_state_filter reads metadata["market_state"].
+                        # Without this both returned None unconditionally in the
+                        # decoupled pipeline (the no-signal root cause).
+                        "regime": regime_value,
+                        "market_state": regime_value,
                     },
                 )
                 signals = await self.manager.check_entries(ctx)

@@ -753,10 +753,14 @@ async def test_llm_discovered_target_publishes_without_technical_warmth():
     assert fields["code"] == "080220"
     assert fields["name"] == "제주반도체"
     assert fields["strategy"] == "llm_discovered"
-    assert fields["price"] == "112900.0"
+    # Execution price anchors to the live tick (71000.0 from the fake feed);
+    # the LLM plan's entry/stop/target are still preserved in metadata.
+    assert fields["price"] == "71000.0"
     assert fields["confidence"] == "1.0"
     metadata = json.loads(fields["metadata_json"])
     assert metadata["source"] == "trade_targets_llm"
+    assert metadata["reference_price_source"] == "live_tick"
+    assert metadata["entry_price"] == 112900.0
     assert metadata["llm_quality"] == 0.61859
     assert metadata["llm_only"] is True
     assert metadata["stop_loss"] == 104997.0
@@ -1761,3 +1765,67 @@ async def test_llm_cooldown_redis_read_failure_falls_back_gracefully():
     # Must not raise; best-effort allows emission when Redis is unreachable.
     published = await daemon.evaluate_once()
     assert published == 1  # degraded to allow-on-error
+
+
+# ---------------------------------------------------------------------------
+# Regime injected into EntryContext (revives momentum_breakout / williams_r)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_regime_injected_into_entry_context_metadata():
+    """The computed regime is exposed to strategies as metadata.regime /
+    metadata.market_state — without it, regime-gated strategies fail closed."""
+    capture = _CaptureManager()
+    d = _daemon(
+        engine=_FakeEngine(mfi_values={"005930": 55.0, "000660": 60.0}),
+        manager=capture,
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    ctx = capture.contexts["005930"]
+    assert ctx.metadata["regime"] == "BULL_STRONG"
+    assert ctx.metadata["market_state"] == "BULL_STRONG"
+
+
+@pytest.mark.asyncio
+async def test_regime_metadata_is_none_when_regime_disabled():
+    """No regime config → regime keys present but None (strategies self-gate)."""
+    capture = _CaptureManager()
+    d = _daemon(manager=capture, regime_config=None)
+    d._universe = ["005930"]
+
+    await d.evaluate_once()
+
+    ctx = capture.contexts["005930"]
+    assert ctx.metadata["regime"] is None
+    assert ctx.metadata["market_state"] is None
+
+
+@pytest.mark.asyncio
+async def test_llm_discovery_prefers_live_tick_over_reference_price():
+    """The LLM-discovery buy anchors to a live tick when available rather than
+    the (possibly stale) plan entry_price / daily_close reference."""
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 10000.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        llm_signal_config=LLMDiscoverySignalConfig(enabled=True),
+    )
+    await daemon._apply_watchlist(_llm_watchlist_payload())
+
+    published = await daemon.evaluate_once()
+
+    assert published == 1
+    fields = redis.added[0][1]
+    assert fields["code"] == "080220"
+    # _FakeFeed returns a live close of 71000.0; it must win over entry_price 10000.0.
+    assert float(fields["price"]) == 71000.0
+    assert "live_tick" in fields["metadata_json"]
