@@ -1,6 +1,6 @@
 # Roadmap — KIS Unified Trading Platform
 
-> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-06-25 KST.**
+> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-06-28 KST.**
 
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
@@ -13,7 +13,10 @@ Trusted current sources cited below:
 [plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md),
 [plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md),
 [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md),
-[runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md).
+[runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md),
+[superpowers/specs/2026-06-27-signals-decision-trace-design.md](superpowers/specs/2026-06-27-signals-decision-trace-design.md),
+[testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md),
+[investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md).
 
 All times are KST (Asia/Seoul). Strategy `enabled` flags in
 `config/strategies/{stock,futures}/*.yaml` are the single source of truth for
@@ -44,9 +47,12 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 - Dashboard APIs already expose parts of the required state: health/process,
   data freshness, kill switch, forecasting, positions, signals, trades/fills,
   Strategy Lab preview/order-ticket endpoints, and stock experiment reports.
-- The main gap is not raw data availability. The gap is decision UX: current
-  pages do not yet merge health, data quality, risk, signal reasons, order/fill
-  lifecycle, backtest evidence, and promotion gates into operator workflows.
+- Decision transparency has moved from compact list fields to an enriched
+  signal-level trace: LLM context, strategy inputs, thresholds, risk/orderability
+  state, lifecycle lineage, scorecard, and degraded evidence gaps are visible.
+- The current gap is strategy/asset-level evidence governance: operators need
+  Setup A/C/D and stock-strategy evidence slices that connect traces to
+  paper-vs-backtest performance, promotion gates, and market-structure policy.
 
 ### Phases
 
@@ -54,20 +60,23 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 |---|---|---|
 | Quant Ops Workbench plan (multi-agent implementation lanes, contracts, gates) | ✅ done | [plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md) |
 | P0 Ops Cockpit 2.0 | ✅ done | `/api/health/summary` now exposes ops summary DTO with process/data freshness/scheduler/producers/forecasting/pipeline/mode |
-| P0 Signal Decision Trace | ✅ done | `/signals` shows trace summary, reject/orderability fields, and linked order/fill/position/trade ids when present |
+| P0 Signal Decision Trace | ✅ done | `/signals` and `GET /api/signals/{signal_id}/trace` show LLM context, strategy inputs, thresholds, risk/orderability detail, lifecycle lineage, scorecard, and evidence gaps |
 | P0 Risk & Exposure Board | ✅ done | `/risk` shows portfolio totals, strategy exposure, symbol exposure, daily loss, and futures long/short signed exposure |
 | P0 Backtest-vs-Paper Comparator | ✅ done | `/experiments` compares latest stock experiment evidence against RuntimeLedger paper trades |
 | P1 Signal -> Order -> Fill lifecycle blotter | ✅ done | `/api/trades/lifecycle` and `/trades` timeline panel show partial signal/order/fill/position/trade lineage |
 | P1 Strategy Promotion Kanban | ✅ done | `/builder` includes read-only Draft -> Live Gated board with explicit present/missing/not-available evidence |
 | P1 Universe & Data Coverage Explorer | ✅ done | `/coverage` and `/api/coverage` show screener universe, trade targets, daily indicator gaps, and latest experiment coverage |
 | P2 Setup C / Event Context diagnostics | ✅ done | `/event-context` and `/api/event-context/diagnostics` show Setup C latest eval, event-score freshness/sparsity, source timeline, config mismatch warnings, and no-signal root cause |
-| P2 Workbench UI/UX QA pass | ✅ done | Vitest/Testing Library smoke coverage plus Playwright fallback desktop/mobile screenshots cover `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context`; evidence: [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) |
+| P2 Workbench UI/UX QA pass | ✅ done | Vitest/Testing Library smoke coverage plus Playwright fallback desktop/mobile screenshots cover `/risk`, `/coverage`, `/trades`, `/builder`, `/event-context`, and `/signals`; evidence: [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md), [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md) |
 
 ### Open next-steps
 
 - Refresh and retain desktop/mobile screenshot/accessibility QA artifacts when
   Workbench routes change, especially `/risk`, `/coverage`, `/trades`,
-  `/builder`, and `/event-context`.
+  `/builder`, `/event-context`, and `/signals`.
+- Add per-asset and per-strategy evidence dashboards so individual signal traces
+  roll up into Setup A/C/D, stock-strategy, paper-vs-backtest, and promotion-gate
+  decisions.
 - Keep all new work paper-safe. UI may inspect paper order tickets, but must not
   introduce live order controls or bypass futures live gates.
 
@@ -154,8 +163,13 @@ that shortens the design → backtest → paper → feedback loop.
   M4-R (risk) → M4-O (order) → M4-X (three-stage, signal-driven exit; **no
   blanket EOD liquidation**) → M5a (monitor). The monolithic stock orchestrator
   is blocked after cutover (`STOCK_ORCHESTRATOR_ENABLED=false`).
-- **Enabled strategies (2026-06-25):** `momentum_breakout` (re-enabled for paper
+- **Enabled strategies (2026-06-28):** `momentum_breakout` (re-enabled for paper
   observation, #443), `pattern_pullback`, `williams_r`.
+- ATS/SOR support is not active. `config/execution.yaml` and
+  `shared/execution/venue_router.py` contain ATS routing primitives and tests,
+  but `ats_routing.enabled=false` and the current `stock_order_router` daemon is
+  KRX-only. Treat multi-venue execution as a planned readiness track unless the
+  operator explicitly decides to keep KRX-only as v1 policy.
 - **Disabled:** `bb_reversion`, `opening_volume_surge` (+variants),
   `volume_accumulation`, `trend_pullback`, `vr_composite`,
   `technical_consensus` (0% win 2026-06-02), `trend_continuation_vwap`,
@@ -175,6 +189,7 @@ that shortens the design → backtest → paper → feedback loop.
 | `technical_consensus` reactivation | 🔄 in-progress | strong long-horizon backtest vs recent ~3wk live loss → regime-verify, then small |
 | `momentum_breakout` redesign / retune | 🔄 in-progress | retune still negative (recent Sharpe ≈ −5.24); observe in paper |
 | Strategy Lab Phase 1–7 (visual design → backtest → paper → feedback) | 🔄 in-progress | design done ([plans/2026-05-26-strategy-lab-extension-design.md](plans/2026-05-26-strategy-lab-extension-design.md)); Quant Ops Workbench UI/UX expansion complete ([plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md)); remaining Strategy Lab work is non-Workbench backtest/paper workflow depth |
+| Nextrade/ATS best-execution readiness | ⏳ planned | decide KRX-only v1 vs ATS/SOR track; if SOR, add venue quote ingestion, best-execution audit logs, midpoint/stop-limit policy, schedule guards, and paper simulator calibration |
 | Position-recovery drill + Redis/SQLite E2E smoke | ⏳ planned | after each cutover / process restart |
 | MLflow restart (localhost:5000 down) | ⏳ planned | ops |
 | Stock live trading | ⏳ planned (blocked) | requires margin/education approval on real accounts; separate promotion tier |
@@ -193,6 +208,13 @@ that shortens the design → backtest → paper → feedback loop.
   evidence before any YAML change.
 - Continue non-Workbench Strategy Lab build-out for deeper design, backtest,
   paper feedback, and reactivation-gate workflows.
+- Decide the stock market-structure policy. If the system remains KRX-only,
+  document that explicitly; if it moves toward Nextrade/ATS, update schedule
+  config, venue quote ingestion, SOR audit evidence, order-type handling, and
+  Workbench venue transparency before enabling routing.
+- Add theme leader/fusion evidence review: theme target freshness, active and
+  quarantined counts, false-positive examples, per-theme hit quality, and
+  rollback thresholds.
 - Run the position-recovery drill and the Redis + SQLite E2E smoke; use
   `scripts/ops/ops_readiness_check.py` as the offline checklist before/after cutovers.
 - Restart MLflow for experiment tracking.
@@ -204,7 +226,7 @@ that shortens the design → backtest → paper → feedback loop.
 ### North Star
 
 The **LLM interprets market context** (veto / risk-mode / size / threshold), and
-an **indicator + rule strategy (Setup A/C) owns entry/exit timing**. Thresholds
+an **indicator + rule strategy (Setup A/C/D) owns entry/exit timing**. Thresholds
 live in YAML; runtime state is Redis DB 1 + the SQLite ledger. RL/TFT prediction
 paths are removed and must not be reintroduced
 ([plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md)).
@@ -218,9 +240,11 @@ paths are removed and must not be reintroduced
   **dormant** (pre-F-9): profiles `futures-ingest`, `futures-pipeline`,
   `futures-killswitch` exist with a double-trade guard, but the daemons are not
   registered in the running Compose stack.
-- **Enabled strategies (2026-06-25):** `setup_a_gap_reversion` (fires live
+- **Enabled strategies (2026-06-28):** `setup_a_gap_reversion` (fires live
   signals), `setup_c_event_reaction` (coded but ~0 signals — event scores need
-  real production/observation; bounded history is now retained for diagnostics).
+  real production/observation; bounded history is now retained for diagnostics),
+  and `setup_d_vwap_reversion` (paper rollout activated 2026-06-26; needs
+  paper validation before any live consideration).
 - **Disabled / deprecated:** `williams_r_15m` (reference), `bb_reversion_15m`
   (disabled — triggered a stock BEAR_EXIT, #479), `macd_ema_crossover_15m`,
   `momentum_breakout_futures`, `trend_pullback_futures`,
@@ -244,9 +268,11 @@ paths are removed and must not be reintroduced
 | F-9 Gate 2 → decoupled cutover (replace orchestrator path) | ⏳ planned | operator written approval; `trader` flag false + daemon-mode env |
 | Phase 5 Gate 1–3 → small live (100 signals + backtest ±20% + MDD/slippage + kill-switch drill) | ⏳ planned | [plans/2026-04-20-futures-paradigm-phase5-rollout.md](plans/2026-04-20-futures-paradigm-phase5-rollout.md) (procedure; RL/systemd/ClickHouse refs there are historical) |
 | Setup C activation | 🔄 in-progress | runtime enforces configured event-score minimum; `ForecastPublisher` keeps bounded Redis event-score history; `/event-context` and `scripts/ops/setup_c_event_score_observe.py` surface readiness; needs real scored-event production/observation to prove eligible signals |
+| Setup D high-vol VWAP reversion paper validation | 🔄 in-progress | `setup_d_vwap_reversion` is enabled in paper only; validate signal count, long/short split, volatility-event attribution, paper PnL, and backtest-vs-paper delta before any promotion |
 | Kill-switch sentinel → shared-volume path | ✅ done | default is `/app/data/runtime/kis_kill_switch.tripped`, shared by kill-switch/order-router containers |
 | Futures cutover verify/rollback automation script (stock analogue exists) | ✅ done | `scripts/ops/futures_cutover_verify.py` read-only audit/strict gate rejects placeholder evidence; `scripts/ops/futures_evidence_bundle.py` compiles F-9/Phase 5 evidence; env examples expose `FUTURES_ORCHESTRATOR_ENABLED`; rollback helper is dry-run-first |
 | HAR-RV log-RV validation (futures side) | 🔄 in-progress | log-RV model target, RV-history serialization, KST regular-session RV, and local file-backed refit/validation CLIs exist; real-data validation/shadow remains open |
+| Futures product/session governance | ⏳ planned | reconcile `FUTURES_TRADING_PRODUCT`, tick size, multiplier, expiry/roll, regular 08:45 open, disabled night-session policy, and quote/session limits before changing runtime windows |
 
 ### Open next-steps
 
@@ -260,6 +286,14 @@ paths are removed and must not be reintroduced
 - Run/observe real event scoring so Setup C has enough fresh score history to
   evaluate eligible signals; use `scripts/ops/setup_c_event_score_observe.py` to
   produce the readiness report.
+- Observe Setup D in paper before promotion: accepted/rejected signals, long/short
+  balance, stop/target quality, volatility-event concentration, and
+  paper-vs-backtest drift.
+- Reconcile futures product/session policy against current KRX rules. The repo
+  defaults to Mini semantics in several execution guards, while full KOSPI 200
+  uses 0.05 tick / KRW 12,500 tick value; do not change live windows until the
+  operator decides how to handle 08:45 regular open and disabled 18:00-06:00
+  night trading.
 - Run `scripts/ops/futures_cutover_verify.py --strict` with Gate 1 evidence and
   written approval before cutover; repo-local sentinel/env checks are wired, so
   the remaining blockers are operator-supplied shadow evidence and approval.
