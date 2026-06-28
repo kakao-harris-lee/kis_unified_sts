@@ -36,6 +36,10 @@ def test_complete_bundle_passes_and_reports_per_gate_sections(tmp_path, capsys) 
     assert report["f9_gate2"]["status"] == "pass"
     assert report["phase5_small_live"]["status"] == "pass"
     assert report["phase5_small_live"]["signal_count"] == 117
+    assert report["setup_d_observation"] == {
+        "required": True,
+        "path": "reports/futures/setup_d/latest.json",
+    }
     assert report["f9_gate1"]["trading_dates"] == [
         "2026-06-22",
         "2026-06-23",
@@ -145,3 +149,39 @@ def test_missing_signal_count_fails_phase5_section(tmp_path, capsys) -> None:
     assert report["f9_gate1"]["status"] == "fail"
     assert report["phase5_small_live"]["status"] == "fail"
     assert "signal_count: missing" in report["phase5_small_live"]["missing_evidence"]
+
+
+def test_strict_bundle_requires_setup_d_observation_when_strategy_enabled(
+    tmp_path,
+    capsys,
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    bundle_path = tmp_path / "complete-f9-evidence.yaml"
+    bundle = {
+        "trading_dates": ["2026-06-22", "2026-06-23", "2026-06-24"],
+        "restart_loop_ok": True,
+        "backlog_ok": True,
+        "dashboard_ok": True,
+        "direction_comparison_ok": True,
+        "kill_switch_drill_ok": True,
+        "signal_count": 117,
+        "backtest_tracking_error_pct": 2.4,
+        "max_drawdown_ok": True,
+        "slippage_ok": True,
+        "operator_approval_ref": "ops-approval-2026-06-24.md",
+    }
+    bundle_path.write_text(yaml.safe_dump(bundle), encoding="utf-8")
+
+    rc = module.main([str(bundle_path), "--json", "--strict"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert report["status"] == "fail"
+    assert report["setup_d_observation"] == {
+        "required": True,
+        "path": "reports/futures/setup_d/latest.json",
+    }
+    assert (
+        "setup_d_observation: missing reports/futures/setup_d/latest.json"
+        in report["missing_evidence"]
+    )

@@ -59,6 +59,13 @@ _GATE_FIELDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SETUP_D_CONFIG_PATH = _REPO_ROOT / "config/strategies/futures/setup_d_vwap_reversion.yaml"
+_SETUP_D_OBSERVATION = {
+    "required": True,
+    "path": "reports/futures/setup_d/latest.json",
+}
+
 
 def _load_bundle(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
@@ -201,6 +208,33 @@ def _validate_bundle(
     return missing, failures_by_field
 
 
+def _setup_d_enabled(config_path: Path = _SETUP_D_CONFIG_PATH) -> bool:
+    if not config_path.exists():
+        return False
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return False
+    strategy = data.get("strategy")
+    if not isinstance(strategy, dict):
+        return False
+    return strategy.get("name") == "setup_d_vwap_reversion" and strategy.get(
+        "enabled"
+    ) is True
+
+
+def _validate_setup_d_observation(
+    failures_by_field: dict[str, list[str]],
+) -> list[str]:
+    if not _setup_d_enabled():
+        return []
+    observation_path = _REPO_ROOT / _SETUP_D_OBSERVATION["path"]
+    if observation_path.exists():
+        return []
+    reason = f"missing {_SETUP_D_OBSERVATION['path']}"
+    failures_by_field.setdefault("setup_d_observation", []).append(reason)
+    return [f"setup_d_observation: {reason}"]
+
+
 def _gate_section(
     bundle: Mapping[str, Any],
     failures_by_field: Mapping[str, list[str]],
@@ -224,12 +258,18 @@ def _gate_section(
 
 
 def compile_report(
-    bundle: Mapping[str, Any], *, source: str | None = None
+    bundle: Mapping[str, Any],
+    *,
+    source: str | None = None,
+    strict_setup_d: bool = False,
 ) -> dict[str, Any]:
     missing, failures_by_field = _validate_bundle(bundle)
+    if strict_setup_d:
+        missing.extend(_validate_setup_d_observation(failures_by_field))
     report: dict[str, Any] = {
         "status": "fail" if missing else "pass",
         "missing_evidence": missing,
+        "setup_d_observation": dict(_SETUP_D_OBSERVATION),
     }
     if source is not None:
         report["source"] = source
@@ -259,7 +299,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     bundle = _load_bundle(args.bundle)
-    report = compile_report(bundle, source=str(args.bundle))
+    report = compile_report(
+        bundle,
+        source=str(args.bundle),
+        strict_setup_d=args.strict,
+    )
     output = json.dumps(report, indent=2, sort_keys=True)
     print(output)
     return 1 if args.strict and report["status"] == "fail" else 0
