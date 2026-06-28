@@ -113,6 +113,25 @@ def test_resolved_product_rejects_malformed_slippage_tick(monkeypatch):
     assert "invalid FUTURES_SLIPPAGE_TICK_SIZE='abc'" in result.message
 
 
+def test_runtime_contract_rejects_explicit_unsupported_product():
+    from shared.execution.futures_instrument import (
+        validate_futures_runtime_product_contract,
+    )
+
+    result = validate_futures_runtime_product_contract(
+        environ={
+            "FUTURES_TRADING_PRODUCT": "nikkei",
+            "FUTURES_SLIPPAGE_TICK_SIZE": "0.02",
+        }
+    )
+
+    assert result.ok is False
+    assert "FUTURES_TRADING_PRODUCT='nikkei'" in result.message
+    assert "supported products" in result.message
+    assert "kospi200" in result.message
+    assert "mini" in result.message
+
+
 def test_resolved_product_rejects_explicit_full_size_symbol_with_mini_contract(
     monkeypatch,
 ):

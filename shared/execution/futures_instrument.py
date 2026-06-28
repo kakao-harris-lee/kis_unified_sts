@@ -90,11 +90,19 @@ def validate_futures_runtime_product_contract(
     environ: Mapping[str, str] | None = None,
 ) -> FuturesProductContractValidation:
     env = os.environ if environ is None else environ
-    product = normalize_futures_product(env.get("FUTURES_TRADING_PRODUCT"))
+    raw_product = env.get("FUTURES_TRADING_PRODUCT")
+    requested_product = (raw_product or "").strip().lower()
+    product = normalize_futures_product(raw_product)
     expected_tick = _PRODUCT_TICK_SIZE[product]
     parsed_tick = _env_tick_size(env.get("FUTURES_SLIPPAGE_TICK_SIZE"), 0.02)
     actual_tick = parsed_tick.value
     invalid_reasons: list[str] = []
+    if requested_product and requested_product not in SUPPORTED_FUTURES_PRODUCTS:
+        allowed_products = ", ".join(sorted(SUPPORTED_FUTURES_PRODUCTS))
+        invalid_reasons.append(
+            f"unsupported FUTURES_TRADING_PRODUCT={raw_product!r}; "
+            f"supported products: {allowed_products}"
+        )
     if parsed_tick.error is not None:
         invalid_reasons.append(parsed_tick.error)
     if abs(actual_tick - expected_tick) >= 1e-9:
