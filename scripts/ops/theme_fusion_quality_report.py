@@ -6,8 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
+
+
+DEFAULT_MAX_AGE_SECONDS = 1800.0
+DEFAULT_MAX_FUTURE_SKEW_SECONDS = 300.0
 
 
 def _normalize_state(value: Any) -> str:
@@ -87,7 +92,91 @@ def _extract_canonical_targets(data: dict[str, Any]) -> list[dict[str, Any]]:
     return targets
 
 
-def build_theme_fusion_quality_report(snapshot_path: Path) -> dict[str, Any]:
+def _parse_generated_at(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _comparison_now(timestamp: datetime, now: datetime | None) -> datetime:
+    if now is None:
+        return datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.now()
+    if timestamp.tzinfo is None:
+        return now.replace(tzinfo=None)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=timestamp.tzinfo)
+    return now.astimezone(timestamp.tzinfo)
+
+
+def _coerce_non_negative_seconds(value: float) -> float:
+    return max(0.0, float(value))
+
+
+def _freshness_report(
+    raw_generated_at: Any,
+    *,
+    now: datetime | None,
+    max_age_seconds: float,
+    max_future_skew_seconds: float,
+) -> dict[str, Any]:
+    max_age = _coerce_non_negative_seconds(max_age_seconds)
+    max_future_skew = _coerce_non_negative_seconds(max_future_skew_seconds)
+    report: dict[str, Any] = {
+        "ok": False,
+        "status": "missing",
+        "reasons": [],
+        "age_seconds": None,
+        "future_skew_seconds": None,
+        "max_age_seconds": max_age,
+        "max_future_skew_seconds": max_future_skew,
+    }
+
+    if not isinstance(raw_generated_at, str) or not raw_generated_at.strip():
+        report["reasons"] = ["generated_at missing"]
+        return report
+
+    generated_at = _parse_generated_at(raw_generated_at)
+    if generated_at is None:
+        report["status"] = "invalid"
+        report["reasons"] = ["generated_at invalid ISO datetime"]
+        return report
+
+    current = _comparison_now(generated_at, now)
+    age_seconds = (current - generated_at).total_seconds()
+    if age_seconds < 0:
+        future_skew_seconds = abs(age_seconds)
+        report["age_seconds"] = 0.0
+        report["future_skew_seconds"] = future_skew_seconds
+        if future_skew_seconds > max_future_skew:
+            report["status"] = "future"
+            report["reasons"] = ["generated_at is in the future"]
+            return report
+        report["ok"] = True
+        report["status"] = "fresh"
+        return report
+
+    report["age_seconds"] = age_seconds
+    report["future_skew_seconds"] = 0.0
+    if age_seconds > max_age:
+        report["status"] = "stale"
+        report["reasons"] = ["generated_at stale"]
+        return report
+
+    report["ok"] = True
+    report["status"] = "fresh"
+    return report
+
+
+def build_theme_fusion_quality_report(
+    snapshot_path: Path,
+    *,
+    now: datetime | None = None,
+    max_age_seconds: float = DEFAULT_MAX_AGE_SECONDS,
+    max_future_skew_seconds: float = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
+) -> dict[str, Any]:
     data = json.loads(snapshot_path.read_text(encoding="utf-8"))
     targets = _extract_legacy_targets(data) or _extract_canonical_targets(data)
     state_counts = Counter(_normalize_state(target.get("state")) for target in targets)
@@ -99,6 +188,12 @@ def build_theme_fusion_quality_report(snapshot_path: Path) -> dict[str, Any]:
     ]
     return {
         "generated_at": data.get("generated_at"),
+        "freshness": _freshness_report(
+            data.get("generated_at"),
+            now=now,
+            max_age_seconds=max_age_seconds,
+            max_future_skew_seconds=max_future_skew_seconds,
+        ),
         "target_count": len(targets),
         "state_counts": dict(state_counts),
         "theme_counts": dict(theme_counts),
@@ -108,12 +203,29 @@ def build_theme_fusion_quality_report(snapshot_path: Path) -> dict[str, Any]:
     }
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--snapshot", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    args = parser.parse_args()
-    report = build_theme_fusion_quality_report(args.snapshot)
+    parser.add_argument(
+        "--max-age-seconds",
+        default=DEFAULT_MAX_AGE_SECONDS,
+        type=float,
+        help="Maximum acceptable snapshot age in seconds.",
+    )
+    parser.add_argument(
+        "--max-future-skew-seconds",
+        default=DEFAULT_MAX_FUTURE_SKEW_SECONDS,
+        type=float,
+        help="Maximum tolerated clock skew when generated_at is in the future.",
+    )
+    args = parser.parse_args(argv)
+    report = build_theme_fusion_quality_report(
+        args.snapshot,
+        now=now,
+        max_age_seconds=args.max_age_seconds,
+        max_future_skew_seconds=args.max_future_skew_seconds,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     return 0
