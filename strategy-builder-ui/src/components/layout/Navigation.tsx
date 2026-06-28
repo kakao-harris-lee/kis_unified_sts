@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   DatabaseZap,
   CalendarClock,
+  FileSearch,
 } from "lucide-react";
 import { useAuth } from "@/hooks";
 import { SettingsModal } from "@/components/settings";
@@ -29,6 +30,7 @@ const navItems = [
   { href: "/signals", label: "Signals", icon: Activity },
   { href: "/risk", label: "Risk", icon: ShieldCheck },
   { href: "/coverage", label: "Coverage", icon: DatabaseZap },
+  { href: "/evidence", label: "Evidence", icon: FileSearch },
   { href: "/event-context", label: "Events", icon: CalendarClock },
   { href: "/trades", label: "Trades", icon: Receipt },
   { href: "/experiments", label: "실험", icon: FlaskConical },
