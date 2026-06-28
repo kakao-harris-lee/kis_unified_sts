@@ -17,7 +17,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from shared.streaming.audit import RateLimitedLog, format_audit_kv
+
 logger = logging.getLogger(__name__)
+
+_READ_ERROR_SLEEP_SECONDS = 0.5
 
 
 def _decode(value: Any) -> str | None:
@@ -104,6 +108,7 @@ class StreamConsumerFeed:
         self._last_id: str = "$"
         self._running = False
         self._task: asyncio.Task[None] | None = None
+        self._xread_error_log = RateLimitedLog()
 
     @property
     def supports_instant_read(self) -> bool:
@@ -212,9 +217,17 @@ class StreamConsumerFeed:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("xread error; sleeping 0.5s")
-                await asyncio.sleep(0.5)
+                self._xread_error_log.exception(
+                    logger,
+                    format_audit_kv(
+                        event="tick_stream_read_error",
+                        stream=self.stream,
+                        sleep_seconds=_READ_ERROR_SLEEP_SECONDS,
+                    ),
+                )
+                await asyncio.sleep(_READ_ERROR_SLEEP_SECONDS)
                 continue
+            self._xread_error_log.reset()
             if not resp:
                 continue
             for _stream, entries in resp:

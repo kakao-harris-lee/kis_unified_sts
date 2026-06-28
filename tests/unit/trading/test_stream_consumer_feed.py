@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 import pytest
@@ -69,6 +70,15 @@ def test_parse_entry_volume_is_cumulative_bool():
 
 def _feed(**kw):
     return StreamConsumerFeed(redis=object(), stream="market:ticks", **kw)
+
+
+class _FailingReadRedis:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def xread(self, *_args, **_kwargs):
+        self.calls += 1
+        raise RuntimeError(f"redis unavailable {self.calls}")
 
 
 @pytest.mark.asyncio
@@ -201,3 +211,31 @@ async def test_read_loop_consumes_xadded_ticks():
     finally:
         await feed.stop()
     assert feed._running is False
+
+
+@pytest.mark.asyncio
+async def test_read_loop_rate_limits_repeated_xread_errors(monkeypatch, caplog):
+    redis = _FailingReadRedis()
+    feed = StreamConsumerFeed(redis=redis, stream="market:ticks")
+    feed._running = True
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        if len(sleep_calls) >= 3:
+            feed._running = False
+
+    monkeypatch.setattr(
+        "services.trading.stream_consumer_feed.asyncio.sleep", fake_sleep
+    )
+    caplog.set_level(logging.ERROR, logger="services.trading.stream_consumer_feed")
+
+    await feed._read_loop()
+
+    assert redis.calls == 3
+    assert sleep_calls == [0.5, 0.5, 0.5]
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [
+        "event=tick_stream_read_error stream=market:ticks sleep_seconds=0.5"
+    ]
+    assert caplog.records[0].exc_info is not None

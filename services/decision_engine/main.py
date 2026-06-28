@@ -31,6 +31,7 @@ from typing import Any
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
+from shared.streaming.audit import decode_stream_id, format_audit_kv
 from shared.streaming.parquet_warmup import (
     warmup_engine_from_parquet as _warmup_engine_from_parquet,
 )
@@ -103,13 +104,24 @@ class DecisionEngineDaemon:
         # Issue a fresh signal_id per emission so downstream consumers can
         # de-dupe and trace through risk_filter / order_router / order_fills.
         fields["signal_id"] = uuid.uuid4().hex
-        await self.redis.xadd(
+        msg_id = await self.redis.xadd(
             self.candidate_stream,
             fields,
             maxlen=self.candidate_maxlen,
             approximate=True,
         )
         await self.redis.expire(self.candidate_stream, _STREAM_TTL_SECONDS)
+        logger.info(
+            format_audit_kv(
+                event="signal_published",
+                stream=self.candidate_stream,
+                msg_id=decode_stream_id(msg_id),
+                signal_id=fields.get("signal_id"),
+                setup_type=fields.get("setup_type"),
+                symbol=fields.get("symbol"),
+                direction=fields.get("direction"),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

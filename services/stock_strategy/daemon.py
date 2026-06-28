@@ -33,6 +33,7 @@ from services.stock_strategy.universe import (
 from shared.models.signal import Signal
 from shared.strategy.base import EntryContext
 from shared.strategy.symbol_strength import compute_strong_symbols
+from shared.streaming.audit import decode_stream_id, format_audit_kv
 from shared.streaming.stock_bear_override import (
     BearOverrideConfig,
     compute_override_payload,
@@ -907,13 +908,24 @@ class StockStrategyDaemon:
 
     async def _publish(self, signal: Signal) -> None:
         fields = stock_signal_to_stream_dict(signal, signal_id=uuid.uuid4().hex)
-        await self.redis.xadd(
+        msg_id = await self.redis.xadd(
             self.candidate_stream,
             fields,
             maxlen=self.candidate_maxlen,
             approximate=True,
         )
         await self.redis.expire(self.candidate_stream, _STREAM_TTL_SECONDS)
+        logger.info(
+            format_audit_kv(
+                event="signal_published",
+                stream=self.candidate_stream,
+                msg_id=decode_stream_id(msg_id),
+                signal_id=fields.get("signal_id"),
+                code=fields.get("code"),
+                strategy=fields.get("strategy"),
+                direction=fields.get("direction"),
+            )
+        )
 
     async def _refresh_loop(self) -> None:
         while not self._stop.is_set():

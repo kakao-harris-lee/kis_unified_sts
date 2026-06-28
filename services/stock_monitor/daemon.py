@@ -27,11 +27,18 @@ from services.stock_monitor.serializers import (
     parse_fill,
     parse_final_signal,
 )
+from shared.streaming.audit import (
+    RateLimitedLog,
+    decode_stream_id,
+    extract_audit_fields,
+    format_audit_kv,
+)
 from shared.utils.calc import calc_realized_pnl
 
 logger = logging.getLogger(__name__)
 
 _KST = ZoneInfo("Asia/Seoul")
+_CONSUME_ERROR_SLEEP_SECONDS = 0.5
 
 
 class StockMonitorDaemon:
@@ -79,6 +86,7 @@ class StockMonitorDaemon:
         self._last_health_alert_ts: float = 0.0
         self._digest_emitted_date: str = ""
         self._digest_reset_date: str = ""
+        self._xreadgroup_error_log = RateLimitedLog()
 
     # -- handlers --------------------------------------------------------- #
 
@@ -396,14 +404,25 @@ class StockMonitorDaemon:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("xreadgroup error; sleeping 0.5s")
-                await asyncio.sleep(0.5)
+                self._xreadgroup_error_log.exception(
+                    logger,
+                    format_audit_kv(
+                        event="monitor_stream_read_error",
+                        streams=f"{self.fill_stream},{self.signal_stream}",
+                        consumer_group=self.consumer_group,
+                        worker_id=self.worker_id,
+                        sleep_seconds=_CONSUME_ERROR_SLEEP_SECONDS,
+                    ),
+                )
+                await asyncio.sleep(_CONSUME_ERROR_SLEEP_SECONDS)
                 continue
+            self._xreadgroup_error_log.reset()
             if not messages:
                 continue
             for stream, msgs in messages:
-                name = stream.decode() if isinstance(stream, bytes) else str(stream)
+                name = decode_stream_id(stream)
                 for msg_id, data in msgs:
+                    handler_failed = False
                     try:
                         if name == self.fill_stream:
                             await self.handle_fill(data)
@@ -412,8 +431,37 @@ class StockMonitorDaemon:
                         else:
                             logger.warning("unexpected stream %s", name)
                     except Exception:
-                        logger.exception("handler error; dropping (poison-pill)")
-                    await self.redis.xack(name, self.consumer_group, msg_id)
+                        handler_failed = True
+                        try:
+                            await self.redis.xack(name, self.consumer_group, msg_id)
+                        except Exception:
+                            logger.error(
+                                format_audit_kv(
+                                    event="stream_message_ack_failed",
+                                    stream=name,
+                                    consumer_group=self.consumer_group,
+                                    worker_id=self.worker_id,
+                                    msg_id=decode_stream_id(msg_id),
+                                    reason="handler_exception",
+                                    **extract_audit_fields(data),
+                                ),
+                                exc_info=True,
+                            )
+                            raise
+                        logger.exception(
+                            format_audit_kv(
+                                event="stream_message_dropped",
+                                stream=name,
+                                consumer_group=self.consumer_group,
+                                worker_id=self.worker_id,
+                                msg_id=decode_stream_id(msg_id),
+                                ack=True,
+                                reason="handler_exception",
+                                **extract_audit_fields(data),
+                            )
+                        )
+                    if not handler_failed:
+                        await self.redis.xack(name, self.consumer_group, msg_id)
 
     async def _status_loop(self) -> None:
         """Periodically mark to market + publish status every ``status_interval``.

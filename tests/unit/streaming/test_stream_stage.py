@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import shlex
 
 import fakeredis.aioredis
 import pytest
@@ -102,6 +104,19 @@ async def _run_briefly(stage, seconds=0.05):
     await asyncio.wait_for(task, timeout=1.0)
 
 
+def _audit_records(caplog, event: str) -> list[dict[str, str]]:
+    records = []
+    for record in caplog.records:
+        values = dict(
+            token.split("=", 1)
+            for token in shlex.split(record.getMessage())
+            if "=" in token
+        )
+        if values.get("event") == event:
+            records.append(values)
+    return records
+
+
 @pytest.mark.asyncio
 async def test_creates_consumer_group_with_mkstream():
     redis = FakeRedis([])
@@ -129,6 +144,80 @@ async def test_no_ack_when_handle_returns_false():
 
 
 @pytest.mark.asyncio
+async def test_audit_log_for_acked_message_includes_context_and_signal(caplog):
+    caplog.set_level(logging.INFO, logger="shared.streaming.stage")
+    redis = FakeRedis([[(b"1-0", {b"signal_id": b"sig-1"})]])
+    stage = _stage(redis, ack_result=True)
+
+    await _run_briefly(stage)
+
+    records = _audit_records(caplog, "stream_message_processed")
+    assert len(records) == 1
+    assert records[0] == {
+        "event": "stream_message_processed",
+        "stream": "s:in",
+        "consumer_group": "g",
+        "worker_id": "w",
+        "msg_id": "1-0",
+        "ack": "true",
+        "claimed": "false",
+        "duration_ms": records[0]["duration_ms"],
+        "signal_id": "sig-1",
+    }
+    assert records[0]["duration_ms"].isdigit()
+
+
+@pytest.mark.asyncio
+async def test_audit_log_for_unacked_message_marks_ack_false(caplog):
+    caplog.set_level(logging.INFO, logger="shared.streaming.stage")
+    redis = FakeRedis([[(b"1-0", {b"signal_id": b"sig-2"})]])
+    stage = _stage(redis, ack_result=False)
+
+    await _run_briefly(stage)
+
+    records = _audit_records(caplog, "stream_message_processed")
+    assert len(records) == 1
+    assert records[0]["ack"] == "false"
+    assert records[0]["claimed"] == "false"
+    assert records[0]["signal_id"] == "sig-2"
+
+
+@pytest.mark.asyncio
+async def test_audit_log_for_acked_message_requires_successful_xack(caplog):
+    class FailingAckRedis(FakeRedis):
+        async def xack(self, _stream, _group, _msg_id):
+            raise ConnectionError("xack down")
+
+    caplog.set_level(logging.INFO, logger="shared.streaming.stage")
+    redis = FailingAckRedis([[(b"1-0", {b"signal_id": b"sig-xack"})]])
+    stage = _stage(redis, ack_result=True)
+
+    task = asyncio.create_task(stage.run())
+    with pytest.raises(ConnectionError):
+        await asyncio.wait_for(task, timeout=1.0)
+
+    assert _audit_records(caplog, "stream_message_processed") == []
+    records = _audit_records(caplog, "stream_message_ack_failed")
+    assert len(records) == 1
+    assert records[0]["stream"] == "s:in"
+    assert records[0]["consumer_group"] == "g"
+    assert records[0]["worker_id"] == "w"
+    assert records[0]["msg_id"] == "1-0"
+    assert records[0]["signal_id"] == "sig-xack"
+
+
+@pytest.mark.asyncio
+async def test_no_audit_log_for_idle_polls(caplog):
+    caplog.set_level(logging.INFO, logger="shared.streaming.stage")
+    redis = FakeRedis([])
+    stage = _stage(redis)
+
+    await _run_briefly(stage)
+
+    assert _audit_records(caplog, "stream_message_processed") == []
+
+
+@pytest.mark.asyncio
 async def test_reclaims_idle_pending_from_previous_consumer():
     redis = fakeredis.aioredis.FakeRedis(db=1)
     msg_id = await redis.xadd("s:in", {"k": "v"})
@@ -143,6 +232,27 @@ async def test_reclaims_idle_pending_from_previous_consumer():
     assert stage.handled == [msg_id]
     pending = await redis.xpending("s:in", "g")
     assert pending["pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_pending_audit_log_marks_claimed_true(caplog):
+    caplog.set_level(logging.INFO, logger="shared.streaming.stage")
+    redis = fakeredis.aioredis.FakeRedis(db=1)
+    msg_id = await redis.xadd("s:in", {"signal_id": "sig-claimed"})
+    await redis.xgroup_create("s:in", "g", id="0")
+    await redis.xreadgroup(
+        groupname="g", consumername="old-worker", streams={"s:in": ">"}, count=1
+    )
+
+    stage = _stage(redis, pending_retry_idle_ms=0)
+    await _run_briefly(stage)
+
+    records = _audit_records(caplog, "stream_message_processed")
+    assert len(records) == 1
+    assert records[0]["msg_id"] == msg_id.decode("utf-8")
+    assert records[0]["claimed"] == "true"
+    assert records[0]["ack"] == "true"
+    assert records[0]["signal_id"] == "sig-claimed"
 
 
 @pytest.mark.asyncio
@@ -196,6 +306,36 @@ async def test_handle_message_exception_propagates_but_shutdown_runs():
 
 
 @pytest.mark.asyncio
+async def test_handle_message_exception_logs_failure_context(caplog):
+    class Boom(RecordingStage):
+        async def handle_message(self, _msg_id, _fields):
+            raise RuntimeError("boom")
+
+    caplog.set_level(logging.ERROR, logger="shared.streaming.stage")
+    redis = FakeRedis([[(b"1-0", {b"signal_id": b"sig-fail"})]])
+    stage = Boom(
+        redis=redis,
+        input_stream="s:in",
+        consumer_group="g",
+        worker_id="w",
+        xread_block_ms=5,
+        batch_size=10,
+    )
+
+    task = asyncio.create_task(stage.run())
+    with pytest.raises(RuntimeError):
+        await asyncio.wait_for(task, timeout=1.0)
+
+    records = _audit_records(caplog, "stream_message_failed")
+    assert len(records) == 1
+    assert records[0]["stream"] == "s:in"
+    assert records[0]["consumer_group"] == "g"
+    assert records[0]["worker_id"] == "w"
+    assert records[0]["msg_id"] == "1-0"
+    assert records[0]["signal_id"] == "sig-fail"
+
+
+@pytest.mark.asyncio
 async def test_xreadgroup_error_sleeps_and_continues():
     class FlakyRedis(FakeRedis):
         def __init__(self):
@@ -213,6 +353,79 @@ async def test_xreadgroup_error_sleeps_and_continues():
     await _run_briefly(stage)
     # survived the transient error and still processed the message afterwards
     assert stage.handled == [b"9-0"]
+
+
+@pytest.mark.asyncio
+async def test_xreadgroup_error_logs_again_after_success(caplog):
+    class ErrorSuccessErrorRedis(FakeRedis):
+        def __init__(self):
+            super().__init__([[(b"9-0", {})]])
+            self._calls = 0
+
+        async def xreadgroup(self, **kw):
+            self._calls += 1
+            if self._calls in {1, 3}:
+                raise ConnectionError("transient")
+            return await super().xreadgroup(**kw)
+
+    caplog.set_level(logging.ERROR, logger="shared.streaming.stage")
+    redis = ErrorSuccessErrorRedis()
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=0.0)
+
+    await _run_briefly(stage, seconds=0.02)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "xreadgroup error" in record.getMessage()
+    ]
+    assert len(messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_repeated_xreadgroup_errors_are_rate_limited(caplog):
+    class FailingReadRedis(FakeRedis):
+        async def xreadgroup(self, **_kw):
+            self.xreadgroup_calls += 1
+            raise ConnectionError("redis down")
+
+    caplog.set_level(logging.ERROR, logger="shared.streaming.stage")
+    redis = FailingReadRedis([])
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=0.0)
+
+    await _run_briefly(stage, seconds=0.01)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "xreadgroup error" in record.getMessage()
+    ]
+    assert len(messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_repeated_xautoclaim_errors_are_rate_limited(caplog):
+    class FailingClaimRedis(FakeRedis):
+        async def xautoclaim(self, *_args, **_kwargs):
+            self.xautoclaim_calls += 1
+            raise ConnectionError("redis down")
+
+    caplog.set_level(logging.ERROR, logger="shared.streaming.stage")
+    redis = FailingClaimRedis([])
+    stage = _stage(
+        redis,
+        pending_retry_idle_ms=0,
+        xreadgroup_error_sleep_seconds=0.0,
+    )
+
+    await _run_briefly(stage, seconds=0.01)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "xautoclaim error" in record.getMessage()
+    ]
+    assert len(messages) == 1
 
 
 @pytest.mark.asyncio

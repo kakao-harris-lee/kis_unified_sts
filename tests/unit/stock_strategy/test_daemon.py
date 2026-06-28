@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from services.stock_strategy.daemon import LLMDiscoverySignalConfig, StockStrategyDaemon
 from services.stock_strategy.universe import _SCREENER_PAYLOAD_KEY
 from shared.models.signal import Signal
+from shared.streaming.audit import decode_stream_id
 from shared.streaming.stock_regime import StockRegimeConfig
 
 _NOW = datetime(2026, 6, 5, 0, 30, tzinfo=UTC)
@@ -84,13 +86,22 @@ class _CaptureManager:
 class _FakeRedis:
     def __init__(self):
         self.added = []
+        self.xadd_kwargs = []
+        self.expires = []
+        self.next_id = b"1719876543210-0"
+        self.fail_expire = False
         self.kv = {}
         self.hashes: dict[str, dict[str, str]] = {}
 
-    async def xadd(self, stream, fields, **_kw):
+    async def xadd(self, stream, fields, **kw):
         self.added.append((stream, fields))
+        self.xadd_kwargs.append(kw)
+        return self.next_id
 
-    async def expire(self, *_a, **_k):
+    async def expire(self, *args, **kwargs):
+        if self.fail_expire:
+            raise ConnectionError("expire failed")
+        self.expires.append((args, kwargs))
         return True
 
     async def set(self, key, value, **_kw):
@@ -140,6 +151,66 @@ async def test_evaluate_once_publishes_candidate_for_warm_firing_symbol():
     stream, fields = redis.added[0]
     assert stream == "signal.candidate.stock.shadow"
     assert fields["code"] == "005930" and "signal_id" in fields
+
+
+@pytest.mark.asyncio
+async def test_publish_logs_signal_published_audit_record(caplog):
+    redis = _FakeRedis()
+    d = _daemon(redis=redis)
+    signal = Signal(
+        code="005930",
+        strategy="williams_r",
+        price=71000.0,
+        confidence=0.6,
+        metadata={"signal_direction": "short"},
+    )
+
+    with caplog.at_level(logging.INFO, logger="services.stock_strategy.daemon"):
+        await d._publish(signal)
+
+    assert len(redis.added) == 1
+    stream, fields = redis.added[0]
+    assert redis.xadd_kwargs == [{"maxlen": 10_000, "approximate": True}]
+    assert redis.expires == [(("signal.candidate.stock.shadow", 86400), {})]
+    signal_id = fields["signal_id"]
+    msg_id = decode_stream_id(redis.next_id)
+
+    records = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.INFO
+        and "event=signal_published" in record.getMessage()
+    ]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert f"stream={stream}" in message
+    assert f"msg_id={msg_id}" in message
+    assert f"signal_id={signal_id}" in message
+    assert "code=005930" in message
+    assert "strategy=williams_r" in message
+    assert "direction=short" in message
+
+
+@pytest.mark.asyncio
+async def test_publish_does_not_log_success_when_ttl_refresh_fails(caplog):
+    redis = _FakeRedis()
+    redis.fail_expire = True
+    d = _daemon(redis=redis)
+    signal = Signal(
+        code="005930",
+        strategy="williams_r",
+        price=71000.0,
+        confidence=0.6,
+    )
+
+    with caplog.at_level(logging.INFO, logger="services.stock_strategy.daemon"):
+        with pytest.raises(ConnectionError):
+            await d._publish(signal)
+
+    assert redis.xadd_kwargs == [{"maxlen": 10_000, "approximate": True}]
+    assert not any(
+        "event=signal_published" in record.getMessage() for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio
