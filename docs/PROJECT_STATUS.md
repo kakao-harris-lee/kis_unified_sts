@@ -61,10 +61,13 @@ Verified 2026-06-28 against `config/strategies/{stock,futures}/*.yaml`
 
 ## Recent Decisions
 
-**2026-06-28** - Quant gap expert lanes verified.
-Completed the focused verification bundle for market-structure policy, futures
-product/session contract, Setup C/D evidence, stock venue policy, theme/fusion
-quality, and Workbench evidence UX. Evidence:
+**2026-06-28** - Quant gap tooling and docs QA verified.
+Completed the focused QA bundle for market-structure policy docs, futures
+product/session contract tooling, Setup C/D evidence tooling, stock venue
+policy docs/tests, theme/fusion quality tooling, and Workbench evidence UX.
+This does not promote strategies or resolve Mini vs full KOSPI 200 policy;
+real paper/market evidence and operator approval are still required before
+promotion, live, or cutover gates. Evidence:
 [testing/quant-gap-execution-2026-06-28.md](testing/quant-gap-execution-2026-06-28.md).
 
 **2026-06-28** - Expert execution board opened.
