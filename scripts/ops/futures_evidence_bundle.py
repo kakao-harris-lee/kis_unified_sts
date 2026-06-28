@@ -343,12 +343,12 @@ def _validate_setup_d_observation(
     if not observation_path.exists():
         reason = f"missing {_SETUP_D_OBSERVATION['path']}"
         failures_by_field.setdefault("setup_d_observation", []).append(reason)
-        return [f"setup_d_observation: {reason}"]
+        return [reason]
     reasons = _validate_setup_d_payload(observation_path)
     if not reasons:
         return []
     failures_by_field.setdefault("setup_d_observation", []).extend(reasons)
-    return [f"setup_d_observation: {reason}" for reason in reasons]
+    return reasons
 
 
 def _gate_section(
@@ -380,12 +380,27 @@ def compile_report(
     strict_setup_d: bool = False,
 ) -> dict[str, Any]:
     missing, failures_by_field = _validate_bundle(bundle)
-    if strict_setup_d:
-        missing.extend(_validate_setup_d_observation(failures_by_field))
+    bundle_failures = list(missing)
+    setup_d_failures = _validate_setup_d_observation(failures_by_field)
+    setup_d_status: str | None = None
+    if setup_d_failures:
+        setup_d_status = "fail" if strict_setup_d else "warn"
+        missing.extend(
+            f"setup_d_observation: {reason}" for reason in setup_d_failures
+        )
+    status = "pass"
+    if bundle_failures or (setup_d_failures and strict_setup_d):
+        status = "fail"
+    elif setup_d_failures:
+        status = "warn"
+    setup_d_observation = dict(_SETUP_D_OBSERVATION)
+    if setup_d_status is not None:
+        setup_d_observation["status"] = setup_d_status
+        setup_d_observation["missing_evidence"] = setup_d_failures
     report: dict[str, Any] = {
-        "status": "fail" if missing else "pass",
+        "status": status,
         "missing_evidence": missing,
-        "setup_d_observation": dict(_SETUP_D_OBSERVATION),
+        "setup_d_observation": setup_d_observation,
     }
     if source is not None:
         report["source"] = source
