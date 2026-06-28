@@ -6749,7 +6749,7 @@ class TradingOrchestrator:
         """
         if self.config.asset_class != "futures":
             return False
-        contract = self._futures_product_contract_validation
+        contract = getattr(self, "_futures_product_contract_validation", None)
         if contract is None:
             contract = validate_futures_runtime_product_contract()
             self._futures_product_contract_validation = contract

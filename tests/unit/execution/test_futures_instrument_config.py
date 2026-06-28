@@ -134,6 +134,27 @@ def test_resolved_product_rejects_explicit_full_size_symbol_with_mini_contract(
     assert "requires product=kospi200" in result.message
 
 
+def test_resolved_product_rejects_numeric_full_size_symbol_with_mini_contract(
+    monkeypatch,
+):
+    monkeypatch.setenv("FUTURES_TRADING_PRODUCT", "mini")
+    monkeypatch.setenv("FUTURES_SLIPPAGE_TICK_SIZE", "0.02")
+    monkeypatch.setenv("FUTURES_STRATEGY_SYMBOL", "101W09")
+
+    from shared.execution.futures_instrument import (
+        validate_futures_runtime_product_contract,
+    )
+
+    result = validate_futures_runtime_product_contract()
+
+    assert result.ok is False
+    assert result.product == "mini"
+    assert result.expected_tick_size == 0.02
+    assert result.actual_tick_size == 0.02
+    assert "FUTURES_STRATEGY_SYMBOL=101W09" in result.message
+    assert "requires product=kospi200" in result.message
+
+
 def test_resolved_product_rejects_explicit_mini_symbol_with_full_size_contract(
     monkeypatch,
 ):
