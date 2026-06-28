@@ -1,0 +1,391 @@
+# Signals Decision Trace - Design Spec
+
+**Status:** Draft for review; layout A approved by operator
+**Date:** 2026-06-27
+
+## Goal
+
+Make the Quant Ops Workbench more transparent by extending `/signals` into the
+first place an operator can answer:
+
+1. What market context and LLM call existed when this signal was evaluated?
+2. Which strategy inputs, event evidence, and risk/orderability checks mattered?
+3. Did the signal become an order, fill, position, or closed trade?
+4. Was the upstream LLM call useful relative to the scorecard evidence?
+5. Which parts of the evidence chain are missing, stale, or not available?
+
+This is a read-only UX and API expansion. It does not change trading logic, does
+not add live order controls, and does not feed scorecard results back into
+execution.
+
+## Product Direction
+
+The chosen layout is **A. Enriched Signal Detail Drawer**:
+
+- Keep `/signals` as the operator's signal inspection surface.
+- Selecting a signal opens a dense detail panel next to the signal list on
+  desktop.
+- On narrow screens, the same panel appears above the table/cards, matching the
+  current page's responsive behavior.
+- The panel exposes a structured decision trace: LLM context, strategy inputs,
+  source freshness, risk/orderability, lifecycle, scorecard, and evidence gaps.
+
+This avoids adding a new top-level page while solving the immediate trust gap:
+the operator can inspect a signal without cross-checking `/event-context`,
+`/trades`, Telegram scorecards, and raw logs.
+
+## Design Principles
+
+1. **Decision transparency first.** The UI should show the signal's evidence
+   chain, not only the final BUY/SELL/HOLD row.
+2. **Read-only and paper-safe.** No new live order control, no bypass of
+   `config/futures_live.yaml::enabled`, no bypass of `futures:live:suspended`.
+3. **No invented evidence.** Missing ledger, Redis, LLM, scorecard, or lifecycle
+   data renders as `unknown`, `missing`, `stale`, or `not_available`.
+4. **Use existing surfaces.** Reuse `/signals`, existing trace fields,
+   `/api/trades/lifecycle`, Event Context status-badge language, and
+   `LifecycleTimeline` patterns.
+5. **Small first slice.** Start with a backend DTO and one panel. Defer a full
+   trace workspace or chart-heavy scorecard page.
+6. **KST/operator semantics.** Display operator-facing times in KST. Keep stored
+   timestamps timezone-aware.
+7. **No behavior change.** The work only reads existing runtime evidence and
+   computes presentation summaries.
+
+## Source Context
+
+Existing local surfaces:
+
+- `/signals` already shows a signal table and a `SignalTraceCard` with status,
+  confidence, strength, reason, reject fields, orderability, and lineage IDs.
+- `/api/signals` already returns enriched optional fields for trace status,
+  reject reason, orderability, and order/fill/position/trade IDs.
+- `/api/trades/lifecycle` already builds a signal -> order -> fill -> position
+  -> closed trade timeline with partial legacy gaps.
+- `/event-context` already shows Setup C source freshness, sparsity, candidate,
+  blocked, and missing-evidence state.
+- RuntimeLedger already has `signal_decisions`, `market_context_history`,
+  `llm_predictions`, and `prediction_scores` tables/accessors.
+
+External product references that shaped the design:
+
+- LLM observability tools model operations as traces/runs with metadata and
+  aggregate metrics:
+  <https://docs.langchain.com/langsmith/observability-concepts>
+- OpenTelemetry traces model units of work as spans with context, timestamps,
+  attributes, events, links, and status:
+  <https://opentelemetry.io/docs/concepts/signals/traces/>
+- QuantConnect live results put equity, holdings, orders, insights, logs, and
+  code provenance in one live result workspace:
+  <https://www.quantconnect.com/docs/v2/cloud-platform/live-trading/results>
+- TradingView Strategy Tester ties overview, performance, trade list, and
+  strategy properties together:
+  <https://www.tradingview.com/pine-script-docs/concepts/strategies/>
+- IBKR TWS activity and audit-trail surfaces reinforce that professional trading
+  tools should expose execution history and operator-relevant provenance:
+  <https://www.interactivebrokers.com/campus/trading-lessons/activity-and-portfolio-window/>
+
+## Information Architecture
+
+`/signals` remains the page. The selected signal detail panel is reorganized
+into these sections:
+
+1. **Trace Header**
+   - Signal ID, asset class, symbol, strategy, side, timestamp.
+   - Status badge: generated, blocked, orderable, submitted, filled, rejected,
+     expired, closed, unknown.
+   - Lineage summary: order ID, fill ID, position ID, trade ID.
+   - Warnings count and evidence freshness summary.
+
+2. **Decision Summary**
+   - One deterministic, non-LLM sentence built from fields:
+     - Example: `Setup A generated BUY 101S6000 from gap/ATR inputs; paper orderability passed; fill evidence is not available.`
+   - This sentence must be derived from structured data, not generated by an LLM.
+
+3. **LLM Context**
+   - Latest relevant `MarketContext` when available:
+     - overall signal, confidence, risk mode, regime, risk score, captured time,
+       source.
+   - If no market context can be linked to the signal, show:
+     - `not_available` plus the lookup reason.
+   - The section is read-only and explicitly says when the signal was strategy-
+     native and only gated by LLM context rather than directly generated by it.
+
+4. **Strategy Inputs**
+   - Strategy/setup type, configured thresholds, price, confidence/strength,
+     reason.
+   - Indicator snapshot when available from `signal.trace`,
+     `signal_decisions.payload`, or runtime signal payload.
+   - Event evidence for Setup C:
+     - event ID/type, impact tier, event score, freshness, missing source names.
+
+5. **Risk And Orderability**
+   - Reject stage and reason.
+   - Orderability state and details.
+   - Risk gate result if present in trace payload.
+   - Show `unknown` when risk data is absent instead of implying a pass.
+
+6. **Lifecycle**
+   - Reuse the lifecycle timeline semantics from `/trades`.
+   - For v1, the panel can render a compact embedded lifecycle summary and a
+     "View full lifecycle" affordance that fetches `/api/trades/lifecycle`.
+   - Partial legacy rows must show gaps, not hide missing steps.
+
+7. **Scorecard Evidence**
+   - Read from `llm_predictions` and `prediction_scores`.
+   - Show the nearest relevant scorecard facet when it can be matched safely:
+     - `direction` for futures Setup A/C market context.
+     - `themes`, `movers`, or `volume_surge` for stock signals when the payload
+       carries matching symbol/theme evidence.
+   - Minimum v1 display:
+     - facet, prediction date, captured time, confidence, latest score state,
+       edge, economic proxy, correct/unscorable, scored time.
+   - If no score exists yet, show prediction-only or `not_scored_yet`.
+
+8. **Evidence Gaps**
+   - Consolidated list of missing/stale inputs:
+     - market context not linked
+     - scorecard not captured
+     - scorecard not scored
+     - lifecycle missing order/fill
+     - event context stale or sparse
+     - RuntimeLedger unavailable
+
+## Backend Contract
+
+Add a signal-detail endpoint instead of overloading the table response:
+
+```text
+GET /api/signals/{signal_id}/trace?asset_class={stock|futures|all}
+```
+
+The endpoint should return `DecisionTraceResponse`.
+
+```yaml
+signal:
+  id: string
+  asset_class: stock | futures | unknown
+  symbol: string
+  strategy: string
+  side: string
+  signal_type: string | null
+  status: string | null
+  reason: string | null
+  confidence: number | null
+  strength: number | null
+  price: number | null
+  timestamp: ISO-8601 | null
+summary:
+  state: generated | blocked | orderable | submitted | filled | rejected | closed | unknown
+  text: string
+  warnings: list[string]
+llm_context:
+  status: ok | stale | missing | not_available | unknown
+  overall_signal: string | null
+  confidence: number | null
+  risk_mode: string | null
+  regime: string | null
+  risk_score: number | null
+  captured_at: ISO-8601 | null
+  source: string | null
+strategy_inputs:
+  setup_type: string | null
+  indicators: map
+  thresholds: map
+  event_evidence: map
+  raw_reason: string | null
+risk_orderability:
+  reject_stage: string | null
+  reject_reason: string | null
+  orderability_state: string | null
+  orderability_details: map
+  risk_state: string | null
+  risk_details: map
+lineage:
+  signal_id: string | null
+  order_id: string | null
+  fill_id: string | null
+  position_id: string | null
+  trade_id: string | null
+lifecycle:
+  status: ok | partial | missing | not_available
+  steps: list[LifecycleStep]
+scorecard:
+  status: ok | prediction_only | not_scored_yet | missing | unknown
+  facet: string | null
+  date_kst: string | null
+  captured_at: ISO-8601 | null
+  confidence: number | null
+  correct: boolean | null
+  value: number | null
+  economic_proxy: number | null
+  baseline_value: number | null
+  edge: number | null
+  scored_at: ISO-8601 | null
+  detail: map
+evidence_gaps:
+  - code: string
+    severity: info | warning | error
+    message: string
+```
+
+### Backend Lookup Rules
+
+1. Load the signal from the current Redis-backed signal list and, when possible,
+   from `RuntimeLedger.signal_decisions`.
+2. Prefer exact `signal_id`. Fall back to symbol/strategy/time only when the
+   confidence is high enough to label the match as inferred.
+3. Build lifecycle data by reusing the existing lifecycle helpers behind
+   `/api/trades/lifecycle`.
+4. Load LLM context from the signal trace payload first. If absent, look for the
+   nearest `market_context_history` row for the same asset class whose
+   `created_at <= signal.timestamp`.
+5. Load scorecard evidence by trading date and candidate facet:
+   - futures Setup A/C: `direction`
+   - stock theme/mover/volume signals: matching facet only when payload fields
+     support it
+6. Never merge scorecard evidence across future dates. No look-ahead.
+7. Return explicit `evidence_gaps` when a source is absent.
+
+## Frontend Design
+
+Update `strategy-builder-ui/src/app/signals/page.tsx` by replacing the current
+`SignalTraceCard` with a `DecisionTracePanel` component. Keep the existing table
+and filters.
+
+Recommended component split:
+
+```text
+strategy-builder-ui/src/app/signals/
+  page.tsx
+  components/
+    DecisionTracePanel.tsx
+    DecisionTraceSection.tsx
+    DecisionTraceSummary.tsx
+    DecisionTraceLifecycle.tsx
+    DecisionTraceScorecard.tsx
+  hooks.ts
+```
+
+Recommended client API module:
+
+```text
+strategy-builder-ui/src/lib/dashboard/decisionTrace.ts
+```
+
+### Desktop Layout
+
+- Use a two-column grid when a signal is selected:
+  - left: existing filters + table
+  - right: sticky `DecisionTracePanel`, max width around 420-520px
+- Keep dense cards and tables. Avoid large hero-like UI.
+- Use existing slate/white/card styling, small status badges, and lucide icons.
+
+### Mobile Layout
+
+- Keep existing mobile signal cards.
+- When a card is selected, render the `DecisionTracePanel` above the list or in
+  the existing detail location. Do not rely on hover-only interactions.
+- All identifiers must wrap; no horizontal overflow.
+
+### Interaction
+
+- Selecting a row fetches `/api/signals/{id}/trace`.
+- The table response still provides enough summary fields for fast rendering.
+- A trace refresh button refetches the detail endpoint.
+- Lifecycle expansion can lazy-load full steps if the first trace payload returns
+  compact data.
+- Keyboard behavior:
+  - table rows remain Enter/Space selectable
+  - panel close button has an accessible label
+  - panel sections use semantic headings
+
+## Error Handling
+
+- API unavailable: keep the selected signal's basic table fields visible and
+  show an inline retry.
+- RuntimeLedger unavailable: show `runtime_ledger_not_available` gap and keep
+  Redis-derived signal fields.
+- LLM context absent: show `not_available`, not an empty section.
+- Scorecard prediction exists but no score: show `not_scored_yet`.
+- Score row `correct = null`: show `unscorable`, not wrong.
+- Lifecycle missing steps: show partial timeline gaps using the existing
+  lifecycle vocabulary.
+
+## Testing
+
+Backend:
+
+- Unit tests for `GET /api/signals/{id}/trace` with:
+  - full evidence chain
+  - no RuntimeLedger
+  - no LLM context
+  - scorecard prediction only
+  - unscorable score
+  - partial lifecycle
+- Regression test that scorecard lookup never uses a date after
+  `signal.timestamp` in KST.
+
+Frontend:
+
+- Type and normalizer tests for `DecisionTraceResponse`.
+- Component tests for:
+  - full trace panel
+  - missing LLM context
+  - scorecard unscorable state
+  - lifecycle partial warning
+  - keyboard close/select behavior
+- Update Quant Ops Workbench smoke coverage for `/signals`.
+
+Verification:
+
+- `pytest tests/unit/dashboard -q`
+- `npm --prefix strategy-builder-ui test -- src/app/quant-ops-workbench.smoke.test.tsx`
+- `npm --prefix strategy-builder-ui test -- <new decision trace tests>`
+- `npm --prefix strategy-builder-ui run lint`
+- `npm --prefix strategy-builder-ui run build`
+- Browser or Playwright fallback QA for `/signals` desktop and mobile when the
+  visual surface changes.
+
+## Incremental Build Order
+
+1. Backend DTO and endpoint using existing signal fields only.
+2. Add RuntimeLedger signal-decision and lifecycle enrichment.
+3. Add LLM context lookup from trace payload and `market_context_history`.
+4. Add scorecard prediction/score lookup with no-look-ahead guard.
+5. Build `DecisionTracePanel` and replace the current `SignalTraceCard`.
+6. Add focused backend/frontend tests.
+7. Refresh `/signals` desktop/mobile QA evidence.
+
+## Scope
+
+### In Scope
+
+- `/signals` selected-row decision trace panel.
+- Read-only backend trace endpoint.
+- Optional enrichment from existing Redis/RuntimeLedger/scorecard data.
+- Explicit evidence gaps.
+- Responsive desktop/mobile rendering.
+
+### Out Of Scope
+
+- New top-level `/decision-trace` or `/llm` page.
+- Live order controls.
+- Automated trading reflection from LLM scorecard values.
+- New scorecard capture/scoring behavior.
+- Broad redesign of navigation, Cockpit, `/execute`, or `/trades`.
+- Any change to stock swing exit behavior or futures long/short symmetry.
+
+## Acceptance Criteria
+
+1. A futures Setup A/C signal can be selected on `/signals` and inspected in one
+   panel for LLM context, strategy inputs, risk/orderability, lifecycle, and
+   scorecard state.
+2. A stock signal with no linked scorecard still renders a useful trace with an
+   explicit scorecard gap.
+3. Missing or stale evidence is visible and does not render as healthy.
+4. The panel is keyboard accessible and usable on desktop and mobile.
+5. No live order control is introduced.
+6. Existing `/signals` filters and table behavior remain intact.
+7. Tests cover full, partial, and missing evidence states.
+8. Visual QA evidence is refreshed when the implementation lands.

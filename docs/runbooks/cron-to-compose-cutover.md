@@ -16,6 +16,7 @@ Compose stack instead.
 | Host crontab (before) | Compose (after) |
 |---|---|
 | `screener.sh start/stop` 08:55/16:00 | `screener` service (profile `producers`), market-hours self-gate |
+| theme-leader derivation | `theme-discovery` service (profile `producers`), derives `system:theme_targets:latest` |
 | `fusion_ranker.sh start/stop` 08:55/16:00 | `fusion-ranker` service (profile `producers`), self-gate |
 | ~20 one-shot `*.sh`/`python` jobs | `scheduler` service (profile `scheduler`) running `deploy/scheduler.crontab` via supercronic |
 | `kis-news-collector` / `kis-news-scorer` host daemons | `news-collector` / `news-scorer` services (profile `news`) |
@@ -58,7 +59,7 @@ The only active lines left should be the 5 env-var declarations + the two
 
 ```bash
 docker compose --env-file .env.paper --profile producers --profile scheduler --profile news up -d --no-deps \
-  screener fusion-ranker scheduler news-collector news-scorer
+  screener theme-discovery fusion-ranker scheduler news-collector news-scorer
 ```
 
 Exactly **one** scheduler must run. A leftover `docker compose run` one-off
@@ -74,11 +75,11 @@ docker rm -f <name>-scheduler-run-<hash>   # only if a `-run-` duplicate exists
 The host `screener.sh stop` / `fusion_ranker.sh stop` use a PID file that can go
 stale (report "No process found" while a process keeps running). The *Compose*
 producers and news daemons run inside containers (parent = `containerd-shim`); do **not** kill
-those. Only kill genuine **host** `python -m services.{screener,fusion_ranker}`
+those. Only kill genuine **host** `python -m services.{screener,theme_discovery,fusion_ranker}`
 or `python -m services.{news_collector,news_scorer}` processes whose parent is **not** containerd:
 
 ```bash
-for p in $(pgrep -f 'services\.(screener|fusion_ranker|news_collector|news_scorer)'); do
+for p in $(pgrep -f 'services\.(screener|theme_discovery|fusion_ranker|news_collector|news_scorer)'); do
   ppid=$(ps -o ppid= -p "$p" | tr -d ' ')
   ps -o cmd= -p "$ppid" | grep -q containerd && continue   # container → leave it
   echo "host orphan $p"; kill "$p"
@@ -95,6 +96,7 @@ done
 # off-hours: the session gate idles — producers log no "Published" lines, and
 # system:universe:latest keeps its last in-session timestamp (does NOT advance).
 docker compose --env-file .env.paper logs --tail 20 screener fusion-ranker
+docker compose --env-file .env.paper logs --tail 20 theme-discovery
 
 # scheduler read its crontab and fires jobs on schedule:
 docker compose --env-file .env.paper logs --tail 20 scheduler | grep -iE "crontab|job"
@@ -103,12 +105,13 @@ docker compose --env-file .env.paper logs --tail 20 news-scorer
 
 # next trading day (≥09:00 KST) watchlist continuity:
 redis-cli -p 6379 -n 1 get system:universe:latest | head -c 200
+redis-cli -p 6379 -n 1 get system:theme_targets:latest | head -c 200
 redis-cli -p 6379 -n 1 get system:trade_targets:latest | head -c 200
 redis-cli -p 6379 -n 1 xinfo stream stream:news.raw
 redis-cli -p 6379 -n 1 xinfo groups stream:news.raw
 ```
 
-Acceptance: host crontab has zero KIS entries; `universe`/`trade_targets`/
+Acceptance: host crontab has zero KIS entries; `universe`/`theme_targets`/`trade_targets`/
 `daily_watchlist`, parquet backfills, briefings, and `stream:news.*` are all
 produced/consumed by Compose services on schedule.
 
@@ -116,7 +119,7 @@ produced/consumed by Compose services on schedule.
 
 ```bash
 crontab ~/crontab.backup.<ts>                               # host crons resume next tick
-docker compose --env-file .env.paper stop screener fusion-ranker scheduler
+docker compose --env-file .env.paper stop screener theme-discovery fusion-ranker scheduler
 docker compose --env-file .env.paper stop news-collector news-scorer
 ```
 

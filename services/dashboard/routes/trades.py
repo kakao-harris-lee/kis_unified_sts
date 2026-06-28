@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from services.dashboard.routes.trading import _normalize_asset_class, _target_assets
+from services.dashboard.domain.assets import normalize_asset_class, target_assets
 from shared.exceptions import InfrastructureError
 from shared.storage.config import StorageConfig
 from shared.storage.runtime_ledger import RuntimeLedgerError, SQLiteRuntimeLedger
@@ -202,7 +202,7 @@ def _load_runtime_ledger_trades(
 
     try:
         rows: list[dict] = []
-        for target in _target_assets(asset_class):
+        for target in target_assets(asset_class):
             filters: dict = {"asset_class": target, "limit": limit}
             if strategy:
                 filters["strategy"] = strategy
@@ -248,7 +248,7 @@ async def get_trades(
     asset_class: str = Query(default="futures"),
 ):
     """Get list of trades with optional filters."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_runtime_ledger_trades(
         asset,
         strategy=strategy,
@@ -263,7 +263,7 @@ async def get_trades(
     else:
         raw_by_asset = [
             (target, trade)
-            for target in _target_assets(asset)
+            for target in target_assets(asset)
             for trade in _load_trades(target)
         ]
     trades = [_to_trade_response(t, target) for target, t in raw_by_asset]
@@ -286,7 +286,7 @@ async def get_trades(
 @router.get("/statistics", response_model=TradeStatistics)
 async def get_trade_statistics():
     """Get overall trade statistics."""
-    asset = _normalize_asset_class(os.environ.get("TRADING_ASSET_CLASS", "stock"))
+    asset = normalize_asset_class(os.environ.get("TRADING_ASSET_CLASS", "stock"))
     ledger_rows, ledger_available = _load_runtime_ledger_trades(asset)
     raw = ledger_rows if ledger_available else _load_trades(asset)
     trades = [
@@ -334,13 +334,15 @@ async def get_trades_by_strategy(
     asset_class: str | None = Query(default=None, description="stock, futures, or all"),
 ):
     """Get trade performance grouped by strategy."""
-    asset = _normalize_asset_class(asset_class or os.environ.get("TRADING_ASSET_CLASS", "stock"))
+    asset = normalize_asset_class(
+        asset_class or os.environ.get("TRADING_ASSET_CLASS", "stock")
+    )
     ledger_rows, ledger_available = _load_runtime_ledger_trades(asset)
     if ledger_available:
         raw = ledger_rows
     else:
         raw = []
-        for target in _target_assets(asset):
+        for target in target_assets(asset):
             raw.extend(_load_trades(target))
     trades = [
         _to_trade_response(
@@ -459,7 +461,7 @@ def _load_runtime_ledger_fills(
         return [], False
     try:
         rows: list[dict] = []
-        for target in _target_assets(asset_class):
+        for target in target_assets(asset_class):
             rows.extend(ledger.query_fills({"asset_class": target, "limit": limit}))
         fills = [_ledger_fill_to_dict(row) for row in rows]
         fills.sort(key=lambda f: _parse_tz_aware(f.get("filled_at")), reverse=True)
@@ -590,14 +592,15 @@ def _derive_lifecycle_lookup(
     order_id: str | None,
     fill_id: str | None,
     trade_id: str | None,
-    symbol: str | None,
+    position_id: str | None = None,
+    symbol: str | None = None,
 ) -> dict[str, str | None]:
     lookup: dict[str, str | None] = {
         "signal_id": _clean_text(signal_id),
         "order_id": _clean_text(order_id),
         "fill_id": _clean_text(fill_id),
         "trade_id": _clean_text(trade_id),
-        "position_id": None,
+        "position_id": _clean_text(position_id),
         "symbol": _clean_text(symbol),
     }
     for trade in rows["trades"]:
@@ -695,7 +698,7 @@ def _query_lifecycle_table(
 
     sql = f"SELECT * FROM {table} WHERE 1=1"
     params: list[Any] = []
-    targets = _target_assets(asset_class)
+    targets = target_assets(asset_class)
     if targets:
         placeholders = ", ".join("?" for _ in targets)
         sql += f" AND asset_class IN ({placeholders})"
@@ -734,6 +737,7 @@ def _query_lifecycle_batch(
     asset_class: str,
     lookup: dict[str, str | None],
     broad: bool = False,
+    allow_symbol_lookup: bool = True,
     limit: int,
 ) -> bool:
     table_map = (
@@ -812,7 +816,7 @@ def _query_lifecycle_batch(
                 ),
             )
 
-        if lookup.get("symbol"):
+        if allow_symbol_lookup and lookup.get("symbol"):
             added |= _append_lifecycle_rows(
                 rows,
                 kind,
@@ -835,9 +839,16 @@ def _load_lifecycle_ledger_rows(
     order_id: str | None = None,
     fill_id: str | None = None,
     trade_id: str | None = None,
+    position_id: str | None = None,
+    allow_symbol_lookup: bool = True,
     limit: int = 500,
+    ledger: SQLiteRuntimeLedger | None = None,
 ) -> tuple[dict[str, list[dict]], bool]:
-    ledger = _get_runtime_ledger()
+    # When a caller passes an already-open ledger we reuse it (and leave closing
+    # to the owner) instead of opening — and migrating — a second connection.
+    owns_ledger = ledger is None
+    if ledger is None:
+        ledger = _get_runtime_ledger()
     if ledger is None:
         return _empty_lifecycle_rows(), False
 
@@ -849,6 +860,7 @@ def _load_lifecycle_ledger_rows(
             order_id=order_id,
             fill_id=fill_id,
             trade_id=trade_id,
+            position_id=position_id,
             symbol=symbol,
         )
         if not _has_lifecycle_lookup(lookup):
@@ -868,6 +880,7 @@ def _load_lifecycle_ledger_rows(
                     order_id=order_id,
                     fill_id=fill_id,
                     trade_id=trade_id,
+                    position_id=position_id,
                     symbol=symbol,
                 )
                 if not _query_lifecycle_batch(
@@ -875,6 +888,7 @@ def _load_lifecycle_ledger_rows(
                     rows,
                     asset_class=asset_class,
                     lookup=lookup,
+                    allow_symbol_lookup=allow_symbol_lookup,
                     limit=limit,
                 ):
                     break
@@ -884,7 +898,8 @@ def _load_lifecycle_ledger_rows(
     except Exception:
         return rows, True
     finally:
-        ledger.close()
+        if owns_ledger:
+            ledger.close()
 
 
 def _load_lifecycle_redis_rows(
@@ -893,7 +908,7 @@ def _load_lifecycle_redis_rows(
     symbol: str | None = None,
 ) -> dict[str, list[dict]]:
     rows = _empty_lifecycle_rows()
-    for target in _target_assets(asset_class):
+    for target in target_assets(asset_class):
         try:
             reader = _get_reader(target)
             trades = reader.get_trades(start=0, count=500)
@@ -1169,10 +1184,12 @@ def _build_lifecycle_response(
     order_id: str | None = None,
     fill_id: str | None = None,
     trade_id: str | None = None,
+    position_id: str | None = None,
     symbol: str | None = None,
     ledger_rows: dict[str, list[dict]] | None = None,
     redis_rows: dict[str, list[dict]] | None = None,
     ledger_available: bool = True,
+    allow_symbol_fallback: bool = True,
 ) -> TradeLifecycleResponse:
     ledger_rows = ledger_rows or _empty_lifecycle_rows()
     redis_rows = redis_rows or _empty_lifecycle_rows()
@@ -1183,11 +1200,13 @@ def _build_lifecycle_response(
             "order_id": order_id,
             "fill_id": fill_id,
             "trade_id": trade_id,
+            "position_id": position_id,
             "symbol": symbol,
         }.items()
         if _clean_text(value)
     }
     has_request_filters = bool(filters)
+    symbol_selector = symbol if allow_symbol_fallback else None
 
     all_trades = ledger_rows["trades"] + redis_rows["trades"]
     all_fills = ledger_rows["fills"] + redis_rows["fills"]
@@ -1202,7 +1221,7 @@ def _build_lifecycle_response(
             (fill_id, ("fill_id", "entry_fill_id", "exit_fill_id")),
             (order_id, ("order_id", "entry_order_id", "exit_order_id")),
             (signal_id, ("signal_id",)),
-            (symbol, ("symbol", "code")),
+            (symbol_selector, ("symbol", "code")),
         ],
         allow_fallback=not has_request_filters,
     )
@@ -1212,7 +1231,7 @@ def _build_lifecycle_response(
         "order_id": _clean_text(order_id),
         "fill_id": _clean_text(fill_id),
         "trade_id": _clean_text(trade_id),
-        "position_id": None,
+        "position_id": _clean_text(position_id),
     }
     _maybe_set_lineage(lineage, "trade_id", _row_value(trade, "id", "trade_id"))
     _maybe_set_lineage(lineage, "position_id", _row_value(trade, "position_id"))
@@ -1230,7 +1249,15 @@ def _build_lifecycle_response(
             (lineage["fill_id"], ("id", "fill_id", "broker_fill_id")),
             (lineage["order_id"], ("order_id",)),
             (lineage["signal_id"], ("signal_id",)),
-            (symbol or _row_text(trade, "symbol", "code"), ("symbol", "code")),
+            (
+                symbol_selector
+                or (
+                    _row_text(trade, "symbol", "code")
+                    if allow_symbol_fallback
+                    else None
+                ),
+                ("symbol", "code"),
+            ),
         ],
         allow_fallback=not any(
             (lineage["fill_id"], lineage["order_id"], lineage["signal_id"])
@@ -1249,7 +1276,13 @@ def _build_lifecycle_response(
                 ("id", "order_id", "client_order_id", "broker_order_id"),
             ),
             (lineage["signal_id"], ("signal_id",)),
-            (symbol or _row_text(fill, "symbol", "code"), ("symbol", "code")),
+            (
+                symbol_selector
+                or (
+                    _row_text(fill, "symbol", "code") if allow_symbol_fallback else None
+                ),
+                ("symbol", "code"),
+            ),
         ],
         allow_fallback=not any((lineage["order_id"], lineage["signal_id"]))
         and not has_request_filters,
@@ -1266,7 +1299,15 @@ def _build_lifecycle_response(
         [
             (lineage["signal_id"], ("signal_id", "id")),
             (lineage["order_id"], ("order_id", "client_order_id", "broker_order_id")),
-            (symbol or _row_text(order, "symbol", "code"), ("symbol", "code")),
+            (
+                symbol_selector
+                or (
+                    _row_text(order, "symbol", "code")
+                    if allow_symbol_fallback
+                    else None
+                ),
+                ("symbol", "code"),
+            ),
         ],
         allow_fallback=not any((lineage["signal_id"], lineage["order_id"]))
         and not has_request_filters,
@@ -1299,9 +1340,13 @@ def _build_lifecycle_response(
             (lineage["position_id"], ("position_id", "id")),
             (lineage["trade_id"], ("trade_id",)),
             (
-                symbol
-                or _row_text(trade, "symbol", "code")
-                or _row_text(fill, "symbol", "code"),
+                symbol_selector
+                or (
+                    _row_text(trade, "symbol", "code")
+                    or _row_text(fill, "symbol", "code")
+                    if allow_symbol_fallback
+                    else None
+                ),
                 ("symbol", "code"),
             ),
         ],
@@ -1351,7 +1396,7 @@ async def get_trade_lifecycle(
     asset_class: str = Query(default="futures"),
 ) -> TradeLifecycleResponse:
     """Return a read-only signal/order/fill/trade lifecycle timeline."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_lifecycle_ledger_rows(
         asset,
         symbol=symbol,
@@ -1380,7 +1425,7 @@ async def get_db_closed_statistics(
     strategy: str | None = Query(None),
 ):
     """Aggregate statistics from RuntimeLedger."""
-    asset_class = _normalize_asset_class(asset_class)
+    asset_class = normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_runtime_ledger_trades(
         asset_class,
         strategy=strategy,
@@ -1397,7 +1442,7 @@ async def get_recent_fills(
     limit: int = Query(default=10, ge=1, le=100),
 ) -> dict:
     """Recent order fills from RuntimeLedger."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     ledger_fills, ledger_available = _load_runtime_ledger_fills(asset, limit=limit)
     if ledger_available:
         return {"fills": ledger_fills}
@@ -1412,7 +1457,7 @@ async def get_db_closed_trades(
     limit: int = Query(100, ge=1, le=500),
 ):
     """Recent closed trades from RuntimeLedger."""
-    asset_class = _normalize_asset_class(asset_class)
+    asset_class = normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_runtime_ledger_trades(
         asset_class,
         strategy=strategy,

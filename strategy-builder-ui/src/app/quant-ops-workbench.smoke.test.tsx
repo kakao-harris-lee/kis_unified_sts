@@ -8,12 +8,15 @@ import type { AxiosResponse } from "axios";
 import CoveragePage from "./coverage/page";
 import EventContextPage from "./event-context/page";
 import RiskPage from "./risk/page";
+import SignalsPage from "./signals/page";
 import TradesPage from "./trades/page";
 import { StrategyPromotionBoard } from "@/components/builder/StrategyPromotionBoard";
 import { INITIAL_STATE } from "@/hooks/useStrategyBuilder";
 import type { StoredStrategy } from "@/types/builder";
 import {
   coverageApi,
+  decisionTraceApi,
+  signalsApi,
   tradesApi,
   tradingApi,
 } from "@/lib/dashboard/api";
@@ -59,6 +62,8 @@ vi.mock("@/lib/dashboard/api", async () => {
   return {
     ...actual,
     coverageApi: { getCoverage: vi.fn() },
+    decisionTraceApi: { getDecisionTrace: vi.fn() },
+    signalsApi: { getSignals: vi.fn(), getHistory: vi.fn() },
     tradesApi: {
       getTrades: vi.fn(),
       getByStrategy: vi.fn(),
@@ -249,6 +254,120 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
     expect(
       await screen.findByRole("status", { name: "Loading coverage sources" }),
     ).toBeInTheDocument();
+  });
+
+  it("renders /signals decision trace after selecting a signal", async () => {
+    vi.mocked(signalsApi.getSignals).mockResolvedValue(
+      axiosResponse({
+        total: 1,
+        page: 1,
+        limit: 50,
+        signals: [
+          {
+            id: "sig-1",
+            asset_class: "stock",
+            strategy: "setup_a_gap_reversion",
+            symbol: "101S6000",
+            side: "BUY",
+            signal_type: "entry",
+            confidence: 0.72,
+            strength: 0.72,
+            price: 390.25,
+            timestamp: "2026-06-27T00:20:00+00:00",
+            executed: false,
+          },
+        ],
+      }),
+    );
+    vi.mocked(decisionTraceApi.getDecisionTrace).mockResolvedValue(
+      axiosResponse({
+        signal: {
+          id: "sig-1",
+          asset_class: "stock",
+          symbol: "101S6000",
+          strategy: "setup_a_gap_reversion",
+          side: "BUY",
+          signal_type: "entry",
+          status: "generated",
+          reason: "gap_reversion_candidate",
+          confidence: 0.72,
+          strength: 0.72,
+          price: 390.25,
+          timestamp: "2026-06-27T00:20:00+00:00",
+        },
+        summary: {
+          state: "orderable",
+          text: "setup_a_gap_reversion generated BUY 101S6000.",
+          warnings: [],
+        },
+        llm_context: {
+          status: "ok",
+          overall_signal: "BULLISH",
+          confidence: 0.71,
+          risk_mode: "risk_on",
+          regime: "trend",
+          risk_score: 0.22,
+          captured_at: "2026-06-27T00:10:00+00:00",
+          source: "llm_premarket_briefing",
+        },
+        strategy_inputs: {
+          setup_type: "setup_a",
+          indicators: { gap_pct: -0.42 },
+          thresholds: { min_gap_pct: 0.3 },
+          event_evidence: {},
+          raw_reason: "gap_reversion_candidate",
+        },
+        risk_orderability: {
+          reject_stage: null,
+          reject_reason: null,
+          orderability_state: "paper_orderable",
+          orderability_details: {},
+          risk_state: null,
+          risk_details: {},
+        },
+        lineage: {
+          signal_id: "sig-1",
+          order_id: null,
+          fill_id: null,
+          position_id: null,
+          trade_id: null,
+        },
+        lifecycle: {
+          status: "missing",
+          steps: [],
+          warnings: ["no_lifecycle_evidence"],
+        },
+        scorecard: {
+          status: "missing",
+          facet: null,
+          date_kst: null,
+          captured_at: null,
+          confidence: null,
+          correct: null,
+          value: null,
+          economic_proxy: null,
+          baseline_value: null,
+          edge: null,
+          scored_at: null,
+          detail: {},
+        },
+        evidence_gaps: [],
+      }),
+    );
+
+    renderWithQueryClient(<SignalsPage />);
+
+    expect(await screen.findByRole("heading", { name: "Trading Signals" })).toBeInTheDocument();
+    const traceButtons = await screen.findAllByRole("button", {
+      name: "View trace for 101S6000",
+    });
+    await userEvent.click(traceButtons[0]);
+
+    expect(await screen.findByRole("region", { name: "Decision Trace" })).toBeInTheDocument();
+    expect(screen.getByText("BULLISH")).toBeInTheDocument();
+    expect(decisionTraceApi.getDecisionTrace).toHaveBeenCalledWith("sig-1", {
+      asset_class: "stock",
+    });
   });
 
   it("renders /trades live lifecycle drill-in from mocked responses", async () => {

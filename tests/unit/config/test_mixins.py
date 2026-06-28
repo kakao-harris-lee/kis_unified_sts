@@ -1,4 +1,5 @@
 """Tests for config mixins."""
+
 from dataclasses import dataclass
 
 import pytest
@@ -20,11 +21,13 @@ class TestConfigMixin:
 
     def test_from_dict_basic(self):
         """Test basic from_dict creation."""
-        config = SampleConfig.from_dict({
-            "name": "test",
-            "count": 5,
-            "enabled": False,
-        })
+        config = SampleConfig.from_dict(
+            {
+                "name": "test",
+                "count": 5,
+                "enabled": False,
+            }
+        )
 
         assert config.name == "test"
         assert config.count == 5
@@ -32,11 +35,13 @@ class TestConfigMixin:
 
     def test_from_dict_ignores_unknown_keys(self):
         """Test that unknown keys are ignored."""
-        config = SampleConfig.from_dict({
-            "name": "test",
-            "unknown_field": "ignored",
-            "another_unknown": 123,
-        })
+        config = SampleConfig.from_dict(
+            {
+                "name": "test",
+                "unknown_field": "ignored",
+                "another_unknown": 123,
+            }
+        )
 
         assert config.name == "test"
         assert config.count == 10  # default
@@ -50,6 +55,26 @@ class TestConfigMixin:
         assert config.count == 10  # default
         assert config.enabled is True  # default
 
+    def test_from_dict_none_uses_non_none_default(self):
+        """Test that None does not override a non-None default."""
+        config = SampleConfig.from_dict({"enabled": None})
+
+        assert config.enabled is True
+
+    def test_from_dict_invalid_primitive_types_use_defaults(self):
+        """Test invalid primitive values do not override defaults."""
+        config = SampleConfig.from_dict(
+            {
+                "name": 123,
+                "count": "not-an-int",
+                "enabled": 0,
+            }
+        )
+
+        assert config.name == "default"
+        assert config.count == 10
+        assert config.enabled is True
+
     def test_from_dict_empty_dict(self):
         """Test creation from empty dict."""
         config = SampleConfig.from_dict({})
@@ -60,24 +85,28 @@ class TestConfigMixin:
 
     def test_from_dict_unwraps_params(self):
         """Test that 'params' key is automatically unwrapped."""
-        config = SampleConfig.from_dict({
-            "params": {
-                "name": "from_params",
-                "count": 20,
+        config = SampleConfig.from_dict(
+            {
+                "params": {
+                    "name": "from_params",
+                    "count": 20,
+                }
             }
-        })
+        )
 
         assert config.name == "from_params"
         assert config.count == 20
 
     def test_from_dict_params_with_extra_keys(self):
         """Test params unwrapping ignores extra keys outside params."""
-        config = SampleConfig.from_dict({
-            "type": "some_type",  # extra key at root level
-            "params": {
-                "name": "nested",
+        config = SampleConfig.from_dict(
+            {
+                "type": "some_type",  # extra key at root level
+                "params": {
+                    "name": "nested",
+                },
             }
-        })
+        )
 
         assert config.name == "nested"
 
@@ -119,10 +148,12 @@ class TestConfigMixinWithDifferentTypes:
 
     def test_type_preservation(self):
         """Test that types are preserved."""
-        config = NestedFieldConfig.from_dict({
-            "rate": 1.5,
-            "items": 10,
-        })
+        config = NestedFieldConfig.from_dict(
+            {
+                "rate": 1.5,
+                "items": 10,
+            }
+        )
 
         assert isinstance(config.rate, float)
         assert isinstance(config.items, int)
@@ -161,10 +192,9 @@ class TestConfigMixinWithNestedDataclass:
 
     def test_nested_dataclass_from_dict(self):
         """Test nested dataclass can be created from dict."""
-        config = OuterConfig.from_dict({
-            "name": "custom",
-            "inner": {"value": 42, "label": "nested"}
-        })
+        config = OuterConfig.from_dict(
+            {"name": "custom", "inner": {"value": 42, "label": "nested"}}
+        )
 
         # Note: ConfigMixin doesn't automatically convert nested dicts
         # The nested dict is passed directly to the dataclass
@@ -203,28 +233,34 @@ class TestConfigMixinWithOptionalFields:
 
     def test_optional_fields_none(self):
         """Test that None values are preserved."""
-        config = OptionalFieldsConfig.from_dict({
-            "required_field": "value",
-        })
+        config = OptionalFieldsConfig.from_dict(
+            {
+                "required_field": "value",
+            }
+        )
 
         assert config.required_field == "value"
         assert config.optional_field is None
 
     def test_list_field(self):
         """Test list field handling."""
-        config = OptionalFieldsConfig.from_dict({
-            "required_field": "value",
-            "list_field": [1, 2, 3],
-        })
+        config = OptionalFieldsConfig.from_dict(
+            {
+                "required_field": "value",
+                "list_field": [1, 2, 3],
+            }
+        )
 
         assert config.list_field == [1, 2, 3]
 
     def test_dict_field(self):
         """Test dict field handling."""
-        config = OptionalFieldsConfig.from_dict({
-            "required_field": "value",
-            "dict_field": {"key": "value"},
-        })
+        config = OptionalFieldsConfig.from_dict(
+            {
+                "required_field": "value",
+                "dict_field": {"key": "value"},
+            }
+        )
 
         assert config.dict_field == {"key": "value"}
 
@@ -256,11 +292,13 @@ class TestConfigMixinValidation:
 
     def test_validation_passes(self):
         """Test that valid config passes validation."""
-        config = ValidatedConfig.from_dict({
-            "threshold": 0.7,
-            "min_value": 10,
-            "max_value": 50,
-        })
+        config = ValidatedConfig.from_dict(
+            {
+                "threshold": 0.7,
+                "min_value": 10,
+                "max_value": 50,
+            }
+        )
 
         assert config.threshold == 0.7
         assert config.min_value == 10
@@ -279,18 +317,17 @@ class TestConfigMixinValidation:
     def test_validation_fails_on_min_greater_than_max(self):
         """Test that validation fails when min > max."""
         with pytest.raises(ValueError, match="min_value must be <= max_value"):
-            ValidatedConfig.from_dict({
-                "min_value": 100,
-                "max_value": 50,
-            })
+            ValidatedConfig.from_dict(
+                {
+                    "min_value": 100,
+                    "max_value": 50,
+                }
+            )
 
     def test_validation_skipped_when_disabled(self):
         """Test that validation can be skipped."""
         # This should NOT raise even though values are invalid
-        config = ValidatedConfig.from_dict(
-            {"threshold": 1.5},
-            validate=False
-        )
+        config = ValidatedConfig.from_dict({"threshold": 1.5}, validate=False)
 
         assert config.threshold == 1.5
 
@@ -323,8 +360,10 @@ class TestConfigMixinValidation:
         assert config2.threshold == 1.0
 
         # Min == max should pass
-        config3 = ValidatedConfig.from_dict({
-            "min_value": 50,
-            "max_value": 50,
-        })
+        config3 = ValidatedConfig.from_dict(
+            {
+                "min_value": 50,
+                "max_value": 50,
+            }
+        )
         assert config3.min_value == config3.max_value

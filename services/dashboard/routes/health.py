@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 
-from services.dashboard.routes.trading import _normalize_asset_class
+from services.dashboard.domain.assets import normalize_asset_class
 from shared.execution.contract_spec import ContractSpecRegistry
 from shared.storage.config import StorageConfig
 from shared.storage.runtime_ledger import SQLiteRuntimeLedger
@@ -127,7 +127,7 @@ async def get_data_freshness(
     asset_class: str = Query(default="all"),
 ) -> dict[str, Any]:
     """Return WebSocket tick-freshness stats per data source."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     redis = _get_redis_client()
     sources: list[dict[str, Any]] = []
 
@@ -813,7 +813,7 @@ async def get_health_summary(
     asset_class: str = Query(default="all"),
 ) -> dict[str, Any]:
     """Aggregated health snapshot (1s cache, keyed by asset_class)."""
-    asset = _normalize_asset_class(asset_class)
+    asset = normalize_asset_class(asset_class)
     now = time.time()
 
     with _summary_lock:

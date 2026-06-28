@@ -1,11 +1,13 @@
 # Fusion Ranker Configuration
 # Combines real-time screener universe with LLM quality snapshots
 # 환경변수로 Redis key 경로를 덮어쓸 수 있음:
-# UNIVERSE_LATEST_KEY, LLM_QUALITY_LATEST_KEY, TRADE_TARGETS_LATEST_KEY, TRADE_TARGETS_STREAM
+# UNIVERSE_LATEST_KEY, LLM_QUALITY_LATEST_KEY, THEME_TARGETS_LATEST_KEY,
+# TRADE_TARGETS_LATEST_KEY, TRADE_TARGETS_STREAM
 
 redis_keys:
   realtime: "${UNIVERSE_LATEST_KEY:system:universe:latest}"
   llm_quality: "${LLM_QUALITY_LATEST_KEY:system:llm_quality:latest}"
+  theme_targets: "${THEME_TARGETS_LATEST_KEY:system:theme_targets:latest}"
   daily_indicators: "${DAILY_INDICATORS_LATEST_KEY:system:daily_indicators:latest}"
   output: "${TRADE_TARGETS_LATEST_KEY:system:trade_targets:latest}"
   output_stream: "${TRADE_TARGETS_STREAM:system:trade_targets}"
@@ -17,16 +19,26 @@ ranking:
   # Default 0 = dormant (no LLM-only admissions until operator enables).
   llm_only_top_n: 0
 
+outputs:
+  # TTL (seconds) for the fused trade-targets latest key.
+  ttl_seconds: 86400
+
 weights:
   realtime: 0.50
   llm: 0.30
   recency: 0.10
   swing: 0.10
+  theme: 0.15
+
+theme:
+  enabled: true
+  active_state_bonus: 0.10
 
 staleness:
   fresh_window_seconds: 600
   stale_seconds: 1800
   llm_stale_seconds: 43200
+  theme_stale_seconds: 1800
 
 llm_adjustments:
   risk_penalty_per_hit: 0.08

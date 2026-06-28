@@ -1,9 +1,11 @@
 """Asset class query parameter validation across dashboard endpoints."""
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from services.dashboard.app import create_app
+from services.dashboard.domain.assets import normalize_asset_class, target_assets
 
 
 @pytest.fixture
@@ -60,3 +62,16 @@ def test_default_is_futures(client, endpoint):
 def test_case_insensitive(client):
     res = client.get("/api/trading/positions", params={"asset_class": "STOCK"})
     assert res.status_code in (200, 503)
+
+
+def test_asset_helper_defaults_to_futures():
+    assert normalize_asset_class(None) == "futures"
+
+
+def test_asset_helper_expands_all():
+    assert target_assets("all") == ("futures", "stock")
+
+
+def test_asset_helper_rejects_invalid_value():
+    with pytest.raises(HTTPException):
+        normalize_asset_class("options")

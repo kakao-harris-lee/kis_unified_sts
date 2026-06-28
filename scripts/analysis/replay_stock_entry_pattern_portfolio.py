@@ -477,7 +477,10 @@ def replay_pattern_set(
         (str(row.code), row.date): float(row.close)
         for row in data[["code", "date", "close"]].itertuples(index=False)
     }
-    signals_by_date = dict(signals.groupby(pd.to_datetime(signals["datetime"]).dt.date))
+    signal_dates = pd.to_datetime(signals["datetime"]).dt.date
+    signals_by_date = {}
+    for day, frame in signals.groupby(signal_dates):
+        signals_by_date[day] = frame
     trading_dates = sorted(data["date"].unique())
 
     cash = float(spec.initial_capital)

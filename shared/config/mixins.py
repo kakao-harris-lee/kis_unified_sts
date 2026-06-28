@@ -31,9 +31,60 @@ from __future__ import annotations
 
 import dataclasses
 import warnings
-from typing import Any, TypeVar
+from typing import Any, TypeVar, get_args, get_origin, get_type_hints
 
 T = TypeVar("T", bound="ConfigMixin")
+
+# Cache resolved type hints per class. ``get_type_hints`` resolves PEP 563
+# stringized annotations (``from __future__ import annotations``) back to real
+# ``type`` objects so the type guard behaves identically regardless of whether a
+# config module opted into stringized annotations.
+_TYPE_HINT_CACHE: dict[type, dict[str, Any]] = {}
+
+
+def _resolve_type_hints(cls: type) -> dict[str, Any]:
+    cached = _TYPE_HINT_CACHE.get(cls)
+    if cached is not None:
+        return cached
+    try:
+        hints = get_type_hints(cls)
+    except Exception:  # noqa: BLE001 - fall back to raw field.type on any failure
+        hints = {}
+    _TYPE_HINT_CACHE[cls] = hints
+    return hints
+
+
+def _field_has_default(field: dataclasses.Field[Any]) -> bool:
+    return (
+        field.default is not dataclasses.MISSING
+        or field.default_factory is not dataclasses.MISSING
+    )
+
+
+def _matches_field_type(value: Any, annotation: Any) -> bool:
+    origin = get_origin(annotation)
+    if origin is not None:
+        if origin is list:
+            return isinstance(value, list)
+        if origin is dict:
+            return isinstance(value, dict)
+        if origin is set:
+            return isinstance(value, set)
+        if origin is tuple:
+            return isinstance(value, tuple)
+        return any(_matches_field_type(value, arg) for arg in get_args(annotation))
+
+    if annotation is Any or not isinstance(annotation, type):
+        return True
+    if annotation is bool:
+        return isinstance(value, bool)
+    if annotation is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if annotation is float:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if dataclasses.is_dataclass(annotation) and isinstance(value, dict):
+        return True
+    return isinstance(value, annotation)
 
 
 class ConfigMixin:
@@ -90,11 +141,36 @@ class ConfigMixin:
         if "params" in data and isinstance(data["params"], dict):
             data = data["params"]
 
-        # Get valid field names for this dataclass
-        field_names = {f.name for f in dataclasses.fields(cls)}
+        # Get valid fields for this dataclass
+        fields = {f.name: f for f in dataclasses.fields(cls)}
+        # Resolve stringized (PEP 563) annotations so the type guard below is
+        # applied consistently to every config class, not just those that avoid
+        # ``from __future__ import annotations``.
+        hints = _resolve_type_hints(cls)
 
-        # Filter to only known fields
-        filtered = {k: v for k, v in data.items() if k in field_names}
+        # Filter to only known fields. Treat None as "missing" when the
+        # dataclass already has a non-None default; this keeps arbitrary config
+        # dicts from erasing bool/int/string defaults while preserving fields
+        # that explicitly default to None.
+        filtered = {}
+        for key, value in data.items():
+            field = fields.get(key)
+            if field is None:
+                continue
+            if value is None and (
+                field.default_factory is not dataclasses.MISSING
+                or field.default is not dataclasses.MISSING
+                and field.default is not None
+            ):
+                continue
+            annotation = hints.get(key, field.type)
+            if (
+                value is not None
+                and _field_has_default(field)
+                and not _matches_field_type(value, annotation)
+            ):
+                continue
+            filtered[key] = value
 
         instance = cls(**filtered)
 

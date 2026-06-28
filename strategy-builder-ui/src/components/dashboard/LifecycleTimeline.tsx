@@ -13,6 +13,7 @@ import type {
   TradeLifecycleResponse,
   TradeLifecycleStep,
 } from "@/lib/dashboard/trades";
+import { formatKstShort } from "@/lib/dashboard/format";
 
 interface LifecycleTimelineProps {
   data?: TradeLifecycleResponse;
@@ -23,17 +24,7 @@ interface LifecycleTimelineProps {
   onClose?: () => void;
 }
 
-function formatTime(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("ko-KR", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+const formatTime = (value?: string | null): string => formatKstShort(value);
 
 function formatValue(value: string | number | boolean | null): string {
   if (value === null) return "-";

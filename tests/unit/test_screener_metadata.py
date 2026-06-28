@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from typing import Any
 
 from services.fusion_ranker import FusionRanker, FusionRankerConfig
@@ -178,6 +179,32 @@ class TestFusionDailyIndicatorCoverage:
         assert coverage["coverage_filtered_count"] == 2
         assert coverage["missing_sample"] == ["123456", "999999"]
 
+    def test_run_once_ignores_stale_realtime_universe_snapshot(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "generated_at": (
+                        datetime.now() - timedelta(seconds=120)
+                    ).isoformat(),
+                    "codes": ["005930"],
+                    "scores": {"005930": 0.99},
+                    "names": {"005930": "삼성전자"},
+                },
+                "system:daily_indicators:latest": {"indicators": {"005930": {}}},
+            },
+            FusionRankerConfig(
+                stale_seconds=60.0,
+                weight_realtime=1.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=0.0,
+            ),
+        )
+
+        assert ranker.run_once() is False
+        assert ranker.publisher.payloads == []
+
     def test_run_once_admits_llm_only_quality_code_with_daily_coverage(self):
         ranker = self._make_ranker(
             {
@@ -269,3 +296,315 @@ class TestFusionDailyIndicatorCoverage:
         assert payload["scores"]["000660"] == 0.95
         assert payload["metadata"]["000660"]["swing_discovery_score"] == 0.95
         assert payload["sources"]["weights"]["swing"] == 1.0
+
+
+class TestFusionThemeTargets:
+    def _make_ranker(
+        self,
+        payloads: dict[str, dict[str, Any]],
+        config: FusionRankerConfig | None = None,
+    ) -> FusionRanker:
+        config = config or FusionRankerConfig()
+        ranker = FusionRanker.__new__(FusionRanker)
+        ranker.config = config
+        ranker._last_seen = {}
+        ranker._first_seen = {}
+        ranker._last_payload_fingerprint = ""
+
+        class FakeRedis:
+            def __init__(self, data: dict[str, dict[str, Any]]) -> None:
+                self.data = data
+                self.writes: dict[str, str] = {}
+
+            def get(self, key: str) -> str | None:
+                payload = self.data.get(key)
+                return json.dumps(payload) if payload is not None else None
+
+            def set(self, key: str, value: str, ex: int | None = None) -> None:
+                _ = ex
+                self.writes[key] = value
+
+        class FakePublisher:
+            def __init__(self) -> None:
+                self.payloads: list[dict[str, Any]] = []
+
+            def publish(self, payload: dict[str, Any]) -> None:
+                self.payloads.append(payload)
+
+        ranker.redis = FakeRedis(payloads)
+        ranker.publisher = FakePublisher()
+        return ranker
+
+    def test_run_once_admits_active_theme_code_with_daily_coverage(self):
+        ranker = self._make_ranker(
+            {
+                "system:theme_targets:latest": {
+                    "generated_at": datetime.now().isoformat(),
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.82},
+                    "names": {"000660": "SK하이닉스"},
+                    "metadata": {
+                        "000660": {
+                            "state": "active",
+                            "theme_id": "ai_hbm",
+                            "leader_score": 0.82,
+                            "reason": "HBM theme leader",
+                        }
+                    },
+                    "themes": {"ai_hbm": {"label": "AI/HBM"}},
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"000660": {"daily_close": 284500.0}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=0.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=1.0,
+                theme_active_state_bonus=0.0,
+            ),
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+
+        assert payload["codes"] == ["000660"]
+        assert payload["scores"]["000660"] == 0.82
+        assert payload["names"]["000660"] == "SK하이닉스"
+        assert payload["metadata"]["000660"]["theme_id"] == "ai_hbm"
+        assert payload["metadata"]["000660"]["theme_label"] == "AI/HBM"
+        assert payload["metadata"]["000660"]["theme_active"] is True
+        assert payload["sources"]["theme_targets"]["active_count"] == 1
+        assert payload["sources"]["theme_targets"]["generated_at"]
+        assert payload["sources"]["weights"]["theme"] == 1.0
+
+    def test_run_once_excludes_quarantined_theme_code_from_final_rows(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "codes": ["005930", "000660"],
+                    "scores": {"005930": 0.99, "000660": 0.6},
+                },
+                "system:theme_targets:latest": {
+                    "codes": ["005930"],
+                    "scores": {"005930": 1.0},
+                    "metadata": {
+                        "005930": {
+                            "state": "quarantine",
+                            "theme_id": "risk_theme",
+                            "reason": "investment warning",
+                        }
+                    },
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"005930": {}, "000660": {}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=1.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=1.0,
+            ),
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+
+        assert payload["codes"] == ["000660"]
+        assert "005930" not in payload["metadata"]
+        assert payload["sources"]["theme_targets"]["quarantine_count"] == 1
+
+    def test_run_once_excludes_producer_shape_quarantine_metadata(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "codes": ["005930", "000660"],
+                    "scores": {"005930": 0.99, "000660": 0.6},
+                },
+                "system:theme_targets:latest": {
+                    # ThemeDiscoveryService excludes quarantined codes from
+                    # tradable codes but keeps them visible in metadata.
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.7},
+                    "metadata": {
+                        "000660": {"state": "active", "theme_id": "ai_hbm"},
+                        "005930": {
+                            "state": "quarantine",
+                            "theme_id": "risk_theme",
+                            "risk_flags": ["investment_warning"],
+                        },
+                    },
+                    "quarantined_codes": ["005930"],
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"005930": {}, "000660": {}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=1.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=0.0,
+            ),
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+
+        assert payload["codes"] == ["000660"]
+        assert "005930" not in payload["metadata"]
+        assert payload["sources"]["theme_targets"]["quarantine_count"] == 1
+
+    def test_run_once_ignores_stale_theme_target_snapshot(self):
+        ranker = self._make_ranker(
+            {
+                "system:theme_targets:latest": {
+                    "generated_at": (
+                        datetime.now() - timedelta(seconds=120)
+                    ).isoformat(),
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.82},
+                    "names": {"000660": "SK하이닉스"},
+                    "metadata": {
+                        "000660": {
+                            "state": "active",
+                            "theme_id": "ai_hbm",
+                            "leader_score": 0.82,
+                        }
+                    },
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"000660": {"daily_close": 284500.0}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=0.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=1.0,
+                theme_stale_seconds=60.0,
+            ),
+        )
+
+        assert ranker.run_once() is False
+        assert ranker.publisher.payloads == []
+
+    def test_run_once_ignores_theme_snapshot_with_stale_source_universe(self):
+        ranker = self._make_ranker(
+            {
+                "system:theme_targets:latest": {
+                    "generated_at": datetime.now().isoformat(),
+                    "source": {
+                        "universe_generated_at": (
+                            datetime.now() - timedelta(seconds=120)
+                        ).isoformat()
+                    },
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.82},
+                    "names": {"000660": "SK하이닉스"},
+                    "metadata": {
+                        "000660": {
+                            "state": "active",
+                            "theme_id": "ai_hbm",
+                            "leader_score": 0.82,
+                        }
+                    },
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"000660": {"daily_close": 284500.0}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=0.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=1.0,
+                theme_stale_seconds=60.0,
+            ),
+        )
+
+        assert ranker.run_once() is False
+        assert ranker.publisher.payloads == []
+
+    def test_run_once_missing_theme_key_preserves_existing_realtime_behavior(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "codes": ["005930"],
+                    "scores": {"005930": 0.7},
+                    "names": {"005930": "삼성전자"},
+                },
+                "system:daily_indicators:latest": {"indicators": {"005930": {}}},
+            },
+            FusionRankerConfig(
+                weight_realtime=1.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=1.0,
+            ),
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+
+        assert payload["codes"] == ["005930"]
+        assert payload["scores"]["005930"] == 0.7
+        assert "theme_score" not in payload["metadata"]["005930"]
+        assert payload["sources"]["theme_targets"]["candidate_count"] == 0
+
+    def test_run_once_preserves_theme_metadata_for_existing_realtime_code(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.2},
+                    "metadata": {"000660": {"prev_day_volume": 5_000_000}},
+                },
+                "system:theme_targets:latest": {
+                    "codes": ["000660"],
+                    "scores": {"000660": 0.5},
+                    "metadata": {
+                        "000660": {
+                            "state": "active",
+                            "theme_id": "ai_hbm",
+                            "theme_label": "AI/HBM",
+                            "leader_score": 0.78,
+                            "reason": "theme breadth and relative strength",
+                        }
+                    },
+                    "themes": {"ai_hbm": {"label": "AI/HBM"}},
+                },
+                "system:daily_indicators:latest": {"indicators": {"000660": {}}},
+            },
+            FusionRankerConfig(
+                weight_realtime=0.5,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=0.0,
+                weight_theme=0.5,
+                theme_active_state_bonus=0.1,
+            ),
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+        metadata = payload["metadata"]["000660"]
+
+        assert payload["scores"]["000660"] == 0.4
+        assert metadata["prev_day_volume"] == 5_000_000
+        assert metadata["state"] == "active"
+        assert metadata["theme_id"] == "ai_hbm"
+        assert metadata["theme_label"] == "AI/HBM"
+        assert metadata["leader_score"] == 0.78
+        assert metadata["reason"] == "theme breadth and relative strength"
+        assert metadata["theme_score"] == 0.5
+        assert metadata["theme_effective_score"] == 0.6
+        assert metadata["theme_active"] is True

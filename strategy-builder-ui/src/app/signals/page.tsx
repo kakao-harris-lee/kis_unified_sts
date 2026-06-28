@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from 'react';
-import { signalsApi } from '@/lib/dashboard/api';
+import { useQuery } from '@tanstack/react-query';
+import { decisionTraceApi, signalsApi } from '@/lib/dashboard/api';
 import TableSkeleton from '@/components/dashboard/TableSkeleton';
 import RefreshIndicator from '@/components/dashboard/RefreshIndicator';
 import ErrorMessage from '@/components/dashboard/ErrorMessage';
@@ -12,21 +13,12 @@ import HeaderBar from '@/components/dashboard/HeaderBar';
 import BottomSheet from '@/components/dashboard/BottomSheet';
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext';
 import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals';
+import { formatKstDateTime } from '@/lib/dashboard/format';
+import DecisionTracePanel from './components/DecisionTracePanel';
 import type {
   DashboardSignal,
   DashboardSignalsResponse,
-  SignalTraceDetails,
 } from '@/lib/dashboard/signalTypes';
-
-function displayValue(value: unknown, fallback = 'not available') {
-  if (value === null || value === undefined || value === '') {
-    return fallback;
-  }
-  if (typeof value === 'object') {
-    return JSON.stringify(value);
-  }
-  return String(value);
-}
 
 function displayPercent(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -37,88 +29,6 @@ function displayPercent(value: number | null | undefined) {
 
 function strengthValue(signal: DashboardSignal) {
   return Math.max(0, Math.min(1, signal.strength ?? signal.confidence ?? 0));
-}
-
-function formatTraceDetails(details?: SignalTraceDetails | null) {
-  if (!details || Object.keys(details).length === 0) {
-    return 'not available';
-  }
-
-  return Object.entries(details)
-    .map(([key, value]) => `${key}: ${displayValue(value, 'unknown')}`)
-    .join(' · ');
-}
-
-function TraceItem({
-  label,
-  value,
-  fallback = 'not available',
-}: {
-  label: string;
-  value: unknown;
-  fallback?: string;
-}) {
-  return (
-    <div>
-      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 break-words text-sm font-medium text-slate-900">
-        {displayValue(value, fallback)}
-      </div>
-    </div>
-  );
-}
-
-function SignalTraceCard({
-  signal,
-  onClose,
-}: {
-  signal: DashboardSignal;
-  onClose: () => void;
-}) {
-  return (
-    <section className="bg-white rounded-lg border border-slate-200 p-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-sm text-slate-500">Signal Trace</div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="text-lg font-semibold text-slate-900">
-              {signal.symbol}
-            </span>
-            <SideBadge side={signal.side} />
-            <span className="text-sm text-slate-500">{signal.strategy}</span>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100"
-        >
-          Close
-        </button>
-      </div>
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <TraceItem label="Status" value={signal.status} fallback="unknown" />
-        <TraceItem label="Confidence" value={displayPercent(signal.confidence)} fallback="unknown" />
-        <TraceItem label="Strength" value={displayPercent(signal.strength)} fallback="unknown" />
-        <TraceItem label="Reason" value={signal.reason} />
-        <TraceItem label="Reject Stage" value={signal.reject_stage} fallback="unknown" />
-        <TraceItem label="Reject Reason" value={signal.reject_reason} />
-        <TraceItem label="Orderability" value={signal.orderability_state} fallback="unknown" />
-        <TraceItem
-          label="Orderability Details"
-          value={formatTraceDetails(signal.orderability_details)}
-        />
-      </div>
-
-      <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 sm:grid-cols-2 lg:grid-cols-4">
-        <TraceItem label="Order ID" value={signal.order_id} />
-        <TraceItem label="Fill ID" value={signal.fill_id} />
-        <TraceItem label="Position ID" value={signal.position_id} />
-        <TraceItem label="Trade ID" value={signal.trade_id} />
-      </div>
-    </section>
-  );
 }
 
 function Signals() {
@@ -154,6 +64,28 @@ function Signals() {
           .then((r) => r.data),
       refetchInterval: QUERY_INTERVALS_MS.normal,
     });
+
+  const {
+    data: traceData,
+    isLoading: traceLoading,
+    error: traceError,
+    refetch: refetchTrace,
+  } = useQuery({
+    queryKey: ['signal-decision-trace', selectedAsset, selectedSignal?.id],
+    queryFn: () =>
+      decisionTraceApi
+        .getDecisionTrace(selectedSignal?.id || '', { asset_class: selectedAsset })
+        .then((r) => r.data),
+    enabled: Boolean(selectedSignal?.id),
+    refetchInterval: false,
+  });
+
+  const traceErrorMessage =
+    traceError instanceof Error
+      ? traceError.message
+      : traceError
+        ? 'Failed to load decision trace'
+        : null;
 
   const updateStrategyFilter = (value: string) => {
     setStrategyFilter(value);
@@ -235,9 +167,12 @@ function Signals() {
           </BottomSheet>
 
           {selectedSignal ? (
-            <SignalTraceCard
-              signal={selectedSignal}
+            <DecisionTracePanel
+              trace={traceData}
+              isLoading={traceLoading}
+              error={traceErrorMessage}
               onClose={() => setSelectedSignal(null)}
+              onRefresh={() => refetchTrace()}
             />
           ) : null}
 
@@ -268,7 +203,7 @@ function Signals() {
                       <div>
                         <div className="text-slate-500">Time</div>
                         <div className="font-medium text-xs">
-                          {new Date(signal.timestamp).toLocaleString()}
+                          {formatKstDateTime(signal.timestamp)}
                         </div>
                       </div>
                       <div>
@@ -309,6 +244,7 @@ function Signals() {
                     <button
                       type="button"
                       onClick={() => setSelectedSignal(signal)}
+                      aria-label={`View trace for ${signal.symbol}`}
                       className="mt-4 w-full rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
                     >
                       View trace
@@ -354,6 +290,8 @@ function Signals() {
                           onClick={() => setSelectedSignal(signal)}
                           tabIndex={0}
                           role="button"
+                          aria-label={`View trace for ${signal.symbol}`}
+                          aria-pressed={selectedSignal?.id === signal.id}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault();
@@ -362,7 +300,7 @@ function Signals() {
                           }}
                         >
                           <td className="px-4 py-3 text-sm text-slate-500">
-                            {new Date(signal.timestamp).toLocaleString()}
+                            {formatKstDateTime(signal.timestamp)}
                           </td>
                           <td className="px-4 py-3">{signal.strategy}</td>
                           <td className="px-4 py-3 font-medium">{signal.symbol}</td>
