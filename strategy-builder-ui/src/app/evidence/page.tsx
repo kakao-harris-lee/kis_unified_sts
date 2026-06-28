@@ -17,20 +17,8 @@ import type {
   EvidenceSummaryResponse,
   StrategyEvidenceSummary,
 } from "@/lib/dashboard/evidence";
+import { formatKstShort } from "@/lib/dashboard/format";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
-
-function fmtDateTime(v?: string | null): string {
-  if (!v) return "-";
-  const d = new Date(v);
-  return Number.isNaN(d.getTime())
-    ? v
-    : d.toLocaleString("ko-KR", {
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-}
 
 function fmtNumber(v: number | null | undefined): string {
   if (v === null || v === undefined) return "-";
@@ -172,9 +160,9 @@ export default function EvidencePage() {
     refetchInterval: QUERY_INTERVALS_MS.slow,
   });
 
-  const accepted = data?.strategies.reduce((sum, row) => sum + row.accepted, 0) ?? 0;
-  const rejected = data?.strategies.reduce((sum, row) => sum + row.rejected, 0) ?? 0;
-  const connected = data?.strategies.length ?? 0;
+  const accepted = (data?.strategies ?? []).reduce((sum, row) => sum + row.accepted, 0);
+  const rejected = (data?.strategies ?? []).reduce((sum, row) => sum + row.rejected, 0);
+  const connected = (data?.strategies ?? []).length;
 
   return (
     <>
@@ -191,7 +179,7 @@ export default function EvidencePage() {
                   Evidence Summary
                 </h1>
                 <p className="text-sm text-slate-500">
-                  {data ? `${data.asset_class} · ${fmtDateTime(data.generated_at)}` : selectedAsset}
+                  {data ? `${data.asset_class} · ${formatKstShort(data.generated_at)}` : selectedAsset}
                 </p>
               </div>
             </div>
@@ -225,7 +213,7 @@ export default function EvidencePage() {
             <StatCell label="Strategies Connected" value={`${connected}`} />
             <StatCell label="Accepted Decisions" value={`${accepted}`} />
             <StatCell label="Rejected Decisions" value={`${rejected}`} />
-            <StatCell label="Evidence Gaps" value={`${data?.evidence_gaps.length ?? 0}`} />
+            <StatCell label="Evidence Gaps" value={`${(data?.evidence_gaps ?? []).length}`} />
           </section>
 
           <section className="space-y-3">
@@ -234,7 +222,7 @@ export default function EvidencePage() {
                 Strategy Evidence
               </h2>
               <span className="text-sm text-slate-500">
-                {data?.strategies.length ?? 0} strategies
+                {(data?.strategies ?? []).length} strategies
               </span>
             </div>
             <StrategyTable rows={data?.strategies ?? []} />

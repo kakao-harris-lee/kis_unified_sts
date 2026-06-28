@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
@@ -183,6 +183,11 @@ class ThemeDiscoveryConfig(ServiceConfigBase):
 
     def scoring_config(self) -> ThemeScoringConfig:
         return self.scoring.to_scoring_config()
+
+
+def _now_iso() -> str:
+    """Return the current time as a timezone-aware ISO-8601 string (UTC)."""
+    return datetime.now(UTC).isoformat()
 
 
 def _parse_timestamp(raw: Any) -> datetime | None:
@@ -523,7 +528,7 @@ class ThemeDiscoveryService:
             universe_age_seconds is not None
             and universe_age_seconds > self.config.max_universe_age_seconds
         ):
-            generated_at = datetime.now().isoformat()
+            generated_at = _now_iso()
             state_counts = {"active": 0, "watch": 0, "quarantine": 0}
             theme_payload = self._build_theme_payload(
                 generated_at=generated_at,
@@ -570,7 +575,7 @@ class ThemeDiscoveryService:
                 raw_matches[code] = matches
 
         if not raw_matches:
-            generated_at = datetime.now().isoformat()
+            generated_at = _now_iso()
             state_counts = {"active": 0, "watch": 0, "quarantine": 0}
             theme_payload = self._build_theme_payload(
                 generated_at=generated_at,
@@ -597,7 +602,7 @@ class ThemeDiscoveryService:
             for theme_id in matches:
                 theme_counts[theme_id] = theme_counts.get(theme_id, 0) + 1
 
-        generated_at = datetime.now().isoformat()
+        generated_at = _now_iso()
         target_metadata: dict[str, dict[str, Any]] = {}
         target_themes: dict[str, list[str]] = {}
         all_names: dict[str, str] = {}

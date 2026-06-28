@@ -370,6 +370,36 @@ def test_theme_discovery_output_flows_into_fusion_ranker() -> None:
     assert fused_payload["sources"]["theme_targets"]["quarantine_count"] == 1
 
 
+def test_now_iso_is_timezone_aware() -> None:
+    module = _load_theme_discovery()
+
+    parsed = datetime.fromisoformat(module._now_iso())
+
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() is not None
+
+
+def test_run_once_emits_timezone_aware_generated_at() -> None:
+    module = _load_theme_discovery()
+    redis = FakeRedis()
+    service, _publisher = _service(module, redis)
+    redis.values["system:universe:latest"] = json.dumps(
+        {
+            "generated_at": datetime.now().isoformat(),
+            "codes": ["999999"],
+            "scores": {"999999": 0.8},
+            "names": {"999999": "Unrelated commerce"},
+        }
+    )
+
+    assert service.run_once() is True
+
+    target_payload = json.loads(redis.values["system:theme_targets:latest"])
+    parsed = datetime.fromisoformat(target_payload["generated_at"])
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() is not None
+
+
 def test_default_yaml_loads_required_keyword_themes() -> None:
     module = _load_theme_discovery()
 

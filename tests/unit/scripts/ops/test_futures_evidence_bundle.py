@@ -28,7 +28,9 @@ def _complete_bundle() -> dict[str, object]:
 
 def _write_bundle(tmp_path, bundle: dict[str, object] | None = None):
     bundle_path = tmp_path / "complete-f9-evidence.yaml"
-    bundle_path.write_text(yaml.safe_dump(bundle or _complete_bundle()), encoding="utf-8")
+    bundle_path.write_text(
+        yaml.safe_dump(bundle or _complete_bundle()), encoding="utf-8"
+    )
     return bundle_path
 
 
@@ -94,8 +96,10 @@ def test_complete_bundle_passes_and_reports_per_gate_sections(
     assert report["phase5_small_live"]["status"] == "pass"
     assert report["phase5_small_live"]["signal_count"] == 117
     assert report["setup_d_observation"] == {
-        "required": True,
+        "required": False,
         "path": "reports/futures/setup_d/latest.json",
+        "status": "disabled",
+        "missing_evidence": [],
     }
     assert report["f9_gate1"]["trading_dates"] == [
         "2026-06-22",
@@ -208,7 +212,7 @@ def test_missing_signal_count_fails_phase5_section(tmp_path, capsys) -> None:
     assert "signal_count: missing" in report["phase5_small_live"]["missing_evidence"]
 
 
-def test_strict_bundle_requires_setup_d_observation_when_strategy_enabled(
+def test_setup_d_missing_is_decoupled_from_f9_strict_gate(
     tmp_path,
     monkeypatch,
     capsys,
@@ -220,21 +224,29 @@ def test_strict_bundle_requires_setup_d_observation_when_strategy_enabled(
     rc = module.main([str(bundle_path), "--json", "--strict"])
     report = json.loads(capsys.readouterr().out)
 
-    assert rc == 1
-    assert report["status"] == "fail"
+    assert rc == 0
+    assert report["status"] == "pass"
     assert report["setup_d_observation"] == {
         "required": True,
         "path": "reports/futures/setup_d/latest.json",
         "status": "fail",
         "missing_evidence": ["missing reports/futures/setup_d/latest.json"],
     }
+    # Top-level missing_evidence no longer carries Setup-D reasons.
     assert (
         "setup_d_observation: missing reports/futures/setup_d/latest.json"
-        in report["missing_evidence"]
+        not in report["missing_evidence"]
     )
 
+    rc = module.main([str(bundle_path), "--json", "--strict", "--strict-setup-d"])
+    report = json.loads(capsys.readouterr().out)
 
-def test_non_strict_bundle_warns_when_required_setup_d_observation_is_missing(
+    assert rc == 1
+    # Top-level status stays F-9-only even when --strict-setup-d trips the exit.
+    assert report["status"] == "pass"
+
+
+def test_non_strict_bundle_reports_missing_required_setup_d_observation(
     tmp_path,
     monkeypatch,
     capsys,
@@ -247,20 +259,14 @@ def test_non_strict_bundle_warns_when_required_setup_d_observation_is_missing(
     report = json.loads(capsys.readouterr().out)
 
     assert rc == 0
-    assert report["status"] == "warn"
-    assert report["setup_d_observation"] == {
-        "required": True,
-        "path": "reports/futures/setup_d/latest.json",
-        "status": "warn",
-        "missing_evidence": ["missing reports/futures/setup_d/latest.json"],
-    }
-    assert (
-        "setup_d_observation: missing reports/futures/setup_d/latest.json"
-        in report["missing_evidence"]
-    )
+    assert report["status"] == "pass"
+    assert report["setup_d_observation"]["status"] == "fail"
+    assert report["setup_d_observation"]["missing_evidence"] == [
+        "missing reports/futures/setup_d/latest.json"
+    ]
 
 
-def test_non_strict_bundle_warns_when_required_setup_d_observation_is_invalid(
+def test_non_strict_bundle_reports_invalid_required_setup_d_observation(
     tmp_path,
     monkeypatch,
     capsys,
@@ -274,14 +280,9 @@ def test_non_strict_bundle_warns_when_required_setup_d_observation_is_invalid(
     report = json.loads(capsys.readouterr().out)
 
     assert rc == 0
-    assert report["status"] == "warn"
-    assert report["setup_d_observation"] == {
-        "required": True,
-        "path": "reports/futures/setup_d/latest.json",
-        "status": "warn",
-        "missing_evidence": ["invalid JSON"],
-    }
-    assert "setup_d_observation: invalid JSON" in report["missing_evidence"]
+    assert report["status"] == "pass"
+    assert report["setup_d_observation"]["status"] == "fail"
+    assert report["setup_d_observation"]["missing_evidence"] == ["invalid JSON"]
 
 
 def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
@@ -296,21 +297,23 @@ def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
     _write_setup_d_report(tmp_path, _valid_setup_d_payload(now))
     bundle_path = _write_bundle(tmp_path)
 
-    rc = module.main([str(bundle_path), "--json", "--strict"])
+    rc = module.main([str(bundle_path), "--json", "--strict", "--strict-setup-d"])
     report = json.loads(capsys.readouterr().out)
 
     assert rc == 0
     assert report["status"] == "pass"
     assert report["missing_evidence"] == []
+    assert report["setup_d_observation"]["status"] == "pass"
+    assert report["setup_d_observation"]["missing_evidence"] == []
 
 
 @pytest.mark.parametrize(
     ("payload", "expected_missing"),
     [
-        ("{not-json", "setup_d_observation: invalid JSON"),
+        ("{not-json", "invalid JSON"),
         (
             ["not", "a", "mapping"],
-            "setup_d_observation: expected JSON object",
+            "expected JSON object",
         ),
         (
             {
@@ -320,7 +323,7 @@ def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
                 "rejected": 1,
                 "generated_at": "2026-06-28T12:00:00+00:00",
             },
-            "setup_d_observation: expected strategy setup_d_vwap_reversion",
+            "expected strategy setup_d_vwap_reversion",
         ),
         (
             {
@@ -330,7 +333,7 @@ def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
                 "rejected": 1,
                 "generated_at": "2026-06-28T12:00:00+00:00",
             },
-            "setup_d_observation: signals expected non-negative integer",
+            "signals expected non-negative integer",
         ),
         (
             {
@@ -339,7 +342,7 @@ def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
                 "accepted": 2,
                 "generated_at": "2026-06-28T12:00:00+00:00",
             },
-            "setup_d_observation: rejected missing",
+            "rejected missing",
         ),
     ],
 )
@@ -357,12 +360,12 @@ def test_strict_bundle_rejects_invalid_setup_d_observation(
     _write_setup_d_report(tmp_path, payload)
     bundle_path = _write_bundle(tmp_path)
 
-    rc = module.main([str(bundle_path), "--json", "--strict"])
+    rc = module.main([str(bundle_path), "--json", "--strict", "--strict-setup-d"])
     report = json.loads(capsys.readouterr().out)
 
     assert rc == 1
-    assert report["status"] == "fail"
-    assert expected_missing in report["missing_evidence"]
+    assert report["setup_d_observation"]["status"] == "fail"
+    assert expected_missing in report["setup_d_observation"]["missing_evidence"]
 
 
 @pytest.mark.parametrize(
@@ -370,15 +373,15 @@ def test_strict_bundle_rejects_invalid_setup_d_observation(
     [
         (
             {"accepted": -1, "rejected": 4},
-            "setup_d_observation: accepted expected non-negative integer",
+            "accepted expected non-negative integer",
         ),
         (
             {"signals": 4},
-            "setup_d_observation: signals count mismatch accepted+rejected",
+            "signals count mismatch accepted+rejected",
         ),
         (
             {"generated_at": "not-a-date"},
-            "setup_d_observation: generated_at invalid ISO datetime",
+            "generated_at invalid ISO datetime",
         ),
     ],
 )
@@ -398,12 +401,11 @@ def test_strict_bundle_rejects_malformed_setup_d_counts_or_timestamp(
     _write_setup_d_report(tmp_path, payload)
     bundle_path = _write_bundle(tmp_path)
 
-    rc = module.main([str(bundle_path), "--json", "--strict"])
+    rc = module.main([str(bundle_path), "--json", "--strict", "--strict-setup-d"])
     report = json.loads(capsys.readouterr().out)
 
     assert rc == 1
-    assert report["status"] == "fail"
-    assert expected_missing in report["missing_evidence"]
+    assert expected_missing in report["setup_d_observation"]["missing_evidence"]
 
 
 def test_strict_bundle_rejects_stale_setup_d_observation(
@@ -417,16 +419,15 @@ def test_strict_bundle_rejects_stale_setup_d_observation(
     monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
     _write_setup_d_report(
         tmp_path,
-        _valid_setup_d_payload(now - timedelta(seconds=129601)),
+        _valid_setup_d_payload(now - timedelta(seconds=345601)),
     )
     bundle_path = _write_bundle(tmp_path)
 
-    rc = module.main([str(bundle_path), "--json", "--strict"])
+    rc = module.main([str(bundle_path), "--json", "--strict", "--strict-setup-d"])
     report = json.loads(capsys.readouterr().out)
 
     assert rc == 1
-    assert report["status"] == "fail"
-    assert "setup_d_observation: generated_at stale" in report["missing_evidence"]
+    assert "generated_at stale" in report["setup_d_observation"]["missing_evidence"]
 
 
 def test_strict_bundle_rejects_future_setup_d_observation(
@@ -444,12 +445,77 @@ def test_strict_bundle_rejects_future_setup_d_observation(
     )
     bundle_path = _write_bundle(tmp_path)
 
-    rc = module.main([str(bundle_path), "--json", "--strict"])
+    rc = module.main([str(bundle_path), "--json", "--strict", "--strict-setup-d"])
     report = json.loads(capsys.readouterr().out)
 
     assert rc == 1
-    assert report["status"] == "fail"
     assert (
-        "setup_d_observation: generated_at is in the future"
-        in report["missing_evidence"]
+        "generated_at is in the future"
+        in report["setup_d_observation"]["missing_evidence"]
     )
+
+
+def test_strict_bundle_rejects_zero_observation_setup_d_payload(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+    _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
+    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    payload = _valid_setup_d_payload(now)
+    payload.update({"signals": 0, "accepted": 0, "rejected": 0})
+    _write_setup_d_report(tmp_path, payload)
+    bundle_path = _write_bundle(tmp_path)
+
+    rc = module.main([str(bundle_path), "--json", "--strict", "--strict-setup-d"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert (
+        "expected at least one observed signal"
+        in report["setup_d_observation"]["missing_evidence"]
+    )
+
+
+def test_strict_bundle_requires_evidence_when_setup_d_config_is_reshaped(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    config_path = tmp_path / "config/strategies/futures/setup_d_vwap_reversion.yaml"
+    config_path.parent.mkdir(parents=True)
+    # Present but reshaped/non-dict config must fail closed (require evidence).
+    config_path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(module, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(module, "_SETUP_D_CONFIG_PATH", config_path)
+    bundle_path = _write_bundle(tmp_path)
+
+    rc = module.main([str(bundle_path), "--json", "--strict", "--strict-setup-d"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert (
+        "missing reports/futures/setup_d/latest.json"
+        in report["setup_d_observation"]["missing_evidence"]
+    )
+
+
+def test_strict_alone_does_not_gate_on_setup_d(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
+    bundle_path = _write_bundle(tmp_path)
+
+    # Setup D is required and missing, but --strict alone never blocks on it.
+    rc = module.main([str(bundle_path), "--json", "--strict"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert report["status"] == "pass"
+    assert report["setup_d_observation"]["status"] == "fail"

@@ -62,13 +62,17 @@ _GATE_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SETUP_D_CONFIG_PATH = _REPO_ROOT / "config/strategies/futures/setup_d_vwap_reversion.yaml"
+_SETUP_D_CONFIG_PATH = (
+    _REPO_ROOT / "config/strategies/futures/setup_d_vwap_reversion.yaml"
+)
 _SETUP_D_OBSERVATION = {
     "required": True,
     "path": "reports/futures/setup_d/latest.json",
 }
 _SETUP_D_MAX_AGE_ENV = "FUTURES_SETUP_D_EVIDENCE_MAX_AGE_SECONDS"
-_DEFAULT_SETUP_D_MAX_AGE_SECONDS = 129600.0
+# 4 days so a Friday-EOD report still verifies after a normal weekend (and a
+# single Monday holiday). Multi-day holiday clusters can widen via the env var.
+_DEFAULT_SETUP_D_MAX_AGE_SECONDS = 345600.0
 _SETUP_D_MAX_FUTURE_SKEW_ENV = "FUTURES_SETUP_D_EVIDENCE_MAX_FUTURE_SKEW_SECONDS"
 _DEFAULT_SETUP_D_MAX_FUTURE_SKEW_SECONDS = 300.0
 
@@ -214,19 +218,24 @@ def _validate_bundle(
     return missing, failures_by_field
 
 
-def _setup_d_enabled(config_path: Path | None = None) -> bool:
+def _setup_d_required(config_path: Path | None = None) -> bool:
     config_path = config_path or _SETUP_D_CONFIG_PATH
     if not config_path.exists():
+        # Strategy config is absent (not deployed): evidence is not required.
         return False
-    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        return False
-    strategy = data.get("strategy")
-    if not isinstance(strategy, dict):
-        return False
-    return strategy.get("name") == "setup_d_vwap_reversion" and strategy.get(
-        "enabled"
-    ) is True
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        # Present but unparseable -> fail closed (require evidence).
+        return True
+    if not isinstance(data, dict) or not isinstance(data.get("strategy"), dict):
+        # Present but reshaped/non-dict -> fail closed (require evidence).
+        return True
+    strategy = data["strategy"]
+    # Explicitly disabled -> evidence not required. Otherwise (enabled, or
+    # present but cannot confirm it is disabled: name mismatch / enabled not
+    # strictly True) -> fail closed and require evidence.
+    return strategy.get("enabled") is not False
 
 
 def _coerce_non_negative_int(value: Any) -> int | None:
@@ -314,11 +323,11 @@ def _validate_setup_d_payload(path: Path) -> list[str]:
             failures.append(f"{field} expected non-negative integer")
             continue
         counts[field] = parsed
-    if (
-        {"signals", "accepted", "rejected"}.issubset(counts)
-        and counts["signals"] != counts["accepted"] + counts["rejected"]
-    ):
+    has_all_counts = {"signals", "accepted", "rejected"}.issubset(counts)
+    if has_all_counts and counts["signals"] != counts["accepted"] + counts["rejected"]:
         failures.append("signals count mismatch accepted+rejected")
+    if has_all_counts and counts["signals"] <= 0:
+        failures.append("expected at least one observed signal")
 
     generated_at = _parse_datetime(payload.get("generated_at"))
     if "generated_at" not in payload:
@@ -337,7 +346,7 @@ def _validate_setup_d_payload(path: Path) -> list[str]:
 def _validate_setup_d_observation(
     failures_by_field: dict[str, list[str]],
 ) -> list[str]:
-    if not _setup_d_enabled():
+    if not _setup_d_required():
         return []
     observation_path = _REPO_ROOT / _SETUP_D_OBSERVATION["path"]
     if not observation_path.exists():
@@ -379,24 +388,34 @@ def compile_report(
     source: str | None = None,
     strict_setup_d: bool = False,
 ) -> dict[str, Any]:
+    # ``strict_setup_d`` is retained for a backwards-compatible signature but no
+    # longer affects the report: Setup D gating is decoupled from the F-9/Phase-5
+    # bundle (gated separately via --strict-setup-d in main()).
+    _ = strict_setup_d
     missing, failures_by_field = _validate_bundle(bundle)
-    bundle_failures = list(missing)
-    setup_d_failures = _validate_setup_d_observation(failures_by_field)
-    setup_d_status: str | None = None
-    if setup_d_failures:
-        setup_d_status = "fail" if strict_setup_d else "warn"
-        missing.extend(
-            f"setup_d_observation: {reason}" for reason in setup_d_failures
-        )
-    status = "pass"
-    if bundle_failures or (setup_d_failures and strict_setup_d):
-        status = "fail"
+
+    required = _setup_d_required()
+    setup_d_failures = (
+        _validate_setup_d_observation(failures_by_field) if required else []
+    )
+    if not required:
+        setup_d_status = "disabled"
     elif setup_d_failures:
-        status = "warn"
-    setup_d_observation = dict(_SETUP_D_OBSERVATION)
-    if setup_d_status is not None:
-        setup_d_observation["status"] = setup_d_status
-        setup_d_observation["missing_evidence"] = setup_d_failures
+        setup_d_status = "fail"
+    else:
+        setup_d_status = "pass"
+
+    # Top-level status reflects ONLY the F-9/Phase-5 evidence bundle. Setup D
+    # paper evidence is reported independently (setup_d_observation.status) so an
+    # absent or failing Setup D report never blocks the futures cutover gate.
+    status = "fail" if missing else "pass"
+
+    setup_d_observation: dict[str, Any] = {
+        "required": required,
+        "path": _SETUP_D_OBSERVATION["path"],
+        "status": setup_d_status,
+        "missing_evidence": setup_d_failures,
+    }
     report: dict[str, Any] = {
         "status": status,
         "missing_evidence": missing,
@@ -422,7 +441,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Exit nonzero when the evidence bundle fails validation",
+        help="Exit nonzero when the F-9/Phase-5 evidence bundle fails validation",
+    )
+    parser.add_argument(
+        "--strict-setup-d",
+        action="store_true",
+        help="Also exit nonzero when the Setup D paper observation fails",
     )
     return parser.parse_args(argv)
 
@@ -430,14 +454,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     bundle = _load_bundle(args.bundle)
-    report = compile_report(
-        bundle,
-        source=str(args.bundle),
-        strict_setup_d=args.strict,
-    )
+    report = compile_report(bundle, source=str(args.bundle))
     output = json.dumps(report, indent=2, sort_keys=True)
     print(output)
-    return 1 if args.strict and report["status"] == "fail" else 0
+    bundle_failed = args.strict and report["status"] == "fail"
+    setup_d_failed = (
+        args.strict_setup_d and report["setup_d_observation"].get("status") == "fail"
+    )
+    return 1 if bundle_failed or setup_d_failed else 0
 
 
 if __name__ == "__main__":

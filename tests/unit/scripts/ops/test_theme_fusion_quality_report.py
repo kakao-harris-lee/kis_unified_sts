@@ -178,6 +178,75 @@ def test_theme_quality_report_marks_missing_generated_at(tmp_path: Path) -> None
     assert report["freshness"]["reasons"] == ["generated_at missing"]
 
 
+def test_theme_quality_report_flags_empty_snapshot_with_no_matches(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+    snapshot = _write_snapshot(
+        tmp_path,
+        {
+            "generated_at": now.isoformat(),
+            "codes": [],
+            "targets": [],
+            "source": {"status": "no_matches"},
+        },
+    )
+
+    report = build_theme_fusion_quality_report(snapshot, now=now)
+
+    assert report["freshness"]["status"] == "fresh"
+    assert report["target_count"] == 0
+    assert report["source_status"] == "no_matches"
+    assert report["ok"] is False
+    assert report["status"] in {"empty", "no_matches"}
+
+
+def test_theme_quality_report_tolerates_list_top_level(tmp_path: Path) -> None:
+    snapshot = tmp_path / "list_snapshot.json"
+    snapshot.write_text(json.dumps([{"code": "000001"}]), encoding="utf-8")
+
+    report = build_theme_fusion_quality_report(
+        snapshot,
+        now=datetime(2026, 6, 28, 12, 0, tzinfo=UTC),
+    )
+
+    assert report["generated_at"] is None
+    assert report["target_count"] == 0
+    assert report["state_counts"] == {}
+    assert report["ok"] is False
+    assert report["status"] == "missing"
+
+
+def test_theme_quality_report_cli_strict_returns_one_on_stale(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+    snapshot = _write_snapshot(
+        tmp_path,
+        {
+            "generated_at": (now - timedelta(seconds=1801)).isoformat(),
+            "targets": [{"code": "000001", "state": "active"}],
+        },
+    )
+    output = tmp_path / "report.json"
+
+    rc = report_module.main(
+        [
+            "--snapshot",
+            str(snapshot),
+            "--output",
+            str(output),
+            "--strict",
+        ],
+        now=now,
+    )
+    report = json.loads(output.read_text(encoding="utf-8"))
+
+    assert rc == 1
+    assert report["ok"] is False
+    assert report["status"] == "stale"
+
+
 def test_theme_quality_report_cli_accepts_freshness_thresholds(
     tmp_path: Path,
 ) -> None:

@@ -12,7 +12,13 @@ from dataclasses import dataclass
 from datetime import date
 from typing import NamedTuple
 
-from shared.instruments.futures import get_front_month_code
+from shared.instruments.futures import (
+    KOSPI200_LEGACY_PREFIX,
+    KOSPI200_PREFIX,
+    KOSPI_MINI_LEGACY_PREFIX,
+    KOSPI_MINI_PREFIX,
+    get_front_month_code,
+)
 
 DEFAULT_FUTURES_PRODUCT = "mini"
 SUPPORTED_FUTURES_PRODUCTS = frozenset({"mini", "kospi200"})
@@ -45,9 +51,10 @@ _PRODUCT_TICK_SIZE = {
 }
 
 _SYMBOL_PREFIX_CONTRACTS = {
-    "A01": ("kospi200", 0.05),
-    "101": ("kospi200", 0.05),
-    "A05": ("mini", 0.02),
+    KOSPI200_PREFIX: ("kospi200", _PRODUCT_TICK_SIZE["kospi200"]),
+    KOSPI200_LEGACY_PREFIX: ("kospi200", _PRODUCT_TICK_SIZE["kospi200"]),
+    KOSPI_MINI_PREFIX: ("mini", _PRODUCT_TICK_SIZE["mini"]),
+    KOSPI_MINI_LEGACY_PREFIX: ("mini", _PRODUCT_TICK_SIZE["mini"]),
 }
 
 
@@ -125,11 +132,7 @@ def validate_futures_runtime_product_contract(
                 f"got product={product} and FUTURES_SLIPPAGE_TICK_SIZE={actual_tick:.2f}"
             )
     ok = not invalid_reasons
-    message = (
-        "futures product contract ok"
-        if ok
-        else "; ".join(invalid_reasons)
-    )
+    message = "futures product contract ok" if ok else "; ".join(invalid_reasons)
     return FuturesProductContractValidation(
         ok=ok,
         product=product,

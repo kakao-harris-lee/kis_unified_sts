@@ -195,6 +195,47 @@ def test_resolved_product_rejects_explicit_mini_symbol_with_full_size_contract(
     assert "requires product=mini" in result.message
 
 
+def test_resolved_product_rejects_canonical_mini_symbol_with_full_size_contract(
+    monkeypatch,
+):
+    monkeypatch.setenv("FUTURES_TRADING_PRODUCT", "kospi200")
+    monkeypatch.setenv("FUTURES_SLIPPAGE_TICK_SIZE", "0.05")
+    monkeypatch.setenv("FUTURES_STRATEGY_SYMBOL", "105X06")
+
+    from shared.execution.futures_instrument import (
+        validate_futures_runtime_product_contract,
+    )
+
+    result = validate_futures_runtime_product_contract()
+
+    assert result.ok is False
+    assert result.product == "kospi200"
+    assert result.expected_tick_size == 0.05
+    assert result.actual_tick_size == 0.05
+    assert "FUTURES_STRATEGY_SYMBOL=105X06" in result.message
+    assert "requires product=mini" in result.message
+
+
+def test_resolved_product_accepts_canonical_mini_symbol_with_mini_contract(
+    monkeypatch,
+):
+    monkeypatch.setenv("FUTURES_TRADING_PRODUCT", "mini")
+    monkeypatch.setenv("FUTURES_SLIPPAGE_TICK_SIZE", "0.02")
+    monkeypatch.setenv("FUTURES_STRATEGY_SYMBOL", "105X06")
+
+    from shared.execution.futures_instrument import (
+        validate_futures_runtime_product_contract,
+    )
+
+    result = validate_futures_runtime_product_contract()
+
+    assert result.ok is True
+    assert result.product == "mini"
+    assert result.expected_tick_size == 0.02
+    assert result.actual_tick_size == 0.02
+    assert result.message == "futures product contract ok"
+
+
 def test_resolved_product_allows_unknown_explicit_symbol_prefix(monkeypatch):
     monkeypatch.setenv("FUTURES_TRADING_PRODUCT", "mini")
     monkeypatch.setenv("FUTURES_SLIPPAGE_TICK_SIZE", "0.02")

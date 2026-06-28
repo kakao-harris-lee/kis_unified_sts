@@ -6,10 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Sequence
-
+from typing import Any
 
 DEFAULT_MAX_AGE_SECONDS = 1800.0
 DEFAULT_MAX_FUTURE_SKEW_SECONDS = 300.0
@@ -96,23 +96,38 @@ def _parse_generated_at(raw: Any) -> datetime | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
     try:
-        return datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
+    # A tz-naive producer timestamp is interpreted as UTC so cross-timezone
+    # comparisons stay correct (the producer now emits aware UTC timestamps).
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _comparison_now(timestamp: datetime, now: datetime | None) -> datetime:
     if now is None:
-        return datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.now()
-    if timestamp.tzinfo is None:
-        return now.replace(tzinfo=None)
+        # Always compare against an aware UTC clock so freshness is timezone-safe.
+        return datetime.now(UTC)
     if now.tzinfo is None:
-        return now.replace(tzinfo=timestamp.tzinfo)
+        # A naive injected now is treated as UTC.
+        now = now.replace(tzinfo=UTC)
+    # An aware injected now is converted to the snapshot's timezone (legacy path).
     return now.astimezone(timestamp.tzinfo)
 
 
 def _coerce_non_negative_seconds(value: float) -> float:
     return max(0.0, float(value))
+
+
+def _coerce_leader_score(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _freshness_report(
@@ -178,28 +193,63 @@ def build_theme_fusion_quality_report(
     max_future_skew_seconds: float = DEFAULT_MAX_FUTURE_SKEW_SECONDS,
 ) -> dict[str, Any]:
     data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        # Degrade gracefully on unexpected top-level shapes (e.g. a JSON list)
+        # instead of raising AttributeError on the .get() accessors below.
+        data = {}
     targets = _extract_legacy_targets(data) or _extract_canonical_targets(data)
     state_counts = Counter(_normalize_state(target.get("state")) for target in targets)
-    theme_counts = Counter(str(target.get("theme_id") or "unknown") for target in targets)
+    theme_counts = Counter(
+        str(target.get("theme_id") or "unknown") for target in targets
+    )
     scores = [
-        float(target.get("leader_score"))
-        for target in targets
-        if target.get("leader_score") is not None
+        score
+        for score in (
+            _coerce_leader_score(target.get("leader_score")) for target in targets
+        )
+        if score is not None
     ]
+
+    source = data.get("source")
+    if not isinstance(source, dict):
+        source = {}
+    source_status = source.get("status")
+
+    freshness = _freshness_report(
+        data.get("generated_at"),
+        now=now,
+        max_age_seconds=max_age_seconds,
+        max_future_skew_seconds=max_future_skew_seconds,
+    )
+    target_count = len(targets)
+    ok = bool(
+        freshness["ok"]
+        and target_count > 0
+        and source_status not in {"stale_universe", "no_matches"}
+    )
+    if ok:
+        status = "ok"
+    elif not freshness["ok"]:
+        status = str(freshness["status"])
+    elif source_status in {"stale_universe", "no_matches"}:
+        status = str(source_status)
+    elif target_count == 0:
+        status = "empty"
+    else:
+        status = "degraded"
+
     return {
         "generated_at": data.get("generated_at"),
-        "freshness": _freshness_report(
-            data.get("generated_at"),
-            now=now,
-            max_age_seconds=max_age_seconds,
-            max_future_skew_seconds=max_future_skew_seconds,
-        ),
-        "target_count": len(targets),
+        "freshness": freshness,
+        "target_count": target_count,
         "state_counts": dict(state_counts),
         "theme_counts": dict(theme_counts),
         "min_leader_score": min(scores) if scores else None,
         "max_leader_score": max(scores) if scores else None,
         "false_positive_examples": data.get("false_positive_examples") or [],
+        "source_status": source_status,
+        "ok": ok,
+        "status": status,
     }
 
 
@@ -219,6 +269,11 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
         type=float,
         help="Maximum tolerated clock skew when generated_at is in the future.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Return a non-zero exit code when the overall report is not ok.",
+    )
     args = parser.parse_args(argv)
     report = build_theme_fusion_quality_report(
         args.snapshot,
@@ -227,7 +282,11 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
         max_future_skew_seconds=args.max_future_skew_seconds,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    args.output.write_text(
+        json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    if args.strict and not report["ok"]:
+        return 1
     return 0
 
 
