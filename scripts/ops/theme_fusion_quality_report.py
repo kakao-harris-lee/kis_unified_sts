@@ -10,10 +10,64 @@ from pathlib import Path
 from typing import Any
 
 
+def _normalize_state(value: Any) -> str:
+    state = str(value or "unknown")
+    if state == "quarantine":
+        return "quarantined"
+    return state
+
+
+def _extract_legacy_targets(data: dict[str, Any]) -> list[dict[str, Any]]:
+    targets = data.get("targets") or []
+    if not isinstance(targets, list):
+        return []
+    return [target for target in targets if isinstance(target, dict)]
+
+
+def _extract_canonical_targets(data: dict[str, Any]) -> list[dict[str, Any]]:
+    codes = data.get("codes") or []
+    scores = data.get("scores") or {}
+    metadata = data.get("metadata") or {}
+    quarantined_codes = {str(code) for code in data.get("quarantined_codes") or []}
+    if not isinstance(codes, list):
+        return []
+    if not isinstance(scores, dict):
+        scores = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    targets: list[dict[str, Any]] = []
+    for raw_code in codes:
+        code = str(raw_code).strip()
+        if not code:
+            continue
+        item_metadata = metadata.get(code) or {}
+        if not isinstance(item_metadata, dict):
+            item_metadata = {}
+        state = item_metadata.get("state")
+        if state is None and code in quarantined_codes:
+            state = "quarantined"
+        targets.append(
+            {
+                "code": code,
+                "theme_id": item_metadata.get("theme_id"),
+                "state": state,
+                "leader_score": scores.get(
+                    code,
+                    item_metadata.get(
+                        "leader_score",
+                        item_metadata.get("theme_leader_score"),
+                    ),
+                ),
+            }
+        )
+    return targets
+
+
 def build_theme_fusion_quality_report(snapshot_path: Path) -> dict[str, Any]:
     data = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    targets = data.get("targets") or []
-    state_counts = Counter(str(target.get("state") or "unknown") for target in targets)
+    targets = _extract_legacy_targets(data) or _extract_canonical_targets(data)
+    state_counts = Counter(_normalize_state(target.get("state")) for target in targets)
     theme_counts = Counter(str(target.get("theme_id") or "unknown") for target in targets)
     scores = [
         float(target.get("leader_score"))
