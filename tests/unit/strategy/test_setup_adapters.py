@@ -126,9 +126,9 @@ class TestSetupAEntryAdapterPreconditions:
 
     @pytest.mark.asyncio
     async def test_too_early_returns_none(self):
-        """Trading before valid_minutes_min (10 min after open) → None."""
+        """Trading before valid_minutes_min (10 min after the 08:45 open) → None."""
         adapter = _setup_a_adapter()
-        ts = _kst(9, 5)  # 5 minutes after open < valid_minutes_min=10
+        ts = _kst(8, 50)  # 5 minutes after the 08:45 open < valid_minutes_min=10
         context = EntryContext(
             market_data=_market_data_for_gap_reversion(current_price=348.8),
             indicators={},
@@ -349,7 +349,7 @@ class TestSetupAEntryAdapterFallbacks:
     async def test_setup_returns_none_adapter_returns_none(self):
         """When the Setup itself returns None, adapter propagates None."""
         adapter = _setup_a_adapter()
-        ts = _kst(9, 3)  # Too early — Setup will return None
+        ts = _kst(8, 50)  # Too early (5 min after 08:45 open) — Setup returns None
         context = EntryContext(
             market_data=_market_data_for_gap_reversion(current_price=348.8),
             indicators={},
@@ -1718,9 +1718,9 @@ def test_history_skips_out_of_window_rejects(_history_redis):
 
     sa._publish_setup_eval("setup_a_gap_reversion", "reject", "no_market_context")
     sa._publish_setup_eval(
-        "setup_a_gap_reversion", "reject", "outside_time_window(5m∉[20,60])"
+        "setup_a_gap_reversion", "reject", "outside_time_window(5m∉[10,90])"
     )
-    sa._publish_setup_eval("setup_c_event_reaction", "reject", "after_cutoff(400m>360)")
+    sa._publish_setup_eval("setup_c_event_reaction", "reject", "after_cutoff(400m>375)")
 
     assert (
         fake.exists(_history_key(fixed)) == 0

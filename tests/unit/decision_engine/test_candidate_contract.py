@@ -18,7 +18,7 @@ class _Macro:
 
 def test_setup_a_candidate_roundtrips_through_risk_filter_parser():
     # Build a context that makes Setup A fire (gap up + retrace in band).
-    # now must be KST 09:30 so minutes_since_open=30 ∈ [10,120].
+    # now is KST 09:30 → minutes_since_open=45 (08:45 open) ∈ [10,120].
     # prev_close=100, today_open=105 (+5% gap), current_price=103
     # retrace = (105-103)/5 = 0.4 ∈ [0.20, 0.70] → fires.
     ctx = MarketContext(

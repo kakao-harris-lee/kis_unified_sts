@@ -86,8 +86,8 @@ def test_last_reject_reason_observability():
     assert setup.check(_ctx(now_hhmm=(9, 30), macro=None)) is None
     assert setup.last_reject_reason == "no_macro_overnight"
 
-    # Outside the time window → outside_time_window
-    assert setup.check(_ctx(now_hhmm=(9, 5), macro=_macro(-1.2))) is None
+    # Outside the time window (before 08:55 = first 10 min) → outside_time_window
+    assert setup.check(_ctx(now_hhmm=(8, 50), macro=_macro(-1.2))) is None
     assert setup.last_reject_reason.startswith("outside_time_window")
 
     # SP500 gap below the minimum → sp500_gap_below_min
@@ -196,8 +196,8 @@ def test_happy_path_gap_down_short_reversion():
 @pytest.mark.parametrize(
     "now_hhmm",
     [
-        (9, 5),  # 5 min after open — below valid_minutes_min=10
-        (11, 30),  # 150 min after open — above valid_minutes_max=90
+        (8, 50),  # 5 min after 08:45 open — below valid_minutes_min=10
+        (11, 30),  # 165 min after 08:45 open — above valid_minutes_max (120 default)
     ],
 )
 def test_outside_valid_minutes_returns_none(now_hhmm):

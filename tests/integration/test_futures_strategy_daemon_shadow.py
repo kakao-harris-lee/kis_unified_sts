@@ -37,8 +37,8 @@ from shared.decision.context import ScheduledEvent
 from shared.decision.setups.event_reaction import SetupCEventReaction
 
 _SYMBOL = "A05"
-# 09:00 KST market open. now_fn = _BASE + 25min = 09:25 KST, well inside the
-# Setup C no_entry_after cutoff (15:00 KST). KST-native per the project's
+# 08:45 KST regular-session open. now_fn = _BASE + 25min = 09:25 KST, well inside
+# the Setup C no_entry_after cutoff (15:00 KST). KST-native per the project's
 # timezone rule — a UTC base here mapped to 18:25 KST (evening), which the new
 # late-session entry cutoff now (correctly) blocks.
 _KST = ZoneInfo("Asia/Seoul")

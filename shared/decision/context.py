@@ -44,19 +44,26 @@ class MarketContext:
     macro_overnight: object | None  # MacroSnapshot | None
     scheduled_events: list[ScheduledEvent]  # recent / upcoming macro events
 
+    # Configured regular-session open (hour/minute KST).
+    # Defaults to 08:45 — the KRX futures day-session open.
+    # Set explicitly by context builders that load market_schedule.yaml.
+    # Stock strategies that rely on the 09:00 open can override these fields.
+    market_open_hour: int = 8
+    market_open_minute: int = 45
+
     def market_open_time(self) -> datetime:
-        """Return 09:00 KST on the same date as ``self.now``."""
+        """Return the configured market open time (KST) on the same date as ``self.now``."""
         return datetime(
             self.now.year,
             self.now.month,
             self.now.day,
-            9,
-            0,
+            self.market_open_hour,
+            self.market_open_minute,
             tzinfo=KST,
         )
 
     def minutes_since_open(self) -> float:
-        """Elapsed minutes since today's 09:00 KST market open."""
+        """Elapsed minutes since today's configured market open (KST)."""
         return (self.now - self.market_open_time()).total_seconds() / 60
 
     def find_recent_event(
@@ -115,6 +122,56 @@ def load_scheduled_events(path: str) -> list[ScheduledEvent]:
     return events
 
 
+_FUTURES_OPEN_CACHE: dict[str, tuple[int, int]] = {}
+
+
+def _load_futures_open_from_config(
+    config_path: str = "config/market_schedule.yaml",
+) -> tuple[int, int]:
+    """Read ``market_schedule.futures.regular.open`` and return (hour, minute).
+
+    Result is cached per *config_path* after the first successful read so
+    per-tick callers (setup_adapters._build_market_context) pay the I/O cost
+    only once per process lifetime.  Returns the 08:45 default if the config
+    is missing or unparseable so callers always get a safe value without raising.
+    """
+    _DEFAULT = (8, 45)
+    if config_path in _FUTURES_OPEN_CACHE:
+        return _FUTURES_OPEN_CACHE[config_path]
+    try:
+        path = Path(config_path)
+        if not path.exists():
+            return _DEFAULT
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        open_str: str | None = (
+            data.get("market_schedule", {})
+            .get("futures", {})
+            .get("regular", {})
+            .get("open")
+        )
+        if not open_str:
+            return _DEFAULT
+        parts = str(open_str).strip().split(":")
+        if len(parts) < 2:
+            return _DEFAULT
+        result: tuple[int, int] = (int(parts[0]), int(parts[1]))
+        _FUTURES_OPEN_CACHE[config_path] = result
+        return result
+    except Exception:  # noqa: BLE001
+        return _DEFAULT
+
+
+def _reset_futures_open_cache() -> None:
+    """Clear the cached futures-open lookups.
+
+    Intended for test isolation: an autouse fixture clears this between tests so
+    a value cached by one test (e.g. via a temp config path) cannot leak into
+    another, especially under pytest-xdist where module-level state is shared
+    within a worker process.
+    """
+    _FUTURES_OPEN_CACHE.clear()
+
+
 def build_market_context(
     *,
     now: datetime,
@@ -130,6 +187,9 @@ def build_market_context(
     current_spread_ticks: float | None = None,
     macro_overnight: object | None = None,
     scheduled_events: list[ScheduledEvent] | None = None,
+    market_open_hour: int | None = None,
+    market_open_minute: int | None = None,
+    config_path: str = "config/market_schedule.yaml",
 ) -> MarketContext:
     """Assemble a MarketContext with the canonical default policy (F-4).
 
@@ -139,7 +199,21 @@ def build_market_context(
     orchestrator (setup_adapters) builders stay consistent: vwap→current_price,
     atr_90th→atr_14*1.5, spread→1.0. ``current_spread_ticks`` is uncomputable
     from the OHLCV-only tick stream, so the decoupled path always defaults it.
+
+    ``market_open_hour`` / ``market_open_minute`` set the session open anchor
+    used by ``minutes_since_open()``. When omitted they are read from
+    ``config/market_schedule.yaml::market_schedule.futures.regular.open``
+    (defaults to 08:45 if the config is absent or the key is missing).
+    Pass them explicitly to avoid the file I/O when the caller already has the
+    values (e.g. the orchestrator builds from its loaded ``MarketSchedule``).
     """
+    if market_open_hour is None or market_open_minute is None:
+        cfg_hour, cfg_minute = _load_futures_open_from_config(config_path)
+        if market_open_hour is None:
+            market_open_hour = cfg_hour
+        if market_open_minute is None:
+            market_open_minute = cfg_minute
+
     return MarketContext(
         now=now,
         symbol=symbol,
@@ -158,4 +232,6 @@ def build_market_context(
         ),
         macro_overnight=macro_overnight,
         scheduled_events=list(scheduled_events) if scheduled_events else [],
+        market_open_hour=market_open_hour,
+        market_open_minute=market_open_minute,
     )

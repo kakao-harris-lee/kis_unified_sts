@@ -94,10 +94,10 @@ class SetupCConfig(ServiceConfigBase):
         ),
     )
     no_entry_after_minutes_since_open: int = Field(
-        default=360,
+        default=375,
         description=(
-            "No new entries after this many minutes since the 09:00 KST open "
-            "(360 = 15:00 KST). Prevents late-session entries that would be "
+            "No new entries after this many minutes since the 08:45 KST open "
+            "(375 = 15:00 KST). Prevents late-session entries that would be "
             "force-closed at the 15:45 session close → churn/slippage."
         ),
     )
@@ -204,9 +204,9 @@ class SetupCEventReaction(Setup):
         c = self.config
 
         # 0. Late-session entry cutoff (KST-anchored via minutes_since_open).
-        #    No new entries after no_entry_after_minutes_since_open (360 = 15:00
-        #    KST) so a late breakout isn't opened minutes before the 15:45 close
-        #    and force-liquidated → churn.
+        #    No new entries after no_entry_after_minutes_since_open (375 = 15:00
+        #    KST with 08:45 open) so a late breakout isn't opened minutes before
+        #    the 15:45 close and force-liquidated → churn.
         if ctx.minutes_since_open() > c.no_entry_after_minutes_since_open:
             return self._reject(
                 f"after_cutoff({ctx.minutes_since_open():.0f}m>"

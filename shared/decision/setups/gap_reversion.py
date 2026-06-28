@@ -3,7 +3,7 @@
 Logic overview (spec §4.1)
 --------------------------
 1. Time window: signal only fires between ``valid_minutes_min`` and
-   ``valid_minutes_max`` minutes after the 09:00 KST market open.
+   ``valid_minutes_max`` minutes after the 08:45 KST market open.
 2. Overnight macro confirmation: ``macro_overnight`` must be present and
    ``abs(sp500_change_pct) >= min_sp500_gap_pct``.
 3. Korean open gap: ``abs(gap_pct) >= min_kr_gap_pct`` where

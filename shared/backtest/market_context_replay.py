@@ -100,6 +100,17 @@ class MarketContextReplay:
     # date).  Missing dates fall back to ``macro_snapshot``.
     macro_provider: Callable[[date], MacroSnapshot | None] | None = field(default=None)
 
+    # Regular-session open anchor (KST) stamped onto every yielded MarketContext.
+    # Defaults to 08:45 — matching current production (config/market_schedule.yaml
+    # ::futures.regular.open after 2026-06-28). IMPORTANT: historical backtests on
+    # PRE-2026-06-28 data, when the futures day session actually opened at 09:00,
+    # MUST pass market_open_hour=9, market_open_minute=0 — otherwise every setup's
+    # open-relative window (minutes_since_open) is shifted 15 min earlier and the
+    # replayed signals no longer match the regime that produced the historical
+    # research numbers (e.g. Setup A / Setup D OOS Sharpe were computed at 09:00).
+    market_open_hour: int = 8
+    market_open_minute: int = 45
+
     # Drop bars with volume < min_volume before replay. Legacy KOSPI200 futures
     # datasets can carry phantom ``volume=2`` prints at recurring clock times
     # every day (see docs/runbooks/phase3-verification.md
@@ -340,5 +351,7 @@ class MarketContextReplay:
                 current_spread_ticks=_STUB_SPREAD_TICKS,
                 macro_overnight=macro,
                 scheduled_events=list(self.scheduled_events),
+                market_open_hour=self.market_open_hour,
+                market_open_minute=self.market_open_minute,
             )
             yield ctx
