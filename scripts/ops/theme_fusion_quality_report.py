@@ -25,27 +25,50 @@ def _extract_legacy_targets(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _extract_canonical_targets(data: dict[str, Any]) -> list[dict[str, Any]]:
-    codes = data.get("codes") or []
+    raw_codes = data.get("codes") or []
     scores = data.get("scores") or {}
     metadata = data.get("metadata") or {}
-    quarantined_codes = {str(code) for code in data.get("quarantined_codes") or []}
-    if not isinstance(codes, list):
+    raw_quarantined_codes = data.get("quarantined_codes") or []
+    if not isinstance(raw_codes, list):
         return []
     if not isinstance(scores, dict):
         scores = {}
     if not isinstance(metadata, dict):
         metadata = {}
+    if not isinstance(raw_quarantined_codes, list):
+        raw_quarantined_codes = []
+
+    codes: list[str] = []
+    seen: set[str] = set()
+    for raw_code in raw_codes:
+        code = str(raw_code).strip()
+        if code and code not in seen:
+            codes.append(code)
+            seen.add(code)
+
+    quarantined_codes = {
+        str(code).strip() for code in raw_quarantined_codes if str(code).strip()
+    }
+    metadata_quarantined_codes = {
+        str(code).strip()
+        for code, item_metadata in metadata.items()
+        if str(code).strip()
+        and isinstance(item_metadata, dict)
+        and _normalize_state(
+            item_metadata.get("state", item_metadata.get("theme_state"))
+        )
+        == "quarantined"
+    }
+    additional_codes = sorted((quarantined_codes | metadata_quarantined_codes) - seen)
+    codes.extend(additional_codes)
 
     targets: list[dict[str, Any]] = []
-    for raw_code in codes:
-        code = str(raw_code).strip()
-        if not code:
-            continue
+    for code in codes:
         item_metadata = metadata.get(code) or {}
         if not isinstance(item_metadata, dict):
             item_metadata = {}
-        state = item_metadata.get("state")
-        if state is None and code in quarantined_codes:
+        state = item_metadata.get("state", item_metadata.get("theme_state"))
+        if code in quarantined_codes:
             state = "quarantined"
         targets.append(
             {

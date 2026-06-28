@@ -65,7 +65,7 @@ def test_theme_quality_report_supports_canonical_theme_target_payload(
         json.dumps(
             {
                 "generated_at": "2026-06-28T09:00:00+09:00",
-                "codes": ["000001", "000002", "000003"],
+                "codes": ["000001", "000003"],
                 "scores": {
                     "000001": 0.91,
                     "000002": 0.21,
