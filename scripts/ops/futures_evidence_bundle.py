@@ -69,6 +69,8 @@ _SETUP_D_OBSERVATION = {
 }
 _SETUP_D_MAX_AGE_ENV = "FUTURES_SETUP_D_EVIDENCE_MAX_AGE_SECONDS"
 _DEFAULT_SETUP_D_MAX_AGE_SECONDS = 129600.0
+_SETUP_D_MAX_FUTURE_SKEW_ENV = "FUTURES_SETUP_D_EVIDENCE_MAX_FUTURE_SKEW_SECONDS"
+_DEFAULT_SETUP_D_MAX_FUTURE_SKEW_SECONDS = 300.0
 
 
 def _load_bundle(path: Path) -> dict[str, Any]:
@@ -279,6 +281,17 @@ def _setup_d_max_age_seconds() -> float:
     return value if value > 0 else _DEFAULT_SETUP_D_MAX_AGE_SECONDS
 
 
+def _setup_d_max_future_skew_seconds() -> float:
+    raw = os.environ.get(_SETUP_D_MAX_FUTURE_SKEW_ENV)
+    if raw is None:
+        return _DEFAULT_SETUP_D_MAX_FUTURE_SKEW_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_SETUP_D_MAX_FUTURE_SKEW_SECONDS
+    return value if value >= 0 else _DEFAULT_SETUP_D_MAX_FUTURE_SKEW_SECONDS
+
+
 def _validate_setup_d_payload(path: Path) -> list[str]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -312,8 +325,12 @@ def _validate_setup_d_payload(path: Path) -> list[str]:
         failures.append("generated_at missing")
     elif generated_at is None:
         failures.append("generated_at invalid ISO datetime")
-    elif (_utc_now() - generated_at).total_seconds() > _setup_d_max_age_seconds():
-        failures.append("generated_at stale")
+    else:
+        now = _utc_now()
+        if (generated_at - now).total_seconds() > _setup_d_max_future_skew_seconds():
+            failures.append("generated_at is in the future")
+        elif (now - generated_at).total_seconds() > _setup_d_max_age_seconds():
+            failures.append("generated_at stale")
     return failures
 
 

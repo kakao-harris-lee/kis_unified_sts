@@ -366,3 +366,29 @@ def test_strict_bundle_rejects_stale_setup_d_observation(
     assert rc == 1
     assert report["status"] == "fail"
     assert "setup_d_observation: generated_at stale" in report["missing_evidence"]
+
+
+def test_strict_bundle_rejects_future_setup_d_observation(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+    _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
+    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    _write_setup_d_report(
+        tmp_path,
+        _valid_setup_d_payload(now + timedelta(seconds=301)),
+    )
+    bundle_path = _write_bundle(tmp_path)
+
+    rc = module.main([str(bundle_path), "--json", "--strict"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert report["status"] == "fail"
+    assert (
+        "setup_d_observation: generated_at is in the future"
+        in report["missing_evidence"]
+    )
