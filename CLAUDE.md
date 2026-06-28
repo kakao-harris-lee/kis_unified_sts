@@ -23,6 +23,9 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
   branches.
 - DRY: shared behavior belongs in `shared/`; avoid duplicating logic in
   `domains/` or per-asset service code.
+- Keep new/changed code small and delegated. If a file, class, or function grows
+  enough that one concern is no longer obvious, extract focused helpers instead
+  of appending more branches to the same unit.
 - Redis: use DB 1 for this project (`redis://localhost:6379/1` unless an env file
   intentionally overrides it). New Redis keys need TTLs; default operational TTL
   is 24h, accumulation snapshots use 48h.
@@ -103,6 +106,30 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
   dependency. Do not add new direct ClickHouse usage.
 - Backtests must avoid look-ahead bias. Use `LookaheadGuard` and keep indicator
   inputs bounded by the current context timestamp.
+
+## Code Structure And Pipeline Rules
+
+- New or heavily edited files should usually stay below about 500 lines; new or
+  heavily edited functions should usually stay below about 60 lines. Treat these
+  as review triggers, not as a mandate to churn historical modules.
+- Delegate responsibilities by layer: service daemons orchestrate, while parsing,
+  codecs, validation, state reduction, signal conversion, logging/audit helpers,
+  and reusable calculations live in focused service-local modules or `shared/`.
+- Prefer established local patterns before inventing new abstractions:
+  `StreamStage` / Redis consumer groups for stream processors, serializers and
+  codecs for stream payloads, registry/table-driven wiring for strategies,
+  config loaders/YAML for behavior, and `TradingStatePublisher` for dashboard
+  read models.
+- Preserve the event-driven architecture. Runtime services should communicate by
+  durable events/Redis Streams and consumer groups; avoid direct cross-service
+  synchronous calls or hidden shared mutable state for trading decisions.
+- Keep stream data pipelines explicit: producers emit bounded payloads with TTLs,
+  processors validate/transform/ACK with audit logs, and read-model publishers
+  expose operator state. Do not bypass this chain for convenience unless a
+  runbook or design doc explicitly approves it.
+- When adding a new trading workflow, first look for an existing stream,
+  serializer, codec, registry, or state-publisher pattern to extend. New paths
+  should be introduced only when the existing pipeline cannot model the contract.
 
 ## Strategy Implementation Pattern
 
