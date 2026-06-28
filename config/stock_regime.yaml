@@ -19,5 +19,11 @@ stock_regime:
   publish_ttl_seconds: 900        # Redis TTL backstop (M4-P republishes every eval cycle)
   min_mfi_symbols: 8              # below this coverage → low_confidence_regime published
   low_confidence_regime: UNKNOWN  # never a BEAR_* value: low confidence must not liquidate
-  block_entries_in_bear: true     # M4-P skips check_entries during BEAR_* regimes
+  # Relaxed to false so entries are not globally suppressed in BEAR_* regimes —
+  # we want trades to flow for paper/shadow observation, then tighten per-strategy.
+  # NOTE: regime-gated strategies (momentum_breakout/williams_r) still self-gate
+  # to bull states; pattern_pullback + LLM picks can fire in bear. If bear-exit
+  # (config/stock_exit.yaml enable_bear_exit) is on, watch for entry→bear-exit
+  # churn and tune there next. Re-enable this to restore the blanket bear block.
+  block_entries_in_bear: false    # M4-P skips check_entries during BEAR_* regimes
   max_age_seconds: 300            # consumer-side staleness gate (M4-P eval cadence is 60s)
