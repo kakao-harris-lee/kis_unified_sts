@@ -206,6 +206,10 @@ class StockOrderRouterDaemon(StreamStage):
 # Flag-gated entrypoint (shadow-first, default-off)
 # ---------------------------------------------------------------------------
 
+# Policy: stock order routing is KRX-only for v1. ATS/SOR code remains behind
+# config/execution.yaml::ats_routing.enabled and must not be enabled until the
+# market-structure policy runbook gates are satisfied.
+
 
 def _resolve_mode() -> str:
     """Return the daemon mode from the env var (default 'off')."""
