@@ -422,6 +422,7 @@ class StockMonitorDaemon:
             for stream, msgs in messages:
                 name = decode_stream_id(stream)
                 for msg_id, data in msgs:
+                    handler_failed = False
                     try:
                         if name == self.fill_stream:
                             await self.handle_fill(data)
@@ -430,6 +431,23 @@ class StockMonitorDaemon:
                         else:
                             logger.warning("unexpected stream %s", name)
                     except Exception:
+                        handler_failed = True
+                        try:
+                            await self.redis.xack(name, self.consumer_group, msg_id)
+                        except Exception:
+                            logger.error(
+                                format_audit_kv(
+                                    event="stream_message_ack_failed",
+                                    stream=name,
+                                    consumer_group=self.consumer_group,
+                                    worker_id=self.worker_id,
+                                    msg_id=decode_stream_id(msg_id),
+                                    reason="handler_exception",
+                                    **extract_audit_fields(data),
+                                ),
+                                exc_info=True,
+                            )
+                            raise
                         logger.exception(
                             format_audit_kv(
                                 event="stream_message_dropped",
@@ -442,7 +460,8 @@ class StockMonitorDaemon:
                                 **extract_audit_fields(data),
                             )
                         )
-                    await self.redis.xack(name, self.consumer_group, msg_id)
+                    if not handler_failed:
+                        await self.redis.xack(name, self.consumer_group, msg_id)
 
     async def _status_loop(self) -> None:
         """Periodically mark to market + publish status every ``status_interval``.

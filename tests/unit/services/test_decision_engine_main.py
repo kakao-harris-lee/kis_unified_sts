@@ -172,6 +172,27 @@ async def test_publish_logs_signal_published_audit_record(
 
 
 @pytest.mark.asyncio
+async def test_publish_does_not_log_success_when_ttl_refresh_fails(
+    redis, context_provider, caplog, monkeypatch
+):
+    daemon = _make_daemon(redis=redis, setups=[], context_provider=context_provider)
+    signal = _AlwaysSetup().check(_ctx())
+
+    async def fail_expire(*_args, **_kwargs):
+        raise ConnectionError("expire failed")
+
+    monkeypatch.setattr(redis, "expire", fail_expire)
+
+    with caplog.at_level(logging.INFO, logger="services.decision_engine.main"):
+        with pytest.raises(ConnectionError):
+            await daemon._publish(signal)
+
+    assert not any(
+        "event=signal_published" in record.getMessage() for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_signal_id_is_stable_uuid_per_signal(redis, context_provider):
     """Each emitted signal gets a fresh UUID — not deterministic per ctx."""
     contexts = [_ctx(), _ctx(now=_ctx().now + timedelta(minutes=1))]

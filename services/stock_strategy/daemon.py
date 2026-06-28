@@ -914,6 +914,7 @@ class StockStrategyDaemon:
             maxlen=self.candidate_maxlen,
             approximate=True,
         )
+        await self.redis.expire(self.candidate_stream, _STREAM_TTL_SECONDS)
         logger.info(
             format_audit_kv(
                 event="signal_published",
@@ -925,7 +926,6 @@ class StockStrategyDaemon:
                 direction=fields.get("direction"),
             )
         )
-        await self.redis.expire(self.candidate_stream, _STREAM_TTL_SECONDS)
 
     async def _refresh_loop(self) -> None:
         while not self._stop.is_set():

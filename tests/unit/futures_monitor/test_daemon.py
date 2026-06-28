@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -46,6 +47,7 @@ class _OneMessageRedis:
         self.fields = fields
         self.acks: list[tuple[str, str, bytes]] = []
         self.on_ack = lambda: None
+        self.fail_ack = False
         self._returned = False
 
     async def xreadgroup(self, **_kwargs):
@@ -56,7 +58,21 @@ class _OneMessageRedis:
 
     async def xack(self, stream: str, group: str, msg_id: bytes) -> None:
         self.acks.append((stream, group, msg_id))
+        if self.fail_ack:
+            raise ConnectionError("xack down")
         self.on_ack()
+
+
+class _FailingReadRedis:
+    def __init__(self, *, success_on_call: int | None = None) -> None:
+        self.calls = 0
+        self.success_on_call = success_on_call
+
+    async def xreadgroup(self, **_kwargs):
+        self.calls += 1
+        if self.success_on_call is not None and self.calls == self.success_on_call:
+            return []
+        raise ConnectionError("redis down")
 
 
 def _fill(side: str, role: str, price: float, qty: int = 1) -> dict[bytes, bytes]:
@@ -230,3 +246,103 @@ async def test_consume_loop_logs_audit_context_before_poison_pill_ack(caplog):
     assert "symbol=A05603" in drop_log
     assert "setup_type=setup_c_event_reaction" in drop_log
     assert "account_number=secret" not in drop_log
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_logs_ack_failed_when_poison_pill_xack_fails(caplog):
+    fields = {
+        b"signal_id": b"sig-futures-ack",
+        b"symbol": b"A05603",
+        b"setup_type": b"setup_c_event_reaction",
+    }
+    redis = _OneMessageRedis(
+        stream=b"signal.final.futures.shadow",
+        msg_id=b"1700000000000-2",
+        fields=fields,
+    )
+    redis.fail_ack = True
+    d = _make_daemon(redis)
+
+    async def fail_handler(_fields):
+        raise RuntimeError("bad futures signal")
+
+    d.handle_signal = fail_handler
+    caplog.set_level(logging.ERROR, logger="services.futures_monitor.daemon")
+
+    with pytest.raises(ConnectionError):
+        await d._consume_loop()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert not any("event=stream_message_dropped" in message for message in messages)
+    ack_log = next(
+        message
+        for message in messages
+        if "event=stream_message_ack_failed" in message
+    )
+    assert "stream=signal.final.futures.shadow" in ack_log
+    assert "consumer_group=futures_monitor" in ack_log
+    assert "worker_id=w1" in ack_log
+    assert "msg_id=1700000000000-2" in ack_log
+    assert "reason=handler_exception" in ack_log
+    assert "signal_id=sig-futures-ack" in ack_log
+    assert "symbol=A05603" in ack_log
+    assert "setup_type=setup_c_event_reaction" in ack_log
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_rate_limits_repeated_read_errors(monkeypatch, caplog):
+    redis = _FailingReadRedis()
+    d = _make_daemon(redis)
+    caplog.set_level(logging.ERROR, logger="services.futures_monitor.daemon")
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(_seconds=0):
+        await real_sleep(0)
+
+    monkeypatch.setattr("services.futures_monitor.daemon.asyncio.sleep", fast_sleep)
+
+    async def stop_after_errors():
+        while redis.calls < 3:
+            await asyncio.sleep(0)
+        await d.stop()
+
+    await asyncio.gather(d._consume_loop(), stop_after_errors())
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "event=monitor_stream_read_error" in record.getMessage()
+    ]
+    assert messages == [
+        'event=monitor_stream_read_error streams="order.fill.futures.shadow,signal.final.futures.shadow" consumer_group=futures_monitor worker_id=w1 sleep_seconds=0.5'
+    ]
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_read_error_logs_again_after_success(monkeypatch, caplog):
+    redis = _FailingReadRedis(success_on_call=2)
+    d = _make_daemon(redis)
+    caplog.set_level(logging.ERROR, logger="services.futures_monitor.daemon")
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(_seconds=0):
+        await real_sleep(0)
+
+    monkeypatch.setattr("services.futures_monitor.daemon.asyncio.sleep", fast_sleep)
+
+    async def stop_after_errors():
+        while redis.calls < 3:
+            await asyncio.sleep(0)
+        await d.stop()
+
+    await asyncio.gather(d._consume_loop(), stop_after_errors())
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "event=monitor_stream_read_error" in record.getMessage()
+    ]
+    assert messages == [
+        'event=monitor_stream_read_error streams="order.fill.futures.shadow,signal.final.futures.shadow" consumer_group=futures_monitor worker_id=w1 sleep_seconds=0.5',
+        'event=monitor_stream_read_error streams="order.fill.futures.shadow,signal.final.futures.shadow" consumer_group=futures_monitor worker_id=w1 sleep_seconds=0.5',
+    ]
