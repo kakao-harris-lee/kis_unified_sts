@@ -19,6 +19,10 @@ ranking:
   # Default 0 = dormant (no LLM-only admissions until operator enables).
   llm_only_top_n: 0
 
+outputs:
+  # TTL (seconds) for the fused trade-targets latest key.
+  ttl_seconds: 86400
+
 weights:
   realtime: 0.50
   llm: 0.30
@@ -29,7 +33,6 @@ weights:
 theme:
   enabled: true
   active_state_bonus: 0.10
-  quarantine_penalty: 1.00
 
 staleness:
   fresh_window_seconds: 600

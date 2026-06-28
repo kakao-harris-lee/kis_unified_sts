@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from services.dashboard.domain.assets import normalize_asset_class, target_assets
+from services.dashboard.routes.trades import _parse_optional_tz_aware
 from shared.exceptions import InfrastructureError
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -330,7 +331,11 @@ def _trace_state(signal: SignalResponse) -> str:
     return "generated"
 
 
-def _trace_summary_text(signal: SignalResponse, state: str) -> str:
+def _trace_summary_text(
+    signal: SignalResponse,
+    state: str,
+    lifecycle_status: str,
+) -> str:
     parts = [
         signal.strategy or "unknown_strategy",
         "generated",
@@ -341,12 +346,15 @@ def _trace_summary_text(signal: SignalResponse, state: str) -> str:
         parts.append(f"from {signal.reason}")
     if signal.orderability_state:
         parts.append(f"orderability {signal.orderability_state}")
-    if state in {"filled", "closed"}:
-        parts.append("lineage id is present; lifecycle evidence is not loaded yet")
-    elif state == "submitted":
-        parts.append("order lineage id is present; fill evidence is not available")
-    elif state == "orderable":
-        parts.append("fill evidence is not available")
+    # Reflect the lifecycle evidence that was actually loaded, rather than
+    # asserting it is missing for every downstream state.
+    if state in {"submitted", "orderable", "filled", "closed"}:
+        if lifecycle_status == "ok":
+            parts.append("lifecycle evidence is available")
+        elif lifecycle_status == "partial":
+            parts.append("lifecycle evidence is partially available")
+        else:
+            parts.append("lifecycle evidence is not available")
     return " ".join(parts) + "."
 
 
@@ -364,17 +372,10 @@ def _empty_scorecard() -> DecisionTraceScorecard:
 
 KST = ZoneInfo("Asia/Seoul")
 
-
-def _parse_dt(value: Any) -> datetime | None:
-    if isinstance(value, datetime):
-        return value.replace(tzinfo=UTC) if value.tzinfo is None else value
-    if isinstance(value, str) and value:
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
-    return None
+# Shared tz-aware ISO parser (see services/dashboard/routes/trades.py); the
+# dashboard emits tz-aware UTC throughout so downstream comparisons never mix
+# offset-naive and offset-aware datetimes.
+_parse_dt = _parse_optional_tz_aware
 
 
 def _date_kst(value: datetime | None) -> str | None:
@@ -425,10 +426,13 @@ def _load_signal_decision_payload(
         row = (
             ledger._require_conn()  # noqa: SLF001
             .execute(
+                # Match either column: a decision row may be keyed by the signal
+                # id in the ``id`` column with ``signal_id`` NULL/different. This
+                # mirrors the lifecycle batch's ``(id = ? OR signal_id = ?)``.
                 "SELECT * FROM signal_decisions "
-                "WHERE signal_id = ? AND asset_class = ? "
+                "WHERE (id = ? OR signal_id = ?) AND asset_class = ? "
                 "ORDER BY created_at DESC LIMIT 1",
-                (signal.id, signal.asset_class),
+                (signal.id, signal.id, signal.asset_class),
             )
             .fetchone()
         )
@@ -603,7 +607,10 @@ def _lifecycle_status(warnings: list[str], steps: list[dict[str, Any]]) -> str:
     return "ok"
 
 
-def _build_trace_lifecycle(signal: SignalResponse) -> DecisionTraceLifecycle:
+def _build_trace_lifecycle(
+    signal: SignalResponse,
+    ledger: Any | None = None,
+) -> DecisionTraceLifecycle:
     from services.dashboard.routes.trades import (
         _build_lifecycle_response,
         _load_lifecycle_ledger_rows,
@@ -619,10 +626,13 @@ def _build_trace_lifecycle(signal: SignalResponse) -> DecisionTraceLifecycle:
         trade_id=signal.trade_id,
         position_id=signal.position_id,
         allow_symbol_lookup=False,
+        ledger=ledger,
     )
+    # Bound the Redis scan to this signal's symbol instead of pulling the full
+    # trade/signal/position history that is then discarded.
     redis_rows = _load_lifecycle_redis_rows(
         signal.asset_class,
-        symbol=None,
+        symbol=signal.symbol or None,
     )
     response = _build_lifecycle_response(
         asset_class=signal.asset_class,
@@ -651,6 +661,7 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
     signal_decision_payload: dict[str, Any] = {}
     llm_context = DecisionTraceLlmContext(status="not_available")
     scorecard = _empty_scorecard()
+    lifecycle = _empty_lifecycle()
 
     try:
         ledger = _get_trace_ledger()
@@ -665,6 +676,7 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
                 "RuntimeLedger is unavailable; trace uses Redis signal fields only.",
             )
         )
+        lifecycle = _build_trace_lifecycle(signal)
     else:
         try:
             signal_decision_payload = _load_signal_decision_payload(ledger, signal)
@@ -676,6 +688,9 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
             if loaded_context is not None:
                 llm_context = loaded_context
             scorecard = _load_scorecard(ledger, signal)
+            # Reuse the already-open ledger for lifecycle evidence rather than
+            # opening (and migrating) a second connection per request.
+            lifecycle = _build_trace_lifecycle(signal, ledger=ledger)
         finally:
             close = getattr(ledger, "close", None)
             if callable(close):
@@ -706,7 +721,6 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
             )
         )
 
-    lifecycle = _build_trace_lifecycle(signal)
     if lifecycle.status == "missing":
         gaps.append(
             _gap(
@@ -748,7 +762,7 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
         ),
         summary=DecisionTraceSummary(
             state=state,
-            text=_trace_summary_text(signal, state),
+            text=_trace_summary_text(signal, state, lifecycle.status),
             warnings=summary_warnings,
         ),
         llm_context=llm_context,
@@ -776,6 +790,12 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
             reject_reason=signal.reject_reason,
             orderability_state=signal.orderability_state,
             orderability_details=signal.orderability_details or {},
+            risk_state=_as_optional_str(signal_decision_payload.get("risk_state")),
+            risk_details=(
+                signal_decision_payload.get("risk_details", {})
+                if isinstance(signal_decision_payload.get("risk_details"), dict)
+                else {}
+            ),
         ),
         lineage=DecisionTraceLineage(
             signal_id=signal.id,

@@ -245,11 +245,8 @@ async def test_signal_trace_lineage_summary_does_not_claim_lifecycle_loaded():
     body = response.json()
     assert body["summary"]["state"] == "filled"
     assert body["lifecycle"]["status"] == "missing"
-    assert "fill evidence is available" not in body["summary"]["text"]
-    assert (
-        "lineage id is present; lifecycle evidence is not loaded yet"
-        in body["summary"]["text"]
-    )
+    assert "lifecycle evidence is available" not in body["summary"]["text"]
+    assert "lifecycle evidence is not available" in body["summary"]["text"]
 
 
 @pytest.mark.asyncio

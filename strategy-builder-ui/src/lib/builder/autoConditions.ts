@@ -61,6 +61,9 @@ export function generateAutoConditions(
   // MA 교차 조건 생성 (같은 타입 2개 이상이면)
   Object.values(maIndicators).forEach(mas => {
     if (mas.length >= 2) {
+      // 같은 밀리초에 여러 MA 타입이 처리되어도 ID가 충돌하지 않도록
+      // 다른 분기와 동일하게 랜덤 솔트를 추가한다.
+      const ts = Date.now() + Math.random();
       const sorted = [...mas].sort((a, b) => {
         const ap = Number(a.params.period) || 20;
         const bp = Number(b.params.period) || 20;
@@ -69,13 +72,13 @@ export function generateAutoConditions(
       const fast = sorted[0];
       const slow = sorted[sorted.length - 1];
       entry.push({
-        id: `auto_entry_${Date.now()}_ma`,
+        id: `auto_entry_${ts}_ma`,
         left: { type: "indicator", indicatorAlias: fast.alias, indicatorOutput: "value" },
         operator: "cross_above",
         right: { type: "indicator", indicatorAlias: slow.alias, indicatorOutput: "value" },
       });
       exit.push({
-        id: `auto_exit_${Date.now()}_ma`,
+        id: `auto_exit_${ts}_ma`,
         left: { type: "indicator", indicatorAlias: fast.alias, indicatorOutput: "value" },
         operator: "cross_below",
         right: { type: "indicator", indicatorAlias: slow.alias, indicatorOutput: "value" },

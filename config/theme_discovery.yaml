@@ -18,6 +18,32 @@ thresholds:
   keyword_catalyst_score: 0.85
   default_intraday_persistence: 0.6
   default_freshness_score: 1.0
+  # Floor applied to volume_surge_score when the screener flags volume_power.
+  volume_power_source_floor: 0.8
+
+# Keywords that must not, on their own, admit a theme match.
+generic_keywords:
+  - "ai"
+
+# Theme leader scoring weights, admission threshold, and risk penalties.
+scoring:
+  weights:
+    relative_strength: 0.25
+    trading_value: 0.20
+    volume_surge: 0.15
+    catalyst: 0.15
+    theme_breadth: 0.10
+    intraday_persistence: 0.10
+    freshness: 0.05
+  active_threshold: 0.70
+  soft_penalty_per_flag: 0.08
+  soft_penalty_cap: 0.35
+  hard_risk_flags:
+    - "investment_warning"
+    - "investment_risk"
+    - "trading_halt"
+    - "administrative_issue"
+    - "preferred_share"
 
 keyword_themes:
   ai_hbm:
@@ -56,6 +82,11 @@ keyword_themes:
       - "조선"
       - "방산"
       - "방위산업"
+    # Suppress known homonyms of "조선" (e.g. refractory/wire firms that are not
+    # shipbuilders). Uncomment / extend as false positives are observed.
+    # exclude_keywords:
+    #   - "조선내화"
+    #   - "조선선재"
   physical_ai:
     label: "Physical AI"
     keywords:

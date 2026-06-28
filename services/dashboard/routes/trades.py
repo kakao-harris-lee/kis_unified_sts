@@ -842,8 +842,13 @@ def _load_lifecycle_ledger_rows(
     position_id: str | None = None,
     allow_symbol_lookup: bool = True,
     limit: int = 500,
+    ledger: SQLiteRuntimeLedger | None = None,
 ) -> tuple[dict[str, list[dict]], bool]:
-    ledger = _get_runtime_ledger()
+    # When a caller passes an already-open ledger we reuse it (and leave closing
+    # to the owner) instead of opening — and migrating — a second connection.
+    owns_ledger = ledger is None
+    if ledger is None:
+        ledger = _get_runtime_ledger()
     if ledger is None:
         return _empty_lifecycle_rows(), False
 
@@ -893,7 +898,8 @@ def _load_lifecycle_ledger_rows(
     except Exception:
         return rows, True
     finally:
-        ledger.close()
+        if owns_ledger:
+            ledger.close()
 
 
 def _load_lifecycle_redis_rows(

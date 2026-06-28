@@ -13,6 +13,7 @@ import HeaderBar from '@/components/dashboard/HeaderBar';
 import BottomSheet from '@/components/dashboard/BottomSheet';
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext';
 import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals';
+import { formatKstDateTime } from '@/lib/dashboard/format';
 import DecisionTracePanel from './components/DecisionTracePanel';
 import type {
   DashboardSignal,
@@ -202,7 +203,7 @@ function Signals() {
                       <div>
                         <div className="text-slate-500">Time</div>
                         <div className="font-medium text-xs">
-                          {new Date(signal.timestamp).toLocaleString()}
+                          {formatKstDateTime(signal.timestamp)}
                         </div>
                       </div>
                       <div>
@@ -299,7 +300,7 @@ function Signals() {
                           }}
                         >
                           <td className="px-4 py-3 text-sm text-slate-500">
-                            {new Date(signal.timestamp).toLocaleString()}
+                            {formatKstDateTime(signal.timestamp)}
                           </td>
                           <td className="px-4 py-3">{signal.strategy}</td>
                           <td className="px-4 py-3 font-medium">{signal.symbol}</td>

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import SideBadge from "@/components/dashboard/SideBadge";
+import { formatKstDateTime } from "@/lib/dashboard/format";
 import type {
   DecisionTraceEvidenceGap,
   DecisionTraceResponse,
@@ -56,23 +57,7 @@ function displaySigned(value?: number | null): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
 }
 
-function formatKst(value?: string | null): string {
-  if (!value) {
-    return "not available";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString("ko-KR", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+const formatKst = (value?: string | null): string => formatKstDateTime(value);
 
 function scoreResult(correct?: boolean | null): string {
   if (correct === null || correct === undefined) {
@@ -271,7 +256,6 @@ export default function DecisionTracePanel({
                 <Field label="Strategy" value={trace.signal.strategy} />
                 <Field label="Type" value={trace.signal.signal_type} fallback="unknown" />
                 <Field label="Confidence" value={displayPercent(trace.signal.confidence)} />
-                <Field label="Strength" value={displayPercent(trace.signal.strength)} />
                 <Field label="Price" value={trace.signal.price} />
               </div>
               {trace.summary.warnings.length > 0 ? (

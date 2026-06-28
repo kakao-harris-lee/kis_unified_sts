@@ -31,9 +31,27 @@ from __future__ import annotations
 
 import dataclasses
 import warnings
-from typing import Any, TypeVar, get_args, get_origin
+from typing import Any, TypeVar, get_args, get_origin, get_type_hints
 
 T = TypeVar("T", bound="ConfigMixin")
+
+# Cache resolved type hints per class. ``get_type_hints`` resolves PEP 563
+# stringized annotations (``from __future__ import annotations``) back to real
+# ``type`` objects so the type guard behaves identically regardless of whether a
+# config module opted into stringized annotations.
+_TYPE_HINT_CACHE: dict[type, dict[str, Any]] = {}
+
+
+def _resolve_type_hints(cls: type) -> dict[str, Any]:
+    cached = _TYPE_HINT_CACHE.get(cls)
+    if cached is not None:
+        return cached
+    try:
+        hints = get_type_hints(cls)
+    except Exception:  # noqa: BLE001 - fall back to raw field.type on any failure
+        hints = {}
+    _TYPE_HINT_CACHE[cls] = hints
+    return hints
 
 
 def _field_has_default(field: dataclasses.Field[Any]) -> bool:
@@ -125,6 +143,10 @@ class ConfigMixin:
 
         # Get valid fields for this dataclass
         fields = {f.name: f for f in dataclasses.fields(cls)}
+        # Resolve stringized (PEP 563) annotations so the type guard below is
+        # applied consistently to every config class, not just those that avoid
+        # ``from __future__ import annotations``.
+        hints = _resolve_type_hints(cls)
 
         # Filter to only known fields. Treat None as "missing" when the
         # dataclass already has a non-None default; this keeps arbitrary config
@@ -141,10 +163,11 @@ class ConfigMixin:
                 and field.default is not None
             ):
                 continue
+            annotation = hints.get(key, field.type)
             if (
                 value is not None
                 and _field_has_default(field)
-                and not _matches_field_type(value, field.type)
+                and not _matches_field_type(value, annotation)
             ):
                 continue
             filtered[key] = value

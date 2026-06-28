@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Any, ClassVar
@@ -16,10 +17,23 @@ from typing import Any, ClassVar
 from pydantic import BaseModel, Field
 
 from shared.config.base import ServiceConfigBase
+from shared.payloads import (
+    clamp01 as _clamp01,
+)
+from shared.payloads import (
+    normalize_scores_by_rank as _normalize_scores_by_rank,
+)
+from shared.payloads import (
+    parse_json_dict as _parse_json,
+)
+from shared.strategy.market_time import is_regular_session_open
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
 from shared.theme_universe.scoring import (
+    HARD_RISK_FLAGS,
     ThemeScoreInput,
+    ThemeScoringConfig,
+    ThemeScoringWeights,
     classify_theme_candidate,
 )
 
@@ -32,7 +46,53 @@ DEFAULT_REDIS_KEYS = {
     "targets_latest": "system:theme_targets:latest",
     "targets_stream": "system:theme_targets",
 }
-GENERIC_THEME_KEYWORDS = {"ai"}
+# Default generic keywords that must not, on their own, admit a theme match.
+# Configuration may override via ``ThemeDiscoveryConfig.generic_keywords``.
+DEFAULT_GENERIC_THEME_KEYWORDS = ("ai",)
+
+
+class ThemeScoringWeightsConfig(BaseModel):
+    """YAML-facing weights for theme leader scoring."""
+
+    relative_strength: float = 0.25
+    trading_value: float = 0.20
+    volume_surge: float = 0.15
+    catalyst: float = 0.15
+    theme_breadth: float = 0.10
+    intraday_persistence: float = 0.10
+    freshness: float = 0.05
+
+
+class ThemeScoringConfigModel(BaseModel):
+    """YAML-facing theme scoring configuration."""
+
+    weights: ThemeScoringWeightsConfig = Field(
+        default_factory=ThemeScoringWeightsConfig
+    )
+    active_threshold: float = 0.70
+    soft_penalty_per_flag: float = 0.08
+    soft_penalty_cap: float = 0.35
+    hard_risk_flags: list[str] = Field(default_factory=lambda: sorted(HARD_RISK_FLAGS))
+
+    def to_scoring_config(self) -> ThemeScoringConfig:
+        return ThemeScoringConfig(
+            weights=ThemeScoringWeights(
+                relative_strength=self.weights.relative_strength,
+                trading_value=self.weights.trading_value,
+                volume_surge=self.weights.volume_surge,
+                catalyst=self.weights.catalyst,
+                theme_breadth=self.weights.theme_breadth,
+                intraday_persistence=self.weights.intraday_persistence,
+                freshness=self.weights.freshness,
+            ),
+            active_threshold=self.active_threshold,
+            soft_penalty_per_flag=self.soft_penalty_per_flag,
+            soft_penalty_cap=self.soft_penalty_cap,
+            hard_risk_flags=frozenset(
+                str(flag).strip() for flag in self.hard_risk_flags if str(flag).strip()
+            )
+            or HARD_RISK_FLAGS,
+        )
 
 
 class ThemeKeywordConfig(BaseModel):
@@ -40,6 +100,26 @@ class ThemeKeywordConfig(BaseModel):
 
     label: str = ""
     keywords: list[str] = Field(default_factory=list)
+    exclude_keywords: list[str] = Field(
+        default_factory=list,
+        description="Substrings that suppress this theme (homonym/false-positive guard)",
+    )
+
+
+def _keyword_matches(keyword: str, haystack: str) -> bool:
+    """Return True if ``keyword`` occurs in ``haystack`` (both casefolded).
+
+    ASCII keywords require word boundaries so a short token cannot match inside a
+    larger word (e.g. ``power`` inside ``empower``). Non-ASCII (e.g. Korean)
+    keywords keep substring matching because Korean theme names are compound and
+    word boundaries would miss legitimate mid-token matches.
+    """
+    needle = str(keyword).casefold()
+    if not needle:
+        return False
+    if needle.isascii():
+        return re.search(rf"\b{re.escape(needle)}\b", haystack) is not None
+    return needle in haystack
 
 
 class ThemeDiscoveryConfig(ServiceConfigBase):
@@ -75,8 +155,14 @@ class ThemeDiscoveryConfig(ServiceConfigBase):
             "keyword_catalyst_score": 0.85,
             "default_intraday_persistence": 0.6,
             "default_freshness_score": 1.0,
+            "volume_power_source_floor": 0.8,
         }
     )
+    generic_keywords: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_GENERIC_THEME_KEYWORDS),
+        description="Keywords that must not, alone, admit a theme match",
+    )
+    scoring: ThemeScoringConfigModel = Field(default_factory=ThemeScoringConfigModel)
     keyword_themes: dict[str, ThemeKeywordConfig] = Field(default_factory=dict)
 
     def redis_key(self, name: str) -> str:
@@ -88,25 +174,15 @@ class ThemeDiscoveryConfig(ServiceConfigBase):
         except (TypeError, ValueError):
             return default
 
+    def generic_keyword_set(self) -> set[str]:
+        return {
+            str(keyword).casefold()
+            for keyword in self.generic_keywords
+            if str(keyword).strip()
+        }
 
-def _decode_redis_value(raw: Any) -> str | None:
-    if raw is None:
-        return None
-    if isinstance(raw, bytes):
-        return raw.decode("utf-8", errors="replace")
-    return str(raw)
-
-
-def _parse_json(raw: Any) -> dict[str, Any]:
-    text = _decode_redis_value(raw)
-    if not text:
-        return {}
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        logger.debug("Failed to parse theme discovery input JSON: %s", exc)
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    def scoring_config(self) -> ThemeScoringConfig:
+        return self.scoring.to_scoring_config()
 
 
 def _parse_timestamp(raw: Any) -> datetime | None:
@@ -127,23 +203,6 @@ def _age_seconds(raw: Any) -> float | None:
     return max(0.0, (now - timestamp).total_seconds())
 
 
-def _clamp01(value: Any) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(1.0, number))
-
-
-def _normalize_scores_by_rank(codes: list[str]) -> dict[str, float]:
-    if not codes:
-        return {}
-    if len(codes) == 1:
-        return {codes[0]: 1.0}
-    span = len(codes) - 1
-    return {code: round((span - idx) / span, 6) for idx, code in enumerate(codes)}
-
-
 def _extract_codes(payload: dict[str, Any]) -> list[str]:
     raw_codes = payload.get("codes", [])
     if not isinstance(raw_codes, list):
@@ -161,9 +220,13 @@ def _extract_scores(payload: dict[str, Any], codes: list[str]) -> dict[str, floa
             if code in raw_scores:
                 scores[code] = _clamp01(raw_scores.get(code))
     if scores:
-        for code, fallback in _normalize_scores_by_rank(codes).items():
-            scores.setdefault(code, fallback)
+        # Some codes had real scores: codes missing from the screener's score map
+        # have no relative-strength evidence, so floor them at 0.0 rather than a
+        # rank-position fallback that could outrank a genuinely low-scored code.
+        for code in codes:
+            scores.setdefault(code, 0.0)
         return scores
+    # No real scores at all: fall back to rank ordering across the full list.
     return _normalize_scores_by_rank(codes)
 
 
@@ -263,6 +326,8 @@ class ThemeDiscoveryService:
             if publisher is not None
             else StreamPublisher(config.redis_key("targets_stream"))
         )
+        self._generic_keywords = config.generic_keyword_set()
+        self._scoring_config = config.scoring_config()
 
     def _match_themes(
         self,
@@ -274,15 +339,23 @@ class ThemeDiscoveryService:
         haystack = " ".join([code, name, *_text_fragments(metadata)]).casefold()
         matches: dict[str, list[str]] = {}
         for theme_id, theme in self.config.keyword_themes.items():
+            exclusions = [
+                str(token).casefold()
+                for token in theme.exclude_keywords
+                if str(token).strip()
+            ]
+            if any(token in haystack for token in exclusions):
+                # Explicitly suppressed for this theme (e.g. known homonym).
+                continue
             needles = list(theme.keywords)
             needles.append(theme_id)
             hits = [
                 keyword
                 for keyword in needles
-                if keyword and str(keyword).casefold() in haystack
+                if keyword and _keyword_matches(keyword, haystack)
             ]
             specific_hits = [
-                hit for hit in hits if str(hit).casefold() not in GENERIC_THEME_KEYWORDS
+                hit for hit in hits if str(hit).casefold() not in self._generic_keywords
             ]
             if hits and not specific_hits:
                 continue
@@ -319,7 +392,10 @@ class ThemeDiscoveryService:
             ),
         )
         if "volume_power" in source_hits:
-            volume_surge_score = max(volume_surge_score, 0.8)
+            volume_surge_score = max(
+                volume_surge_score,
+                _clamp01(self.config.threshold("volume_power_source_floor", 0.8)),
+            )
 
         breadth_full_count = max(
             1.0,
@@ -542,14 +618,10 @@ class ThemeDiscoveryService:
                 theme_counts=theme_counts,
                 risk_flags=risk_flags,
             )
-            result = classify_theme_candidate(score_input)
-            state = str(getattr(result, "state", "watch") or "watch")
-            if state not in state_counts:
-                state = "watch"
-            leader_score = _clamp01(getattr(result, "leader_score", 0.0))
-            hard_blocked = bool(getattr(result, "hard_blocked", False))
-            if hard_blocked:
-                state = "quarantine"
+            result = classify_theme_candidate(score_input, self._scoring_config)
+            state = result.state
+            leader_score = _clamp01(result.leader_score)
+            hard_blocked = result.hard_blocked
             state_counts[state] += 1
             primary_theme_id = matched_themes[0] if matched_themes else ""
             primary_theme = self.config.keyword_themes.get(primary_theme_id)
@@ -569,7 +641,7 @@ class ThemeDiscoveryService:
                 "theme_state": state,
                 "theme_leader_score": leader_score,
                 "hard_blocked": hard_blocked,
-                "risk_penalty": _clamp01(getattr(result, "risk_penalty", 0.0)),
+                "risk_penalty": result.risk_penalty,
                 "risk_flags": risk_flags,
             }
             target_metadata[code] = enriched_metadata
@@ -720,6 +792,11 @@ def run_theme_discovery(config: ThemeDiscoveryConfig) -> None:
     )
     try:
         while True:
+            if not is_regular_session_open():
+                # Idle outside the KRX regular session: the upstream universe
+                # snapshot is not refreshed, so there is nothing new to derive.
+                time.sleep(60)
+                continue
             started = time.time()
             try:
                 service.run_once()
