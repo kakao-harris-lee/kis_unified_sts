@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -30,6 +31,32 @@ class _FakeFeed:
 
     def get_staleness_seconds(self) -> float | None:
         return 0.0
+
+
+class _OneMessageRedis:
+    def __init__(
+        self,
+        *,
+        stream: bytes,
+        msg_id: bytes,
+        fields: dict[bytes, bytes],
+    ) -> None:
+        self.stream = stream
+        self.msg_id = msg_id
+        self.fields = fields
+        self.acks: list[tuple[str, str, bytes]] = []
+        self.on_ack = lambda: None
+        self._returned = False
+
+    async def xreadgroup(self, **_kwargs):
+        if self._returned:
+            return []
+        self._returned = True
+        return [(self.stream, [(self.msg_id, self.fields)])]
+
+    async def xack(self, stream: str, group: str, msg_id: bytes) -> None:
+        self.acks.append((stream, group, msg_id))
+        self.on_ack()
 
 
 def _fill(side: str, role: str, price: float, qty: int = 1) -> dict[bytes, bytes]:
@@ -158,3 +185,48 @@ async def test_signal_published(redis):
         }
     )
     d.publisher.publish_raw_signal.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_logs_audit_context_before_poison_pill_ack(caplog):
+    fields = {
+        b"signal_id": b"sig-futures-1",
+        b"symbol": b"A05603",
+        b"setup_type": b"setup_c_event_reaction",
+        b"account_number": b"secret",
+    }
+    redis = _OneMessageRedis(
+        stream=b"signal.final.futures.shadow",
+        msg_id=b"1700000000000-1",
+        fields=fields,
+    )
+    d = _make_daemon(redis)
+    redis.on_ack = d._stop.set
+
+    async def fail_handler(_fields):
+        raise RuntimeError("bad futures signal")
+
+    d.handle_signal = fail_handler
+    caplog.set_level(logging.ERROR, logger="services.futures_monitor.daemon")
+
+    await d._consume_loop()
+
+    assert redis.acks == [
+        ("signal.final.futures.shadow", "futures_monitor", b"1700000000000-1")
+    ]
+    messages = [record.getMessage() for record in caplog.records]
+    drop_log = next(
+        message
+        for message in messages
+        if "event=stream_message_dropped" in message
+    )
+    assert "stream=signal.final.futures.shadow" in drop_log
+    assert "consumer_group=futures_monitor" in drop_log
+    assert "worker_id=w1" in drop_log
+    assert "msg_id=1700000000000-1" in drop_log
+    assert "ack=true" in drop_log
+    assert "reason=handler_exception" in drop_log
+    assert "signal_id=sig-futures-1" in drop_log
+    assert "symbol=A05603" in drop_log
+    assert "setup_type=setup_c_event_reaction" in drop_log
+    assert "account_number=secret" not in drop_log

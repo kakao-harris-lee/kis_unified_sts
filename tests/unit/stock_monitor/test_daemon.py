@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -94,6 +95,32 @@ class _FakeFeed:
 
     async def stop(self) -> None:
         pass
+
+
+class _OneMessageRedis:
+    def __init__(
+        self,
+        *,
+        stream: bytes,
+        msg_id: bytes,
+        fields: dict[bytes, bytes],
+    ) -> None:
+        self.stream = stream
+        self.msg_id = msg_id
+        self.fields = fields
+        self.acks: list[tuple[str, str, bytes]] = []
+        self.on_ack = lambda: None
+        self._returned = False
+
+    async def xreadgroup(self, **_kwargs):
+        if self._returned:
+            return []
+        self._returned = True
+        return [(self.stream, [(self.msg_id, self.fields)])]
+
+    async def xack(self, stream: str, group: str, msg_id: bytes) -> None:
+        self.acks.append((stream, group, msg_id))
+        self.on_ack()
 
 
 @pytest.fixture()
@@ -368,6 +395,54 @@ async def test_entry_without_signal_meta_is_graceful(wired) -> None:
     assert pos["strategy"] == ""
     assert pos["name"] == ""
     assert pos["entry_price"] == 71000.0
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_logs_audit_context_before_poison_pill_ack(
+    wired, caplog
+) -> None:
+    daemon, _redis, _reader = wired
+    fields = {
+        b"signal_id": b"sig-stock-1",
+        b"code": b"005930",
+        b"strategy": b"vr_composite",
+        b"account_number": b"secret",
+    }
+    redis = _OneMessageRedis(
+        stream=b"signal.final.stock.shadow",
+        msg_id=b"1700000000000-7",
+        fields=fields,
+    )
+    daemon.redis = redis
+    redis.on_ack = daemon._stop.set
+
+    async def fail_handler(_fields):
+        raise RuntimeError("bad stock signal")
+
+    daemon.handle_signal = fail_handler
+    caplog.set_level(logging.ERROR, logger="services.stock_monitor.daemon")
+
+    await daemon._consume_loop()
+
+    assert redis.acks == [
+        ("signal.final.stock.shadow", "stock_monitor", b"1700000000000-7")
+    ]
+    messages = [record.getMessage() for record in caplog.records]
+    drop_log = next(
+        message
+        for message in messages
+        if "event=stream_message_dropped" in message
+    )
+    assert "stream=signal.final.stock.shadow" in drop_log
+    assert "consumer_group=stock_monitor" in drop_log
+    assert "worker_id=test" in drop_log
+    assert "msg_id=1700000000000-7" in drop_log
+    assert "ack=true" in drop_log
+    assert "reason=handler_exception" in drop_log
+    assert "signal_id=sig-stock-1" in drop_log
+    assert "code=005930" in drop_log
+    assert "strategy=vr_composite" in drop_log
+    assert "account_number=secret" not in drop_log
 
 
 # -- spec §7 ②/③: health anomaly + session digest --------------------------- #
