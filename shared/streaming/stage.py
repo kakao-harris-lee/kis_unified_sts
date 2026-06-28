@@ -17,10 +17,72 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Any, final
 
+from shared.streaming.audit import (
+    RateLimitedLog,
+    decode_stream_id,
+    extract_audit_fields,
+    format_audit_kv,
+)
+
 logger = logging.getLogger(__name__)
+
+
+def _duration_ms(started_at: float) -> int:
+    return max(0, int((time.perf_counter() - started_at) * 1000))
+
+
+def _log_processed_message(
+    *,
+    stream: str | bytes,
+    consumer_group: str,
+    worker_id: str,
+    msg_id: bytes,
+    fields: dict[bytes, bytes],
+    ack: bool,
+    claimed: bool,
+    duration_ms: int,
+) -> None:
+    logger.info(
+        format_audit_kv(
+            event="stream_message_processed",
+            stream=decode_stream_id(stream),
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            msg_id=decode_stream_id(msg_id),
+            ack=ack,
+            claimed=claimed,
+            duration_ms=duration_ms,
+            **extract_audit_fields(fields),
+        )
+    )
+
+
+def _log_failed_message(
+    *,
+    stream: str | bytes,
+    consumer_group: str,
+    worker_id: str,
+    msg_id: bytes,
+    fields: dict[bytes, bytes],
+    claimed: bool,
+    duration_ms: int,
+) -> None:
+    logger.error(
+        format_audit_kv(
+            event="stream_message_failed",
+            stream=decode_stream_id(stream),
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            msg_id=decode_stream_id(msg_id),
+            claimed=claimed,
+            duration_ms=duration_ms,
+            **extract_audit_fields(fields),
+        )
+    )
 
 
 class StreamStage(ABC):
@@ -48,6 +110,8 @@ class StreamStage(ABC):
         self.pending_retry_idle_ms = pending_retry_idle_ms
         self._pending_claim_start_id: str | bytes = "0-0"
         self._pending_claim_disabled = pending_retry_idle_ms < 0
+        self._xautoclaim_error_log = RateLimitedLog()
+        self._xreadgroup_error_log = RateLimitedLog()
         self._stop = asyncio.Event()
 
     # -- subclass contract ------------------------------------------------ #
@@ -127,7 +191,8 @@ class StreamStage(ABC):
                 )
                 self._pending_claim_disabled = True
                 return []
-            logger.exception(
+            self._xautoclaim_error_log.exception(
+                logger,
                 "xautoclaim error; sleeping %.1fs",
                 self._xreadgroup_error_sleep,
             )
@@ -144,10 +209,36 @@ class StreamStage(ABC):
         return list(messages)
 
     async def _process_messages(
-        self, messages: list[tuple[bytes, dict[bytes, bytes]]]
+        self,
+        messages: list[tuple[bytes, dict[bytes, bytes]]],
+        *,
+        claimed: bool = False,
     ) -> None:
         for msg_id, data in messages:
-            should_ack = await self.handle_message(msg_id, data)
+            started_at = time.perf_counter()
+            try:
+                should_ack = await self.handle_message(msg_id, data)
+            except Exception:
+                _log_failed_message(
+                    stream=self.input_stream,
+                    consumer_group=self.consumer_group,
+                    worker_id=self.worker_id,
+                    msg_id=msg_id,
+                    fields=data,
+                    claimed=claimed,
+                    duration_ms=_duration_ms(started_at),
+                )
+                raise
+            _log_processed_message(
+                stream=self.input_stream,
+                consumer_group=self.consumer_group,
+                worker_id=self.worker_id,
+                msg_id=msg_id,
+                fields=data,
+                ack=should_ack,
+                claimed=claimed,
+                duration_ms=_duration_ms(started_at),
+            )
             if should_ack:
                 await self.redis.xack(self.input_stream, self.consumer_group, msg_id)
 
@@ -168,7 +259,7 @@ class StreamStage(ABC):
                 claimed = await self._claim_pending_messages()
                 if claimed:
                     await self.post_poll(len(claimed))
-                    await self._process_messages(claimed)
+                    await self._process_messages(claimed, claimed=True)
                     continue
 
                 try:
@@ -180,7 +271,8 @@ class StreamStage(ABC):
                         block=self.xread_block_ms,
                     )
                 except Exception:
-                    logger.exception(
+                    self._xreadgroup_error_log.exception(
+                        logger,
                         "xreadgroup error; sleeping %.1fs",
                         self._xreadgroup_error_sleep,
                     )
@@ -195,7 +287,7 @@ class StreamStage(ABC):
                     continue
 
                 for _stream, msgs in messages:
-                    await self._process_messages(list(msgs))
+                    await self._process_messages(list(msgs), claimed=False)
         finally:
             await self.on_shutdown()
 
@@ -232,6 +324,8 @@ class MultiStreamStage(ABC):
             self.input_streams, "0-0"
         )
         self._pending_claim_disabled = pending_retry_idle_ms < 0
+        self._xautoclaim_error_log = RateLimitedLog()
+        self._xreadgroup_error_log = RateLimitedLog()
         self._stop = asyncio.Event()
 
     # -- subclass contract ------------------------------------------------ #
@@ -296,7 +390,8 @@ class MultiStreamStage(ABC):
                 )
                 self._pending_claim_disabled = True
                 return []
-            logger.exception(
+            self._xautoclaim_error_log.exception(
+                logger,
                 "xautoclaim error; sleeping %.1fs",
                 self._xreadgroup_error_sleep,
             )
@@ -326,9 +421,34 @@ class MultiStreamStage(ABC):
         self,
         stream: str | bytes,
         messages: list[tuple[bytes, dict[bytes, bytes]]],
+        *,
+        claimed: bool = False,
     ) -> None:
         for msg_id, data in messages:
-            should_ack = await self.handle_message(stream, msg_id, data)
+            started_at = time.perf_counter()
+            try:
+                should_ack = await self.handle_message(stream, msg_id, data)
+            except Exception:
+                _log_failed_message(
+                    stream=stream,
+                    consumer_group=self.consumer_group,
+                    worker_id=self.worker_id,
+                    msg_id=msg_id,
+                    fields=data,
+                    claimed=claimed,
+                    duration_ms=_duration_ms(started_at),
+                )
+                raise
+            _log_processed_message(
+                stream=stream,
+                consumer_group=self.consumer_group,
+                worker_id=self.worker_id,
+                msg_id=msg_id,
+                fields=data,
+                ack=should_ack,
+                claimed=claimed,
+                duration_ms=_duration_ms(started_at),
+            )
             if should_ack:
                 await self.redis.xack(stream, self.consumer_group, msg_id)
 
@@ -354,7 +474,7 @@ class MultiStreamStage(ABC):
                     )
                     await self.post_poll(count)
                     for stream, messages in claimed_by_stream:
-                        await self._process_messages(stream, messages)
+                        await self._process_messages(stream, messages, claimed=True)
                     continue
 
                 try:
@@ -366,7 +486,8 @@ class MultiStreamStage(ABC):
                         block=self.xread_block_ms,
                     )
                 except Exception:
-                    logger.exception(
+                    self._xreadgroup_error_log.exception(
+                        logger,
                         "xreadgroup error; sleeping %.1fs",
                         self._xreadgroup_error_sleep,
                     )
@@ -381,7 +502,7 @@ class MultiStreamStage(ABC):
                     continue
 
                 for stream, msgs in messages:
-                    await self._process_messages(stream, list(msgs))
+                    await self._process_messages(stream, list(msgs), claimed=False)
         finally:
             await self.on_shutdown()
 
