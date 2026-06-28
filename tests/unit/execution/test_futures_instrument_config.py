@@ -62,3 +62,35 @@ def test_normalize_futures_product_is_case_insensitive():
     assert normalize_futures_product(" mini ") == "mini"
     assert normalize_futures_product("") == "mini"
     assert normalize_futures_product(None) == "mini"
+
+
+def test_resolved_futures_product_requires_matching_slippage_tick(monkeypatch):
+    monkeypatch.setenv("FUTURES_TRADING_PRODUCT", "kospi200")
+    monkeypatch.setenv("FUTURES_SLIPPAGE_TICK_SIZE", "0.02")
+
+    from shared.execution.futures_instrument import (
+        validate_futures_runtime_product_contract,
+    )
+
+    result = validate_futures_runtime_product_contract()
+
+    assert result.ok is False
+    assert result.product == "kospi200"
+    assert result.expected_tick_size == 0.05
+    assert result.actual_tick_size == 0.02
+    assert "FUTURES_SLIPPAGE_TICK_SIZE=0.05" in result.message
+
+
+def test_resolved_mini_product_accepts_default_slippage_tick(monkeypatch):
+    monkeypatch.setenv("FUTURES_TRADING_PRODUCT", "mini")
+    monkeypatch.delenv("FUTURES_SLIPPAGE_TICK_SIZE", raising=False)
+
+    from shared.execution.futures_instrument import (
+        validate_futures_runtime_product_contract,
+    )
+
+    result = validate_futures_runtime_product_contract()
+
+    assert result.ok is True
+    assert result.product == "mini"
+    assert result.expected_tick_size == 0.02

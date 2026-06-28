@@ -61,6 +61,10 @@ from shared.exceptions import (
     WebSocketDisconnectError,
 )
 from shared.execution.config import ATSRoutingConfig
+from shared.execution.futures_instrument import (
+    FuturesProductContractValidation,
+    validate_futures_runtime_product_contract,
+)
 from shared.execution.models import ExecutionVenue
 from shared.execution.venue_router import VenueRouter
 from shared.models.position import Position, PositionSide, PositionState
@@ -919,6 +923,9 @@ class TradingOrchestrator:
         self._stream_redis: Any | None = None
         self._futures_slippage_controller: Any | None = None
         self._futures_slippage_aux_symbols: list[str] = []
+        self._futures_product_contract_validation: (
+            FuturesProductContractValidation | None
+        ) = None
         self._entry_slippage_stats: dict[str, float] = {
             "count": 0.0,
             "adverse_ticks_sum": 0.0,
@@ -1159,7 +1166,8 @@ class TradingOrchestrator:
         # 1. Initialize KIS Client & Config
         kis_config = self._init_kis_client()
 
-        # 2. Initialize futures slippage controller (if enabled)
+        # 2. Validate futures product/tick contract, then initialize slippage control
+        self._validate_futures_product_contract()
         self._init_futures_slippage_controller()
 
         # 3. Initialize Price Feeds (WebSocket)
@@ -1288,6 +1296,31 @@ class TradingOrchestrator:
             logger.warning(f"Futures slippage controller init failed: {e}")
             self._futures_slippage_controller = None
             self._futures_slippage_aux_symbols = []
+
+    def _validate_futures_product_contract(self) -> None:
+        """Validate futures product/tick env before startup uses slippage config."""
+        self._futures_product_contract_validation = None
+
+        if self.config.asset_class != "futures":
+            return
+
+        validation = validate_futures_runtime_product_contract()
+        self._futures_product_contract_validation = validation
+        if validation.ok:
+            logger.info(
+                "Futures product contract ok (product=%s, tick_size=%.2f)",
+                validation.product,
+                validation.actual_tick_size,
+            )
+            return
+
+        log = logger.warning if self.config.paper_trading else logger.error
+        log(
+            "Futures product contract invalid (%s); %s mode will %s",
+            validation.message,
+            "paper" if self.config.paper_trading else "live",
+            "continue for observation" if self.config.paper_trading else "block entries",
+        )
 
     def _init_kis_client(self):
         """Initialize KIS REST API Client"""
@@ -6716,6 +6749,16 @@ class TradingOrchestrator:
         """
         if self.config.asset_class != "futures":
             return False
+        contract = self._futures_product_contract_validation
+        if contract is None:
+            contract = validate_futures_runtime_product_contract()
+            self._futures_product_contract_validation = contract
+        if not contract.ok:
+            logger.error(
+                "futures live product contract invalid — real ENTRY blocked (%s)",
+                contract.message,
+            )
+            return True
         guard = self._live_mode_guard
         redis = self._guard_redis
         if guard is None or redis is None:
@@ -6771,22 +6814,20 @@ class TradingOrchestrator:
             venue = getattr(order, "venue", "KRX")
             return is_filled, fill_price, (quantity if is_filled else 0), venue
 
-        if self._order_executor is not None:
-            if await self._real_entry_blocked():
-                logger.warning(
-                    "futures live suspended — real ENTRY blocked for %s "
-                    "(enable: set futures_live.enabled=true + clear the redis "
-                    "suspend key)",
-                    code,
+        if not self.config.paper_trading and await self._real_entry_blocked():
+            logger.warning(
+                "futures live guard blocked real ENTRY for %s before broker submit",
+                code,
+            )
+            if not self._live_guard_warned:
+                self._schedule_notify(
+                    f"⛔ 선물 실주문 차단 (live guard): {code} — "
+                    "futures product/slippage contract 또는 futures_live 설정 확인"
                 )
-                if not self._live_guard_warned:
-                    self._schedule_notify(
-                        f"⛔ 선물 실주문 차단 (live suspended): {code} — "
-                        "futures_live.enabled / futures:live:suspended 확인"
-                    )
-                    self._live_guard_warned = True
-                return False, 0.0, 0, "KRX"
+                self._live_guard_warned = True
+            return False, 0.0, 0, "KRX"
 
+        if self._order_executor is not None:
             from shared.execution.models import OrderRequest, OrderSide, OrderType
 
             side = OrderSide.SELL if is_short else OrderSide.BUY
