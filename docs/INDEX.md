@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: 2026-06-28 (quant gap execution QA added).
+Last updated: 2026-06-28 (stream processor audit logging QA added).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
@@ -56,6 +56,7 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [DAILY_SCANNER_VERIFICATION.md](DAILY_SCANNER_VERIFICATION.md) | `scripts/daily_indicator_scanner.py` 검증 절차. |
 | [CI_PARALLEL_NOTES.md](CI_PARALLEL_NOTES.md) | `pytest-xdist` 병렬 실행 (#399로 CI 활성화: 병렬 패스 + `serial` 마커 직렬 패스) + parallel-unsafe 테스트 목록. |
 | [runbooks/ops-readiness-checks.md](runbooks/ops-readiness-checks.md) | Offline common readiness checklist for Redis/SQLite, MLflow, position recovery, Workbench QA, and Strategy Lab follow-ups. |
+| [testing/stream-processor-audit-logging-2026-06-28.md](testing/stream-processor-audit-logging-2026-06-28.md) | Static QA evidence and paper-machine runtime checklist for stream processor audit logs. |
 | [testing/quant-gap-execution-2026-06-28.md](testing/quant-gap-execution-2026-06-28.md) | Final QA evidence for the 2026-06-28 quant gap expert-lane execution bundle. |
 | [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) | Quant Ops Workbench desktop/mobile Playwright fallback screenshot QA evidence. |
 | [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md) | `/signals` Signal Decision Trace desktop/mobile QA evidence. |
