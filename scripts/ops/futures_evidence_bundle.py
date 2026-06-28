@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +67,8 @@ _SETUP_D_OBSERVATION = {
     "required": True,
     "path": "reports/futures/setup_d/latest.json",
 }
+_SETUP_D_MAX_AGE_ENV = "FUTURES_SETUP_D_EVIDENCE_MAX_AGE_SECONDS"
+_DEFAULT_SETUP_D_MAX_AGE_SECONDS = 129600.0
 
 
 def _load_bundle(path: Path) -> dict[str, Any]:
@@ -223,22 +227,56 @@ def _setup_d_enabled(config_path: Path | None = None) -> bool:
     ) is True
 
 
-def _is_int_compatible(value: Any) -> bool:
+def _coerce_non_negative_int(value: Any) -> int | None:
     if isinstance(value, bool):
-        return False
+        return None
     if isinstance(value, int):
-        return True
-    if isinstance(value, float):
-        return value.is_integer()
-    if isinstance(value, str):
+        parsed = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            return None
+        parsed = int(value)
+    elif isinstance(value, str):
         stripped = value.strip()
         if not stripped:
-            return False
+            return None
         try:
-            return float(stripped).is_integer()
+            number = float(stripped)
         except ValueError:
-            return False
-    return False
+            return None
+        if not number.is_integer():
+            return None
+        parsed = int(number)
+    else:
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _parse_datetime(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _setup_d_max_age_seconds() -> float:
+    raw = os.environ.get(_SETUP_D_MAX_AGE_ENV)
+    if raw is None:
+        return _DEFAULT_SETUP_D_MAX_AGE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_SETUP_D_MAX_AGE_SECONDS
+    return value if value > 0 else _DEFAULT_SETUP_D_MAX_AGE_SECONDS
 
 
 def _validate_setup_d_payload(path: Path) -> list[str]:
@@ -252,11 +290,30 @@ def _validate_setup_d_payload(path: Path) -> list[str]:
     failures: list[str] = []
     if payload.get("strategy") != "setup_d_vwap_reversion":
         failures.append("expected strategy setup_d_vwap_reversion")
-    if not _is_int_compatible(payload.get("signals")):
-        failures.append("signals expected numeric integer")
-    for field in ("accepted", "rejected"):
+
+    counts: dict[str, int] = {}
+    for field in ("signals", "accepted", "rejected"):
         if field not in payload:
             failures.append(f"{field} missing")
+            continue
+        parsed = _coerce_non_negative_int(payload.get(field))
+        if parsed is None:
+            failures.append(f"{field} expected non-negative integer")
+            continue
+        counts[field] = parsed
+    if (
+        {"signals", "accepted", "rejected"}.issubset(counts)
+        and counts["signals"] != counts["accepted"] + counts["rejected"]
+    ):
+        failures.append("signals count mismatch accepted+rejected")
+
+    generated_at = _parse_datetime(payload.get("generated_at"))
+    if "generated_at" not in payload:
+        failures.append("generated_at missing")
+    elif generated_at is None:
+        failures.append("generated_at invalid ISO datetime")
+    elif (_utc_now() - generated_at).total_seconds() > _setup_d_max_age_seconds():
+        failures.append("generated_at stale")
     return failures
 
 

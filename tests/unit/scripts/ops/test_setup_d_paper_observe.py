@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from scripts.ops.setup_d_paper_observe import build_setup_d_report, main
@@ -21,9 +22,13 @@ def test_build_setup_d_report_summarizes_long_short_and_rejections(
         encoding="utf-8",
     )
 
-    report = build_setup_d_report(ledger)
+    generated_at = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+
+    report = build_setup_d_report(ledger, generated_at=generated_at)
 
     assert report["strategy"] == "setup_d_vwap_reversion"
+    assert report["generated_at"] == "2026-06-28T12:00:00+00:00"
+    assert report["source_path"] == str(ledger)
     assert report["accepted"] == 2
     assert report["rejected"] == 1
     assert report["long_signals"] == 2

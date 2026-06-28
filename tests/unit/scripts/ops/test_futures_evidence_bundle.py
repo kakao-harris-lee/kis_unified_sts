@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import yaml
@@ -56,6 +57,17 @@ def _write_setup_d_report(tmp_path, payload: object | str) -> None:
         report_path.write_text(payload, encoding="utf-8")
         return
     report_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _valid_setup_d_payload(generated_at: datetime) -> dict[str, object]:
+    return {
+        "strategy": "setup_d_vwap_reversion",
+        "signals": "3",
+        "accepted": 2,
+        "rejected": 1,
+        "generated_at": generated_at.isoformat(),
+        "source_path": "/tmp/signals.jsonl",
+    }
 
 
 def test_complete_bundle_passes_and_reports_per_gate_sections(tmp_path, capsys) -> None:
@@ -217,16 +229,10 @@ def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
     capsys,
 ) -> None:
     module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
     _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
-    _write_setup_d_report(
-        tmp_path,
-        {
-            "strategy": "setup_d_vwap_reversion",
-            "signals": "3",
-            "accepted": 2,
-            "rejected": 1,
-        },
-    )
+    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    _write_setup_d_report(tmp_path, _valid_setup_d_payload(now))
     bundle_path = _write_bundle(tmp_path)
 
     rc = module.main([str(bundle_path), "--json", "--strict"])
@@ -251,6 +257,7 @@ def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
                 "signals": 3,
                 "accepted": 2,
                 "rejected": 1,
+                "generated_at": "2026-06-28T12:00:00+00:00",
             },
             "setup_d_observation: expected strategy setup_d_vwap_reversion",
         ),
@@ -260,14 +267,16 @@ def test_strict_bundle_accepts_valid_setup_d_observation_when_strategy_enabled(
                 "signals": "many",
                 "accepted": 2,
                 "rejected": 1,
+                "generated_at": "2026-06-28T12:00:00+00:00",
             },
-            "setup_d_observation: signals expected numeric integer",
+            "setup_d_observation: signals expected non-negative integer",
         ),
         (
             {
                 "strategy": "setup_d_vwap_reversion",
                 "signals": 3,
                 "accepted": 2,
+                "generated_at": "2026-06-28T12:00:00+00:00",
             },
             "setup_d_observation: rejected missing",
         ),
@@ -281,7 +290,9 @@ def test_strict_bundle_rejects_invalid_setup_d_observation(
     expected_missing: str,
 ) -> None:
     module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
     _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
+    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
     _write_setup_d_report(tmp_path, payload)
     bundle_path = _write_bundle(tmp_path)
 
@@ -291,3 +302,67 @@ def test_strict_bundle_rejects_invalid_setup_d_observation(
     assert rc == 1
     assert report["status"] == "fail"
     assert expected_missing in report["missing_evidence"]
+
+
+@pytest.mark.parametrize(
+    ("payload_update", "expected_missing"),
+    [
+        (
+            {"accepted": -1, "rejected": 4},
+            "setup_d_observation: accepted expected non-negative integer",
+        ),
+        (
+            {"signals": 4},
+            "setup_d_observation: signals count mismatch accepted+rejected",
+        ),
+        (
+            {"generated_at": "not-a-date"},
+            "setup_d_observation: generated_at invalid ISO datetime",
+        ),
+    ],
+)
+def test_strict_bundle_rejects_malformed_setup_d_counts_or_timestamp(
+    tmp_path,
+    monkeypatch,
+    capsys,
+    payload_update: dict[str, object],
+    expected_missing: str,
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+    _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
+    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    payload = _valid_setup_d_payload(now)
+    payload.update(payload_update)
+    _write_setup_d_report(tmp_path, payload)
+    bundle_path = _write_bundle(tmp_path)
+
+    rc = module.main([str(bundle_path), "--json", "--strict"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert report["status"] == "fail"
+    assert expected_missing in report["missing_evidence"]
+
+
+def test_strict_bundle_rejects_stale_setup_d_observation(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    module = importlib.import_module("scripts.ops.futures_evidence_bundle")
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+    _enable_setup_d_with_tmp_root(module, tmp_path, monkeypatch)
+    monkeypatch.setattr(module, "_utc_now", lambda: now, raising=False)
+    _write_setup_d_report(
+        tmp_path,
+        _valid_setup_d_payload(now - timedelta(seconds=129601)),
+    )
+    bundle_path = _write_bundle(tmp_path)
+
+    rc = module.main([str(bundle_path), "--json", "--strict"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert report["status"] == "fail"
+    assert "setup_d_observation: generated_at stale" in report["missing_evidence"]

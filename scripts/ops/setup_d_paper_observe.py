@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,18 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def build_setup_d_report(path: Path) -> dict[str, Any]:
+def _utc_iso(value: datetime | None = None) -> str:
+    dt = value or datetime.now(UTC)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat()
+
+
+def build_setup_d_report(
+    path: Path,
+    *,
+    generated_at: datetime | None = None,
+) -> dict[str, Any]:
     rows = [row for row in _load_jsonl(path) if row.get("strategy") == STRATEGY_ID]
     accepted = [row for row in rows if row.get("status") == "accepted"]
     rejected = [row for row in rows if row.get("status") == "rejected"]
@@ -34,6 +46,8 @@ def build_setup_d_report(path: Path) -> dict[str, Any]:
     )
     return {
         "strategy": STRATEGY_ID,
+        "generated_at": _utc_iso(generated_at),
+        "source_path": str(path),
         "signals": len(rows),
         "accepted": len(accepted),
         "rejected": len(rejected),
