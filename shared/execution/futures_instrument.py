@@ -10,8 +10,15 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from typing import NamedTuple
 
-from shared.instruments.futures import get_front_month_code
+from shared.instruments.futures import (
+    KOSPI200_LEGACY_PREFIX,
+    KOSPI200_PREFIX,
+    KOSPI_MINI_LEGACY_PREFIX,
+    KOSPI_MINI_PREFIX,
+    get_front_month_code,
+)
 
 DEFAULT_FUTURES_PRODUCT = "mini"
 SUPPORTED_FUTURES_PRODUCTS = frozenset({"mini", "kospi200"})
@@ -26,12 +33,116 @@ class FuturesInstrumentConfig:
     source: str
 
 
+@dataclass(frozen=True)
+class FuturesProductContractValidation:
+    ok: bool
+    product: str
+    expected_tick_size: float
+    actual_tick_size: float
+    message: str
+    invalid_reasons: tuple[str, ...] = ()
+    symbol: str | None = None
+    symbol_source: str | None = None
+
+
+_PRODUCT_TICK_SIZE = {
+    "mini": 0.02,
+    "kospi200": 0.05,
+}
+
+_SYMBOL_PREFIX_CONTRACTS = {
+    KOSPI200_PREFIX: ("kospi200", _PRODUCT_TICK_SIZE["kospi200"]),
+    KOSPI200_LEGACY_PREFIX: ("kospi200", _PRODUCT_TICK_SIZE["kospi200"]),
+    KOSPI_MINI_PREFIX: ("mini", _PRODUCT_TICK_SIZE["mini"]),
+    KOSPI_MINI_LEGACY_PREFIX: ("mini", _PRODUCT_TICK_SIZE["mini"]),
+}
+
+
+class _ParsedTickSize(NamedTuple):
+    value: float
+    error: str | None = None
+
+
 def normalize_futures_product(value: str | None) -> str:
     """Normalize FUTURES_TRADING_PRODUCT with mini as the safe runtime default."""
     product = (value or DEFAULT_FUTURES_PRODUCT).strip().lower()
     if product not in SUPPORTED_FUTURES_PRODUCTS:
         return DEFAULT_FUTURES_PRODUCT
     return product
+
+
+def _env_tick_size(value: str | None, default: float) -> _ParsedTickSize:
+    if value is None or not str(value).strip():
+        return _ParsedTickSize(default)
+    raw_value = str(value).strip()
+    try:
+        return _ParsedTickSize(float(raw_value))
+    except ValueError:
+        return _ParsedTickSize(
+            default,
+            f"invalid FUTURES_SLIPPAGE_TICK_SIZE={raw_value!r}",
+        )
+
+
+def _symbol_prefix_contract(symbol: str) -> tuple[str, float] | None:
+    normalized_symbol = symbol.strip().upper()
+    for prefix, contract in _SYMBOL_PREFIX_CONTRACTS.items():
+        if normalized_symbol.startswith(prefix):
+            return contract
+    return None
+
+
+def validate_futures_runtime_product_contract(
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> FuturesProductContractValidation:
+    env = os.environ if environ is None else environ
+    raw_product = env.get("FUTURES_TRADING_PRODUCT")
+    requested_product = (raw_product or "").strip().lower()
+    product = normalize_futures_product(raw_product)
+    expected_tick = _PRODUCT_TICK_SIZE[product]
+    parsed_tick = _env_tick_size(env.get("FUTURES_SLIPPAGE_TICK_SIZE"), 0.02)
+    actual_tick = parsed_tick.value
+    invalid_reasons: list[str] = []
+    if requested_product and requested_product not in SUPPORTED_FUTURES_PRODUCTS:
+        allowed_products = ", ".join(sorted(SUPPORTED_FUTURES_PRODUCTS))
+        invalid_reasons.append(
+            f"unsupported FUTURES_TRADING_PRODUCT={raw_product!r}; "
+            f"supported products: {allowed_products}"
+        )
+    if parsed_tick.error is not None:
+        invalid_reasons.append(parsed_tick.error)
+    if abs(actual_tick - expected_tick) >= 1e-9:
+        invalid_reasons.append(
+            f"{product} requires FUTURES_SLIPPAGE_TICK_SIZE={expected_tick:.2f}; "
+            f"got {actual_tick:.2f}"
+        )
+    explicit_symbol = (env.get("FUTURES_STRATEGY_SYMBOL") or "").strip()
+    symbol_source = "FUTURES_STRATEGY_SYMBOL" if explicit_symbol else None
+    symbol_contract = (
+        _symbol_prefix_contract(explicit_symbol) if explicit_symbol else None
+    )
+    if symbol_contract is not None:
+        symbol_product, symbol_tick = symbol_contract
+        if product != symbol_product or abs(actual_tick - symbol_tick) >= 1e-9:
+            invalid_reasons.append(
+                f"FUTURES_STRATEGY_SYMBOL={explicit_symbol} requires "
+                f"product={symbol_product} and "
+                f"FUTURES_SLIPPAGE_TICK_SIZE={symbol_tick:.2f}; "
+                f"got product={product} and FUTURES_SLIPPAGE_TICK_SIZE={actual_tick:.2f}"
+            )
+    ok = not invalid_reasons
+    message = "futures product contract ok" if ok else "; ".join(invalid_reasons)
+    return FuturesProductContractValidation(
+        ok=ok,
+        product=product,
+        expected_tick_size=expected_tick,
+        actual_tick_size=actual_tick,
+        message=message,
+        invalid_reasons=tuple(invalid_reasons),
+        symbol=explicit_symbol or None,
+        symbol_source=symbol_source,
+    )
 
 
 def resolve_futures_instrument_from_env(

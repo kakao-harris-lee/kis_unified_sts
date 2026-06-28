@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: 2026-06-25 (readiness automation and runbooks added).
+Last updated: 2026-06-28 (quant gap execution QA added).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
@@ -17,6 +17,7 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 |-----|-----|
 | [ROADMAP.md](ROADMAP.md) | **Authoritative phased roadmap (Stock + Futures).** North Star, phase tables, current state, open next-steps. Supersedes scattered plan docs. |
 | [PROJECT_STATUS.md](PROJECT_STATUS.md) | 60-second dashboard — current phase, active strategies, automation schedule, blocking risks. |
+| [investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md) | Current gap research split by KOSPI 200 futures and stock trading; includes ATS/session/product governance findings. |
 
 ## 📐 Architecture & API
 
@@ -40,10 +41,12 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [BACKTEST_RESULTS_INTERPRETATION_GUIDE.md](BACKTEST_RESULTS_INTERPRETATION_GUIDE.md) | 백테스트 지표 해석 가이드. 현재 전략/런타임 상태는 ROADMAP 기준. |
 | [runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md) | 현재 stock decoupled paper pipeline cutover/runbook. |
 | [runbooks/futures-pipeline-cutover-f9.md](runbooks/futures-pipeline-cutover-f9.md) | futures decoupled pipeline F-9 shadow/cutover runbook. |
+| [runbooks/market-structure-policy.md](runbooks/market-structure-policy.md) | Operator policy for stock ATS/SOR, futures 08:45 regular session, night session, and KOSPI 200 product governance. |
 | [runbooks/har-rv-log-rv-validation.md](runbooks/har-rv-log-rv-validation.md) | HAR-RV raw-vs-log validation report workflow before `rv_target: log` cutover. |
 | [runbooks/setup-c-event-score-observation.md](runbooks/setup-c-event-score-observation.md) | Setup C event-score history readiness observation. |
 | [runbooks/stock-strategy-reactivation.md](runbooks/stock-strategy-reactivation.md) | `technical_consensus` / `momentum_breakout` evidence review before reactivation changes. |
 | [plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md) | Quant Ops Workbench UI/UX 계획 — cockpit, signal trace, risk, backtest-vs-paper, promotion gates. |
+| [superpowers/specs/2026-06-27-signals-decision-trace-design.md](superpowers/specs/2026-06-27-signals-decision-trace-design.md) | Signal Decision Trace design — LLM context, strategy evidence, risk/orderability, lifecycle, scorecard, and evidence gaps. |
 | [plans/2026-06-02-stock-reopt-har-rv-followups.md](plans/2026-06-02-stock-reopt-har-rv-followups.md) | 현재 stock HAR-RV/strategy reactivation follow-up. |
 
 ## ⚙️ Operations
@@ -53,7 +56,9 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [DAILY_SCANNER_VERIFICATION.md](DAILY_SCANNER_VERIFICATION.md) | `scripts/daily_indicator_scanner.py` 검증 절차. |
 | [CI_PARALLEL_NOTES.md](CI_PARALLEL_NOTES.md) | `pytest-xdist` 병렬 실행 (#399로 CI 활성화: 병렬 패스 + `serial` 마커 직렬 패스) + parallel-unsafe 테스트 목록. |
 | [runbooks/ops-readiness-checks.md](runbooks/ops-readiness-checks.md) | Offline common readiness checklist for Redis/SQLite, MLflow, position recovery, Workbench QA, and Strategy Lab follow-ups. |
+| [testing/quant-gap-execution-2026-06-28.md](testing/quant-gap-execution-2026-06-28.md) | Final QA evidence for the 2026-06-28 quant gap expert-lane execution bundle. |
 | [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) | Quant Ops Workbench desktop/mobile Playwright fallback screenshot QA evidence. |
+| [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md) | `/signals` Signal Decision Trace desktop/mobile QA evidence. |
 
 ## 📁 Sub-directories
 

@@ -27,6 +27,7 @@ Internal service ports are not host-published in the supported runtime.
 | `POST /api/trading/stop` | Stop supported trading runtime path. |
 | `POST /api/trading/kill-switch` | Trigger kill-switch action. |
 | `GET /api/signals` | Signal list/detail data. |
+| `GET /api/signals/{signal_id}/trace` | Read-only signal decision trace: LLM context, strategy inputs, risk/orderability, lifecycle lineage, scorecard, and evidence gaps. |
 | `GET /api/trades` | Runtime trade history. |
 | `GET /api/trades/lifecycle` | Signal -> order -> fill -> position -> trade lineage. |
 | `GET /api/strategies` | Strategy registry data. |

@@ -30,6 +30,39 @@ def _build_paper_execution_config():
 
 
 @pytest.mark.integration
+def test_stock_order_router_policy_defaults_to_krx_only():
+    from shared.execution.config import ATSRoutingConfig
+    from shared.execution.models import ExecutionVenue, OrderRequest, OrderSide, OrderType
+    from shared.execution.venue_router import MarketData, VenueRouter
+
+    router = VenueRouter(ATSRoutingConfig(enabled=False, default_venue="KRX"))
+    order = OrderRequest(
+        code="005930",
+        side=OrderSide.BUY,
+        quantity=10,
+        order_type=OrderType.LIMIT,
+        price=70000,
+        asset_class="stock",
+    )
+    data = MarketData(
+        symbol="005930",
+        krx_bid=69900,
+        krx_ask=70000,
+        krx_bid_qty=1000,
+        krx_ask_qty=1000,
+        ats_bid=69950,
+        ats_ask=69980,
+        ats_bid_qty=2000,
+        ats_ask_qty=2000,
+    )
+
+    decision = router.select_venue(order, data)
+
+    assert decision.venue == ExecutionVenue.KRX
+    assert decision.reason == "ATS routing disabled"
+
+
+@pytest.mark.integration
 def test_ats_config_loading():
     """Test ATS routing configuration loads correctly."""
     from shared.config.loader import ConfigLoader
