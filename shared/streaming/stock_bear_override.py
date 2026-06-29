@@ -35,6 +35,7 @@ class BearOverrideConfig:
     require_above_sma20: bool = True
     require_rsi_rising: bool = True
     require_macd_positive: bool = True
+    min_change_pct_for_rs: float = 0.0
 
     @property
     def criteria(self) -> StrengthCriteria:
@@ -75,6 +76,9 @@ class BearOverrideConfig:
                 ),
                 require_macd_positive=bool(
                     raw.get("require_macd_positive", cls.require_macd_positive)
+                ),
+                min_change_pct_for_rs=float(
+                    raw.get("min_change_pct_for_rs", cls.min_change_pct_for_rs)
                 ),
             )
         except Exception:

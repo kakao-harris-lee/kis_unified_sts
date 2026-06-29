@@ -49,6 +49,7 @@ from shared.streaming.stock_signal_eval import (
     OUTCOME_SIGNAL,
     REJECT_BEAR_CAP_REACHED,
     REJECT_BEAR_REGIME,
+    REJECT_BEAR_RS_GATE,
     REJECT_COLD,
     REJECT_CONDITIONS_NOT_MET,
     REJECT_NO_DAILY_WATCHLIST,
@@ -658,6 +659,24 @@ class StockStrategyDaemon:
                         evaluator, roster, symbol, REJECT_BEAR_REGIME
                     )
                     continue
+                if is_bear and (
+                    self._bear_override_config is not None
+                    and self._bear_override_config.min_change_pct_for_rs > 0
+                ):
+                    trade_meta = self._trade_targets_payload.get("metadata", {})
+                    symbol_meta = trade_meta.get(symbol, {})
+                    raw_change = symbol_meta.get("change_pct")
+                    if raw_change is None:
+                        logger.debug(
+                            "bear RS gate: %s has no change_pct in trade_targets — defaulting to 0.0",
+                            symbol,
+                        )
+                    change_pct = float(raw_change or 0)
+                    if change_pct < self._bear_override_config.min_change_pct_for_rs:
+                        self._record_symbol_reject(
+                            evaluator, roster, symbol, REJECT_BEAR_RS_GATE
+                        )
+                        continue
                 if not self.engine.is_warm(symbol):
                     self._record_symbol_reject(evaluator, roster, symbol, REJECT_COLD)
                     continue

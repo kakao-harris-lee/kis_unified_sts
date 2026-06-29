@@ -872,6 +872,9 @@ class FusionRanker:
                 "risk_flags": risk_hits,
                 "llm_only": code in llm_only_set,
                 "llm_final": code in llm_final_set,
+                "change_pct": float(
+                    realtime_metadata.get(code, {}).get("change_pct", 0) or 0
+                ),
             }
             if has_theme:
                 row_metadata.update(theme_metadata.get(code, {}))

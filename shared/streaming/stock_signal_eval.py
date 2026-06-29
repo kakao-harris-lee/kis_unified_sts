@@ -57,6 +57,7 @@ REJECT_COLD = "cold"  # symbol not yet warm (skipped before generators ran)
 REJECT_NO_MARKET_DATA = "no_market_data"  # feed had no current price
 REJECT_BEAR_REGIME = "bear_regime"  # bear gate skipped entry evaluation
 REJECT_BEAR_CAP_REACHED = "bear_cap_reached"  # bear override cap blocked new entries
+REJECT_BEAR_RS_GATE = "bear_rs_gate"  # symbol not up ≥ min_change_pct_for_rs today
 REJECT_NO_SMA_200 = "no_sma_200"  # SMA(200)-dependent strategy, daily SMA absent
 # daily-gated strategy, this symbol not on its watchlist
 REJECT_NO_DAILY_WATCHLIST = "no_daily_watchlist"
@@ -67,6 +68,7 @@ __all__ = [
     "OUTCOME_SIGNAL",
     "REJECT_BEAR_CAP_REACHED",
     "REJECT_BEAR_REGIME",
+    "REJECT_BEAR_RS_GATE",
     "REJECT_COLD",
     "REJECT_CONDITIONS_NOT_MET",
     "REJECT_NO_DAILY_WATCHLIST",
