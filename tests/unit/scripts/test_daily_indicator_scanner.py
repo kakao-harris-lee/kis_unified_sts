@@ -462,22 +462,46 @@ def test_compute_futures_daily_indicators_insufficient_history_returns_none():
 
 
 def test_scan_futures_symbols_aggregates_per_symbol():
-    closes = [1000.0 + i * 1.0 for i in range(80)]
+    """scan_futures_symbols uses ParquetMarketDataStore.get_minute_bars API.
 
-    class Result:
-        def __init__(self, rows):
-            self.result_rows = rows
+    The client must expose get_minute_bars(symbol) returning a DataFrame with
+    datetime and OHLCV columns; the function aggregates to daily candles itself.
+    At least 60 distinct trading days with >=30 bars each are needed for
+    compute_futures_daily_indicators to return a result.
+    """
+    # Build 80 synthetic trading days × 35 bars each to pass the
+    # _FUTURES_MIN_BARS_PER_DAY=30 gate and the >=60-day indicator minimum.
+    import pytz
+
+    kst = pytz.timezone("Asia/Seoul")
+    rows = []
+    base_close = 1000.0
+    bdate_range = pd.bdate_range("2026-01-02", periods=80, tz=kst)
+    for day_ts in bdate_range:
+        close = base_close
+        for minute in range(35):
+            ts = day_ts.normalize() + pd.Timedelta(hours=9, minutes=minute)
+            rows.append(
+                {
+                    "datetime": ts.tz_convert("UTC"),
+                    "open": close,
+                    "high": close + 2.0,
+                    "low": close - 2.0,
+                    "close": close,
+                    "volume": 1000 + minute,
+                }
+            )
+        base_close += 1.25
+
+    minute_df = pd.DataFrame(rows)
 
     class Client:
         def __init__(self):
-            self.calls = []
+            self.calls: list[str] = []
 
-        def query(self, _query, parameters):
-            self.calls.append(parameters["code"])
-            # date column unused by compute path → placeholders fine.
-            return Result(
-                [(date(2026, 1, 1), c, c + 5.0, c - 5.0, c, 1000) for c in closes]
-            )
+        def get_minute_bars(self, symbol: str) -> pd.DataFrame:
+            self.calls.append(symbol)
+            return minute_df.copy()
 
     client = Client()
     out = scan_futures_symbols(client, ["101S6000"])
@@ -552,9 +576,7 @@ def test_load_enabled_daily_strategies_excludes_dynamic_only(monkeypatch):
     monkeypatch.setattr(
         registry_mod.StrategyFactory,
         "create",
-        staticmethod(
-            lambda cfg: _FakeStrategy(cfg["strategy"]["name"])
-        ),
+        staticmethod(lambda cfg: _FakeStrategy(cfg["strategy"]["name"])),
     )
 
     strategies = load_enabled_daily_strategies(

@@ -1,4 +1,4 @@
-"""Tests for local file-backed HAR-RV refit."""
+"""Tests for local file-backed and Parquet-backed HAR-RV refit."""
 
 from __future__ import annotations
 
@@ -98,3 +98,50 @@ def test_load_minute_bars_accepts_timezone_aware_bounds(tmp_path: Path):
     assert loaded.index.min() == pd.Timestamp("2026-01-02T00:00:00Z")
     assert loaded.index.max() == pd.Timestamp("2026-01-02T00:55:00Z")
     np.testing.assert_allclose(loaded["close"].to_numpy(), bars.iloc[:12]["close"])
+
+
+def test_refit_from_parquet_writes_model_to_redis(monkeypatch, tmp_path: Path):
+    """--from-parquet mode resolves near-month, fits HAR-RV, writes to Redis.
+
+    Uses dependency injection (store= / redis_client=) so no lazy-import
+    patching is needed.
+    """
+    bars = _synthetic_refit_bars(days=82, code="A01606")
+
+    class FakeStore:
+        """Minimal ParquetMarketDataStore stand-in."""
+
+        def __init__(self) -> None:
+            self.root = tmp_path / "market"
+            (self.root / "futures" / "minute" / "code=A01606").mkdir(parents=True)
+
+        def get_minute_bars(self, symbol: str) -> pd.DataFrame:
+            assert symbol == "A01606"
+            return bars.copy()
+
+    redis_stored: dict[str, str] = {}
+
+    class FakeRedis:
+        def set(self, key: str, value: str, **_kw: object) -> None:
+            redis_stored[key] = value
+
+    monkeypatch.setenv("FORECAST_REFIT_CODE", "A01606")
+
+    from shared.forecasting.config import HARRVConfig
+
+    cfg = HARRVConfig(history_days=60, holdout_days=7, min_r2_oos=-1.0)
+    rc = refit_har_rv.refit_from_parquet(
+        cfg, store=FakeStore(), redis_client=FakeRedis()
+    )
+
+    assert rc == 0, "refit_from_parquet should exit 0 on success"
+    assert "forecast:vol:model" in redis_stored
+    payload = json.loads(redis_stored["forecast:vol:model"])
+    assert "rv_history" in payload
+    assert len(payload["rv_history"]) >= 60
+
+
+def test_file_mode_requires_bars_and_out():
+    """File mode without --from-parquet must error if --bars/--out absent."""
+    rc = refit_har_rv.main([])
+    assert rc == 2

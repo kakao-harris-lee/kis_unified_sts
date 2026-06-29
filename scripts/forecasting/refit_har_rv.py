@@ -162,20 +162,198 @@ def refit_from_file(
     return out
 
 
+def _resolve_near_month_from_parquet(store: Any) -> str:
+    """Return the most-active A01* near-month code from Parquet minute bars.
+
+    Sums volume over recent bars for each A01* contract partition and picks the
+    one with the highest total.  Falls back to ``FORECAST_REFIT_CODE`` env var
+    (operator override) or ``_FALLBACK_PROXY_CODE`` if no data is found.
+    """
+    env = os.environ.get("FORECAST_REFIT_CODE")
+    if env:
+        logger.info("FORECAST_REFIT_CODE override = %s", env)
+        return env
+
+    from datetime import UTC, datetime, timedelta
+
+    # Inspect the parquet store root directly — we need per-code volume sums
+    # without loading all bars into memory.
+    root = store.root / "futures" / "minute"
+    if not root.exists():
+        logger.warning(
+            "Parquet futures/minute root %s missing — falling back to %s",
+            root,
+            _FALLBACK_PROXY_CODE,
+        )
+        return _FALLBACK_PROXY_CODE
+
+    cutoff = datetime.now(UTC) - timedelta(days=5)
+    best_code: str | None = None
+    best_volume: int = -1
+
+    for code_dir in sorted(root.glob("code=A01*")):
+        code = code_dir.name.removeprefix("code=")
+        try:
+            bars = store.get_minute_bars(code)
+            if bars is None or bars.empty:
+                continue
+            if "datetime" not in bars.columns:
+                bars = bars.reset_index().rename(
+                    columns={bars.index.name or "index": "datetime"}
+                )
+            bars["datetime"] = pd.to_datetime(bars["datetime"], utc=True)
+            recent = bars[bars["datetime"] >= cutoff]
+            if len(recent) < _MIN_RESOLVE_BARS:
+                continue
+            vol = int(recent["volume"].sum())
+            if vol > best_volume:
+                best_volume = vol
+                best_code = code
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Skipping %s: %s", code, exc)
+
+    if best_code:
+        logger.info(
+            "Auto-resolved near-month code from Parquet: %s (vol=%d)",
+            best_code,
+            best_volume,
+        )
+        return best_code
+
+    logger.warning(
+        "No A01* contract with >= %d bars in last 5d in Parquet — falling back to %s",
+        _MIN_RESOLVE_BARS,
+        _FALLBACK_PROXY_CODE,
+    )
+    return _FALLBACK_PROXY_CODE
+
+
+def refit_from_parquet(
+    cfg: HARRVConfig,
+    *,
+    store: Any = None,
+    redis_client: Any = None,
+) -> int:
+    """Fit HAR-RV from Parquet minute bars and write model JSON to Redis.
+
+    This is the scheduler cron path (``--from-parquet``).  It:
+      1. Resolves the active near-month A01* contract from Parquet volume.
+      2. Loads its 1-minute bars from ``ParquetMarketDataStore``.
+      3. Computes daily RV and fits the HAR-RV model.
+      4. Serialises the model and stores it in Redis (``forecast:vol:model``).
+
+    The running forecasting daemon picks up the new model on SIGUSR1 or on
+    next start (``_try_load_model_from_redis``).
+
+    Args:
+        cfg: HAR-RV configuration (history window, holdout, R² threshold).
+        store: Optional ``ParquetMarketDataStore`` instance (injected for tests).
+            If ``None``, built from ``StorageConfig.load_or_default()``.
+        redis_client: Optional Redis client (injected for tests).
+            If ``None``, obtained from ``RedisClient.get_client()``.
+    """
+    if store is None:
+        from shared.storage.config import StorageConfig
+        from shared.storage.market_data_store import ParquetMarketDataStore
+
+        storage_cfg = StorageConfig.load_or_default()
+        store = ParquetMarketDataStore(
+            storage_cfg.market_data.parquet.root,
+            asset_class="futures",
+        )
+
+    if redis_client is None:
+        from shared.streaming.client import RedisClient
+
+        redis_client = RedisClient.get_client()
+
+    proxy_code = _resolve_near_month_from_parquet(store)
+    logger.info("Fetching Parquet 1m bars for %s", proxy_code)
+
+    bars = store.get_minute_bars(proxy_code)
+    if bars is None or bars.empty:
+        logger.error("No bars found for %s — cannot refit", proxy_code)
+        return 2
+
+    # Normalise to UTC DatetimeIndex expected by daily_rv_series.
+    if "datetime" not in bars.columns:
+        bars = bars.reset_index().rename(
+            columns={bars.index.name or "index": "datetime"}
+        )
+    bars["datetime"] = pd.to_datetime(bars["datetime"], utc=True)
+    bars = bars.sort_values("datetime").set_index("datetime")
+    logger.info("Loaded %d minute bars for %s", len(bars), proxy_code)
+
+    rv = daily_rv_series(bars)
+    logger.info("Computed %d daily RV points", len(rv))
+
+    min_needed = max(cfg.history_days, 22)
+    if len(rv) < min_needed:
+        logger.error(
+            "Insufficient RV history: have %d, need >= %d — cannot refit",
+            len(rv),
+            min_needed,
+        )
+        return 3
+
+    forecaster = VolatilityForecaster(cfg)
+    try:
+        forecaster.fit(rv)
+    except ValueError as exc:
+        logger.error("Fit failed: %s", exc)
+        return 4
+
+    coef = forecaster._coefficients
+    assert coef is not None
+    logger.info(
+        "Fit OK: beta_d=%.3f beta_w=%.3f beta_m=%.3f R²_oos=%.3f n_obs=%d",
+        coef.beta_d,
+        coef.beta_w,
+        coef.beta_m,
+        coef.r2_oos,
+        coef.n_obs_used,
+    )
+
+    blob = forecaster.to_json()
+    redis_client.set("forecast:vol:model", blob)
+    logger.info("Wrote model JSON to Redis (forecast:vol:model, %d bytes)", len(blob))
+    return 0
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=(
-            "Refit HAR-RV from local CSV/Parquet minute bars and write model JSON."
-        )
+            "Refit HAR-RV volatility model.\n\n"
+            "Two modes:\n"
+            "  --from-parquet   (scheduler default) Load near-month A01* bars from\n"
+            "                   ParquetMarketDataStore, fit, and write model JSON to\n"
+            "                   Redis (forecast:vol:model).  No extra args required.\n"
+            "  --bars/--out     Offline file-based refit: read CSV/Parquet bars and\n"
+            "                   write the serialised model to a local JSON file."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "--from-parquet",
+        action="store_true",
+        default=False,
+        help=(
+            "Load bars from ParquetMarketDataStore and write model to Redis. "
+            "This is the scheduler cron mode — no --bars/--out required."
+        ),
     )
     ap.add_argument(
         "--bars",
         "--input",
         dest="bars",
-        required=True,
-        help="CSV or Parquet bars file with datetime and close columns",
+        default=None,
+        help="CSV or Parquet bars file with datetime and close columns (file mode)",
     )
-    ap.add_argument("--out", required=True, help="output model JSON path")
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="output model JSON path (file mode)",
+    )
     ap.add_argument("--code", default=None, help="optional contract code filter")
     ap.add_argument(
         "--start",
@@ -207,6 +385,19 @@ def main(argv: list[str] | None = None) -> int:
         min_r2_oos=args.min_r2_oos,
         rv_target=args.rv_target,
     )
+
+    if args.from_parquet:
+        return refit_from_parquet(cfg)
+
+    # File-based mode: --bars and --out are both required.
+    if not args.bars or not args.out:
+        print(
+            "ERROR: --bars/--input and --out are required in file mode "
+            "(or use --from-parquet for the scheduler cron path).",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         out = refit_from_file(
             args.bars,

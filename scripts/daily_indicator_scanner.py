@@ -643,42 +643,65 @@ def compute_indicators(
 
 
 # Futures symbols whose daily indicators feed Setup A/C daily_regime_trend_filter.
-# Reads from kospi.kospi200f_1m (1m bars) and aggregates to daily candles inline —
-# `market.daily_candles` does not carry futures.
+# Reads from Parquet futures/minute bars (ParquetMarketDataStore) and aggregates
+# to daily candles inline — `market.daily_candles` does not carry futures.
 FUTURES_DAILY_SYMBOLS: tuple[str, ...] = ("101S6000",)
+
+# Minimum intraday 1-minute bars per session for it to count as a real trading day.
+# Filters out phantom single-tick rows that pre-open/after-close data can create.
+_FUTURES_MIN_BARS_PER_DAY = 30
 
 
 def load_futures_daily_candles(
     client: Any, symbol: str, days: int = 250
 ) -> pd.DataFrame:
-    """Aggregate kospi.kospi200f_1m intraday bars to daily candles.
+    """Aggregate Parquet futures 1-minute bars to daily OHLCV candles.
 
-    Returns columns: date, open, high, low, close, volume (one row per session).
+    Uses ``client.get_minute_bars(symbol)`` (ParquetMarketDataStore API) so no
+    ClickHouse connection is required.  Returns columns: date, open, high, low,
+    close, volume (one row per session, sorted ascending).
+
+    Sessions with fewer than ``_FUTURES_MIN_BARS_PER_DAY`` bars are dropped to
+    filter phantom single-tick rows that appear before/after market hours.
     """
-    query = """
-        SELECT
-            toDate(datetime) AS date,
-            argMin(open, datetime) AS open,
-            max(high) AS high,
-            min(low) AS low,
-            argMax(close, datetime) AS close,
-            sum(volume) AS volume
-        FROM kospi.kospi200f_1m
-        WHERE code = {code:String}
-        GROUP BY date
-        ORDER BY date DESC
-        LIMIT {limit:UInt32}
-    """
-    result = client.query(query, parameters={"code": symbol, "limit": int(days)})
-    if not result.result_rows:
+    minute_bars = client.get_minute_bars(symbol)
+    if minute_bars is None or minute_bars.empty:
         return pd.DataFrame()
-    df = pd.DataFrame(
-        result.result_rows,
-        columns=["date", "open", "high", "low", "close", "volume"],
+
+    df = minute_bars.copy()
+    # Normalise datetime column: may be a DatetimeIndex or a plain column.
+    if "datetime" not in df.columns:
+        df = df.reset_index().rename(columns={df.index.name or "index": "datetime"})
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+
+    # Derive KST date for grouping (exchange sessions are KST calendar days).
+    import pytz as _pytz
+
+    kst = _pytz.timezone("Asia/Seoul")
+    df["_date"] = df["datetime"].dt.tz_convert(kst).dt.date
+
+    # Drop sessions with too few bars (phantom / partial-open days).
+    bar_counts = df.groupby("_date")["_date"].transform("count")
+    df = df[bar_counts >= _FUTURES_MIN_BARS_PER_DAY]
+    if df.empty:
+        return pd.DataFrame()
+
+    # Aggregate 1-minute bars to OHLCV daily candles.
+    daily = df.groupby("_date").agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
     )
-    # Drop intraday-only "phantom days" (single tick before market close):
-    # require at least 30 minutes of trading to count as a real session.
-    return df.sort_values("date").reset_index(drop=True)
+    daily.index.name = "date"
+    daily = daily.reset_index().sort_values("date")
+
+    # Trim to the most-recent `days` sessions.
+    if len(daily) > days:
+        daily = daily.iloc[-days:]
+
+    return daily.reset_index(drop=True)
 
 
 def compute_futures_daily_indicators(df: pd.DataFrame) -> dict[str, float] | None:
