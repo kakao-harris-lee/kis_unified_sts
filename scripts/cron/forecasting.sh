@@ -62,7 +62,7 @@ refit_service() {
   CID=$(docker ps -q -f name=kis-forecasting)
   if [ -n "$CID" ]; then
     docker exec "$CID" python /app/scripts/forecasting/refit_har_rv.py \
-      >> "$LOG_FILE" 2>&1
+      --from-parquet >> "$LOG_FILE" 2>&1
     rc=$?
     if [ "$rc" -ne 0 ]; then
       log "ERROR: refit script exited $rc"
@@ -74,7 +74,8 @@ refit_service() {
     # No daemon — run via venv on host so the cron job still produces a model
     # in Redis/storage. Daemon will load it on next start.
     "$PROJECT_DIR/.venv/bin/python" \
-      "$PROJECT_DIR/scripts/forecasting/refit_har_rv.py" >> "$LOG_FILE" 2>&1
+      "$PROJECT_DIR/scripts/forecasting/refit_har_rv.py" --from-parquet \
+      >> "$LOG_FILE" 2>&1
     rc=$?
     if [ "$rc" -ne 0 ]; then
       log "ERROR: host refit script exited $rc"

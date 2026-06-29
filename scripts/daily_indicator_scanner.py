@@ -349,13 +349,20 @@ async def build_strategy_candidate_watchlist(
     return watchlist
 
 
-def get_market_data_store():
-    """Return the Parquet market-data store."""
+def get_market_data_store(asset_class: str = "stock"):
+    """Return a Parquet market-data store for the given asset class.
+
+    ``asset_class`` selects the partition root: ``stock`` reads
+    ``<root>/stock/...`` and ``futures`` reads ``<root>/futures/...``.  The
+    futures scan MUST use a futures-asset-class store — a stock store would
+    resolve ``101S6000`` to ``<root>/stock/minute/code=101S6000/`` (which does
+    not exist) and silently return no bars.
+    """
     _load_repo_env()
     storage_config = StorageConfig.load_or_default()
     return ParquetMarketDataStore(
         storage_config.market_data.parquet.root,
-        asset_class="stock",
+        asset_class=asset_class,
     )
 
 
@@ -760,7 +767,21 @@ def scan_futures_symbols(
     Returns a dict ready to merge into the scanner's stock-symbol payload —
     the orchestrator already keys by symbol, so a single Redis key carries both
     stock and futures daily indicators (~unchanged consumer code path).
+
+    The ``client`` MUST be a futures-asset-class ``ParquetMarketDataStore``;
+    a stock store resolves ``101S6000`` to a non-existent ``<root>/stock/``
+    path and silently returns no bars.  We surface that misuse loudly instead
+    of letting the scan quietly yield nothing.
     """
+    asset_class = getattr(client, "asset_class", None)
+    if asset_class is not None and asset_class != "futures":
+        logger.warning(
+            "scan_futures_symbols received a %r-asset-class store; futures bars "
+            "live under <root>/futures/ — pass a futures store or no indicators "
+            "will be produced.",
+            asset_class,
+        )
+
     out: dict[str, dict[str, Any]] = {}
     for sym in symbols:
         try:
@@ -1055,8 +1076,11 @@ def main():
     # Augment with futures daily indicators (Setup A/C daily_regime_trend_filter
     # consumes daily_close / daily_ema_20 / daily_ema_60 / daily_rsi_14 for
     # KOSPI200 futures; the stock scan above never covers these symbols).
+    # NOTE: `client` above is a STOCK-asset-class store — futures bars live under
+    # <root>/futures/, so the futures scan needs its own futures store.
     try:
-        futures_results = scan_futures_symbols(client, FUTURES_DAILY_SYMBOLS)
+        futures_store = get_market_data_store(asset_class="futures")
+        futures_results = scan_futures_symbols(futures_store, FUTURES_DAILY_SYMBOLS)
         if futures_results:
             results.update(futures_results)
     except Exception as exc:  # noqa: BLE001 - keep stock publishing on failure

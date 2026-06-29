@@ -541,6 +541,55 @@ def test_load_futures_daily_candles_buckets_late_session_to_same_day():
     assert daily.iloc[0]["close"] == first_day_rows.iloc[-1]["close"]
 
 
+def test_get_market_data_store_futures_asset_class(tmp_path, monkeypatch):
+    """get_market_data_store(asset_class='futures') builds a FUTURES store.
+
+    Regression: the futures scan must NOT receive the default stock store, or
+    101S6000 resolves to <root>/stock/ and silently returns no bars.
+    """
+
+    def fake_load_or_default():
+        return SimpleNamespace(
+            market_data=SimpleNamespace(parquet=SimpleNamespace(root=str(tmp_path)))
+        )
+
+    monkeypatch.setattr(scanner, "_load_repo_env", lambda: None)
+    monkeypatch.setattr(scanner.StorageConfig, "load_or_default", fake_load_or_default)
+
+    stock_store = scanner.get_market_data_store()
+    futures_store = scanner.get_market_data_store(asset_class="futures")
+
+    assert stock_store.asset_class == "stock"
+    assert futures_store.asset_class == "futures"
+    # The futures store must resolve symbol paths under <root>/futures/.
+    assert (futures_store.root / "futures").parts[-1] == "futures"
+
+
+def test_scan_futures_symbols_warns_on_stock_store(caplog):
+    """scan_futures_symbols loudly warns when given a non-futures store.
+
+    A stock-asset-class store would make get_minute_bars('101S6000') resolve to
+    a non-existent <root>/stock/ path and return nothing — so we surface the
+    misuse instead of silently producing zero indicators.
+    """
+    import logging
+
+    class StockStore:
+        asset_class = "stock"
+
+        def get_minute_bars(self, symbol: str) -> pd.DataFrame:
+            return pd.DataFrame()  # stock root has no futures bars
+
+    with caplog.at_level(logging.WARNING):
+        out = scan_futures_symbols(StockStore(), ["101S6000"])
+
+    assert out == {}
+    assert any(
+        "asset-class store" in rec.message and "futures" in rec.message
+        for rec in caplog.records
+    ), "expected a warning about the wrong asset-class store"
+
+
 # ---------------------------------------------------------------------------
 # dynamic_only_strategies exclusion tests (fix/momentum-breakout-dynamic-prescreen)
 # ---------------------------------------------------------------------------
