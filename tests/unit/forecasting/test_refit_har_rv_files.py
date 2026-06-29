@@ -1,4 +1,4 @@
-"""Tests for local file-backed HAR-RV refit."""
+"""Tests for local file-backed and Parquet-backed HAR-RV refit."""
 
 from __future__ import annotations
 
@@ -42,6 +42,24 @@ def _synthetic_refit_bars(days: int = 82, code: str = "A01606") -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _synthetic_refit_bars_kst_naive(
+    days: int = 82, code: str = "A01606"
+) -> pd.DataFrame:
+    """Same RV structure as ``_synthetic_refit_bars`` but with tz-NAIVE KST
+    datetimes — matching ParquetMarketDataStore output (datetime64[ns], tz=None,
+    values are KST wall-clock).  This is what the real store returns; using it
+    here ensures the test would CATCH a ``utc=True`` localize bug (which would
+    shift bars out of the 09:00–15:30 KST session filter → 0 RV points).
+    """
+    df = _synthetic_refit_bars(days=days, code=code)
+    # _synthetic_refit_bars emits UTC-aware (09:00 KST -> 00:00 UTC). Convert
+    # back to KST wall-clock then strip tz so it mirrors the Parquet store.
+    df["datetime"] = (
+        pd.to_datetime(df["datetime"]).dt.tz_convert("Asia/Seoul").dt.tz_localize(None)
+    )
+    return df
 
 
 def test_refit_main_writes_log_model_json_from_csv(tmp_path: Path):
@@ -98,3 +116,52 @@ def test_load_minute_bars_accepts_timezone_aware_bounds(tmp_path: Path):
     assert loaded.index.min() == pd.Timestamp("2026-01-02T00:00:00Z")
     assert loaded.index.max() == pd.Timestamp("2026-01-02T00:55:00Z")
     np.testing.assert_allclose(loaded["close"].to_numpy(), bars.iloc[:12]["close"])
+
+
+def test_refit_from_parquet_writes_model_to_redis(monkeypatch, tmp_path: Path):
+    """--from-parquet mode resolves near-month, fits HAR-RV, writes to Redis.
+
+    Uses dependency injection (store= / redis_client=) so no lazy-import
+    patching is needed.  The store returns tz-NAIVE KST bars (real store output)
+    so this test would FAIL if refit_from_parquet localized them as UTC.
+    """
+    bars = _synthetic_refit_bars_kst_naive(days=82, code="A01606")
+    assert bars["datetime"].dt.tz is None, "store mock must yield tz-naive KST"
+
+    class FakeStore:
+        """Minimal ParquetMarketDataStore stand-in."""
+
+        def __init__(self) -> None:
+            self.root = tmp_path / "market"
+            (self.root / "futures" / "minute" / "code=A01606").mkdir(parents=True)
+
+        def get_minute_bars(self, symbol: str) -> pd.DataFrame:
+            assert symbol == "A01606"
+            return bars.copy()
+
+    redis_stored: dict[str, str] = {}
+
+    class FakeRedis:
+        def set(self, key: str, value: str, **_kw: object) -> None:
+            redis_stored[key] = value
+
+    monkeypatch.setenv("FORECAST_REFIT_CODE", "A01606")
+
+    from shared.forecasting.config import HARRVConfig
+
+    cfg = HARRVConfig(history_days=60, holdout_days=7, min_r2_oos=-1.0)
+    rc = refit_har_rv.refit_from_parquet(
+        cfg, store=FakeStore(), redis_client=FakeRedis()
+    )
+
+    assert rc == 0, "refit_from_parquet should exit 0 on success"
+    assert "forecast:vol:model" in redis_stored
+    payload = json.loads(redis_stored["forecast:vol:model"])
+    assert "rv_history" in payload
+    assert len(payload["rv_history"]) >= 60
+
+
+def test_file_mode_requires_bars_and_out():
+    """File mode without --from-parquet must error if --bars/--out absent."""
+    rc = refit_har_rv.main([])
+    assert rc == 2

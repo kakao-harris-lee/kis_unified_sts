@@ -349,13 +349,20 @@ async def build_strategy_candidate_watchlist(
     return watchlist
 
 
-def get_market_data_store():
-    """Return the Parquet market-data store."""
+def get_market_data_store(asset_class: str = "stock"):
+    """Return a Parquet market-data store for the given asset class.
+
+    ``asset_class`` selects the partition root: ``stock`` reads
+    ``<root>/stock/...`` and ``futures`` reads ``<root>/futures/...``.  The
+    futures scan MUST use a futures-asset-class store — a stock store would
+    resolve ``101S6000`` to ``<root>/stock/minute/code=101S6000/`` (which does
+    not exist) and silently return no bars.
+    """
     _load_repo_env()
     storage_config = StorageConfig.load_or_default()
     return ParquetMarketDataStore(
         storage_config.market_data.parquet.root,
-        asset_class="stock",
+        asset_class=asset_class,
     )
 
 
@@ -643,42 +650,76 @@ def compute_indicators(
 
 
 # Futures symbols whose daily indicators feed Setup A/C daily_regime_trend_filter.
-# Reads from kospi.kospi200f_1m (1m bars) and aggregates to daily candles inline —
-# `market.daily_candles` does not carry futures.
+# Reads from Parquet futures/minute bars (ParquetMarketDataStore) and aggregates
+# to daily candles inline — `market.daily_candles` does not carry futures.
 FUTURES_DAILY_SYMBOLS: tuple[str, ...] = ("101S6000",)
+
+# Minimum intraday 1-minute bars per session for it to count as a real trading day.
+# Filters out phantom single-tick rows that pre-open/after-close data can create.
+_FUTURES_MIN_BARS_PER_DAY = 30
 
 
 def load_futures_daily_candles(
     client: Any, symbol: str, days: int = 250
 ) -> pd.DataFrame:
-    """Aggregate kospi.kospi200f_1m intraday bars to daily candles.
+    """Aggregate Parquet futures 1-minute bars to daily OHLCV candles.
 
-    Returns columns: date, open, high, low, close, volume (one row per session).
+    Uses ``client.get_minute_bars(symbol)`` (ParquetMarketDataStore API) so no
+    ClickHouse connection is required.  Returns columns: date, open, high, low,
+    close, volume (one row per session, sorted ascending).
+
+    Sessions with fewer than ``_FUTURES_MIN_BARS_PER_DAY`` bars are dropped to
+    filter phantom single-tick rows that appear before/after market hours.
+
+    Timezone handling (CRITICAL): ParquetMarketDataStore returns tz-NAIVE
+    datetimes that are already KST wall-clock (e.g. ``2026-06-29 15:45:00`` is a
+    KST close, tz=None).  Grouping on these naive values directly yields the
+    correct KST session date.  We must NOT ``pd.to_datetime(..., utc=True)`` —
+    that *localizes* (treats 15:45 KST as 15:45 UTC), a +9h shift that buckets
+    late-session bars (15:00–15:45 KST) onto the NEXT calendar day and corrupts
+    the daily OHLC / close that feeds Setup A/C ``daily_regime_trend_filter``.
     """
-    query = """
-        SELECT
-            toDate(datetime) AS date,
-            argMin(open, datetime) AS open,
-            max(high) AS high,
-            min(low) AS low,
-            argMax(close, datetime) AS close,
-            sum(volume) AS volume
-        FROM kospi.kospi200f_1m
-        WHERE code = {code:String}
-        GROUP BY date
-        ORDER BY date DESC
-        LIMIT {limit:UInt32}
-    """
-    result = client.query(query, parameters={"code": symbol, "limit": int(days)})
-    if not result.result_rows:
+    minute_bars = client.get_minute_bars(symbol)
+    if minute_bars is None or minute_bars.empty:
         return pd.DataFrame()
-    df = pd.DataFrame(
-        result.result_rows,
-        columns=["date", "open", "high", "low", "close", "volume"],
+
+    df = minute_bars.copy()
+    # Normalise datetime column: may be a DatetimeIndex or a plain column.
+    if "datetime" not in df.columns:
+        df = df.reset_index().rename(columns={df.index.name or "index": "datetime"})
+    df["datetime"] = pd.to_datetime(df["datetime"])
+
+    # Derive the KST session date for grouping.  The store's datetimes are
+    # tz-naive KST, so ``.dt.date`` is already the correct session date.  If a
+    # tz-aware frame is ever passed (e.g. from a different source), convert it
+    # to KST first so the date assignment stays correct.
+    if df["datetime"].dt.tz is not None:
+        df["_date"] = df["datetime"].dt.tz_convert("Asia/Seoul").dt.date
+    else:
+        df["_date"] = df["datetime"].dt.date
+
+    # Drop sessions with too few bars (phantom / partial-open days).
+    bar_counts = df.groupby("_date")["_date"].transform("count")
+    df = df[bar_counts >= _FUTURES_MIN_BARS_PER_DAY]
+    if df.empty:
+        return pd.DataFrame()
+
+    # Aggregate 1-minute bars to OHLCV daily candles.
+    daily = df.groupby("_date").agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
     )
-    # Drop intraday-only "phantom days" (single tick before market close):
-    # require at least 30 minutes of trading to count as a real session.
-    return df.sort_values("date").reset_index(drop=True)
+    daily.index.name = "date"
+    daily = daily.reset_index().sort_values("date")
+
+    # Trim to the most-recent `days` sessions.
+    if len(daily) > days:
+        daily = daily.iloc[-days:]
+
+    return daily.reset_index(drop=True)
 
 
 def compute_futures_daily_indicators(df: pd.DataFrame) -> dict[str, float] | None:
@@ -726,7 +767,21 @@ def scan_futures_symbols(
     Returns a dict ready to merge into the scanner's stock-symbol payload —
     the orchestrator already keys by symbol, so a single Redis key carries both
     stock and futures daily indicators (~unchanged consumer code path).
+
+    The ``client`` MUST be a futures-asset-class ``ParquetMarketDataStore``;
+    a stock store resolves ``101S6000`` to a non-existent ``<root>/stock/``
+    path and silently returns no bars.  We surface that misuse loudly instead
+    of letting the scan quietly yield nothing.
     """
+    asset_class = getattr(client, "asset_class", None)
+    if asset_class is not None and asset_class != "futures":
+        logger.warning(
+            "scan_futures_symbols received a %r-asset-class store; futures bars "
+            "live under <root>/futures/ — pass a futures store or no indicators "
+            "will be produced.",
+            asset_class,
+        )
+
     out: dict[str, dict[str, Any]] = {}
     for sym in symbols:
         try:
@@ -1021,8 +1076,11 @@ def main():
     # Augment with futures daily indicators (Setup A/C daily_regime_trend_filter
     # consumes daily_close / daily_ema_20 / daily_ema_60 / daily_rsi_14 for
     # KOSPI200 futures; the stock scan above never covers these symbols).
+    # NOTE: `client` above is a STOCK-asset-class store — futures bars live under
+    # <root>/futures/, so the futures scan needs its own futures store.
     try:
-        futures_results = scan_futures_symbols(client, FUTURES_DAILY_SYMBOLS)
+        futures_store = get_market_data_store(asset_class="futures")
+        futures_results = scan_futures_symbols(futures_store, FUTURES_DAILY_SYMBOLS)
         if futures_results:
             results.update(futures_results)
     except Exception as exc:  # noqa: BLE001 - keep stock publishing on failure

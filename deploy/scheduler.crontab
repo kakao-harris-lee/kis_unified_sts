@@ -15,7 +15,9 @@
 */15 * * * 1-5  cd /app && python -m services.macro_overnight_collector.main fx
 
 # --- forecasting refit (07:35) ---
-35 7  * * 1-5  cd /app && python scripts/forecasting/refit_har_rv.py
+# --from-parquet: auto-resolves active A01* near-month from Parquet minute bars,
+# fits HAR-RV, and writes forecast:vol:model to Redis.  No external DB required.
+35 7  * * 1-5  cd /app && python scripts/forecasting/refit_har_rv.py --from-parquet
 
 # --- pre-open scanners (08:30 / 08:50 / 08:58) → daily_watchlist, indicators ---
 30 8  * * 1-5  cd /app && python scripts/run_daily_scanner.py
