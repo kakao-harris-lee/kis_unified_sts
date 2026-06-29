@@ -58,3 +58,22 @@ def test_load_defaults_on_missing(monkeypatch):
 
     monkeypatch.setattr(loader_mod.ConfigLoader, "load", staticmethod(lambda _f: {}))
     assert BearOverrideConfig.load().enabled is False
+
+
+def test_min_change_pct_for_rs_default():
+    """Default is 0.0 (gate disabled)."""
+    assert BearOverrideConfig().min_change_pct_for_rs == 0.0
+
+
+def test_min_change_pct_for_rs_loaded(monkeypatch):
+    from shared.config import loader as loader_mod
+
+    monkeypatch.setattr(
+        loader_mod.ConfigLoader,
+        "load",
+        staticmethod(
+            lambda _f: {"stock_bear_override": {"min_change_pct_for_rs": 0.3}}
+        ),
+    )
+    cfg = BearOverrideConfig.load()
+    assert cfg.min_change_pct_for_rs == 0.3

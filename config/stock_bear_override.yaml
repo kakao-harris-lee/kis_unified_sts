@@ -9,3 +9,4 @@ stock_bear_override:
   require_above_sma20: true
   require_rsi_rising: true
   require_macd_positive: true
+  min_change_pct_for_rs: 0.3   # RS gate: bear override only for stocks up ≥0.3% vs prev close
