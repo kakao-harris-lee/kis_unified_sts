@@ -943,6 +943,7 @@ async def run_screener(config: ScreenerConfig) -> None:
                 if codes:
                     names = {c: info[c]["name"] for c in codes if c in info}
                     metadata = prev_vol_cache.build_metadata(codes)
+                    # Forward today's return vs prev-close for downstream RS gate.
                     for code in codes:
                         if code in info:
                             metadata.setdefault(code, {})["change_pct"] = float(

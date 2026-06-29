@@ -1066,6 +1066,7 @@ async def test_pattern_pullback_fires_only_with_daily_sma_200_injected():
 from shared.streaming.stock_signal_eval import (  # noqa: E402
     REJECT_BEAR_CAP_REACHED,
     REJECT_BEAR_REGIME,
+    REJECT_BEAR_RS_GATE,
     REJECT_COLD,
     REJECT_CONDITIONS_NOT_MET,
     REJECT_NO_DAILY_WATCHLIST,
@@ -1829,3 +1830,104 @@ async def test_llm_discovery_prefers_live_tick_over_reference_price():
     # _FakeFeed returns a live close of 71000.0; it must win over entry_price 10000.0.
     assert float(fields["price"]) == 71000.0
     assert "live_tick" in fields["metadata_json"]
+
+
+# ---------------------------------------------------------------------------
+# RS gate (bear_rs_gate) — bear override symbol below min_change_pct_for_rs
+# ---------------------------------------------------------------------------
+
+
+def _bear_daily():
+    """Daily indicators for 005930 that pass the strong-set filter."""
+    return {
+        "indicators": {
+            "005930": {
+                "daily_close": 100,
+                "daily_sma_20": 90,
+                "daily_rsi_14": 70,
+                "daily_prev_rsi_14": 65,
+                "daily_macd_hist": 5,
+            }
+        }
+    }
+
+
+def _trade_targets_with_change_pct(change_pct):
+    """Minimal trade_targets payload with change_pct for 005930."""
+    return json.dumps({"metadata": {"005930": {"change_pct": change_pct}}})
+
+
+def _make_rs_daemon(redis, change_pct, threshold, monkeypatch):
+    """Helper: bear override daemon with RS gate, change_pct injected via _trade_targets_payload."""
+    from shared.streaming.stock_bear_override import BearOverrideConfig
+
+    redis.kv["system:daily_indicators:latest"] = json.dumps(_bear_daily())
+    d = _eval_daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=("005930",)),
+        manager=_RosterManager(fire_map={"pattern_pullback": {"005930"}}),
+        regime_config=StockRegimeConfig(),
+        bear_override_config=BearOverrideConfig(
+            enabled=True, min_change_pct_for_rs=threshold
+        ),
+    )
+    d._universe = ["005930"]
+    # Inject trade_targets payload directly (bypasses _apply_watchlist).
+    if change_pct is not None:
+        d._trade_targets_payload = {"metadata": {"005930": {"change_pct": change_pct}}}
+    else:
+        d._trade_targets_payload = {"metadata": {}}
+    monkeypatch.setattr(d, "_publish_regime", _async_return(json.loads(_bear_payload())))
+    return d
+
+
+@pytest.mark.asyncio
+async def test_bear_rs_gate_rejects_symbol_below_threshold(monkeypatch):
+    """Bear override symbol with change_pct below threshold → REJECT_BEAR_RS_GATE."""
+    redis = _HashRedis()
+    d = _make_rs_daemon(redis, change_pct=0.1, threshold=0.3, monkeypatch=monkeypatch)
+
+    published = await d.evaluate_once()
+
+    assert published == 0
+    summary = _eval_summary(redis)
+    assert summary["pattern_pullback"]["reason"] == REJECT_BEAR_RS_GATE
+
+
+@pytest.mark.asyncio
+async def test_bear_rs_gate_passes_symbol_above_threshold(monkeypatch):
+    """Bear override symbol with change_pct above threshold → evaluated normally."""
+    redis = _HashRedis()
+    d = _make_rs_daemon(redis, change_pct=0.5, threshold=0.3, monkeypatch=monkeypatch)
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    # Symbol passes RS gate — rejection reason is strategy selectivity, not RS gate.
+    assert summary["pattern_pullback"]["reason"] != REJECT_BEAR_RS_GATE
+
+
+@pytest.mark.asyncio
+async def test_bear_rs_gate_noop_when_threshold_zero(monkeypatch):
+    """min_change_pct_for_rs=0.0 (default) — gate block not entered, symbol evaluated."""
+    redis = _HashRedis()
+    # change_pct=0.0 would fail a 0.3 threshold, but gate is disabled here.
+    d = _make_rs_daemon(redis, change_pct=0.0, threshold=0.0, monkeypatch=monkeypatch)
+
+    await d.evaluate_once()
+
+    summary = _eval_summary(redis)
+    assert summary["pattern_pullback"]["reason"] != REJECT_BEAR_RS_GATE
+
+
+@pytest.mark.asyncio
+async def test_bear_rs_gate_missing_change_pct_defaults_to_zero(monkeypatch):
+    """Symbol absent from trade_targets metadata → change_pct=0.0 → rejected by gate."""
+    redis = _HashRedis()
+    d = _make_rs_daemon(redis, change_pct=None, threshold=0.3, monkeypatch=monkeypatch)
+
+    published = await d.evaluate_once()
+
+    assert published == 0
+    summary = _eval_summary(redis)
+    assert summary["pattern_pullback"]["reason"] == REJECT_BEAR_RS_GATE

@@ -664,9 +664,14 @@ class StockStrategyDaemon:
                     and self._bear_override_config.min_change_pct_for_rs > 0
                 ):
                     trade_meta = self._trade_targets_payload.get("metadata", {})
-                    change_pct = float(
-                        trade_meta.get(symbol, {}).get("change_pct", 0) or 0
-                    )
+                    symbol_meta = trade_meta.get(symbol, {})
+                    raw_change = symbol_meta.get("change_pct")
+                    if raw_change is None:
+                        logger.debug(
+                            "bear RS gate: %s has no change_pct in trade_targets — defaulting to 0.0",
+                            symbol,
+                        )
+                    change_pct = float(raw_change or 0)
                     if change_pct < self._bear_override_config.min_change_pct_for_rs:
                         self._record_symbol_reject(
                             evaluator, roster, symbol, REJECT_BEAR_RS_GATE
