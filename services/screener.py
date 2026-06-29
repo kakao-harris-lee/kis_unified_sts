@@ -818,6 +818,11 @@ def _stock_kis_config() -> KISAuthConfig:
 async def run_screener(config: ScreenerConfig) -> None:
     kis_config = _stock_kis_config()
     ranking = KISRankingClient(kis_config)
+    # TODO: `trend_kis_client` and `ranking` each hold a SEPARATE `_RateLimiter`
+    # while sharing the same KIS app key, so neither caps the other's per-second
+    # rate. The sequential ranking sweep + EGW retry (PR #555) shrinks the burst
+    # window, but the eventual hard cap is a shared `_RateLimiter` keyed by
+    # `(app_key, is_real)` across both clients. Deferred to a separate PR.
     trend_kis_client = KISClient(kis_config) if config.trend_confirm_enabled else None
     trend_confirm_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 

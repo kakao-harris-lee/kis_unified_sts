@@ -1,5 +1,7 @@
 """Unit tests for KIS ranking client (request mapping and constants)."""
 
+import asyncio
+
 import pytest
 
 from shared.kis.auth import KISAuthConfig
@@ -8,6 +10,11 @@ from shared.kis.ranking_client import (
     RankingEndpoints,
     _market_to_input_iscd,
 )
+
+# Faithful to the production code path: `_get()` extracts `data["msg1"]` and
+# raises `RuntimeError(f"KIS ranking API error: {msg}")`. For the per-second
+# throttle, KIS sets msg1 == "초당 거래건수를 초과하였습니다." (msg_cd "EGW00201").
+_PROD_EGW_THROTTLE_ERROR = "KIS ranking API error: 초당 거래건수를 초과하였습니다."
 
 
 def test_market_to_input_iscd_mapping():
@@ -33,9 +40,22 @@ def test_endpoints_match_kis_docs():
 
 
 def test_rate_limit_error_detection():
-    assert KISRankingClient._is_rate_limit_error("EGW00201: 초당 거래건수 초과")
-    assert KISRankingClient._is_rate_limit_error("RATE limit exceeded")
+    # Production EGW throttle: msg1 == "초당 거래건수를 초과하였습니다.", msg_cd "EGW00201".
+    assert KISRankingClient._is_rate_limit_error("초당 거래건수를 초과하였습니다.")
+    assert KISRankingClient._is_rate_limit_error("EGW00201")
+    assert KISRankingClient._is_rate_limit_error("rate limit exceeded")
     assert not KISRankingClient._is_rate_limit_error("normal business error")
+
+
+def test_rate_limit_markers_do_not_over_match():
+    """Tightened markers must not misclassify unrelated errors as rate-limit.
+
+    A bare "RATE" substring (or unqualified "거래건수") previously over-matched —
+    e.g. an interest-rate message — and would wrongly trigger the EGW retry path.
+    """
+    assert not KISRankingClient._is_rate_limit_error("interest RATE error")
+    assert not KISRankingClient._is_rate_limit_error("일별 거래건수 집계 오류")
+    assert not KISRankingClient._is_rate_limit_error("RATE limit exceeded")
 
 
 @pytest.mark.asyncio
@@ -105,7 +125,8 @@ def test_normalize_near_new_highlow_row():
 @pytest.mark.asyncio
 async def test_get_all_aggressive_sources_can_disable_swing_sources(monkeypatch):
     client = KISRankingClient(
-        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True)
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True),
+        inter_call_seconds=0.0,
     )
     calls: list[str] = []
 
@@ -124,3 +145,199 @@ async def test_get_all_aggressive_sources_can_disable_swing_sources(monkeypatch)
     assert sources["kosdaq_volume_power"] == []
     assert sources["kospi_near_new_high"] == []
     assert sources["kosdaq_near_new_high"] == []
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit pacing and EGW retry tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sources_fetched_sequentially_not_concurrent(monkeypatch):
+    """get_all_aggressive_sources must not fire calls concurrently.
+
+    We verify this by recording active-concurrency counts: if more than one
+    call is in-flight at any point, the test fails.
+    """
+    client = KISRankingClient(
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True),
+        inter_call_seconds=0.0,  # no sleep delay in the test
+    )
+    in_flight = 0
+    max_in_flight = 0
+    call_count = 0
+
+    async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        nonlocal in_flight, max_in_flight, call_count
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        call_count += 1
+        await asyncio.sleep(0)  # yield to event loop
+        in_flight -= 1
+        return []
+
+    monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
+
+    await client.get_all_aggressive_sources(limit=5, include_swing=True)
+
+    assert call_count == 10, f"Expected 10 source calls, got {call_count}"
+    assert max_in_flight == 1, (
+        f"Calls were concurrent: max_in_flight={max_in_flight} "
+        "(should be 1 — sequential)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_egw_throttle_retried_and_source_recovered(monkeypatch):
+    """A single EGW throttle response is retried once; source must succeed on retry."""
+    client = KISRankingClient(
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True),
+        inter_call_seconds=0.0,
+        retry_backoff_seconds=0.0,  # no sleep in tests
+    )
+    attempts: dict[str, int] = {}
+
+    async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        key = f"{type}_{market}"
+        attempts[key] = attempts.get(key, 0) + 1
+        # Fail the first attempt for kospi_volume with the EXACT production
+        # EGW throttle error string (faithful to `_get()`'s msg1 extraction).
+        if type == "volume" and market == "KOSPI" and attempts[key] == 1:
+            raise RuntimeError(_PROD_EGW_THROTTLE_ERROR)
+        return [{"code": f"00000{attempts[key]}", "name": "test"}]
+
+    monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
+
+    sources = await client.get_all_aggressive_sources(limit=5, include_swing=False)
+
+    # kospi_volume should have recovered on the second attempt.
+    assert len(sources["kospi_volume"]) > 0, "kospi_volume should recover after retry"
+    assert attempts.get("volume_KOSPI", 0) == 2, "kospi_volume must be attempted twice"
+
+
+@pytest.mark.asyncio
+async def test_egw_throttle_second_attempt_also_fails_logs_and_drops(
+    monkeypatch, caplog
+):
+    """If both attempts fail with EGW throttle, source is dropped with a warning."""
+    import logging
+
+    client = KISRankingClient(
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True),
+        inter_call_seconds=0.0,
+        retry_backoff_seconds=0.0,
+    )
+
+    async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        # EXACT production EGW throttle error string (faithful to `_get()`).
+        if type == "volume" and market == "KOSPI":
+            raise RuntimeError(_PROD_EGW_THROTTLE_ERROR)
+        return []
+
+    monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
+
+    with caplog.at_level(logging.WARNING, logger="shared.kis.ranking_client"):
+        sources = await client.get_all_aggressive_sources(limit=5, include_swing=False)
+
+    assert sources["kospi_volume"] == [], "Failed source must degrade to empty list"
+    # Should log the EGW retry attempt and then the final failure.
+    egw_logs = [
+        r
+        for r in caplog.records
+        if "EGW" in r.message or "throttle" in r.message.lower()
+    ]
+    final_fail_logs = [
+        r for r in caplog.records if "ranking source failed" in r.message
+    ]
+    assert egw_logs, "Should log EGW throttle on first attempt"
+    assert final_fail_logs, "Should log final failure after both attempts exhausted"
+
+
+@pytest.mark.asyncio
+async def test_non_throttle_error_not_retried(monkeypatch):
+    """Non-EGW errors should not trigger the retry path."""
+    client = KISRankingClient(
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True),
+        inter_call_seconds=0.0,
+        retry_backoff_seconds=0.0,
+    )
+    attempts: dict[str, int] = {}
+
+    async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        key = f"{type}_{market}"
+        attempts[key] = attempts.get(key, 0) + 1
+        if type == "volume" and market == "KOSPI":
+            raise RuntimeError("KIS ranking API error: some unrelated business error")
+        return []
+
+    monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
+
+    sources = await client.get_all_aggressive_sources(limit=5, include_swing=False)
+
+    assert sources["kospi_volume"] == []
+    # Non-throttle error must NOT trigger a retry — only one attempt.
+    assert (
+        attempts.get("volume_KOSPI", 0) == 1
+    ), "Non-throttle errors must not be retried (attempt count should be 1)"
+
+
+@pytest.mark.asyncio
+async def test_rate_word_error_not_retried(monkeypatch):
+    """An error merely containing 'RATE' must not be treated as a throttle.
+
+    Guards the tightened ``_is_rate_limit_error`` markers at the retry path:
+    a future interest-rate / business error containing 'RATE' must fail fast
+    (single attempt) rather than waste a backoff+retry.
+    """
+    client = KISRankingClient(
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True),
+        inter_call_seconds=0.0,
+        retry_backoff_seconds=0.0,
+    )
+    attempts: dict[str, int] = {}
+
+    async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        key = f"{type}_{market}"
+        attempts[key] = attempts.get(key, 0) + 1
+        if type == "volume" and market == "KOSPI":
+            raise RuntimeError("KIS ranking API error: interest RATE adjustment error")
+        return []
+
+    monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
+
+    sources = await client.get_all_aggressive_sources(limit=5, include_swing=False)
+
+    assert sources["kospi_volume"] == []
+    assert (
+        attempts.get("volume_KOSPI", 0) == 1
+    ), "A 'RATE'-containing non-throttle error must not be retried"
+
+
+@pytest.mark.asyncio
+async def test_inter_call_delay_applied_between_sources(monkeypatch):
+    """The inter_call_seconds delay is applied between consecutive source calls."""
+    sleep_calls: list[float] = []
+
+    async def recording_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        # Don't actually sleep in tests — just record.
+
+    monkeypatch.setattr(asyncio, "sleep", recording_sleep)
+
+    client = KISRankingClient(
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True),
+        inter_call_seconds=0.25,
+    )
+
+    async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        return []
+
+    monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
+
+    await client.get_all_aggressive_sources(limit=5, include_swing=True)
+
+    # 10 sources: 9 inter-call gaps (first source has no preceding gap).
+    inter_call_delays = [d for d in sleep_calls if d == 0.25]
+    assert (
+        len(inter_call_delays) == 9
+    ), f"Expected 9 inter-call delays of 0.25s, got {len(inter_call_delays)}: {sleep_calls}"

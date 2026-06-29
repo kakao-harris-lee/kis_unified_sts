@@ -7,6 +7,19 @@ Key endpoints used for screening:
   - 국내주식 등락률 순위: /uapi/domestic-stock/v1/ranking/fluctuation (TR: FHPST01700000)
   - 체결강도상위: /uapi/domestic-stock/v1/ranking/volume-power (TR: FHPST01680000)
   - 신고/신저 근접종목 상위: /uapi/domestic-stock/v1/ranking/near-new-highlow (TR: FHPST01870000)
+
+Rate-limiting note
+------------------
+``get_all_aggressive_sources`` iterates the ranking sources **sequentially** with a
+configurable inter-call delay (``KIS_RANKING_INTER_CALL_SECONDS``, default 0.25 s)
+rather than firing them all concurrently via ``asyncio.gather``.  Concurrent fan-out
+caused the screener to burst up to 10 calls within a single second against an API key
+that also services the trend-confirmation ``KISClient``, overwhelming KIS's per-second
+transaction limit (EGW "초당 거래건수를 초과하였습니다.").
+
+When KIS returns an EGW throttle response the source is retried once after
+``KIS_RANKING_RETRY_BACKOFF_SECONDS`` (default 1.0 s) before being dropped for
+that cycle so a transient burst recovers within the same sweep.
 """
 
 from __future__ import annotations
@@ -32,6 +45,17 @@ MarketType = Literal["KOSPI", "KOSDAQ", "ALL", "KOSPI200", "KRX100"]
 
 
 _MAX_KIS_RANKING_ROWS = 30
+
+# Default inter-call delay between sequential ranking source fetches (seconds).
+# Matches the ``stagger_delay`` convention in streaming.yaml / DataProvider.
+_DEFAULT_INTER_CALL_SECONDS = float(
+    os.environ.get("KIS_RANKING_INTER_CALL_SECONDS", "0.25")
+)
+
+# Backoff (seconds) before retrying a source that returned an EGW throttle error.
+_DEFAULT_RETRY_BACKOFF_SECONDS = float(
+    os.environ.get("KIS_RANKING_RETRY_BACKOFF_SECONDS", "1.0")
+)
 
 
 def _market_to_input_iscd(market: str) -> str:
@@ -73,7 +97,12 @@ class KISRankingClient(AsyncSessionMixin):
     """Async client for KIS domestic stock ranking APIs."""
 
     def __init__(
-        self, config: KISAuthConfig, endpoints: RankingEndpoints | None = None
+        self,
+        config: KISAuthConfig,
+        endpoints: RankingEndpoints | None = None,
+        *,
+        inter_call_seconds: float | None = None,
+        retry_backoff_seconds: float | None = None,
     ):
         self.config = config
         self.endpoints = endpoints or RankingEndpoints()
@@ -85,6 +114,18 @@ class KISRankingClient(AsyncSessionMixin):
             )
         )
         self._rate_limiter = _RateLimiter(max_requests=max(1, rate_limit))
+        # Inter-call pacing: minimum sleep between sequential source fetches.
+        self._inter_call_seconds = (
+            inter_call_seconds
+            if inter_call_seconds is not None
+            else _DEFAULT_INTER_CALL_SECONDS
+        )
+        # Backoff before retrying an EGW-throttled source.
+        self._retry_backoff_seconds = (
+            retry_backoff_seconds
+            if retry_backoff_seconds is not None
+            else _DEFAULT_RETRY_BACKOFF_SECONDS
+        )
 
     async def close(self) -> None:
         await self._close_session()
@@ -147,59 +188,52 @@ class KISRankingClient(AsyncSessionMixin):
     async def get_all_aggressive_sources(
         self, limit: int = _MAX_KIS_RANKING_ROWS, *, include_swing: bool = True
     ) -> dict[str, Any]:
-        """Fetch multiple ranking sources concurrently.
+        """Fetch multiple ranking sources sequentially with inter-call pacing.
+
+        Sources are fetched one at a time (not concurrently) to avoid bursting
+        multiple calls per second against the shared KIS API key.  A short
+        ``inter_call_seconds`` gap is inserted between consecutive fetches.
+
+        When KIS returns an EGW per-second throttle response (rt_cd != "0",
+        "초당 거래건수") the source is retried once after ``retry_backoff_seconds``
+        before being recorded as failed for this cycle.  This lets a transient
+        burst recover within the same sweep rather than silently dropping sources.
 
         This is meant for screeners: high volume + strong gainers + losers
         across KOSPI/KOSDAQ. When include_swing is true, also fetches
         short-term momentum discovery inputs for volume power and near-new-high.
         """
-        tasks = {
-            "kospi_volume": self.get_ranking(
-                type="volume", market="KOSPI", limit=limit
-            ),
-            "kosdaq_volume": self.get_ranking(
-                type="volume", market="KOSDAQ", limit=limit
-            ),
-            "kospi_gainer": self.get_ranking(
-                type="gainer", market="KOSPI", limit=limit
-            ),
-            "kosdaq_gainer": self.get_ranking(
-                type="gainer", market="KOSDAQ", limit=limit
-            ),
-            "kospi_loser": self.get_ranking(
-                type="gainer", market="KOSPI", limit=limit, direction="down"
-            ),
-            "kosdaq_loser": self.get_ranking(
-                type="gainer", market="KOSDAQ", limit=limit, direction="down"
-            ),
-        }
+        source_specs: list[tuple[str, str, str, str]] = [
+            # (key, type, market, direction)
+            ("kospi_volume", "volume", "KOSPI", "up"),
+            ("kosdaq_volume", "volume", "KOSDAQ", "up"),
+            ("kospi_gainer", "gainer", "KOSPI", "up"),
+            ("kosdaq_gainer", "gainer", "KOSDAQ", "up"),
+            ("kospi_loser", "gainer", "KOSPI", "down"),
+            ("kosdaq_loser", "gainer", "KOSDAQ", "down"),
+        ]
         if include_swing:
-            tasks.update(
-                {
-                    "kospi_volume_power": self.get_ranking(
-                        type="volume_power", market="KOSPI", limit=limit
-                    ),
-                    "kosdaq_volume_power": self.get_ranking(
-                        type="volume_power", market="KOSDAQ", limit=limit
-                    ),
-                    "kospi_near_new_high": self.get_ranking(
-                        type="near_new_high", market="KOSPI", limit=limit
-                    ),
-                    "kosdaq_near_new_high": self.get_ranking(
-                        type="near_new_high", market="KOSDAQ", limit=limit
-                    ),
-                }
-            )
+            source_specs += [
+                ("kospi_volume_power", "volume_power", "KOSPI", "up"),
+                ("kosdaq_volume_power", "volume_power", "KOSDAQ", "up"),
+                ("kospi_near_new_high", "near_new_high", "KOSPI", "up"),
+                ("kosdaq_near_new_high", "near_new_high", "KOSDAQ", "up"),
+            ]
 
-        gathered = await asyncio.gather(*tasks.values(), return_exceptions=True)
         results: dict[str, Any] = {}
-        for key, result in zip(tasks, gathered, strict=True):
-            if isinstance(result, Exception):
-                logger.warning("KIS ranking source failed (%s): %s", key, result)
-                results[key] = []
-            else:
-                results[key] = result
+        for idx, (key, rtype, market, direction) in enumerate(source_specs):
+            if idx > 0 and self._inter_call_seconds > 0:
+                await asyncio.sleep(self._inter_call_seconds)
+            result = await self._fetch_source_with_retry(
+                key=key,
+                rtype=rtype,  # type: ignore[arg-type]
+                market=market,  # type: ignore[arg-type]
+                direction=direction,  # type: ignore[arg-type]
+                limit=limit,
+            )
+            results[key] = result
 
+        # Ensure all swing keys are present even when include_swing=False.
         for key in (
             "kospi_volume_power",
             "kosdaq_volume_power",
@@ -221,14 +255,52 @@ class KISRankingClient(AsyncSessionMixin):
             "kosdaq_near_new_high": results["kosdaq_near_new_high"],
         }
 
+    async def _fetch_source_with_retry(
+        self,
+        *,
+        key: str,
+        rtype: RankingType,
+        market: MarketType,
+        direction: Literal["up", "down"],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch one ranking source; retry once on EGW throttle response.
+
+        Returns an empty list and logs a warning when both attempts fail.
+        """
+        for attempt in range(2):
+            try:
+                return await self.get_ranking(
+                    type=rtype, market=market, limit=limit, direction=direction
+                )
+            except RuntimeError as exc:
+                err_text = str(exc)
+                if self._is_rate_limit_error(err_text) and attempt == 0:
+                    logger.warning(
+                        "KIS ranking EGW throttle on %s (attempt 1); "
+                        "retrying after %.1fs",
+                        key,
+                        self._retry_backoff_seconds,
+                    )
+                    await asyncio.sleep(self._retry_backoff_seconds)
+                    continue
+                logger.warning("KIS ranking source failed (%s): %s", key, exc)
+                return []
+            except Exception as exc:
+                logger.warning("KIS ranking source failed (%s): %s", key, exc)
+                return []
+        # Should not reach here, but satisfy the type checker.
+        return []  # pragma: no cover
+
     @staticmethod
     def _is_rate_limit_error(text: str) -> bool:
+        # Precise markers only. A bare "RATE" or unqualified "거래건수" substring
+        # over-matches (e.g. a future interest-rate message) and would wrongly
+        # trigger the wasteful EGW retry path.
         markers = (
             "EGW00201",
             "초당 거래건수",
-            "거래건수",
             "rate limit",
-            "RATE",
         )
         return any(marker in text for marker in markers)
 
