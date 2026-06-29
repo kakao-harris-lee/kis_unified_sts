@@ -11,6 +11,11 @@ from shared.kis.ranking_client import (
     _market_to_input_iscd,
 )
 
+# Faithful to the production code path: `_get()` extracts `data["msg1"]` and
+# raises `RuntimeError(f"KIS ranking API error: {msg}")`. For the per-second
+# throttle, KIS sets msg1 == "초당 거래건수를 초과하였습니다." (msg_cd "EGW00201").
+_PROD_EGW_THROTTLE_ERROR = "KIS ranking API error: 초당 거래건수를 초과하였습니다."
+
 
 def test_market_to_input_iscd_mapping():
     assert _market_to_input_iscd("ALL") == "0000"
@@ -35,9 +40,22 @@ def test_endpoints_match_kis_docs():
 
 
 def test_rate_limit_error_detection():
-    assert KISRankingClient._is_rate_limit_error("EGW00201: 초당 거래건수 초과")
-    assert KISRankingClient._is_rate_limit_error("RATE limit exceeded")
+    # Production EGW throttle: msg1 == "초당 거래건수를 초과하였습니다.", msg_cd "EGW00201".
+    assert KISRankingClient._is_rate_limit_error("초당 거래건수를 초과하였습니다.")
+    assert KISRankingClient._is_rate_limit_error("EGW00201")
+    assert KISRankingClient._is_rate_limit_error("rate limit exceeded")
     assert not KISRankingClient._is_rate_limit_error("normal business error")
+
+
+def test_rate_limit_markers_do_not_over_match():
+    """Tightened markers must not misclassify unrelated errors as rate-limit.
+
+    A bare "RATE" substring (or unqualified "거래건수") previously over-matched —
+    e.g. an interest-rate message — and would wrongly trigger the EGW retry path.
+    """
+    assert not KISRankingClient._is_rate_limit_error("interest RATE error")
+    assert not KISRankingClient._is_rate_limit_error("일별 거래건수 집계 오류")
+    assert not KISRankingClient._is_rate_limit_error("RATE limit exceeded")
 
 
 @pytest.mark.asyncio
@@ -182,12 +200,10 @@ async def test_egw_throttle_retried_and_source_recovered(monkeypatch):
     async def fake_get_ranking(*, type, market, limit=30, direction="up"):
         key = f"{type}_{market}"
         attempts[key] = attempts.get(key, 0) + 1
-        # Fail the first attempt for kospi_volume with an EGW throttle error.
+        # Fail the first attempt for kospi_volume with the EXACT production
+        # EGW throttle error string (faithful to `_get()`'s msg1 extraction).
         if type == "volume" and market == "KOSPI" and attempts[key] == 1:
-            raise RuntimeError(
-                'KIS ranking API error: {"rt_cd":"1","msg1":"초당 거래건수를 초과하였습니다.",'
-                '"msg_cd":"EGW00201"}'
-            )
+            raise RuntimeError(_PROD_EGW_THROTTLE_ERROR)
         return [{"code": f"00000{attempts[key]}", "name": "test"}]
 
     monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
@@ -213,11 +229,9 @@ async def test_egw_throttle_second_attempt_also_fails_logs_and_drops(
     )
 
     async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        # EXACT production EGW throttle error string (faithful to `_get()`).
         if type == "volume" and market == "KOSPI":
-            raise RuntimeError(
-                'KIS ranking API error: {"rt_cd":"1","msg1":"초당 거래건수를 초과하였습니다.",'
-                '"msg_cd":"EGW00201"}'
-            )
+            raise RuntimeError(_PROD_EGW_THROTTLE_ERROR)
         return []
 
     monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
@@ -265,6 +279,38 @@ async def test_non_throttle_error_not_retried(monkeypatch):
     assert (
         attempts.get("volume_KOSPI", 0) == 1
     ), "Non-throttle errors must not be retried (attempt count should be 1)"
+
+
+@pytest.mark.asyncio
+async def test_rate_word_error_not_retried(monkeypatch):
+    """An error merely containing 'RATE' must not be treated as a throttle.
+
+    Guards the tightened ``_is_rate_limit_error`` markers at the retry path:
+    a future interest-rate / business error containing 'RATE' must fail fast
+    (single attempt) rather than waste a backoff+retry.
+    """
+    client = KISRankingClient(
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True),
+        inter_call_seconds=0.0,
+        retry_backoff_seconds=0.0,
+    )
+    attempts: dict[str, int] = {}
+
+    async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        key = f"{type}_{market}"
+        attempts[key] = attempts.get(key, 0) + 1
+        if type == "volume" and market == "KOSPI":
+            raise RuntimeError("KIS ranking API error: interest RATE adjustment error")
+        return []
+
+    monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
+
+    sources = await client.get_all_aggressive_sources(limit=5, include_swing=False)
+
+    assert sources["kospi_volume"] == []
+    assert (
+        attempts.get("volume_KOSPI", 0) == 1
+    ), "A 'RATE'-containing non-throttle error must not be retried"
 
 
 @pytest.mark.asyncio

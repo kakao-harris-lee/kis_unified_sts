@@ -294,12 +294,13 @@ class KISRankingClient(AsyncSessionMixin):
 
     @staticmethod
     def _is_rate_limit_error(text: str) -> bool:
+        # Precise markers only. A bare "RATE" or unqualified "거래건수" substring
+        # over-matches (e.g. a future interest-rate message) and would wrongly
+        # trigger the wasteful EGW retry path.
         markers = (
             "EGW00201",
             "초당 거래건수",
-            "거래건수",
             "rate limit",
-            "RATE",
         )
         return any(marker in text for marker in markers)
 
