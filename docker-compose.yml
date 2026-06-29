@@ -197,6 +197,10 @@ services:
     command: ["python", "-m", "services.market_ingest.main"]
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
+      # KRX market-hours logging: container TZ was UTC causing 9h log timestamp
+      # offset (misdiagnosis risk). Code uses now_kst()/datetime.now(UTC) so this
+      # is logging-only; no functional change.
+      TZ: "Asia/Seoul"
       INGEST_ASSET: "stock"
       INGEST_MAX_SYMBOLS: "${INGEST_MAX_SYMBOLS:-40}"
       INGEST_REFRESH_SECONDS: "${INGEST_REFRESH_SECONDS:-30}"
@@ -209,6 +213,7 @@ services:
     command: ["python", "-m", "services.stock_strategy.main"]
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
+      TZ: "Asia/Seoul"
       STOCK_STRATEGY_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
       STOCK_WATCHLIST_KEY: "${STOCK_WATCHLIST_KEY:-system:daily_watchlist:latest}"
@@ -224,6 +229,7 @@ services:
     command: ["python", "-m", "services.stock_risk_filter.main"]
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
+      TZ: "Asia/Seoul"
       STOCK_RISK_FILTER: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
 
@@ -234,6 +240,7 @@ services:
     command: ["python", "-m", "services.stock_order_router.main"]
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
+      TZ: "Asia/Seoul"
       STOCK_ORDER_ROUTER: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
       STOCK_PAPER_SLIPPAGE_RATE: "${STOCK_PAPER_SLIPPAGE_RATE:-0.0001}"
@@ -245,6 +252,7 @@ services:
     command: ["python", "-m", "services.stock_exit.main"]
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env]
+      TZ: "Asia/Seoul"
       STOCK_EXIT_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
       STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
@@ -258,6 +266,7 @@ services:
     command: ["python", "-m", "services.stock_monitor.main"]
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
+      TZ: "Asia/Seoul"
       STOCK_MONITOR_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
       STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
