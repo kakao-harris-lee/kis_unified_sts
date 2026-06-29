@@ -43,8 +43,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Hard fallback used only if both env-var override is unset AND auto-resolve
-# fails. A01606 is the active near-month as of 2026-05-23.
-_FALLBACK_PROXY_CODE = "A01606"
+# fails (empty/missing Parquet). Auto-resolve handles quarterly rolls whenever
+# data exists, so this only matters on a cold start. A01703 is the active
+# near-month as of 2026-06-29.
+_FALLBACK_PROXY_CODE = "A01703"
 
 # Minimum 1m-bar count in the resolution window for a contract to be eligible.
 # Without this, a stray single bar of an illiquid far-month (e.g. A01612, 1 bar
@@ -162,6 +164,23 @@ def refit_from_file(
     return out
 
 
+def _kst_naive_to_utc(datetimes: pd.Series) -> pd.Series:
+    """Convert a datetime Series to tz-aware UTC, treating naive values as KST.
+
+    ParquetMarketDataStore returns tz-NAIVE datetimes that are already KST
+    wall-clock (e.g. ``2026-06-29 15:45:00`` is a KST close, tz=None).  To get a
+    correct UTC instant we must *localize* them to KST then *convert* to UTC —
+    NOT ``pd.to_datetime(..., utc=True)``, which would localize them AS UTC (a
+    +9h shift).  That shift pushes every bar to 18:00–00:45 KST, so
+    ``daily_rv_series``'s 09:00–15:30 KST session filter drops ALL bars → 0 RV
+    points → the refit fails every day.  tz-aware inputs are converted directly.
+    """
+    parsed = pd.to_datetime(datetimes)
+    if parsed.dt.tz is None:
+        return parsed.dt.tz_localize("Asia/Seoul").dt.tz_convert("UTC")
+    return parsed.dt.tz_convert("UTC")
+
+
 def _resolve_near_month_from_parquet(store: Any) -> str:
     """Return the most-active A01* near-month code from Parquet minute bars.
 
@@ -201,7 +220,7 @@ def _resolve_near_month_from_parquet(store: Any) -> str:
                 bars = bars.reset_index().rename(
                     columns={bars.index.name or "index": "datetime"}
                 )
-            bars["datetime"] = pd.to_datetime(bars["datetime"], utc=True)
+            bars["datetime"] = _kst_naive_to_utc(bars["datetime"])
             recent = bars[bars["datetime"] >= cutoff]
             if len(recent) < _MIN_RESOLVE_BARS:
                 continue
@@ -275,12 +294,14 @@ def refit_from_parquet(
         logger.error("No bars found for %s — cannot refit", proxy_code)
         return 2
 
-    # Normalise to UTC DatetimeIndex expected by daily_rv_series.
+    # Normalise to a CORRECT tz-aware UTC DatetimeIndex expected by
+    # daily_rv_series.  The store yields tz-naive KST; localize→convert so the
+    # downstream 09:00–15:30 KST session filter sees real session times.
     if "datetime" not in bars.columns:
         bars = bars.reset_index().rename(
             columns={bars.index.name or "index": "datetime"}
         )
-    bars["datetime"] = pd.to_datetime(bars["datetime"], utc=True)
+    bars["datetime"] = _kst_naive_to_utc(bars["datetime"])
     bars = bars.sort_values("datetime").set_index("datetime")
     logger.info("Loaded %d minute bars for %s", len(bars), proxy_code)
 

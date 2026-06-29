@@ -663,6 +663,14 @@ def load_futures_daily_candles(
 
     Sessions with fewer than ``_FUTURES_MIN_BARS_PER_DAY`` bars are dropped to
     filter phantom single-tick rows that appear before/after market hours.
+
+    Timezone handling (CRITICAL): ParquetMarketDataStore returns tz-NAIVE
+    datetimes that are already KST wall-clock (e.g. ``2026-06-29 15:45:00`` is a
+    KST close, tz=None).  Grouping on these naive values directly yields the
+    correct KST session date.  We must NOT ``pd.to_datetime(..., utc=True)`` —
+    that *localizes* (treats 15:45 KST as 15:45 UTC), a +9h shift that buckets
+    late-session bars (15:00–15:45 KST) onto the NEXT calendar day and corrupts
+    the daily OHLC / close that feeds Setup A/C ``daily_regime_trend_filter``.
     """
     minute_bars = client.get_minute_bars(symbol)
     if minute_bars is None or minute_bars.empty:
@@ -672,13 +680,16 @@ def load_futures_daily_candles(
     # Normalise datetime column: may be a DatetimeIndex or a plain column.
     if "datetime" not in df.columns:
         df = df.reset_index().rename(columns={df.index.name or "index": "datetime"})
-    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+    df["datetime"] = pd.to_datetime(df["datetime"])
 
-    # Derive KST date for grouping (exchange sessions are KST calendar days).
-    import pytz as _pytz
-
-    kst = _pytz.timezone("Asia/Seoul")
-    df["_date"] = df["datetime"].dt.tz_convert(kst).dt.date
+    # Derive the KST session date for grouping.  The store's datetimes are
+    # tz-naive KST, so ``.dt.date`` is already the correct session date.  If a
+    # tz-aware frame is ever passed (e.g. from a different source), convert it
+    # to KST first so the date assignment stays correct.
+    if df["datetime"].dt.tz is not None:
+        df["_date"] = df["datetime"].dt.tz_convert("Asia/Seoul").dt.date
+    else:
+        df["_date"] = df["datetime"].dt.date
 
     # Drop sessions with too few bars (phantom / partial-open days).
     bar_counts = df.groupby("_date")["_date"].transform("count")

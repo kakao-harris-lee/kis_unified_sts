@@ -44,6 +44,24 @@ def _synthetic_refit_bars(days: int = 82, code: str = "A01606") -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _synthetic_refit_bars_kst_naive(
+    days: int = 82, code: str = "A01606"
+) -> pd.DataFrame:
+    """Same RV structure as ``_synthetic_refit_bars`` but with tz-NAIVE KST
+    datetimes — matching ParquetMarketDataStore output (datetime64[ns], tz=None,
+    values are KST wall-clock).  This is what the real store returns; using it
+    here ensures the test would CATCH a ``utc=True`` localize bug (which would
+    shift bars out of the 09:00–15:30 KST session filter → 0 RV points).
+    """
+    df = _synthetic_refit_bars(days=days, code=code)
+    # _synthetic_refit_bars emits UTC-aware (09:00 KST -> 00:00 UTC). Convert
+    # back to KST wall-clock then strip tz so it mirrors the Parquet store.
+    df["datetime"] = (
+        pd.to_datetime(df["datetime"]).dt.tz_convert("Asia/Seoul").dt.tz_localize(None)
+    )
+    return df
+
+
 def test_refit_main_writes_log_model_json_from_csv(tmp_path: Path):
     bars_path = tmp_path / "bars.csv"
     out_path = tmp_path / "har_rv_model.json"
@@ -104,9 +122,11 @@ def test_refit_from_parquet_writes_model_to_redis(monkeypatch, tmp_path: Path):
     """--from-parquet mode resolves near-month, fits HAR-RV, writes to Redis.
 
     Uses dependency injection (store= / redis_client=) so no lazy-import
-    patching is needed.
+    patching is needed.  The store returns tz-NAIVE KST bars (real store output)
+    so this test would FAIL if refit_from_parquet localized them as UTC.
     """
-    bars = _synthetic_refit_bars(days=82, code="A01606")
+    bars = _synthetic_refit_bars_kst_naive(days=82, code="A01606")
+    assert bars["datetime"].dt.tz is None, "store mock must yield tz-naive KST"
 
     class FakeStore:
         """Minimal ParquetMarketDataStore stand-in."""

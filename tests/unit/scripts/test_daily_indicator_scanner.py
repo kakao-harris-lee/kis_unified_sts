@@ -461,29 +461,26 @@ def test_compute_futures_daily_indicators_insufficient_history_returns_none():
     assert compute_futures_daily_indicators(df) is None
 
 
-def test_scan_futures_symbols_aggregates_per_symbol():
-    """scan_futures_symbols uses ParquetMarketDataStore.get_minute_bars API.
+def _futures_minute_bars_kst_naive(days: int = 80, bars_per_day: int = 40):
+    """Build tz-NAIVE KST minute bars, matching ParquetMarketDataStore output.
 
-    The client must expose get_minute_bars(symbol) returning a DataFrame with
-    datetime and OHLCV columns; the function aggregates to daily candles itself.
-    At least 60 distinct trading days with >=30 bars each are needed for
-    compute_futures_daily_indicators to return a result.
+    Each session spans 15:00–15:39 KST (late session) so the date-bucketing is
+    genuinely exercised: a 15:39 KST bar must bucket to its OWN day.  A
+    ``utc=True`` localize bug would treat 15:39 KST as 15:39 UTC → 00:39 KST
+    next day, splitting/shifting sessions and corrupting the daily OHLC.
     """
-    # Build 80 synthetic trading days × 35 bars each to pass the
-    # _FUTURES_MIN_BARS_PER_DAY=30 gate and the >=60-day indicator minimum.
-    import pytz
-
-    kst = pytz.timezone("Asia/Seoul")
     rows = []
     base_close = 1000.0
-    bdate_range = pd.bdate_range("2026-01-02", periods=80, tz=kst)
+    # Anchored late-session window so the bucket-to-next-day bug is observable.
+    bdate_range = pd.bdate_range("2026-01-02", periods=days)  # tz-naive
     for day_ts in bdate_range:
         close = base_close
-        for minute in range(35):
-            ts = day_ts.normalize() + pd.Timedelta(hours=9, minutes=minute)
+        for minute in range(bars_per_day):
+            # 15:00 + minute → up to 15:39 KST (all naive, KST wall-clock).
+            ts = day_ts.normalize() + pd.Timedelta(hours=15, minutes=minute)
             rows.append(
                 {
-                    "datetime": ts.tz_convert("UTC"),
+                    "datetime": ts,  # tz-naive (datetime64[ns]) like the store
                     "open": close,
                     "high": close + 2.0,
                     "low": close - 2.0,
@@ -492,8 +489,20 @@ def test_scan_futures_symbols_aggregates_per_symbol():
                 }
             )
         base_close += 1.25
+    return pd.DataFrame(rows), bdate_range
 
-    minute_df = pd.DataFrame(rows)
+
+def test_scan_futures_symbols_aggregates_per_symbol():
+    """scan_futures_symbols uses ParquetMarketDataStore.get_minute_bars API.
+
+    The client must expose get_minute_bars(symbol) returning a DataFrame with
+    datetime and OHLCV columns; the function aggregates to daily candles itself.
+    At least 60 distinct trading days with >=30 bars each are needed for
+    compute_futures_daily_indicators to return a result.
+    """
+    # 80 days × 40 bars each (>= _FUTURES_MIN_BARS_PER_DAY=30, >= 60-day minimum).
+    minute_df, _ = _futures_minute_bars_kst_naive(days=80, bars_per_day=40)
+    assert minute_df["datetime"].dt.tz is None, "store mock must yield tz-naive KST"
 
     class Client:
         def __init__(self):
@@ -508,6 +517,28 @@ def test_scan_futures_symbols_aggregates_per_symbol():
     assert "101S6000" in out
     assert "daily_ema_20" in out["101S6000"]
     assert client.calls == ["101S6000"]
+
+
+def test_load_futures_daily_candles_buckets_late_session_to_same_day():
+    """Regression: late-session KST bars (15:00–15:39) must NOT roll to next day.
+
+    Directly asserts the date-bucketing is correct.  A ``utc=True`` localize
+    bug would push the 15:xx KST bars to 00:xx KST the next calendar day,
+    yielding wrong session dates and a corrupt last-bar close.
+    """
+    minute_df, bdate_range = _futures_minute_bars_kst_naive(days=3, bars_per_day=40)
+
+    class Client:
+        def get_minute_bars(self, symbol: str) -> pd.DataFrame:
+            return minute_df.copy()
+
+    daily = scanner.load_futures_daily_candles(Client(), "101S6000")
+
+    # One row per KST business day — exactly the input days, none shifted.
+    assert daily["date"].tolist() == [d.date() for d in bdate_range]
+    # Daily close == last bar's close for that day (last bar is 15:39 KST).
+    first_day_rows = minute_df[minute_df["datetime"].dt.date == bdate_range[0].date()]
+    assert daily.iloc[0]["close"] == first_day_rows.iloc[-1]["close"]
 
 
 # ---------------------------------------------------------------------------
