@@ -415,6 +415,94 @@ def test_registry_exposes_builder_v1() -> None:
     assert ExitRegistry.is_registered("builder_v1_exit")
 
 
+def test_factory_skips_cross_operator_builder_strategy(caplog) -> None:
+    """StrategyFactory.create must raise ConfigurationError for cross-operator
+    builder_v1 strategies so create_all excludes them from the streaming roster.
+
+    This prevents golden_cross (and any future cross-operator preset) from
+    appearing as an always-inert entry in the stock daemon's active strategy list.
+    """
+    import logging
+
+    from shared.exceptions import ConfigurationError
+    from shared.strategy.registry import StrategyFactory, register_builtin_components
+
+    register_builtin_components()
+
+    cross_config = {
+        "strategy": {
+            "name": "golden_cross",
+            "asset_class": "stock",
+            "enabled": True,
+            "entry": {
+                "type": "builder_v1",
+                "params": {"builder_state": _cross_state()},
+            },
+            "exit": {
+                "type": "builder_v1_exit",
+                "params": {"builder_state": _cross_state()},
+            },
+            "position": {"type": "fixed", "params": {}},
+        }
+    }
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(ConfigurationError, match="streaming-incompatible"):
+            StrategyFactory.create(cross_config)
+
+
+def test_factory_create_all_excludes_cross_operator_builder_strategy(
+    tmp_path, monkeypatch
+) -> None:
+    """When create_all loads builder_v1 strategies with cross operators from the
+    built/ directory, they are silently excluded from the returned roster.
+
+    The 3 working stock strategies (threshold-based, not cross-based) must not
+    be affected.
+    """
+    import yaml
+
+    from shared.config.loader import ConfigLoader
+    from shared.strategy.registry import StrategyFactory, register_builtin_components
+
+    register_builtin_components()
+    monkeypatch.setenv("KIS_CONFIG_DIR", str(tmp_path))
+    ConfigLoader.clear_cache()
+
+    # Write a cross-operator builder_v1 strategy into built/
+    built_dir = tmp_path / "strategies" / "built"
+    built_dir.mkdir(parents=True)
+    (built_dir / "golden_cross.yaml").write_text(
+        yaml.dump(
+            {
+                "strategy": {
+                    "name": "golden_cross",
+                    "asset_class": "stock",
+                    "enabled": True,
+                    "entry": {
+                        "type": "builder_v1",
+                        "params": {"builder_state": _cross_state()},
+                    },
+                    "exit": {
+                        "type": "builder_v1_exit",
+                        "params": {"builder_state": _cross_state()},
+                    },
+                    "position": {"type": "fixed", "params": {}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    strategies = StrategyFactory.create_all(asset_class="stock", enabled_only=True)
+    names = [s.name for s in strategies]
+    assert "golden_cross" not in names, (
+        "cross-operator builder_v1 strategy must be excluded from the streaming roster"
+    )
+
+    ConfigLoader.clear_cache()
+
+
 # --- Futures safety guards (EOD close + hard-stop cap) -----------------
 
 

@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from shared.config import ConfigLoader
+from shared.exceptions import ConfigurationError
 
 if TYPE_CHECKING:
     from shared.strategy.base import (
@@ -256,6 +257,30 @@ class StrategyFactory:
         }
 
         entry = EntryRegistry.create(entry_type, entry_params_filtered)
+
+        # Streaming-runtime incompatibility guard: builder_v1 strategies whose
+        # entry conditions use cross_above/cross_below operators can NEVER fire
+        # in the streaming stock/futures daemon (no cross-cycle history series
+        # and no arbitrary-period SMA keys). Raise ConfigurationError here so
+        # StrategyFactory.create_all's existing warning+skip loop excludes them
+        # from the active roster instead of adding a permanently-inert strategy.
+        # This is the single authoritative gate; BuilderStrategyEntry._parse_state
+        # still logs loudly when instantiated directly (e.g. in tests or backtest),
+        # but the streaming roster path never reaches generate() for these.
+        if entry_type == "builder_v1":
+            state = getattr(entry, "_state", None)
+            if state is not None:
+                from shared.strategy_builder.runtime_support import (
+                    streaming_support_reason,
+                )
+
+                reason = streaming_support_reason(state)
+                if reason is not None:
+                    strategy_name = strategy_cfg.get("name", "unnamed")
+                    raise ConfigurationError(
+                        f"Skipping streaming-incompatible builder_v1 strategy "
+                        f"'{strategy_name}': {reason}"
+                    )
 
         # Attach GateConfig to the adapter (P2-③ T7).  The hasattr guard
         # preserves backward-compat for entry adapters that don't support gates.
