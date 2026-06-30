@@ -217,6 +217,16 @@ class SetupDConfig(ServiceConfigBase):
         default=0.3,
         description="Confidence slope per unit of vol_ratio above min_atr_ratio",
     )
+    min_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum confidence gate applied after _compute_confidence(). "
+            "Signals below this threshold are rejected with low_confidence. "
+            "0.0 disables the gate."
+        ),
+    )
 
 
 class SetupDVWAPReversion(Setup):
@@ -395,6 +405,10 @@ class SetupDVWAPReversion(Setup):
             target = entry - target_distance
 
         confidence = self._compute_confidence(z, vol_ratio)
+        if c.min_confidence > 0.0 and confidence < c.min_confidence:
+            return self._reject(
+                f"low_confidence({confidence:.2f}<{c.min_confidence})"
+            )
 
         self.last_reject_reason = None  # fired — clear any prior reject reason
         return Signal(

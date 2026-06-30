@@ -61,7 +61,7 @@ strategy:
       # range_window_bars closes (NOT the context's last_15min_high/low, which has
       # no live producer in the orchestrator path). Raise stall_buffer high to
       # effectively disable the guard.
-      stall_buffer_atr_mult: 1.0
+      stall_buffer_atr_mult: 1.5  # raised 1.0→1.5: stricter trend-continuation guard
       range_window_bars: 15     # prior closes for the self-computed recent range
       range_warmup_bars: 5      # stall guard permissive until this many prior closes
 
@@ -75,6 +75,18 @@ strategy:
       # Confidence shaping (more extreme stretch / higher vol → higher confidence).
       extension_conf_scale: 0.3
       vol_conf_scale: 0.3
+
+      # Minimum confidence gate (0.0 = disabled).
+      # Drops edge-of-band signals where the VWAP extension is only barely 1.8×ATR.
+      min_confidence: 0.6
+
+      # Regime direction block: LLM regime labels where the corresponding
+      # direction is suppressed.  Fading a VWAP spike against a strong trending
+      # regime is the dominant failure mode on trend-continuation days.
+      # Paper-only tuning — validate with ≥4 weeks data before live consideration.
+      long_blocked_regimes: []           # e.g. ["BEAR_STRONG"] — disabled for now
+      short_blocked_regimes:
+        - "BULL_STRONG"                  # block SHORT fades on strong uptrend days
 
       # Optional RegimeGate (consistent with Setup A/C). Default off — operator
       # opt-in. When enabled, blocks entries that fail the live HAR-RV / event

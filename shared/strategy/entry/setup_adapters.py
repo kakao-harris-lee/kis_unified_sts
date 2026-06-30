@@ -322,9 +322,13 @@ class SetupDEntryConfig(ServiceConfigBase):
     names 1:1 so the adapter is driven purely from
     ``config/strategies/futures/setup_d_vwap_reversion.yaml`` without referencing
     the decision-engine config file. Setup D is a self-contained indicator setup
-    (no macro/event/LLM inputs), so this config intentionally has no
-    ``llm_tuning`` / ``forecast_integration`` / ``daily_bias`` sections — keeping
-    it thin (DRY: no dead config knobs).
+    (no LLM-driven signal generation — the entry signal itself is produced purely
+    from ATR/VWAP mechanics), so this config has no ``llm_tuning`` /
+    ``forecast_integration`` / ``daily_bias`` sections for signal shaping. The
+    regime direction block below is the one exception: it reads the LLM MarketContext
+    regime label *after* the setup fires to post-filter signals whose direction
+    conflicts with a strong regime (``long_blocked_regimes`` /
+    ``short_blocked_regimes``). Empty lists (defaults) disable the block entirely.
     """
 
     _default_config_file: ClassVar[str] = (
@@ -386,6 +390,26 @@ class SetupDEntryConfig(ServiceConfigBase):
     )
     vol_conf_scale: float = Field(
         default=0.3, description="Confidence slope per unit of vol_ratio above gate"
+    )
+    min_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum signal confidence gate (0.0 = disabled). Mirrors SetupDConfig.",
+    )
+    long_blocked_regimes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "LLM regime labels where LONG signals are suppressed "
+            "(e.g. [\"BEAR_STRONG\"]). Empty list disables the block."
+        ),
+    )
+    short_blocked_regimes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "LLM regime labels where SHORT signals are suppressed "
+            "(e.g. [\"BULL_STRONG\"]). Empty list disables the block."
+        ),
     )
 
 
@@ -1480,6 +1504,7 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
             range_warmup_bars=config.range_warmup_bars,
             extension_conf_scale=config.extension_conf_scale,
             vol_conf_scale=config.vol_conf_scale,
+            min_confidence=config.min_confidence,
         )
         self._setup = SetupDVWAPReversion(config=setup_cfg)
         self._gate_cfg = gate_cfg
@@ -1545,6 +1570,38 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
                 self.name, "reject", self._setup.last_reject_reason or "setup_rejected"
             )
             return None
+
+        # Regime direction block: suppress counter-trend entries in strong regimes.
+        # Mirrors Setup A/C long_blocked_regimes / short_blocked_regimes gating.
+        # Uses the LLM MarketContext regime label (same source as Setup A/C).
+        cfg = self.config
+        if cfg.long_blocked_regimes or cfg.short_blocked_regimes:
+            llm_ctx = _get_llm_context(context)
+            if llm_ctx is None:
+                logger.debug(
+                    "SetupD direction block: LLM context unavailable — block skipped (signal passes)"
+                )
+            else:
+                regime: str = str(llm_ctx.regime)
+                direction: str = str(decision_signal.direction)
+                if direction == "long" and regime in cfg.long_blocked_regimes:
+                    logger.debug(
+                        "SetupD direction block: long dropped — regime=%s in long_blocked_regimes",
+                        regime,
+                    )
+                    _publish_setup_eval(
+                        self.name, "reject", f"direction_blocked:{direction}:{regime}"
+                    )
+                    return None
+                if direction == "short" and regime in cfg.short_blocked_regimes:
+                    logger.debug(
+                        "SetupD direction block: short dropped — regime=%s in short_blocked_regimes",
+                        regime,
+                    )
+                    _publish_setup_eval(
+                        self.name, "reject", f"direction_blocked:{direction}:{regime}"
+                    )
+                    return None
 
         ts = context.timestamp
         if ts is None:

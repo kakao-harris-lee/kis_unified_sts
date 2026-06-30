@@ -414,3 +414,45 @@ def test_config_defaults():
     assert cfg.signal_ttl_minutes == 10
     assert cfg.range_window_bars == 15
     assert cfg.range_warmup_bars == 5
+    assert cfg.min_confidence == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# min_confidence gate
+# ---------------------------------------------------------------------------
+
+
+def test_min_confidence_disabled_by_default():
+    """Default min_confidence=0.0 never gates any signal."""
+    setup = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0))
+    _warm(setup, atr=2.0, n=30)
+    # Edge-of-band signal: z barely > 1.8 → low confidence ~0.5
+    sig = setup.check(_ctx(current_price=103.7, vwap=100.0, atr_14=2.0))
+    assert sig is not None, "default min_confidence=0.0 must not gate any signal"
+
+
+def test_min_confidence_rejects_low_confidence_signal():
+    """min_confidence=0.8 drops a barely-extreme signal (confidence ≈ 0.5)."""
+    cfg = SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.8)
+    setup = SetupDVWAPReversion(config=cfg)
+    _warm(setup, atr=2.0, n=30)
+    # z ≈ 1.85 → extension_bonus ≈ (1.85-1.8)*0.3=0.015
+    # vol_ratio=2.0/2.0=1.0, min_atr_ratio=0.9 → vol_bonus=(1.0-0.9)*0.3=0.03
+    # confidence ≈ 0.5+0.015+0.03=0.545 < 0.8 → reject
+    sig = setup.check(_ctx(current_price=103.7, vwap=100.0, atr_14=2.0))
+    assert sig is None
+    assert setup.last_reject_reason is not None
+    assert "low_confidence" in setup.last_reject_reason
+
+
+def test_min_confidence_passes_strong_signal():
+    """min_confidence=0.6 passes a deeply-extreme high-vol signal."""
+    cfg = SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.6)
+    setup = SetupDVWAPReversion(config=cfg)
+    _warm(setup, atr=1.0, n=30)  # reference ≈ 1.0
+    # atr=2.0 → vol_ratio=2.0 → vol_bonus=min((2.0-0.9)*0.3,0.2)=0.2
+    # z=2.0 → extension_bonus=min((2.0-1.8)*0.3,0.3)=0.06
+    # confidence = 0.5+0.06+0.2 = 0.76 > 0.6 → passes
+    sig = setup.check(_ctx(current_price=104.0, vwap=100.0, atr_14=2.0))
+    assert sig is not None
+    assert sig.confidence >= 0.6
