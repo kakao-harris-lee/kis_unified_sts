@@ -203,6 +203,121 @@ class TestSetupDAdapterRejects:
         assert spike.metadata["signal_direction"] == "short"
 
 
+class TestSetupDMinConfidence:
+    """Adapter-level min_confidence gate passthrough."""
+
+    @pytest.mark.asyncio
+    async def test_min_confidence_passthrough_rejects(self):
+        """min_confidence=0.9 via adapter config rejects edge-of-band signal."""
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.9)
+        )
+        md = _md(current_price=103.7, vwap=100.0, atr=2.0)
+        ctx = _context(md, _utc(2, 0))
+        # Warm up vol + range windows
+        for _ in range(30):
+            await adapter.generate(_context(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0)))
+        sig = await adapter.generate(ctx)
+        assert sig is None  # low confidence ≈ 0.5 < 0.9
+
+
+class _FakeLLMCtx:
+    """Minimal duck-typed LLM MarketContext stub (avoids importing shared.llm chain)."""
+
+    def __init__(self, regime: str = "NEUTRAL", risk_score: float = 50.0, confidence: float = 0.8) -> None:
+        self.regime = regime
+        self.risk_score = risk_score
+        self.confidence = confidence
+
+
+class TestSetupDDirectionBlock:
+    """Regime direction-block (long_blocked_regimes / short_blocked_regimes)."""
+
+    def _llm_ctx(self, regime: str) -> _FakeLLMCtx:
+        return _FakeLLMCtx(regime=regime)
+
+    def _context_with_regime(self, md: dict, ts: datetime, regime: str) -> EntryContext:
+        return EntryContext(
+            market_data=md,
+            indicators=md,
+            timestamp=ts,
+            metadata={},
+            market_context=self._llm_ctx(regime),
+        )
+
+    @pytest.mark.asyncio
+    async def test_short_blocked_in_bull_strong(self):
+        """SHORT signal is dropped when regime=BULL_STRONG and short_blocked_regimes configured."""
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(
+                vol_warmup_bars=30,
+                stall_buffer_atr_mult=10.0,
+                short_blocked_regimes=["BULL_STRONG"],
+            )
+        )
+        # Warm windows
+        for _ in range(30):
+            await adapter.generate(
+                self._context_with_regime(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "BULL_STRONG")
+            )
+        # Up-spike would normally fire SHORT
+        md = _md(current_price=104.0, vwap=100.0, atr=2.0)
+        sig = await adapter.generate(self._context_with_regime(md, _utc(2, 0), "BULL_STRONG"))
+        assert sig is None  # direction_blocked
+
+    @pytest.mark.asyncio
+    async def test_short_allowed_in_neutral_regime(self):
+        """SHORT signal passes when regime is not in short_blocked_regimes."""
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(
+                vol_warmup_bars=30,
+                stall_buffer_atr_mult=10.0,
+                short_blocked_regimes=["BULL_STRONG"],
+            )
+        )
+        for _ in range(30):
+            await adapter.generate(
+                self._context_with_regime(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "NEUTRAL")
+            )
+        md = _md(current_price=104.0, vwap=100.0, atr=2.0)
+        sig = await adapter.generate(self._context_with_regime(md, _utc(2, 0), "NEUTRAL"))
+        assert sig is not None
+        assert sig.metadata["signal_direction"] == "short"
+
+    @pytest.mark.asyncio
+    async def test_direction_block_noop_when_lists_empty(self):
+        """Empty blocked lists (default) never suppress signals."""
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0)
+        )
+        for _ in range(30):
+            await adapter.generate(
+                self._context_with_regime(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "BULL_STRONG")
+            )
+        md = _md(current_price=104.0, vwap=100.0, atr=2.0)
+        sig = await adapter.generate(self._context_with_regime(md, _utc(2, 0), "BULL_STRONG"))
+        assert sig is not None  # no block configured
+
+    @pytest.mark.asyncio
+    async def test_long_blocked_in_bear_strong(self):
+        """LONG signal is dropped when regime=BEAR_STRONG and long_blocked_regimes configured."""
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(
+                vol_warmup_bars=30,
+                stall_buffer_atr_mult=10.0,
+                long_blocked_regimes=["BEAR_STRONG"],
+            )
+        )
+        for _ in range(30):
+            await adapter.generate(
+                self._context_with_regime(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "BEAR_STRONG")
+            )
+        # Down-spike would normally fire LONG
+        md = _md(current_price=96.0, vwap=100.0, atr=2.0)
+        sig = await adapter.generate(self._context_with_regime(md, _utc(2, 0), "BEAR_STRONG"))
+        assert sig is None  # direction_blocked
+
+
 class TestSetupDValidation:
     def test_invalid_config_raises(self):
         with pytest.raises(AssertionError):

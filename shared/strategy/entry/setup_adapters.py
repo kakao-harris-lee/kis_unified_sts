@@ -325,6 +325,11 @@ class SetupDEntryConfig(ServiceConfigBase):
     (no macro/event/LLM inputs), so this config intentionally has no
     ``llm_tuning`` / ``forecast_integration`` / ``daily_bias`` sections — keeping
     it thin (DRY: no dead config knobs).
+
+    Regime direction block (``long_blocked_regimes`` / ``short_blocked_regimes``):
+    reads the LLM MarketContext regime label (same source as Setup A/C) and
+    suppresses signals whose direction is counter-trend relative to a strong
+    regime. Empty lists (defaults) disable the block entirely.
     """
 
     _default_config_file: ClassVar[str] = (
@@ -386,6 +391,24 @@ class SetupDEntryConfig(ServiceConfigBase):
     )
     vol_conf_scale: float = Field(
         default=0.3, description="Confidence slope per unit of vol_ratio above gate"
+    )
+    min_confidence: float = Field(
+        default=0.0,
+        description="Minimum signal confidence gate (0.0 = disabled). Mirrors SetupDConfig.",
+    )
+    long_blocked_regimes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "LLM regime labels where LONG signals are suppressed "
+            "(e.g. [\"BEAR_STRONG\"]). Empty list disables the block."
+        ),
+    )
+    short_blocked_regimes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "LLM regime labels where SHORT signals are suppressed "
+            "(e.g. [\"BULL_STRONG\"]). Empty list disables the block."
+        ),
     )
 
 
@@ -1480,6 +1503,7 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
             range_warmup_bars=config.range_warmup_bars,
             extension_conf_scale=config.extension_conf_scale,
             vol_conf_scale=config.vol_conf_scale,
+            min_confidence=config.min_confidence,
         )
         self._setup = SetupDVWAPReversion(config=setup_cfg)
         self._gate_cfg = gate_cfg
@@ -1545,6 +1569,30 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
                 self.name, "reject", self._setup.last_reject_reason or "setup_rejected"
             )
             return None
+
+        # Regime direction block: suppress counter-trend entries in strong regimes.
+        # Mirrors Setup A/C long_blocked_regimes / short_blocked_regimes gating.
+        # Uses the LLM MarketContext regime label (same source as Setup A/C).
+        cfg = self.config
+        if cfg.long_blocked_regimes or cfg.short_blocked_regimes:
+            llm_ctx = _get_llm_context(context)
+            if llm_ctx is not None:
+                regime: str = str(llm_ctx.regime)
+                direction: str = str(decision_signal.direction)
+                if direction == "long" and regime in cfg.long_blocked_regimes:
+                    logger.debug(
+                        "SetupD direction block: long dropped — regime=%s in long_blocked_regimes",
+                        regime,
+                    )
+                    _publish_setup_eval(self.name, "reject", "direction_blocked")
+                    return None
+                if direction == "short" and regime in cfg.short_blocked_regimes:
+                    logger.debug(
+                        "SetupD direction block: short dropped — regime=%s in short_blocked_regimes",
+                        regime,
+                    )
+                    _publish_setup_eval(self.name, "reject", "direction_blocked")
+                    return None
 
         ts = context.timestamp
         if ts is None:
