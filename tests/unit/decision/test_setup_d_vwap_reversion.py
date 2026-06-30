@@ -436,8 +436,9 @@ def test_min_confidence_rejects_low_confidence_signal():
     cfg = SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.8)
     setup = SetupDVWAPReversion(config=cfg)
     _warm(setup, atr=2.0, n=30)
-    # z ≈ 1.85 → extension_bonus ≈ (1.85-1.8)*0.3=0.015, vol_ratio=1.0 → vol_bonus=0
-    # confidence ≈ 0.515 < 0.8 → reject
+    # z ≈ 1.85 → extension_bonus ≈ (1.85-1.8)*0.3=0.015
+    # vol_ratio=2.0/2.0=1.0, min_atr_ratio=0.9 → vol_bonus=(1.0-0.9)*0.3=0.03
+    # confidence ≈ 0.5+0.015+0.03=0.545 < 0.8 → reject
     sig = setup.check(_ctx(current_price=103.7, vwap=100.0, atr_14=2.0))
     assert sig is None
     assert setup.last_reject_reason is not None
