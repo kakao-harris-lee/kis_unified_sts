@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from dataclasses import asdict
+from datetime import date, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from .data_classes import FuturesTradingPlan, StockTradingPlan
@@ -95,9 +98,7 @@ def _stock_empty_message(stock_analysis: dict[str, Any] | None) -> str:
         else None
     )
     if not isinstance(status, dict):
-        return (
-            "⚠️ <b>주식 추천 없음</b>\n시장 데이터 수집 실패 또는 조건 충족 종목 없음"
-        )
+        return "⚠️ <b>주식 추천 없음</b>\n시장 데이터 수집 실패 또는 조건 충족 종목 없음"
 
     reason = str(status.get("reason") or "unknown")
     detail = status.get("detail")
@@ -275,7 +276,7 @@ def publish_llm_quality_snapshot(
             analyzer, snapshot_id, stock_plans, stock_analysis
         )
         redis = RedisClient.get_client()
-        redis.set(key, json.dumps(payload, ensure_ascii=False), ex=86400)
+        redis.set(key, _dumps_llm_quality_snapshot(payload), ex=86400)
         logger.info(
             f"Published LLM quality snapshot: {len(payload.get('codes', []))} symbols"
         )
@@ -291,6 +292,45 @@ def should_publish_llm_quality_snapshot(
 
     status = stock_analysis.get("_analysis_status")
     return not (isinstance(status, dict) and status.get("status") == "failed")
+
+
+def _dumps_llm_quality_snapshot(payload: dict[str, Any]) -> str:
+    return json.dumps(
+        _json_safe(payload),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(_json_safe(k)): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return _json_safe(float(value))
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str | int | bool) or value is None:
+        return value
+
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return _json_safe(item())
+        except (TypeError, ValueError):
+            pass
+
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        try:
+            return _json_safe(tolist())
+        except (TypeError, ValueError):
+            pass
+
+    return str(value)
 
 
 # ------------------------------------------------------------------

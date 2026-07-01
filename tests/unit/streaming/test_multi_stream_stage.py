@@ -298,6 +298,34 @@ async def test_xreadgroup_error_logs_again_after_success(caplog):
 
 
 @pytest.mark.asyncio
+async def test_xreadgroup_nogroup_recreates_groups_and_processes_existing_message():
+    class MissingGroupRedis(FakeRedis):
+        def __init__(self):
+            super().__init__([("s:a", [(b"9-0", {})])])
+            self._raised = False
+
+        async def xreadgroup(self, **kw):
+            self.xreadgroup_calls += 1
+            if not self._raised:
+                self._raised = True
+                raise RuntimeError("NOGROUP No such key 's:a' or consumer group 'g'")
+            return await super().xreadgroup(**kw)
+
+    redis = MissingGroupRedis()
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=0.0)
+
+    await _run_briefly(stage)
+
+    assert redis.created == [
+        ("s:a", "g", "0", True),
+        ("s:b", "g", "0", True),
+        ("s:a", "g", "0", True),
+        ("s:b", "g", "0", True),
+    ]
+    assert stage.handled == [("s:a", b"9-0")]
+
+
+@pytest.mark.asyncio
 async def test_pre_iteration_gate_false_stops_before_read_and_runs_shutdown():
     redis = FakeRedis([("s:a", [(b"1-0", {})])])
     stage = _stage(redis, gate_result=False)

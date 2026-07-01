@@ -27,12 +27,14 @@ class FakeRedis:
         self._batches = list(batches)
         self._claimed_batches = list(claimed_batches or [])
         self.group_created: tuple | None = None
+        self.group_created_calls: list[tuple] = []
         self.acked: list[bytes] = []
         self.xreadgroup_calls = 0
         self.xautoclaim_calls = 0
 
     async def xgroup_create(self, stream, group, id="0", mkstream=False):
         self.group_created = (stream, group, id, mkstream)
+        self.group_created_calls.append(self.group_created)
 
     async def xreadgroup(self, *, streams, **_kwargs):
         self.xreadgroup_calls += 1
@@ -352,6 +354,32 @@ async def test_xreadgroup_error_sleeps_and_continues():
     stage = _stage(redis, xreadgroup_error_sleep_seconds=0.0)
     await _run_briefly(stage)
     # survived the transient error and still processed the message afterwards
+    assert stage.handled == [b"9-0"]
+
+
+@pytest.mark.asyncio
+async def test_xreadgroup_nogroup_recreates_group_and_processes_existing_message():
+    class MissingGroupRedis(FakeRedis):
+        def __init__(self):
+            super().__init__([[(b"9-0", {})]])
+            self._raised = False
+
+        async def xreadgroup(self, **kw):
+            self.xreadgroup_calls += 1
+            if not self._raised:
+                self._raised = True
+                raise RuntimeError("NOGROUP No such key 's:in' or consumer group 'g'")
+            return await super().xreadgroup(**kw)
+
+    redis = MissingGroupRedis()
+    stage = _stage(redis, xreadgroup_error_sleep_seconds=0.0)
+
+    await _run_briefly(stage)
+
+    assert redis.group_created_calls == [
+        ("s:in", "g", "0", True),
+        ("s:in", "g", "0", True),
+    ]
     assert stage.handled == [b"9-0"]
 
 

@@ -15,7 +15,6 @@ override the optional hooks ``on_startup`` / ``pre_iteration_gate`` /
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -33,6 +32,49 @@ logger = logging.getLogger(__name__)
 
 def _duration_ms(started_at: float) -> int:
     return max(0, int((time.perf_counter() - started_at) * 1000))
+
+
+def _is_busygroup_error(exc: Exception) -> bool:
+    return "busygroup" in str(exc).lower()
+
+
+def _is_nogroup_error(exc: Exception) -> bool:
+    return "nogroup" in str(exc).lower()
+
+
+async def _ensure_consumer_group(
+    redis: Any,
+    stream: str | bytes,
+    consumer_group: str,
+) -> bool:
+    try:
+        await redis.xgroup_create(stream, consumer_group, id="0", mkstream=True)
+        return True
+    except Exception as exc:
+        if _is_busygroup_error(exc):
+            return True
+        logger.warning(
+            "consumer group ensure failed stream=%s group=%s",
+            decode_stream_id(stream),
+            consumer_group,
+            exc_info=True,
+        )
+        return False
+
+
+async def _recover_missing_consumer_group(
+    redis: Any,
+    stream: str | bytes,
+    consumer_group: str,
+) -> bool:
+    ensured = await _ensure_consumer_group(redis, stream, consumer_group)
+    if ensured:
+        logger.warning(
+            "consumer group missing; recreated stream=%s group=%s",
+            decode_stream_id(stream),
+            consumer_group,
+        )
+    return ensured
 
 
 def _log_processed_message(
@@ -208,6 +250,14 @@ class StreamStage(ABC):
             self._pending_claim_disabled = True
             return []
         except Exception as exc:
+            if _is_nogroup_error(exc):
+                await _recover_missing_consumer_group(
+                    self.redis,
+                    self.input_stream,
+                    self.consumer_group,
+                )
+                self._pending_claim_start_id = "0-0"
+                return []
             message = str(exc).lower()
             if "unknown command" in message or "syntax" in message:
                 logger.warning(
@@ -257,7 +307,9 @@ class StreamStage(ABC):
                 raise
             if should_ack:
                 try:
-                    await self.redis.xack(self.input_stream, self.consumer_group, msg_id)
+                    await self.redis.xack(
+                        self.input_stream, self.consumer_group, msg_id
+                    )
                 except Exception:
                     _log_ack_failed_message(
                         stream=self.input_stream,
@@ -285,10 +337,11 @@ class StreamStage(ABC):
         try:
             await self.on_startup()
 
-            with contextlib.suppress(Exception):
-                await self.redis.xgroup_create(
-                    self.input_stream, self.consumer_group, id="0", mkstream=True
-                )
+            await _ensure_consumer_group(
+                self.redis,
+                self.input_stream,
+                self.consumer_group,
+            )
 
             while not self._stop.is_set():
                 if not await self.pre_iteration_gate():
@@ -308,7 +361,15 @@ class StreamStage(ABC):
                         count=self.batch_size,
                         block=self.xread_block_ms,
                     )
-                except Exception:
+                except Exception as exc:
+                    if _is_nogroup_error(exc):
+                        await _recover_missing_consumer_group(
+                            self.redis,
+                            self.input_stream,
+                            self.consumer_group,
+                        )
+                        await asyncio.sleep(0)
+                        continue
                     self._xreadgroup_error_log.exception(
                         logger,
                         "xreadgroup error; sleeping %.1fs",
@@ -421,6 +482,14 @@ class MultiStreamStage(ABC):
             self._pending_claim_disabled = True
             return []
         except Exception as exc:
+            if _is_nogroup_error(exc):
+                await _recover_missing_consumer_group(
+                    self.redis,
+                    stream,
+                    self.consumer_group,
+                )
+                self._pending_claim_start_ids[stream] = "0-0"
+                return []
             message = str(exc).lower()
             if "unknown command" in message or "syntax" in message:
                 logger.warning(
@@ -510,10 +579,11 @@ class MultiStreamStage(ABC):
             await self.on_startup()
 
             for stream in self.input_streams:
-                with contextlib.suppress(Exception):
-                    await self.redis.xgroup_create(
-                        stream, self.consumer_group, id="0", mkstream=True
-                    )
+                await _ensure_consumer_group(
+                    self.redis,
+                    stream,
+                    self.consumer_group,
+                )
 
             while not self._stop.is_set():
                 if not await self.pre_iteration_gate():
@@ -537,7 +607,16 @@ class MultiStreamStage(ABC):
                         count=self.batch_size,
                         block=self.xread_block_ms,
                     )
-                except Exception:
+                except Exception as exc:
+                    if _is_nogroup_error(exc):
+                        for stream in self.input_streams:
+                            await _recover_missing_consumer_group(
+                                self.redis,
+                                stream,
+                                self.consumer_group,
+                            )
+                        await asyncio.sleep(0)
+                        continue
                     self._xreadgroup_error_log.exception(
                         logger,
                         "xreadgroup error; sleeping %.1fs",
