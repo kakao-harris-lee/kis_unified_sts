@@ -397,18 +397,31 @@ class SetupDEntryConfig(ServiceConfigBase):
         le=1.0,
         description="Minimum signal confidence gate (0.0 = disabled). Mirrors SetupDConfig.",
     )
+    reversal_confirm_enabled: bool = Field(
+        default=False,
+        description="Require price to start reverting toward VWAP before firing.",
+    )
+    reversal_confirm_atr_mult: float = Field(
+        default=0.2,
+        ge=0.0,
+        description="Minimum abs(z) improvement versus the prior close, in ATR units.",
+    )
+    reversal_confirm_requires_price_turn: bool = Field(
+        default=True,
+        description="Require the latest close to move back toward VWAP.",
+    )
     long_blocked_regimes: list[str] = Field(
         default_factory=list,
         description=(
             "LLM regime labels where LONG signals are suppressed "
-            "(e.g. [\"BEAR_STRONG\"]). Empty list disables the block."
+            '(e.g. ["BEAR_STRONG"]). Empty list disables the block.'
         ),
     )
     short_blocked_regimes: list[str] = Field(
         default_factory=list,
         description=(
             "LLM regime labels where SHORT signals are suppressed "
-            "(e.g. [\"BULL_STRONG\"]). Empty list disables the block."
+            '(e.g. ["BULL_STRONG"]). Empty list disables the block.'
         ),
     )
 
@@ -607,6 +620,7 @@ def _decision_signal_to_orchestrator_signal(
     timestamp: datetime,
     confidence_override: float | None = None,
     entry_atr: float = 0.0,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> OrchestratorSignal:
     """Convert a :class:`shared.decision.signal.Signal` to a :class:`shared.models.signal.Signal`.
 
@@ -654,6 +668,8 @@ def _decision_signal_to_orchestrator_signal(
         "entry_atr": entry_atr,
         "reason_tags": list(decision_signal.reason_tags),
     }
+    if extra_metadata:
+        metadata.update(extra_metadata)
     # Preserve the decision-engine TTL so downstream consumers (risk filter,
     # orchestrator) can drop stale signals without re-deriving the deadline.
     # Phase 1.0: not yet read by orchestrator entry guards, but Phase 1.1+
@@ -1505,6 +1521,11 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
             extension_conf_scale=config.extension_conf_scale,
             vol_conf_scale=config.vol_conf_scale,
             min_confidence=config.min_confidence,
+            reversal_confirm_enabled=config.reversal_confirm_enabled,
+            reversal_confirm_atr_mult=config.reversal_confirm_atr_mult,
+            reversal_confirm_requires_price_turn=(
+                config.reversal_confirm_requires_price_turn
+            ),
         )
         self._setup = SetupDVWAPReversion(config=setup_cfg)
         self._gate_cfg = gate_cfg
@@ -1528,6 +1549,9 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
         assert self.config.stop_atr_mult > 0.0, "stop_atr_mult must be > 0"
         assert self.config.min_reward_risk > 0.0, "min_reward_risk must be > 0"
         assert self.config.signal_ttl_minutes > 0, "signal_ttl_minutes must be > 0"
+        assert (
+            self.config.reversal_confirm_atr_mult >= 0.0
+        ), "reversal_confirm_atr_mult must be >= 0"
 
     @property
     def name(self) -> str:
@@ -1641,6 +1665,7 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
             strategy_name=self.name,
             timestamp=ts,
             entry_atr=_atr_14,
+            extra_metadata=getattr(self._setup, "last_signal_details", {}),
         )
 
 

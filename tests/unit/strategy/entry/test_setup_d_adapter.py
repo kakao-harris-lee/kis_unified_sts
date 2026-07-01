@@ -83,6 +83,9 @@ class TestSetupDAdapterFires:
         assert sig.metadata["signal_direction"] == "short"
         assert sig.metadata["stop_loss"] == pytest.approx(104.0 + 1.5 * 2.0)
         assert sig.metadata["take_profit"] == pytest.approx(100.0)
+        assert sig.metadata["z"] == pytest.approx(2.0)
+        assert sig.metadata["target_rr"] == pytest.approx(4.0 / 3.0)
+        assert sig.metadata["risk_points"] == pytest.approx(3.0)
         # tz-aware UTC contract
         assert sig.timestamp.tzinfo is not None
         assert sig.timestamp.utcoffset().total_seconds() == 0
@@ -210,13 +213,17 @@ class TestSetupDMinConfidence:
     async def test_min_confidence_passthrough_rejects(self):
         """min_confidence=0.9 via adapter config rejects edge-of-band signal."""
         adapter = SetupDEntryAdapter(
-            SetupDEntryConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.9)
+            SetupDEntryConfig(
+                vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.9
+            )
         )
         md = _md(current_price=103.7, vwap=100.0, atr=2.0)
         ctx = _context(md, _utc(2, 0))
         # Warm up vol + range windows
         for _ in range(30):
-            await adapter.generate(_context(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0)))
+            await adapter.generate(
+                _context(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0))
+            )
         sig = await adapter.generate(ctx)
         assert sig is None  # low confidence ≈ 0.5 < 0.9
 
@@ -224,7 +231,9 @@ class TestSetupDMinConfidence:
 class _FakeLLMCtx:
     """Minimal duck-typed LLM MarketContext stub (avoids importing shared.llm chain)."""
 
-    def __init__(self, regime: str = "NEUTRAL", risk_score: float = 50.0, confidence: float = 0.8) -> None:
+    def __init__(
+        self, regime: str = "NEUTRAL", risk_score: float = 50.0, confidence: float = 0.8
+    ) -> None:
         self.regime = regime
         self.risk_score = risk_score
         self.confidence = confidence
@@ -258,11 +267,17 @@ class TestSetupDDirectionBlock:
         # Warm windows
         for _ in range(30):
             await adapter.generate(
-                self._context_with_regime(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "BULL_STRONG")
+                self._context_with_regime(
+                    _md(current_price=100.0, vwap=100.0, atr=2.0),
+                    _utc(2, 0),
+                    "BULL_STRONG",
+                )
             )
         # Up-spike would normally fire SHORT
         md = _md(current_price=104.0, vwap=100.0, atr=2.0)
-        sig = await adapter.generate(self._context_with_regime(md, _utc(2, 0), "BULL_STRONG"))
+        sig = await adapter.generate(
+            self._context_with_regime(md, _utc(2, 0), "BULL_STRONG")
+        )
         assert sig is None  # direction_blocked
 
     @pytest.mark.asyncio
@@ -277,10 +292,14 @@ class TestSetupDDirectionBlock:
         )
         for _ in range(30):
             await adapter.generate(
-                self._context_with_regime(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "NEUTRAL")
+                self._context_with_regime(
+                    _md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "NEUTRAL"
+                )
             )
         md = _md(current_price=104.0, vwap=100.0, atr=2.0)
-        sig = await adapter.generate(self._context_with_regime(md, _utc(2, 0), "NEUTRAL"))
+        sig = await adapter.generate(
+            self._context_with_regime(md, _utc(2, 0), "NEUTRAL")
+        )
         assert sig is not None
         assert sig.metadata["signal_direction"] == "short"
 
@@ -292,10 +311,16 @@ class TestSetupDDirectionBlock:
         )
         for _ in range(30):
             await adapter.generate(
-                self._context_with_regime(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "BULL_STRONG")
+                self._context_with_regime(
+                    _md(current_price=100.0, vwap=100.0, atr=2.0),
+                    _utc(2, 0),
+                    "BULL_STRONG",
+                )
             )
         md = _md(current_price=104.0, vwap=100.0, atr=2.0)
-        sig = await adapter.generate(self._context_with_regime(md, _utc(2, 0), "BULL_STRONG"))
+        sig = await adapter.generate(
+            self._context_with_regime(md, _utc(2, 0), "BULL_STRONG")
+        )
         assert sig is not None  # no block configured
 
     @pytest.mark.asyncio
@@ -310,11 +335,17 @@ class TestSetupDDirectionBlock:
         )
         for _ in range(30):
             await adapter.generate(
-                self._context_with_regime(_md(current_price=100.0, vwap=100.0, atr=2.0), _utc(2, 0), "BEAR_STRONG")
+                self._context_with_regime(
+                    _md(current_price=100.0, vwap=100.0, atr=2.0),
+                    _utc(2, 0),
+                    "BEAR_STRONG",
+                )
             )
         # Down-spike would normally fire LONG
         md = _md(current_price=96.0, vwap=100.0, atr=2.0)
-        sig = await adapter.generate(self._context_with_regime(md, _utc(2, 0), "BEAR_STRONG"))
+        sig = await adapter.generate(
+            self._context_with_regime(md, _utc(2, 0), "BEAR_STRONG")
+        )
         assert sig is None  # direction_blocked
 
 

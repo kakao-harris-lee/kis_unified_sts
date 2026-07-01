@@ -49,6 +49,10 @@ async def test_long_exits_at_setup_stop():
     assert signal is not None
     assert signal.reason == ExitReason.STOP_LOSS
     assert signal.priority == 1
+    assert signal.current_price == pytest.approx(97.9)
+    assert signal.exit_price == pytest.approx(98.0)
+    assert signal.metadata["trigger_price"] == pytest.approx(98.0)
+    assert signal.metadata["detected_price"] == pytest.approx(97.9)
 
 
 @pytest.mark.asyncio
@@ -63,6 +67,9 @@ async def test_long_exits_at_setup_target():
     assert signal is not None
     assert signal.reason == ExitReason.TARGET_REACHED
     assert signal.priority == 2
+    assert signal.current_price == pytest.approx(104.1)
+    assert signal.exit_price == pytest.approx(104.0)
+    assert signal.metadata["trigger_price"] == pytest.approx(104.0)
 
 
 @pytest.mark.asyncio
@@ -94,6 +101,7 @@ async def test_short_uses_inverted_stop_and_target():
     assert fired is True
     assert signal is not None
     assert signal.reason == ExitReason.TARGET_REACHED
+    assert signal.exit_price == pytest.approx(96.0)
 
     fired, signal = await exit_strategy.should_exit(
         ExitContext(position=position, market_data={"close": 102.1})
@@ -101,6 +109,23 @@ async def test_short_uses_inverted_stop_and_target():
     assert fired is True
     assert signal is not None
     assert signal.reason == ExitReason.STOP_LOSS
+    assert signal.exit_price == pytest.approx(102.0)
+
+
+@pytest.mark.asyncio
+async def test_can_use_detected_price_for_legacy_behavior():
+    exit_strategy = SetupTargetExit(
+        SetupTargetExitConfig(eod_close_enabled=False, fill_at_trigger_price=False)
+    )
+    position = _position(side=PositionSide.LONG, stop_price=98.0, take_profit=104.0)
+    context = ExitContext(position=position, market_data={"close": 97.9})
+
+    fired, signal = await exit_strategy.should_exit(context)
+
+    assert fired is True
+    assert signal is not None
+    assert signal.exit_price == pytest.approx(97.9)
+    assert signal.metadata["trigger_price"] == pytest.approx(98.0)
 
 
 def test_setup_a_config_uses_setup_target_exit():

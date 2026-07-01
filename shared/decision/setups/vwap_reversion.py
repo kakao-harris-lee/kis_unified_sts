@@ -227,6 +227,29 @@ class SetupDConfig(ServiceConfigBase):
             "0.0 disables the gate."
         ),
     )
+    reversal_confirm_enabled: bool = Field(
+        default=False,
+        description=(
+            "Require the VWAP extension to start reverting before firing. "
+            "This turns the setup from an immediate fade into an armed-then-confirmed "
+            "fade while preserving long/short symmetry."
+        ),
+    )
+    reversal_confirm_atr_mult: float = Field(
+        default=0.2,
+        ge=0.0,
+        description=(
+            "Minimum improvement in abs(z) versus the prior close before a confirmed "
+            "signal can fire. z is measured in ATR units."
+        ),
+    )
+    reversal_confirm_requires_price_turn: bool = Field(
+        default=True,
+        description=(
+            "When reversal confirmation is enabled, require price to move back "
+            "toward VWAP versus the prior close."
+        ),
+    )
 
 
 class SetupDVWAPReversion(Setup):
@@ -264,6 +287,7 @@ class SetupDVWAPReversion(Setup):
         # per-bar high/low; this is the only range definition reproducible in the
         # orchestrator path, where last_15min_high/low has no live producer.
         self._close_window: deque[float] = deque(maxlen=self.config.range_window_bars)
+        self.last_signal_details: dict[str, float | int | bool | str | None] = {}
 
     def _reject(self, reason: str) -> None:
         """Record the rejection reason and return None (early-return helper)."""
@@ -354,6 +378,7 @@ class SetupDVWAPReversion(Setup):
         #    BEFORE any later early-return) so the rolling ATR/close histories stay
         #    continuous. Both return None during warmup → the corresponding gate is
         #    permissive (never silently dead).
+        prev_close = self._close_window[-1] if self._close_window else None
         vol_ref = self._vol_reference(atr)
         recent_range = self._self_range(ctx.current_price)
         gate_active = vol_ref is not None and vol_ref > 0
@@ -374,24 +399,59 @@ class SetupDVWAPReversion(Setup):
         #    self-computed recent extreme on its side, so we fade a stalling
         #    spike, not a still-trending runaway. recent_range is the causal
         #    (high, low) of prior closes (None during warmup → guard permissive).
+        recent_high: float | None = None
+        recent_low: float | None = None
+        stall_distance: float | None = None
+        stall_buffer: float | None = None
         if recent_range is not None:
             recent_high, recent_low = recent_range
             buffer = c.stall_buffer_atr_mult * atr
+            stall_buffer = buffer
             if direction == "short":
                 # require price within `buffer` ABOVE the prior recent high
                 # (close to it / just poking through, not far past = still trending)
-                if ctx.current_price - recent_high > buffer:
+                stall_distance = ctx.current_price - recent_high
+                if stall_distance > buffer:
                     return self._reject(
                         f"still_trending_up(px={ctx.current_price:.2f}-"
                         f"hi={recent_high:.2f}>{buffer:.2f})"
                     )
-            elif recent_low - ctx.current_price > buffer:
+            else:
+                stall_distance = recent_low - ctx.current_price
+            if direction == "long" and stall_distance > buffer:
                 return self._reject(
                     f"still_trending_down(lo={recent_low:.2f}-"
                     f"px={ctx.current_price:.2f}>{buffer:.2f})"
                 )
 
-        # 6. Risk bracket (ATR-scaled, symmetric)
+        # 6. Optional reversal confirmation — arm on the extreme, fire only once
+        #    price starts moving back toward VWAP. This avoids treating a fresh
+        #    one-way impulse as a completed stall.
+        reversal_price_turn: bool | None = None
+        reversal_z_improvement: float | None = None
+        prev_z: float | None = None
+        if c.reversal_confirm_enabled:
+            if prev_close is None:
+                return self._reject("awaiting_reversal_confirm(no_prev_close)")
+            prev_z = (prev_close - ctx.vwap) / atr
+            reversal_z_improvement = abs(prev_z) - abs(z)
+            reversal_price_turn = (
+                ctx.current_price > prev_close
+                if direction == "long"
+                else ctx.current_price < prev_close
+            )
+            if c.reversal_confirm_requires_price_turn and not reversal_price_turn:
+                return self._reject(
+                    f"awaiting_reversal_confirm(price_turn={direction})"
+                )
+            if reversal_z_improvement < c.reversal_confirm_atr_mult:
+                return self._reject(
+                    "awaiting_reversal_confirm("
+                    f"z_improve={reversal_z_improvement:.2f}<"
+                    f"{c.reversal_confirm_atr_mult:.2f})"
+                )
+
+        # 7. Risk bracket (ATR-scaled, symmetric)
         entry = ctx.current_price
         risk = c.stop_atr_mult * atr
         vwap_distance = abs(entry - ctx.vwap)
@@ -406,9 +466,37 @@ class SetupDVWAPReversion(Setup):
 
         confidence = self._compute_confidence(z, vol_ratio)
         if c.min_confidence > 0.0 and confidence < c.min_confidence:
-            return self._reject(
-                f"low_confidence({confidence:.2f}<{c.min_confidence})"
-            )
+            return self._reject(f"low_confidence({confidence:.2f}<{c.min_confidence})")
+
+        target_rr = target_distance / risk if risk > 0 else 0.0
+        self.last_signal_details = {
+            "strategy": "setup_d_vwap_reversion",
+            "entry_price": entry,
+            "vwap": ctx.vwap,
+            "atr_14": atr,
+            "z": z,
+            "abs_z": abs(z),
+            "direction": direction,
+            "vol_ref": vol_ref,
+            "vol_ratio": vol_ratio,
+            "vol_gate_active": gate_active,
+            "vol_window_count": len(self._atr_window),
+            "recent_high": recent_high,
+            "recent_low": recent_low,
+            "stall_distance": stall_distance,
+            "stall_buffer": stall_buffer,
+            "prev_close": prev_close,
+            "prev_z": prev_z,
+            "reversal_confirm_enabled": c.reversal_confirm_enabled,
+            "reversal_price_turn": reversal_price_turn,
+            "reversal_z_improvement": reversal_z_improvement,
+            "risk_points": risk,
+            "vwap_distance": vwap_distance,
+            "target_distance": target_distance,
+            "target_rr": target_rr,
+            "stop_atr_mult": c.stop_atr_mult,
+            "min_reward_risk": c.min_reward_risk,
+        }
 
         self.last_reject_reason = None  # fired — clear any prior reject reason
         return Signal(
@@ -422,7 +510,9 @@ class SetupDVWAPReversion(Setup):
             reason_tags=[
                 f"vwap_z_{z:+.2f}",
                 f"vol_ratio_{vol_ratio:.2f}",
+                f"target_R_{target_rr:.2f}",
                 "highvol_vwap_reversion",
+                *(["reversal_confirmed"] if c.reversal_confirm_enabled else []),
             ],
             valid_until=ctx.now + timedelta(minutes=c.signal_ttl_minutes),
             generated_at=ctx.now,

@@ -209,6 +209,13 @@ paper_broker:
   # Lookback window (minutes) for computing reference median price
   reference_price_lookback_minutes: 5
 
+  # Asset-specific paper execution costs. The orchestrator's legacy defaults are
+  # stock-oriented; futures paper evaluation must not apply 0.1% price slippage
+  # to index points because that is ~25-35 ticks per side around KOSPI200 1350.
+  futures:
+    commission_rate: 0.00003
+    slippage_rate: 0.00002
+
 # KOSPI200 선물 계약 스펙 (계약당 승수, 틱 크기, 수수료)
 # 모든 계약 상수는 여기서 로드 — 코드에 하드코딩 금지
 futures_contract_spec:

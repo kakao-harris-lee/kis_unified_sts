@@ -35,6 +35,7 @@ class SetupTargetExitConfig(ConfigMixin):
     eod_close_hour: int = 15
     eod_close_minute: int = 15
     default_exit_confidence: float = 0.9
+    fill_at_trigger_price: bool = True
 
     @property
     def eod_close_time(self) -> time:
@@ -100,8 +101,6 @@ class SetupTargetExit(ExitSignalGenerator[SetupTargetExitConfig]):
             return None
 
         now = now_kst()
-        profit_pct = self._calc_profit_pct(position, current_price)
-        profit_amount = self._calc_profit_amount(position, current_price)
         holding_minutes = int(
             (to_kst(now) - to_kst(position.entry_time)).total_seconds() / 60
         )
@@ -119,15 +118,22 @@ class SetupTargetExit(ExitSignalGenerator[SetupTargetExitConfig]):
             trigger_price=stop_price,
             trigger="stop",
         ):
+            exit_price = (
+                stop_price if self.config.fill_at_trigger_price else current_price
+            )
             return self._create_exit_signal(
                 position=position,
                 current_price=current_price,
-                profit_pct=profit_pct,
-                profit_amount=profit_amount,
+                exit_price=exit_price,
                 reason=ExitReason.STOP_LOSS,
                 priority=1,
                 holding_minutes=holding_minutes,
-                metadata={"stop_price": stop_price},
+                metadata={
+                    "stop_price": stop_price,
+                    "trigger_price": stop_price,
+                    "detected_price": current_price,
+                    "fill_at_trigger_price": self.config.fill_at_trigger_price,
+                },
             )
 
         if take_profit is not None and self._price_crossed(
@@ -136,23 +142,29 @@ class SetupTargetExit(ExitSignalGenerator[SetupTargetExitConfig]):
             trigger_price=take_profit,
             trigger="target",
         ):
+            exit_price = (
+                take_profit if self.config.fill_at_trigger_price else current_price
+            )
             return self._create_exit_signal(
                 position=position,
                 current_price=current_price,
-                profit_pct=profit_pct,
-                profit_amount=profit_amount,
+                exit_price=exit_price,
                 reason=ExitReason.TARGET_REACHED,
                 priority=2,
                 holding_minutes=holding_minutes,
-                metadata={"take_profit": take_profit},
+                metadata={
+                    "take_profit": take_profit,
+                    "trigger_price": take_profit,
+                    "detected_price": current_price,
+                    "fill_at_trigger_price": self.config.fill_at_trigger_price,
+                },
             )
 
         if self._should_eod_close(now):
             return self._create_exit_signal(
                 position=position,
                 current_price=current_price,
-                profit_pct=profit_pct,
-                profit_amount=profit_amount,
+                exit_price=current_price,
                 reason=ExitReason.EOD_CLOSE,
                 priority=3,
                 holding_minutes=holding_minutes,
@@ -215,18 +227,20 @@ class SetupTargetExit(ExitSignalGenerator[SetupTargetExitConfig]):
         *,
         position: Position,
         current_price: float,
-        profit_pct: float,
-        profit_amount: float,
+        exit_price: float,
         reason: ExitReason,
         priority: int,
         holding_minutes: int,
         metadata: dict[str, Any],
     ) -> ExitSignal:
+        profit_pct = self._calc_profit_pct(position, exit_price)
+        profit_amount = self._calc_profit_amount(position, exit_price)
         logger.info(
-            "[%s] Exit signal: %s reason=%s price=%.2f pnl=%+.2f%%",
+            "[%s] Exit signal: %s reason=%s trigger_price=%.2f detected_price=%.2f pnl=%+.2f%%",
             self.name,
             position.code,
             reason.value,
+            exit_price,
             current_price,
             profit_pct * 100,
         )
@@ -237,7 +251,7 @@ class SetupTargetExit(ExitSignalGenerator[SetupTargetExitConfig]):
             reason=reason,
             strategy=self.name,
             current_price=current_price,
-            exit_price=current_price,
+            exit_price=exit_price,
             entry_price=position.entry_price,
             profit_amount=profit_amount,
             profit_pct=profit_pct,

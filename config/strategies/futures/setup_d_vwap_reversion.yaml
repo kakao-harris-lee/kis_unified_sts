@@ -65,6 +65,13 @@ strategy:
       range_window_bars: 15     # prior closes for the self-computed recent range
       range_warmup_bars: 5      # stall guard permissive until this many prior closes
 
+      # Reversal confirmation: first arm on a VWAP extreme, then fire only after
+      # price starts moving back toward VWAP. This keeps Setup D from treating a
+      # fresh one-way impulse as a completed stall.
+      reversal_confirm_enabled: true
+      reversal_confirm_atr_mult: 0.2
+      reversal_confirm_requires_price_turn: true
+
       # Risk bracket (ATR-scaled, symmetric).
       stop_atr_mult: 1.5        # hard stop = entry ± 1.5 × ATR14
       min_reward_risk: 1.0      # VWAP-revert target at least 1.0R away

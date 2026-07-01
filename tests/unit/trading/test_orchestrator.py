@@ -75,6 +75,22 @@ class TestMarketSchedule:
         assert schedule.get_close_time("futures") == time(15, 45)
 
 
+class TestPaperExecutionLayer:
+    @pytest.mark.asyncio
+    async def test_futures_paper_broker_uses_futures_costs(self):
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+
+        orchestrator = TradingOrchestrator(
+            TradingConfig(asset_class="futures", paper_trading=True)
+        )
+
+        await orchestrator._init_execution_layer()
+
+        assert orchestrator._paper_broker is not None
+        assert orchestrator._paper_broker.commission_rate == pytest.approx(0.00003)
+        assert orchestrator._paper_broker.slippage_rate == pytest.approx(0.00002)
+
+
 class TestTradingConfig:
     """TradingConfig 클래스 테스트"""
 

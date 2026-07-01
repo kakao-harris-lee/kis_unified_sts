@@ -2001,11 +2001,29 @@ class TradingOrchestrator:
                 # Load paper broker guard parameters from execution.yaml
                 exec_cfg = ConfigLoader.load("execution.yaml") or {}
                 paper_broker_cfg = exec_cfg.get("paper_broker", {}) or {}
+                asset_paper_cfg = (
+                    paper_broker_cfg.get(self.config.asset_class, {}) or {}
+                )
+                paper_commission_rate = self.config.paper_commission_rate
+                paper_slippage_rate = self.config.paper_slippage_rate
+                if self.config.asset_class == "futures":
+                    paper_commission_rate = float(
+                        os.environ.get(
+                            "FUTURES_PAPER_COMMISSION_RATE",
+                            asset_paper_cfg.get("commission_rate", 0.00003),
+                        )
+                    )
+                    paper_slippage_rate = float(
+                        os.environ.get(
+                            "FUTURES_PAPER_SLIPPAGE_RATE",
+                            asset_paper_cfg.get("slippage_rate", 0.00002),
+                        )
+                    )
 
                 paper_config = PaperTradingConfig(
                     initial_balance=self.config.initial_capital,
-                    commission_rate=self.config.paper_commission_rate,
-                    slippage_rate=self.config.paper_slippage_rate,
+                    commission_rate=paper_commission_rate,
+                    slippage_rate=paper_slippage_rate,
                     max_price_staleness_seconds=float(
                         paper_broker_cfg.get("max_price_staleness_seconds", 30.0)
                     ),
@@ -2018,8 +2036,8 @@ class TradingOrchestrator:
                 )
                 self._paper_broker = VirtualBroker(
                     initial_balance=self.config.initial_capital,
-                    commission_rate=self.config.paper_commission_rate,
-                    slippage_rate=self.config.paper_slippage_rate,
+                    commission_rate=paper_commission_rate,
+                    slippage_rate=paper_slippage_rate,
                     config=paper_config,
                 )
                 logger.info("Paper broker (VirtualBroker) initialized")

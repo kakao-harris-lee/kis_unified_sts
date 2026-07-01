@@ -285,6 +285,44 @@ def test_stall_guard_permissive_during_warmup():
 
 
 # ---------------------------------------------------------------------------
+# Reversal confirmation
+# ---------------------------------------------------------------------------
+
+
+def test_reversal_confirmation_waits_for_pullback_then_fires():
+    """With reversal confirmation enabled, a fresh extension arms but does not
+    fire until price starts moving back toward VWAP while still extreme."""
+    setup = SetupDVWAPReversion(
+        config=SetupDConfig(
+            reversal_confirm_enabled=True,
+            reversal_confirm_atr_mult=0.2,
+            stall_buffer_atr_mult=10.0,
+        )
+    )
+    _warm(setup, atr=2.0, n=10, close=100.0)
+
+    first = setup.check(_ctx(current_price=104.5, vwap=100.0, atr_14=2.0))
+    assert first is None
+    assert setup.last_reject_reason is not None
+    assert setup.last_reject_reason.startswith("awaiting_reversal_confirm")
+
+    confirmed = setup.check(_ctx(current_price=103.8, vwap=100.0, atr_14=2.0))
+    assert confirmed is not None
+    assert confirmed.direction == "short"
+    assert "reversal_confirmed" in confirmed.reason_tags
+
+
+def test_signal_details_recorded_for_observability():
+    setup = _setup()
+    sig = setup.check(_ctx(current_price=104.0, vwap=100.0, atr_14=2.0))
+    assert sig is not None
+    details = setup.last_signal_details
+    assert details["z"] == pytest.approx(2.0)
+    assert details["target_rr"] == pytest.approx(sig.risk_reward_ratio())
+    assert details["risk_points"] == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
 # Session window
 # ---------------------------------------------------------------------------
 
@@ -415,6 +453,9 @@ def test_config_defaults():
     assert cfg.range_window_bars == 15
     assert cfg.range_warmup_bars == 5
     assert cfg.min_confidence == pytest.approx(0.0)
+    assert cfg.reversal_confirm_enabled is False
+    assert cfg.reversal_confirm_atr_mult == pytest.approx(0.2)
+    assert cfg.reversal_confirm_requires_price_turn is True
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +465,9 @@ def test_config_defaults():
 
 def test_min_confidence_disabled_by_default():
     """Default min_confidence=0.0 never gates any signal."""
-    setup = SetupDVWAPReversion(config=SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0))
+    setup = SetupDVWAPReversion(
+        config=SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0)
+    )
     _warm(setup, atr=2.0, n=30)
     # Edge-of-band signal: z barely > 1.8 → low confidence ~0.5
     sig = setup.check(_ctx(current_price=103.7, vwap=100.0, atr_14=2.0))
@@ -433,7 +476,9 @@ def test_min_confidence_disabled_by_default():
 
 def test_min_confidence_rejects_low_confidence_signal():
     """min_confidence=0.8 drops a barely-extreme signal (confidence ≈ 0.5)."""
-    cfg = SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.8)
+    cfg = SetupDConfig(
+        vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.8
+    )
     setup = SetupDVWAPReversion(config=cfg)
     _warm(setup, atr=2.0, n=30)
     # z ≈ 1.85 → extension_bonus ≈ (1.85-1.8)*0.3=0.015
@@ -447,7 +492,9 @@ def test_min_confidence_rejects_low_confidence_signal():
 
 def test_min_confidence_passes_strong_signal():
     """min_confidence=0.6 passes a deeply-extreme high-vol signal."""
-    cfg = SetupDConfig(vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.6)
+    cfg = SetupDConfig(
+        vol_warmup_bars=30, stall_buffer_atr_mult=10.0, min_confidence=0.6
+    )
     setup = SetupDVWAPReversion(config=cfg)
     _warm(setup, atr=1.0, n=30)  # reference ≈ 1.0
     # atr=2.0 → vol_ratio=2.0 → vol_bonus=min((2.0-0.9)*0.3,0.2)=0.2
