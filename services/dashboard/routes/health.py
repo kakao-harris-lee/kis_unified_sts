@@ -180,6 +180,99 @@ async def get_data_freshness(
 
 
 # ---------------------------------------------------------------------------
+# Market-structure snapshot freshness (Wave 2b daily collector)
+# ---------------------------------------------------------------------------
+
+# Fallbacks mirroring config/market_structure.yaml::collector defaults; the
+# YAML stays the source of truth (key + stale threshold are config-driven).
+_MARKET_STRUCTURE_DEFAULT_KEY = "market:structure:latest"
+_MARKET_STRUCTURE_DEFAULT_STALE_S = 50400
+
+
+def _market_structure_settings() -> tuple[str, int]:
+    """Return (latest_key, stale_after_seconds) from config/market_structure.yaml."""
+    try:
+        from shared.config.loader import ConfigLoader
+
+        raw = ConfigLoader.load("market_structure.yaml")
+        collector = raw.get("collector") if isinstance(raw, dict) else None
+        collector = collector if isinstance(collector, dict) else {}
+        redis_cfg = collector.get("redis")
+        redis_cfg = redis_cfg if isinstance(redis_cfg, dict) else {}
+        health_cfg = collector.get("health")
+        health_cfg = health_cfg if isinstance(health_cfg, dict) else {}
+        key = str(redis_cfg.get("latest_key") or _MARKET_STRUCTURE_DEFAULT_KEY)
+        stale_after = int(
+            health_cfg.get("stale_after_seconds") or _MARKET_STRUCTURE_DEFAULT_STALE_S
+        )
+        return key, stale_after
+    except Exception:  # noqa: BLE001 - dashboard must not raise on config issues
+        return _MARKET_STRUCTURE_DEFAULT_KEY, _MARKET_STRUCTURE_DEFAULT_STALE_S
+
+
+def _market_structure_ops(redis: Any) -> dict[str, Any]:
+    """Freshness summary for the ``market:structure:latest`` snapshot hash.
+
+    ``asof`` is written by the collector in naive KST; ``_timestamp_summary``
+    assumes KST for naive timestamps, so ``age_s`` is publication age. Status
+    is ``ok`` while the age is within the configured stale threshold (14h by
+    default: > close 18:40 → premarket 08:00 gap, < the 24h key TTL).
+    """
+    key, stale_after = _market_structure_settings()
+    summary: dict[str, Any] = {
+        "status": "unknown",
+        "source": key,
+        "snapshot": None,
+        "trade_date": None,
+        "asof": None,
+        "age_s": None,
+        "stale_after_s": stale_after,
+        "coverage_ratio": None,
+        "missing_components": [],
+    }
+    payload = _redis_hgetall(redis, key)
+    if not payload:
+        return summary
+
+    timing = _timestamp_summary(payload)
+    age_s = timing["age_s"]
+    if age_s is None:
+        status = "unknown"
+    else:
+        status = "ok" if age_s <= stale_after else "stale"
+
+    coverage: float | None = None
+    raw_coverage = payload.get("coverage_ratio")
+    if raw_coverage not in (None, ""):
+        try:
+            coverage = float(raw_coverage)
+        except (TypeError, ValueError):
+            coverage = None
+
+    missing = payload.get("missing_components")
+    summary.update(
+        {
+            "status": status,
+            "snapshot": _coerce_redis_text(payload.get("snapshot")) or None,
+            "trade_date": _coerce_redis_text(payload.get("trade_date")) or None,
+            "asof": timing["timestamp"],
+            "age_s": age_s,
+            "coverage_ratio": coverage,
+            "missing_components": missing if isinstance(missing, list) else [],
+        }
+    )
+    return summary
+
+
+@router.get("/market-structure")
+async def get_market_structure_health() -> dict[str, Any]:
+    """Market-structure daily snapshot freshness (premarket/close publisher)."""
+    summary = _market_structure_ops(_get_redis_client())
+    summary["checked_at"] = datetime.now(UTC).isoformat()
+    return summary
+
+
+# ---------------------------------------------------------------------------
 # Kill switch
 # ---------------------------------------------------------------------------
 
@@ -750,6 +843,7 @@ def _build_ops_summary(
     scheduler = _scheduler_ops(redis)
     forecasting_summary = _forecasting_ops(forecasting)
     kill_summary = _kill_switch_ops(kill_switch)
+    market_structure = _market_structure_ops(redis)
 
     asset_rows: dict[str, dict[str, Any]] = {}
     for target in _ops_targets(asset):
@@ -802,6 +896,7 @@ def _build_ops_summary(
         "scheduler": scheduler,
         "producers": producers_summary,
         "forecasting": forecasting_summary,
+        "market_structure": market_structure,
         "pipeline": pipeline_summary,
         "mode": mode_summary,
         "assets": asset_rows,
@@ -853,6 +948,7 @@ async def get_health_summary(
         "scheduler": ops_summary["scheduler"],
         "producers": ops_summary["producers"],
         "forecasting": ops_summary["forecasting"],
+        "market_structure": ops_summary["market_structure"],
         "pipeline": ops_summary["pipeline"],
         "mode": ops_summary["mode"],
     }

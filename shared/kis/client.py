@@ -50,6 +50,23 @@ _KST = ZoneInfo("Asia/Seoul")
 _INVEST_OPINION_PATH = "/uapi/domestic-stock/v1/quotations/invest-opinion"
 _INVEST_OPINION_TR_ID = "FHKST663300C0"
 
+# Market-structure quotations (unified investment roadmap Phase 0, Wave 2b).
+# All of these TRs are REAL-investment only (mock server unsupported).
+_INVESTOR_TREND_PATH = (
+    "/uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market"
+)
+_INVESTOR_TREND_TR_ID = "FHPTJ04030000"
+_PROGRAM_TRADE_DAILY_PATH = (
+    "/uapi/domestic-stock/v1/quotations/comp-program-trade-daily"
+)
+_PROGRAM_TRADE_DAILY_TR_ID = "FHPPG04600001"
+_INDEX_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-index-price"
+_INDEX_PRICE_TR_ID = "FHPUP02100000"
+_INDEX_DAILY_CHART_PATH = (
+    "/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice"
+)
+_INDEX_DAILY_CHART_TR_ID = "FHKUP03500100"
+
 
 def _record_rate_limit_penalty() -> None:
     """Best-effort: record a rate-limit penalty metric.
@@ -541,6 +558,172 @@ class KISClient(AsyncSessionMixin):
             return "down"
         return "flat"
 
+    # ------------------------------------------------------------------
+    # Market-structure quotations (unified investment roadmap Phase 0)
+    # ------------------------------------------------------------------
+
+    async def _quotations_get(
+        self,
+        path: str,
+        tr_id: str,
+        params: dict[str, str],
+        *,
+        tr_cont: str = "",
+    ) -> tuple[dict[str, Any], str]:
+        """Rate-limited GET for quotation TRs; returns (payload, tr_cont).
+
+        Shared plumbing for the market-structure TR wrappers below: acquires
+        the client rate limiter, applies EGW00201 backoff, and raises
+        ``RuntimeError`` on HTTP/logic errors so callers can degrade a single
+        component instead of the whole collection run.
+        """
+        await self._rate_limiter.acquire()
+        session = await self._get_session()
+        headers = await self.auth_manager.get_auth_headers_async()
+        headers["tr_id"] = tr_id
+        headers["custtype"] = "P"
+        if tr_cont:
+            headers["tr_cont"] = tr_cont
+
+        url = f"{self.config.base_url}{path}"
+        timeout_seconds = getattr(
+            self.config, "request_timeout_seconds", _DEFAULT_REQUEST_TIMEOUT
+        )
+        request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
+
+        async with session.get(
+            url, headers=headers, params=params, timeout=request_timeout
+        ) as response:
+            if response.status != 200:
+                text = await response.text()
+                if "EGW00201" in text:
+                    self._rate_limiter.penalty()
+                KISApiErrorRateTracker.get_instance().record_error()
+                raise RuntimeError(f"KIS {tr_id} HTTP {response.status}: {text[:2000]}")
+
+            data = await response.json(content_type=None)
+            response_tr_cont = str(response.headers.get("tr_cont", "")).strip()
+
+        if data.get("rt_cd") != "0":
+            msg = data.get("msg1", "Unknown error")
+            if "EGW00201" in msg:
+                self._rate_limiter.penalty()
+            KISApiErrorRateTracker.get_instance().record_error()
+            raise RuntimeError(f"KIS {tr_id} API error: {msg}")
+
+        self._rate_limiter.reset_backoff()
+        KISApiErrorRateTracker.get_instance().record_success()
+        return data, response_tr_cont
+
+    async def fetch_market_investor_trend(
+        self, market_code: str, product_code: str
+    ) -> list[dict[str, Any]]:
+        """시장별 투자자매매동향 스냅샷 (FHPTJ04030000) — raw output rows.
+
+        REAL-investment only. For the KOSPI200 futures market use
+        ``market_code="K2I"`` / ``product_code="F001"`` (codes come from
+        ``config/market_structure.yaml``). The daily-confirmed TR does not
+        support the futures market, so the market-structure collector captures
+        this snapshot after 15:45 KST as the day's finalized value.
+        """
+        data, _ = await self._quotations_get(
+            _INVESTOR_TREND_PATH,
+            _INVESTOR_TREND_TR_ID,
+            {
+                "FID_INPUT_ISCD": market_code,
+                "FID_INPUT_ISCD_2": product_code,
+            },
+        )
+        return self._extract_output_rows(data)
+
+    async def fetch_program_trade_daily(
+        self,
+        start_date: date | datetime | str,
+        end_date: date | datetime | str,
+        *,
+        market_div: str = "J",
+        max_pages: int = 20,
+    ) -> list[dict[str, Any]]:
+        """프로그램매매 종합현황 일별 (FHPPG04600001) — raw output rows.
+
+        REAL-investment only. Supports a date range with tr_cont continuation;
+        the per-call row cap is still unconfirmed (roadmap O1 residual probe),
+        so backfill callers chunk requests by month and rely on the
+        continuation loop here as a second guard.
+        """
+        start_yyyymmdd = self._format_kis_date(start_date)
+        end_yyyymmdd = self._format_kis_date(end_date)
+
+        rows: list[dict[str, Any]] = []
+        tr_cont = ""
+        for _ in range(max(int(max_pages), 1)):
+            data, response_tr_cont = await self._quotations_get(
+                _PROGRAM_TRADE_DAILY_PATH,
+                _PROGRAM_TRADE_DAILY_TR_ID,
+                {
+                    "FID_COND_MRKT_DIV_CODE": market_div,
+                    "FID_INPUT_DATE_1": start_yyyymmdd,
+                    "FID_INPUT_DATE_2": end_yyyymmdd,
+                },
+                tr_cont=tr_cont,
+            )
+            rows.extend(self._extract_output_rows(data))
+            if response_tr_cont != "M":
+                break
+            tr_cont = "N"
+        return rows
+
+    async def fetch_index_price(
+        self, index_code: str, *, market_div: str = "U"
+    ) -> dict[str, Any]:
+        """국내업종 현재지수 (FHPUP02100000) — raw output dict.
+
+        ``index_code="2001"`` is KOSPI200 (config-driven at call sites).
+        Captured after the close it equals the day's closing index; the
+        market-structure collector pairs it with the futures snapshot for
+        basis computation.
+        """
+        data, _ = await self._quotations_get(
+            _INDEX_PRICE_PATH,
+            _INDEX_PRICE_TR_ID,
+            {
+                "FID_COND_MRKT_DIV_CODE": market_div,
+                "FID_INPUT_ISCD": index_code,
+            },
+        )
+        output = data.get("output", {})
+        return output if isinstance(output, dict) else {}
+
+    async def fetch_index_daily_candles(
+        self,
+        index_code: str,
+        start_date: date | datetime | str,
+        end_date: date | datetime | str,
+        *,
+        market_div: str = "U",
+        period_div: str = "D",
+    ) -> list[dict[str, Any]]:
+        """업종 기간별시세 일봉 (FHKUP03500100) — raw output2 rows.
+
+        KIS caps a single call at ~100 rows and this TR has no continuation,
+        so backfill callers chunk the range (~100 days per call).
+        """
+        data, _ = await self._quotations_get(
+            _INDEX_DAILY_CHART_PATH,
+            _INDEX_DAILY_CHART_TR_ID,
+            {
+                "FID_COND_MRKT_DIV_CODE": market_div,
+                "FID_INPUT_ISCD": index_code,
+                "FID_INPUT_DATE_1": self._format_kis_date(start_date),
+                "FID_INPUT_DATE_2": self._format_kis_date(end_date),
+                "FID_PERIOD_DIV_CODE": period_div,
+            },
+        )
+        rows = data.get("output2", [])
+        if not isinstance(rows, list):
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
     async def _get_stock_price(self, symbol: str) -> dict[str, Any]:
         """Fetch current price for a Stock symbol."""
         session = await self._get_session()
@@ -646,6 +829,13 @@ class KISClient(AsyncSessionMixin):
             # after the ZeroDivisionError guard, the gap_pct path returns early.
             prev_close = float(output.get("futs_prdy_clpr", 0) or 0)
 
+            # Open interest snapshot (market-structure roadmap Phase 0): OI
+            # history is not served by any KIS REST TR, so the daily collector
+            # persists these snapshot fields. ``None`` (not 0) when the server
+            # omits the field so callers can tell "missing" from "flat".
+            oi_raw = output.get("hts_otst_stpl_qty")
+            oi_change_raw = output.get("otst_stpl_qty_icdc")
+
             return {
                 "code": symbol,
                 "close": float(output.get("futs_prpr", 0)),
@@ -659,6 +849,14 @@ class KISClient(AsyncSessionMixin):
                     float(output.get("futs_prdy_ctrt", 0)) / 100.0
                     if output.get("futs_prdy_ctrt")
                     else 0.0
+                ),
+                "open_interest": (
+                    parse_float(oi_raw) if oi_raw not in (None, "") else None
+                ),
+                "open_interest_change": (
+                    parse_float(oi_change_raw)
+                    if oi_change_raw not in (None, "")
+                    else None
                 ),
                 "timestamp": time.time(),
             }

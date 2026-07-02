@@ -374,3 +374,83 @@ class TestForecastingHealth:
             "model_last_refit",
             "model_r2_oos",
         } <= set(body.keys())
+
+
+class TestMarketStructureHealth:
+    """market:structure:latest asof freshness (Wave 2b daily collector)."""
+
+    KST = ZoneInfo("Asia/Seoul")
+
+    def _latest_hash(self, asof: datetime) -> dict[str, object]:
+        return {
+            "market:structure:latest": {
+                "snapshot": "close",
+                "trade_date": "2026-07-02",
+                # collector publishes naive-KST isoformat
+                "asof": asof.astimezone(self.KST).replace(tzinfo=None).isoformat(),
+                "coverage_ratio": "0.875",
+                "missing_components": json.dumps(["program"]),
+                "fut_foreign_net_qty": "-1250.0",
+            }
+        }
+
+    def test_unknown_when_redis_unavailable(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        monkeypatch.setattr(health, "_get_redis_client", lambda: None)
+
+        res = client.get("/api/health/market-structure")
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "unknown"
+        assert body["source"] == "market:structure:latest"
+        assert body["asof"] is None
+        assert body["age_s"] is None
+        assert body["missing_components"] == []
+
+    def test_fresh_snapshot_is_ok(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=5)
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/market-structure")
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "ok"
+        assert body["snapshot"] == "close"
+        assert body["trade_date"] == "2026-07-02"
+        assert 0 <= body["age_s"] <= 600
+        assert body["stale_after_s"] == 50400
+        assert body["coverage_ratio"] == pytest.approx(0.875)
+        assert body["missing_components"] == ["program"]
+
+    def test_old_snapshot_is_stale(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(hours=20)  # > 14h threshold
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/market-structure")
+
+        body = res.json()
+        assert body["status"] == "stale"
+        assert body["age_s"] > body["stale_after_s"]
+
+    def test_summary_exposes_market_structure(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=10)
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/summary", params={"asset_class": "all"})
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["market_structure"]["status"] == "ok"
+        assert body["ops_summary"]["market_structure"]["snapshot"] == "close"
