@@ -67,6 +67,17 @@ def _section(
     return value if isinstance(value, dict) else {}
 
 
+# data.krx.co.kr 익명 스크레이핑 기본값 (outerLoader 화이트리스트 경로).
+# KRX 정책 변경(2026)으로 일반 bld(dbms/MDC/STAT/...)는 세션 없이
+# 400 + "LOGOUT"을 반환하며, MDC_OUT bld + 쿠키 부트스트랩만 익명 가용.
+DEFAULT_KRX_SCRAPE_BASE_URL = "https://data.krx.co.kr"
+DEFAULT_KRX_SCRAPE_INVESTOR_BLD = "dbms/MDC_OUT/STAT/standard/MDCSTAT02203_OUT"
+DEFAULT_KRX_SCRAPE_INVESTOR_SCREEN_ID = "MDCSTAT022"
+DEFAULT_KRX_SCRAPE_INVESTOR_MARKETS = ["STK", "KSQ"]
+DEFAULT_KRX_SCRAPE_TIMEOUT_SECONDS = 10
+DEFAULT_KRX_SCRAPE_REQUEST_INTERVAL_SECONDS = 2.0
+
+
 def _build_config_dict(
     *,
     provider: str,
@@ -80,6 +91,8 @@ def _build_config_dict(
     env_key_name: str,
 ) -> dict[str, Any]:
     """Build flattened LLMConfig keyword arguments from YAML sections."""
+    scrape_config = _section(krx_config, "scrape")
+    investor_scrape_config = _section(scrape_config, "investor_trading")
 
     def get_value(env_key: str, yaml_keys: list[Any], default: Any) -> Any:
         """Get value from env var or YAML (provider-specific -> common -> default)."""
@@ -184,9 +197,7 @@ def _build_config_dict(
         # Stock settings (all stock_* prefixed fields)
         "stock_markets": stock_config.get("markets", ["KOSPI"]),
         "stock_min_market_cap": stock_config.get("min_market_cap", 100_000_000_000),
-        "stock_max_market_cap": stock_config.get(
-            "max_market_cap", 50_000_000_000_000
-        ),
+        "stock_max_market_cap": stock_config.get("max_market_cap", 50_000_000_000_000),
         "stock_min_price": stock_config.get("min_price", 1000),
         "stock_top_n_volume": stock_config.get("top_n_volume", 30),
         "stock_final_selection": stock_config.get("final_selection", 5),
@@ -308,7 +319,9 @@ def _build_config_dict(
         ),
         "stock_nps_change_score_cap": stock_config.get("nps_change_score_cap", 5.0),
         "stock_nps_score_cap": stock_config.get("nps_score_cap", 15.0),
-        "stock_nps_max_report_age_days": stock_config.get("nps_max_report_age_days", 90),
+        "stock_nps_max_report_age_days": stock_config.get(
+            "nps_max_report_age_days", 90
+        ),
         "stock_nps_stale_score_multiplier": stock_config.get(
             "nps_stale_score_multiplier", 0.5
         ),
@@ -342,6 +355,26 @@ def _build_config_dict(
         ),
         "krx_timeout": krx_config.get("timeout_seconds", 30),
         "krx_analysis_days": krx_config.get("analysis_days", 20),
+        # KRX data.krx.co.kr 익명 스크레이핑 설정
+        "krx_scrape_base_url": scrape_config.get(
+            "base_url", DEFAULT_KRX_SCRAPE_BASE_URL
+        ),
+        "krx_scrape_timeout": scrape_config.get(
+            "timeout_seconds", DEFAULT_KRX_SCRAPE_TIMEOUT_SECONDS
+        ),
+        "krx_scrape_request_interval_seconds": scrape_config.get(
+            "request_interval_seconds",
+            DEFAULT_KRX_SCRAPE_REQUEST_INTERVAL_SECONDS,
+        ),
+        "krx_scrape_investor_bld": investor_scrape_config.get(
+            "bld", DEFAULT_KRX_SCRAPE_INVESTOR_BLD
+        ),
+        "krx_scrape_investor_screen_id": investor_scrape_config.get(
+            "screen_id", DEFAULT_KRX_SCRAPE_INVESTOR_SCREEN_ID
+        ),
+        "krx_scrape_investor_markets": investor_scrape_config.get(
+            "markets", list(DEFAULT_KRX_SCRAPE_INVESTOR_MARKETS)
+        ),
         "sector_etfs": krx_config.get(
             "sector_etfs",
             {
@@ -662,6 +695,37 @@ class LLMConfig(ServiceConfigBase):
     krx_timeout: int = Field(default=30, description="KRX API timeout in seconds")
     krx_analysis_days: int = Field(
         default=20, description="KRX analysis period in days"
+    )
+
+    # KRX data.krx.co.kr 익명 스크레이핑 설정 (outerLoader 화이트리스트 화면)
+    krx_scrape_base_url: str = Field(
+        default=DEFAULT_KRX_SCRAPE_BASE_URL,
+        description="KRX data portal base URL for anonymous scraping",
+    )
+    krx_scrape_timeout: int = Field(
+        default=DEFAULT_KRX_SCRAPE_TIMEOUT_SECONDS,
+        description="KRX scrape request timeout in seconds",
+    )
+    krx_scrape_request_interval_seconds: float = Field(
+        default=DEFAULT_KRX_SCRAPE_REQUEST_INTERVAL_SECONDS,
+        description="Minimum interval between KRX scrape requests in seconds",
+    )
+    krx_scrape_investor_bld: str = Field(
+        default=DEFAULT_KRX_SCRAPE_INVESTOR_BLD,
+        description=(
+            "KRX bld for the anonymous investor trading value trend screen "
+            "(outerLoader whitelist path)"
+        ),
+    )
+    krx_scrape_investor_screen_id: str = Field(
+        default=DEFAULT_KRX_SCRAPE_INVESTOR_SCREEN_ID,
+        description="KRX screenId used for the investor trading cookie bootstrap",
+    )
+    krx_scrape_investor_markets: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_KRX_SCRAPE_INVESTOR_MARKETS),
+        description=(
+            "KRX market ids aggregated for investor trading " "(STK=KOSPI, KSQ=KOSDAQ)"
+        ),
     )
 
     # 섹터 ETF 매핑

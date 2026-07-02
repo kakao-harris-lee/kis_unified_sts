@@ -11,6 +11,7 @@ Data Sources:
 - KOFIA (freesis.kofia.or.kr): 펀드, 채권, 투자자동향
 - MK Stock (stock.mk.co.kr): 증권뉴스, 테마, 분석
 """
+
 import asyncio
 import contextlib
 import json
@@ -65,9 +66,11 @@ class DataCollector(ABC):
 
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+        )
 
     @abstractmethod
     def collect(self, *args, **kwargs) -> dict:
@@ -110,21 +113,29 @@ class StockDataCollector(DataCollector):
             self._validate_market(market)
 
             target_date = self._get_last_trading_date()
-            logger.info(f"Collecting market data for {target_date} ({market}) via KRX Open API")
+            logger.info(
+                f"Collecting market data for {target_date} ({market}) via KRX Open API"
+            )
 
             # 최대 3일 전까지 fallback 시도
             df = pd.DataFrame()
             attempt_date = target_date
             for attempt in range(3):
                 try:
-                    df = self._krx_client.get_stock_daily_as_dataframe(market, attempt_date)
+                    df = self._krx_client.get_stock_daily_as_dataframe(
+                        market, attempt_date
+                    )
                 except Exception as e:
-                    logger.warning(f"KRX API fetch failed for {attempt_date} ({market}): {e}")
+                    logger.warning(
+                        f"KRX API fetch failed for {attempt_date} ({market}): {e}"
+                    )
                     df = pd.DataFrame()
                 if len(df) > 0:
                     break
                 prev = self._previous_date(attempt_date)
-                logger.info(f"No data for {attempt_date}, trying {prev} (attempt {attempt + 2}/3)")
+                logger.info(
+                    f"No data for {attempt_date}, trying {prev} (attempt {attempt + 2}/3)"
+                )
                 attempt_date = prev
 
             if len(df) > 0:
@@ -133,9 +144,13 @@ class StockDataCollector(DataCollector):
                     for code, row in df.iterrows():
                         self._name_cache[str(code)] = str(row["종목명"])
                 self._attach_market_column(df, market)
-                logger.info(f"Collected {len(df)} stocks for {market} (date={attempt_date})")
+                logger.info(
+                    f"Collected {len(df)} stocks for {market} (date={attempt_date})"
+                )
             else:
-                logger.error(f"Market data collection exhausted for {market} (tried 3 dates)")
+                logger.error(
+                    f"Market data collection exhausted for {market} (tried 3 dates)"
+                )
 
             return df
         except Exception as e:
@@ -144,7 +159,9 @@ class StockDataCollector(DataCollector):
 
     def _validate_market(self, market: str) -> None:
         if market not in self.SUPPORTED_MARKETS:
-            raise ValueError(f"Unsupported market: {market} (supported={self.SUPPORTED_MARKETS})")
+            raise ValueError(
+                f"Unsupported market: {market} (supported={self.SUPPORTED_MARKETS})"
+            )
 
     def _previous_date(self, target_date: str) -> str:
         parsed = datetime.strptime(target_date, "%Y%m%d").date()
@@ -180,7 +197,9 @@ class StockDataCollector(DataCollector):
         app_key = SecretsManager.kis_app_key("stock") or ""
         app_secret = SecretsManager.kis_app_secret("stock") or ""
         if not app_key or not app_secret:
-            logger.debug("KIS stock credentials not configured; history uses KRX fallback only")
+            logger.debug(
+                "KIS stock credentials not configured; history uses KRX fallback only"
+            )
             return None
 
         is_real = str(SecretsManager.kis_market("stock")).lower() != "mock"
@@ -278,7 +297,9 @@ class StockDataCollector(DataCollector):
             if not rows:
                 return None
 
-            history = pd.DataFrame(rows).drop_duplicates(subset=["date"]).sort_values("date")
+            history = (
+                pd.DataFrame(rows).drop_duplicates(subset=["date"]).sort_values("date")
+            )
             history = history.set_index("date")
             return history
         except Exception as e:
@@ -295,7 +316,9 @@ class StockDataCollector(DataCollector):
         for _ in range(3):
             for market in self.SUPPORTED_MARKETS:
                 try:
-                    df = self._krx_client.get_stock_daily_as_dataframe(market, attempt_date)
+                    df = self._krx_client.get_stock_daily_as_dataframe(
+                        market, attempt_date
+                    )
                 except Exception:
                     df = pd.DataFrame()
                 if df.empty:
@@ -312,7 +335,9 @@ class StockDataCollector(DataCollector):
             return None
 
         try:
-            cursor = datetime.strptime(self._krx_client._get_last_trading_date(), "%Y%m%d").date()
+            cursor = datetime.strptime(
+                self._krx_client._get_last_trading_date(), "%Y%m%d"
+            ).date()
         except Exception:
             cursor = date.today()
 
@@ -350,7 +375,9 @@ class StockDataCollector(DataCollector):
         if not rows:
             return None
 
-        history = pd.DataFrame(rows).drop_duplicates(subset=["date"]).sort_values("date")
+        history = (
+            pd.DataFrame(rows).drop_duplicates(subset=["date"]).sort_values("date")
+        )
         history = history.set_index("date")
         return history
 
@@ -387,23 +414,153 @@ class KRXDataCollector(DataCollector):
 
     수집 데이터:
     - 시장 개요
-    - 투자자별 매매동향
-    - 프로그램매매 현황
+    - 투자자별 매매동향 (거래대금 순매수, 원 단위)
+    - 프로그램매매 현황 (현재 명시적 결측 — 아래 참조)
     - 업종별 지수
+
+    익명 접근 정책 (2026 KRX 변경, 2026-07-02 실측):
+    - 일반 bld(``dbms/MDC/STAT/...``)는 세션 없이 400 + body "LOGOUT" 반환.
+    - outerLoader 화이트리스트 화면의 ``dbms/MDC_OUT/STAT/standard/*_OUT``
+      bld만 쿠키 부트스트랩(JSESSIONID) 후 익명 조회 가능.
     """
 
-    BASE_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+    _DATA_PATH = "/comm/bldAttendant/getJsonData.cmd"
+    _BOOTSTRAP_PATH = "/contents/MDC/MDI/outerLoader/index.cmd"
 
-    def __init__(self):
+    # KRX 일별 데이터 게시 시간 (~18:00 KST). KRXOpenAPIClient 컷오프와 정합.
+    _DATA_AVAILABLE_TIME = KRXOpenAPIClient._KRX_DATA_AVAILABLE_TIME
+
+    # 투자자별 거래실적 조회 모드. 파서(_parse_investor_trading)와 한 몸인
+    # 계약이므로 config가 아닌 상수로 유지:
+    # inqTpCd=2(일별추이), trdVolVal=2(거래대금), askBid=3(순매수)
+    _INVESTOR_QUERY_MODE = {
+        "inqTpCd": "2",
+        "trdVolVal": "2",
+        "askBid": "3",
+        "detailView": "1",
+        "locale": "ko_KR",
+        "csvxls_isNo": "false",
+    }
+
+    # MDCSTAT02203_OUT(detailView=1) 응답 컬럼 → 투자자 그룹 매핑 (파서 계약).
+    # 값은 콤마 포함 문자열, 원 단위 순매수 거래대금.
+    _INSTITUTION_COLUMNS = (
+        "TRDVAL1",  # 금융투자
+        "TRDVAL2",  # 보험
+        "TRDVAL3",  # 투신
+        "TRDVAL4",  # 사모
+        "TRDVAL5",  # 은행
+        "TRDVAL6",  # 기타금융
+        "TRDVAL7",  # 연기금
+    )
+    _ETC_CORPORATE_COLUMN = "TRDVAL8"  # 기타법인
+    _RETAIL_COLUMN = "TRDVAL9"  # 개인
+    _FOREIGN_COLUMNS = ("TRDVAL10", "TRDVAL11")  # 외국인 + 기타외국인
+
+    def __init__(self, config: LLMConfig | None = None):
         super().__init__()
+        self._config = config or LLMConfig.load()
         self._calendar = MarketCalendar()
+        self._bootstrapped = False
+        self._last_request_monotonic = 0.0
+        self._investor_cache: dict[str, dict] = {}
+        self._program_trading_warned = False
+
+    # ------------------------------------------------------------
+    # 세션 부트스트랩 / 요청 헬퍼
+    # ------------------------------------------------------------
+
+    @property
+    def _data_url(self) -> str:
+        return f"{self._config.krx_scrape_base_url}{self._DATA_PATH}"
+
+    def _bootstrap_url(self, screen_id: str) -> str:
+        return (
+            f"{self._config.krx_scrape_base_url}{self._BOOTSTRAP_PATH}"
+            f"?screenId={screen_id}&locale=ko_KR&kosdaqGlobalYn=1"
+        )
+
+    def _throttle(self) -> None:
+        """스크레이핑 요청 간 최소 간격 유지 (config 기반)."""
+        interval = float(self._config.krx_scrape_request_interval_seconds)
+        if interval <= 0:
+            return
+        wait = self._last_request_monotonic + interval - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._last_request_monotonic = time.monotonic()
+
+    def _ensure_bootstrap(self, screen_id: str, *, force: bool = False) -> bool:
+        """outerLoader 화면 로드로 JSESSIONID 쿠키 획득 (인스턴스당 1회)."""
+        if self._bootstrapped and not force:
+            return True
+        try:
+            self._throttle()
+            response = self.session.get(
+                self._bootstrap_url(screen_id),
+                timeout=self._config.krx_scrape_timeout,
+            )
+        except Exception as e:
+            logger.warning(f"KRX session bootstrap failed: {e}")
+            self._bootstrapped = False
+            return False
+        if response.status_code != 200:
+            logger.warning(
+                f"KRX session bootstrap failed: status={response.status_code}"
+            )
+            self._bootstrapped = False
+            return False
+        self._bootstrapped = True
+        return True
+
+    def _fetch_outer_json(self, payload: dict, screen_id: str) -> dict | None:
+        """MDC_OUT bld 데이터 조회 (400 "LOGOUT" 시 1회 재부트스트랩 후 실패).
+
+        Returns:
+            응답 봉투 dict(``{"output": [...], ...}``) 또는 실패 시 None.
+        """
+        if not self._ensure_bootstrap(screen_id):
+            return None
+        headers = {"Referer": self._bootstrap_url(screen_id)}
+        for attempt in range(2):
+            self._throttle()
+            response = self.session.post(
+                self._data_url,
+                data=payload,
+                headers=headers,
+                timeout=self._config.krx_scrape_timeout,
+            )
+            if response.status_code == 200:
+                try:
+                    return response.json()
+                except ValueError:
+                    logger.warning("KRX outer data response is not valid JSON")
+                    return None
+            if (
+                response.status_code == 400
+                and "LOGOUT" in response.text
+                and attempt == 0
+            ):
+                logger.info("KRX session expired (LOGOUT); re-bootstrapping once")
+                if not self._ensure_bootstrap(screen_id, force=True):
+                    return None
+                continue
+            logger.warning(
+                f"KRX outer data request failed: status={response.status_code}"
+            )
+            return None
+        return None
 
     def _get_last_trading_date(self) -> str:
-        """KRX 기준 최근 거래일 (휴장일/공휴일 반영)."""
+        """KRX 기준 최근 게시 거래일 (휴장일/공휴일 + 게시 시간 반영).
+
+        T일 데이터는 ~18:00 KST 이후 게시되므로 그 전에는 직전 거래일을
+        반환한다 (KRXOpenAPIClient._KRX_DATA_AVAILABLE_TIME과 정합).
+        """
         now = datetime.now()
         today = now.date()
 
-        if now.time() < self._calendar.MARKET_CLOSE_TIME:
+        if now.time() < self._DATA_AVAILABLE_TIME:
             return self._calendar.get_previous_market_day(today).strftime("%Y%m%d")
 
         if self._calendar.is_market_day(today):
@@ -415,7 +572,7 @@ class KRXDataCollector(DataCollector):
         """KRX 데이터 수집"""
         data = {
             "market_overview": self._get_market_overview(),
-            "investor_trading": self._get_investor_trading(),
+            "investor_trading": self.get_investor_trading(),
             "program_trading": self._get_program_trading(),
             "index_data": self._get_index_data(),
         }
@@ -430,7 +587,7 @@ class KRXDataCollector(DataCollector):
                 "isuCd2": code,
                 "mktId": "STK",
             }
-            response = self.session.post(self.BASE_URL, data=payload, timeout=10)
+            response = self.session.post(self._data_url, data=payload, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -444,65 +601,140 @@ class KRXDataCollector(DataCollector):
                 "bld": "dbms/MDC/STAT/standard/MDCSTAT00101",
                 "mktId": "STK",
             }
-            response = self.session.post(self.BASE_URL, data=payload, timeout=10)
+            response = self.session.post(self._data_url, data=payload, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
             logger.debug(f"KRX market overview failed: {e}")
         return {}
 
-    def _get_investor_trading(self) -> dict:
-        """투자자별 매매동향"""
+    def get_investor_trading(self) -> dict:
+        """투자자별 매매동향 (거래대금 순매수, 원 단위).
+
+        익명 outerLoader 경로(MDCSTAT02203_OUT)로 시장별 일별추이를 조회해
+        config의 markets(STK/KSQ)를 합산한다. 컨슈머 계약 키
+        (foreign_net/institution_net/retail_net)는 유지.
+        """
         try:
-            today = self._get_last_trading_date()
-            payload = {
-                "bld": "dbms/MDC/STAT/standard/MDCSTAT02401",
-                "mktId": "STK",
-                "strtDd": today,
-                "endDd": today,
+            target_date = self._get_last_trading_date()
+            cached = self._investor_cache.get(target_date)
+            if cached is not None:
+                return cached
+
+            screen_id = self._config.krx_scrape_investor_screen_id
+            by_market: dict[str, dict[str, float]] = {}
+            for market in self._config.krx_scrape_investor_markets:
+                payload = {
+                    "bld": self._config.krx_scrape_investor_bld,
+                    "mktId": market,
+                    "strtDd": target_date,
+                    "endDd": target_date,
+                    **self._INVESTOR_QUERY_MODE,
+                }
+                data = self._fetch_outer_json(payload, screen_id)
+                if not data:
+                    continue
+                parsed = self._parse_investor_trading(data, target_date)
+                if parsed:
+                    by_market[market] = parsed
+
+            if not by_market:
+                return {}
+
+            keys = (
+                "foreign_net",
+                "institution_net",
+                "retail_net",
+                "etc_corporate_net",
+            )
+            result: dict = {
+                key: sum(market_data[key] for market_data in by_market.values())
+                for key in keys
             }
-            response = self.session.post(self.BASE_URL, data=payload, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                return self._parse_investor_trading(data)
+            result["date"] = target_date
+            result["unit"] = "KRW"
+            result["measure"] = "trade_value_net"
+            result["by_market"] = by_market
+            self._investor_cache[target_date] = result
+            return result
         except Exception as e:
             logger.debug(f"KRX investor trading failed: {e}")
         return {}
 
-    def _parse_investor_trading(self, data: dict) -> dict:
-        """투자자별 데이터 파싱"""
-        result = {}
+    # Backward-compat alias: market_structure_collector and older callers used
+    # the pre-promotion private name.
+    _get_investor_trading = get_investor_trading
+
+    def _parse_investor_trading(self, data: dict, target_date: str) -> dict:
+        """투자자별 데이터 파싱 (MDCSTAT02203_OUT 일별추이 응답).
+
+        기관 = 금융투자~연기금(TRDVAL1~7) 합산,
+        외국인 = 외국인+기타외국인(TRDVAL10+11), 개인 = TRDVAL9.
+        """
         try:
-            output = data.get("output", [])
-            for row in output:
-                inv_type = row.get("INVST_NM", "")
-                net_buy = float(row.get("NETT_BUY_QTY", 0))
-                if "외국인" in inv_type:
-                    result["foreign_net"] = net_buy
-                elif "기관" in inv_type:
-                    result["institution_net"] = net_buy
-                elif "개인" in inv_type:
-                    result["retail_net"] = net_buy
+            output = data.get("output") or []
+            row = None
+            for candidate in output:
+                trd_dd = str(candidate.get("TRD_DD", ""))
+                normalized = trd_dd.replace("/", "").replace("-", "").replace(".", "")
+                if normalized == target_date:
+                    row = candidate
+                    break
+            if row is None:
+                if not output:
+                    return {}
+                row = output[0]
+
+            institution = sum(
+                self._parse_krx_number(row.get(column))
+                for column in self._INSTITUTION_COLUMNS
+            )
+            foreign = sum(
+                self._parse_krx_number(row.get(column))
+                for column in self._FOREIGN_COLUMNS
+            )
+            return {
+                "foreign_net": foreign,
+                "institution_net": institution,
+                "retail_net": self._parse_krx_number(row.get(self._RETAIL_COLUMN)),
+                "etc_corporate_net": self._parse_krx_number(
+                    row.get(self._ETC_CORPORATE_COLUMN)
+                ),
+            }
         except Exception as e:
             logger.debug(f"Failed to parse investor trading: {e}")
-        return result
+        return {}
+
+    @staticmethod
+    def _parse_krx_number(value) -> float:
+        """KRX 콤마 포함 숫자 문자열 파싱 ("1,234" / "-1,234" / "-" / None)."""
+        if value is None:
+            return 0.0
+        text = str(value).strip().replace(",", "")
+        if not text or text == "-":
+            return 0.0
+        return float(text)
 
     def _get_program_trading(self) -> dict:
-        """프로그램 매매"""
-        try:
-            today = self._get_last_trading_date()
-            payload = {
-                "bld": "dbms/MDC/STAT/standard/MDCSTAT02701",
-                "mktId": "STK",
-                "strtDd": today,
-                "endDd": today,
-            }
-            response = self.session.post(self.BASE_URL, data=payload, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-        except Exception as e:
-            logger.debug(f"KRX program trading failed: {e}")
-        return {}
+        """프로그램 매매 — 현재 자동 수집 불가, 명시적 결측 처리.
+
+        올바른 화면(MDCSTAT02601)은 KRX 로그인이 필요해 익명 접근이 불가하고,
+        과거 사용하던 bld(MDCSTAT02701)는 ETN/ELW 시세 화면이라 프로그램매매
+        데이터가 아니었다. 가짜/빈 값 대신 사유를 명시해 반환한다.
+
+        TODO(roadmap 2026-07-02 O1/O10): KIS TR 소스 확정 시 교체.
+        """
+        if not self._program_trading_warned:
+            logger.warning(
+                "KRX program trading is unavailable via anonymous access "
+                "(login required); returning explicit missing marker until "
+                "a KIS TR source is confirmed (roadmap O1/O10)"
+            )
+            self._program_trading_warned = True
+        return {
+            "status": "unavailable",
+            "reason": "krx_login_required_pending_kis_tr",
+        }
 
     def _get_index_data(self) -> dict:
         """지수 데이터"""
@@ -511,7 +743,7 @@ class KRXDataCollector(DataCollector):
                 "bld": "dbms/MDC/STAT/standard/MDCSTAT00501",
                 "idxIndMidclssCd": "01",  # KOSPI
             }
-            response = self.session.post(self.BASE_URL, data=payload, timeout=10)
+            response = self.session.post(self._data_url, data=payload, timeout=10)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
@@ -606,7 +838,9 @@ class DARTDataCollector(DataCollector):
         data = {
             "recent_disclosures": self._get_disclosures(corp_code) if corp_code else [],
             "financial_info": self._get_financial_info(corp_code) if corp_code else {},
-            "major_shareholders": self._get_major_shareholders(corp_code) if corp_code else {},
+            "major_shareholders": (
+                self._get_major_shareholders(corp_code) if corp_code else {}
+            ),
             "executive_major_shareholders": (
                 self._get_executive_major_shareholders(corp_code) if corp_code else []
             ),
@@ -818,9 +1052,11 @@ class KOFIADataCollector(DataCollector):
 
     def __init__(self):
         super().__init__()
-        self.session.headers.update({
-            'Referer': 'https://freesis.kofia.or.kr/',
-        })
+        self.session.headers.update(
+            {
+                "Referer": "https://freesis.kofia.or.kr/",
+            }
+        )
 
     def collect(self) -> dict:
         """KOFIA 데이터 수집"""
@@ -837,8 +1073,8 @@ class KOFIADataCollector(DataCollector):
             url = f"{self.BASE_URL}/stat/FreeSIS/info/fsis/fsis0100/fsis010001.do"
             response = self.session.get(url, timeout=10)
             if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                tables = soup.find_all('table')
+                soup = BeautifulSoup(response.text, "html.parser")
+                tables = soup.find_all("table")
                 return {"status": "available", "tables_found": len(tables)}
         except Exception as e:
             logger.debug(f"KOFIA fund overview failed: {e}")
@@ -881,9 +1117,11 @@ class MKStockNewsCollector(DataCollector):
 
     def __init__(self):
         super().__init__()
-        self.session.headers.update({
-            'Referer': 'https://stock.mk.co.kr/',
-        })
+        self.session.headers.update(
+            {
+                "Referer": "https://stock.mk.co.kr/",
+            }
+        )
         self._market_news_cache: list[dict] = []
         self._market_news_cached_at: float = 0.0
         self._market_news_ttl_seconds: float = 60.0
@@ -912,18 +1150,24 @@ class MKStockNewsCollector(DataCollector):
             url = f"{self.BASE_URL}/news"
             response = self.session.get(url, timeout=10, allow_redirects=True)
             if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
+                soup = BeautifulSoup(response.text, "html.parser")
                 for li in soup.select("ul.news_list li.news_node")[:10]:
                     a = li.find("a", href=True)
                     if a:
                         title = a.get_text(strip=True)
                         href = a["href"]
                         if title and "/news/view/" in href:
-                            news_list.append({
-                                "title": title,
-                                "link": f"{self.BASE_URL}{href}" if href.startswith("/") else href,
-                                "source": "매일경제",
-                            })
+                            news_list.append(
+                                {
+                                    "title": title,
+                                    "link": (
+                                        f"{self.BASE_URL}{href}"
+                                        if href.startswith("/")
+                                        else href
+                                    ),
+                                    "source": "매일경제",
+                                }
+                            )
                 self._market_news_cache = news_list
                 self._market_news_cached_at = now_ts
         except Exception as e:
@@ -958,16 +1202,44 @@ class MKStockNewsCollector(DataCollector):
         if not news_list:
             return NewsSentiment.NEUTRAL
 
-        positive_keywords = ['급등', '상승', '호재', '실적개선', '목표가상향', '매수', '추천',
-                            '성장', '기대', '수주', '신사업', '흑자', '반등', '돌파']
-        negative_keywords = ['급락', '하락', '악재', '실적악화', '목표가하향', '매도', '경고',
-                            '손실', '우려', '취소', '적자', '하회', '이탈', '감소']
+        positive_keywords = [
+            "급등",
+            "상승",
+            "호재",
+            "실적개선",
+            "목표가상향",
+            "매수",
+            "추천",
+            "성장",
+            "기대",
+            "수주",
+            "신사업",
+            "흑자",
+            "반등",
+            "돌파",
+        ]
+        negative_keywords = [
+            "급락",
+            "하락",
+            "악재",
+            "실적악화",
+            "목표가하향",
+            "매도",
+            "경고",
+            "손실",
+            "우려",
+            "취소",
+            "적자",
+            "하회",
+            "이탈",
+            "감소",
+        ]
 
         pos_count = 0
         neg_count = 0
 
         for news in news_list:
-            title = news.get('title', '')
+            title = news.get("title", "")
             for kw in positive_keywords:
                 if kw in title:
                     pos_count += 1
@@ -1034,7 +1306,9 @@ class NaverFinanceNewsCollector(DataCollector):
                 news_list.append(
                     {
                         "title": title,
-                        "link": f"{self.BASE_URL}{href}" if href.startswith("/") else href,
+                        "link": (
+                            f"{self.BASE_URL}{href}" if href.startswith("/") else href
+                        ),
                         "code": code,
                         "source": "네이버금융",
                     }
@@ -1179,7 +1453,6 @@ class FuturesGlobalCollector(DataCollector):
         )
 
 
-
 class FuturesFlowCollector(DataCollector):
     """수급 데이터 수집"""
 
@@ -1219,7 +1492,9 @@ class FuturesFlowCollector(DataCollector):
 
         try:
             futures_list = self._krx_client.get_kospi200_futures(base_date)
-            futures = max(futures_list, key=lambda f: f.volume) if futures_list else None
+            futures = (
+                max(futures_list, key=lambda f: f.volume) if futures_list else None
+            )
             options = self._krx_client.get_kospi200_options(base_date)
             spot = self._get_kospi200_index_price(base_date)
             if futures is not None and spot is not None:
@@ -1275,10 +1550,14 @@ class FuturesFlowCollector(DataCollector):
             institution_futures_5d=None,
             basis=round(basis, 2) if basis is not None else None,
             put_call_ratio=round(put_call, 2) if put_call is not None else None,
-            orderbook_imbalance=micro_data.get("orderbook_imbalance") if micro_data else None,
+            orderbook_imbalance=(
+                micro_data.get("orderbook_imbalance") if micro_data else None
+            ),
             ofi_zscore=micro_data.get("ofi_zscore") if micro_data else None,
             aggressor_ratio=micro_data.get("aggressor_ratio") if micro_data else None,
-            aggressor_balance=micro_data.get("aggressor_balance") if micro_data else None,
+            aggressor_balance=(
+                micro_data.get("aggressor_balance") if micro_data else None
+            ),
             oi_change=micro_data.get("oi_change") if micro_data else None,
             price_change=micro_data.get("price_change") if micro_data else None,
             microstructure_score=micro_score,
@@ -1302,7 +1581,9 @@ class FuturesFlowCollector(DataCollector):
 
         try:
             redis_client = RedisClient.get_client()
-            raw_msgs = redis_client.xrevrange(stream_name, max="+", min="-", count=max_entries)
+            raw_msgs = redis_client.xrevrange(
+                stream_name, max="+", min="-", count=max_entries
+            )
         except Exception as e:
             logger.debug(f"Redis tick fetch failed: {e}")
             missing.append("redis_unavailable")
@@ -1341,7 +1622,9 @@ class FuturesFlowCollector(DataCollector):
             return None
         return max(counts.items(), key=lambda item: item[1])[0]
 
-    def _extract_orderbook_levels(self, data: dict[str, Any]) -> tuple[list[float], list[float], list[float], list[float]]:
+    def _extract_orderbook_levels(
+        self, data: dict[str, Any]
+    ) -> tuple[list[float], list[float], list[float], list[float]]:
         bid_prices: list[float] = []
         bid_qtys: list[float] = []
         ask_prices: list[float] = []
@@ -1485,7 +1768,9 @@ class FuturesFlowCollector(DataCollector):
             missing,
         )
         ofi_zscore = self._compute_ofi_zscore(ofi_calc, missing)
-        aggressor_ratio, aggressor_balance = self._compute_aggressor_metrics(state, missing)
+        aggressor_ratio, aggressor_balance = self._compute_aggressor_metrics(
+            state, missing
+        )
         oi_change, price_change = self._compute_oi_price_change(state, missing)
         micro_score, components = self._compute_micro_score(
             orderbook_imbalance,
@@ -1520,7 +1805,9 @@ class FuturesFlowCollector(DataCollector):
             missing.append("orderbook_imbalance")
             return None
 
-        bid_prices, ask_prices, bid_qtys, ask_qtys = self._extract_orderbook_levels(state.last_orderbook)
+        bid_prices, ask_prices, bid_qtys, ask_qtys = self._extract_orderbook_levels(
+            state.last_orderbook
+        )
         if not (bid_prices and ask_prices and bid_qtys and ask_qtys):
             missing.append("orderbook_imbalance")
             return None
@@ -1537,7 +1824,9 @@ class FuturesFlowCollector(DataCollector):
             return None
 
     @staticmethod
-    def _compute_ofi_zscore(ofi_calc: OFICalculator, missing: list[str]) -> float | None:
+    def _compute_ofi_zscore(
+        ofi_calc: OFICalculator, missing: list[str]
+    ) -> float | None:
         ofi_zscore = ofi_calc.get_ofi_zscore()
         if ofi_zscore is None:
             missing.append("ofi_zscore")
@@ -1562,13 +1851,21 @@ class FuturesFlowCollector(DataCollector):
         missing: list[str],
     ) -> tuple[float | None, float | None]:
         oi_change: float | None = None
-        if state.first_oi is not None and state.last_oi is not None and state.trade_count >= 2:
+        if (
+            state.first_oi is not None
+            and state.last_oi is not None
+            and state.trade_count >= 2
+        ):
             oi_change = state.last_oi - state.first_oi
         else:
             missing.append("open_interest_change")
 
         price_change: float | None = None
-        if state.first_trade_price is not None and state.last_trade_price is not None and state.trade_count >= 2:
+        if (
+            state.first_trade_price is not None
+            and state.last_trade_price is not None
+            and state.trade_count >= 2
+        ):
             price_change = state.last_trade_price - state.first_trade_price
         else:
             missing.append("price_change")
@@ -1618,12 +1915,22 @@ class FuturesFlowCollector(DataCollector):
         micro_score: float,
     ) -> dict[str, Any]:
         return {
-            "orderbook_imbalance": round(orderbook_imbalance, 3) if orderbook_imbalance is not None else None,
+            "orderbook_imbalance": (
+                round(orderbook_imbalance, 3)
+                if orderbook_imbalance is not None
+                else None
+            ),
             "ofi_zscore": round(ofi_zscore, 2) if ofi_zscore is not None else None,
-            "aggressor_ratio": round(aggressor_ratio, 3) if aggressor_ratio is not None else None,
-            "aggressor_balance": round(aggressor_balance, 3) if aggressor_balance is not None else None,
+            "aggressor_ratio": (
+                round(aggressor_ratio, 3) if aggressor_ratio is not None else None
+            ),
+            "aggressor_balance": (
+                round(aggressor_balance, 3) if aggressor_balance is not None else None
+            ),
             "oi_change": round(oi_change, 2) if oi_change is not None else None,
-            "price_change": round(price_change, 2) if price_change is not None else None,
+            "price_change": (
+                round(price_change, 2) if price_change is not None else None
+            ),
             "microstructure_score": round(micro_score, 1),
         }
 
@@ -1653,7 +1960,9 @@ class FuturesFlowCollector(DataCollector):
             self._update_state_from_orderbook(data, state, ofi_calc)
             self._update_state_from_trade(data, state)
 
-        return self._finalize_microstructure(state, ofi_calc, orderbook_analyzer, missing)
+        return self._finalize_microstructure(
+            state, ofi_calc, orderbook_analyzer, missing
+        )
 
     def _get_last_trading_date(self) -> str:
         now = datetime.now()
@@ -1675,6 +1984,7 @@ class FuturesFlowCollector(DataCollector):
             if "KOSPI200" in name or "코스피200" in name:
                 return KRXOpenAPIClient._parse_number(item.get("CLSPRC_IDX", 0))
         return None
+
 
 class FuturesEventCollector(DataCollector):
     """경제 이벤트 수집"""
@@ -1703,14 +2013,16 @@ class FuturesEventCollector(DataCollector):
         events = []
         for item in payload:
             try:
-                events.append(EconomicEvent(
-                    date=str(item.get("date", "")),
-                    time=str(item.get("time", "")),
-                    country=str(item.get("country", "")),
-                    event=str(item.get("event", "")),
-                    importance=str(item.get("importance", "")),
-                    impact_analysis=str(item.get("impact_analysis", "")),
-                ))
+                events.append(
+                    EconomicEvent(
+                        date=str(item.get("date", "")),
+                        time=str(item.get("time", "")),
+                        country=str(item.get("country", "")),
+                        event=str(item.get("event", "")),
+                        importance=str(item.get("importance", "")),
+                        impact_analysis=str(item.get("impact_analysis", "")),
+                    )
+                )
             except Exception:
                 continue
 

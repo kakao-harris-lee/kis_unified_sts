@@ -178,6 +178,22 @@ krx_api:
   timeout_seconds: 30
   analysis_days: 20
 
+  # data.krx.co.kr 익명 스크레이핑 설정 (KRXDataCollector)
+  # KRX 정책 변경(2026)으로 일반 bld(dbms/MDC/STAT/...)는 세션 없이
+  # 400 + "LOGOUT" 응답. outerLoader 화이트리스트 화면의 MDC_OUT bld만
+  # 쿠키 부트스트랩(JSESSIONID) 후 익명 조회 가능.
+  scrape:
+    base_url: "https://data.krx.co.kr"
+    timeout_seconds: 10
+    # 스크레이핑 요청 간 최소 간격 (예의상 rate limit)
+    request_interval_seconds: 2.0
+    investor_trading:
+      # 투자자별 거래실적 일별추이 (거래대금 기준, 익명 가용 실측 2026-07-02)
+      bld: "dbms/MDC_OUT/STAT/standard/MDCSTAT02203_OUT"
+      screen_id: "MDCSTAT022"
+      # 합산 대상 시장 (STK=KOSPI, KSQ=KOSDAQ)
+      markets: ["STK", "KSQ"]
+
   # 섹터별 ETF 코드 매핑
   sector_etfs:
     반도체: ["091160", "091170", "395160"]

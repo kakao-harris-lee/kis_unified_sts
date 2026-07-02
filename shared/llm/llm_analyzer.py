@@ -597,7 +597,7 @@ class UnifiedTradingAnalyzer:
         self.stock_news_analyzer = StockNewsAnalyzer()
 
         # Korean Financial Data Source Collectors
-        self.krx_collector = KRXDataCollector()
+        self.krx_collector = KRXDataCollector(self.config)
         self.seibro_collector = SEIBRODataCollector()
         self.dart_collector = DARTDataCollector(api_key=dart_api_key)
         self.ksd_collector = KSDDataCollector()
