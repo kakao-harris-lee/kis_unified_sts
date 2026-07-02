@@ -7,6 +7,7 @@ reads via TradingStateReader. Side-aware, contract-multiplier PnL. No I/O.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +15,17 @@ from typing import Any
 def _s(fields: dict[bytes, bytes], key: str) -> str:
     raw = fields.get(key.encode(), b"")
     return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+
+
+def _json_dict(raw: str) -> dict[str, Any] | None:
+    """Parse a JSON-object stream field; None for absent/malformed/non-dict."""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _ms_to_iso(ms: str) -> str:
@@ -54,6 +66,10 @@ def parse_final_signal(fields: dict[bytes, bytes]) -> dict[str, Any]:
         "entry_price": float(_s(fields, "entry_price") or 0.0),
         "confidence": float(_s(fields, "confidence") or 0.0),
         "generated_at_ms": _s(fields, "generated_at_ms"),
+        # Market-risk gate trace (gate_trace_payload JSON attached by
+        # decision_engine, forwarded verbatim by risk_filter — roadmap
+        # Phase 2D). Passthrough-only: None on pre-gate records.
+        "market_risk_gate": _json_dict(_s(fields, "market_risk_gate")),
     }
 
 
@@ -117,7 +133,7 @@ def build_trade_dict(
 
 def build_signal_dict(sig: dict[str, Any]) -> dict[str, Any]:
     """Dashboard signal dict (mirrors orchestrator convention)."""
-    return {
+    data = {
         "id": sig["signal_id"],
         "symbol": sig["symbol"],
         "name": "",
@@ -131,3 +147,10 @@ def build_signal_dict(sig: dict[str, Any]) -> dict[str, Any]:
         "reason": "",
         "stage": "",
     }
+    gate = sig.get("market_risk_gate")
+    if isinstance(gate, dict):
+        # Fixed key contract: the /signals trace lane resolves the gate from
+        # the top-level ``market_risk_gate`` key first. Attached only when
+        # present so pre-gate records keep their exact legacy shape.
+        data["market_risk_gate"] = gate
+    return data

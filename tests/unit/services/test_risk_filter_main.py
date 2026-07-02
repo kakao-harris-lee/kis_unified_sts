@@ -264,3 +264,80 @@ def test_streams_for_env_override(monkeypatch) -> None:
     monkeypatch.setenv("FUTURES_CANDIDATE_STREAM", "custom.candidate")
     monkeypatch.setenv("FUTURES_FINAL_STREAM", "custom.final")
     assert _streams_for("live") == ("custom.candidate", "custom.final")
+
+
+# ---------------------------------------------------------------------------
+# Market-risk gate composition (Phase 2D, roadmap §5.2 track C)
+# ---------------------------------------------------------------------------
+
+
+async def _publish_candidate_with_gate(
+    redis, signal: Signal, *, entry_size_factor: str, gate_trace: str
+) -> None:
+    fields = signal.to_stream_dict()
+    fields["signal_id"] = "sig-1"
+    fields["entry_size_factor"] = entry_size_factor
+    fields["market_risk_gate"] = gate_trace
+    await redis.xadd(CANDIDATE_STREAM, fields)
+
+
+@pytest.mark.asyncio
+async def test_final_stream_composes_upstream_entry_size_factor(redis, signals_writer):
+    """Multiplicative stacking: gate 0.7 x layer 0.5 -> 0.35 on the final
+    stream. The layer factor stands in for any other sizing lane (e.g.
+    consecutive-loss or a future LLM size factor) — composition is
+    multiplication-only, so factors accumulate conservatively."""
+    import asyncio
+    import json
+
+    gate_trace = json.dumps({"mode": "enforce", "band": "ELEVATED"})
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=0.5))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    await _publish_candidate_with_gate(
+        redis, _signal("long"), entry_size_factor="0.7", gate_trace=gate_trace
+    )
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    fields = (await redis.xrange(FINAL_STREAM))[0][1]
+    assert float(fields[b"size_multiplier"]) == pytest.approx(0.35)
+    # Fixed contract: the market_risk_gate trace is forwarded unchanged for
+    # the /signals trace lane.
+    assert json.loads(fields[b"market_risk_gate"].decode()) == {
+        "mode": "enforce",
+        "band": "ELEVATED",
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_or_invalid_entry_size_factor_is_neutral(redis, signals_writer):
+    """Legacy candidates (no gate fields) and malformed factors keep the
+    layer-only size_multiplier."""
+    import asyncio
+
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=0.5))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+
+    # Legacy candidate — no entry_size_factor / market_risk_gate fields.
+    await _publish_candidate(redis, _signal("long"))
+    # Malformed factor (out of range) — must fail open to neutral 1.0.
+    fields = _signal("short").to_stream_dict()
+    fields["signal_id"] = "sig-2"
+    fields["entry_size_factor"] = "0.0"
+    await redis.xadd(CANDIDATE_STREAM, fields)
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    entries = await redis.xrange(FINAL_STREAM)
+    assert len(entries) == 2
+    for _msg_id, out in entries:
+        assert float(out[b"size_multiplier"]) == pytest.approx(0.5)
+        assert b"market_risk_gate" not in out

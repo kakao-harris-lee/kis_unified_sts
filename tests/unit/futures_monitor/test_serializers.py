@@ -116,3 +116,66 @@ def test_build_signal_dict_futures() -> None:
     assert d["strategy"] == "A_gap_reversion"
     assert d["price"] == 331.20
     assert d["side"] == "entry"
+
+
+# ---------------------------------------------------------------------------
+# Market-risk gate passthrough (roadmap Phase 2 — /signals trace lane contract)
+# ---------------------------------------------------------------------------
+
+GATE_JSON = (
+    '{"mode": "shadow", "band": "HIGH", "score": 74.2, "would_block": true,'
+    ' "allow": true, "size_factor": 0.5,'
+    ' "reason": "market_risk band=HIGH score=74.2 rule=block_new_long"}'
+)
+
+
+def _final_fields(**extra: bytes) -> dict[bytes, bytes]:
+    fields = {
+        b"signal_id": b"s1",
+        b"symbol": b"A05603",
+        b"setup_type": b"A_gap_reversion",
+        b"direction": b"long",
+        b"entry_price": b"331.20",
+        b"confidence": b"0.85",
+        b"generated_at_ms": b"1700000000000",
+    }
+    fields.update({key.encode(): value for key, value in extra.items()})
+    return fields
+
+
+def test_parse_final_signal_passes_market_risk_gate_through() -> None:
+    sig = parse_final_signal(_final_fields(market_risk_gate=GATE_JSON.encode()))
+    gate = sig["market_risk_gate"]
+    assert gate["band"] == "HIGH"
+    assert gate["mode"] == "shadow"
+    assert gate["would_block"] is True
+    assert gate["size_factor"] == 0.5
+
+
+def test_parse_final_signal_gate_absent_or_malformed_is_none() -> None:
+    assert parse_final_signal(_final_fields())["market_risk_gate"] is None
+    assert (
+        parse_final_signal(_final_fields(market_risk_gate=b"not-json"))[
+            "market_risk_gate"
+        ]
+        is None
+    )
+    assert (
+        parse_final_signal(_final_fields(market_risk_gate=b'["list"]'))[
+            "market_risk_gate"
+        ]
+        is None
+    )
+
+
+def test_build_signal_dict_carries_gate_top_level() -> None:
+    sig = parse_final_signal(_final_fields(market_risk_gate=GATE_JSON.encode()))
+    d = build_signal_dict(sig)
+    # /signals trace lane resolves the top-level key first (fixed contract).
+    assert d["market_risk_gate"]["band"] == "HIGH"
+    assert d["market_risk_gate"]["would_block"] is True
+
+
+def test_build_signal_dict_omits_gate_when_absent() -> None:
+    d = build_signal_dict(parse_final_signal(_final_fields()))
+    assert "market_risk_gate" not in d  # legacy shape preserved bit-for-bit

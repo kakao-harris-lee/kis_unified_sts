@@ -23,7 +23,9 @@ Error taxonomy:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -31,6 +33,12 @@ from typing import Any
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
+from shared.risk.market_risk_gate import (
+    MarketRiskGateConfig,
+    MarketRiskGateDecision,
+    evaluate_market_risk_gate,
+    gate_trace_payload,
+)
 from shared.streaming.audit import decode_stream_id, format_audit_kv
 from shared.streaming.parquet_warmup import (
     warmup_engine_from_parquet as _warmup_engine_from_parquet,
@@ -51,6 +59,9 @@ class DecisionEngineDaemon:
         candidate_stream: str,
         candidate_maxlen: int,
         tick_interval_seconds: float,
+        market_risk_gate_config: MarketRiskGateConfig | None = None,
+        market_risk_redis: Any | None = None,
+        shadow_gate_log_interval_seconds: float = 300.0,
     ) -> None:
         self.redis = redis
         self.setups = setups
@@ -58,6 +69,16 @@ class DecisionEngineDaemon:
         self.candidate_stream = candidate_stream
         self.candidate_maxlen = candidate_maxlen
         self.tick_interval_seconds = tick_interval_seconds
+        # Market-risk ENTRY gate (roadmap §5.2 track C). Config is loaded
+        # ONCE at startup by the caller — no YAML reparse on the hot path.
+        # ``market_risk_redis`` is a SYNC client (the shared evaluator reads
+        # the market:risk:latest hash synchronously, same pattern as the
+        # macro_reader sync client). Both None => gate unwired (legacy
+        # behavior, e.g. tests constructing the daemon without gate args).
+        self.market_risk_gate_config = market_risk_gate_config
+        self.market_risk_redis = market_risk_redis
+        self.shadow_gate_log_interval_seconds = shadow_gate_log_interval_seconds
+        self._last_shadow_gate_log_monotonic: float | None = None
         self._stop = asyncio.Event()
 
     async def run(self) -> None:
@@ -85,8 +106,31 @@ class DecisionEngineDaemon:
                 if signal is None:
                     continue
 
+                # Market-risk ENTRY gate — new-entry candidates only; exit /
+                # stop / kill_switch paths never flow through this daemon
+                # (futures exits are pseudo-OCO fills in order_router).
+                gate_decision = self._evaluate_market_risk_gate(signal)
+                if gate_decision is not None and not gate_decision.allow:
+                    # enforce mode + blocking matrix cell (HIGH new-long /
+                    # CRITICAL all). Mirror of the monolith adapters'
+                    # reject-reason pattern (PR #483): record a canonical
+                    # machine-readable reason at the daemon boundary, then
+                    # drop the entry candidate. allow=False is impossible
+                    # outside enforce mode (fixed gate contract).
+                    logger.info(
+                        format_audit_kv(
+                            event="entry_rejected",
+                            stage="market_risk_gate",
+                            setup_type=signal.setup_type,
+                            symbol=signal.symbol,
+                            direction=signal.direction,
+                            reason=gate_decision.reason,
+                        )
+                    )
+                    continue
+
                 try:
-                    await self._publish(signal)
+                    await self._publish(signal, gate_decision=gate_decision)
                 except Exception:
                     logger.exception(
                         "publish to %s failed; signal dropped (%s)",
@@ -99,11 +143,81 @@ class DecisionEngineDaemon:
     async def stop(self) -> None:
         self._stop.set()
 
-    async def _publish(self, signal) -> None:
+    def _evaluate_market_risk_gate(self, signal) -> MarketRiskGateDecision | None:
+        """Evaluate the market-risk ENTRY gate for one fired candidate.
+
+        The candidate's ``signal.direction`` (signal_direction) decides the
+        side; the gate only answers allow/size for that side — long/short
+        symmetry is preserved (shorts stay allowed at HIGH; only CRITICAL
+        blocks both sides). Returns None when the gate is unwired. The shared
+        evaluator never raises (fail-open), so this cannot break the tick.
+        """
+        config = self.market_risk_gate_config
+        if config is None or self.market_risk_redis is None:
+            return None
+        decision = evaluate_market_risk_gate(
+            self.market_risk_redis,
+            config,
+            asset="futures",
+            side=signal.direction,
+        )
+        if decision.mode == "shadow" and (
+            decision.would_block or decision.size_factor != 1.0
+        ):
+            self._maybe_log_shadow_gate(signal, decision)
+        return decision
+
+    def _maybe_log_shadow_gate(self, signal, decision: MarketRiskGateDecision) -> None:
+        """Throttled shadow observation log (would_block / would-be size).
+
+        Shadow mode never rejects and never resizes — this log plus the
+        ``market_risk_gate`` trace field on the published candidate are the
+        only shadow outputs.
+        """
+        now = time.monotonic()
+        last = self._last_shadow_gate_log_monotonic
+        if last is not None and now - last < self.shadow_gate_log_interval_seconds:
+            return
+        self._last_shadow_gate_log_monotonic = now
+        logger.info(
+            format_audit_kv(
+                event="market_risk_gate_shadow",
+                would_block=decision.would_block,
+                size_factor=decision.size_factor,
+                band=decision.band,
+                score=decision.score,
+                setup_type=signal.setup_type,
+                symbol=signal.symbol,
+                direction=signal.direction,
+                reason=decision.reason,
+            )
+        )
+
+    async def _publish(
+        self, signal, *, gate_decision: MarketRiskGateDecision | None = None
+    ) -> None:
         fields = signal.to_stream_dict()
         # Issue a fresh signal_id per emission so downstream consumers can
         # de-dupe and trace through risk_filter / order_router / order_fills.
         fields["signal_id"] = uuid.uuid4().hex
+        if gate_decision is not None:
+            # Fixed contract: the /signals trace lane reads this exact key
+            # from the signal metadata; gate_trace_payload keys are frozen.
+            # Attached in EVERY mode (shadow observability included).
+            fields["market_risk_gate"] = json.dumps(gate_trace_payload(gate_decision))
+            # Size composition: entry_size_factor seeds the decoupled
+            # chain's multiplicative sizing — risk_filter multiplies it into
+            # the RiskFilterLayer size_multiplier product and order_router
+            # applies that product to base_quantity. Multiplication-only
+            # composition means every factor <= 1.0 (gate matrix cell, any
+            # future LLM size factor, consecutive-loss filter) stacks in the
+            # most conservative direction. The gate factor is APPLIED only
+            # in enforce mode; shadow reports it observationally in the
+            # trace payload above (fixed gate contract).
+            applied_size_factor = (
+                gate_decision.size_factor if gate_decision.mode == "enforce" else 1.0
+            )
+            fields["entry_size_factor"] = str(applied_size_factor)
         msg_id = await self.redis.xadd(
             self.candidate_stream,
             fields,
@@ -291,6 +405,15 @@ async def _build_and_run() -> int:
         mode, redis_client
     )
 
+    # Market-risk ENTRY gate (roadmap §5.2 track C): config loaded ONCE at
+    # startup — the hot path never reparses YAML. The shared evaluator reads
+    # the market:risk:latest hash via a dedicated SYNC client (redis-py
+    # connects lazily, so inert/off modes never open the connection).
+    import redis as _redis_sync
+
+    market_risk_gate_config = MarketRiskGateConfig.load_or_default()
+    market_risk_redis = _redis_sync.Redis.from_url(redis_url, decode_responses=True)
+
     daemon = DecisionEngineDaemon(
         redis=redis_client,
         setups=setups,
@@ -298,6 +421,8 @@ async def _build_and_run() -> int:
         candidate_stream=candidate_stream,
         candidate_maxlen=10_000,
         tick_interval_seconds=60.0,
+        market_risk_gate_config=market_risk_gate_config,
+        market_risk_redis=market_risk_redis,
     )
 
     loop = asyncio.get_running_loop()
@@ -311,6 +436,7 @@ async def _build_and_run() -> int:
             await feed.stop()
         if sync_redis is not None:
             sync_redis.close()
+        market_risk_redis.close()
         await redis_client.aclose()
     return 0
 

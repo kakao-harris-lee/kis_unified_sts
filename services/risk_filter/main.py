@@ -32,6 +32,32 @@ logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400
 
+# Candidate-stream fields attached by the decision_engine market-risk ENTRY
+# gate (roadmap §5.2 track C). Optional — absent on legacy candidates.
+_ENTRY_SIZE_FACTOR_FIELD = b"entry_size_factor"
+_MARKET_RISK_GATE_FIELD = b"market_risk_gate"
+
+
+def _entry_size_factor(fields: dict[bytes, bytes]) -> float:
+    """Upstream (decision_engine) entry-size factor, neutral 1.0 default.
+
+    Carries the market-risk gate's enforce-mode size factor (shadow always
+    publishes 1.0 — the observed factor lives in the ``market_risk_gate``
+    trace payload instead). Missing/invalid/out-of-range values fail open to
+    the neutral multiplier so a malformed field can never inflate or zero
+    out sizing.
+    """
+    raw = fields.get(_ENTRY_SIZE_FACTOR_FIELD)
+    if not raw:
+        return 1.0
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if not 0.0 < value <= 1.0:
+        return 1.0
+    return value
+
 
 def _resolve_mode() -> str:
     """risk_filter mode: off (default, inert) | shadow | live."""
@@ -166,8 +192,27 @@ class RiskFilterDaemon(StreamStage):
             try:
                 fields_out = signal.to_stream_dict()
                 fields_out["signal_id"] = signal_id
-                fields_out["size_multiplier"] = str(result.size_multiplier)
+                # Multiplicative size composition: the upstream entry factor
+                # (market-risk gate enforce size_factor today; any future
+                # LLM size factor rides the same field) stacks with the
+                # RiskFilterLayer product. Every factor is <= 1.0, so the
+                # composition only ever shrinks size — the most conservative
+                # verdict wins cumulatively. order_router applies the final
+                # product to base_quantity.
+                fields_out["size_multiplier"] = str(
+                    result.size_multiplier * _entry_size_factor(fields)
+                )
                 fields_out["filtered_at_ms"] = str(int(time.time() * 1000))
+                gate_trace = fields.get(_MARKET_RISK_GATE_FIELD)
+                if gate_trace:
+                    # Forward the decision trace unchanged — fixed
+                    # ``market_risk_gate`` key contract for the /signals
+                    # trace lane downstream.
+                    fields_out["market_risk_gate"] = (
+                        gate_trace.decode("utf-8", errors="replace")
+                        if isinstance(gate_trace, bytes)
+                        else str(gate_trace)
+                    )
                 await self.redis.xadd(
                     self.final_stream,
                     fields_out,
