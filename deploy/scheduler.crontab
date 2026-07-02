@@ -153,3 +153,14 @@
 # Keys/TTLs/TR params live in config/market_structure.yaml (collector section).
 0  8  * * 1-5  cd /app && python -m services.market_structure_collector.main premarket
 40 18 * * 1-5  cd /app && python -m services.market_structure_collector.main close
+
+# --- Market Risk Score engine (unified roadmap Phase 1, §4 — shadow-only) ---
+# premarket (08:05, after the 08:00 structure collector) scores the pre-open
+# row; intraday (*/30 09:00–15:30; session window filtered inside the runner
+# via config/market_risk.yaml) re-scores market:structure:latest Redis-only;
+# close (18:45, after the 18:40 close collector) is the confirmed daily
+# computation — Redis + regime:unified:daily + score columns merged into the
+# Parquet close row. Weights/bands/hysteresis/alerts: config/market_risk.yaml.
+5  8  * * 1-5  cd /app && python -m services.market_risk_engine.main premarket
+*/30 9-15 * * 1-5  cd /app && python -m services.market_risk_engine.main intraday
+45 18 * * 1-5  cd /app && python -m services.market_risk_engine.main close

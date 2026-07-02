@@ -1,0 +1,252 @@
+# Market Risk Score (0-100) — unified investment roadmap Phase 1 (§4).
+#
+# Consumed by shared/risk/market_risk_score.py (scoring library) and
+# services/market_risk_engine (premarket/intraday/close one-shot runner).
+# Every weight, window, band boundary, hysteresis buffer, regime mapping and
+# coverage threshold lives here — no hardcoded thresholds in code.
+#
+# This score is SHADOW-ONLY in Phase 1: it is published to Redis/Parquet and
+# the dashboard, but is NOT wired into any strategy, gate, or execution path
+# (that is Phase 2, behind its own operator gate). It is deliberately named
+# market_risk_score to avoid confusion with the LLM MarketContext.risk_score
+# (a static RiskMode mapping, not a composite indicator).
+
+engine:
+  # Rolling normalization window, in trading-day observations taken from the
+  # market_structure_daily close-row history (per column, nulls skipped).
+  window_days: 240
+  # Minimum prior observations required before a signal produces a sub-score;
+  # below this the signal is treated as missing (no synthetic values).
+  min_periods: 20
+  # Clipped z-score bound: z is clipped to +/- this before mapping to 0..100.
+  zscore_clip: 3.0
+  # EMA smoothing span over consecutive DAILY scores (alpha = 2/(span+1)).
+  # Premarket/intraday runs blend the current provisional score against the
+  # last CONFIRMED daily EMA (they never compound intra-day).
+  ema_span: 3
+  # Weighted coverage below this publishes degraded=true (fail-open: the
+  # score is still published for transparency, never used for enforcement).
+  min_coverage_ratio: 0.6
+  # Which series drives banding/hysteresis: "ema" (smoothed, per §4.1) or "raw".
+  band_source: ema
+
+# ---------------------------------------------------------------------------
+# Components (§4.1). Weights sum to 100 but are renormalized over the
+# available components, so the sum is not load-bearing. Each component is a
+# weighted blend of signals; a component is missing only when ALL of its
+# signals are missing (missing signals renormalize within the component).
+#
+# Signal kinds:
+#   numeric      column + method (percentile | zscore) + direction
+#                (high_is_risk | low_is_risk), normalized against the rolling
+#                window of that column's close-row history.
+#   categorical  column + mapping {label: sub-score}. Optional
+#                magnitude_column scales the mapped score toward 50 by the
+#                percentile of |magnitude| (weak moves ~50, strong moves →
+#                full mapped value).
+#
+# Input columns come from shared/storage/market_structure_store.py rows as
+# written by services/market_structure_collector (close snapshot):
+#   fut_foreign_net_qty_cum20, basis_dev_ma5, basis_dev, usdkrw,
+#   usdkrw_ret_5d, prog_net_val, oi_price_signal, fut_oi_change,
+#   es_futures_change_pct, nq_futures_change_pct, sox_change_pct,
+#   k200_ma_alignment, k200_ret_20d.
+# har_rv_pred is injected by the engine from forecast:vol:current (HAR-RV)
+# and persisted into the close row so its rolling history accumulates.
+# ---------------------------------------------------------------------------
+components:
+  foreign_fut:
+    weight: 25
+    signals:
+      # 20-trading-day cumulative foreign futures net buy: deep cumulative
+      # net-selling = risk up (low_is_risk inverts the percentile).
+      - column: fut_foreign_net_qty_cum20
+        kind: numeric
+        method: percentile
+        direction: low_is_risk
+        weight: 0.7
+      # Same-day net buy adds the fresh flow on top of the accumulation.
+      - column: fut_foreign_net_qty
+        kind: numeric
+        method: percentile
+        direction: low_is_risk
+        weight: 0.3
+  basis:
+    weight: 15
+    signals:
+      # Deviation from theoretical fair value: deepening backwardation
+      # (negative basis_dev) = risk up.
+      - column: basis_dev_ma5
+        kind: numeric
+        method: percentile
+        direction: low_is_risk
+        weight: 0.6
+      - column: basis_dev
+        kind: numeric
+        method: percentile
+        direction: low_is_risk
+        weight: 0.4
+  usdkrw:
+    weight: 15
+    signals:
+      # Level percentile: elevated USD/KRW = risk up.
+      - column: usdkrw
+        kind: numeric
+        method: percentile
+        direction: high_is_risk
+        weight: 0.5
+      # 5-day change momentum: a spike = risk up (clipped z-score).
+      - column: usdkrw_ret_5d
+        kind: numeric
+        method: zscore
+        direction: high_is_risk
+        weight: 0.5
+  program:
+    weight: 10
+    signals:
+      # Program trading (arb + non-arb) net value: large net sell = risk up.
+      - column: prog_net_val
+        kind: numeric
+        method: percentile
+        direction: low_is_risk
+        weight: 1.0
+  oi:
+    weight: 10
+    signals:
+      # OI change x price direction quadrant (collector derived label);
+      # magnitude_column scales conviction by |OI change| percentile.
+      - column: oi_price_signal
+        kind: categorical
+        mapping:
+          new_shorts: 100        # price down + OI up = fresh short build-up
+          long_liquidation: 70   # price down + OI down = longs bailing
+          neutral: 50
+          short_covering: 35     # price up + OI down
+          new_longs: 15          # price up + OI up = fresh long build-up
+        magnitude_column: fut_oi_change
+        weight: 1.0
+  overseas:
+    weight: 10
+    signals:
+      # Overnight US futures / SOX moves: sharp drops = risk up.
+      - column: es_futures_change_pct
+        kind: numeric
+        method: zscore
+        direction: low_is_risk
+        weight: 0.4
+      - column: nq_futures_change_pct
+        kind: numeric
+        method: zscore
+        direction: low_is_risk
+        weight: 0.3
+      - column: sox_change_pct
+        kind: numeric
+        method: zscore
+        direction: low_is_risk
+        weight: 0.3
+  vol:
+    weight: 10
+    signals:
+      # HAR-RV predicted RV (annualized %, forecast:vol:current →
+      # har_rv_pred column): high predicted vol = risk up.
+      - column: har_rv_pred
+        kind: numeric
+        method: percentile
+        direction: high_is_risk
+        weight: 1.0
+  trend:
+    weight: 5
+    signals:
+      # KOSPI200 MA(5/20/60) alignment (collector derived label).
+      - column: k200_ma_alignment
+        kind: categorical
+        mapping:
+          bearish: 100
+          mixed: 50
+          bullish: 0
+        weight: 0.5
+      # 20-day index return: drawdown = risk up.
+      - column: k200_ret_20d
+        kind: numeric
+        method: percentile
+        direction: low_is_risk
+        weight: 0.5
+
+# ---------------------------------------------------------------------------
+# Bands (§4.2) — inclusive [min, max] on the band_source score.
+# ---------------------------------------------------------------------------
+bands:
+  - { name: LOW,      min: 0,  max: 29 }
+  - { name: NEUTRAL,  min: 30, max: 54 }
+  - { name: ELEVATED, min: 55, max: 69 }
+  - { name: HIGH,     min: 70, max: 84 }
+  - { name: CRITICAL, min: 85, max: 100 }
+
+# Band-transition hysteresis (§4.2): a transition is confirmed only when the
+# score exceeds the shared boundary with the previous band by more than
+# buffer_points, OR when the same new raw band is observed on
+# confirm_consecutive consecutive computations.
+hysteresis:
+  buffer_points: 5.0
+  confirm_consecutive: 2
+
+# ---------------------------------------------------------------------------
+# Unified Regime (§4.2): band + index-trend sign → RISK_ON/NEUTRAL/RISK_OFF.
+# trend_column's sign picks the up/down/unknown row (missing → unknown).
+# ---------------------------------------------------------------------------
+unified_regime:
+  trend_column: k200_ret_20d
+  mapping:
+    LOW:      { up: RISK_ON,  down: RISK_ON,  unknown: RISK_ON }
+    NEUTRAL:  { up: RISK_ON,  down: NEUTRAL,  unknown: NEUTRAL }
+    ELEVATED: { up: NEUTRAL,  down: NEUTRAL,  unknown: NEUTRAL }
+    HIGH:     { up: RISK_OFF, down: RISK_OFF, unknown: RISK_OFF }
+    CRITICAL: { up: RISK_OFF, down: RISK_OFF, unknown: RISK_OFF }
+
+# ---------------------------------------------------------------------------
+# Redis publication contract (§4.3) — field names are FIXED with the Phase 1c
+# dashboard lane; do not rename without coordinating both lanes.
+# ---------------------------------------------------------------------------
+redis:
+  latest_key: "market:risk:latest"
+  latest_ttl_seconds: 86400
+  stream_key: "stream:market.risk"
+  stream_maxlen: 5000
+  stream_ttl_seconds: 86400
+  # Close-confirmed daily regime (string JSON {date, regime, score, band}).
+  regime_daily_key: "regime:unified:daily"
+  regime_daily_ttl_seconds: 172800
+  # Hysteresis/degraded state between one-shot runs. 48h TTL bridges normal
+  # gaps; on expiry (long weekend/holiday) the previous band is re-seeded
+  # from the last close row's risk_band column (durable fallback).
+  band_state_key: "market:risk:band_state"
+  band_state_ttl_seconds: 172800
+  # Inputs (read-only): intraday current row + HAR-RV forecast.
+  structure_latest_key: "market:structure:latest"
+  vol_forecast_key: "forecast:vol:current"
+
+# ---------------------------------------------------------------------------
+# Runner (services/market_risk_engine) — one-shot modes via cron.
+# ---------------------------------------------------------------------------
+runner:
+  # Intraday runs outside this KST window are skipped (cron fires */30 9-15).
+  intraday_session_start: "09:00"
+  intraday_session_end: "15:30"
+  # Calendar-day lookback for loading close-row history (>= window_days
+  # trading days; 420 calendar days ≈ 285 trading days).
+  history_lookback_days: 420
+  # Max age of forecast:vol:current accepted as har_rv_pred (premarket 08:05
+  # consumes the 07:35 refit; close 18:45 consumes the last session forecast).
+  vol_forecast_max_age_seconds: 86400
+
+# ---------------------------------------------------------------------------
+# Telegram alerts — reuses shared/notification/telegram.notifier_for_domain
+# (no new alert infrastructure). Band-transition alerts fire when either the
+# previous or the new confirmed band is in notify_bands; degraded alerts fire
+# on the false→true edge.
+# ---------------------------------------------------------------------------
+alerts:
+  enabled: true
+  domain: briefing
+  notify_bands: [HIGH, CRITICAL]
+  notify_on_degraded: true
