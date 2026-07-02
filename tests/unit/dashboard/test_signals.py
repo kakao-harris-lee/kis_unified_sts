@@ -68,6 +68,7 @@ async def test_signals_respect_asset_class_and_emit_strength():
                     {
                         "id": "stk-1",
                         "symbol": "086790",
+                        "name": "하나금융지주",
                         "side": "SELL",
                         "signal_type": "exit",
                         "strategy": "pattern_pullback",
@@ -92,6 +93,7 @@ async def test_signals_respect_asset_class_and_emit_strength():
     assert response.status_code == 200
     body = response.json()
     assert [s["asset_class"] for s in body["signals"]] == ["stock", "futures"]
+    assert body["signals"][0]["name"] == "하나금융지주"
     assert body["signals"][0]["strength"] == pytest.approx(0.61)
     assert body["signals"][1]["confidence"] == pytest.approx(0.72)
 

@@ -48,6 +48,7 @@ export interface SetupCEvidenceItem {
   timestamp: string | null;
   status: DiagnosticStatus;
   symbol: string | null;
+  name?: string | null;
   direction: string | null;
   event_id: string | null;
   event_type: string | null;
@@ -403,6 +404,7 @@ function normalizeEvidenceItem(
       timestamp: null,
       status: fallbackStatus,
       symbol: null,
+      name: null,
       direction: null,
       event_id: null,
       event_type: null,
@@ -427,6 +429,7 @@ function normalizeEvidenceItem(
           ? 'missing'
           : fallbackStatus,
     symbol: readString(value, ['symbol', 'code']),
+    name: readString(value, ['name', 'stock_name', 'symbol_name', 'prdt_name']),
     direction: readString(value, ['direction', 'side', 'signal_direction']),
     event_id: readString(value, ['event_id']),
     event_type: readString(value, ['event_type', 'type', 'category']),

@@ -11,6 +11,7 @@ export interface DecisionTraceSignal {
   id: string;
   asset_class: string;
   symbol: string;
+  name?: string | null;
   strategy: string;
   side: string;
   signal_type?: string | null;

@@ -19,6 +19,7 @@ import ErrorMessage from '@/components/dashboard/ErrorMessage';
 import SideBadge from '@/components/dashboard/SideBadge';
 import StrategySelect from '@/components/dashboard/StrategySelect';
 import LifecycleTimeline from '@/components/dashboard/LifecycleTimeline';
+import SymbolLabel, { symbolDisplayText } from '@/components/dashboard/SymbolLabel';
 import {
   buildCumulativePnlData,
   pnlTone,
@@ -98,6 +99,12 @@ export function LiveTradesTab() {
   } = byStrategyQuery;
 
   const cumulativePnlData = buildCumulativePnlData(tradesData?.trades);
+  const selectedLifecycleLabel = selectedLifecycleTrade
+    ? symbolDisplayText({
+        code: selectedLifecycleTrade.symbol,
+        name: selectedLifecycleTrade.name,
+      })
+    : '';
 
   // Error states
   if (tradesError) {
@@ -212,7 +219,7 @@ export function LiveTradesTab() {
 
       {selectedLifecycleTrade ? (
         <LifecycleTimeline
-          title={`Lifecycle ${selectedLifecycleTrade.symbol}`}
+          title={`Lifecycle ${selectedLifecycleLabel}`}
           data={lifecycleData}
           isLoading={lifecycleLoading}
           error={
@@ -246,7 +253,11 @@ export function LiveTradesTab() {
                 className="bg-white rounded-lg p-4 border border-slate-200"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <span className="font-medium text-lg">{trade.symbol}</span>
+                  <SymbolLabel
+                    code={trade.symbol}
+                    name={trade.name}
+                    className="text-lg text-slate-900"
+                  />
                   <SideBadge side={trade.side} />
                 </div>
 
@@ -293,7 +304,10 @@ export function LiveTradesTab() {
                   </div>
                 </div>
                 <LifecycleTextButton
-                  label={`View lifecycle for ${trade.symbol}`}
+                  label={`View lifecycle for ${symbolDisplayText({
+                    code: trade.symbol,
+                    name: trade.name,
+                  })}`}
                   onClick={() => setSelectedLifecycleTrade(trade)}
                 />
               </div>
@@ -325,7 +339,9 @@ export function LiveTradesTab() {
                         {new Date(trade.exit_time).toLocaleString()}
                       </td>
                       <td className="px-4 py-3">{trade.strategy}</td>
-                      <td className="px-4 py-3 font-medium">{trade.symbol}</td>
+                      <td className="px-4 py-3 font-medium">
+                        <SymbolLabel code={trade.symbol} name={trade.name} />
+                      </td>
                       <td className="px-4 py-3">
                         <SideBadge side={trade.side} />
                       </td>
@@ -349,7 +365,10 @@ export function LiveTradesTab() {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <LifecycleIconButton
-                          label={`View lifecycle for ${trade.symbol}`}
+                          label={`View lifecycle for ${symbolDisplayText({
+                            code: trade.symbol,
+                            name: trade.name,
+                          })}`}
                           onClick={() => setSelectedLifecycleTrade(trade)}
                         />
                       </td>

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
 import { fillsApi } from '@/lib/dashboard/api'
 import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
+import SymbolLabel from './SymbolLabel'
 
 interface Fill {
   signal_id: string
@@ -47,16 +48,12 @@ export default function FillsListCompact() {
               {new Date(f.filled_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
             </span>
             <span className={f.side === 'BUY' ? 'text-emerald-700' : 'text-rose-700'}>{f.side}</span>
-            <span className="min-w-0 truncate">
-              {f.name ? (
-                <>
-                  <span className="font-medium text-slate-800">{f.name}</span>
-                  <span className="ml-1 font-mono text-slate-500">{f.symbol}</span>
-                </>
-              ) : (
-                <span className="font-mono">{f.symbol}</span>
-              )}
-            </span>
+            <SymbolLabel
+              code={f.symbol}
+              name={f.name}
+              className="min-w-0 truncate"
+              nameClassName="text-slate-800"
+            />
           </div>
           <span className="shrink-0 text-slate-500">{f.filled_price.toLocaleString()} × {f.quantity}</span>
         </div>

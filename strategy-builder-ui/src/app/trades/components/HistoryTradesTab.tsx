@@ -8,6 +8,7 @@ import ErrorMessage from '@/components/dashboard/ErrorMessage';
 import SideBadge from '@/components/dashboard/SideBadge';
 import StatCard from '@/components/dashboard/StatCard';
 import LifecycleTimeline from '@/components/dashboard/LifecycleTimeline';
+import SymbolLabel, { symbolDisplayText } from '@/components/dashboard/SymbolLabel';
 import {
   pnlTone,
   useHistoryTradesQueries,
@@ -89,6 +90,12 @@ export function HistoryTradesTab() {
 
   const isLoading = statsLoading || tradesLoading;
   const hasError = statsError || tradesError || positionsError;
+  const selectedLifecycleLabel = selectedLifecycleTrade
+    ? symbolDisplayText({
+        code: selectedLifecycleTrade.code,
+        name: selectedLifecycleTrade.name,
+      })
+    : '';
 
   // Error state
   if (hasError && !isLoading) {
@@ -180,7 +187,7 @@ export function HistoryTradesTab() {
 
       {selectedLifecycleTrade ? (
         <LifecycleTimeline
-          title={`Lifecycle ${selectedLifecycleTrade.code}`}
+          title={`Lifecycle ${selectedLifecycleLabel}`}
           data={lifecycleData}
           isLoading={lifecycleLoading}
           error={
@@ -218,15 +225,15 @@ export function HistoryTradesTab() {
                 className="bg-white rounded-lg p-4 border border-slate-200"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <span className="font-medium text-lg">{pos.code}</span>
+                  <SymbolLabel
+                    code={pos.code}
+                    name={pos.name}
+                    className="text-lg text-slate-900"
+                  />
                   <SideBadge side={pos.side} />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <div className="text-slate-500">Name</div>
-                    <div className="font-medium text-slate-700">{pos.name}</div>
-                  </div>
                   <div>
                     <div className="text-slate-500">Strategy</div>
                     <div className="font-medium text-slate-700">{pos.strategy}</div>
@@ -273,8 +280,7 @@ export function HistoryTradesTab() {
                 <caption className="sr-only">Open database positions with risk state</caption>
                 <thead className="bg-slate-100">
                   <tr>
-                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Code</th>
-                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Name</th>
+                    <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Symbol</th>
                     <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
                     <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
                     <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Entry Date</th>
@@ -288,8 +294,9 @@ export function HistoryTradesTab() {
                 <tbody className="divide-y divide-slate-200">
                   {openPositions.map((pos) => (
                     <tr key={pos.id} className="hover:bg-slate-100">
-                      <td className="px-4 py-3 font-medium">{pos.code}</td>
-                      <td className="px-4 py-3">{pos.name}</td>
+                      <td className="px-4 py-3 font-medium">
+                        <SymbolLabel code={pos.code} name={pos.name} />
+                      </td>
                       <td className="px-4 py-3">{pos.strategy}</td>
                       <td className="px-4 py-3">
                         <SideBadge side={pos.side} />
@@ -332,15 +339,15 @@ export function HistoryTradesTab() {
                   className="bg-white rounded-lg p-4 border border-slate-200"
                 >
                   <div className="flex items-center justify-between mb-3">
-                    <span className="font-medium text-lg">{trade.code}</span>
+                    <SymbolLabel
+                      code={trade.code}
+                      name={trade.name}
+                      className="text-lg text-slate-900"
+                    />
                     <SideBadge side={trade.side} />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <div className="text-slate-500">Name</div>
-                      <div className="font-medium text-slate-700">{trade.name}</div>
-                    </div>
                     <div>
                       <div className="text-slate-500">Strategy</div>
                       <div className="font-medium text-slate-700">{trade.strategy}</div>
@@ -379,7 +386,10 @@ export function HistoryTradesTab() {
                     </div>
                   </div>
                   <LifecycleTextButton
-                    label={`View lifecycle for ${trade.code}`}
+                    label={`View lifecycle for ${symbolDisplayText({
+                      code: trade.code,
+                      name: trade.name,
+                    })}`}
                     onClick={() => setSelectedLifecycleTrade(trade)}
                   />
                 </div>
@@ -394,8 +404,7 @@ export function HistoryTradesTab() {
                   <thead className="bg-slate-100">
                     <tr>
                       <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Exit Date</th>
-                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Code</th>
-                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Name</th>
+                      <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Symbol</th>
                       <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
                       <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
                       <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry</th>
@@ -411,8 +420,9 @@ export function HistoryTradesTab() {
                         <td className="px-4 py-3 text-sm text-slate-500">
                           {trade.exit_date ? new Date(trade.exit_date).toLocaleString() : '-'}
                         </td>
-                        <td className="px-4 py-3 font-medium">{trade.code}</td>
-                        <td className="px-4 py-3">{trade.name}</td>
+                        <td className="px-4 py-3 font-medium">
+                          <SymbolLabel code={trade.code} name={trade.name} />
+                        </td>
                         <td className="px-4 py-3">{trade.strategy}</td>
                         <td className="px-4 py-3">
                           <SideBadge side={trade.side} />
@@ -433,7 +443,10 @@ export function HistoryTradesTab() {
                         <td className="px-4 py-3 text-sm text-slate-500">{trade.exit_reason || '-'}</td>
                         <td className="px-4 py-3 text-center">
                           <LifecycleIconButton
-                            label={`View lifecycle for ${trade.code}`}
+                            label={`View lifecycle for ${symbolDisplayText({
+                              code: trade.code,
+                              name: trade.name,
+                            })}`}
                             onClick={() => setSelectedLifecycleTrade(trade)}
                           />
                         </td>

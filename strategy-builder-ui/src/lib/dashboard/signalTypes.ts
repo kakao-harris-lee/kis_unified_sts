@@ -7,6 +7,7 @@ export interface DashboardSignal {
   asset_class?: string;
   strategy: string;
   symbol: string;
+  name?: string | null;
   side: string;
   signal_type?: string;
   confidence?: number;

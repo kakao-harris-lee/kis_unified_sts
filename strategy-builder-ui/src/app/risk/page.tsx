@@ -10,6 +10,7 @@ import {
 import HeaderBar from "@/components/dashboard/HeaderBar";
 import ErrorMessage from "@/components/dashboard/ErrorMessage";
 import RefreshIndicator from "@/components/dashboard/RefreshIndicator";
+import SymbolLabel from "@/components/dashboard/SymbolLabel";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
 import { useAssetClass } from "@/contexts/dashboard/AssetClassContext";
 import { tradingApi } from "@/lib/dashboard/api";
@@ -156,12 +157,11 @@ function SymbolTable({ rows }: { rows: RiskSymbolExposure[] }) {
                 {row.asset_class}
               </td>
               <td className="px-3 py-3">
-                <div className="font-semibold text-slate-900 dark:text-slate-100">
-                  {row.code}
-                </div>
-                <div className="max-w-40 truncate text-xs text-slate-500">
-                  {row.name || "-"}
-                </div>
+                <SymbolLabel
+                  code={row.code}
+                  name={row.name}
+                  nameClassName="text-slate-900 dark:text-slate-100"
+                />
               </td>
               <td className="px-3 py-3 text-right text-xs font-medium uppercase">
                 {row.side}

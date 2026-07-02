@@ -10,6 +10,7 @@ import {
 import HeaderBar from "@/components/dashboard/HeaderBar";
 import ErrorMessage from "@/components/dashboard/ErrorMessage";
 import RefreshIndicator from "@/components/dashboard/RefreshIndicator";
+import SymbolLabel from "@/components/dashboard/SymbolLabel";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
 import { useAssetClass } from "@/contexts/dashboard/AssetClassContext";
 import { coverageApi } from "@/lib/dashboard/api";
@@ -104,10 +105,18 @@ function SourcesTable({ rows }: { rows: CoverageSource[] }) {
               </td>
               <td className="px-3 py-3 text-right">
                 {row.missing_symbols.length ? (
-                  <span className="text-xs text-amber-700 dark:text-amber-300">
-                    {row.missing_symbols.slice(0, 5).join(", ")}
-                    {row.missing_symbols.length > 5 ? " ..." : ""}
-                  </span>
+                  <div className="flex flex-wrap justify-end gap-x-2 gap-y-1 text-xs text-amber-700 dark:text-amber-300">
+                    {row.missing_symbols.slice(0, 5).map((symbol) => (
+                      <SymbolLabel
+                        key={symbol}
+                        code={symbol}
+                        name={row.names?.[symbol]}
+                        nameClassName="text-amber-700 dark:text-amber-300"
+                        codeClassName="text-amber-600 dark:text-amber-400"
+                      />
+                    ))}
+                    {row.missing_symbols.length > 5 ? <span>...</span> : null}
+                  </div>
                 ) : (
                   <span className="text-slate-400">-</span>
                 )}
@@ -154,8 +163,12 @@ function ExperimentTable({ rows }: { rows: ExperimentCoverageRow[] }) {
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {rows.map((row) => (
             <tr key={row.symbol} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-              <td className="px-3 py-3 font-mono font-semibold text-slate-900 dark:text-slate-100">
-                {row.symbol}
+              <td className="px-3 py-3 font-semibold text-slate-900 dark:text-slate-100">
+                <SymbolLabel
+                  code={row.symbol}
+                  name={row.name}
+                  nameClassName="text-slate-900 dark:text-slate-100"
+                />
               </td>
               <td className="px-3 py-3 text-right">
                 <StatusBadge ok={row.loaded} />

@@ -2,12 +2,14 @@ import { useQuery } from '@tanstack/react-query'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
 import { signalsApi } from '@/lib/dashboard/api'
 import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
+import SymbolLabel from './SymbolLabel'
 
 interface Signal {
   id: string
   asset_class: 'stock' | 'futures'
   strategy: string
   symbol: string
+  name?: string | null
   side: 'BUY' | 'SELL'
   confidence?: number
   strength?: number
@@ -39,8 +41,8 @@ export default function SignalsListCompact() {
       {(data?.signals ?? []).slice(0, MAX_ITEMS).map((s) => {
         const strength = s.strength ?? s.confidence ?? 0
         return (
-          <div key={s.id} className="text-xs flex items-center justify-between py-1 border-b last:border-0">
-            <div className="flex items-center gap-1">
+          <div key={s.id} className="text-xs flex items-center justify-between gap-2 py-1 border-b last:border-0">
+            <div className="flex min-w-0 items-center gap-1">
               {selectedAsset === 'all' && (
                 <span className="text-[9px] text-slate-400">
                   [{s.asset_class === 'futures' ? '선' : '주'}]
@@ -55,8 +57,14 @@ export default function SignalsListCompact() {
               <span className={s.side === 'BUY' ? 'text-emerald-700' : 'text-rose-700'}>
                 {s.side === 'BUY' ? 'LONG' : 'SHORT'}
               </span>
+              <SymbolLabel
+                code={s.symbol}
+                name={s.name}
+                className="min-w-0 truncate"
+                nameClassName="text-slate-800"
+              />
             </div>
-            <span className="text-slate-500">conf {strength.toFixed(2)}</span>
+            <span className="shrink-0 text-slate-500">conf {strength.toFixed(2)}</span>
           </div>
         )
       })}

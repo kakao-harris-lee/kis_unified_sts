@@ -1,6 +1,7 @@
 import { Position } from '@/lib/dashboard/types';
 import TableSkeleton from './TableSkeleton';
 import SideBadge from './SideBadge';
+import SymbolLabel from './SymbolLabel';
 
 interface PositionsTableProps {
   positions: Position[];
@@ -39,7 +40,11 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
             className="bg-white rounded-lg p-4 border border-slate-200"
           >
             <div className="flex items-center justify-between mb-3">
-              <span className="font-medium text-lg">{position.name || position.code}</span>
+              <SymbolLabel
+                code={position.code}
+                name={position.name}
+                className="text-lg text-slate-900"
+              />
               <SideBadge side={position.side} />
             </div>
 
@@ -132,7 +137,9 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
             <tbody className="divide-y divide-slate-200">
               {positions.map((position, idx) => (
                 <tr key={idx} className="hover:bg-slate-100">
-                  <td className="px-4 py-3 font-medium">{position.name || position.code}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <SymbolLabel code={position.code} name={position.name} />
+                  </td>
                   <td className="px-4 py-3">
                     <SideBadge side={position.side} />
                   </td>

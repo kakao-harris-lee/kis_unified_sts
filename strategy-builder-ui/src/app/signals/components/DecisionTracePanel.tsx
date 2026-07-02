@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import SideBadge from "@/components/dashboard/SideBadge";
+import SymbolLabel from "@/components/dashboard/SymbolLabel";
 import { formatKstDateTime } from "@/lib/dashboard/format";
 import type {
   DecisionTraceEvidenceGap,
@@ -173,7 +174,7 @@ export default function DecisionTracePanel({
   onClose,
   onRefresh,
 }: DecisionTracePanelProps) {
-  const headerText = trace?.signal.symbol || trace?.signal.id || "No signal selected";
+  const headerSymbol = trace?.signal.symbol || trace?.signal.id || "";
 
   return (
     <section
@@ -189,7 +190,15 @@ export default function DecisionTracePanel({
           </div>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
             <span className="break-words text-lg font-bold text-slate-950">
-              {headerText}
+              {trace ? (
+                <SymbolLabel
+                  code={headerSymbol}
+                  name={trace.signal.name}
+                  nameClassName="text-slate-950"
+                />
+              ) : (
+                "No signal selected"
+              )}
             </span>
             {trace?.signal.id && trace.signal.id !== trace.signal.symbol ? (
               <span className="break-words rounded bg-white px-2 py-0.5 text-xs font-medium text-slate-500">

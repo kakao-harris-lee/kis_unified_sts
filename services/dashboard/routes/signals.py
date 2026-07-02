@@ -22,6 +22,7 @@ class SignalResponse(BaseModel):
     id: str
     asset_class: str
     symbol: str
+    name: str = ""
     side: str
     signal_type: str
     strategy: str
@@ -74,6 +75,7 @@ class DecisionTraceSignal(BaseModel):
     id: str
     asset_class: str
     symbol: str
+    name: str = ""
     strategy: str
     side: str
     signal_type: str | None = None
@@ -217,6 +219,15 @@ def _as_optional_str(value: Any) -> str | None:
     return str(value)
 
 
+def _clean_display_name(value: Any) -> str:
+    if value is None:
+        return ""
+    name = str(value).strip()
+    if not name or name.lower() in {"none", "null"}:
+        return ""
+    return name
+
+
 def _as_optional_dict(value: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
@@ -248,6 +259,9 @@ def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
             id=s.get("id", ""),
             asset_class=asset_class,
             symbol=s.get("symbol", ""),
+            name=_clean_display_name(
+                s.get("name") or s.get("stock_name") or s.get("prdt_name")
+            ),
             side=s.get("side", ""),
             signal_type=s.get("signal_type", ""),
             strategy=s.get("strategy", ""),
@@ -331,6 +345,11 @@ def _trace_state(signal: SignalResponse) -> str:
     return "generated"
 
 
+def _signal_label(signal: SignalResponse) -> str:
+    symbol = signal.symbol or "unknown_symbol"
+    return f"{signal.name} {symbol}" if signal.name else symbol
+
+
 def _trace_summary_text(
     signal: SignalResponse,
     state: str,
@@ -340,7 +359,7 @@ def _trace_summary_text(
         signal.strategy or "unknown_strategy",
         "generated",
         signal.side or "unknown_side",
-        signal.symbol or "unknown_symbol",
+        _signal_label(signal),
     ]
     if signal.reason:
         parts.append(f"from {signal.reason}")
@@ -750,6 +769,7 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
             id=signal.id,
             asset_class=signal.asset_class,
             symbol=signal.symbol,
+            name=signal.name,
             strategy=signal.strategy,
             side=signal.side,
             signal_type=signal.signal_type,

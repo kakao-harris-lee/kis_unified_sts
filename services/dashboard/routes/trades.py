@@ -60,6 +60,7 @@ class TradeResponse(BaseModel):
     id: str
     asset_class: str
     symbol: str
+    name: str = ""
     side: str
     quantity: int
     entry_price: float
@@ -226,6 +227,9 @@ def _to_trade_response(t: dict, asset_class: str) -> TradeResponse | None:
             id=t.get("id", ""),
             asset_class=t.get("asset_class", asset_class),
             symbol=t.get("symbol") or t.get("code", ""),
+            name=_clean_display_name(
+                t.get("name") or t.get("stock_name") or t.get("prdt_name")
+            ),
             side=t.get("side", "long"),
             quantity=int(t.get("quantity", 0)),
             entry_price=float(t.get("entry_price", 0)),

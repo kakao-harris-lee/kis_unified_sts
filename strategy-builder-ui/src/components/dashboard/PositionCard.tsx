@@ -1,4 +1,5 @@
 import SideBadge from './SideBadge'
+import SymbolLabel from './SymbolLabel'
 import type { Position } from '@/lib/dashboard/types'
 
 export default function PositionCard({ position: p }: { position: Position }) {
@@ -8,7 +9,12 @@ export default function PositionCard({ position: p }: { position: Position }) {
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <SideBadge side={p.side} />
-          <span className="font-semibold text-sm text-slate-900">{p.code} {p.name}</span>
+          <SymbolLabel
+            code={p.code}
+            name={p.name}
+            className="text-sm text-slate-900"
+            nameClassName="font-semibold"
+          />
         </div>
         <span className={`text-xs font-medium ${positive ? 'text-emerald-700' : 'text-rose-700'}`}>
           {positive ? '+' : ''}{p.pnl_pct.toFixed(2)}%

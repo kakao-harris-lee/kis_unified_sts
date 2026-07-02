@@ -11,6 +11,7 @@ import useQueryWithError from '@/hooks/dashboard/useQueryWithError';
 import SideBadge from '@/components/dashboard/SideBadge';
 import HeaderBar from '@/components/dashboard/HeaderBar';
 import BottomSheet from '@/components/dashboard/BottomSheet';
+import SymbolLabel, { symbolDisplayText } from '@/components/dashboard/SymbolLabel';
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext';
 import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals';
 import { formatKstDateTime } from '@/lib/dashboard/format';
@@ -195,7 +196,11 @@ function Signals() {
                     className="bg-white rounded-lg p-4 border border-slate-200"
                   >
                     <div className="flex items-center justify-between mb-3">
-                      <span className="font-medium text-lg">{signal.symbol}</span>
+                      <SymbolLabel
+                        code={signal.symbol}
+                        name={signal.name}
+                        className="text-lg text-slate-900"
+                      />
                       <SideBadge side={signal.side} />
                     </div>
 
@@ -244,7 +249,10 @@ function Signals() {
                     <button
                       type="button"
                       onClick={() => setSelectedSignal(signal)}
-                      aria-label={`View trace for ${signal.symbol}`}
+                      aria-label={`View trace for ${symbolDisplayText({
+                        code: signal.symbol,
+                        name: signal.name,
+                      })}`}
                       className="mt-4 w-full rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
                     >
                       View trace
@@ -290,7 +298,10 @@ function Signals() {
                           onClick={() => setSelectedSignal(signal)}
                           tabIndex={0}
                           role="button"
-                          aria-label={`View trace for ${signal.symbol}`}
+                          aria-label={`View trace for ${symbolDisplayText({
+                            code: signal.symbol,
+                            name: signal.name,
+                          })}`}
                           aria-pressed={selectedSignal?.id === signal.id}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
@@ -303,7 +314,9 @@ function Signals() {
                             {formatKstDateTime(signal.timestamp)}
                           </td>
                           <td className="px-4 py-3">{signal.strategy}</td>
-                          <td className="px-4 py-3 font-medium">{signal.symbol}</td>
+                          <td className="px-4 py-3 font-medium">
+                            <SymbolLabel code={signal.symbol} name={signal.name} />
+                          </td>
                           <td className="px-4 py-3">
                             <SideBadge side={signal.side} />
                           </td>

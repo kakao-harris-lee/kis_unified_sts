@@ -29,6 +29,12 @@ _THEME_TARGETS_KEY = os.environ.get(
 _DAILY_INDICATORS_KEY = os.environ.get(
     "DAILY_INDICATORS_LATEST_KEY", "system:daily_indicators:latest"
 )
+_ENABLE_KRX_NAME_FALLBACK = os.environ.get(
+    "DASHBOARD_KRX_NAME_FALLBACK", "true"
+).strip().lower() not in {"0", "false", "no", "off"}
+
+_KRX_SYMBOL_NAME_CACHE: dict[str, str] = {}
+_KRX_SYMBOL_NAME_CACHE_DATE = ""
 
 
 class CoverageSource(BaseModel):
@@ -40,6 +46,7 @@ class CoverageSource(BaseModel):
     count: int | None = None
     updated_at: str | None = None
     symbols: list[str] = []
+    names: dict[str, str] = {}
     missing_symbols: list[str] = []
     metadata: dict[str, Any] = {}
 
@@ -48,6 +55,7 @@ class ExperimentCoverageRow(BaseModel):
     """Latest stock experiment symbol coverage."""
 
     symbol: str
+    name: str | None = None
     loaded: bool
     rows: int | None = None
     start: str | None = None
@@ -125,6 +133,53 @@ def _extract_symbols(payload: dict[str, Any] | None) -> list[str]:
     return list(seen)
 
 
+def _clean_name(value: Any) -> str:
+    if value is None:
+        return ""
+    name = str(value).strip()
+    if not name or name.lower() in {"none", "null"}:
+        return ""
+    return name
+
+
+def _extract_names(payload: dict[str, Any] | None) -> dict[str, str]:
+    """Return a normalized code -> display name map from known payload shapes."""
+    if not payload:
+        return {}
+
+    names: dict[str, str] = {}
+
+    raw_names = payload.get("names")
+    if isinstance(raw_names, dict):
+        for code, name in raw_names.items():
+            clean = _clean_name(name)
+            if code and clean:
+                names[str(code)] = clean
+    elif isinstance(raw_names, list):
+        codes = payload.get("codes") or payload.get("symbols") or []
+        if isinstance(codes, list):
+            for code, name in zip(codes, raw_names, strict=False):
+                clean = _clean_name(name)
+                if code and clean:
+                    names[str(code)] = clean
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        for code, item in metadata.items():
+            if not isinstance(item, dict):
+                continue
+            clean = _clean_name(
+                item.get("name")
+                or item.get("stock_name")
+                or item.get("symbol_name")
+                or item.get("prdt_name")
+            )
+            if code and clean:
+                names.setdefault(str(code), clean)
+
+    return names
+
+
 def _source_from_redis(redis: Any, name: str, key: str) -> CoverageSource:
     raw = None
     if redis is not None:
@@ -134,6 +189,7 @@ def _source_from_redis(redis: Any, name: str, key: str) -> CoverageSource:
             raw = None
     payload = _decode_json(raw)
     symbols = _extract_symbols(payload)
+    names = _extract_names(payload)
     updated_at = None
     metadata: dict[str, Any] = {}
     if payload:
@@ -153,6 +209,7 @@ def _source_from_redis(redis: Any, name: str, key: str) -> CoverageSource:
         count=len(symbols) if payload is not None else None,
         updated_at=updated_at,
         symbols=symbols[:200],
+        names={symbol: names[symbol] for symbol in symbols[:200] if symbol in names},
         metadata=metadata,
     )
 
@@ -176,16 +233,22 @@ def _latest_experiment_report() -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _experiment_rows(report: dict[str, Any] | None) -> list[ExperimentCoverageRow]:
+def _experiment_rows(
+    report: dict[str, Any] | None,
+    names: dict[str, str] | None = None,
+) -> list[ExperimentCoverageRow]:
     coverage = report.get("data_coverage") if report else None
     if not isinstance(coverage, dict):
         return []
     rows: list[ExperimentCoverageRow] = []
+    symbol_names = names or {}
     for symbol, payload in sorted(coverage.items()):
         item = payload if isinstance(payload, dict) else {}
+        symbol_text = str(symbol)
         rows.append(
             ExperimentCoverageRow(
-                symbol=str(symbol),
+                symbol=symbol_text,
+                name=_clean_name(item.get("name")) or symbol_names.get(symbol_text),
                 loaded=bool(item.get("loaded", False)),
                 rows=int(item["rows"]) if item.get("rows") is not None else None,
                 start=item.get("start"),
@@ -203,6 +266,100 @@ def _with_daily_missing(
         return source
     missing = [symbol for symbol in source.symbols if symbol not in daily_symbols]
     return source.model_copy(update={"missing_symbols": missing[:50]})
+
+
+def _merge_source_names(sources: list[CoverageSource]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for source in sources:
+        for symbol, name in source.names.items():
+            if name:
+                names.setdefault(symbol, name)
+    return names
+
+
+def _load_krx_symbol_names() -> dict[str, str]:
+    """Best-effort stock code -> name map from KRX Open API, cached by trade date."""
+    global _KRX_SYMBOL_NAME_CACHE_DATE
+
+    if not _ENABLE_KRX_NAME_FALLBACK or not os.environ.get("KRX_API_KEY", "").strip():
+        return {}
+
+    try:
+        from shared.llm.config import LLMConfig
+        from shared.llm.krx_api_client import KRXOpenAPIClient
+
+        client = KRXOpenAPIClient(LLMConfig.from_env())
+        target_date = client._get_last_trading_date()
+        if _KRX_SYMBOL_NAME_CACHE and target_date == _KRX_SYMBOL_NAME_CACHE_DATE:
+            return _KRX_SYMBOL_NAME_CACHE
+
+        names: dict[str, str] = {}
+        for market in ("KOSPI", "KOSDAQ"):
+            for item in client.get_stock_daily(market=market, base_date=target_date):
+                code = str(item.get("ISU_CD", "")).strip()
+                name = _clean_name(item.get("ISU_NM"))
+                if code and name:
+                    names[code] = name
+        if names:
+            _KRX_SYMBOL_NAME_CACHE.clear()
+            _KRX_SYMBOL_NAME_CACHE.update(names)
+            _KRX_SYMBOL_NAME_CACHE_DATE = target_date
+        return _KRX_SYMBOL_NAME_CACHE
+    except Exception:  # noqa: BLE001 - coverage diagnostics must stay available
+        return _KRX_SYMBOL_NAME_CACHE
+
+
+def _coverage_symbols(report: dict[str, Any] | None) -> set[str]:
+    coverage = report.get("data_coverage") if report else None
+    if not isinstance(coverage, dict):
+        return set()
+    return {str(symbol) for symbol in coverage}
+
+
+def _symbols_without_names(
+    sources: list[CoverageSource],
+    report: dict[str, Any] | None,
+) -> set[str]:
+    missing: set[str] = set()
+    for source in sources:
+        source_symbols = [*source.symbols, *source.missing_symbols]
+        for symbol in source_symbols:
+            if symbol and not source.names.get(symbol):
+                missing.add(symbol)
+    for symbol in _coverage_symbols(report):
+        if symbol:
+            missing.add(symbol)
+    return missing
+
+
+def _apply_name_fallback(
+    sources: list[CoverageSource],
+    report: dict[str, Any] | None,
+) -> tuple[list[CoverageSource], dict[str, str]]:
+    names = _merge_source_names(sources)
+    missing = {
+        symbol
+        for symbol in _symbols_without_names(sources, report)
+        if not names.get(symbol)
+    }
+    if missing:
+        krx_names = _load_krx_symbol_names()
+        for symbol in missing:
+            name = krx_names.get(symbol)
+            if name:
+                names.setdefault(symbol, name)
+
+    enriched_sources = []
+    for source in sources:
+        source_names = dict(source.names)
+        for symbol in source.symbols:
+            if symbol in names:
+                source_names.setdefault(symbol, names[symbol])
+        for symbol in source.missing_symbols:
+            if symbol in names:
+                source_names.setdefault(symbol, names[symbol])
+        enriched_sources.append(source.model_copy(update={"names": source_names}))
+    return enriched_sources, names
 
 
 @router.get("", response_model=CoverageResponse)
@@ -248,7 +405,8 @@ async def get_coverage(
         missing.append("futures_data_coverage")
 
     report = _latest_experiment_report() if asset in {"stock", "all"} else None
-    experiment = _experiment_rows(report)
+    sources, symbol_names = _apply_name_fallback(sources, report)
+    experiment = _experiment_rows(report, symbol_names)
     if asset in {"stock", "all"} and not experiment:
         missing.append("latest_experiment_coverage")
 

@@ -10,6 +10,7 @@ export interface Trade {
   id: string;
   strategy: string;
   symbol: string;
+  name?: string | null;
   side: 'BUY' | 'SELL';
   quantity: number;
   entry_price: number;

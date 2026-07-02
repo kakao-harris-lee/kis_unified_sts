@@ -17,6 +17,7 @@ import {
 import HeaderBar from "@/components/dashboard/HeaderBar";
 import ErrorMessage from "@/components/dashboard/ErrorMessage";
 import RefreshIndicator from "@/components/dashboard/RefreshIndicator";
+import SymbolLabel from "@/components/dashboard/SymbolLabel";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
 import {
   eventContextApi,
@@ -348,9 +349,18 @@ function EvidenceList({
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
-                      {row.symbol ?? row.event_id ?? "event"}
-                    </span>
+                    {row.symbol ? (
+                      <SymbolLabel
+                        code={row.symbol}
+                        name={row.name}
+                        className="text-xs text-slate-900 dark:text-slate-100"
+                        nameClassName="font-semibold"
+                      />
+                    ) : (
+                      <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
+                        {row.event_id ?? "event"}
+                      </span>
+                    )}
                     {row.direction ? (
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                         {row.direction}

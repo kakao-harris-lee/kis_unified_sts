@@ -304,6 +304,7 @@ async def test_trades_list_reads_runtime_ledger(monkeypatch, tmp_path):
     assert data["total"] == 1
     assert data["trades"][0]["id"] == "trade-stock-1"
     assert data["trades"][0]["symbol"] == "005930"
+    assert data["trades"][0]["name"] == "Samsung"
     assert data["trades"][0]["pnl"] == 10000.0
 
 

@@ -7,6 +7,7 @@ import SideBadge from './SideBadge'
 import PositionCard from './PositionCard'
 import TableSkeleton from './TableSkeleton'
 import ErrorMessage from './ErrorMessage'
+import SymbolLabel from './SymbolLabel'
 
 export default function PositionsTableLarge() {
   const { selectedAsset } = useAssetClass()
@@ -29,8 +30,7 @@ export default function PositionsTableLarge() {
           <thead className="bg-slate-50 text-slate-600">
             <tr>
               <th className="px-2 py-1 text-left">Side</th>
-              <th className="px-2 py-1 text-left">Code</th>
-              <th className="px-2 py-1 text-left">Name</th>
+              <th className="px-2 py-1 text-left">Symbol</th>
               <th className="px-2 py-1 text-right">Qty</th>
               <th className="px-2 py-1 text-right">Entry</th>
               <th className="px-2 py-1 text-right">PnL</th>
@@ -41,8 +41,9 @@ export default function PositionsTableLarge() {
             {data.map((p) => (
               <tr key={`${p.asset_class}-${p.code}`} className="border-t border-slate-100">
                 <td className="px-2 py-1"><SideBadge side={p.side} /></td>
-                <td className="px-2 py-1 font-mono text-slate-900">{p.code}</td>
-                <td className="px-2 py-1 text-slate-900">{p.name}</td>
+                <td className="px-2 py-1 text-slate-900">
+                  <SymbolLabel code={p.code} name={p.name} />
+                </td>
                 <td className="px-2 py-1 text-right">{p.quantity}</td>
                 <td className="px-2 py-1 text-right">{p.entry_price.toLocaleString()}</td>
                 <td className={`px-2 py-1 text-right ${p.unrealized_pnl >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>

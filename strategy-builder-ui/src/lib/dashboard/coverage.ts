@@ -7,12 +7,14 @@ export interface CoverageSource {
   count: number | null;
   updated_at: string | null;
   symbols: string[];
+  names?: Record<string, string>;
   missing_symbols: string[];
   metadata: Record<string, unknown>;
 }
 
 export interface ExperimentCoverageRow {
   symbol: string;
+  name?: string | null;
   loaded: boolean;
   rows: number | null;
   start: string | null;
