@@ -1,0 +1,83 @@
+# Market Risk Gate — unified investment roadmap Phase 2A (§4.2 reaction
+# matrix, §5.1 track B, §5.2 track C).
+#
+# Consumed by shared/risk/market_risk_gate.py (evaluate_market_risk_gate),
+# which reads the Phase 1 hash `market:risk:latest` (Redis DB 1, published by
+# services/market_risk_engine) and turns the confirmed band into an entry
+# directive shared by the stock M4-P pipeline, the futures decision_engine,
+# and the dashboard lanes.
+#
+# ENTRY ONLY: this gate applies exclusively to NEW entries. Exit paths are
+# never gated — stock swing exits stay signal-driven (no blanket EOD
+# liquidation) and futures exits are untouched (roadmap §4.2). Direction
+# itself is decided by the caller's signal_direction; the gate only answers
+# allow/size for the requested side. The matrix carries no short-block rule
+# except the CRITICAL full stop (long/short symmetry, roadmap §5.2).
+#
+# Fail-open (RegimeGate P2-③ precedent): missing hash / parse failure /
+# degraded=true / stale asof_ts / mode off  =>  allow=true,
+# would_block=false, size_factor=1.0 with a machine-readable fail_open:*
+# reason. The evaluator never raises into the caller.
+
+# Gate mode:
+#   off      gate disabled — always fail-open pass-through
+#   shadow   rule verdict is computed and reported (would_block / reason)
+#            but allow stays true; log-only observation (roadmap §4.4:
+#            enforce only after >=10 trading days shadow + operator approval)
+#   enforce  blocking rules actually deny new entries
+mode: shadow
+
+# Maximum age of market:risk:latest asof_ts (KST naive ISO) before the hash
+# is considered stale and the gate fails open. 21600s = 6h — spans the gap
+# between the 08:00 premarket computation and the 30-minute intraday
+# refreshes with headroom.
+staleness_max_age_seconds: 21600
+
+redis:
+  # Phase 1 publication key (services/market_risk_engine, Redis DB 1).
+  latest_key: "market:risk:latest"
+
+# ---------------------------------------------------------------------------
+# Reaction matrix (§4.2): asset x band -> NEW-entry rule.
+#
+# Rule fields (all optional; defaults: allow_long=true, allow_short=true,
+# size_factor=1.0, min_confidence=null):
+#   allow_long      false blocks NEW long entries (enforce mode only)
+#   allow_short     false blocks NEW short entries (enforce mode only)
+#   size_factor     multiplicative position-size factor, 0 < f <= 1.0
+#   min_confidence  minimum signal confidence required (stock track B);
+#                   the caller compares it against its signal confidence
+#
+# Band names must match config/market_risk.yaml bands
+# (LOW / NEUTRAL / ELEVATED / HIGH / CRITICAL).
+# ---------------------------------------------------------------------------
+assets:
+  # Track B (stock pipeline) — long-only in practice; no short-block rules
+  # here by design (the CRITICAL full stop is the only both-side block).
+  stock:
+    LOW: {}
+    NEUTRAL: {}
+    ELEVATED:
+      min_confidence: "HIGH" # only HIGH-confidence signals may enter
+    HIGH:
+      allow_long: false # no new longs; holdings follow exit rules only
+    CRITICAL:
+      allow_long: false # full new-entry stop
+      allow_short: false
+
+  # Track C (futures) — direction stays with signal_direction; the gate only
+  # adjusts allow/size per side.
+  futures:
+    LOW:
+      size_factor: 1.0
+    NEUTRAL:
+      size_factor: 1.0
+    ELEVATED:
+      size_factor: 0.7
+    HIGH:
+      allow_long: false # no new longs
+      allow_short: true # short bias stays allowed
+      size_factor: 0.5
+    CRITICAL:
+      allow_long: false # full new-entry stop (hedge/liquidation shorts are
+      allow_short: false # exit-path concerns, never gated entries)
