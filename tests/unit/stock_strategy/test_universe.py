@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 
 from services.stock_strategy.universe import (
+    _EFFECTIVE_PAYLOAD_KEY,
     _SCREENER_PAYLOAD_KEY,
+    build_effective_watchlist,
+    effective_universe_to_watchlist,
     merge_screener_universe,
     parse_trade_targets_codes,
     parse_watchlist_codes,
@@ -136,3 +139,52 @@ def test_merge_screener_universe_handles_empty_sources():
         )
         == []
     )
+
+
+def test_effective_universe_to_watchlist_filters_blocked_trade_target_payload():
+    effective = {
+        "codes": ["005930"],
+        "market_data_codes": ["005930", "000660"],
+        "generated_at": "2026-07-02T00:00:00+00:00",
+    }
+    trade_targets = {
+        "codes": ["005930", "000660"],
+        "metadata": {
+            "005930": {"llm_quality": 0.9},
+            "000660": {"llm_quality": 0.95},
+        },
+        "names": {"005930": "삼성전자", "000660": "SK하이닉스"},
+    }
+
+    watchlist = effective_universe_to_watchlist(
+        effective,
+        watchlist_raw={"strategies": {"pattern_pullback": ["005930", "000660"]}},
+        trade_targets_raw=trade_targets,
+        max_symbols=40,
+    )
+
+    assert parse_watchlist_codes(watchlist, max_symbols=40) == ["005930"]
+    assert watchlist[_SCREENER_PAYLOAD_KEY]["codes"] == ["005930"]
+    assert "000660" not in watchlist[_SCREENER_PAYLOAD_KEY]["metadata"]
+    assert watchlist[_EFFECTIVE_PAYLOAD_KEY]["market_data_codes"] == [
+        "005930",
+        "000660",
+    ]
+
+
+def test_build_effective_watchlist_honors_manual_exclude_when_no_snapshot():
+    watchlist = build_effective_watchlist(
+        watchlist_raw={"strategies": {"pattern_pullback": ["005930", "000660"]}},
+        trade_targets_raw={"codes": ["005930", "000660"]},
+        overrides_raw={
+            "manual_exclude": {
+                "000660": {
+                    "reason": "blocked",
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            }
+        },
+        max_symbols=40,
+    )
+
+    assert parse_watchlist_codes(watchlist, max_symbols=40) == ["005930"]

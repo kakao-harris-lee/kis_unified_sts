@@ -15,6 +15,7 @@ import {
   FlaskConical,
   ShieldCheck,
   DatabaseZap,
+  ListFilter,
   CalendarClock,
   FileSearch,
 } from "lucide-react";
@@ -29,6 +30,7 @@ const navItems = [
   { href: "/positions", label: "Positions", icon: Briefcase },
   { href: "/signals", label: "Signals", icon: Activity },
   { href: "/risk", label: "Risk", icon: ShieldCheck },
+  { href: "/universe", label: "Universe", icon: ListFilter },
   { href: "/coverage", label: "Coverage", icon: DatabaseZap },
   { href: "/evidence", label: "Evidence", icon: FileSearch },
   { href: "/event-context", label: "Events", icon: CalendarClock },

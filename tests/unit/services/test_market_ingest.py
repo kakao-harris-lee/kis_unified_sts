@@ -337,3 +337,32 @@ def test_stock_symbol_selection_prioritizes_trade_targets_then_watchlist_then_ex
         max_symbols=5,
         existing=["051910", "068270"],
     ) == ["005930", "000660", "035720", "035420", "051910"]
+
+
+def test_stock_symbol_selection_uses_effective_market_data_codes_first():
+    from services.market_ingest.main import _select_stock_symbols_from_payloads
+
+    effective = '{"codes": ["005930"], "market_data_codes": ["005930", "000660"]}'
+
+    assert _select_stock_symbols_from_payloads(
+        '{"codes": ["035720"]}',
+        '{"strategies": {"s": ["035420"]}}',
+        effective_raw=effective,
+        max_symbols=5,
+    ) == ["005930", "000660"]
+
+
+def test_stock_symbol_selection_applies_overrides_without_effective_snapshot():
+    from services.market_ingest.main import _select_stock_symbols_from_payloads
+
+    overrides = (
+        '{"manual_exclude": {"000660": '
+        '{"reason": "blocked", "expires_at": "2099-01-01T00:00:00+00:00"}}}'
+    )
+
+    assert _select_stock_symbols_from_payloads(
+        '{"codes": ["005930", "000660", "035720"]}',
+        None,
+        overrides_raw=overrides,
+        max_symbols=2,
+    ) == ["005930", "035720"]

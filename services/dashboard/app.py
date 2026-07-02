@@ -220,11 +220,13 @@ def _register_routes(app: FastAPI) -> None:
         strategy_lab,
         trades,
         trading,
+        universe,
     )
     from services.dashboard.websocket import websocket_endpoint
 
     # Include API routers (registered first — take priority over SPA catch-all)
     app.include_router(trading.router)
+    app.include_router(universe.router)
     app.include_router(signals.router)
     app.include_router(strategy_builder.router)
     app.include_router(kis_builder.router)

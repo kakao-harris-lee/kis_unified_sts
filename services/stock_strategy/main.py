@@ -180,20 +180,28 @@ async def _build_and_run() -> int:
     trade_targets_key = os.environ.get(
         "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
     )
+    effective_universe_key = os.environ.get(
+        "STOCK_EFFECTIVE_UNIVERSE_KEY", "stock:universe:effective:latest"
+    )
+    overrides_key = os.environ.get(
+        "STOCK_UNIVERSE_OVERRIDES_KEY", "stock:universe:overrides"
+    )
     _max_symbols = int(os.environ.get("STOCK_MAX_SYMBOLS", "40"))
 
     from services.stock_strategy.universe import (
-        merge_screener_universe,
+        build_effective_watchlist,
         parse_watchlist_codes,
     )
 
     def _watchlist_reader() -> Any:
-        # Universe = daily-watchlist (scanner) ∪ trade_targets (screener) so the
-        # strategy evaluates the screener's ranked candidates, not just the thin
-        # technical watchlist. market-ingest ticks the same union.
-        return merge_screener_universe(
-            sync_redis.get(watchlist_key),
-            sync_redis.get(trade_targets_key),
+        # Universe = managed effective entry universe when available, otherwise
+        # daily-watchlist (scanner) ∪ trade_targets (screener) plus manual
+        # include/exclude overrides. market-ingest reads the same effective key.
+        return build_effective_watchlist(
+            watchlist_raw=sync_redis.get(watchlist_key),
+            trade_targets_raw=sync_redis.get(trade_targets_key),
+            overrides_raw=sync_redis.get(overrides_key),
+            effective_raw=sync_redis.get(effective_universe_key),
             max_symbols=_max_symbols,
         )
 

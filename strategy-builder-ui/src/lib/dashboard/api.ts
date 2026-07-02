@@ -15,6 +15,7 @@ export { strategyBuilderApi } from './strategyBuilder';
 export { fillsApi } from './fills';
 export { healthApi } from './health';
 export { coverageApi } from './coverage';
+export { universeApi } from './universe';
 export { eventContextApi } from './eventContext';
 export { killSwitchApi } from './killSwitch';
 export { evidenceApi } from './evidence';

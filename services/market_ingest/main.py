@@ -18,7 +18,11 @@ from datetime import datetime
 from typing import Any
 
 from shared.config.runtime_defaults import redis_url_from_env
-from shared.stock_universe import select_stock_universe
+from shared.stock_universe import (
+    build_effective_universe_snapshot,
+    parse_effective_universe_codes,
+    select_stock_universe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +63,31 @@ def _select_stock_symbols_from_payloads(
     *,
     max_symbols: int,
     existing: list[str] | None = None,
+    effective_raw: str | None = None,
+    overrides_raw: str | None = None,
 ) -> list[str]:
     """Select the stock ingest universe using the shared cap order."""
 
     from services.stock_strategy.universe import parse_watchlist_codes
+
+    effective_codes = parse_effective_universe_codes(
+        effective_raw,
+        field="market_data_codes",
+        max_symbols=max_symbols,
+    )
+    if effective_codes:
+        return effective_codes
+
+    effective = build_effective_universe_snapshot(
+        trade_targets_raw=trade_targets_raw,
+        daily_watchlist_raw=watchlist_raw,
+        overrides_raw=overrides_raw,
+        existing_symbols=existing,
+        max_symbols=max_symbols,
+    )
+    market_data_codes = effective.get("market_data_codes")
+    if isinstance(market_data_codes, list) and market_data_codes:
+        return [str(code) for code in market_data_codes[:max_symbols]]
 
     return select_stock_universe(
         trade_targets=_load_trade_target_codes(trade_targets_raw),
@@ -375,6 +400,12 @@ async def _build_and_run() -> int:
         watchlist_key = os.environ.get(
             "STOCK_WATCHLIST_KEY", "system:daily_watchlist:latest"
         )
+        effective_universe_key = os.environ.get(
+            "STOCK_EFFECTIVE_UNIVERSE_KEY", "stock:universe:effective:latest"
+        )
+        overrides_key = os.environ.get(
+            "STOCK_UNIVERSE_OVERRIDES_KEY", "stock:universe:overrides"
+        )
         max_symbols = int(os.environ.get("INGEST_MAX_SYMBOLS", "40"))
 
         async def _get_text(key: str) -> str | None:
@@ -392,6 +423,8 @@ async def _build_and_run() -> int:
                 await _get_text(target_key),
                 await _get_text(watchlist_key),
                 max_symbols=max_symbols,
+                effective_raw=await _get_text(effective_universe_key),
+                overrides_raw=await _get_text(overrides_key),
             )
 
         refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "30"))
