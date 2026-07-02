@@ -15,6 +15,14 @@ from shared.storage.market_data_store import (
     create_market_data_store,
     load_market_bars_for_backtest,
 )
+from shared.storage.market_structure_store import (
+    MarketStructureConfig,
+    MarketStructureSnapshotSettings,
+    MarketStructureStorageSettings,
+    MarketStructureStoreError,
+    ParquetMarketStructureStore,
+    create_market_structure_store,
+)
 from shared.storage.runtime_ledger import (
     RuntimeLedger,
     RuntimeLedgerError,
@@ -26,8 +34,13 @@ __all__ = [
     "MarketDataStorageConfig",
     "MarketDataStore",
     "MarketDataStoreError",
+    "MarketStructureConfig",
+    "MarketStructureSnapshotSettings",
+    "MarketStructureStorageSettings",
+    "MarketStructureStoreError",
     "ParquetMarketDataConfig",
     "ParquetMarketDataStore",
+    "ParquetMarketStructureStore",
     "RuntimeLedger",
     "RuntimeLedgerError",
     "RuntimeStorageConfig",
@@ -35,5 +48,6 @@ __all__ = [
     "SQLiteStorageConfig",
     "StorageConfig",
     "create_market_data_store",
+    "create_market_structure_store",
     "load_market_bars_for_backtest",
 ]

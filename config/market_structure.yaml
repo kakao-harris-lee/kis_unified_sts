@@ -1,0 +1,94 @@
+# Market-structure daily series (Market Risk Score, unified roadmap Phase 0).
+#
+# Consumed by shared/storage/market_structure_store.py and the (future)
+# market_structure collector. The parquet root itself comes from
+# config/storage.yaml::market_data.parquet.root; only the dataset subpath and
+# snapshot policy live here. Intraday provisional values are Redis-only and
+# are never written to this dataset.
+
+storage:
+  # Dataset subdirectory under the market-data parquet root:
+  #   <root>/market_structure/daily/year=YYYY/day=YYYY-MM-DD/part-<uuid>.parquet
+  subdir: market_structure/daily
+  # Logical schema version stamped into every row (SMALLINT).
+  schema_version: 1
+
+snapshots:
+  # Allowed snapshot names for (trade_date, snapshot) rows.
+  names:
+    - premarket
+    - close
+  # Snapshots whose rows default to finalized=true.
+  finalized:
+    - close
+  # Publication cutoffs per snapshot (KST, HH:MM). close waits for the KRX
+  # ~18:00 investor/program publication plus a 40-minute buffer.
+  cutoffs_kst:
+    premarket: "08:00"
+    close: "18:40"
+
+# ---------------------------------------------------------------------------
+# Collector runtime settings (services/market_structure_collector, Wave 2b).
+# The store reader above ignores this section (ServiceConfigBase extra=ignore).
+# ---------------------------------------------------------------------------
+collector:
+  redis:
+    # Latest snapshot hash (flattened row; "" denotes null). 24h operational TTL.
+    latest_key: "market:structure:latest"
+    latest_ttl_seconds: 86400
+    # Collection-event stream (macro_overnight_collector pattern).
+    stream_key: "stream:market.structure"
+    stream_maxlen: 5000
+    stream_ttl_seconds: 86400
+    # 20-trading-day foreign futures net-buy window (accumulation policy: 48h).
+    cum20_key: "market:structure:cum20:foreign_futures"
+    cum20_ttl_seconds: 172800
+    # Night-session KRX K200 futures capture (Wave 2e lane) — merged into the
+    # premarket snapshot when present; absent key is a soft miss.
+    night_close_key: "market:structure:night_close"
+    # Macro overnight stream (Wave 2a) — FX/overseas are READ from here,
+    # never re-collected by this service.
+    macro_stream_key: "stream:macro.overnight"
+  kis:
+    # FHPTJ04030000 (시장별 투자자매매동향): K2I = KOSPI200 futures market,
+    # F001 = futures product. Snapshot after 15:45 KST = daily confirmed value.
+    foreign_futures_market_code: "K2I"
+    foreign_futures_product_code: "F001"
+    # FHPPG04600001 (프로그램매매 종합현황 일별): J = KRX.
+    program_market_div: "J"
+    # FHMIF10000000 snapshot symbol for price/OI. 101S6000 is the KIS
+    # auto-rolling KOSPI200 front-month short code.
+    futures_symbol: "101S6000"
+    # FHPUP02100000 / FHKUP03500100: U/2001 = KOSPI200 index.
+    index_market_div: "U"
+    index_code: "2001"
+  basis:
+    # Annual risk-free rate for the theoretical fair value
+    # (shared/arbitrage/basis_calculator.py).
+    risk_free_rate: 0.035
+  derived:
+    foreign_cum_window_days: 20
+    basis_dev_ma_days: 5
+    usdkrw_ret_days: 5
+    k200_ma_windows: [5, 20, 60]
+    k200_ret_days: 20
+    # Calendar-day lookback for loading close-row history used by the
+    # derived computations above (>= max(k200_ma_windows) trading days).
+    history_lookback_days: 120
+  # Coverage components: coverage_ratio = collected / len(components); every
+  # component is allowed to be missing (recorded in missing_components) and
+  # synthetic values are never fabricated.
+  components:
+    - foreign_futures
+    - program
+    - oi
+    - k200
+    - basis
+    - stock_investor
+    - fx
+    - overseas
+  health:
+    # /api/health/summary freshness: market:structure:latest asof older than
+    # this is "stale". 14h > the longest intra-week publish gap
+    # (close 18:40 -> premarket 08:00 = 13.3h) and < the 24h key TTL.
+    stale_after_seconds: 50400
