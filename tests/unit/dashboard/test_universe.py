@@ -10,6 +10,29 @@ import types
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _restore_universe_module():
+    """Reload the universe route module under the real fastapi after each test.
+
+    ``_client`` injects a fake ``fastapi`` into ``sys.modules`` and reloads
+    ``services.dashboard.routes.universe`` under it, leaving the cached module
+    with ``router`` bound to the fake ``_Router``. monkeypatch restores the
+    ``fastapi`` entry, but not the reloaded module — a later ``create_app()``
+    in the same process would then fail with ``'_Router' object has no
+    attribute 'routes'``. Reloading in place (same module object) restores
+    every existing reference, including the parent package attribute.
+    """
+    real_fastapi = sys.modules.get("fastapi")
+    yield
+    if real_fastapi is not None:
+        sys.modules["fastapi"] = real_fastapi
+    else:
+        sys.modules.pop("fastapi", None)
+    universe = sys.modules.get("services.dashboard.routes.universe")
+    if universe is not None:
+        importlib.reload(universe)
+
+
 class _FakeRedis:
     def __init__(self, payloads: dict[str, object]) -> None:
         self.payloads = payloads
