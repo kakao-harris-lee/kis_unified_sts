@@ -5,21 +5,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 
 import yfinance as yf  # noqa: F401 — re-exported for tests to monkey-patch
 
 from shared.macro.base import MacroSnapshot
+from shared.macro.config import DEFAULT_YAHOO_SYMBOLS
 
 logger = logging.getLogger(__name__)
 
-
-_TICKER_MAP = {
-    "sp500": "^GSPC",
-    "nasdaq": "^IXIC",
-    "vix": "^VIX",
-    "dxy": "DX-Y.NYB",
-    "us10y": "^TNX",
-}
+# Snapshot field prefixes fetched by the pre-market session (07:45 KST).
+# Each key doubles as the ticker-map key and yields ``<key>``/
+# ``<key>_change_pct`` MacroSnapshot fields.
+_PREMARKET_FIELDS: tuple[str, ...] = (
+    "es_futures",
+    "nq_futures",
+    "sox",
+    "usdkrw_realtime",
+)
 
 
 def _fetch_close_and_change(ticker_symbol: str) -> tuple[float | None, float | None]:
@@ -40,18 +43,34 @@ def _fetch_close_and_change(ticker_symbol: str) -> tuple[float | None, float | N
 
 
 class YahooMacroSource:
-    async def fetch_us_close_snapshot(self) -> MacroSnapshot:
-        # Fetch in thread pool (yfinance is sync)
+    """Fetches macro snapshots from Yahoo Finance.
+
+    Args:
+        ticker_map: MacroSnapshot field prefix -> Yahoo symbol. Normally
+            injected from ``MacroCollectorConfig.yahoo_symbols`` so symbol
+            additions are config-only; defaults to the legacy hardcoded map.
+    """
+
+    def __init__(self, ticker_map: Mapping[str, str] | None = None) -> None:
+        self._ticker_map: dict[str, str] = (
+            dict(ticker_map) if ticker_map is not None else dict(DEFAULT_YAHOO_SYMBOLS)
+        )
+
+    async def _fetch(self, key: str) -> tuple[float | None, float | None]:
+        """Fetch (close, change_pct) for a ticker-map key; None-safe."""
+        symbol = self._ticker_map.get(key)
+        if not symbol:
+            logger.warning("yahoo ticker map missing key=%s — skipping", key)
+            return None, None
         loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _fetch_close_and_change, symbol)
 
-        async def _t(sym: str):
-            return await loop.run_in_executor(None, _fetch_close_and_change, sym)
-
-        sp500, sp500_pct = await _t(_TICKER_MAP["sp500"])
-        nasdaq, nasdaq_pct = await _t(_TICKER_MAP["nasdaq"])
-        vix, _ = await _t(_TICKER_MAP["vix"])
-        dxy, _ = await _t(_TICKER_MAP["dxy"])
-        us10y, _ = await _t(_TICKER_MAP["us10y"])
+    async def fetch_us_close_snapshot(self) -> MacroSnapshot:
+        sp500, sp500_pct = await self._fetch("sp500")
+        nasdaq, nasdaq_pct = await self._fetch("nasdaq")
+        vix, _ = await self._fetch("vix")
+        dxy, _ = await self._fetch("dxy")
+        us10y, _ = await self._fetch("us10y")
 
         return MacroSnapshot(
             ts_ms=int(time.time() * 1000),
@@ -64,4 +83,23 @@ class YahooMacroSource:
             dxy=dxy,
             us10y_yield=us10y,
             collected_from=["yahoo"],
+        )
+
+    async def fetch_premarket_snapshot(self) -> MacroSnapshot:
+        """Pre-market (07:45 KST) snapshot: ES/NQ futures, SOX, offshore KRW.
+
+        Covers the gap before the ECOS same-day USD/KRW fixing (published
+        after 08:30 KST) so the 08:00 pre-open Risk Score has fresh inputs.
+        """
+        values: dict[str, float | None] = {}
+        for key in _PREMARKET_FIELDS:
+            close, change_pct = await self._fetch(key)
+            values[key] = close
+            values[f"{key}_change_pct"] = change_pct
+
+        return MacroSnapshot(
+            ts_ms=int(time.time() * 1000),
+            session="premarket",
+            collected_from=["yahoo"],
+            **values,
         )

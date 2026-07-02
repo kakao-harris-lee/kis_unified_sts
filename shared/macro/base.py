@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class MacroSnapshot:
     ts_ms: int
-    session: str  # "overnight_us_close" | "overnight_fx"
+    session: str  # "overnight_us_close" | "overnight_fx" | "premarket"
     sp500_close: float | None = None
     sp500_change_pct: float | None = None
     nasdaq_close: float | None = None
@@ -25,13 +25,25 @@ class MacroSnapshot:
     dxy: float | None = None
     us10y_yield: float | None = None
     vix: float | None = None
+    # Pre-market session fields (07:45 KST; Yahoo ES=F/NQ=F/^SOX/KRW=X).
+    # ``usdkrw_realtime`` is the offshore near-realtime rate used before the
+    # ECOS same-day fixing (published only after 08:30 KST) is available.
+    # Additive only — existing stream consumers stay compatible.
+    es_futures: float | None = None
+    es_futures_change_pct: float | None = None
+    nq_futures: float | None = None
+    nq_futures_change_pct: float | None = None
+    sox: float | None = None
+    sox_change_pct: float | None = None
+    usdkrw_realtime: float | None = None
+    usdkrw_realtime_change_pct: float | None = None
     collected_from: list[str] = field(default_factory=list)
 
 
-# Float fields parsed from the Redis stream payload (collector emits all
-# values as strings; "" denotes None — see macro_overnight_collector
-# _publish_snapshot).
-_FLOAT_FIELDS = (
+# Float fields carried on the Redis stream payload. Single source of truth
+# for both the writer (macro_overnight_collector._publish_snapshot emits all
+# values as strings; "" denotes None) and the reader below.
+MACRO_FLOAT_FIELDS: tuple[str, ...] = (
     "sp500_close",
     "sp500_change_pct",
     "nasdaq_close",
@@ -43,7 +55,18 @@ _FLOAT_FIELDS = (
     "dxy",
     "us10y_yield",
     "vix",
+    "es_futures",
+    "es_futures_change_pct",
+    "nq_futures",
+    "nq_futures_change_pct",
+    "sox",
+    "sox_change_pct",
+    "usdkrw_realtime",
+    "usdkrw_realtime_change_pct",
 )
+
+# Backward-compat alias (internal name used before the pre-market expansion).
+_FLOAT_FIELDS = MACRO_FLOAT_FIELDS
 
 
 def _coerce_float(raw: Any) -> float | None:
@@ -60,11 +83,13 @@ def read_latest_macro_snapshot(
 ) -> MacroSnapshot | None:
     """Read the freshest merged :class:`MacroSnapshot` from the Redis stream.
 
-    The collector interleaves two session kinds on the same stream:
+    The collector interleaves session kinds on the same stream:
 
       * ``overnight_us_close`` — once at 06:30 KST; carries sp500/nasdaq/
         vix/dxy/us10y (the equity-gap fields Setup A needs).
       * ``overnight_fx`` — every 15 min; carries only usdkrw.
+      * ``premarket`` — once at 07:45 KST; carries es_futures/nq_futures/
+        sox/usdkrw_realtime for the pre-open Risk Score.
 
     A naive "latest entry" read almost always returns an ``overnight_fx``
     row with ``sp500_change_pct=None``, which makes Setup A no-op forever

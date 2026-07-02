@@ -11,6 +11,7 @@ from typing import Any
 
 from services.monitoring.metrics import record_macro_collected
 from shared.config.runtime_defaults import redis_url_from_env
+from shared.macro.base import MACRO_FLOAT_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -18,22 +19,12 @@ _STREAM_TTL_SECONDS = 86400  # Project Redis TTL policy (memory: stream keys 24h
 
 
 async def _publish_snapshot(redis: Any, stream: str, maxlen: int, snap) -> None:
-    payload = {
-        "ts_ms": snap.ts_ms,
-        "session": snap.session,
-        "sp500_close": snap.sp500_close,
-        "sp500_change_pct": snap.sp500_change_pct,
-        "nasdaq_close": snap.nasdaq_close,
-        "nasdaq_change_pct": snap.nasdaq_change_pct,
-        "eurex_kospi_close": snap.eurex_kospi_close,
-        "eurex_kospi_change_pct": snap.eurex_kospi_change_pct,
-        "usdkrw": snap.usdkrw,
-        "usdkrw_change_pct": snap.usdkrw_change_pct,
-        "dxy": snap.dxy,
-        "us10y_yield": snap.us10y_yield,
-        "vix": snap.vix,
-        "collected_from_json": json.dumps(snap.collected_from),
-    }
+    # MACRO_FLOAT_FIELDS is the shared writer/reader schema — keeps this
+    # payload in lockstep with read_latest_macro_snapshot (additive-only).
+    payload: dict[str, Any] = {"ts_ms": snap.ts_ms, "session": snap.session}
+    for f in MACRO_FLOAT_FIELDS:
+        payload[f] = getattr(snap, f)
+    payload["collected_from_json"] = json.dumps(snap.collected_from)
     fields = {k: ("" if v is None else str(v)) for k, v in payload.items()}
     await redis.xadd(stream, fields, maxlen=maxlen, approximate=True)
     await redis.expire(stream, _STREAM_TTL_SECONDS)
@@ -49,6 +40,21 @@ async def collect_us_session(
 ) -> int:
     _ = archive_client
     snap = await yahoo_source.fetch_us_close_snapshot()
+    await _publish_snapshot(redis, stream, maxlen, snap)
+    record_macro_collected(snap.session)
+    return 0
+
+
+async def collect_premarket_session(
+    *,
+    redis: Any,
+    archive_client: Any,
+    yahoo_source: Any,
+    stream: str,
+    maxlen: int,
+) -> int:
+    _ = archive_client
+    snap = await yahoo_source.fetch_premarket_snapshot()
     await _publish_snapshot(redis, stream, maxlen, snap)
     record_macro_collected(snap.session)
     return 0
@@ -90,7 +96,15 @@ async def _cli(session_kind: str) -> int:
             rc = await collect_us_session(
                 redis=r,
                 archive_client=None,
-                yahoo_source=YahooMacroSource(),
+                yahoo_source=YahooMacroSource(ticker_map=cfg.yahoo_symbols),
+                stream=stream,
+                maxlen=maxlen,
+            )
+        elif session_kind == "premarket":
+            rc = await collect_premarket_session(
+                redis=r,
+                archive_client=None,
+                yahoo_source=YahooMacroSource(ticker_map=cfg.yahoo_symbols),
                 stream=stream,
                 maxlen=maxlen,
             )
@@ -117,7 +131,7 @@ def main() -> int:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     p = argparse.ArgumentParser()
-    p.add_argument("session", choices=["us", "fx"])
+    p.add_argument("session", choices=["us", "fx", "premarket"])
     args = p.parse_args()
     return asyncio.run(_cli(args.session))
 

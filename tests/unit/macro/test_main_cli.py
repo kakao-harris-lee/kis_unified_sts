@@ -60,6 +60,61 @@ async def test_cli_us_session_runs(monkeypatch, _patch_external_clients):
 
 
 @pytest.mark.asyncio
+async def test_cli_premarket_session_runs(monkeypatch, _patch_external_clients):
+    yahoo_stub = MagicMock()
+    yahoo_stub.fetch_premarket_snapshot = AsyncMock(
+        return_value=MacroSnapshot(
+            ts_ms=1_700_000_000_000,
+            session="premarket",
+            es_futures=6000.0,
+            es_futures_change_pct=-0.3,
+            usdkrw_realtime=1462.5,
+            collected_from=["yahoo"],
+        )
+    )
+    captured_kwargs: dict = {}
+
+    def _make_yahoo(*_a, **kwargs):
+        captured_kwargs.update(kwargs)
+        return yahoo_stub
+
+    monkeypatch.setattr("shared.macro.sources.yahoo.YahooMacroSource", _make_yahoo)
+
+    rc = await _cli("premarket")
+
+    assert rc == 0
+    yahoo_stub.fetch_premarket_snapshot.assert_awaited_once()
+    # _cli must inject the config-driven ticker map (config-only symbol adds).
+    from shared.macro.config import DEFAULT_YAHOO_SYMBOLS
+
+    assert captured_kwargs.get("ticker_map") == DEFAULT_YAHOO_SYMBOLS
+
+
+@pytest.mark.asyncio
+async def test_cli_us_session_injects_config_ticker_map(
+    monkeypatch, _patch_external_clients
+):
+    yahoo_stub = MagicMock()
+    yahoo_stub.fetch_us_close_snapshot = AsyncMock(
+        return_value=_snap("overnight_us_close")
+    )
+    captured_kwargs: dict = {}
+
+    def _make_yahoo(*_a, **kwargs):
+        captured_kwargs.update(kwargs)
+        return yahoo_stub
+
+    monkeypatch.setattr("shared.macro.sources.yahoo.YahooMacroSource", _make_yahoo)
+
+    rc = await _cli("us")
+
+    assert rc == 0
+    from shared.macro.config import DEFAULT_YAHOO_SYMBOLS
+
+    assert captured_kwargs.get("ticker_map") == DEFAULT_YAHOO_SYMBOLS
+
+
+@pytest.mark.asyncio
 async def test_cli_fx_session_runs_with_ecos_key(monkeypatch, _patch_external_clients):
     monkeypatch.setenv("ECOS_API_KEY", "test-key")
 

@@ -1,6 +1,23 @@
 macro_overnight_collector:
   redis_stream: "stream:macro.overnight"
   redis_maxlen: 5000
+  # Yahoo Finance ticker map — key = MacroSnapshot field prefix, value =
+  # Yahoo symbol. Consumed by MacroCollectorConfig.yahoo_symbols; adding a
+  # symbol here is config-only (no code change). If this section is absent
+  # the collector falls back to the legacy 5-symbol map (sp500..us10y).
+  yahoo_symbols:
+    sp500: "^GSPC"
+    nasdaq: "^IXIC"
+    vix: "^VIX"
+    dxy: "DX-Y.NYB"
+    us10y: "^TNX"
+    es_futures: "ES=F"
+    nq_futures: "NQ=F"
+    sox: "^SOX"
+    usdkrw_realtime: "KRW=X" # offshore near-realtime; ECOS same-day fix only after 08:30 KST
+  # NOTE: sessions below are documentation only — code does not consume them.
+  # The authoritative schedule is deploy/scheduler.crontab (compose
+  # `scheduler` service, supercronic, TZ=Asia/Seoul). Keep both in sync.
   sessions:
     overnight_us_close:
       cron: "30 6 * * 1-5"
@@ -10,4 +27,8 @@ macro_overnight_collector:
       cron: "*/15 * * * 1-5"
       indices: ["usdkrw"]
       provider: "ecos"
+    premarket:
+      cron: "45 7 * * 1-5"
+      indices: ["es_futures", "nq_futures", "sox", "usdkrw_realtime"]
+      provider: "yahoo"
   # overnight_eurex_close deferred — see spec §11
