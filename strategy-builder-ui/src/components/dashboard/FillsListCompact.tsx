@@ -7,6 +7,8 @@ interface Fill {
   signal_id: string
   asset_class: 'stock' | 'futures'
   symbol: string
+  code?: string
+  name?: string
   side: 'BUY' | 'SELL'
   filled_price: number
   quantity: number
@@ -34,8 +36,8 @@ export default function FillsListCompact() {
         </span>
       </div>
       {(data?.fills ?? []).map((f) => (
-        <div key={f.signal_id + f.filled_at} className="text-xs flex items-center justify-between py-1 border-b last:border-0">
-          <div className="flex items-center gap-1">
+        <div key={f.signal_id + f.filled_at} className="text-xs flex items-center justify-between gap-2 py-1 border-b last:border-0">
+          <div className="flex min-w-0 items-center gap-1">
             {selectedAsset === 'all' && (
               <span className="text-[9px] text-slate-400">
                 [{f.asset_class === 'futures' ? '선' : '주'}]
@@ -45,9 +47,18 @@ export default function FillsListCompact() {
               {new Date(f.filled_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
             </span>
             <span className={f.side === 'BUY' ? 'text-emerald-700' : 'text-rose-700'}>{f.side}</span>
-            <span className="font-mono">{f.symbol}</span>
+            <span className="min-w-0 truncate">
+              {f.name ? (
+                <>
+                  <span className="font-medium text-slate-800">{f.name}</span>
+                  <span className="ml-1 font-mono text-slate-500">{f.symbol}</span>
+                </>
+              ) : (
+                <span className="font-mono">{f.symbol}</span>
+              )}
+            </span>
           </div>
-          <span className="text-slate-500">{f.filled_price.toLocaleString()} × {f.quantity}</span>
+          <span className="shrink-0 text-slate-500">{f.filled_price.toLocaleString()} × {f.quantity}</span>
         </div>
       ))}
       {(!data || data.fills.length === 0) && (

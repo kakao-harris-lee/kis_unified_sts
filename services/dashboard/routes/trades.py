@@ -51,6 +51,8 @@ def _parse_optional_tz_aware(value: Any) -> datetime | None:
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
+_LEDGER_NAME_LOOKUP_LIMIT = 2_000
+
 
 class TradeResponse(BaseModel):
     """Trade response model."""
@@ -428,17 +430,78 @@ def _ledger_trade_to_closed_dict(trade: dict) -> dict:
     }
 
 
+def _clean_display_name(value: Any) -> str:
+    if value is None:
+        return ""
+    name = str(value).strip()
+    if not name or name.lower() in {"none", "null"}:
+        return ""
+    return name
+
+
+def _symbol_from_payload(row: dict, payload: dict) -> str:
+    return str(row.get("symbol") or payload.get("symbol") or payload.get("code") or "")
+
+
+def _name_from_payload(row: dict, payload: dict) -> str:
+    return _clean_display_name(
+        row.get("name")
+        or payload.get("name")
+        or payload.get("stock_name")
+        or payload.get("prdt_name")
+    )
+
+
+def _ledger_symbol_names(
+    ledger: SQLiteRuntimeLedger,
+    asset_class: str,
+) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for target in target_assets(asset_class):
+        try:
+            trades = ledger.query_trades(
+                {"asset_class": target, "limit": _LEDGER_NAME_LOOKUP_LIMIT}
+            )
+        except RuntimeLedgerError:
+            trades = []
+        for trade in trades:
+            payload = (
+                trade.get("payload") if isinstance(trade.get("payload"), dict) else {}
+            )
+            symbol = _symbol_from_payload(trade, payload)
+            name = _name_from_payload(trade, payload)
+            if symbol and name:
+                names.setdefault(symbol, name)
+
+        try:
+            positions = ledger.load_open_positions(target)
+        except RuntimeLedgerError:
+            positions = []
+        for position in positions:
+            payload = (
+                position.get("payload")
+                if isinstance(position.get("payload"), dict)
+                else {}
+            )
+            symbol = _symbol_from_payload(position, payload)
+            name = _name_from_payload(position, payload)
+            if symbol and name:
+                names.setdefault(symbol, name)
+    return names
+
+
 def _ledger_fill_to_dict(fill: dict) -> dict:
     payload = fill.get("payload") if isinstance(fill.get("payload"), dict) else {}
     role = payload.get("trade_role", "")
     filled_at = fill.get("filled_at") or payload.get("filled_at")
     if isinstance(filled_at, datetime):
         filled_at = filled_at.isoformat()
+    symbol = fill.get("symbol") or payload.get("symbol") or payload.get("code", "")
     return {
         "signal_id": payload.get("signal_id", ""),
-        "symbol": fill.get("symbol")
-        or payload.get("symbol")
-        or payload.get("code", ""),
+        "symbol": symbol,
+        "code": symbol,
+        "name": _name_from_payload(fill, payload),
         "side": fill.get("side") or payload.get("side", ""),
         "filled_price": fill.get("price") or payload.get("filled_price", 0.0),
         "quantity": fill.get("quantity") or payload.get("quantity", 0),
@@ -463,7 +526,11 @@ def _load_runtime_ledger_fills(
         rows: list[dict] = []
         for target in target_assets(asset_class):
             rows.extend(ledger.query_fills({"asset_class": target, "limit": limit}))
+        symbol_names = _ledger_symbol_names(ledger, asset_class)
         fills = [_ledger_fill_to_dict(row) for row in rows]
+        for fill in fills:
+            if not fill.get("name"):
+                fill["name"] = symbol_names.get(str(fill.get("symbol") or ""), "")
         fills.sort(key=lambda f: _parse_tz_aware(f.get("filled_at")), reverse=True)
         return fills[:limit], True
     except RuntimeLedgerError:

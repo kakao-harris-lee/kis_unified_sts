@@ -140,6 +140,47 @@ def _seed_runtime_ledger_fill(db_path):
     ledger.close()
 
 
+def _seed_runtime_ledger_stock_fill_with_trade_name(db_path):
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    ledger = SQLiteRuntimeLedger(db_path)
+    ledger.record_fill(
+        {
+            "id": "fill-stock-1",
+            "idempotency_key": "fill-stock-1",
+            "fill_id": "broker-fill-stock-1",
+            "signal_id": "signal-stock-1",
+            "order_id": "order-stock-1",
+            "asset_class": "stock",
+            "code": "005930",
+            "side": "SELL",
+            "filled_qty": 1,
+            "filled_price": 72000.0,
+            "filled_at": "2026-06-03T10:00:00+09:00",
+            "trade_role": "exit",
+            "venue": "KIS",
+        }
+    )
+    ledger.record_trade(
+        {
+            "id": "trade-stock-1",
+            "idempotency_key": "trade-stock-1",
+            "asset_class": "stock",
+            "code": "005930",
+            "name": "Samsung",
+            "side": "long",
+            "strategy": "bb_reversion",
+            "entry_time": "2026-06-03T09:00:00+09:00",
+            "entry_price": 71000.0,
+            "exit_time": "2026-06-03T10:00:00+09:00",
+            "exit_price": 72000.0,
+            "quantity": 1,
+            "exit_reason": "target",
+        }
+    )
+    ledger.close()
+
+
 def _seed_runtime_ledger_lifecycle(db_path):
     from shared.storage.runtime_ledger import SQLiteRuntimeLedger
 
@@ -441,6 +482,29 @@ async def test_trades_fills_reads_runtime_ledger(monkeypatch, tmp_path):
     assert fill["trade_role"] == "entry"
     assert fill["asset_class"] == "futures"
     assert fill["order_id"] == "order-futures-1"
+
+
+@pytest.mark.asyncio
+async def test_trades_fills_enriches_stock_name_from_runtime_ledger(
+    monkeypatch, tmp_path
+):
+    """Stock fills should include a display name when the ledger has one."""
+    from services.dashboard.app import create_app
+
+    db_path = tmp_path / "runtime.db"
+    _seed_runtime_ledger_stock_fill_with_trade_name(db_path)
+    _configure_runtime_ledger_env(monkeypatch, db_path)
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/trades/fills?asset_class=stock")
+
+    assert response.status_code == 200
+    fill = response.json()["fills"][0]
+    assert fill["symbol"] == "005930"
+    assert fill["code"] == "005930"
+    assert fill["name"] == "Samsung"
 
 
 @pytest.mark.asyncio
