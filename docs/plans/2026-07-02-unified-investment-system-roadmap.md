@@ -382,14 +382,29 @@
 (`shared/execution/rate_limiter.py`)를 재사용하고, 시그널 hot path보다 낮은
 우선순위로 분리한다. 수집기별 독립 토큰 발급 금지.
 
-### Phase 1 — Market Risk Score + 통합 국면 엔진 (약 2주) ⏳
+### Phase 1 — Market Risk Score + 통합 국면 엔진 (약 2주) 🔄 (2026-07-02 착수)
 
-- [ ] `shared/risk/market_risk_score.py`(신규) + `config/market_risk.yaml` —
-      §4 스펙 구현 (sub-score 정규화, 가중합, EMA, 히스테리시스, 결측 처리)
-- [ ] 발행 체계(§4.3) + 스케줄(장전/장중 30분/장 마감 확정)
-- [ ] 검증(§4.4): 백필 기반 사후 검증 리포트 + counterfactual
-- [ ] 대시보드 `/market` 페이지 v1(게이지+분해+이력 차트, 전부 read-only) +
-      Cockpit 칩 + Telegram 밴드 전환 알림
+- [x] 엔진 (2026-07-03 완료): `shared/risk/market_risk_score.py` +
+      `config/market_risk.yaml`(§4 스펙 — 8요소 정규화·가중합·EMA3·히스테리시스
+      ±5/2연속·regime 매핑·coverage<0.6 degraded) +
+      `services/market_risk_engine` one-shot(premarket 08:05/intraday 30분/
+      close 18:45, crontab 등록) + hindcast CLI(look-ahead-free) + HAR-RV
+      주입(`forecast:vol:current`, close 시 원값 Parquet 영속) +
+      `RuntimeLedger.record_risk_event` 감사 + 기존 Telegram 채널 재사용 알림.
+      shadow 전용 — 전략/게이트 미연결. 테스트 67건 통과
+- [x] 검증 도구(§4.4, 2026-07-02 완료): 백필 FX 정렬 수정(O11-① 해소 —
+      `d < day` 직전 확정 봉, ECOS forward와 정렬),
+      `scripts/validation/validate_market_risk_score.py`(판별력 순열 검정 +
+      밴드 플래핑 + 에피소드 재현), `market_risk_counterfactual.py`(롱 신규만
+      소급 차단, look-ahead 안전, insufficient-data 우아 종료). 테스트 39건
+      통과. **실데이터 리포트는 operator 백필 + 1a hindcast `--write` 후 실행**
+- [x] 대시보드 `/market` v1 (2026-07-02 완료): `GET /api/market-risk`(+
+      `/history`, 컬럼 폴백으로 Phase 0 데이터에서도 동작) + `/market` 페이지
+      (밴드 게이지·8요소 분해·트랙 반응 패널 "shadow — 미집행" 상시·score×
+      KOSPI 90일/외국인 수급/베이시스 차트·야간 신호 타일) + 내비 링크 +
+      Cockpit 칩(미발행 시 자동 숨김). 백엔드 9건+dashboard 회귀 220건,
+      프론트 Vitest 82건+lint+build 통과. §6.1 차트 7종 중 OI/프로그램/환율
+      차트는 후속(데이터는 history 응답에 포함)
 - **게이트**: 사후 검증 리포트에서 score≥70의 판별력 확인 + shadow 10거래일 +
   operator 리뷰 → Phase 2 진행 승인
 
@@ -450,6 +465,7 @@
 | O8 | 합성 데이터 오염 방지 | `market_analyzers.py`의 `np.random` 샘플 경로는 Risk Score 입력 금지(실데이터 수집기 전용). 기존 `MarketContext.risk_score`(정적 매핑)와 명칭 혼동 방지를 위해 신규 지표는 `market_risk_score`로 구분하고, 장기적으로 합성 분석기 경로는 실데이터로 교체 또는 제거 |
 | O9 | ~~KRX 야간파생시장 종가 신호~~ **확정 (2026-07-02 스파이크)** | 야간 REST 시세는 부재, **WS `H0MFCNT0`(실시간-064)만 가용** — 체결가와 함께 `mrkt_basis`(시장 베이시스)/`dprt`(괴리율)/OI 필드를 직접 제공해 신호 품질이 ES/NQ 프록시보다 우월. 05:50~06:00 KST 캡처 윈도우 수집기로 마지막 체결을 Redis 스냅샷(TTL 24h)에 저장(Wave 2e). 과거 백필 불가(forward 축적만). `eurex_kospi_close` 레거시 필드는 `krx_night_kospi200_close`로 대체 예정 |
 | O10 | ~~`KRXDataCollector` 프로덕션 결함~~ **수정 완료 (Wave 2c)** | 투자자매매·프로그램매매 bld가 잘못된 화면 조회 + KRX 로그인 정책 변경으로 수급 수치가 조용히 빈 값이던 결함. 투자자별 경로는 `MDCSTAT02203_OUT`(public `get_investor_trading`)으로 교정, 프로그램 경로는 KIS TR 이관까지 명시적 결측 처리 |
+| O12 | Phase 1 리뷰 비차단 지적 (2026-07-03 검수 패스) | 블로킹 1건(수집 coverage_ratio vs 스코어 risk_coverage_ratio 컬럼 혼용)은 수정 완료. 잔여: ① **premarket score 미영속** — 엔진 premarket 모드는 Redis-only라 premarket Parquet 행에 score 컬럼이 없음 → counterfactual의 premarket 경로는 항상 전일 close 폴백(보수적·안전), 에피소드 표의 premarket 셀은 결측. premarket score 영속화 여부는 §4.4 게이트 운영 후 결정. ② close 행 부재 시 `market:structure:latest` 폴백으로 계산한 값이 `regime:unified:daily`에 확정 기록될 수 있음 — 폴백 시 regime 기록 스킵 검토. ③ 프론트 밴드 경계/트랙 매트릭스는 YAML 정본의 정적 사본 — Phase 2 전 API 노출 검토 |
 | O11 | 리뷰 비차단 지적 (2026-07-02 검수 패스) | ① 백필 `usdkrw`가 `KRW=X` 당일 봉을 close 행에 기록 — 봉 확정(~익일 07:00 KST)이 컷오프(18:40)를 넘고 forward 경로(ECOS≈전일 평균)와 ~1일 어긋남. 백테스트 프로토콜상 악용 불가하나 **Phase 1 사후검증 전에** overseas식 직전 봉(`d < day`) 또는 ECOS로 정렬 필요. ② `futs_prdy_ctrt` 부재 시 client가 `change=0.0` 반환 → 결측이 "보합"으로 위장(`oi_price_signal=neutral`) — 수집기에서 raw 필드 부재 구분 권장. ③ 야간 종가 TTL 24h로 월요일 premarket이 금요일 야간 신호를 못 봄 + `night`가 coverage 미포함이라 부재가 안 드러남 — 주말 케이스 정책(누적형 TTL 48h+ 또는 결측 명시) 결정 필요. ④ float 파서 4종·KST now 헬퍼 중복 — shared 유틸 수렴 후보 |
 
 ---
