@@ -24,6 +24,11 @@
 50 8  * * 1-5  cd /app && python scripts/daily_indicator_scanner.py
 58 8  * * 1-5  cd /app && python scripts/daily_indicator_scanner.py
 
+# --- pre-open risk reset (08:59) ---
+# Idempotently resets decoupled stock/futures daily risk counters before
+# risk-filter daemons admit the first regular-session entries.
+59 8  * * 1-5  cd /app && python -m scripts.maintenance.daily_risk_reset
+
 # --- intraday LLM refresh (hourly 10:00–15:00) ---
 0 10-15 * * 1-5  cd /app && python -m scripts.analysis.llm_intraday_refresh
 

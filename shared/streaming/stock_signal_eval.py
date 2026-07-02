@@ -62,6 +62,13 @@ REJECT_NO_SMA_200 = "no_sma_200"  # SMA(200)-dependent strategy, daily SMA absen
 # daily-gated strategy, this symbol not on its watchlist
 REJECT_NO_DAILY_WATCHLIST = "no_daily_watchlist"
 REJECT_CONDITIONS_NOT_MET = "conditions_not_met"  # generator returned None
+REJECT_LLM_COOLDOWN = "llm_cooldown"
+REJECT_LLM_QUALITY_BELOW_MIN = "llm_quality_below_min"
+REJECT_LLM_CONFIDENCE_BELOW_MIN = "llm_confidence_below_min"
+REJECT_LLM_NO_PRICE = "llm_no_price"
+REJECT_LLM_METADATA_MISSING = "llm_metadata_missing"
+REJECT_LLM_EXCLUDED = "llm_excluded"
+REJECT_LLM_NOT_ALLOWED = "llm_not_allowed"
 
 __all__ = [
     "OUTCOME_REJECT",
@@ -71,6 +78,13 @@ __all__ = [
     "REJECT_BEAR_RS_GATE",
     "REJECT_COLD",
     "REJECT_CONDITIONS_NOT_MET",
+    "REJECT_LLM_CONFIDENCE_BELOW_MIN",
+    "REJECT_LLM_COOLDOWN",
+    "REJECT_LLM_EXCLUDED",
+    "REJECT_LLM_METADATA_MISSING",
+    "REJECT_LLM_NOT_ALLOWED",
+    "REJECT_LLM_NO_PRICE",
+    "REJECT_LLM_QUALITY_BELOW_MIN",
     "REJECT_NO_DAILY_WATCHLIST",
     "REJECT_NO_MARKET_DATA",
     "REJECT_NO_SMA_200",

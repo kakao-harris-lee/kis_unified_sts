@@ -13,6 +13,18 @@ from services.stock_strategy.universe import _SCREENER_PAYLOAD_KEY
 from shared.models.signal import Signal
 from shared.streaming.audit import decode_stream_id
 from shared.streaming.stock_regime import StockRegimeConfig
+from shared.streaming.stock_signal_eval import (
+    REJECT_BEAR_CAP_REACHED,
+    REJECT_BEAR_REGIME,
+    REJECT_BEAR_RS_GATE,
+    REJECT_COLD,
+    REJECT_CONDITIONS_NOT_MET,
+    REJECT_LLM_COOLDOWN,
+    REJECT_NO_DAILY_WATCHLIST,
+    REJECT_NO_MARKET_DATA,
+    REJECT_NO_SMA_200,
+    StockSignalEvalConfig,
+)
 
 _NOW = datetime(2026, 6, 5, 0, 30, tzinfo=UTC)
 
@@ -803,6 +815,55 @@ async def test_llm_discovered_target_respects_cooldown():
 
 
 @pytest.mark.asyncio
+async def test_llm_discovered_cooldown_is_reported_in_signal_eval():
+    redis = _FakeRedis()
+    redis.kv["system:daily_indicators:latest"] = _scanner_payload(
+        {"080220": {"daily_close": 111700.0}}
+    )
+    daemon = _daemon(
+        redis=redis,
+        engine=_FakeEngine(warm=()),
+        manager=_FakeManager(fire_for=()),
+        signal_eval_config=StockSignalEvalConfig(
+            enabled=True,
+            redis_key="stock:daemon:signal_eval",
+            publish_ttl_seconds=86400,
+        ),
+        llm_signal_config=LLMDiscoverySignalConfig(
+            enabled=True,
+            cooldown_seconds=86400.0,
+            skip_log_interval_seconds=0.0,
+        ),
+    )
+    await daemon._apply_watchlist(
+        {
+            "strategies": {"_screener_trade_targets": ["080220"]},
+            _SCREENER_PAYLOAD_KEY: {
+                "codes": ["080220"],
+                "names": {"080220": "제주반도체"},
+                "metadata": {
+                    "080220": {
+                        "llm_quality": 0.9,
+                        "llm_confidence": 1.0,
+                    }
+                },
+            },
+        }
+    )
+
+    assert await daemon.evaluate_once() == 1
+    redis.hashes.pop("stock:daemon:signal_eval")
+
+    assert await daemon.evaluate_once() == 0
+
+    raw = redis.hashes["stock:daemon:signal_eval"]["llm_discovered"]
+    payload = json.loads(raw)
+    assert payload["outcome"] == "reject"
+    assert payload["reason"] == REJECT_LLM_COOLDOWN
+    assert payload["reason_counts"] == {REJECT_LLM_COOLDOWN: 1}
+
+
+@pytest.mark.asyncio
 async def test_scanner_daily_payload_merged_into_context():
     """DailyScanner fields (daily_volume_ratio, daily_closes) land in ctx.indicators."""
     manager = _CaptureManager()
@@ -1062,18 +1123,6 @@ async def test_pattern_pullback_fires_only_with_daily_sma_200_injected():
 # instrument missing from the 2026-06-24 no-trade diagnosis. Read-only telemetry:
 # it must not change the candidate stream the daemon already publishes.
 # ---------------------------------------------------------------------------
-
-from shared.streaming.stock_signal_eval import (  # noqa: E402
-    REJECT_BEAR_CAP_REACHED,
-    REJECT_BEAR_REGIME,
-    REJECT_BEAR_RS_GATE,
-    REJECT_COLD,
-    REJECT_CONDITIONS_NOT_MET,
-    REJECT_NO_DAILY_WATCHLIST,
-    REJECT_NO_MARKET_DATA,
-    REJECT_NO_SMA_200,
-    StockSignalEvalConfig,
-)
 
 _EVAL_CFG = StockSignalEvalConfig()
 
@@ -1877,7 +1926,9 @@ def _make_rs_daemon(redis, change_pct, threshold, monkeypatch):
         d._trade_targets_payload = {"metadata": {"005930": {"change_pct": change_pct}}}
     else:
         d._trade_targets_payload = {"metadata": {}}
-    monkeypatch.setattr(d, "_publish_regime", _async_return(json.loads(_bear_payload())))
+    monkeypatch.setattr(
+        d, "_publish_regime", _async_return(json.loads(_bear_payload()))
+    )
     return d
 
 

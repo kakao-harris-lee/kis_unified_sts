@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from services.stock_strategy.candidate import stock_signal_to_stream_dict
 from services.stock_strategy.universe import (
@@ -52,6 +53,13 @@ from shared.streaming.stock_signal_eval import (
     REJECT_BEAR_RS_GATE,
     REJECT_COLD,
     REJECT_CONDITIONS_NOT_MET,
+    REJECT_LLM_CONFIDENCE_BELOW_MIN,
+    REJECT_LLM_COOLDOWN,
+    REJECT_LLM_EXCLUDED,
+    REJECT_LLM_METADATA_MISSING,
+    REJECT_LLM_NO_PRICE,
+    REJECT_LLM_NOT_ALLOWED,
+    REJECT_LLM_QUALITY_BELOW_MIN,
     REJECT_NO_DAILY_WATCHLIST,
     REJECT_NO_MARKET_DATA,
     REJECT_NO_SMA_200,
@@ -62,6 +70,7 @@ from shared.streaming.stock_signal_eval import (
 logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400
+_KST = ZoneInfo("Asia/Seoul")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -104,6 +113,7 @@ class LLMDiscoverySignalConfig:
     max_per_cycle: int = 5
     cooldown_seconds: float = 86400.0
     quantity: int = 1
+    skip_log_interval_seconds: float = 600.0
 
     @classmethod
     def from_env(cls) -> LLMDiscoverySignalConfig:
@@ -122,6 +132,10 @@ class LLMDiscoverySignalConfig:
                 0.0, _env_float("STOCK_LLM_DISCOVERY_COOLDOWN_SECONDS", 86400.0)
             ),
             quantity=max(1, _env_int("STOCK_LLM_DISCOVERY_QUANTITY", 1)),
+            skip_log_interval_seconds=max(
+                0.0,
+                _env_float("STOCK_LLM_DISCOVERY_SKIP_LOG_INTERVAL_SECONDS", 600.0),
+            ),
         )
 
 
@@ -186,6 +200,7 @@ class StockStrategyDaemon:
         # In-memory fast-path kept as _llm_last_published_cache; Redis is source of truth.
         self._llm_cooldown_key = "stock:daemon:llm_cooldown"
         self._llm_last_published_cache: dict[str, float] = {}
+        self._llm_skip_log_cache: dict[tuple[str, str], float] = {}
         self._stop = asyncio.Event()
 
     async def _apply_watchlist(self, raw: Any) -> None:
@@ -415,6 +430,39 @@ class StockStrategyDaemon:
                 return price
         return None
 
+    @staticmethod
+    def _record_llm_reject(
+        evaluator: SignalEvalCollector | None,
+        strategy: str,
+        symbol: str,
+        reason: str,
+    ) -> None:
+        if evaluator is None:
+            return
+        evaluator.record(strategy, symbol, OUTCOME_REJECT, reason)
+
+    def _log_llm_skip(
+        self,
+        *,
+        symbol: str,
+        reason: str,
+        now_ts: float,
+        detail: str = "",
+    ) -> None:
+        interval = self._llm_signal_config.skip_log_interval_seconds
+        cache_key = (symbol, reason)
+        last_logged = self._llm_skip_log_cache.get(cache_key)
+        if last_logged is not None and now_ts - last_logged < interval:
+            return
+        self._llm_skip_log_cache[cache_key] = now_ts
+        suffix = f" {detail}" if detail else ""
+        logger.info(
+            "LLM discovery candidate skipped code=%s reason=%s%s",
+            symbol,
+            reason,
+            suffix,
+        )
+
     async def _publish_llm_discovery_signals(
         self,
         *,
@@ -450,16 +498,28 @@ class StockStrategyDaemon:
             if not symbol:
                 continue
             if allowed_codes is not None and symbol not in allowed_codes:
+                self._record_llm_reject(
+                    evaluator, cfg.strategy_name, symbol, REJECT_LLM_NOT_ALLOWED
+                )
                 continue
             if symbol in excluded:
+                self._record_llm_reject(
+                    evaluator, cfg.strategy_name, symbol, REJECT_LLM_EXCLUDED
+                )
                 continue
 
             metadata = metadata_raw.get(symbol, {})
             if not isinstance(metadata, dict):
+                self._record_llm_reject(
+                    evaluator, cfg.strategy_name, symbol, REJECT_LLM_METADATA_MISSING
+                )
                 continue
 
             quality = self._as_float(metadata.get("llm_quality"))
             if quality is None or quality < cfg.min_llm_quality:
+                self._record_llm_reject(
+                    evaluator, cfg.strategy_name, symbol, REJECT_LLM_QUALITY_BELOW_MIN
+                )
                 continue
 
             # NOTE on the confidence gate: for LLM-only symbols the fused
@@ -472,6 +532,12 @@ class StockStrategyDaemon:
             if confidence is None:
                 confidence = 1.0
             if confidence < cfg.min_llm_confidence:
+                self._record_llm_reject(
+                    evaluator,
+                    cfg.strategy_name,
+                    symbol,
+                    REJECT_LLM_CONFIDENCE_BELOW_MIN,
+                )
                 continue
 
             # Cooldown check — Redis-backed so a daemon restart does not reset
@@ -480,12 +546,14 @@ class StockStrategyDaemon:
             # In-memory cache is a fast-path for the same process; Redis is the
             # source of truth (survives restarts).
             in_cooldown = False
+            cooldown_until_ts: float | None = None
             try:
                 stored_raw = await self.redis.hget(self._llm_cooldown_key, symbol)
                 if stored_raw is not None:
                     stored_ts = float(stored_raw)
                     if now_ts - stored_ts < cfg.cooldown_seconds:
                         in_cooldown = True
+                        cooldown_until_ts = stored_ts + cfg.cooldown_seconds
                     else:
                         # Stale entry in Redis — also clear local cache
                         self._llm_last_published_cache.pop(symbol, None)
@@ -496,6 +564,10 @@ class StockStrategyDaemon:
                         < cfg.cooldown_seconds
                     ):
                         in_cooldown = True
+                        cooldown_until_ts = (
+                            self._llm_last_published_cache[symbol]
+                            + cfg.cooldown_seconds
+                        )
             except Exception:
                 # Redis read failed — fall back to in-memory cache (best-effort).
                 # Log at warning so ops can diagnose but do NOT crash the loop.
@@ -507,7 +579,24 @@ class StockStrategyDaemon:
                 cached = self._llm_last_published_cache.get(symbol)
                 if cached is not None and now_ts - cached < cfg.cooldown_seconds:
                     in_cooldown = True
+                    cooldown_until_ts = cached + cfg.cooldown_seconds
             if in_cooldown:
+                self._record_llm_reject(
+                    evaluator, cfg.strategy_name, symbol, REJECT_LLM_COOLDOWN
+                )
+                cooldown_until = (
+                    datetime.fromtimestamp(cooldown_until_ts, tz=_KST).isoformat()
+                    if cooldown_until_ts is not None
+                    else ""
+                )
+                self._log_llm_skip(
+                    symbol=symbol,
+                    reason=REJECT_LLM_COOLDOWN,
+                    now_ts=now_ts,
+                    detail=(
+                        f"cooldown_until_kst={cooldown_until}" if cooldown_until else ""
+                    ),
+                )
                 continue
 
             price = self._llm_reference_price(symbol, metadata, scanner_indicators)
@@ -528,6 +617,9 @@ class StockStrategyDaemon:
                     price = live_price
                     price_source = "live_tick"
             if price is None:
+                self._record_llm_reject(
+                    evaluator, cfg.strategy_name, symbol, REJECT_LLM_NO_PRICE
+                )
                 continue
 
             score = self._as_float(scores.get(symbol))
