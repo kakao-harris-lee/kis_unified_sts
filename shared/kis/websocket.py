@@ -35,6 +35,7 @@ import socket
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -75,6 +76,7 @@ def _record_ws_disconnect(feed: str) -> None:
 # WebSocket TR IDs for Futures
 TR_FUTURES_ASK = "H0IFASP0"  # 선물옵션 호가
 TR_FUTURES_CNT = "H0IFCNT0"  # 선물옵션 체결
+TR_NIGHT_FUTURES_CNT = "H0MFCNT0"  # KRX 야간선물 실시간종목체결 [실시간-064]
 
 # Queue configuration
 MESSAGE_QUEUE_MAXSIZE = 10000
@@ -119,9 +121,59 @@ TRADE_FIELDS = {
     "open_interest": 18,
 }
 
+# Field indices for H0MFCNT0 (KRX night futures trade, [실시간-064]).
+# Layout confirmed against the official koreainvestment/open-trading-api repo:
+#  - examples_llm/domestic_futureoption/krx_ngt_futures_ccnl/krx_ngt_futures_ccnl.py
+#    (49-column list: futs_shrn_iscd .. dynm_prc_limt_yn)
+#  - legacy/websocket/python/ws_domestic_future.py::stockspurchase_cmefuts
+#    (46-column Korean menulist — first 46 columns identical to the above)
+# [0]=futs_shrn_iscd(종목코드), [1]=bsop_hour(체결시각 HHMMSS KST)
+# [5]=futs_prpr(현재가), [6]=futs_oprc(시가), [7]=futs_hgpr(고가), [8]=futs_lwpr(저가)
+# [9]=last_cnqn(체결수량), [10]=acml_vol(누적거래량)
+# [13]=mrkt_basis(시장베이시스), [14]=dprt(괴리율)
+# [18]=hts_otst_stpl_qty(미결제약정수량, OI)
+NIGHT_TRADE_FIELDS = {
+    "trade_time": 1,
+    "current_price": 5,
+    "open_price": 6,
+    "high_price": 7,
+    "low_price": 8,
+    "tick_volume": 9,
+    "cumulative_volume": 10,
+    "market_basis": 13,
+    "disparity_rate": 14,
+    "open_interest": 18,
+}
+NIGHT_TRADE_MIN_FIELDS = max(NIGHT_TRADE_FIELDS.values()) + 1
+
+# bsop_hour is HHMMSS (6 digits, KST)
+_NIGHT_TRADE_TIME_PATTERN = re.compile(r"^\d{6}$")
+
 # Value bounds for validation
 MAX_PRICE = 1e9
 MIN_PRICE = -1e9
+
+
+@dataclass(frozen=True)
+class NightFuturesTrade:
+    """One parsed H0MFCNT0 (KRX night futures) trade record.
+
+    ``timestamp`` is the local receive time (unix seconds); ``trade_time`` is
+    the exchange trade clock (``bsop_hour``, HHMMSS KST) when well-formed.
+    """
+
+    symbol: str
+    timestamp: float
+    trade_time: str | None
+    price: float
+    open_price: float | None
+    high_price: float | None
+    low_price: float | None
+    tick_volume: float | None
+    cumulative_volume: float | None
+    market_basis: float | None
+    disparity_rate: float | None
+    open_interest: float | None
 
 
 class WSMessageType(StrEnum):
@@ -270,6 +322,89 @@ def parse_futures_trade(symbol: str, data: str, timestamp: float) -> TickData | 
         return None
 
 
+def _parse_night_trade_record(
+    fields: list[str], timestamp: float
+) -> NightFuturesTrade | None:
+    """Parse one H0MFCNT0 record (already split into fields).
+
+    Returns None when the record is too short or carries no usable trade
+    price (``futs_prpr``) — a night-close capture without a price is useless.
+    """
+    if len(fields) < NIGHT_TRADE_MIN_FIELDS:
+        return None
+
+    symbol = fields[0].strip()
+    price = _safe_float(fields, NIGHT_TRADE_FIELDS["current_price"])
+    if not symbol or price is None:
+        return None
+
+    raw_time = fields[NIGHT_TRADE_FIELDS["trade_time"]].strip()
+    trade_time = raw_time if _NIGHT_TRADE_TIME_PATTERN.match(raw_time) else None
+
+    return NightFuturesTrade(
+        symbol=symbol,
+        timestamp=timestamp,
+        trade_time=trade_time,
+        price=price,
+        open_price=_safe_float(fields, NIGHT_TRADE_FIELDS["open_price"]),
+        high_price=_safe_float(fields, NIGHT_TRADE_FIELDS["high_price"]),
+        low_price=_safe_float(fields, NIGHT_TRADE_FIELDS["low_price"]),
+        tick_volume=_safe_float(fields, NIGHT_TRADE_FIELDS["tick_volume"]),
+        cumulative_volume=_safe_float(fields, NIGHT_TRADE_FIELDS["cumulative_volume"]),
+        market_basis=_safe_float(fields, NIGHT_TRADE_FIELDS["market_basis"]),
+        disparity_rate=_safe_float(fields, NIGHT_TRADE_FIELDS["disparity_rate"]),
+        open_interest=_safe_float(fields, NIGHT_TRADE_FIELDS["open_interest"]),
+    )
+
+
+def parse_night_futures_trades(
+    data: str, timestamp: float, record_count: int = 1
+) -> list[NightFuturesTrade]:
+    """Parse H0MFCNT0 (KRX night futures trade) data — pure function.
+
+    A single WS frame can carry ``record_count`` concatenated records (the
+    envelope's 데이터건수 field). Records are returned in wire order, so the
+    last element is the most recent trade of the frame. When the field count
+    does not divide evenly by ``record_count`` (unexpected layout), only the
+    first record is parsed — confirmed indices stay valid, extras are dropped.
+
+    Args:
+        data: ``^``-separated data body (after decryption if needed)
+        timestamp: Local receive time (unix seconds)
+        record_count: Record count from the WS envelope (defaults to 1)
+
+    Returns:
+        Parsed trades (possibly empty)
+    """
+    fields = data.split("^")
+    if len(fields) < NIGHT_TRADE_MIN_FIELDS:
+        logger.debug(
+            "[KIS WS] Night trade parse skipped: insufficient fields (%d < %d)",
+            len(fields),
+            NIGHT_TRADE_MIN_FIELDS,
+        )
+        return []
+
+    records: list[list[str]]
+    if record_count > 1 and len(fields) % record_count == 0:
+        stride = len(fields) // record_count
+        if stride >= NIGHT_TRADE_MIN_FIELDS:
+            records = [
+                fields[i * stride : (i + 1) * stride] for i in range(record_count)
+            ]
+        else:
+            records = [fields]
+    else:
+        records = [fields]
+
+    trades: list[NightFuturesTrade] = []
+    for record in records:
+        trade = _parse_night_trade_record(record, timestamp)
+        if trade is not None:
+            trades.append(trade)
+    return trades
+
+
 # =============================================================================
 # WebSocket Adapter
 # =============================================================================
@@ -320,6 +455,10 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         # Callback (protected by _state_lock)
         self._callback: Callable[[TickData], None] | None = None
         self._subscribed_symbols: list[str] = []
+
+        # Night futures (H0MFCNT0) callback/state (protected by _state_lock)
+        self._night_callback: Callable[[NightFuturesTrade], None] | None = None
+        self._night_symbols: list[str] = []
 
         # AES decryption key (obtained from approval response)
         self._aes_key: bytes | None = None
@@ -508,6 +647,57 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             except Exception as e:
                 logger.error(f"[KIS WS] Error processing message: {e}")
 
+    def subscribe_night_trades(
+        self,
+        symbols: list[str],
+        callback: Callable[[NightFuturesTrade], None],
+        *,
+        until: float | None = None,
+    ) -> None:
+        """Subscribe to KRX night futures trades (H0MFCNT0) and process them.
+
+        Mirrors subscribe() but registers only the night trade TR (no
+        orderbook — the night close capture needs trades only). Blocks until
+        disconnect() is called or the ``until`` deadline passes.
+
+        Args:
+            symbols: Night-session futures codes (8-char, e.g. "101W9000")
+            callback: Called for every parsed NightFuturesTrade
+            until: Optional unix-seconds deadline; processing stops once
+                time.time() >= until (the caller still owns disconnect())
+
+        Raises:
+            ValueError: If symbols list is empty or contains invalid format
+        """
+        if not symbols:
+            raise ValueError("At least one symbol required")
+
+        for symbol in symbols:
+            if not SYMBOL_PATTERN.match(symbol):
+                raise ValueError(f"Invalid symbol format: {symbol}")
+
+        with self._state_lock:
+            self._night_callback = callback
+            self._night_symbols = list(symbols)
+
+        for symbol in symbols:
+            self._send_subscribe(symbol, TR_NIGHT_FUTURES_CNT)
+            time.sleep(0.1)  # Rate limit
+
+        logger.info(f"[KIS WS] Subscribed to {len(symbols)} night futures symbols")
+
+        while self.is_running:
+            if until is not None and time.time() >= until:
+                logger.info("[KIS WS] Night trade processing deadline reached")
+                break
+            try:
+                msg = self._message_queue.get(timeout=1.0)
+                self._process_message(msg)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"[KIS WS] Error processing message: {e}")
+
     def disconnect(self) -> None:
         """Close WebSocket connection."""
         self._set_running(False)
@@ -515,6 +705,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         # Get subscribed symbols safely
         with self._state_lock:
             symbols_to_unsub = list(self._subscribed_symbols)
+            night_symbols_to_unsub = list(self._night_symbols)
 
         if self.ws:
             # Unsubscribe from all symbols
@@ -522,6 +713,12 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                 try:
                     self._send_unsubscribe(symbol, TR_FUTURES_ASK)
                     self._send_unsubscribe(symbol, TR_FUTURES_CNT)
+                except Exception:
+                    pass
+
+            for symbol in night_symbols_to_unsub:
+                try:
+                    self._send_unsubscribe(symbol, TR_NIGHT_FUTURES_CNT)
                 except Exception:
                     pass
 
@@ -731,6 +928,11 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                 timestamp = time.time()
                 tick = None
 
+                if tr_id == TR_NIGHT_FUTURES_CNT:
+                    # parts[2] is the envelope record count (데이터건수)
+                    self._dispatch_night_trades(parts[2], data_str, timestamp)
+                    return
+
                 if tr_id == TR_FUTURES_ASK:
                     tick = parse_futures_orderbook(parts[2], data_str, timestamp)
                 elif tr_id == TR_FUTURES_CNT:
@@ -753,6 +955,31 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                 self._handle_json_message(data)
             except json.JSONDecodeError:
                 logger.warning(f"[KIS WS] Unknown message format: {message[:100]}")
+
+    def _dispatch_night_trades(
+        self, count_str: str, data_str: str, timestamp: float
+    ) -> None:
+        """Parse an H0MFCNT0 frame and invoke the night callback per record."""
+        try:
+            record_count = max(1, int(count_str))
+        except (TypeError, ValueError):
+            record_count = 1
+
+        trades = parse_night_futures_trades(
+            data_str, timestamp, record_count=record_count
+        )
+        if not trades:
+            return
+
+        with self._state_lock:
+            night_callback = self._night_callback
+        if night_callback is None:
+            return
+        for trade in trades:
+            try:
+                night_callback(trade)
+            except Exception as e:
+                logger.error(f"[KIS WS] Night trade callback error: {e}")
 
     def _handle_json_message(self, data: dict[str, Any]) -> None:
         """Handle JSON formatted message (subscription response, etc.)."""

@@ -1,0 +1,43 @@
+# KRX 야간파생시장 (18:00 → next-day 06:00 KST) KOSPI200 futures close capture
+# — unified roadmap O9 / Wave 2e.
+#
+# The night session has NO REST quote endpoint; the only market-data path is
+# the realtime WebSocket H0MFCNT0 (KRX야간선물 실시간종목체결, [실시간-064]).
+# A one-shot collector (services/night_futures_collector, scheduled 05:48 KST
+# via deploy/scheduler.crontab) subscribes during the capture window and
+# publishes the last trade before the 06:00 close to Redis (DB 1 via REDIS_URL)
+# as the overnight signal for the pre-open Market Risk Score.
+#
+# tr_key resolution (야간 종목코드):
+#   The night session uses a dedicated 8-char code (e.g. "101W9000"), distinct
+#   from the 6-char day-session code (e.g. "101W09"). Resolve/roll the active
+#   near-month night code from the KIS futures/options NIGHT master file
+#   fo_cme_code.mst (file name retained from the legacy CME-linked night
+#   session; it now carries the KRX night-derivatives codes):
+#     https://new.real.download.dws.co.kr/common/master/fo_cme_code.mst.zip
+#   Parser reference: stocks_info/domestic_cme_future_code.py in
+#     https://github.com/koreainvestment/open-trading-api
+#   (단축코드 column = tr_key). Update tr_key/product_code here on contract roll.
+
+night_close_capture:
+  enabled: true
+
+  # Night-session KOSPI200 futures code (8 chars) — roll on contract expiry.
+  tr_key: "101W9000"
+
+  # Published as product_code in the Redis snapshot when the frame's own
+  # symbol field is blank (normally the wire symbol wins).
+  product_code: "101W9000"
+
+  # Capture window (KST, HH:MM, same calendar morning). The last trade
+  # received inside [start, end) is published as the night close. The night
+  # session closes at 06:00; the cron entry starts the collector at 05:48 so
+  # connect/subscribe are warm before the window opens.
+  window_start_kst: "05:50"
+  window_end_kst: "06:00"
+
+  # Redis snapshot hash (DB 1). Fields: close, mrkt_basis, dprt,
+  # open_interest, acml_vol, asof_ts (KST ISO), product_code.
+  # No trades inside the window → key is NOT published (no empty values).
+  redis_key: "market:structure:night_close"
+  redis_ttl_seconds: 86400  # project policy: operational keys 24h
