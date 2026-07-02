@@ -228,9 +228,20 @@ class TestFxOvernightAlignment:
         prior = sorted(d for d in closes if d < day)
         expected = (closes[prior[-1]] / closes[prior[-2]] - 1.0) * 100.0
         assert updates[day]["es_futures_change_pct"] == pytest.approx(expected)
-        # usdkrw is the bar dated D itself (same 10-day-buffer fetch window)
+        # O11-①: usdkrw is the last confirmed bar strictly before D — the bar
+        # dated D only finalizes ~07:00 KST on D+1, past the close cutoff.
         fx_closes = _fake_yahoo_daily("KRW=X", START - date.resolution * 10, END)
-        assert updates[day]["usdkrw"] == fx_closes[day]
+        fx_prior = sorted(d for d in fx_closes if d < day)
+        assert updates[day]["usdkrw"] == fx_closes[fx_prior[-1]]
+        assert updates[day]["usdkrw"] != fx_closes[day]
+
+    def test_usdkrw_never_uses_same_day_or_future_bar(self):
+        symbols = {"usdkrw_realtime": "KRW=X"}
+        updates = fetch_fx_updates(_fake_yahoo_daily, symbols, TRADING_DAYS, START, END)
+        fx_closes = _fake_yahoo_daily("KRW=X", START - date.resolution * 10, END)
+        for day in TRADING_DAYS:
+            prior = sorted(d for d in fx_closes if d < day)
+            assert updates[day]["usdkrw"] == fx_closes[prior[-1]]
 
 
 class TestRecomputeDerived:

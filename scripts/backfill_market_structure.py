@@ -215,7 +215,9 @@ def fetch_fx_updates(
     """USD/KRW level + overseas overnight change pct per KST trading day.
 
     For a KST trade date D the "overnight" overseas move is the last US bar
-    strictly before D; USD/KRW uses the bar dated D (offshore daily close).
+    strictly before D; USD/KRW likewise uses the last confirmed bar strictly
+    before D (O11-①: the ``KRW=X`` bar dated D only finalizes ~07:00 KST on
+    D+1, past the 18:40 close cutoff).
     """
     updates: dict[date, dict[str, Any]] = {}
     fetch_start = start - timedelta(days=10)
@@ -223,9 +225,13 @@ def fetch_fx_updates(
     fx_symbol = yahoo_symbols.get("usdkrw_realtime")
     if fx_symbol:
         closes = yahoo_daily(fx_symbol, fetch_start, end)
+        ordered_fx = sorted(closes.items())
         for day in trading_days:
-            if day in closes:
-                updates.setdefault(day, {})["usdkrw"] = closes[day]
+            # Last bar with d < day: confirmed before the close cutoff and
+            # aligned with the forward ECOS path (~prior-day fixing).
+            prior_fx = [close for bar_date, close in ordered_fx if bar_date < day]
+            if prior_fx:
+                updates.setdefault(day, {})["usdkrw"] = prior_fx[-1]
 
     for prefix in ("es_futures", "nq_futures", "sox"):
         symbol = yahoo_symbols.get(prefix)

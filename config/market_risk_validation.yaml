@@ -1,0 +1,60 @@
+# Offline Market Risk Score validation config (unified roadmap §4.4).
+#
+# Consumed by the read-only analysis CLIs:
+#   scripts/validation/validate_market_risk_score.py
+#   scripts/validation/market_risk_counterfactual.py
+#
+# These tools only READ the market_structure_daily Parquet (score columns are
+# written by the Phase 1a hindcast CLI) and the RuntimeLedger. They never feed
+# strategy, gate, or execution paths.
+
+validation:
+  # Score column candidates, first present wins. §4.2 band thresholds apply to
+  # the EMA(3)-smoothed composite; fall back to the raw score when absent.
+  score_columns: ["risk_score_ema3", "risk_score"]
+  band_column: risk_band
+  regime_column: unified_regime
+  degraded_column: degraded
+  # Engine score coverage; the bare coverage_ratio column is the collector's
+  # data-collection coverage (a different metric).
+  coverage_column: risk_coverage_ratio
+  # Daily index close used for forward returns; first present column wins
+  # (kospi_close per the Phase 1a contract, k200_close from the backfill).
+  price_columns: ["kospi_close", "k200_close"]
+  # Score thresholds whose flagged-day forward-return distributions are
+  # compared against all days (§4.4-2: HIGH >= 70, CRITICAL >= 85).
+  thresholds: [70.0, 85.0]
+  # Forward-return horizons in trading days.
+  horizons_days: [5, 20]
+  # Lower-tail quantiles reported for each distribution.
+  lower_quantiles: [0.10, 0.25]
+  # DEGRADED rows (coverage < 60%) are excluded from flagged-day selection —
+  # they are fail-open and never used for enforcement (§4.1).
+  exclude_degraded: true
+  # One-sided permutation test (mean flagged < mean rest); deterministic seed.
+  permutation_iterations: 5000
+  permutation_seed: 20260702
+  # Band flapping metrics (roadmap O7): round-trip pairs counted as X->Y->X
+  # over the run-compressed band sequence.
+  flapping_round_trip_pairs:
+    - ["ELEVATED", "HIGH"]
+  # Crash episodes to replay: was the score elevated BEFORE the drop
+  # (prior close / same-day premarket)?
+  episodes: ["2026-07-02"]
+  report_dir: reports/market-risk
+
+counterfactual:
+  # "score >= 70 blocks NEW LONG entries" (§4.2 HIGH band, long-only rule).
+  block_threshold: 70.0
+  block_sides: ["long"]
+  # Empty list = all asset classes in the ledger.
+  asset_classes: []
+  score_columns: ["risk_score_ema3", "risk_score"]
+  exclude_degraded: true
+  # Entry-time score lookup (look-ahead safe): same-day premarket snapshot
+  # when the entry is at/after the premarket cutoff, else the latest close
+  # row strictly before the entry date. Missing score = fail-open (allowed).
+  prefer_premarket: true
+  # Naive ledger entry_time values are assumed to be in this timezone.
+  assume_naive_entry_tz: "Asia/Seoul"
+  report_dir: reports/market-risk
