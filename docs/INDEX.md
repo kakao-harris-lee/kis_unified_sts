@@ -15,8 +15,9 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 
 | Doc | Use |
 |-----|-----|
-| [ROADMAP.md](ROADMAP.md) | **Authoritative phased roadmap (Stock + Futures).** North Star, phase tables, current state, open next-steps. Supersedes scattered plan docs. |
+| [ROADMAP.md](ROADMAP.md) | **Authoritative phased roadmap (Cross-Asset + Stock + Futures).** North Star, phase tables, current state, open next-steps. Supersedes scattered plan docs. |
 | [PROJECT_STATUS.md](PROJECT_STATUS.md) | 60-second dashboard — current phase, active strategies, automation schedule, blocking risks. |
+| [통합_투자_시스템_전략_설계서.md](통합_투자_시스템_전략_설계서.md) | 마스터 투자 전략 설계서 (트랙 A/B/C, 자본 3-계층, 시장 국면, 통합 리스크 예산). 구현 매핑은 [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md). |
 | [investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md) | Current gap research split by KOSPI 200 futures and stock trading; includes ATS/session/product governance findings. |
 
 ## 📐 Architecture & API

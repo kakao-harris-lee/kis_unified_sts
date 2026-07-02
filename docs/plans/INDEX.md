@@ -12,6 +12,7 @@ scattered plan docs for "where is each asset headed".
 
 | Plan | Status |
 |---|---|
+| [2026-07-02-unified-investment-system-roadmap.md](2026-07-02-unified-investment-system-roadmap.md) | **Cross-asset unified investment system roadmap** — maps [통합_투자_시스템_전략_설계서.md](../통합_투자_시스템_전략_설계서.md) onto the current codebase: Market Risk Score (0–100) from futures market structure (foreign flow/OI/program/basis) + macro, unified regime engine, integrated MDD circuit breaker, hedge advisor, `/market` dashboard, Track A ledger. Phases P0–P6. |
 | [2026-06-22-quant-ops-workbench-uiux.md](2026-06-22-quant-ops-workbench-uiux.md) | Active UI/UX roadmap for Quant Ops Workbench: P0 cockpit, signal trace, risk/exposure, backtest-vs-paper comparator; structured for multi-agent implementation lanes. |
 | [2026-06-02-stock-reopt-har-rv-followups.md](2026-06-02-stock-reopt-har-rv-followups.md) | Open domain follow-up recommendations: HAR-RV log-RV validation, stock strategy reactivation decisions, MLflow ops. |
 

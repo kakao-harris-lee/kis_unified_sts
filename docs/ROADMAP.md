@@ -24,6 +24,67 @@ active/disabled state.
 
 ---
 
+## Cross-Asset — Unified Investment System & Market Risk
+
+### North Star
+
+Operate stock + futures (+ a manual long-term core portfolio) under **one
+market view**: a config-driven Market Risk Score (0–100) built from futures
+market structure (foreign futures flow, open interest, program trading, basis)
+plus macro inputs (USD/KRW, overseas futures, volatility), driving a unified
+RISK_ON / NEUTRAL / RISK_OFF regime, per-track reaction rules (score ≥ 70 →
+no new longs + hedge review), an integrated whole-asset MDD circuit breaker,
+and full dashboard transparency.
+
+Master strategy doc: [통합_투자_시스템_전략_설계서.md](통합_투자_시스템_전략_설계서.md).
+Implementation roadmap (authoritative for this track, includes design-doc ↔
+codebase reconciliation):
+[plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+
+### Current operating state (2026-07-02)
+
+- Regime logic is split across three uncoordinated mechanisms (futures HAR-RV
+  `RegimeGate`, stock median-MFI bear-exit, LLM `risk_mode`); there is no
+  unified cross-asset regime engine and no composite market risk score.
+- Market-structure data is mostly collected-but-unused: OI flows in ticks only,
+  program trading is fetched raw but never parsed, the basis calculator is a
+  library wired to no daemon, and macro (USD/KRW etc.) is published to
+  `stream:macro.overnight` with almost no strategy consumers.
+- No `/market` dashboard page, no hedge advisor, no whole-asset MDD monitor,
+  and no Track A (core portfolio) ledger exist yet.
+
+### Phases
+
+| Phase / Milestone | Status | Gate / Owner |
+|---|---|---|
+| P0 Market-structure data foundation (KIS TR spike, collectors for foreign futures flow / OI / program / basis / FX / overseas futures / KRX night-session close, Parquet daily history + backfill) | 🔄 in-progress | Implementation landed 2026-07-02 (spikes + macro expansion + `market_structure_collector` + night-futures capture + store + backfill + health freshness; review pass: committable). Remaining gate: operator items (live-key probes, night tr_key, KRX CSV backfill, scheduler image rebuild) + 10 clean trading days + data-quality report |
+| P1 Market Risk Score + unified regime engine (0–100 composite, bands, hysteresis, shadow-only) + `/market` page v1 + alerts | ⏳ planned | backfill hindcast shows score ≥ 70 discriminates forward returns; ≥10-day shadow; operator review |
+| P2 Track enforcement (stock M4-P long-block ≥ 70, futures size/direction modulation via reaction matrix YAML; trace integration) | ⏳ planned | shadow → enforcement flip is operator-approved; 2-week block/allow review |
+| P3 Integrated risk budget (whole-asset MDD −5/−8/−12 circuit breaker, `track_id` ledger tagging, track capital caps) | ⏳ planned | circuit-breaker dry-run + kill-switch drill |
+| P4 Hedge advisor (net β-exposure vs futures, contract recommendation — advisory only, no auto orders) | ⏳ planned | blocked on full-vs-Mini product policy decision |
+| P5 Track A (core portfolio) ledger, Kill Criteria YAML, Tier 3 watch, quarterly rebalancing runbook | ⏳ planned | first quarterly rebalancing recorded |
+| P6 Integrated feedback loop (weekly slippage/edge, monthly equity curve, quarterly track verdicts) | ⏳ planned | first 6-month integrated evaluation |
+
+### Open next-steps
+
+- P0 operator items before daily operation: run the 3 remaining live-key KIS
+  probes (program-trade daily row cap, SOX symbol notation, night-code REST
+  response), confirm the active near-month night tr_key in
+  `config/night_futures.yaml`, export the KRX login CSV for foreign-futures
+  history (`--from-csv` backfill path), and rebuild the scheduler image to
+  activate the new crontab entries (07:45 / 05:48 / 08:00 / 18:40 KST).
+- Resolve the non-blocking review findings recorded as O11 in the plan doc
+  (backfill FX alignment before the Phase 1 hindcast, missing-vs-flat OI
+  signal masking, weekend night-close TTL policy) and start the 10-trading-day
+  clean-collection observation.
+- Keep every new gate fail-open (shadow → counterfactual → enforcement),
+  following the RegimeGate P2-③ precedent; never source the risk score from the
+  synthetic (`np.random`) LLM analyzer paths.
+- This track layers on top of the per-asset roadmaps below; it does not change
+  F-9, Phase 5 live, or Setup C/D gates.
+
+---
+
 ## UI/UX — Quant Ops Workbench
 
 ### North Star
