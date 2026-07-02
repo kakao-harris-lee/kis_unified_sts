@@ -242,8 +242,10 @@
   편향 허용을 반응 매트릭스 YAML로 반영. 롱/숏 대칭 원칙 유지 — 방향 자체는
   `signal_direction`이 결정하고 score는 허용/사이즈만 조절.
 - 설계서 4.2 생존 규칙 정렬 감사: 현행 kill_switch는 일 3%/주 7%/연속 6패를
-  이미 커버한다. 남은 갭 — 연속 **4패 시 사이즈 50% 축소**(중단이 아닌 축소
-  액션), 월간 15% 도달 시 당월 완전 중단 — 을 설정 기반으로 추가.
+  커버하고, 연속 4패 → ×0.5 소프트 축소도 `ConsecutiveLossFilter`+사이저에
+  이미 존재한다(2026-07-03 감사로 확인 — 갭은 "2주 지속성"과 1계약 base의
+  floor-at-1 실효성). 남은 갭: 월간 15% 당월 완전 중단(월간 PnL 추적 부재),
+  weekly PnL 리셋 semantics. 상세는 정렬 감사 리포트 참조.
 - 분기 수익 인출·증거금 리셋(설계서 4.3)은 수동 운영 절차로 런북화.
 
 ### 5.3 트랙 A (중장기 코어) 체계화
@@ -408,12 +410,45 @@
 - **게이트**: 사후 검증 리포트에서 score≥70의 판별력 확인 + shadow 10거래일 +
   operator 리뷰 → Phase 2 진행 승인
 
-### Phase 2 — 트랙 연동 (enforcement) (약 2주) ⏳
+### Phase 2 — 트랙 연동 (enforcement) (약 2주) 🔄 (2026-07-03 착수)
 
-- [ ] 트랙 B: M4-P 진입 게이트(§5.1) — shadow 플래그로 배포 후 enforcement 전환
-- [ ] 트랙 C: decision_engine 사이즈/방향 편향(§5.2), 반응 매트릭스 YAML
-- [ ] `/signals` trace에 score 게이트 사유 통합, `/market` 트랙 반응 패널 활성화
-- [ ] 설계서 3.2/4.2 리스크 규격 정렬 감사 리포트(현행 설정 vs 설계서 규격 diff)
+전 구현이 `config/market_risk_gate.yaml::mode: shadow` 기본값으로 들어간다 —
+실차단이 켜지는 enforce 전환은 Phase 1 판별력 리포트 + shadow 10거래일 +
+operator 승인 후 YAML 변경으로만 한다.
+
+- [x] 공유 게이트 평가기 (2026-07-03 완료): `shared/risk/market_risk_gate.py`
+      + `config/market_risk_gate.yaml` — off/shadow/enforce(기본 shadow),
+      fail-open 11경로, 진입 전용, `gate_trace_payload` 고정 계약.
+      테스트 71건
+- [x] 설계서 3.2/4.2 리스크 규격 정렬 감사 (2026-07-03 완료):
+      [investigations/2026-07-03-design-spec-risk-alignment-audit.md](../investigations/2026-07-03-design-spec-risk-alignment-audit.md)
+      — 트랙 B 일치 0/부분 2/부재 3, 트랙 C 일치 1/부분 3/부재 2. 후속 티켓
+      후보: 월간 15% 래치, 연속 4패 축소의 2주 지속성, 주식 ATR exit 규격,
+      weekly PnL 리셋, 분기 리셋 런북. 현행이 더 보수적인 지점(−1.5% 손절,
+      1계약 캡, 6패 중단)은 편차 유지 권고
+- [x] 트랙 B: M4-P 진입 게이트 배선 (2026-07-03 완료): 사이클당 1회 평가
+      (bear gate 패턴), 기술 신호+LLM discovery 후보 모두 trace 첨부
+      (`market_risk_gate` 키) + enforce 시 blanket reject(#483 레인)/
+      min_confidence 기각, shadow는 throttled 로그만. `_publish_regime` 이후
+      평가로 M4-X bear-exit 피드 불가침. `config/stock_market_risk_gate.yaml`
+      (신뢰도 라벨→float 매핑). 테스트 187+청산 회귀 111 통과
+- [x] 트랙 C: decision_engine 게이트 배선 (2026-07-03 완료): publish 직전
+      평가(signal_direction→side, 대칭 유지), enforce 차단 audit 로그 + 곱셈
+      사이즈 합성(RiskFilterLayer factor × entry_size_factor, risk_filter
+      최소 확장으로 전달 경로 확보), shadow throttled 로그. 테스트 236건 통과.
+      **주의**: 현행 futures paper는 모놀리식 경로라 이 게이트는 디커플드 체인
+      기동 시에만 작동(O13·F-9와 동일 맥락)
+- [x] 리뷰 패스 (2026-07-03, 판정: 커밋 가능): 블로킹 2건 직접 수정 —
+      stock_monitor·futures_monitor serializer가 게이트 필드를 드롭해 양 자산
+      모두 `/signals` trace 미도달이던 브리지 갭(passthrough+테스트 9건 추가).
+      안전 점검(진입 전용/shadow 기본/fail-open/regime publish 순서) 전 항목
+      통과. 백엔드 1042건+프론트 93건. 비차단 잔여는 O14
+- [x] `/signals` trace 게이트 표시 + `/market` 패널 라이브 (2026-07-03 완료):
+      trace 응답에 `market_risk_gate` 블록(다중 소스 폴백, 부재 시 null),
+      `/api/market-risk`에 `gate` 섹션(mode+매트릭스), DecisionTracePanel
+      "차단됨/shadow — 차단됐을 것" 구분 칩, TrackResponsePanel 라이브
+      매트릭스(현재 밴드 강조, gate 부재 시 정적 폴백). 백엔드 228건+프론트
+      93건+lint/build 통과
 - **게이트**: shadow 대비 enforcement 전환은 operator 승인. 전환 후 2주간
   차단/허용 내역 주간 리뷰
 
@@ -465,6 +500,8 @@
 | O8 | 합성 데이터 오염 방지 | `market_analyzers.py`의 `np.random` 샘플 경로는 Risk Score 입력 금지(실데이터 수집기 전용). 기존 `MarketContext.risk_score`(정적 매핑)와 명칭 혼동 방지를 위해 신규 지표는 `market_risk_score`로 구분하고, 장기적으로 합성 분석기 경로는 실데이터로 교체 또는 제거 |
 | O9 | ~~KRX 야간파생시장 종가 신호~~ **확정 (2026-07-02 스파이크)** | 야간 REST 시세는 부재, **WS `H0MFCNT0`(실시간-064)만 가용** — 체결가와 함께 `mrkt_basis`(시장 베이시스)/`dprt`(괴리율)/OI 필드를 직접 제공해 신호 품질이 ES/NQ 프록시보다 우월. 05:50~06:00 KST 캡처 윈도우 수집기로 마지막 체결을 Redis 스냅샷(TTL 24h)에 저장(Wave 2e). 과거 백필 불가(forward 축적만). `eurex_kospi_close` 레거시 필드는 `krx_night_kospi200_close`로 대체 예정 |
 | O10 | ~~`KRXDataCollector` 프로덕션 결함~~ **수정 완료 (Wave 2c)** | 투자자매매·프로그램매매 bld가 잘못된 화면 조회 + KRX 로그인 정책 변경으로 수급 수치가 조용히 빈 값이던 결함. 투자자별 경로는 `MDCSTAT02203_OUT`(public `get_investor_trading`)으로 교정, 프로그램 경로는 KIS TR 이관까지 명시적 결측 처리 |
+| O14 | Phase 2 리뷰 비차단 지적 (2026-07-03) | ① enforce에서 차단된 선물 후보는 audit 로그에만 남음(스트림/ledger 미기록) — enforce 전환 리뷰 전에 RuntimeLedger 기록 배선 고려(주식은 #483 eval 레인에 기록됨). ② trace의 ledger 폴백(`signal_decisions`)은 현재 기록자 없는 dead path(무해, 감사 기록 배선 시 활성화). ③ 선물 shadow 로그 스로틀 간격 하드코딩(주식은 YAML), throttle 헬퍼 2종 수렴 후보. ④ min_confidence 경계값(=0.7) 고정 테스트 없음 |
+| O13 | **kill_switch 조건 미평가 가능성 (2026-07-03 감사 발견, 운영 중요)** | 현행 모놀리식 futures paper 운용에서 kill_switch 모니터는 `futures-killswitch` 프로파일 뒤에 있고, 조건 데이터원 `risk:state:futures`는 decoupled `order_router`만 기록 → **일 3%/주 7%/연속 6패 kill 조건이 실제로 평가되지 않고 있을 가능성**. 운용 중 일일 가드는 `risk_management.yaml`의 5%(더 느슨)만. F-9 컷오버 전에 커버리지 정책 결정 필요(모놀리식에도 risk-state 기록 추가 vs 컷오버로 해소). `risk_stock.max_position_risk_pct: 0.02`는 어떤 필터도 소비하지 않는 선언값 |
 | O12 | Phase 1 리뷰 비차단 지적 (2026-07-03 검수 패스) | 블로킹 1건(수집 coverage_ratio vs 스코어 risk_coverage_ratio 컬럼 혼용)은 수정 완료. 잔여: ① **premarket score 미영속** — 엔진 premarket 모드는 Redis-only라 premarket Parquet 행에 score 컬럼이 없음 → counterfactual의 premarket 경로는 항상 전일 close 폴백(보수적·안전), 에피소드 표의 premarket 셀은 결측. premarket score 영속화 여부는 §4.4 게이트 운영 후 결정. ② close 행 부재 시 `market:structure:latest` 폴백으로 계산한 값이 `regime:unified:daily`에 확정 기록될 수 있음 — 폴백 시 regime 기록 스킵 검토. ③ 프론트 밴드 경계/트랙 매트릭스는 YAML 정본의 정적 사본 — Phase 2 전 API 노출 검토 |
 | O11 | 리뷰 비차단 지적 (2026-07-02 검수 패스) | ① 백필 `usdkrw`가 `KRW=X` 당일 봉을 close 행에 기록 — 봉 확정(~익일 07:00 KST)이 컷오프(18:40)를 넘고 forward 경로(ECOS≈전일 평균)와 ~1일 어긋남. 백테스트 프로토콜상 악용 불가하나 **Phase 1 사후검증 전에** overseas식 직전 봉(`d < day`) 또는 ECOS로 정렬 필요. ② `futs_prdy_ctrt` 부재 시 client가 `change=0.0` 반환 → 결측이 "보합"으로 위장(`oi_price_signal=neutral`) — 수집기에서 raw 필드 부재 구분 권장. ③ 야간 종가 TTL 24h로 월요일 premarket이 금요일 야간 신호를 못 봄 + `night`가 coverage 미포함이라 부재가 안 드러남 — 주말 케이스 정책(누적형 TTL 48h+ 또는 결측 명시) 결정 필요. ④ float 파서 4종·KST now 헬퍼 중복 — shared 유틸 수렴 후보 |
 
