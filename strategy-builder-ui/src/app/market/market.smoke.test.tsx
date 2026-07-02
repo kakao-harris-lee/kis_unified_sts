@@ -149,6 +149,35 @@ const EMPTY_HISTORY: MarketRiskHistory = {
   points: [],
 };
 
+const GATE_RULE = {
+  allow_long: true,
+  allow_short: true,
+  size_factor: 1.0,
+  min_confidence: null,
+};
+
+// config/market_risk_gate.yaml 기본 매트릭스 미러 (Phase 2E gate 섹션).
+const GATE_INFO: NonNullable<MarketRiskLatest["gate"]> = {
+  mode: "shadow",
+  staleness_max_age_seconds: 21600,
+  matrix: {
+    stock: {
+      LOW: GATE_RULE,
+      NEUTRAL: GATE_RULE,
+      ELEVATED: { ...GATE_RULE, min_confidence: "HIGH" },
+      HIGH: { ...GATE_RULE, allow_long: false },
+      CRITICAL: { ...GATE_RULE, allow_long: false, allow_short: false },
+    },
+    futures: {
+      LOW: GATE_RULE,
+      NEUTRAL: GATE_RULE,
+      ELEVATED: { ...GATE_RULE, size_factor: 0.7 },
+      HIGH: { ...GATE_RULE, allow_long: false, size_factor: 0.5 },
+      CRITICAL: { ...GATE_RULE, allow_long: false, allow_short: false },
+    },
+  },
+};
+
 describe("/market page smoke coverage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -180,7 +209,7 @@ describe("/market page smoke coverage", () => {
     expect(screen.getByText("베이시스")).toBeInTheDocument();
     expect(screen.getAllByText("missing").length).toBeGreaterThan(0);
 
-    // 트랙 반응 패널은 shadow 라벨을 상시 표시한다.
+    // gate 섹션 부재 → 트랙 반응 패널은 정적 매트릭스로 폴백한다.
     expect(screen.getByText("shadow — 미집행")).toBeInTheDocument();
     expect(
       screen.getByText("신규 롱 전면 금지 · 보유분 손절/청산 규칙만 가동"),
@@ -189,6 +218,35 @@ describe("/market page smoke coverage", () => {
     // 야간 신호 타일
     expect(screen.getByText("야간 K200 종가")).toBeInTheDocument();
     expect(screen.getByText("370.15")).toBeInTheDocument();
+  });
+
+  it("renders the live track matrix when the gate section is present", async () => {
+    const payload = latestPayload();
+    vi.mocked(marketRiskApi.getLatest).mockResolvedValue(
+      axiosResponse({ ...payload, gate: GATE_INFO }),
+    );
+
+    renderWithQueryClient(<MarketPage />);
+
+    // 라이브 매트릭스: 현재 밴드(HIGH) 행 강조 + 트랙별 라이브 지시.
+    expect(await screen.findByText("신규 롱 금지 · 사이즈 50%")).toBeInTheDocument();
+    expect(screen.getByText("shadow — 미집행")).toBeInTheDocument();
+    expect(screen.getByText("현재")).toBeInTheDocument();
+    expect(
+      screen.queryByText("신규 롱 전면 금지 · 보유분 손절/청산 규칙만 가동"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the enforce badge when the gate mode is enforce", async () => {
+    const payload = latestPayload();
+    vi.mocked(marketRiskApi.getLatest).mockResolvedValue(
+      axiosResponse({ ...payload, gate: { ...GATE_INFO, mode: "enforce" } }),
+    );
+
+    renderWithQueryClient(<MarketPage />);
+
+    expect(await screen.findByText("enforce — 집행 중")).toBeInTheDocument();
+    expect(screen.queryByText("shadow — 미집행")).not.toBeInTheDocument();
   });
 
   it("shows the DEGRADED banner with coverage and missing components", async () => {

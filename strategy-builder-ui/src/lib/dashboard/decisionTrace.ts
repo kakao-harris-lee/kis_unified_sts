@@ -57,6 +57,23 @@ export interface DecisionTraceRiskOrderability {
   risk_details: Record<string, unknown>;
 }
 
+// gate_trace_payload schema (shared/risk/market_risk_gate.py, fixed key
+// contract). The whole block is null/absent for signals generated before the
+// gate wiring — the panel hides the section instead of rendering it empty.
+export interface DecisionTraceMarketRiskGate {
+  mode?: string | null;
+  band?: string | null;
+  score?: number | null;
+  regime?: string | null;
+  would_block?: boolean | null;
+  allow?: boolean | null;
+  size_factor?: number | null;
+  min_confidence?: string | null;
+  reason?: string | null;
+  degraded?: boolean | null;
+  stale?: boolean | null;
+}
+
 export interface DecisionTraceLineage {
   signal_id?: string | null;
   order_id?: string | null;
@@ -92,6 +109,7 @@ export interface DecisionTraceResponse {
   llm_context: DecisionTraceLlmContext;
   strategy_inputs: DecisionTraceStrategyInputs;
   risk_orderability: DecisionTraceRiskOrderability;
+  market_risk_gate?: DecisionTraceMarketRiskGate | null;
   lineage: DecisionTraceLineage;
   lifecycle: DecisionTraceLifecycle;
   scorecard: DecisionTraceScorecard;

@@ -55,6 +55,25 @@ export interface NightCloseSummary {
   age_s?: number | null;
 }
 
+// Market Risk Gate (Phase 2E) — reaction matrix sourced from
+// config/market_risk_gate.yaml via shared/risk/market_risk_gate.py.
+// Display-only: the dashboard never mutates the gate mode.
+export interface MarketRiskGateRule {
+  allow_long: boolean;
+  allow_short: boolean;
+  size_factor: number;
+  min_confidence: string | null;
+}
+
+export type MarketRiskGateMode = "off" | "shadow" | "enforce";
+
+export interface MarketRiskGateInfo {
+  mode: MarketRiskGateMode | string;
+  staleness_max_age_seconds: number;
+  // asset ("stock" | "futures") → band → rule
+  matrix: Record<string, Record<string, MarketRiskGateRule>>;
+}
+
 export interface MarketRiskLatest {
   status: "ok" | "degraded" | "stale" | "unavailable";
   checked_at: string;
@@ -62,6 +81,9 @@ export interface MarketRiskLatest {
   risk: MarketRiskSnapshot | null;
   structure: MarketStructureFreshness;
   night_close: NightCloseSummary;
+  // null/absent when the gate module is unavailable — the track panel then
+  // falls back to the static roadmap matrix.
+  gate?: MarketRiskGateInfo | null;
 }
 
 export interface MarketRiskHistoryPoint {

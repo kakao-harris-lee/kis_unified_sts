@@ -90,6 +90,20 @@ const baseTrace: DecisionTraceResponse = {
   evidence_gaps: [],
 };
 
+const gateShadowBlock = {
+  mode: "shadow",
+  band: "HIGH",
+  score: 74.2,
+  regime: "RISK_OFF",
+  would_block: true,
+  allow: true,
+  size_factor: 0.5,
+  min_confidence: null,
+  reason: "market_risk band=HIGH score=74.2 rule=block_new_long",
+  degraded: false,
+  stale: false,
+};
+
 describe("DecisionTracePanel", () => {
   it("renders full decision trace evidence in a named region", () => {
     render(
@@ -107,6 +121,78 @@ describe("DecisionTracePanel", () => {
     expect(screen.getByText("direction")).toBeInTheDocument();
     expect(screen.getByText("+0.18")).toBeInTheDocument();
     expect(screen.getByText("BUY 101S6000")).toBeInTheDocument();
+    // 게이트 배선 전 신호(market_risk_gate 부재)는 섹션을 렌더하지 않는다.
+    expect(screen.queryByText("Market Risk Gate")).not.toBeInTheDocument();
+  });
+
+  it("renders the market risk gate section with shadow would-block wording", () => {
+    render(
+      <DecisionTracePanel
+        trace={{ ...baseTrace, market_risk_gate: gateShadowBlock }}
+        onClose={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Market Risk Gate")).toBeInTheDocument();
+    expect(screen.getByText("HIGH")).toBeInTheDocument();
+    expect(screen.getByText("score 74.2")).toBeInTheDocument();
+    expect(screen.getByText("shadow — 미집행")).toBeInTheDocument();
+    expect(screen.getByText("shadow — 차단됐을 것")).toBeInTheDocument();
+    expect(
+      screen.getByText("market_risk band=HIGH score=74.2 rule=block_new_long"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("0.5 (50%)")).toBeInTheDocument();
+    expect(screen.getByText("RISK_OFF")).toBeInTheDocument();
+  });
+
+  it("marks an enforce-mode block as actually blocked", () => {
+    render(
+      <DecisionTracePanel
+        trace={{
+          ...baseTrace,
+          market_risk_gate: {
+            ...gateShadowBlock,
+            mode: "enforce",
+            allow: false,
+            band: "CRITICAL",
+            score: 91.3,
+            reason: "market_risk band=CRITICAL score=91.3 rule=block_all_entries",
+          },
+        }}
+        onClose={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("enforce — 집행 중")).toBeInTheDocument();
+    expect(screen.getByText("차단됨")).toBeInTheDocument();
+    expect(screen.queryByText("shadow — 차단됐을 것")).not.toBeInTheDocument();
+  });
+
+  it("shows a pass verdict and fail-open flags when the gate degrades", () => {
+    render(
+      <DecisionTracePanel
+        trace={{
+          ...baseTrace,
+          market_risk_gate: {
+            ...gateShadowBlock,
+            would_block: false,
+            size_factor: 1.0,
+            reason: "fail_open:degraded",
+            degraded: true,
+          },
+        }}
+        onClose={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("통과")).toBeInTheDocument();
+    expect(screen.getByText("fail_open:degraded")).toBeInTheDocument();
+    expect(
+      screen.getByText(/degraded — fail-open 통과/),
+    ).toBeInTheDocument();
   });
 
   it("renders missing LLM context and unscorable score without implying failure", () => {

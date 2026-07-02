@@ -113,6 +113,26 @@ def _get_store():
         return None
 
 
+def _load_gate_config():
+    """Market Risk Gate config (Phase 2E) — read-only display source.
+
+    ``load_or_default`` already degrades to code defaults when the YAML file
+    is absent; a malformed YAML additionally degrades to the same defaults
+    here. None only when even the defaults cannot be built.
+    """
+    try:
+        from shared.risk.market_risk_gate import MarketRiskGateConfig
+    except Exception:  # noqa: BLE001 - dashboard must stay resilient
+        return None
+    try:
+        return MarketRiskGateConfig.load_or_default()
+    except Exception:  # noqa: BLE001 - malformed YAML → shipped defaults
+        try:
+            return MarketRiskGateConfig()
+        except Exception:  # noqa: BLE001
+            return None
+
+
 # ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
@@ -352,6 +372,35 @@ def _risk_summary(redis: Any, store: Any) -> dict[str, Any] | None:
     }
 
 
+def _gate_summary() -> dict[str, Any] | None:
+    """Reaction matrix + mode from ``config/market_risk_gate.yaml``.
+
+    Display-only (Phase 2E): the dashboard never mutates the gate mode. The
+    matrix shape is ``{asset: {band: {allow_long, allow_short, size_factor,
+    min_confidence}}}``; None when the gate module is unavailable so the UI
+    falls back to the static roadmap matrix.
+    """
+    config = _load_gate_config()
+    if config is None:
+        return None
+    return {
+        "mode": config.mode,
+        "staleness_max_age_seconds": config.staleness_max_age_seconds,
+        "matrix": {
+            asset: {
+                band: {
+                    "allow_long": rule.allow_long,
+                    "allow_short": rule.allow_short,
+                    "size_factor": rule.size_factor,
+                    "min_confidence": rule.min_confidence,
+                }
+                for band, rule in bands.items()
+            }
+            for asset, bands in config.assets.items()
+        },
+    }
+
+
 @router.get("")
 async def get_market_risk() -> dict[str, Any]:
     """Latest Market Risk Score + market-structure snapshot freshness.
@@ -359,7 +408,9 @@ async def get_market_risk() -> dict[str, Any]:
     ``status`` is ``unavailable`` when the engine has not published
     ``market:risk:latest`` yet, ``degraded`` when the engine flags reduced
     coverage, ``stale`` when publication age exceeds the threshold, and
-    ``ok`` otherwise. Read-only — this API never mutates runtime state.
+    ``ok`` otherwise. ``gate`` carries the Market Risk Gate reaction matrix
+    (config-sourced, display-only). Read-only — this API never mutates
+    runtime state.
     """
     redis = _get_redis_client()
     store = _get_store()
@@ -388,6 +439,7 @@ async def get_market_risk() -> dict[str, Any]:
         "risk": risk,
         "structure": {**structure, "source": structure_latest_key},
         "night_close": {**night_close, "source": night_close_key},
+        "gate": _gate_summary(),
     }
 
 

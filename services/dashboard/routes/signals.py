@@ -42,6 +42,10 @@ class SignalResponse(BaseModel):
     fill_id: str | None = None
     position_id: str | None = None
     trade_id: str | None = None
+    # Market Risk Gate verdict attached by the Phase 2 entry lanes
+    # (gate_trace_payload schema, shared/risk/market_risk_gate.py). Signals
+    # generated before the gate wiring simply omit it (None).
+    market_risk_gate: dict[str, Any] | None = None
 
 
 class SignalListResponse(BaseModel):
@@ -147,6 +151,29 @@ class DecisionTraceLifecycle(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class DecisionTraceMarketRiskGate(BaseModel):
+    """Market Risk Gate verdict linked to the signal (roadmap Phase 2E).
+
+    Mirrors the ``gate_trace_payload`` key contract from
+    ``shared/risk/market_risk_gate.py``. Every field is optional so partially
+    populated payloads from the entry lanes still render; the whole block is
+    ``None`` when the signal carries no ``market_risk_gate`` metadata (signals
+    generated before the gate wiring, monolithic futures path, ...).
+    """
+
+    mode: str | None = None
+    band: str | None = None
+    score: float | None = None
+    regime: str | None = None
+    would_block: bool | None = None
+    allow: bool | None = None
+    size_factor: float | None = None
+    min_confidence: str | None = None
+    reason: str | None = None
+    degraded: bool | None = None
+    stale: bool | None = None
+
+
 class DecisionTraceScorecard(BaseModel):
     """LLM prediction scorecard evidence linked to the signal."""
 
@@ -172,6 +199,9 @@ class DecisionTraceResponse(BaseModel):
     llm_context: DecisionTraceLlmContext
     strategy_inputs: DecisionTraceStrategyInputs
     risk_orderability: DecisionTraceRiskOrderability
+    # None when the signal has no market_risk_gate metadata — the UI hides
+    # the section instead of rendering an empty block.
+    market_risk_gate: DecisionTraceMarketRiskGate | None = None
     lineage: DecisionTraceLineage
     lifecycle: DecisionTraceLifecycle
     scorecard: DecisionTraceScorecard
@@ -230,6 +260,33 @@ def _clean_display_name(value: Any) -> str:
 
 def _as_optional_dict(value: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
+
+
+def _as_optional_bool(value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def _market_risk_gate_source(s: dict, trace: dict) -> dict[str, Any] | None:
+    """Locate the gate_trace_payload block attached by the entry lanes.
+
+    The Phase 2 lanes attach it under the fixed ``market_risk_gate`` key —
+    either on the signal itself, inside ``metadata``, or inside the trace
+    block. Absent (pre-gate signals, monolithic futures path) → None.
+    """
+    metadata = s.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    payload = _as_optional_dict(
+        _first_present(
+            s.get("market_risk_gate"),
+            metadata.get("market_risk_gate"),
+            trace.get("market_risk_gate"),
+        )
+    )
+    return payload or None
 
 
 def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
@@ -317,6 +374,7 @@ def _to_signal_response(s: dict, asset_class: str) -> SignalResponse | None:
             trade_id=_as_optional_str(
                 _first_present(s.get("trade_id"), trace.get("trade_id"))
             ),
+            market_risk_gate=_market_risk_gate_source(s, trace),
         )
     except (ValueError, TypeError, KeyError):
         # Invalid signal data - skip this record
@@ -458,6 +516,27 @@ def _load_signal_decision_payload(
     except Exception:
         return {}
     return _json_payload(row)
+
+
+def _market_risk_gate_from_payload(
+    payload: Any,
+) -> DecisionTraceMarketRiskGate | None:
+    """Coerce a gate_trace_payload dict into the trace block (lenient)."""
+    if not isinstance(payload, dict) or not payload:
+        return None
+    return DecisionTraceMarketRiskGate(
+        mode=_as_optional_str(payload.get("mode")),
+        band=_as_optional_str(payload.get("band")),
+        score=_as_optional_float(payload.get("score")),
+        regime=_as_optional_str(payload.get("regime")),
+        would_block=_as_optional_bool(payload.get("would_block")),
+        allow=_as_optional_bool(payload.get("allow")),
+        size_factor=_as_optional_float(payload.get("size_factor")),
+        min_confidence=_as_optional_str(payload.get("min_confidence")),
+        reason=_as_optional_str(payload.get("reason")),
+        degraded=_as_optional_bool(payload.get("degraded")),
+        stale=_as_optional_bool(payload.get("stale")),
+    )
 
 
 def _llm_context_from_payload(
@@ -764,6 +843,12 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
         if warning not in summary_warnings:
             summary_warnings.append(warning)
 
+    # Signal metadata first (fixed key contract), ledger decision payload as
+    # fallback; both absent → None so the UI omits the section.
+    market_risk_gate = _market_risk_gate_from_payload(
+        signal.market_risk_gate
+    ) or _market_risk_gate_from_payload(signal_decision_payload.get("market_risk_gate"))
+
     return DecisionTraceResponse(
         signal=DecisionTraceSignal(
             id=signal.id,
@@ -817,6 +902,7 @@ def _trace_from_signal(signal: SignalResponse) -> DecisionTraceResponse:
                 else {}
             ),
         ),
+        market_risk_gate=market_risk_gate,
         lineage=DecisionTraceLineage(
             signal_id=signal.id,
             order_id=signal.order_id,

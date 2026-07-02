@@ -11,11 +11,13 @@ import {
   X,
 } from "lucide-react";
 
+import RiskBandBadge from "@/components/dashboard/RiskBandBadge";
 import SideBadge from "@/components/dashboard/SideBadge";
 import SymbolLabel from "@/components/dashboard/SymbolLabel";
 import { formatKstDateTime } from "@/lib/dashboard/format";
 import type {
   DecisionTraceEvidenceGap,
+  DecisionTraceMarketRiskGate,
   DecisionTraceResponse,
 } from "@/lib/dashboard/decisionTrace";
 import type { TradeLifecycleStep } from "@/lib/dashboard/trades";
@@ -92,6 +94,112 @@ function StepIcon({ step }: { step: TradeLifecycleStep }) {
     return <AlertTriangle className={className} aria-hidden="true" />;
   }
   return <CheckCircle2 className={className} aria-hidden="true" />;
+}
+
+// Market Risk Gate (Phase 2E) — gate_trace_payload display helpers. The
+// panel is light-styled (no dark variants), matching the sections above.
+
+const GATE_MODE_BADGE_CLASSES: Record<string, string> = {
+  enforce: "bg-rose-100 text-rose-800",
+  shadow: "bg-amber-100 text-amber-800",
+  off: "bg-slate-100 text-slate-500",
+};
+
+const GATE_MODE_LABELS: Record<string, string> = {
+  enforce: "enforce — 집행 중",
+  shadow: "shadow — 미집행",
+  off: "off — 비활성",
+};
+
+function normalizeGateMode(mode?: string | null): string {
+  return (mode ?? "").trim().toLowerCase();
+}
+
+function GateModeBadge({ mode }: { mode?: string | null }) {
+  const key = normalizeGateMode(mode);
+  return (
+    <span
+      className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-bold ${
+        GATE_MODE_BADGE_CLASSES[key] ?? "bg-slate-100 text-slate-500"
+      }`}
+    >
+      {GATE_MODE_LABELS[key] ?? (mode || "mode unknown")}
+    </span>
+  );
+}
+
+function gateVerdict(gate: DecisionTraceMarketRiskGate): {
+  label: string;
+  tone: string;
+} {
+  if (gate.would_block) {
+    if (normalizeGateMode(gate.mode) === "enforce") {
+      return {
+        label: "차단됨",
+        tone: "border-rose-200 bg-rose-50 text-rose-700",
+      };
+    }
+    return {
+      label: "shadow — 차단됐을 것",
+      tone: "border-amber-200 bg-amber-50 text-amber-700",
+    };
+  }
+  return {
+    label: "통과",
+    tone: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  };
+}
+
+function gateSizeFactorText(value?: number | null): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "not available";
+  }
+  return `${value} (${Math.round(value * 100)}%)`;
+}
+
+function MarketRiskGateSection({
+  gate,
+}: {
+  gate: DecisionTraceMarketRiskGate;
+}) {
+  const verdict = gateVerdict(gate);
+  const flags = [
+    gate.degraded ? "degraded" : null,
+    gate.stale ? "stale" : null,
+  ].filter(Boolean);
+
+  return (
+    <Section title="Market Risk Gate">
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <RiskBandBadge band={gate.band} />
+          <span className="inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-slate-700">
+            score{" "}
+            {gate.score === null || gate.score === undefined
+              ? "-"
+              : gate.score.toFixed(1)}
+          </span>
+          <GateModeBadge mode={gate.mode} />
+          <span
+            className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-bold ${verdict.tone}`}
+          >
+            {verdict.label}
+          </span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Reason" value={gate.reason} />
+          <Field label="Size Factor" value={gateSizeFactorText(gate.size_factor)} />
+          <Field label="Min Confidence" value={gate.min_confidence} fallback="none" />
+          <Field label="Regime" value={gate.regime} fallback="unknown" />
+        </div>
+        {flags.length > 0 ? (
+          <div className="break-words rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            {flags.join(", ")} — fail-open 통과 (게이트 미적용)
+          </div>
+        ) : null}
+      </div>
+    </Section>
+  );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -308,6 +416,10 @@ export default function DecisionTracePanel({
               <Field label="Risk Details" value={trace.risk_orderability.risk_details} />
             </div>
           </Section>
+
+          {trace.market_risk_gate ? (
+            <MarketRiskGateSection gate={trace.market_risk_gate} />
+          ) : null}
 
           <Section title="Lifecycle">
             <div className="space-y-3">

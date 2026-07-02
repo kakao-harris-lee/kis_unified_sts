@@ -243,10 +243,11 @@ export default function MarketPage() {
             />
           </section>
 
-          {/* 트랙 반응 패널 (shadow — 미집행) */}
+          {/* 트랙 반응 패널 — gate 섹션이 오면 라이브 매트릭스, 없으면 정적 폴백 */}
           <TrackResponsePanel
             band={risk?.band ?? null}
             score={risk?.score ?? null}
+            gate={latest?.gate ?? null}
           />
 
           {/* 차트 */}

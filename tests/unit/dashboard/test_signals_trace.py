@@ -10,6 +10,22 @@ def _reader_with_signals(signals: list[object]) -> MagicMock:
     return MagicMock(get_signals=MagicMock(return_value=signals))
 
 
+# gate_trace_payload schema (shared/risk/market_risk_gate.py, fixed contract).
+GATE_PAYLOAD = {
+    "mode": "shadow",
+    "band": "HIGH",
+    "score": 74.2,
+    "regime": "RISK_OFF",
+    "would_block": True,
+    "allow": True,
+    "size_factor": 0.5,
+    "min_confidence": None,
+    "reason": "market_risk band=HIGH score=74.2 rule=block_new_long",
+    "degraded": False,
+    "stale": False,
+}
+
+
 def _missing_lifecycle(signals_route):
     return signals_route.DecisionTraceLifecycle(
         status="missing",
@@ -161,6 +177,8 @@ async def test_signal_trace_returns_basic_signal_and_explicit_missing_gaps():
     assert body["llm_context"]["status"] == "not_available"
     assert body["scorecard"]["status"] == "missing"
     assert body["lifecycle"]["status"] == "missing"
+    # Pre-gate signals carry no market_risk_gate metadata — block stays null.
+    assert body["market_risk_gate"] is None
     assert {gap["code"] for gap in body["evidence_gaps"]} >= {
         "llm_context_not_available",
         "scorecard_missing",
@@ -576,6 +594,217 @@ async def test_signal_trace_scorecard_maps_setup_ac_shorthand_to_direction(
     assert body["scorecard"]["facet"] == "direction"
     assert body["scorecard"]["edge"] == 0.18
     assert "scorecard_missing" not in {gap["code"] for gap in body["evidence_gaps"]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "attach",
+    ["top_level", "metadata", "trace"],
+)
+async def test_signal_trace_exposes_market_risk_gate_block(attach):
+    from services.dashboard.routes import signals as signals_route
+
+    raw_signal = {
+        "id": f"sig-gate-{attach}",
+        "symbol": "101S6000",
+        "side": "BUY",
+        "signal_type": "entry",
+        "strategy": "setup_a_gap_reversion",
+        "price": 390.25,
+        "confidence": 0.72,
+        "timestamp": "2026-07-02T00:20:00+00:00",
+        "executed": False,
+    }
+    if attach == "top_level":
+        raw_signal["market_risk_gate"] = dict(GATE_PAYLOAD)
+    elif attach == "metadata":
+        raw_signal["metadata"] = {"market_risk_gate": dict(GATE_PAYLOAD)}
+    else:
+        raw_signal["trace"] = {"market_risk_gate": dict(GATE_PAYLOAD)}
+
+    reader = _reader_with_signals([raw_signal])
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(signals_route, "_get_trace_ledger", return_value=None),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
+        ),
+    ):
+        response = await _get(
+            f"/api/signals/{raw_signal['id']}/trace?asset_class=futures"
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    gate = body["market_risk_gate"]
+    assert gate["mode"] == "shadow"
+    assert gate["band"] == "HIGH"
+    assert gate["score"] == 74.2
+    assert gate["regime"] == "RISK_OFF"
+    assert gate["would_block"] is True
+    assert gate["allow"] is True
+    assert gate["size_factor"] == 0.5
+    assert gate["min_confidence"] is None
+    assert gate["reason"] == "market_risk band=HIGH score=74.2 rule=block_new_long"
+    assert gate["degraded"] is False
+    assert gate["stale"] is False
+
+
+@pytest.mark.asyncio
+async def test_signal_list_exposes_market_risk_gate_metadata():
+    from services.dashboard.routes import signals as signals_route
+
+    reader = _reader_with_signals(
+        [
+            {
+                "id": "sig-gate-list",
+                "symbol": "005930",
+                "side": "BUY",
+                "signal_type": "entry",
+                "strategy": "bb_reversion",
+                "price": 71500.0,
+                "confidence": 0.66,
+                "timestamp": "2026-07-02T00:20:00+00:00",
+                "executed": False,
+                "metadata": {"market_risk_gate": dict(GATE_PAYLOAD)},
+            },
+            {
+                "id": "sig-no-gate",
+                "symbol": "000660",
+                "side": "BUY",
+                "signal_type": "entry",
+                "strategy": "bb_reversion",
+                "price": 180000.0,
+                "confidence": 0.61,
+                "timestamp": "2026-07-02T00:10:00+00:00",
+                "executed": False,
+            },
+        ]
+    )
+
+    with patch.object(signals_route, "_get_reader", return_value=reader):
+        response = await _get("/api/signals?asset_class=stock")
+
+    assert response.status_code == 200
+    by_id = {s["id"]: s for s in response.json()["signals"]}
+    assert by_id["sig-gate-list"]["market_risk_gate"]["band"] == "HIGH"
+    assert by_id["sig-gate-list"]["market_risk_gate"]["would_block"] is True
+    assert by_id["sig-no-gate"]["market_risk_gate"] is None
+
+
+@pytest.mark.asyncio
+async def test_signal_trace_market_risk_gate_falls_back_to_ledger_payload(tmp_path):
+    from services.dashboard.routes import signals as signals_route
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    db_path = tmp_path / "runtime.db"
+    ledger = SQLiteRuntimeLedger(db_path)
+    ledger.record_signal_decision(
+        {
+            "signal_id": "sig-gate-ledger",
+            "asset_class": "futures",
+            "symbol": "101S6000",
+            "strategy": "setup_a_gap_reversion",
+            "decision": "generated",
+            "created_at": "2026-07-02T00:19:00+00:00",
+            "market_risk_gate": dict(GATE_PAYLOAD),
+        }
+    )
+    ledger.close()
+
+    reader = _reader_with_signals(
+        [
+            {
+                "id": "sig-gate-ledger",
+                "symbol": "101S6000",
+                "side": "BUY",
+                "signal_type": "entry",
+                "strategy": "setup_a_gap_reversion",
+                "price": 390.25,
+                "confidence": 0.72,
+                "timestamp": "2026-07-02T00:20:00+00:00",
+                "executed": False,
+            }
+        ]
+    )
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(
+            signals_route,
+            "_get_trace_ledger",
+            side_effect=lambda: SQLiteRuntimeLedger(db_path),
+        ),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
+        ),
+    ):
+        response = await _get("/api/signals/sig-gate-ledger/trace?asset_class=futures")
+
+    assert response.status_code == 200
+    gate = response.json()["market_risk_gate"]
+    assert gate is not None
+    assert gate["band"] == "HIGH"
+    assert gate["reason"] == "market_risk band=HIGH score=74.2 rule=block_new_long"
+
+
+@pytest.mark.asyncio
+async def test_signal_trace_market_risk_gate_coerces_string_payload_values():
+    """Redis round-trips may stringify values — the trace must coerce them."""
+    from services.dashboard.routes import signals as signals_route
+
+    reader = _reader_with_signals(
+        [
+            {
+                "id": "sig-gate-strings",
+                "symbol": "101S6000",
+                "side": "SELL",
+                "signal_type": "entry",
+                "strategy": "setup_c_event_reaction",
+                "price": 390.25,
+                "confidence": 0.72,
+                "timestamp": "2026-07-02T00:20:00+00:00",
+                "executed": False,
+                "market_risk_gate": {
+                    "mode": "enforce",
+                    "band": "CRITICAL",
+                    "score": "91.3",
+                    "would_block": "true",
+                    "allow": "false",
+                    "size_factor": "1.0",
+                    "reason": "market_risk band=CRITICAL score=91.3 rule=block_all_entries",
+                    "degraded": "false",
+                    "stale": "false",
+                },
+            }
+        ]
+    )
+
+    with (
+        patch.object(signals_route, "_get_reader", return_value=reader),
+        patch.object(signals_route, "_get_trace_ledger", return_value=None),
+        patch.object(
+            signals_route,
+            "_build_trace_lifecycle",
+            return_value=_missing_lifecycle(signals_route),
+        ),
+    ):
+        response = await _get("/api/signals/sig-gate-strings/trace?asset_class=futures")
+
+    assert response.status_code == 200
+    gate = response.json()["market_risk_gate"]
+    assert gate["mode"] == "enforce"
+    assert gate["band"] == "CRITICAL"
+    assert gate["score"] == 91.3
+    assert gate["would_block"] is True
+    assert gate["allow"] is False
+    assert gate["size_factor"] == 1.0
+    assert gate["degraded"] is False
 
 
 @pytest.mark.asyncio

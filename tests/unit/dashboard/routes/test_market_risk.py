@@ -319,3 +319,80 @@ def test_endpoint_is_read_only(monkeypatch, redis_client):
     assert client.put("/api/market-risk").status_code == 405
     assert client.delete("/api/market-risk").status_code == 405
     assert client.post("/api/market-risk/history").status_code == 405
+
+
+# ---------------------------------------------------------------------------
+# Gate section (Phase 2E — config/market_risk_gate.yaml, display-only)
+# ---------------------------------------------------------------------------
+
+
+def _assert_default_gate_matrix(gate: dict) -> None:
+    """Assertions valid for both the shipped YAML and the code defaults."""
+    assert gate["mode"] in {"off", "shadow", "enforce"}
+    assert gate["staleness_max_age_seconds"] > 0
+    matrix = gate["matrix"]
+    for asset in ("stock", "futures"):
+        assert set(matrix[asset]) == {
+            "LOW",
+            "NEUTRAL",
+            "ELEVATED",
+            "HIGH",
+            "CRITICAL",
+        }
+    assert matrix["stock"]["HIGH"]["allow_long"] is False
+    assert matrix["stock"]["ELEVATED"]["min_confidence"] == "HIGH"
+    assert matrix["stock"]["CRITICAL"]["allow_short"] is False
+    assert matrix["futures"]["ELEVATED"]["size_factor"] == pytest.approx(0.7)
+    assert matrix["futures"]["HIGH"]["allow_long"] is False
+    assert matrix["futures"]["HIGH"]["allow_short"] is True
+    assert matrix["futures"]["HIGH"]["size_factor"] == pytest.approx(0.5)
+    assert matrix["futures"]["CRITICAL"]["allow_long"] is False
+    assert matrix["futures"]["CRITICAL"]["allow_short"] is False
+
+
+def test_latest_includes_gate_matrix_section(monkeypatch, redis_client):
+    _publish_risk_hash(redis_client)
+    client = _client(monkeypatch, redis_client, None)
+
+    body = client.get("/api/market-risk").json()
+
+    _assert_default_gate_matrix(body["gate"])
+
+
+def test_gate_present_even_when_engine_unavailable(monkeypatch, redis_client):
+    """The config-sourced gate block does not depend on the Redis hash."""
+    client = _client(monkeypatch, redis_client, None)
+
+    body = client.get("/api/market-risk").json()
+
+    assert body["status"] == "unavailable"
+    _assert_default_gate_matrix(body["gate"])
+
+
+def test_gate_falls_back_to_defaults_when_yaml_is_malformed(monkeypatch, redis_client):
+    """A broken YAML degrades to the code-default mirror, never a 500."""
+    from shared.risk.market_risk_gate import MarketRiskGateConfig
+
+    def _broken_yaml(cls, *args, **kwargs):
+        raise ValueError("malformed market_risk_gate.yaml")
+
+    monkeypatch.setattr(MarketRiskGateConfig, "from_yaml", classmethod(_broken_yaml))
+    client = _client(monkeypatch, redis_client, None)
+
+    body = client.get("/api/market-risk").json()
+
+    _assert_default_gate_matrix(body["gate"])
+    assert body["gate"]["mode"] == "shadow"
+    assert body["gate"]["staleness_max_age_seconds"] == 21600
+
+
+def test_gate_is_null_when_gate_module_unavailable(monkeypatch, redis_client):
+    """Total gate failure yields gate=null so the UI keeps the static panel."""
+    from services.dashboard.routes import market_risk
+
+    monkeypatch.setattr(market_risk, "_load_gate_config", lambda: None)
+    client = _client(monkeypatch, redis_client, None)
+
+    body = client.get("/api/market-risk").json()
+
+    assert body["gate"] is None
