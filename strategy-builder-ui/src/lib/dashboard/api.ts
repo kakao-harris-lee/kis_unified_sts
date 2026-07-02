@@ -19,3 +19,4 @@ export { universeApi } from './universe';
 export { eventContextApi } from './eventContext';
 export { killSwitchApi } from './killSwitch';
 export { evidenceApi } from './evidence';
+export { marketRiskApi } from './marketRisk';

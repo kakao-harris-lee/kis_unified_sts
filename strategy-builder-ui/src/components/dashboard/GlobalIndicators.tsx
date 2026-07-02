@@ -1,6 +1,10 @@
+import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { useAssetClass } from '@/contexts/dashboard/AssetClassContext'
-import { healthApi } from '@/lib/dashboard/api'
+import { healthApi, marketRiskApi } from '@/lib/dashboard/api'
+import type { MarketRiskLatest } from '@/lib/dashboard/marketRisk'
+import { normalizeBand } from '@/lib/dashboard/marketRisk'
+import { BAND_HEADER_CHIP_CLASSES } from '@/components/dashboard/RiskBandBadge'
 import { QUERY_INTERVALS_MS } from '@/lib/dashboard/queryIntervals'
 
 interface HealthSummary {
@@ -8,6 +12,33 @@ interface HealthSummary {
   data_sources: Array<{ asset_class: string; fresh_ratio: number }>
   kill_switch: { enabled: boolean; active_conditions: { name: string }[] }
   today_pnl: number
+}
+
+// Cockpit ops-summary chip for the Market Risk Score (roadmap §6.2). Renders
+// nothing while the engine has not published yet (graceful absence).
+function MarketRiskChip() {
+  const { data } = useQuery<MarketRiskLatest>({
+    queryKey: ['market-risk'],
+    queryFn: () => marketRiskApi.getLatest().then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.normal,
+  })
+
+  const risk = data?.risk
+  if (!risk || risk.score === null) return null
+
+  const band = normalizeBand(risk.band)
+  const chipClass = band ? BAND_HEADER_CHIP_CLASSES[band] : 'bg-slate-700'
+  return (
+    <Link
+      href="/market"
+      className={`px-2 py-0.5 rounded ${chipClass}`}
+      aria-label={`Market risk score ${risk.score.toFixed(0)}, band ${band ?? 'unknown'}${risk.degraded ? ', degraded' : ''}`}
+      title={`Market Risk ${risk.score.toFixed(1)} · ${band ?? '-'} · ${risk.regime ?? '-'}${risk.degraded ? ' · DEGRADED' : ''}`}
+    >
+      ● Risk {risk.score.toFixed(0)} {band ?? '-'}
+      {risk.degraded ? ' ⚠' : ''}
+    </Link>
+  )
 }
 
 export default function GlobalIndicators() {
@@ -32,6 +63,7 @@ export default function GlobalIndicators() {
 
   return (
     <div className="flex items-center gap-3 text-xs">
+      <MarketRiskChip />
       <span
         className={`px-2 py-0.5 rounded ${
           allAlive ? 'bg-emerald-700' : someAlive ? 'bg-amber-700' : 'bg-rose-700'
