@@ -8,6 +8,7 @@ No Redis / I/O — pure functions.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +16,25 @@ from typing import Any
 def _s(fields: dict[bytes, bytes], key: str) -> str:
     raw = fields.get(key.encode(), b"")
     return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+
+
+def _gate_from_metadata(raw: str) -> dict[str, Any] | None:
+    """Extract ``market_risk_gate`` from an M4-P ``metadata_json`` field.
+
+    The stock lane carries the gate trace inside the signal metadata
+    (roadmap Phase 2C fixed key contract). None for absent/malformed
+    metadata or a missing/non-dict gate key — passthrough only.
+    """
+    if not raw:
+        return None
+    try:
+        metadata = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    gate = metadata.get("market_risk_gate")
+    return gate if isinstance(gate, dict) else None
 
 
 def _ms_to_iso(ms: str) -> str:
@@ -57,6 +77,9 @@ def parse_final_signal(fields: dict[bytes, bytes]) -> dict[str, Any]:
         "price": float(_s(fields, "price") or 0.0),
         "confidence": float(_s(fields, "confidence") or 0.0),
         "generated_at_ms": _s(fields, "generated_at_ms"),
+        # Market-risk gate trace from the M4-P metadata (roadmap Phase 2C).
+        # Passthrough-only: None on pre-gate records.
+        "market_risk_gate": _gate_from_metadata(_s(fields, "metadata_json")),
     }
 
 
@@ -114,7 +137,7 @@ def build_trade_dict(
 
 def build_signal_dict(sig: dict[str, Any]) -> dict[str, Any]:
     """Dashboard signal dict (mirrors TradingStatePublisher.publish_signal data)."""
-    return {
+    data = {
         "id": sig["signal_id"],
         "symbol": sig["code"],
         "name": sig["name"],
@@ -131,3 +154,10 @@ def build_signal_dict(sig: dict[str, Any]) -> dict[str, Any]:
         "reason": "",
         "stage": "",
     }
+    gate = sig.get("market_risk_gate")
+    if isinstance(gate, dict):
+        # Fixed key contract: the /signals trace lane resolves the gate from
+        # the top-level ``market_risk_gate`` key first. Attached only when
+        # present so pre-gate records keep their exact legacy shape.
+        data["market_risk_gate"] = gate
+    return data

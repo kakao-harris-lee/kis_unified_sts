@@ -1,0 +1,31 @@
+# M4-P (stock_strategy) consumer-side wiring for the shared market-risk
+# ENTRY gate (unified roadmap Phase 2C, §5.1 track B).
+#
+# The gate itself — mode, reaction matrix, staleness bound, Redis key — lives
+# in config/market_risk_gate.yaml. THAT file's `mode` is the single
+# off/shadow/enforce switch; this file deliberately carries no on/off
+# duplicate. It only defines how M4-P interprets the gate's outputs:
+#
+#   confidence_levels   maps the matrix `min_confidence` LABEL (e.g. "HIGH"
+#                       at stock/ELEVATED) onto the numeric Signal.confidence
+#                       scale (0.0–1.0) stock entry signals carry. In enforce
+#                       mode a signal whose confidence is below the mapped
+#                       threshold is rejected; unknown labels fail open.
+#                       Reference points on the current roster: williams_r
+#                       fires at ~0.6, technical_consensus at >=0.70,
+#                       pattern_pullback patterns carry ~0.9.
+#
+#   would_block_log_interval_seconds
+#                       shadow-mode would-block observations repeat every
+#                       eval cycle (~60s) for as long as the band holds;
+#                       log at most once per interval per reason (setup-eval
+#                       throttled-logging pattern).
+#
+# ENTRY ONLY: this wiring is applied exclusively to NEW entry candidates in
+# the M4-P daemon. Exit paths (M4-X) are never gated.
+stock_market_risk_gate:
+  confidence_levels:
+    LOW: 0.3
+    MEDIUM: 0.5
+    HIGH: 0.7
+  would_block_log_interval_seconds: 300.0

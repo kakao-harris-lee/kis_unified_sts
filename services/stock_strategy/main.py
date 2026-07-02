@@ -103,12 +103,14 @@ async def _build_and_run() -> int:
         LLMDiscoverySignalConfig,
         StockStrategyDaemon,
     )
+    from services.stock_strategy.market_risk import MarketRiskGateWiringConfig
     from services.trading.indicator_engine import StreamingIndicatorEngine
     from services.trading.strategy_manager import StrategyManager
     from services.trading.stream_consumer_feed import StreamConsumerFeed
     from shared.config.loader import ConfigLoader
     from shared.indicators.contracts import IndicatorContract
     from shared.indicators.resolver import StreamingIndicatorResolver
+    from shared.risk.market_risk_gate import MarketRiskGateConfig
     from shared.storage.config import StorageConfig
     from shared.storage.market_data_store import ParquetMarketDataStore
     from shared.streaming.client import RedisClient
@@ -245,6 +247,15 @@ async def _build_and_run() -> int:
     signal_eval_config = StockSignalEvalConfig.load()
     llm_signal_config = LLMDiscoverySignalConfig.from_env()
 
+    # Market-risk ENTRY gate (unified roadmap Phase 2C). The single
+    # off/shadow/enforce switch is config/market_risk_gate.yaml::mode — no
+    # M4-P-side on/off duplicate. Both configs are loaded ONCE here (never on
+    # the hot path); the per-cycle Redis hash read happens inside the shared
+    # evaluator through the sync client (the gate's contract is a sync
+    # hgetall, which the async candidate-stream client cannot serve).
+    market_risk_gate_config = MarketRiskGateConfig.load_or_default()
+    market_risk_wiring = MarketRiskGateWiringConfig.load()
+
     daemon = StockStrategyDaemon(
         redis=redis_client,
         feed=feed,
@@ -261,6 +272,9 @@ async def _build_and_run() -> int:
         daily_indicators_key=daily_indicators_key,
         signal_eval_config=signal_eval_config,
         llm_signal_config=llm_signal_config,
+        market_risk_gate_config=market_risk_gate_config,
+        market_risk_gate_redis=sync_redis,
+        market_risk_wiring=market_risk_wiring,
         prewarm_fn=prewarm_fn,
         max_prewarm_per_cycle=prewarm_cfg.max_prewarm_per_cycle,
     )

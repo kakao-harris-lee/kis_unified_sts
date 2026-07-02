@@ -119,3 +119,58 @@ def test_build_signal_dict() -> None:
 def test_parse_fill_empty_defaults() -> None:
     f = parse_fill({})
     assert f["code"] == "" and f["filled_price"] == 0.0 and f["quantity"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Market-risk gate passthrough (roadmap Phase 2C — /signals trace lane contract)
+# ---------------------------------------------------------------------------
+
+_GATE_METADATA_JSON = (
+    '{"strategy_params": {}, "market_risk_gate": {"mode": "shadow",'
+    ' "band": "ELEVATED", "score": 60.0, "would_block": false, "allow": true,'
+    ' "size_factor": 1.0, "min_confidence": "HIGH",'
+    ' "reason": "market_risk band=ELEVATED score=60.0 rule=min_confidence:HIGH"}}'
+)
+
+
+def _final_with_metadata(metadata_json: str) -> dict[bytes, bytes]:
+    fields = _final()
+    fields[b"metadata_json"] = metadata_json.encode()
+    return fields
+
+
+def test_parse_final_signal_extracts_gate_from_metadata() -> None:
+    s = parse_final_signal(_final_with_metadata(_GATE_METADATA_JSON))
+    gate = s["market_risk_gate"]
+    assert gate["band"] == "ELEVATED"
+    assert gate["mode"] == "shadow"
+    assert gate["min_confidence"] == "HIGH"
+    assert gate["would_block"] is False
+
+
+def test_parse_final_signal_gate_absent_or_malformed_is_none() -> None:
+    # Plain empty metadata (the pre-gate shape).
+    assert parse_final_signal(_final())["market_risk_gate"] is None
+    # Malformed metadata_json.
+    assert (
+        parse_final_signal(_final_with_metadata("not-json"))["market_risk_gate"] is None
+    )
+    # Gate key present but not a dict.
+    assert (
+        parse_final_signal(_final_with_metadata('{"market_risk_gate": "HIGH"}'))[
+            "market_risk_gate"
+        ]
+        is None
+    )
+
+
+def test_build_signal_dict_carries_gate_top_level() -> None:
+    s = build_signal_dict(parse_final_signal(_final_with_metadata(_GATE_METADATA_JSON)))
+    # /signals trace lane resolves the top-level key first (fixed contract).
+    assert s["market_risk_gate"]["band"] == "ELEVATED"
+    assert s["market_risk_gate"]["allow"] is True
+
+
+def test_build_signal_dict_omits_gate_when_absent() -> None:
+    s = build_signal_dict(parse_final_signal(_final()))
+    assert "market_risk_gate" not in s  # legacy shape preserved bit-for-bit

@@ -10,6 +10,14 @@ market-wide regime (median MFI over the universe) and publishes it to Redis for
 M4-X's bear exit — see ``shared.streaming.stock_regime``. While the regime is
 BEAR_* it skips entry evaluation (``block_entries_in_bear``): long-only entries
 in a bear market would be liquidated by M4-X immediately (fee churn).
+
+It additionally consults the shared market-risk ENTRY gate
+(``shared.risk.market_risk_gate``, roadmap Phase 2C) once per eval cycle:
+every published entry candidate carries the gate trace under
+``metadata["market_risk_gate"]`` in ALL modes, and only ``mode: enforce``
+(config/market_risk_gate.yaml) may reject entries (HIGH blocks new longs,
+CRITICAL blocks all, ELEVATED requires min-confidence). Exit paths (M4-X)
+are never gated — the gate is entry-only by contract.
 """
 
 from __future__ import annotations
@@ -27,11 +35,18 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from services.stock_strategy.candidate import stock_signal_to_stream_dict
+from services.stock_strategy.market_risk import MarketRiskGateWiringConfig
 from services.stock_strategy.universe import (
     _SCREENER_PAYLOAD_KEY,
     parse_watchlist_codes,
 )
 from shared.models.signal import Signal
+from shared.risk.market_risk_gate import (
+    MarketRiskGateConfig,
+    MarketRiskGateDecision,
+    evaluate_market_risk_gate,
+    gate_trace_payload,
+)
 from shared.strategy.base import EntryContext
 from shared.strategy.symbol_strength import compute_strong_symbols
 from shared.streaming.audit import decode_stream_id, format_audit_kv
@@ -162,6 +177,9 @@ class StockStrategyDaemon:
         daily_indicators_key: str = "system:daily_indicators:latest",
         signal_eval_config: StockSignalEvalConfig | None = None,
         llm_signal_config: LLMDiscoverySignalConfig | None = None,
+        market_risk_gate_config: MarketRiskGateConfig | None = None,
+        market_risk_gate_redis: Any | None = None,
+        market_risk_wiring: MarketRiskGateWiringConfig | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -189,6 +207,17 @@ class StockStrategyDaemon:
         # and publishing never influence the candidate stream.
         self._signal_eval_config = signal_eval_config
         self._llm_signal_config = llm_signal_config or LLMDiscoverySignalConfig()
+        # Shared market-risk ENTRY gate (roadmap Phase 2C). The config object is
+        # loaded ONCE at startup (main.py) — never re-parsed on the hot path.
+        # The gate's Redis read is a sync hgetall by contract, so it gets its
+        # own sync client (the async candidate-stream client cannot serve it).
+        # Unwired (either is None) → the daemon behaves exactly as before.
+        self._market_risk_gate_config = market_risk_gate_config
+        self._market_risk_gate_redis = market_risk_gate_redis
+        self._market_risk_wiring = market_risk_wiring or MarketRiskGateWiringConfig()
+        # Throttle cache for shadow-mode would-block logs (reason → last ts),
+        # mirroring the _llm_skip_log_cache throttled-logging pattern.
+        self._market_risk_log_cache: dict[str, float] = {}
         self._universe: list[str] = []
         # Raw watchlist payload ({"strategies": {...}}) from the last refresh.
         # Injected into EntryContext.metadata so daily-watchlist-gated strategies
@@ -396,6 +425,103 @@ class StockStrategyDaemon:
         }
         return len(decoded & strong)
 
+    # ------------------------------------------------------------------
+    # Market-risk ENTRY gate (shared/risk/market_risk_gate, roadmap Phase 2C)
+    # ------------------------------------------------------------------
+
+    def _evaluate_market_risk_gate(
+        self, now: datetime
+    ) -> MarketRiskGateDecision | None:
+        """Evaluate the shared market-risk ENTRY gate once per eval cycle.
+
+        The decision depends only on ``(asset="stock", side="long")`` and the
+        cycle clock, so one evaluation covers every candidate this cycle
+        (mirrors the once-per-cycle bear regime gate). Stock is long-only,
+        hence ``side="long"``. The Redis hash read happens inside the shared
+        evaluator (sync client) and it never raises — every failure path is
+        fail-open by contract. ENTRY ONLY: never consulted by any exit path.
+
+        Returns ``None`` when the gate is unwired (no config / no sync redis)
+        so legacy construction keeps pre-gate behavior bit-for-bit.
+        """
+        cfg = self._market_risk_gate_config
+        if cfg is None or self._market_risk_gate_redis is None:
+            return None
+        return evaluate_market_risk_gate(
+            self._market_risk_gate_redis,
+            cfg,
+            asset="stock",
+            side="long",
+            now=now,
+        )
+
+    def _log_market_risk_would_block(
+        self, decision: MarketRiskGateDecision, now_ts: float
+    ) -> None:
+        """Shadow-mode observation log, throttled per reason.
+
+        The shadow verdict repeats every eval cycle (~60s) for as long as the
+        band holds, so this logs at most once per configured interval per
+        reason (same pattern as the throttled setup-eval / LLM-skip logs).
+        """
+        interval = self._market_risk_wiring.would_block_log_interval_seconds
+        last_logged = self._market_risk_log_cache.get(decision.reason)
+        if last_logged is not None and now_ts - last_logged < interval:
+            return
+        self._market_risk_log_cache[decision.reason] = now_ts
+        logger.info(
+            "market risk gate (shadow): would block new stock entries — %s "
+            "(band=%s score=%s regime=%s)",
+            decision.reason,
+            decision.band,
+            decision.score,
+            decision.regime,
+        )
+
+    @staticmethod
+    def _attach_market_risk_trace(
+        signal: Signal, gate_trace: dict[str, Any] | None
+    ) -> None:
+        """Attach the fixed-key gate trace as ``metadata["market_risk_gate"]``.
+
+        Applied in ALL modes (off/shadow/enforce) — fixed contract with the
+        downstream /signals trace lane; the payload keys come verbatim from
+        ``gate_trace_payload``. Best-effort, like the ``bear_override`` tag.
+        """
+        if gate_trace is None:
+            return
+        with contextlib.suppress(Exception):
+            signal.metadata["market_risk_gate"] = dict(gate_trace)
+
+    def _market_risk_gate_admits(
+        self, signal: Signal, decision: MarketRiskGateDecision | None
+    ) -> bool:
+        """Per-signal enforce-mode min-confidence admission.
+
+        Only ``mode == "enforce"`` applies matrix values — in shadow the
+        observed ``min_confidence`` rides along in the trace but must never
+        reject (shared-gate contract). Blanket ``allow=False`` blocks are
+        handled at cycle level, not here. Unknown labels and unreadable
+        confidences fail open.
+        """
+        if decision is None or decision.mode != "enforce":
+            return True
+        threshold = self._market_risk_wiring.min_confidence_threshold(
+            decision.min_confidence
+        )
+        if threshold is None:
+            if decision.min_confidence:
+                logger.warning(
+                    "market risk gate: unknown min_confidence label %r — "
+                    "admitting (fail-open)",
+                    decision.min_confidence,
+                )
+            return True
+        try:
+            return float(signal.confidence) >= threshold
+        except (TypeError, ValueError):
+            return True
+
     @staticmethod
     def _as_float(value: Any) -> float | None:
         if value is None:
@@ -471,6 +597,8 @@ class StockStrategyDaemon:
         evaluator: SignalEvalCollector | None,
         allowed_codes: set[str] | None = None,
         excluded_codes: set[str] | None = None,
+        gate_decision: MarketRiskGateDecision | None = None,
+        gate_trace: dict[str, Any] | None = None,
     ) -> int:
         cfg = self._llm_signal_config
         if not cfg.enabled or cfg.max_per_cycle <= 0:
@@ -652,6 +780,26 @@ class StockStrategyDaemon:
                 },
             )
 
+            # LLM-discovery candidates are NEW entries too: same gate trace
+            # contract and the same enforce-mode min-confidence admission as
+            # the technical loop (blanket allow=False blocks never reach here
+            # — the cycle already early-returned).
+            self._attach_market_risk_trace(signal, gate_trace)
+            if not self._market_risk_gate_admits(signal, gate_decision):
+                self._record_llm_reject(
+                    evaluator,
+                    cfg.strategy_name,
+                    symbol,
+                    gate_decision.reason,  # type: ignore[union-attr]
+                )
+                self._log_llm_skip(
+                    symbol=symbol,
+                    reason="market_risk_gate",
+                    now_ts=now_ts,
+                    detail=gate_decision.reason,  # type: ignore[union-attr]
+                )
+                continue
+
             await self._publish(signal)
             # Persist cooldown to Redis (source of truth) and local cache.
             # TTL on the hash is refreshed to cooldown_seconds so stale entries
@@ -740,6 +888,30 @@ class StockStrategyDaemon:
                 len(strong),
                 sorted(strong),
             )
+        # Market-risk ENTRY gate (roadmap Phase 2C §5.1): evaluated ONCE per
+        # cycle after the regime publish (M4-X's bear-exit feed must never be
+        # skipped) — the (asset="stock", side="long") verdict is identical for
+        # every candidate this cycle, mirroring the once-per-cycle bear gate.
+        gate_decision = self._evaluate_market_risk_gate(now)
+        gate_trace = (
+            gate_trace_payload(gate_decision) if gate_decision is not None else None
+        )
+        if gate_decision is not None and not gate_decision.allow:
+            # enforce mode + blocking rule (stock: HIGH blocks new longs,
+            # CRITICAL blocks all new entries). Blanket-reject the cycle via
+            # the #483 reject-reason lane with the gate's machine-readable
+            # reason. Exits (M4-X) are untouched — the gate is entry-only.
+            logger.info(
+                "market risk gate: blocking new stock entries — %s",
+                gate_decision.reason,
+            )
+            self._record_blanket_reject(evaluator, roster, gate_decision.reason)
+            await self._publish_signal_eval(evaluator, now)
+            return 0
+        if gate_decision is not None and gate_decision.would_block:
+            # shadow mode: would-block is observation-only — log (throttled)
+            # and annotate the trace; never reject.
+            self._log_market_risk_would_block(gate_decision, now.timestamp())
         # Read the DailyScanner payload once for the whole cycle (not per symbol)
         # so daily-gated strategies see the orchestrator's full daily field set.
         scanner_indicators = await self._load_scanner_daily_indicators()
@@ -820,10 +992,37 @@ class StockStrategyDaemon:
                             sig.metadata["bear_override"] = (
                                 True  # best-effort; tag is observability only
                             )
-                    fired_strategies.add(str(getattr(sig, "strategy", "") or ""))
+                    strategy_name = str(getattr(sig, "strategy", "") or "")
+                    # The generator DID fire — mark it so the non-firing
+                    # classifier below never double-records this strategy.
+                    fired_strategies.add(strategy_name)
+                    # Fixed contract with the /signals trace lane: every
+                    # candidate carries the gate trace in ALL modes.
+                    self._attach_market_risk_trace(sig, gate_trace)
+                    if not self._market_risk_gate_admits(sig, gate_decision):
+                        # enforce mode + ELEVATED min-confidence: signal
+                        # confidence below the mapped threshold → reject via
+                        # the #483 reject-reason lane with the gate reason.
+                        logger.info(
+                            "market risk gate: rejected %s %s "
+                            "(confidence=%.2f < min_confidence=%s) — %s",
+                            strategy_name,
+                            symbol,
+                            float(getattr(sig, "confidence", 0.0) or 0.0),
+                            gate_decision.min_confidence,  # type: ignore[union-attr]
+                            gate_decision.reason,  # type: ignore[union-attr]
+                        )
+                        self._eval_record(
+                            evaluator,
+                            strategy_name,
+                            symbol,
+                            OUTCOME_REJECT,
+                            gate_decision.reason,  # type: ignore[union-attr]
+                        )
+                        continue
                     self._eval_record(
                         evaluator,
-                        str(getattr(sig, "strategy", "") or ""),
+                        strategy_name,
                         symbol,
                         OUTCOME_SIGNAL,
                         (
@@ -854,6 +1053,8 @@ class StockStrategyDaemon:
                 evaluator=evaluator,
                 allowed_codes=override_codes if is_bear else None,
                 excluded_codes=technical_published_symbols,
+                gate_decision=gate_decision,
+                gate_trace=gate_trace,
             )
         except Exception:
             logger.exception("LLM discovery signal publish failed")
