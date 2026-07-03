@@ -493,13 +493,26 @@ shadow` 기본 — enforce 전환은 드릴 통과 + operator 승인 후 YAML로
       오프라인 드릴은 통과(11/11). 남은 것: 모의투자 서버에서 `--execute`
       드릴(실 sentinel 트립+원복) + enforce 전환은 operator 승인
 
-### Phase 4 — 헤지 어드바이저 (paper·권고 전용) (약 2주) ⏳
+### Phase 4 — 헤지 어드바이저 (paper·권고 전용) ✅ (2026-07-03 완료)
 
-- [ ] 크로스에셋 넷 β-노출 산출 + 헤지 계약수 권고(§5.4)
-- [ ] `/market` 헤지 카드 + Telegram 권고 알림 (자동 주문 없음)
-- **선행 조건**: full vs Mini 상품 정책 확정 (기존 ROADMAP 미결 항목)
-- **게이트**: HIGH 밴드 실발생 구간에서 권고 품질 리뷰 후, 자동 헤지 여부는
-  별도 plan으로만 논의
+- [x] 상품 확정: **미니 KOSPI200** (O4 — 정밀도 5배/증거금 1/5, operator 승인)
+- [x] 엔진: `shared/portfolio/hedge.py`(β 회귀 120일·클리핑, product-aware
+      승수 — 보유 full ×250k/mini ×50k 구분, floor 권고·net≤0→0·stale 생략)
+      + `config/hedge_advisor.yaml`(승수는 execution.yaml과 런타임 교차 검증,
+      불일치 시 발행 전 loud fail) + portfolio_monitor 통합(_cli fail-safe
+      배선 — 어드바이저 실패가 equity 배치를 못 죽임)
+- [x] 발행/이력/알림: `portfolio:hedge:latest`(18필드, TTL 24h) +
+      `stream:portfolio.hedge` + ledger v4 `hedge_advice`(전환/변경 시에만
+      기록) + Telegram rising edge("권고일 뿐 자동 주문 아님" 문구)
+- [x] UI: `GET /api/portfolio/hedge`(+history, read-only URI) + `/market`
+      헤지 카드("권고 전용 — 자동 주문 없음" 상시 라벨) + `/risk` 순 β-노출 셀
+- [x] 리뷰 패스 (2026-07-03, 판정: 커밋 가능): 권고 전용 보증 PASS —
+      집행 코드 0건, execution import 가드 테스트(AST+서브프로세스) 실효성
+      확인, UI 집행 컨트롤 0건. 계약 18필드 3-way 일치. 중단 복구 감사에서
+      프로덕션 미배선(데드 코드)·테스트 전무 블로킹 2건을 해소(테스트 111건
+      추가). 백엔드 247건+프론트 125건 통과. 비차단 잔여는 O15
+- **게이트 (유지)**: HIGH 밴드 실발생 구간에서 권고 품질 리뷰 후, 자동 헤지
+  여부는 별도 plan + operator 게이트로만 논의
 
 ### Phase 5 — 트랙 A 운영 체계화 (분기 운영) ⏳
 
@@ -526,7 +539,7 @@ shadow` 기본 — enforce 전환은 드릴 통과 + operator 승인 후 YAML로
 | O1 | ~~KIS TR 가용성~~ **확정 (2026-07-02 스파이크)** | Phase 0의 "데이터 소스 확정" 표 참조. 요지: 프로그램매매는 KIS 일별 TR이 날짜범위 백필까지 지원(KRX 폴백 불필요), 외국인 선물 순매수는 KIS 장중 스냅샷(`K2I`/`F001`)만 가용 → 장마감 캡처로 forward 축적 + 백필은 KRX 로그인 CSV 수동 런북, OI 이력은 REST 미제공 → WS+스냅샷 forward / KRX Open API 백필. 신규 수급 TR 전부 실전 appkey 전용. 잔여 프로브 3건은 실전 토큰 환경에서 각 1콜 |
 | O2 | ~~SOX 데이터 소스~~ **해소 (2026-07-02 스파이크)** | `^SOX` Yahoo 직접 조회 확인 — SOXX 프록시 불필요. ES=F/NQ=F/KRW=X도 가용. 단 `macro_sources.yaml`의 `sessions:` 블록은 코드가 소비하지 않는 장식이므로, 확장 시 티커맵 config화 포함 (Wave 2a 구현) |
 | O3 | 가중치 초기값 | §4.1은 출발점일 뿐. 백필 사후 검증에서 판별력 낮은 요소는 가중치 조정(전부 YAML이므로 코드 변경 없음). 과최적화 경계 — 요소 추가/제거는 분기 리뷰에서만 |
-| O4 | full vs Mini 상품 정책 | 헤지 계약수·승수 계산의 선행 조건. 기존 ROADMAP "Futures product/session governance" 항목과 동일 게이트 |
+| O4 | ~~full vs Mini 상품 정책~~ **헤지 상품 확정 (2026-07-03, operator 승인)** | **헤지 어드바이저는 미니 KOSPI200 선물 사용.** 근거: 승수 1/5(5만원/pt)로 헤지 계약수 정밀도 5배 — 현재 Tier 2 자본 규모에서 full 1계약(~9,500만원 명목)은 반올림 오차 자체가 방향성 베팅이 됨. 증거금 1/5, 저장소 실행 가드의 Mini semantics 기본값과 정합. 소액 헤지에서 유동성 차이는 무시 가능. **트레이딩 전략의 상품 governance(기존 ROADMAP 항목)는 별도 결정으로 유지** — 이 확정은 헤지 인스트루먼트에 한정 |
 | O5 | 전체 자산 스냅샷 범위 | 트랙 A가 별도 증권사 계좌면 수동 입력 의존 — 정확도 한계를 월간 리뷰에서 보정 |
 | O6 | ~~V-KOSPI~~ **판정 확정 (2026-07-02 스파이크)** | Yahoo에 V-KOSPI 없음(404 확인). KRX OpenAPI 파생상품지수는 AUTH_KEY 서비스별 승인 필요 + 일별 종가라 정보 우위 낮음 → **HAR-RV 유지 확정**. 후속: deploy 호스트 KRX_API_KEY로 `idx/drvprod_dd_trd` 1회 검증만 백로그로 유지 |
 | O7 | 밴드 전환 빈도 | 히스테리시스에도 횡보장에서 ELEVATED↔HIGH 플래핑 가능성 — shadow 기간 관찰 지표로 지정 |
@@ -534,6 +547,7 @@ shadow` 기본 — enforce 전환은 드릴 통과 + operator 승인 후 YAML로
 | O9 | ~~KRX 야간파생시장 종가 신호~~ **확정 (2026-07-02 스파이크)** | 야간 REST 시세는 부재, **WS `H0MFCNT0`(실시간-064)만 가용** — 체결가와 함께 `mrkt_basis`(시장 베이시스)/`dprt`(괴리율)/OI 필드를 직접 제공해 신호 품질이 ES/NQ 프록시보다 우월. 05:50~06:00 KST 캡처 윈도우 수집기로 마지막 체결을 Redis 스냅샷(TTL 24h)에 저장(Wave 2e). 과거 백필 불가(forward 축적만). `eurex_kospi_close` 레거시 필드는 `krx_night_kospi200_close`로 대체 예정 |
 | O10 | ~~`KRXDataCollector` 프로덕션 결함~~ **수정 완료 (Wave 2c)** | 투자자매매·프로그램매매 bld가 잘못된 화면 조회 + KRX 로그인 정책 변경으로 수급 수치가 조용히 빈 값이던 결함. 투자자별 경로는 `MDCSTAT02203_OUT`(public `get_investor_trading`)으로 교정, 프로그램 경로는 KIS TR 이관까지 명시적 결측 처리 |
 | O14 | Phase 2 리뷰 비차단 지적 (2026-07-03) | ① enforce에서 차단된 선물 후보는 audit 로그에만 남음(스트림/ledger 미기록) — enforce 전환 리뷰 전에 RuntimeLedger 기록 배선 고려(주식은 #483 eval 레인에 기록됨). ② trace의 ledger 폴백(`signal_decisions`)은 현재 기록자 없는 dead path(무해, 감사 기록 배선 시 활성화). ③ 선물 shadow 로그 스로틀 간격 하드코딩(주식은 YAML), throttle 헬퍼 2종 수렴 후보. ④ min_confidence 경계값(=0.7) 고정 테스트 없음 |
+| O15 | Phase 4 리뷰 비차단 지적 (2026-07-03) | ① hedge stale 임계(14h) 여유가 10분뿐(19:00 발행→익일 08:50 갭 13h50m) — 크론 지연 시 아침 false stale 가능, `PORTFOLIO_HEDGE_STALE_SECONDS` env로 조정. ② execution import 서브프로세스 가드가 lazy 의존 4종의 전이 그래프 미커버(수동 검증 결과 현재 유입 없음) — 가드 스니펫 확장 권장. ③ `query_hedge_advice` limit이 ASC 선두 N 반환(현 호출자는 정확) |
 | O13 | **kill_switch 조건 미평가 가능성 (2026-07-03 감사 발견, 운영 중요)** | 현행 모놀리식 futures paper 운용에서 kill_switch 모니터는 `futures-killswitch` 프로파일 뒤에 있고, 조건 데이터원 `risk:state:futures`는 decoupled `order_router`만 기록 → **일 3%/주 7%/연속 6패 kill 조건이 실제로 평가되지 않고 있을 가능성**. 운용 중 일일 가드는 `risk_management.yaml`의 5%(더 느슨)만. F-9 컷오버 전에 커버리지 정책 결정 필요(모놀리식에도 risk-state 기록 추가 vs 컷오버로 해소). `risk_stock.max_position_risk_pct: 0.02`는 어떤 필터도 소비하지 않는 선언값 |
 | O12 | Phase 1 리뷰 비차단 지적 (2026-07-03 검수 패스) | 블로킹 1건(수집 coverage_ratio vs 스코어 risk_coverage_ratio 컬럼 혼용)은 수정 완료. 잔여: ① **premarket score 미영속** — 엔진 premarket 모드는 Redis-only라 premarket Parquet 행에 score 컬럼이 없음 → counterfactual의 premarket 경로는 항상 전일 close 폴백(보수적·안전), 에피소드 표의 premarket 셀은 결측. premarket score 영속화 여부는 §4.4 게이트 운영 후 결정. ② close 행 부재 시 `market:structure:latest` 폴백으로 계산한 값이 `regime:unified:daily`에 확정 기록될 수 있음 — 폴백 시 regime 기록 스킵 검토. ③ 프론트 밴드 경계/트랙 매트릭스는 YAML 정본의 정적 사본 — Phase 2 전 API 노출 검토 |
 | O11 | 리뷰 비차단 지적 (2026-07-02 검수 패스) | ① 백필 `usdkrw`가 `KRW=X` 당일 봉을 close 행에 기록 — 봉 확정(~익일 07:00 KST)이 컷오프(18:40)를 넘고 forward 경로(ECOS≈전일 평균)와 ~1일 어긋남. 백테스트 프로토콜상 악용 불가하나 **Phase 1 사후검증 전에** overseas식 직전 봉(`d < day`) 또는 ECOS로 정렬 필요. ② `futs_prdy_ctrt` 부재 시 client가 `change=0.0` 반환 → 결측이 "보합"으로 위장(`oi_price_signal=neutral`) — 수집기에서 raw 필드 부재 구분 권장. ③ 야간 종가 TTL 24h로 월요일 premarket이 금요일 야간 신호를 못 봄 + `night`가 coverage 미포함이라 부재가 안 드러남 — 주말 케이스 정책(누적형 TTL 48h+ 또는 결측 명시) 결정 필요. ④ float 파서 4종·KST now 헬퍼 중복 — shared 유틸 수렴 후보 |
