@@ -106,6 +106,39 @@ class WeeklyLossCondition(KillCondition):
         return loss_pct >= self.limit_pct
 
 
+class MonthlyLossCondition(KillCondition):
+    """Design spec §4.3 (Phase 3C ticket C1): monthly loss >= limit → halt
+    trading for the remainder of the KST month.
+
+    Latch semantics — how "halt until month end" is enforced:
+
+    * On trip, the daemon writes the sentinel file, which blocks the
+      order_router until an operator explicitly clears it (no auto-expiry).
+    * ``snapshot.monthly_pnl_krw`` is served from the
+      ``risk:state:{asset_class}:period`` HASH whose TTL always covers the
+      remainder of the current KST month, so the condition's input cannot
+      silently expire before month end (unlike the 24 h main-HASH TTL).
+    * If an operator clears the sentinel *before* month end and restarts
+      the daemon, this condition re-trips within one ``check_interval``
+      because the monthly accumulation is still latched below the limit.
+    * At the KST month boundary the monthly accumulation resets (anchor
+      rollover), the condition stops firing, and the operator can clear
+      the sentinel to resume — after the §4.3 root-cause review.
+    """
+
+    name = "monthly_loss"
+
+    def __init__(self, *, limit_pct: float, equity_krw: float) -> None:
+        self.limit_pct = limit_pct
+        self.equity_krw = equity_krw
+
+    def check(self, *, snapshot: Any) -> bool:
+        if self.equity_krw <= 0:
+            return False
+        loss_pct = -snapshot.monthly_pnl_krw / self.equity_krw
+        return loss_pct >= self.limit_pct
+
+
 class ConsecutiveLossesCondition(KillCondition):
     name = "consecutive_losses"
 
@@ -293,6 +326,12 @@ async def _build_and_run() -> int:
         conditions.append(
             WeeklyLossCondition(
                 limit_pct=float(cc.weekly_loss.limit_pct), equity_krw=equity_krw
+            )
+        )
+    if cc.monthly_loss.enabled and cc.monthly_loss.limit_pct is not None:
+        conditions.append(
+            MonthlyLossCondition(
+                limit_pct=float(cc.monthly_loss.limit_pct), equity_krw=equity_krw
             )
         )
     if cc.consecutive_losses.enabled and cc.consecutive_losses.threshold is not None:

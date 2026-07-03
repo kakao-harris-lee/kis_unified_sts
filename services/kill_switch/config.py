@@ -36,6 +36,11 @@ class _NewsPipelineLagToggle(_ConditionToggle):
 class _ConditionsBlock(BaseModel):
     daily_loss: _ConditionToggle = Field(default_factory=_ConditionToggle)
     weekly_loss: _ConditionToggle = Field(default_factory=_ConditionToggle)
+    # Phase 3C (design spec §4.3): monthly loss latch — halts trading for the
+    # remainder of the KST month. See MonthlyLossCondition in main.py for the
+    # latch semantics. limit_pct defaults to None so the condition is only
+    # armed when config/kill_switch.yaml provides a threshold.
+    monthly_loss: _ConditionToggle = Field(default_factory=_ConditionToggle)
     consecutive_losses: _ConditionToggle = Field(default_factory=_ConditionToggle)
     api_error_rate_5min: _ConditionToggle = Field(default_factory=_ConditionToggle)
     news_pipeline_lag_seconds: _NewsPipelineLagToggle = Field(

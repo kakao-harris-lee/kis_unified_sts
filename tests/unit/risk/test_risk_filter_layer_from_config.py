@@ -7,6 +7,7 @@ from shared.risk.filters.consecutive_loss import ConsecutiveLossFilter
 from shared.risk.filters.daily_mdd import DailyMDDFilter
 from shared.risk.filters.daily_trade_count import DailyTradeCountFilter
 from shared.risk.filters.open_position import OpenPositionFilter
+from shared.risk.filters.portfolio_mdd import PortfolioMddFilter
 from shared.risk.filters.spread import SpreadFilter
 from shared.risk.filters.trading_hours import TradingHoursFilter
 from shared.risk.filters.volatility import VolatilityFilter
@@ -28,7 +29,7 @@ def _cfg() -> FuturesRiskConfig:
     )
 
 
-def test_from_config_builds_all_8_filters_in_spec_order() -> None:
+def test_from_config_builds_all_9_filters_in_spec_order() -> None:
     layer = RiskFilterLayer.from_config(
         _cfg(), trading_windows=["09:00-10:30", "14:30-15:20"]
     )
@@ -41,9 +42,18 @@ def test_from_config_builds_all_8_filters_in_spec_order() -> None:
         VolatilityFilter,
         SpreadFilter,
         OpenPositionFilter,
+        # Phase 3B: unified portfolio-MDD gate (fail-open; shadow-mode no-op).
+        PortfolioMddFilter,
     ]
     actual_types = [type(f) for f in layer._filters]
     assert actual_types == expected_types
+
+
+def test_from_config_portfolio_mdd_disabled_by_config() -> None:
+    cfg = _cfg()
+    cfg.portfolio_mdd.enabled = False
+    layer = RiskFilterLayer.from_config(cfg, trading_windows=["09:00-15:30"])
+    assert not any(isinstance(f, PortfolioMddFilter) for f in layer._filters)
 
 
 def test_from_config_propagates_config_values() -> None:
@@ -70,7 +80,12 @@ def test_from_config_default_providers_never_reject() -> None:
     from shared.decision.signal import Signal
     from shared.risk.state import RiskStateSnapshot
 
-    layer = RiskFilterLayer.from_config(_cfg(), trading_windows=["00:00-23:59"])
+    layer = RiskFilterLayer.from_config(
+        _cfg(),
+        trading_windows=["00:00-23:59"],
+        # Hermetic: never let the portfolio filter build a real Redis client.
+        portfolio_snapshot_provider=lambda: None,
+    )
     # Build a minimal signal squarely inside the always-valid window.
     sig = Signal(
         setup_type="A_gap_reversion",

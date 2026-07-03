@@ -7,7 +7,26 @@ risk:
   max_position_size_contracts: 2
   consecutive_loss_soft_threshold: 4
   consecutive_loss_hard_threshold: 6
+  # 설계서 §4.2 (Phase 3C C2): 연속 4패 도달 시점부터 14일(KST)간 사이즈 x0.5
+  # 유지 — 승리로 streak가 리셋돼도 윈도우는 유지되며 재기동에도 생존한다
+  # (risk:state:{asset}:period 해시의 size_reduce_until_kst). 0이면 지속성
+  # 비활성(과거 동작: 첫 승 시 즉시 원복).
+  soft_reduce_persist_days: 14
+  # floor-at-1 정책 — operator 결정 사항. 기본값 false 변경 금지(변경은 백테스트/
+  # 운영 근거 필요). false: 현행 유지 — base 1계약에서는 x0.5 축소가 order_router의
+  # floor-at-1로 사실상 무효(필터 INFO 로그로만 관찰 가능). true: 축소가 실효를
+  # 가질 수 없는 1계약 운용에서 축소 대신 진입 자체를 차단(보수,
+  # skip_reason=consecutive_losses_floor_block).
+  reduce_blocks_at_floor: false
   max_spread_ticks: 2
+  # Phase 3B unified portfolio-MDD circuit-breaker gate (filter #9).
+  # Enabled by default but a NO-OP until config/portfolio.yaml
+  # circuit_breaker.mode=enforce (fail-open on missing/stale snapshot or
+  # shadow/off mode). Stage thresholds/size factor: config/portfolio.yaml.
+  portfolio_mdd:
+    enabled: true
+    latest_key: "portfolio:equity:latest"
+    stale_max_age_seconds: 93600   # 26h — daily 19:00 KST cadence + slack
 
 trading_windows:
   - "09:00-10:30"
@@ -24,7 +43,17 @@ risk_stock:
   max_position_size_contracts: 1000
   consecutive_loss_soft_threshold: 4
   consecutive_loss_hard_threshold: 6
+  # Track C 설계서 §4.2의 2주 지속성은 선물 대상 — 주식은 현행 유지
+  # (0 = 첫 승 시 즉시 원복). 주식 적용 여부는 별도 결정 사항.
+  soft_reduce_persist_days: 0
+  reduce_blocks_at_floor: false
   max_spread_ticks: 5
+  # Phase 3B unified portfolio-MDD gate — same semantics as risk.portfolio_mdd
+  # (stock M4-R chain reads this section). Shadow mode ⇒ no-op.
+  portfolio_mdd:
+    enabled: true
+    latest_key: "portfolio:equity:latest"
+    stale_max_age_seconds: 93600
 
 # Korean equity regular session, KST. Half-open [start, end).
 trading_windows_stock:

@@ -524,9 +524,37 @@ class RiskConfig:
 # Phase 3: Futures intraday risk config (ServiceConfigBase-based)
 # ---------------------------------------------------------------------------
 
-from pydantic import Field  # noqa: E402 — deferred import to avoid circular issues
+from pydantic import BaseModel, Field  # noqa: E402 — deferred import (circulars)
 
 from shared.config.base import ServiceConfigBase  # noqa: E402
+
+
+class PortfolioMddFilterSettings(BaseModel):
+    """Unified portfolio-MDD filter knobs (Phase 3B, roadmap §5.5).
+
+    The filter reads the ``portfolio:equity:latest`` hash published by
+    ``services/portfolio_monitor`` and fails OPEN whenever the key is absent,
+    stale, unparseable, or the published breaker ``mode`` is not ``enforce``.
+    Stage thresholds/size factors live in ``config/portfolio.yaml`` — this
+    block only wires the read side.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Run the portfolio_mdd filter in the RiskFilterLayer chain",
+    )
+    latest_key: str = Field(
+        default="portfolio:equity:latest",
+        description="Redis hash published by services/portfolio_monitor",
+    )
+    stale_max_age_seconds: int = Field(
+        default=93600,
+        description=(
+            "Fail-open when the snapshot asof_ts (KST naive ISO) is older "
+            "than this. 26h covers the daily 19:00 KST cadence with slack; "
+            "the key's own 24h TTL is the harder bound."
+        ),
+    )
 
 
 class FuturesRiskConfig(ServiceConfigBase):
@@ -585,9 +613,32 @@ class FuturesRiskConfig(ServiceConfigBase):
         default=6,
         description="Consecutive losses before all new entries are rejected",
     )
+    soft_reduce_persist_days: int = Field(
+        default=14,
+        description=(
+            "Days (KST) the x0.5 soft size reduction persists once the "
+            "consecutive-loss streak reaches the soft threshold (design "
+            "spec §4.2). 0 disables persistence (legacy behaviour: the "
+            "reduction ends on the first win)."
+        ),
+    )
+    reduce_blocks_at_floor: bool = Field(
+        default=False,
+        description=(
+            "Operator policy for the floor-at-1 limit: when the soft "
+            "reduction is active but cannot take effect (base quantity 1 "
+            "floors x0.5 back to 1 contract), True rejects entries outright "
+            "instead of passing at effectively full size. Default False "
+            "preserves current behaviour (observable via filter logs)."
+        ),
+    )
     max_spread_ticks: int = Field(
         default=2,
         description="Max bid-ask spread in ticks; signals above this are rejected",
+    )
+    portfolio_mdd: PortfolioMddFilterSettings = Field(
+        default_factory=PortfolioMddFilterSettings,
+        description="Unified portfolio-MDD circuit-breaker filter (Phase 3B)",
     )
 
 

@@ -90,6 +90,7 @@ class RiskFilterLayer:
         current_atr_provider: Callable[[], float] | None = None,
         current_spread_provider: Callable[[], float] | None = None,
         has_open_position_provider: Callable[[str], bool] | None = None,
+        portfolio_snapshot_provider: Callable[[], dict | None] | None = None,
     ) -> RiskFilterLayer:
         """Build a fully-wired RiskFilterLayer from a FuturesRiskConfig + providers.
 
@@ -107,6 +108,14 @@ class RiskFilterLayer:
         8. :class:`OpenPositionFilter` — uses ``has_open_position_provider``
            if given, else a stub that always returns False (never rejects
            for duplicate positions).
+
+        Phase 3B appends filter #9 when ``config.portfolio_mdd.enabled``:
+
+        9. :class:`PortfolioMddFilter` — unified monthly-MDD circuit-breaker
+           gate. Fail-open by design (missing/stale Redis snapshot or mode
+           ≠ enforce passes), so enabling it under the default shadow mode
+           is a no-op. ``portfolio_snapshot_provider`` overrides the default
+           lazy sync-Redis reader (tests / backtests).
 
         The stubs let the backtest run the layer in a reproducible way
         without wiring real position / ATR / LOB sources; Phase 4 overrides
@@ -149,6 +158,7 @@ class RiskFilterLayer:
             ConsecutiveLossFilter(
                 soft_threshold=config.consecutive_loss_soft_threshold,
                 hard_threshold=config.consecutive_loss_hard_threshold,
+                reduce_blocks_at_floor=config.reduce_blocks_at_floor,
             ),
             DailyTradeCountFilter(max_daily_trades=config.max_daily_trades),
             VolatilityFilter(current_atr_provider=current_atr_provider),
@@ -158,6 +168,24 @@ class RiskFilterLayer:
             ),
             OpenPositionFilter(has_open_position_provider=has_open_position_provider),
         ]
+
+        portfolio_settings = getattr(config, "portfolio_mdd", None)
+        if portfolio_settings is not None and portfolio_settings.enabled:
+            from shared.portfolio.config import PortfolioConfig
+            from shared.risk.filters.portfolio_mdd import PortfolioMddFilter
+
+            portfolio_config = PortfolioConfig.load_or_default()
+            filters.append(
+                PortfolioMddFilter(
+                    reduce_size_factor=(
+                        portfolio_config.circuit_breaker.monthly_mdd_stages.reduce.new_entry_size_factor
+                    ),
+                    latest_key=portfolio_settings.latest_key,
+                    stale_max_age_seconds=portfolio_settings.stale_max_age_seconds,
+                    snapshot_provider=portfolio_snapshot_provider,
+                )
+            )
+
         return cls(filters=filters)
 
     def evaluate(

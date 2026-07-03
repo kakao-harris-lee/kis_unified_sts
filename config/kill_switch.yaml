@@ -35,6 +35,16 @@ kill_switch:
     weekly_loss:
       enabled: true
       limit_pct: 0.07
+    monthly_loss:
+      enabled: true
+      # 설계서 §4.3: 월간 손실 15% → 당월 완전 중단 (Phase 3C C1).
+      # 래치 semantics: 트립 시 sentinel 파일은 operator가 수동 해제할 때까지
+      # 유지되고, monthly_pnl_krw는 risk:state:{asset}:period 해시(TTL이 항상
+      # 당월 잔여기간 + 7일 grace를 커버)에 저장된다. 월말 전에 sentinel을
+      # 해제해도 상태가 남아 있어 kill_switch 재기동 시 즉시 재트립한다.
+      # KST 월 경계(1일 00:00)에서 monthly 누적이 리셋되어야 조건이 풀리며,
+      # 재개는 §4.3 원인 분석 후 operator의 sentinel 해제로만 가능하다.
+      limit_pct: 0.15
     consecutive_losses:
       enabled: true
       threshold: 6

@@ -20,10 +20,20 @@ class RiskStateSnapshot:
 
     Attributes:
         daily_pnl_krw: Realised + unrealised daily P&L in KRW.
-        weekly_pnl_krw: Rolling weekly P&L in KRW.
+        weekly_pnl_krw: KST calendar-week P&L in KRW (resets Monday 00:00 KST).
         consecutive_losses: Number of consecutive losing trades.
         daily_trade_count: Number of trades executed today.
         atr_90th_percentile: 90th-percentile ATR value (used by VolatilityFilter).
+        monthly_pnl_krw: KST calendar-month P&L in KRW (resets on the 1st,
+            00:00 KST).  Not persisted in this HASH — populated by
+            ``RuntimeRiskState.snapshot()`` from the sibling ``:period`` HASH
+            whose TTL covers the remainder of the month (kill-switch
+            ``monthly_loss`` latch, design spec §4.3).
+        size_reduce_until_kst: ISO-8601 KST datetime until which the
+            consecutive-loss soft size reduction (x0.5) stays active
+            (design spec §4.2 — two-week persistence).  Empty string when
+            inactive.  Not persisted in this HASH — populated by
+            ``RuntimeRiskState.snapshot()`` from the sibling ``:period`` HASH.
     """
 
     daily_pnl_krw: float = 0.0
@@ -31,9 +41,15 @@ class RiskStateSnapshot:
     consecutive_losses: int = 0
     daily_trade_count: int = 0
     atr_90th_percentile: float = 0.0
+    monthly_pnl_krw: float = 0.0
+    size_reduce_until_kst: str = ""
 
 
 # Internal mapping: field name -> (hash-field name, type converter)
+# NOTE: ``monthly_pnl_krw`` and ``size_reduce_until_kst`` are deliberately
+# absent — they live in the ``risk:state:{asset_class}:period`` sibling HASH
+# (owned by RuntimeRiskState) because this HASH's 24 h TTL cannot cover
+# calendar-week/month windows.
 _FIELD_MAP: dict[str, type] = {
     "daily_pnl_krw": float,
     "weekly_pnl_krw": float,
