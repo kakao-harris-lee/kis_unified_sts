@@ -178,3 +178,22 @@
 # day. Idempotent: same one-shot, upsert by trade_date; the 19:00 run
 # overwrites the row with the EOD state (risk-event audits dedupe by key).
 50 8 * * 1-5  cd /app && python -m services.portfolio_monitor.main
+
+# --- Unified performance feedback reports (Phase 6A — read-only analysis) ---
+# Read-only batch: turns RuntimeLedger track-tagged trades/fills,
+# portfolio_equity_daily, hedge_advice, market_structure close rows, and the
+# newest experiment artifact into weekly/monthly/quarterly report files
+# ({reports_root}/{weekly,monthly,quarterly}/<period_label>.{md,json}), a
+# portfolio:feedback:latest Redis pointer, and one Telegram headline. It NEVER
+# influences any strategy/execution/gate path (설계서 §8, §8.2). Defaults cover
+# the just-completed period, so each run lands after that period closes.
+# Weekly — Sat 09:00 KST: the trading week (Mon-Fri) has closed; the default
+# period_label is that week's last trading day (Friday). After the Fri 19:00
+# portfolio-monitor EOD row so the equity/slippage inputs are complete.
+0 9 * * 6  cd /app && python -m services.feedback_reporter.main weekly
+# Monthly — 1st 09:10 KST: covers the previous KST month (portfolio_equity_daily
+# month rows + market-risk band residency are finalized by month end).
+10 9 1 * *  cd /app && python -m services.feedback_reporter.main monthly
+# Quarterly — Jan/Apr/Jul/Oct 1st 09:20 KST: §8.2 track judgment material for the
+# just-closed quarter (produce-only; promotion/demotion stays with the operator).
+20 9 1 1,4,7,10 *  cd /app && python -m services.feedback_reporter.main quarterly
