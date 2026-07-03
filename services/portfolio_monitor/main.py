@@ -41,6 +41,10 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from services.portfolio_monitor.hedge_advisor import (
+    HedgeRunContext,
+    run_hedge_advice,
+)
 from shared.portfolio.config import (
     TRACK_CORE,
     TRACK_FUTURES,
@@ -422,8 +426,14 @@ def run_snapshot(
     dry_run: bool = False,
     sentinel_path: str | None = None,
     suspend_key: str | None = None,
+    hedge: HedgeRunContext | None = None,
 ) -> int:
-    """Execute one daily snapshot run (see module docstring)."""
+    """Execute one daily snapshot run (see module docstring).
+
+    When ``hedge`` is provided (Phase 4A), the hedge advisory runs AFTER the
+    equity snapshot — advisory only (Redis publish + ledger history +
+    Telegram); a hedge failure never fails the equity run.
+    """
     current_time = now or _now_kst()
     day = trade_date or current_time.date()
 
@@ -499,6 +509,20 @@ def run_snapshot(
             suspend_key=suspend_key or default_suspend_key(),
         )
 
+    # Phase 4A hedge advisory (advisory ONLY — publishes/records/alerts, never
+    # orders). Runs after the equity snapshot; failures degrade, never kill.
+    if hedge is not None:
+        try:
+            run_hedge_advice(
+                context=hedge,
+                ledger=ledger,
+                redis=redis,
+                trade_date=day,
+                now=current_time,
+            )
+        except Exception as exc:  # noqa: BLE001 — hedge must not fail the run
+            logger.exception("hedge advisory run failed: %s", exc)
+
     return 0
 
 
@@ -536,6 +560,13 @@ def _cli(args: argparse.Namespace) -> int:
     ledger = _default_ledger()
     redis_client = redis_lib.Redis.from_url(redis_url_from_env(), decode_responses=True)
     try:
+        hedge = None
+        try:
+            from services.portfolio_monitor.hedge_advisor import default_hedge_context
+
+            hedge = default_hedge_context()
+        except Exception as exc:  # noqa: BLE001 — advisory must not block the snapshot
+            logger.warning("hedge advisor context unavailable: %s", exc)
         return run_snapshot(
             config=config,
             ledger=ledger,
@@ -543,6 +574,7 @@ def _cli(args: argparse.Namespace) -> int:
             notifier=_default_notifier(config),
             trade_date=date.fromisoformat(args.date) if args.date else None,
             dry_run=args.dry_run,
+            hedge=hedge,
         )
     finally:
         redis_client.close()

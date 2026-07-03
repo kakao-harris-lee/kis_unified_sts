@@ -59,7 +59,9 @@ class TestMigration:
             .execute("SELECT value FROM ledger_metadata WHERE key='schema_version'")
             .fetchone()[0]
         )
-        assert value == SQLiteRuntimeLedger.SCHEMA_VERSION == "3"
+        # v4 added the hedge_advice table (Phase 4A) on top of v3's
+        # portfolio_equity_daily — the metadata always tracks the constant.
+        assert value == SQLiteRuntimeLedger.SCHEMA_VERSION == "4"
 
 
 class TestUpsert:

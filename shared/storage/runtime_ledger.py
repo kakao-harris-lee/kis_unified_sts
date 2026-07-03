@@ -155,6 +155,25 @@ class RuntimeLedger(Protocol):
         """
         ...
 
+    def record_hedge_advice(self, row: Mapping[str, Any] | Any) -> int:
+        """Append one hedge-advisory history row (Phase 4A, advisory only).
+
+        Rows are appended ONLY on advisory_active transitions or recommended
+        contract-count changes (dedup is the caller's contract). Returns the
+        inserted row id.
+        """
+        ...
+
+    def query_hedge_advice(
+        self, filters: Mapping[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Query hedge-advisory history ordered by row id ASC.
+
+        Supported filter keys: ``start``, ``end`` (trade-date bounds),
+        ``limit`` (0 disables).
+        """
+        ...
+
     def flush(self) -> None:
         """Flush pending writes."""
         ...
@@ -293,7 +312,9 @@ class SQLiteRuntimeLedger:
     """SQLite WAL runtime ledger implementation."""
 
     # v3: adds the portfolio_equity_daily table (Phase 3B unified MDD monitor).
-    SCHEMA_VERSION = "3"
+    # v4: adds the hedge_advice history table (Phase 4A hedge advisor —
+    #     advisory only; rows appended on advisory transitions/changes).
+    SCHEMA_VERSION = "4"
 
     # Tables carrying the unified-portfolio track tag (schema v2). Existing
     # databases are migrated in place via idempotent ALTER TABLE ADD COLUMN;
@@ -519,6 +540,33 @@ class SQLiteRuntimeLedger:
                     updated_at TEXT NOT NULL,
                     payload_json TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS hedge_advice (
+                    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trade_date TEXT NOT NULL,
+                    asof_ts TEXT NOT NULL,
+                    product TEXT NOT NULL,
+                    advisory_active INTEGER NOT NULL DEFAULT 0,
+                    recommended_short_contracts INTEGER NOT NULL DEFAULT 0,
+                    net_beta_exposure REAL,
+                    beta_notional REAL,
+                    stock_long_notional REAL,
+                    portfolio_beta REAL,
+                    futures_net_contracts INTEGER,
+                    futures_net_notional REAL,
+                    futures_price REAL,
+                    residual_exposure_after REAL,
+                    band TEXT,
+                    score REAL,
+                    reason TEXT,
+                    degraded INTEGER NOT NULL DEFAULT 0,
+                    missing_components TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_hedge_advice_trade_date
+                    ON hedge_advice(trade_date);
                 """)
             for table in self._TRACK_TAGGED_TABLES:
                 self._ensure_column(conn, table, "track_id", "track_id TEXT")
@@ -1019,6 +1067,86 @@ class SQLiteRuntimeLedger:
             params.append(str(end))
 
         sql += " ORDER BY trade_date ASC"
+        limit = int(_coalesce(filters, "limit", default=0))
+        if limit > 0:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        with self._lock:
+            rows = self._require_conn().execute(sql, params).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def record_hedge_advice(self, row: Mapping[str, Any] | Any) -> int:
+        data = _as_mapping(row)
+        trade_date = str(_coalesce(data, "trade_date", "date") or "")
+        if not trade_date:
+            raise RuntimeLedgerError("hedge advice row requires trade_date")
+
+        def _optional_float(*keys: str) -> float | None:
+            value = _coalesce(data, *keys)
+            return None if value is None else float(value)
+
+        def _optional_int(*keys: str) -> int | None:
+            value = _coalesce(data, *keys)
+            return None if value is None else int(value)
+
+        missing = _coalesce(data, "missing_components", default=[])
+        if not isinstance(missing, str):
+            missing = json.dumps(_json_safe(missing), ensure_ascii=False)
+
+        params = (
+            trade_date,
+            str(_coalesce(data, "asof_ts", default="") or ""),
+            str(_coalesce(data, "product", default="") or ""),
+            int(bool(_coalesce(data, "advisory_active", default=False))),
+            int(_coalesce(data, "recommended_short_contracts", default=0)),
+            _optional_float("net_beta_exposure"),
+            _optional_float("beta_notional"),
+            _optional_float("stock_long_notional"),
+            _optional_float("portfolio_beta"),
+            _optional_int("futures_net_contracts"),
+            _optional_float("futures_net_notional"),
+            _optional_float("futures_price"),
+            _optional_float("residual_exposure_after"),
+            _coalesce(data, "band"),
+            _optional_float("score"),
+            str(_coalesce(data, "reason", default="") or ""),
+            int(bool(_coalesce(data, "degraded", default=False))),
+            missing,
+            _utc_now_iso(),
+            _json_payload(data),
+        )
+        with self._lock:
+            cursor = self._require_conn().execute(
+                """
+                INSERT INTO hedge_advice (
+                    trade_date, asof_ts, product, advisory_active,
+                    recommended_short_contracts, net_beta_exposure,
+                    beta_notional, stock_long_notional, portfolio_beta,
+                    futures_net_contracts, futures_net_notional, futures_price,
+                    residual_exposure_after, band, score, reason, degraded,
+                    missing_components, created_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                params,
+            )
+        return int(cursor.lastrowid or 0)
+
+    def query_hedge_advice(
+        self, filters: Mapping[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        filters = filters or {}
+        sql = "SELECT * FROM hedge_advice WHERE 1=1"
+        params: list[Any] = []
+
+        if start := _coalesce(filters, "start", "start_date", "from"):
+            sql += " AND trade_date >= ?"
+            params.append(str(start))
+        if end := _coalesce(filters, "end", "end_date", "to"):
+            sql += " AND trade_date <= ?"
+            params.append(str(end))
+
+        sql += " ORDER BY row_id ASC"
         limit = int(_coalesce(filters, "limit", default=0))
         if limit > 0:
             sql += " LIMIT ?"

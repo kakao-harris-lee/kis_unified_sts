@@ -1,0 +1,77 @@
+# Hedge advisor (Phase 4A — advisory ONLY, no automated orders ever).
+#
+# Source: docs/plans/2026-07-02-unified-investment-system-roadmap.md §5.4 /
+# §6.1 (hedge card) / Phase 4, O4 product decision (2026-07-03, operator
+# approved): the hedge instrument is the MINI KOSPI200 future (1/5 multiplier
+# of the full contract — contract-count precision, margin, and rounding-error
+# rationale in O4). Loaded by shared/portfolio/hedge.py::HedgeAdvisorConfig.
+#
+# HARD CONSTRAINT: this lane only publishes Redis state, appends ledger
+# history, and sends Telegram advisories. Nothing here may import
+# shared/execution or touch any order path (pinned by unit tests).
+
+enabled: true
+
+# --- Hedge product (mini KOSPI200 future).
+# Values are cross-checked at runtime against the repository's single source
+# of contract constants, config/execution.yaml::futures_contract_spec
+# (execution_spec_key below). A mismatch fails the run loudly instead of
+# silently hedging with the wrong contract size.
+product:
+  name: "mini_kospi200"
+  execution_spec_key: "kospi200_mini"
+  multiplier_krw_per_point: 50000   # KRW per index point (mini = full 250,000 / 5)
+  tick_size_points: 0.02            # mini tick (full = 0.05)
+  cross_check_execution_spec: true
+
+# --- Held-futures notional resolution.
+# Existing futures positions may be in EITHER product (full vs mini); each
+# held symbol resolves to its own multiplier through these prefixes, with the
+# multiplier value itself loaded from config/execution.yaml (never hardcoded).
+# Prefixes: KIS live codes A05 (mini) / A01 (full); continuous/backtest codes
+# 105 (mini) / 101 (full) — see shared/instruments/futures.py.
+futures_exposure:
+  products:
+    kospi200_mini:
+      symbol_prefixes: ["A05", "105"]
+    kospi200_full:
+      symbol_prefixes: ["A01", "101"]
+
+# --- β estimation (per-symbol daily returns vs K200 daily returns).
+# Stock closes come from the Parquet market-data store (daily bars); K200
+# closes come from the market_structure_daily "close" rows (k200_close).
+beta:
+  window_trading_days: 120      # regression window (trading days)
+  min_observations: 60          # fewer aligned observations -> default_beta
+  clip_min: 0.0                 # β clipping range
+  clip_max: 3.0
+  default_beta: 1.0             # fallback when data is insufficient
+  lookback_calendar_days: 260   # calendar span fetched to cover the window
+
+# --- Advisory rules.
+advisory:
+  # advisory_active requires band >= trigger_band AND recommendation >= 1.
+  trigger_band: "HIGH"
+  # Band severity order (must match market_risk band names, low -> high).
+  band_order: ["LOW", "NEUTRAL", "ELEVATED", "HIGH", "CRITICAL"]
+  # Contract rounding: floor prevents over-hedging (roadmap §5.4).
+  rounding: "floor"             # floor | nearest | ceil
+  # Futures price (market:structure:latest fut_close) staleness bound; a
+  # stale/absent price SKIPS the recommendation and marks the run degraded.
+  futures_price_max_age_hours: 24.0
+
+# --- Redis publication (FIXED contract with the 4B UI lane — do not rename).
+redis:
+  latest_key: "portfolio:hedge:latest"
+  latest_ttl_seconds: 86400          # 24h
+  stream_key: "stream:portfolio.hedge"
+  stream_maxlen: 5000
+  stream_ttl_seconds: 86400
+  # Inputs (read-only): published by market_structure_collector / market_risk_engine.
+  structure_latest_key: "market:structure:latest"
+  risk_latest_key: "market:risk:latest"
+
+# --- Telegram advisory (one message when advisory_active newly turns on).
+alerts:
+  enabled: true
+  domain: "briefing"
