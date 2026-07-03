@@ -153,11 +153,46 @@ class MonitorAlertsConfig(BaseModel):
     )
 
 
+class TrackAMonitorConfig(BaseModel):
+    """Track A manual-ledger equity knobs (Phase 5A).
+
+    ``valuation_stale_days``: manual valuations older than this still publish
+    (a quarterly track moves slowly) but flag ``track_a_valuation_stale`` in
+    ``missing_components`` so the UI/operator sees the drift.
+    """
+
+    valuation_stale_days: int = Field(default=45, gt=0)
+
+
+class Tier3WatchConfig(BaseModel):
+    """Tier 3 opportunity-capital watch (Phase 5A — watch/alert ONLY).
+
+    Publishes the FIXED 5E-UI Redis contract ``portfolio:tier3:watch`` from
+    the market_structure_daily close history. The drawdown trigger threshold
+    itself lives in ``fund_movement.tier3_activation.kospi_drawdown_from_peak``
+    (single source — 설계서 §1.2). Deployment is a manual operator decision;
+    nothing here buys anything.
+    """
+
+    enabled: bool = Field(default=True)
+    redis_key: str = Field(default="portfolio:tier3:watch")
+    ttl_seconds: int = Field(default=86400, gt=0)
+    # Rolling-peak window in TRADING days over the daily close history.
+    peak_window_days: int = Field(default=252, gt=0)
+    # market_structure_daily column used as the KOSPI proxy. The dataset
+    # carries the KOSPI200 index (k200_close); switch here if/when a KOSPI
+    # composite column is collected.
+    close_column: str = Field(default="k200_close")
+    alerts_enabled: bool = Field(default=True)
+
+
 class PortfolioMonitorConfig(BaseModel):
     """Runtime knobs for the daily portfolio equity snapshot batch."""
 
     redis: MonitorRedisConfig = Field(default_factory=MonitorRedisConfig)
     alerts: MonitorAlertsConfig = Field(default_factory=MonitorAlertsConfig)
+    track_a: TrackAMonitorConfig = Field(default_factory=TrackAMonitorConfig)
+    tier3_watch: Tier3WatchConfig = Field(default_factory=Tier3WatchConfig)
 
 
 class MddReduceStage(BaseModel):

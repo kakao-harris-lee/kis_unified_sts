@@ -45,12 +45,17 @@ from services.portfolio_monitor.hedge_advisor import (
     HedgeRunContext,
     run_hedge_advice,
 )
+from services.portfolio_monitor.tier3_watch import (
+    Tier3RunContext,
+    run_tier3_watch,
+)
 from shared.portfolio.config import (
     TRACK_CORE,
     TRACK_FUTURES,
     TRACK_STOCK,
     PortfolioConfig,
 )
+from shared.portfolio.core_holdings import CoreHoldings, compute_track_a_equity
 from shared.portfolio.equity import (
     STAGE_FULL_STOP,
     STAGE_HALT_NEW,
@@ -138,14 +143,29 @@ def compute_tracks(
     ledger: Any,
     prior_rows: Sequence[Mapping[str, Any]],
     positions_providers: Mapping[str, PositionsProvider] | None = None,
+    core_holdings: CoreHoldings | None = None,
+    trade_date: date | None = None,
 ) -> dict[str, TrackEquity]:
-    """Compute equity for all three tracks (A optional pre-Phase 5)."""
+    """Compute equity for all three tracks.
+
+    Track A (Phase 5A) values the manual core ledger when ``core_holdings``
+    is provided: ``Σ(shares × last_valuation.price) + cash_krw``. An empty /
+    unvalued ledger — and the ``core_holdings=None`` legacy path — keeps the
+    pre-Phase 5 shape: equity ``None`` with the ``track_a`` coverage marker.
+    """
     providers = dict(positions_providers or {})
     for track_id, asset_class in _TRACK_ASSET_CLASSES.items():
         providers.setdefault(track_id, _default_positions_provider(asset_class))
 
     tracks: dict[str, TrackEquity] = {}
     for track_id in (TRACK_CORE, TRACK_STOCK, TRACK_FUTURES):
+        if track_id == TRACK_CORE and core_holdings is not None:
+            tracks[track_id] = compute_track_a_equity(
+                core_holdings,
+                as_of=trade_date or _now_kst().date(),
+                stale_after_days=config.monitor.track_a.valuation_stale_days,
+            )
+            continue
         tracks[track_id] = compute_track_equity(
             track_id=track_id,
             capital_base=config.capital_base.for_track(track_id),
@@ -427,12 +447,19 @@ def run_snapshot(
     sentinel_path: str | None = None,
     suspend_key: str | None = None,
     hedge: HedgeRunContext | None = None,
+    core_holdings: CoreHoldings | None = None,
+    tier3: Tier3RunContext | None = None,
 ) -> int:
     """Execute one daily snapshot run (see module docstring).
 
     When ``hedge`` is provided (Phase 4A), the hedge advisory runs AFTER the
     equity snapshot — advisory only (Redis publish + ledger history +
     Telegram); a hedge failure never fails the equity run.
+
+    Phase 5A additions (both optional, both manual-track surfaces):
+    ``core_holdings`` values Track A from the manual ledger;
+    ``tier3`` runs the Tier 3 drawdown watch after the snapshot —
+    watch/alert only, and a watch failure never fails the equity run.
     """
     current_time = now or _now_kst()
     day = trade_date or current_time.date()
@@ -452,6 +479,8 @@ def run_snapshot(
         ledger=ledger,
         prior_rows=prior_rows,
         positions_providers=positions_providers,
+        core_holdings=core_holdings,
+        trade_date=day,
     )
     snapshot = evaluate_snapshot(
         trade_date=day,
@@ -508,6 +537,19 @@ def run_snapshot(
             sentinel_path=sentinel_path or default_sentinel_path(),
             suspend_key=suspend_key or default_suspend_key(),
         )
+
+    # Phase 5A Tier 3 opportunity-capital watch (watch/alert ONLY — publishes
+    # + rising-edge Telegram, never buys). Failures degrade, never kill.
+    if tier3 is not None:
+        try:
+            run_tier3_watch(
+                context=tier3,
+                redis=redis,
+                trade_date=day,
+                now=current_time,
+            )
+        except Exception as exc:  # noqa: BLE001 — the watch must not fail the run
+            logger.exception("tier3 watch run failed: %s", exc)
 
     # Phase 4A hedge advisory (advisory ONLY — publishes/records/alerts, never
     # orders). Runs after the equity snapshot; failures degrade, never kill.
@@ -567,6 +609,18 @@ def _cli(args: argparse.Namespace) -> int:
             hedge = default_hedge_context()
         except Exception as exc:  # noqa: BLE001 — advisory must not block the snapshot
             logger.warning("hedge advisor context unavailable: %s", exc)
+        core_holdings = None
+        try:
+            core_holdings = CoreHoldings.load_or_default()
+        except Exception as exc:  # noqa: BLE001 — manual ledger must not block
+            logger.warning("core holdings unavailable: %s", exc)
+        tier3 = None
+        try:
+            from services.portfolio_monitor.tier3_watch import default_tier3_context
+
+            tier3 = default_tier3_context(config)
+        except Exception as exc:  # noqa: BLE001 — the watch must not block
+            logger.warning("tier3 watch context unavailable: %s", exc)
         return run_snapshot(
             config=config,
             ledger=ledger,
@@ -575,6 +629,8 @@ def _cli(args: argparse.Namespace) -> int:
             trade_date=date.fromisoformat(args.date) if args.date else None,
             dry_run=args.dry_run,
             hedge=hedge,
+            core_holdings=core_holdings,
+            tier3=tier3,
         )
     finally:
         redis_client.close()

@@ -19,6 +19,7 @@ import click
 from dotenv import load_dotenv
 
 from cli.commands.data import data_cmd
+from cli.commands.portfolio import portfolio_cmd
 from shared.config.runtime_defaults import dashboard_host_port_from_env
 
 # Load environment variables from .env file
@@ -896,6 +897,14 @@ def mlflow_list():
 
 
 cli.add_command(data_cmd)
+
+
+# =============================================================================
+# Track A Core Portfolio (manual ledger — record/display only, no orders)
+# =============================================================================
+
+
+cli.add_command(portfolio_cmd)
 
 
 # =============================================================================

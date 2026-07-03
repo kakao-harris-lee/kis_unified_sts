@@ -90,6 +90,28 @@ monitor:
     enabled: true
     domain: briefing
     notify_stages: [REDUCE, HALT_NEW, FULL_STOP]
+  # Phase 5A — Track A manual-ledger equity (config/portfolio/core_holdings.yaml
+  # + valuations sidecar). Valuations older than valuation_stale_days still
+  # publish but flag "track_a_valuation_stale" in missing_components.
+  track_a:
+    valuation_stale_days: 45
+  # Phase 5A — Tier 3 opportunity-capital watch (watch/alert ONLY — deployment
+  # is a manual operator decision; no automated buying exists anywhere).
+  # Publishes the FIXED 5E-UI contract portfolio:tier3:watch (hash, TTL 24h):
+  # kospi_close / kospi_peak / drawdown (FRACTION, -0.16 = -16%) /
+  # trigger_threshold / triggered / asof_ts. The trigger threshold reads from
+  # fund_movement.tier3_activation.kospi_drawdown_from_peak above (single
+  # source). Telegram fires once on the triggered rising edge.
+  tier3_watch:
+    enabled: true
+    redis_key: "portfolio:tier3:watch"
+    ttl_seconds: 86400
+    peak_window_days: 252 # rolling-peak window (trading days)
+    # market_structure_daily column used as the KOSPI proxy. The dataset
+    # currently carries the KOSPI200 index close (k200_close); repoint here
+    # if/when a KOSPI composite close column is collected.
+    close_column: "k200_close"
+    alerts_enabled: true
 
 # --- Track C monthly loss halt (설계서 §1.3): if Track C loses more than
 # this fraction of its allocated capital within a calendar month, Track C
