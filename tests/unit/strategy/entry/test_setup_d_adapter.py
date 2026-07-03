@@ -254,6 +254,17 @@ class TestSetupDDirectionBlock:
             market_context=self._llm_ctx(regime),
         )
 
+    def _context_with_metadata_regime(
+        self, md: dict, ts: datetime, regime: str
+    ) -> EntryContext:
+        return EntryContext(
+            market_data=md,
+            indicators=md,
+            timestamp=ts,
+            metadata={"regime": regime},
+            market_context=None,
+        )
+
     @pytest.mark.asyncio
     async def test_short_blocked_in_bull_strong(self):
         """SHORT signal is dropped when regime=BULL_STRONG and short_blocked_regimes configured."""
@@ -279,6 +290,30 @@ class TestSetupDDirectionBlock:
             self._context_with_regime(md, _utc(2, 0), "BULL_STRONG")
         )
         assert sig is None  # direction_blocked
+
+    @pytest.mark.asyncio
+    async def test_short_blocked_from_orchestrator_metadata_regime(self):
+        """Live orchestrator metadata regime blocks SHORT even without LLM context."""
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(
+                vol_warmup_bars=30,
+                stall_buffer_atr_mult=10.0,
+                short_blocked_regimes=["BULL_STRONG"],
+            )
+        )
+        for _ in range(30):
+            await adapter.generate(
+                self._context_with_metadata_regime(
+                    _md(current_price=100.0, vwap=100.0, atr=2.0),
+                    _utc(2, 0),
+                    "BULL_STRONG",
+                )
+            )
+        md = _md(current_price=104.0, vwap=100.0, atr=2.0)
+        sig = await adapter.generate(
+            self._context_with_metadata_regime(md, _utc(2, 0), "BULL_STRONG")
+        )
+        assert sig is None
 
     @pytest.mark.asyncio
     async def test_short_allowed_in_neutral_regime(self):

@@ -325,7 +325,7 @@ class SetupDEntryConfig(ServiceConfigBase):
     (no LLM-driven signal generation — the entry signal itself is produced purely
     from ATR/VWAP mechanics), so this config has no ``llm_tuning`` /
     ``forecast_integration`` / ``daily_bias`` sections for signal shaping. The
-    regime direction block below is the one exception: it reads the LLM MarketContext
+    regime direction block below is the one exception: it reads the runtime
     regime label *after* the setup fires to post-filter signals whose direction
     conflicts with a strong regime (``long_blocked_regimes`` /
     ``short_blocked_regimes``). Empty lists (defaults) disable the block entirely.
@@ -715,6 +715,43 @@ def _get_llm_context(context: EntryContext) -> Any | None:
         and hasattr(mc, "confidence")
     ):
         return mc
+    return None
+
+
+def _normalise_regime_label(value: Any) -> str | None:
+    """Return a YAML-comparable regime label from strings or enum-like objects."""
+    if value is None:
+        return None
+    name = getattr(value, "name", None)
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    text = str(value).strip()
+    if not text:
+        return None
+    if "." in text:
+        suffix = text.rsplit(".", 1)[-1].strip()
+        if suffix:
+            return suffix
+    return text
+
+
+def _resolve_regime_label(context: EntryContext) -> str | None:
+    """Resolve the active regime label for entry adapter direction gates.
+
+    Setup A/C use the LLM MarketContext directly. Setup D is normally indicator
+    only, but the live orchestrator still injects the current market regime into
+    ``EntryContext.metadata``. Read that metadata fallback so configured
+    direction blocks work even when no LLM context object is attached.
+    """
+    llm_ctx = _get_llm_context(context)
+    if llm_ctx is not None:
+        return _normalise_regime_label(getattr(llm_ctx, "regime", None))
+
+    metadata = context.metadata or {}
+    for key in ("regime", "market_state"):
+        regime = _normalise_regime_label(metadata.get(key))
+        if regime is not None:
+            return regime
     return None
 
 
@@ -1596,17 +1633,16 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
             return None
 
         # Regime direction block: suppress counter-trend entries in strong regimes.
-        # Mirrors Setup A/C long_blocked_regimes / short_blocked_regimes gating.
-        # Uses the LLM MarketContext regime label (same source as Setup A/C).
+        # Mirrors Setup A/C long_blocked_regimes / short_blocked_regimes gating,
+        # while also supporting the orchestrator's metadata-only regime path.
         cfg = self.config
         if cfg.long_blocked_regimes or cfg.short_blocked_regimes:
-            llm_ctx = _get_llm_context(context)
-            if llm_ctx is None:
+            regime = _resolve_regime_label(context)
+            if regime is None:
                 logger.debug(
-                    "SetupD direction block: LLM context unavailable — block skipped (signal passes)"
+                    "SetupD direction block: regime unavailable — block skipped (signal passes)"
                 )
             else:
-                regime: str = str(llm_ctx.regime)
                 direction: str = str(decision_signal.direction)
                 if direction == "long" and regime in cfg.long_blocked_regimes:
                     logger.debug(
