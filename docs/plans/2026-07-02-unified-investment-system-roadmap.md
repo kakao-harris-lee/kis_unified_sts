@@ -514,12 +514,40 @@ shadow` 기본 — enforce 전환은 드릴 통과 + operator 승인 후 YAML로
 - **게이트 (유지)**: HIGH 밴드 실발생 구간에서 권고 품질 리뷰 후, 자동 헤지
   여부는 별도 plan + operator 게이트로만 논의
 
-### Phase 5 — 트랙 A 운영 체계화 (분기 운영) ⏳
+### Phase 5 — 트랙 A 운영 체계화 (분기 운영) 🔄 (2026-07-03 착수)
 
-- [ ] 트랙 A 수동 원장 CLI(`sts portfolio`) + `core_holdings.yaml`(Kill Criteria)
-- [ ] 상관관계 규칙(동일 종목 중복 금지·섹터 상한)을 M4-R에 연결
-- [ ] Tier 3 워치(/market + 알림), 분기 리밸런싱 체크리스트 런북
-- [ ] 첫 분기 리밸런싱 실행 기록
+트랙 A는 수동 트랙 — 자동 매매 코드 없음(기록·표시·알림만). 보유 종목 미보유
+상태로 빈 원장 체계를 먼저 구축하고, 종목 등록은 operator가 YAML/CLI로.
+core_holdings가 빈 동안 상관관계 규칙은 자동 no-op.
+
+- [x] 트랙 A 원장 (2026-07-03 완료): `config/portfolio/core_holdings.yaml`
+      (섹터 35/35/15/15·Kill Criteria 스키마, 빈 원장) + 로더 +
+      `sts portfolio list|value|record` CLI(record는 track_id="A" 순수 기록,
+      valuation은 사이드카 파일 — 주석 유실 방지) + portfolio_monitor 트랙 A
+      equity(stale 45일 플래그) + Tier 3 워치(`portfolio:tier3:watch`,
+      fraction, −15% 경계 포함, rising edge 알림, fail-safe 배선) + 분기
+      리밸런싱 런북. **주의**: 워치 소스는 현재 `k200_close`(KOSPI 종합지수
+      미수집 — config `close_column`으로 교체 가능). 신규 테스트 67건 통과
+- [x] `/market` Tier 3 게이지 + 코어 홀딩스 카드 (2026-07-03 완료):
+      `GET /api/portfolio/core`(tier3/holdings 독립 강등, 읽기 전용) +
+      Tier3WatchCard(0~−25% 게이지, −15% 트리거 라인, 발동 시 "분할 매수
+      검토는 수동" 배지) + CoreHoldingsCard(섹터 실비중 vs 목표 드리프트
+      표시, Kill Criteria expandable, 빈 원장 안내). "수동 트랙 — 자동 매매
+      없음" 라벨 상시. 백엔드 262건+프론트 139건+lint/build 통과
+- [x] 상관관계 규칙 M4-R 연결 (2026-07-03 완료):
+      `shared/risk/filters/core_correlation.py` — `core_overlap`(트랙 A 보유
+      종목 진입 거절) + `core_sector_cap`(반도체 40% 상한, 분류 소스는
+      core_holdings 원장의 operator 지정 sector — **보수적 축소판**).
+      mtime 기반 리로드, 전 실패 경로 fail-open, 빈 원장 no-op bit-for-bit.
+      StockRiskConfig 전용(선물 경로 구조적 무접촉). 테스트 49건+회귀 420건.
+      **갭(O16)**: 원장 밖 반도체 종목은 상한 우회 — 전종목 섹터 분류
+      파이프라인(KRX 업종 수집) 도입 시 확장
+- [x] 리뷰 패스 (2026-07-03, 판정: 커밋 가능·블로킹 0건): 수동 트랙 보증
+      (record는 순수 ledger 기록, UI 매매 컨트롤 0건, import 가드)·빈 원장
+      no-op(기존 계약 전 필드 동일)·tier3 fraction 3-way 계약·선물 경로
+      무접촉·fail-open 전부 코드/테스트로 고정 확인. 백엔드 1,223건+프론트
+      139건. 비차단 잔여는 O17
+- [ ] 첫 분기 리밸런싱 실행 기록 (operator — 종목 등록 후)
 
 ### Phase 6 — 통합 성과 피드백 루프 (지속) ⏳
 
@@ -547,6 +575,8 @@ shadow` 기본 — enforce 전환은 드릴 통과 + operator 승인 후 YAML로
 | O9 | ~~KRX 야간파생시장 종가 신호~~ **확정 (2026-07-02 스파이크)** | 야간 REST 시세는 부재, **WS `H0MFCNT0`(실시간-064)만 가용** — 체결가와 함께 `mrkt_basis`(시장 베이시스)/`dprt`(괴리율)/OI 필드를 직접 제공해 신호 품질이 ES/NQ 프록시보다 우월. 05:50~06:00 KST 캡처 윈도우 수집기로 마지막 체결을 Redis 스냅샷(TTL 24h)에 저장(Wave 2e). 과거 백필 불가(forward 축적만). `eurex_kospi_close` 레거시 필드는 `krx_night_kospi200_close`로 대체 예정 |
 | O10 | ~~`KRXDataCollector` 프로덕션 결함~~ **수정 완료 (Wave 2c)** | 투자자매매·프로그램매매 bld가 잘못된 화면 조회 + KRX 로그인 정책 변경으로 수급 수치가 조용히 빈 값이던 결함. 투자자별 경로는 `MDCSTAT02203_OUT`(public `get_investor_trading`)으로 교정, 프로그램 경로는 KIS TR 이관까지 명시적 결측 처리 |
 | O14 | Phase 2 리뷰 비차단 지적 (2026-07-03) | ① enforce에서 차단된 선물 후보는 audit 로그에만 남음(스트림/ledger 미기록) — enforce 전환 리뷰 전에 RuntimeLedger 기록 배선 고려(주식은 #483 eval 레인에 기록됨). ② trace의 ledger 폴백(`signal_decisions`)은 현재 기록자 없는 dead path(무해, 감사 기록 배선 시 활성화). ③ 선물 shadow 로그 스로틀 간격 하드코딩(주식은 YAML), throttle 헬퍼 2종 수렴 후보. ④ min_confidence 경계값(=0.7) 고정 테스트 없음 |
+| O17 | Phase 5 리뷰 비차단 지적 (2026-07-03) | ① Tier 3 워치가 이력 0건일 때만 미발행 — 부분 백필 상태(수십 행)면 롤링 피크가 얕아 드로다운 과소 산출(발동 누락) 가능. `min_history_rows` config 또는 경고 플래그 권장. ② 발동 상태에서 주말 TTL 만료 후 월요일 재알림(재통지로 무해, 의도 주석 권장). ③ import 가드에 `shared.kis` 프리픽스 추가 권장(O15-② 계열). ④ UI 보유 평가액(평단 폴백)과 equity 발행(`total_value()` None)의 이원화는 의도·문서화됨 — 운영자 인지 사항 |
+| O16 | 섹터 분류 파이프라인 부재 (2026-07-03) | 임의 KOSPI/KOSDAQ 종목의 섹터를 판별할 소스가 리포에 없음(screener/theme/KRX 수집 전부 종목별 섹터 부재, `trade_trend_priority.yaml`은 17개 화이트리스트) → 설계서 §7.2 반도체 40% 상한이 core_holdings 등재 종목에만 발동. 완전한 규칙에는 KRX 업종 수집→Redis/정적 스냅샷 파이프라인 필요. `classification_source` 확장 지점은 코드에 예약됨 |
 | O15 | Phase 4 리뷰 비차단 지적 (2026-07-03) | ① hedge stale 임계(14h) 여유가 10분뿐(19:00 발행→익일 08:50 갭 13h50m) — 크론 지연 시 아침 false stale 가능, `PORTFOLIO_HEDGE_STALE_SECONDS` env로 조정. ② execution import 서브프로세스 가드가 lazy 의존 4종의 전이 그래프 미커버(수동 검증 결과 현재 유입 없음) — 가드 스니펫 확장 권장. ③ `query_hedge_advice` limit이 ASC 선두 N 반환(현 호출자는 정확) |
 | O13 | **kill_switch 조건 미평가 가능성 (2026-07-03 감사 발견, 운영 중요)** | 현행 모놀리식 futures paper 운용에서 kill_switch 모니터는 `futures-killswitch` 프로파일 뒤에 있고, 조건 데이터원 `risk:state:futures`는 decoupled `order_router`만 기록 → **일 3%/주 7%/연속 6패 kill 조건이 실제로 평가되지 않고 있을 가능성**. 운용 중 일일 가드는 `risk_management.yaml`의 5%(더 느슨)만. F-9 컷오버 전에 커버리지 정책 결정 필요(모놀리식에도 risk-state 기록 추가 vs 컷오버로 해소). `risk_stock.max_position_risk_pct: 0.02`는 어떤 필터도 소비하지 않는 선언값 |
 | O12 | Phase 1 리뷰 비차단 지적 (2026-07-03 검수 패스) | 블로킹 1건(수집 coverage_ratio vs 스코어 risk_coverage_ratio 컬럼 혼용)은 수정 완료. 잔여: ① **premarket score 미영속** — 엔진 premarket 모드는 Redis-only라 premarket Parquet 행에 score 컬럼이 없음 → counterfactual의 premarket 경로는 항상 전일 close 폴백(보수적·안전), 에피소드 표의 premarket 셀은 결측. premarket score 영속화 여부는 §4.4 게이트 운영 후 결정. ② close 행 부재 시 `market:structure:latest` 폴백으로 계산한 값이 `regime:unified:daily`에 확정 기록될 수 있음 — 폴백 시 regime 기록 스킵 검토. ③ 프론트 밴드 경계/트랙 매트릭스는 YAML 정본의 정적 사본 — Phase 2 전 API 노출 검토 |
