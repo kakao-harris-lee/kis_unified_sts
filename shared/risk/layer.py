@@ -23,7 +23,7 @@ filter requires I/O, without changing the public sync API.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -31,6 +31,7 @@ from shared.risk.filters.base import FilterResult, RiskFilter
 
 if TYPE_CHECKING:
     from shared.decision.signal import Signal
+    from shared.portfolio.core_holdings import CoreHoldings
     from shared.risk.config import FuturesRiskConfig
     from shared.risk.state import RiskStateSnapshot
 
@@ -91,6 +92,10 @@ class RiskFilterLayer:
         current_spread_provider: Callable[[], float] | None = None,
         has_open_position_provider: Callable[[str], bool] | None = None,
         portfolio_snapshot_provider: Callable[[], dict | None] | None = None,
+        core_holdings_provider: Callable[[], CoreHoldings | None] | None = None,
+        stock_positions_provider: (
+            Callable[[], Mapping[str, float] | None] | None
+        ) = None,
     ) -> RiskFilterLayer:
         """Build a fully-wired RiskFilterLayer from a FuturesRiskConfig + providers.
 
@@ -116,6 +121,19 @@ class RiskFilterLayer:
            ≠ enforce passes), so enabling it under the default shadow mode
            is a no-op. ``portfolio_snapshot_provider`` overrides the default
            lazy sync-Redis reader (tests / backtests).
+
+        Phase 5B appends the stock-only Track A/B correlation filters when
+        the config object carries a ``core_correlation`` block (i.e. for
+        :class:`~shared.risk.config.StockRiskConfig`; the futures config has
+        no such attribute, keeping the futures chain untouched):
+
+        10. :class:`TrackAOverlapFilter` — reject candidates already held in
+            the Track A manual ledger (fail-open; empty ledger → no-op).
+        11. :class:`CoreSectorCapFilter` — sector cap on Track B open-position
+            notional (fail-open; empty ledger → no-op).
+            ``core_holdings_provider`` / ``stock_positions_provider`` override
+            the default mtime-reloading ledger loader and lazy sync-Redis
+            positions reader (tests / backtests).
 
         The stubs let the backtest run the layer in a reproducible way
         without wiring real position / ATR / LOB sources; Phase 4 overrides
@@ -185,6 +203,38 @@ class RiskFilterLayer:
                     snapshot_provider=portfolio_snapshot_provider,
                 )
             )
+
+        # Phase 5B: Track A/B correlation filters — stock chain only (the
+        # futures FuturesRiskConfig carries no core_correlation attribute).
+        core_settings = getattr(config, "core_correlation", None)
+        if core_settings is not None and (
+            core_settings.overlap_enabled or core_settings.sector_cap.enabled
+        ):
+            from shared.risk.filters.core_correlation import (
+                CoreHoldingsProvider,
+                CoreSectorCapFilter,
+                TrackAOverlapFilter,
+            )
+
+            # Both filters share one reloading ledger loader (single stat/
+            # parse cadence) unless a provider is injected.
+            holdings_provider = core_holdings_provider or CoreHoldingsProvider(
+                reload_interval_seconds=core_settings.reload_interval_seconds
+            )
+            if core_settings.overlap_enabled:
+                filters.append(
+                    TrackAOverlapFilter(core_holdings_provider=holdings_provider)
+                )
+            if core_settings.sector_cap.enabled:
+                filters.append(
+                    CoreSectorCapFilter(
+                        core_holdings_provider=holdings_provider,
+                        sector_key=core_settings.sector_cap.sector_key,
+                        cap=core_settings.sector_cap.cap,
+                        skip_reason=core_settings.sector_cap.skip_reason,
+                        positions_provider=stock_positions_provider,
+                    )
+                )
 
         return cls(filters=filters)
 

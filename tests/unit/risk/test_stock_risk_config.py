@@ -16,3 +16,16 @@ def test_stock_risk_config_loads_risk_stock_section():
 
 def test_stock_trading_windows_are_korean_equity_session():
     assert load_stock_trading_windows() == ["09:00-15:30"]
+
+
+def test_stock_risk_config_loads_core_correlation_block():
+    """Phase 5B Track A/B correlation knobs come from risk.yaml risk_stock."""
+    cfg = StockRiskConfig.from_yaml()
+    cc = cfg.core_correlation
+    assert cc.overlap_enabled is True
+    assert cc.reload_interval_seconds == 60
+    assert cc.sector_cap.enabled is True
+    assert cc.sector_cap.sector_key == "semiconductor_equipment"
+    assert cc.sector_cap.cap == 0.40
+    assert cc.sector_cap.skip_reason == "sector_cap_semiconductor"
+    assert cc.sector_cap.classification_source == "core_holdings"

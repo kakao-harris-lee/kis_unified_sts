@@ -524,6 +524,8 @@ class RiskConfig:
 # Phase 3: Futures intraday risk config (ServiceConfigBase-based)
 # ---------------------------------------------------------------------------
 
+from typing import Literal  # noqa: E402 — grouped with the deferred imports
+
 from pydantic import BaseModel, Field  # noqa: E402 — deferred import (circulars)
 
 from shared.config.base import ServiceConfigBase  # noqa: E402
@@ -554,6 +556,76 @@ class PortfolioMddFilterSettings(BaseModel):
             "than this. 26h covers the daily 19:00 KST cadence with slack; "
             "the key's own 24h TTL is the harder bound."
         ),
+    )
+
+
+class CoreSectorCapSettings(BaseModel):
+    """Rule 2 — sector cap on Track B open-position notional (Phase 5B §7.2).
+
+    Rejects NEW entries into ``sector_key`` while that sector's share of the
+    current Track B open-position notional is at or above ``cap``.
+
+    ``classification_source`` is deliberately restricted: the only trustworthy
+    symbol→sector mapping wired today is the Track A core-holdings ledger
+    itself (operator-assigned ``sector`` on holdings/candidates). No repo
+    source classifies arbitrary KOSPI/KOSDAQ codes — the screener universe,
+    theme targets, and market-structure stores carry no per-symbol sector, and
+    ``config/trade_trend_priority.yaml::symbol_sectors`` is a ~17-symbol
+    screener-priority whitelist, not a risk-grade classification. Until a real
+    sector pipeline exists this rule therefore only fires for candidates the
+    operator has explicitly listed in the ledger (conservative reduced scope).
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Run the core_sector_cap filter in the stock chain",
+    )
+    sector_key: str = Field(
+        default="semiconductor_equipment",
+        description="Capped sector key (config/portfolio/core_holdings.yaml sectors)",
+    )
+    cap: float = Field(
+        default=0.40,
+        gt=0.0,
+        le=1.0,
+        description="Reject new sector entries when sector share >= cap",
+    )
+    skip_reason: str = Field(
+        default="sector_cap_semiconductor",
+        description="Rejection tag emitted when the cap blocks an entry",
+    )
+    classification_source: Literal["core_holdings"] = Field(
+        default="core_holdings",
+        description="Symbol→sector source (only the Track A ledger is wired)",
+    )
+
+
+class CoreCorrelationSettings(BaseModel):
+    """Track A/B correlation rules (Phase 5B, roadmap §5.1 / 설계서 §7.2).
+
+    Both rules read the Track A manual core-holdings ledger
+    (``config/portfolio/core_holdings.yaml``) and are automatic no-ops while
+    the ledger is empty. Ledger load failures fail OPEN (pass + warning).
+    """
+
+    overlap_enabled: bool = Field(
+        default=True,
+        description=(
+            "Rule 1 — reject Track B candidates already held in Track A "
+            "(skip_reason: track_a_overlap)"
+        ),
+    )
+    reload_interval_seconds: int = Field(
+        default=60,
+        gt=0,
+        description=(
+            "Ledger mtime re-check cadence; YAML is re-parsed only when the "
+            "mtime actually changed (never on the hot path)"
+        ),
+    )
+    sector_cap: CoreSectorCapSettings = Field(
+        default_factory=CoreSectorCapSettings,
+        description="Rule 2 — sector cap on Track B open-position notional",
     )
 
 
@@ -652,6 +724,15 @@ class StockRiskConfig(FuturesRiskConfig):
 
     _default_section: ClassVar[str] = "risk_stock"
     _env_prefix: ClassVar[str] = "STOCK_RISK_"
+
+    core_correlation: CoreCorrelationSettings = Field(
+        default_factory=CoreCorrelationSettings,
+        description=(
+            "Track A/B correlation rules (Phase 5B) — stock-only; the field "
+            "exists on StockRiskConfig only so the futures chain never grows "
+            "these filters"
+        ),
+    )
 
 
 def _load_risk_yaml(path: str | None = None) -> dict[str, Any]:

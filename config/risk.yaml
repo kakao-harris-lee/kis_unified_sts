@@ -54,6 +54,30 @@ risk_stock:
     enabled: true
     latest_key: "portfolio:equity:latest"
     stale_max_age_seconds: 93600
+  # Phase 5B Track A/B 상관관계 규칙 (설계서 §7.2 / roadmap §5.1) — 주식 전용
+  # (StockRiskConfig에만 존재; 선물 체인은 이 필터들을 만들지 않는다).
+  # 두 규칙 모두 트랙 A 수동 원장(config/portfolio/core_holdings.yaml)을 읽으며,
+  # 원장이 비어 있는 동안(현 상태) 자동 NO-OP. 원장 로드 실패 → fail-open(통과+경고).
+  core_correlation:
+    # 규칙 1 — 트랙 A '보유'(holdings) 종목과 동일 종목 신규 진입 금지
+    # (skip_reason: track_a_overlap). 후보(candidates) 종목은 미보유 → 차단 안 함.
+    overlap_enabled: true
+    # 원장 파일 mtime 재확인 주기(초) — mtime 변경 시에만 YAML 재파싱
+    # (핫패스에서 후보마다 재파싱하지 않음).
+    reload_interval_seconds: 60
+    # 규칙 2 — 트랙 B 오픈 포지션 명목가 중 반도체 섹터 비중이 cap 이상이면
+    # 반도체 섹터 신규 진입 거절 (skip_reason: sector_cap_semiconductor).
+    sector_cap:
+      enabled: true
+      sector_key: "semiconductor_equipment" # core_holdings.yaml sectors 키
+      cap: 0.40 # 설계서 §7.2 — 트랙 B 포지션의 40%
+      skip_reason: "sector_cap_semiconductor"
+      # 축소판(보수적): 신뢰 가능한 전종목 섹터 분류 소스가 리포에 없어
+      # (screener/universe/theme/market_structure 모두 종목별 섹터 필드 부재),
+      # 분류는 core_holdings 원장(holdings+candidates)의 operator 지정 sector만
+      # 사용한다. 원장 밖 종목은 분류 불가 → 상한 미적용(관대). 전종목 분류
+      # 파이프라인(KRX 업종 수집 등) 도입 시 소스 값을 확장한다.
+      classification_source: "core_holdings"
 
 # Korean equity regular session, KST. Half-open [start, end).
 trading_windows_stock:

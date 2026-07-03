@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from shared.risk.config import FuturesRiskConfig
+from shared.risk.config import FuturesRiskConfig, StockRiskConfig
 from shared.risk.filters.consecutive_loss import ConsecutiveLossFilter
+from shared.risk.filters.core_correlation import (
+    CoreSectorCapFilter,
+    TrackAOverlapFilter,
+)
 from shared.risk.filters.daily_mdd import DailyMDDFilter
 from shared.risk.filters.daily_trade_count import DailyTradeCountFilter
 from shared.risk.filters.open_position import OpenPositionFilter
@@ -47,6 +51,79 @@ def test_from_config_builds_all_9_filters_in_spec_order() -> None:
     ]
     actual_types = [type(f) for f in layer._filters]
     assert actual_types == expected_types
+
+
+def test_futures_config_never_grows_core_correlation_filters() -> None:
+    """FuturesRiskConfig has no core_correlation attribute → futures chain
+    stays untouched by the Phase 5B stock-only rules."""
+    layer = RiskFilterLayer.from_config(_cfg(), trading_windows=["09:00-15:30"])
+    assert not any(
+        isinstance(f, TrackAOverlapFilter | CoreSectorCapFilter) for f in layer._filters
+    )
+
+
+def test_stock_config_appends_core_correlation_filters_last() -> None:
+    layer = RiskFilterLayer.from_config(
+        StockRiskConfig(),
+        trading_windows=["09:00-15:30"],
+        core_holdings_provider=lambda: None,  # hermetic: no file loader built
+        stock_positions_provider=lambda: None,
+    )
+    assert [type(f) for f in layer._filters[-3:]] == [
+        PortfolioMddFilter,
+        TrackAOverlapFilter,
+        CoreSectorCapFilter,
+    ]
+
+
+def test_stock_config_core_correlation_flags_disable_each_filter() -> None:
+    cfg = StockRiskConfig()
+    cfg.core_correlation.overlap_enabled = False
+    layer = RiskFilterLayer.from_config(
+        cfg,
+        trading_windows=["09:00-15:30"],
+        core_holdings_provider=lambda: None,
+    )
+    assert not any(isinstance(f, TrackAOverlapFilter) for f in layer._filters)
+    assert any(isinstance(f, CoreSectorCapFilter) for f in layer._filters)
+
+    cfg.core_correlation.sector_cap.enabled = False
+    layer = RiskFilterLayer.from_config(
+        cfg,
+        trading_windows=["09:00-15:30"],
+        core_holdings_provider=lambda: None,
+    )
+    assert not any(
+        isinstance(f, TrackAOverlapFilter | CoreSectorCapFilter) for f in layer._filters
+    )
+
+
+def test_stock_config_core_correlation_values_propagate() -> None:
+    cfg = StockRiskConfig()
+
+    def _ledger() -> None:
+        return None
+
+    def _positions() -> None:
+        return None
+
+    layer = RiskFilterLayer.from_config(
+        cfg,
+        trading_windows=["09:00-15:30"],
+        core_holdings_provider=_ledger,
+        stock_positions_provider=_positions,
+    )
+    overlap = layer._filters[-2]
+    assert isinstance(overlap, TrackAOverlapFilter)
+    assert overlap._core_holdings_provider is _ledger
+
+    cap = layer._filters[-1]
+    assert isinstance(cap, CoreSectorCapFilter)
+    assert cap._core_holdings_provider is _ledger
+    assert cap._positions_provider is _positions
+    assert cap.sector_key == cfg.core_correlation.sector_cap.sector_key
+    assert cap.cap == cfg.core_correlation.sector_cap.cap
+    assert cap.skip_reason == cfg.core_correlation.sector_cap.skip_reason
 
 
 def test_from_config_portfolio_mdd_disabled_by_config() -> None:

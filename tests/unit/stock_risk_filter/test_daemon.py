@@ -39,11 +39,15 @@ def _candidate(
     }
 
 
-def _build_daemon(redis: fakeredis.aioredis.FakeRedis) -> StockRiskFilterDaemon:
-    layer = RiskFilterLayer.from_config(
-        config=StockRiskConfig(),
-        trading_windows=["09:00-15:30"],
-    )
+def _build_daemon(
+    redis: fakeredis.aioredis.FakeRedis,
+    layer: RiskFilterLayer | None = None,
+) -> StockRiskFilterDaemon:
+    if layer is None:
+        layer = RiskFilterLayer.from_config(
+            config=StockRiskConfig(),
+            trading_windows=["09:00-15:30"],
+        )
     return StockRiskFilterDaemon(
         redis=redis,
         layer=layer,
@@ -116,3 +120,80 @@ async def test_final_stream_has_ttl() -> None:
     assert ack is True
     ttl = await redis.ttl("signal.final.stock.shadow")
     assert 0 < ttl <= 86400
+
+
+# ---------------------------------------------------------------------------
+# Phase 5B — Track A/B correlation rules through the full daemon path
+# ---------------------------------------------------------------------------
+
+
+def _correlation_layer(
+    ledger: object, positions: dict[str, float] | None
+) -> RiskFilterLayer:
+    return RiskFilterLayer.from_config(
+        config=StockRiskConfig(),
+        trading_windows=["09:00-15:30"],
+        core_holdings_provider=lambda: ledger,
+        stock_positions_provider=lambda: positions,
+    )
+
+
+def _semi_ledger():
+    """Ledger holding one Track A semiconductor symbol + one watch candidate."""
+    from shared.portfolio.core_holdings import (
+        CoreCandidate,
+        CoreHolding,
+        CoreHoldings,
+    )
+
+    return CoreHoldings(
+        holdings=[
+            CoreHolding(
+                symbol="005930",
+                sector="semiconductor_equipment",
+                kill_criteria=["k"],
+            )
+        ],
+        candidates=[
+            CoreCandidate(
+                symbol="000660",
+                sector="semiconductor_equipment",
+                kill_criteria=["k"],
+            )
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_track_a_overlap_rejected_no_final() -> None:
+    """Rule 1: a candidate already HELD in Track A is consumed without final."""
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis, layer=_correlation_layer(_semi_ledger(), {}))
+    ack = await daemon.handle_message(b"1-0", _encode(_candidate(code="005930")))
+    assert ack is True  # rejected is audit-only consume
+    assert await redis.xrange("signal.final.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_sector_cap_rejected_no_final() -> None:
+    """Rule 2: semiconductor share at the cap blocks a new semiconductor entry."""
+    redis = fakeredis.aioredis.FakeRedis()
+    # Track B already holds 005930 notional (semiconductor, 100%) — a new
+    # semiconductor candidate (ledger watchlist symbol 000660) must be blocked.
+    layer = _correlation_layer(_semi_ledger(), {"005930": 1_000_000.0})
+    daemon = _build_daemon(redis, layer=layer)
+    ack = await daemon.handle_message(b"1-0", _encode(_candidate(code="000660")))
+    assert ack is True
+    assert await redis.xrange("signal.final.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_empty_ledger_keeps_candidate_flowing() -> None:
+    """Empty Track A ledger → both correlation rules are no-ops (final emitted)."""
+    from shared.portfolio.core_holdings import CoreHoldings
+
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis, layer=_correlation_layer(CoreHoldings(), {}))
+    ack = await daemon.handle_message(b"1-0", _encode(_candidate(code="005930")))
+    assert ack is True
+    assert len(await redis.xrange("signal.final.stock.shadow")) == 1
