@@ -219,6 +219,7 @@ def _register_routes(app: FastAPI) -> None:
         kis_builder,
         market_risk,
         metrics,
+        portfolio,
         signals,
         strategies,
         strategy_builder,
@@ -240,6 +241,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(evidence.router)
     app.include_router(event_context.router)
     app.include_router(market_risk.router)
+    app.include_router(portfolio.router)
     app.include_router(strategy_lab.router)
     app.include_router(trades.router)
     app.include_router(strategies.router)

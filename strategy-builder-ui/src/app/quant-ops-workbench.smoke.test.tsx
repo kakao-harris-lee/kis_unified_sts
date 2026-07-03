@@ -16,10 +16,15 @@ import type { StoredStrategy } from "@/types/builder";
 import {
   coverageApi,
   decisionTraceApi,
+  portfolioApi,
   signalsApi,
   tradesApi,
   tradingApi,
 } from "@/lib/dashboard/api";
+import type {
+  PortfolioEquityHistory,
+  PortfolioEquityLatest,
+} from "@/lib/dashboard/portfolio";
 import { eventContextApi } from "@/lib/dashboard/eventContext";
 import { getStrategyPromotionSources } from "@/lib/dashboard/strategyBuilder";
 
@@ -51,6 +56,8 @@ vi.mock("recharts", () => ({
   YAxis: () => null,
   CartesianGrid: () => null,
   Tooltip: () => null,
+  Legend: () => null,
+  ReferenceLine: () => null,
   BarChart: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Bar: () => null,
 }));
@@ -74,6 +81,10 @@ vi.mock("@/lib/dashboard/api", async () => {
     tradingApi: {
       getPositions: vi.fn(),
       getRiskExposure: vi.fn(),
+    },
+    portfolioApi: {
+      getEquity: vi.fn(),
+      getEquityHistory: vi.fn(),
     },
   };
 });
@@ -133,9 +144,33 @@ function axiosResponse<T>(data: T): AxiosResponse<T> {
   };
 }
 
+// /risk 통합 자산 패널 기본값 — 배치 미가동(unavailable) + 빈 이력.
+const EQUITY_UNAVAILABLE: PortfolioEquityLatest = {
+  status: "unavailable",
+  checked_at: "2026-07-03T10:00:00+00:00",
+  source: "portfolio:equity:latest",
+  equity: null,
+  stages: null,
+};
+
+const EQUITY_HISTORY_EMPTY: PortfolioEquityHistory = {
+  status: "empty",
+  days: 90,
+  start: "2026-04-04",
+  end: "2026-07-03",
+  count: 0,
+  points: [],
+};
+
 describe("Quant Ops Workbench UI smoke coverage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(portfolioApi.getEquity).mockResolvedValue(
+      axiosResponse(EQUITY_UNAVAILABLE),
+    );
+    vi.mocked(portfolioApi.getEquityHistory).mockResolvedValue(
+      axiosResponse(EQUITY_HISTORY_EMPTY),
+    );
   });
 
   it("renders /risk empty exposure state with accessible refresh control", async () => {

@@ -20,3 +20,4 @@ export { eventContextApi } from './eventContext';
 export { killSwitchApi } from './killSwitch';
 export { evidenceApi } from './evidence';
 export { marketRiskApi } from './marketRisk';
+export { portfolioApi } from './portfolio';

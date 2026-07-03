@@ -13,13 +13,24 @@ import RefreshIndicator from "@/components/dashboard/RefreshIndicator";
 import SymbolLabel from "@/components/dashboard/SymbolLabel";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
 import { useAssetClass } from "@/contexts/dashboard/AssetClassContext";
-import { tradingApi } from "@/lib/dashboard/api";
+import { portfolioApi, tradingApi } from "@/lib/dashboard/api";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
+import type {
+  PortfolioEquityHistory,
+  PortfolioEquityLatest,
+} from "@/lib/dashboard/portfolio";
 import type {
   RiskExposure,
   RiskStrategyExposure,
   RiskSymbolExposure,
 } from "@/lib/dashboard/types";
+import PortfolioEquityPanel from "./components/PortfolioEquityPanel";
+import {
+  EquityCurveChart,
+  MddStageChart,
+} from "./components/PortfolioEquityChart";
+
+const EQUITY_HISTORY_DAYS = 90;
 
 function fmtKrw(v: number | null | undefined): string {
   if (v === null || v === undefined) return "-";
@@ -213,7 +224,34 @@ export default function RiskPage() {
     refetchInterval: QUERY_INTERVALS_MS.normal,
   });
 
+  // 통합 자산 (Phase 3D) — 자산군 탭과 무관한 전체 계좌 합산 뷰.
+  const {
+    data: equityLatest,
+    isLoading: equityLoading,
+    refetch: refetchEquity,
+  } = useQueryWithError<PortfolioEquityLatest>({
+    queryKey: ["portfolio-equity"],
+    queryFn: () => portfolioApi.getEquity().then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.normal,
+  });
+  const { data: equityHistory, refetch: refetchEquityHistory } =
+    useQueryWithError<PortfolioEquityHistory>({
+      queryKey: ["portfolio-equity-history", EQUITY_HISTORY_DAYS],
+      queryFn: () =>
+        portfolioApi
+          .getEquityHistory({ days: EQUITY_HISTORY_DAYS })
+          .then((r) => r.data),
+      refetchInterval: QUERY_INTERVALS_MS.experiments,
+    });
+
   const portfolio = data?.portfolio;
+  const equityPoints = equityHistory?.points ?? [];
+
+  const handleRefresh = () => {
+    refetch();
+    refetchEquity();
+    refetchEquityHistory();
+  };
 
   return (
     <>
@@ -241,7 +279,7 @@ export default function RiskPage() {
               />
               <button
                 type="button"
-                onClick={() => refetch()}
+                onClick={handleRefresh}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 focus-ring dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
                 aria-label="Refresh risk exposure"
               >
@@ -259,6 +297,18 @@ export default function RiskPage() {
               Loading risk exposure
             </div>
           ) : null}
+
+          {/* 통합 자산 카드 행 + MDD 단계 배지 (Phase 3D — 표시 전용) */}
+          <PortfolioEquityPanel data={equityLatest} isLoading={equityLoading} />
+
+          {/* 통합 자산 곡선 + 월간 MDD 서브차트 (90일) */}
+          <div className="grid gap-2 lg:grid-cols-2">
+            <EquityCurveChart points={equityPoints} />
+            <MddStageChart
+              points={equityPoints}
+              stages={equityLatest?.stages ?? null}
+            />
+          </div>
 
           <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
             <StatCell
