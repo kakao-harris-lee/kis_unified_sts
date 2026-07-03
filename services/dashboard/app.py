@@ -79,6 +79,10 @@ OPENAPI_TAGS = [
         "name": "market-risk",
         "description": "Market Risk Score and market-structure transparency (read-only)",
     },
+    {
+        "name": "feedback-reports",
+        "description": "Unified performance feedback reports (weekly/monthly/quarterly, read-only)",
+    },
 ]
 
 
@@ -215,6 +219,7 @@ def _register_routes(app: FastAPI) -> None:
         event_context,
         evidence,
         experiments,
+        feedback,
         health,
         kis_builder,
         market_risk,
@@ -237,6 +242,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(strategy_builder.router)
     app.include_router(kis_builder.router)
     app.include_router(experiments.router)
+    app.include_router(feedback.router)
     app.include_router(coverage.router)
     app.include_router(evidence.router)
     app.include_router(event_context.router)

@@ -21,3 +21,4 @@ export { killSwitchApi } from './killSwitch';
 export { evidenceApi } from './evidence';
 export { marketRiskApi } from './marketRisk';
 export { portfolioApi } from './portfolio';
+export { reportsApi } from './reports';

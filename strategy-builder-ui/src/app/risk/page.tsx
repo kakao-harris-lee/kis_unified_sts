@@ -13,7 +13,8 @@ import RefreshIndicator from "@/components/dashboard/RefreshIndicator";
 import SymbolLabel from "@/components/dashboard/SymbolLabel";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
 import { useAssetClass } from "@/contexts/dashboard/AssetClassContext";
-import { portfolioApi, tradingApi } from "@/lib/dashboard/api";
+import { portfolioApi, reportsApi, tradingApi } from "@/lib/dashboard/api";
+import type { FeedbackListResponse } from "@/lib/dashboard/reports";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 import type {
   PortfolioEquityHistory,
@@ -25,6 +26,7 @@ import type {
   RiskStrategyExposure,
   RiskSymbolExposure,
 } from "@/lib/dashboard/types";
+import FeedbackSummaryCard from "./components/FeedbackSummaryCard";
 import PortfolioEquityPanel from "./components/PortfolioEquityPanel";
 import {
   EquityCurveChart,
@@ -252,6 +254,32 @@ export default function RiskPage() {
       refetchInterval: QUERY_INTERVALS_MS.normal,
     });
 
+  // 성과 피드백 리포트 (Phase 6B §8) — 자산군 탭과 무관한 전 시스템 요약.
+  // 엔진 미가동 시 빈 목록 → 카드가 empty state를 렌더한다.
+  const { data: feedbackWeekly, isLoading: feedbackLoading } =
+    useQueryWithError<FeedbackListResponse>({
+      queryKey: ["feedback-reports", "weekly"],
+      queryFn: () =>
+        reportsApi
+          .listFeedback({ kind: "weekly", limit: 8 })
+          .then((r) => r.data),
+      refetchInterval: QUERY_INTERVALS_MS.experiments,
+    });
+  const { data: feedbackMonthly } = useQueryWithError<FeedbackListResponse>({
+    queryKey: ["feedback-reports", "monthly"],
+    queryFn: () =>
+      reportsApi.listFeedback({ kind: "monthly", limit: 1 }).then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.experiments,
+  });
+  const { data: feedbackQuarterly } = useQueryWithError<FeedbackListResponse>({
+    queryKey: ["feedback-reports", "quarterly"],
+    queryFn: () =>
+      reportsApi
+        .listFeedback({ kind: "quarterly", limit: 1 })
+        .then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.experiments,
+  });
+
   const portfolio = data?.portfolio;
   const equityPoints = equityHistory?.points ?? [];
 
@@ -323,6 +351,14 @@ export default function RiskPage() {
               stages={equityLatest?.stages ?? null}
             />
           </div>
+
+          {/* 성과 피드백 요약 (Phase 6B §8 — 표시 전용, 판정 자료) */}
+          <FeedbackSummaryCard
+            weekly={feedbackWeekly}
+            monthly={feedbackMonthly}
+            quarterly={feedbackQuarterly}
+            isLoading={feedbackLoading}
+          />
 
           <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
             <StatCell

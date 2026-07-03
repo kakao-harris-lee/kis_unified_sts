@@ -47,6 +47,22 @@ describe("strategy-builder-ui API catch-all proxy", () => {
     );
   });
 
+  it("proxies feedback report routes to the STS dashboard (Phase 6B)", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ kind: "weekly", reports: [] })));
+
+    const response = await GET(
+      requestFor("/api/reports/feedback?kind=weekly&limit=8"),
+      contextFor(["reports", "feedback"]),
+    );
+
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://localhost:5081/api/reports/feedback?kind=weekly&limit=8",
+    );
+  });
+
   it("keeps bare /api/strategies on the STS registry route", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
