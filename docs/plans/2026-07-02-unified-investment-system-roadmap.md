@@ -5,12 +5,29 @@
 > 리스크 예산)를 **현재 코드베이스에 실제로 매핑한 구현 로드맵**. 추가로 하락장
 > 대응을 위한 **선물 시장구조 기반 Market Risk Score(0~100) 시스템**과 그 대시보드
 > 투명성 설계를 포함한다.
-> **작성일**: 2026-07-02 · **상태**: Active
+> **작성일**: 2026-07-02 · **상태**: Phase 0–6 코드 전량 main 병합 (2026-07-03)
 >
 > 기존 [ROADMAP.md](../ROADMAP.md)(Stock/Futures 자산별 로드맵)를 대체하지 않는다.
 > 이 문서는 그 위에 얹히는 **크로스에셋 통합 트랙**이며, 충돌 시 리스크 규칙은
 > 설계서 > 본 로드맵 > 자산별 로드맵 순으로 우선한다. 단, 저장소 불변 규칙
 > (CLAUDE.md)은 설계서보다 우선한다 — §1 조정 사항 참조.
+>
+> ### 현재 상태 (2026-07-03)
+>
+> **Phase 0–6 구현이 전부 main에 병합됨.** 위험 행동이 걸리는 지점(트랙 게이트
+> P2, 서킷 브레이커 P3)은 전부 `mode: shadow` 기본이라 실제 차단·집행이 없다.
+> 남은 것은 전부 **operator 게이트**(모의투자 서버):
+> 1. Phase 0 데이터: KRX/KIS 백필 + scheduler 이미지 리빌드(크론 활성화) +
+>    실전 토큰 프로브 3건 + 야간 tr_key 확정 → 10거래일 무결 수집
+> 2. Phase 1→2 enforce: hindcast `--write` → 판별력 리포트(score≥70) →
+>    shadow 10거래일 → `market_risk_gate.yaml::mode: enforce` (operator 승인)
+> 3. Phase 3 서킷 브레이커: `portfolio_mdd_drill.py --execute` 드릴 →
+>    `portfolio.yaml::circuit_breaker.mode: enforce` (operator 승인)
+> 4. Phase 5 트랙 A: `core_holdings.yaml` 종목 등록(YAML/`sts portfolio`)
+> 5. 운영 중요 미결(O13): 모놀리식 futures paper 경로 kill_switch 조건
+>    미평가 가능성 — F-9 컷오버 전 커버리지 정책 결정
+>
+> 비차단 후속 항목은 §8 O11~O17에 정리됨.
 
 ---
 

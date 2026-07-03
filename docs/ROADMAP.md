@@ -57,13 +57,13 @@ codebase reconciliation):
 
 | Phase / Milestone | Status | Gate / Owner |
 |---|---|---|
-| P0 Market-structure data foundation (KIS TR spike, collectors for foreign futures flow / OI / program / basis / FX / overseas futures / KRX night-session close, Parquet daily history + backfill) | 🔄 in-progress | Implementation landed 2026-07-02 (spikes + macro expansion + `market_structure_collector` + night-futures capture + store + backfill + health freshness; review pass: committable). Remaining gate: operator items (live-key probes, night tr_key, KRX CSV backfill, scheduler image rebuild) + 10 clean trading days + data-quality report |
-| P1 Market Risk Score + unified regime engine (0–100 composite, bands, hysteresis, shadow-only) + `/market` page v1 + alerts | ⏳ planned | backfill hindcast shows score ≥ 70 discriminates forward returns; ≥10-day shadow; operator review |
-| P2 Track enforcement (stock M4-P long-block ≥ 70, futures size/direction modulation via reaction matrix YAML; trace integration) | ⏳ planned | shadow → enforcement flip is operator-approved; 2-week block/allow review |
-| P3 Integrated risk budget (whole-asset MDD −5/−8/−12 circuit breaker, `track_id` ledger tagging, track capital caps) | ⏳ planned | circuit-breaker dry-run + kill-switch drill |
-| P4 Hedge advisor (net β-exposure vs futures, contract recommendation — advisory only, no auto orders) | ⏳ planned | blocked on full-vs-Mini product policy decision |
-| P5 Track A (core portfolio) ledger, Kill Criteria YAML, Tier 3 watch, quarterly rebalancing runbook | ⏳ planned | first quarterly rebalancing recorded |
-| P6 Integrated feedback loop (weekly slippage/edge, monthly equity curve, quarterly track verdicts) | ⏳ planned | first 6-month integrated evaluation |
+| P0 Market-structure data foundation (KIS TR spike, collectors for foreign futures flow / OI / program / basis / FX / overseas futures / KRX night-session close, Parquet daily history + backfill) | ✅ code merged | Merged 2026-07-02. Operator gate: live-key probes, night tr_key, KRX CSV backfill, scheduler image rebuild, 10 clean trading days + data-quality report |
+| P1 Market Risk Score + unified regime engine (0–100 composite, bands, hysteresis, shadow-only) + `/market` page v1 + alerts | ✅ code merged | Merged 2026-07-03. Operator gate: backfill hindcast shows score ≥ 70 discriminates forward returns; ≥10-day shadow; operator review |
+| P2 Track enforcement (stock M4-P long-block ≥ 70, futures size/direction modulation via reaction matrix YAML; trace integration) | ✅ code merged (shadow) | Merged 2026-07-03. `market_risk_gate.yaml::mode: shadow`. Operator gate: shadow → enforce flip is operator-approved; 2-week block/allow review |
+| P3 Integrated risk budget (whole-asset MDD −5/−8/−12 circuit breaker, `track_id` ledger tagging, track capital caps) | ✅ code merged (shadow) | Merged 2026-07-03. Offline drill 11/11. Operator gate: `--execute` drill + kill-switch drill on paper server before enforce |
+| P4 Hedge advisor (net β-exposure vs futures, mini-KOSPI200 contract recommendation — advisory only, no auto orders) | ✅ code merged | Merged 2026-07-03. Mini KOSPI200 (O4). Operator gate: recommendation-quality review on a real HIGH-band episode before any separate auto-hedge plan |
+| P5 Track A (core portfolio) ledger, Kill Criteria YAML, Tier 3 watch, quarterly rebalancing runbook | ✅ code merged | Merged 2026-07-03. Empty ledger (rules no-op). Operator gate: register holdings, first quarterly rebalancing record |
+| P6 Integrated feedback loop (weekly slippage/edge, monthly equity curve, quarterly track verdicts) | ✅ code merged | Merged 2026-07-03. Read-only. Operator gate: first 6-month integrated evaluation |
 
 ### Open next-steps
 
