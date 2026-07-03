@@ -164,3 +164,17 @@
 5  8  * * 1-5  cd /app && python -m services.market_risk_engine.main premarket
 */30 9-15 * * 1-5  cd /app && python -m services.market_risk_engine.main intraday
 45 18 * * 1-5  cd /app && python -m services.market_risk_engine.main close
+
+# --- Portfolio equity snapshot + unified monthly-MDD monitor (Phase 3B) ---
+# 19:00 KST after the 18:45 market-risk close run. Track B/C equity =
+# capital_base (config/portfolio.yaml) + RuntimeLedger track-tagged realized
+# PnL + trading-state unrealized PnL; appends portfolio_equity_daily and
+# publishes portfolio:equity:latest (TTL 24h) + stream:portfolio.equity.
+# circuit_breaker.mode=shadow (default) → observe/alert only, no enforcement.
+0 19 * * 1-5  cd /app && python -m services.portfolio_monitor.main
+# Pre-market refresh (08:50 KST): re-publish portfolio:equity:latest before
+# the session. Without it the Friday 19:00 publish's 24h TTL lapses Saturday
+# 19:00, so Monday-intraday REDUCE/HALT_NEW enforcement would fail open all
+# day. Idempotent: same one-shot, upsert by trade_date; the 19:00 run
+# overwrites the row with the EOD state (risk-event audits dedupe by key).
+50 8 * * 1-5  cd /app && python -m services.portfolio_monitor.main
