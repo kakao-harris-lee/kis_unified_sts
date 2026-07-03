@@ -549,14 +549,25 @@ core_holdings가 빈 동안 상관관계 규칙은 자동 no-op.
       139건. 비차단 잔여는 O17
 - [ ] 첫 분기 리밸런싱 실행 기록 (operator — 종목 등록 후)
 
-### Phase 6 — 통합 성과 피드백 루프 (지속) ⏳
+### Phase 6 — 통합 성과 피드백 루프 (지속) 🔄 (2026-07-03 착수)
 
-- [ ] 주간: 트랙 B/C 슬리피지·승률·Edge 자동 리포트(RuntimeLedger 배치;
-      설계서의 "ClickHouse 주간 배치" 대응)
-- [ ] 월간: 통합 자산 곡선·트랙별 기여도·MDD 요약 1페이지 자동 생성
-- [ ] 분기: 설계서 8.2 판정 기준(트랙 B 백테스트 대비 60%, 트랙 C EV 검증)
-      자동 산출 → 승격/강등/폐지 판단 자료
-- [ ] 6개월 후: 첫 통합 평가(설계서 Phase 5 대응)
+- [x] 리포트 엔진(6A, 2026-07-03 완료): `shared/reports/feedback.py`(순수
+      compute+render) + `services/feedback_reporter` one-shot — 주간(트랙 B/C
+      승률·EV·손익비·슬리피지[fills payload requested/filled_price, 결측 시
+      null] + 전략 분해) + 월간(자산·기여도·MDD·Risk Score 밴드 체류·헤지
+      1페이지) + 분기(§8.2 5개 verdict 경로, 백테스트 기대치는 experiment
+      아티팩트 평균, 불가 시 insufficient). 토 09:00/1일 09:10/분기 09:20
+      크론, Telegram 헤드라인. 테스트 22건+회귀 566건. shared.execution
+      무오염
+- [x] `GET /api/reports/feedback`(목록/단일/latest, path traversal 방어) +
+      `/risk` 피드백 요약 카드(판정 배지 "판정 자료 — 결정은 수동")
+      (2026-07-03 완료, 백엔드 22건+프론트 148건)
+- [x] **크로스에셋 버그 수정 (2026-07-03)**: Next 프록시 `directRoots`에
+      `market-risk`·`portfolio` 누락 발견 → Phase 1c/3D/4B/5E API가
+      same-origin 프록시에서 404(대시보드 빈 표시)였음. 두 라우트 추가로 해소
+      (프론트 테스트가 API 클라이언트를 mock해 이전 리뷰들이 못 잡음). Caddy는
+      이 읽기 전용 라우트 전부를 Next 폴백에 의존 — Caddyfile 변경 불요
+- [ ] 6개월 후: 첫 통합 평가(설계서 Phase 5 대응 — operator)
 
 ---
 
