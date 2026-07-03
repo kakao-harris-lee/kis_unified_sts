@@ -27,17 +27,30 @@ class RuntimeLedgerError(RuntimeError):
 
 
 class RuntimeLedger(Protocol):
-    """Durable runtime ledger contract."""
+    """Durable runtime ledger contract.
 
-    def record_order(self, order: Mapping[str, Any] | Any) -> str:
+    ``track_id`` tags rows with the unified-portfolio track ("A" core /
+    "B" stock / "C" futures — see ``shared.portfolio.config``). It is
+    optional everywhere: omitted (None) keeps legacy callers unchanged and
+    leaves the column NULL. When None, implementations fall back to a
+    ``track_id`` key in the record mapping itself.
+    """
+
+    def record_order(
+        self, order: Mapping[str, Any] | Any, *, track_id: str | None = None
+    ) -> str:
         """Record an order submission/router decision and return record id."""
         ...
 
-    def record_fill(self, fill: Mapping[str, Any] | Any) -> str:
+    def record_fill(
+        self, fill: Mapping[str, Any] | Any, *, track_id: str | None = None
+    ) -> str:
         """Record a broker/mock fill and return record id."""
         ...
 
-    def record_trade(self, trade: Mapping[str, Any] | Any) -> str:
+    def record_trade(
+        self, trade: Mapping[str, Any] | Any, *, track_id: str | None = None
+    ) -> str:
         """Record a closed trade summary and return record id."""
         ...
 
@@ -49,7 +62,9 @@ class RuntimeLedger(Protocol):
         """Record an operational risk/audit event and return record id."""
         ...
 
-    def record_signal_decision(self, decision: Mapping[str, Any] | Any) -> str:
+    def record_signal_decision(
+        self, decision: Mapping[str, Any] | Any, *, track_id: str | None = None
+    ) -> str:
         """Record generated/filtered/vetoed signal history and return record id."""
         ...
 
@@ -103,13 +118,41 @@ class RuntimeLedger(Protocol):
     def query_trades(
         self, filters: Mapping[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        """Query closed trades by common filters."""
+        """Query closed trades by common filters.
+
+        Supported filter keys: ``asset_class``, ``symbol``/``code``,
+        ``strategy``, ``side``, ``track_id``/``track``, ``start``, ``end``,
+        ``limit``. Per-track realized-PnL aggregation filters on ``track_id``.
+        """
         ...
 
     def query_fills(
         self, filters: Mapping[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        """Query order fills by common filters."""
+        """Query order fills by common filters.
+
+        Supported filter keys: ``asset_class``, ``symbol``/``code``,
+        ``side``, ``order_id``, ``track_id``/``track``, ``start``, ``end``,
+        ``limit``.
+        """
+        ...
+
+    def record_portfolio_equity_daily(self, row: Mapping[str, Any] | Any) -> str:
+        """Upsert one daily portfolio-equity row (Phase 3B monitor).
+
+        Keyed by ``trade_date`` (KST ``YYYY-MM-DD``) — same-day re-runs
+        replace the row idempotently. Returns the trade date.
+        """
+        ...
+
+    def query_portfolio_equity_daily(
+        self, filters: Mapping[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Query daily portfolio-equity rows ordered by trade date ASC.
+
+        Supported filter keys: ``month`` (``YYYY-MM``), ``start``, ``end``
+        (trade-date bounds), ``limit`` (0 disables).
+        """
         ...
 
     def flush(self) -> None:
@@ -188,6 +231,12 @@ def _record_id(data: Mapping[str, Any], prefix: str, *keys: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
+def _resolve_track_id(data: Mapping[str, Any], track_id: str | None) -> str | None:
+    """Resolve the row track tag: explicit argument wins over payload key."""
+    resolved = track_id if track_id is not None else _coalesce(data, "track_id")
+    return str(resolved) if resolved is not None else None
+
+
 def _json_payload(data: Mapping[str, Any]) -> str:
     return json.dumps(_json_safe(data), ensure_ascii=False, sort_keys=True)
 
@@ -243,7 +292,13 @@ def _hold_seconds(data: Mapping[str, Any]) -> int | None:
 class SQLiteRuntimeLedger:
     """SQLite WAL runtime ledger implementation."""
 
-    SCHEMA_VERSION = "1"
+    # v3: adds the portfolio_equity_daily table (Phase 3B unified MDD monitor).
+    SCHEMA_VERSION = "3"
+
+    # Tables carrying the unified-portfolio track tag (schema v2). Existing
+    # databases are migrated in place via idempotent ALTER TABLE ADD COLUMN;
+    # pre-migration rows keep track_id NULL (no retroactive tagging).
+    _TRACK_TAGGED_TABLES = ("orders", "fills", "trades", "signal_decisions")
 
     def __init__(self, path: str | Path | SQLiteStorageConfig):
         if isinstance(path, SQLiteStorageConfig):
@@ -315,6 +370,7 @@ class SQLiteRuntimeLedger:
                     strategy TEXT,
                     broker_order_id TEXT,
                     client_order_id TEXT,
+                    track_id TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     payload_json TEXT NOT NULL
@@ -332,6 +388,7 @@ class SQLiteRuntimeLedger:
                     filled_at TEXT NOT NULL,
                     broker_fill_id TEXT,
                     venue TEXT,
+                    track_id TEXT,
                     payload_json TEXT NOT NULL
                 );
 
@@ -352,6 +409,7 @@ class SQLiteRuntimeLedger:
                     pnl_pct REAL,
                     hold_seconds INTEGER,
                     exit_reason TEXT,
+                    track_id TEXT,
                     payload_json TEXT NOT NULL
                 );
 
@@ -406,6 +464,7 @@ class SQLiteRuntimeLedger:
                     symbol TEXT,
                     strategy TEXT,
                     decision TEXT,
+                    track_id TEXT,
                     created_at TEXT NOT NULL,
                     payload_json TEXT NOT NULL
                 );
@@ -442,9 +501,43 @@ class SQLiteRuntimeLedger:
                     scored_at TEXT NOT NULL,
                     PRIMARY KEY (date_kst, facet)
                 );
+
+                CREATE TABLE IF NOT EXISTS portfolio_equity_daily (
+                    trade_date TEXT PRIMARY KEY,
+                    track_a_equity REAL,
+                    track_b_equity REAL,
+                    track_c_equity REAL,
+                    total_equity REAL NOT NULL,
+                    month_start_equity REAL NOT NULL,
+                    month_peak_equity REAL NOT NULL,
+                    monthly_mdd_pct REAL NOT NULL,
+                    stage TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    degraded INTEGER NOT NULL DEFAULT 0,
+                    missing_components TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
                 """)
+            for table in self._TRACK_TAGGED_TABLES:
+                self._ensure_column(conn, table, "track_id", "track_id TEXT")
             self._upsert_metadata("schema_version", self.SCHEMA_VERSION)
             self._upsert_metadata("ledger_path", str(self.path))
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection, table: str, column: str, ddl: str
+    ) -> None:
+        """Idempotently add a column to an existing table.
+
+        ``ALTER TABLE ... ADD COLUMN`` in SQLite is a metadata-only change
+        (no table rewrite), so the WAL write lock window is minimal. Skips
+        when the column already exists — safe to run on every startup.
+        """
+        existing = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
     def _upsert_metadata(self, key: str, value: str) -> None:
         self._require_conn().execute(
@@ -458,7 +551,9 @@ class SQLiteRuntimeLedger:
             (key, value, _utc_now_iso()),
         )
 
-    def record_order(self, order: Mapping[str, Any] | Any) -> str:
+    def record_order(
+        self, order: Mapping[str, Any] | Any, *, track_id: str | None = None
+    ) -> str:
         data = _as_mapping(order)
         record_id = _record_id(data, "order", "order_id", "client_order_id")
         now = _utc_now_iso()
@@ -475,6 +570,7 @@ class SQLiteRuntimeLedger:
             _coalesce(data, "strategy"),
             _coalesce(data, "broker_order_id", "order_no"),
             _coalesce(data, "client_order_id"),
+            _resolve_track_id(data, track_id),
             _coalesce(data, "created_at", "timestamp", default=now),
             now,
             _json_payload(data),
@@ -485,11 +581,12 @@ class SQLiteRuntimeLedger:
                 INSERT INTO orders (
                     id, idempotency_key, asset_class, symbol, side, order_type,
                     quantity, price, status, strategy, broker_order_id,
-                    client_order_id, created_at, updated_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    client_order_id, track_id, created_at, updated_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(idempotency_key) DO UPDATE SET
                     status = excluded.status,
                     broker_order_id = excluded.broker_order_id,
+                    track_id = COALESCE(excluded.track_id, track_id),
                     updated_at = excluded.updated_at,
                     payload_json = excluded.payload_json
                 """,
@@ -497,7 +594,9 @@ class SQLiteRuntimeLedger:
             )
         return record_id
 
-    def record_fill(self, fill: Mapping[str, Any] | Any) -> str:
+    def record_fill(
+        self, fill: Mapping[str, Any] | Any, *, track_id: str | None = None
+    ) -> str:
         data = _as_mapping(fill)
         record_id = _record_id(data, "fill", "fill_id", "broker_fill_id")
         params = (
@@ -514,6 +613,7 @@ class SQLiteRuntimeLedger:
             _coalesce(data, "filled_at", "timestamp", default=_utc_now_iso()),
             _coalesce(data, "broker_fill_id", "fill_id"),
             _coalesce(data, "venue", "execution_venue"),
+            _resolve_track_id(data, track_id),
             _json_payload(data),
         )
         with self._lock:
@@ -521,19 +621,23 @@ class SQLiteRuntimeLedger:
                 """
                 INSERT INTO fills (
                     id, idempotency_key, order_id, asset_class, symbol, side,
-                    quantity, price, filled_at, broker_fill_id, venue, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    quantity, price, filled_at, broker_fill_id, venue, track_id,
+                    payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(idempotency_key) DO UPDATE SET
                     quantity = excluded.quantity,
                     price = excluded.price,
                     filled_at = excluded.filled_at,
+                    track_id = COALESCE(excluded.track_id, track_id),
                     payload_json = excluded.payload_json
                 """,
                 params,
             )
         return record_id
 
-    def record_trade(self, trade: Mapping[str, Any] | Any) -> str:
+    def record_trade(
+        self, trade: Mapping[str, Any] | Any, *, track_id: str | None = None
+    ) -> str:
         data = _as_mapping(trade)
         record_id = _record_id(data, "trade", "trade_id", "position_id")
         pnl = _pnl(data)
@@ -556,6 +660,7 @@ class SQLiteRuntimeLedger:
             _pnl_pct(data, pnl),
             _hold_seconds(data),
             _coalesce(data, "exit_reason", "reason"),
+            _resolve_track_id(data, track_id),
             _json_payload(data),
         )
         with self._lock:
@@ -564,8 +669,9 @@ class SQLiteRuntimeLedger:
                 INSERT INTO trades (
                     id, idempotency_key, asset_class, symbol, name, side,
                     strategy, entry_time, entry_price, exit_time, exit_price,
-                    quantity, pnl, pnl_pct, hold_seconds, exit_reason, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    quantity, pnl, pnl_pct, hold_seconds, exit_reason, track_id,
+                    payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(idempotency_key) DO UPDATE SET
                     exit_time = excluded.exit_time,
                     exit_price = excluded.exit_price,
@@ -573,6 +679,7 @@ class SQLiteRuntimeLedger:
                     pnl_pct = excluded.pnl_pct,
                     hold_seconds = excluded.hold_seconds,
                     exit_reason = excluded.exit_reason,
+                    track_id = COALESCE(excluded.track_id, track_id),
                     payload_json = excluded.payload_json
                 """,
                 params,
@@ -660,7 +767,9 @@ class SQLiteRuntimeLedger:
             data=data,
         )
 
-    def record_signal_decision(self, decision: Mapping[str, Any] | Any) -> str:
+    def record_signal_decision(
+        self, decision: Mapping[str, Any] | Any, *, track_id: str | None = None
+    ) -> str:
         data = _as_mapping(decision)
         return self._record_event_table(
             table="signal_decisions",
@@ -672,6 +781,7 @@ class SQLiteRuntimeLedger:
                 "symbol",
                 "strategy",
                 "decision",
+                "track_id",
                 "created_at",
             ),
             values=(
@@ -680,6 +790,7 @@ class SQLiteRuntimeLedger:
                 _coalesce(data, "symbol", "code"),
                 _coalesce(data, "strategy"),
                 _coalesce(data, "decision", "status"),
+                _resolve_track_id(data, track_id),
                 _coalesce(data, "created_at", "timestamp", default=_utc_now_iso()),
             ),
             data=data,
@@ -714,7 +825,14 @@ class SQLiteRuntimeLedger:
         all_columns = ("id", "idempotency_key", *columns, "payload_json")
         placeholders = ", ".join("?" for _ in all_columns)
         updates = ", ".join(
-            f"{column} = excluded.{column}" for column in (*columns, "payload_json")
+            # track_id must survive an untagged upsert retry (NULL never
+            # overwrites an existing tag).
+            (
+                f"{column} = COALESCE(excluded.{column}, {column})"
+                if column == "track_id"
+                else f"{column} = excluded.{column}"
+            )
+            for column in (*columns, "payload_json")
         )
         with self._lock:
             self._require_conn().execute(
@@ -763,6 +881,7 @@ class SQLiteRuntimeLedger:
             ("symbol", ("symbol", "code")),
             ("strategy", ("strategy",)),
             ("side", ("side",)),
+            ("track_id", ("track_id", "track")),
         ):
             value = _coalesce(filters, *keys)
             if value is not None:
@@ -798,6 +917,7 @@ class SQLiteRuntimeLedger:
             ("symbol", ("symbol", "code")),
             ("side", ("side",)),
             ("order_id", ("order_id",)),
+            ("track_id", ("track_id", "track")),
         ):
             value = _coalesce(filters, *keys)
             if value is not None:
@@ -813,6 +933,93 @@ class SQLiteRuntimeLedger:
 
         sql += " ORDER BY filled_at DESC, id DESC"
         limit = int(_coalesce(filters, "limit", default=100))
+        if limit > 0:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        with self._lock:
+            rows = self._require_conn().execute(sql, params).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def record_portfolio_equity_daily(self, row: Mapping[str, Any] | Any) -> str:
+        data = _as_mapping(row)
+        trade_date = str(_coalesce(data, "trade_date", "date") or "")
+        if not trade_date:
+            raise RuntimeLedgerError("portfolio equity row requires trade_date")
+        now = _utc_now_iso()
+
+        def _optional_float(*keys: str) -> float | None:
+            value = _coalesce(data, *keys)
+            return None if value is None else float(value)
+
+        missing = _coalesce(data, "missing_components", default=[])
+        if not isinstance(missing, str):
+            missing = json.dumps(_json_safe(missing), ensure_ascii=False)
+
+        params = (
+            trade_date,
+            _optional_float("track_a_equity"),
+            _optional_float("track_b_equity"),
+            _optional_float("track_c_equity"),
+            float(_coalesce(data, "total_equity", default=0.0)),
+            float(_coalesce(data, "month_start_equity", default=0.0)),
+            float(_coalesce(data, "month_peak_equity", default=0.0)),
+            float(_coalesce(data, "monthly_mdd_pct", default=0.0)),
+            str(_coalesce(data, "stage", default="NORMAL")),
+            str(_coalesce(data, "mode", default="shadow")),
+            int(bool(_coalesce(data, "degraded", default=False))),
+            missing,
+            now,
+            now,
+            _json_payload(data),
+        )
+        with self._lock:
+            self._require_conn().execute(
+                """
+                INSERT INTO portfolio_equity_daily (
+                    trade_date, track_a_equity, track_b_equity, track_c_equity,
+                    total_equity, month_start_equity, month_peak_equity,
+                    monthly_mdd_pct, stage, mode, degraded, missing_components,
+                    created_at, updated_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(trade_date) DO UPDATE SET
+                    track_a_equity = excluded.track_a_equity,
+                    track_b_equity = excluded.track_b_equity,
+                    track_c_equity = excluded.track_c_equity,
+                    total_equity = excluded.total_equity,
+                    month_start_equity = excluded.month_start_equity,
+                    month_peak_equity = excluded.month_peak_equity,
+                    monthly_mdd_pct = excluded.monthly_mdd_pct,
+                    stage = excluded.stage,
+                    mode = excluded.mode,
+                    degraded = excluded.degraded,
+                    missing_components = excluded.missing_components,
+                    updated_at = excluded.updated_at,
+                    payload_json = excluded.payload_json
+                """,
+                params,
+            )
+        return trade_date
+
+    def query_portfolio_equity_daily(
+        self, filters: Mapping[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        filters = filters or {}
+        sql = "SELECT * FROM portfolio_equity_daily WHERE 1=1"
+        params: list[Any] = []
+
+        if month := _coalesce(filters, "month"):
+            sql += " AND substr(trade_date, 1, 7) = ?"
+            params.append(str(month))
+        if start := _coalesce(filters, "start", "start_date", "from"):
+            sql += " AND trade_date >= ?"
+            params.append(str(start))
+        if end := _coalesce(filters, "end", "end_date", "to"):
+            sql += " AND trade_date <= ?"
+            params.append(str(end))
+
+        sql += " ORDER BY trade_date ASC"
+        limit = int(_coalesce(filters, "limit", default=0))
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
@@ -842,7 +1049,14 @@ class SQLiteRuntimeLedger:
                 data["payload"] = {}
         return data
 
-    def save_prediction(self, date_kst: str, facet: str, captured_at: str, payload: dict, confidence: float | None) -> None:
+    def save_prediction(
+        self,
+        date_kst: str,
+        facet: str,
+        captured_at: str,
+        payload: dict,
+        confidence: float | None,
+    ) -> None:
         """Idempotent upsert of an LLM prediction (per date_kst+facet)."""
         with self._lock:
             self._require_conn().execute(
@@ -851,16 +1065,25 @@ class SQLiteRuntimeLedger:
                 " ON CONFLICT(date_kst,facet) DO UPDATE SET"
                 " captured_at=excluded.captured_at, payload_json=excluded.payload_json,"
                 " confidence=excluded.confidence",
-                (date_kst, facet, captured_at, json.dumps(payload), confidence, _utc_now_iso()),
+                (
+                    date_kst,
+                    facet,
+                    captured_at,
+                    json.dumps(payload),
+                    confidence,
+                    _utc_now_iso(),
+                ),
             )
             self._require_conn().commit()
 
     def load_predictions(self, date_kst: str) -> list[dict]:
         """Return all LLM predictions recorded for the given trading date (KST)."""
         with self._lock:
-            rows = self._require_conn().execute(
-                "SELECT * FROM llm_predictions WHERE date_kst=?", (date_kst,)
-            ).fetchall()
+            rows = (
+                self._require_conn()
+                .execute("SELECT * FROM llm_predictions WHERE date_kst=?", (date_kst,))
+                .fetchall()
+            )
         return [{**dict(r), "payload": json.loads(r["payload_json"])} for r in rows]
 
     def query_predictions(
@@ -901,12 +1124,23 @@ class SQLiteRuntimeLedger:
                 " value=excluded.value, economic_proxy=excluded.economic_proxy,"
                 " baseline_value=excluded.baseline_value, edge=excluded.edge,"
                 " detail_json=excluded.detail_json, scored_at=excluded.scored_at",
-                (s["date_kst"], s["facet"], correct, s["value"], s["economic_proxy"],
-                 s["baseline_value"], s["edge"], json.dumps(s["detail"]), s["scored_at"]),
+                (
+                    s["date_kst"],
+                    s["facet"],
+                    correct,
+                    s["value"],
+                    s["economic_proxy"],
+                    s["baseline_value"],
+                    s["edge"],
+                    json.dumps(s["detail"]),
+                    s["scored_at"],
+                ),
             )
             self._require_conn().commit()
 
-    def query_scores(self, facet: str | None = None, start: str | None = None, end: str | None = None) -> list[dict]:
+    def query_scores(
+        self, facet: str | None = None, start: str | None = None, end: str | None = None
+    ) -> list[dict]:
         """Query prediction scores with optional facet and date range filters."""
         q = "SELECT * FROM prediction_scores WHERE 1=1"
         p: list = []

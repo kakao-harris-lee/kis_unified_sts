@@ -1,0 +1,99 @@
+# Unified portfolio capital structure and integrated risk budget.
+#
+# Source: docs/통합_투자_시스템_전략_설계서.md §1 (3-tier capital) / §7 (unified
+# MDD circuit breaker) and docs/plans/2026-07-02-unified-investment-system-
+# roadmap.md §5.5. Loaded by shared/portfolio/config.py::PortfolioConfig.
+#
+# Phase 3 scope: parameter declaration + ledger track tagging only. No
+# automated fund movement or circuit-breaker enforcement happens from this
+# file yet — the unified MDD monitor (shadow first) and kill_switch wiring
+# land in parallel/follow-up lanes.
+
+# --- Tier allocation (fractions of total investable assets; must sum to 1.0)
+tiers:
+  tier1_core: 0.65         # Track A — core portfolio (설계서 band 60~70%)
+  tier2_trading: 0.25      # Tracks B+C — system trading capital (band 20~30%)
+  tier3_opportunity: 0.10  # Opportunity reserve (평시 CMA/RP 대기)
+
+# --- Tier 2 internal split (fractions of tier2_trading; must sum to 1.0)
+tier2_split:
+  track_b_stock: 0.70      # Track B — stock auto-trading
+  track_c_futures: 0.30    # Track C — KOSPI200 futures (physically isolated account)
+
+# --- Fund movement rules (설계서 §1.2 — one-way principle).
+# Phase 3 declares parameters only; execution is manual / a follow-up phase.
+fund_movement:
+  # Tier 2 -> Tier 1 (allowed): once cumulative trading profit exceeds
+  # +30% of initial Tier 2 capital, transfer 50% of the excess into core.
+  tier2_to_tier1:
+    profit_threshold_pct: 0.30
+    transfer_ratio: 0.50
+  # Tier 1 -> Tier 2 is FORBIDDEN in principle (no selling core assets to
+  # cover trading losses). The sole exception — 6+ months of verified
+  # positive EV, applied only at the annual rebalance — is a manual,
+  # documented decision and is intentionally NOT parameterized here.
+  # Tier 3 activation: deploy only when KOSPI falls >= 15% from its recent
+  # peak AND the core investment theses remain intact; staged in 3 tranches.
+  tier3_activation:
+    kospi_drawdown_from_peak: -0.15
+    tranches: 3
+
+# --- Track capital bases (Phase 3B equity anchors, KRW).
+# equity(track) = capital_base + cumulative realized PnL (RuntimeLedger trades
+# tagged with the track id) + open-position unrealized PnL (best-effort from
+# the trading-state positions hash). Absolute bases keep the monthly-MDD math
+# stable across process restarts. Values mirror the per-asset risk equity
+# anchors in config/risk.yaml (risk.account_equity_krw / risk_stock.*).
+# track_a_core_krw stays null until the Phase 5 manual core ledger lands —
+# the monitor then reports track_a_equity as missing (coverage recorded).
+capital_base:
+  track_a_core_krw: null
+  track_b_stock_krw: 10000000
+  track_c_futures_krw: 5000000
+
+# --- Unified circuit breaker (설계서 §7.1 — monthly MDD over TOTAL assets).
+# Track A (core) is NOT an MDD trigger target: no stage ever sells core
+# holdings. Stages only constrain Track B/C NEW entries; held positions
+# continue to exit by their own rules.
+circuit_breaker:
+  # off    — breaker fully disabled
+  # shadow — evaluate + log/alert stage transitions, no enforcement (Phase 3 default)
+  # enforce— stages gate Track B/C entries via existing kill_switch/suspended flags
+  mode: shadow
+  # Intra-month stage latch (설계서 §7.1 취지): once a stage is reached it
+  # holds for the remainder of the KST month even if equity recovers above
+  # the threshold. Set false to let the stage relax with recovery.
+  stage_latch: true
+  monthly_mdd_stages:
+    reduce:
+      threshold: -0.05             # -5%: Track B/C new-entry size cut
+      new_entry_size_factor: 0.5
+    halt_new:
+      threshold: -0.08             # -8%: Track B/C new entries fully halted
+    full_stop:
+      threshold: -0.12             # -12%: full system stop + monthly review gate
+
+# --- Phase 3B daily portfolio monitor (services/portfolio_monitor).
+# One-shot cron (deploy/scheduler.crontab, 19:00 KST after the 18:45 market-
+# risk close run). Publishes the fixed 3D-UI Redis contract and appends the
+# daily row to the RuntimeLedger portfolio_equity_daily table.
+monitor:
+  redis:
+    latest_key: "portfolio:equity:latest"
+    latest_ttl_seconds: 86400          # 24h — fixed contract with the 3D UI lane
+    stream_key: "stream:portfolio.equity"
+    stream_maxlen: 5000
+    stream_ttl_seconds: 86400
+  # Telegram stage-transition alerts — reuses
+  # shared/notification/telegram.notifier_for_domain (market_risk pattern).
+  alerts:
+    enabled: true
+    domain: briefing
+    notify_stages: [REDUCE, HALT_NEW, FULL_STOP]
+
+# --- Track C monthly loss halt (설계서 §1.3): if Track C loses more than
+# this fraction of its allocated capital within a calendar month, Track C
+# halts for the remainder of the month (margin top-up max once per month).
+# Reference declaration — actual enforcement is wired into kill_switch by
+# the parallel risk lane, reusing the existing suspended-flag mechanism.
+track_c_monthly_loss_halt: 0.15
