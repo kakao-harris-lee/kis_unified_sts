@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from shared.exceptions import InfrastructureError, TradingSystemError, ValidationError
 from shared.models.position import Position, PositionSide, PositionState
+from shared.portfolio.config import track_for_asset_class
 from shared.storage.config import StorageConfig
 from shared.storage.runtime_ledger import RuntimeLedger, RuntimeLedgerError
 from shared.utils.calc import validate_price
@@ -1114,6 +1115,9 @@ class PositionTracker:
             "trade_id": position.id,
             "idempotency_key": f"{asset_class}:{position.id}",
             "asset_class": asset_class,
+            # Portfolio track tag ("B" stock / "C" futures) derived from the
+            # asset class — shared.portfolio owns the mapping.
+            "track_id": track_for_asset_class(asset_class),
             "code": position.code,
             "symbol": position.code,
             "name": position.name,

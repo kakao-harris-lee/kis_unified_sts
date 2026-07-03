@@ -23,6 +23,7 @@ from services.stock_exit.positions import (
 )
 from shared.models.position import Position
 from shared.paper.models import OrderSide, OrderType
+from shared.portfolio.config import track_for_asset_class
 from shared.strategy.base import MarketStateAdapter
 from shared.streaming.stock_bear_override import BearOverrideConfig, parse_strong_set
 from shared.streaming.stock_regime import StockRegimeConfig, parse_market_state
@@ -269,6 +270,7 @@ class StockExitDaemon:
             "trade_id": pos.id,
             "idempotency_key": pos.id,
             "asset_class": "stock",
+            "track_id": track_for_asset_class("stock"),
             "symbol": sig.code,
             "name": pos.name,
             "side": "long",

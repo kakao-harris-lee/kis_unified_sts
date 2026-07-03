@@ -102,6 +102,22 @@ async def test_closed_position_snapshot_and_stock_trade_use_runtime_ledger(tmp_p
     assert trades[0]["pnl_pct"] == pytest.approx(1.40845, rel=1e-4)
     assert trades[0]["hold_seconds"] == 3600
     assert trades[0]["payload"]["commission"] == 100.0
+    assert trades[0]["track_id"] == "B"  # stock trade → portfolio track B
+
+
+@pytest.mark.asyncio
+async def test_futures_trade_tagged_track_c_in_runtime_ledger(tmp_path):
+    tracker, ledger = _futures_tracker_with_ledger(tmp_path)
+    position = _closed_position()
+
+    assert await tracker.save_futures_trade_to_db(position, "futures") is True
+
+    trades = ledger.query_trades({"track_id": "C"})
+    assert len(trades) == 1
+    assert trades[0]["id"] == "pos-001"
+    assert trades[0]["asset_class"] == "futures"
+    # Track filter isolates C from B rows (3B per-track PnL contract).
+    assert ledger.query_trades({"track_id": "B"}) == []
 
 
 @pytest.mark.asyncio

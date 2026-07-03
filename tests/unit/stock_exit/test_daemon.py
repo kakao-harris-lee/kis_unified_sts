@@ -135,6 +135,7 @@ async def test_closed_trade_recorded_to_ledger_with_strategy() -> None:
     assert trade["strategy"] == "pattern_pullback"
     assert trade["symbol"] == "005930"
     assert trade["asset_class"] == "stock"
+    assert trade["track_id"] == "B"  # stock pipeline → portfolio track B
     assert trade["exit_reason"]
     assert trade["pnl"] < 0  # closed at a loss
     assert trade["idempotency_key"] == "sig-005930"

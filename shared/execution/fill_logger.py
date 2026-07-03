@@ -12,6 +12,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from shared.portfolio.config import track_for_asset_class
+
 logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400  # Redis TTL policy — stream keys 24 h.
@@ -164,6 +166,9 @@ class FillLogger:
             "signal_id": signal_id,
             "order_id": order_id,
             "asset_class": self.asset_class,
+            # Portfolio track tag ("B" stock / "C" futures) derived from the
+            # logger's asset class — shared.portfolio owns the mapping.
+            "track_id": track_for_asset_class(self.asset_class),
             "symbol": symbol,
             "code": symbol,
             "strategy": strategy,

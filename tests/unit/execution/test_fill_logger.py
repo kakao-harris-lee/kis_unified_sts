@@ -102,9 +102,30 @@ async def test_log_fill_records_runtime_ledger_when_mirror_disabled(redis):
     assert payload["id"] == "fill:ord-ledger:entry:1700000000125"
     assert payload["idempotency_key"] == payload["id"]
     assert payload["asset_class"] == "futures"
+    assert payload["track_id"] == "C"  # futures pipeline → portfolio track C
     assert payload["symbol"] == "A05603"
     assert payload["price"] == 331.22
     assert payload["latency_ms"] == 125
+
+
+@pytest.mark.asyncio
+async def test_ledger_payload_track_id_follows_asset_class(redis):
+    """Track tag derives from shared.portfolio mapping: stock→B, none→NULL."""
+    for asset_class, expected_track in (("stock", "B"), (None, None)):
+        ledger = MagicMock()
+        fl = FillLogger(
+            redis=redis,
+            archive_client=None,
+            runtime_ledger=ledger,
+            stream=_STREAM,
+            maxlen=1000,
+            asset_class=asset_class,
+        )
+
+        await fl.log_fill(**_payload(order_id=f"ord-{asset_class}"))
+
+        payload = ledger.record_fill.call_args.args[0]
+        assert payload["track_id"] == expected_track
 
 
 @pytest.mark.asyncio
