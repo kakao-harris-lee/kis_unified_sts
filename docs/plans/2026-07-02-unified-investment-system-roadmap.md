@@ -452,13 +452,46 @@ operator 승인 후 YAML 변경으로만 한다.
 - **게이트**: shadow 대비 enforcement 전환은 operator 승인. 전환 후 2주간
   차단/허용 내역 주간 리뷰
 
-### Phase 3 — 통합 리스크 예산 + 서킷 브레이커 (약 2주) ⏳
+### Phase 3 — 통합 리스크 예산 + 서킷 브레이커 (약 2주) 🔄 (2026-07-03 착수)
 
-- [ ] `config/portfolio.yaml` + RuntimeLedger `track_id` 태깅
-- [ ] 전체 자산 스냅샷 일별 배치 + 통합 MDD 모니터(−5/−8/−12 단계, §5.5)
-- [ ] 트랙 C 월간 15% 완전 중단·주간 7% 한도·연속 4패 사이즈 축소 정렬(§5.2)
-- [ ] `/risk`에 통합 자산 곡선·MDD 단계 표시
-- **게이트**: 서킷 브레이커 드라이런(모의 트리거) + kill-switch 연동 드릴
+서킷 브레이커도 Phase 2와 동일하게 `config/portfolio.yaml::circuit_breaker.mode:
+shadow` 기본 — enforce 전환은 드릴 통과 + operator 승인 후 YAML로만.
+
+- [x] `config/portfolio.yaml` + RuntimeLedger `track_id` 태깅 (2026-07-03
+      완료): Tier 65/25/10·B/C 70/30·MDD 단계(shadow 기본)·자금 이동 파라미터
+      + `shared/portfolio/config.py`(track 매핑 A/B/C). ledger SCHEMA_VERSION
+      2 — orders/fills/trades/signal_decisions에 track_id(idempotent ALTER,
+      기존 행 NULL, COALESCE upsert), fills/trades 전 기록 경로 태깅(디커플드
+      B/C + 모놀리식), track 필터 조회 헬퍼. 테스트 100건+광역 회귀 1255건
+- [x] 트랙 C 생존 규칙 정렬 (2026-07-03 완료): 신규 `risk:state:*:period`
+      해시(TTL이 월말+grace를 커버, 24h idle 의존 제거) — C1 kill_switch
+      `monthly_loss` 0.15 조건+당월 말 래치, C2 4패 ×0.5 축소 14일 지속
+      (승리·재기동 생존, `reduce_blocks_at_floor` 기본 false·operator 결정),
+      C5 weekly KST 월요일 경계 리셋. 6패 하드 중단 등 기존 보수 값 불변.
+      신규 44건+회귀 1029건 통과. 신규 조건도 decoupled killswitch 프로파일
+      에서만 평가(O13 커버리지 동일)
+- [x] 전체 자산 스냅샷 + 통합 MDD 모니터 + 서킷 브레이커 (2026-07-03 완료):
+      `shared/portfolio/equity.py`(capital_base 앵커 + track별 realized/
+      unrealized, 실패 시 직전 equity 유지+degraded) +
+      `services/portfolio_monitor`(08:50/19:00 크론, idempotent) +
+      `portfolio:equity:latest`(fraction 단위) + ledger
+      `portfolio_equity_daily` + `shared/risk/filters/portfolio_mdd.py`
+      (REDUCE ×0.5/HALT 차단, enforce 전용·fail-open) + FULL_STOP은 기존
+      sentinel/suspend 재사용 + `scripts/ops/portfolio_mdd_drill.py`
+      (dry-run 11/11 PASS). 월내 단계 래치, shadow 기본
+- [x] `/risk` 통합 자산 표시 (2026-07-03 완료): `GET /api/portfolio/equity`
+      (+history — ledger는 read-only SQLite URI로 접근, 스키마 생성 원천 차단)
+      + 통합 자산 카드 행(트랙 분해·MDD·단계/mode 배지) + 자산 곡선(단계
+      전환 마커)·MDD 서브차트(임계선). 배치 미가동 시 empty state.
+      백엔드 241건+프론트 113건+lint/build 통과
+- [x] 리뷰 패스 (2026-07-03, 판정: 커밋 가능): 블로킹 1건 수정 — 3B는 MDD를
+      fraction(−0.0494)으로 발행하는데 3D 프론트가 percent로 가정한 단위
+      불일치 → 프론트를 fraction 해석으로 정렬(필드 계약 명문화). risk
+      계층 동시 수정(3B/3C)은 충돌 없음 확인. 주말 enforce 공백은 08:50
+      프리마켓 크론으로 해소. 백엔드 1494건+프론트 113건+드릴 11/11
+- **게이트**: 서킷 브레이커 드라이런(모의 트리거) + kill-switch 연동 드릴 —
+      오프라인 드릴은 통과(11/11). 남은 것: 모의투자 서버에서 `--execute`
+      드릴(실 sentinel 트립+원복) + enforce 전환은 operator 승인
 
 ### Phase 4 — 헤지 어드바이저 (paper·권고 전용) (약 2주) ⏳
 
