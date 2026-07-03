@@ -11,6 +11,7 @@ import type {
   MarketRiskLatest,
 } from "@/lib/dashboard/marketRisk";
 import type {
+  PortfolioCoreLatest,
   PortfolioHedgeHistory,
   PortfolioHedgeLatest,
 } from "@/lib/dashboard/portfolio";
@@ -47,6 +48,7 @@ vi.mock("@/lib/dashboard/api", async () => {
       ...actual.portfolioApi,
       getHedge: vi.fn(),
       getHedgeHistory: vi.fn(),
+      getCore: vi.fn(),
     },
   };
 });
@@ -177,6 +179,20 @@ const EMPTY_HEDGE_HISTORY: PortfolioHedgeHistory = {
   points: [],
 };
 
+// 트랙 A(Phase 5E)는 스모크에서 워치 미가동 + 빈 원장 기본값 — 두 empty
+// state가 페이지를 깨지 않고 렌더링되는 것까지가 스모크 범위다.
+const CORE_UNAVAILABLE: PortfolioCoreLatest = {
+  status: "unavailable",
+  checked_at: "2026-07-02T10:00:00+00:00",
+  source: "portfolio:tier3:watch",
+  manual_track: true,
+  tier3: null,
+  holdings: [],
+  candidates: [],
+  sectors: null,
+  rebalancing: null,
+};
+
 const GATE_RULE = {
   allow_long: true,
   allow_short: true,
@@ -218,6 +234,9 @@ describe("/market page smoke coverage", () => {
     vi.mocked(portfolioApi.getHedgeHistory).mockResolvedValue(
       axiosResponse(EMPTY_HEDGE_HISTORY),
     );
+    vi.mocked(portfolioApi.getCore).mockResolvedValue(
+      axiosResponse(CORE_UNAVAILABLE),
+    );
   });
 
   it("renders score header, breakdown table, and shadow track panel", async () => {
@@ -258,6 +277,16 @@ describe("/market page smoke coverage", () => {
     expect(screen.getByText("헤지 어드바이저")).toBeInTheDocument();
     expect(screen.getByText("권고 전용 — 자동 주문 없음")).toBeInTheDocument();
     expect(screen.getByText(/헤지 어드바이저 미가동/)).toBeInTheDocument();
+
+    // 트랙 A (Phase 5E) — 워치 미가동 + 빈 원장 empty state에서도 두 카드와
+    // 수동 트랙 라벨은 항상 렌더링된다.
+    expect(screen.getByText("Tier 3 워치")).toBeInTheDocument();
+    expect(screen.getByText(/Tier 3 워치 미가동/)).toBeInTheDocument();
+    expect(screen.getByText("코어 홀딩스 — 트랙 A")).toBeInTheDocument();
+    expect(screen.getByText(/보유 종목 미등록/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText("수동 트랙 — 자동 매매 없음").length,
+    ).toBe(2);
   });
 
   it("renders the live track matrix when the gate section is present", async () => {

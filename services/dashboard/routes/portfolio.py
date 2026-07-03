@@ -64,6 +64,15 @@ _HEDGE_LATEST_KEY = os.environ.get(
 # expires the key, so the endpoint reports "unavailable" like the equity lane.
 _HEDGE_STALE_SECONDS = int(os.environ.get("PORTFOLIO_HEDGE_STALE_SECONDS", "50400"))
 
+# Phase 5 publication contract (fixed): Tier 3 watch hash key + field names.
+# ``drawdown``/``trigger_threshold`` are FRACTIONS (−0.16 = −16%, Phase 3
+# unit convention). Env-overridable for operator setups only.
+_TIER3_WATCH_KEY = os.environ.get("PORTFOLIO_TIER3_WATCH_KEY", "portfolio:tier3:watch")
+# The watch publishes on the portfolio monitor cadence (weekday cron), so the
+# hedge-lane staleness reasoning applies: 14h covers the widest weekday gap
+# and the publication TTL expires the key over weekends (→ "unavailable").
+_TIER3_STALE_SECONDS = int(os.environ.get("PORTFOLIO_TIER3_STALE_SECONDS", "50400"))
+
 # RuntimeLedger history table (owned by the batch lane — read-only here).
 _HISTORY_TABLE = "portfolio_equity_daily"
 
@@ -548,4 +557,224 @@ async def get_portfolio_hedge_history(
         "end": end.isoformat(),
         "count": len(points),
         "points": points,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Track A core (Phase 5E — Tier 3 watch + core holdings / Kill Criteria)
+# ---------------------------------------------------------------------------
+# 수동 트랙 — 자동 매매 없음: this surface is display-only and exposes no
+# trade, order, or ledger-mutation controls, ever. The Tier 3 watch (Redis)
+# and the core holdings config (YAML loader — Phase 5A lane) degrade
+# independently: either side may be absent without breaking the endpoint.
+
+
+def _load_core_holdings():
+    """Track A core holdings via the Phase 5A loader; None when unavailable.
+
+    The loader module (``shared/portfolio/core_holdings.py``) is landing in a
+    parallel lane and may not exist yet — an import failure degrades to None
+    (Phase 2E gate-section pattern), as does any load failure.
+    """
+    try:
+        from shared.portfolio.core_holdings import CoreHoldings
+    except Exception:  # noqa: BLE001 - loader lane may not have landed yet
+        return None
+    try:
+        return CoreHoldings.load_or_default()
+    except Exception:  # noqa: BLE001 - malformed YAML degrades to null
+        return None
+
+
+def _tier3_summary(redis: Any) -> dict[str, Any] | None:
+    """Parse the ``portfolio:tier3:watch`` hash (fixed Phase 5 contract).
+
+    ``drawdown`` and ``trigger_threshold`` pass through as FRACTIONS (≤ 0;
+    −0.16 = −16%) — the UI multiplies by 100 for display. ``triggered`` is
+    the watch lane's own verdict ("true"/"false"); it is never re-derived
+    here from drawdown vs threshold.
+    """
+    payload = _redis_hgetall(redis, _TIER3_WATCH_KEY)
+    if not payload:
+        return None
+
+    asof = _parse_kst_naive(payload.get("asof_ts"))
+    age_s = _age_seconds(asof)
+    return {
+        "kospi_close": _coerce_float(payload.get("kospi_close")),
+        "kospi_peak": _coerce_float(payload.get("kospi_peak")),
+        "drawdown": _coerce_float(payload.get("drawdown")),
+        "trigger_threshold": _coerce_float(payload.get("trigger_threshold")),
+        "triggered": _coerce_bool(payload.get("triggered")) or False,
+        "asof": asof.isoformat() if asof else None,
+        "age_s": age_s,
+        "stale": age_s is not None and age_s > _TIER3_STALE_SECONDS,
+    }
+
+
+def _attr(obj: Any, name: str, default: Any = None) -> Any:
+    """Read ``name`` off an attribute object or mapping (loader-agnostic)."""
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _kill_criteria_list(raw: Any) -> list[str]:
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [text for item in raw if (text := _coerce_text(item)) is not None]
+
+
+def _last_valuation_summary(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    date = _coerce_text(_attr(raw, "date"))
+    price = _coerce_float(_attr(raw, "price"))
+    if date is None and price is None:
+        return None
+    return {"date": date, "price": price}
+
+
+def _sector_label(config: Any, sector: str | None) -> str | None:
+    if sector is None:
+        return None
+    sectors = _attr(config, "sectors") or {}
+    spec = sectors.get(sector) if isinstance(sectors, dict) else None
+    if spec is None:
+        return sector
+    return _coerce_text(_attr(spec, "label")) or sector
+
+
+def _holding_summary(config: Any, holding: Any) -> dict[str, Any]:
+    """Serialize one holding; valuation = shares × (last valuation ∥ 평단)."""
+    sector = _coerce_text(_attr(holding, "sector"))
+    shares = _coerce_float(_attr(holding, "shares"))
+    avg_price = _coerce_float(_attr(holding, "avg_price"))
+    last_valuation = _last_valuation_summary(_attr(holding, "last_valuation"))
+    price = last_valuation["price"] if last_valuation else None
+    if price is None:
+        price = avg_price
+    valuation = shares * price if shares is not None and price is not None else None
+    return {
+        "symbol": _coerce_text(_attr(holding, "symbol")),
+        "name": _coerce_text(_attr(holding, "name")),
+        "sector": sector,
+        "sector_label": _sector_label(config, sector),
+        "thesis": _coerce_text(_attr(holding, "thesis")),
+        "kill_criteria": _kill_criteria_list(_attr(holding, "kill_criteria")),
+        "shares": shares,
+        "avg_price": avg_price,
+        "last_valuation": last_valuation,
+        "valuation": valuation,
+        "weight": None,  # filled once the holdings total is known
+    }
+
+
+def _candidate_summary(config: Any, candidate: Any) -> dict[str, Any]:
+    sector = _coerce_text(_attr(candidate, "sector"))
+    return {
+        "symbol": _coerce_text(_attr(candidate, "symbol")),
+        "name": _coerce_text(_attr(candidate, "name")),
+        "sector": sector,
+        "sector_label": _sector_label(config, sector),
+        "thesis": _coerce_text(_attr(candidate, "thesis")),
+        "kill_criteria": _kill_criteria_list(_attr(candidate, "kill_criteria")),
+    }
+
+
+def _holdings_summary(config: Any) -> list[dict[str, Any]]:
+    """Serialize holdings with weight = valuation share of the holdings total."""
+    holdings = [
+        _holding_summary(config, holding)
+        for holding in (_attr(config, "holdings") or [])
+    ]
+    total = sum(h["valuation"] for h in holdings if h["valuation"] is not None)
+    if total > 0:
+        for holding in holdings:
+            if holding["valuation"] is not None:
+                holding["weight"] = holding["valuation"] / total
+    return holdings
+
+
+def _actual_sector_weights(config: Any) -> dict[str, float]:
+    """실비중 from the loader's ``sector_weights()``; {} on any failure."""
+    try:
+        weights = config.sector_weights()
+    except Exception:  # noqa: BLE001 - display-only, degrade to unknown
+        return {}
+    if not isinstance(weights, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key, value in weights.items():
+        coerced = _coerce_float(value)
+        if coerced is not None:
+            out[str(key)] = coerced
+    return out
+
+
+def _sectors_summary(config: Any) -> dict[str, dict[str, Any]]:
+    """Target vs actual weight per configured sector (fractions)."""
+    actual = _actual_sector_weights(config)
+    sectors = _attr(config, "sectors") or {}
+    if not isinstance(sectors, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, spec in sectors.items():
+        name = str(key)
+        out[name] = {
+            "label": _coerce_text(_attr(spec, "label")) or name,
+            "target_weight": _coerce_float(_attr(spec, "target_weight")),
+            "actual_weight": actual.get(name),
+        }
+    return out
+
+
+def _rebalancing_summary(config: Any) -> dict[str, Any] | None:
+    rebalancing = _attr(config, "rebalancing")
+    if rebalancing is None:
+        return None
+    return {
+        "drift_threshold_pct": _coerce_float(_attr(rebalancing, "drift_threshold_pct")),
+        "single_holding_max": _coerce_float(_attr(rebalancing, "single_holding_max")),
+    }
+
+
+@router.get("/core")
+async def get_portfolio_core() -> dict[str, Any]:
+    """Tier 3 watch + Track A core holdings (Kill Criteria) — display only.
+
+    ``status`` reflects the Tier 3 watch publication (``unavailable`` when the
+    watch key is absent, ``stale`` when old, ``ok`` otherwise); the holdings
+    side degrades independently (loader unavailable → empty holdings and null
+    sectors/rebalancing). 수동 트랙 — 자동 매매 없음: no trade controls exist
+    on this surface, and drawdown/weights are fractions (UI converts to %).
+    """
+    tier3 = _tier3_summary(_get_redis_client())
+    config = _load_core_holdings()
+
+    if tier3 is None:
+        status = "unavailable"
+    elif tier3["stale"]:
+        status = "stale"
+    else:
+        status = "ok"
+
+    return {
+        "status": status,
+        "checked_at": datetime.now(UTC).isoformat(),
+        "source": _TIER3_WATCH_KEY,
+        # 수동 트랙 — 자동 매매 없음 (roadmap §5.3). Fixed marker for the UI.
+        "manual_track": True,
+        "tier3": tier3,
+        "holdings": _holdings_summary(config) if config is not None else [],
+        "candidates": (
+            [
+                _candidate_summary(config, candidate)
+                for candidate in (_attr(config, "candidates") or [])
+            ]
+            if config is not None
+            else []
+        ),
+        "sectors": _sectors_summary(config) if config is not None else None,
+        "rebalancing": _rebalancing_summary(config) if config is not None else None,
     }

@@ -12,6 +12,7 @@ import type {
 } from "@/lib/dashboard/portfolio";
 import { hedgeProductLabel } from "@/lib/dashboard/portfolio";
 import { formatKstDateTime } from "@/lib/dashboard/format";
+import Tile from "./Tile";
 
 // 헤지 어드바이저 카드 (Phase 4B — roadmap §5.4/§6.1). portfolio:hedge:latest
 // 발행(미니 KOSPI200 — O4)을 표시 전용으로 렌더링한다. 권고 전용 — 자동 주문
@@ -72,34 +73,6 @@ function AdvisoryBadge({ hedge }: { hedge: PortfolioHedgeSnapshot | null }) {
     <span className="inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
       권고 없음
     </span>
-  );
-}
-
-function Tile({
-  label,
-  value,
-  sub,
-  tone,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  tone?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-      <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
-        {label}
-      </div>
-      <div
-        className={`mt-1 truncate text-lg font-bold tabular-nums ${
-          tone ?? "text-slate-900 dark:text-slate-100"
-        }`}
-      >
-        {value}
-      </div>
-      {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
-    </div>
   );
 }
 

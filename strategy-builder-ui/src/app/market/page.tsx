@@ -14,6 +14,7 @@ import type {
   MarketRiskLatest,
 } from "@/lib/dashboard/marketRisk";
 import type {
+  PortfolioCoreLatest,
   PortfolioHedgeHistory,
   PortfolioHedgeLatest,
 } from "@/lib/dashboard/portfolio";
@@ -23,6 +24,8 @@ import ScoreGauge from "./components/ScoreGauge";
 import ComponentBreakdown from "./components/ComponentBreakdown";
 import TrackResponsePanel from "./components/TrackResponsePanel";
 import HedgeAdvisorCard from "./components/HedgeAdvisorCard";
+import Tier3WatchCard from "./components/Tier3WatchCard";
+import CoreHoldingsCard from "./components/CoreHoldingsCard";
 import {
   BasisChart,
   ForeignFuturesChart,
@@ -96,6 +99,17 @@ export default function MarketPage() {
       refetchInterval: QUERY_INTERVALS_MS.experiments,
     });
 
+  // 트랙 A — Tier 3 워치 + 코어 홀딩스 (Phase 5E) — 수동 트랙, 매매 컨트롤 없음.
+  const {
+    data: core,
+    isLoading: coreLoading,
+    refetch: refetchCore,
+  } = useQueryWithError<PortfolioCoreLatest>({
+    queryKey: ["portfolio-core"],
+    queryFn: () => portfolioApi.getCore().then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.normal,
+  });
+
   const risk = latest?.risk ?? null;
   const unavailable = latest !== undefined && latest.status === "unavailable";
   const points = history?.points ?? [];
@@ -106,6 +120,7 @@ export default function MarketPage() {
     refetchHistory();
     refetchHedge();
     refetchHedgeHistory();
+    refetchCore();
   };
 
   return (
@@ -310,6 +325,20 @@ export default function MarketPage() {
             history={hedgeHistory}
             isLoading={hedgeLoading}
           />
+
+          {/* 트랙 A — 중장기 코어 (Phase 5E §5.3/§6.1) — 수동 트랙 */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                트랙 A — 중장기 코어
+              </h2>
+              <span className="text-sm text-slate-500">
+                Tier 3 워치 + Kill Criteria — 집행은 항상 수동
+              </span>
+            </div>
+            <Tier3WatchCard data={core} isLoading={coreLoading} />
+            <CoreHoldingsCard data={core} isLoading={coreLoading} />
+          </section>
         </div>
       </div>
     </>

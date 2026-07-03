@@ -129,6 +129,88 @@ export interface PortfolioHedgeHistory {
   points: PortfolioHedgeHistoryPoint[];
 }
 
+// ---------------------------------------------------------------------------
+// Track A core (Phase 5E — roadmap §5.3/§6.1). 수동 트랙 — 자동 매매 없음:
+// this client exposes no trade or ledger-mutation endpoints. Mirrors the
+// portfolio:tier3:watch contract plus the core_holdings.yaml loader (Phase 5A
+// lane); either side may be null/empty while its lane has not landed.
+// ---------------------------------------------------------------------------
+
+export interface Tier3WatchSnapshot {
+  kospi_close: number | null;
+  kospi_peak: number | null;
+  /** Drawdown from the KOSPI peak as a FRACTION (≤ 0; -0.16 = -16%) — same
+   *  unit convention as monthly_mdd_pct above. Multiply by 100 for display. */
+  drawdown: number | null;
+  /** Trigger threshold as a FRACTION (-0.15 = -15%). */
+  trigger_threshold: number | null;
+  /** Watch lane's verdict — the UI never re-derives it. */
+  triggered: boolean;
+  asof: string | null;
+  age_s: number | null;
+  stale: boolean;
+}
+
+export interface CoreHoldingValuation {
+  date: string | null;
+  price: number | null;
+}
+
+export interface CoreHolding {
+  symbol: string | null;
+  name: string | null;
+  sector: string | null;
+  sector_label: string | null;
+  thesis: string | null;
+  kill_criteria: string[];
+  shares: number | null;
+  avg_price: number | null;
+  last_valuation: CoreHoldingValuation | null;
+  /** KRW — shares × (last valuation price ∥ 평단). */
+  valuation: number | null;
+  /** Fraction of the holdings total valuation. */
+  weight: number | null;
+}
+
+export interface CoreCandidate {
+  symbol: string | null;
+  name: string | null;
+  sector: string | null;
+  sector_label: string | null;
+  thesis: string | null;
+  kill_criteria: string[];
+}
+
+export interface CoreSectorSpec {
+  label: string;
+  /** Target allocation as a fraction (0.35 = 35%). */
+  target_weight: number | null;
+  /** Actual allocation as a fraction; null while 미산출. */
+  actual_weight: number | null;
+}
+
+export interface CoreRebalancing {
+  /** Allocation drift threshold as a fraction (0.10 = ±10%p). */
+  drift_threshold_pct: number | null;
+  /** Single-holding weight cap as a fraction (0.25 = 25%). */
+  single_holding_max: number | null;
+}
+
+export interface PortfolioCoreLatest {
+  /** Reflects the Tier 3 watch publication; holdings degrade independently. */
+  status: "ok" | "stale" | "unavailable";
+  checked_at: string;
+  source: string;
+  /** Fixed true marker — Track A is manual, no automated trading. */
+  manual_track: boolean;
+  tier3: Tier3WatchSnapshot | null;
+  holdings: CoreHolding[];
+  candidates: CoreCandidate[];
+  /** Null when the Phase 5A loader has not landed / failed to load. */
+  sectors: Record<string, CoreSectorSpec> | null;
+  rebalancing: CoreRebalancing | null;
+}
+
 const HEDGE_PRODUCT_LABELS: Record<string, string> = {
   mini_kospi200: "미니 KOSPI200",
 };
@@ -152,6 +234,7 @@ export const portfolioApi = {
     apiClient.get<PortfolioHedgeHistory>("/api/portfolio/hedge/history", {
       params,
     }),
+  getCore: () => apiClient.get<PortfolioCoreLatest>("/api/portfolio/core"),
 };
 
 // ---------------------------------------------------------------------------
