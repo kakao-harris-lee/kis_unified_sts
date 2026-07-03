@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type {
   PortfolioEquityLatest,
   PortfolioEquitySnapshot,
+  PortfolioHedgeLatest,
 } from "@/lib/dashboard/portfolio";
 import PortfolioEquityPanel from "./PortfolioEquityPanel";
 
@@ -179,5 +180,78 @@ describe("PortfolioEquityPanel", () => {
     expect(
       screen.getByRole("status", { name: "Loading unified equity" }),
     ).toBeInTheDocument();
+  });
+
+  // 크로스에셋 순 β-노출 셀 (Phase 4B §6.2 — 헤지 어드바이저와 동일 산식).
+
+  it("renders the cross-asset net beta exposure cell from the hedge advisor", () => {
+    const hedge: PortfolioHedgeLatest = {
+      status: "ok",
+      checked_at: "2026-07-03T10:00:00+00:00",
+      source: "portfolio:hedge:latest",
+      advisory_only: true,
+      hedge: {
+        product: "mini_kospi200",
+        multiplier: 50_000,
+        futures_price: 368.5,
+        stock_long_notional: 52_000_000,
+        portfolio_beta: 1.08,
+        beta_notional: 56_160_000,
+        futures_net_contracts: -1,
+        futures_net_notional: -18_425_000,
+        net_beta_exposure: 37_735_000,
+        recommended_short_contracts: 3,
+        residual_exposure_after: -13_520_000,
+        band: "HIGH",
+        score: 74.2,
+        advisory_active: true,
+        reason: "HIGH 밴드",
+        degraded: false,
+        missing_components: [],
+        asof: "2026-07-03T18:40:00+09:00",
+        age_s: 120,
+        stale: false,
+      },
+    };
+
+    render(
+      <PortfolioEquityPanel data={latest()} isLoading={false} hedge={hedge} />,
+    );
+
+    expect(screen.getByText("순 β-노출")).toBeInTheDocument();
+    expect(screen.getByText("₩37,735,000")).toBeInTheDocument();
+    expect(
+      screen.getByText("β-노출 ₩56,160,000 · 선물 넷 ₩-18,425,000"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders only a dash in the beta cell when the hedge advisor is absent", () => {
+    render(<PortfolioEquityPanel data={latest()} isLoading={false} />);
+
+    expect(screen.getByText("순 β-노출")).toBeInTheDocument();
+    const dash = screen.getByText("—");
+    expect(dash.className).toContain("text-slate-400");
+    expect(screen.getByText("헤지 어드바이저 미가동")).toBeInTheDocument();
+    // 다른 셀(총자산 등)은 그대로 렌더링된다.
+    expect(screen.getByText("₩125,000,000")).toBeInTheDocument();
+  });
+
+  it("renders the dash beta cell when the hedge advisor is unavailable", () => {
+    render(
+      <PortfolioEquityPanel
+        data={latest()}
+        isLoading={false}
+        hedge={{
+          status: "unavailable",
+          checked_at: "2026-07-03T10:00:00+00:00",
+          source: "portfolio:hedge:latest",
+          advisory_only: true,
+          hedge: null,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText("헤지 어드바이저 미가동")).toBeInTheDocument();
   });
 });

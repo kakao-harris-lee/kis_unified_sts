@@ -5,11 +5,15 @@ import type { ReactNode } from "react";
 import type { AxiosResponse } from "axios";
 
 import MarketPage from "./page";
-import { marketRiskApi } from "@/lib/dashboard/api";
+import { marketRiskApi, portfolioApi } from "@/lib/dashboard/api";
 import type {
   MarketRiskHistory,
   MarketRiskLatest,
 } from "@/lib/dashboard/marketRisk";
+import type {
+  PortfolioHedgeHistory,
+  PortfolioHedgeLatest,
+} from "@/lib/dashboard/portfolio";
 
 vi.mock("@/components/dashboard/HeaderBar", () => ({
   default: () => <header aria-label="Cockpit header">KIS Cockpit</header>,
@@ -39,6 +43,11 @@ vi.mock("@/lib/dashboard/api", async () => {
   return {
     ...actual,
     marketRiskApi: { getLatest: vi.fn(), getHistory: vi.fn() },
+    portfolioApi: {
+      ...actual.portfolioApi,
+      getHedge: vi.fn(),
+      getHedgeHistory: vi.fn(),
+    },
   };
 });
 
@@ -149,6 +158,25 @@ const EMPTY_HISTORY: MarketRiskHistory = {
   points: [],
 };
 
+// 헤지 어드바이저(Phase 4B)는 스모크에서 미가동(unavailable) 기본값 — 카드
+// empty state가 페이지를 깨지 않고 렌더링되는 것까지가 스모크 범위다.
+const HEDGE_UNAVAILABLE: PortfolioHedgeLatest = {
+  status: "unavailable",
+  checked_at: "2026-07-02T10:00:00+00:00",
+  source: "portfolio:hedge:latest",
+  advisory_only: true,
+  hedge: null,
+};
+
+const EMPTY_HEDGE_HISTORY: PortfolioHedgeHistory = {
+  status: "empty",
+  days: 30,
+  start: "2026-06-02",
+  end: "2026-07-02",
+  count: 0,
+  points: [],
+};
+
 const GATE_RULE = {
   allow_long: true,
   allow_short: true,
@@ -184,6 +212,12 @@ describe("/market page smoke coverage", () => {
     vi.mocked(marketRiskApi.getHistory).mockResolvedValue(
       axiosResponse(EMPTY_HISTORY),
     );
+    vi.mocked(portfolioApi.getHedge).mockResolvedValue(
+      axiosResponse(HEDGE_UNAVAILABLE),
+    );
+    vi.mocked(portfolioApi.getHedgeHistory).mockResolvedValue(
+      axiosResponse(EMPTY_HEDGE_HISTORY),
+    );
   });
 
   it("renders score header, breakdown table, and shadow track panel", async () => {
@@ -218,6 +252,12 @@ describe("/market page smoke coverage", () => {
     // 야간 신호 타일
     expect(screen.getByText("야간 K200 종가")).toBeInTheDocument();
     expect(screen.getByText("370.15")).toBeInTheDocument();
+
+    // 헤지 카드 (Phase 4B) — 어드바이저 미가동 empty state에서도 카드와
+    // 권고 전용 라벨은 항상 렌더링된다.
+    expect(screen.getByText("헤지 어드바이저")).toBeInTheDocument();
+    expect(screen.getByText("권고 전용 — 자동 주문 없음")).toBeInTheDocument();
+    expect(screen.getByText(/헤지 어드바이저 미가동/)).toBeInTheDocument();
   });
 
   it("renders the live track matrix when the gate section is present", async () => {

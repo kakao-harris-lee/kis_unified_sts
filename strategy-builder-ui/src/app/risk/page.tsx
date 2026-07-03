@@ -18,6 +18,7 @@ import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 import type {
   PortfolioEquityHistory,
   PortfolioEquityLatest,
+  PortfolioHedgeLatest,
 } from "@/lib/dashboard/portfolio";
 import type {
   RiskExposure,
@@ -243,6 +244,13 @@ export default function RiskPage() {
           .then((r) => r.data),
       refetchInterval: QUERY_INTERVALS_MS.experiments,
     });
+  // 헤지 어드바이저 (Phase 4B §6.2) — 순 β-노출 셀 전용, 권고 전용 표시.
+  const { data: hedgeLatest, refetch: refetchHedge } =
+    useQueryWithError<PortfolioHedgeLatest>({
+      queryKey: ["portfolio-hedge"],
+      queryFn: () => portfolioApi.getHedge().then((r) => r.data),
+      refetchInterval: QUERY_INTERVALS_MS.normal,
+    });
 
   const portfolio = data?.portfolio;
   const equityPoints = equityHistory?.points ?? [];
@@ -251,6 +259,7 @@ export default function RiskPage() {
     refetch();
     refetchEquity();
     refetchEquityHistory();
+    refetchHedge();
   };
 
   return (
@@ -298,8 +307,13 @@ export default function RiskPage() {
             </div>
           ) : null}
 
-          {/* 통합 자산 카드 행 + MDD 단계 배지 (Phase 3D — 표시 전용) */}
-          <PortfolioEquityPanel data={equityLatest} isLoading={equityLoading} />
+          {/* 통합 자산 카드 행 + MDD 단계 배지 (Phase 3D — 표시 전용)
+              + 크로스에셋 순 β-노출 셀 (Phase 4B §6.2 — 권고 전용) */}
+          <PortfolioEquityPanel
+            data={equityLatest}
+            isLoading={equityLoading}
+            hedge={hedgeLatest}
+          />
 
           {/* 통합 자산 곡선 + 월간 MDD 서브차트 (90일) */}
           <div className="grid gap-2 lg:grid-cols-2">

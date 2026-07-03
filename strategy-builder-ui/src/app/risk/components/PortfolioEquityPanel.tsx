@@ -3,6 +3,7 @@
 import { AlertTriangle } from "lucide-react";
 import type {
   PortfolioEquityLatest,
+  PortfolioHedgeLatest,
   PortfolioMddStages,
   PortfolioStage,
 } from "@/lib/dashboard/portfolio";
@@ -12,6 +13,8 @@ import { formatKstDateTime } from "@/lib/dashboard/format";
 // 통합 자산 패널 (Phase 3D — roadmap §5.5). 일별 equity 배치의
 // portfolio:equity:latest 발행을 표시 전용으로 렌더링한다. 서킷 브레이커는
 // shadow 우선(미집행)이며, 이 패널은 어떤 단계/모드도 절대 변경하지 않는다.
+// Phase 4B(§6.2): 헤지 어드바이저 발행이 있으면 크로스에셋 순 β-노출 셀을
+// 함께 표시한다 (헤지 부재 시 해당 셀만 "—" — 권고 전용, 자동 주문 없음).
 
 function fmtKrw(v: number | null | undefined): string {
   if (v === null || v === undefined) return "-";
@@ -122,15 +125,19 @@ function stageThresholdSub(stages: PortfolioMddStages | null): string {
 export default function PortfolioEquityPanel({
   data,
   isLoading,
+  hedge,
 }: {
   data: PortfolioEquityLatest | undefined;
   isLoading: boolean;
+  hedge?: PortfolioHedgeLatest;
 }) {
   const equity = data?.equity ?? null;
   const stages = data?.stages ?? null;
   const unavailable = data !== undefined && data.status === "unavailable";
   // 라이브 mode(배치 발행)가 우선, 부재 시 config mode로 폴백.
   const mode = equity?.mode ?? stages?.mode ?? null;
+  // 헤지 어드바이저(Phase 4B) 발행 — 부재 시 β-노출 셀만 "—"로 표시.
+  const hedgeSnapshot = hedge?.hedge ?? null;
 
   return (
     <section aria-label="통합 자산" className="space-y-3">
@@ -194,7 +201,7 @@ export default function PortfolioEquityPanel({
       )}
 
       {equity && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">
           <Tile label="총자산" value={fmtKrw(equity.total_equity)} />
           <Tile
             label="트랙 B (주식)"
@@ -232,6 +239,21 @@ export default function PortfolioEquityPanel({
             label="월초 자산"
             value={fmtKrw(equity.month_start_equity)}
             sub={`월중 최고 ${fmtKrw(equity.month_peak_equity)}`}
+          />
+          {/* 크로스에셋 순 β-노출 (§6.2) — 헤지 어드바이저와 동일 산식. */}
+          <Tile
+            label="순 β-노출"
+            value={
+              hedgeSnapshot ? fmtKrw(hedgeSnapshot.net_beta_exposure) : "—"
+            }
+            tone={hedgeSnapshot ? undefined : "text-slate-400"}
+            sub={
+              hedgeSnapshot
+                ? `β-노출 ${fmtKrw(hedgeSnapshot.beta_notional)} · 선물 넷 ${fmtKrw(
+                    hedgeSnapshot.futures_net_notional,
+                  )}`
+                : "헤지 어드바이저 미가동"
+            }
           />
         </div>
       )}

@@ -63,10 +63,93 @@ export interface PortfolioEquityHistory {
   points: PortfolioEquityHistoryPoint[];
 }
 
+// ---------------------------------------------------------------------------
+// Hedge advisor (Phase 4B — roadmap §5.4/§6.1). 권고 전용 — 자동 주문 없음:
+// this client exposes no order or execution endpoints. Mirrors the
+// portfolio:hedge:latest contract (mini KOSPI200 — O4). Notional/exposure
+// fields are KRW.
+// ---------------------------------------------------------------------------
+
+export interface PortfolioHedgeSnapshot {
+  product: string | null;
+  /** KRW per index point (mini KOSPI200 = 50,000). */
+  multiplier: number | null;
+  futures_price: number | null;
+  stock_long_notional: number | null;
+  portfolio_beta: number | null;
+  beta_notional: number | null;
+  futures_net_contracts: number | null;
+  /** Signed KRW notional — net short is negative. */
+  futures_net_notional: number | null;
+  net_beta_exposure: number | null;
+  recommended_short_contracts: number | null;
+  residual_exposure_after: number | null;
+  band: string | null;
+  score: number | null;
+  advisory_active: boolean;
+  reason: string | null;
+  degraded: boolean;
+  missing_components: string[];
+  asof: string | null;
+  age_s: number | null;
+  stale: boolean;
+}
+
+export interface PortfolioHedgeLatest {
+  status: "ok" | "degraded" | "stale" | "unavailable";
+  checked_at: string;
+  source: string;
+  /** Fixed true marker — the advisor never places orders. */
+  advisory_only: boolean;
+  hedge: PortfolioHedgeSnapshot | null;
+}
+
+export interface PortfolioHedgeHistoryPoint {
+  asof: string | null;
+  trade_date: string | null;
+  recommended_short_contracts: number | null;
+  net_beta_exposure: number | null;
+  beta_notional: number | null;
+  futures_net_notional: number | null;
+  residual_exposure_after: number | null;
+  futures_price: number | null;
+  score: number | null;
+  product: string | null;
+  band: string | null;
+  reason: string | null;
+  advisory_active: boolean | null;
+}
+
+export interface PortfolioHedgeHistory {
+  status: "ok" | "empty";
+  days: number;
+  start: string;
+  end: string;
+  count: number;
+  points: PortfolioHedgeHistoryPoint[];
+}
+
+const HEDGE_PRODUCT_LABELS: Record<string, string> = {
+  mini_kospi200: "미니 KOSPI200",
+};
+
+export function hedgeProductLabel(
+  product: string | null | undefined,
+): string {
+  const key = (product ?? "").trim().toLowerCase();
+  if (!key) return "-";
+  return HEDGE_PRODUCT_LABELS[key] ?? product ?? "-";
+}
+
 export const portfolioApi = {
   getEquity: () => apiClient.get<PortfolioEquityLatest>("/api/portfolio/equity"),
   getEquityHistory: (params?: { days?: number }) =>
     apiClient.get<PortfolioEquityHistory>("/api/portfolio/equity/history", {
+      params,
+    }),
+  getHedge: () => apiClient.get<PortfolioHedgeLatest>("/api/portfolio/hedge"),
+  getHedgeHistory: (params?: { days?: number }) =>
+    apiClient.get<PortfolioHedgeHistory>("/api/portfolio/hedge/history", {
       params,
     }),
 };

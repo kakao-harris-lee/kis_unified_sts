@@ -8,16 +8,21 @@ import RiskBandBadge, {
   RegimeBadge,
 } from "@/components/dashboard/RiskBandBadge";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
-import { marketRiskApi } from "@/lib/dashboard/api";
+import { marketRiskApi, portfolioApi } from "@/lib/dashboard/api";
 import type {
   MarketRiskHistory,
   MarketRiskLatest,
 } from "@/lib/dashboard/marketRisk";
+import type {
+  PortfolioHedgeHistory,
+  PortfolioHedgeLatest,
+} from "@/lib/dashboard/portfolio";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 import { formatKstDateTime } from "@/lib/dashboard/format";
 import ScoreGauge from "./components/ScoreGauge";
 import ComponentBreakdown from "./components/ComponentBreakdown";
 import TrackResponsePanel from "./components/TrackResponsePanel";
+import HedgeAdvisorCard from "./components/HedgeAdvisorCard";
 import {
   BasisChart,
   ForeignFuturesChart,
@@ -26,6 +31,7 @@ import {
 } from "./components/MarketCharts";
 
 const HISTORY_DAYS = 90;
+const HEDGE_HISTORY_DAYS = 30;
 
 function fmtScore(v: number | null | undefined): string {
   return v === null || v === undefined ? "-" : v.toFixed(1);
@@ -70,6 +76,26 @@ export default function MarketPage() {
       refetchInterval: QUERY_INTERVALS_MS.experiments,
     });
 
+  // 헤지 어드바이저 (Phase 4B) — 권고 전용, 자동 주문 없음.
+  const {
+    data: hedge,
+    isLoading: hedgeLoading,
+    refetch: refetchHedge,
+  } = useQueryWithError<PortfolioHedgeLatest>({
+    queryKey: ["portfolio-hedge"],
+    queryFn: () => portfolioApi.getHedge().then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.normal,
+  });
+  const { data: hedgeHistory, refetch: refetchHedgeHistory } =
+    useQueryWithError<PortfolioHedgeHistory>({
+      queryKey: ["portfolio-hedge-history", HEDGE_HISTORY_DAYS],
+      queryFn: () =>
+        portfolioApi
+          .getHedgeHistory({ days: HEDGE_HISTORY_DAYS })
+          .then((r) => r.data),
+      refetchInterval: QUERY_INTERVALS_MS.experiments,
+    });
+
   const risk = latest?.risk ?? null;
   const unavailable = latest !== undefined && latest.status === "unavailable";
   const points = history?.points ?? [];
@@ -78,6 +104,8 @@ export default function MarketPage() {
   const handleRefresh = () => {
     refetchLatest();
     refetchHistory();
+    refetchHedge();
+    refetchHedgeHistory();
   };
 
   return (
@@ -275,6 +303,13 @@ export default function MarketPage() {
               />
             </div>
           </section>
+
+          {/* 헤지 카드 (Phase 4B §6.1) — 권고 전용, 자동 주문 없음 */}
+          <HedgeAdvisorCard
+            data={hedge}
+            history={hedgeHistory}
+            isLoading={hedgeLoading}
+          />
         </div>
       </div>
     </>

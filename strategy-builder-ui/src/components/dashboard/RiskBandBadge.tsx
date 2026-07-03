@@ -5,7 +5,7 @@ import { normalizeBand } from "@/lib/dashboard/marketRisk";
 // strings so the Tailwind JIT can see them; risk severity ramps from calm
 // (emerald) to critical (rose) — 상승/하락 색상(profit/loss)과는 별개의 상태색.
 
-const BAND_BADGE_CLASSES: Record<RiskBand, string> = {
+export const BAND_BADGE_CLASSES: Record<RiskBand, string> = {
   LOW: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
   NEUTRAL: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
   ELEVATED: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
