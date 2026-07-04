@@ -47,19 +47,21 @@ from services.trading.execution_facade import (
     get_signal_direction,
     normalize_entry_order_result,
 )
+from services.trading.execution_runtime import (
+    finalize_entry_execution_metadata,
+    mock_mirror_exit_should_skip,
+    record_mock_mirror_result,
+)
 from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
-from services.trading.recovery import (
-    evaluate_position_freshness,
-    parse_recovery_entry_time,
-    reconstruct_recovered_position,
-)
+from services.trading.recovery import PositionRecoveryService
 from services.trading.reentry_guard import (
     record_recent_exit_cooldown,
     reentry_guard_block,
     reentry_guard_key,
 )
+from services.trading.startup_sequence import run_trading_startup_sequence
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
@@ -582,39 +584,7 @@ class TradingOrchestrator:
 
     async def _initialize_components(self):
         """Initialize trading components"""
-        # 1. Initialize KIS Client & Config
-        kis_config = self._init_kis_client()
-
-        # 2. Validate futures product/tick contract, then initialize slippage control
-        self._validate_futures_product_contract()
-        self._init_futures_slippage_controller()
-
-        # 3. Initialize Price Feeds (WebSocket)
-        data_source = self._init_price_feeds(kis_config)
-
-        # 4. Initialize Data Provider
-        self._init_data_provider(data_source)
-
-        # 5. Initialize optional tick stream publisher (monitoring only)
-        self._init_tick_stream_publisher()
-
-        # 6. Initialize Strategy Infra
-        self._init_strategy_infrastructure()
-
-        # 7. Initialize Indicator Engine + feed callbacks
-        self._init_indicator_engine()
-
-        # 8. Initialize Execution Layer
-        await self._init_execution_layer()
-
-        # 9. Ensure persistence schema is current before recovery/flush paths
-        await self._ensure_db_schema()
-
-        # 10. Load Swing Positions
-        await self._load_swing_positions()
-
-        # 11. Initialize LLM Context Publisher
-        self._init_llm_context_publisher()
+        await run_trading_startup_sequence(self)
 
     @staticmethod
     def _deep_merge_config_dict(
@@ -1356,31 +1326,21 @@ class TradingOrchestrator:
         recovery_disabled = str(
             os.getenv("STS_DISABLE_POSITION_RECOVERY", "")
         ).strip().lower() in {"1", "true", "yes", "on"}
-        if recovery_disabled:
+        if self._position_tracker:
+            recovery_service = PositionRecoveryService(
+                config=self.config,
+                position_tracker=self._position_tracker,
+                symbol_names=getattr(self, "_symbol_names", {}),
+                symbol_last_seen=self._symbol_last_seen,
+                swing_strategies=self.SWING_STRATEGIES,
+            )
+            await recovery_service.recover_open_positions(
+                recovery_disabled=recovery_disabled
+            )
+        elif recovery_disabled:
             logger.info(
                 "Position recovery disabled by env (STS_DISABLE_POSITION_RECOVERY)"
             )
-        elif self._position_tracker:
-            await self._recover_positions_from_redis()
-            # Durable fallback: recover open positions from the SQLite runtime
-            # ledger as well. Redis is ephemeral (a container recreate or DB
-            # flush loses open positions), but the runtime ledger
-            # position_snapshots table is durable. load_from_db() dedupes
-            # against positions already recovered from Redis (it skips any
-            # position id already tracked), so a position present in BOTH
-            # Redis and SQLite is added only once.
-            try:
-                db_loaded = await self._position_tracker.load_from_db()
-                if db_loaded:
-                    logger.info(
-                        "Recovered %d open position(s) from runtime ledger "
-                        "(durable SQLite fallback)",
-                        db_loaded,
-                    )
-            except (InfrastructureError, OSError, ConnectionError) as e:
-                logger.warning(
-                    "Durable SQLite position recovery failed (continuing): %s", e
-                )
 
         # --- Risk state recovery from Redis ---
         if self._risk_manager:
@@ -1465,87 +1425,17 @@ class TradingOrchestrator:
         - Intraday strategies: recover same-day only
         Stale positions are removed from Redis with logging.
         """
-        try:
-            from shared.streaming.trading_state import TradingStateReader
-
-            reader = TradingStateReader(self.config.asset_class)
-        except (ConfigurationError, InfrastructureError) as e:
-            logger.warning(f"Cannot initialize TradingStateReader for recovery: {e}")
+        if not self._position_tracker:
             return 0
 
-        positions = reader.get_positions()
-        if not positions:
-            logger.info("No positions to recover from Redis")
-            return 0
-
-        today = datetime.now().date()
-        max_age_days = self.config.swing_recovery_max_age_days
-        recovered = 0
-        stale = 0
-
-        for pos_data in positions:
-            pos_id = pos_data.get("id", "")
-            strategy = pos_data.get("strategy", "")
-
-            try:
-                entry_time = parse_recovery_entry_time(pos_data)
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid entry_time in Redis position: {pos_id[:8]}")
-                reader.remove_position(pos_id)
-                stale += 1
-                continue
-
-            freshness = evaluate_position_freshness(
-                strategy=strategy,
-                entry_time=entry_time,
-                today=today,
-                swing_strategies=self.SWING_STRATEGIES,
-                max_swing_age_days=max_age_days,
-            )
-            if not freshness.recoverable:
-                if freshness.is_swing:
-                    logger.debug(
-                        f"Stale swing position: {pos_data.get('code')} "
-                        f"(age={freshness.age_days}d)"
-                    )
-                else:
-                    logger.debug(
-                        f"Stale intraday position: {pos_data.get('code')} "
-                        f"(age={freshness.age_days}d)"
-                    )
-                reader.remove_position(pos_id)
-                stale += 1
-                continue
-
-            try:
-                position = reconstruct_recovered_position(
-                    pos_data,
-                    entry_time=entry_time,
-                    symbol_names=getattr(self, "_symbol_names", {}),
-                )
-            except (KeyError, ValueError, TypeError) as e:
-                logger.warning(f"Failed to reconstruct position {pos_id[:8]}: {e}")
-                reader.remove_position(pos_id)
-                stale += 1
-                continue
-
-            if self._position_tracker.add_recovered_position(position):
-                recovered += 1
-                # Ensure symbol receives WebSocket ticks
-                current_symbols = set(self.config.symbols or [])
-                if position.code not in current_symbols:
-                    if self.config.symbols is None:
-                        self.config.symbols = []
-                    self.config.symbols.append(position.code)
-                    self._symbol_last_seen[position.code] = datetime.now()
-
-        if stale > 0:
-            logger.info(f"Cleaned {stale} stale positions from Redis")
-        if recovered > 0:
-            logger.info(
-                f"Recovered {recovered} positions from Redis ({self.config.asset_class})"
-            )
-        return recovered
+        recovery_service = PositionRecoveryService(
+            config=self.config,
+            position_tracker=self._position_tracker,
+            symbol_names=getattr(self, "_symbol_names", {}),
+            symbol_last_seen=self._symbol_last_seen,
+            swing_strategies=self.SWING_STRATEGIES,
+        )
+        return await recovery_service.recover_positions_from_redis()
 
     async def _verify_positions_with_broker(self) -> None:
         """Delegate broker/ledger comparison to the extracted verifier."""
@@ -6268,38 +6158,10 @@ class TradingOrchestrator:
         label: str,
         result: dict[str, Any] | None,
     ) -> None:
-        normalized = dict(result or {})
-        if "success" not in normalized:
-            normalized["success"] = False
-            normalized.setdefault("message", "mock_mirror_no_result")
-        normalized.setdefault("skipped", False)
-
-        metadata = position.metadata if isinstance(position.metadata, dict) else {}
-        metadata = dict(metadata)
-        mirror_meta = metadata.get("mock_mirror")
-        mirror_meta = {} if not isinstance(mirror_meta, dict) else dict(mirror_meta)
-        mirror_meta[label] = normalized
-        metadata["mock_mirror"] = mirror_meta
-        position.metadata = metadata
-
-        if normalized.get("skipped"):
-            outcome = "skipped"
-        elif normalized.get("success"):
-            outcome = "success"
-        else:
-            outcome = "failed"
-        key = f"{label}_{outcome}"
-        self._mock_mirror_stats[key] = int(self._mock_mirror_stats.get(key, 0)) + 1
+        record_mock_mirror_result(position, self._mock_mirror_stats, label, result)
 
     def _mock_mirror_exit_should_skip(self, position: Position) -> bool:
-        metadata = position.metadata if isinstance(position.metadata, dict) else {}
-        mirror_meta = metadata.get("mock_mirror")
-        if not isinstance(mirror_meta, dict):
-            return False
-        entry_result = mirror_meta.get("entry")
-        if not isinstance(entry_result, dict):
-            return False
-        return entry_result.get("success") is False
+        return mock_mirror_exit_should_skip(position)
 
     def _finalize_entry_execution_meta(
         self,
@@ -6309,34 +6171,25 @@ class TradingOrchestrator:
         is_short: bool,
         execution_meta: dict[str, Any],
     ) -> dict[str, Any]:
-        meta = dict(execution_meta)
-        signal_price = float(signal.price)
-        submit_price = float(meta.get("submit_price", signal_price) or signal_price)
+        tick_size = 0.02
+        if (
+            self._futures_slippage_controller is not None
+            and getattr(self._futures_slippage_controller, "config", None) is not None
+        ):
+            tick_size = float(self._futures_slippage_controller.config.tick_size)
 
-        meta["signal_price"] = signal_price
-        meta["submit_price"] = submit_price
-        meta["fill_price"] = float(fill_price)
+        meta = finalize_entry_execution_metadata(
+            signal=signal,
+            fill_price=fill_price,
+            is_short=is_short,
+            execution_meta=execution_meta,
+            tick_size=tick_size,
+        )
 
-        try:
-            from shared.execution.slippage_control import compute_adverse_slippage_ticks
-
-            tick_size = 0.02
-            if (
-                self._futures_slippage_controller is not None
-                and getattr(self._futures_slippage_controller, "config", None)
-                is not None
-            ):
-                tick_size = float(self._futures_slippage_controller.config.tick_size)
-
-            slippage_ticks = compute_adverse_slippage_ticks(
-                signal_price=signal_price,
-                fill_price=float(fill_price),
-                is_buy=(not is_short),
-                tick_size=tick_size,
-            )
-            meta["slippage_ticks"] = float(slippage_ticks)
-            meta["slippage_tick_size"] = tick_size
-
+        if "slippage_ticks" in meta:
+            signal_price = float(meta["signal_price"])
+            submit_price = float(meta["submit_price"])
+            slippage_ticks = float(meta["slippage_ticks"])
             self._update_entry_slippage_stats(max(0.0, float(slippage_ticks)))
             logger.info(
                 "Entry execution prices: code=%s signal=%.2f submit=%.2f fill=%.2f "
@@ -6347,7 +6200,7 @@ class TradingOrchestrator:
                 float(fill_price),
                 float(slippage_ticks),
             )
-        except ImportError:
+        else:
             logger.debug("slippage_control not available, skipping slippage telemetry")
 
         return meta

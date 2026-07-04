@@ -42,6 +42,7 @@ _EXPORT_MODULES = {
 _SUBMODULES = {
     "data_provider": "services.trading.data_provider",
     "execution_facade": "services.trading.execution_facade",
+    "execution_runtime": "services.trading.execution_runtime",
     "market_data_bootstrap": "services.trading.market_data_bootstrap",
     "orchestrator": "services.trading.orchestrator",
     "pipeline": "services.trading.pipeline",
@@ -50,6 +51,7 @@ _SUBMODULES = {
     "recovery": "services.trading.recovery",
     "runtime_config": "services.trading.runtime_config",
     "session_calendar": "services.trading.session_calendar",
+    "startup_sequence": "services.trading.startup_sequence",
     "strategy_manager": "services.trading.strategy_manager",
 }
 

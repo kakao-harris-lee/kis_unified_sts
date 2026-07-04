@@ -93,6 +93,18 @@ def test_execution_facade_package_attribute_resolves_without_orchestrator() -> N
     assert result.returncode == 0, result.stderr
 
 
+def test_execution_runtime_package_attribute_resolves_without_orchestrator() -> None:
+    result = _run_python("""
+        import sys
+        import services.trading as trading
+
+        assert trading.execution_runtime.finalize_entry_execution_metadata is not None
+        assert "services.trading.orchestrator" not in sys.modules
+        """)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_recovery_package_attribute_resolves_without_orchestrator() -> None:
     result = _run_python("""
         import sys
@@ -113,6 +125,18 @@ def test_market_data_bootstrap_package_attribute_resolves_without_orchestrator()
         import services.trading as trading
 
         assert trading.market_data_bootstrap.init_price_feeds is not None
+        assert "services.trading.orchestrator" not in sys.modules
+        """)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_startup_sequence_package_attribute_resolves_without_orchestrator() -> None:
+    result = _run_python("""
+        import sys
+        import services.trading as trading
+
+        assert trading.startup_sequence.run_trading_startup_sequence is not None
         assert "services.trading.orchestrator" not in sys.modules
         """)
 
