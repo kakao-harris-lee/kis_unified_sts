@@ -158,10 +158,15 @@ _STOCH_D_RUNTIME = 49.647273
 _STOCH_K_SHARED = 56.017756
 _STOCH_D_SHARED = 77.266641
 
-# ADX: full Wilder-smoothed ADX(런타임) vs 단일-bar DX(regime detector)
+# ADX: full Wilder-smoothed ADX(런타임) vs regime detector.
+# M2 (2026-07-04): detector._calc_adx 가 canonical Wilder ADX(reference.ADXCalculator)
+# 로 위임되어 두 경로가 이제 수렴한다. 과거 detector 는 단일-bar DX(15.873272)를
+# 냈으나(방향성 이동 규칙 누락 + SMA-DI + DX→ADX 스무딩 생략), 이제 canonical
+# Wilder ADX(31.634448)를 낸다. 런타임과의 0.08 잔차는 첫 DI 를 seed bar 에서
+# 보고하느냐 한 bar 뒤에서 보고하느냐의 warmup-seed 차이일 뿐, 둘 다 정통 Wilder.
 _ADX_RUNTIME_WILDER = 31.719136
-_ADX_DETECTOR_DX = 15.873272
-_ADX_KNOWN_DELTA = 15.845864
+_ADX_DETECTOR_WILDER = 31.634448  # was 15.873272 (defective single-bar DX)
+_ADX_WARMUP_SEED_DELTA = 0.084688  # detector(calculate_last) vs runtime warmup offset
 
 # Bollinger (런타임 ddof=1 sample std)
 _BB_LOWER = 99.902454
@@ -316,17 +321,24 @@ def test_adx_range_invariant_both_paths(
     assert 0.0 <= float(adx_detector) <= 100.0
 
 
-def test_adx_two_implementations_diverge(
+def test_adx_two_implementations_converge(
     candles: list[Candle], ohlcv: dict[str, list[float]]
 ) -> None:
-    """두 ADX 구현의 알고리즘 차이를 tolerance 비교 + 델타 스냅샷으로 특성화.
+    """두 ADX 구현이 이제 canonical Wilder ADX 로 **수렴**함을 고정 (M2, 2026-07-04).
 
-    왜 다른가:
-      * 런타임 ``_calc_adx`` 는 정통 ADX — DX 를 다시 Wilder 스무딩한 최종값.
-      * regime detector ``_calc_adx`` 는 이름만 ADX 이고 실제로는 마지막 바의
-        **단일 DX** 를 rolling-mean(단순평균) 기반으로 산출한다(스무딩 없음).
-    따라서 같은 OHLC 에서도 값이 크게 벌어진다. 통합 시 둘을 하나로 합치면
-    아래 스냅샷/델타 floor 가 무너져 실패로 드러난다.
+    과거(특성화 하네스의 원래 목적): detector 는 이름만 ADX 이고 실제로는 마지막
+    바의 단일 DX(15.873272)를 rolling-mean(단순평균)으로 산출했다 — 방향성 이동
+    규칙 누락 + SMA-DI + DX→ADX Wilder 스무딩 생략. 런타임(31.719136)과 약 15.8
+    포인트 벌어져, ADX 를 임계값으로 쓰는 regime gate 가 오작동했다.
+
+    수정(Diff 2): ``shared/regime/adaptive_detector._calc_adx`` 를
+    ``reference.ADXCalculator(period).calculate_last(...)`` 에 위임 → 이제 detector
+    도 canonical Wilder ADX(31.634448)를 낸다. 런타임과의 0.08 잔차는 첫 DI 를
+    seed bar 에서 보고하느냐 한 bar 뒤에서 보고하느냐의 warmup-seed 차이뿐이며,
+    둘 다 정통 Wilder 이므로 warmup tolerance(0.1) 안에서 일치해야 한다.
+
+    이 테스트가 다시 벌어지면(delta > 0.1) detector 위임이 풀렸거나 세 번째 ADX
+    구현이 재도입된 것이다.
     """
     adx_runtime = IndicatorCalculationMixin._calc_adx(candles, period=14)
     detector = AdaptiveRegimeDetector()
@@ -340,12 +352,16 @@ def test_adx_two_implementations_diverge(
     )
 
     assert adx_runtime is not None
+    # (a) 각 경로 값 스냅샷 (둘 다 canonical Wilder ADX)
     assert adx_runtime == pytest.approx(_ADX_RUNTIME_WILDER, abs=_SNAPSHOT_ABS_TOL)
-    assert adx_detector == pytest.approx(_ADX_DETECTOR_DX, abs=_SNAPSHOT_ABS_TOL)
+    assert adx_detector == pytest.approx(_ADX_DETECTOR_WILDER, abs=_SNAPSHOT_ABS_TOL)
 
+    # (b) 수렴 불변식: 두 정통 Wilder ADX 가 warmup-seed 오프셋(≈0.08) 안에서 일치
     delta = abs(adx_runtime - adx_detector)
-    assert delta == pytest.approx(_ADX_KNOWN_DELTA, abs=_SNAPSHOT_ABS_TOL)
-    assert delta > 5.0, "ADX 두 구현이 수렴함 — SoT 통합 발생? 스냅샷 갱신 필요"
+    assert delta == pytest.approx(_ADX_WARMUP_SEED_DELTA, abs=_SNAPSHOT_ABS_TOL)
+    assert (
+        delta < 0.1
+    ), "ADX 두 경로가 다시 벌어짐 — detector 위임 해제 또는 세 번째 ADX 재도입?"
 
 
 # ---------------------------------------------------------------------------

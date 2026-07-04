@@ -11,6 +11,7 @@ from enum import StrEnum
 import numpy as np
 import pandas as pd
 
+from shared.indicators.reference import ADXCalculator
 from shared.utils.math import safe_divide
 
 from .models import RegimeSignal
@@ -393,43 +394,30 @@ class AdaptiveRegimeDetector:
         close: np.ndarray,
         period: int = 14
     ) -> float:
-        """Calculate Average Directional Index.
+        """Average Directional Index — canonical Wilder ADX.
+
+        Delegates to ``shared.indicators.reference.ADXCalculator`` so the regime
+        detector, the runtime indicator engine, and the reference layer all share
+        one canonical ADX. The previous body was named ADX but returned a single
+        last-bar DX: it dropped the directional-movement rule
+        (``np.maximum(H-Hp, 0)`` never zeroes the smaller move), smoothed +DI/-DI
+        with a simple rolling mean, and omitted the final DX→ADX Wilder smoothing.
+        That under-reported trend strength by roughly half (≈15.9 vs the correct
+        ≈31.6 on the M2 parity sample), which mis-triggered any ADX-keyed regime
+        gate.
 
         Args:
             high: High prices
             low: Low prices
             close: Close prices
-            period: ADX period
+            period: Wilder period for DMI / DX smoothing
 
         Returns:
-            ADX value (0-100)
+            ADX value (0-100); 0.0 when there is insufficient data (preserving
+            the prior early-return contract — never None).
         """
-        if len(high) < period + 1:
-            return 0.0
-
-        # Calculate directional movement
-        plus_dm = np.maximum(high[1:] - high[:-1], 0)
-        minus_dm = np.maximum(low[:-1] - low[1:], 0)
-
-        # True range
-        tr1 = high[1:] - low[1:]
-        tr2 = np.abs(high[1:] - close[:-1])
-        tr3 = np.abs(low[1:] - close[:-1])
-        tr = np.maximum(tr1, np.maximum(tr2, tr3))
-
-        # Smooth indicators
-        atr = pd.Series(tr).rolling(period).mean().iloc[-1]
-
-        if atr == 0:
-            return 0.0
-
-        plus_di = 100 * pd.Series(plus_dm).rolling(period).mean().iloc[-1] / atr
-        minus_di = 100 * pd.Series(minus_dm).rolling(period).mean().iloc[-1] / atr
-
-        # ADX calculation
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di) if (plus_di + minus_di) != 0 else 0
-
-        return float(dx)
+        adx = ADXCalculator(period=period).calculate_last(high, low, close)
+        return float(adx) if adx is not None else 0.0
 
     def _calc_atr(
         self,
