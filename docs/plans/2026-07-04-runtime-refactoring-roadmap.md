@@ -174,8 +174,12 @@ boundaries, not by arbitrary line counts:
   `services/trading/execution_facade.py`; orchestrator compatibility methods
   now delegate pure entry-order result normalization and signal direction
   extraction to the owner module;
+- recovery helpers: branch implemented in `services/trading/recovery.py`;
+  Redis recovery still owns reader/tracker/symbol side effects in the
+  orchestrator while freshness checks and `Position` reconstruction live in
+  the owner module;
 - initialization and dependency wiring;
-- recovery and reconciliation;
+- full Redis/SQLite recovery service and broker reconciliation handoff;
 - execution setup and order submission;
 - position state transitions;
 - kill-switch and live-mode guard hooks;

@@ -49,6 +49,11 @@ from services.trading.execution_facade import (
 from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+from services.trading.recovery import (
+    evaluate_position_freshness,
+    parse_recovery_entry_time,
+    reconstruct_recovered_position,
+)
 from services.trading.reentry_guard import (
     record_recent_exit_cooldown,
     reentry_guard_block,
@@ -74,7 +79,7 @@ from shared.execution.futures_instrument import (
 )
 from shared.execution.models import ExecutionVenue
 from shared.execution.venue_router import VenueRouter
-from shared.models.position import Position, PositionSide, PositionState
+from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal, Signal
 from shared.regime.performance_tracker import (
     RegimePerformanceConfig,
@@ -1678,75 +1683,42 @@ class TradingOrchestrator:
             pos_id = pos_data.get("id", "")
             strategy = pos_data.get("strategy", "")
 
-            # Parse entry_time
             try:
-                entry_time_str = pos_data.get("entry_time", "")
-                entry_time = datetime.fromisoformat(entry_time_str)
+                entry_time = parse_recovery_entry_time(pos_data)
             except (ValueError, TypeError):
                 logger.warning(f"Invalid entry_time in Redis position: {pos_id[:8]}")
                 reader.remove_position(pos_id)
                 stale += 1
                 continue
 
-            # Freshness filter
-            age_days = (today - entry_time.date()).days
-            if strategy in self.SWING_STRATEGIES:
-                if age_days > max_age_days:
+            freshness = evaluate_position_freshness(
+                strategy=strategy,
+                entry_time=entry_time,
+                today=today,
+                swing_strategies=self.SWING_STRATEGIES,
+                max_swing_age_days=max_age_days,
+            )
+            if not freshness.recoverable:
+                if freshness.is_swing:
                     logger.debug(
-                        f"Stale swing position: {pos_data.get('code')} (age={age_days}d)"
+                        f"Stale swing position: {pos_data.get('code')} "
+                        f"(age={freshness.age_days}d)"
                     )
-                    reader.remove_position(pos_id)
-                    stale += 1
-                    continue
-            else:
-                # Intraday strategies: same-day only
-                if entry_time.date() != today:
+                else:
                     logger.debug(
-                        f"Stale intraday position: {pos_data.get('code')} (age={age_days}d)"
+                        f"Stale intraday position: {pos_data.get('code')} "
+                        f"(age={freshness.age_days}d)"
                     )
-                    reader.remove_position(pos_id)
-                    stale += 1
-                    continue
+                reader.remove_position(pos_id)
+                stale += 1
+                continue
 
-            # Reconstruct Position
             try:
-                side_str = pos_data.get("side", "long")
-                side = PositionSide(side_str)
-                entry_price = float(pos_data["entry_price"])
-                current_price = float(pos_data.get("current_price", entry_price))
-
-                pos_code = pos_data["code"]
-                position = Position(
-                    id=pos_id,
-                    code=pos_code,
-                    name=pos_data.get("name", "")
-                    or self._symbol_names.get(pos_code, pos_code),
-                    side=side,
-                    quantity=int(pos_data["quantity"]),
-                    entry_price=entry_price,
+                position = reconstruct_recovered_position(
+                    pos_data,
                     entry_time=entry_time,
-                    current_price=current_price,
-                    highest_price=float(
-                        pos_data.get("highest_price", max(entry_price, current_price))
-                    ),
-                    lowest_price=float(
-                        pos_data.get("lowest_price", min(entry_price, current_price))
-                    ),
-                    state=PositionState(pos_data.get("state", "survival").lower()),
-                    strategy=strategy,
-                    fee_rate=float(pos_data.get("fee_rate", 0.003)),
+                    symbol_names=getattr(self, "_symbol_names", {}),
                 )
-
-                # Re-attach the idempotency key (if persisted) so that
-                # any in-flight retry of the originating signal does not
-                # create a duplicate position after restart.
-                recovered_coid = str(pos_data.get("client_order_id") or "").strip()
-                if recovered_coid:
-                    position.metadata["client_order_id"] = recovered_coid
-
-                stop_price = pos_data.get("stop_price")
-                if stop_price is not None:
-                    position.stop_price = float(stop_price)
             except (KeyError, ValueError, TypeError) as e:
                 logger.warning(f"Failed to reconstruct position {pos_id[:8]}: {e}")
                 reader.remove_position(pos_id)

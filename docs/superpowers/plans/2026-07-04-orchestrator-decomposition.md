@@ -263,8 +263,9 @@ implementation.
   branch-implemented from the underscored orchestrator compatibility methods;
   keep broker submission on `TradingOrchestrator` until a dedicated
   execution-service plan exists.
-- `services/trading/recovery.py`: extract Redis/ledger recovery and broker
-  reconciliation behind existing startup tests.
+- `services/trading/recovery.py`: freshness and `Position` reconstruction
+  helpers are branch-implemented; full Redis/ledger recovery service extraction
+  and broker reconciliation handoff remain separate follow-up work.
 - `services/trading/runtime_config.py`: extract env parsing and `TradingConfig`
   after the smaller helpers have moved.
 

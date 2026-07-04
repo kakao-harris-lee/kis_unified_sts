@@ -218,6 +218,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Trading package lazy facade | 🟡 branch implemented | `services/trading/__init__.py` resolves top-level exports lazily so config/module imports do not eagerly load the monolithic orchestrator |
 | Re-entry guard helper split | 🟡 branch implemented | `services/trading/reentry_guard.py`; orchestrator keeps compatibility methods while cooldown key/record/block logic lives in owner helpers |
 | Execution helper split | 🟡 branch implemented | `services/trading/execution_facade.py`; orchestrator keeps compatibility methods while pure order-result/direction helpers live in an owner module |
+| Recovery helper split | 🟡 branch implemented | `services/trading/recovery.py`; Redis recovery keeps orchestrator side effects while freshness and reconstruction logic lives in an owner module |
 | Orchestrator decomposition | ⏳ planned | Continue extracting initialization, recovery, execution setup, position transitions, and guard hooks from `services/trading/orchestrator.py` behind delegation tests |
 | Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
 

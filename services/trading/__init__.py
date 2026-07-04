@@ -46,6 +46,7 @@ _SUBMODULES = {
     "pipeline": "services.trading.pipeline",
     "position_tracker": "services.trading.position_tracker",
     "reentry_guard": "services.trading.reentry_guard",
+    "recovery": "services.trading.recovery",
     "runtime_config": "services.trading.runtime_config",
     "session_calendar": "services.trading.session_calendar",
     "strategy_manager": "services.trading.strategy_manager",
