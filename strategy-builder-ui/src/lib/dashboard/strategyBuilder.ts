@@ -1,4 +1,55 @@
 import { apiClient } from './client';
+import type { IndicatorCategory } from '@/types/builder';
+
+// ── Capabilities response contract ─────────────────────────────────────────
+// Mirrors backend `shared/strategy_builder/schema.py`:
+//   BuilderCapabilities.indicators[] = IndicatorDefinition (snake_case;
+//   `model_config = extra="forbid"` — NO camelCase alias_generator).
+// We still tolerate camelCase aliases defensively; the mapper in
+// `lib/builder/indicatorCatalog.ts` reads snake_case first, camel as fallback.
+
+export interface CapabilityIndicatorParam {
+  name: string;
+  type?: 'number' | 'string';
+  default: number | string;
+  min?: number;
+  max?: number;
+  step?: number;
+  description?: string;
+}
+
+export interface CapabilityIndicatorOutput {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface CapabilityIndicator {
+  id: string;
+  name: string;
+  name_ko?: string;
+  nameKo?: string;
+  category: IndicatorCategory;
+  description?: string;
+  params?: CapabilityIndicatorParam[];
+  outputs?: CapabilityIndicatorOutput[];
+  default_output?: string;
+  defaultOutput?: string;
+  implemented?: boolean;
+  backtest_supported?: boolean;
+  backtestSupported?: boolean;
+  runtime_supported?: boolean;
+  runtimeSupported?: boolean;
+}
+
+export interface BuilderCapabilitiesResponse {
+  indicators: CapabilityIndicator[];
+  operators?: string[];
+  price_fields?: string[];
+  risk_fields?: Record<string, unknown>;
+  default_order_amount?: number;
+  ttl_seconds?: number;
+}
 
 export interface PromotionRegisteredStrategy {
   id: string;
@@ -102,7 +153,8 @@ function errorMessage(error: unknown): string {
 
 // Strategy Builder API
 export const strategyBuilderApi = {
-  getCapabilities: () => apiClient.get('/api/strategy-builder/capabilities'),
+  getCapabilities: () =>
+    apiClient.get<BuilderCapabilitiesResponse>('/api/strategy-builder/capabilities'),
   validate: (state: unknown) => apiClient.post('/api/strategy-builder/validate', state),
   previewYaml: (state: unknown) => apiClient.post('/api/strategy-builder/preview-yaml', state),
   previewCode: (state: unknown) => apiClient.post('/api/strategy-builder/preview-code', state),

@@ -5,13 +5,13 @@ import { Search, Plus, ChevronDown, ChevronRight, X, Settings2, Sparkles, Check,
 import { cn } from "@/lib/utils";
 import type { BuilderIndicator, IndicatorCategory, IndicatorDefinition } from "@/types/builder";
 import { POPULAR_INDICATORS } from "@/types/builder";
+import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/lib/builder/constants";
+import { useIndicatorCatalog } from "@/lib/builder/useIndicatorCatalog";
 import {
-  CATEGORY_LABELS,
-  CATEGORY_ORDER,
-  getIndicatorsByCategory,
-  searchIndicators,
-  getIndicatorById,
-} from "@/lib/builder/constants";
+  resolveIndicatorBadges,
+  primaryBadge,
+  type IndicatorBadge,
+} from "@/lib/builder/indicatorBadges";
 
 interface IndicatorSelectorProps {
   selectedIndicators: BuilderIndicator[];
@@ -33,6 +33,19 @@ const CATEGORY_ICONS: Record<IndicatorCategory, string> = {
   candlestick: "🕯️",
 };
 
+/** 공용 amber 경고 배지 칩 (백엔드/백테스트/런타임/선물 미지원). */
+function AmberBadge({ badge, iconOnly = false }: { badge: IndicatorBadge; iconOnly?: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded"
+      title={badge.title}
+    >
+      <AlertTriangle className="w-3 h-3" />
+      {!iconOnly && badge.label}
+    </span>
+  );
+}
+
 export function IndicatorSelector({
   selectedIndicators,
   onAddIndicator,
@@ -49,6 +62,9 @@ export function IndicatorSelector({
   // alias 편집 중인 로컬 값 (커밋 전 입력 중 상태)
   const [pendingAliases, setPendingAliases] = useState<Record<string, string>>({});
 
+  // 백엔드 capabilities 로부터 병합된 지표 카탈로그 (오프라인 시 constants fallback).
+  const catalog = useIndicatorCatalog();
+
   // 이미 추가된 지표 ID 목록
   const addedIndicatorIds = useMemo(() => {
     return new Set(selectedIndicators.map(ind => ind.indicatorId));
@@ -57,17 +73,17 @@ export function IndicatorSelector({
   // 인기 지표 정의들
   const popularIndicatorDefs = useMemo(() => {
     return POPULAR_INDICATORS
-      .map(id => getIndicatorById(id))
+      .map(id => catalog.getById(id))
       .filter((def): def is IndicatorDefinition => def !== undefined);
-  }, []);
+  }, [catalog]);
 
   // Filtered indicators for search
   const filteredIndicators = useMemo(() => {
     if (searchQuery.trim()) {
-      return searchIndicators(searchQuery);
+      return catalog.search(searchQuery);
     }
     return [];
-  }, [searchQuery]);
+  }, [searchQuery, catalog]);
 
   // Handle add indicator - 패널은 열어둔 채로 계속 추가 가능
   const handleAddIndicator = useCallback(
@@ -172,10 +188,11 @@ export function IndicatorSelector({
         {selectedIndicators.length > 0 ? (
           <div className="space-y-2">
             {selectedIndicators.map((ind) => {
-              const def = getIndicatorById(ind.indicatorId);
+              const def = catalog.getById(ind.indicatorId);
               if (!def) return null;
 
               const isExpanded = expandedIndicator === ind.id;
+              const badgeState = resolveIndicatorBadges(def, assetClass);
 
               return (
                 <div
@@ -196,13 +213,20 @@ export function IndicatorSelector({
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <div className="font-medium text-sm text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
                           {def.nameKo}
-                          {def.leanUnsupported && (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded" title="Lean 백테스트 미지원 (p1 실행만 가능)">
-                              <AlertTriangle className="w-3 h-3" />
-                              백테스트 미지원
+                          {badgeState.locked ? (
+                            <span
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 rounded"
+                              title={badgeState.badges[0]?.title}
+                            >
+                              <Lock className="w-3 h-3" />
+                              {badgeState.badges[0]?.label}
                             </span>
+                          ) : (
+                            badgeState.badges.map((badge) => (
+                              <AmberBadge key={badge.kind} badge={badge} />
+                            ))
                           )}
                         </div>
                         <div className="text-xs text-slate-500 flex items-center gap-2">
@@ -402,7 +426,9 @@ export function IndicatorSelector({
               {filteredIndicators.slice(0, 20).map((def) => {
                 const isAdded = addedIndicatorIds.has(def.id);
                 const isJustAdded = recentlyAdded === def.id;
-                const isUnimplemented = def.implemented === false;
+                const badgeState = resolveIndicatorBadges(def, assetClass);
+                const isUnimplemented = badgeState.disabled;
+                const badge = primaryBadge(badgeState);
 
                 return (
                   <button
@@ -438,19 +464,9 @@ export function IndicatorSelector({
                       <div className="text-xs text-slate-500">{def.name}</div>
                     </div>
                     {isUnimplemented ? (
-                      <span className="text-xs text-slate-400">지원 예정</span>
-                    ) : def.leanUnsupported ? (
-                      <span className="flex items-center gap-1 text-xs text-amber-500" title="Lean 백테스트 미지원 (p1 실행만 가능)">
-                        <AlertTriangle className="w-3 h-3" />
-                        백테스트 미지원
-                      </span>
-                    ) : assetClass === "futures" && def.futuresApplicability === "degraded" ? (
-                      <span
-                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded"
-                        title="코스피200 미니의 낮은 유동성에서 신뢰도 저하 — 선물 권장 안 함"
-                      >
-                        선물 권장 안 함
-                      </span>
+                      <span className="text-xs text-slate-400">{badge?.label ?? "지원 예정"}</span>
+                    ) : badge ? (
+                      <AmberBadge badge={badge} />
                     ) : isAdded && !isJustAdded ? (
                       <span className="text-xs text-slate-400">+1 더 추가</span>
                     ) : null}
@@ -478,37 +494,49 @@ export function IndicatorSelector({
                   {popularIndicatorDefs.map((def) => {
                     const isAdded = addedIndicatorIds.has(def.id);
                     const isJustAdded = recentlyAdded === def.id;
+                    const badgeState = resolveIndicatorBadges(def, assetClass);
+                    const isUnimplemented = badgeState.disabled;
+                    const badge = primaryBadge(badgeState);
 
                     return (
                       <button
                         key={def.id}
-                        onClick={() => handleAddIndicator(def)}
+                        onClick={() => !isUnimplemented && handleAddIndicator(def)}
+                        disabled={isUnimplemented}
                         className={cn(
                           "flex flex-col items-center justify-center gap-1 p-3 rounded-lg border transition-all group relative",
-                          isJustAdded
+                          isUnimplemented
+                            ? "bg-slate-50 dark:bg-slate-800/30 border-slate-200 dark:border-slate-700 opacity-50 cursor-not-allowed"
+                            : isJustAdded
                             ? "bg-green-50 dark:bg-green-900/20 border-green-400"
                             : isAdded
                             ? "bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800"
                             : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-900/20"
                         )}
                       >
-                        {isJustAdded && (
+                        {isUnimplemented && (
+                          <span className="absolute -top-1 -right-1 w-5 h-5 bg-slate-300 dark:bg-slate-600 rounded-full flex items-center justify-center">
+                            <Lock className="w-3 h-3 text-white" />
+                          </span>
+                        )}
+                        {!isUnimplemented && isJustAdded && (
                           <span className="absolute -top-1 -right-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
                             <Check className="w-3 h-3 text-white" />
                           </span>
                         )}
-                        {isAdded && !isJustAdded && (
+                        {!isUnimplemented && isAdded && !isJustAdded && (
                           <span className="absolute -top-1 -right-1 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center text-[10px] text-white font-bold">
                             {selectedIndicators.filter(i => i.indicatorId === def.id).length}
                           </span>
                         )}
                         <span className={cn(
                           "text-sm font-medium group-hover:text-blue-600",
-                          isJustAdded ? "text-green-700 dark:text-green-400" : "text-slate-900 dark:text-white"
+                          isUnimplemented ? "text-slate-400 dark:text-slate-500" : isJustAdded ? "text-green-700 dark:text-green-400" : "text-slate-900 dark:text-white"
                         )}>
                           {def.nameKo}
                         </span>
                         <span className="text-xs text-slate-400">{def.name}</span>
+                        {badge && <AmberBadge badge={badge} />}
                       </button>
                     );
                   })}
@@ -518,7 +546,7 @@ export function IndicatorSelector({
               {/* Category Accordion */}
               <div className="space-y-1 max-h-64 overflow-y-auto">
                 {CATEGORY_ORDER.map((cat) => {
-                  const categoryIndicators = getIndicatorsByCategory(cat);
+                  const categoryIndicators = catalog.byCategory(cat);
                   const isExpanded = expandedCategories.has(cat);
 
                   return (
@@ -549,7 +577,9 @@ export function IndicatorSelector({
                             const isAdded = addedIndicatorIds.has(def.id);
                             const isJustAdded = recentlyAdded === def.id;
                             const count = selectedIndicators.filter(i => i.indicatorId === def.id).length;
-                            const isUnimplemented = def.implemented === false;
+                            const badgeState = resolveIndicatorBadges(def, assetClass);
+                            const isUnimplemented = badgeState.disabled;
+                            const badge = primaryBadge(badgeState);
 
                             return (
                               <button
@@ -579,25 +609,21 @@ export function IndicatorSelector({
                                   {def.nameKo}
                                 </span>
                                 {isUnimplemented ? (
-                                  <span className="text-[10px] text-slate-400 ml-auto">지원 예정</span>
-                                ) : def.leanUnsupported ? (
-                                  <span className="flex items-center gap-0.5 text-[10px] text-amber-500 ml-auto" title="Lean 백테스트 미지원">
-                                    <AlertTriangle className="w-3 h-3" />
-                                  </span>
-                                ) : assetClass === "futures" && def.futuresApplicability === "degraded" ? (
-                                  <span
-                                    className="ml-auto inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded"
-                                    title="코스피200 미니의 낮은 유동성에서 신뢰도 저하 — 선물 권장 안 함"
-                                  >
-                                    선물 권장 안 함
-                                  </span>
-                                ) : isAdded && !isJustAdded ? (
-                                  <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded">
-                                    {count}개
-                                  </span>
-                                ) : null}
-                                {!isUnimplemented && (
-                                  <span className="text-xs text-slate-400 ml-auto">{def.name}</span>
+                                  <span className="text-[10px] text-slate-400 ml-auto">{badge?.label ?? "지원 예정"}</span>
+                                ) : (
+                                  <>
+                                    {badge && (
+                                      <span className="ml-auto">
+                                        <AmberBadge badge={badge} />
+                                      </span>
+                                    )}
+                                    {!badge && isAdded && !isJustAdded && (
+                                      <span className="ml-auto px-1.5 py-0.5 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded">
+                                        {count}개
+                                      </span>
+                                    )}
+                                    <span className={cn("text-xs text-slate-400", badge || (isAdded && !isJustAdded) ? "" : "ml-auto")}>{def.name}</span>
+                                  </>
                                 )}
                               </button>
                             );

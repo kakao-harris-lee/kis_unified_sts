@@ -40,9 +40,19 @@ export interface IndicatorDefinition {
   params: IndicatorParam[];
   outputs: IndicatorOutput[];
   defaultOutput: string;
-  implemented?: boolean; // false면 미구현 (기본값 true 취급)
-  leanUnsupported?: boolean; // true면 Lean 백테스트 미지원 (p1 자체 실행은 가능)
-  /** "degraded": 코스피200 미니의 낮은 유동성에서 신뢰도 저하 (선물 모드 자문 경고용, 차단 아님) */
+  // ── Backend capability flags ─────────────────────────────────────────────
+  // 백엔드 `shared/strategy_builder/schema.py::IndicatorDefinition` 와 정합.
+  // 매핑은 `lib/builder/indicatorCatalog.ts::mapCapabilityIndicator` 가 담당.
+  /** backend `implemented` — false면 미구현: Lock + 추가 차단 (기본값 true 취급) */
+  implemented?: boolean;
+  /** backend `backtest_supported === false` — Lean/백테스트 미지원 (amber "백테스트 미지원") */
+  leanUnsupported?: boolean;
+  /** backend `runtime_supported === false` — 실시간 런타임 미지원 ("런타임 미지원") */
+  runtimeUnsupported?: boolean;
+  /** constants 에는 있으나 백엔드 capabilities 에는 없는 항목 ("백엔드 미지원", 선택 가능하되 경고) */
+  backendUnsupported?: boolean;
+  /** "degraded": 코스피200 미니의 낮은 유동성에서 신뢰도 저하 (선물 모드 자문 경고용, 차단 아님).
+   * 백엔드 미제공 — constants UI 메타에서만 공급된다. */
   futuresApplicability?: "ok" | "degraded";
 }
 

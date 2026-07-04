@@ -11,6 +11,7 @@ import type {
   RiskManagement,
 } from "@/types/builder";
 import { getIndicatorById } from "@/lib/builder/constants";
+import { useIndicatorCatalog } from "@/lib/builder/useIndicatorCatalog";
 import { builderReducer, INITIAL_STATE } from "@/lib/builder/reducer";
 import { toYamlStrategy, toYamlString as serializeYamlStrategy } from "@/lib/builder/yamlSerializer";
 
@@ -22,6 +23,12 @@ export { INITIAL_STATE } from "@/lib/builder/reducer";
 
 export function useStrategyBuilder(initialState?: BuilderState) {
   const [state, dispatch] = useReducer(builderReducer, initialState || INITIAL_STATE);
+
+  // Backend capabilities drive the indicator catalog (동적 fetch). React Query
+  // dedupes this with the IndicatorSelector's subscription. The catalog already
+  // falls back to the constants seed while loading / on error, so createIndicator
+  // always resolves a definition.
+  const catalog = useIndicatorCatalog();
 
   // ============================================================
   // Metadata Actions
@@ -178,7 +185,9 @@ export function useStrategyBuilder(initialState?: BuilderState) {
 
   const createIndicator = useCallback(
     (indicatorId: string, customAlias?: string): BuilderIndicator | null => {
-      const def = getIndicatorById(indicatorId);
+      // Prefer the capability-driven catalog; fall back to the constants seed
+      // (offline / first render) so the builder still functions.
+      const def = catalog.getById(indicatorId) ?? getIndicatorById(indicatorId);
       if (!def) return null;
 
       const defaultParams: Record<string, number | string> = {};
@@ -213,7 +222,7 @@ export function useStrategyBuilder(initialState?: BuilderState) {
         output: def.defaultOutput,
       };
     },
-    [state.indicators]
+    [state.indicators, catalog]
   );
 
   // ============================================================

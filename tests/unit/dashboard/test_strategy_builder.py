@@ -264,3 +264,74 @@ async def test_register_paper_futures_defaults_to_one_contract(tmp_path, monkeyp
         (tmp_path / "fut_default_contracts.yaml").read_text(encoding="utf-8")
     )
     assert doc["strategy"]["position"]["params"]["fixed_quantity"] == 1
+
+
+def test_capabilities_expose_tier1_indicators() -> None:
+    """The Tier1 catalog expansion must surface the newly-exposed indicators."""
+    from shared.strategy_builder.catalog import load_capabilities
+
+    catalog = load_capabilities()
+    by_id = {indicator.id: indicator for indicator in catalog.indicators}
+
+    # Original 10 stay present (no regression).
+    for base in (
+        "sma",
+        "ema",
+        "rsi",
+        "macd",
+        "bollinger",
+        "stochastic",
+        "atr",
+        "adx",
+        "volume_ma",
+        "vwap",
+    ):
+        assert base in by_id, f"base indicator {base} disappeared"
+
+    # Tier1 additions are exposed.
+    for new_id in (
+        "williams_r",
+        "cci",
+        "trix",
+        "obv",
+        "mfi",
+        "rvol",
+        "volume_acceleration",
+        "ichimoku",
+    ):
+        assert new_id in by_id, f"tier1 indicator {new_id} missing from catalog"
+
+
+def test_capabilities_tier1_flags_are_honest() -> None:
+    """Flags must match what the runtime/backtest engine actually produces.
+
+    Engine-produced indicators (base flat path + momentum_5m bundle) are
+    runtime/backtest true; ``ichimoku`` has a calculator but no engine wiring,
+    so it must stay implemented-only.
+    """
+    from shared.strategy_builder.catalog import load_capabilities
+
+    by_id = {i.id: i for i in load_capabilities().indicators}
+
+    # Produced at runtime (momentum_5m bundle) AND backtest -> both true.
+    for produced in ("williams_r", "cci", "trix", "obv"):
+        ind = by_id[produced]
+        assert ind.implemented is True
+        assert ind.runtime_supported is True, f"{produced} should be runtime true"
+        assert ind.backtest_supported is True, f"{produced} should be backtest true"
+
+    # Produced as flat keys by the base indicator path -> both true.
+    for produced in ("mfi", "rvol", "volume_acceleration"):
+        ind = by_id[produced]
+        assert ind.implemented is True
+        assert ind.runtime_supported is True, f"{produced} should be runtime true"
+        assert ind.backtest_supported is True, f"{produced} should be backtest true"
+
+    # Calculator exists but is NOT wired into the streaming/backtest engine.
+    ichimoku = by_id["ichimoku"]
+    assert ichimoku.implemented is True
+    assert ichimoku.runtime_supported is False, "ichimoku is not engine-produced"
+    assert ichimoku.backtest_supported is False, "ichimoku is not engine-produced"
+
+    # trix exposes both the oscillator value and its signal line.
+    assert {o.id for o in by_id["trix"].outputs} == {"value", "signal"}

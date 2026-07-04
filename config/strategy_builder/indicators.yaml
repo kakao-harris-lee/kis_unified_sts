@@ -241,3 +241,202 @@ strategy_builder:
       implemented: true
       backtest_supported: true
       runtime_supported: true
+
+    # -------------------------------------------------------------------------
+    # Tier1 expansion (M1 WS3): indicators already computed by the backend.
+    # Flags below are set from an actual cross-check of what the streaming
+    # StreamingIndicatorEngine / backtest engine produce (see
+    # services/trading/indicator_queries.py + shared/indicators/*).
+    #
+    #   * williams_r/cci/trix/obv are emitted in the momentum_5m bundle
+    #     (get_momentum_indicators -> calculate_all_momentum). They are NOT in
+    #     the flat base indicator path; the description notes this. The live
+    #     engine + backtest both compute them, so runtime/backtest are true
+    #     (same convention already used for macd/stochastic, which are also
+    #     bundle-only, not flat-base keys).
+    #   * mfi/rvol/volume_acceleration ARE emitted as flat keys directly by the
+    #     base path get_indicators().
+    #   * ichimoku has a calculator (shared/indicators/technical.py) but is NOT
+    #     wired into the streaming/backtest indicator engine — nothing calls
+    #     TechnicalCalculator on the runtime path — so runtime/backtest are
+    #     false while implemented stays true (honest "exists but not produced").
+    # -------------------------------------------------------------------------
+
+    - id: williams_r
+      name: Williams %R
+      name_ko: 윌리엄스 %R
+      category: oscillator
+      description: >-
+        Williams %R momentum oscillator (range -100..0; < -80 oversold, > -20
+        overbought). Emitted by the runtime in the momentum_5m bundle
+        (get_momentum_indicators), not the flat base indicator path.
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: cci
+      name: CCI
+      name_ko: CCI
+      category: oscillator
+      description: >-
+        Commodity Channel Index over typical price. Emitted by the runtime in
+        the momentum_5m bundle (get_momentum_indicators), not the flat base
+        indicator path.
+      params:
+        - name: period
+          type: number
+          default: 9
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: trix
+      name: TRIX
+      name_ko: TRIX
+      category: oscillator
+      description: >-
+        Triple-smoothed EMA rate-of-change oscillator with a signal line.
+        Emitted by the runtime in the momentum_5m bundle
+        (get_momentum_indicators: trix, trix_signal), not the flat base path.
+      params:
+        - name: n
+          type: number
+          default: 12
+          min: 1
+          max: 100
+        - name: signal
+          type: number
+          default: 9
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: TRIX
+        - id: signal
+          name: Signal
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: obv
+      name: OBV
+      name_ko: OBV
+      category: volume
+      description: >-
+        On-Balance Volume (cumulative signed volume). Emitted by the runtime in
+        the momentum_5m bundle (get_momentum_indicators), not the flat base
+        indicator path. Cumulative — no tunable period.
+      params: []
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: mfi
+      name: MFI
+      name_ko: MFI
+      category: oscillator
+      description: >-
+        Money Flow Index (volume-weighted RSI, range 0..100). Emitted as a flat
+        key by the base indicator path get_indicators() when candles carry
+        volume (omitted for volume-less candles).
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: rvol
+      name: Relative Volume
+      name_ko: 상대 거래량
+      category: volume
+      description: >-
+        Relative Volume (short-window average / long-window average). Emitted as
+        a flat key by the base indicator path get_indicators().
+      params:
+        - name: short_window
+          type: number
+          default: 5
+          min: 1
+          max: 100
+        - name: long_window
+          type: number
+          default: 20
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: volume_acceleration
+      name: Volume Acceleration
+      name_ko: 거래량 가속도
+      category: volume
+      description: >-
+        Second derivative of volume flow (rate-of-change of volume velocity).
+        Emitted as a flat key by the base indicator path get_indicators(). The
+        underlying window is tick/second based, not a bar period.
+      params: []
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: ichimoku
+      name: Ichimoku Cloud
+      name_ko: 일목균형표
+      category: trend
+      description: >-
+        Ichimoku Cloud spans (Senkou Span A/B and cloud top/bottom). A
+        calculator exists (shared/indicators/technical.py) but it is NOT wired
+        into the streaming/backtest indicator engine yet, so it is not produced
+        at runtime — implemented is true while runtime/backtest are false.
+      params: []
+      outputs:
+        - id: span_a
+          name: Senkou Span A
+        - id: span_b
+          name: Senkou Span B
+        - id: cloud_top
+          name: Cloud Top
+        - id: cloud_bottom
+          name: Cloud Bottom
+      default_output: cloud_top
+      implemented: true
+      backtest_supported: false
+      runtime_supported: false
