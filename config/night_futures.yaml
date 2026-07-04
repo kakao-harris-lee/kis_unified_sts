@@ -23,11 +23,12 @@ night_close_capture:
   enabled: true
 
   # Night-session KOSPI200 futures code (8 chars) — roll on contract expiry.
-  tr_key: "101W9000"
+  # 1A01609 = 2026-09 front-month per fo_cme_code.mst (2026-07-02).
+  tr_key: "1A01609"
 
   # Published as product_code in the Redis snapshot when the frame's own
   # symbol field is blank (normally the wire symbol wins).
-  product_code: "101W9000"
+  product_code: "1A01609"
 
   # Capture window (KST, HH:MM, same calendar morning). The last trade
   # received inside [start, end) is published as the night close. The night

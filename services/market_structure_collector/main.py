@@ -236,7 +236,10 @@ async def _collect_program(
     kis_client: Any, config: MarketStructureCollectorConfig, trade_date: date
 ) -> dict[str, Any]:
     rows = await kis_client.fetch_program_trade_daily(
-        trade_date, trade_date, market_div=config.kis.program_market_div
+        trade_date,
+        trade_date,
+        market_div=config.kis.program_market_div,
+        market_cls=config.kis.program_market_cls,
     )
     if not rows:
         raise RuntimeError("FHPPG04600001 returned no rows")

@@ -111,7 +111,10 @@ async def fetch_program_updates(
     updates: dict[date, dict[str, Any]] = {}
     for chunk_start, chunk_end in _chunks(start, end, _PROGRAM_CHUNK_DAYS):
         rows = await kis_client.fetch_program_trade_daily(
-            chunk_start, chunk_end, market_div=config.kis.program_market_div
+            chunk_start,
+            chunk_end,
+            market_div=config.kis.program_market_div,
+            market_cls=config.kis.program_market_cls,
         )
         for row in rows:
             row_date = next(

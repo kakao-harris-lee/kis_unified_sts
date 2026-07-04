@@ -49,6 +49,7 @@ class MarketStructureKISSettings(BaseModel):
     foreign_futures_market_code: str = Field(default="K2I")
     foreign_futures_product_code: str = Field(default="F001")
     program_market_div: str = Field(default="J")
+    program_market_cls: str = Field(default="K")
     futures_symbol: str = Field(default="101S6000")
     index_market_div: str = Field(default="U")
     index_code: str = Field(default="2001")
