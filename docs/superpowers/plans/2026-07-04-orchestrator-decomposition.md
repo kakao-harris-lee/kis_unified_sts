@@ -263,6 +263,10 @@ implementation.
   branch-implemented from the underscored orchestrator compatibility methods;
   keep broker submission on `TradingOrchestrator` until a dedicated
   execution-service plan exists.
+- `services/trading/market_data_bootstrap.py`: KIS client, stock/futures feed,
+  `MarketDataProvider`, and tick-stream publisher construction helpers are
+  branch-implemented; `_initialize_components` ordering remains on
+  `TradingOrchestrator`.
 - `services/trading/recovery.py`: freshness and `Position` reconstruction
   helpers are branch-implemented; full Redis/ledger recovery service extraction
   and broker reconciliation handoff remain separate follow-up work.

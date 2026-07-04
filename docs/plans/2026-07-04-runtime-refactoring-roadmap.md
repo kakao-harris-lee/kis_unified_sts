@@ -178,7 +178,11 @@ boundaries, not by arbitrary line counts:
   Redis recovery still owns reader/tracker/symbol side effects in the
   orchestrator while freshness checks and `Position` reconstruction live in
   the owner module;
-- initialization and dependency wiring;
+- market-data bootstrap helpers: branch implemented in
+  `services/trading/market_data_bootstrap.py`; orchestrator compatibility
+  methods now assign KIS client, price feed, data provider, and tick publisher
+  results returned by the owner module;
+- remaining initialization ordering and dependency wiring;
 - full Redis/SQLite recovery service and broker reconciliation handoff;
 - execution setup and order submission;
 - position state transitions;

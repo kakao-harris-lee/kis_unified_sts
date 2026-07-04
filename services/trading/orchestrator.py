@@ -38,10 +38,11 @@ import pandas as pd
 import yaml
 
 from services.monitoring.metrics import get_metrics_collector
+from services.trading import market_data_bootstrap as _market_data_bootstrap
 from services.trading import runtime_config as _runtime_config
 from services.trading import session_calendar as _session_calendar
 from services.trading.broker_verification import BrokerPositionVerifier
-from services.trading.data_provider import DataProviderConfig, MarketDataProvider
+from services.trading.data_provider import MarketDataProvider
 from services.trading.execution_facade import (
     get_signal_direction,
     normalize_entry_order_result,
@@ -746,32 +747,9 @@ class TradingOrchestrator:
 
     def _init_kis_client(self):
         """Initialize KIS REST API Client"""
-        try:
-            from shared.kis.auth import KISAuthConfig
-            from shared.kis.client import KISClient
-
-            if self.config.asset_class == "futures":
-                app_key = os.getenv("KIS_FUTURES_APP_KEY", os.getenv("KIS_APP_KEY", ""))
-                app_secret = os.getenv(
-                    "KIS_FUTURES_APP_SECRET", os.getenv("KIS_APP_SECRET", "")
-                )
-                # 선물은 항상 실서버 사용 (모의서버는 선물 시세 미지원)
-                is_real = True
-            else:
-                app_key = os.getenv("KIS_APP_KEY", "")
-                app_secret = os.getenv("KIS_APP_SECRET", "")
-                market = os.getenv("KIS_STOCK_MARKET", "real")
-                is_real = market.lower() == "real"
-            kis_config = KISAuthConfig(
-                app_key=app_key, app_secret=app_secret, is_real=is_real
-            )
-            self._kis_client = KISClient(kis_config)
-            logger.info("KIS Client initialized")
-            return kis_config
-        except (ConfigurationError, APIError, NetworkError) as e:
-            logger.warning(f"Failed to initialize KIS Client: {e}")
-            self._kis_client = None
-            return None
+        result = _market_data_bootstrap.init_kis_client(self.config)
+        self._kis_client = result.client
+        return result.auth_config
 
     async def _prefetch_futures_daily_reference(self) -> None:
         """Cache prev_close for each futures symbol via REST at session start.
@@ -807,211 +785,37 @@ class TradingOrchestrator:
 
     def _load_stream_staleness_threshold(self) -> float:
         """Staleness threshold for the stream feed — mirror the failover config."""
-        try:
-            failover_cfg = ConfigLoader.load("streaming.yaml").get("failover", {})
-            return float(failover_cfg.get("staleness_threshold_seconds", 30.0))
-        except (
-            InvalidConfigError,
-            MissingConfigError,
-            OSError,
-            yaml.YAMLError,
-            KeyError,
-            TypeError,
-            ValueError,
-        ):
-            return 30.0
+        return _market_data_bootstrap.load_stream_staleness_threshold()
 
     def _init_price_feeds(self, kis_config) -> Any | None:
         """Initialize WebSocket Price Feeds"""
-        self._stock_price_feed = None
-        self._futures_price_feed = None
-        self._stream_consumer_feed = None
-        self._stream_redis = None
-        data_source = None
-
-        if not self._kis_client or not kis_config:
-            return None
-
-        if self.config.asset_class == "stock":
-            source_mode = (
-                os.getenv("STOCK_MARKET_DATA_SOURCE", "websocket").strip().lower()
-            )
-            if source_mode == "stream":
-                import redis.asyncio as aioredis
-
-                from services.trading.stream_consumer_feed import StreamConsumerFeed
-
-                stream_name = os.getenv("MARKET_TICK_STREAM", "market:ticks")
-                self._stream_redis = aioredis.from_url(redis_url_from_env())
-                self._stream_consumer_feed = StreamConsumerFeed(
-                    redis=self._stream_redis,
-                    stream=stream_name,
-                    stale_threshold_seconds=self._load_stream_staleness_threshold(),
-                )
-                data_source = self._stream_consumer_feed
-                logger.info(
-                    "Stock data source = STREAM (%s); KIS WebSocket feed skipped",
-                    stream_name,
-                )
-            else:
-                try:
-                    from shared.kis.stock_feed import KISStockPriceFeed
-
-                    self._stock_price_feed = KISStockPriceFeed(
-                        config=kis_config,
-                    )
-                    data_source = self._stock_price_feed
-                    logger.info("Stock WebSocket price feed initialized")
-                except (
-                    NetworkError,
-                    WebSocketDisconnectError,
-                    ConfigurationError,
-                ) as e:
-                    logger.warning(f"Stock WebSocket feed init failed: {e}")
-        elif self.config.asset_class == "futures":
-            try:
-                from shared.kis.futures_feed import KISFuturesPriceFeed
-
-                self._futures_price_feed = KISFuturesPriceFeed(
-                    config=kis_config,
-                )
-                data_source = self._futures_price_feed
-                logger.info("Futures WebSocket price feed initialized")
-            except (NetworkError, WebSocketDisconnectError, ConfigurationError) as e:
-                logger.warning(f"Futures WebSocket feed init failed: {e}")
-
-        return data_source
+        result = _market_data_bootstrap.init_price_feeds(
+            config=self.config,
+            kis_client=self._kis_client,
+            kis_config=kis_config,
+        )
+        self._stock_price_feed = result.stock_price_feed
+        self._futures_price_feed = result.futures_price_feed
+        self._stream_consumer_feed = result.stream_consumer_feed
+        self._stream_redis = result.stream_redis
+        return result.data_source
 
     def _init_data_provider(self, data_source):
         """Initialize Market Data Provider"""
-        try:
-            streaming_cfg = ConfigLoader.load("streaming.yaml")
-            dp_cfg = streaming_cfg.get("data_provider", {})
-            failover_cfg = streaming_cfg.get("failover", {})
-        except (
-            InvalidConfigError,
-            MissingConfigError,
-            OSError,
-            yaml.YAMLError,
-            KeyError,
-            TypeError,
-        ):
-            dp_cfg = {}
-            failover_cfg = {}
-
-        if data_source:
-            cache_ttl = float(dp_cfg.get("cache_ttl_websocket", 2.0))
-        else:
-            if self.config.asset_class == "stock":
-                cache_ttl = float(dp_cfg.get("cache_ttl_stock", 30.0))
-            else:
-                cache_ttl = float(dp_cfg.get("cache_ttl_futures", 5.0))
-
-        stagger_delay = float(dp_cfg.get("stagger_delay", 0.1))
-
-        telegram_notifier = None
-        send_telegram_alerts = bool(failover_cfg.get("send_telegram_alerts", False))
-        if self.config.enable_telegram and send_telegram_alerts:
-            try:
-                from shared.notification.telegram import (
-                    TelegramNotifier,
-                    resolve_domain_credentials,
-                )
-
-                domain = (
-                    self.config.asset_class
-                    if self.config.asset_class in ("stock", "futures")
-                    else None
-                )
-                # Use resolve_domain_credentials (NOT SecretsManager.telegram_token)
-                # to avoid the silent legacy fallback to TELEGRAM_BOT_TOKEN.
-                # If futures env is empty for any reason, the legacy fallback
-                # would route futures alerts to the stock channel because
-                # `.env` aliases TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}.
-                env_token, env_chat = resolve_domain_credentials(domain)
-                bot_token = self.config.telegram_token or env_token
-                chat_id = self.config.telegram_chat_id or env_chat
-                if bot_token and chat_id:
-                    telegram_notifier = TelegramNotifier(
-                        bot_token=bot_token,
-                        chat_id=chat_id,
-                    )
-            except Exception as e:
-                logger.warning("Failed to initialize failover telegram notifier: %s", e)
-
-        self._data_provider_failover_enabled = bool(failover_cfg.get("enabled", False))
-
-        self._data_provider = MarketDataProvider(
-            symbols=self.config.symbols,
-            config=DataProviderConfig(
-                cache_ttl_seconds=cache_ttl,
-                batch_size=int(dp_cfg.get("batch_size", 20)),
-                fetch_timeout_seconds=float(dp_cfg.get("fetch_timeout_seconds", 5.0)),
-                stagger_delay_seconds=stagger_delay,
-                health_check_interval_seconds=float(
-                    failover_cfg.get("health_check_interval_seconds", 10.0)
-                ),
-                rest_poll_interval_seconds=float(
-                    failover_cfg.get("rest_poll_interval_seconds", 10.0)
-                ),
-                staleness_threshold_seconds=float(
-                    failover_cfg.get("staleness_threshold_seconds", 30.0)
-                ),
-                min_fresh_ratio=float(failover_cfg.get("min_fresh_ratio", 0.25)),
-                startup_grace_seconds=float(
-                    failover_cfg.get("startup_grace_seconds", 120.0)
-                ),
-                rest_fallback_max_symbols=failover_cfg.get("rest_fallback_max_symbols"),
-                send_telegram_alerts=send_telegram_alerts,
-                failover_unhealthy_threshold=int(
-                    failover_cfg.get("failover_unhealthy_threshold", 3)
-                ),
-                recovery_healthy_threshold=int(
-                    failover_cfg.get("recovery_healthy_threshold", 3)
-                ),
-            ),
+        result = _market_data_bootstrap.init_data_provider(
+            config=self.config,
             kis_client=self._kis_client,
             data_source=data_source,
-            telegram_notifier=telegram_notifier,
         )
+        self._data_provider = result.provider
+        self._data_provider_failover_enabled = result.failover_enabled
 
     def _init_tick_stream_publisher(self) -> None:
         """Initialize optional Redis tick mirroring for monitoring."""
-        if self._stream_consumer_feed is not None:
-            # Stream path: the market-ingest daemon owns publishing. Leave the
-            # publisher None so the reused _on_stock_tick publish (guarded by
-            # `if self._tick_stream_publisher:`) no-ops — no double-publish.
-            self._tick_stream_publisher = None
-            logger.info("Tick stream publisher skipped (stock data source = stream)")
-            return
-        try:
-            from services.monitoring.tick_stream_publisher import (
-                TickStreamPublisher,
-                TickStreamPublisherConfig,
-            )
-
-            cfg = TickStreamPublisherConfig.from_env()
-            if not cfg.enabled:
-                self._tick_stream_publisher = None
-                logger.info("Tick stream publisher disabled by env")
-                return
-
-            self._tick_stream_publisher = TickStreamPublisher(cfg)
-            logger.info(
-                "Tick stream publisher enabled "
-                "(async=%s, stock_stream=%s, futures_stream=%s, "
-                "stock_interval=%.2fs, futures_interval=%.2fs, queue=%d, batch=%d)",
-                cfg.async_publish,
-                cfg.stock_stream,
-                cfg.futures_stream,
-                cfg.stock_min_interval_seconds,
-                cfg.futures_min_interval_seconds,
-                cfg.queue_maxsize,
-                cfg.flush_batch_size,
-            )
-        except (ConfigurationError, InfrastructureError) as e:
-            self._tick_stream_publisher = None
-            logger.warning(f"Tick stream publisher init failed: {e}")
+        result = _market_data_bootstrap.init_tick_stream_publisher(
+            stream_consumer_feed=self._stream_consumer_feed,
+        )
+        self._tick_stream_publisher = result.publisher
 
     def _init_llm_context_publisher(self) -> None:
         """Initialize LLM Context Publisher for market analysis integration."""
