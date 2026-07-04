@@ -119,6 +119,18 @@ def test_market_data_bootstrap_package_attribute_resolves_without_orchestrator()
     assert result.returncode == 0, result.stderr
 
 
+def test_startup_sequence_package_attribute_resolves_without_orchestrator() -> None:
+    result = _run_python("""
+        import sys
+        import services.trading as trading
+
+        assert trading.startup_sequence.run_trading_startup_sequence is not None
+        assert "services.trading.orchestrator" not in sys.modules
+        """)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_top_level_orchestrator_import_still_uses_facade_exports() -> None:
     result = _run_python("""
         from services.trading import TradingConfig, TradingOrchestrator, TradingState

@@ -60,6 +60,7 @@ from services.trading.reentry_guard import (
     reentry_guard_block,
     reentry_guard_key,
 )
+from services.trading.startup_sequence import run_trading_startup_sequence
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
@@ -582,39 +583,7 @@ class TradingOrchestrator:
 
     async def _initialize_components(self):
         """Initialize trading components"""
-        # 1. Initialize KIS Client & Config
-        kis_config = self._init_kis_client()
-
-        # 2. Validate futures product/tick contract, then initialize slippage control
-        self._validate_futures_product_contract()
-        self._init_futures_slippage_controller()
-
-        # 3. Initialize Price Feeds (WebSocket)
-        data_source = self._init_price_feeds(kis_config)
-
-        # 4. Initialize Data Provider
-        self._init_data_provider(data_source)
-
-        # 5. Initialize optional tick stream publisher (monitoring only)
-        self._init_tick_stream_publisher()
-
-        # 6. Initialize Strategy Infra
-        self._init_strategy_infrastructure()
-
-        # 7. Initialize Indicator Engine + feed callbacks
-        self._init_indicator_engine()
-
-        # 8. Initialize Execution Layer
-        await self._init_execution_layer()
-
-        # 9. Ensure persistence schema is current before recovery/flush paths
-        await self._ensure_db_schema()
-
-        # 10. Load Swing Positions
-        await self._load_swing_positions()
-
-        # 11. Initialize LLM Context Publisher
-        self._init_llm_context_publisher()
+        await run_trading_startup_sequence(self)
 
     @staticmethod
     def _deep_merge_config_dict(
