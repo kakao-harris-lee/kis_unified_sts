@@ -164,6 +164,9 @@ boundaries, not by arbitrary line counts:
 
 - runtime configuration and entry re-entry guard config: branch implemented in
   `services/trading/runtime_config.py` with orchestrator facade exports;
+- trading package facade: branch implemented with lazy top-level exports so
+  runtime config and other lightweight submodule imports do not eagerly load
+  the monolithic orchestrator;
 - initialization and dependency wiring;
 - recovery and reconciliation;
 - execution setup and order submission;
