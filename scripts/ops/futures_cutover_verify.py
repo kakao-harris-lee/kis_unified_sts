@@ -336,12 +336,25 @@ def _active_env_line(text: str, key: str) -> bool:
 
 
 def _check_orchestrator_guard(repo_root: Path) -> CheckResult:
-    cli_path = repo_root / "cli" / "main.py"
+    # The F-8 guard originally lived in cli/main.py; the runtime-command
+    # refactor (#59e18a72) moved it into cli/commands/trading_control.py, which
+    # cli/main.py re-exports. Scan both so the audit follows the guard's real
+    # location instead of false-negating after the split.
+    cli_paths = (
+        repo_root / "cli" / "main.py",
+        repo_root / "cli" / "commands" / "trading_control.py",
+    )
     env_paths = (
         repo_root / ".env.paper.example",
         repo_root / ".env.live.example",
     )
-    cli_has_guard = "FUTURES_ORCHESTRATOR_ENABLED" in _read_text(cli_path)
+    guard_files = [
+        path.name
+        for path in cli_paths
+        if path.exists() and "FUTURES_ORCHESTRATOR_ENABLED" in _read_text(path)
+    ]
+    cli_has_guard = bool(guard_files)
+    cli_source = "; ".join(str(path) for path in cli_paths)
     env_with_knob = [
         path.name
         for path in env_paths
@@ -352,15 +365,21 @@ def _check_orchestrator_guard(repo_root: Path) -> CheckResult:
         return CheckResult(
             name="futures orchestrator guard knob",
             status="pass",
-            detail=f"guard in cli/main.py; env knob in {', '.join(env_with_knob)}",
-            source=f"{cli_path}; {', '.join(str(path) for path in env_paths)}",
+            detail=(
+                f"guard in {', '.join(guard_files)}; "
+                f"env knob in {', '.join(env_with_knob)}"
+            ),
+            source=f"{cli_source}; {', '.join(str(path) for path in env_paths)}",
         )
     if cli_has_guard:
         return CheckResult(
             name="futures orchestrator guard knob",
             status="warn",
-            detail="guard exists in cli/main.py; no active env example knob found",
-            source=f"{cli_path}; {', '.join(str(path) for path in env_paths)}",
+            detail=(
+                f"guard exists in {', '.join(guard_files)}; "
+                "no active env example knob found"
+            ),
+            source=f"{cli_source}; {', '.join(str(path) for path in env_paths)}",
             action=(
                 "At cutover, set FUTURES_ORCHESTRATOR_ENABLED=false in the operator "
                 "env file before keeping trader-futures stopped."
@@ -370,7 +389,7 @@ def _check_orchestrator_guard(repo_root: Path) -> CheckResult:
         name="futures orchestrator guard knob",
         status="fail",
         detail="FUTURES_ORCHESTRATOR_ENABLED guard not found",
-        source=str(cli_path),
+        source=cli_source,
         action="Restore the F-8 double-trade guard before F-9 cutover.",
     )
 
