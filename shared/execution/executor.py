@@ -24,6 +24,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _record_kis_api_outcome(*, is_error: bool) -> None:
+    """Feed an OrderExecutor KIS REST outcome into the shared error-rate tracker.
+
+    The tracker (a process-global singleton) publishes the futures kill-switch's
+    ``kill_switch:metrics:api_error_rate_5min:{source}`` signal. OrderExecutor is
+    the only continuous KIS REST caller in the decoupled futures pipeline (the
+    price feed is WebSocket), so its order/query outcomes are that pipeline's
+    api-error signal. Only KIS-side infra failures (5xx / 429 / network) count;
+    business rejects (KIS reachable) do not. Telemetry must never break order
+    placement, so every failure here is swallowed.
+    """
+    try:
+        from shared.kis.error_rate import KISApiErrorRateTracker
+
+        tracker = KISApiErrorRateTracker.get_instance()
+        if is_error:
+            tracker.record_error()
+        else:
+            tracker.record_success()
+    except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
+        logger.debug("error-rate tracker record failed", exc_info=True)
+
+
 KST = ZoneInfo("Asia/Seoul")
 NIGHT_START_KST = dt_time(18, 0)
 NIGHT_END_KST = dt_time(6, 0)
@@ -696,14 +719,19 @@ class OrderExecutor:
             return await do_request(current_headers)
 
         try:
-            return await retry_once_on_token_expiry(
+            data, status = await retry_once_on_token_expiry(
                 attempt,
                 self.auth_manager,
                 is_expired=lambda result: is_token_expired_error(result[0]),
             )
         except Exception as e:
+            # Network/timeout reaching KIS = infra failure.
+            _record_kis_api_outcome(is_error=True)
             logger.error(f"KIS request error ({method} {url}): {e}")
             raise
+        # 5xx / 429 = KIS-side infra failure; any other response = KIS reachable.
+        _record_kis_api_outcome(is_error=status >= 500 or status == 429)
+        return data, status
 
     @staticmethod
     def _is_futures_code(code: str) -> bool:

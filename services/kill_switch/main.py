@@ -451,23 +451,27 @@ async def _build_and_run() -> int:
 def _build_api_error_rate_provider(
     redis_client: Any,
 ) -> Callable[[], float]:
-    """Return a synchronous callable that reads the 5-minute KIS API error rate.
+    """Return a synchronous callable reading the 5-minute KIS API error rate.
 
-    Data source: Redis key ``kill_switch:metrics:api_error_rate_5min``
-    written by the KIS client rate-limiter (``shared/kis/client.py``).
-    The key holds a float string (fraction 0–1) representing the proportion
-    of KIS REST calls that errored in the last 5-minute window.
+    Data source: Redis keys under ``kill_switch:metrics:api_error_rate_5min``
+    published by ``KISApiErrorRateTracker`` (``shared/kis/error_rate.py``), fed
+    by ``shared/kis/client.py``, ``shared/kis/ranking_client.py`` and
+    ``shared/execution/executor.py``. The publish loop runs in the monolithic
+    orchestrator (legacy unsuffixed key) and, on the decoupled stack, in the
+    screener and the futures order_router (``…:screener`` / ``…:order_router``
+    via ``KIS_ERROR_RATE_SOURCE``).
 
-    TODO(Phase 3 Track A): ``shared/kis/client.py`` must write this key on
-    each rate-limiter tick (EGW00201 / 5xx count / total call count rolling
-    window). Until that instrumentation is added the key will be absent and
-    this provider returns 0.0 (never triggers).
+    Each publisher writes its own source-suffixed key; this provider reads them
+    all and returns the MAX (fraction 0–1) so the kill switch trips on the WORST
+    KIS path — conservative for a safety net. When no publisher is running, no
+    key exists and this returns 0.0 (never triggers).
     """
     import redis as sync_redis  # type: ignore[import-untyped]
 
     _METRIC_KEY = "kill_switch:metrics:api_error_rate_5min"
 
     def _provider() -> float:
+        r = None
         try:
             # redis.asyncio client does not expose synchronous get; use the
             # connection pool's underlying sync path via a temporary sync client
@@ -484,18 +488,31 @@ def _build_api_error_rate_provider(
                 db = kwargs.get("db", 1)
                 url = f"redis://{host}:{port}/{db}"
             r = sync_redis.from_url(url, socket_timeout=1.0)
-            raw = r.get(_METRIC_KEY)
-            r.close()
-            if raw is None:
-                return 0.0
-            return float(raw)
+            # Base key (orchestrator) + per-source keys (…:screener, …:order_router);
+            # take the worst rate across every publisher.
+            rates: list[float] = []
+            for key in r.scan_iter(match=f"{_METRIC_KEY}*", count=100):
+                raw = r.get(key)
+                if raw is None:
+                    continue
+                try:
+                    rates.append(float(raw))
+                except (TypeError, ValueError):
+                    continue
+            return max(rates) if rates else 0.0
         except Exception:
             logger.debug(
-                "api_error_rate provider: could not read %s — returning 0.0",
+                "api_error_rate provider: could not read %s* — returning 0.0",
                 _METRIC_KEY,
                 exc_info=True,
             )
             return 0.0
+        finally:
+            if r is not None:
+                try:
+                    r.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     return _provider
 

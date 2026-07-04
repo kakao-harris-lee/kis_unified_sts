@@ -30,6 +30,7 @@ Design decisions
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -88,6 +89,14 @@ class ErrorRateConfig:
         """Load config from streaming.yaml, falling back to built-in defaults."""
         raw = _load_config()
         defaults = cls._DEFAULTS
+        base_key = str(raw.get("redis_key", defaults["redis_key"]))
+        # Per-process source suffix (``KIS_ERROR_RATE_SOURCE``) so multiple
+        # decoupled publishers — the screener and the futures order_router —
+        # write distinct keys (…:screener, …:order_router) that the kill-switch
+        # provider aggregates by max, instead of racing on one key. Unset (the
+        # monolithic orchestrator) keeps the legacy unsuffixed key.
+        source = os.environ.get("KIS_ERROR_RATE_SOURCE", "").strip()
+        redis_key = f"{base_key}:{source}" if source else base_key
         return cls(
             enabled=bool(raw.get("enabled", defaults["enabled"])),
             window_seconds=float(
@@ -99,7 +108,7 @@ class ErrorRateConfig:
                     defaults["publish_interval_seconds"],
                 )
             ),
-            redis_key=str(raw.get("redis_key", defaults["redis_key"])),
+            redis_key=redis_key,
         )
 
 
@@ -181,3 +190,47 @@ class KISApiErrorRateTracker(RollingRateTracker):
         infrastructure failures count.
         """
         self.record_failure()
+
+
+# ---------------------------------------------------------------------------
+# Publisher lifecycle helpers (shared by the screener + futures order_router)
+# ---------------------------------------------------------------------------
+
+
+async def start_error_rate_publisher(
+    *, enabled: bool = True
+) -> KISApiErrorRateTracker | None:
+    """Start the singleton tracker's Redis publish loop; return it (or None).
+
+    Used by decoupled daemons (the screener, the futures order_router) to
+    publish the kill-switch ``api_error_rate`` metric on paths the monolithic
+    orchestrator does not cover. ``enabled=False`` is an operator opt-out that
+    returns None without starting. All failures are swallowed — the metric is
+    best-effort and must never break the host daemon.
+    """
+    if not enabled:
+        return None
+    try:
+        tracker = KISApiErrorRateTracker.get_instance()
+        await tracker.start()
+        return tracker
+    except Exception as exc:  # noqa: BLE001 — metric is best-effort
+        logger.warning(
+            "kis_api_error_rate tracker start failed (%s) — kill_switch "
+            "ApiErrorRateCondition will read the 0.0 fallback",
+            exc,
+            exc_info=True,
+        )
+        return None
+
+
+async def stop_error_rate_publisher(
+    tracker: KISApiErrorRateTracker | None,
+) -> None:
+    """Stop a publish loop started by :func:`start_error_rate_publisher`."""
+    if tracker is None:
+        return
+    try:
+        await tracker.stop()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("kis_api_error_rate tracker stop failed (%s)", exc)

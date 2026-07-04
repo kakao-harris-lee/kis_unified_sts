@@ -5,11 +5,17 @@
 #            services/kill_switch/config.py via KillSwitchConsumerConfig.from_yaml()
 #
 # Provider-backed conditions data sources (Phase 0.4):
-#   api_error_rate_5min      → Redis key: kill_switch:metrics:api_error_rate_5min
-#                              Written by: shared/kis/client.py (TODO Phase 3 Track A)
+#   api_error_rate_5min      → Redis keys: kill_switch:metrics:api_error_rate_5min[:<source>]
+#                              Published by: KISApiErrorRateTracker
+#                              (shared/kis/error_rate.py). Publishers: the
+#                              orchestrator (legacy unsuffixed key), the screener
+#                              (…:screener) and the futures order_router
+#                              (…:order_router), tagged via KIS_ERROR_RATE_SOURCE.
+#                              The provider reads the MAX across all source keys.
 #   news_pipeline_lag_seconds → Redis stream: stream:news.raw (last message timestamp)
 #                               Written by: news collector (services/)
-# Until TODO items are wired, providers return 0.0 (never trigger).
+# When no publisher process runs, that provider's key is absent and it returns
+# 0.0 (never triggers).
 #
 # force_flatten signalling (Phase 0.2):
 #   On trip, writes Redis key: kill_switch:force_flatten:requested (TTL 300s)

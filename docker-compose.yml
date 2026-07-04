@@ -326,6 +326,10 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
       FUTURES_ORDER_ROUTER: "${FUTURES_ORDER_ROUTER_MODE:-paper}"
+      # Publishes the kill-switch api_error_rate metric for the decoupled futures
+      # pipeline under its own source key (…:order_router), fed by OrderExecutor
+      # REST outcomes. Opt out via ORDER_ROUTER_PUBLISH_KIS_ERROR_RATE=false.
+      KIS_ERROR_RATE_SOURCE: "order_router"
       # Executor real/paper gate (config/execution.yaml::execution.trading_mode
       # reads ${TRADING_MODE}). Dedicated knob, safe default PAPER — distinct from
       # the orchestrator's paper/live TRADING_MODE space (executor enum is
@@ -406,6 +410,10 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
       TZ: "Asia/Seoul"
+      # Publishes the kill-switch api_error_rate metric under its own source key
+      # (kill_switch:metrics:api_error_rate_5min:screener). Opt out via
+      # SCREENER_PUBLISH_KIS_ERROR_RATE=false.
+      KIS_ERROR_RATE_SOURCE: "screener"
 
   theme-discovery:
     <<: *pipeline-service

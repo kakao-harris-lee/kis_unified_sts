@@ -40,6 +40,30 @@ from shared.utils.parsing import parse_float, parse_int
 logger = logging.getLogger(__name__)
 
 
+def _record_ranking_api_outcome(*, is_error: bool) -> None:
+    """Feed a KIS ranking REST outcome into the shared error-rate tracker.
+
+    The tracker (a process-global singleton) publishes
+    ``kill_switch:metrics:api_error_rate_5min``, read by the futures kill-switch's
+    ApiErrorRateCondition. Ranking sweeps are the screener's primary continuous
+    KIS REST load — and where the EGW00201 per-second throttle surfaces — so
+    their success/failure is the most representative api-error signal on the
+    decoupled deployment (KISRankingClient uses its own aiohttp session, so
+    these calls would otherwise never reach the tracker that only
+    ``shared/kis/client.py`` feeds). Telemetry must never break screening.
+    """
+    try:
+        from shared.kis.error_rate import KISApiErrorRateTracker
+
+        tracker = KISApiErrorRateTracker.get_instance()
+        if is_error:
+            tracker.record_error()
+        else:
+            tracker.record_success()
+    except Exception:  # noqa: BLE001 — telemetry is best-effort, never fatal
+        logger.debug("error-rate tracker record failed", exc_info=True)
+
+
 RankingType = Literal["volume", "gainer", "volume_power", "near_new_high"]
 MarketType = Literal["KOSPI", "KOSDAQ", "ALL", "KOSPI200", "KRX100"]
 
@@ -401,27 +425,39 @@ class KISRankingClient(AsyncSessionMixin):
         timeout_seconds = getattr(self.config, "request_timeout_seconds", 30)
         request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
 
-        async with session.get(
-            url, headers=headers, params=params, timeout=request_timeout
-        ) as response:
-            text = await response.text()
-            if response.status != 200:
-                if self._is_rate_limit_error(text):
-                    self._rate_limiter.penalty()
-                raise RuntimeError(f"KIS ranking HTTP {response.status}: {text[:2000]}")
-            try:
-                data = await response.json()
-            except Exception as e:
-                raise RuntimeError(
-                    f"KIS ranking JSON decode failed: {e}: {text[:2000]}"
-                ) from e
+        # Record the KIS-API outcome (network/HTTP/throttle failure vs success)
+        # into the shared error-rate tracker so the kill-switch metric reflects
+        # this heavy continuous REST path. asyncio.CancelledError is a
+        # BaseException, so ``except Exception`` never mis-labels a shutdown as
+        # an API error.
+        try:
+            async with session.get(
+                url, headers=headers, params=params, timeout=request_timeout
+            ) as response:
+                text = await response.text()
+                if response.status != 200:
+                    if self._is_rate_limit_error(text):
+                        self._rate_limiter.penalty()
+                    raise RuntimeError(
+                        f"KIS ranking HTTP {response.status}: {text[:2000]}"
+                    )
+                try:
+                    data = await response.json()
+                except Exception as e:
+                    raise RuntimeError(
+                        f"KIS ranking JSON decode failed: {e}: {text[:2000]}"
+                    ) from e
 
-        if data.get("rt_cd") != "0":
-            msg = data.get("msg1", "Unknown error")
-            if self._is_rate_limit_error(str(msg)):
-                self._rate_limiter.penalty()
-            raise RuntimeError(f"KIS ranking API error: {msg}")
+            if data.get("rt_cd") != "0":
+                msg = data.get("msg1", "Unknown error")
+                if self._is_rate_limit_error(str(msg)):
+                    self._rate_limiter.penalty()
+                raise RuntimeError(f"KIS ranking API error: {msg}")
+        except Exception:
+            _record_ranking_api_outcome(is_error=True)
+            raise
         self._rate_limiter.reset_backoff()
+        _record_ranking_api_outcome(is_error=False)
         return data
 
     @staticmethod

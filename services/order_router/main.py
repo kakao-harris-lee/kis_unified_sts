@@ -515,9 +515,25 @@ async def _build_and_run() -> int:
     for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
 
+    # Publish the kill-switch api_error_rate metric for the decoupled futures
+    # pipeline: OrderExecutor's REST outcomes feed the tracker (executor.py) and
+    # this process owns the …:order_router source key (KIS_ERROR_RATE_SOURCE).
+    # Gated by ORDER_ROUTER_PUBLISH_KIS_ERROR_RATE (default true) for opt-out.
+    from shared.kis.error_rate import (
+        start_error_rate_publisher,
+        stop_error_rate_publisher,
+    )
+
+    publish_error_rate = (
+        os.environ.get("ORDER_ROUTER_PUBLISH_KIS_ERROR_RATE", "true").strip().lower()
+        == "true"
+    )
+    error_rate_tracker = await start_error_rate_publisher(enabled=publish_error_rate)
+
     try:
         await daemon.run()
     finally:
+        await stop_error_rate_publisher(error_rate_tracker)
         await fill_logger.flush()
         await futures_feed.stop()
         await redis_client.aclose()

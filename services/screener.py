@@ -815,6 +815,31 @@ def _stock_kis_config() -> KISAuthConfig:
     )
 
 
+async def _start_kis_error_rate_publisher() -> Any | None:
+    """Start the KIS error-rate publish loop for the kill switch (screener source).
+
+    The screener is the decoupled deployment's continuous KIS REST caller, so it
+    publishes the ``api_error_rate`` metric under its own source key
+    (…:screener, via ``KIS_ERROR_RATE_SOURCE``) that the kill-switch provider
+    aggregates. Gated by ``SCREENER_PUBLISH_KIS_ERROR_RATE`` (default true) for
+    operator opt-out.
+    """
+    from shared.kis.error_rate import start_error_rate_publisher
+
+    enabled = (
+        os.environ.get("SCREENER_PUBLISH_KIS_ERROR_RATE", "true").strip().lower()
+        == "true"
+    )
+    return await start_error_rate_publisher(enabled=enabled)
+
+
+async def _stop_kis_error_rate_publisher(tracker: Any | None) -> None:
+    """Stop the KIS error-rate publish loop started by the screener, if any."""
+    from shared.kis.error_rate import stop_error_rate_publisher
+
+    await stop_error_rate_publisher(tracker)
+
+
 async def run_screener(config: ScreenerConfig) -> None:
     kis_config = _stock_kis_config()
     ranking = KISRankingClient(kis_config)
@@ -873,6 +898,8 @@ async def run_screener(config: ScreenerConfig) -> None:
         f"rank_limit={config.rank_limit}, swing_ranking={config.swing_ranking_enabled}, "
         f"trend_confirm={config.trend_confirm_enabled})"
     )
+
+    error_rate_tracker = await _start_kis_error_rate_publisher()
 
     try:
         while True:
@@ -1124,6 +1151,7 @@ async def run_screener(config: ScreenerConfig) -> None:
             sleep_for = max(0.0, config.interval_seconds - elapsed)
             await asyncio.sleep(sleep_for)
     finally:
+        await _stop_kis_error_rate_publisher(error_rate_tracker)
         await ranking.close()
         if trend_kis_client:
             await trend_kis_client.close()

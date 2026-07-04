@@ -362,6 +362,9 @@ class TestApiErrorRateProvider:
     def test_returns_float_from_redis_key(self):
         redis_mock = self._make_redis_mock_with_connection_kwargs()
         sync_redis_mock = MagicMock()
+        sync_redis_mock.scan_iter.return_value = [
+            b"kill_switch:metrics:api_error_rate_5min"
+        ]
         sync_redis_mock.get.return_value = b"0.35"
 
         with patch("redis.from_url", return_value=sync_redis_mock):
@@ -371,9 +374,28 @@ class TestApiErrorRateProvider:
         assert result == pytest.approx(0.35)
         sync_redis_mock.close.assert_called_once()
 
+    def test_returns_max_across_source_keys(self):
+        # orchestrator (legacy) + screener + order_router each publish a key;
+        # the provider trips on the worst path, so it returns the max.
+        redis_mock = self._make_redis_mock_with_connection_kwargs()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.scan_iter.return_value = [
+            b"kill_switch:metrics:api_error_rate_5min",
+            b"kill_switch:metrics:api_error_rate_5min:screener",
+            b"kill_switch:metrics:api_error_rate_5min:order_router",
+        ]
+        sync_redis_mock.get.side_effect = [b"0.05", b"0.30", b"0.10"]
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_api_error_rate_provider(redis_mock)
+            result = provider()
+
+        assert result == pytest.approx(0.30)
+
     def test_returns_zero_when_key_absent(self):
         redis_mock = self._make_redis_mock_with_connection_kwargs()
         sync_redis_mock = MagicMock()
+        sync_redis_mock.scan_iter.return_value = []
         sync_redis_mock.get.return_value = None
 
         with patch("redis.from_url", return_value=sync_redis_mock):
@@ -394,6 +416,9 @@ class TestApiErrorRateProvider:
     def test_condition_triggers_when_rate_exceeds_threshold(self):
         redis_mock = self._make_redis_mock_with_connection_kwargs()
         sync_redis_mock = MagicMock()
+        sync_redis_mock.scan_iter.return_value = [
+            b"kill_switch:metrics:api_error_rate_5min"
+        ]
         sync_redis_mock.get.return_value = b"0.25"
 
         with patch("redis.from_url", return_value=sync_redis_mock):
@@ -406,6 +431,9 @@ class TestApiErrorRateProvider:
     def test_condition_does_not_trigger_below_threshold(self):
         redis_mock = self._make_redis_mock_with_connection_kwargs()
         sync_redis_mock = MagicMock()
+        sync_redis_mock.scan_iter.return_value = [
+            b"kill_switch:metrics:api_error_rate_5min"
+        ]
         sync_redis_mock.get.return_value = b"0.10"
 
         with patch("redis.from_url", return_value=sync_redis_mock):
