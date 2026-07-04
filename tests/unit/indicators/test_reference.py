@@ -91,7 +91,10 @@ def frame(ohlcv: dict[str, list[float]]) -> pd.DataFrame:
 # ADX: reference (canonical Wilder) vs runtime canonical Wilder vs detector DX.
 _ADX_REF = 31.634448  # reference series/scalar
 _ADX_RUNTIME_WILDER = 31.719136  # from test_calc_parity (runtime _calc_adx)
-_ADX_DETECTOR_DX = 15.873272  # from test_calc_parity (defective detector _calc_adx)
+# M2 (2026-07-04): detector._calc_adx now delegates to ADXCalculator, so it
+# yields the canonical Wilder ADX (== _ADX_REF) instead of the old defective
+# single-bar DX (15.873272).
+_ADX_DETECTOR_WILDER = 31.634448  # was 15.873272 (defective single-bar DX)
 
 # Bollinger (last bar).
 _BB_LOWER_DDOF1 = 99.902454
@@ -205,20 +208,22 @@ def test_adx_reference_close_to_runtime_canonical_wilder(frame: pd.DataFrame) ->
     assert adx_ref == pytest.approx(_ADX_RUNTIME_WILDER, abs=0.5)
 
 
-def test_adx_reference_diverges_from_defective_detector(
+def test_adx_reference_agrees_with_detector_after_delegation(
     frame: pd.DataFrame, ohlcv: dict[str, list[float]]
 ) -> None:
-    """Reference Wilder ADX diverges sharply from ``detector._calc_adx``.
+    """Reference Wilder ADX now AGREES with ``detector._calc_adx`` (M2).
 
-    ``adaptive_detector._calc_adx`` is named ADX but returns a single,
-    SMA-smoothed DX (no directional-movement rule, no final DX smoothing). On
-    identical input it yields ~15.9 while the correct Wilder ADX is ~31.0 --
-    proving the detector under-reports trend strength by roughly half.
+    ``adaptive_detector._calc_adx`` used to be named ADX but returned a single,
+    SMA-smoothed DX (no directional-movement rule, no final DX smoothing),
+    yielding ~15.9 vs the correct Wilder ADX ~31.6 -- under-reporting trend
+    strength by roughly half. It now delegates to ``ADXCalculator``, so the two
+    are the same value. If this ever diverges again (> 1e-6) the detector has
+    stopped delegating or a third ADX has been reintroduced.
     """
     adx_ref = float(ADXCalculator(period=14).calculate(frame)["adx"].dropna().iloc[-1])
 
     detector = AdaptiveRegimeDetector()
-    detector_dx = float(
+    detector_adx = float(
         detector._calc_adx(
             np.asarray(ohlcv["high"]),
             np.asarray(ohlcv["low"]),
@@ -227,8 +232,9 @@ def test_adx_reference_diverges_from_defective_detector(
         )
     )
 
-    assert detector_dx == pytest.approx(_ADX_DETECTOR_DX, abs=_TOL)
-    assert abs(adx_ref - detector_dx) > 10.0
+    assert detector_adx == pytest.approx(_ADX_DETECTOR_WILDER, abs=_TOL)
+    # Exact delegation: detector == reference calculate_last (same code path).
+    assert detector_adx == pytest.approx(adx_ref, abs=1e-9)
 
 
 def test_adx_flat_market_is_zero() -> None:

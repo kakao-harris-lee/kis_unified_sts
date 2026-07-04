@@ -1,10 +1,12 @@
 """Test AdaptiveRegimeDetector with multi-metric classification."""
+import math
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from shared.indicators.reference import ADXCalculator
 from shared.regime.adaptive_detector import (
     AdaptiveRegimeConfig,
     AdaptiveRegimeDetector,
@@ -596,3 +598,88 @@ class TestAdaptiveRegimeDetector:
         assert "sma_slow" in signal.indicators
         assert "trend_pct" in signal.indicators
         assert "close" in signal.indicators
+
+
+# ---------------------------------------------------------------------------
+# M2 (2026-07-04): detector._calc_adx canonical-Wilder correctness regression
+# ---------------------------------------------------------------------------
+
+
+def _deterministic_ohlcv(n_bars: int = 64) -> dict[str, list[float]]:
+    """RNG-free deterministic OHLCV — identical to the M2 parity harness sample.
+
+    Kept in-file (not imported from the parity test) so this correctness
+    regression stands on its own. Because it uses no RNG, the canonical ADX it
+    produces is stable across numpy/python versions.
+    """
+    highs: list[float] = []
+    lows: list[float] = []
+    closes: list[float] = []
+    for i in range(n_bars):
+        close = 100.0 + 0.12 * i + 4.0 * math.sin(i / 4.0) + 1.5 * math.cos(i / 2.3)
+        span = 0.8 + 0.5 * abs(math.sin(i / 3.0))
+        high = close + span
+        low = close - span * (0.7 + 0.3 * abs(math.cos(i / 5.0)))
+        open_ = close - 0.4 * math.sin(i / 2.0)
+        high = max(high, open_, close)
+        low = min(low, open_, close)
+        highs.append(high)
+        lows.append(low)
+        closes.append(close)
+    return {"high": highs, "low": lows, "close": closes}
+
+
+class TestAdaptiveDetectorADXCanonical:
+    """``_calc_adx`` now delegates to the canonical Wilder ``ADXCalculator``.
+
+    Before M2 the detector returned a single last-bar DX (SMA-smoothed DI, no
+    directional-movement rule, no DX→ADX smoothing) that under-reported trend
+    strength by ~half. On the deterministic sample it produced ~15.87; the
+    canonical Wilder ADX is ~31.63. Any regime gate keyed on an ADX threshold
+    was mis-triggering; these tests pin the corrected value.
+    """
+
+    # Canonical Wilder ADX on the deterministic sample (reference.calculate_last).
+    _CANONICAL_ADX = 31.634448
+    # The old defective single-bar DX the detector used to return.
+    _OLD_DEFECTIVE_DX = 15.873272
+
+    def test_detector_adx_matches_reference_calculator(self) -> None:
+        """detector._calc_adx == reference.ADXCalculator.calculate_last (single SoT)."""
+        d = _deterministic_ohlcv()
+        high = np.asarray(d["high"])
+        low = np.asarray(d["low"])
+        close = np.asarray(d["close"])
+
+        detector = AdaptiveRegimeDetector()
+        detector_adx = detector._calc_adx(high, low, close, period=14)
+        reference_adx = ADXCalculator(period=14).calculate_last(high, low, close)
+
+        assert reference_adx is not None
+        # Exact delegation: same code path, so bit-for-bit within float noise.
+        assert detector_adx == pytest.approx(reference_adx, abs=1e-9)
+        assert detector_adx == pytest.approx(self._CANONICAL_ADX, abs=5e-3)
+
+    def test_detector_adx_no_longer_defective_single_bar_dx(self) -> None:
+        """Canonical ADX is ~2x the old single-bar DX (the fixed defect)."""
+        d = _deterministic_ohlcv()
+        detector = AdaptiveRegimeDetector()
+        adx = detector._calc_adx(
+            np.asarray(d["high"]),
+            np.asarray(d["low"]),
+            np.asarray(d["close"]),
+            period=14,
+        )
+        # Far above the old defective ~15.87 — documents the ~2x correction that
+        # shifts every ADX-keyed RegimeGate admission decision.
+        assert adx > 25.0
+        assert abs(adx - self._OLD_DEFECTIVE_DX) > 10.0
+        assert 0.0 <= adx <= 100.0
+
+    def test_detector_adx_insufficient_data_returns_zero(self) -> None:
+        """Contract preserved: too few bars → 0.0 float (never None)."""
+        detector = AdaptiveRegimeDetector()
+        short = np.asarray([100.0, 101.0, 102.0])  # < period + 1
+        adx = detector._calc_adx(short, short - 1.0, short, period=14)
+        assert isinstance(adx, float)
+        assert adx == 0.0
