@@ -140,14 +140,16 @@ class TRIXCalculator:
         ema2 = ema(ema1, n)
         ema3 = ema(ema2, n)
 
-        # TRIX = rate of change of EMA3 as percentage
-        ema3_prev = ema3.shift(1)
-        df["trix"] = np.where(
-            ema3_prev != 0,
-            (ema3 - ema3_prev) / ema3_prev * 100,
-            0.0,
-        )
-        df["trix_signal"] = ema(df["trix"], self.config.signal)
+        # TRIX = rate of change of EMA3 as percentage. Ratio runs in numpy to
+        # avoid Series-alignment overhead; the .ewm signal stays in pandas.
+        ema3_arr = ema3.to_numpy()
+        ema3_prev = ema3.shift(1).to_numpy()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            trix = np.where(
+                ema3_prev != 0, (ema3_arr - ema3_prev) / ema3_prev * 100.0, 0.0
+            )
+        df["trix"] = trix
+        df["trix_signal"] = ema(pd.Series(trix, index=df.index), self.config.signal)
 
         return df
 
@@ -353,16 +355,20 @@ class StochasticCalculator:
             DataFrame with added sto_k, sto_d columns.
         """
         n = self.config.fastk_period
-        lowest_low = df["low"].rolling(window=n, min_periods=1).min()
-        highest_high = df["high"].rolling(window=n, min_periods=1).max()
+        # rolling min/max stay in pandas (deque O(n) beats sliding-window O(n*w));
+        # the raw-%K arithmetic runs in numpy to avoid Series-alignment overhead.
+        lowest_low = df["low"].rolling(window=n, min_periods=1).min().to_numpy()
+        highest_high = df["high"].rolling(window=n, min_periods=1).max().to_numpy()
+        close = df["close"].to_numpy()
 
         # Raw (fast) %K
         denominator = highest_high - lowest_low
-        raw_k = np.where(
-            denominator != 0,
-            (df["close"] - lowest_low) / denominator * 100,
-            50.0,  # When range is zero, neutral
-        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            raw_k = np.where(
+                denominator != 0,
+                (close - lowest_low) / denominator * 100.0,
+                50.0,  # When range is zero, neutral
+            )
         raw_k_series = pd.Series(raw_k, index=df.index)
 
         # Slow %K = SMA of raw %K
@@ -418,15 +424,18 @@ class WilliamsRCalculator:
             DataFrame with added williams_r column.
         """
         n = self.config.period
-        highest_high = df["high"].rolling(window=n, min_periods=1).max()
-        lowest_low = df["low"].rolling(window=n, min_periods=1).min()
+        # rolling max/min stay in pandas; the %R arithmetic runs in numpy.
+        highest_high = df["high"].rolling(window=n, min_periods=1).max().to_numpy()
+        lowest_low = df["low"].rolling(window=n, min_periods=1).min().to_numpy()
+        close = df["close"].to_numpy()
 
         denominator = highest_high - lowest_low
-        df["williams_r"] = np.where(
-            denominator != 0,
-            ((highest_high - df["close"]) / denominator) * -100,
-            -50.0,  # Neutral when range is zero
-        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            df["williams_r"] = np.where(
+                denominator != 0,
+                ((highest_high - close) / denominator) * -100.0,
+                -50.0,  # Neutral when range is zero
+            )
 
         return df
 
