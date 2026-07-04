@@ -1,6 +1,6 @@
 # Roadmap — KIS Unified Trading Platform
 
-> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-07-03 KST.**
+> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-07-04 KST.**
 
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
@@ -168,6 +168,9 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
   modules with focused tests.
 - `/trades` is split into a shell, tab list, live/history tab components, and
   query hooks without changing query keys, polling, or tab accessibility behavior.
+- Dashboard API route modules are split into thin FastAPI facades plus
+  route-adjacent implementation modules for trades, signals, KIS builder, and
+  health. Compatibility imports and monkeypatch surfaces remain stable.
 - Futures broker/ledger reconciliation is extracted from the 8k-line
   orchestrator into `services/trading/broker_verification.py` with isolated unit
   tests.
@@ -194,6 +197,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Runtime defaults centralization | ✅ done | `shared/config/runtime_defaults.py`, `CLAUDE.md` |
 | Builder state/YAML serializer extraction | ✅ done | `strategy-builder-ui/src/lib/builder/` |
 | Trades page component/hook split | ✅ done | `strategy-builder-ui/src/app/trades/` |
+| Dashboard route facade split (`trades`, `signals`, `kis_builder`, `health`) | ✅ done | `tests/unit/dashboard -q`; public route modules stay compatibility facades |
 | Broker verification extraction | ✅ done | `services/trading/broker_verification.py` |
 | Orchestrator metrics sync helper | ✅ done | `services/trading/metrics_sync.py` |
 | Broker verifier delegation guard | ✅ done | `tests/unit/trading/test_orchestrator_broker_verifier_delegation.py` |
