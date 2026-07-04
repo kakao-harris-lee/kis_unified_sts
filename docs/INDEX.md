@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: 2026-06-28 (stream processor audit logging QA added).
+Last updated: 2026-07-03 (cross-asset unified investment system Phases 0–6 merged).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
@@ -17,8 +17,10 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 |-----|-----|
 | [ROADMAP.md](ROADMAP.md) | **Authoritative phased roadmap (Cross-Asset + Stock + Futures).** North Star, phase tables, current state, open next-steps. Supersedes scattered plan docs. |
 | [PROJECT_STATUS.md](PROJECT_STATUS.md) | 60-second dashboard — current phase, active strategies, automation schedule, blocking risks. |
-| [통합_투자_시스템_전략_설계서.md](통합_투자_시스템_전략_설계서.md) | 마스터 투자 전략 설계서 (트랙 A/B/C, 자본 3-계층, 시장 국면, 통합 리스크 예산). 구현 매핑은 [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md). |
+| [통합_투자_시스템_전략_설계서.md](통합_투자_시스템_전략_설계서.md) | 마스터 투자 전략 설계서 (트랙 A/B/C, 자본 3-계층, 시장 국면, 통합 리스크 예산). 구현 매핑은 아래 크로스에셋 로드맵. |
+| [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md) | **크로스에셋 통합 투자 시스템 구현 로드맵** — 설계서를 코드베이스에 매핑. Market Risk Score(0~100), 트랙 게이트, 통합 MDD 서킷 브레이커, 헤지 어드바이저, 트랙 A 원장, 피드백 리포트. Phase 0~6 전량 main 병합(2026-07-03, 위험 게이트 shadow 기본); 남은 operator 게이트·미결 항목(O11~O17) 포함. |
 | [investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md) | Current gap research split by KOSPI 200 futures and stock trading; includes ATS/session/product governance findings. |
+| [investigations/2026-07-03-design-spec-risk-alignment-audit.md](investigations/2026-07-03-design-spec-risk-alignment-audit.md) | 설계서 §3.2/§4.2 리스크 규격 vs 현행 설정 정렬 감사 (트랙 B/C 규격별 판정, kill_switch 커버리지 발견 O13). |
 
 ## 📐 Architecture & API
 
