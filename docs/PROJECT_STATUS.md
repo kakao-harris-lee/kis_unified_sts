@@ -94,8 +94,10 @@ require a scheduler image rebuild to activate.
 
 ## Active Strategies
 
-Verified 2026-06-28 against `config/strategies/{stock,futures}/*.yaml`
-(`enabled` flag is the single source of truth).
+Verified 2026-07-04 against `config/strategies/{stock,futures}/*.yaml`
+(`enabled` flag is the single source of truth; names below are the strategy
+`name:` fields, which can differ from the filename). Enablement is unchanged
+since 2026-06-28 — recent Setup D commits tuned parameters only.
 
 | Asset | Strategy | Mode | Note |
 |---|---|---|---|
