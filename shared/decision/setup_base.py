@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
-from shared.decision.context import MarketContext
+from shared.decision.interfaces import FuturesMarketView
 from shared.decision.signal import Signal
 
 
@@ -25,7 +25,7 @@ class Setup(ABC):
         class SetupAGapReversion(Setup):
             CONFIG_CLASS = SetupAConfig
 
-            def check(self, ctx: MarketContext) -> Signal | None:
+            def check(self, ctx: FuturesMarketView) -> Signal | None:
                 ...
     """
 
@@ -43,7 +43,7 @@ class Setup(ABC):
         self.config = config
 
     @abstractmethod
-    def check(self, ctx: MarketContext) -> Signal | None:
+    def check(self, ctx: FuturesMarketView) -> Signal | None:
         """Evaluate market context and optionally emit a trading signal.
 
         Parameters

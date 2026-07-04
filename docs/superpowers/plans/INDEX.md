@@ -1,6 +1,6 @@
 # Superpowers Plans Index
 
-Last updated: 2026-06-28.
+Last updated: 2026-07-04.
 
 `docs/superpowers/plans/` contains generated implementation plans. The completed
 plans have been moved to [archive/](archive/) so this directory does not look
@@ -15,6 +15,7 @@ Active plans:
 
 | Date | Plan | Purpose |
 |---|---|---|
+| 2026-07-04 | [orchestrator decomposition](2026-07-04-orchestrator-decomposition.md) | Facade-preserving decomposition plan for the monolithic trading orchestrator while F-9 remains the futures runtime replacement path. |
 | 2026-06-28 | [quant system expert work allocation](2026-06-28-quant-system-expert-work-allocation.md) | Expert-lane execution plan for market-structure policy, KOSPI 200 futures, stock ATS/SOR, strategy evidence, Workbench transparency, and QA. |
 | 2026-06-27 | [architecture audit parallel plan](2026-06-27-architecture-audit-parallel-plan.md) | Parallel read-only architecture audit of orchestrator, stock pipeline, futures pipeline, and shared streaming boundaries. |
 | 2026-06-27 | [architecture hardening phase 1](2026-06-27-architecture-hardening-phase1.md) | Implementation plan for shared futures instrument resolution and a reusable multi-input Redis stream stage. |

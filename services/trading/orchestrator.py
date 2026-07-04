@@ -30,23 +30,36 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
-from enum import Enum
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import yaml
 
 from services.monitoring.metrics import get_metrics_collector
+from services.trading import market_data_bootstrap as _market_data_bootstrap
+from services.trading import runtime_config as _runtime_config
+from services.trading import session_calendar as _session_calendar
 from services.trading.broker_verification import BrokerPositionVerifier
-from services.trading.data_provider import DataProviderConfig, MarketDataProvider
+from services.trading.data_provider import MarketDataProvider
+from services.trading.execution_facade import (
+    get_signal_direction,
+    normalize_entry_order_result,
+)
 from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+from services.trading.recovery import (
+    evaluate_position_freshness,
+    parse_recovery_entry_time,
+    reconstruct_recovered_position,
+)
+from services.trading.reentry_guard import (
+    record_recent_exit_cooldown,
+    reentry_guard_block,
+    reentry_guard_key,
+)
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
@@ -67,7 +80,7 @@ from shared.execution.futures_instrument import (
 )
 from shared.execution.models import ExecutionVenue
 from shared.execution.venue_router import VenueRouter
-from shared.models.position import Position, PositionSide, PositionState
+from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal, Signal
 from shared.regime.performance_tracker import (
     RegimePerformanceConfig,
@@ -94,15 +107,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+HolidayCache = _session_calendar.HolidayCache
+HolidayLoader = _session_calendar.HolidayLoader
+MarketSchedule = _session_calendar.MarketSchedule
+TradingState = _session_calendar.TradingState
+_get_holidays = _session_calendar._get_holidays
+default_holiday_loader = _session_calendar.default_holiday_loader
+is_trading_day = _session_calendar.is_trading_day
+reload_holidays = _session_calendar.reload_holidays
+set_holiday_cache = _session_calendar.set_holiday_cache
 
-# Validation constants
-MIN_INITIAL_CAPITAL = 100_000  # 10만원 minimum
-MAX_INITIAL_CAPITAL = 100_000_000_000  # 1000억원 maximum
-MIN_ORDER_AMOUNT = 10_000  # 1만원 minimum per trade
-MAX_ORDER_AMOUNT = 100_000_000  # 1억원 maximum per trade
+EntryReentryGuardConfig = _runtime_config.EntryReentryGuardConfig
+TradingConfig = _runtime_config.TradingConfig
+MIN_INITIAL_CAPITAL = _runtime_config.MIN_INITIAL_CAPITAL
+MAX_INITIAL_CAPITAL = _runtime_config.MAX_INITIAL_CAPITAL
+MIN_ORDER_AMOUNT = _runtime_config.MIN_ORDER_AMOUNT
+MAX_ORDER_AMOUNT = _runtime_config.MAX_ORDER_AMOUNT
+REENTRY_GUARD_SCOPES = _runtime_config.REENTRY_GUARD_SCOPES
+
 MAX_ORDER_QUANTITY = 1_000_000  # Safety cap for quantity
-MAX_YAML_FILE_SIZE = 1_024 * 1_024  # 1MB max for YAML config files
-REENTRY_GUARD_SCOPES = {"symbol", "symbol_strategy"}
 
 # Futures Setup A/C strategy → kospi.signals_all.setup_type code. Only these
 # two are persisted to signals_all (the Phase 2 verification gates count
@@ -117,330 +140,6 @@ _SIGNALS_ALL_INSERT_SQL = (
     "(signal_id, generated_at, setup_type, direction, entry_price, stop_loss, "
     "take_profit, confidence, executed, skip_reason, reason_tags) VALUES"
 )
-
-
-@dataclass(frozen=True)
-class EntryReentryGuardConfig:
-    """Post-exit entry guard configuration.
-
-    The guard prevents immediate churn after a position closes, especially
-    stop-loss followed by same-symbol re-entry during noisy intraday moves.
-    """
-
-    enabled: bool = True
-    scope: str = "symbol_strategy"
-    default_cooldown_seconds: float = 900.0
-    reason_cooldown_seconds: dict[str, float] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> EntryReentryGuardConfig:
-        raw = data or {}
-        raw_reasons = raw.get("reason_cooldown_seconds", {})
-        reasons: dict[str, float] = {}
-        if isinstance(raw_reasons, dict):
-            for reason, seconds in raw_reasons.items():
-                if not isinstance(seconds, (int, float)):
-                    raise TypeError(
-                        "entry_reentry_guard.reason_cooldown_seconds values "
-                        f"must be numeric, got {type(seconds)} for {reason}"
-                    )
-                if float(seconds) < 0:
-                    raise ValueError(
-                        "entry_reentry_guard.reason_cooldown_seconds values "
-                        f"must be non-negative, got {seconds} for {reason}"
-                    )
-                reasons[str(reason).lower()] = float(seconds)
-
-        default_cooldown = raw.get("default_cooldown_seconds", 900.0)
-        if not isinstance(default_cooldown, (int, float)):
-            raise TypeError(
-                "entry_reentry_guard.default_cooldown_seconds must be numeric"
-            )
-        if float(default_cooldown) < 0:
-            raise ValueError(
-                "entry_reentry_guard.default_cooldown_seconds must be non-negative"
-            )
-
-        scope = str(raw.get("scope", "symbol_strategy"))
-        if scope not in REENTRY_GUARD_SCOPES:
-            raise ValueError(
-                "entry_reentry_guard.scope must be one of "
-                f"{sorted(REENTRY_GUARD_SCOPES)}, got {scope}"
-            )
-
-        return cls(
-            enabled=bool(raw.get("enabled", True)),
-            scope=scope,
-            default_cooldown_seconds=float(default_cooldown),
-            reason_cooldown_seconds=reasons,
-        )
-
-    def cooldown_for(self, reason: str | None) -> float:
-        if not reason:
-            return self.default_cooldown_seconds
-        return self.reason_cooldown_seconds.get(
-            str(reason).lower(),
-            self.default_cooldown_seconds,
-        )
-
-
-class HolidayLoader(Protocol):
-    """Protocol for holiday data loading (allows injection for testing)."""
-
-    def __call__(self, config_path: str) -> set[date]:
-        """Load holidays from config file."""
-        ...
-
-
-def default_holiday_loader(
-    config_path: str = "config/market_schedule.yaml",
-) -> set[date]:
-    """Default implementation for loading holidays from config file.
-
-    Args:
-        config_path: Path to market schedule YAML config
-
-    Returns:
-        Set of holiday dates
-    """
-    holidays: set[date] = set()
-    path = Path(config_path)
-
-    if not path.exists():
-        logger.warning(f"Holiday config not found: {config_path}, using empty set")
-        return holidays
-
-    try:
-        # Security: Check file size before parsing to prevent DoS via large files
-        file_size = path.stat().st_size
-        if file_size > MAX_YAML_FILE_SIZE:
-            logger.error(
-                f"Holiday config file too large: {file_size} bytes > {MAX_YAML_FILE_SIZE} bytes"
-            )
-            return holidays
-
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-
-        if not isinstance(data, dict):
-            logger.warning(f"Invalid holiday config format in {config_path}")
-            return holidays
-
-        for holiday_str in data.get("holidays", []):
-            try:
-                if isinstance(holiday_str, str):
-                    holidays.add(date.fromisoformat(holiday_str))
-                elif isinstance(holiday_str, date):
-                    holidays.add(holiday_str)
-            except (ValueError, TypeError) as e:
-                logger.debug(f"Skipping invalid holiday entry: {holiday_str} - {e}")
-    except (OSError, yaml.YAMLError) as e:
-        logger.error(f"Failed to load holidays from config file: {e}", exc_info=True)
-    except (KeyError, TypeError, AttributeError) as e:
-        logger.error(f"Invalid holiday config format: {e}", exc_info=True)
-
-    return holidays
-
-
-class HolidayCache:
-    """Thread-safe holiday cache with injectable loader.
-
-    NOTE: This is a legacy sync version. For async contexts, use
-    AsyncHolidayCache from services.trading.holiday_cache instead.
-
-    Usage:
-        # Default usage
-        cache = HolidayCache()
-        holidays = cache.get()
-
-        # With custom loader (for testing)
-        cache = HolidayCache(loader=lambda path: {date(2024, 1, 1)})
-    """
-
-    def __init__(
-        self,
-        loader: Callable[[str], set[date]] | None = None,
-        config_path: str = "config/market_schedule.yaml",
-    ):
-        self._loader = loader or default_holiday_loader
-        self._config_path = config_path
-        self._cache: set[date] | None = None
-        self._lock = asyncio.Lock()
-
-    def get(self) -> set[date]:
-        """Get holidays (loads on first access)."""
-        if self._cache is None:
-            self._cache = self._loader(self._config_path)
-        return self._cache
-
-    def reload(self):
-        """Force reload of holidays (sync version, not thread-safe for concurrent use)."""
-        self._cache = None
-
-    async def reload_async(self):
-        """Force reload of holidays with async lock for thread-safety."""
-        async with self._lock:
-            self._cache = None
-
-    async def get_async(self) -> set[date]:
-        """Get holidays with async lock for concurrent access."""
-        async with self._lock:
-            return self.get()
-
-
-# Global holiday cache (can be replaced for testing)
-_holiday_cache = HolidayCache()
-
-
-def _get_holidays() -> set[date]:
-    """공휴일 가져오기 (캐시 사용)"""
-    return _holiday_cache.get()
-
-
-def reload_holidays():
-    """공휴일 다시 로드 (설정 변경 시)"""
-    _holiday_cache.reload()
-
-
-def set_holiday_cache(cache: HolidayCache):
-    """Replace global holiday cache (for testing)."""
-    global _holiday_cache
-    _holiday_cache = cache
-
-
-class TradingState(Enum):
-    """트레이딩 상태"""
-
-    IDLE = "idle"  # 대기 중
-    WAITING = "waiting"  # 장 시작 대기
-    RUNNING = "running"  # 거래 중
-    PAUSED = "paused"  # 일시 정지
-    STOPPED = "stopped"  # 종료됨
-    ERROR = "error"  # 오류 발생
-
-
-@dataclass
-class MarketSchedule:
-    """장 시간 설정"""
-
-    # 주식
-    stock_open: dt_time = field(default_factory=lambda: dt_time(9, 0))
-    stock_close: dt_time = field(default_factory=lambda: dt_time(15, 30))
-
-    # 선물 — default 08:45 matches market_schedule.yaml::futures.regular.open.
-    # NOT hardcoded to 09:00; populated by load_from_yaml() below.
-    futures_open: dt_time = field(default_factory=lambda: dt_time(8, 45))
-    futures_close: dt_time = field(default_factory=lambda: dt_time(15, 45))
-
-    # 서비스 시작/종료 (장 시작 전/후 여유)
-    service_start_offset_minutes: int = 5
-    service_end_offset_minutes: int = 5
-
-    @classmethod
-    def load_from_yaml(
-        cls, config_path: str = "config/market_schedule.yaml"
-    ) -> MarketSchedule:
-        """Load a MarketSchedule from *config_path*.
-
-        Reads ``market_schedule.{stock,futures}.regular.{open,close}`` and
-        constructs a schedule.  Falls back to the dataclass defaults when the
-        file is absent or a key is missing.
-        """
-        import yaml as _yaml
-
-        schedule = cls()
-        path = Path(config_path)
-        if not path.exists():
-            logger.warning(
-                "market_schedule config not found: %s; using defaults", config_path
-            )
-            return schedule
-        try:
-            data = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            ms = data.get("market_schedule", {})
-
-            def _parse_time(section: dict, key: str, default: dt_time) -> dt_time:
-                raw = section.get(key)
-                if not raw:
-                    return default
-                parts = str(raw).strip().split(":")
-                if len(parts) < 2:
-                    return default
-                return dt_time(int(parts[0]), int(parts[1]))
-
-            stock_reg = ms.get("stock", {}).get("regular", {})
-            futures_reg = ms.get("futures", {}).get("regular", {})
-
-            schedule = cls(
-                stock_open=_parse_time(stock_reg, "open", dt_time(9, 0)),
-                stock_close=_parse_time(stock_reg, "close", dt_time(15, 30)),
-                futures_open=_parse_time(futures_reg, "open", dt_time(8, 45)),
-                futures_close=_parse_time(futures_reg, "close", dt_time(15, 45)),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to load market_schedule from %s: %s; using defaults",
-                config_path,
-                exc,
-            )
-        return schedule
-
-    def get_open_time(self, asset_class: str) -> dt_time:
-        return self.stock_open if asset_class == "stock" else self.futures_open
-
-    def get_close_time(self, asset_class: str) -> dt_time:
-        return self.stock_close if asset_class == "stock" else self.futures_close
-
-
-def is_trading_day(d: date | None = None, holidays: set[date] | None = None) -> bool:
-    """거래일 여부 확인
-
-    Args:
-        d: 확인할 날짜 (None이면 오늘)
-        holidays: 공휴일 set (None이면 설정 파일에서 로드)
-
-    Returns:
-        거래일이면 True
-    """
-    if d is None:
-        d = date.today()
-
-    # 주말
-    if d.weekday() >= 5:
-        return False
-
-    # 공휴일
-    if holidays is None:
-        holidays = _get_holidays()
-
-    return d not in holidays
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    try:
-        return float(str(value).strip())
-    except (TypeError, ValueError):
-        return default
 
 
 def _risk_params_for_runtime_capital(
@@ -462,341 +161,6 @@ def _risk_params_for_runtime_capital(
     ):
         params["initial_capital"] = int(runtime_initial_capital)
     return params
-
-
-@dataclass
-class TradingConfig:
-    """트레이딩 설정"""
-
-    # 기본 설정
-    asset_class: str = "stock"  # "stock" or "futures"
-    strategy_name: str | None = None  # None = load all enabled strategies
-    initial_capital: float = 10_000_000
-
-    # 거래 대상
-    symbols: list[str] = field(default_factory=list)  # 주식 종목 코드들
-
-    # 스케줄
-    schedule: MarketSchedule = field(default_factory=MarketSchedule)
-
-    # 모드
-    paper_trading: bool = True  # 모의투자 여부
-    auto_start: bool = True  # 장 시작 시 자동 시작
-
-    # Optional execution mode override (PAPER/MOCK/REAL).
-    # If empty, inferred from paper_trading (PAPER if True, else MOCK).
-    execution_mode: str = ""
-
-    # 알림
-    enable_telegram: bool = True
-    telegram_token: str = ""
-    telegram_chat_id: str = ""
-
-    # Redis (선택)
-    redis_url: str | None = None
-
-    # Order sizing (previously hardcoded)
-    order_amount_per_trade: float = 1_000_000  # 종목당 주문 금액
-
-    # Order execution concurrency
-    max_concurrent_orders: int = 5
-
-    # Market data refresh cadence (seconds)
-    market_data_refresh_seconds: float = 0.5
-
-    # Per-symbol metadata (e.g. watchlist baseline volumes).
-    symbol_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
-
-    # Paper trading simulation fees (round-trip 기준 0.3% = 편도 0.15%)
-    paper_commission_rate: float = 0.0015  # 편도 수수료 0.15%
-    paper_slippage_rate: float = 0.001  # 슬리피지 0.1%
-
-    # Position recovery
-    swing_recovery_max_age_days: int = (
-        7  # Max age for swing position recovery from Redis
-    )
-
-    # Error recovery
-    error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
-
-    # Candle cache persistence interval (seconds)
-    candle_cache_save_interval: float = 60.0
-
-    # Universe mode: "dynamic" (screener-driven, default) or "static" (daily watchlist)
-    universe_mode: str = "dynamic"
-    require_daily_indicators_for_dynamic_universe: bool = True
-    include_daily_watchlist_in_dynamic_universe: bool = True
-    allow_daily_watchlist_entry_before_intraday_warmup: bool = True
-    prioritize_stock_entry_execution: bool = True
-    regime_exclude_dip_candidates: bool = True
-    regime_exclude_position_only_symbols: bool = True
-    regime_require_daily_indicators: bool = True
-    regime_require_mfi_symbols: bool = True
-    regime_min_mfi_symbols: int = 8
-    regime_min_mfi_coverage_ratio: float = 0.5
-    regime_low_confidence_bear_fallback: str = "SIDEWAYS_DOWN"
-
-    # Regime performance tracking
-    regime_performance_tracking_enabled: bool = False
-
-    # Regime detection mode: 'simple' (MFI+ADX), 'adaptive' (multi-metric), or 'hmm' (future)
-    regime_detection_mode: str = "simple"
-
-    def __post_init__(self):
-        """Validate configuration values."""
-        self._validate()
-
-    def _validate(self):
-        """Validate all configuration parameters."""
-        if self.asset_class not in ("stock", "futures"):
-            raise ValueError(
-                f"asset_class must be 'stock' or 'futures', got {self.asset_class}"
-            )
-
-        if self.universe_mode not in ("dynamic", "static"):
-            raise ValueError(
-                f"universe_mode must be 'dynamic' or 'static', got {self.universe_mode}"
-            )
-        if not isinstance(self.require_daily_indicators_for_dynamic_universe, bool):
-            raise TypeError(
-                "require_daily_indicators_for_dynamic_universe must be bool, "
-                f"got {type(self.require_daily_indicators_for_dynamic_universe)}"
-            )
-        if not isinstance(self.include_daily_watchlist_in_dynamic_universe, bool):
-            raise TypeError(
-                "include_daily_watchlist_in_dynamic_universe must be bool, "
-                f"got {type(self.include_daily_watchlist_in_dynamic_universe)}"
-            )
-        if not isinstance(
-            self.allow_daily_watchlist_entry_before_intraday_warmup, bool
-        ):
-            raise TypeError(
-                "allow_daily_watchlist_entry_before_intraday_warmup must be bool, "
-                f"got {type(self.allow_daily_watchlist_entry_before_intraday_warmup)}"
-            )
-        if not isinstance(self.prioritize_stock_entry_execution, bool):
-            raise TypeError(
-                "prioritize_stock_entry_execution must be bool, "
-                f"got {type(self.prioritize_stock_entry_execution)}"
-            )
-        for attr_name in (
-            "regime_exclude_dip_candidates",
-            "regime_exclude_position_only_symbols",
-            "regime_require_daily_indicators",
-            "regime_require_mfi_symbols",
-        ):
-            if not isinstance(getattr(self, attr_name), bool):
-                raise TypeError(
-                    f"{attr_name} must be bool, got {type(getattr(self, attr_name))}"
-                )
-        if self.regime_min_mfi_symbols < 1:
-            raise ValueError("regime_min_mfi_symbols must be >= 1")
-        if not (0.0 <= self.regime_min_mfi_coverage_ratio <= 1.0):
-            raise ValueError("regime_min_mfi_coverage_ratio must be in [0, 1]")
-        if not self.regime_low_confidence_bear_fallback:
-            raise ValueError("regime_low_confidence_bear_fallback must be non-empty")
-
-        if self.regime_detection_mode not in ("simple", "adaptive", "hmm"):
-            raise ValueError(
-                f"regime_detection_mode must be 'simple', 'adaptive', or 'hmm', "
-                f"got {self.regime_detection_mode}"
-            )
-
-        if not (MIN_INITIAL_CAPITAL <= self.initial_capital <= MAX_INITIAL_CAPITAL):
-            raise ValueError(
-                f"initial_capital must be between {MIN_INITIAL_CAPITAL:,} "
-                f"and {MAX_INITIAL_CAPITAL:,}, got {self.initial_capital:,}"
-            )
-
-        if not (MIN_ORDER_AMOUNT <= self.order_amount_per_trade <= MAX_ORDER_AMOUNT):
-            raise ValueError(
-                f"order_amount_per_trade must be between {MIN_ORDER_AMOUNT:,} "
-                f"and {MAX_ORDER_AMOUNT:,}, got {self.order_amount_per_trade:,}"
-            )
-
-        if self.strategy_name is not None and (
-            not isinstance(self.strategy_name, str) or not self.strategy_name
-        ):
-            raise ValueError("strategy_name must be a non-empty string or None")
-
-        if not isinstance(self.symbols, list):
-            raise TypeError(f"symbols must be a list, got {type(self.symbols)}")
-
-        if not isinstance(self.paper_trading, bool):
-            raise TypeError(
-                f"paper_trading must be bool, got {type(self.paper_trading)}"
-            )
-
-        if (
-            not isinstance(self.max_concurrent_orders, int)
-            or self.max_concurrent_orders < 1
-        ):
-            raise ValueError(
-                f"max_concurrent_orders must be int >= 1, got {self.max_concurrent_orders}"
-            )
-
-        if not isinstance(self.market_data_refresh_seconds, (int, float)):
-            raise TypeError(
-                "market_data_refresh_seconds must be numeric, "
-                f"got {type(self.market_data_refresh_seconds)}"
-            )
-        if not (0.5 <= float(self.market_data_refresh_seconds) <= 5.0):
-            raise ValueError(
-                "market_data_refresh_seconds must be between 0.5 and 5.0, "
-                f"got {self.market_data_refresh_seconds}"
-            )
-
-    @classmethod
-    def stock(
-        cls,
-        strategy_name: str | None = None,
-        symbols: list[str] | None = None,
-        initial_capital: float = 10_000_000,
-        order_amount: float = 1_000_000,
-        paper_trading: bool = True,
-        execution_mode: str = "",
-        symbol_metadata: dict[str, dict[str, Any]] | None = None,
-        require_daily_indicators_for_dynamic_universe: bool | None = None,
-        include_daily_watchlist_in_dynamic_universe: bool | None = None,
-        allow_daily_watchlist_entry_before_intraday_warmup: bool | None = None,
-        prioritize_stock_entry_execution: bool | None = None,
-        regime_exclude_dip_candidates: bool | None = None,
-        regime_exclude_position_only_symbols: bool | None = None,
-        regime_require_daily_indicators: bool | None = None,
-        regime_require_mfi_symbols: bool | None = None,
-        regime_min_mfi_symbols: int | None = None,
-        regime_min_mfi_coverage_ratio: float | None = None,
-        regime_low_confidence_bear_fallback: str | None = None,
-    ) -> TradingConfig:
-        """주식용 설정"""
-        require_daily_indicators = (
-            _env_bool("STOCK_REQUIRE_DAILY_INDICATORS_FOR_DYNAMIC_UNIVERSE", True)
-            if require_daily_indicators_for_dynamic_universe is None
-            else require_daily_indicators_for_dynamic_universe
-        )
-        include_daily_watchlist = (
-            _env_bool("STOCK_INCLUDE_DAILY_WATCHLIST_IN_DYNAMIC_UNIVERSE", True)
-            if include_daily_watchlist_in_dynamic_universe is None
-            else include_daily_watchlist_in_dynamic_universe
-        )
-        allow_daily_warmup_bypass = (
-            _env_bool("STOCK_ALLOW_DAILY_WATCHLIST_ENTRY_BEFORE_INTRADAY_WARMUP", True)
-            if allow_daily_watchlist_entry_before_intraday_warmup is None
-            else allow_daily_watchlist_entry_before_intraday_warmup
-        )
-        prioritize_entries = (
-            _env_bool("STOCK_PRIORITIZE_ENTRY_EXECUTION", True)
-            if prioritize_stock_entry_execution is None
-            else prioritize_stock_entry_execution
-        )
-        exclude_dip_from_regime = (
-            _env_bool("STOCK_REGIME_EXCLUDE_DIP_CANDIDATES", True)
-            if regime_exclude_dip_candidates is None
-            else regime_exclude_dip_candidates
-        )
-        exclude_position_only_from_regime = (
-            _env_bool("STOCK_REGIME_EXCLUDE_POSITION_ONLY_SYMBOLS", True)
-            if regime_exclude_position_only_symbols is None
-            else regime_exclude_position_only_symbols
-        )
-        require_daily_for_regime = (
-            _env_bool("STOCK_REGIME_REQUIRE_DAILY_INDICATORS", True)
-            if regime_require_daily_indicators is None
-            else regime_require_daily_indicators
-        )
-        require_mfi_for_regime = (
-            _env_bool("STOCK_REGIME_REQUIRE_MFI_SYMBOLS", True)
-            if regime_require_mfi_symbols is None
-            else regime_require_mfi_symbols
-        )
-        min_mfi_symbols = (
-            _env_int("STOCK_REGIME_MIN_MFI_SYMBOLS", 8)
-            if regime_min_mfi_symbols is None
-            else regime_min_mfi_symbols
-        )
-        min_mfi_coverage_ratio = (
-            _env_float("STOCK_REGIME_MIN_MFI_COVERAGE_RATIO", 0.5)
-            if regime_min_mfi_coverage_ratio is None
-            else regime_min_mfi_coverage_ratio
-        )
-        low_confidence_bear_fallback = (
-            os.getenv("STOCK_REGIME_LOW_CONFIDENCE_BEAR_FALLBACK", "SIDEWAYS_DOWN")
-            if regime_low_confidence_bear_fallback is None
-            else regime_low_confidence_bear_fallback
-        )
-        return cls(
-            asset_class="stock",
-            strategy_name=strategy_name,
-            symbols=symbols or [],
-            initial_capital=initial_capital,
-            order_amount_per_trade=order_amount,
-            paper_trading=paper_trading,
-            execution_mode=execution_mode,
-            symbol_metadata=symbol_metadata or {},
-            require_daily_indicators_for_dynamic_universe=require_daily_indicators,
-            include_daily_watchlist_in_dynamic_universe=include_daily_watchlist,
-            allow_daily_watchlist_entry_before_intraday_warmup=allow_daily_warmup_bypass,
-            prioritize_stock_entry_execution=prioritize_entries,
-            regime_exclude_dip_candidates=exclude_dip_from_regime,
-            regime_exclude_position_only_symbols=exclude_position_only_from_regime,
-            regime_require_daily_indicators=require_daily_for_regime,
-            regime_require_mfi_symbols=require_mfi_for_regime,
-            regime_min_mfi_symbols=min_mfi_symbols,
-            regime_min_mfi_coverage_ratio=min_mfi_coverage_ratio,
-            regime_low_confidence_bear_fallback=low_confidence_bear_fallback,
-            # Slower refresh for stock (40-50 symbols with retention)
-            # avoids KIS API rate limiting
-            market_data_refresh_seconds=2.0,
-        )
-
-    @classmethod
-    def futures(
-        cls,
-        strategy_name: str | None = None,
-        initial_capital: float = 10_000_000,
-        order_amount: float = 1_000_000,
-        symbols: list[str] | None = None,
-    ) -> TradingConfig:
-        """선물용 설정"""
-        # Auto-detect KOSPI200 mini futures front-month code
-        symbols = symbols or cls._get_futures_default_symbols()
-        # Load the market schedule from config so that the session open/close
-        # anchors (including the 08:45 futures open) reflect the YAML source of
-        # truth rather than the old hardcoded 09:00 default.
-        schedule = MarketSchedule.load_from_yaml()
-        return cls(
-            asset_class="futures",
-            strategy_name=strategy_name,
-            initial_capital=initial_capital,
-            order_amount_per_trade=order_amount,
-            symbols=symbols,
-            telegram_token=os.getenv("TELEGRAM_FUTURES_BOT_TOKEN", ""),
-            telegram_chat_id=os.getenv("TELEGRAM_FUTURES_CHAT_ID", ""),
-            schedule=schedule,
-        )
-
-    @staticmethod
-    def _get_futures_default_symbols() -> list[str]:
-        """Get default KOSPI200 futures front-month symbol.
-
-        Product is env-selectable via ``FUTURES_TRADING_PRODUCT``:
-        - ``mini`` (default): KOSPI200 mini front-month (A05…) — the live product.
-        - ``kospi200``: full-size F200 front-month (A01…) — tighter spread, used
-          for paper signal validation (the mini's low liquidity blocks most
-          entries on the wide-spread guard).
-        """
-        from shared.execution.futures_instrument import (
-            resolve_futures_instrument_from_env,
-        )
-
-        instrument = resolve_futures_instrument_from_env()
-        logger.info(
-            "Futures default symbol (resolved): %s (product=%s source=%s)",
-            instrument.symbol,
-            instrument.product,
-            instrument.source,
-        )
-        return [instrument.symbol]
 
 
 class TradingOrchestrator:
@@ -831,7 +195,7 @@ class TradingOrchestrator:
         self.pipeline: TradingPipeline | None = None
 
         # Holiday cache (injectable for testing)
-        self._holiday_cache = holiday_cache or _holiday_cache
+        self._holiday_cache = holiday_cache or _session_calendar._holiday_cache
 
         # 통계
         self.start_time: datetime | None = None
@@ -1383,32 +747,9 @@ class TradingOrchestrator:
 
     def _init_kis_client(self):
         """Initialize KIS REST API Client"""
-        try:
-            from shared.kis.auth import KISAuthConfig
-            from shared.kis.client import KISClient
-
-            if self.config.asset_class == "futures":
-                app_key = os.getenv("KIS_FUTURES_APP_KEY", os.getenv("KIS_APP_KEY", ""))
-                app_secret = os.getenv(
-                    "KIS_FUTURES_APP_SECRET", os.getenv("KIS_APP_SECRET", "")
-                )
-                # 선물은 항상 실서버 사용 (모의서버는 선물 시세 미지원)
-                is_real = True
-            else:
-                app_key = os.getenv("KIS_APP_KEY", "")
-                app_secret = os.getenv("KIS_APP_SECRET", "")
-                market = os.getenv("KIS_STOCK_MARKET", "real")
-                is_real = market.lower() == "real"
-            kis_config = KISAuthConfig(
-                app_key=app_key, app_secret=app_secret, is_real=is_real
-            )
-            self._kis_client = KISClient(kis_config)
-            logger.info("KIS Client initialized")
-            return kis_config
-        except (ConfigurationError, APIError, NetworkError) as e:
-            logger.warning(f"Failed to initialize KIS Client: {e}")
-            self._kis_client = None
-            return None
+        result = _market_data_bootstrap.init_kis_client(self.config)
+        self._kis_client = result.client
+        return result.auth_config
 
     async def _prefetch_futures_daily_reference(self) -> None:
         """Cache prev_close for each futures symbol via REST at session start.
@@ -1444,211 +785,37 @@ class TradingOrchestrator:
 
     def _load_stream_staleness_threshold(self) -> float:
         """Staleness threshold for the stream feed — mirror the failover config."""
-        try:
-            failover_cfg = ConfigLoader.load("streaming.yaml").get("failover", {})
-            return float(failover_cfg.get("staleness_threshold_seconds", 30.0))
-        except (
-            InvalidConfigError,
-            MissingConfigError,
-            OSError,
-            yaml.YAMLError,
-            KeyError,
-            TypeError,
-            ValueError,
-        ):
-            return 30.0
+        return _market_data_bootstrap.load_stream_staleness_threshold()
 
     def _init_price_feeds(self, kis_config) -> Any | None:
         """Initialize WebSocket Price Feeds"""
-        self._stock_price_feed = None
-        self._futures_price_feed = None
-        self._stream_consumer_feed = None
-        self._stream_redis = None
-        data_source = None
-
-        if not self._kis_client or not kis_config:
-            return None
-
-        if self.config.asset_class == "stock":
-            source_mode = (
-                os.getenv("STOCK_MARKET_DATA_SOURCE", "websocket").strip().lower()
-            )
-            if source_mode == "stream":
-                import redis.asyncio as aioredis
-
-                from services.trading.stream_consumer_feed import StreamConsumerFeed
-
-                stream_name = os.getenv("MARKET_TICK_STREAM", "market:ticks")
-                self._stream_redis = aioredis.from_url(redis_url_from_env())
-                self._stream_consumer_feed = StreamConsumerFeed(
-                    redis=self._stream_redis,
-                    stream=stream_name,
-                    stale_threshold_seconds=self._load_stream_staleness_threshold(),
-                )
-                data_source = self._stream_consumer_feed
-                logger.info(
-                    "Stock data source = STREAM (%s); KIS WebSocket feed skipped",
-                    stream_name,
-                )
-            else:
-                try:
-                    from shared.kis.stock_feed import KISStockPriceFeed
-
-                    self._stock_price_feed = KISStockPriceFeed(
-                        config=kis_config,
-                    )
-                    data_source = self._stock_price_feed
-                    logger.info("Stock WebSocket price feed initialized")
-                except (
-                    NetworkError,
-                    WebSocketDisconnectError,
-                    ConfigurationError,
-                ) as e:
-                    logger.warning(f"Stock WebSocket feed init failed: {e}")
-        elif self.config.asset_class == "futures":
-            try:
-                from shared.kis.futures_feed import KISFuturesPriceFeed
-
-                self._futures_price_feed = KISFuturesPriceFeed(
-                    config=kis_config,
-                )
-                data_source = self._futures_price_feed
-                logger.info("Futures WebSocket price feed initialized")
-            except (NetworkError, WebSocketDisconnectError, ConfigurationError) as e:
-                logger.warning(f"Futures WebSocket feed init failed: {e}")
-
-        return data_source
+        result = _market_data_bootstrap.init_price_feeds(
+            config=self.config,
+            kis_client=self._kis_client,
+            kis_config=kis_config,
+        )
+        self._stock_price_feed = result.stock_price_feed
+        self._futures_price_feed = result.futures_price_feed
+        self._stream_consumer_feed = result.stream_consumer_feed
+        self._stream_redis = result.stream_redis
+        return result.data_source
 
     def _init_data_provider(self, data_source):
         """Initialize Market Data Provider"""
-        try:
-            streaming_cfg = ConfigLoader.load("streaming.yaml")
-            dp_cfg = streaming_cfg.get("data_provider", {})
-            failover_cfg = streaming_cfg.get("failover", {})
-        except (
-            InvalidConfigError,
-            MissingConfigError,
-            OSError,
-            yaml.YAMLError,
-            KeyError,
-            TypeError,
-        ):
-            dp_cfg = {}
-            failover_cfg = {}
-
-        if data_source:
-            cache_ttl = float(dp_cfg.get("cache_ttl_websocket", 2.0))
-        else:
-            if self.config.asset_class == "stock":
-                cache_ttl = float(dp_cfg.get("cache_ttl_stock", 30.0))
-            else:
-                cache_ttl = float(dp_cfg.get("cache_ttl_futures", 5.0))
-
-        stagger_delay = float(dp_cfg.get("stagger_delay", 0.1))
-
-        telegram_notifier = None
-        send_telegram_alerts = bool(failover_cfg.get("send_telegram_alerts", False))
-        if self.config.enable_telegram and send_telegram_alerts:
-            try:
-                from shared.notification.telegram import (
-                    TelegramNotifier,
-                    resolve_domain_credentials,
-                )
-
-                domain = (
-                    self.config.asset_class
-                    if self.config.asset_class in ("stock", "futures")
-                    else None
-                )
-                # Use resolve_domain_credentials (NOT SecretsManager.telegram_token)
-                # to avoid the silent legacy fallback to TELEGRAM_BOT_TOKEN.
-                # If futures env is empty for any reason, the legacy fallback
-                # would route futures alerts to the stock channel because
-                # `.env` aliases TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}.
-                env_token, env_chat = resolve_domain_credentials(domain)
-                bot_token = self.config.telegram_token or env_token
-                chat_id = self.config.telegram_chat_id or env_chat
-                if bot_token and chat_id:
-                    telegram_notifier = TelegramNotifier(
-                        bot_token=bot_token,
-                        chat_id=chat_id,
-                    )
-            except Exception as e:
-                logger.warning("Failed to initialize failover telegram notifier: %s", e)
-
-        self._data_provider_failover_enabled = bool(failover_cfg.get("enabled", False))
-
-        self._data_provider = MarketDataProvider(
-            symbols=self.config.symbols,
-            config=DataProviderConfig(
-                cache_ttl_seconds=cache_ttl,
-                batch_size=int(dp_cfg.get("batch_size", 20)),
-                fetch_timeout_seconds=float(dp_cfg.get("fetch_timeout_seconds", 5.0)),
-                stagger_delay_seconds=stagger_delay,
-                health_check_interval_seconds=float(
-                    failover_cfg.get("health_check_interval_seconds", 10.0)
-                ),
-                rest_poll_interval_seconds=float(
-                    failover_cfg.get("rest_poll_interval_seconds", 10.0)
-                ),
-                staleness_threshold_seconds=float(
-                    failover_cfg.get("staleness_threshold_seconds", 30.0)
-                ),
-                min_fresh_ratio=float(failover_cfg.get("min_fresh_ratio", 0.25)),
-                startup_grace_seconds=float(
-                    failover_cfg.get("startup_grace_seconds", 120.0)
-                ),
-                rest_fallback_max_symbols=failover_cfg.get("rest_fallback_max_symbols"),
-                send_telegram_alerts=send_telegram_alerts,
-                failover_unhealthy_threshold=int(
-                    failover_cfg.get("failover_unhealthy_threshold", 3)
-                ),
-                recovery_healthy_threshold=int(
-                    failover_cfg.get("recovery_healthy_threshold", 3)
-                ),
-            ),
+        result = _market_data_bootstrap.init_data_provider(
+            config=self.config,
             kis_client=self._kis_client,
             data_source=data_source,
-            telegram_notifier=telegram_notifier,
         )
+        self._data_provider = result.provider
+        self._data_provider_failover_enabled = result.failover_enabled
 
     def _init_tick_stream_publisher(self) -> None:
         """Initialize optional Redis tick mirroring for monitoring."""
-        if self._stream_consumer_feed is not None:
-            # Stream path: the market-ingest daemon owns publishing. Leave the
-            # publisher None so the reused _on_stock_tick publish (guarded by
-            # `if self._tick_stream_publisher:`) no-ops — no double-publish.
-            self._tick_stream_publisher = None
-            logger.info("Tick stream publisher skipped (stock data source = stream)")
-            return
-        try:
-            from services.monitoring.tick_stream_publisher import (
-                TickStreamPublisher,
-                TickStreamPublisherConfig,
-            )
-
-            cfg = TickStreamPublisherConfig.from_env()
-            if not cfg.enabled:
-                self._tick_stream_publisher = None
-                logger.info("Tick stream publisher disabled by env")
-                return
-
-            self._tick_stream_publisher = TickStreamPublisher(cfg)
-            logger.info(
-                "Tick stream publisher enabled "
-                "(async=%s, stock_stream=%s, futures_stream=%s, "
-                "stock_interval=%.2fs, futures_interval=%.2fs, queue=%d, batch=%d)",
-                cfg.async_publish,
-                cfg.stock_stream,
-                cfg.futures_stream,
-                cfg.stock_min_interval_seconds,
-                cfg.futures_min_interval_seconds,
-                cfg.queue_maxsize,
-                cfg.flush_batch_size,
-            )
-        except (ConfigurationError, InfrastructureError) as e:
-            self._tick_stream_publisher = None
-            logger.warning(f"Tick stream publisher init failed: {e}")
+        result = _market_data_bootstrap.init_tick_stream_publisher(
+            stream_consumer_feed=self._stream_consumer_feed,
+        )
+        self._tick_stream_publisher = result.publisher
 
     def _init_llm_context_publisher(self) -> None:
         """Initialize LLM Context Publisher for market analysis integration."""
@@ -2320,75 +1487,42 @@ class TradingOrchestrator:
             pos_id = pos_data.get("id", "")
             strategy = pos_data.get("strategy", "")
 
-            # Parse entry_time
             try:
-                entry_time_str = pos_data.get("entry_time", "")
-                entry_time = datetime.fromisoformat(entry_time_str)
+                entry_time = parse_recovery_entry_time(pos_data)
             except (ValueError, TypeError):
                 logger.warning(f"Invalid entry_time in Redis position: {pos_id[:8]}")
                 reader.remove_position(pos_id)
                 stale += 1
                 continue
 
-            # Freshness filter
-            age_days = (today - entry_time.date()).days
-            if strategy in self.SWING_STRATEGIES:
-                if age_days > max_age_days:
+            freshness = evaluate_position_freshness(
+                strategy=strategy,
+                entry_time=entry_time,
+                today=today,
+                swing_strategies=self.SWING_STRATEGIES,
+                max_swing_age_days=max_age_days,
+            )
+            if not freshness.recoverable:
+                if freshness.is_swing:
                     logger.debug(
-                        f"Stale swing position: {pos_data.get('code')} (age={age_days}d)"
+                        f"Stale swing position: {pos_data.get('code')} "
+                        f"(age={freshness.age_days}d)"
                     )
-                    reader.remove_position(pos_id)
-                    stale += 1
-                    continue
-            else:
-                # Intraday strategies: same-day only
-                if entry_time.date() != today:
+                else:
                     logger.debug(
-                        f"Stale intraday position: {pos_data.get('code')} (age={age_days}d)"
+                        f"Stale intraday position: {pos_data.get('code')} "
+                        f"(age={freshness.age_days}d)"
                     )
-                    reader.remove_position(pos_id)
-                    stale += 1
-                    continue
+                reader.remove_position(pos_id)
+                stale += 1
+                continue
 
-            # Reconstruct Position
             try:
-                side_str = pos_data.get("side", "long")
-                side = PositionSide(side_str)
-                entry_price = float(pos_data["entry_price"])
-                current_price = float(pos_data.get("current_price", entry_price))
-
-                pos_code = pos_data["code"]
-                position = Position(
-                    id=pos_id,
-                    code=pos_code,
-                    name=pos_data.get("name", "")
-                    or self._symbol_names.get(pos_code, pos_code),
-                    side=side,
-                    quantity=int(pos_data["quantity"]),
-                    entry_price=entry_price,
+                position = reconstruct_recovered_position(
+                    pos_data,
                     entry_time=entry_time,
-                    current_price=current_price,
-                    highest_price=float(
-                        pos_data.get("highest_price", max(entry_price, current_price))
-                    ),
-                    lowest_price=float(
-                        pos_data.get("lowest_price", min(entry_price, current_price))
-                    ),
-                    state=PositionState(pos_data.get("state", "survival").lower()),
-                    strategy=strategy,
-                    fee_rate=float(pos_data.get("fee_rate", 0.003)),
+                    symbol_names=getattr(self, "_symbol_names", {}),
                 )
-
-                # Re-attach the idempotency key (if persisted) so that
-                # any in-flight retry of the originating signal does not
-                # create a duplicate position after restart.
-                recovered_coid = str(pos_data.get("client_order_id") or "").strip()
-                if recovered_coid:
-                    position.metadata["client_order_id"] = recovered_coid
-
-                stop_price = pos_data.get("stop_price")
-                if stop_price is not None:
-                    position.stop_price = float(stop_price)
             except (KeyError, ValueError, TypeError) as e:
                 logger.warning(f"Failed to reconstruct position {pos_id[:8]}: {e}")
                 reader.remove_position(pos_id)
@@ -5439,15 +4573,7 @@ class TradingOrchestrator:
     @staticmethod
     def _normalize_entry_order_result(result: Any) -> tuple[bool, float, int, str]:
         """Normalize legacy/new entry-order return tuples."""
-        if not isinstance(result, tuple):
-            raise ValueError(f"Unexpected entry order result type: {type(result)}")
-        if len(result) == 4:
-            is_filled, fill_price, filled_qty, venue = result
-            return bool(is_filled), float(fill_price), int(filled_qty), str(venue)
-        if len(result) == 3:
-            is_filled, fill_price, filled_qty = result
-            return bool(is_filled), float(fill_price), int(filled_qty), "KRX"
-        raise ValueError(f"Unexpected entry order result length: {len(result)}")
+        return normalize_entry_order_result(result)
 
     def _update_entry_slippage_stats(self, adverse_ticks: float) -> None:
         stats = self._entry_slippage_stats
@@ -5852,9 +4978,7 @@ class TradingOrchestrator:
             "_entry_reentry_guard",
             EntryReentryGuardConfig(enabled=False),
         )
-        if cfg.scope == "symbol":
-            return str(code)
-        return f"{code}:{strategy or ''}"
+        return reentry_guard_key(cfg, code, strategy)
 
     def _record_recent_exit_for_reentry_guard(
         self,
@@ -5868,36 +4992,21 @@ class TradingOrchestrator:
             "_entry_reentry_guard",
             EntryReentryGuardConfig(enabled=False),
         )
-        # Applies to stock AND futures. Futures whipsaw (shake-out stop →
-        # immediate re-entry) accumulates round-trip slippage; per-asset
-        # cooldowns come from execution.yaml entry_reentry_guard[.futures].
-        if not cfg.enabled:
-            return
-
-        cooldown_seconds = cfg.cooldown_for(reason)
-        if cooldown_seconds <= 0:
-            return
-
-        code = str(getattr(signal, "code", "") or getattr(closed, "code", "") or "")
-        if not code:
-            return
-        strategy = str(
-            getattr(signal, "strategy", "") or getattr(closed, "strategy", "") or ""
-        )
-        key = self._entry_reentry_guard_key(code, strategy)
-
         recent = getattr(self, "_recent_exit_cooldowns", None)
         if recent is None:
             recent = {}
             self._recent_exit_cooldowns = recent
 
-        recent[key] = {
-            "code": code,
-            "strategy": strategy,
-            "reason": str(reason).lower(),
-            "exit_time": datetime.now(UTC),
-            "cooldown_seconds": float(cooldown_seconds),
-        }
+        # Applies to stock AND futures. Futures whipsaw (shake-out stop →
+        # immediate re-entry) accumulates round-trip slippage; per-asset
+        # cooldowns come from execution.yaml entry_reentry_guard[.futures].
+        record_recent_exit_cooldown(
+            recent,
+            cfg,
+            closed=closed,
+            signal=signal,
+            reason=reason,
+        )
 
     def _reentry_guard_block(
         self,
@@ -5910,45 +5019,14 @@ class TradingOrchestrator:
             "_entry_reentry_guard",
             EntryReentryGuardConfig(enabled=False),
         )
-        if not cfg.enabled:
-            return None
-
         recent = getattr(self, "_recent_exit_cooldowns", {})
-        if not recent:
-            return None
-
-        now_utc = now or datetime.now(UTC)
-        if now_utc.tzinfo is None:
-            now_utc = now_utc.replace(tzinfo=UTC)
-        else:
-            now_utc = now_utc.astimezone(UTC)
-
-        key = self._entry_reentry_guard_key(signal.code, signal.strategy)
-        record = recent.get(key)
-        if not record:
-            return None
-
-        exit_time = record.get("exit_time")
-        if not isinstance(exit_time, datetime):
-            recent.pop(key, None)
-            return None
-        if exit_time.tzinfo is None:
-            exit_time = exit_time.replace(tzinfo=UTC)
-        else:
-            exit_time = exit_time.astimezone(UTC)
-
-        cooldown_seconds = float(record.get("cooldown_seconds", 0.0) or 0.0)
-        elapsed = max(0.0, (now_utc - exit_time).total_seconds())
-        remaining = cooldown_seconds - elapsed
-        if remaining <= 0:
-            recent.pop(key, None)
-            return None
-
-        return {
-            **record,
-            "remaining_seconds": remaining,
-            "elapsed_seconds": elapsed,
-        }
+        return reentry_guard_block(
+            recent,
+            cfg,
+            code=signal.code,
+            strategy=signal.strategy,
+            now=now,
+        )
 
     def _filter_reentry_guarded_signals(self, signals: list[Signal]) -> list[Signal]:
         if not signals:
@@ -7725,14 +6803,7 @@ class TradingOrchestrator:
     @staticmethod
     def _get_signal_direction(signal: Signal) -> str:
         """Extract normalized signal direction from metadata."""
-        metadata = getattr(signal, "metadata", {}) or {}
-        if not isinstance(metadata, dict):
-            return "long"
-        direction = (
-            metadata.get("signal_direction") or metadata.get("direction") or "long"
-        )
-        direction = str(direction).strip().lower()
-        return "short" if direction == "short" else "long"
+        return get_signal_direction(signal)
 
     @staticmethod
     def _build_signals_all_row(

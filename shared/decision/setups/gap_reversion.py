@@ -32,12 +32,12 @@ from __future__ import annotations
 
 import math
 from datetime import timedelta
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
-from shared.decision.context import MarketContext
+from shared.decision.interfaces import FuturesMarketView, MacroOvernightView
 from shared.decision.setup_base import Setup
 from shared.decision.signal import Signal
 
@@ -114,7 +114,7 @@ class SetupAGapReversion(Setup):
         self.last_reject_reason = reason
         return None
 
-    def check(self, ctx: MarketContext) -> Signal | None:  # noqa: PLR0911
+    def check(self, ctx: FuturesMarketView) -> Signal | None:  # noqa: PLR0911
         """Evaluate *ctx* and return a Signal when all conditions are met.
 
         Returns ``None`` as soon as any condition fails (early-return pattern).
@@ -132,7 +132,8 @@ class SetupAGapReversion(Setup):
         # 2. Overnight macro confirmation
         if ctx.macro_overnight is None:
             return self._reject("no_macro_overnight")
-        sp500_pct: float = ctx.macro_overnight.sp500_change_pct  # type: ignore[union-attr]
+        macro = cast(MacroOvernightView, ctx.macro_overnight)
+        sp500_pct = macro.sp500_change_pct
         if sp500_pct is None:
             return self._reject("no_sp500_data")
         if abs(sp500_pct) < c.min_sp500_gap_pct:

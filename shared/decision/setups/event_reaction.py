@@ -36,7 +36,7 @@ from typing import ClassVar
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
-from shared.decision.context import MarketContext, ScheduledEvent
+from shared.decision.interfaces import FuturesMarketView, ScheduledEventView
 from shared.decision.setup_base import Setup
 from shared.decision.signal import Signal
 
@@ -196,7 +196,7 @@ class SetupCEventReaction(Setup):
     # Core entry check
     # ------------------------------------------------------------------
 
-    def check(self, ctx: MarketContext) -> Signal | None:  # noqa: PLR0911
+    def check(self, ctx: FuturesMarketView) -> Signal | None:  # noqa: PLR0911
         """Evaluate *ctx* and return a Signal when all conditions are met.
 
         Returns ``None`` as soon as any condition fails (early-return pattern).
@@ -214,7 +214,7 @@ class SetupCEventReaction(Setup):
             )
 
         # 1. Look for a qualifying scheduled event within the window
-        recent_event: ScheduledEvent | None = ctx.find_recent_event(
+        recent_event: ScheduledEventView | None = ctx.find_recent_event(
             window_minutes=c.window_minutes,
             min_tier=c.min_impact_tier,
         )

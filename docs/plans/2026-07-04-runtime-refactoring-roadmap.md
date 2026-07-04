@@ -112,8 +112,9 @@ Add one reusable decorator surface for infrastructure retries:
 
 The decorator should wrap the existing retry policy rather than introduce a
 new policy. It should default to a narrow transient exception set such as
-`ConnectionError`, `TimeoutError`, and `OSError`, with explicit config for
-attempts and delay.
+`ConnectionError` and `TimeoutError`, with explicit config for attempts, delay,
+and opt-in custom exception tuples. Broad `OSError` retry should remain caller
+opt-in.
 
 Do not apply it to Redis stream handlers blindly. `StreamStage.handle_message`
 already owns ACK/NOACK semantics, so retry decoration belongs around small
@@ -136,12 +137,14 @@ The first change should be re-export compatible so imports such as
 
 ### Phase R0 - Contract Tests
 
-Status: planned.
+Status: branch implemented.
 
-- Add Protocol/import compatibility tests for the new interface files.
-- Add characterization tests around `StrategyFactory.create_all`,
-  Setup A/C/D adapter behavior, and `with_retry` compatibility before moving
-  code.
+- Added Protocol/import compatibility tests for the new decision, strategy, and
+  portfolio interface files.
+- Added focused retry-decorator tests, including the non-disconnect `OSError`
+  guard.
+- Re-ran existing characterization tests around `StrategyFactory.create_all`
+  and Setup A/C/D adapter behavior before moving code.
 - Verification target:
   - `pytest tests/unit/strategy/test_registry_builtin_components.py -v`
   - `pytest tests/unit/strategy/test_setup_adapters.py -v`
@@ -149,36 +152,71 @@ Status: planned.
 
 ### Phase R1 - Setup Adapter Split
 
-Status: planned.
+Status: branch implemented.
 
 Split `shared/strategy/entry/setup_adapters.py` into focused modules:
 
 - `setup_entry_configs.py`: Pydantic config classes.
 - `setup_context_builder.py`: `EntryContext` -> decision `MarketContext`.
 - `setup_signal_mapper.py`: decision signal -> orchestrator signal.
-- `setup_llm_gates.py`: LLM tuning, veto, and daily-bias helpers.
-- `setup_entry_adapters.py`: adapter classes only.
+- `setup_llm_gate.py`: LLM tuning, veto, and regime-label helpers.
+- `setup_eval_publisher.py`: setup evaluation Redis/latest/history publisher.
 
-Keep `setup_adapters.py` as a compatibility re-export until all imports are
-updated. No behavior changes are allowed in this phase.
+Keep `setup_adapters.py` as the compatibility facade and adapter-class owner
+until a later adapter-class split can retire legacy private monkeypatch points.
+No behavior changes are allowed in this phase.
 
 ### Phase R2 - Strategy Registry And Factory Split
 
-Status: planned.
+Status: branch implemented.
 
 Move builtin tables and factory assembly out of `shared/strategy/registry.py`.
 The registry module should remain the stable public import surface while the
 implementation becomes small and searchable.
 
+Implemented split:
+
+- `shared/strategy/factory.py`: `StrategyFactory` assembly from config.
+- `shared/strategy/builtin_components.py`: builtin component tables and
+  registration helper.
+- `shared/strategy/registry.py`: registry classes, exceptions, and backward
+  compatible facade exports.
+
 ### Phase R3 - Orchestrator Service Extraction
 
-Status: planned.
+Status: branch implemented for runtime configuration; broader service
+extraction remains in progress.
+
+Design and executable Task 1 plan:
+
+- `docs/superpowers/specs/2026-07-04-orchestrator-decomposition-design.md`
+- `docs/superpowers/plans/2026-07-04-orchestrator-decomposition.md`
 
 Continue extracting `services/trading/orchestrator.py` by existing ownership
 boundaries, not by arbitrary line counts:
 
-- initialization and dependency wiring;
-- recovery and reconciliation;
+- runtime configuration and entry re-entry guard config: branch implemented in
+  `services/trading/runtime_config.py` with orchestrator facade exports;
+- trading package facade: branch implemented with lazy top-level exports so
+  runtime config and other lightweight submodule imports do not eagerly load
+  the monolithic orchestrator;
+- re-entry guard helpers: branch implemented in
+  `services/trading/reentry_guard.py`; orchestrator compatibility methods now
+  delegate cooldown key/record/block logic to the owner module;
+- execution helpers: branch implemented in
+  `services/trading/execution_facade.py`; orchestrator compatibility methods
+  now delegate pure entry-order result normalization and signal direction
+  extraction to the owner module;
+- recovery helpers: branch implemented in `services/trading/recovery.py`;
+  Redis recovery still owns reader/tracker/symbol side effects in the
+  orchestrator while freshness checks and `Position` reconstruction live in
+  the owner module;
+- market-data bootstrap helpers: branch implemented in
+  `services/trading/market_data_bootstrap.py`; orchestrator compatibility
+  methods now assign KIS client, price feed, data provider, and tick publisher
+  results returned by the owner module;
+- remaining initialization ordering and dependency wiring;
+- full Redis/SQLite recovery service and broker reconciliation handoff;
 - execution setup and order submission;
 - position state transitions;
 - kill-switch and live-mode guard hooks;
@@ -217,7 +255,8 @@ The monolithic futures path should be treated as a compatibility runtime until
 F-9 gates approve the decoupled chain as primary. Do not create a second
 side-channel around the stream pipeline. The safe sequence is:
 
-1. Keep the monolith stable while R0-R2 reduce shared strategy context cost.
+1. Keep the monolith stable while R0-R3 reduce shared strategy and runtime
+   configuration context cost.
 2. Use F-9 shadow evidence to validate the decoupled futures stream chain.
 3. Resolve O13 kill-switch coverage for the monolithic path before cutover.
 4. After written operator approval, flip the primary runtime through the
@@ -251,8 +290,8 @@ still document:
 
 ## Open Questions
 
-- Which extraction should follow setup adapters first: registry/factory or
-  orchestrator initialization?
+- Which orchestrator boundary should follow runtime configuration:
+  initialization/dependency wiring or recovery/reconciliation?
 - Should monitor bridges migrate to `MultiStreamStage`, or should they stay as
   direct multi-stream loops with explicit retry documentation?
 - After F-9, how long should the monolithic futures runtime remain as rollback
