@@ -47,6 +47,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from numpy.lib.stride_tricks import sliding_window_view
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,14 @@ class TRIXCalculator:
     def __init__(self, n: int = 12, signal: int = 9):
         self.config = TRIXConfig(n=n, signal=signal)
 
-    def calculate(self, df: pd.DataFrame, *, lookahead_guard=None, context_timestamp=None, context_info: str = None) -> pd.DataFrame:
+    def calculate(
+        self,
+        df: pd.DataFrame,
+        *,
+        lookahead_guard=None,
+        context_timestamp=None,
+        context_info: str = None,
+    ) -> pd.DataFrame:
         """Calculate TRIX and signal line.
 
         Adds 'trix' and 'trix_signal' columns to the DataFrame.
@@ -121,7 +129,12 @@ class TRIXCalculator:
         # LookaheadGuard: close 시계열 검사
         if lookahead_guard and context_timestamp is not None:
             timestamps = df["timestamp"].tolist() if "timestamp" in df.columns else None
-            lookahead_guard.check(close.tolist(), timestamps, context_timestamp, context_info or "momentum:trix_close")
+            lookahead_guard.check(
+                close.tolist(),
+                timestamps,
+                context_timestamp,
+                context_info or "momentum:trix_close",
+            )
 
         ema1 = ema(close, n)
         ema2 = ema(ema1, n)
@@ -142,6 +155,37 @@ class TRIXCalculator:
 # =============================================================================
 # CCI Calculator
 # =============================================================================
+
+
+def _rolling_mad(values: np.ndarray, period: int) -> np.ndarray:
+    """Rolling mean-absolute-deviation with pandas ``min_periods=1`` semantics.
+
+    ``mad[i] = mean(|w - mean(w)|)`` over ``w = values[max(0, i-period+1) : i+1]``.
+
+    The ramp-up rows (``i < period-1``) use the expanding window; the full
+    windows are computed in a single vectorized pass via a strided view, which
+    avoids the per-window Python callback that ``Series.rolling().apply()``
+    incurs (the dominant cost of the previous CCI implementation).
+
+    Args:
+        values: 1-D float array (typical price).
+        period: rolling window length.
+
+    Returns:
+        Array of the same length as ``values`` with the rolling MAD.
+    """
+    n = values.shape[0]
+    out = np.empty(n, dtype=float)
+    ramp = min(period - 1, n)
+    for i in range(ramp):  # expanding window; length is period-1 (constant), not O(n)
+        w = values[: i + 1]
+        out[i] = np.abs(w - w.mean()).mean()
+    if n >= period:
+        windows = sliding_window_view(values, period)  # (n-period+1, period)
+        out[period - 1 :] = np.abs(windows - windows.mean(axis=1, keepdims=True)).mean(
+            axis=1
+        )
+    return out
 
 
 @dataclass
@@ -184,9 +228,11 @@ class CCICalculator:
         tp = (df["high"] + df["low"] + df["close"]) / 3
         tp_sma = tp.rolling(window=self.config.period, min_periods=1).mean()
 
-        # Mean Deviation = mean of |TP - SMA(TP)|
-        mean_dev = tp.rolling(window=self.config.period, min_periods=1).apply(
-            lambda x: np.mean(np.abs(x - np.mean(x))), raw=True
+        # Mean Deviation = mean of |TP - SMA(TP)|. Vectorized (sliding-window
+        # view) to avoid a per-window Python callback; see _rolling_mad.
+        mean_dev = pd.Series(
+            _rolling_mad(tp.to_numpy(dtype=float), self.config.period),
+            index=tp.index,
         )
 
         # Avoid division by zero
@@ -421,30 +467,42 @@ class RSICalculator:
         Returns:
             DataFrame with added rsi column.
         """
-        delta = df["close"].diff()
-        gain = delta.clip(lower=0)
-        loss = (-delta).clip(lower=0)
+        period = self.config.period
+        # Wilder smoothing stays in pandas (.ewm handles NaN / min_periods); the
+        # gain/loss split and edge-case selection run in one numpy pass to avoid
+        # the .clip / chained .where / .fillna Series overhead.
+        delta = df["close"].diff().to_numpy()
+        gain = np.maximum(delta, 0.0)  # == delta.clip(lower=0), NaN-preserving
+        loss = np.maximum(-delta, 0.0)  # == (-delta).clip(lower=0)
 
-        avg_gain = gain.ewm(
-            alpha=1.0 / self.config.period, min_periods=self.config.period, adjust=False
-        ).mean()
-        avg_loss = loss.ewm(
-            alpha=1.0 / self.config.period, min_periods=self.config.period, adjust=False
-        ).mean()
+        alpha = 1.0 / period
+        avg_gain = (
+            pd.Series(gain, index=df.index)
+            .ewm(alpha=alpha, min_periods=period, adjust=False)
+            .mean()
+            .to_numpy()
+        )
+        avg_loss = (
+            pd.Series(loss, index=df.index)
+            .ewm(alpha=alpha, min_periods=period, adjust=False)
+            .mean()
+            .to_numpy()
+        )
 
         # When avg_loss=0 and avg_gain=0 (flat), RSI=50
         # When avg_loss=0 and avg_gain>0 (all gains), RSI=100
         # When avg_gain=0 and avg_loss>0 (all losses), RSI=0
-        zero_loss = avg_loss == 0
-        zero_gain = avg_gain == 0
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        rsi = 100 - (100 / (1 + rs))
-        rsi = rsi.where(~(zero_loss & zero_gain), 50.0)
-        rsi = rsi.where(~(zero_loss & ~zero_gain), 100.0)
-        rsi = rsi.where(~(zero_gain & ~zero_loss), 0.0)
+        zero_loss = avg_loss == 0.0
+        zero_gain = avg_gain == 0.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            rs = avg_gain / np.where(zero_loss, np.nan, avg_loss)  # replace(0, nan)
+            rsi = 100.0 - 100.0 / (1.0 + rs)
+        rsi = np.where(zero_loss & zero_gain, 50.0, rsi)
+        rsi = np.where(zero_loss & ~zero_gain, 100.0, rsi)
+        rsi = np.where(zero_gain & ~zero_loss, 0.0, rsi)
+        # Fill initial NaN (min_periods warmup) with neutral 50
+        rsi = np.where(np.isnan(rsi), 50.0, rsi)
         df["rsi"] = rsi
-        # Fill initial NaN with neutral 50
-        df["rsi"] = df["rsi"].fillna(50.0)
 
         return df
 
