@@ -55,11 +55,7 @@ from services.trading.execution_runtime import (
 from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
-from services.trading.recovery import (
-    evaluate_position_freshness,
-    parse_recovery_entry_time,
-    reconstruct_recovered_position,
-)
+from services.trading.recovery import PositionRecoveryService
 from services.trading.reentry_guard import (
     record_recent_exit_cooldown,
     reentry_guard_block,
@@ -1330,31 +1326,21 @@ class TradingOrchestrator:
         recovery_disabled = str(
             os.getenv("STS_DISABLE_POSITION_RECOVERY", "")
         ).strip().lower() in {"1", "true", "yes", "on"}
-        if recovery_disabled:
+        if self._position_tracker:
+            recovery_service = PositionRecoveryService(
+                config=self.config,
+                position_tracker=self._position_tracker,
+                symbol_names=getattr(self, "_symbol_names", {}),
+                symbol_last_seen=self._symbol_last_seen,
+                swing_strategies=self.SWING_STRATEGIES,
+            )
+            await recovery_service.recover_open_positions(
+                recovery_disabled=recovery_disabled
+            )
+        elif recovery_disabled:
             logger.info(
                 "Position recovery disabled by env (STS_DISABLE_POSITION_RECOVERY)"
             )
-        elif self._position_tracker:
-            await self._recover_positions_from_redis()
-            # Durable fallback: recover open positions from the SQLite runtime
-            # ledger as well. Redis is ephemeral (a container recreate or DB
-            # flush loses open positions), but the runtime ledger
-            # position_snapshots table is durable. load_from_db() dedupes
-            # against positions already recovered from Redis (it skips any
-            # position id already tracked), so a position present in BOTH
-            # Redis and SQLite is added only once.
-            try:
-                db_loaded = await self._position_tracker.load_from_db()
-                if db_loaded:
-                    logger.info(
-                        "Recovered %d open position(s) from runtime ledger "
-                        "(durable SQLite fallback)",
-                        db_loaded,
-                    )
-            except (InfrastructureError, OSError, ConnectionError) as e:
-                logger.warning(
-                    "Durable SQLite position recovery failed (continuing): %s", e
-                )
 
         # --- Risk state recovery from Redis ---
         if self._risk_manager:
@@ -1439,87 +1425,17 @@ class TradingOrchestrator:
         - Intraday strategies: recover same-day only
         Stale positions are removed from Redis with logging.
         """
-        try:
-            from shared.streaming.trading_state import TradingStateReader
-
-            reader = TradingStateReader(self.config.asset_class)
-        except (ConfigurationError, InfrastructureError) as e:
-            logger.warning(f"Cannot initialize TradingStateReader for recovery: {e}")
+        if not self._position_tracker:
             return 0
 
-        positions = reader.get_positions()
-        if not positions:
-            logger.info("No positions to recover from Redis")
-            return 0
-
-        today = datetime.now().date()
-        max_age_days = self.config.swing_recovery_max_age_days
-        recovered = 0
-        stale = 0
-
-        for pos_data in positions:
-            pos_id = pos_data.get("id", "")
-            strategy = pos_data.get("strategy", "")
-
-            try:
-                entry_time = parse_recovery_entry_time(pos_data)
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid entry_time in Redis position: {pos_id[:8]}")
-                reader.remove_position(pos_id)
-                stale += 1
-                continue
-
-            freshness = evaluate_position_freshness(
-                strategy=strategy,
-                entry_time=entry_time,
-                today=today,
-                swing_strategies=self.SWING_STRATEGIES,
-                max_swing_age_days=max_age_days,
-            )
-            if not freshness.recoverable:
-                if freshness.is_swing:
-                    logger.debug(
-                        f"Stale swing position: {pos_data.get('code')} "
-                        f"(age={freshness.age_days}d)"
-                    )
-                else:
-                    logger.debug(
-                        f"Stale intraday position: {pos_data.get('code')} "
-                        f"(age={freshness.age_days}d)"
-                    )
-                reader.remove_position(pos_id)
-                stale += 1
-                continue
-
-            try:
-                position = reconstruct_recovered_position(
-                    pos_data,
-                    entry_time=entry_time,
-                    symbol_names=getattr(self, "_symbol_names", {}),
-                )
-            except (KeyError, ValueError, TypeError) as e:
-                logger.warning(f"Failed to reconstruct position {pos_id[:8]}: {e}")
-                reader.remove_position(pos_id)
-                stale += 1
-                continue
-
-            if self._position_tracker.add_recovered_position(position):
-                recovered += 1
-                # Ensure symbol receives WebSocket ticks
-                current_symbols = set(self.config.symbols or [])
-                if position.code not in current_symbols:
-                    if self.config.symbols is None:
-                        self.config.symbols = []
-                    self.config.symbols.append(position.code)
-                    self._symbol_last_seen[position.code] = datetime.now()
-
-        if stale > 0:
-            logger.info(f"Cleaned {stale} stale positions from Redis")
-        if recovered > 0:
-            logger.info(
-                f"Recovered {recovered} positions from Redis ({self.config.asset_class})"
-            )
-        return recovered
+        recovery_service = PositionRecoveryService(
+            config=self.config,
+            position_tracker=self._position_tracker,
+            symbol_names=getattr(self, "_symbol_names", {}),
+            symbol_last_seen=self._symbol_last_seen,
+            swing_strategies=self.SWING_STRATEGIES,
+        )
+        return await recovery_service.recover_positions_from_redis()
 
     async def _verify_positions_with_broker(self) -> None:
         """Delegate broker/ledger comparison to the extracted verifier."""
