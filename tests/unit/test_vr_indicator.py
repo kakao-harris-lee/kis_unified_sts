@@ -10,9 +10,13 @@
 """
 
 
+import math
+
 import numpy as np
+import pandas as pd
 import pytest
 
+from shared.indicators.momentum import RSICalculator
 from shared.indicators.volume_ratio import (
     MATrend,
     VolumeRatioCalculator,
@@ -289,6 +293,43 @@ class TestRSI:
     def test_rsi_insufficient_data(self):
         result = VolumeRatioCalculator.calculate_rsi([100, 101, 102], period=14)
         assert all(v is None for v in result)
+
+    def test_rsi_no_duplicate_seed_stutter(self):
+        """First two RSI outputs must be distinct Wilder steps, not a duplicated seed.
+
+        Regression for the off-by-one: the loop emitted the SMA seed for both
+        result[period] and result[period+1] (making them identical) and never
+        folded gains[period] into the Wilder recursion.
+        """
+        closes = [100.0 + 3.0 * math.sin(i / 2.0) + 0.3 * i for i in range(20)]
+        result = VolumeRatioCalculator.calculate_rsi(closes, period=14)
+
+        assert result[14] is not None and result[15] is not None
+        assert result[14] != pytest.approx(
+            result[15], abs=1e-9
+        ), "result[period] and result[period+1] must not be the duplicated seed"
+
+    def test_rsi_matches_canonical_wilder(self):
+        """calculate_rsi must equal the canonical Wilder RSI (shared SoT) everywhere.
+
+        Cross-checks against ``momentum.RSICalculator`` (a separate implementation
+        of the repo's converged Wilder convention). The off-by-one both duplicated
+        the seed and dropped gains[period], so every value from index ``period`` on
+        diverged from canonical.
+        """
+        closes = [100.0 + 3.0 * math.sin(i / 2.0) + 0.3 * i for i in range(40)]
+        result = VolumeRatioCalculator.calculate_rsi(closes, period=14)
+        canonical = (
+            RSICalculator(period=14)
+            .calculate(pd.DataFrame({"close": closes}))["rsi"]
+            .tolist()
+        )
+
+        for i, value in enumerate(result):
+            if value is not None:
+                assert value == pytest.approx(
+                    canonical[i], abs=1e-6
+                ), f"RSI diverges from canonical Wilder at index {i}"
 
 
 class TestVolumeWarning:

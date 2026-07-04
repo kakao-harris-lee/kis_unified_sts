@@ -29,6 +29,8 @@ from enum import StrEnum
 
 import numpy as np
 
+from shared.indicators.reference import wilder_rsi
+
 logger = logging.getLogger(__name__)
 
 
@@ -271,57 +273,31 @@ class VolumeRatioCalculator:
         closes: np.ndarray | list[float],
         period: int = 14,
     ) -> list[float | None]:
-        """RSI (Relative Strength Index) - Wilder's smoothing 방식.
+        """RSI (Relative Strength Index) — canonical Wilder smoothing.
+
+        Delegates to the single-source ``reference.wilder_rsi`` (Wilder EMA,
+        alpha=1/period) so this path matches the repo-converged RSI used by
+        ``momentum.RSICalculator`` and the streaming runtime ``_calc_rsi``
+        (#561). Replaces a hand-rolled loop that (a) duplicated the SMA seed for
+        both ``result[period]`` and ``result[period+1]`` and never folded
+        ``gains[period]`` into the recursion (off-by-one), and (b) used an
+        SMA seed that diverged from the shared Wilder-EMA convention.
 
         Args:
-            closes: 종가 배열
-            period: RSI 기간 (기본 14)
+            closes: 종가 배열.
+            period: RSI 기간 (기본 14).
 
         Returns:
-            RSI (0~100) 리스트. 계산 불가 구간은 None.
+            RSI (0~100) 리스트. 계산 불가 구간(warmup)은 None. 첫 유효 값은
+            인덱스 ``period`` (delta ``period`` 개가 쌓인 뒤)부터 나온다.
         """
         arr = np.asarray(closes, dtype=float)
         n = len(arr)
-        result: list[float | None] = [None] * n
-
         if n < period + 1:
-            return result
+            return [None] * n
 
-        deltas = np.diff(arr)
-        gains = np.where(deltas > 0, deltas, 0.0)
-        losses = np.where(deltas < 0, -deltas, 0.0)
-
-        # 초기 평균 (SMA)
-        avg_gain = float(np.mean(gains[:period]))
-        avg_loss = float(np.mean(losses[:period]))
-
-        for i in range(period, len(deltas)):
-            if i == period:
-                # 첫 번째 RSI
-                if avg_loss == 0:
-                    result[i + 1] = 100.0
-                else:
-                    rs = avg_gain / avg_loss
-                    result[i + 1] = 100.0 - (100.0 / (1.0 + rs))
-            else:
-                # Wilder's smoothing
-                avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-                avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-
-                if avg_loss == 0:
-                    result[i + 1] = 100.0
-                else:
-                    rs = avg_gain / avg_loss
-                    result[i + 1] = 100.0 - (100.0 / (1.0 + rs))
-
-        # 첫 RSI 포인트도 계산
-        if avg_loss == 0:
-            result[period] = 100.0
-        else:
-            rs = float(np.mean(gains[:period])) / float(np.mean(losses[:period]))
-            result[period] = 100.0 - (100.0 / (1.0 + rs))
-
-        return result
+        rsi = wilder_rsi(arr, period).to_numpy()
+        return [None if not np.isfinite(v) else float(v) for v in rsi]
 
     @staticmethod
     def check_volume_warning(
