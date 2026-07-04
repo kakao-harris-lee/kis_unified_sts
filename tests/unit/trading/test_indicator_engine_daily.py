@@ -894,6 +894,93 @@ class TestDailyCloseTrackingAndEMAAlignment:
             ), "Should respect maxlen of 60"
 
 
+class TestDailyCloseTrackingRegression:
+    """Regression tests: daily closes must roll over exactly like daily highs.
+
+    Guards the _update_daily_high / _update_daily_close ordering bug where the
+    two updaters shared self._current_date as their day-change sentinel. Because
+    _update_daily_high ran first and advanced _current_date to today,
+    _update_daily_close never observed a day change, so _daily_closes stayed
+    permanently empty and _calc_daily_ema_aligned() (momentum_breakout's
+    EMA-pullback gate) always returned False on the live streaming path.
+    """
+
+    def test_daily_closes_roll_over_like_daily_highs(self):
+        """_daily_closes must populate on day change, in parity with _daily_highs."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        # Five distinct trading days, two ticks each so a candle completes.
+        for day_idx in range(5):
+            day_date = datetime(2026, 3, 2 + day_idx, 9, 30, 0)
+            base = 100.0 + day_idx * 5
+            engine.on_tick(
+                "005930",
+                {"close": base, "high": base + 1, "low": base - 1, "volume": 1000},
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {
+                    "close": base + 0.5,
+                    "high": base + 1.5,
+                    "low": base - 0.5,
+                    "volume": 1100,
+                },
+                day_date + timedelta(minutes=1),
+            )
+
+        # Trigger the final rollover with a sixth day.
+        engine.on_tick(
+            "005930",
+            {"close": 130.0, "high": 131.0, "low": 129.0, "volume": 1000},
+            datetime(2026, 3, 8, 9, 30, 0),
+        )
+
+        # Core bug: closes must not be silently empty when highs rolled over.
+        assert engine._daily_closes.get("005930"), "_daily_closes must be populated"
+        # Both trackers share the same day-change boundaries → identical length.
+        assert len(engine._daily_closes["005930"]) == len(
+            engine._daily_highs["005930"]
+        ), "_daily_closes must roll over in parity with _daily_highs"
+
+    def test_daily_ema_aligned_true_for_strong_uptrend(self):
+        """A strong multi-day uptrend must report ema_daily_aligned True.
+
+        With the ordering bug, _daily_closes never fills so this is always False
+        regardless of trend — silently disabling momentum_breakout's EMA pullback.
+        """
+        engine = StreamingIndicatorEngine(
+            staleness_seconds=0, daily_ema_periods=[5, 10, 20]
+        )
+
+        for day_idx in range(30):
+            day_date = datetime(2026, 2, 1, 9, 30, 0) + timedelta(days=day_idx)
+            close_price = 100.0 + day_idx * 2.0  # strong monotonic uptrend
+            engine.on_tick(
+                "005930",
+                {
+                    "close": close_price,
+                    "high": close_price + 1,
+                    "low": close_price - 1,
+                    "volume": 10000,
+                },
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {
+                    "close": close_price + 0.5,
+                    "high": close_price + 1.5,
+                    "low": close_price - 0.5,
+                    "volume": 11000,
+                },
+                day_date + timedelta(minutes=1),
+            )
+
+        # Direct unit assertion (bypasses get_indicators warmth gating).
+        assert engine._calc_daily_ema_aligned("005930") is True
+
+
 class TestDailyEdgeCases:
     """Edge cases and error conditions for daily candle functionality."""
 

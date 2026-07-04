@@ -154,6 +154,12 @@ class StreamingIndicatorEngine(IndicatorQueryMixin, IndicatorCalculationMixin):
         self._intraday_last_close: dict[str, float] = (
             {}
         )  # symbol -> current session last close
+        # Independent day-change sentinel for close tracking. Must NOT share
+        # _current_date with _update_daily_high: that method runs first and
+        # advances _current_date to today before _update_daily_close reads it,
+        # which made the close-side day-change branch unreachable (closes never
+        # accumulated → _calc_daily_ema_aligned stuck False on the live path).
+        self._current_close_date: dict[str, str] = {}  # symbol -> current date string
         self._daily_ema_periods: list[int] = daily_ema_periods or [5, 10, 20]
 
         # Cumulative volume → delta conversion
@@ -219,13 +225,11 @@ class StreamingIndicatorEngine(IndicatorQueryMixin, IndicatorCalculationMixin):
             self._vwap_calc.add_tick(symbol, candle.close, int(candle.volume), date_str)
             self._vol_accel_calc.add_tick(symbol, int(candle.volume), ts.timestamp())
 
-            # Track daily highs for multi-day breakout (high_N)
-            # NOTE: _update_daily_high must be called before _update_daily_close
-            # because both use self._current_date for day-change detection,
-            # and _update_daily_high is responsible for updating it.
+            # Track daily highs for multi-day breakout (high_N) and daily closes
+            # for the daily-scale EMA trend filter. Each updater owns its own
+            # day-change sentinel (_current_date vs _current_close_date), so
+            # call order is not significant.
             self._update_daily_high(symbol, candle.high, date_str)
-
-            # Track daily closes for daily-scale EMA trend filter
             self._update_daily_close(symbol, candle.close, date_str)
 
             # Feed multi-timeframe accumulators
