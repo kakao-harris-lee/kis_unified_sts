@@ -167,6 +167,9 @@ boundaries, not by arbitrary line counts:
 - trading package facade: branch implemented with lazy top-level exports so
   runtime config and other lightweight submodule imports do not eagerly load
   the monolithic orchestrator;
+- re-entry guard helpers: branch implemented in
+  `services/trading/reentry_guard.py`; orchestrator compatibility methods now
+  delegate cooldown key/record/block logic to the owner module;
 - initialization and dependency wiring;
 - recovery and reconciliation;
 - execution setup and order submission;

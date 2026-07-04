@@ -45,6 +45,11 @@ from services.trading.data_provider import DataProviderConfig, MarketDataProvide
 from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+from services.trading.reentry_guard import (
+    record_recent_exit_cooldown,
+    reentry_guard_block,
+    reentry_guard_key,
+)
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from shared.config.loader import ConfigLoader
 from shared.config.runtime_defaults import redis_url_from_env
@@ -5201,9 +5206,7 @@ class TradingOrchestrator:
             "_entry_reentry_guard",
             EntryReentryGuardConfig(enabled=False),
         )
-        if cfg.scope == "symbol":
-            return str(code)
-        return f"{code}:{strategy or ''}"
+        return reentry_guard_key(cfg, code, strategy)
 
     def _record_recent_exit_for_reentry_guard(
         self,
@@ -5217,36 +5220,21 @@ class TradingOrchestrator:
             "_entry_reentry_guard",
             EntryReentryGuardConfig(enabled=False),
         )
-        # Applies to stock AND futures. Futures whipsaw (shake-out stop →
-        # immediate re-entry) accumulates round-trip slippage; per-asset
-        # cooldowns come from execution.yaml entry_reentry_guard[.futures].
-        if not cfg.enabled:
-            return
-
-        cooldown_seconds = cfg.cooldown_for(reason)
-        if cooldown_seconds <= 0:
-            return
-
-        code = str(getattr(signal, "code", "") or getattr(closed, "code", "") or "")
-        if not code:
-            return
-        strategy = str(
-            getattr(signal, "strategy", "") or getattr(closed, "strategy", "") or ""
-        )
-        key = self._entry_reentry_guard_key(code, strategy)
-
         recent = getattr(self, "_recent_exit_cooldowns", None)
         if recent is None:
             recent = {}
             self._recent_exit_cooldowns = recent
 
-        recent[key] = {
-            "code": code,
-            "strategy": strategy,
-            "reason": str(reason).lower(),
-            "exit_time": datetime.now(UTC),
-            "cooldown_seconds": float(cooldown_seconds),
-        }
+        # Applies to stock AND futures. Futures whipsaw (shake-out stop →
+        # immediate re-entry) accumulates round-trip slippage; per-asset
+        # cooldowns come from execution.yaml entry_reentry_guard[.futures].
+        record_recent_exit_cooldown(
+            recent,
+            cfg,
+            closed=closed,
+            signal=signal,
+            reason=reason,
+        )
 
     def _reentry_guard_block(
         self,
@@ -5259,45 +5247,14 @@ class TradingOrchestrator:
             "_entry_reentry_guard",
             EntryReentryGuardConfig(enabled=False),
         )
-        if not cfg.enabled:
-            return None
-
         recent = getattr(self, "_recent_exit_cooldowns", {})
-        if not recent:
-            return None
-
-        now_utc = now or datetime.now(UTC)
-        if now_utc.tzinfo is None:
-            now_utc = now_utc.replace(tzinfo=UTC)
-        else:
-            now_utc = now_utc.astimezone(UTC)
-
-        key = self._entry_reentry_guard_key(signal.code, signal.strategy)
-        record = recent.get(key)
-        if not record:
-            return None
-
-        exit_time = record.get("exit_time")
-        if not isinstance(exit_time, datetime):
-            recent.pop(key, None)
-            return None
-        if exit_time.tzinfo is None:
-            exit_time = exit_time.replace(tzinfo=UTC)
-        else:
-            exit_time = exit_time.astimezone(UTC)
-
-        cooldown_seconds = float(record.get("cooldown_seconds", 0.0) or 0.0)
-        elapsed = max(0.0, (now_utc - exit_time).total_seconds())
-        remaining = cooldown_seconds - elapsed
-        if remaining <= 0:
-            recent.pop(key, None)
-            return None
-
-        return {
-            **record,
-            "remaining_seconds": remaining,
-            "elapsed_seconds": elapsed,
-        }
+        return reentry_guard_block(
+            recent,
+            cfg,
+            code=signal.code,
+            strategy=signal.strategy,
+            now=now,
+        )
 
     def _filter_reentry_guarded_signals(self, signals: list[Signal]) -> list[Signal]:
         if not signals:

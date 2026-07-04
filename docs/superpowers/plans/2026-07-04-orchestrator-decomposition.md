@@ -255,8 +255,9 @@ git add services/trading/session_calendar.py services/trading/orchestrator.py te
 These are not executable tasks yet. Expand each into a full plan section before
 implementation.
 
-- `services/trading/reentry_guard.py`: extract `EntryReentryGuardConfig` and
-  pure cooldown key/block helpers after Task 1 lands.
+- `services/trading/reentry_guard.py`: pure cooldown key/record/block helpers
+  are branch-implemented; `EntryReentryGuardConfig` lives in
+  `services/trading/runtime_config.py`.
 - `services/trading/execution_facade.py`: extract pure execution result helpers
   such as `_normalize_entry_order_result` and `_get_signal_direction`; keep
   broker submission on `TradingOrchestrator` until a dedicated execution-service

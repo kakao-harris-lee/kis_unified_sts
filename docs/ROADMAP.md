@@ -216,6 +216,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Setup adapter decomposition | 🟡 branch implemented | Split `shared/strategy/entry/setup_adapters.py` into config, context-builder, signal-mapper, setup-eval publisher, and LLM-gate modules while keeping adapter classes on the compatibility facade |
 | Orchestrator runtime config extraction | 🟡 branch implemented | `services/trading/runtime_config.py`; `services/trading/orchestrator.py` keeps facade exports for existing imports |
 | Trading package lazy facade | 🟡 branch implemented | `services/trading/__init__.py` resolves top-level exports lazily so config/module imports do not eagerly load the monolithic orchestrator |
+| Re-entry guard helper split | 🟡 branch implemented | `services/trading/reentry_guard.py`; orchestrator keeps compatibility methods while cooldown key/record/block logic lives in owner helpers |
 | Orchestrator decomposition | ⏳ planned | Continue extracting initialization, recovery, execution setup, position transitions, and guard hooks from `services/trading/orchestrator.py` behind delegation tests |
 | Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
 
@@ -224,8 +225,8 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 - Follow the active runtime refactoring plan: thin contracts, retry decoration,
   setup adapter decomposition, registry/factory split, and runtime config
   extraction are branch-implemented; the trading package facade now resolves
-  exports lazily, so next split the remaining high-complexity regions of
-  `services/trading/orchestrator.py`.
+  exports lazily and re-entry guard helper logic has an owner module, so next
+  split the remaining high-complexity regions of `services/trading/orchestrator.py`.
 - Treat the monolithic futures path as a compatibility runtime until F-9
   cutover. New decomposition should move toward the existing event-driven
   chain (`market_ingest -> decision_engine -> risk_filter -> order_router ->
