@@ -105,6 +105,30 @@ def test_execution_runtime_package_attribute_resolves_without_orchestrator() -> 
     assert result.returncode == 0, result.stderr
 
 
+def test_entry_runtime_package_attribute_resolves_without_orchestrator() -> None:
+    result = _run_python("""
+        import sys
+        import services.trading as trading
+
+        assert trading.entry_runtime.entry_signal_priority is not None
+        assert "services.trading.orchestrator" not in sys.modules
+        """)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_signals_all_runtime_package_attribute_resolves_without_orchestrator() -> None:
+    result = _run_python("""
+        import sys
+        import services.trading as trading
+
+        assert trading.signals_all_runtime.build_signals_all_row is not None
+        assert "services.trading.orchestrator" not in sys.modules
+        """)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_recovery_package_attribute_resolves_without_orchestrator() -> None:
     result = _run_python("""
         import sys

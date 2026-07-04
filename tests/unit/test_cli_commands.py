@@ -1,5 +1,10 @@
 """Test CLI commands."""
 
+import json
+import os
+import subprocess
+import sys
+
 import pytest
 from click.testing import CliRunner
 
@@ -425,3 +430,44 @@ class TestHealthCommand:
         result = runner.invoke(cli, ["health"])
         # Should show connection error or not installed
         assert result.exit_code in (0, 1)
+
+    def test_dotenv_dashboard_port_is_loaded_before_cli_defaults(self, tmp_path):
+        """Dashboard URL defaults should honor DASHBOARD_HOST_PORT from .env."""
+        repo_root = os.fspath(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        )
+        (tmp_path / ".env").write_text("DASHBOARD_HOST_PORT=5999\n")
+
+        env = os.environ.copy()
+        env.pop("DASHBOARD_HOST_PORT", None)
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (repo_root, env.get("PYTHONPATH", "")) if part
+        )
+
+        script = """
+import json
+import cli.main as main
+
+def option_default(command, name):
+    return next(param.default for param in command.params if param.name == name)
+
+print(json.dumps({
+    "module": main.DEFAULT_DASHBOARD_URL,
+    "health": option_default(main.health, "url"),
+    "trade_status": option_default(main.trade_status, "url"),
+    "trade_stop": option_default(main.trade_stop, "url"),
+    "paper_status": option_default(main.paper_status, "url"),
+    "paper_stop": option_default(main.paper_stop, "url"),
+}))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        defaults = json.loads(result.stdout)
+        assert set(defaults.values()) == {"http://localhost:5999"}

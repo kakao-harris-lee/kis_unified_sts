@@ -29,9 +29,7 @@ import json
 import logging
 import os
 import time
-import uuid
 from datetime import UTC, date, datetime, timedelta
-from datetime import time as dt_time
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -43,6 +41,10 @@ from services.trading import runtime_config as _runtime_config
 from services.trading import session_calendar as _session_calendar
 from services.trading.broker_verification import BrokerPositionVerifier
 from services.trading.data_provider import MarketDataProvider
+from services.trading.entry_runtime import (
+    entry_signal_priority,
+    prioritize_entry_signals,
+)
 from services.trading.execution_facade import (
     get_signal_direction,
     normalize_entry_order_result,
@@ -66,6 +68,11 @@ from services.trading.reentry_guard import (
     record_recent_exit_cooldown,
     reentry_guard_block,
     reentry_guard_key,
+)
+from services.trading.signals_all_runtime import (
+    SETUP_TYPE_BY_STRATEGY,
+    SIGNALS_ALL_INSERT_SQL,
+    build_signals_all_row,
 )
 from services.trading.startup_sequence import run_trading_startup_sequence
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
@@ -135,40 +142,9 @@ REENTRY_GUARD_SCOPES = _runtime_config.REENTRY_GUARD_SCOPES
 
 MAX_ORDER_QUANTITY = 1_000_000  # Safety cap for quantity
 
-# Futures Setup A/C strategy → kospi.signals_all.setup_type code. Only these
-# two are persisted to signals_all (the Phase 2 verification gates count
-# setup_type IN ('A','C')); other strategies are not written.
-_SETUP_TYPE_BY_STRATEGY = {
-    "setup_a_gap_reversion": "A",
-    "setup_c_event_reaction": "C",
-}
-# Column order matches shared/backtest/signals_writer.py (Phase 5 risk_filter).
-_SIGNALS_ALL_INSERT_SQL = (
-    "INSERT INTO kospi.signals_all "
-    "(signal_id, generated_at, setup_type, direction, entry_price, stop_loss, "
-    "take_profit, confidence, executed, skip_reason, reason_tags) VALUES"
-)
-
-
-def _risk_params_for_runtime_capital(
-    risk_params: dict[str, Any], runtime_initial_capital: float
-) -> dict[str, Any]:
-    """Return risk params aligned with the active orchestrator capital.
-
-    ``risk_management.yaml`` is shared across runtime modes and has a conservative
-    standalone fallback. In orchestrator runs, the CLI/config ``initial_capital``
-    is the account baseline unless an operator explicitly sets
-    ``RISK_INITIAL_CAPITAL``.
-    """
-    params = dict(risk_params)
-    explicit_risk_capital = os.getenv("RISK_INITIAL_CAPITAL")
-    if (
-        explicit_risk_capital is None
-        or not explicit_risk_capital.strip()
-        or "initial_capital" not in params
-    ):
-        params["initial_capital"] = int(runtime_initial_capital)
-    return params
+_SETUP_TYPE_BY_STRATEGY = SETUP_TYPE_BY_STRATEGY
+_SIGNALS_ALL_INSERT_SQL = SIGNALS_ALL_INSERT_SQL
+_risk_params_for_runtime_capital = _runtime_config.risk_params_for_runtime_capital
 
 
 class TradingOrchestrator:
@@ -3248,25 +3224,7 @@ class TradingOrchestrator:
                 return
             await asyncio.sleep(min(remaining, 1.0))
 
-    @staticmethod
-    def _next_session_wake(
-        now: datetime, open_time: dt_time, offset_minutes: int
-    ) -> datetime:
-        """Next day's pre-open wake instant.
-
-        Wakes ``offset_minutes`` before the configured market open so the daemon
-        is ready when the session begins; ``run_session`` gates on the precise
-        open. Naive datetimes (container TZ=Asia/Seoul → KST wall clock), matching
-        the surrounding loop. Asset-class-aware via ``open_time`` (futures 08:45 /
-        stock 09:00), replacing the prior hardcoded 08:55.
-        """
-        base = (now + timedelta(days=1)).replace(
-            hour=open_time.hour,
-            minute=open_time.minute,
-            second=0,
-            microsecond=0,
-        )
-        return base - timedelta(minutes=offset_minutes)
+    _next_session_wake = staticmethod(_session_calendar.next_session_wake)
 
     async def run(self):
         """데몬 모드 실행 (매일 반복)"""
@@ -4944,41 +4902,10 @@ class TradingOrchestrator:
 
         return filtered
 
-    @staticmethod
-    def _entry_signal_priority(signal: Signal) -> tuple[float, float, str, str]:
-        """Sort key for deterministic stock entry admission.
-
-        Lower explicit ``entry_priority`` wins; unranked signals stay behind
-        ranked ones. Within the same priority, higher confidence wins. This
-        keeps daily/pattern candidates from being admitted by dict/concurrency
-        order when position or capital limits bind.
-        """
-        metadata = getattr(signal, "metadata", {}) or {}
-        if not isinstance(metadata, dict):
-            metadata = {}
-        raw_priority = metadata.get("entry_priority", metadata.get("pattern_priority"))
-        if raw_priority is None:
-            priority = 1_000_000.0
-        else:
-            try:
-                priority = float(raw_priority)
-            except (TypeError, ValueError):
-                priority = 1_000_000.0
-        try:
-            confidence = float(getattr(signal, "confidence", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
-        return (
-            priority,
-            -confidence,
-            str(getattr(signal, "strategy", "") or ""),
-            str(getattr(signal, "code", "") or ""),
-        )
+    _entry_signal_priority = staticmethod(entry_signal_priority)
 
     def _prioritize_entry_signals(self, signals: list[Signal]) -> list[Signal]:
-        if len(signals) <= 1:
-            return signals
-        return sorted(signals, key=self._entry_signal_priority)
+        return prioritize_entry_signals(signals)
 
     async def _handle_entry(self) -> list[Signal]:
         """Entry signal handler (runs every 1 sec)
@@ -6662,45 +6589,7 @@ class TradingOrchestrator:
         """Extract normalized signal direction from metadata."""
         return get_signal_direction(signal)
 
-    @staticmethod
-    def _build_signals_all_row(
-        signal: Signal,
-        direction: str,
-        entry_price: float,
-        executed: bool,
-    ) -> tuple | None:
-        """Build a ``kospi.signals_all`` row tuple for a Setup A/C signal.
-
-        Returns ``None`` for non-Setup-A/C strategies (not persisted). Column
-        order/semantics mirror shared/backtest/signals_writer.py so rows from
-        the orchestrator and the Phase 5 risk_filter are interchangeable.
-        """
-        setup_type = _SETUP_TYPE_BY_STRATEGY.get(getattr(signal, "strategy", "") or "")
-        if setup_type is None:
-            return None
-
-        generated_at = getattr(signal, "timestamp", None) or datetime.now(UTC)
-        if generated_at.tzinfo is not None:
-            # DateTime64(3,'UTC') expects naive UTC (see signals_writer.py).
-            generated_at = generated_at.astimezone(UTC).replace(tzinfo=None)
-
-        metadata = getattr(signal, "metadata", {}) or {}
-        if not isinstance(metadata, dict):
-            metadata = {}
-
-        return (
-            str(uuid.uuid4()),
-            generated_at,
-            setup_type,
-            direction or "long",
-            float(entry_price or getattr(signal, "price", 0) or 0),
-            float(metadata.get("stop_loss", 0) or 0),
-            float(metadata.get("take_profit", 0) or 0),
-            float(getattr(signal, "confidence", 0) or 0),
-            1 if executed else 0,
-            "",
-            [],
-        )
+    _build_signals_all_row = staticmethod(build_signals_all_row)
 
     async def _persist_setup_signal_row(
         self,

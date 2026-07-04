@@ -111,6 +111,27 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def risk_params_for_runtime_capital(
+    risk_params: dict[str, Any], runtime_initial_capital: float
+) -> dict[str, Any]:
+    """Return risk params aligned with the active orchestrator capital.
+
+    ``risk_management.yaml`` is shared across runtime modes and has a conservative
+    standalone fallback. In orchestrator runs, the CLI/config ``initial_capital``
+    is the account baseline unless an operator explicitly sets
+    ``RISK_INITIAL_CAPITAL``.
+    """
+    params = dict(risk_params)
+    explicit_risk_capital = os.getenv("RISK_INITIAL_CAPITAL")
+    if (
+        explicit_risk_capital is None
+        or not explicit_risk_capital.strip()
+        or "initial_capital" not in params
+    ):
+        params["initial_capital"] = int(runtime_initial_capital)
+    return params
+
+
 @dataclass
 class TradingConfig:
     """트레이딩 설정"""

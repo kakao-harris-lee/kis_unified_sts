@@ -237,18 +237,19 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Recovery service split | ✅ done | `services/trading/recovery.py::PositionRecoveryService`; orchestrator keeps the compatibility method while Redis recovery, freshness checks, position reconstruction, tracker registration, and SQLite fallback delegation live in the owner module |
 | Market-data bootstrap split | ✅ done | `services/trading/market_data_bootstrap.py`; orchestrator facades assign KIS client, price feed, data provider, and tick publisher results |
 | Startup sequence extraction | ✅ done | `services/trading/startup_sequence.py`; `_initialize_components` delegates startup ordering behind focused tests |
-| Orchestrator decomposition | 🔄 in-progress | `services/trading/orchestrator.py` remains the compatibility runtime; pure initialization guard helpers and kill-switch request parsing now live in owner modules, while the next larger slices are execution/order lifecycle, initialization dependency wiring, kill-switch/live guard side effects, universe/market-data runtime, and position transitions |
-| Runtime refactoring next priorities | ⏳ planned | [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md) lists P1/P2/P3 lanes, files, tests, verification commands, and conflict rules |
+| Orchestrator decomposition | 🔄 in-progress | `services/trading/orchestrator.py` remains the compatibility runtime; pure initialization guard helpers, kill-switch request parsing, entry-priority sorting, signals_all row mapping, session wake calculation, and runtime-capital risk alignment now live in owner modules, while the next larger slices are execution/order lifecycle, kill-switch/live guard side effects, universe/market-data runtime, and position transitions |
+| Runtime refactoring next priorities | 🔄 in-progress | [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md) tracks completed CLI/dashboard/KIS/OHLCV second-wave splits plus remaining P1/P2/P3 lanes, tests, verification commands, and conflict rules |
 | Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
 
 ### Open next-steps
 
 - Follow the active runtime refactoring plan: the contract/decorator/factory
-  surfaces and first orchestrator owner modules are merged. Next work should use
+  surfaces, first orchestrator owner modules, and second-wave CLI/dashboard/KIS
+  parser splits are merged. Next work should use
   [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md)
-  to split execution/order lifecycle, initialization dependency wiring,
-  kill-switch/live guard, dashboard trades routes, CLI command modules, KIS
-  adapters, collector backfill, and large tests.
+  to split the remaining execution/order lifecycle, kill-switch/live guard,
+  universe/market-data helpers, KIS response mappers, backfill planning/sinks,
+  and large tests.
 - Treat the monolithic futures path as a compatibility runtime until F-9
   cutover. New decomposition should move toward the existing event-driven
   chain (`market_ingest -> decision_engine -> risk_filter -> order_router ->

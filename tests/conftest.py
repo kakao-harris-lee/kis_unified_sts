@@ -8,6 +8,7 @@ import os
 import sys
 from contextlib import suppress
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -72,6 +73,34 @@ if _xdist_worker:
         "HYPOTHESIS_STORAGE_DIRECTORY",
         str(Path("/tmp") / f"hypothesis-{_xdist_worker}"),
     )
+
+
+@pytest.fixture
+def mocker():
+    """Small pytest-mock compatible fixture for local patching in unit tests."""
+    patchers = []
+
+    class _PatchProxy:
+        def __call__(self, *args, **kwargs):
+            patcher = mock.patch(*args, **kwargs)
+            patchers.append(patcher)
+            return patcher.start()
+
+        def object(self, *args, **kwargs):
+            patcher = mock.patch.object(*args, **kwargs)
+            patchers.append(patcher)
+            return patcher.start()
+
+    class _Mocker:
+        Mock = mock.Mock
+        MagicMock = mock.MagicMock
+        patch = _PatchProxy()
+
+    yield _Mocker()
+
+    for patcher in reversed(patchers):
+        with suppress(Exception):
+            patcher.stop()
 
 
 def pytest_configure(config):

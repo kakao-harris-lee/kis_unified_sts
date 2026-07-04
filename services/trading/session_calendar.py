@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from enum import Enum
 from pathlib import Path
@@ -249,3 +249,20 @@ def is_trading_day(d: date | None = None, holidays: set[date] | None = None) -> 
         holidays = _get_holidays()
 
     return d not in holidays
+
+
+def next_session_wake(
+    now: datetime, open_time: dt_time, offset_minutes: int
+) -> datetime:
+    """Return the next day's pre-open wake instant.
+
+    Naive datetimes remain naive so daemon scheduling follows the container's
+    KST wall clock, matching the orchestrator loop.
+    """
+    base = (now + timedelta(days=1)).replace(
+        hour=open_time.hour,
+        minute=open_time.minute,
+        second=0,
+        microsecond=0,
+    )
+    return base - timedelta(minutes=offset_minutes)

@@ -27,23 +27,34 @@ Already merged:
   `services/trading/runtime_config.py`, `reentry_guard.py`,
   `execution_facade.py`, `execution_runtime.py`, `recovery.py`,
   `market_data_bootstrap.py`, `startup_sequence.py`;
+- second-wave pure runtime/parser splits:
+  `services/trading/entry_runtime.py`, `signals_all_runtime.py`,
+  `session_calendar.py::next_session_wake`,
+  `runtime_config.py::risk_params_for_runtime_capital`,
+  `shared/kis/target_price.py`,
+  `shared/collector/historical/ohlcv_parser.py`,
+  `services/dashboard/routes/trades_lifecycle_data.py`;
+- CLI command modules:
+  `cli/commands/backfill.py`, `stock_backfill.py`, `trading_control.py`,
+  `paper.py`, `health.py`, `common.py`;
 - package lazy imports in `services/trading/__init__.py`.
 
-Current large-file scan on `main`:
+Current large-file scan after the second-wave refactor branch:
 
 | File | Lines | Priority |
 |---|---:|---|
-| `services/trading/orchestrator.py` | 7102 | P1 |
-| `cli/main.py` | 2282 | P2 |
-| `services/dashboard/routes/trades.py` | 1540 | P2 |
-| `shared/kis/client.py` | 1373 | P3 |
-| `shared/collector/historical/backfill.py` | 1295 | P3 |
-| `services/dashboard/routes/kis_builder.py` | 1234 | P3 |
+| `services/trading/orchestrator.py` | 6995 | P1 |
+| `cli/main.py` | 1234 | P2 |
+| `shared/kis/client.py` | 1237 | P3 |
 | `services/screener.py` | 1172 | P3 |
 | `shared/kis/websocket.py` | 1074 | P3 |
-| `services/dashboard/routes/signals.py` | 1033 | P3 |
 | `shared/collector/historical/parquet_backfill.py` | 1030 | P3 |
-| `services/dashboard/routes/health.py` | 1018 | P3 |
+| `shared/collector/historical/backfill.py` | 1019 | P3 |
+| `services/dashboard/routes/trades_lifecycle.py` | 501 | P2 |
+| `services/dashboard/routes/health.py` | 490 | P3 |
+| `services/dashboard/routes/kis_builder.py` | 464 | P3 |
+| `services/dashboard/routes/signals.py` | 359 | P3 |
+| `services/dashboard/routes/trades.py` | 330 | P2 |
 
 ## Conflict Rules
 
@@ -486,141 +497,125 @@ same files.
 
 ### Task 2.1: Dashboard Trades Route Query/Response Split
 
+Status: partially complete. `services/dashboard/routes/trades_lifecycle.py`
+now owns lifecycle response assembly, while lifecycle row helpers and
+SQL/Redis loading live in `services/dashboard/routes/trades_lifecycle_data.py`.
+`services/dashboard/routes/trades.py` remains the route facade, and
+`services/dashboard/routes/trades_data.py` owns general trade query/stat helpers.
+
 **Files:**
 
-- Create: `services/dashboard/routes/trades_queries.py`
-- Create: `services/dashboard/routes/trades_lifecycle.py`
+- Done: `services/dashboard/routes/trades_lifecycle_data.py`
+- Existing: `services/dashboard/routes/trades_lifecycle.py`
+- Existing: `services/dashboard/routes/trades_data.py`
 - Modify: `services/dashboard/routes/trades.py`
 - Test: `tests/unit/dashboard/test_trades.py`
 
-- [ ] **Step 1: Move pure ledger row conversion first**
+- [x] **Step 1: Keep lifecycle step builders in a route-adjacent module**
 
-Move these functions from `trades.py` into `trades_lifecycle.py`:
+`trades_lifecycle.py` owns `_missing_lifecycle_step`, `_signal_step`,
+`_order_step`, `_fill_step`, `_position_step`, `_closed_trade_step`, and
+`_build_lifecycle_response`.
 
-- `_parse_tz_aware`
-- `_parse_optional_tz_aware`
-- `_ledger_row_to_trade_dict`
-- `_ledger_trade_to_closed_dict`
-- `_ledger_fill_to_dict`
-- `_statistics_from_trade_dicts`
+- [x] **Step 2: Move lifecycle row loading/data helpers**
 
-Keep imports in `trades.py` so route functions remain unchanged.
+`trades_lifecycle_data.py` owns `_query_lifecycle_table`,
+`_query_lifecycle_batch`, `_load_lifecycle_ledger_rows`,
+`_load_lifecycle_redis_rows`, and row-shape helpers. SQL strings, Redis key
+lookups, broad/direct-id behavior, and ledger ownership semantics are unchanged.
 
-- [ ] **Step 2: Move lifecycle step builders**
+- [ ] **Step 3: Optional remaining trade-query split**
 
-Move these functions into `trades_lifecycle.py`:
+Only if `trades_data.py` grows again, split general trade list/stat query helpers
+into `trades_queries.py`. Do not move lifecycle builders in that same commit.
 
-- `_missing_lifecycle_step`
-- `_signal_step`
-- `_order_step`
-- `_fill_step`
-- `_position_step`
-- `_closed_trade_step`
-- `_build_lifecycle_response`
-
-Keep the existing response model imports stable.
-
-- [ ] **Step 3: Move DB/ledger queries**
-
-Move these functions into `trades_queries.py`:
-
-- `_load_runtime_ledger_trades`
-- `_load_runtime_ledger_fills`
-- `_query_lifecycle_table`
-- `_query_lifecycle_batch`
-- `_load_lifecycle_ledger_rows`
-- `_load_lifecycle_redis_rows`
-
-Do not change SQL strings or Redis key names in the same commit.
-
-- [ ] **Step 4: Verify route behavior**
+- [x] **Step 4: Verify route behavior**
 
 ```bash
 pytest tests/unit/dashboard/test_trades.py -q --tb=short
-ruff check services/dashboard/routes/trades.py services/dashboard/routes/trades_queries.py services/dashboard/routes/trades_lifecycle.py tests/unit/dashboard/test_trades.py
-black --check services/dashboard/routes/trades.py services/dashboard/routes/trades_queries.py services/dashboard/routes/trades_lifecycle.py tests/unit/dashboard/test_trades.py
-python3 -m py_compile services/dashboard/routes/trades.py services/dashboard/routes/trades_queries.py services/dashboard/routes/trades_lifecycle.py tests/unit/dashboard/test_trades.py
+ruff check services/dashboard/routes/trades.py services/dashboard/routes/trades_data.py services/dashboard/routes/trades_lifecycle.py services/dashboard/routes/trades_lifecycle_data.py tests/unit/dashboard/test_trades.py tests/unit/dashboard/test_signals_trace.py
+black --check services/dashboard/routes/trades.py services/dashboard/routes/trades_data.py services/dashboard/routes/trades_lifecycle.py services/dashboard/routes/trades_lifecycle_data.py tests/unit/dashboard/test_trades.py tests/unit/dashboard/test_signals_trace.py
+python3 -m py_compile services/dashboard/routes/trades.py services/dashboard/routes/trades_data.py services/dashboard/routes/trades_lifecycle.py services/dashboard/routes/trades_lifecycle_data.py tests/unit/dashboard/test_trades.py tests/unit/dashboard/test_signals_trace.py
 git diff --check
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Include in combined branch commit**
 
-```bash
-git add services/dashboard/routes/trades.py services/dashboard/routes/trades_queries.py services/dashboard/routes/trades_lifecycle.py tests/unit/dashboard/test_trades.py
-git commit -m "Split dashboard trades lifecycle helpers"
-```
+This slice is included in the combined runtime-decomposition branch commit for
+this run rather than a standalone task commit.
 
 ### Task 2.2: CLI Command Module Split
 
+Status: partially complete. The CLI now uses the existing `cli/commands/`
+package pattern. Backfill, stock-backfill, trade, paper, health, and shared
+dashboard URL defaults have moved out of `cli/main.py`. Backtest/experiment
+commands remain in `cli/main.py` and are the next safe CLI slice.
+
 **Files:**
 
-- Create: `cli/backtest_commands.py`
-- Create: `cli/backfill_commands.py`
-- Create: `cli/trade_commands.py`
+- Existing: `cli/commands/backfill.py`
+- Existing: `cli/commands/stock_backfill.py`
+- Existing: `cli/commands/trading_control.py`
+- Existing: `cli/commands/paper.py`
+- Existing: `cli/commands/health.py`
+- Existing: `cli/commands/common.py`
+- Optional next: `cli/commands/backtest.py`
 - Modify: `cli/main.py`
-- Test: `tests/unit/cli/test_main_imports.py`
+- Test: `tests/unit/test_cli_commands.py`
 
-- [ ] **Step 1: Add import smoke test**
+- [x] **Step 1: Keep CLI smoke coverage through existing tests**
 
-Create `tests/unit/cli/test_main_imports.py`:
+`tests/unit/test_cli_commands.py::TestCLIHelp` plus `python -m cli.main
+--help` verify the extracted top-level commands remain listed.
 
-```python
-from click.testing import CliRunner
-
-from cli.main import cli
-
-
-def test_cli_lists_existing_top_level_commands():
-    result = CliRunner().invoke(cli, ["--help"])
-
-    assert result.exit_code == 0
-    assert "backtest" in result.output
-    assert "backfill" in result.output
-    assert "trade" in result.output
-    assert "paper" in result.output
-```
-
-- [ ] **Step 2: Extract one command group at a time**
+- [x] **Step 2: Extract one command group at a time**
 
 Move only the `backfill` group and stock-backfill commands first into
-`cli/backfill_commands.py`. Export a group named `backfill` and a group named
-`stock_backfill`.
+`cli/commands/backfill.py` and `cli/commands/stock_backfill.py`. Export a group
+named `backfill` and a group named `stock_backfill`.
 
-- [ ] **Step 3: Register extracted groups in `cli/main.py`**
+- [x] **Step 3: Register extracted groups in `cli/main.py`**
 
 In `cli/main.py`, keep the top-level `cli` group and register extracted groups:
 
 ```python
-from cli.backfill_commands import backfill, stock_backfill
+from cli.commands.backfill import backfill
+from cli.commands.stock_backfill import stock_backfill
 
 cli.add_command(backfill)
-cli.add_command(stock_backfill, name="stock-backfill")
+cli.add_command(stock_backfill)
 ```
 
-- [ ] **Step 4: Repeat for `backtest` and `trade` only after tests pass**
+- [x] **Step 4: Repeat for trade/paper/health only after tests pass**
 
-Use the same pattern for:
+Completed:
 
-- `cli/backtest_commands.py`: `backtest`, `experiment`, helper `_run_tier_backtest`;
-- `cli/trade_commands.py`: `trade`, `paper`, `health`, orchestrator guard helpers.
+- `cli/commands/trading_control.py`: `trade`, orchestrator guard helpers;
+- `cli/commands/paper.py`: `paper`;
+- `cli/commands/health.py`: `health`;
+- `cli/commands/common.py`: dashboard URL defaults.
 
-- [ ] **Step 5: Verify**
+- [ ] **Step 5: Optional remaining backtest/experiment split**
+
+Move `backtest`, `experiment`, and helper `_run_tier_backtest` to
+`cli/commands/backtest.py` only after adding focused compatibility tests for
+`from cli.main import _run_tier_backtest`.
+
+- [x] **Step 6: Verify**
 
 ```bash
-pytest tests/unit/cli/test_main_imports.py -q --tb=short
-python -m cli.main --help >/tmp/sts-cli-help.txt
-ruff check cli/main.py cli/backtest_commands.py cli/backfill_commands.py cli/trade_commands.py tests/unit/cli/test_main_imports.py
-black --check cli/main.py cli/backtest_commands.py cli/backfill_commands.py cli/trade_commands.py tests/unit/cli/test_main_imports.py
-python3 -m py_compile cli/main.py cli/backtest_commands.py cli/backfill_commands.py cli/trade_commands.py tests/unit/cli/test_main_imports.py
+pytest tests/unit/test_cli_commands.py tests/unit/test_cli_paper.py tests/unit/test_cli_stock_guard.py tests/unit/test_cli_futures_guard.py tests/unit/test_cli_portfolio.py -q
+python -m cli.main --help
+ruff check cli/main.py cli/commands tests/conftest.py
+black --check cli/main.py cli/commands tests/conftest.py
+python3 -m py_compile cli/main.py cli/commands/backfill.py cli/commands/stock_backfill.py cli/commands/trading_control.py cli/commands/paper.py cli/commands/health.py cli/commands/common.py
 git diff --check
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 7: Include in combined branch commit**
 
-```bash
-git add cli/main.py cli/backtest_commands.py cli/backfill_commands.py cli/trade_commands.py tests/unit/cli/test_main_imports.py
-git commit -m "Split CLI command groups"
-```
+This slice is included in the combined runtime-decomposition branch commit for
+this run rather than a standalone task commit.
 
 ### Task 2.3: Orchestrator Universe And Market Data Runtime Helpers
 
@@ -749,76 +744,102 @@ git commit -m "Extract orchestrator universe and market-data helpers"
 
 ### Task 3.1: KIS REST Client Request/Response Split
 
+Status: partially complete. Analyst target-price summary/normalization logic now
+lives in `shared/kis/target_price.py`; `KISClient` keeps compatibility wrappers
+and owns auth/session/rate-limit behavior. The remaining safe slice is generic
+quotation response parsing/mapping.
+
 **Files:**
 
-- Create: `shared/kis/request_runtime.py`
-- Create: `shared/kis/response_parsing.py`
+- Done: `shared/kis/target_price.py`
+- Optional next: `shared/kis/response_parsing.py`
+- Optional later: `shared/kis/request_runtime.py`
 - Modify: `shared/kis/client.py`
-- Test: `tests/unit/kis/test_client.py`
+- Test: `tests/unit/kis/test_target_price.py`
 
-- [ ] **Step 1: Move response-normalization helpers only**
+- [x] **Step 1: Move target-price normalization helpers only**
 
-Move pure payload parsing and response normalization from `shared/kis/client.py`
-into `shared/kis/response_parsing.py`. Do not move auth/session/rate-limit
-calls in the first commit.
+Move `_empty_target_price_summary`, `_normalize_target_price_report`,
+`_calc_target_revision_pct`, `_target_revision_direction`, and the row summary
+workflow into `shared/kis/target_price.py`. Do not move auth/session/rate-limit
+calls.
 
-- [ ] **Step 2: Add tests around payload parsing**
+- [x] **Step 2: Keep compatibility wrappers**
+
+`KISClient.summarize_target_price()` fetches rows and delegates to
+`summarize_target_price_rows()`. Private static/class methods remain as wrappers
+for downstream tests/imports.
+
+- [ ] **Step 3: Optional remaining response parser split**
 
 Use existing fixtures in `tests/unit/kis/test_client.py`; add focused tests for
-the moved parser functions so they can run without network credentials.
+the moved parser functions so they can run without network credentials. Keep
+`_quotations_get()` in `KISClient` until request/session behavior has separate
+coverage.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 4: Verify**
 
 ```bash
-pytest tests/unit/kis/test_client.py -q --tb=short
-ruff check shared/kis/client.py shared/kis/request_runtime.py shared/kis/response_parsing.py tests/unit/kis/test_client.py
-black --check shared/kis/client.py shared/kis/request_runtime.py shared/kis/response_parsing.py tests/unit/kis/test_client.py
-python3 -m py_compile shared/kis/client.py shared/kis/request_runtime.py shared/kis/response_parsing.py tests/unit/kis/test_client.py
+pytest tests/unit/kis/test_target_price.py -q
+ruff check shared/kis/client.py shared/kis/target_price.py tests/unit/kis/test_target_price.py
+black --check shared/kis/client.py shared/kis/target_price.py tests/unit/kis/test_target_price.py
+python3 -m py_compile shared/kis/client.py shared/kis/target_price.py
 git diff --check
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 5: Include in combined branch commit**
 
-```bash
-git add shared/kis/client.py shared/kis/request_runtime.py shared/kis/response_parsing.py tests/unit/kis/test_client.py
-git commit -m "Split KIS REST response parsing"
-```
+This slice is included in the combined runtime-decomposition branch commit for
+this run rather than a standalone task commit.
 
 ### Task 3.2: Historical Backfill Planner/Sink Split
 
+Status: partially complete. KIS futures/index OHLCV parsing now lives in
+`shared/collector/historical/ohlcv_parser.py`, while
+`shared.collector.historical.backfill.parse_ohlcv` remains the compatibility
+import path used by parquet backfill monkeypatch tests. Planning/sink extraction
+is still open.
+
 **Files:**
 
-- Create: `shared/collector/historical/backfill_plan.py`
-- Create: `shared/collector/historical/backfill_sink.py`
+- Done: `shared/collector/historical/ohlcv_parser.py`
+- Optional next: `shared/collector/historical/backfill_plan.py`
+- Optional next: `shared/collector/historical/backfill_sink.py`
 - Modify: `shared/collector/historical/backfill.py`
-- Test: `tests/unit/collector/test_backfill.py`
+- Test: `tests/unit/collector/test_parse_ohlcv_divergent_dedup.py`
+- Test: `tests/unit/collector/test_parse_ohlcv_phantom_drop.py`
+- Test: `tests/unit/collector/test_parquet_backfill.py`
 
-- [ ] **Step 1: Extract date/chunk planning**
+- [x] **Step 1: Extract OHLCV parser first**
+
+Move `_first_present`, `_resolve_minute_bars`, `_DIVERGENCE_MAX_STEP_FRACTION`,
+and `parse_ohlcv` into `ohlcv_parser.py`. Keep the legacy import path in
+`backfill.py` so tests and dynamic imports can monkeypatch it.
+
+- [ ] **Step 2: Extract date/chunk planning**
 
 Move pure date range, chunk, and resume planning helpers into
 `backfill_plan.py`. Keep network fetch and file writes in the existing module.
 
-- [ ] **Step 2: Extract sink write adapter**
+- [ ] **Step 3: Extract sink write adapter**
 
 Move sink dispatch and output-path resolution into `backfill_sink.py`. Preserve
 existing CLI options and output paths.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 4: Verify parser extraction**
 
 ```bash
-pytest tests/unit/collector/test_backfill.py -q --tb=short
-ruff check shared/collector/historical/backfill.py shared/collector/historical/backfill_plan.py shared/collector/historical/backfill_sink.py tests/unit/collector/test_backfill.py
-black --check shared/collector/historical/backfill.py shared/collector/historical/backfill_plan.py shared/collector/historical/backfill_sink.py tests/unit/collector/test_backfill.py
-python3 -m py_compile shared/collector/historical/backfill.py shared/collector/historical/backfill_plan.py shared/collector/historical/backfill_sink.py tests/unit/collector/test_backfill.py
+pytest tests/unit/collector/test_parse_ohlcv_divergent_dedup.py tests/unit/collector/test_parse_ohlcv_phantom_drop.py tests/unit/collector/test_parquet_backfill.py -q
+ruff check shared/collector/historical/backfill.py shared/collector/historical/ohlcv_parser.py tests/unit/collector/test_parse_ohlcv_divergent_dedup.py tests/unit/collector/test_parse_ohlcv_phantom_drop.py tests/unit/collector/test_parquet_backfill.py
+black --check shared/collector/historical/backfill.py shared/collector/historical/ohlcv_parser.py tests/unit/collector/test_parse_ohlcv_divergent_dedup.py tests/unit/collector/test_parse_ohlcv_phantom_drop.py tests/unit/collector/test_parquet_backfill.py
+python3 -m py_compile shared/collector/historical/backfill.py shared/collector/historical/ohlcv_parser.py
 git diff --check
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 5: Include in combined branch commit**
 
-```bash
-git add shared/collector/historical/backfill.py shared/collector/historical/backfill_plan.py shared/collector/historical/backfill_sink.py tests/unit/collector/test_backfill.py
-git commit -m "Split historical backfill planning and sinks"
-```
+This slice is included in the combined runtime-decomposition branch commit for
+this run rather than a standalone task commit.
 
 ### Task 3.3: Large Test File Decomposition
 

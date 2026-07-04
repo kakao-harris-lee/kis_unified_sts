@@ -123,10 +123,14 @@ kept. The remaining actionable backlog is now grouped by priority in
 P1 orchestrator execution/initialization/kill-switch slices, P2 dashboard
 trades route + CLI + universe/market-data helpers, and P3 KIS/backfill/test
 decomposition.
-The next P1 micro-slice added owner modules for pure state-transition
-serialization, entry slippage-stat accumulation, futures-asset guard checks, and
-kill-switch force-flatten request parsing; side-effecting execution, Redis,
-flatten, notification, and live-guard behavior remains in the orchestrator.
+The next P1/P2/P3 micro-slices added owner modules for pure state-transition
+serialization, entry slippage-stat accumulation, futures-asset guard checks,
+kill-switch force-flatten request parsing, entry-priority sorting,
+signals_all row mapping, session wake calculation, runtime-capital risk
+alignment, CLI command groups, lifecycle data loading, KIS target-price
+summaries, and futures/index OHLCV parsing. Side-effecting execution, Redis,
+flatten, notification, live-guard behavior, broader KIS response mappers, and
+backfill planning/sinks remain in their existing owners.
 
 **2026-07-04** - Runtime large-file split priority 3 merged.
 Commit `83e94681` split the requested large runtime files without changing
@@ -344,7 +348,7 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
   QA artifacts when those routes change; continue runtime refactoring from
   [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md)
-  with one orchestrator lane at a time and independent dashboard/CLI/KIS/backfill
-  lanes in parallel where possible. Use
+  with one orchestrator lane at a time and the remaining independent
+  dashboard/KIS/backfill/test lanes in parallel where possible. Use
   `scripts/ops/ops_readiness_check.py` as the offline checklist; live service
   confirmation remains external.
