@@ -66,6 +66,11 @@ class StreamingIndicatorEngine(IndicatorQueryMixin, IndicatorCalculationMixin):
         ema_periods: list[int] | None = None,
         daily_ema_periods: list[int] | None = None,
         mtf_warmth_timeframe: int | None = None,
+        stochrsi_enabled: bool = False,
+        stochrsi_rsi_period: int = 14,
+        stochrsi_stoch_period: int = 14,
+        stochrsi_k_period: int = 3,
+        stochrsi_d_period: int = 3,
     ):
         self.bb_period = bb_period
         self.bb_std = bb_std
@@ -75,6 +80,19 @@ class StreamingIndicatorEngine(IndicatorQueryMixin, IndicatorCalculationMixin):
         self._accumulators: dict[str, CandleAccumulator] = {}
         self._warm_logged: set[str] = set()
         self._ema_periods: list[int] = ema_periods or [5, 20, 60]
+
+        # StochRSI producer (config-gated, default OFF). Emits flat keys
+        # stochrsi_k/stochrsi_d/stochrsi_k_prev in get_indicators() only when
+        # enabled, so stock / Setup-A/C paths are unchanged and the per-candle
+        # DataFrame build is only paid once a StochRSI strategy is activated.
+        # min_bars = rsi_period + stoch_period (enough to fill the RSI warmup
+        # AND one full stoch normalization window before values are non-neutral).
+        self._stochrsi_enabled = stochrsi_enabled
+        self._stochrsi_rsi_period = stochrsi_rsi_period
+        self._stochrsi_stoch_period = stochrsi_stoch_period
+        self._stochrsi_k_period = stochrsi_k_period
+        self._stochrsi_d_period = stochrsi_d_period
+        self._stochrsi_min_bars = stochrsi_rsi_period + stochrsi_stoch_period
 
         # Multi-timeframe accumulators: {symbol: {timeframe: accumulator}}
         # Separate 'daily' from numeric timeframes (5, 15, etc.)

@@ -78,6 +78,30 @@ class IndicatorQueryMixin:
             "rsi": rsi,
         }
 
+        # StochRSI producer (flat keys consumed by StochRSITrendEntry). Config-
+        # gated (default off) so existing paths are byte-for-byte unchanged and
+        # the per-candle DataFrame build is only paid when the strategy is
+        # active. `closes` above is built from acc.candles (closed candles only)
+        # so this is look-ahead safe (C1) — the in-progress buffer is never read.
+        # latest_values() falls back to neutral 50 during warmup, and
+        # stochrsi_k_prev is the previous bar's %K derived from the same closed
+        # series (no Redis state needed at bar cadence). Import is lazy so the
+        # numpy/pandas-free hot path stays import-free when StochRSI is disabled.
+        if self._stochrsi_enabled and len(closes) >= self._stochrsi_min_bars:
+            import pandas as pd
+
+            from shared.indicators.reference import StochRSICalculator
+
+            sr = StochRSICalculator(
+                rsi_period=self._stochrsi_rsi_period,
+                stoch_period=self._stochrsi_stoch_period,
+                k_period=self._stochrsi_k_period,
+                d_period=self._stochrsi_d_period,
+            ).latest_values(pd.DataFrame({"close": closes}))
+            result["stochrsi_k"] = sr["stochrsi_k"]
+            result["stochrsi_d"] = sr["stochrsi_d"]
+            result["stochrsi_k_prev"] = sr["stochrsi_k_prev"]
+
         # MFI needs volume data; only compute if candles have volume
         mfi = self._calc_mfi(candles)
         if mfi is not None:

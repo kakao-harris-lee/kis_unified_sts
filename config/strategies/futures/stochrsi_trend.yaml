@@ -1,0 +1,63 @@
+# StochRSI Trend Entry (양방향) — 지표 카탈로그 M2 (2026-07-04)
+#
+# StochRSITrendEntry 는 등록되어 있으나, 소비하는 flat 키
+# (stochrsi_k / stochrsi_d / stochrsi_k_prev) 를 생산하는 producer 가 없어
+# 항상 중립 50 을 읽어 신호를 전혀 내지 못하는 inert 상태였다.
+# M2 에서 StreamingIndicatorEngine.get_indicators 에 config-gated producer
+# (shared.indicators.reference.StochRSICalculator) 를 배선했다.
+#
+# enabled: false — **활성화 금지**. 신규 신호 소스이므로 활성화 전
+# backtest → RegimeGate head-to-head → counterfactual EOD-proxy PnL →
+# paper 검증(strategy-lab 파이프라인)을 반드시 통과해야 한다.
+#
+# 활성화 시 아래 indicators.stochrsi 파라미터를 엔진 생성자
+# (stochrsi_enabled / stochrsi_rsi_period / stochrsi_stoch_period /
+#  stochrsi_k_period / stochrsi_d_period) 로 배선하는 별도 PR 필요.
+
+strategy:
+  name: stochrsi_trend
+  asset_class: futures
+  enabled: false
+  description: "StochRSI %K/%D 크로스오버 양방향 진입 (oversold/overbought 존)"
+
+  backtest:
+    initial_capital: 10000000
+    point_value: 50000   # KOSPI200 mini multiplier (execution.yaml 참조)
+
+  # get_indicators producer 파라미터 (StochRSICalculator 기본값과 일치).
+  # 엔진 생성자로 배선되며 stochrsi_enabled=true 일 때만 키를 생산한다.
+  indicators:
+    stochrsi:
+      enabled: false        # producer 게이트 — paper 검증 전 비활성 유지
+      rsi_period: 14
+      stoch_period: 14
+      k_period: 3
+      d_period: 3
+
+  entry:
+    type: stochrsi_trend
+    params:
+      rsi_period: 14
+      stoch_period: 14
+      k_period: 3
+      d_period: 3
+      oversold: 20
+      overbought: 80
+
+  exit:
+    # StochRSI 전용 청산은 별도 설계 전까지 표준 트랙 청산을 재사용.
+    type: williams_r_exit
+    params:
+      overbought_threshold: -20.0
+      oversold_exit_threshold: -80.0
+      max_stop_loss_pct: -0.03
+      time_cut_minutes: 120
+      eod_close_hour: 15
+      eod_close_minute: 45
+      default_exit_confidence: 0.8
+
+  position:
+    type: fixed
+    params:
+      max_positions: 1
+      order_amount_per_stock: 1000000
