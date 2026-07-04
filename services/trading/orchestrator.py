@@ -47,6 +47,11 @@ from services.trading.execution_facade import (
     get_signal_direction,
     normalize_entry_order_result,
 )
+from services.trading.execution_runtime import (
+    finalize_entry_execution_metadata,
+    mock_mirror_exit_should_skip,
+    record_mock_mirror_result,
+)
 from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
@@ -6237,38 +6242,10 @@ class TradingOrchestrator:
         label: str,
         result: dict[str, Any] | None,
     ) -> None:
-        normalized = dict(result or {})
-        if "success" not in normalized:
-            normalized["success"] = False
-            normalized.setdefault("message", "mock_mirror_no_result")
-        normalized.setdefault("skipped", False)
-
-        metadata = position.metadata if isinstance(position.metadata, dict) else {}
-        metadata = dict(metadata)
-        mirror_meta = metadata.get("mock_mirror")
-        mirror_meta = {} if not isinstance(mirror_meta, dict) else dict(mirror_meta)
-        mirror_meta[label] = normalized
-        metadata["mock_mirror"] = mirror_meta
-        position.metadata = metadata
-
-        if normalized.get("skipped"):
-            outcome = "skipped"
-        elif normalized.get("success"):
-            outcome = "success"
-        else:
-            outcome = "failed"
-        key = f"{label}_{outcome}"
-        self._mock_mirror_stats[key] = int(self._mock_mirror_stats.get(key, 0)) + 1
+        record_mock_mirror_result(position, self._mock_mirror_stats, label, result)
 
     def _mock_mirror_exit_should_skip(self, position: Position) -> bool:
-        metadata = position.metadata if isinstance(position.metadata, dict) else {}
-        mirror_meta = metadata.get("mock_mirror")
-        if not isinstance(mirror_meta, dict):
-            return False
-        entry_result = mirror_meta.get("entry")
-        if not isinstance(entry_result, dict):
-            return False
-        return entry_result.get("success") is False
+        return mock_mirror_exit_should_skip(position)
 
     def _finalize_entry_execution_meta(
         self,
@@ -6278,34 +6255,25 @@ class TradingOrchestrator:
         is_short: bool,
         execution_meta: dict[str, Any],
     ) -> dict[str, Any]:
-        meta = dict(execution_meta)
-        signal_price = float(signal.price)
-        submit_price = float(meta.get("submit_price", signal_price) or signal_price)
+        tick_size = 0.02
+        if (
+            self._futures_slippage_controller is not None
+            and getattr(self._futures_slippage_controller, "config", None) is not None
+        ):
+            tick_size = float(self._futures_slippage_controller.config.tick_size)
 
-        meta["signal_price"] = signal_price
-        meta["submit_price"] = submit_price
-        meta["fill_price"] = float(fill_price)
+        meta = finalize_entry_execution_metadata(
+            signal=signal,
+            fill_price=fill_price,
+            is_short=is_short,
+            execution_meta=execution_meta,
+            tick_size=tick_size,
+        )
 
-        try:
-            from shared.execution.slippage_control import compute_adverse_slippage_ticks
-
-            tick_size = 0.02
-            if (
-                self._futures_slippage_controller is not None
-                and getattr(self._futures_slippage_controller, "config", None)
-                is not None
-            ):
-                tick_size = float(self._futures_slippage_controller.config.tick_size)
-
-            slippage_ticks = compute_adverse_slippage_ticks(
-                signal_price=signal_price,
-                fill_price=float(fill_price),
-                is_buy=(not is_short),
-                tick_size=tick_size,
-            )
-            meta["slippage_ticks"] = float(slippage_ticks)
-            meta["slippage_tick_size"] = tick_size
-
+        if "slippage_ticks" in meta:
+            signal_price = float(meta["signal_price"])
+            submit_price = float(meta["submit_price"])
+            slippage_ticks = float(meta["slippage_ticks"])
             self._update_entry_slippage_stats(max(0.0, float(slippage_ticks)))
             logger.info(
                 "Entry execution prices: code=%s signal=%.2f submit=%.2f fill=%.2f "
@@ -6316,7 +6284,7 @@ class TradingOrchestrator:
                 float(fill_price),
                 float(slippage_ticks),
             )
-        except ImportError:
+        else:
             logger.debug("slippage_control not available, skipping slippage telemetry")
 
         return meta
