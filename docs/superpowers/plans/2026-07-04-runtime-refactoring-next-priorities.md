@@ -12,7 +12,8 @@
 
 ## Current Baseline
 
-Use `main` at or after `2140c9ed Merge runtime decomposition follow-ups`.
+Use `main` at or after `59e18a72 Refactor runtime command and parser ownership
+slices`.
 
 Already merged:
 
@@ -28,6 +29,8 @@ Already merged:
   `execution_facade.py`, `execution_runtime.py`, `recovery.py`,
   `market_data_bootstrap.py`, `startup_sequence.py`;
 - second-wave pure runtime/parser splits:
+  `services/trading/initialization_runtime.py`,
+  `services/trading/kill_switch_runtime.py`,
   `services/trading/entry_runtime.py`, `signals_all_runtime.py`,
   `session_calendar.py::next_session_wake`,
   `runtime_config.py::risk_params_for_runtime_capital`,
@@ -44,7 +47,7 @@ Current large-file scan after the second-wave refactor branch:
 | File | Lines | Priority |
 |---|---:|---|
 | `services/trading/orchestrator.py` | 6995 | P1 |
-| `cli/main.py` | 1234 | P2 |
+| `cli/main.py` | 1184 | P2 |
 | `shared/kis/client.py` | 1237 | P3 |
 | `services/screener.py` | 1172 | P3 |
 | `shared/kis/websocket.py` | 1074 | P3 |
@@ -58,6 +61,10 @@ Current large-file scan after the second-wave refactor branch:
 
 ## Conflict Rules
 
+- Current-state caution: `initialization_runtime.py` and
+  `kill_switch_runtime.py` are already merged. Do not recreate those lanes as
+  first-time extraction work; only extend them when a new owner-helper boundary
+  is covered by tests.
 - Create one worktree per task lane. Do not work in the default checkout if it has user files.
 - Do not edit `shared/llm/*` in this plan unless a task explicitly adds a test proving no LLM runtime behavior changed.
 - Do not change stock swing exit policy; no blanket EOD liquidation.
@@ -257,121 +264,18 @@ git commit -m "Refactor orchestrator execution metadata delegation"
 
 ### Task 1.2: Initialization Dependency Wiring Owner
 
-**Files:**
+Status: complete. `services/trading/initialization_runtime.py` exists, is
+registered as a lazy `services.trading` package attribute, and is covered by
+`tests/unit/trading/test_initialization_runtime.py` plus package import-laziness
+tests. The orchestrator delegates futures contract-validation checks through
+`should_require_futures_contract_validation()`.
 
-- Create: `services/trading/initialization_runtime.py`
-- Modify: `services/trading/orchestrator.py`
-- Test: `tests/unit/trading/test_initialization_runtime.py`
-- Test: `tests/unit/trading/test_package_imports.py`
+**Do not redo this as a first-time extraction.** Future work may extend this
+owner only for pure initialization decisions. Keep broker construction, notifier
+setup, Redis connections, live-order wiring, and startup side effects in their
+current owners unless a focused test proves the behavior boundary.
 
-- [ ] **Step 1: Add import-laziness test**
-
-Append to `tests/unit/trading/test_package_imports.py`:
-
-```python
-def test_initialization_runtime_package_attribute_resolves_without_orchestrator() -> None:
-    result = _run_python("""
-        import sys
-        import services.trading as trading
-
-        assert trading.initialization_runtime is not None
-        assert "services.trading.orchestrator" not in sys.modules
-        """)
-
-    assert result.returncode == 0, result.stderr
-```
-
-- [ ] **Step 2: Create owner module**
-
-Create `services/trading/initialization_runtime.py` with pure helpers only:
-
-```python
-"""Initialization owner helpers for the trading orchestrator."""
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any
-
-
-@dataclass(frozen=True)
-class ExecutionLayerInputs:
-    asset_class: str
-    use_real_broker: bool
-    futures_live_enabled: bool
-    futures_tick_size: float
-
-
-def execution_layer_mode(inputs: ExecutionLayerInputs) -> str:
-    if inputs.asset_class == "futures" and inputs.futures_live_enabled:
-        return "futures_live"
-    if inputs.use_real_broker:
-        return "real_broker"
-    return "paper"
-
-
-def should_require_futures_contract_validation(asset_class: str) -> bool:
-    return asset_class == "futures"
-```
-
-- [ ] **Step 3: Add tests**
-
-Create `tests/unit/trading/test_initialization_runtime.py`:
-
-```python
-from services.trading.initialization_runtime import (
-    ExecutionLayerInputs,
-    execution_layer_mode,
-    should_require_futures_contract_validation,
-)
-
-
-def test_execution_layer_mode_prefers_futures_live_guard():
-    mode = execution_layer_mode(
-        ExecutionLayerInputs(
-            asset_class="futures",
-            use_real_broker=False,
-            futures_live_enabled=True,
-            futures_tick_size=0.05,
-        )
-    )
-
-    assert mode == "futures_live"
-
-
-def test_execution_layer_mode_keeps_paper_default():
-    mode = execution_layer_mode(
-        ExecutionLayerInputs(
-            asset_class="stock",
-            use_real_broker=False,
-            futures_live_enabled=False,
-            futures_tick_size=0.05,
-        )
-    )
-
-    assert mode == "paper"
-
-
-def test_futures_contract_validation_gate_is_asset_scoped():
-    assert should_require_futures_contract_validation("futures") is True
-    assert should_require_futures_contract_validation("stock") is False
-```
-
-- [ ] **Step 4: Register lazy submodule**
-
-Add to `services/trading/__init__.py` `_SUBMODULES`:
-
-```python
-"initialization_runtime": "services.trading.initialization_runtime",
-```
-
-- [ ] **Step 5: Delegate one low-risk decision first**
-
-Use the helpers from `_init_execution_layer` or contract validation guard only.
-Do not move broker construction, notifier setup, Redis connections, or live
-order wiring in the first commit.
-
-- [ ] **Step 6: Verify**
+Verification anchor:
 
 ```bash
 pytest tests/unit/trading/test_initialization_runtime.py tests/unit/trading/test_package_imports.py -q --tb=short
@@ -381,111 +285,27 @@ python3 -m py_compile services/trading/initialization_runtime.py services/tradin
 git diff --check
 ```
 
-- [ ] **Step 7: Commit**
-
-```bash
-git add services/trading/initialization_runtime.py services/trading/__init__.py services/trading/orchestrator.py tests/unit/trading/test_initialization_runtime.py tests/unit/trading/test_package_imports.py
-git commit -m "Extract orchestrator initialization runtime decisions"
-```
-
 ### Task 1.3: Kill-Switch Runtime Boundary
 
-**Files:**
+Status: complete for request parsing. `services/trading/kill_switch_runtime.py`
+owns `KillSwitchRequest` and `parse_force_flatten_request()`, including string
+and bytes payload handling. `services/trading/orchestrator.py` still owns stream
+polling/ACK state, sentinel lifecycle, notification, flatten side effects, and
+live-guard behavior.
 
-- Create: `services/trading/kill_switch_runtime.py`
-- Modify: `services/trading/orchestrator.py`
-- Test: `tests/unit/trading/test_kill_switch_runtime.py`
-- Test: `tests/unit/trading/test_orchestrator_live_guard.py`
+**Do not move side effects in the next small slice.** If this lane continues,
+keep Redis stream ACK/pending behavior, Telegram messages, kill-switch sentinel
+deletion, and flatten order submission in the orchestrator until each side
+effect has a named characterization test.
 
-- [ ] **Step 1: Create pure payload parser tests**
-
-Create `tests/unit/trading/test_kill_switch_runtime.py`:
-
-```python
-from services.trading.kill_switch_runtime import (
-    KillSwitchRequest,
-    parse_force_flatten_request,
-)
-
-
-def test_parse_force_flatten_request_defaults_reason():
-    request = parse_force_flatten_request({"event_id": "1-0", "source": "unit"})
-
-    assert request == KillSwitchRequest(
-        event_id="1-0",
-        source="unit",
-        reason="force_flatten",
-        dry_run=False,
-    )
-
-
-def test_parse_force_flatten_request_handles_string_dry_run():
-    request = parse_force_flatten_request(
-        {"event_id": "2-0", "source": "unit", "dry_run": "true"}
-    )
-
-    assert request.dry_run is True
-```
-
-- [ ] **Step 2: Implement owner module**
-
-Create `services/trading/kill_switch_runtime.py`:
-
-```python
-"""Kill-switch owner helpers for trading orchestrator compatibility runtime."""
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any
-
-
-@dataclass(frozen=True)
-class KillSwitchRequest:
-    event_id: str
-    source: str
-    reason: str
-    dry_run: bool
-
-
-def _as_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def parse_force_flatten_request(payload: dict[str, Any]) -> KillSwitchRequest:
-    return KillSwitchRequest(
-        event_id=str(payload.get("event_id") or ""),
-        source=str(payload.get("source") or "unknown"),
-        reason=str(payload.get("reason") or "force_flatten"),
-        dry_run=_as_bool(payload.get("dry_run")),
-    )
-```
-
-- [ ] **Step 3: Delegate parsing from orchestrator loop**
-
-Use `parse_force_flatten_request()` where `_kill_switch_consumer_loop` currently
-interprets payload fields. Keep stream ACK, pending, Telegram, and flatten side
-effects in the orchestrator for this first commit.
-
-- [ ] **Step 4: Verify no live-guard regression**
+Verification anchor:
 
 ```bash
-pytest tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_orchestrator_live_guard.py -q --tb=short
-ruff check services/trading/kill_switch_runtime.py services/trading/orchestrator.py tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_orchestrator_live_guard.py
-black --check services/trading/kill_switch_runtime.py services/trading/orchestrator.py tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_orchestrator_live_guard.py
-python3 -m py_compile services/trading/kill_switch_runtime.py services/trading/orchestrator.py tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_orchestrator_live_guard.py
+pytest tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_kill_switch_consumer.py tests/unit/trading/test_orchestrator_live_guard.py -q --tb=short
+ruff check services/trading/kill_switch_runtime.py services/trading/orchestrator.py tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_kill_switch_consumer.py tests/unit/trading/test_orchestrator_live_guard.py
+black --check services/trading/kill_switch_runtime.py services/trading/orchestrator.py tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_kill_switch_consumer.py tests/unit/trading/test_orchestrator_live_guard.py
+python3 -m py_compile services/trading/kill_switch_runtime.py services/trading/orchestrator.py tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_kill_switch_consumer.py tests/unit/trading/test_orchestrator_live_guard.py
 git diff --check
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add services/trading/kill_switch_runtime.py services/trading/orchestrator.py tests/unit/trading/test_kill_switch_runtime.py tests/unit/trading/test_orchestrator_live_guard.py
-git commit -m "Extract kill-switch request parsing"
 ```
 
 ---
@@ -900,21 +720,22 @@ Safe parallel lanes:
 | Lane | Branch | Primary files | Conflict risk |
 |---|---|---|---|
 | P1-A execution lifecycle | `refactor/orchestrator-execution-runtime` | `services/trading/orchestrator.py`, `services/trading/execution_runtime.py` | Conflicts with other orchestrator edits |
-| P1-B initialization | `refactor/orchestrator-initialization-runtime` | `services/trading/orchestrator.py`, `services/trading/initialization_runtime.py` | Conflicts with other orchestrator edits |
-| P1-C kill switch | `refactor/orchestrator-kill-switch-runtime` | `services/trading/orchestrator.py`, `services/trading/kill_switch_runtime.py` | Conflicts with other orchestrator edits |
-| P2-A trades route | `refactor/dashboard-trades-route-split` | `services/dashboard/routes/trades*.py` | Low |
-| P2-B CLI split | `refactor/cli-command-split` | `cli/*.py` | Low |
 | P2-C universe helpers | `refactor/orchestrator-universe-runtime` | `services/trading/orchestrator.py`, `services/trading/universe_runtime.py` | Conflicts with P1 |
 | P3-A KIS client | `refactor/kis-client-response-split` | `shared/kis/*.py` | Low |
 | P3-B backfill | `refactor/historical-backfill-split` | `shared/collector/historical/*.py` | Low |
+| P2-B CLI backtest split | `refactor/cli-backtest-command-split` | `cli/main.py`, `cli/commands/backtest.py` | Low |
 | P3-C tests | `refactor/large-test-split` | `tests/**` | Medium if code lanes add tests |
 
-Recommended first wave:
+Recommended next wave:
 
-1. Run P2-A, P2-B, P3-A, and P3-B in parallel.
-2. Run only one orchestrator lane at a time, or coordinate exact line ownership
-   before dispatching multiple orchestrator workers.
-3. Run P3-C after code movement stabilizes so test-file moves do not collide
+1. Run exactly one orchestrator lane at a time. Start with P2-C
+   universe/market-data helpers because it only moves pure set/filter/median
+   helpers and leaves loops/side effects in place.
+2. In parallel with that, run P3-A KIS response parsing and P3-B backfill
+   planning/sink splits because they do not edit orchestrator files.
+3. Run the CLI backtest split after adding compatibility tests for
+   `from cli.main import _run_tier_backtest`.
+4. Run P3-C after code movement stabilizes so test-file moves do not collide
    with newly added regression tests.
 
 ## Merge Gate

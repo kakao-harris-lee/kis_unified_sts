@@ -195,11 +195,13 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
   surfaces remain compatible, while position tracking, indicator streaming,
   market-data provider, stock strategy daemon, and SQLite runtime-ledger
   behavior are split into focused model/mixin/helper modules.
-- Runtime refactoring follow-ups are merged through `2140c9ed`: thin
+- Runtime refactoring follow-ups are merged through `59e18a72`: thin
   interfaces, retry decorator, strategy factory split, setup adapter class-owner
   split, trading lazy facade, runtime config, re-entry guard, startup sequence,
-  recovery service, execution helpers/runtime, and market-data bootstrap slices
-  now have focused owner modules with compatibility facades.
+  recovery service, execution helpers/runtime, market-data bootstrap,
+  initialization guard helpers, kill-switch request parsing, CLI command groups,
+  dashboard lifecycle data loading, KIS target-price parsing, and futures/index
+  OHLCV parsing now have focused owner modules with compatibility facades.
 
 ### Completed maintainability milestones
 
@@ -247,9 +249,11 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
   surfaces, first orchestrator owner modules, and second-wave CLI/dashboard/KIS
   parser splits are merged. Next work should use
   [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md)
-  to split the remaining execution/order lifecycle, kill-switch/live guard,
-  universe/market-data helpers, KIS response mappers, backfill planning/sinks,
-  and large tests.
+  to split the remaining execution/order lifecycle, universe/market-data
+  helpers, kill-switch side effects/live guard, KIS response mappers, backfill
+  planning/sinks, and large tests. Treat universe/market-data helpers as the
+  next safest orchestrator lane because initialization and kill-switch request
+  parsing already have owner modules.
 - Treat the monolithic futures path as a compatibility runtime until F-9
   cutover. New decomposition should move toward the existing event-driven
   chain (`market_ingest -> decision_engine -> risk_filter -> order_router ->

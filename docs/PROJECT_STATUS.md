@@ -123,14 +123,17 @@ kept. The remaining actionable backlog is now grouped by priority in
 P1 orchestrator execution/initialization/kill-switch slices, P2 dashboard
 trades route + CLI + universe/market-data helpers, and P3 KIS/backfill/test
 decomposition.
-The next P1/P2/P3 micro-slices added owner modules for pure state-transition
-serialization, entry slippage-stat accumulation, futures-asset guard checks,
-kill-switch force-flatten request parsing, entry-priority sorting,
-signals_all row mapping, session wake calculation, runtime-capital risk
-alignment, CLI command groups, lifecycle data loading, KIS target-price
-summaries, and futures/index OHLCV parsing. Side-effecting execution, Redis,
-flatten, notification, live-guard behavior, broader KIS response mappers, and
-backfill planning/sinks remain in their existing owners.
+Commits `134a690d` and `59e18a72` then merged the next P1/P2/P3 micro-slices:
+pure state-transition serialization, entry slippage-stat accumulation,
+futures-asset guard checks, kill-switch force-flatten request parsing,
+entry-priority sorting, signals_all row mapping, session wake calculation,
+runtime-capital risk alignment, CLI command groups, lifecycle data loading, KIS
+target-price summaries, and futures/index OHLCV parsing. Side-effecting
+execution, Redis, flatten, notification, live-guard behavior, broader KIS
+response mappers, and backfill planning/sinks remain in their existing owners.
+The active plan now treats initialization and kill-switch request parsing as
+merged work; the next low-risk orchestrator slice is universe/market-data
+helper ownership.
 
 **2026-07-04** - Runtime large-file split priority 3 merged.
 Commit `83e94681` split the requested large runtime files without changing
