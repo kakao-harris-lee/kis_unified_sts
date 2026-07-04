@@ -1,8 +1,10 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-06-28
+**Last updated**: 2026-07-03
 
-> Phased roadmap (Stock + Futures): [ROADMAP.md](ROADMAP.md) — authoritative.
+> Phased roadmap (Cross-Asset + Stock + Futures): [ROADMAP.md](ROADMAP.md) —
+> authoritative. Cross-asset detail:
+> [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
 
 ## Current Runtime
 
@@ -36,10 +38,54 @@
   `/signals` trace QA was refreshed on 2026-06-27:
   [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md).
 
+## Cross-Asset Unified Investment System (Phases 0–6, shadow)
+
+Phases 0–6 of the unified investment system are merged to main
+(2026-07-03). **Every risk-bearing gate defaults to `mode: shadow`**, so
+nothing blocks, resizes, or trips in the running paper system yet — the
+enforce flips are operator gates. See the plan doc for the operator
+checklist and open items (O11–O17).
+
+- **P0 Market structure**: `services/market_structure_collector` (08:00/18:40
+  KST) + `services/night_futures_collector` (05:48) collect foreign futures
+  flow, OI, program trading, basis, FX, overseas futures, and the KRX
+  night-session K200 close into `market_structure_daily` (Parquet) and Redis
+  snapshots. Backfill via `scripts/backfill_market_structure.py`.
+- **P1 Market Risk Score**: `services/market_risk_engine` (premarket/intraday/
+  close) publishes a 0–100 composite (8 components), band + unified regime to
+  `market:risk:latest` / `regime:unified:daily`; the `/market` page and Cockpit
+  chip render it. Validation CLIs under `scripts/validation/`.
+- **P2 Track gates (shadow)**: `shared/risk/market_risk_gate.py` +
+  `config/market_risk_gate.yaml` gate stock M4-P entries and futures
+  decision-engine size/direction; `/signals` traces and the `/market` reaction
+  panel show would-block verdicts.
+- **P3 Integrated risk budget (shadow)**: `services/portfolio_monitor`
+  (08:50/19:00) publishes whole-asset equity + monthly-MDD stage
+  (`portfolio:equity:latest`); `shared/risk/filters/portfolio_mdd.py` is the
+  −5/−8/−12 circuit breaker. RuntimeLedger is schema v4 with `track_id` tagging
+  (B/C/A). Drill: `scripts/ops/portfolio_mdd_drill.py`.
+- **P4 Hedge advisor (advisory-only)**: `shared/portfolio/hedge.py` recommends
+  mini-KOSPI200 short contracts against net β-exposure; `portfolio:hedge:latest`
+  + `/market` hedge card. Never places orders.
+- **P5 Track A (manual core)**: `config/portfolio/core_holdings.yaml` +
+  `sts portfolio` CLI + Tier 3 drawdown watch (`portfolio:tier3:watch`);
+  correlation rules (core-overlap, semiconductor cap) in the stock risk layer.
+  Ledger ships empty (rules no-op).
+- **P6 Feedback loop (read-only)**: `services/feedback_reporter`
+  (weekly/monthly/quarterly) writes reports under `reports/feedback/`, publishes
+  `portfolio:feedback:latest`, and `/risk` shows a summary card with §8.2
+  quarterly verdicts (produce-only; decisions stay manual).
+
+New Compose scheduler crontab entries (macro premarket, market-structure,
+night futures, market-risk engine, portfolio monitor, feedback reporter)
+require a scheduler image rebuild to activate.
+
 ## Storage And Runtime Decisions
 
 - Redis DB 1 is the runtime stream/state store.
-- SQLite `RuntimeLedger` is the durable runtime ledger.
+- SQLite `RuntimeLedger` is the durable runtime ledger (schema v4: `track_id`
+  tagging on orders/fills/trades/signal_decisions, plus `portfolio_equity_daily`
+  and `hedge_advice` tables).
 - Parquet/DuckDB is the historical market-data backend.
 - ClickHouse is removed from active runtime, collection, backtest, and compose
   service paths.
@@ -60,6 +106,24 @@ Verified 2026-06-28 against `config/strategies/{stock,futures}/*.yaml`
 | Futures | `llm_directed_indicator` | Deprecated | Not an active path without a separate redefinition gate. |
 
 ## Recent Decisions
+
+**2026-07-02 to 2026-07-03** - Unified investment system Phases 0–6 merged.
+Built the cross-asset track from the master design doc
+([통합_투자_시스템_전략_설계서.md](통합_투자_시스템_전략_설계서.md)) plus a
+market-structure-based Market Risk Score for bear-market response: P0 data
+foundation, P1 risk score + `/market`, P2 track gates, P3 whole-asset MDD
+circuit breaker + `track_id` ledger, P4 mini-KOSPI200 hedge advisor
+(advisory-only), P5 Track A manual ledger + Tier 3 watch, P6 feedback reports.
+Every risk-bearing gate defaults to `mode: shadow`; a separate review pass per
+phase caught parallel-lane contract gaps (verdict-token mapping, MDD unit
+mismatch, monitor-serializer drops, a same-origin proxy 404 for
+market-risk/portfolio) before commit. Remaining work is operator gates only —
+backfill + scheduler rebuild, shadow-to-enforce flips, the circuit-breaker
+`--execute` drill, and Track A holdings registration. Detail and open items
+(O11–O17) in
+[plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
+Operationally important: O13 flags that the monolithic futures paper path may
+leave kill-switch conditions unevaluated — decide coverage before F-9 cutover.
 
 **2026-06-28** - Quant gap tooling and docs QA verified.
 Completed the focused QA bundle for market-structure policy docs, futures
@@ -234,6 +298,16 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
   and paper-vs-backtest drift review; product/session policy needs reconciliation
   for full vs Mini KOSPI 200, tick size, expiry/roll, 08:45 regular open, and
   disabled 18:00-06:00 night trading.
+- **Cross-asset (unified system, all operator gates):** run the Phase 0 backfill
+  and rebuild the scheduler image to activate the new crontab entries; run the
+  live-key KIS probes and confirm the night-futures tr_key; drive the Phase 1
+  hindcast + score≥70 discrimination report, then a ≥10-day shadow before
+  flipping `market_risk_gate.yaml::mode` to enforce; run
+  `scripts/ops/portfolio_mdd_drill.py --execute` before flipping
+  `portfolio.yaml::circuit_breaker.mode`; register Track A holdings; and decide
+  the O13 monolithic kill-switch coverage before F-9 cutover. Full checklist and
+  open items O11–O17 in
+  [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
