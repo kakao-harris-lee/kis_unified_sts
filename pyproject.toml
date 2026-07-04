@@ -119,6 +119,9 @@ dev = [
     "types-requests",
     "types-redis",
     "pandas-stubs",
+
+    # Profiling
+    "line_profiler>=4.1",  # line-level hot-path profiling (indicators/forecasting)
 ]
 
 optimization = [
