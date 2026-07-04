@@ -212,17 +212,18 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 |---|---|---|
 | Thin strategy/context interfaces | 🟡 branch implemented | `shared/decision/interfaces.py`, `shared/strategy/interfaces.py`, `shared/portfolio/interfaces.py`; existing dataclasses/classes remain compatible |
 | Retry decorator surface | 🟡 branch implemented | `shared/resilience/retry.py::retry_on_disconnect`; default retries are limited to disconnect/timeout exceptions |
-| Strategy factory split | ⏳ planned | Move factory assembly and builtin component tables out of `shared/strategy/registry.py`; keep backward-compatible exports |
+| Strategy factory split | 🟡 branch implemented | `shared/strategy/factory.py`, `shared/strategy/builtin_components.py`; `shared/strategy/registry.py` remains the backward-compatible facade |
 | Setup adapter decomposition | 🟡 branch implemented | Split `shared/strategy/entry/setup_adapters.py` into config, context-builder, signal-mapper, setup-eval publisher, and LLM-gate modules while keeping adapter classes on the compatibility facade |
+| Orchestrator runtime config extraction | 🟡 branch implemented | `services/trading/runtime_config.py`; `services/trading/orchestrator.py` keeps facade exports for existing imports |
 | Orchestrator decomposition | ⏳ planned | Continue extracting initialization, recovery, execution setup, position transitions, and guard hooks from `services/trading/orchestrator.py` behind delegation tests |
 | Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
 
 ### Open next-steps
 
 - Follow the active runtime refactoring plan: thin contracts, retry decoration,
-  and the first `setup_adapters.py` split are branch-implemented; next split
-  `registry.py`/factory concerns and the remaining high-complexity regions of
-  `services/trading/orchestrator.py`.
+  setup adapter decomposition, registry/factory split, and runtime config
+  extraction are branch-implemented; next split the remaining high-complexity
+  regions of `services/trading/orchestrator.py`.
 - Treat the monolithic futures path as a compatibility runtime until F-9
   cutover. New decomposition should move toward the existing event-driven
   chain (`market_ingest -> decision_engine -> risk_filter -> order_router ->

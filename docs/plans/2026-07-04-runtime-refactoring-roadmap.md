@@ -135,15 +135,24 @@ No behavior changes are allowed in this phase.
 
 ### Phase R2 - Strategy Registry And Factory Split
 
-Status: planned.
+Status: branch implemented.
 
 Move builtin tables and factory assembly out of `shared/strategy/registry.py`.
 The registry module should remain the stable public import surface while the
 implementation becomes small and searchable.
 
+Implemented split:
+
+- `shared/strategy/factory.py`: `StrategyFactory` assembly from config.
+- `shared/strategy/builtin_components.py`: builtin component tables and
+  registration helper.
+- `shared/strategy/registry.py`: registry classes, exceptions, and backward
+  compatible facade exports.
+
 ### Phase R3 - Orchestrator Service Extraction
 
-Status: in progress.
+Status: branch implemented for runtime configuration; broader service
+extraction remains in progress.
 
 Design and executable Task 1 plan:
 
@@ -153,6 +162,8 @@ Design and executable Task 1 plan:
 Continue extracting `services/trading/orchestrator.py` by existing ownership
 boundaries, not by arbitrary line counts:
 
+- runtime configuration and entry re-entry guard config: branch implemented in
+  `services/trading/runtime_config.py` with orchestrator facade exports;
 - initialization and dependency wiring;
 - recovery and reconciliation;
 - execution setup and order submission;
@@ -193,7 +204,8 @@ The monolithic futures path should be treated as a compatibility runtime until
 F-9 gates approve the decoupled chain as primary. Do not create a second
 side-channel around the stream pipeline. The safe sequence is:
 
-1. Keep the monolith stable while R0-R2 reduce shared strategy context cost.
+1. Keep the monolith stable while R0-R3 reduce shared strategy and runtime
+   configuration context cost.
 2. Use F-9 shadow evidence to validate the decoupled futures stream chain.
 3. Resolve O13 kill-switch coverage for the monolithic path before cutover.
 4. After written operator approval, flip the primary runtime through the
@@ -227,8 +239,8 @@ still document:
 
 ## Open Questions
 
-- Which extraction should follow setup adapters first: registry/factory or
-  orchestrator initialization?
+- Which orchestrator boundary should follow runtime configuration:
+  initialization/dependency wiring or recovery/reconciliation?
 - Should monitor bridges migrate to `MultiStreamStage`, or should they stay as
   direct multi-stream loops with explicit retry documentation?
 - After F-9, how long should the monolithic futures runtime remain as rollback
