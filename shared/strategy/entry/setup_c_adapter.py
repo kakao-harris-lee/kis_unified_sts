@@ -7,7 +7,7 @@ import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from shared.decision.daily_bias import DailyBiasProvider
+from shared.decision.daily_bias import DailyBiasProvider as _default_DailyBiasProvider
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.entry.setup_context_builder import build_setup_market_context
 from shared.strategy.entry.setup_entry_configs import SetupCEntryConfig
@@ -104,6 +104,10 @@ def _now_kst() -> datetime:
     return fn()
 
 
+def _daily_bias_provider_class() -> Any:
+    return _facade_attr("DailyBiasProvider", _default_DailyBiasProvider)
+
+
 class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
     """EntrySignalGenerator adapter wrapping SetupCEventReaction."""
 
@@ -134,7 +138,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         self._setup = SetupCEventReaction(config=setup_cfg)
         self._forecast_client = forecast_client
         self._gate_cfg = gate_cfg
-        self._daily_bias_provider = DailyBiasProvider(
+        self._daily_bias_provider = _daily_bias_provider_class()(
             bias_min_confidence=config.daily_bias_min_confidence,
             non_long_regimes=list(config.llm_tuning.long_blocked_regimes),
             bias_refresh_minutes=config.daily_bias_refresh_minutes,

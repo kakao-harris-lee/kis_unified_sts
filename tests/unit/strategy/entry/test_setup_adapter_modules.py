@@ -31,6 +31,39 @@ def test_setup_adapter_classes_have_owner_modules_and_facade_identity():
     assert setup_d_adapter.SetupDEntryAdapter.__module__.endswith(".setup_d_adapter")
 
 
+def test_setup_adapter_facade_preserves_legacy_top_level_symbols():
+    """Facade keeps legacy names that tests/operator tooling monkeypatch."""
+    assert setup_adapters.DailyBiasProvider is not None
+    assert setup_adapters.GateConfig is not None
+    assert setup_adapters.EntryContext is not None
+    assert setup_adapters.EntrySignalGenerator is not None
+
+
+def test_setup_a_and_c_daily_bias_provider_resolves_through_facade(monkeypatch):
+    """Setup A/C owner modules should honor facade DailyBiasProvider monkeypatches."""
+    from shared.strategy.entry.setup_a_adapter import SetupAEntryAdapter
+    from shared.strategy.entry.setup_c_adapter import SetupCEntryAdapter
+    from shared.strategy.entry.setup_entry_configs import (
+        SetupAEntryConfig,
+        SetupCEntryConfig,
+    )
+
+    constructed: list[tuple[object, tuple, dict]] = []
+
+    class FakeDailyBiasProvider:
+        def __init__(self, *args, **kwargs) -> None:
+            constructed.append((self, args, kwargs))
+
+    monkeypatch.setattr(setup_adapters, "DailyBiasProvider", FakeDailyBiasProvider)
+
+    setup_a = SetupAEntryAdapter(SetupAEntryConfig())
+    setup_c = SetupCEntryAdapter(SetupCEntryConfig())
+
+    assert isinstance(setup_a._daily_bias_provider, FakeDailyBiasProvider)
+    assert isinstance(setup_c._daily_bias_provider, FakeDailyBiasProvider)
+    assert len(constructed) == 2
+
+
 def test_setup_adapter_facade_reexports_decomposed_config_models():
     """Existing setup_adapters imports must remain stable after config extraction."""
     from shared.strategy.entry import setup_entry_configs
