@@ -112,3 +112,10 @@ logs/security/
 
 # Builder→paper generated strategies (runtime drop point; keep the dir + .gitkeep)
 config/strategies/built/*.yaml
+
+# Share project CLAUDE.md guides across machines.
+# Overrides the global ~/.gitignore_global `CLAUDE.md` rule so in-repo guides
+# (root + subsystem docs like shared/llm/CLAUDE.md) ship on clone.
+# `.worktrees/` is ignored above, so worktree CLAUDE.md files stay excluded.
+!CLAUDE.md
+!**/CLAUDE.md
