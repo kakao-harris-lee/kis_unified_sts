@@ -41,6 +41,7 @@ _EXPORT_MODULES = {
 
 _SUBMODULES = {
     "data_provider": "services.trading.data_provider",
+    "execution_facade": "services.trading.execution_facade",
     "orchestrator": "services.trading.orchestrator",
     "pipeline": "services.trading.pipeline",
     "position_tracker": "services.trading.position_tracker",

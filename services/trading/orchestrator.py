@@ -42,6 +42,10 @@ from services.trading import runtime_config as _runtime_config
 from services.trading import session_calendar as _session_calendar
 from services.trading.broker_verification import BrokerPositionVerifier
 from services.trading.data_provider import DataProviderConfig, MarketDataProvider
+from services.trading.execution_facade import (
+    get_signal_direction,
+    normalize_entry_order_result,
+)
 from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
@@ -4793,15 +4797,7 @@ class TradingOrchestrator:
     @staticmethod
     def _normalize_entry_order_result(result: Any) -> tuple[bool, float, int, str]:
         """Normalize legacy/new entry-order return tuples."""
-        if not isinstance(result, tuple):
-            raise ValueError(f"Unexpected entry order result type: {type(result)}")
-        if len(result) == 4:
-            is_filled, fill_price, filled_qty, venue = result
-            return bool(is_filled), float(fill_price), int(filled_qty), str(venue)
-        if len(result) == 3:
-            is_filled, fill_price, filled_qty = result
-            return bool(is_filled), float(fill_price), int(filled_qty), "KRX"
-        raise ValueError(f"Unexpected entry order result length: {len(result)}")
+        return normalize_entry_order_result(result)
 
     def _update_entry_slippage_stats(self, adverse_ticks: float) -> None:
         stats = self._entry_slippage_stats
@@ -7031,14 +7027,7 @@ class TradingOrchestrator:
     @staticmethod
     def _get_signal_direction(signal: Signal) -> str:
         """Extract normalized signal direction from metadata."""
-        metadata = getattr(signal, "metadata", {}) or {}
-        if not isinstance(metadata, dict):
-            return "long"
-        direction = (
-            metadata.get("signal_direction") or metadata.get("direction") or "long"
-        )
-        direction = str(direction).strip().lower()
-        return "short" if direction == "short" else "long"
+        return get_signal_direction(signal)
 
     @staticmethod
     def _build_signals_all_row(

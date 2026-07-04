@@ -81,6 +81,18 @@ def test_direct_package_submodule_attributes_resolve_lazily() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_execution_facade_package_attribute_resolves_without_orchestrator() -> None:
+    result = _run_python("""
+        import sys
+        import services.trading as trading
+
+        assert trading.execution_facade.get_signal_direction is not None
+        assert "services.trading.orchestrator" not in sys.modules
+        """)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_top_level_orchestrator_import_still_uses_facade_exports() -> None:
     result = _run_python("""
         from services.trading import TradingConfig, TradingOrchestrator, TradingState

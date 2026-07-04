@@ -258,10 +258,11 @@ implementation.
 - `services/trading/reentry_guard.py`: pure cooldown key/record/block helpers
   are branch-implemented; `EntryReentryGuardConfig` lives in
   `services/trading/runtime_config.py`.
-- `services/trading/execution_facade.py`: extract pure execution result helpers
-  such as `_normalize_entry_order_result` and `_get_signal_direction`; keep
-  broker submission on `TradingOrchestrator` until a dedicated execution-service
-  plan exists.
+- `services/trading/execution_facade.py`: public owner helpers
+  `normalize_entry_order_result` and `get_signal_direction` are
+  branch-implemented from the underscored orchestrator compatibility methods;
+  keep broker submission on `TradingOrchestrator` until a dedicated
+  execution-service plan exists.
 - `services/trading/recovery.py`: extract Redis/ledger recovery and broker
   reconciliation behind existing startup tests.
 - `services/trading/runtime_config.py`: extract env parsing and `TradingConfig`

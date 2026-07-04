@@ -170,6 +170,10 @@ boundaries, not by arbitrary line counts:
 - re-entry guard helpers: branch implemented in
   `services/trading/reentry_guard.py`; orchestrator compatibility methods now
   delegate cooldown key/record/block logic to the owner module;
+- execution helpers: branch implemented in
+  `services/trading/execution_facade.py`; orchestrator compatibility methods
+  now delegate pure entry-order result normalization and signal direction
+  extraction to the owner module;
 - initialization and dependency wiring;
 - recovery and reconciliation;
 - execution setup and order submission;
