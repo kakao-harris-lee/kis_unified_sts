@@ -1,6 +1,6 @@
 # Roadmap — KIS Unified Trading Platform
 
-> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-07-03 KST.**
+> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-07-04 KST.**
 
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
@@ -17,6 +17,7 @@ Trusted current sources cited below:
 [superpowers/specs/2026-06-27-signals-decision-trace-design.md](superpowers/specs/2026-06-27-signals-decision-trace-design.md),
 [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md),
 [investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md),
+[plans/2026-07-04-runtime-refactoring-roadmap.md](plans/2026-07-04-runtime-refactoring-roadmap.md),
 [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
 
 All times are KST (Asia/Seoul). Strategy `enabled` flags in
@@ -182,6 +183,10 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 - Strategy-level guardrail tests now lock `momentum_breakout` trend-mode
   cooldown behavior and `opening_volume_surge` post-close behavior when no
   explicit cutoff is configured.
+- The active runtime refactoring plan is
+  [plans/2026-07-04-runtime-refactoring-roadmap.md](plans/2026-07-04-runtime-refactoring-roadmap.md):
+  add thin Interface/Decorator/Factory surfaces first, then split high-cost
+  modules while preserving stream contracts and runtime behavior.
 
 ### Completed maintainability milestones
 
@@ -201,11 +206,27 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | `/trades` screenshot/interaction QA refresh | ✅ done | [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) |
 | LLM YAML loader helper split | ✅ done | `tests/unit/llm/test_config_yaml_loading.py` |
 
+### Refactoring roadmap
+
+| Milestone | Status | Gate / Owner |
+|---|---|---|
+| Thin strategy/context interfaces | 🟡 branch implemented | `shared/decision/interfaces.py`, `shared/strategy/interfaces.py`, `shared/portfolio/interfaces.py`; existing dataclasses/classes remain compatible |
+| Retry decorator surface | 🟡 branch implemented | `shared/resilience/retry.py::retry_on_disconnect`; default retries are limited to disconnect/timeout exceptions |
+| Strategy factory split | ⏳ planned | Move factory assembly and builtin component tables out of `shared/strategy/registry.py`; keep backward-compatible exports |
+| Setup adapter decomposition | 🟡 branch implemented | Split `shared/strategy/entry/setup_adapters.py` into config, context-builder, signal-mapper, setup-eval publisher, and LLM-gate modules while keeping adapter classes on the compatibility facade |
+| Orchestrator decomposition | ⏳ planned | Continue extracting initialization, recovery, execution setup, position transitions, and guard hooks from `services/trading/orchestrator.py` behind delegation tests |
+| Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
+
 ### Open next-steps
 
-- Continue decomposing `services/trading/orchestrator.py`; broker verification
-  and metrics sync are extracted, but initialization, recovery, and execution
-  setup remain high-complexity regions.
+- Follow the active runtime refactoring plan: thin contracts, retry decoration,
+  and the first `setup_adapters.py` split are branch-implemented; next split
+  `registry.py`/factory concerns and the remaining high-complexity regions of
+  `services/trading/orchestrator.py`.
+- Treat the monolithic futures path as a compatibility runtime until F-9
+  cutover. New decomposition should move toward the existing event-driven
+  chain (`market_ingest -> decision_engine -> risk_filter -> order_router ->
+  futures_monitor`) rather than adding direct side channels.
 - Keep extracting shared runtime defaults from remaining large runtime modules
   only when it does not blur ownership or change live/paper behavior.
 - Refresh browser/screenshot QA whenever the Workbench visual surface changes

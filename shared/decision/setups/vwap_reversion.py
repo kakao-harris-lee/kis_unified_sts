@@ -91,7 +91,7 @@ import numpy as np
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
-from shared.decision.context import MarketContext
+from shared.decision.interfaces import FuturesMarketView
 from shared.decision.setup_base import Setup
 from shared.decision.signal import Signal
 
@@ -347,7 +347,7 @@ class SetupDVWAPReversion(Setup):
         self._close_window.append(close)
         return rng
 
-    def check(self, ctx: MarketContext) -> Signal | None:  # noqa: PLR0911
+    def check(self, ctx: FuturesMarketView) -> Signal | None:  # noqa: PLR0911
         """Evaluate *ctx* and return a Signal when all conditions are met.
 
         Returns ``None`` as soon as any condition fails (early-return pattern).
