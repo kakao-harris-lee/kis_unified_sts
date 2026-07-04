@@ -1,6 +1,6 @@
 # Roadmap — KIS Unified Trading Platform
 
-> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-07-03 KST.**
+> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-07-04 KST.**
 
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
@@ -17,6 +17,7 @@ Trusted current sources cited below:
 [superpowers/specs/2026-06-27-signals-decision-trace-design.md](superpowers/specs/2026-06-27-signals-decision-trace-design.md),
 [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md),
 [investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md),
+[plans/2026-07-04-runtime-refactoring-roadmap.md](plans/2026-07-04-runtime-refactoring-roadmap.md),
 [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
 
 All times are KST (Asia/Seoul). Strategy `enabled` flags in
@@ -182,6 +183,14 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 - Strategy-level guardrail tests now lock `momentum_breakout` trend-mode
   cooldown behavior and `opening_volume_surge` post-close behavior when no
   explicit cutoff is configured.
+- The active runtime refactoring plan is
+  [plans/2026-07-04-runtime-refactoring-roadmap.md](plans/2026-07-04-runtime-refactoring-roadmap.md):
+  add thin Interface/Decorator/Factory surfaces first, then split high-cost
+  modules while preserving stream contracts and runtime behavior.
+- Runtime large-file refactoring priority 3 is merged. The public import
+  surfaces remain compatible, while position tracking, indicator streaming,
+  market-data provider, stock strategy daemon, and SQLite runtime-ledger
+  behavior are split into focused model/mixin/helper modules.
 
 ### Completed maintainability milestones
 
@@ -200,14 +209,32 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Strategy close/cooldown guardrails | ✅ done | `tests/unit/strategy/entry/test_entry_gate_integration_momentum_opening.py` |
 | `/trades` screenshot/interaction QA refresh | ✅ done | [testing/quant-ops-workbench-2026-06-25.md](testing/quant-ops-workbench-2026-06-25.md) |
 | LLM YAML loader helper split | ✅ done | `tests/unit/llm/test_config_yaml_loading.py` |
+| Runtime large-file split priority 3 | ✅ done | `83e94681`; `position_tracker`, `indicator_engine`, `data_provider`, `stock_strategy/daemon`, `runtime_ledger` split with targeted pytest/ruff/black/py_compile |
+
+### Refactoring roadmap
+
+| Milestone | Status | Gate / Owner |
+|---|---|---|
+| Thin strategy/context interfaces | ⏳ planned | Add small Protocol/ABC files under `shared/decision/`, `shared/strategy/`, and `shared/portfolio/`; existing dataclasses/classes remain compatible |
+| Retry decorator surface | ⏳ planned | Add `shared/resilience/retry.py::retry_on_disconnect`; wrap existing retry policy, do not alter `StreamStage` ACK/NOACK semantics |
+| Strategy factory split | ⏳ planned | Move factory assembly and builtin component tables out of `shared/strategy/registry.py`; keep backward-compatible exports |
+| Setup adapter decomposition | ⏳ planned | Split `shared/strategy/entry/setup_adapters.py` into config, context-builder, signal-mapper, LLM-gate, and adapter modules with no behavior change |
+| Runtime large-file split priority 3 | ✅ done | `services/trading/position_tracker.py`, `indicator_engine.py`, `data_provider.py`, `services/stock_strategy/daemon.py`, and `shared/storage/runtime_ledger.py` reduced to focused shells plus extracted modules |
+| Orchestrator decomposition | ⏳ planned | Continue extracting initialization, recovery, execution setup, position transitions, and guard hooks from `services/trading/orchestrator.py` behind delegation tests |
+| Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
 
 ### Open next-steps
 
-- Continue decomposing `services/trading/orchestrator.py`; broker verification
-  and metrics sync are extracted, but initialization, recovery, and execution
-  setup remain high-complexity regions.
-- Keep extracting shared runtime defaults from remaining large runtime modules
-  only when it does not blur ownership or change live/paper behavior.
+- Follow the active runtime refactoring plan: first add thin contracts for
+  Setup A/C/D, strategy generators, hedge advice, and retry decoration; then
+  split `setup_adapters.py`, `registry.py`, and the remaining high-complexity
+  regions of `services/trading/orchestrator.py`.
+- Treat the monolithic futures path as a compatibility runtime until F-9
+  cutover. New decomposition should move toward the existing event-driven
+  chain (`market_ingest -> decision_engine -> risk_filter -> order_router ->
+  futures_monitor`) rather than adding direct side channels.
+- Keep extracting shared runtime defaults from remaining behavior-heavy runtime
+  modules only when it does not blur ownership or change live/paper behavior.
 - Refresh browser/screenshot QA whenever the Workbench visual surface changes
   materially.
 

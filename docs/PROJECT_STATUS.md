@@ -1,6 +1,6 @@
 # Project Status - KIS Unified Trading Platform
 
-**Last updated**: 2026-07-03
+**Last updated**: 2026-07-04
 
 > Phased roadmap (Cross-Asset + Stock + Futures): [ROADMAP.md](ROADMAP.md) —
 > authoritative. Cross-asset detail:
@@ -108,6 +108,16 @@ since 2026-06-28 — recent Setup D commits tuned parameters only.
 | Futures | `llm_directed_indicator` | Deprecated | Not an active path without a separate redefinition gate. |
 
 ## Recent Decisions
+
+**2026-07-04** - Runtime large-file split priority 3 merged.
+Commit `83e94681` split the requested large runtime files without changing
+public imports or runtime behavior: `services/trading/position_tracker.py`,
+`services/trading/indicator_engine.py`, `services/trading/data_provider.py`,
+`services/stock_strategy/daemon.py`, and `shared/storage/runtime_ledger.py`.
+Each file now acts as a smaller public shell delegating to focused
+model/mixin/helper modules. Targeted pytest for the touched trading,
+stock-strategy, and runtime-ledger tests passed, as did targeted `ruff check`,
+`black --check`, and `python3 -m py_compile`.
 
 **2026-07-02 to 2026-07-03** - Unified investment system Phases 0–6 merged.
 Built the cross-asset track from the master design doc
