@@ -1,6 +1,6 @@
 # Roadmap — KIS Unified Trading Platform
 
-> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-06-28 KST.**
+> **Authoritative roadmap — supersedes scattered plan docs. Last updated 2026-07-03 KST.**
 
 This is the single per-asset roadmap. For the live runtime snapshot see
 [PROJECT_STATUS.md](PROJECT_STATUS.md); for the plan catalogue see
@@ -16,7 +16,8 @@ Trusted current sources cited below:
 [runbooks/stock-pipeline-cutover-m5d.md](runbooks/stock-pipeline-cutover-m5d.md),
 [superpowers/specs/2026-06-27-signals-decision-trace-design.md](superpowers/specs/2026-06-27-signals-decision-trace-design.md),
 [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md),
-[investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md).
+[investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md),
+[plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
 
 All times are KST (Asia/Seoul). Strategy `enabled` flags in
 `config/strategies/{stock,futures}/*.yaml` are the single source of truth for
@@ -41,17 +42,22 @@ Implementation roadmap (authoritative for this track, includes design-doc ↔
 codebase reconciliation):
 [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
 
-### Current operating state (2026-07-02)
+### Current operating state (2026-07-03)
 
-- Regime logic is split across three uncoordinated mechanisms (futures HAR-RV
-  `RegimeGate`, stock median-MFI bear-exit, LLM `risk_mode`); there is no
-  unified cross-asset regime engine and no composite market risk score.
-- Market-structure data is mostly collected-but-unused: OI flows in ticks only,
-  program trading is fetched raw but never parsed, the basis calculator is a
-  library wired to no daemon, and macro (USD/KRW etc.) is published to
-  `stream:macro.overnight` with almost no strategy consumers.
-- No `/market` dashboard page, no hedge advisor, no whole-asset MDD monitor,
-  and no Track A (core portfolio) ledger exist yet.
+- **Phases 0–6 are merged to main.** The composite Market Risk Score, unified
+  regime, `/market` dashboard, track gates, whole-asset MDD circuit breaker,
+  mini-KOSPI200 hedge advisor, Track A ledger, and feedback reports now exist —
+  the pre-Phase-0 gaps (collected-but-unused market structure, no composite
+  score, no `/market` page) are closed.
+- **Every risk-bearing gate defaults to `mode: shadow`.** Track gates (P2) and
+  the MDD circuit breaker (P3) annotate/log but do not block, resize, or trip;
+  the pre-existing regime mechanisms (HAR-RV `RegimeGate`, stock median-MFI
+  bear-exit, LLM `risk_mode`) are unchanged and the new Market Risk Score layers
+  on top rather than replacing them.
+- The remaining work is **operator gates**: backfill + scheduler image rebuild
+  to activate the new crontab entries, the shadow→enforce flips, the
+  circuit-breaker `--execute` drill, and Track A holdings registration. See the
+  cross-asset plan doc for the full checklist and open items O11–O17.
 
 ### Phases
 
