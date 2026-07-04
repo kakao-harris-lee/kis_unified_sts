@@ -15,6 +15,22 @@ from shared.strategy.entry import setup_adapters
 KST = ZoneInfo("Asia/Seoul")
 
 
+def test_setup_adapter_classes_have_owner_modules_and_facade_identity():
+    """Adapter class imports should work from owner modules and the old facade."""
+    from shared.strategy.entry import (
+        setup_a_adapter,
+        setup_c_adapter,
+        setup_d_adapter,
+    )
+
+    assert setup_a_adapter.SetupAEntryAdapter is setup_adapters.SetupAEntryAdapter
+    assert setup_a_adapter.SetupAEntryAdapter.__module__.endswith(".setup_a_adapter")
+    assert setup_c_adapter.SetupCEntryAdapter is setup_adapters.SetupCEntryAdapter
+    assert setup_c_adapter.SetupCEntryAdapter.__module__.endswith(".setup_c_adapter")
+    assert setup_d_adapter.SetupDEntryAdapter is setup_adapters.SetupDEntryAdapter
+    assert setup_d_adapter.SetupDEntryAdapter.__module__.endswith(".setup_d_adapter")
+
+
 def test_setup_adapter_facade_reexports_decomposed_config_models():
     """Existing setup_adapters imports must remain stable after config extraction."""
     from shared.strategy.entry import setup_entry_configs
