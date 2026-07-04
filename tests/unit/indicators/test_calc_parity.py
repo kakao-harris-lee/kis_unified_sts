@@ -144,10 +144,13 @@ def runtime_host() -> _RuntimeIndicatorHost:
 # 아래 값들은 _build_ohlcv() 로 만든 고정 입력에 대해 현재 각 구현이 산출하는
 # 실제 값이다. 알고리즘/스키마가 바뀌면 이 상수와 어긋나 테스트가 실패한다.
 
-# RSI: rolling-SMA(런타임) vs Wilder EMA(shared)
-_RSI_RUNTIME_SMA = 60.198576
-_RSI_SHARED_WILDER = 47.099143
-_RSI_KNOWN_DELTA = 13.099432  # 두 알고리즘 사이의 현재 델타(문서화용)
+# RSI: M2 (2026-07-04) 런타임이 Wilder EMA(shared 표준)로 수렴.
+# 과거 런타임은 gains/losses 의 rolling-SMA 로 47.099143 이 아닌 60.198576 을 냈다
+# (델타 13.1). 이제 런타임 _calc_rsi 는 ewm(alpha=1/period, adjust=False, first-delta
+# seed) 를 순수 파이썬으로 포팅해 shared RSICalculator 와 1e-6 안에서 일치한다.
+_RSI_SHARED_WILDER = 47.099143  # 런타임 == shared (수렴 후 공통값)
+_RSI_RUNTIME_WILDER = 47.099143  # was 60.198576 (defective rolling-SMA)
+_RSI_CONVERGENCE_TOL = 1e-6  # 두 경로가 사실상 동일함을 요구하는 tolerance
 
 # Stochastic 값 스냅샷 (키 이름은 별도 테스트에서 특성화)
 _STOCH_K_RUNTIME = 32.771277
@@ -186,16 +189,18 @@ def test_rsi_range_invariant_both_paths(
     assert 0.0 <= rsi_shared <= 100.0
 
 
-def test_rsi_runtime_uses_rolling_sma_smoothing(
+def test_rsi_runtime_uses_wilder_smoothing(
     runtime_host: _RuntimeIndicatorHost, frame: pd.DataFrame
 ) -> None:
-    """런타임 RSI 는 gains/losses 의 단순이동평균(SMA) 방식임을 스냅샷으로 고정.
+    """런타임 RSI 가 Wilder EMA(shared 표준)로 수렴했음을 스냅샷으로 고정 (M2).
 
-    ``services.trading.indicator_calculations._calc_rsi`` 는 최근 rsi_period 개
-    delta 의 평균(SMA)으로 RS 를 계산한다(core polars RSI 와 동일 규약).
+    ``services.trading.indicator_calculations._calc_rsi`` 는 이제 최근
+    rsi_period 개 delta 의 SMA 가 아니라, first-delta 로 seed 한 뒤 전체 시계열에
+    Wilder 재귀(alpha=1/period, adjust=False)를 적용한다 — shared RSICalculator 와
+    동일 규약. 과거 rolling-SMA 값(60.198576)에서 47.099143 으로 이동했다.
     """
     rsi_runtime = runtime_host._calc_rsi(frame["close"].tolist())
-    assert rsi_runtime == pytest.approx(_RSI_RUNTIME_SMA, abs=_SNAPSHOT_ABS_TOL)
+    assert rsi_runtime == pytest.approx(_RSI_RUNTIME_WILDER, abs=_SNAPSHOT_ABS_TOL)
 
 
 def test_rsi_shared_uses_wilder_ema_smoothing(frame: pd.DataFrame) -> None:
@@ -209,23 +214,26 @@ def test_rsi_shared_uses_wilder_ema_smoothing(frame: pd.DataFrame) -> None:
     assert rsi_shared == pytest.approx(_RSI_SHARED_WILDER, abs=_SNAPSHOT_ABS_TOL)
 
 
-def test_rsi_two_paths_diverge_materially(
+def test_rsi_two_paths_converge(
     runtime_host: _RuntimeIndicatorHost, frame: pd.DataFrame
 ) -> None:
-    """두 RSI 경로가 "다르다는 사실" 자체를 안전망으로 고정.
+    """두 RSI 경로가 이제 **동일**함을 안전망으로 고정 (M2, 2026-07-04).
 
-    왜 다른가: 런타임은 rolling-SMA, shared 는 Wilder-EMA 스무딩이라
-    같은 close 시계열에서도 서로 다른 RS 를 낸다. 통합으로 둘이 같아지면
-    아래 델타 floor 가 무너져 이 테스트가 실패 -> 의도적 갱신을 유도한다.
+    과거(특성화 하네스의 원래 목적): 런타임은 rolling-SMA, shared 는 Wilder-EMA
+    스무딩이라 같은 close 시계열에서도 서로 다른 RS(델타 13.1)를 냈다. Diff 1 에서
+    런타임 _calc_rsi 를 shared RSICalculator 와 동일한 Wilder 재귀로 포팅해 둘이
+    수렴했다. 이 테스트가 다시 벌어지면(delta > 1e-6) 런타임 RSI 가 표준에서
+    다시 이탈한 것이다 — 모든 RSI 소비 전략의 신호가 바뀌므로 실패로 드러나야 한다.
     """
     rsi_runtime = runtime_host._calc_rsi(frame["close"].tolist())
     rsi_shared = float(RSICalculator(period=14).calculate(frame)["rsi"].iloc[-1])
     delta = abs(rsi_runtime - rsi_shared)
 
-    # (a) 현재 델타 스냅샷
-    assert delta == pytest.approx(_RSI_KNOWN_DELTA, abs=_SNAPSHOT_ABS_TOL)
-    # (b) "재현적으로 다르다"는 구조 불변식 (통합 시 무너져 실패로 드러남)
-    assert delta > 5.0, "RSI 두 경로가 수렴함 — SoT 통합 발생? 스냅샷 갱신 필요"
+    # 두 경로가 사실상 동일 (Wilder EMA 표준으로 수렴)
+    assert (
+        delta < _RSI_CONVERGENCE_TOL
+    ), "RSI 런타임/shared 경로가 다시 벌어짐 — 런타임이 Wilder 표준에서 이탈?"
+    assert rsi_runtime == pytest.approx(_RSI_SHARED_WILDER, abs=_SNAPSHOT_ABS_TOL)
 
 
 # ---------------------------------------------------------------------------
