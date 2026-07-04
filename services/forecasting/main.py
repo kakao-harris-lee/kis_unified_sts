@@ -30,6 +30,7 @@ class ForecastingService:
         storage_client: Any,
         taxonomy_path: Path,
         llm_client: LLMScorerClient | None = None,
+        futures_tick_stream: str = "raw_data",
     ):
         self._config = config
         self._redis = redis_client
@@ -37,6 +38,12 @@ class ForecastingService:
         self._taxonomy = EventTaxonomy.load(taxonomy_path)
         self._llm = llm_client
         self._stop_event: asyncio.Event | None = None
+        # Futures tick stream market_ingest republishes each mark to. Same key
+        # the producer (TickStreamPublisher) uses so the two cannot drift.
+        self._futures_tick_stream = futures_tick_stream
+        # Last observed futures mark — bridges transient empty stream reads so a
+        # single missed tick does not fabricate a price.
+        self._last_close: float | None = None
         self._forecaster = VolatilityForecaster(config.har_rv)
         self._publisher = ForecastPublisher(
             redis=redis_client,
@@ -108,21 +115,76 @@ class ForecastingService:
             except TimeoutError:
                 continue
 
+    def _read_current_close(self) -> float | None:
+        """Return the latest futures mark from the tick stream, or None.
+
+        market_ingest (INGEST_ASSET=futures) republishes every mark to the
+        futures tick stream (``raw_data`` by default). We read its newest entry
+        rather than a hand-maintained scalar so the price tracks the live feed.
+        Returns None on an empty/unreadable stream so the caller can fall back
+        to the last known mark instead of a fabricated price.
+        """
+        try:
+            entries = self._redis.xrevrange(self._futures_tick_stream, count=1)
+        except Exception as e:  # noqa: BLE001 — off-path telemetry read
+            logger.debug(
+                "could not read futures tick stream %s: %s",
+                self._futures_tick_stream,
+                e,
+            )
+            return None
+        if not entries:
+            return None
+        try:
+            _entry_id, fields = entries[0]
+        except Exception:  # noqa: BLE001 — malformed / non-stream entry
+            return None
+
+        def _field(name: str) -> Any:
+            # Stream fields arrive as {bytes: bytes} (decode_responses=False) or
+            # {str: str} (fakeredis / decoded clients); tolerate both.
+            try:
+                if name in fields:
+                    return fields[name]
+                return fields.get(name.encode())
+            except (TypeError, AttributeError):
+                return None
+
+        for key in ("close", "current_price", "price"):
+            raw = _field(key)
+            if raw is None:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", "ignore")
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return None
+
     async def _tick_forecast(self) -> None:
         # If model not fit, skip
         if self._forecaster._coefficients is None:
             return
         asof = datetime.now(UTC)
-        # Caller should supply current_close from data_provider in production;
-        # for now use a stub queryable from Redis (set elsewhere).
-        try:
-            close_raw = self._redis.get("market:futures:current_close")
-        except Exception:  # noqa: BLE001
-            close_raw = None
-        try:
-            current_close = float(close_raw) if close_raw else 380.0
-        except (TypeError, ValueError):
-            current_close = 380.0
+        current_close = self._read_current_close()
+        if current_close is not None:
+            self._last_close = current_close
+        elif self._last_close is not None:
+            # Transient empty read — reuse the last observed mark.
+            current_close = self._last_close
+        else:
+            # No futures mark yet (pre-open / stream not primed). Skip rather
+            # than scale the forecast to a fabricated price: forecast_atr_equivalent
+            # drives Setup A gap/buffer/target geometry (shared/strategy/entry/
+            # setup_adapters.py), so a wrong close distorts real entry/exit levels.
+            logger.warning(
+                "no futures mark on %s yet — skipping forecast tick",
+                self._futures_tick_stream,
+            )
+            return
         vf = self._forecaster.forecast(asof, current_close=current_close)
         self._publisher.publish_vol_forecast(vf)
 
@@ -221,6 +283,9 @@ async def _main() -> None:
         storage_client=None,
         taxonomy_path=taxonomy_path,
         llm_client=llm_client,
+        # Same env var the producer (TickStreamPublisher) reads, so the
+        # forecasting consumer always tracks the stream market_ingest writes.
+        futures_tick_stream=os.environ.get("MONITOR_FUTURES_TICK_STREAM", "raw_data"),
     )
 
     loop = asyncio.get_running_loop()

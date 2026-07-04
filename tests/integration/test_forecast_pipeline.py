@@ -56,6 +56,11 @@ async def test_service_start_starts_forecast_loop(cfg, tmp_path):
     redis.get = MagicMock(return_value=None)
     redis.set = MagicMock()
     redis.publish = MagicMock()
+    # The forecast loop reads the current futures mark from the tick stream
+    # (market_ingest republishes it); supply one so a forecast is produced.
+    redis.xrevrange = MagicMock(
+        return_value=[(b"1700000000000-0", {b"close": b"350.5"})]
+    )
     # pubsub returns an object that returns None for get_message (no events)
     pubsub_obj = MagicMock()
     pubsub_obj.get_message = MagicMock(return_value=None)
