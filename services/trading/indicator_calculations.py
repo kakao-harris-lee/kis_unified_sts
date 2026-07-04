@@ -24,27 +24,37 @@ class IndicatorCalculationMixin:
         return lower, mean, upper
 
     def _calc_rsi(self, closes: list[float]) -> float:
-        """RSI using rolling SMA of gains/losses (matching core/indicator_engine.py)."""
+        """RSI using Wilder smoothing (alpha=1/period), matching the
+        M1-certified shared RSICalculator (ewm adjust=False, first-delta seed).
+
+        Converged from the previous rolling-SMA of gains/losses (which diverged
+        ~13 RSI points from the batch/backtest path on the M2 parity sample) so
+        the streaming oversold/overbought line matches the shared standard.
+        """
         if len(closes) < self.rsi_period + 1:
             return 50.0
-
-        # Use the last rsi_period+1 closes to get rsi_period deltas
-        recent = closes[-(self.rsi_period + 1) :]
-        gains = []
-        losses = []
-        for i in range(1, len(recent)):
-            delta = recent[i] - recent[i - 1]
-            gains.append(delta if delta > 0 else 0.0)
-            losses.append(-delta if delta < 0 else 0.0)
-
-        avg_gain = sum(gains) / len(gains)
-        avg_loss = sum(losses) / len(losses)
-
-        if avg_loss == 0:
-            return 100.0
-
+        period = self.rsi_period
+        alpha = 1.0 / period
+        one_minus = 1.0 - alpha
+        # Seed on the first delta, then Wilder-EMA over the FULL series
+        # (adjust=False semantics) — do NOT window to the last period+1 closes,
+        # or the exponential warmup is lost and parity with RSICalculator breaks.
+        avg_gain = 0.0
+        avg_loss = 0.0
+        seeded = False
+        for i in range(1, len(closes)):
+            delta = closes[i] - closes[i - 1]
+            gain = delta if delta > 0.0 else 0.0
+            loss = -delta if delta < 0.0 else 0.0
+            if not seeded:
+                avg_gain, avg_loss, seeded = gain, loss, True
+            else:
+                avg_gain = alpha * gain + one_minus * avg_gain
+                avg_loss = alpha * loss + one_minus * avg_loss
+        if avg_loss == 0.0:
+            return 100.0 if avg_gain > 0.0 else 50.0
         rs = avg_gain / avg_loss
-        return 100.0 - (100.0 / (1.0 + rs))
+        return 100.0 - 100.0 / (1.0 + rs)
 
     def _calc_rvol(self, candles: list[Candle]) -> float:
         """RVOL = short-window avg volume / long-window avg volume.
