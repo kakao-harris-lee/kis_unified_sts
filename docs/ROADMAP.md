@@ -18,6 +18,7 @@ Trusted current sources cited below:
 [testing/quant-ops-workbench-2026-06-27.md](testing/quant-ops-workbench-2026-06-27.md),
 [investigations/2026-06-28-quant-system-gap-research.md](investigations/2026-06-28-quant-system-gap-research.md),
 [plans/2026-07-04-runtime-refactoring-roadmap.md](plans/2026-07-04-runtime-refactoring-roadmap.md),
+[superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md),
 [plans/2026-07-02-unified-investment-system-roadmap.md](plans/2026-07-02-unified-investment-system-roadmap.md).
 
 All times are KST (Asia/Seoul). Strategy `enabled` flags in
@@ -194,6 +195,11 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
   surfaces remain compatible, while position tracking, indicator streaming,
   market-data provider, stock strategy daemon, and SQLite runtime-ledger
   behavior are split into focused model/mixin/helper modules.
+- Runtime refactoring follow-ups are merged through `2140c9ed`: thin
+  interfaces, retry decorator, strategy factory split, setup adapter class-owner
+  split, trading lazy facade, runtime config, re-entry guard, startup sequence,
+  recovery service, execution helpers/runtime, and market-data bootstrap slices
+  now have focused owner modules with compatibility facades.
 
 ### Completed maintainability milestones
 
@@ -220,27 +226,29 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Milestone | Status | Gate / Owner |
 |---|---|---|
 | Runtime large-file split priority 3 | ✅ done | `services/trading/position_tracker.py`, `indicator_engine.py`, `data_provider.py`, `services/stock_strategy/daemon.py`, and `shared/storage/runtime_ledger.py` reduced to focused shells plus extracted modules |
-| Thin strategy/context interfaces | 🟡 branch implemented | `shared/decision/interfaces.py`, `shared/strategy/interfaces.py`, `shared/portfolio/interfaces.py`; existing dataclasses/classes remain compatible |
-| Retry decorator surface | 🟡 branch implemented | `shared/resilience/retry.py::retry_on_disconnect`; default retries are limited to disconnect/timeout exceptions |
-| Strategy factory split | 🟡 branch implemented | `shared/strategy/factory.py`, `shared/strategy/builtin_components.py`; `shared/strategy/registry.py` remains the backward-compatible facade |
-| Setup adapter decomposition | 🟡 branch implemented | Split `shared/strategy/entry/setup_adapters.py` into config, context-builder, signal-mapper, setup-eval publisher, and LLM-gate modules while keeping adapter classes on the compatibility facade |
-| Orchestrator runtime config extraction | 🟡 branch implemented | `services/trading/runtime_config.py`; `services/trading/orchestrator.py` keeps facade exports for existing imports |
-| Trading package lazy facade | 🟡 branch implemented | `services/trading/__init__.py` resolves top-level exports lazily so config/module imports do not eagerly load the monolithic orchestrator |
-| Re-entry guard helper split | 🟡 branch implemented | `services/trading/reentry_guard.py`; orchestrator keeps compatibility methods while cooldown key/record/block logic lives in owner helpers |
-| Execution helper split | 🟡 branch implemented | `services/trading/execution_facade.py`; orchestrator keeps compatibility methods while pure order-result/direction helpers live in an owner module |
-| Recovery helper split | 🟡 branch implemented | `services/trading/recovery.py`; Redis recovery keeps orchestrator side effects while freshness and reconstruction logic lives in an owner module |
-| Market-data bootstrap split | 🟡 branch implemented | `services/trading/market_data_bootstrap.py`; orchestrator facades assign KIS client, price feed, data provider, and tick publisher results |
-| Orchestrator decomposition | ⏳ planned | Continue extracting initialization, recovery, execution setup, position transitions, and guard hooks from `services/trading/orchestrator.py` behind delegation tests |
+| Thin strategy/context interfaces | ✅ done | `shared/decision/interfaces.py`, `shared/strategy/interfaces.py`, `shared/portfolio/interfaces.py`; existing dataclasses/classes remain compatible |
+| Retry decorator surface | ✅ done | `shared/resilience/retry.py::retry_on_disconnect`; default retries are limited to disconnect/timeout exceptions |
+| Strategy factory split | ✅ done | `shared/strategy/factory.py`, `shared/strategy/builtin_components.py`; `shared/strategy/registry.py` remains the backward-compatible facade |
+| Setup adapter decomposition | ✅ done | `shared/strategy/entry/setup_adapters.py` is a compatibility facade; config, context-builder, signal-mapper, setup-eval publisher, LLM gate, and Setup A/C/D adapter classes live in focused modules |
+| Orchestrator runtime config extraction | ✅ done | `services/trading/runtime_config.py`; `services/trading/orchestrator.py` keeps facade exports for existing imports |
+| Trading package lazy facade | ✅ done | `services/trading/__init__.py` resolves top-level exports lazily so config/module imports do not eagerly load the monolithic orchestrator |
+| Re-entry guard helper split | ✅ done | `services/trading/reentry_guard.py`; orchestrator keeps compatibility methods while cooldown key/record/block logic lives in owner helpers |
+| Execution helper/runtime split | ✅ done | `services/trading/execution_facade.py` and `services/trading/execution_runtime.py`; orchestrator keeps compatibility methods while pure order-result, direction, entry metadata, and mock-mirror helpers live in owner modules |
+| Recovery service split | ✅ done | `services/trading/recovery.py::PositionRecoveryService`; orchestrator keeps the compatibility method while Redis recovery, freshness checks, position reconstruction, tracker registration, and SQLite fallback delegation live in the owner module |
+| Market-data bootstrap split | ✅ done | `services/trading/market_data_bootstrap.py`; orchestrator facades assign KIS client, price feed, data provider, and tick publisher results |
+| Startup sequence extraction | ✅ done | `services/trading/startup_sequence.py`; `_initialize_components` delegates startup ordering behind focused tests |
+| Orchestrator decomposition | 🔄 in-progress | `services/trading/orchestrator.py` remains 7,102 lines; next slices are execution/order lifecycle, initialization dependency wiring, kill-switch/live guard, universe/market-data runtime, and position transitions |
+| Runtime refactoring next priorities | ⏳ planned | [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md) lists P1/P2/P3 lanes, files, tests, verification commands, and conflict rules |
 | Event-driven futures primary runtime | ⏳ planned | Keep F-9 as the only approved replacement path for the monolithic futures runtime; validate shadow chain and O13 kill-switch coverage before cutover |
 
 ### Open next-steps
 
-- Follow the active runtime refactoring plan: thin contracts, retry decoration,
-  setup adapter decomposition, registry/factory split, and runtime config
-  extraction are branch-implemented; the trading package facade now resolves
-  exports lazily, and re-entry guard/execution helper logic have owner modules,
-  so next split the remaining high-complexity regions of
-  `services/trading/orchestrator.py`.
+- Follow the active runtime refactoring plan: the contract/decorator/factory
+  surfaces and first orchestrator owner modules are merged. Next work should use
+  [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md)
+  to split execution/order lifecycle, initialization dependency wiring,
+  kill-switch/live guard, dashboard trades routes, CLI command modules, KIS
+  adapters, collector backfill, and large tests.
 - Treat the monolithic futures path as a compatibility runtime until F-9
   cutover. New decomposition should move toward the existing event-driven
   chain (`market_ingest -> decision_engine -> risk_filter -> order_router ->

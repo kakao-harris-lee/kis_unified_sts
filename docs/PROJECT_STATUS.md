@@ -109,6 +109,21 @@ since 2026-06-28 — recent Setup D commits tuned parameters only.
 
 ## Recent Decisions
 
+**2026-07-04** - Runtime refactoring follow-ups merged and next priorities
+documented.
+Commit `2140c9ed` merged the next runtime decomposition batch on top of the
+large-file split: thin decision/strategy/portfolio interfaces, the
+`retry_on_disconnect` decorator, strategy factory/builtin registration split,
+setup adapter facade + Setup A/C/D class-owner modules, trading package lazy
+facade, runtime config extraction, re-entry guard helpers, startup sequence,
+execution facade/runtime helpers, market-data bootstrap, and
+`PositionRecoveryService`. Compatibility imports and monkeypatch surfaces are
+kept. The remaining actionable backlog is now grouped by priority in
+[superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md):
+P1 orchestrator execution/initialization/kill-switch slices, P2 dashboard
+trades route + CLI + universe/market-data helpers, and P3 KIS/backfill/test
+decomposition.
+
 **2026-07-04** - Runtime large-file split priority 3 merged.
 Commit `83e94681` split the requested large runtime files without changing
 public imports or runtime behavior: `services/trading/position_tracker.py`,
@@ -323,8 +338,9 @@ Full per-asset open list with owners/gates is in [ROADMAP.md](ROADMAP.md). Top i
 - **Both:** Paper/live E2E smoke with Redis + SQLite only after each cutover;
   position-recovery drill after process restart; MLflow restart
   (`localhost:5000` down); refresh Workbench desktop/mobile screenshot/accessibility
-  QA artifacts when those routes change; continue decomposing the orchestrator
-  initialization, recovery, and execution setup regions after the
-  broker-verification and metrics-sync extractions. Use
+  QA artifacts when those routes change; continue runtime refactoring from
+  [superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md](superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md)
+  with one orchestrator lane at a time and independent dashboard/CLI/KIS/backfill
+  lanes in parallel where possible. Use
   `scripts/ops/ops_readiness_check.py` as the offline checklist; live service
   confirmation remains external.

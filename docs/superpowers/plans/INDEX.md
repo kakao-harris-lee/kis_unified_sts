@@ -15,6 +15,7 @@ Active plans:
 
 | Date | Plan | Purpose |
 |---|---|---|
+| 2026-07-04 | [runtime refactoring next priorities](2026-07-04-runtime-refactoring-next-priorities.md) | P1/P2/P3 execution plan for remaining orchestrator slices, dashboard trades route split, CLI split, KIS/backfill cleanup, and large-test decomposition after `2140c9ed`. |
 | 2026-07-04 | [orchestrator decomposition](2026-07-04-orchestrator-decomposition.md) | Facade-preserving decomposition plan for the monolithic trading orchestrator while F-9 remains the futures runtime replacement path. |
 | 2026-06-28 | [quant system expert work allocation](2026-06-28-quant-system-expert-work-allocation.md) | Expert-lane execution plan for market-structure policy, KOSPI 200 futures, stock ATS/SOR, strategy evidence, Workbench transparency, and QA. |
 | 2026-06-27 | [architecture audit parallel plan](2026-06-27-architecture-audit-parallel-plan.md) | Parallel read-only architecture audit of orchestrator, stock pipeline, futures pipeline, and shared streaming boundaries. |

@@ -34,6 +34,35 @@ files instead of requiring agents or developers to load large runtime modules.
 
 ## Completed Progress
 
+### 2026-07-04 - Runtime Refactoring Follow-Ups
+
+Status: done in `2140c9ed`.
+
+Merged the additive pattern surfaces and first orchestrator decomposition
+follow-ups:
+
+- `shared/decision/interfaces.py`, `shared/strategy/interfaces.py`, and
+  `shared/portfolio/interfaces.py` provide thin Protocol-style contracts.
+- `shared/resilience/retry.py::retry_on_disconnect` provides the narrow retry
+  decorator surface for disconnect/timeout-safe infrastructure calls.
+- `shared/strategy/factory.py` and `shared/strategy/builtin_components.py`
+  split strategy assembly and builtin registration while
+  `shared/strategy/registry.py` stays the compatibility facade.
+- `shared/strategy/entry/setup_adapters.py` is now a small compatibility
+  facade; setup config, context, signal mapping, LLM gate, setup-eval
+  publishing, and Setup A/C/D adapter classes live in owner modules.
+- `services/trading/__init__.py` lazily resolves lightweight submodules without
+  importing the monolithic orchestrator.
+- `services/trading/runtime_config.py`, `reentry_guard.py`,
+  `startup_sequence.py`, `execution_facade.py`, `execution_runtime.py`,
+  `market_data_bootstrap.py`, and `recovery.py::PositionRecoveryService` own the
+  first runtime slices while orchestrator compatibility methods remain.
+
+Verification included targeted pytest for strategy interfaces, retry,
+registry/setup adapters, startup sequence, execution runtime, recovery, package
+imports, and orchestrator behavior guards, plus targeted `ruff check`,
+`black --check`, `python3 -m py_compile`, and `git diff --check`.
+
 ### 2026-07-04 - Runtime Large-File Split Priority 3
 
 Status: done in `83e94681`.
@@ -137,7 +166,7 @@ The first change should be re-export compatible so imports such as
 
 ### Phase R0 - Contract Tests
 
-Status: branch implemented.
+Status: done.
 
 - Added Protocol/import compatibility tests for the new decision, strategy, and
   portfolio interface files.
@@ -152,7 +181,7 @@ Status: branch implemented.
 
 ### Phase R1 - Setup Adapter Split
 
-Status: branch implemented.
+Status: done.
 
 Split `shared/strategy/entry/setup_adapters.py` into focused modules:
 
@@ -162,13 +191,14 @@ Split `shared/strategy/entry/setup_adapters.py` into focused modules:
 - `setup_llm_gate.py`: LLM tuning, veto, and regime-label helpers.
 - `setup_eval_publisher.py`: setup evaluation Redis/latest/history publisher.
 
-Keep `setup_adapters.py` as the compatibility facade and adapter-class owner
-until a later adapter-class split can retire legacy private monkeypatch points.
-No behavior changes are allowed in this phase.
+`setup_adapters.py` now stays as the compatibility facade. Setup A/C/D adapter
+classes live in `setup_a_adapter.py`, `setup_c_adapter.py`, and
+`setup_d_adapter.py`; legacy top-level symbols and monkeypatch points are
+preserved by facade tests. No behavior changes were made in this phase.
 
 ### Phase R2 - Strategy Registry And Factory Split
 
-Status: branch implemented.
+Status: done.
 
 Move builtin tables and factory assembly out of `shared/strategy/registry.py`.
 The registry module should remain the stable public import surface while the
@@ -184,8 +214,8 @@ Implemented split:
 
 ### Phase R3 - Orchestrator Service Extraction
 
-Status: branch implemented for runtime configuration; broader service
-extraction remains in progress.
+Status: in progress. The first owner modules are merged; the orchestrator is
+still the largest compatibility runtime at 7,102 lines.
 
 Design and executable Task 1 plan:
 
@@ -193,33 +223,42 @@ Design and executable Task 1 plan:
 - `docs/superpowers/plans/2026-07-04-orchestrator-decomposition.md`
 
 Continue extracting `services/trading/orchestrator.py` by existing ownership
-boundaries, not by arbitrary line counts:
+boundaries, not by arbitrary line counts. The next actionable priority plan is:
 
-- runtime configuration and entry re-entry guard config: branch implemented in
+- `docs/superpowers/plans/2026-07-04-runtime-refactoring-next-priorities.md`
+
+Merged owner modules:
+
+- runtime configuration and entry re-entry guard config: done in
   `services/trading/runtime_config.py` with orchestrator facade exports;
-- trading package facade: branch implemented with lazy top-level exports so
+- trading package facade: done with lazy top-level exports so
   runtime config and other lightweight submodule imports do not eagerly load
   the monolithic orchestrator;
-- re-entry guard helpers: branch implemented in
+- re-entry guard helpers: done in
   `services/trading/reentry_guard.py`; orchestrator compatibility methods now
   delegate cooldown key/record/block logic to the owner module;
-- execution helpers: branch implemented in
-  `services/trading/execution_facade.py`; orchestrator compatibility methods
-  now delegate pure entry-order result normalization and signal direction
-  extraction to the owner module;
-- recovery helpers: branch implemented in `services/trading/recovery.py`;
-  Redis recovery still owns reader/tracker/symbol side effects in the
-  orchestrator while freshness checks and `Position` reconstruction live in
-  the owner module;
-- market-data bootstrap helpers: branch implemented in
+- startup sequence: done in `services/trading/startup_sequence.py`;
+- execution helpers/runtime: done in `services/trading/execution_facade.py` and
+  `services/trading/execution_runtime.py`; orchestrator compatibility methods
+  now delegate pure entry-order result normalization, signal direction
+  extraction, entry metadata finalization, and mock-mirror metadata helpers to
+  owner modules;
+- recovery service: done in `services/trading/recovery.py`; Redis recovery,
+  freshness checks, `Position` reconstruction, tracker registration, symbol
+  subscription injection, and SQLite fallback delegation live in the owner
+  service;
+- market-data bootstrap helpers: done in
   `services/trading/market_data_bootstrap.py`; orchestrator compatibility
   methods now assign KIS client, price feed, data provider, and tick publisher
   results returned by the owner module;
-- remaining initialization ordering and dependency wiring;
-- full Redis/SQLite recovery service and broker reconciliation handoff;
-- execution setup and order submission;
+
+Remaining high-priority slices:
+
+- execution/order lifecycle beyond pure metadata helpers;
+- initialization ordering and dependency wiring;
 - position state transitions;
 - kill-switch and live-mode guard hooks;
+- universe and market-data runtime helpers;
 - strategy-entry context assembly.
 
 Each extraction must have a delegation guard or characterization test before
@@ -290,8 +329,8 @@ still document:
 
 ## Open Questions
 
-- Which orchestrator boundary should follow runtime configuration:
-  initialization/dependency wiring or recovery/reconciliation?
+- Which orchestrator boundary should follow the latest merged recovery service:
+  execution/order lifecycle or initialization/dependency wiring?
 - Should monitor bridges migrate to `MultiStreamStage`, or should they stay as
   direct multi-stream loops with explicit retry documentation?
 - After F-9, how long should the monolithic futures runtime remain as rollback
