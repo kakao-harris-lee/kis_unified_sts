@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -80,6 +81,42 @@ def test_mock_mirror_exit_should_skip_only_after_failed_entry_mirror() -> None:
         is False
     )
     assert mock_mirror_exit_should_skip(SimpleNamespace(metadata={})) is False
+
+
+def test_update_entry_slippage_stats_accumulates_average() -> None:
+    from services.trading.execution_runtime import update_entry_slippage_stats
+
+    stats = {"count": 1.0, "adverse_ticks_sum": 2.0, "avg_adverse_ticks": 2.0}
+
+    update_entry_slippage_stats(stats, 4.0)
+
+    assert stats == {
+        "count": 2.0,
+        "adverse_ticks_sum": 6.0,
+        "avg_adverse_ticks": 3.0,
+    }
+
+
+def test_serialize_state_transitions_preserves_state_value_and_timestamp() -> None:
+    from services.trading.execution_runtime import serialize_state_transitions
+
+    transitions = [
+        SimpleNamespace(
+            state=SimpleNamespace(value="submitted"),
+            at=datetime(2026, 7, 4, 9, 15, tzinfo=UTC),
+            reason="passive_limit",
+        ),
+        SimpleNamespace(state="cancelled", at=None, reason="retry_unfilled"),
+    ]
+
+    assert serialize_state_transitions(transitions) == [
+        {
+            "state": "submitted",
+            "at": "2026-07-04T09:15:00+00:00",
+            "reason": "passive_limit",
+        },
+        {"state": "cancelled", "at": "None", "reason": "retry_unfilled"},
+    ]
 
 
 def test_execution_runtime_import_does_not_import_orchestrator() -> None:

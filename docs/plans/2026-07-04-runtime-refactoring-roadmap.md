@@ -241,8 +241,15 @@ Merged owner modules:
 - execution helpers/runtime: done in `services/trading/execution_facade.py` and
   `services/trading/execution_runtime.py`; orchestrator compatibility methods
   now delegate pure entry-order result normalization, signal direction
-  extraction, entry metadata finalization, and mock-mirror metadata helpers to
-  owner modules;
+  extraction, entry metadata finalization, state-transition serialization,
+  entry slippage-stat accumulation, and mock-mirror metadata helpers to owner
+  modules;
+- initialization and kill-switch runtime helper micro-slice: done in
+  `services/trading/initialization_runtime.py` and
+  `services/trading/kill_switch_runtime.py`; orchestrator keeps startup ordering,
+  Redis polling, flattening, sentinel cleanup, notifications, and live-guard side
+  effects while delegating futures-asset guard checks and force-flatten request
+  metadata parsing;
 - recovery service: done in `services/trading/recovery.py`; Redis recovery,
   freshness checks, `Position` reconstruction, tracker registration, symbol
   subscription injection, and SQLite fallback delegation live in the owner
@@ -255,9 +262,9 @@ Merged owner modules:
 Remaining high-priority slices:
 
 - execution/order lifecycle beyond pure metadata helpers;
-- initialization ordering and dependency wiring;
+- initialization ordering and dependency wiring beyond pure guard checks;
 - position state transitions;
-- kill-switch and live-mode guard hooks;
+- kill-switch and live-mode guard side effects;
 - universe and market-data runtime helpers;
 - strategy-entry context assembly.
 

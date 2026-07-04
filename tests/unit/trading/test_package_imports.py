@@ -143,6 +143,32 @@ def test_startup_sequence_package_attribute_resolves_without_orchestrator() -> N
     assert result.returncode == 0, result.stderr
 
 
+def test_initialization_runtime_package_attribute_resolves_without_orchestrator() -> (
+    None
+):
+    result = _run_python("""
+        import sys
+        import services.trading as trading
+
+        assert trading.initialization_runtime.execution_layer_mode is not None
+        assert "services.trading.orchestrator" not in sys.modules
+        """)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_kill_switch_runtime_package_attribute_resolves_without_orchestrator() -> None:
+    result = _run_python("""
+        import sys
+        import services.trading as trading
+
+        assert trading.kill_switch_runtime.parse_force_flatten_request is not None
+        assert "services.trading.orchestrator" not in sys.modules
+        """)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_top_level_orchestrator_import_still_uses_facade_exports() -> None:
     result = _run_python("""
         from services.trading import TradingConfig, TradingOrchestrator, TradingState

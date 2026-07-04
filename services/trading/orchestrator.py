@@ -51,7 +51,13 @@ from services.trading.execution_runtime import (
     finalize_entry_execution_metadata,
     mock_mirror_exit_should_skip,
     record_mock_mirror_result,
+    serialize_state_transitions,
+    update_entry_slippage_stats,
 )
+from services.trading.initialization_runtime import (
+    should_require_futures_contract_validation,
+)
+from services.trading.kill_switch_runtime import parse_force_flatten_request
 from services.trading.metrics_sync import sync_open_positions_metric
 from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
@@ -631,7 +637,7 @@ class TradingOrchestrator:
         self._futures_slippage_controller = None
         self._futures_slippage_aux_symbols = []
 
-        if self.config.asset_class != "futures":
+        if not should_require_futures_contract_validation(self.config.asset_class):
             return
 
         try:
@@ -690,7 +696,7 @@ class TradingOrchestrator:
         """Validate futures product/tick env before startup uses slippage config."""
         self._futures_product_contract_validation = None
 
-        if self.config.asset_class != "futures":
+        if not should_require_futures_contract_validation(self.config.asset_class):
             return
 
         validation = validate_futures_runtime_product_contract()
@@ -3713,6 +3719,14 @@ class TradingOrchestrator:
                     latest_event_id = None
                 else:
                     latest_event_id = entries[0][0]
+                event_payload = entries[0][1] if entries else {}
+                flatten_request = parse_force_flatten_request(
+                    {
+                        **(event_payload if isinstance(event_payload, dict) else {}),
+                        "event_id": latest_event_id,
+                        "source": ks_cfg.sentinel_key,
+                    }
+                )
 
                 # Idempotency / pre-startup check.
                 if latest_event_id is not None and (
@@ -3734,6 +3748,13 @@ class TradingOrchestrator:
                     "flattening all open positions",
                     ks_cfg.sentinel_key,
                     latest_event_id,
+                )
+                logger.debug(
+                    "kill_switch force-flatten request parsed "
+                    "(source=%s, reason=%s, dry_run=%s)",
+                    flatten_request.source,
+                    flatten_request.reason,
+                    flatten_request.dry_run,
                 )
 
                 flat_count = await self._kill_switch_flatten_all()
@@ -4446,19 +4467,7 @@ class TradingOrchestrator:
 
     @staticmethod
     def _serialize_state_transitions(transitions: list[Any]) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
-        for item in transitions:
-            state = getattr(item, "state", None)
-            at = getattr(item, "at", None)
-            reason = getattr(item, "reason", "")
-            result.append(
-                {
-                    "state": getattr(state, "value", str(state)),
-                    "at": at.isoformat() if isinstance(at, datetime) else str(at),
-                    "reason": reason,
-                }
-            )
-        return result
+        return serialize_state_transitions(transitions)
 
     @staticmethod
     def _normalize_entry_order_result(result: Any) -> tuple[bool, float, int, str]:
@@ -4466,12 +4475,7 @@ class TradingOrchestrator:
         return normalize_entry_order_result(result)
 
     def _update_entry_slippage_stats(self, adverse_ticks: float) -> None:
-        stats = self._entry_slippage_stats
-        count = int(stats.get("count", 0.0)) + 1
-        total = float(stats.get("adverse_ticks_sum", 0.0)) + adverse_ticks
-        stats["count"] = float(count)
-        stats["adverse_ticks_sum"] = total
-        stats["avg_adverse_ticks"] = total / count if count > 0 else 0.0
+        update_entry_slippage_stats(self._entry_slippage_stats, adverse_ticks)
 
     # -------------------------------------------------------------------------
     # Pipeline Handlers
@@ -5814,7 +5818,7 @@ class TradingOrchestrator:
         missing guard/redis handle, or a Redis read error, returns True (block).
         Non-futures assets are never blocked here.
         """
-        if self.config.asset_class != "futures":
+        if not should_require_futures_contract_validation(self.config.asset_class):
             return False
         contract = getattr(self, "_futures_product_contract_validation", None)
         if contract is None:

@@ -123,6 +123,10 @@ kept. The remaining actionable backlog is now grouped by priority in
 P1 orchestrator execution/initialization/kill-switch slices, P2 dashboard
 trades route + CLI + universe/market-data helpers, and P3 KIS/backfill/test
 decomposition.
+The next P1 micro-slice added owner modules for pure state-transition
+serialization, entry slippage-stat accumulation, futures-asset guard checks, and
+kill-switch force-flatten request parsing; side-effecting execution, Redis,
+flatten, notification, and live-guard behavior remains in the orchestrator.
 
 **2026-07-04** - Runtime large-file split priority 3 merged.
 Commit `83e94681` split the requested large runtime files without changing

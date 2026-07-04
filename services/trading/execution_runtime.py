@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
+from datetime import datetime
 from typing import Any
 
 
@@ -69,6 +70,35 @@ def record_mock_mirror_result(
         outcome = "failed"
     key = f"{label}_{outcome}"
     stats[key] = int(stats.get(key, 0)) + 1
+
+
+def update_entry_slippage_stats(
+    stats: MutableMapping[str, float],
+    adverse_ticks: float,
+) -> None:
+    """Accumulate entry adverse slippage summary fields in-place."""
+    count = int(stats.get("count", 0.0)) + 1
+    total = float(stats.get("adverse_ticks_sum", 0.0)) + adverse_ticks
+    stats["count"] = float(count)
+    stats["adverse_ticks_sum"] = total
+    stats["avg_adverse_ticks"] = total / count if count > 0 else 0.0
+
+
+def serialize_state_transitions(transitions: list[Any]) -> list[dict[str, Any]]:
+    """Serialize execution state transition objects for metadata payloads."""
+    result: list[dict[str, Any]] = []
+    for item in transitions:
+        state = getattr(item, "state", None)
+        at = getattr(item, "at", None)
+        reason = getattr(item, "reason", "")
+        result.append(
+            {
+                "state": getattr(state, "value", str(state)),
+                "at": at.isoformat() if isinstance(at, datetime) else str(at),
+                "reason": reason,
+            }
+        )
+    return result
 
 
 def mock_mirror_exit_should_skip(position: Any) -> bool:

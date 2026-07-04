@@ -43,6 +43,8 @@ _SUBMODULES = {
     "data_provider": "services.trading.data_provider",
     "execution_facade": "services.trading.execution_facade",
     "execution_runtime": "services.trading.execution_runtime",
+    "initialization_runtime": "services.trading.initialization_runtime",
+    "kill_switch_runtime": "services.trading.kill_switch_runtime",
     "market_data_bootstrap": "services.trading.market_data_bootstrap",
     "orchestrator": "services.trading.orchestrator",
     "pipeline": "services.trading.pipeline",
