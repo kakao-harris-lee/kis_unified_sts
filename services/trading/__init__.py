@@ -50,6 +50,7 @@ _SUBMODULES = {
     "recovery": "services.trading.recovery",
     "runtime_config": "services.trading.runtime_config",
     "session_calendar": "services.trading.session_calendar",
+    "startup_sequence": "services.trading.startup_sequence",
     "strategy_manager": "services.trading.strategy_manager",
 }
 
