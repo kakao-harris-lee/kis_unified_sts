@@ -210,7 +210,7 @@ Before enabling night trading:
 Add a row in `docs/INDEX.md` under Strategy & paper trading or Operations:
 
 ```markdown
-| [runbooks/market-structure-policy.md](runbooks/market-structure-policy.md) | Operator policy for stock ATS/SOR, futures 08:45 regular session, night session, and KOSPI 200 product governance. |
+| [runbooks/market-structure-policy.md](../../runbooks/market-structure-policy.md) | Operator policy for stock ATS/SOR, futures 08:45 regular session, night session, and KOSPI 200 product governance. |
 ```
 
 - [ ] **Step 3: Update the roadmap policy line**
@@ -1005,7 +1005,7 @@ Only after verification passes, add a `Recent Decisions` note to
 Completed the focused verification bundle for market-structure policy, futures
 product/session contract, Setup C/D evidence, stock venue policy, theme/fusion
 quality, and Workbench evidence UX. Evidence:
-[testing/quant-gap-execution-2026-06-28.md](testing/quant-gap-execution-2026-06-28.md).
+[testing/quant-gap-execution-2026-06-28.md](../../testing/quant-gap-execution-2026-06-28.md).
 ```
 
 - [ ] **Step 4: Commit**

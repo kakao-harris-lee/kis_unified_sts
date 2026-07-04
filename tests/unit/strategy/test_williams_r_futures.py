@@ -1,6 +1,6 @@
 """Williams %R 선물 양방향 변형 회귀 테스트.
 
-설계: docs/superpowers/specs/2026-05-15-williams-r-futures-design.md
+설계: docs/superpowers/specs/archive/2026-05-15-williams-r-futures-design.md
 
 검증:
   - allow_short=True 에서 과매수 반전 → SHORT 진입 (신규)

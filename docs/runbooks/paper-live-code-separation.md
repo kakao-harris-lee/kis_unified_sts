@@ -1,6 +1,6 @@
 # Runbook — Paper/Live Source-Code Separation
 
-Design: `docs/superpowers/specs/2026-06-04-paper-live-code-separation-design.md`
+Design: `docs/superpowers/specs/archive/2026-06-04-paper-live-code-separation-design.md`
 
 LIVE trading runs only validated (annotated-tag) code from a **separate clone**.
 paper/dev keeps tracking `main` in the existing checkout.

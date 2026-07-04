@@ -7,7 +7,8 @@ Two-layer suspend:
   2. Runtime flag in Redis at ``suspend_key`` (default
      ``futures:live:suspended``). Set/cleared without a process restart.
 
-Spec reference: ``docs/plans/2026-04-20-futures-paradigm-phase5-implementation-plan.md``
+Historical spec reference:
+``docs/plans/archive/2026-04-20-futures-paradigm-phase5-implementation-plan.md``
 Task 5; ``docs/plans/2026-04-20-futures-paradigm-phase5-rollout.md`` §2.3
 (Gate 3 ladder).
 

@@ -19,7 +19,7 @@
 #     live consideration (full Gate 1–4 procedure, futures_live.enabled stays
 #     false).
 #
-# See: docs/superpowers/specs/2026-06-25-futures-mr-highvol-setup-d.md
+# See: docs/superpowers/specs/archive/2026-06-25-futures-mr-highvol-setup-d.md
 #      scripts/analysis/walkforward_setup_d_vwap_reversion.py
 # Rollback: this strategy is disabled by default; no rollback needed. To activate
 #   in paper, flip strategy.enabled: true (after paper-rollout validation).

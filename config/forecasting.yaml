@@ -1,5 +1,5 @@
 # Forecasting service configuration
-# See: docs/superpowers/specs/2026-05-13-forecast-aware-paradigm-design.md
+# See: docs/superpowers/specs/archive/2026-05-13-forecast-aware-paradigm-design.md
 
 forecasting:
   publisher_enabled: true               # master switch; off → service idles

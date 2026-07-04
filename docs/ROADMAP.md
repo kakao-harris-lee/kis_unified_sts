@@ -208,7 +208,7 @@ execution lifecycle -> backtest-vs-paper comparison -> promotion gate
 | Milestone | Status | Gate / Owner |
 |---|---|---|
 | Dead/stale docs and unused-code cleanup | ✅ done | `b8cec3d`; stale docs archived, dashboard host-port drift audited |
-| Multi-agent code-quality cleanup plan | ✅ done | [superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md) |
+| Multi-agent code-quality cleanup plan | ✅ done | [superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md) |
 | Shared strategy entry gates + behavior tests | ✅ done | `shared/strategy/entry/gates.py`, `tests/unit/strategy/entry/` |
 | Strategy registry table-driven registration | ✅ done | `tests/unit/strategy/test_registry_builtin_components.py` |
 | Runtime defaults centralization | ✅ done | `shared/config/runtime_defaults.py`, `CLAUDE.md` |

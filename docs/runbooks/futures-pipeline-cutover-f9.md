@@ -9,7 +9,7 @@ account.
 This runbook is the operator half of F-9. The compose wiring is dormant
 (default-off profiles); going live is gated.
 
-Spec: `docs/superpowers/specs/2026-06-08-futures-pipeline-cutover-f9-design.md`
+Spec: `docs/superpowers/specs/archive/2026-06-08-futures-pipeline-cutover-f9-design.md`
 Stock analogue: `docs/runbooks/stock-pipeline-cutover-m5d.md`
 Host-redis cutover analogue: `docs/runbooks/cron-to-compose-cutover.md`
 Phase-5 gates (HARD prerequisite for live): `docs/runbooks/phase5-verification.md`

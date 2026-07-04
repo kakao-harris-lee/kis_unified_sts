@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: 2026-07-03 (cross-asset unified investment system Phases 0–6 merged).
+Last updated: 2026-07-04 (active plan/spec context compacted; historical references archived).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
@@ -70,8 +70,8 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | Path | 내용 |
 |------|------|
 | [plans/](plans/) | Current/reference/archive plan 분류 → [plans/INDEX.md](plans/INDEX.md) |
-| [superpowers/plans/](superpowers/plans/) | Completed generated implementation plans → [superpowers/plans/INDEX.md](superpowers/plans/INDEX.md) |
-| [superpowers/specs/](superpowers/specs/) | Design specs paired with generated implementation plans |
+| [superpowers/plans/](superpowers/plans/) | Active generated implementation plans only → [superpowers/plans/INDEX.md](superpowers/plans/INDEX.md); completed records are under `archive/` |
+| [superpowers/specs/](superpowers/specs/) | Active design specs only; completed design rationale is under `superpowers/specs/archive/` |
 | [runbooks/](runbooks/) | 운영 런북 → [README.md § 운영 런북](../README.md#운영-런북-runbooks) |
 | [testing/](testing/) | Current QA evidence and screenshot artifacts |
 | [archive/](archive/) | 시간 의존적 stale snapshot 보존 (정보 보존 목적) |
@@ -96,6 +96,8 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [archive/MIGRATION_GUIDE.md](archive/MIGRATION_GUIDE.md) | Initial project migration strategy snapshot; superseded by current architecture docs. |
 | [archive/deep-research-report.md](archive/deep-research-report.md) | Historical KOSPI200 synthetic-data research note. |
 | [archive/unified_implementation.py](archive/unified_implementation.py) | Historical implementation sketch, not active runtime code. |
+| [plans/archive/](plans/archive/) | Historical plan/spec records that should not be loaded for current roadmap decisions by default. |
+| [superpowers/plans/archive/](superpowers/plans/archive/) and [superpowers/specs/archive/](superpowers/specs/archive/) | Completed generated plans/specs retained for audit history only. |
 
 ## How to add a new doc
 

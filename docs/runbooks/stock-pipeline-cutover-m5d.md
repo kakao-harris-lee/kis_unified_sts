@@ -5,7 +5,7 @@ decoupled M4 pipeline (M4-P -> M4-R -> M4-O -> M4-X) + M5a monitor + M5b LLM
 context job + M5c daily risk reset. Paper->paper: M4-O still uses `VirtualBroker`.
 The operational risks are silent stop, double trading, and stale market data.
 
-Spec: `docs/superpowers/specs/2026-06-06-stock-stream-cutover-m5d-design.md`
+Spec: `docs/superpowers/specs/archive/2026-06-06-stock-stream-cutover-m5d-design.md`
 Compose plan: `docs/plans/archive/2026-06-06-compose-pipeline-services.md`
 
 ## Compose Profiles

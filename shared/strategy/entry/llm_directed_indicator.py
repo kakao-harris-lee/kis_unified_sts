@@ -1,6 +1,6 @@
 """LLM-directed indicator composite entry (futures) — succeeds RL_mppo.
 
-Design: docs/superpowers/specs/2026-05-16-llm-directed-indicator-futures-design.md
+Design: docs/superpowers/specs/archive/2026-05-16-llm-directed-indicator-futures-design.md
 """
 
 from __future__ import annotations

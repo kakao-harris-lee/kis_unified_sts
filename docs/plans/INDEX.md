@@ -1,6 +1,6 @@
 # Plans Index
 
-Last updated: 2026-07-04.
+Last updated: 2026-07-04 (active plan set compacted; historical references archived).
 
 This index separates plans that still affect operational decisions from completed
 implementation records. For the current runtime snapshot, start with
@@ -28,22 +28,11 @@ the scattered plan docs for "where is each asset headed".
 | [2026-04-20-futures-paradigm-phase5-rollout.md](2026-04-20-futures-paradigm-phase5-rollout.md) | Futures live rollout Gate 1–4 procedure (still valid) + rollback policy; RL/systemd/ClickHouse references are historical (see top note in the doc). |
 | [2026-05-26-strategy-lab-extension-design.md](2026-05-26-strategy-lab-extension-design.md) | Strategy Lab product direction (active); many pieces now exist in `strategy-builder-ui/`, dashboard APIs, and experiment runner. UI is Next.js, not Vite. |
 
-## Historical Reference Still Cited
+## Historical Reference
 
-| Plan | Why It Remains Top-Level |
-|---|---|
-| [2026-04-20-futures-paradigm-phase1-data-infra.md](2026-04-20-futures-paradigm-phase1-data-infra.md) | Spec backing Phase 1 verification/runbook references. |
-| [2026-04-20-futures-paradigm-phase2-scoring.md](2026-04-20-futures-paradigm-phase2-scoring.md) | Spec backing Phase 2 scoring and verification references. |
-| [2026-04-20-futures-paradigm-phase3-decision-engine.md](2026-04-20-futures-paradigm-phase3-decision-engine.md) | Spec backing decision-engine config and verification references. |
-| [2026-04-20-futures-paradigm-phase4-execution.md](2026-04-20-futures-paradigm-phase4-execution.md) | Spec backing execution, kill-switch, weekly edge review, and verification references. |
-| [2026-04-20-futures-paradigm-phase1-implementation-plan.md](2026-04-20-futures-paradigm-phase1-implementation-plan.md) | Phase 1 implementation breakdown. |
-| [2026-04-20-futures-paradigm-phase2-implementation-plan.md](2026-04-20-futures-paradigm-phase2-implementation-plan.md) | Phase 2 implementation breakdown. |
-| [2026-04-20-futures-paradigm-phase3-implementation-plan.md](2026-04-20-futures-paradigm-phase3-implementation-plan.md) | Phase 3 implementation breakdown. |
-| [2026-04-20-futures-paradigm-phase4-implementation-plan.md](2026-04-20-futures-paradigm-phase4-implementation-plan.md) | Phase 4 implementation breakdown. |
-| [2026-04-20-futures-paradigm-phase5-implementation-plan.md](2026-04-20-futures-paradigm-phase5-implementation-plan.md) | Phase 5 implementation breakdown; cited by live-mode guard code. |
-| [2026-02-20-position-recovery-design.md](2026-02-20-position-recovery-design.md) | Position recovery and restart design. |
-| [2026-03-02-momentum-breakout-trend-mode-design.md](2026-03-02-momentum-breakout-trend-mode-design.md) | Stock momentum_breakout trend-mode design. |
-| [VR_Trading_Strategy_Design_Spec.md](VR_Trading_Strategy_Design_Spec.md) | VR composite stock strategy spec. |
+Historical plans that no longer drive current operator decisions live under
+[archive/](archive/). Keep them out of default agent context unless you need
+audit history for an older change.
 
 ## Archive
 
@@ -58,6 +47,9 @@ Completed implementation records live under [archive/](archive/). Recent moves:
 | [archive/2026-06-14-stock-strategy-experiment-backtest.md](archive/2026-06-14-stock-strategy-experiment-backtest.md) | Stock experiment runner/API/UI/scheduler implemented. |
 | [archive/2026-04-15-paper-trading-quality-recovery.md](archive/2026-04-15-paper-trading-quality-recovery.md) | Historical paper-quality investigation; RL/ClickHouse sections obsolete after 2026-06-03 removals. |
 | [archive/2026-04-20-futures-trading-change-paradagms.md](archive/2026-04-20-futures-trading-change-paradagms.md) | Original futures paradigm brief; superseded by Setup A/C + LLM-context roadmap and current rollout gates. |
+| [archive/2026-04-20-futures-paradigm-phase1-data-infra.md](archive/2026-04-20-futures-paradigm-phase1-data-infra.md) and phase 1-5 companion specs/plans | Historical futures paradigm implementation record; current futures direction is [../ROADMAP.md](../ROADMAP.md), Setup A/C, LLM context, and the F-9 runbook. |
+| [archive/2026-02-20-position-recovery-design.md](archive/2026-02-20-position-recovery-design.md), [archive/2026-03-02-momentum-breakout-trend-mode-design.md](archive/2026-03-02-momentum-breakout-trend-mode-design.md), [archive/VR_Trading_Strategy_Design_Spec.md](archive/VR_Trading_Strategy_Design_Spec.md) | Older stock/recovery/VR strategy designs retained for audit history, not active roadmap steering. |
+| [archive/2026-06-24-no-trade-diagnosis.md](archive/2026-06-24-no-trade-diagnosis.md) | Draft diagnostic plan superseded by later signal trace, gap research, and roadmap/status updates. |
 
 ### Historical / Archived — superseded 2026-06-20 (DO NOT REFERENCE for current work)
 

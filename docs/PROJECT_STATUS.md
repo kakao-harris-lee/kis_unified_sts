@@ -203,7 +203,7 @@ longer claims committed browser/screenshot evidence. Audit note:
 
 **2026-06-25** - Multi-agent code-quality cleanup completed.
 Implemented the high-priority cleanup plan in
-[superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/2026-06-25-code-quality-cleanup-multi-agent.md):
+[superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md](superpowers/plans/archive/2026-06-25-code-quality-cleanup-multi-agent.md):
 shared strategy entry gates, table-driven registry registration, centralized
 runtime defaults, centralized dashboard query intervals, Strategy Builder
 reducer/YAML serializer extraction, `/trades` page componentization, broker

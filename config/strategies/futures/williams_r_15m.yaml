@@ -1,6 +1,6 @@
 # Williams %R 선물 변형 (양방향) — RL_mppo deprecate (v4.10) 후속 지표 전략
 #
-# 설계: docs/superpowers/specs/2026-05-15-williams-r-futures-design.md
+# 설계: docs/superpowers/specs/archive/2026-05-15-williams-r-futures-design.md
 #
 # enabled: false — 백테스트(101S6000) + Optuna 검증 통과 전까지 비활성.
 # 활성화 절차: 백테스트 Sharpe 검증 → enabled: true 별도 PR.
