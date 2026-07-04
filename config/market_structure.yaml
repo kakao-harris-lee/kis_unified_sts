@@ -54,8 +54,11 @@ collector:
     # F001 = futures product. Snapshot after 15:45 KST = daily confirmed value.
     foreign_futures_market_code: "K2I"
     foreign_futures_product_code: "F001"
-    # FHPPG04600001 (프로그램매매 종합현황 일별): J = KRX.
+    # FHPPG04600001 (프로그램매매 종합현황 일별): J = KRX(주식).
     program_market_div: "J"
+    # FID_MRKT_CLS_CODE (required): K = 코스피, Q = 코스닥. Omitting it returns
+    # "ERROR INPUT FIELD NOT FOUND [FID_MRKT_CLS_CODE]" (roadmap O1 probe).
+    program_market_cls: "K"
     # FHMIF10000000 snapshot symbol for price/OI. 101S6000 is the KIS
     # auto-rolling KOSPI200 front-month short code.
     futures_symbol: "101S6000"

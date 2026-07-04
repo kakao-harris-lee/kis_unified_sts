@@ -504,14 +504,18 @@ class KISClient(AsyncSessionMixin):
         end_date: date | datetime | str,
         *,
         market_div: str = "J",
+        market_cls: str = "K",
         max_pages: int = 20,
     ) -> list[dict[str, Any]]:
         """프로그램매매 종합현황 일별 (FHPPG04600001) — raw output rows.
 
-        REAL-investment only. Supports a date range with tr_cont continuation;
-        the per-call row cap is still unconfirmed (roadmap O1 residual probe),
-        so backfill callers chunk requests by month and rely on the
-        continuation loop here as a second guard.
+        REAL-investment only. Supports a date range with tr_cont continuation.
+
+        Args:
+            market_div: FID_COND_MRKT_DIV_CODE — J(주식)/NX(NXT)/UN(통합).
+            market_cls: FID_MRKT_CLS_CODE — K(코스피)/Q(코스닥). REQUIRED by the
+                TR; omitting it returns "ERROR INPUT FIELD NOT FOUND
+                [FID_MRKT_CLS_CODE]" (roadmap O1 probe, 2026-07-02).
         """
         start_yyyymmdd = self._format_kis_date(start_date)
         end_yyyymmdd = self._format_kis_date(end_date)
@@ -524,6 +528,7 @@ class KISClient(AsyncSessionMixin):
                 _PROGRAM_TRADE_DAILY_TR_ID,
                 {
                     "FID_COND_MRKT_DIV_CODE": market_div,
+                    "FID_MRKT_CLS_CODE": market_cls,
                     "FID_INPUT_DATE_1": start_yyyymmdd,
                     "FID_INPUT_DATE_2": end_yyyymmdd,
                 },

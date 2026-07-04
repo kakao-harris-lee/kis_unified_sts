@@ -58,8 +58,10 @@ class FakeKISClient:
             raise RuntimeError("boom")
         return [{"frgn_ntby_qty": "-1,250", "frgn_ntby_tr_pbmn": "-31500"}]
 
-    async def fetch_program_trade_daily(self, start, end, *, market_div="J"):
-        self.calls.append(("program", start, end, market_div))
+    async def fetch_program_trade_daily(
+        self, start, end, *, market_div="J", market_cls="K"
+    ):
+        self.calls.append(("program", start, end, market_div, market_cls))
         if "program" in self.fail:
             raise RuntimeError("boom")
         return [

@@ -114,6 +114,7 @@ async def test_fetch_program_trade_daily_single_page(client):
     assert "tr_cont" not in call[1]["headers"]
     assert call[1]["params"] == {
         "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_MRKT_CLS_CODE": "K",
         "FID_INPUT_DATE_1": "20260701",
         "FID_INPUT_DATE_2": "20260702",
     }

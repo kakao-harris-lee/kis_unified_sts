@@ -35,7 +35,9 @@ class _Calendar:
 
 
 class FakeKISClient:
-    async def fetch_program_trade_daily(self, start, end, *, market_div="J"):
+    async def fetch_program_trade_daily(
+        self, start, end, *, market_div="J", market_cls="K"
+    ):
         rows = []
         for day in TRADING_DAYS:
             if start <= day <= end:
@@ -247,7 +249,9 @@ class TestFxOvernightAlignment:
 class TestRecomputeDerived:
     def test_gap_report_lists_uncovered_trading_days(self, store, config):
         class _OnlyProgramKIS(FakeKISClient):
-            async def fetch_program_trade_daily(self, start, end, *, market_div="J"):
+            async def fetch_program_trade_daily(
+                self, start, end, *, market_div="J", market_cls="K"
+            ):
                 return [
                     {
                         "stck_bsop_date": "20260629",
