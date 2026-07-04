@@ -103,8 +103,16 @@ class IndicatorCalculationMixin:
 
         On day change, pushes the previous day's last close to the deque.
         Always updates the current intraday last close.
+
+        Uses its own ``_current_close_date`` sentinel rather than the shared
+        ``_current_date`` that ``_update_daily_high`` owns and advances first:
+        sharing it made this method's day-change branch unreachable, so daily
+        closes never accumulated and ``_calc_daily_ema_aligned`` was stuck
+        ``False`` on the live streaming path. The independent sentinel makes
+        close tracking order-independent (mirrors the backtest adapter's
+        per-tracker date).
         """
-        prev_date = self._current_date.get(symbol)
+        prev_date = self._current_close_date.get(symbol)
 
         if prev_date and prev_date != date_str:
             # Day changed — push previous day's close
@@ -114,8 +122,9 @@ class IndicatorCalculationMixin:
                     self._daily_closes[symbol] = deque(maxlen=60)
                 self._daily_closes[symbol].append(prev_close)
 
-        # Always update current intraday close (last seen)
+        # Always update current intraday close (last seen) and advance sentinel
         self._intraday_last_close[symbol] = close
+        self._current_close_date[symbol] = date_str
 
     def _calc_daily_ema_aligned(self, symbol: str) -> bool:
         """Check if daily EMA(5) > EMA(10) > EMA(20) — multi-day uptrend.
