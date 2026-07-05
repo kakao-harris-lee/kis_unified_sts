@@ -157,6 +157,19 @@ def _trix(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndar
     return {"value": value, "signal": signal}
 
 
+def _stochrsi(
+    mod: Any, w: OHLCVWindow, p: Mapping[str, float]
+) -> dict[str, np.ndarray]:
+    fastk, fastd = mod.STOCHRSI(
+        w.close,
+        timeperiod=_int(p, "period", 14),
+        fastk_period=_int(p, "k", 5),
+        fastd_period=_int(p, "d", 3),
+        fastd_matype=0,
+    )
+    return {"k": fastk, "d": fastd}
+
+
 @dataclass(frozen=True)
 class _TalibIndicator:
     """How to compute one indicator via TA-Lib."""
@@ -182,6 +195,7 @@ _TABLE: dict[str, _TalibIndicator] = {
     "bollinger": _TalibIndicator(_bollinger, ("upper", "middle", "lower")),
     "macd": _TalibIndicator(_macd, ("value", "signal", "histogram")),
     "stochastic": _TalibIndicator(_stochastic, ("k", "d")),
+    "stochrsi": _TalibIndicator(_stochrsi, ("k", "d")),
     "trix": _TalibIndicator(_trix, ("value", "signal")),
 }
 

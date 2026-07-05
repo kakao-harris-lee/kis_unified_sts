@@ -171,6 +171,39 @@ strategy_builder:
       backtest_supported: true
       runtime_supported: true
 
+    - id: stochrsi
+      name: Stochastic RSI
+      name_ko: 스토캐스틱 RSI
+      category: oscillator
+      description: >-
+        Stochastic oscillator applied to RSI (range 0..100). Computed by the
+        TA-Lib engine (STOCHRSI). Emitted as flat keys stochrsi_k / stochrsi_d.
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+        - name: k
+          type: number
+          default: 5
+          min: 1
+          max: 100
+        - name: d
+          type: number
+          default: 3
+          min: 1
+          max: 100
+      outputs:
+        - id: k
+          name: Percent K
+        - id: d
+          name: Percent D
+      default_output: k
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
     - id: atr
       name: ATR
       name_ko: ATR
