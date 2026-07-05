@@ -15,7 +15,11 @@ Example:
 
 from __future__ import annotations
 
-from shared.indicators.engine.adapters import OHLCVBar, window_from_bars
+from shared.indicators.engine.adapters import (
+    OHLCVBar,
+    window_from_bars,
+    window_from_records,
+)
 from shared.indicators.engine.base import (
     IndicatorBackend,
     IndicatorComputationError,
@@ -57,4 +61,5 @@ __all__ = [
     "default_engine",
     "flat_key",
     "window_from_bars",
+    "window_from_records",
 ]

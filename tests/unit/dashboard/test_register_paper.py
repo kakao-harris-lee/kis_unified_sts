@@ -319,11 +319,11 @@ def test_toggle_missing_strategy_returns_404(client) -> None:
     assert resp.status_code == 404
 
 
-def test_enable_refused_for_cross_strategy(client) -> None:
-    """A cross-based (golden_cross) builder strategy must not be enableable.
+def test_enable_allowed_for_cross_strategy(client) -> None:
+    """A cross-based (golden_cross) builder strategy is now enableable.
 
-    cross_above/cross_below can never fire in the streaming runtime, so the
-    enable endpoint refuses with 400 and the file stays disabled.
+    Cross detection works via the full-series Indicator Context, so the enable
+    endpoint accepts it and the file is marked enabled on disk.
     """
     tc, built_dir = client
     tc.post(
@@ -333,11 +333,9 @@ def test_enable_refused_for_cross_strategy(client) -> None:
     resp = tc.post(
         "/api/kis-builder/registered/golden_cross/enable", json={"enabled": True}
     )
-    assert resp.status_code == 400, resp.text
-    assert "cross" in resp.json()["detail"].lower()
-    # File must remain disabled on disk (no partial write).
+    assert resp.status_code == 200, resp.text
     doc = yaml.safe_load((built_dir / "golden_cross.yaml").read_text(encoding="utf-8"))
-    assert doc["strategy"]["enabled"] is False
+    assert doc["strategy"]["enabled"] is True
 
 
 def test_disable_allowed_for_cross_strategy(client) -> None:
