@@ -72,6 +72,10 @@ def flat_key(
         period = int((params or {}).get("period", 0) or 0)
         if period > 0:
             return f"{indicator_id}_{period}"
+    # Multi-output indicators without an explicit override (e.g. ichimoku's
+    # span_a/cloud_top) must not all collapse to the bare id — suffix the output.
+    if output and output != "value":
+        return f"{indicator_id}_{output}"
     return indicator_id
 
 

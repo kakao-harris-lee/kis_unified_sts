@@ -5,6 +5,7 @@ Pure NumPy — runs without TA-Lib. Expected values are hand-computed.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from shared.indicators.engine.numpy_backend import NumpyBackend
@@ -18,7 +19,44 @@ def backend() -> NumpyBackend:
 
 
 def test_supported_ids(backend: NumpyBackend) -> None:
-    assert backend.supported_ids() == {"vwap", "rvol"}
+    assert backend.supported_ids() == {
+        "vwap",
+        "rvol",
+        "volume_acceleration",
+        "ichimoku",
+    }
+
+
+def test_volume_acceleration_second_difference(backend: NumpyBackend) -> None:
+    # volume = [1, 2, 4, 7] -> 2nd diff at last = 7 - 2*4 + 2 = 1.
+    window = OHLCVWindow.from_sequences(
+        open=[1, 1, 1, 1],
+        high=[1, 1, 1, 1],
+        low=[1, 1, 1, 1],
+        close=[1, 1, 1, 1],
+        volume=[1, 2, 4, 7],
+    )
+    flat = backend.compute(
+        IndicatorSpec.create("volume_acceleration"), window
+    ).flat_latest()
+    assert flat["volume_acceleration"] == pytest.approx(1.0)
+
+
+def test_ichimoku_multi_output_and_cloud_bounds(backend: NumpyBackend) -> None:
+    rng = np.random.default_rng(3)
+    n = 80
+    close = 100.0 + np.cumsum(rng.normal(0, 1, n))
+    window = OHLCVWindow.from_sequences(
+        open=close,
+        high=close + rng.uniform(0, 1, n),
+        low=close - rng.uniform(0, 1, n),
+        close=close,
+        volume=np.full(n, 1000.0),
+    )
+    result = backend.compute(IndicatorSpec.create("ichimoku"), window)
+    assert set(result.series) == {"span_a", "span_b", "cloud_top", "cloud_bottom"}
+    flat = result.flat_latest()
+    assert flat["ichimoku_cloud_top"] >= flat["ichimoku_cloud_bottom"]
 
 
 def test_vwap_cumulative(backend: NumpyBackend) -> None:
