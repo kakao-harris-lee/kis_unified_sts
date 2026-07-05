@@ -22,6 +22,11 @@ from shared.indicators.engine.base import (
     IndicatorResult,
     UnsupportedIndicatorError,
 )
+from shared.indicators.engine.cache import (
+    IndicatorCacheEngine,
+    InMemoryPanelStore,
+    PanelStore,
+)
 from shared.indicators.engine.registry import IndicatorEngine, default_engine
 from shared.indicators.engine.spec import (
     IndicatorSpec,
@@ -32,12 +37,15 @@ from shared.indicators.engine.talib_backend import TALibBackend
 
 __all__ = [
     "IndicatorBackend",
+    "IndicatorCacheEngine",
     "IndicatorComputationError",
     "IndicatorEngine",
     "IndicatorError",
     "IndicatorResult",
     "IndicatorSpec",
+    "InMemoryPanelStore",
     "OHLCVWindow",
+    "PanelStore",
     "TALibBackend",
     "UnsupportedIndicatorError",
     "default_engine",
