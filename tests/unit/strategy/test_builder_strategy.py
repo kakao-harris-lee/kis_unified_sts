@@ -18,6 +18,19 @@ from shared.strategy.exit.builder_strategy_exit import (
 )
 
 
+def _ohlcv(closes: list[float]) -> list[dict[str, float]]:
+    """OHLCV candle rows in the shape the resolver puts under indicators['ohlcv']."""
+    return [
+        {"open": c, "high": c + 1.0, "low": c - 1.0, "close": c, "volume": 1000.0}
+        for c in closes
+    ]
+
+
+# Monotonic rise -> RSI ~100 (>30, >70); monotonic fall -> RSI ~0 (<30, <70).
+_UPTREND = _ohlcv([100.0 + i for i in range(40)])
+_DOWNTREND = _ohlcv([100.0 - i for i in range(40)])
+
+
 def _make_state(asset_class: str = "stock") -> dict:
     """Minimal BuilderState dict that the evaluator can parse.
 
@@ -82,8 +95,8 @@ def _make_state(asset_class: str = "stock") -> dict:
 def _cross_state(asset_class: str = "stock") -> dict:
     """golden_cross-shaped state: sma_fast cross_above/cross_below sma_slow.
 
-    Structurally dead in the streaming runtime (no cross-cycle history); used
-    to assert the runtime adapters warn instead of silently no-opping.
+    Now fully supported: the declarative Indicator Context computes both SMAs
+    over the OHLCV history so cross detection has a real previous value.
     """
     return {
         "metadata": {
@@ -160,7 +173,7 @@ def _cross_state(asset_class: str = "stock") -> dict:
 def test_entry_registers_and_initializes() -> None:
     entry = BuilderStrategyEntry(BuilderStrategyConfig(builder_state=_make_state()))
     assert entry.name == "builder_v1::test_strategy"
-    assert entry.required_indicators == []
+    assert entry.required_indicators == ["ohlcv"]
 
 
 @pytest.mark.asyncio
@@ -168,7 +181,7 @@ async def test_entry_emits_signal_when_conditions_pass() -> None:
     entry = BuilderStrategyEntry(BuilderStrategyConfig(builder_state=_make_state()))
     ctx = EntryContext(
         market_data={"code": "005930", "name": "삼성전자", "close": 70000.0},
-        indicators={"rsi.value": 45.0},
+        indicators={"ohlcv": _UPTREND},  # rising closes -> RSI > 30
         timestamp=datetime.now(UTC),
     )
     signal = await entry.generate(ctx)
@@ -184,7 +197,7 @@ async def test_entry_no_signal_when_conditions_fail() -> None:
     entry = BuilderStrategyEntry(BuilderStrategyConfig(builder_state=_make_state()))
     ctx = EntryContext(
         market_data={"code": "005930", "name": "삼성전자", "close": 70000.0},
-        indicators={"rsi.value": 20.0},  # below threshold 30
+        indicators={"ohlcv": _DOWNTREND},  # falling closes -> RSI < 30
         timestamp=datetime.now(UTC),
     )
     assert await entry.generate(ctx) is None
@@ -208,7 +221,7 @@ async def test_entry_emits_long_signal_for_futures() -> None:
     )
     ctx = EntryContext(
         market_data={"code": "101S6000", "close": 1000.0},
-        indicators={"rsi.value": 50.0},  # rsi > 30 → entry condition passes
+        indicators={"ohlcv": _UPTREND},  # RSI > 30 → entry condition passes
         timestamp=datetime.now(UTC),
     )
     signal = await entry.generate(ctx)
@@ -285,7 +298,7 @@ async def test_exit_conditions_fire_strategy_exit() -> None:
     ctx = ExitContext(
         position=_Pos("005930", entry_price=10000.0),
         market_data={"close": 10500.0},  # +5% (neither SL nor TP)
-        indicators={"rsi.value": 75.0},  # exit condition (rsi > 70)
+        indicators={"ohlcv": _UPTREND},  # rising closes -> RSI > 70 exit fires
         timestamp=datetime.now(UTC),
     )
     triggered, signal = await exit_strat.should_exit(ctx)
@@ -306,7 +319,7 @@ async def test_exit_holds_when_conditions_not_met() -> None:
     ctx = ExitContext(
         position=_Pos("005930", entry_price=10000.0),
         market_data={"close": 10200.0},  # +2% — neither SL/TP nor rsi>70
-        indicators={"rsi.value": 50.0},
+        indicators={"ohlcv": _DOWNTREND},  # RSI < 70 -> exit condition holds
         timestamp=datetime.now(UTC),
     )
     triggered, signal = await exit_strat.should_exit(ctx)
@@ -415,16 +428,12 @@ def test_registry_exposes_builder_v1() -> None:
     assert ExitRegistry.is_registered("builder_v1_exit")
 
 
-def test_factory_skips_cross_operator_builder_strategy(caplog) -> None:
-    """StrategyFactory.create must raise ConfigurationError for cross-operator
-    builder_v1 strategies so create_all excludes them from the streaming roster.
+def test_factory_creates_cross_operator_builder_strategy() -> None:
+    """Cross-operator builder_v1 strategies are now created, not skipped.
 
-    This prevents golden_cross (and any future cross-operator preset) from
-    appearing as an always-inert entry in the stock daemon's active strategy list.
+    Cross detection works via the full-series Indicator Context, so golden_cross
+    is a valid active strategy rather than a streaming-incompatible one.
     """
-    import logging
-
-    from shared.exceptions import ConfigurationError
     from shared.strategy.registry import StrategyFactory, register_builtin_components
 
     register_builtin_components()
@@ -446,20 +455,15 @@ def test_factory_skips_cross_operator_builder_strategy(caplog) -> None:
         }
     }
 
-    with caplog.at_level(logging.WARNING):
-        with pytest.raises(ConfigurationError, match="streaming-incompatible"):
-            StrategyFactory.create(cross_config)
+    strategy = StrategyFactory.create(cross_config)
+    assert strategy is not None
 
 
-def test_factory_create_all_excludes_cross_operator_builder_strategy(
+def test_factory_create_all_includes_cross_operator_builder_strategy(
     tmp_path, monkeypatch
 ) -> None:
-    """When create_all loads builder_v1 strategies with cross operators from the
-    built/ directory, they are silently excluded from the returned roster.
-
-    The 3 working stock strategies (threshold-based, not cross-based) must not
-    be affected.
-    """
+    """create_all now includes cross-operator builder_v1 strategies in the roster
+    (they fire via the full-series Indicator Context)."""
     import yaml
 
     from shared.config.loader import ConfigLoader
@@ -496,9 +500,9 @@ def test_factory_create_all_excludes_cross_operator_builder_strategy(
 
     strategies = StrategyFactory.create_all(asset_class="stock", enabled_only=True)
     names = [s.name for s in strategies]
-    assert "golden_cross" not in names, (
-        "cross-operator builder_v1 strategy must be excluded from the streaming roster"
-    )
+    assert (
+        "golden_cross" in names
+    ), "cross-operator builder_v1 strategy must now be part of the roster"
 
     ConfigLoader.clear_cache()
 
@@ -643,63 +647,30 @@ async def test_futures_exit_take_profit_not_preempted_by_safety() -> None:
 # --- Streaming cross-operator retirement (golden_cross is structurally dead) --
 
 
-def test_entry_warns_on_streaming_unsupported_cross(caplog) -> None:
-    """A cross-based builder entry (golden_cross) must log a loud error.
-
-    It can never fire in the streaming runtime; warn rather than silently
-    no-op. Parsing must still succeed so the operator can see the strategy.
-    """
-    import logging
-
-    with caplog.at_level(logging.ERROR):
-        entry = BuilderStrategyEntry(
-            BuilderStrategyConfig(builder_state=_cross_state())
-        )
-    assert entry._state is not None  # parsing succeeds
-    assert any(
-        "will NEVER fire" in rec.message and "golden_cross" in rec.message
-        for rec in caplog.records
-    )
-
-
-def test_entry_no_warn_for_supported_threshold_strategy(caplog) -> None:
-    """A threshold strategy (rsi > 30) must NOT trigger the never-fire warning."""
+def test_entry_no_error_log_for_threshold_strategy(caplog) -> None:
+    """A threshold strategy (rsi > 30) initializes without an error log."""
     import logging
 
     with caplog.at_level(logging.ERROR):
         BuilderStrategyEntry(BuilderStrategyConfig(builder_state=_make_state()))
-    assert not any("will NEVER fire" in rec.message for rec in caplog.records)
+    assert not any(rec.levelno >= logging.ERROR for rec in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_entry_cross_strategy_produces_no_signal() -> None:
-    """Even with both SMA scalars present, a cross entry yields no signal.
+async def test_entry_cross_strategy_fires_on_crossover() -> None:
+    """A cross entry now fires: the full-series Indicator Context gives cross
+    detection a genuine previous value.
 
-    The streaming context only carries a single scalar per indicator per cycle,
-    so the [x, x] series makes cross_above undetectable — confirming the
-    strategy is genuinely dead (the reason it is retired).
+    A downtrend keeps SMA-fast below SMA-slow; the final spike flips fast above
+    slow on the last bar -> cross_above.
     """
     entry = BuilderStrategyEntry(BuilderStrategyConfig(builder_state=_cross_state()))
+    closes = [100.0 - 2 * i for i in range(24)] + [400.0]
     ctx = EntryContext(
         market_data={"code": "005930", "name": "삼성전자", "close": 70000.0},
-        # fast already above slow — a threshold strategy would fire, a cross
-        # strategy must NOT (no transition is observable from a single tick).
-        indicators={"sma_fast.value": 100.0, "sma_slow.value": 90.0},
+        indicators={"ohlcv": _ohlcv(closes)},
         timestamp=datetime.now(UTC),
     )
-    assert await entry.generate(ctx) is None
-
-
-def test_exit_warns_on_streaming_unsupported_cross(caplog) -> None:
-    """A cross-based builder exit condition must log a warning (SL/TP still work)."""
-    import logging
-
-    with caplog.at_level(logging.WARNING):
-        exit_strat = BuilderStrategyExit(
-            BuilderStrategyExitConfig(builder_state=_cross_state())
-        )
-    assert exit_strat._state is not None
-    assert any(
-        "will NEVER fire" in rec.message and "golden_cross" in rec.message
-        for rec in caplog.records
-    )
+    signal = await entry.generate(ctx)
+    assert signal is not None
+    assert signal.metadata["signal_direction"] == "long"

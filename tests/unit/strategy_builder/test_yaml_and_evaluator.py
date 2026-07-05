@@ -21,8 +21,12 @@ def _golden_cross_state() -> BuilderState:
     return BuilderState(
         metadata=BuilderMetadata(id="golden_cross_test", name="Golden Cross Test"),
         indicators=[
-            BuilderIndicator(indicator_id="sma", alias="sma_fast", params={"period": 5}),
-            BuilderIndicator(indicator_id="sma", alias="sma_slow", params={"period": 20}),
+            BuilderIndicator(
+                indicator_id="sma", alias="sma_fast", params={"period": 5}
+            ),
+            BuilderIndicator(
+                indicator_id="sma", alias="sma_slow", params={"period": 20}
+            ),
         ],
         entry=BuilderConditionGroup(
             logic=ConditionLogic.AND,

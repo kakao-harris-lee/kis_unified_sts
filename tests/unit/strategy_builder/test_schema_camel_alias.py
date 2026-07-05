@@ -1,5 +1,6 @@
 """BuilderState must accept the frontend's camelCase payload (and still
 accept snake_case), while dumping snake_case for the runtime/YAML."""
+
 from __future__ import annotations
 
 from shared.strategy_builder.schema import BuilderState

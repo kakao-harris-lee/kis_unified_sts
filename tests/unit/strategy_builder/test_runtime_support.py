@@ -1,9 +1,9 @@
-"""Tests for builder_v1 streaming-runtime support detection.
+"""Tests for builder_v1 runtime-support detection.
 
-Guards the retirement of cross-based builder strategies (e.g. golden_cross)
-from the decoupled streaming runtime: cross_above/cross_below need cross-cycle
-history the streaming engine does not provide, so they can never fire and must
-be detected up front rather than masquerading as active-but-silent.
+Since the declarative Indicator Context feeds the evaluator the full indicator
+series, cross_above/cross_below now work in every runtime that runs builder_v1.
+The unsupported-operator set is therefore empty and every state reports as
+supported; these tests pin that (and that the extensible scan still works).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from shared.strategy_builder.runtime_support import (
     streaming_support_reason,
     unsupported_streaming_operators,
 )
-from shared.strategy_builder.schema import BuilderState, ConditionOperator
+from shared.strategy_builder.schema import BuilderState
 
 
 def _state(
@@ -95,38 +95,20 @@ def _state(
     )
 
 
-def test_cross_operators_are_the_unsupported_set() -> None:
-    assert set(STREAMING_UNSUPPORTED_OPERATORS) == {
-        ConditionOperator.CROSS_ABOVE,
-        ConditionOperator.CROSS_BELOW,
-    }
+def test_unsupported_operator_set_is_empty() -> None:
+    assert set(STREAMING_UNSUPPORTED_OPERATORS) == set()
 
 
-def test_golden_cross_entry_is_unsupported() -> None:
-    # golden_cross: entry cross_above, exit cross_below.
+def test_golden_cross_is_now_supported() -> None:
+    # golden_cross (entry cross_above, exit cross_below) fires via the
+    # full-series Indicator Context — no longer flagged as unsupported.
     state = _state(entry_op="cross_above", exit_op="cross_below")
-    ops = unsupported_streaming_operators(state)
-    assert ops == [ConditionOperator.CROSS_ABOVE, ConditionOperator.CROSS_BELOW]
-    assert is_streaming_supported(state) is False
-    reason = streaming_support_reason(state)
-    assert reason is not None
-    assert "cross_above" in reason and "cross_below" in reason
+    assert unsupported_streaming_operators(state) == []
+    assert is_streaming_supported(state) is True
+    assert streaming_support_reason(state) is None
 
 
-def test_cross_above_only_in_entry_is_unsupported() -> None:
-    state = _state(entry_op="cross_above", exit_op="greater_than")
-    assert unsupported_streaming_operators(state) == [ConditionOperator.CROSS_ABOVE]
-    assert is_streaming_supported(state) is False
-
-
-def test_cross_below_only_in_exit_is_unsupported() -> None:
-    state = _state(entry_op="greater_than", exit_op="cross_below")
-    assert unsupported_streaming_operators(state) == [ConditionOperator.CROSS_BELOW]
-    assert is_streaming_supported(state) is False
-
-
-def test_non_cross_strategy_is_supported() -> None:
-    # Threshold comparisons (rsi > 30 style) work fine on scalar-per-cycle data.
+def test_threshold_strategy_is_supported() -> None:
     state = _state(entry_op="greater_than", exit_op="less_than")
     assert unsupported_streaming_operators(state) == []
     assert is_streaming_supported(state) is True

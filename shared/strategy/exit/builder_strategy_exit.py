@@ -19,12 +19,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from shared.config.mixins import ConfigMixin
+from shared.indicators.engine import default_engine, window_from_records
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_time import to_kst
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
 from shared.strategy_builder.futures_safety import FuturesSafety, load_futures_safety
-from shared.strategy_builder.runtime_support import streaming_support_reason
+from shared.strategy_builder.indicator_context import build_indicator_context
 from shared.strategy_builder.schema import BuilderState, SymbolSeries
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
     def __init__(self, config: BuilderStrategyExitConfig):
         super().__init__(config)
         self._evaluator = StrategyBuilderEvaluator()
+        self._engine = default_engine()
         self._state: BuilderState | None = None
         # Per-position peak price since entry, for the trailing stop. Keyed by
         # position id (falls back to code). Persists across cycles because the
@@ -84,18 +86,6 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
             logger.error("builder_v1_exit failed to parse builder_state: %s", exc)
             self._state = None
             return
-        # SL/TP/trailing still work, but condition-based exits using
-        # cross_above/cross_below can never fire in the streaming runtime (no
-        # cross-cycle history). Warn so an operator relying on a cross exit
-        # condition is not silently left with SL/TP only.
-        reason = streaming_support_reason(self._state)
-        if reason is not None:
-            logger.warning(
-                "builder_v1_exit %s cross conditions will NEVER fire in the "
-                "streaming runtime (SL/TP/trailing still apply): %s",
-                self._state.metadata.id,
-                reason,
-            )
 
     @property
     def name(self) -> str:
@@ -218,7 +208,6 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         series = self._build_series(
             position.code,
             getattr(position, "name", "") or "",
-            market_data,
             context.indicators or {},
         )
         evaluation = self._evaluator.evaluate_group(
@@ -296,41 +285,20 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         self,
         code: str,
         name: str,
-        data: dict[str, Any],
         indicators: dict[str, Any],
     ) -> SymbolSeries:
-        # Same helper as entry; duplicated locally to keep the two classes
-        # independently importable.
-        def _dup(x: float | None) -> list[float]:
-            if x is None:
-                return []
-            return [float(x), float(x)]
+        """Compute the declarative Indicator Context over the OHLCV history.
 
-        fields: dict[str, list[float]] = {}
-        for key in ("close", "open", "high", "low", "volume"):
-            value = data.get(key)
-            if value is not None:
-                fields[key] = _dup(value)
-
-        series_indicators: dict[str, list[float]] = {}
-        if self._state is not None:
-            for ind in self._state.indicators:
-                key_alias = ind.alias
-                key_full = f"{ind.alias}.{ind.output}"
-                value = indicators.get(key_full)
-                if value is None:
-                    value = indicators.get(key_alias)
-                if isinstance(value, (int, float)):
-                    series_indicators[key_full] = _dup(value)
-                elif isinstance(value, dict):
-                    out_value = value.get(ind.output)
-                    if isinstance(out_value, (int, float)):
-                        series_indicators[key_full] = _dup(out_value)
-
-        return SymbolSeries(
-            symbol=code,
-            name=name or None,
-            timestamps=[],
-            fields=fields,
-            indicators=series_indicators,
-        )
+        The paired builder_v1 entry declares ``required_indicators == ["ohlcv"]``,
+        so the resolver's exit payload carries ``indicators["ohlcv"]``. All
+        indicator math is delegated to the TA-Lib engine; absent history yields
+        an empty series (condition exits fail safe — SL/TP/trailing still apply).
+        """
+        if self._state is None:
+            return SymbolSeries(symbol=code, name=name or None)
+        rows = indicators.get("ohlcv")
+        if not isinstance(rows, list) or not rows:
+            return SymbolSeries(symbol=code, name=name or None)
+        window = window_from_records(rows)
+        context = build_indicator_context(self._state, window, self._engine)
+        return context.to_symbol_series(code, name or None)

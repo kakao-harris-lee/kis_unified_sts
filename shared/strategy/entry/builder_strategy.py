@@ -19,19 +19,16 @@ The YAML shape this class consumes:
           builder_state: { ... full BuilderState JSON ... }
           cooldown_seconds: 0
 
-History feed: STS provides per-tick scalar indicators; the evaluator only
-needs the latest two values (current + previous for crossover detection).
-We build a 2-element ``SymbolSeries`` from the runtime context — enough
-for ``current_left / current_right`` and ``previous_left / previous_right``
-in evaluate_condition.
-
-Indicator name mapping: builder operands reference ``alias.output``
-(default ``alias.value``). The runtime expects the orchestrator's
-``context.indicators`` dict to contain the alias under that same key.
-Builder users set the alias to whatever the runtime emits — typically the
-indicator id itself (e.g. alias=``rsi``, output=``value`` → series.indicators[``rsi.value``]).
-Missing aliases surface as the evaluator's ``missing`` list, which makes
-the condition group fail safely (no signal).
+Declarative computation: this adapter does no indicator math. It declares
+``required_indicators == ["ohlcv"]`` so the resolver supplies the recent
+OHLCV candle window under ``context.indicators["ohlcv"]``, then delegates to
+``build_indicator_context`` (``shared/strategy_builder/indicator_context.py``),
+which computes every ``BuilderState.indicators`` entry through the TA-Lib
+engine into a DataFrame of ``alias.output`` columns. Because the context
+carries the full series, cross_above/cross_below work. Missing history or an
+unsupported indicator surfaces as the evaluator's ``missing`` list, so the
+condition group fails safely (no signal). Adding a new indicator is a registry
+change only — this adapter and the evaluator never change.
 """
 
 from __future__ import annotations
@@ -42,10 +39,11 @@ from datetime import datetime
 from typing import Any
 
 from shared.config.mixins import ConfigMixin
+from shared.indicators.engine import default_engine, window_from_records
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
-from shared.strategy_builder.runtime_support import streaming_support_reason
+from shared.strategy_builder.indicator_context import build_indicator_context
 from shared.strategy_builder.schema import BuilderState, SymbolSeries
 
 logger = logging.getLogger(__name__)
@@ -71,6 +69,7 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
     def __init__(self, config: BuilderStrategyConfig):
         super().__init__(config)
         self._evaluator = StrategyBuilderEvaluator()
+        self._engine = default_engine()
         self._state: BuilderState | None = None
         self._last_signal_at: dict[str, datetime] = {}
         self._parse_state()
@@ -90,18 +89,6 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
             logger.error("builder_v1 entry failed to parse builder_state: %s", exc)
             self._state = None
             return
-        # Surface structurally-dead strategies instead of silently no-opping.
-        # The streaming runtime cannot detect cross_above/cross_below (no
-        # cross-cycle history series, no arbitrary-period SMA), so such a
-        # strategy never fires. Log loudly so a manually-enabled YAML is obvious
-        # in the logs rather than masquerading as active-but-silent.
-        reason = streaming_support_reason(self._state)
-        if reason is not None:
-            logger.error(
-                "builder_v1 entry %s will NEVER fire in the streaming runtime: %s",
-                self._state.metadata.id,
-                reason,
-            )
 
     @property
     def name(self) -> str:
@@ -111,11 +98,10 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
 
     @property
     def required_indicators(self) -> list[str]:
-        # Builder operands reference indicator aliases at runtime; we don't
-        # ask the resolver to materialize anything specific. The orchestrator
-        # passes whatever was already computed, and missing aliases just
-        # make the condition group fail safely.
-        return []
+        # Declarative builder computes its OWN indicator context from OHLCV
+        # history via the TA-Lib engine, so it only needs the raw candle window.
+        # Declaring "ohlcv" makes the resolver populate context.indicators["ohlcv"].
+        return ["ohlcv"]
 
     async def generate(self, context: EntryContext) -> Signal | None:
         if self._state is None:
@@ -133,7 +119,7 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
             if last and (now - last).total_seconds() < self.config.cooldown_seconds:
                 return None
 
-        series = self._build_series(code, name, data, context.indicators or {})
+        series = self._build_series(code, name, context.indicators or {})
         evaluation = self._evaluator.evaluate_group(
             self._state.entry.conditions,
             self._state.entry.logic,
@@ -180,52 +166,22 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
         self,
         code: str,
         name: str,
-        data: dict[str, Any],
         indicators: dict[str, Any],
     ) -> SymbolSeries:
-        """Materialize a 2-tick SymbolSeries from per-tick context.
+        """Compute the declarative Indicator Context over the OHLCV history.
 
-        evaluate_condition only reads ``_latest`` and ``_previous``, so 2
-        observations are enough. We duplicate the current scalar into
-        previous when no history is available — the cross-over branch then
-        cannot fire on the first tick (correct: a fresh strategy has no
-        crossover to detect yet).
+        The resolver supplies ``indicators["ohlcv"]`` (completed candles) because
+        this strategy declares ``required_indicators == ["ohlcv"]``. Every
+        indicator value is computed by the TA-Lib engine from that window — the
+        builder itself does no indicator math. Full series means cross operators
+        have a genuine previous value. Absent history yields an empty series, so
+        the evaluator reports every operand as ``missing`` and fails safe.
         """
-
-        def _dup(x: float | None) -> list[float]:
-            if x is None:
-                return []
-            return [float(x), float(x)]
-
-        fields: dict[str, list[float]] = {}
-        for key in ("close", "open", "high", "low", "volume"):
-            value = data.get(key)
-            if value is not None:
-                fields[key] = _dup(value)
-
-        # Resolve every builder alias against the runtime indicators dict.
-        # Builder operand key = "alias.output"; runtime indicators expose
-        # values either keyed by full "alias.output" or by raw alias.
-        series_indicators: dict[str, list[float]] = {}
-        if self._state is not None:
-            for ind in self._state.indicators:
-                key_alias = ind.alias
-                key_full = f"{ind.alias}.{ind.output}"
-                value = indicators.get(key_full)
-                if value is None:
-                    value = indicators.get(key_alias)
-                if isinstance(value, (int, float)):
-                    series_indicators[key_full] = _dup(value)
-                elif isinstance(value, dict):
-                    # Some indicators (bb) expose multi-output dicts.
-                    out_value = value.get(ind.output)
-                    if isinstance(out_value, (int, float)):
-                        series_indicators[key_full] = _dup(out_value)
-
-        return SymbolSeries(
-            symbol=code,
-            name=name or None,
-            timestamps=[],
-            fields=fields,
-            indicators=series_indicators,
-        )
+        if self._state is None:
+            return SymbolSeries(symbol=code, name=name or None)
+        rows = indicators.get("ohlcv")
+        if not isinstance(rows, list) or not rows:
+            return SymbolSeries(symbol=code, name=name or None)
+        window = window_from_records(rows)
+        context = build_indicator_context(self._state, window, self._engine)
+        return context.to_symbol_series(code, name or None)
