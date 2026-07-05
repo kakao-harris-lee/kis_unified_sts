@@ -15,6 +15,7 @@ Example:
 
 from __future__ import annotations
 
+from shared.indicators.engine.adapters import OHLCVBar, window_from_bars
 from shared.indicators.engine.base import (
     IndicatorBackend,
     IndicatorComputationError,
@@ -29,6 +30,7 @@ from shared.indicators.engine.cache import (
 )
 from shared.indicators.engine.numpy_backend import NumpyBackend
 from shared.indicators.engine.registry import IndicatorEngine, default_engine
+from shared.indicators.engine.shadow import ShadowDelta
 from shared.indicators.engine.spec import (
     IndicatorSpec,
     OHLCVWindow,
@@ -46,10 +48,13 @@ __all__ = [
     "IndicatorSpec",
     "InMemoryPanelStore",
     "NumpyBackend",
+    "OHLCVBar",
     "OHLCVWindow",
     "PanelStore",
+    "ShadowDelta",
     "TALibBackend",
     "UnsupportedIndicatorError",
     "default_engine",
     "flat_key",
+    "window_from_bars",
 ]
