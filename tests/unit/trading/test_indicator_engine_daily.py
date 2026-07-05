@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.indicators.daily import calculate_daily_indicators
 
@@ -483,6 +485,45 @@ class TestDailyIndicators:
 
         # RSI should be close to 100 (all gains)
         assert ind_gains["rsi_5"] > 90, "RSI should be very high for all gains"
+
+
+class TestDailySMAWarmup:
+    """SMA must use a full window; under-warmed periods are omitted, not partial.
+
+    Regression for `min_periods=1`, which emitted a partial-window mean labeled
+    as the full-period SMA (e.g. 30 candles → `sma_200` = mean of 30). That
+    partial `sma_200` can flip a price-vs-SMA200 trend filter.
+    """
+
+    @staticmethod
+    def _candles(closes: list[float]) -> list[dict]:
+        return [
+            {"open": c, "high": c + 1, "low": c - 1, "close": c, "volume": 1000}
+            for c in closes
+        ]
+
+    def test_underwarmed_sma_periods_are_omitted(self):
+        """With 30 candles, sma_20 is present but sma_60 / sma_200 are omitted."""
+        result = calculate_daily_indicators(
+            self._candles([100.0 + i for i in range(30)]),
+            sma_periods=[20, 60, 200],
+            ema_periods=[5],
+            rsi_period=5,
+        )
+        assert "sma_20" in result, "sma_20 has a full 20-window in 30 candles"
+        assert "sma_60" not in result, "sma_60 must not be a partial-window mean"
+        assert "sma_200" not in result, "sma_200 must not be a partial-window mean"
+
+    def test_warmed_sma_uses_full_trailing_window(self):
+        """A warmed SMA equals the mean of exactly the last `period` closes."""
+        closes = [float(i) for i in range(1, 26)]  # 25 candles
+        result = calculate_daily_indicators(
+            self._candles(closes),
+            sma_periods=[20],
+            ema_periods=[5],
+            rsi_period=5,
+        )
+        assert result["sma_20"] == pytest.approx(sum(closes[-20:]) / 20.0)
 
 
 class TestDailyHighTracking:

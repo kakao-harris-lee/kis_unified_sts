@@ -125,10 +125,17 @@ def calculate_daily_indicators(
     result: dict[str, float] = {}
 
     try:
-        # Calculate SMA for each period
+        # Calculate SMA for each period. Require a full window (min_periods=period)
+        # so an under-warmed period is NaN and its key is omitted, rather than
+        # emitting a partial-window mean mislabeled as the full-period SMA (e.g.
+        # 30 candles must not report sma_200 = mean of 30). Consumers treat a
+        # missing SMA as "no trend confirmation" (PatternPullback defaults to 0.0
+        # and gates on sma > 0), so omission is the safe, conservative signal.
         for period in sma_periods:
-            sma = df["close"].rolling(window=period, min_periods=1).mean()
-            result[f"sma_{period}"] = float(sma.iloc[-1])
+            sma = df["close"].rolling(window=period, min_periods=period).mean()
+            value = sma.iloc[-1]
+            if pd.notna(value):
+                result[f"sma_{period}"] = float(value)
 
         # Calculate EMA for each period
         for period in ema_periods:
