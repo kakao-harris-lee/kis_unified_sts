@@ -7,7 +7,7 @@
 #                            REDIS host, real KIS market key). Omitting it silently drops the
 #                            pipeline to shadow streams + localhost redis.
 # and MUST be recreated with `up -d --no-deps` (NEVER `docker compose down`) so paper trading
-# state/streams are not torn down. See CLAUDE.md + docs/runbooks/paper-trading-docker.md.
+# state/streams are not torn down. See CLAUDE.md + docs/runbooks/paper-live-code-separation.md.
 #
 # Safety:
 #   * Services to (re)build/recreate are AUTO-DETECTED from the currently-running project
@@ -84,14 +84,14 @@ run() {
 while [ $# -gt 0 ]; do
   case "$1" in
     deploy|verify|cleanup) CMD="$1" ;;
-    --env-file) ENV_FILE="$2"; shift ;;
-    --services) SERVICES_OVERRIDE="$2"; shift ;;
-    --profiles) PROFILES="$2"; shift ;;
+    --env-file) [ $# -ge 2 ] || die "--env-file requires a value"; ENV_FILE="$2"; shift ;;
+    --services) [ $# -ge 2 ] || die "--services requires a value"; SERVICES_OVERRIDE="$2"; shift ;;
+    --profiles) [ $# -ge 2 ] || die "--profiles requires a value"; PROFILES="$2"; shift ;;
     --no-build) DO_BUILD=0 ;;
     --no-cleanup) DO_CLEANUP=0 ;;
     --dry-run) DRY_RUN=1 ;;
     -y|--yes) ASSUME_YES=1 ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    -h|--help) awk 'NR>=2 && /^#/{sub(/^# ?/,"");print;next} NR>=2{exit}' "$0"; exit 0 ;;
     *) die "Unknown argument: $1 (see --help)" ;;
   esac
   shift
@@ -117,6 +117,11 @@ preflight() {
   PROJECT_NAME="${proj:-kis_paper}"
   ok "Compose project: $PROJECT_NAME"
 
+  # The published dashboard port is decided by the env-file, not the shell — read it so the
+  # verify probe hits the real port even if only .env.paper sets it.
+  local port; port="$(grep -E '^DASHBOARD_HOST_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+  [ -n "$port" ] && DASHBOARD_HOST_PORT="$port"
+
   # Informational only — deploying a non-main branch is allowed (never blocks).
   local branch; branch="$(git branch --show-current 2>/dev/null || echo '?')"
   if [ "$branch" != "main" ]; then
@@ -138,8 +143,13 @@ resolve_services() {
     log "Services (override): ${SERVICES[*]}"
     return
   fi
-  mapfile -t SERVICES < <(dc ps --services --status running 2>/dev/null | sort)
-  [ "${#SERVICES[@]}" -gt 0 ] || die "No running services detected for project '$PROJECT_NAME'. Start the stack first, or pass --services."
+  # Include `restarting` — a crash-looping service is exactly what a redeploy must reach.
+  mapfile -t SERVICES < <(dc ps --services --status running --status restarting 2>/dev/null | sort -u)
+  [ "${#SERVICES[@]}" -gt 0 ] || die "No running/restarting services for project '$PROJECT_NAME'. Start the stack first, or pass --services."
+  # Surface (but never auto-start) services that have a container yet aren't running (e.g. exited).
+  local not_running
+  not_running="$(dc ps -a --services 2>/dev/null | sort -u | comm -23 - <(printf '%s\n' "${SERVICES[@]}") | tr '\n' ' ')"
+  [ -n "${not_running// /}" ] && warn "Have a container but not running (excluded — pass --services to include): $not_running"
   log "Services (auto-detected, ${#SERVICES[@]}): ${SERVICES[*]}"
 }
 
@@ -201,7 +211,7 @@ verify_phase() {
 
     if [ "$running" != "true" ]; then
       err "$svc: NOT running (health=$health, restarts=$rc1)"; failed=1
-    elif [ "$rc1" != "$rc_prev" ] && [ "$DRY_RUN" -eq 0 ]; then
+    elif [ "$DRY_RUN" -eq 0 ] && [ "$rc_prev" -ge 0 ] && [ "$rc1" -gt "$rc_prev" ]; then
       err "$svc: RESTARTING ($rc_prev -> $rc1) — crash-loop; check: docker logs ${PROJECT_NAME}-$svc"; failed=1
     elif [ "$health" = "unhealthy" ]; then
       err "$svc: unhealthy"; failed=1
