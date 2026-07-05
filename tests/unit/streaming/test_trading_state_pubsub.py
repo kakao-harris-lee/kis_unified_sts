@@ -27,6 +27,21 @@ _CHANNELS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_key_suffix(monkeypatch):
+    """Make every test here hermetic against a leaked ``TRADING_STATE_KEY_SUFFIX``.
+
+    ``services/{stock,futures}_monitor/main.py`` set that env var via a direct
+    ``os.environ[...] = "shadow"`` (not monkeypatch), so under xdist an entrypoint
+    test can leak it into this worker. ``trading_state._key()`` would then suffix
+    the trades/signals keys these tests assert on (e.g. write to
+    ``trading:stock:trades:shadow`` while the test checks ``trading:stock:trades``),
+    flaking as ``llen(...) == 0``. Clearing it restores deterministic, unsuffixed
+    keys regardless of test execution order.
+    """
+    monkeypatch.delenv("TRADING_STATE_KEY_SUFFIX", raising=False)
+
+
 @pytest.fixture
 def fake_redis(monkeypatch):
     """Isolated fakeredis (decode_responses mirrors RedisClient.get_client())."""
