@@ -3,6 +3,7 @@
 Combines MFI, ADX, volatility (ATR ratio), and trend (SMA crossover)
 to classify market into enhanced regime states.
 """
+
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -48,13 +49,13 @@ class AdaptiveRegimeConfig:
 
     # ADX thresholds (trend strength)
     adx_strong_trend: float = 25.0  # ADX > 25 = strong trend
-    adx_weak_trend: float = 20.0    # ADX < 20 = weak/no trend
+    adx_weak_trend: float = 20.0  # ADX < 20 = weak/no trend
     adx_period: int = 14
 
     # Volatility thresholds (ATR ratio)
     atr_period: int = 14
     atr_high_volatility: float = 0.025  # ATR/price > 2.5% = high volatility
-    atr_low_volatility: float = 0.015   # ATR/price < 1.5% = low volatility
+    atr_low_volatility: float = 0.015  # ATR/price < 1.5% = low volatility
 
     # Trend thresholds (SMA crossover)
     sma_fast: int = 10
@@ -152,9 +153,7 @@ class AdaptiveRegimeDetector:
         required_cols = ["close", "high", "low", "volume"]
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
-            return self._unknown_signal(
-                reason=f"Missing columns: {missing_cols}"
-            )
+            return self._unknown_signal(reason=f"Missing columns: {missing_cols}")
 
         # Calculate all indicators
         try:
@@ -354,45 +353,16 @@ class AdaptiveRegimeDetector:
         Returns:
             MFI value (0-100)
         """
-        typical_price = (df["high"] + df["low"] + df["close"]) / 3
-        money_flow = typical_price * df["volume"]
+        # Delegated to the canonical reference.MFICalculator (its sibling ADX/ATR
+        # already delegate to reference). Convention preserved bit-for-bit.
+        from shared.indicators.reference import MFICalculator
 
-        # Positive and negative money flow
-        positive_flow = []
-        negative_flow = []
-
-        for i in range(1, len(df)):
-            if typical_price.iloc[i] > typical_price.iloc[i-1]:
-                positive_flow.append(money_flow.iloc[i])
-                negative_flow.append(0)
-            elif typical_price.iloc[i] < typical_price.iloc[i-1]:
-                positive_flow.append(0)
-                negative_flow.append(money_flow.iloc[i])
-            else:
-                positive_flow.append(0)
-                negative_flow.append(0)
-
-        if len(positive_flow) < period:
-            return 50.0  # Neutral
-
-        # Calculate MFI
-        positive_mf = sum(positive_flow[-period:])
-        negative_mf = sum(negative_flow[-period:])
-
-        if negative_mf == 0:
-            return 100.0
-
-        money_ratio = positive_mf / negative_mf
-        mfi = 100 - (100 / (1 + money_ratio))
-
-        return float(mfi)
+        return MFICalculator(period=period).mfi_last(
+            df["high"], df["low"], df["close"], df["volume"]
+        )
 
     def _calc_adx(
-        self,
-        high: np.ndarray,
-        low: np.ndarray,
-        close: np.ndarray,
-        period: int = 14
+        self, high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14
     ) -> float:
         """Average Directional Index — canonical Wilder ADX.
 
