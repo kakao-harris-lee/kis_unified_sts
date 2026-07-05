@@ -33,7 +33,12 @@ from shared.indicators.engine.cache import (
     PanelStore,
 )
 from shared.indicators.engine.numpy_backend import NumpyBackend
-from shared.indicators.engine.registry import IndicatorEngine, default_engine
+from shared.indicators.engine.registry import (
+    IndicatorEngine,
+    default_engine,
+    streaming_indicator_engine,
+)
+from shared.indicators.engine.streaming_backend import StreamingCompatBackend
 from shared.indicators.engine.shadow import ShadowDelta
 from shared.indicators.engine.spec import (
     IndicatorSpec,
@@ -56,10 +61,12 @@ __all__ = [
     "OHLCVWindow",
     "PanelStore",
     "ShadowDelta",
+    "StreamingCompatBackend",
     "TALibBackend",
     "UnsupportedIndicatorError",
     "default_engine",
     "flat_key",
+    "streaming_indicator_engine",
     "window_from_bars",
     "window_from_records",
 ]

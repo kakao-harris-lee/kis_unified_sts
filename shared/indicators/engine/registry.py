@@ -91,6 +91,27 @@ class IndicatorEngine:
         return panel
 
 
+_STREAMING_ENGINE: IndicatorEngine | None = None
+
+
+def streaming_indicator_engine() -> IndicatorEngine:
+    """Runtime-convention engine hosting the exact streaming ``_calc_*`` math.
+
+    Distinct from :func:`default_engine` (TA-Lib standard conventions, used by the
+    no-code builder): the runtime must preserve its historical values (first-delta
+    RSI seed, ddof=1 Bollinger, lenient ADX warmup, fast %K), which TA-Lib does not
+    reproduce on the short early-session windows the runtime uses. Cached as a
+    module singleton — the streaming hot path calls it per symbol per bar and the
+    backend is stateless.
+    """
+    global _STREAMING_ENGINE
+    if _STREAMING_ENGINE is None:
+        from shared.indicators.engine.streaming_backend import StreamingCompatBackend
+
+        _STREAMING_ENGINE = IndicatorEngine([StreamingCompatBackend()])
+    return _STREAMING_ENGINE
+
+
 def default_engine() -> IndicatorEngine:
     """Build the standard engine: TA-Lib for standard indicators, NumPy for custom.
 

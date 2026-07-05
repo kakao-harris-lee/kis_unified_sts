@@ -1,86 +1,88 @@
-"""Pure indicator calculation helpers for StreamingIndicatorEngine."""
+"""Runtime indicator accessors for StreamingIndicatorEngine.
+
+The RSI / Bollinger / MFI / ADX / Stochastic / RVOL math no longer lives here —
+it was retired into the engine's :class:`StreamingCompatBackend`
+(``shared/indicators/engine/streaming_backend.py``) so the platform has one place
+that computes each indicator. These ``_calc_*`` methods are now thin,
+value-preserving delegates to :func:`streaming_indicator_engine` (the runtime's
+convention set), keeping their exact signatures + None/sentinel contracts so every
+call site (``indicator_queries``) is unchanged. Bit-identity to the previous
+inline math is pinned by ``test_streaming_backend_golden.py``.
+
+The daily-EMA / high-N / ATR accessors below remain here: ATR already delegates to
+the canonical ``reference.ATRCalculator``; the daily trackers are stateful session
+aggregators, not window indicators.
+"""
 
 from __future__ import annotations
 
-import math
 from collections import deque
 
+from shared.indicators.engine import (
+    IndicatorSpec,
+    OHLCVWindow,
+    streaming_indicator_engine,
+    window_from_bars,
+)
 from shared.indicators.reference import ATRCalculator
 
 from .indicator_candles import Candle
 
 
+def _close_window(closes: list[float]) -> OHLCVWindow:
+    """A close-only OHLCV window for close-based indicators (rsi / bollinger)."""
+    return OHLCVWindow.from_sequences(
+        open=closes, high=closes, low=closes, close=closes, volume=[0.0] * len(closes)
+    )
+
+
 class IndicatorCalculationMixin:
     def _calc_bb(self, closes: list[float]) -> tuple[float, float, float]:
-        """Bollinger Bands using sample std (ddof=1, matching Polars rolling_std)."""
-        window = closes[-self.bb_period :]
-        n = len(window)
-        mean = sum(window) / n
-
-        # Sample variance (ddof=1) to match Polars rolling_std default
-        variance = sum((x - mean) ** 2 for x in window) / (n - 1)
-        std = math.sqrt(variance)
-
-        upper = mean + self.bb_std * std
-        lower = mean - self.bb_std * std
-        return lower, mean, upper
+        """Bollinger Bands (sample std, ddof=1) via the streaming-compat engine."""
+        flat = (
+            streaming_indicator_engine()
+            .compute(
+                IndicatorSpec.create(
+                    "bollinger", {"period": self.bb_period, "std": self.bb_std}
+                ),
+                _close_window(closes),
+            )
+            .flat_latest()
+        )
+        return flat["bb_lower"], flat["bb_middle"], flat["bb_upper"]
 
     def _calc_rsi(self, closes: list[float]) -> float:
-        """RSI using Wilder smoothing (alpha=1/period), matching the
-        M1-certified shared RSICalculator (ewm adjust=False, first-delta seed).
+        """Wilder RSI (first-delta seed) via the streaming-compat engine.
 
-        Converged from the previous rolling-SMA of gains/losses (which diverged
-        ~13 RSI points from the batch/backtest path on the M2 parity sample) so
-        the streaming oversold/overbought line matches the shared standard.
+        Returns the neutral 50.0 sentinel on insufficient/flat windows (contract
+        preserved by the backend).
         """
-        if len(closes) < self.rsi_period + 1:
-            return 50.0
-        period = self.rsi_period
-        alpha = 1.0 / period
-        one_minus = 1.0 - alpha
-        # Seed on the first delta, then Wilder-EMA over the FULL series
-        # (adjust=False semantics) — do NOT window to the last period+1 closes,
-        # or the exponential warmup is lost and parity with RSICalculator breaks.
-        avg_gain = 0.0
-        avg_loss = 0.0
-        seeded = False
-        for i in range(1, len(closes)):
-            delta = closes[i] - closes[i - 1]
-            gain = delta if delta > 0.0 else 0.0
-            loss = -delta if delta < 0.0 else 0.0
-            if not seeded:
-                avg_gain, avg_loss, seeded = gain, loss, True
-            else:
-                avg_gain = alpha * gain + one_minus * avg_gain
-                avg_loss = alpha * loss + one_minus * avg_loss
-        if avg_loss == 0.0:
-            return 100.0 if avg_gain > 0.0 else 50.0
-        rs = avg_gain / avg_loss
-        return 100.0 - 100.0 / (1.0 + rs)
+        flat = (
+            streaming_indicator_engine()
+            .compute(
+                IndicatorSpec.create("rsi", {"period": self.rsi_period}),
+                _close_window(closes),
+            )
+            .flat_latest()
+        )
+        return flat.get("rsi", 50.0)
 
     def _calc_rvol(self, candles: list[Candle]) -> float:
-        """RVOL = short-window avg volume / long-window avg volume.
-
-        Intentionally numpy-free to keep the streaming indicator hot path
-        dependency-light. Verified bit-identical to the engine's ``rvol`` backend
-        across the runtime's window lengths (see the shadow-parity report), so it
-        is the one delegate-safe indicator — kept inline here only to avoid adding
-        a per-call NumPy window build to the hot path.
-        """
-        n = len(candles)
-        sw = min(self._rvol_short, n)
-        lw = min(self._rvol_long, n)
-
-        if lw == 0 or sw == 0:
+        """RVOL = short-window avg / long-window avg volume, via the engine."""
+        if not candles:
             return 1.0
-
-        short_avg = sum(c.volume for c in candles[-sw:]) / sw
-        long_avg = sum(c.volume for c in candles[-lw:]) / lw
-
-        if long_avg == 0:
-            return 1.0
-
-        return short_avg / long_avg
+        flat = (
+            streaming_indicator_engine()
+            .compute(
+                IndicatorSpec.create(
+                    "rvol",
+                    {"short_window": self._rvol_short, "long_window": self._rvol_long},
+                ),
+                window_from_bars(candles),
+            )
+            .flat_latest()
+        )
+        return flat.get("rvol", 1.0)
 
     def _update_daily_high(self, symbol: str, high: float, date_str: str) -> None:
         """Track intraday high and roll over on day change."""
@@ -232,121 +234,47 @@ class IndicatorCalculationMixin:
     def _calc_stochastic(
         candles: list[Candle], period: int = 14, smooth: int = 3
     ) -> tuple[float, float]:
-        """Stochastic K and D values."""
-        n = len(candles)
-        if n < period:
+        """Fast %K / %D (streaming convention) via the streaming-compat engine."""
+        if not candles:
             return 50.0, 50.0
-        # Compute K for recent bars (enough for D smoothing)
-        start = max(period - 1, n - smooth - 2)
-        k_vals: list[float] = []
-        for i in range(start, n):
-            ws = i - period + 1
-            low_min = min(candles[j].low for j in range(ws, i + 1))
-            high_max = max(candles[j].high for j in range(ws, i + 1))
-            denom = high_max - low_min
-            k_vals.append(100 * (candles[i].close - low_min) / (denom + 1e-10))
-        stoch_k = k_vals[-1]
-        stoch_d = sum(k_vals[-smooth:]) / min(smooth, len(k_vals))
-        return stoch_k, stoch_d
+        flat = (
+            streaming_indicator_engine()
+            .compute(
+                IndicatorSpec.create(
+                    "stochastic", {"k_period": period, "d_period": smooth}
+                ),
+                window_from_bars(candles),
+            )
+            .flat_latest()
+        )
+        return flat["stoch_k"], flat["stoch_d"]
 
     def _calc_mfi(self, candles: list[Candle], period: int = 14) -> float | None:
-        """Money Flow Index (14-period).
-
-        MFI = 100 - 100 / (1 + positive_flow / negative_flow)
-        Typical Price = (high + low + close) / 3
-        Raw Money Flow = Typical Price * Volume
-        """
-        if len(candles) < period + 1:
+        """Money Flow Index via the streaming-compat engine (None if insufficient)."""
+        if not candles:
             return None
-
-        recent = candles[-(period + 1) :]
-        positive_flow = 0.0
-        negative_flow = 0.0
-
-        for i in range(1, len(recent)):
-            tp_prev = (recent[i - 1].high + recent[i - 1].low + recent[i - 1].close) / 3
-            tp_curr = (recent[i].high + recent[i].low + recent[i].close) / 3
-            raw_flow = tp_curr * recent[i].volume
-
-            if tp_curr > tp_prev:
-                positive_flow += raw_flow
-            elif tp_curr < tp_prev:
-                negative_flow += raw_flow
-
-        if negative_flow == 0:
-            return 100.0 if positive_flow > 0 else 50.0
-
-        money_ratio = positive_flow / negative_flow
-        return 100.0 - (100.0 / (1.0 + money_ratio))
+        flat = (
+            streaming_indicator_engine()
+            .compute(
+                IndicatorSpec.create("mfi", {"period": period}),
+                window_from_bars(candles),
+            )
+            .flat_latest()
+        )
+        return flat.get("mfi")
 
     @staticmethod
     def _calc_adx(candles: list[Candle], period: int = 14) -> float | None:
-        """ADX (Average Directional Index) using Wilder smoothing.
-
-        Returns None if insufficient data (need period*2 + 1 candles).
-        """
-        n = len(candles)
-        if n < period + 1:
+        """Wilder ADX (lenient warmup) via the streaming-compat engine (None if
+        insufficient)."""
+        if not candles:
             return None
-
-        # Compute True Range, +DM, -DM
-        tr_list: list[float] = []
-        plus_dm_list: list[float] = []
-        minus_dm_list: list[float] = []
-
-        for i in range(1, n):
-            h = candles[i].high
-            lo = candles[i].low
-            pc = candles[i - 1].close
-            ph = candles[i - 1].high
-            pl = candles[i - 1].low
-
-            tr = max(h - lo, abs(h - pc), abs(lo - pc))
-            up_move = h - ph
-            down_move = pl - lo
-
-            plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0
-            minus_dm = down_move if (down_move > up_move and down_move > 0) else 0.0
-
-            tr_list.append(tr)
-            plus_dm_list.append(plus_dm)
-            minus_dm_list.append(minus_dm)
-
-        if len(tr_list) < period:
-            return None
-
-        # Wilder smoothing: first value = SMA, then EMA-like
-        atr = sum(tr_list[:period]) / period
-        plus_di_smooth = sum(plus_dm_list[:period]) / period
-        minus_di_smooth = sum(minus_dm_list[:period]) / period
-
-        dx_values: list[float] = []
-
-        for i in range(period, len(tr_list)):
-            atr = (atr * (period - 1) + tr_list[i]) / period
-            plus_di_smooth = (plus_di_smooth * (period - 1) + plus_dm_list[i]) / period
-            minus_di_smooth = (
-                minus_di_smooth * (period - 1) + minus_dm_list[i]
-            ) / period
-
-            if atr > 0:
-                plus_di = 100 * plus_di_smooth / atr
-                minus_di = 100 * minus_di_smooth / atr
-            else:
-                plus_di = 0.0
-                minus_di = 0.0
-
-            di_sum = plus_di + minus_di
-            if di_sum > 0:
-                dx_values.append(100 * abs(plus_di - minus_di) / di_sum)
-
-        if len(dx_values) < period:
-            # Not enough DX values; return simple average if we have any
-            return sum(dx_values) / len(dx_values) if dx_values else None
-
-        # ADX = Wilder-smoothed DX
-        adx = sum(dx_values[:period]) / period
-        for dx in dx_values[period:]:
-            adx = (adx * (period - 1) + dx) / period
-
-        return adx
+        flat = (
+            streaming_indicator_engine()
+            .compute(
+                IndicatorSpec.create("adx", {"period": period}),
+                window_from_bars(candles),
+            )
+            .flat_latest()
+        )
+        return flat.get("adx")
