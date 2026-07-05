@@ -57,6 +57,8 @@ class IndicatorCalculationMixin:
         Returns the neutral 50.0 sentinel on insufficient/flat windows (contract
         preserved by the backend).
         """
+        if not closes:  # legacy _calc_rsi([]) -> 50.0 (len < period+1 branch)
+            return 50.0
         flat = (
             streaming_indicator_engine()
             .compute(
