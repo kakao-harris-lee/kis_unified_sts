@@ -21,44 +21,16 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
 
 import redis
 from prometheus_client import Counter, Gauge, start_http_server
 
 from shared.exceptions import InfrastructureError, ValidationError
+from shared.models.stream_models import MarketTickMessage
 from shared.streaming.client import RedisClient
-from shared.streaming.message import StreamMessage
+from shared.streaming.codec import StreamDecodeError, decode
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        try:
-            return float(text)
-        except ValueError:
-            return None
-    return None
-
-
-def _parse_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in {"true", "1", "yes", "y", "on"}:
-            return True
-        if text in {"false", "0", "no", "n", "off"}:
-            return False
-    return None
 
 
 def _parse_msg_id_ms(message_id: str) -> float | None:
@@ -70,24 +42,6 @@ def _parse_msg_id_ms(message_id: str) -> float | None:
         return int(head) / 1000.0
     except ValueError:
         return None
-
-
-def _extract_symbol_name(payload: dict[str, Any], symbol: str) -> str:
-    for key in (
-        "name",
-        "stock_name",
-        "symbol_name",
-        "item_name",
-        "prdt_name",
-        "hts_kor_isnm",
-    ):
-        value = payload.get(key)
-        if value is None:
-            continue
-        text = str(value).strip()
-        if text:
-            return text
-    return symbol
 
 
 def detect_asset(symbol: str, stream_name: str) -> str:
@@ -307,9 +261,16 @@ class StreamExporter:
         msg_ts: float,
     ) -> None:
         try:
-            msg = StreamMessage.from_raw(stream_name, message_id, dict(raw_fields))
-            payload = msg.data
-        except (ValidationError, ValueError, KeyError, TypeError) as e:
+            tick = decode(
+                MarketTickMessage,
+                raw_fields,
+                legacy_adapter=lambda fields: MarketTickMessage.from_legacy_fields(
+                    fields,
+                    default_timestamp=msg_ts,
+                    price_keys=("current_price", "close", "price"),
+                ),
+            )
+        except StreamDecodeError as e:
             self.parse_errors_total.labels(stream=stream_name).inc()
             logger.debug(
                 "Failed to parse stream message: stream=%s message_id=%s error=%s",
@@ -319,24 +280,14 @@ class StreamExporter:
             )
             return
 
-        symbol = str(payload.get("symbol") or payload.get("code") or "").strip()
-        if not symbol:
-            self.parse_errors_total.labels(stream=stream_name).inc()
-            return
-
-        asset = str(payload.get("asset") or "").strip().lower()
-        if asset not in {"stock", "futures"}:
-            asset = detect_asset(symbol, stream_name)
+        symbol = tick.symbol
+        asset = tick.asset
         if not self._accept_symbol(asset, symbol):
             return
 
-        event_ts = _parse_float(payload.get("timestamp")) or msg_ts
-        price = (
-            _parse_float(payload.get("current_price"))
-            or _parse_float(payload.get("close"))
-            or _parse_float(payload.get("price"))
-        )
-        symbol_name = _extract_symbol_name(payload, symbol)
+        event_ts = tick.timestamp
+        price = tick.price
+        symbol_name = tick.name or symbol
         self._sync_symbol_name(asset, symbol, symbol_name)
 
         self.messages_total.labels(stream=stream_name, asset=asset).inc()
@@ -350,15 +301,12 @@ class StreamExporter:
             name=self._symbol_names[(asset, symbol)],
         ).set(event_ts)
 
-        if price is None or price <= 0:
-            return
-
         self.last_price_krw.labels(
             asset=asset,
             symbol=symbol,
             name=self._symbol_names[(asset, symbol)],
         ).set(price)
-        self._update_bar(asset, symbol, price, payload, event_ts)
+        self._update_bar(asset, symbol, tick, event_ts)
 
     def _accept_symbol(self, asset: str, symbol: str) -> bool:
         tracked = self._symbol_set[asset]
@@ -374,10 +322,10 @@ class StreamExporter:
         self,
         asset: str,
         symbol: str,
-        price: float,
-        payload: dict[str, Any],
+        tick: MarketTickMessage,
         event_ts: float,
     ) -> None:
+        price = tick.price
         minute_epoch = int(event_ts // 60) * 60
         key = (asset, symbol)
         state = self._bars.get(key)
@@ -414,18 +362,18 @@ class StreamExporter:
         state.close = price
         state.published = False
 
-        delta_vol = self._extract_volume_delta(key, payload)
+        delta_vol = self._extract_volume_delta(key, tick)
         if delta_vol > 0:
             state.volume += delta_vol
 
     def _extract_volume_delta(
-        self, key: tuple[str, str], payload: dict[str, Any]
+        self, key: tuple[str, str], tick: MarketTickMessage
     ) -> float:
         """Estimate per-tick volume delta with cumulative fallback support."""
-        volume_is_cumulative = _parse_bool(payload.get("volume_is_cumulative"))
-        cumulative_volume = _parse_float(payload.get("cumulative_volume"))
-        raw_volume = _parse_float(payload.get("volume"))
-        tick_volume = _parse_float(payload.get("tick_volume"))
+        volume_is_cumulative = tick.volume_is_cumulative
+        cumulative_volume = tick.cumulative_volume
+        raw_volume = tick.volume
+        tick_volume = tick.tick_volume
 
         # If source explicitly marks non-cumulative, use tick/raw volume directly.
         if volume_is_cumulative is False:

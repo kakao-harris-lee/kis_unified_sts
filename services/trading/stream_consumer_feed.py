@@ -17,17 +17,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from shared.models.stream_models import MarketTickMessage
 from shared.streaming.audit import RateLimitedLog, format_audit_kv
+from shared.streaming.codec import StreamDecodeError, decode
 
 logger = logging.getLogger(__name__)
 
 _READ_ERROR_SLEEP_SECONDS = 0.5
-
-
-def _decode(value: Any) -> str | None:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return None if value is None else str(value)
 
 
 def _parse_entry_fields(
@@ -40,44 +36,15 @@ def _parse_entry_fields(
     ``high``/``low``/``volume``/``timestamp`` + optional ``volume_is_cumulative``).
     Returns ``None`` when the entry has no usable symbol or price.
     """
-    g: dict[str, str | None] = {}
-    for raw_key, raw_value in fields.items():
-        key = raw_key.decode() if isinstance(raw_key, bytes) else str(raw_key)
-        g[key] = _decode(raw_value)
-
-    symbol = g.get("symbol") or g.get("code")
-    if not symbol:
-        return None
-
-    close_raw = g.get("close") or g.get("current_price") or g.get("price")
-    if close_raw is None:
-        return None
     try:
-        close = float(close_raw)
-    except (TypeError, ValueError):
-        return None
-
-    price: dict[str, Any] = {"code": symbol, "close": close}
-    for key in ("open", "high", "low"):
-        if g.get(key) is not None:
-            try:  # noqa: SIM105
-                price[key] = float(g[key])
-            except (TypeError, ValueError):
-                pass
-    if g.get("volume") is not None:
-        try:  # noqa: SIM105
-            price["volume"] = int(float(g["volume"]))
-        except (TypeError, ValueError):
-            pass
-    if g.get("volume_is_cumulative") is not None:
-        price["volume_is_cumulative"] = str(g["volume_is_cumulative"]).lower() == "true"
-    try:
-        price["timestamp"] = (
-            float(g["timestamp"]) if g.get("timestamp") else time.time()
+        tick = decode(
+            MarketTickMessage,
+            fields,
+            legacy_adapter=MarketTickMessage.from_legacy_fields,
         )
-    except (TypeError, ValueError):
-        price["timestamp"] = time.time()
-    return symbol, price
+    except StreamDecodeError:
+        return None
+    return tick.symbol, tick.to_price_dict()
 
 
 class StreamConsumerFeed:

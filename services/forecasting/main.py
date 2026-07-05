@@ -16,6 +16,8 @@ from shared.forecasting.event_taxonomy import EventTaxonomy
 from shared.forecasting.forecast_publisher import ForecastPublisher
 from shared.forecasting.llm_event_scorer import LLMScorerClient
 from shared.forecasting.volatility_har_rv import VolatilityForecaster
+from shared.models.stream_models import MarketTickMessage
+from shared.streaming.codec import StreamDecodeError, decode
 
 logger = logging.getLogger(__name__)
 
@@ -139,30 +141,15 @@ class ForecastingService:
             _entry_id, fields = entries[0]
         except Exception:  # noqa: BLE001 — malformed / non-stream entry
             return None
-
-        def _field(name: str) -> Any:
-            # Stream fields arrive as {bytes: bytes} (decode_responses=False) or
-            # {str: str} (fakeredis / decoded clients); tolerate both.
-            try:
-                if name in fields:
-                    return fields[name]
-                return fields.get(name.encode())
-            except (TypeError, AttributeError):
-                return None
-
-        for key in ("close", "current_price", "price"):
-            raw = _field(key)
-            if raw is None:
-                continue
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8", "ignore")
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                continue
-            if value > 0:
-                return value
-        return None
+        try:
+            tick = decode(
+                MarketTickMessage,
+                fields,
+                legacy_adapter=MarketTickMessage.from_legacy_fields,
+            )
+        except StreamDecodeError:
+            return None
+        return tick.price
 
     async def _tick_forecast(self) -> None:
         # If model not fit, skip

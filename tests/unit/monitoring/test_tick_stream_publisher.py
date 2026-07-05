@@ -78,7 +78,11 @@ def test_publish_stock_tick_to_market_stream():
     assert call["stream"] == "market:ticks"
     assert call["fields"]["asset"] == "stock"
     assert call["fields"]["symbol"] == "005930"
+    assert call["fields"]["schema_version"] == "1"
+    assert call["fields"]["price"] == "71500.0"
     assert call["fields"]["current_price"] == "71500.0"
+    assert call["fields"]["close"] == "71500.0"
+    assert call["fields"]["code"] == "005930"
     assert call["fields"]["volume"] == "123456.0"
     assert client.expire_calls == [("market:ticks", 86400)]
 
@@ -107,6 +111,50 @@ def test_publish_includes_symbol_name_when_present():
     assert len(client.xadd_calls) == 1
     call = client.xadd_calls[0]
     assert call["fields"]["name"] == "SamsungElec"
+
+
+def test_publish_accepts_source_price_aliases():
+    client = _FakeRedis()
+    cfg = TickStreamPublisherConfig(
+        enabled=True,
+        async_publish=False,
+        stock_stream="market:ticks",
+        futures_stream="raw_data",
+        stream_maxlen=10000,
+        stock_min_interval_seconds=0.0,
+        futures_min_interval_seconds=0.0,
+        stream_ttl_seconds=86400,
+        ttl_refresh_interval_seconds=60.0,
+    )
+    publisher = TickStreamPublisher(cfg, client=client)
+
+    publisher.publish("stock", "005930", {"current_price": 71500.0})
+    publisher.publish("stock", "000660", {"price": 124000.0})
+
+    assert [call["fields"]["price"] for call in client.xadd_calls] == [
+        "71500.0",
+        "124000.0",
+    ]
+
+
+def test_publish_includes_kis_symbol_name_alias():
+    client = _FakeRedis()
+    cfg = TickStreamPublisherConfig(
+        enabled=True,
+        async_publish=False,
+        stock_stream="market:ticks",
+        futures_stream="raw_data",
+        stream_maxlen=10000,
+        stock_min_interval_seconds=0.0,
+        futures_min_interval_seconds=0.0,
+        stream_ttl_seconds=86400,
+        ttl_refresh_interval_seconds=60.0,
+    )
+    publisher = TickStreamPublisher(cfg, client=client)
+
+    publisher.publish("stock", "005930", {"close": 71500.0, "hts_kor_isnm": "삼성전자"})
+
+    assert client.xadd_calls[0]["fields"]["name"] == "삼성전자"
 
 
 def test_publish_respects_per_symbol_interval(monkeypatch):

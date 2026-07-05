@@ -20,55 +20,11 @@ from pydantic import ConfigDict, Field
 
 from shared.config.base import ServiceConfigBase
 from shared.exceptions import InfrastructureError
+from shared.models.stream_models import MarketTickMessage
 from shared.streaming.client import RedisClient
+from shared.streaming.codec import encode
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        try:
-            return float(text)
-        except ValueError:
-            return None
-    return None
-
-
-def _parse_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in {"true", "1", "yes", "y", "on"}:
-            return True
-        if text in {"false", "0", "no", "n", "off"}:
-            return False
-    return None
-
-
-def _extract_symbol_name(payload: dict[str, Any]) -> str:
-    for key in (
-        "name",
-        "stock_name",
-        "symbol_name",
-        "item_name",
-        "prdt_name",
-        "hts_kor_isnm",
-    ):
-        value = payload.get(key)
-        if value is None:
-            continue
-        text = str(value).strip()
-        if text:
-            return text
-    return ""
 
 
 class TickStreamPublisherConfig(ServiceConfigBase):
@@ -288,41 +244,23 @@ class TickStreamPublisher:
         payload: dict[str, Any],
         now: float,
     ) -> dict[str, str] | None:
-        price = (
-            _parse_float(payload.get("current_price"))
-            or _parse_float(payload.get("close"))
-            or _parse_float(payload.get("price"))
-        )
-        if price is None or price <= 0:
+        try:
+            msg = MarketTickMessage.from_source_payload(
+                asset=asset,
+                symbol=symbol,
+                payload=payload,
+                now=now,
+            )
+        except ValueError:
             return None
 
-        event_ts = _parse_float(payload.get("timestamp")) or now
-        fields: dict[str, str] = {
-            "asset": asset,
-            "symbol": symbol,
-            "code": symbol,
-            "price": str(price),
-            "current_price": str(price),
-            "close": str(price),
-            "timestamp": str(event_ts),
-        }
-        symbol_name = _extract_symbol_name(payload)
-        if symbol_name:
-            fields["name"] = symbol_name
-
-        for key in ("open", "high", "low"):
-            value = _parse_float(payload.get(key))
-            if value is not None:
-                fields[key] = str(value)
-
-        volume = _parse_float(payload.get("volume"))
-        if volume is not None and volume >= 0:
-            fields["volume"] = str(volume)
-
-        vol_cum = _parse_bool(payload.get("volume_is_cumulative"))
-        if vol_cum is not None:
-            fields["volume_is_cumulative"] = "true" if vol_cum else "false"
-
+        fields = encode(msg)
+        # Compatibility aliases for the rollout window. New consumers should
+        # decode the canonical v1 schema; old consumers still see the legacy
+        # field names they already understand.
+        fields["code"] = msg.symbol
+        fields["close"] = str(msg.price)
+        fields["current_price"] = str(msg.price)
         return fields
 
     def _enqueue(self, tick: _QueuedTick) -> None:

@@ -21,6 +21,21 @@ def _fake_vol_forecast():
     )
 
 
+def _make_service(cfg, tmp_path, redis):
+    from services.forecasting.main import ForecastingService
+
+    storage = MagicMock()
+    tax_path = tmp_path / "event_taxonomy.yaml"
+    tax_path.write_text("events: []\nunknown_match_score: 40")
+    return ForecastingService(
+        config=cfg,
+        redis_client=redis,
+        storage_client=storage,
+        taxonomy_path=tax_path,
+        llm_client=None,
+    )
+
+
 @pytest.fixture
 def cfg(tmp_path):
     yaml_path = tmp_path / "forecasting.yaml"
@@ -48,10 +63,49 @@ forecasting:
     return ForecastingConfig.from_yaml(str(yaml_path))
 
 
+def test_read_current_close_accepts_canonical_tick_schema(cfg, tmp_path):
+    redis = MagicMock()
+    redis.xrevrange = MagicMock(
+        return_value=[
+            (
+                b"1700000000000-0",
+                {
+                    b"schema_version": b"1",
+                    b"asset": b"futures",
+                    b"symbol": b"101V3000",
+                    b"price": b"350.5",
+                    b"timestamp": b"1700000000.0",
+                },
+            )
+        ]
+    )
+    service = _make_service(cfg, tmp_path, redis)
+
+    assert service._read_current_close() == 350.5
+
+
+def test_read_current_close_preserves_legacy_close_priority(cfg, tmp_path):
+    redis = MagicMock()
+    redis.xrevrange = MagicMock(
+        return_value=[
+            (
+                b"1700000000000-0",
+                {
+                    b"symbol": b"101V3000",
+                    b"close": b"350.5",
+                    b"current_price": b"351.5",
+                    b"price": b"352.5",
+                },
+            )
+        ]
+    )
+    service = _make_service(cfg, tmp_path, redis)
+
+    assert service._read_current_close() == 350.5
+
+
 @pytest.mark.asyncio
 async def test_service_start_starts_forecast_loop(cfg, tmp_path):
-    from services.forecasting.main import ForecastingService
-
     redis = MagicMock()
     redis.get = MagicMock(return_value=None)
     redis.set = MagicMock()
@@ -59,7 +113,9 @@ async def test_service_start_starts_forecast_loop(cfg, tmp_path):
     # The forecast loop reads the current futures mark from the tick stream
     # (market_ingest republishes it); supply one so a forecast is produced.
     redis.xrevrange = MagicMock(
-        return_value=[(b"1700000000000-0", {b"close": b"350.5"})]
+        return_value=[
+            (b"1700000000000-0", {b"symbol": b"101V3000", b"close": b"350.5"})
+        ]
     )
     # pubsub returns an object that returns None for get_message (no events)
     pubsub_obj = MagicMock()
@@ -69,19 +125,7 @@ async def test_service_start_starts_forecast_loop(cfg, tmp_path):
     pubsub_obj.close = MagicMock()
     redis.pubsub = MagicMock(return_value=pubsub_obj)
 
-    storage = MagicMock()
-
-    # Empty taxonomy file
-    tax_path = tmp_path / "event_taxonomy.yaml"
-    tax_path.write_text("events: []\nunknown_match_score: 40")
-
-    service = ForecastingService(
-        config=cfg,
-        redis_client=redis,
-        storage_client=storage,
-        taxonomy_path=tax_path,
-        llm_client=None,
-    )
+    service = _make_service(cfg, tmp_path, redis)
 
     # Mock forecaster fit so no historical data needed
     service._forecaster = MagicMock()
@@ -100,8 +144,6 @@ async def test_service_start_starts_forecast_loop(cfg, tmp_path):
 
 @pytest.mark.asyncio
 async def test_service_stop_cancels_tasks(cfg, tmp_path):
-    from services.forecasting.main import ForecastingService
-
     redis = MagicMock()
     redis.set = MagicMock()
     pubsub_obj = MagicMock()
@@ -111,17 +153,7 @@ async def test_service_stop_cancels_tasks(cfg, tmp_path):
     pubsub_obj.close = MagicMock()
     redis.pubsub = MagicMock(return_value=pubsub_obj)
 
-    storage = MagicMock()
-    tax_path = tmp_path / "event_taxonomy.yaml"
-    tax_path.write_text("events: []\nunknown_match_score: 40")
-
-    service = ForecastingService(
-        config=cfg,
-        redis_client=redis,
-        storage_client=storage,
-        taxonomy_path=tax_path,
-        llm_client=None,
-    )
+    service = _make_service(cfg, tmp_path, redis)
     service._forecaster = MagicMock()
     service._forecaster._coefficients = MagicMock()
     service._forecaster.forecast = MagicMock(return_value=_fake_vol_forecast())

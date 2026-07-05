@@ -34,8 +34,9 @@ class FakeIndicatorEngine:
 def test_parse_entry_extracts_price_shape():
     sym, price = _parse_entry_fields(
         _entry(
+            schema_version="1",
             symbol="005930",
-            close="100.5",
+            price="100.5",
             open="99",
             high="101",
             low="98",
@@ -51,9 +52,16 @@ def test_parse_entry_extracts_price_shape():
     assert price["timestamp"] == 1700000000.0
 
 
-def test_parse_entry_falls_back_to_price_and_current_price_keys():
+def test_parse_entry_supports_legacy_price_aliases_during_rollout():
     _, price = _parse_entry_fields(_entry(code="A01", current_price="50.0"))
     assert price["close"] == 50.0 and price["code"] == "A01"
+
+
+def test_parse_entry_preserves_stream_consumer_legacy_close_priority():
+    _, price = _parse_entry_fields(
+        _entry(symbol="A01", close="49.0", current_price="50.0", price="51.0")
+    )
+    assert price["close"] == 49.0
 
 
 def test_parse_entry_returns_none_on_missing_symbol_or_price():
@@ -63,7 +71,12 @@ def test_parse_entry_returns_none_on_missing_symbol_or_price():
 
 def test_parse_entry_volume_is_cumulative_bool():
     _, price = _parse_entry_fields(
-        _entry(symbol="X", close="1", volume_is_cumulative="true")
+        _entry(
+            schema_version="1",
+            symbol="X",
+            price="1",
+            volume_is_cumulative="true",
+        )
     )
     assert price["volume_is_cumulative"] is True
 
@@ -84,7 +97,9 @@ class _FailingReadRedis:
 @pytest.mark.asyncio
 async def test_apply_entry_updates_cache_and_get_current_price():
     feed = _feed()
-    feed._apply_entry(_entry(symbol="005930", close="100.0", volume="10"))
+    feed._apply_entry(
+        _entry(schema_version="1", symbol="005930", price="100.0", volume="10")
+    )
     got = await feed.get_current_price("005930")
     assert got["close"] == 100.0 and got["code"] == "005930"
     got["close"] = -1
@@ -103,13 +118,17 @@ def test_supports_instant_read_is_true():
 def test_apply_entry_pushes_to_indicator_engine_with_baseline_guard():
     eng = FakeIndicatorEngine()
     feed = _feed(indicator_engine=eng)
-    feed._apply_entry(_entry(symbol="005930", close="100.0", volume="500"))
+    feed._apply_entry(
+        _entry(schema_version="1", symbol="005930", price="100.0", volume="500")
+    )
     assert eng.baseline_calls == [("005930", 500.0)]
     assert len(eng.on_tick_calls) == 1
     sym, price, ts = eng.on_tick_calls[0]
     assert sym == "005930" and price["close"] == 100.0
     assert isinstance(ts, datetime)
-    feed._apply_entry(_entry(symbol="005930", close="101.0", volume="600"))
+    feed._apply_entry(
+        _entry(schema_version="1", symbol="005930", price="101.0", volume="600")
+    )
     assert eng.baseline_calls == [("005930", 500.0)]
     assert len(eng.on_tick_calls) == 2
 
@@ -138,7 +157,7 @@ def test_health_status_has_failover_keys_and_is_stale_before_ticks():
 def test_is_healthy_true_when_running_and_fresh():
     feed = _feed(stale_threshold_seconds=30.0)
     feed._running = True
-    feed._apply_entry(_entry(symbol="X", close="1.0"))
+    feed._apply_entry(_entry(schema_version="1", symbol="X", price="1.0"))
     assert feed.is_healthy() is True
     h = feed.get_health_status()
     assert h["fresh_symbol_count"] == 1
@@ -152,7 +171,9 @@ def test_set_tick_callback_invoked_instead_of_indicator_push():
     feed.set_tick_callback(
         lambda symbol, price, ts: seen.append((symbol, price["close"], ts))
     )
-    feed._apply_entry(_entry(symbol="005930", close="100.0", volume="500"))
+    feed._apply_entry(
+        _entry(schema_version="1", symbol="005930", price="100.0", volume="500")
+    )
     assert len(seen) == 1
     symbol, close, ts = seen[0]
     assert symbol == "005930" and close == 100.0
@@ -167,14 +188,16 @@ def test_set_tick_callback_invoked_instead_of_indicator_push():
 def test_set_tick_callback_via_constructor():
     seen: list[str] = []
     feed = _feed(tick_callback=lambda s, _p, _ts: seen.append(s))
-    feed._apply_entry(_entry(symbol="000660", close="50.0"))
+    feed._apply_entry(_entry(schema_version="1", symbol="000660", price="50.0"))
     assert seen == ["000660"]
 
 
 def test_no_callback_still_pushes_indicator():
     eng = FakeIndicatorEngine()
     feed = _feed(indicator_engine=eng)
-    feed._apply_entry(_entry(symbol="005930", close="100.0", volume="500"))
+    feed._apply_entry(
+        _entry(schema_version="1", symbol="005930", price="100.0", volume="500")
+    )
     assert len(eng.on_tick_calls) == 1  # unchanged M1b behavior
 
 
@@ -186,7 +209,7 @@ def test_tick_callback_exception_is_swallowed():
 
     feed.set_tick_callback(boom)
     # must not propagate out of _apply_entry
-    feed._apply_entry(_entry(symbol="005930", close="100.0"))
+    feed._apply_entry(_entry(schema_version="1", symbol="005930", price="100.0"))
     assert feed._prices["005930"]["close"] == 100.0
 
 
@@ -200,7 +223,16 @@ async def test_read_loop_consumes_xadded_ticks():
     feed = StreamConsumerFeed(redis=redis, stream="market:ticks", xread_block_ms=20)
     await feed.start()
     try:
-        await redis.xadd("market:ticks", {"symbol": "005930", "close": "123.0"})
+        await redis.xadd(
+            "market:ticks",
+            {
+                "schema_version": "1",
+                "symbol": "005930",
+                "asset": "stock",
+                "price": "123.0",
+                "timestamp": "1700000000.0",
+            },
+        )
         for _ in range(50):
             if await feed.get_current_price("005930"):
                 break

@@ -12,7 +12,9 @@ from typing import Any
 from shared.calendar import MarketCalendar
 from shared.features.ofi import OFICalculator, OFIConfig
 from shared.indicators.orderbook import OrderBookAnalyzer
+from shared.models.stream_models import MarketTickMessage
 from shared.streaming.client import RedisClient
+from shared.streaming.codec import StreamDecodeError, decode, normalize_stream_fields
 from shared.streaming.message import StreamMessage
 
 from .collector_base import DataCollector
@@ -162,9 +164,8 @@ class FuturesFlowCollector(DataCollector):
         now = time.time()
         parsed: list[StreamMessage] = []
         for msg_id, fields in raw_msgs:
-            try:
-                msg = StreamMessage.from_raw(stream_name, msg_id, dict(fields))
-            except Exception:
+            msg = self._decode_tick_message(stream_name, msg_id, fields)
+            if msg is None:
                 continue
             if now - msg.timestamp > lookback_seconds:
                 continue
@@ -174,6 +175,51 @@ class FuturesFlowCollector(DataCollector):
         if not parsed:
             missing.append("microstructure_ticks")
         return parsed, missing
+
+    def _decode_tick_message(
+        self,
+        stream_name: str,
+        msg_id: Any,
+        fields: dict[Any, Any],
+    ) -> StreamMessage | None:
+        normalized = normalize_stream_fields(fields)
+        try:
+            tick = decode(
+                MarketTickMessage,
+                normalized,
+                legacy_adapter=lambda legacy: MarketTickMessage.from_legacy_fields(
+                    legacy,
+                    price_keys=("current_price", "price", "close"),
+                ),
+            )
+        except StreamDecodeError:
+            return None
+
+        data: dict[str, Any] = dict(normalized)
+        data["asset"] = tick.asset
+        data["symbol"] = tick.symbol
+        data["price"] = str(tick.price)
+        data["current_price"] = str(tick.price)
+        data.setdefault("close", str(tick.price))
+        data["timestamp"] = str(tick.timestamp)
+        if tick.volume is not None:
+            data.setdefault("volume", str(tick.volume))
+        if tick.tick_volume is not None:
+            data.setdefault("tick_volume", str(tick.tick_volume))
+        if tick.cumulative_volume is not None:
+            data.setdefault("cumulative_volume", str(tick.cumulative_volume))
+
+        msg_id_text = (
+            msg_id.decode("utf-8", errors="replace")
+            if isinstance(msg_id, bytes)
+            else str(msg_id)
+        )
+        return StreamMessage(
+            id=msg_id_text,
+            data=data,
+            stream=stream_name,
+            timestamp=time.time(),
+        )
 
     @staticmethod
     def _resolve_symbol(ticks: list[StreamMessage], explicit: str | None) -> str | None:

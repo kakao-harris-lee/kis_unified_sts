@@ -123,3 +123,72 @@ def test_futures_flow_score_combines_components():
     )
 
     assert flow_score == 2.5
+
+
+def test_futures_flow_loads_canonical_tick_schema(monkeypatch):
+    cfg = LLMConfig(
+        futures_tick_stream="raw_data",
+        futures_tick_symbol="101V3000",
+        futures_tick_lookback_seconds=600,
+        futures_tick_max=100,
+    )
+    collector = FuturesFlowCollector(config=cfg)
+
+    class FakeRedis:
+        def xrevrange(self, *_args, **_kwargs):
+            return [
+                (
+                    b"1700000000000-0",
+                    {
+                        b"schema_version": b"1",
+                        b"asset": b"futures",
+                        b"symbol": b"101V3000",
+                        b"price": b"350.5",
+                        b"timestamp": b"1700000000.0",
+                        b"bid_price_1": b"350.4",
+                        b"ask_price_1": b"350.6",
+                    },
+                )
+            ]
+
+    monkeypatch.setattr(
+        "shared.llm.futures_flow_collector.RedisClient.get_client",
+        lambda: FakeRedis(),
+    )
+
+    ticks, missing = collector._load_recent_ticks()
+
+    assert missing == []
+    assert ticks[0].data["symbol"] == "101V3000"
+    assert ticks[0].data["current_price"] == "350.5"
+    assert ticks[0].data["bid_price_1"] == "350.4"
+
+
+def test_futures_flow_preserves_legacy_current_price_priority(monkeypatch):
+    collector = FuturesFlowCollector(
+        config=LLMConfig(futures_tick_stream="raw_data", futures_tick_max=100)
+    )
+
+    class FakeRedis:
+        def xrevrange(self, *_args, **_kwargs):
+            return [
+                (
+                    b"1700000000000-0",
+                    {
+                        b"symbol": b"101V3000",
+                        b"current_price": b"351.5",
+                        b"close": b"350.5",
+                        b"price": b"352.5",
+                    },
+                )
+            ]
+
+    monkeypatch.setattr(
+        "shared.llm.futures_flow_collector.RedisClient.get_client",
+        lambda: FakeRedis(),
+    )
+
+    ticks, missing = collector._load_recent_ticks()
+
+    assert missing == []
+    assert ticks[0].data["current_price"] == "351.5"
