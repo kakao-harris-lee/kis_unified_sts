@@ -26,6 +26,8 @@ import logging
 import os
 import socket
 import time
+from collections.abc import Callable
+from datetime import date, datetime
 from typing import Any
 
 from services.stock_risk_filter.codec import (
@@ -35,6 +37,7 @@ from services.stock_risk_filter.codec import (
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.risk.layer import RiskFilterLayer
 from shared.risk.runtime_state import RuntimeRiskState
+from shared.strategy.market_time import now_kst
 from shared.streaming.stage import StreamStage
 from shared.streaming.stock_keys import stock_daemon_positions_key
 
@@ -59,6 +62,7 @@ class StockRiskFilterDaemon(StreamStage):
         final_maxlen: int,
         xread_block_ms: int,
         batch_size: int,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         super().__init__(
             redis=redis,
@@ -73,6 +77,61 @@ class StockRiskFilterDaemon(StreamStage):
         self.runtime_state = runtime_state
         self.final_stream = final_stream
         self.final_maxlen = final_maxlen
+        # KST "now" provider — injectable so tests can pin the day boundary.
+        self._clock = clock if clock is not None else now_kst
+        # In-memory guard: the KST date we last reset (or confirmed reset) for.
+        # Keeps the per-cycle hook off the Redis path except on the first cycle
+        # of a new KST day.
+        self._last_reset_date: date | None = None
+
+    async def pre_iteration_gate(self) -> bool:
+        """Reset the daily risk counters at the KST calendar-day boundary.
+
+        The decoupled M4 pipeline keeps ``daily_trade_count`` / ``daily_pnl_krw``
+        in ``risk:state:stock`` (24 h idle TTL). With trades continuing inside a
+        <24 h weekday-to-weekday span the TTL never expired, so the counter
+        accumulated across days and — once it reached
+        ``risk_stock.max_daily_trades`` — every later candidate was silently
+        rejected (``skip_reason="max_daily_trades"``, observed 2026-07-03). The
+        futures orchestrator ``RiskManager`` already self-resets via
+        ``_check_and_reset_daily``; this restores parity for the stock path.
+
+        Runs once per consume cycle (before any candidate is evaluated), never
+        per candidate. Reuses the unchanged ``RuntimeRiskState.should_reset_daily``
+        / ``reset_daily`` API (the same one the M5c cron calls), so daily resets
+        share the state load/save path with the weekly/monthly rollover. Always
+        returns ``True`` — the reset must never abort the loop.
+        """
+        await self._maybe_reset_daily()
+        return True
+
+    async def _maybe_reset_daily(self) -> None:
+        """Zero the daily counters once per KST day, idempotently.
+
+        Fast path: an in-memory date guard skips Redis entirely for every cycle
+        after the day's first. On a new KST date the Redis ``:meta`` guard
+        (``should_reset_daily``) makes the reset idempotent across restarts and
+        co-workers — a mid-session restart that finds the day already stamped
+        skips the reset instead of wiping the session's accumulated counters.
+        Transient Redis errors are swallowed (the loop must not die) and the
+        in-memory guard is left un-advanced so the next cycle retries.
+        """
+        now = self._clock()
+        today = now.date()
+        if self._last_reset_date == today:
+            return  # already handled this KST day — stay off the Redis path
+        try:
+            if await self.runtime_state.should_reset_daily(now_kst=now):
+                await self.runtime_state.reset_daily(now_kst=now)
+                logger.info("Stock daily risk counters reset for KST date %s", today)
+        except Exception:
+            logger.exception(
+                "Stock daily risk-counter reset failed for KST date %s; "
+                "retrying next cycle",
+                today,
+            )
+            return  # do NOT advance the guard — retry on the next cycle
+        self._last_reset_date = today
 
     async def handle_message(
         self, msg_id: bytes, fields: dict[bytes, bytes]  # noqa: ARG002
