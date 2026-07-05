@@ -24,9 +24,12 @@ import pandas as pd
 import pytest
 
 # Target (read/import only)
+from services.trading.indicator_calculations import IndicatorCalculationMixin
+from services.trading.indicator_candles import Candle
 from shared.indicators.momentum import RSICalculator
 from shared.indicators.reference import (
     ADXCalculator,
+    ATRCalculator,
     BollingerBandsCalculator,
     StochRSICalculator,
     wilder_rma,
@@ -408,3 +411,114 @@ def test_stochrsi_flat_market_is_neutral() -> None:
     raw = out["stochrsi"].dropna()
     assert not raw.empty
     assert np.allclose(raw.to_numpy(), 50.0, atol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# ATR -- canonical True Range + smoothing-mode knob (sma | wilder)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def candles(ohlcv: dict[str, list[float]]) -> list[Candle]:
+    """Runtime Candle list for cross-checking against the streaming ATR."""
+    return [
+        Candle(
+            open=ohlcv["open"][i],
+            high=ohlcv["high"][i],
+            low=ohlcv["low"][i],
+            close=ohlcv["close"][i],
+            volume=ohlcv["volume"][i],
+            minute=930 + i,
+        )
+        for i in range(_N_BARS)
+    ]
+
+
+def test_atr_true_range_is_max_of_three(ohlcv: dict[str, list[float]]) -> None:
+    """TR[i] = max(H-L, |H-Cp|, |L-Cp|); TR aligned to bars 1..n-1 (bar 0 has no Cp)."""
+    high = np.asarray(ohlcv["high"])
+    low = np.asarray(ohlcv["low"])
+    close = np.asarray(ohlcv["close"])
+    tr = ATRCalculator.true_range(high, low, close)
+    assert tr.shape[0] == high.shape[0] - 1
+    i = 10  # arbitrary interior bar (diff index -> price bar i+1)
+    expected = max(
+        high[i + 1] - low[i + 1],
+        abs(high[i + 1] - close[i]),
+        abs(low[i + 1] - close[i]),
+    )
+    assert tr[i] == pytest.approx(expected, abs=1e-9)
+
+
+def test_atr_sma_mode_matches_runtime_calc_atr_raw(
+    ohlcv: dict[str, list[float]], candles: list[Candle]
+) -> None:
+    """SMA mode reproduces the runtime standalone ATR exactly -> safe drop-in.
+
+    Every standalone ATR consumer in the repo uses ``sum(trs[-period:]) / period``
+    (SMA of True Range). ``ATRCalculator(mode="sma")`` must return the identical
+    value so consumers can delegate without moving any ATR-scaled threshold.
+    """
+    atr_ref = ATRCalculator(period=14, mode="sma").atr_last(
+        ohlcv["high"], ohlcv["low"], ohlcv["close"]
+    )
+    atr_runtime = IndicatorCalculationMixin._calc_atr_raw(candles, period=14)
+    assert atr_ref is not None
+    assert atr_ref == pytest.approx(atr_runtime, abs=1e-9)
+
+
+def test_atr_wilder_mode_matches_wilder_rma_of_true_range(
+    ohlcv: dict[str, list[float]],
+) -> None:
+    """Wilder mode == wilder_rma(TR) -- the same ATR the reference ADX smooths."""
+    high = np.asarray(ohlcv["high"])
+    low = np.asarray(ohlcv["low"])
+    close = np.asarray(ohlcv["close"])
+    tr = ATRCalculator.true_range(high, low, close)
+    expected = wilder_rma(tr, 14)
+    expected_last = float(expected[~np.isnan(expected)][-1])
+
+    atr_ref = ATRCalculator(period=14, mode="wilder").atr_last(
+        ohlcv["high"], ohlcv["low"], ohlcv["close"]
+    )
+    assert atr_ref == pytest.approx(expected_last, abs=1e-9)
+
+
+def test_atr_wilder_and_sma_modes_diverge(ohlcv: dict[str, list[float]]) -> None:
+    """The two smoothings genuinely differ -- the SoT divergence this consolidates."""
+    sma = ATRCalculator(period=14, mode="sma").atr_last(
+        ohlcv["high"], ohlcv["low"], ohlcv["close"]
+    )
+    wil = ATRCalculator(period=14, mode="wilder").atr_last(
+        ohlcv["high"], ohlcv["low"], ohlcv["close"]
+    )
+    assert sma is not None and wil is not None
+    assert sma > 0.0 and wil > 0.0
+    assert abs(sma - wil) > 1e-6
+
+
+def test_atr_series_warmup_is_nan_and_causal(frame: pd.DataFrame) -> None:
+    """calculate() adds an ``atr`` column with NaN warmup; first valid at index period."""
+    out = ATRCalculator(period=14, mode="sma").calculate(frame)
+    atr = out["atr"].to_numpy()
+    assert np.isnan(atr[:14]).all(), "bars before a full TR window must be NaN"
+    assert not np.isnan(atr[14]), "first ATR available once `period` TRs exist"
+
+
+def test_atr_fraction_last_is_atr_over_close(ohlcv: dict[str, list[float]]) -> None:
+    """atr_fraction_last returns atr_last / last_close (an explicit fraction, not %)."""
+    calc = ATRCalculator(period=14, mode="sma")
+    atr = calc.atr_last(ohlcv["high"], ohlcv["low"], ohlcv["close"])
+    frac = calc.atr_fraction_last(ohlcv["high"], ohlcv["low"], ohlcv["close"])
+    assert atr is not None and frac is not None
+    assert frac == pytest.approx(atr / ohlcv["close"][-1], abs=1e-12)
+
+
+def test_atr_insufficient_data_returns_none() -> None:
+    calc = ATRCalculator(period=14, mode="sma")
+    assert calc.atr_last([100.0, 101.0], [99.0, 100.0], [99.5, 100.5]) is None
+
+
+def test_atr_invalid_mode_rejected() -> None:
+    with pytest.raises(ValueError):
+        ATRCalculator(period=14, mode="ewm")

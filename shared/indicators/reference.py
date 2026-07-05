@@ -555,3 +555,181 @@ class StochRSICalculator:
             "stochrsi_d": _val(d_series, -1),
             "stochrsi_k_prev": _val(k_series, -2),
         }
+
+
+# ---------------------------------------------------------------------------
+# ATR (Average True Range) -- canonical TR + explicit smoothing-mode knob
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ATRConfig:
+    """ATR configuration.
+
+    Attributes:
+        period: Smoothing window for True Range (default 14).
+        mode: Smoothing family. ``"sma"`` (default) is a simple trailing mean of
+            True Range -- the de-facto convention of every *standalone* ATR
+            consumer in this repo (runtime ``_calc_atr_raw``/``_calc_atr_normalized``,
+            ``regime._calc_atr``, ``technical._calc_atr``, the LLM/screening and
+            ``trix_golden`` ``atr_pct`` helpers). ``"wilder"`` is Wilder's RMA of
+            True Range -- the ATR the reference :class:`ADXCalculator` smooths
+            internally; on real intraday data it runs materially higher than the
+            SMA form, so switching a consumer to it MOVES that consumer's
+            ATR-scaled stops/filters and requires a backtest gate.
+    """
+
+    period: int = 14
+    mode: str = "sma"
+
+
+class ATRCalculator:
+    """Average True Range with an explicit smoothing-mode knob.
+
+    True Range (Wilder 1978) is ``max(H-L, |H-Cp|, |L-Cp|)`` and is computed
+    causally: TR at bar ``i`` uses only bars ``<= i`` (needs the prior close, so
+    bar 0 has no TR). The array returned by :meth:`true_range` is length ``n-1``,
+    aligned to bars ``1..n-1`` (the same alignment the reference
+    :class:`ADXCalculator` uses internally), so ``mode="wilder"`` reproduces that
+    ADX-internal ATR exactly.
+
+    Motivation: the repo currently carries seven divergent ATR copies. All agree
+    on the max-of-three True Range but split on smoothing (six use SMA, only the
+    ADX-internal path uses Wilder -- ~24% apart on real data) and on
+    normalization (some return raw ATR, some return ``atr/close`` under a
+    misleading ``*_pct`` name). This calculator is the single canonical source
+    they can delegate to; it mirrors Bollinger's explicit ``ddof`` knob by making
+    the SMA-vs-Wilder choice explicit instead of an accident of which copy a
+    caller happened to reach. It is additive -- nothing is rewired here; consumer
+    migration is a separate, backtest-gated step.
+
+    ATR is emitted raw; callers that want a price-relative figure call
+    :meth:`atr_fraction_last`, which returns an explicit ``atr/close`` fraction
+    (not a percent) so the ``*_pct``-named-but-returns-a-fraction trap in the
+    current copies is not reproduced.
+    """
+
+    def __init__(self, period: int = 14, mode: str = "sma"):
+        if mode not in ("sma", "wilder"):
+            raise ValueError(f"ATR mode must be 'sma' or 'wilder', got {mode!r}")
+        if period <= 0:
+            raise ValueError(f"ATR period must be > 0, got {period}")
+        self.config = ATRConfig(period=period, mode=mode)
+
+    @staticmethod
+    def true_range(
+        high: np.ndarray | list[float],
+        low: np.ndarray | list[float],
+        close: np.ndarray | list[float],
+    ) -> np.ndarray:
+        """Return the True Range array aligned to bars ``1..n-1`` (length ``n-1``).
+
+        Args:
+            high: High-price series.
+            low: Low-price series.
+            close: Close-price series.
+
+        Returns:
+            ``max(H-L, |H-Cp|, |L-Cp|)`` for each bar from 1 onward; empty array
+            when fewer than 2 bars are supplied.
+        """
+        h = np.asarray(high, dtype=float)
+        low_a = np.asarray(low, dtype=float)
+        c = np.asarray(close, dtype=float)
+        if h.shape[0] < 2:
+            return np.empty(0, dtype=float)
+        tr1 = h[1:] - low_a[1:]
+        tr2 = np.abs(h[1:] - c[:-1])
+        tr3 = np.abs(low_a[1:] - c[:-1])
+        tr: np.ndarray = np.maximum(tr1, np.maximum(tr2, tr3))
+        return tr
+
+    def _smooth(self, tr: np.ndarray) -> np.ndarray:
+        """Smooth the True Range tail per ``mode`` (``NaN`` warmup preserved)."""
+        period = self.config.period
+        if self.config.mode == "wilder":
+            return wilder_rma(tr, period)
+        out = np.full(tr.shape[0], np.nan, dtype=float)
+        if tr.shape[0] < period:
+            return out
+        # Trailing simple mean of TR: identical to sum(tr[-period:]) / period at
+        # every position, matching the runtime ``_calc_atr_raw`` convention.
+        cumsum = np.cumsum(np.insert(tr, 0, 0.0))
+        out[period - 1 :] = (cumsum[period:] - cumsum[:-period]) / period
+        return out
+
+    def atr_series(
+        self,
+        high: np.ndarray | list[float],
+        low: np.ndarray | list[float],
+        close: np.ndarray | list[float],
+    ) -> np.ndarray:
+        """Return the full-length ATR series (length ``n``, ``NaN`` warmup + bar 0)."""
+        h = np.asarray(high, dtype=float)
+        out = np.full(h.shape[0], np.nan, dtype=float)
+        tr = self.true_range(high, low, close)
+        if tr.shape[0] == 0:
+            return out
+        out[1:] = self._smooth(tr)
+        return out
+
+    def atr_last(
+        self,
+        high: np.ndarray | list[float],
+        low: np.ndarray | list[float],
+        close: np.ndarray | list[float],
+    ) -> float | None:
+        """Return the latest ATR value, or ``None`` when there is not enough data."""
+        series = self.atr_series(high, low, close)
+        valid = series[~np.isnan(series)]
+        if valid.size == 0:
+            return None
+        return float(valid[-1])
+
+    def atr_fraction_last(
+        self,
+        high: np.ndarray | list[float],
+        low: np.ndarray | list[float],
+        close: np.ndarray | list[float],
+    ) -> float | None:
+        """Return ``atr_last / last_close`` (an explicit fraction), or ``None``."""
+        atr = self.atr_last(high, low, close)
+        if atr is None:
+            return None
+        last_close = float(np.asarray(close, dtype=float)[-1])
+        if last_close == 0.0:
+            return None
+        return atr / last_close
+
+    def calculate(
+        self,
+        df: pd.DataFrame,
+        *,
+        lookahead_guard: Any = None,
+        context_timestamp: Any = None,
+        context_info: str | None = None,
+    ) -> pd.DataFrame:
+        """Add an ``atr`` column to ``df`` (``NaN`` warmup).
+
+        Args:
+            df: DataFrame with ``high``, ``low``, ``close`` columns.
+            lookahead_guard: Optional ``LookaheadGuard`` for backtest assertions.
+            context_timestamp: Reference timestamp for the guard.
+            context_info: Optional context label for guard messages.
+
+        Returns:
+            The same DataFrame with an ``atr`` column added.
+        """
+        if lookahead_guard is not None and context_timestamp is not None:
+            timestamps = df["timestamp"].tolist() if "timestamp" in df.columns else None
+            lookahead_guard.check(
+                df["close"].tolist(),
+                timestamps,
+                context_timestamp,
+                context_info or "reference:atr_close",
+            )
+        high = df["high"].to_numpy(dtype=float)
+        low = df["low"].to_numpy(dtype=float)
+        close = df["close"].to_numpy(dtype=float)
+        df["atr"] = self.atr_series(high, low, close)
+        return df
