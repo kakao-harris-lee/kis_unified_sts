@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import pandas as pd
@@ -124,52 +125,41 @@ def calculate_daily_indicators(
 
     result: dict[str, float] = {}
 
+    # Indicator math is delegated to the daily-convention engine backend
+    # (shared/indicators/engine/daily_backend.py) so the platform computes daily
+    # SMA/EMA/RSI in one place. The pandas conventions (min_periods SMA,
+    # adjust=False EMA, ewm-seeded RSI + zero-gain/loss handling) are reproduced
+    # bit-for-bit there; this function keeps only the look-ahead guard, validation,
+    # and the {sma,ema,rsi}_{period} labelling / SMA omission contract.
+    from shared.indicators.engine import (
+        IndicatorSpec,
+        OHLCVWindow,
+        daily_indicator_engine,
+    )
+
+    closes = [float(c) for c in df["close"].tolist()]
+    window = OHLCVWindow.from_sequences(
+        open=closes, high=closes, low=closes, close=closes, volume=[0.0] * len(closes)
+    )
+    engine = daily_indicator_engine()
+
+    def _daily(indicator_id: str, period: int) -> float:
+        return engine.compute(
+            IndicatorSpec.create(indicator_id, {"period": period}), window
+        ).latest["value"]
+
     try:
-        # Calculate SMA for each period. Require a full window (min_periods=period)
-        # so an under-warmed period is NaN and its key is omitted, rather than
-        # emitting a partial-window mean mislabeled as the full-period SMA (e.g.
-        # 30 candles must not report sma_200 = mean of 30). Consumers treat a
-        # missing SMA as "no trend confirmation" (PatternPullback defaults to 0.0
-        # and gates on sma > 0), so omission is the safe, conservative signal.
+        # SMA requires a full window (min_periods=period): an under-warmed period
+        # comes back NaN and its key is omitted, rather than reporting a partial
+        # mean as the full-period SMA. Consumers treat a missing SMA as "no trend
+        # confirmation" (PatternPullback defaults to 0.0 and gates on sma > 0).
         for period in sma_periods:
-            sma = df["close"].rolling(window=period, min_periods=period).mean()
-            value = sma.iloc[-1]
-            if pd.notna(value):
+            value = _daily("sma", period)
+            if math.isfinite(value):
                 result[f"sma_{period}"] = float(value)
-
-        # Calculate EMA for each period
         for period in ema_periods:
-            ema = df["close"].ewm(span=period, adjust=False).mean()
-            result[f"ema_{period}"] = float(ema.iloc[-1])
-
-        # Calculate RSI
-        delta = df["close"].diff()
-        gain = delta.clip(lower=0)
-        loss = (-delta).clip(lower=0)
-
-        avg_gain = gain.ewm(
-            alpha=1.0 / rsi_period, min_periods=rsi_period, adjust=False
-        ).mean()
-        avg_loss = loss.ewm(
-            alpha=1.0 / rsi_period, min_periods=rsi_period, adjust=False
-        ).mean()
-
-        # Handle edge cases for RSI calculation
-        zero_loss = avg_loss.iloc[-1] == 0
-        zero_gain = avg_gain.iloc[-1] == 0
-
-        if zero_loss and zero_gain:
-            rsi_value = 50.0  # Flat market
-        elif zero_loss and not zero_gain:
-            rsi_value = 100.0  # All gains
-        elif zero_gain and not zero_loss:
-            rsi_value = 0.0  # All losses
-        else:
-            rs = avg_gain.iloc[-1] / avg_loss.iloc[-1]
-            rsi_value = 100 - (100 / (1 + rs))
-
-        result[f"rsi_{rsi_period}"] = float(rsi_value)
-
+            result[f"ema_{period}"] = float(_daily("ema", period))
+        result[f"rsi_{rsi_period}"] = float(_daily("rsi", rsi_period))
     except (ValueError, KeyError, IndexError, ZeroDivisionError) as e:
         logger.error(f"calculate_daily_indicators: calculation failed: {e}")
         return {}
