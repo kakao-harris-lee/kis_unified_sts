@@ -69,7 +69,16 @@ def _build_daemon(
 async def test_pre_iteration_gate_resets_daily_on_new_kst_day() -> None:
     """A leftover count from a prior KST day is zeroed on the first cycle of the new day."""
     redis = fakeredis.aioredis.FakeRedis(db=1)
-    rs = RuntimeRiskState(redis=redis, asset_class="stock")
+    # Pin the STATE clock too, not just the daemon's: snapshot()'s weekly/monthly
+    # rollover reads RuntimeRiskState._clock, which defaults to the real wall clock.
+    # Without pinning, the weekly assertion below fails whenever the real date drifts
+    # into a different ISO week than the hardcoded 2026-07-02/03 dates (the state
+    # would roll the week over and zero weekly_pnl). Advance the holder in lockstep
+    # with the daemon clock.
+    clock_holder = {"now": _kst(2026, 7, 2)}
+    rs = RuntimeRiskState(
+        redis=redis, asset_class="stock", clock=lambda: clock_holder["now"]
+    )
 
     yesterday = _kst(2026, 7, 2)
     await rs.reset_daily(now_kst=yesterday)  # stamp meta = 2026-07-02
@@ -78,6 +87,7 @@ async def test_pre_iteration_gate_resets_daily_on_new_kst_day() -> None:
     assert (await rs.snapshot()).daily_trade_count == 1
 
     today = _kst(2026, 7, 3)
+    clock_holder["now"] = today  # cross into the new KST day (same ISO week)
     daemon = _build_daemon(redis, clock=lambda: today, runtime_state=rs)
 
     proceed = await daemon.pre_iteration_gate()
