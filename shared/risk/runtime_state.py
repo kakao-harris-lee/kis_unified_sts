@@ -37,9 +37,17 @@ adds two sibling HASHes:
     latch could silently expire before month end.
 
 Each operation does load → mutate → save. Multi-writer atomicity isn't
-guaranteed, but in Phase 4 only one daemon (order_router) writes — risk_filter
-and kill_switch only read via :meth:`RuntimeRiskState.snapshot` (which never
-writes). WATCH/Lua isn't required.
+guaranteed. Trade/loss/win accumulation still has a single writer (the
+order_router / exit daemon), and kill_switch stays a pure reader via
+:meth:`RuntimeRiskState.snapshot`. The daily-counter reset is the one path
+with more than one writer: both the in-process ``stock_risk_filter``
+day-boundary hook (KST midnight, per consume cycle) and the M5c
+``scripts/maintenance/daily_risk_reset.py`` cron (08:59 KST) may call
+:meth:`reset_daily` on ``risk:state:{asset}``. That stays safe without
+WATCH/Lua because :meth:`should_reset_daily` gates every reset on the
+``:meta`` ``last_reset_date_kst`` stamp — the second writer for a given KST
+date is a no-op, and even a rare concurrent double reset only re-zeros
+already-zero daily counters.
 """
 
 from __future__ import annotations
