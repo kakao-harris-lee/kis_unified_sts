@@ -438,5 +438,5 @@ strategy_builder:
           name: Cloud Bottom
       default_output: cloud_top
       implemented: true
-      backtest_supported: false
-      runtime_supported: false
+      backtest_supported: true
+      runtime_supported: true
