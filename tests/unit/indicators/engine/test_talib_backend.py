@@ -108,6 +108,18 @@ def test_stochastic_flat_keys_are_normalized(backend: TALibBackend, window) -> N
     assert 0.0 <= flat["stoch_k"] <= 100.0
 
 
+def test_stochrsi_flat_keys_and_parity(backend: TALibBackend, window) -> None:
+    spec = IndicatorSpec.create("stochrsi", {"period": 14, "k": 5, "d": 3})
+    flat = backend.compute(spec, window).flat_latest()
+    assert set(flat) == {"stochrsi_k", "stochrsi_d"}
+    assert 0.0 <= flat["stochrsi_k"] <= 100.0
+    fastk, _fastd = talib.STOCHRSI(
+        window.close, timeperiod=14, fastk_period=5, fastd_period=3, fastd_matype=0
+    )
+    expected = float(fastk[np.isfinite(fastk)][-1])
+    assert flat["stochrsi_k"] == pytest.approx(expected, rel=1e-9)
+
+
 def test_ema_flat_key_embeds_period(backend: TALibBackend, window) -> None:
     spec = IndicatorSpec.create("ema", {"period": 20})
     flat = backend.compute(spec, window).flat_latest()
