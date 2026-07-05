@@ -45,29 +45,57 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
-from numpy.lib.stride_tricks import sliding_window_view
+
+from shared.indicators.engine import (
+    IndicatorSpec,
+    OHLCVWindow,
+    momentum_indicator_engine,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# EMA Utility
-# =============================================================================
 
 
 def ema(series: pd.Series, span: int) -> pd.Series:
     """Exponential Moving Average (adjust=False for HTS compatibility).
 
-    Args:
-        series: Input price series.
-        span: EMA period.
-
-    Returns:
-        EMA series of same length.
+    Public EMA primitive (part of this module's API). The indicator calculators
+    themselves no longer use it — their math is delegated to the engine — but it
+    is kept for external callers.
     """
     return series.ewm(span=span, adjust=False).mean()
+
+
+# The indicator math lives in the engine's MomentumCompatBackend
+# (shared/indicators/engine/momentum_backend.py) — the exact pandas conventions,
+# reproduced bit-for-bit. These calculator classes are thin, value-preserving
+# delegates that keep their public API + column names; calculate_all_momentum and
+# DivergenceDetector below are unchanged. Pinned by test_momentum_backend_golden.py.
+
+
+def _window(df: pd.DataFrame) -> OHLCVWindow:
+    """Build an engine window from a momentum DataFrame (positional order).
+
+    Falls back to close for a missing high/low and 0 for a missing volume so a
+    calculator invoked on a partial frame behaves as before (each backend fn reads
+    only the columns its indicator needs)."""
+    close = df["close"].tolist()
+    high = df["high"].tolist() if "high" in df.columns else close
+    low = df["low"].tolist() if "low" in df.columns else close
+    volume = df["volume"].tolist() if "volume" in df.columns else [0.0] * len(df)
+    open_ = df["open"].tolist() if "open" in df.columns else close
+    return OHLCVWindow.from_sequences(
+        open=open_, high=high, low=low, close=close, volume=volume
+    )
+
+
+def _series(indicator_id: str, params: dict, df: pd.DataFrame) -> dict:
+    """Compute an indicator's full output series via the momentum engine."""
+    return (
+        momentum_indicator_engine()
+        .compute(IndicatorSpec.create(indicator_id, params), _window(df))
+        .series
+    )
 
 
 # =============================================================================
@@ -136,20 +164,9 @@ class TRIXCalculator:
                 context_info or "momentum:trix_close",
             )
 
-        ema1 = ema(close, n)
-        ema2 = ema(ema1, n)
-        ema3 = ema(ema2, n)
-
-        # TRIX = rate of change of EMA3 as percentage. Ratio runs in numpy to
-        # avoid Series-alignment overhead; the .ewm signal stays in pandas.
-        ema3_arr = ema3.to_numpy()
-        ema3_prev = ema3.shift(1).to_numpy()
-        with np.errstate(divide="ignore", invalid="ignore"):
-            trix = np.where(
-                ema3_prev != 0, (ema3_arr - ema3_prev) / ema3_prev * 100.0, 0.0
-            )
-        df["trix"] = trix
-        df["trix_signal"] = ema(pd.Series(trix, index=df.index), self.config.signal)
+        s = _series("trix", {"n": n, "signal": self.config.signal}, df)
+        df["trix"] = s["trix"]
+        df["trix_signal"] = s["trix_signal"]
 
         return df
 
@@ -157,37 +174,6 @@ class TRIXCalculator:
 # =============================================================================
 # CCI Calculator
 # =============================================================================
-
-
-def _rolling_mad(values: np.ndarray, period: int) -> np.ndarray:
-    """Rolling mean-absolute-deviation with pandas ``min_periods=1`` semantics.
-
-    ``mad[i] = mean(|w - mean(w)|)`` over ``w = values[max(0, i-period+1) : i+1]``.
-
-    The ramp-up rows (``i < period-1``) use the expanding window; the full
-    windows are computed in a single vectorized pass via a strided view, which
-    avoids the per-window Python callback that ``Series.rolling().apply()``
-    incurs (the dominant cost of the previous CCI implementation).
-
-    Args:
-        values: 1-D float array (typical price).
-        period: rolling window length.
-
-    Returns:
-        Array of the same length as ``values`` with the rolling MAD.
-    """
-    n = values.shape[0]
-    out = np.empty(n, dtype=float)
-    ramp = min(period - 1, n)
-    for i in range(ramp):  # expanding window; length is period-1 (constant), not O(n)
-        w = values[: i + 1]
-        out[i] = np.abs(w - w.mean()).mean()
-    if n >= period:
-        windows = sliding_window_view(values, period)  # (n-period+1, period)
-        out[period - 1 :] = np.abs(windows - windows.mean(axis=1, keepdims=True)).mean(
-            axis=1
-        )
-    return out
 
 
 @dataclass
@@ -227,24 +213,11 @@ class CCICalculator:
         Returns:
             DataFrame with added cci column.
         """
-        tp = (df["high"] + df["low"] + df["close"]) / 3
-        tp_sma = tp.rolling(window=self.config.period, min_periods=1).mean()
-
-        # Mean Deviation = mean of |TP - SMA(TP)|. Vectorized (sliding-window
-        # view) to avoid a per-window Python callback; see _rolling_mad.
-        mean_dev = pd.Series(
-            _rolling_mad(tp.to_numpy(dtype=float), self.config.period),
-            index=tp.index,
-        )
-
-        # Avoid division by zero
-        denominator = self.config.constant * mean_dev
-        df["cci"] = np.where(
-            denominator != 0,
-            (tp - tp_sma) / denominator,
-            0.0,
-        )
-
+        df["cci"] = _series(
+            "cci",
+            {"period": self.config.period, "constant": self.config.constant},
+            df,
+        )["cci"]
         return df
 
 
@@ -291,13 +264,18 @@ class MACDCalculator:
         Returns:
             DataFrame with added MACD columns.
         """
-        close = df["close"]
-        fast_ema = ema(close, self.config.fast)
-        slow_ema = ema(close, self.config.slow)
-
-        df["macd_line"] = fast_ema - slow_ema
-        df["macd_signal"] = ema(df["macd_line"], self.config.signal)
-        df["macd_oscillator"] = df["macd_line"] - df["macd_signal"]
+        s = _series(
+            "macd",
+            {
+                "fast": self.config.fast,
+                "slow": self.config.slow,
+                "signal": self.config.signal,
+            },
+            df,
+        )
+        df["macd_line"] = s["macd_line"]
+        df["macd_signal"] = s["macd_signal"]
+        df["macd_oscillator"] = s["macd_oscillator"]
 
         return df
 
@@ -354,32 +332,17 @@ class StochasticCalculator:
         Returns:
             DataFrame with added sto_k, sto_d columns.
         """
-        n = self.config.fastk_period
-        # rolling min/max stay in pandas (deque O(n) beats sliding-window O(n*w));
-        # the raw-%K arithmetic runs in numpy to avoid Series-alignment overhead.
-        lowest_low = df["low"].rolling(window=n, min_periods=1).min().to_numpy()
-        highest_high = df["high"].rolling(window=n, min_periods=1).max().to_numpy()
-        close = df["close"].to_numpy()
-
-        # Raw (fast) %K
-        denominator = highest_high - lowest_low
-        with np.errstate(divide="ignore", invalid="ignore"):
-            raw_k = np.where(
-                denominator != 0,
-                (close - lowest_low) / denominator * 100.0,
-                50.0,  # When range is zero, neutral
-            )
-        raw_k_series = pd.Series(raw_k, index=df.index)
-
-        # Slow %K = SMA of raw %K
-        df["sto_k"] = raw_k_series.rolling(
-            window=self.config.slowk_period, min_periods=1
-        ).mean()
-
-        # Slow %D = SMA of Slow %K
-        df["sto_d"] = (
-            df["sto_k"].rolling(window=self.config.slowd_period, min_periods=1).mean()
+        s = _series(
+            "stochastic",
+            {
+                "fastk_period": self.config.fastk_period,
+                "slowk_period": self.config.slowk_period,
+                "slowd_period": self.config.slowd_period,
+            },
+            df,
         )
+        df["sto_k"] = s["sto_k"]
+        df["sto_d"] = s["sto_d"]
 
         return df
 
@@ -423,19 +386,9 @@ class WilliamsRCalculator:
         Returns:
             DataFrame with added williams_r column.
         """
-        n = self.config.period
-        # rolling max/min stay in pandas; the %R arithmetic runs in numpy.
-        highest_high = df["high"].rolling(window=n, min_periods=1).max().to_numpy()
-        lowest_low = df["low"].rolling(window=n, min_periods=1).min().to_numpy()
-        close = df["close"].to_numpy()
-
-        denominator = highest_high - lowest_low
-        with np.errstate(divide="ignore", invalid="ignore"):
-            df["williams_r"] = np.where(
-                denominator != 0,
-                ((highest_high - close) / denominator) * -100.0,
-                -50.0,  # Neutral when range is zero
-            )
+        df["williams_r"] = _series("williams_r", {"period": self.config.period}, df)[
+            "williams_r"
+        ]
 
         return df
 
@@ -476,42 +429,7 @@ class RSICalculator:
         Returns:
             DataFrame with added rsi column.
         """
-        period = self.config.period
-        # Wilder smoothing stays in pandas (.ewm handles NaN / min_periods); the
-        # gain/loss split and edge-case selection run in one numpy pass to avoid
-        # the .clip / chained .where / .fillna Series overhead.
-        delta = df["close"].diff().to_numpy()
-        gain = np.maximum(delta, 0.0)  # == delta.clip(lower=0), NaN-preserving
-        loss = np.maximum(-delta, 0.0)  # == (-delta).clip(lower=0)
-
-        alpha = 1.0 / period
-        avg_gain = (
-            pd.Series(gain, index=df.index)
-            .ewm(alpha=alpha, min_periods=period, adjust=False)
-            .mean()
-            .to_numpy()
-        )
-        avg_loss = (
-            pd.Series(loss, index=df.index)
-            .ewm(alpha=alpha, min_periods=period, adjust=False)
-            .mean()
-            .to_numpy()
-        )
-
-        # When avg_loss=0 and avg_gain=0 (flat), RSI=50
-        # When avg_loss=0 and avg_gain>0 (all gains), RSI=100
-        # When avg_gain=0 and avg_loss>0 (all losses), RSI=0
-        zero_loss = avg_loss == 0.0
-        zero_gain = avg_gain == 0.0
-        with np.errstate(divide="ignore", invalid="ignore"):
-            rs = avg_gain / np.where(zero_loss, np.nan, avg_loss)  # replace(0, nan)
-            rsi = 100.0 - 100.0 / (1.0 + rs)
-        rsi = np.where(zero_loss & zero_gain, 50.0, rsi)
-        rsi = np.where(zero_loss & ~zero_gain, 100.0, rsi)
-        rsi = np.where(zero_gain & ~zero_loss, 0.0, rsi)
-        # Fill initial NaN (min_periods warmup) with neutral 50
-        rsi = np.where(np.isnan(rsi), 50.0, rsi)
-        df["rsi"] = rsi
+        df["rsi"] = _series("rsi", {"period": self.config.period}, df)["rsi"]
 
         return df
 
@@ -539,8 +457,7 @@ class OBVDataFrameCalculator:
         Returns:
             DataFrame with added obv column.
         """
-        direction = np.sign(df["close"].diff().fillna(0))
-        df["obv"] = (direction * df["volume"]).cumsum()
+        df["obv"] = _series("obv", {}, df)["obv"]
         return df
 
 

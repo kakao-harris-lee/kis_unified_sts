@@ -92,7 +92,20 @@ class IndicatorEngine:
 
 
 _DAILY_ENGINE: IndicatorEngine | None = None
+_MOMENTUM_ENGINE: IndicatorEngine | None = None
 _STREAMING_ENGINE: IndicatorEngine | None = None
+
+
+def momentum_indicator_engine() -> IndicatorEngine:
+    """Momentum-convention engine hosting the exact ``shared.indicators.momentum``
+    math (TRIX/CCI/MACD/slow-Stochastic/Williams %R/OBV/RSI, HTS-compatible column
+    names, full-series output). Distinct from the other engines; cached singleton."""
+    global _MOMENTUM_ENGINE
+    if _MOMENTUM_ENGINE is None:
+        from shared.indicators.engine.momentum_backend import MomentumCompatBackend
+
+        _MOMENTUM_ENGINE = IndicatorEngine([MomentumCompatBackend()])
+    return _MOMENTUM_ENGINE
 
 
 def daily_indicator_engine() -> IndicatorEngine:

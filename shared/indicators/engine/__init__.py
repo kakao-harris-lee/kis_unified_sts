@@ -32,21 +32,23 @@ from shared.indicators.engine.cache import (
     InMemoryPanelStore,
     PanelStore,
 )
-from shared.indicators.engine.numpy_backend import NumpyBackend
 from shared.indicators.engine.daily_backend import DailyCompatBackend
+from shared.indicators.engine.momentum_backend import MomentumCompatBackend
+from shared.indicators.engine.numpy_backend import NumpyBackend
 from shared.indicators.engine.registry import (
     IndicatorEngine,
     daily_indicator_engine,
     default_engine,
+    momentum_indicator_engine,
     streaming_indicator_engine,
 )
-from shared.indicators.engine.streaming_backend import StreamingCompatBackend
 from shared.indicators.engine.shadow import ShadowDelta
 from shared.indicators.engine.spec import (
     IndicatorSpec,
     OHLCVWindow,
     flat_key,
 )
+from shared.indicators.engine.streaming_backend import StreamingCompatBackend
 from shared.indicators.engine.talib_backend import TALibBackend
 
 __all__ = [
@@ -59,6 +61,7 @@ __all__ = [
     "IndicatorResult",
     "IndicatorSpec",
     "InMemoryPanelStore",
+    "MomentumCompatBackend",
     "NumpyBackend",
     "OHLCVBar",
     "OHLCVWindow",
@@ -70,6 +73,7 @@ __all__ = [
     "daily_indicator_engine",
     "default_engine",
     "flat_key",
+    "momentum_indicator_engine",
     "streaming_indicator_engine",
     "window_from_bars",
     "window_from_records",
