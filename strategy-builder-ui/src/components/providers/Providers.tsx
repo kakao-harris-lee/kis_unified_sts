@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AuthProvider } from "@/contexts";
 import { AssetClassProvider } from "@/contexts/dashboard/AssetClassContext";
 import { ToastProvider } from "@/components/ui";
+import { RealtimeBridge } from "@/components/providers/RealtimeBridge";
 import type { ReactNode } from "react";
 
 interface ProvidersProps {
@@ -30,6 +31,9 @@ export function Providers({ children }: ProvidersProps) {
 
   return (
     <QueryClientProvider client={queryClient}>
+      {/* Single /ws subscription → React Query invalidation. Mounted here so it
+          lives under QueryClientProvider and mounts exactly once for the app. */}
+      <RealtimeBridge />
       <AuthProvider>
         <AssetClassProvider>
           <ToastProvider>{children}</ToastProvider>
