@@ -7,7 +7,9 @@
     "samples_per_symbol": 60,
     "indicators": {
       "rsi": {
-        "n": 4380,
+        "n": 4379,
+        "n_pairs": 4380,
+        "n_zero_legacy": 1,
         "expected": "safe",
         "median_abs": 7.673976476496591e-07,
         "median_rel": 1.5634728124773452e-08,
@@ -20,6 +22,8 @@
       },
       "adx": {
         "n": 4334,
+        "n_pairs": 4334,
+        "n_zero_legacy": 0,
         "expected": "safe",
         "median_abs": 1.6191104350582464e-06,
         "median_rel": 6.501838241121858e-08,
@@ -31,7 +35,9 @@
         "agrees_with_prior": true
       },
       "atr": {
-        "n": 4380,
+        "n": 4284,
+        "n_pairs": 4380,
+        "n_zero_legacy": 96,
         "expected": "gate",
         "median_abs": 16.370485891445348,
         "median_rel": 0.059884054808004614,
@@ -44,6 +50,8 @@
       },
       "bb_middle": {
         "n": 4380,
+        "n_pairs": 4380,
+        "n_zero_legacy": 0,
         "expected": "safe",
         "median_abs": 0.0,
         "median_rel": 0.0,
@@ -55,7 +63,9 @@
         "agrees_with_prior": true
       },
       "bb_width": {
-        "n": 4380,
+        "n": 4260,
+        "n_pairs": 4380,
+        "n_zero_legacy": 120,
         "expected": "gate",
         "median_abs": 14.648137730968301,
         "median_rel": 0.025320565519103735,
@@ -67,7 +77,9 @@
         "agrees_with_prior": true
       },
       "stoch_k": {
-        "n": 4380,
+        "n": 3920,
+        "n_pairs": 4380,
+        "n_zero_legacy": 460,
         "expected": "gate",
         "median_abs": 7.587035809028272,
         "median_rel": 0.1666666666668613,
@@ -79,7 +91,9 @@
         "agrees_with_prior": true
       },
       "mfi": {
-        "n": 4380,
+        "n": 4371,
+        "n_pairs": 4380,
+        "n_zero_legacy": 9,
         "expected": "safe",
         "median_abs": 2.4868995751603507e-14,
         "median_rel": 5.630205563474926e-16,
@@ -92,6 +106,8 @@
       },
       "rvol": {
         "n": 4380,
+        "n_pairs": 4380,
+        "n_zero_legacy": 0,
         "expected": "safe",
         "median_abs": 0.0,
         "median_rel": 0.0,
@@ -113,6 +129,8 @@
     "indicators": {
       "rsi": {
         "n": 960,
+        "n_pairs": 960,
+        "n_zero_legacy": 0,
         "expected": "safe",
         "median_abs": 7.090910827400876e-07,
         "median_rel": 1.4057508395138507e-08,
@@ -125,6 +143,8 @@
       },
       "adx": {
         "n": 960,
+        "n_pairs": 960,
+        "n_zero_legacy": 0,
         "expected": "safe",
         "median_abs": 8.415920689230916e-07,
         "median_rel": 5.738131075720587e-08,
@@ -137,6 +157,8 @@
       },
       "atr": {
         "n": 960,
+        "n_pairs": 960,
+        "n_zero_legacy": 0,
         "expected": "gate",
         "median_abs": 0.46380763176923556,
         "median_rel": 0.0808585029187033,
@@ -149,6 +171,8 @@
       },
       "bb_middle": {
         "n": 960,
+        "n_pairs": 960,
+        "n_zero_legacy": 0,
         "expected": "safe",
         "median_abs": 2.2737367544323206e-13,
         "median_rel": 3.07004498685105e-16,
@@ -161,6 +185,8 @@
       },
       "bb_width": {
         "n": 960,
+        "n_pairs": 960,
+        "n_zero_legacy": 0,
         "expected": "gate",
         "median_abs": 0.2900166934206254,
         "median_rel": 0.02532056551912741,
@@ -172,7 +198,9 @@
         "agrees_with_prior": true
       },
       "stoch_k": {
-        "n": 960,
+        "n": 894,
+        "n_pairs": 960,
+        "n_zero_legacy": 66,
         "expected": "gate",
         "median_abs": 9.476616334566401,
         "median_rel": 0.24776116332716647,
@@ -185,6 +213,8 @@
       },
       "mfi": {
         "n": 960,
+        "n_pairs": 960,
+        "n_zero_legacy": 0,
         "expected": "safe",
         "median_abs": 1.4210854715202004e-14,
         "median_rel": 3.728691123606511e-16,
@@ -196,7 +226,9 @@
         "agrees_with_prior": true
       },
       "rvol": {
-        "n": 960,
+        "n": 959,
+        "n_pairs": 960,
+        "n_zero_legacy": 1,
         "expected": "safe",
         "median_abs": 0.0,
         "median_rel": 0.0,

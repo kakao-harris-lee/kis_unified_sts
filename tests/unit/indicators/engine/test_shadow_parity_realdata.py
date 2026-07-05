@@ -17,6 +17,8 @@ talib = pytest.importorskip("talib")
 
 from scripts.analysis.shadow_parity_realdata import (  # noqa: E402
     _comparisons,
+    _interpretation_lines,
+    _json_safe,
     _LegacyShim,
 )
 from services.trading.indicator_candles import Candle  # noqa: E402
@@ -97,3 +99,44 @@ def test_bb_width_isolates_ddof_shift(candles) -> None:
 def test_all_labels_unique() -> None:
     labels = [c.label for c in _comparisons()]
     assert len(labels) == len(set(labels))
+
+
+def test_interpretation_membership_derives_from_results() -> None:
+    """The prose safe/gate lists must come from the measured classification, so
+    the report can never assert 'delegate-safe' for a gate-required row."""
+    results = [
+        {
+            "asset": "stock",
+            "indicators": {
+                "rsi": {"classification": "delegate-safe"},
+                "atr": {"classification": "gate-required"},
+                "bb_width": {"classification": "gate-required"},
+            },
+        }
+    ]
+    text = "\n".join(_interpretation_lines(results))
+    # safe row appears in the delegate-safe sentence, gate rows under gate-required
+    assert "`rsi`" in text
+    assert "`atr`" in text and "`bb_width`" in text
+    # a row that flipped to gate-required must NOT be advertised as delegate-safe:
+    flipped = [
+        {
+            "asset": "stock",
+            "indicators": {"rsi": {"classification": "gate-required"}},
+        }
+    ]
+    flipped_text = "\n".join(_interpretation_lines(flipped))
+    safe_line = next(
+        line for line in flipped_text.splitlines() if line.startswith("**Delegate-safe")
+    )
+    assert "`rsi`" not in safe_line
+
+
+def test_json_safe_replaces_nonfinite() -> None:
+    payload = {"a": float("nan"), "b": [float("inf"), 1.5], "c": {"d": -float("inf")}}
+    safe = _json_safe(payload)
+    assert safe == {"a": None, "b": [None, 1.5], "c": {"d": None}}
+    # and it round-trips through strict JSON
+    import json
+
+    json.dumps(safe, allow_nan=False)

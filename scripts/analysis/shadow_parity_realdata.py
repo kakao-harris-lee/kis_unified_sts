@@ -35,7 +35,9 @@ import numpy as np
 from services.trading.indicator_calculations import IndicatorCalculationMixin
 from services.trading.indicator_candles import Candle
 from shared.indicators.engine import (
+    IndicatorComputationError,
     IndicatorSpec,
+    TALibBackend,
     default_engine,
     window_from_bars,
 )
@@ -197,8 +199,9 @@ def _candles_from_frame(df: Any) -> list[Candle]:
     return out
 
 
-def _symbols(store: ParquetMarketDataStore, asset: str, limit: int | None) -> list[str]:
-    base = Path("data/market") / asset / "minute"
+def _symbols(store: ParquetMarketDataStore, limit: int | None) -> list[str]:
+    """Enumerate minute-bar symbols from the store's own root (no duplicated path)."""
+    base = Path(store.root) / store.asset_class / "minute"
     codes = sorted(p.name.split("=", 1)[1] for p in base.glob("code=*") if p.is_dir())
     return codes[:limit] if limit else codes
 
@@ -218,13 +221,30 @@ def run(
     window: int,
     samples: int,
 ) -> dict[str, Any]:
+    # Fail loudly if the TA-Lib wheel is absent: default_engine() would silently
+    # degrade to NumPy-only, every TA-Lib id would raise UnsupportedIndicatorError,
+    # and the report would show n=0 for 7/8 indicators with no error surfaced.
+    if not TALibBackend.available():
+        raise SystemExit(
+            'TA-Lib wheel not importable — run `pip install -e ".[dev]"`. '
+            "Without it this harness would emit a misleadingly-empty report."
+        )
+
     store = ParquetMarketDataStore("data/market", asset_class=asset)  # type: ignore[arg-type]
-    symbols = _symbols(store, asset, symbol_limit)
+    symbols = _symbols(store, symbol_limit)
     engine = default_engine()
     shim = _LegacyShim()
     comparisons = _comparisons()
 
-    # per-label accumulators of (abs_delta, rel_delta, engine, legacy)
+    # Each engine spec is computed once per window and shared across the
+    # comparisons that read it (bb_middle + bb_width share one Bollinger pass).
+    specs: dict[str, IndicatorSpec] = {}
+    comp_spec_key: dict[str, str] = {}
+    for comp in comparisons:
+        spec = IndicatorSpec.create(comp.engine_id, comp.engine_params)
+        specs.setdefault(spec.key, spec)
+        comp_spec_key[comp.label] = spec.key
+
     deltas: dict[str, list[ShadowDelta]] = {c.label: [] for c in comparisons}
     symbols_used = 0
     bars_total = 0
@@ -246,13 +266,16 @@ def run(
         for e in endpoints:
             win_candles = candles[e - window + 1 : e + 1]
             engine_window = window_from_bars(win_candles)
-            for comp in comparisons:
+            # compute each unique spec once for this window
+            flats: dict[str, dict[str, float]] = {}
+            for key, spec in specs.items():
                 try:
-                    flat = engine.compute(
-                        IndicatorSpec.create(comp.engine_id, comp.engine_params),
-                        engine_window,
-                    ).flat_latest()
-                except Exception:  # noqa: BLE001 - skip degenerate windows
+                    flats[key] = engine.compute(spec, engine_window).flat_latest()
+                except IndicatorComputationError:
+                    continue  # skip a degenerate window; UnsupportedIndicator propagates
+            for comp in comparisons:
+                flat = flats.get(comp_spec_key[comp.label])
+                if flat is None:
                     continue
                 new = comp.engine_value(flat)
                 old = comp.legacy(shim, win_candles)
@@ -272,31 +295,39 @@ def run(
     }
     for comp in comparisons:
         ds = deltas[comp.label]
+        # rel_delta is inf when legacy ~= 0 (flat/degenerate window): those windows
+        # drop out of the rel-based stats, so report their count separately rather
+        # than hide them behind the total pair count.
         rels = [d.rel_delta for d in ds if np.isfinite(d.rel_delta)]
         absd = [d.abs_delta for d in ds]
-        n = len(ds)
-        p95 = _percentile(rels, 95)
+        n_pairs = len(ds)
+        n_rel = len(rels)
         median_rel = _percentile(rels, 50)
         # Rate of gross (>=50%) disagreement. For value-convention indicators this
         # is ~0; for RSI/MFI it captures the flat/halted-window sentinel tail
         # (legacy returns neutral 50.0, TA-Lib returns 0.0) — a delegation
         # contract issue, not a value change.
         large_div_rate = (
-            sum(1 for r in rels if r >= 0.5) / len(rels) if rels else float("nan")
+            sum(1 for r in rels if r >= 0.5) / n_rel if rels else float("nan")
         )
-        # Classify on the *robust* p95, not p99/max: a real convention change
-        # (Wilder vs SMA, ddof, fast vs slow) shifts the whole distribution, so it
-        # shows in the median/p95. A divergence confined to a <5% tail is a
-        # degenerate-window artifact (see large_div_rate), not a value change.
+        # Classify on the *robust median*, not p95/p99: a real convention change
+        # (Wilder vs SMA, ddof, fast vs slow) is present on ~every window, so it
+        # moves the median. The median tolerates up to 50% contamination, so it is
+        # immune to the RSI/MFI sentinel tail (a minority of flat windows); p95
+        # would flip to gate-required once that tail exceeded 5%.
         classification = (
-            "delegate-safe" if np.isfinite(p95) and p95 <= 0.01 else "gate-required"
+            "delegate-safe"
+            if np.isfinite(median_rel) and median_rel <= 0.01
+            else "gate-required"
         )
         results["indicators"][comp.label] = {
-            "n": n,
+            "n": n_rel,  # denominator of the rel-based stats below
+            "n_pairs": n_pairs,
+            "n_zero_legacy": n_pairs - n_rel,  # dropped inf (legacy ~= 0) windows
             "expected": comp.expected,
             "median_abs": _percentile(absd, 50),
             "median_rel": median_rel,
-            "p95_rel": p95,
+            "p95_rel": _percentile(rels, 95),
             "p99_rel": _percentile(rels, 99),
             "max_rel": max(rels) if rels else float("nan"),
             "large_div_rate": large_div_rate,
@@ -311,6 +342,17 @@ def _fmt_pct(x: float) -> str:
     return "n/a" if not np.isfinite(x) else f"{x * 100:.3f}%"
 
 
+def _json_safe(obj: Any) -> Any:
+    """Recursively replace non-finite floats with None for standard JSON."""
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    return obj
+
+
 def render_markdown(all_results: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     lines.append("# Real-data shadow parity — engine vs legacy `_calc_*`")
@@ -318,12 +360,13 @@ def render_markdown(all_results: list[dict[str, Any]]) -> str:
     lines.append(
         "Engine (TA-Lib / NumPy) vs streaming `IndicatorCalculationMixin._calc_*` "
         "measured on identical bounded windows (runtime `candle_maxlen`) across "
-        "real Parquet minute bars. `rel` = |engine − legacy| / |legacy|. "
-        "**Classification is on the robust p95** — a genuine convention change "
-        "(Wilder vs SMA, ddof, fast vs slow) shifts the whole distribution, so it "
-        "shows in the median/p95; a divergence confined to a <5% tail (`≥50% div` "
-        "column) is a degenerate-window artifact, not a value change. "
-        "**delegate-safe** = p95 rel ≤ 1% (no backtest gate); **gate-required** = "
+        "real Parquet minute bars. `rel` = |engine − legacy| / |legacy|; `n` is the "
+        "count of finite-rel comparisons (windows where legacy ~= 0 are excluded "
+        "from the rel stats). **Classification is on the robust median** — a genuine "
+        "convention change (Wilder vs SMA, ddof, fast vs slow) is present on ~every "
+        "window, so it moves the median; a divergence confined to a minority tail "
+        "(`≥50% div` column) is a degenerate-window artifact, not a value change. "
+        "**delegate-safe** = median rel ≤ 1% (no backtest gate); **gate-required** = "
         "systematic value change, needs a Setup-A/C / bb_reversion / stochastic "
         "backtest gate before delegation."
     )
@@ -349,46 +392,76 @@ def render_markdown(all_results: list[dict[str, Any]]) -> str:
                 f"{m['expected']} | **{m['classification']}**{flag} |"
             )
         lines.append("")
-    lines.extend(_interpretation_lines())
+    lines.extend(_interpretation_lines(all_results))
     lines.append("_Generated by `scripts/analysis/shadow_parity_realdata.py`._")
     lines.append("")
     return "\n".join(lines)
 
 
-def _interpretation_lines() -> list[str]:
-    """Static interpretation appended to every report (the harness is stable)."""
-    return [
-        "## Interpretation → Phase 2 delegation",
-        "",
-        "**Delegate-safe (no backtest gate):** `rsi`, `adx`, `mfi`, `bb_middle`, "
-        "`rvol` — bit-identical to legacy on the central distribution (median = "
-        "p95 = 0%). The engine (Wilder RSI/ADX, typical-price MFI, 20-SMA middle "
-        "band, short/long RVOL) already matches the runtime convention.",
-        "",
-        "**Gate-required (systematic value change):**",
+# Per-indicator gate rationale, rendered only when that indicator actually
+# classifies gate-required in the measured results (so the prose can never
+# contradict the tables).
+_GATE_NOTES: dict[str, str] = {
+    "atr": (
         "- `atr` — legacy is SMA-of-TR, engine is Wilder; median ~6% (stock) / ~8% "
         "(futures), tails far higher on quiet minutes. Drives Setup A/C stops + "
         "edge filters and ATR exits → needs a Setup-A/C backtest gate. (Note: "
         "`#571` evaluated the standalone-consumer ATR and chose **keep SMA**; the "
-        "engine ATR would need an SMA mode, or the gate must justify the switch.)",
+        "engine ATR would need an SMA mode, or the gate must justify the switch.)"
+    ),
+    "bb_width": (
         "- `bb_width` — legacy sample std (ddof=1) vs engine population std "
         "(ddof=0): a constant band-half-width shift of **2.53%** (= 1 − √(19/20)). "
-        "Drives `bb_reversion` band touches → bb_reversion backtest gate.",
+        "Drives `bb_reversion` band touches → bb_reversion backtest gate."
+    ),
+    "stoch_k": (
         "- `stoch_k` — legacy fast %K vs engine slow %K (STOCH): median 17–25%. "
         "Either gate the fast→slow change or switch the backend to `STOCHF` to "
-        "preserve the fast convention.",
-        "",
-        "**⚠️ Sentinel-contract caveat (RSI/MFI, delegate-safe but not free):** the "
-        "`≥50% div` tail on stock RSI/MFI is entirely flat/halted-window "
-        "disagreement — legacy returns the neutral sentinel **50.0**, TA-Lib "
-        "returns **0.0** — on illiquid names printing a constant price. A "
-        "delegation must **preserve the neutral fallback on degenerate windows** "
-        "(or gate halted symbols upstream); an RSI/MFI of 0.0 reads as extreme "
-        "oversold and could spuriously trigger entries. Futures show 0% here "
-        "(no flat-print degeneracy). This is a delegation contract requirement, "
-        "not a value gate.",
-        "",
-    ]
+        "preserve the fast convention."
+    ),
+}
+
+
+def _interpretation_lines(all_results: list[dict[str, Any]]) -> list[str]:
+    """Interpretation whose membership is derived from the measured results."""
+
+    def labels_with(classification: str) -> list[str]:
+        out: list[str] = []
+        for res in all_results:
+            for label, m in res["indicators"].items():
+                if m["classification"] == classification and label not in out:
+                    out.append(label)
+        return out
+
+    safe = labels_with("delegate-safe")
+    gate = labels_with("gate-required")
+
+    lines = ["## Interpretation → Phase 2 delegation", ""]
+    safe_str = ", ".join(f"`{s}`" for s in safe) or "—"
+    lines.append(
+        f"**Delegate-safe (no backtest gate):** {safe_str} — median rel ≤ 1% "
+        "(near-parity on the central distribution); the engine already matches the "
+        "runtime convention (Wilder RSI/ADX, typical-price MFI, 20-SMA middle band, "
+        "short/long RVOL)."
+    )
+    lines.append("")
+    lines.append("**Gate-required (systematic value change):**")
+    for label in gate:
+        lines.append(_GATE_NOTES.get(label, f"- `{label}` — value change (see table)."))
+    lines.append("")
+    if "rsi" in safe or "mfi" in safe:
+        lines.append(
+            "**⚠️ Sentinel-contract caveat (RSI/MFI, delegate-safe but not free):** "
+            "the `≥50% div` tail on stock RSI/MFI is flat/halted-window disagreement "
+            "— legacy returns the neutral sentinel **50.0**, TA-Lib returns **0.0** "
+            "— on illiquid names printing a constant price. A delegation must "
+            "**preserve the neutral fallback on degenerate windows** (or gate halted "
+            "symbols upstream); an RSI/MFI of 0.0 reads as extreme oversold and could "
+            "spuriously trigger entries. Futures show 0% here (no flat-print "
+            "degeneracy). This is a delegation contract requirement, not a value gate."
+        )
+        lines.append("")
+    return lines
 
 
 def main() -> None:
@@ -419,8 +492,11 @@ def main() -> None:
     else:
         print(md)
     if args.json_out:
+        # Standard JSON has no NaN/Infinity: emit null instead so strict parsers
+        # (jq, JSON.parse, serde_json) accept the file.
         Path(args.json_out).write_text(
-            json.dumps(all_results, indent=2), encoding="utf-8"
+            json.dumps(_json_safe(all_results), indent=2, allow_nan=False),
+            encoding="utf-8",
         )
         print(f"wrote {args.json_out}")
 
