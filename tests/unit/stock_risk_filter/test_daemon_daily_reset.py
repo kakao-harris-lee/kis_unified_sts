@@ -74,6 +74,7 @@ async def test_pre_iteration_gate_resets_daily_on_new_kst_day() -> None:
     yesterday = _kst(2026, 7, 2)
     await rs.reset_daily(now_kst=yesterday)  # stamp meta = 2026-07-02
     await rs.record_trade(pnl_krw=-1000.0, now_kst=yesterday)  # leftover count = 1
+    await rs.record_loss(now_kst=yesterday)  # consecutive_losses -> 1 (must survive)
     assert (await rs.snapshot()).daily_trade_count == 1
 
     today = _kst(2026, 7, 3)
@@ -86,6 +87,7 @@ async def test_pre_iteration_gate_resets_daily_on_new_kst_day() -> None:
     assert snap.daily_trade_count == 0  # reset at the KST day boundary
     assert snap.daily_pnl_krw == 0.0
     assert snap.weekly_pnl_krw == -1000.0  # cumulative window preserved
+    assert snap.consecutive_losses == 1  # cumulative loss streak preserved
     meta = await redis.hget("risk:state:stock:meta", "last_reset_date_kst")
     assert _decode(meta) == "2026-07-03"
 
@@ -185,3 +187,47 @@ async def test_reset_error_is_swallowed_and_retried_next_cycle(monkeypatch) -> N
     # Second cycle: retried and succeeds.
     assert await daemon.pre_iteration_gate() is True
     assert (await rs.snapshot()).daily_trade_count == 0
+
+
+@pytest.mark.asyncio
+async def test_single_daemon_instance_resets_again_after_crossing_midnight() -> None:
+    """One long-lived daemon re-arms its in-memory guard across midnight.
+
+    The production-primary scenario: a single ``StockRiskFilterDaemon`` stays
+    up and its clock advances past midnight (not a fresh instance per day). The
+    in-memory ``_last_reset_date`` guard must re-arm day1 -> day2 so the second
+    day's first cycle fires a fresh reset. A mutable clock holder advances the
+    pinned time between cycles (no hardcoded ``now()``).
+    """
+    redis = fakeredis.aioredis.FakeRedis(db=1)
+    rs = RuntimeRiskState(redis=redis, asset_class="stock")
+
+    # Prior day (07-01) already stamped; a leftover count carries into day 1.
+    await rs.reset_daily(now_kst=_kst(2026, 7, 1))
+    await rs.record_trade(
+        pnl_krw=-1000.0, now_kst=_kst(2026, 7, 1)
+    )  # leftover count = 1
+
+    clock_holder = {"now": _kst(2026, 7, 2, 9, 0)}  # day 1, mid-session
+    daemon = _build_daemon(redis, clock=lambda: clock_holder["now"], runtime_state=rs)
+
+    # Day-1 first cycle resets (meta 07-01 -> 07-02).
+    await daemon.pre_iteration_gate()
+    assert (await rs.snapshot()).daily_trade_count == 0
+    meta_day1 = await redis.hget("risk:state:stock:meta", "last_reset_date_kst")
+    assert _decode(meta_day1) == "2026-07-02"
+
+    # Day-1 trades accumulate under the SAME instance.
+    await rs.record_trade(pnl_krw=100.0, now_kst=clock_holder["now"])
+    await rs.record_trade(pnl_krw=100.0, now_kst=clock_holder["now"])
+    assert (await rs.snapshot()).daily_trade_count == 2
+
+    # Same instance crosses midnight into day 2 (00:01 KST).
+    clock_holder["now"] = _kst(2026, 7, 3, 0, 1)
+
+    await daemon.pre_iteration_gate()  # day-2 first cycle → in-memory guard re-armed
+
+    snap = await rs.snapshot()
+    assert snap.daily_trade_count == 0  # second reset fired after the day rollover
+    meta_day2 = await redis.hget("risk:state:stock:meta", "last_reset_date_kst")
+    assert _decode(meta_day2) == "2026-07-03"
