@@ -402,6 +402,20 @@ def render_markdown(all_results: list[dict[str, Any]]) -> str:
 # classifies gate-required in the measured results (so the prose can never
 # contradict the tables).
 _GATE_NOTES: dict[str, str] = {
+    "rsi": (
+        "- `rsi` — bit-identical to legacy only at long windows (~200+ bars). "
+        "TA-Lib seeds Wilder with an SMA of the first `period` deltas; the streaming "
+        "`_calc_rsi` seeds on the first delta, so on the SHORT windows the runtime "
+        "actually uses early in a session (len≥20) they diverge by **up to ~17 RSI "
+        "points**. A live delegation would change early-session RSI-gated entries → "
+        "backtest gate required."
+    ),
+    "adx": (
+        "- `adx` — warmup contract differs: TA-Lib needs ~2×period bars to emit a "
+        "finite value, while `_calc_adx` returns a value at period+1 (partial-DX "
+        "average). On short windows the engine is still `None` where legacy gives a "
+        "number, so delegation changes early-session ADX availability → gate."
+    ),
     "atr": (
         "- `atr` — legacy is SMA-of-TR, engine is Wilder; median ~6% (stock) / ~8% "
         "(futures), tails far higher on quiet minutes. Drives Setup A/C stops + "
@@ -423,44 +437,88 @@ _GATE_NOTES: dict[str, str] = {
 
 
 def _interpretation_lines(all_results: list[dict[str, Any]]) -> list[str]:
-    """Interpretation whose membership is derived from the measured results."""
+    """Interpretation derived from the results, classified by the WORST window.
 
-    def labels_with(classification: str) -> list[str]:
-        out: list[str] = []
+    An indicator is delegate-safe only if it is delegate-safe at EVERY tested
+    window — the shortest window (the runtime's early-session case) is the binding
+    constraint. Classifying off a single long window overstated the safe set: RSI
+    and ADX are bit-parity at ~200+ bars but diverge on the short windows the
+    runtime actually uses (Wilder seeding / ADX warmup).
+    """
+    windows = sorted({int(res.get("window", 0)) for res in all_results})
+    labels: list[str] = []
+    for res in all_results:
+        for label in res["indicators"]:
+            if label not in labels:
+                labels.append(label)
+
+    def safe_everywhere(label: str) -> bool:
+        seen = False
         for res in all_results:
-            for label, m in res["indicators"].items():
-                if m["classification"] == classification and label not in out:
-                    out.append(label)
-        return out
+            m = res["indicators"].get(label)
+            if m is None:
+                continue
+            seen = True
+            if m["classification"] != "delegate-safe":
+                return False
+        return seen
 
-    safe = labels_with("delegate-safe")
-    gate = labels_with("gate-required")
+    # Warmup-sensitive: safe at the longest window but NOT at the shortest.
+    def warmup_sensitive(label: str) -> bool:
+        long_w, short_w = max(windows), min(windows)
+        safe_long = any(
+            res.get("window", 0) == long_w
+            and res["indicators"].get(label, {}).get("classification")
+            == "delegate-safe"
+            for res in all_results
+        )
+        gate_short = any(
+            res.get("window", 0) == short_w
+            and res["indicators"].get(label, {}).get("classification")
+            == "gate-required"
+            for res in all_results
+        )
+        return safe_long and gate_short
+
+    safe = [x for x in labels if safe_everywhere(x)]
+    gate = [x for x in labels if not safe_everywhere(x)]
+    warmup = [x for x in gate if warmup_sensitive(x)]
 
     lines = ["## Interpretation → Phase 2 delegation", ""]
-    safe_str = ", ".join(f"`{s}`" for s in safe) or "—"
     lines.append(
-        f"**Delegate-safe (no backtest gate):** {safe_str} — median rel ≤ 1% "
-        "(near-parity on the central distribution); the engine already matches the "
-        "runtime convention (Wilder RSI/ADX, typical-price MFI, 20-SMA middle band, "
-        "short/long RVOL)."
+        f"Windows tested: {', '.join(str(w) for w in windows)} bars. **Classified by "
+        "the shortest window** — the runtime fires `get_indicators` from `len ≥ "
+        "bb_period` (20), so early-session parity is what a live delegation must hold."
     )
     lines.append("")
-    lines.append("**Gate-required (systematic value change):**")
+    safe_str = ", ".join(f"`{s}`" for s in safe) or "—"
+    lines.append(
+        f"**Delegate-safe at every window (drop-in, no gate):** {safe_str}. Only "
+        "these are bit-identical to the legacy streaming calc across the runtime's "
+        "variable window lengths."
+    )
+    lines.append("")
+    if warmup:
+        warm_str = ", ".join(f"`{w}`" for w in warmup)
+        lines.append(
+            f"**⚠️ Warmup-sensitive (safe ONLY at long windows — NOT drop-in):** "
+            f"{warm_str}. Bit-parity at ~200+ bars but divergent on the short windows "
+            "the runtime uses early in a session. Classifying these off a single long "
+            "window (as the first cut of this report did) is misleading — they are "
+            "**gated value changes**, not free swaps."
+        )
+        lines.append("")
+    lines.append("**Gate-required (value change — backtest before delegating):**")
     for label in gate:
         lines.append(_GATE_NOTES.get(label, f"- `{label}` — value change (see table)."))
     lines.append("")
-    if "rsi" in safe or "mfi" in safe:
-        lines.append(
-            "**⚠️ Sentinel-contract caveat (RSI/MFI, delegate-safe but not free):** "
-            "the `≥50% div` tail on stock RSI/MFI is flat/halted-window disagreement "
-            "— legacy returns the neutral sentinel **50.0**, TA-Lib returns **0.0** "
-            "— on illiquid names printing a constant price. A delegation must "
-            "**preserve the neutral fallback on degenerate windows** (or gate halted "
-            "symbols upstream); an RSI/MFI of 0.0 reads as extreme oversold and could "
-            "spuriously trigger entries. Futures show 0% here (no flat-print "
-            "degeneracy). This is a delegation contract requirement, not a value gate."
-        )
-        lines.append("")
+    lines.append(
+        "**RSI/MFI sentinel-contract note:** the `≥50% div` tail is flat/halted-window "
+        "disagreement — legacy returns the neutral sentinel **50.0**, TA-Lib **0.0** — "
+        "on illiquid constant-price names. Any RSI/MFI delegation must preserve the "
+        "neutral fallback on degenerate windows or a 0.0 reads as extreme oversold."
+    )
+    lines.append("")
     return lines
 
 
@@ -468,21 +526,25 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--asset", choices=["stock", "futures", "both"], default="both")
     ap.add_argument("--symbol-limit", type=int, default=None)
-    ap.add_argument("--window", type=int, default=DEFAULT_WINDOW)
+    ap.add_argument(
+        "--windows",
+        type=str,
+        default="30,240",
+        help="Comma-separated window lengths. Short windows expose the "
+        "early-session warmup/seeding divergence (RSI/ADX) that a single long "
+        "window hides; the runtime fires get_indicators from len>=bb_period (20).",
+    )
     ap.add_argument("--samples", type=int, default=60)
     ap.add_argument("--out", type=str, default=None, help="Markdown report path")
     ap.add_argument("--json-out", type=str, default=None, help="Raw stats JSON path")
     args = ap.parse_args()
 
+    windows = [int(w) for w in str(args.windows).split(",") if w.strip()]
     assets = ["stock", "futures"] if args.asset == "both" else [args.asset]
     all_results = [
-        run(
-            a,
-            symbol_limit=args.symbol_limit,
-            window=args.window,
-            samples=args.samples,
-        )
+        run(a, symbol_limit=args.symbol_limit, window=w, samples=args.samples)
         for a in assets
+        for w in windows
     ]
 
     md = render_markdown(all_results)
