@@ -733,3 +733,56 @@ class ATRCalculator:
         close = df["close"].to_numpy(dtype=float)
         df["atr"] = self.atr_series(high, low, close)
         return df
+
+
+class MFICalculator:
+    """Money Flow Index (regime convention: whole-series flows, sum last period).
+
+    Canonical home for the previously hand-rolled ``AdaptiveRegimeDetector._calc_mfi``
+    (its sibling ADX/ATR already delegate here). Convention preserved exactly:
+    typical-price money flow, classified per consecutive-bar direction over the
+    whole series, then the *last* ``period`` positive/negative flows are summed.
+    Neutral ``50.0`` when fewer than ``period`` classified bars; ``100.0`` when the
+    summed negative flow is zero (note: differs from the intraday streaming MFI,
+    which returns 50 on a flat window — this is the regime detector's own contract).
+    """
+
+    def __init__(self, period: int = 14):
+        if period <= 0:
+            raise ValueError(f"MFI period must be > 0, got {period}")
+        self.period = period
+
+    def mfi_last(
+        self,
+        high: np.ndarray | list[float] | Any,
+        low: np.ndarray | list[float] | Any,
+        close: np.ndarray | list[float] | Any,
+        volume: np.ndarray | list[float] | Any,
+    ) -> float:
+        """Latest MFI scalar (regime convention)."""
+        h = np.asarray(high, dtype=float)
+        low_a = np.asarray(low, dtype=float)
+        c = np.asarray(close, dtype=float)
+        v = np.asarray(volume, dtype=float)
+        tp = (h + low_a + c) / 3.0
+        mf = tp * v
+        positive_flow: list[float] = []
+        negative_flow: list[float] = []
+        for i in range(1, tp.shape[0]):
+            if tp[i] > tp[i - 1]:
+                positive_flow.append(mf[i])
+                negative_flow.append(0.0)
+            elif tp[i] < tp[i - 1]:
+                positive_flow.append(0.0)
+                negative_flow.append(mf[i])
+            else:
+                positive_flow.append(0.0)
+                negative_flow.append(0.0)
+        if len(positive_flow) < self.period:
+            return 50.0
+        positive_mf = sum(positive_flow[-self.period :])
+        negative_mf = sum(negative_flow[-self.period :])
+        if negative_mf == 0:
+            return 100.0
+        money_ratio = positive_mf / negative_mf
+        return float(100 - (100 / (1 + money_ratio)))
