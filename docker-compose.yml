@@ -204,6 +204,12 @@ services:
       INGEST_ASSET: "stock"
       INGEST_MAX_SYMBOLS: "${INGEST_MAX_SYMBOLS:-40}"
       INGEST_REFRESH_SECONDS: "${INGEST_REFRESH_SECONDS:-30}"
+      # Cold-start feed-start retry backoff (exponential, capped). A KIS
+      # /oauth2/Approval outage at start() is non-fatal: the daemon stays up,
+      # REST fallback covers the session, and start() retries on this schedule
+      # instead of crash-looping the container.
+      INGEST_FEED_START_RETRY_INITIAL_SECONDS: "${INGEST_FEED_START_RETRY_INITIAL_SECONDS:-5}"
+      INGEST_FEED_START_RETRY_MAX_SECONDS: "${INGEST_FEED_START_RETRY_MAX_SECONDS:-60}"
       TRADE_TARGETS_LATEST_KEY: "${TRADE_TARGETS_LATEST_KEY:-system:trade_targets:latest}"
 
   stock-strategy:
@@ -297,6 +303,10 @@ services:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
       INGEST_ASSET: "futures"
       INGEST_REFRESH_SECONDS: "${FUTURES_INGEST_REFRESH_SECONDS:-3600}"
+      # Cold-start feed-start retry backoff (see stock-market-ingest above):
+      # a KIS approval/connect failure at start() retries instead of crashing.
+      INGEST_FEED_START_RETRY_INITIAL_SECONDS: "${INGEST_FEED_START_RETRY_INITIAL_SECONDS:-5}"
+      INGEST_FEED_START_RETRY_MAX_SECONDS: "${INGEST_FEED_START_RETRY_MAX_SECONDS:-60}"
 
   futures-decision-engine:
     <<: *pipeline-service

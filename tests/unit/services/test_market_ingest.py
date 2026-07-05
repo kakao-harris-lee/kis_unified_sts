@@ -176,6 +176,117 @@ async def test_symbol_provider_failure_keeps_current_symbols():
     assert feed.started == 1
 
 
+class ColdStartFailFeed(FakeFeed):
+    """Feed whose ``start()`` raises for the first ``fail_times`` calls.
+
+    Models a KIS ``/oauth2/Approval`` connect-timeout at cold start
+    (``shared/kis/stock_feed._get_approval_key`` raises ``ConnectionError``),
+    the failure that historically crash-looped the ingest container
+    (RestartCount=1268) because ``run()`` awaited ``feed.start()`` bare.
+    ``is_healthy()`` stays False until a ``start()`` finally succeeds.
+    """
+
+    def __init__(self, *, fail_times: int = 10**9, exc: Exception | None = None):
+        super().__init__()
+        self._fail_times = fail_times
+        self._exc = exc or ConnectionError("Approval key request failed: timeout")
+        self.start_attempts = 0
+        self.healthy = False  # not running until a start() succeeds
+
+    async def start(self):
+        self.start_attempts += 1
+        if self.start_attempts <= self._fail_times:
+            raise self._exc
+        self.started += 1
+        self.healthy = True
+
+
+def _cold_start_daemon(
+    feed,
+    pub,
+    *,
+    fetcher=None,
+    grace=0.0,
+    session=lambda: True,
+    retry_initial=0.02,
+    retry_max=0.02,
+):
+    return MarketIngestDaemon(
+        asset="stock",
+        feed=feed,
+        publisher=pub,
+        symbol_provider=_provider([["A", "B"]]),
+        refresh_interval_seconds=0.05,
+        rest_price_fetcher=fetcher,
+        rest_poll_interval_seconds=0.02,
+        ws_unhealthy_grace_seconds=grace,
+        session_gate=session if fetcher else None,
+        feed_start_retry_initial_seconds=retry_initial,
+        feed_start_retry_max_seconds=retry_max,
+    )
+
+
+@pytest.mark.asyncio
+async def test_cold_start_feed_failure_does_not_crash_daemon():
+    """A KIS approval/connect failure at cold start must NOT kill the daemon.
+
+    Regression for the crash-loop root cause: ``run()`` awaited ``feed.start()``
+    without a guard, so a ``ConnectionError`` propagated through ``asyncio.run``
+    and the container restarted forever, re-hammering ``/oauth2/Approval``.
+    """
+    feed, pub = ColdStartFailFeed(), FakePublisher()
+    daemon = _cold_start_daemon(feed, pub)
+    task = asyncio.create_task(daemon.run())
+    await asyncio.sleep(0.15)
+    assert not task.done(), "daemon must stay alive despite feed cold-start failure"
+    assert (
+        feed.start_attempts >= 2
+    ), "feed start must be retried with backoff, not fatal"
+    await daemon.stop()
+    # Must complete cleanly — if run() re-raised the ConnectionError this awaits it.
+    await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_wired_despite_cold_start_failure():
+    """REST fallback must cover the session even when the WS feed never starts.
+
+    Previously the fallback task was created AFTER ``feed.start()``, so a
+    cold-start failure meant no failover was ever wired.
+    """
+    feed, pub = ColdStartFailFeed(), FakePublisher()
+    calls: list[str] = []
+    daemon = _cold_start_daemon(feed, pub, fetcher=_fetcher(calls), grace=0.0)
+    task = asyncio.create_task(daemon.run())
+    await asyncio.sleep(0.2)
+    await daemon.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert calls, "REST fallback must poll even when the WS feed never cold-starts"
+    assert pub.published, "cold-start blackout must be covered by REST-sourced ticks"
+
+
+@pytest.mark.asyncio
+async def test_feed_starts_after_transient_cold_start_failures():
+    """Once the transient KIS outage clears, the retry loop brings the feed up."""
+    feed, pub = ColdStartFailFeed(fail_times=2), FakePublisher()
+    daemon = _cold_start_daemon(feed, pub)
+    task = asyncio.create_task(daemon.run())
+    await asyncio.sleep(0.25)
+    await daemon.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert feed.started == 1, "feed must come up once the transient failure clears"
+    assert feed.start_attempts == 3, "2 failures + 1 success, then retries stop"
+
+
+@pytest.mark.asyncio
+async def test_healthy_cold_start_starts_feed_once():
+    """The happy path is unchanged: a working feed is started exactly once."""
+    feed, pub = FakeFeed(), FakePublisher()
+    await _run_briefly(_daemon(feed, pub, _provider([["A"]])))
+    assert feed.started == 1
+    assert feed.callback is not None
+
+
 def _fetcher(calls: list[str]):
     """Async REST price fetcher recording calls; returns a WS-shaped tick."""
 
