@@ -10,12 +10,17 @@ delegation makes the delta explicit. Measured on a fixed seed:
   **backtest gate required** before delegation (affects stops/edge filters).
 * **Stoch**— divergent (legacy returns fast %K, TA-Lib ``STOCH`` is slow) → **gate**
   (or switch the backend to ``STOCHF`` to preserve the fast convention).
+* **Bollinger** — middle band parity (both 20-SMA); the upper/lower diverge because
+  legacy ``_calc_bb`` uses sample std (ddof=1) and TA-Lib uses population std
+  (ddof=0) → **gate** (band width changes on delegation).
 
 If any of these relationships changes, this test fails loudly and whoever changed
 it updates the expectation deliberately.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -98,6 +103,20 @@ def test_stochastic_diverges_fast_vs_slow(candles: list[Candle]) -> None:
     assert not delta.within(
         abs_tol=2.0
     ), f"Stochastic unexpectedly matches; convention may have changed. {delta}"
+
+
+def test_bollinger_middle_parity_but_bands_diverge(candles: list[Candle]) -> None:
+    new = _engine_latest(candles, "bollinger", {"period": 20, "std": 2})
+    # legacy _calc_bb only reads self.bb_period / self.bb_std -> duck-typed self.
+    ns = SimpleNamespace(bb_period=20, bb_std=2.0)
+    old_lower, old_mid, old_upper = Legacy._calc_bb(ns, [c.close for c in candles])
+    # Middle band = 20-SMA in both -> parity, delegate-safe.
+    assert ShadowDelta("bb_middle", new["bb_middle"], old_mid).within(abs_tol=1e-6)
+    # Upper band: TA-Lib population std (ddof=0) vs legacy sample std (ddof=1);
+    # legacy band is slightly wider -> gate required before delegating BB.
+    upper = ShadowDelta("bb_upper", new["bb_upper"], old_upper)
+    assert not upper.within(abs_tol=1e-4), f"BB ddof gate closed unexpectedly: {upper}"
+    assert old_upper > new["bb_upper"]
 
 
 def test_shadow_delta_semantics() -> None:

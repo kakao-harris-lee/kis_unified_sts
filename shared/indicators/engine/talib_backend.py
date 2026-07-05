@@ -28,20 +28,14 @@ from shared.indicators.engine.base import (
     UnsupportedIndicatorError,
     last_finite,
 )
+from shared.indicators.engine.params import float_param as _float
+from shared.indicators.engine.params import int_param as _int
 from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow
 
 try:  # pragma: no cover - exercised via availability branch in tests
     import talib as _talib
 except ImportError:  # pragma: no cover
     _talib = None  # type: ignore[assignment]
-
-
-def _int(params: Mapping[str, float], name: str, default: int) -> int:
-    return int(params.get(name, default))
-
-
-def _float(params: Mapping[str, float], name: str, default: float) -> float:
-    return float(params.get(name, default))
 
 
 def _ema_nan_aware(mod: Any, series: np.ndarray, period: int) -> np.ndarray:

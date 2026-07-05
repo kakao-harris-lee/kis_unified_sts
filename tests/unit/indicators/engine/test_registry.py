@@ -104,3 +104,35 @@ def test_flat_panel_merges_canonical_keys(window: OHLCVWindow) -> None:
     ]
     panel = engine.flat_panel(specs, window)
     assert panel == {"rsi": 5.0, "atr": 5.0}
+
+
+class _PeriodEchoBackend(IndicatorBackend):
+    """Backend whose latest value IS the requested period (observes collisions)."""
+
+    @property
+    def name(self) -> str:
+        return "period-echo"
+
+    def supported_ids(self) -> frozenset[str]:
+        return frozenset({"rsi"})
+
+    def compute(self, spec: IndicatorSpec, window: OHLCVWindow) -> IndicatorResult:
+        period = spec.param_map.get("period", 0.0)
+        return IndicatorResult(
+            spec=spec,
+            series={"value": np.array([period], dtype=np.float64)},
+            latest={"value": period},
+        )
+
+
+def test_flat_panel_last_wins_on_flatkey_collision(window: OHLCVWindow) -> None:
+    # rsi is NOT period-keyed, so rsi(14) and rsi(21) both flatten to "rsi".
+    # compute_many keeps them distinct (2 computations) but flat_panel is
+    # last-wins on the shared key — this pins that documented foot-gun.
+    engine = IndicatorEngine([_PeriodEchoBackend()])
+    specs = [
+        IndicatorSpec.create("rsi", {"period": 14}),
+        IndicatorSpec.create("rsi", {"period": 21}),
+    ]
+    assert len(engine.compute_many(specs, window)) == 2
+    assert engine.flat_panel(specs, window) == {"rsi": 21.0}

@@ -25,11 +25,8 @@ from shared.indicators.engine.base import (
     UnsupportedIndicatorError,
     last_finite,
 )
+from shared.indicators.engine.params import int_param as _int
 from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow
-
-
-def _int(params: Mapping[str, float], name: str, default: int) -> int:
-    return int(params.get(name, default))
 
 
 def _rolling_mean(values: np.ndarray, window: int) -> np.ndarray:

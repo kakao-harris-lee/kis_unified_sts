@@ -61,6 +61,33 @@ def test_rsi_parity_with_direct_talib(backend: TALibBackend, window) -> None:
     assert got == pytest.approx(expected, rel=1e-9)
 
 
+def test_atr_parity_with_direct_talib(backend: TALibBackend, window) -> None:
+    spec = IndicatorSpec.create("atr", {"period": 14})
+    got = backend.compute(spec, window).flat_latest()["atr"]
+    ref = talib.ATR(window.high, window.low, window.close, timeperiod=14)
+    expected = float(ref[np.isfinite(ref)][-1])
+    assert got == pytest.approx(expected, rel=1e-9)
+
+
+def test_adx_parity_with_direct_talib(backend: TALibBackend, window) -> None:
+    spec = IndicatorSpec.create("adx", {"period": 14})
+    got = backend.compute(spec, window).flat_latest()["adx"]
+    ref = talib.ADX(window.high, window.low, window.close, timeperiod=14)
+    expected = float(ref[np.isfinite(ref)][-1])
+    assert got == pytest.approx(expected, rel=1e-9)
+
+
+def test_compute_latest_default_matches_flat_latest(
+    backend: TALibBackend, window
+) -> None:
+    # Exercises the base compute_latest() default (batch -> finite tail).
+    spec = IndicatorSpec.create("rsi", {"period": 14})
+    assert (
+        backend.compute_latest(spec, window)
+        == backend.compute(spec, window).flat_latest()
+    )
+
+
 def test_bollinger_flat_keys_are_normalized(backend: TALibBackend, window) -> None:
     spec = IndicatorSpec.create("bollinger", {"period": 20, "std": 2})
     flat = backend.compute(spec, window).flat_latest()
