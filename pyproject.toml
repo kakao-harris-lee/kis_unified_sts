@@ -60,8 +60,11 @@ dependencies = [
     # TA-Lib ships prebuilt manylinux wheels (0.5.x+); resolves cleanly on the
     # python:3.11-slim (Debian/glibc) base images with no C source build.
     "TA-Lib>=0.5.1",
-    # Columnar/large-scale batch + cache-engine fan-out (WS-A2/WS-A4).
-    "polars>=1.0",
+    # NOTE: Polars (planned for the cache-engine batch/fan-out, WS-A2/WS-A4) is
+    # intentionally NOT added here yet — no code in this change imports it, and
+    # installing polars surfaces a pre-existing polars-1.x incompatibility in
+    # tests/unit/core/test_data_engine.py. It lands with the WS-A2 batch code
+    # that actually uses it (which also owns that data_engine compat fix).
 
     # HTTP Client
     "requests>=2.31",
