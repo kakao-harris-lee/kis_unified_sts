@@ -117,6 +117,14 @@ class DataFreshnessTracker:
         """
         ref = time.time() if now is None else now
         with self._lock:
+            # Prune symbols that rotated out of the subscribed universe. The
+            # stock feed churns through many codes a day (screener / intraday
+            # dynamic mode), so without this _last_tick would grow unbounded.
+            # Output only ever iterates `symbols`, so pruning never changes the
+            # snapshot — it strictly bounds memory.
+            self._last_tick = {
+                s: self._last_tick[s] for s in symbols if s in self._last_tick
+            }
             last_tick = dict(self._last_tick)
 
         symbol_count = len(symbols)

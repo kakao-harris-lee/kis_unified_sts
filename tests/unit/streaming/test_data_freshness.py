@@ -35,6 +35,34 @@ def test_build_snapshot_counts_fresh_and_last_tick():
     assert snap["asset_class"] == "stock"
 
 
+def test_rotated_out_symbols_are_pruned():
+    """Symbols that leave the universe are dropped from _last_tick; output unchanged.
+
+    Guards the unbounded-growth risk on rotating feeds (screener / intraday
+    dynamic mode churn through many codes a day).
+    """
+    tracker = DataFreshnessTracker("stock", window_seconds=60.0)
+    now = 1000.0
+    tracker.record_tick("A", now=now - 5)
+    tracker.record_tick("B", now=now - 5)
+    tracker.record_tick("C", now=now - 5)
+
+    # Universe rotates so only A remains subscribed.
+    snap = tracker.build_snapshot(["A"], now=now)
+    assert snap["symbol_count"] == 1
+    assert snap["fresh_count"] == 1
+    assert snap["last_tick_s"] == 5
+
+    # B and C were pruned from the in-memory map (bounded memory).
+    assert set(tracker._last_tick.keys()) == {"A"}
+
+    # A subsequent snapshot for the same universe is unchanged (no corruption).
+    snap2 = tracker.build_snapshot(["A"], now=now)
+    assert snap2["symbol_count"] == snap["symbol_count"]
+    assert snap2["fresh_count"] == snap["fresh_count"]
+    assert snap2["last_tick_s"] == snap["last_tick_s"]
+
+
 def test_no_ticks_reports_no_data_sentinel():
     tracker = DataFreshnessTracker("stock")
     snap = tracker.build_snapshot(["A", "B"], now=1000.0)
