@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from shared.indicators.reference import ATRCalculator
+
 from .data_classes import BacktestResult, Signal, StockInfo, TechnicalAnalysis
 
 if TYPE_CHECKING:
@@ -104,21 +106,19 @@ def calc_max_drawdown(close: pd.Series) -> float:
 
 
 def calc_atr_pct(df: pd.DataFrame, period: int = 14) -> float:
-    """ATR as a fraction of the last close price."""
+    """ATR as a fraction of the last close price.
+
+    Delegates to the canonical ``reference.ATRCalculator`` (``mode="sma"``);
+    value-identical to the previous inline SMA-of-True-Range / close.
+    """
     if df is None or len(df) < period + 1:
         return 0.0
-    high = df["고가"].astype(float)
-    low = df["저가"].astype(float)
-    close = df["종가"].astype(float)
-    prev_close = close.shift(1)
-    tr = (high - low).abs()
-    tr = tr.combine((high - prev_close).abs(), max)
-    tr = tr.combine((low - prev_close).abs(), max)
-    atr = tr.rolling(period).mean().iloc[-1]
-    last_close = close.iloc[-1]
-    if pd.isna(atr) or last_close == 0:
-        return 0.0
-    return float(atr / last_close)
+    frac = ATRCalculator(period=period, mode="sma").atr_fraction_last(
+        df["고가"].astype(float).to_numpy(),
+        df["저가"].astype(float).to_numpy(),
+        df["종가"].astype(float).to_numpy(),
+    )
+    return float(frac) if frac is not None else 0.0
 
 
 def calc_consecutive_up(returns: pd.Series) -> int:

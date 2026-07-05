@@ -50,14 +50,21 @@ ATRCalculator(period=14, mode="sma"|"wilder")
 ### Phase 1 — 값-보존 통합 (parity 게이트)
 6개 standalone 소비자를 `ATRCalculator(mode="sma")` 위임으로 교체하되 **각자의 정규화·입력 어댑터를 보존**해 값이 안 바뀌게 한다. `_calc_rsi`(#561)/VR RSI(#565)와 동일 패턴. 각 이관은 **parity 테스트(before==after)** 필수.
 
-| 소비자 | 위임 형태 | 보존할 계약 | 부수 개선 |
+**Phase 1a — DONE (값-보존 확정)**: 아래 4개 stateless 소비자 이관 완료. 단위 parity 1e-9 + 실증 1e-17 + trix_golden 백테스트(035720, 2026-03~06) before==after **bit-identical**(5거래/-26,048원/Sharpe -17.09 동일). `unified_trading_analyzer._calc_atr_pct`는 #3 위임이라 자동 포함.
+
+| 소비자 | 위임 형태 | 보존할 계약 | 상태 |
 |---|---|---|---|
-| runtime `_calc_atr_raw`(6) | `atr_last(mode=sma)`, None→0.0 | raw, <period+1→0.0 | — |
-| runtime `_calc_atr_normalized`(6b) | `atr_fraction_last`, None→0.0 | atr/(close+1e-10) | 1e-10 vs None 처리 정렬 |
-| regime `_calc_atr`(7) | `atr_last(mode=sma)`, None→0.0 | raw | **warmup mean(tr)→정식 SMA/None** (regime dormant, [[indicator-audit-2026-07-05]]) |
-| technical `_calc_atr`(2) | deque→arrays 어댑터, `atr_last` | raw | **warmup mean(H−L)→TR 기반** (갭 정확) |
-| llm `calc_atr_pct`(3) | 한글컬럼 어댑터→`atr_fraction_last` | fraction | 이름 유지(호출부 광범위) 또는 `*_fraction` 리네이밍 검토 |
-| trix `_calc_atr_pct`(5) | 영문컬럼 어댑터→`atr_fraction_last` | fraction | #3와 DRY 통합 |
+| runtime `_calc_atr_raw`(6) | `atr_last(mode=sma)`, None→0.0 | raw, <period+1→0.0 | ✅ 1a |
+| runtime `_calc_atr_normalized`(6b) | `_calc_atr_raw`/(close+1e-10) | atr/(close+1e-10) | ✅ 1a |
+| llm `calc_atr_pct`(3) | 한글컬럼 어댑터→`atr_fraction_last` | fraction | ✅ 1a |
+| trix `_calc_atr_pct`(5) | 영문컬럼 어댑터→`atr_fraction_last` | fraction | ✅ 1a (#3와 동일 로직) |
+
+**Phase 1b — 남음 (warmup 동작 변경 → 별도 검증)**: 아래 2개는 이관 시 warmup fallback이 바뀌므로 값-보존이 아님. 별도 브랜치+영향 확인.
+
+| 소비자 | 위임 형태 | warmup 변경 |
+|---|---|---|
+| regime `_calc_atr`(7) | `atr_last(mode=sma)`, None→? | mean(tr) 부분평균 → 정식 SMA/None (regime **dormant**, [[indicator-audit-2026-07-05]]) |
+| technical `_calc_atr`(2) | deque→arrays 어댑터 | mean(H−L) → TR 기반(갭 정확); stateful deque라 리팩터 필요 |
 
 - **게이트**: 각 소비자 이관 브랜치는 parity 테스트가 before==after(1e-9)를 증명하면 통과. warmup을 실제로 바꾸는 #2/#7은 해당 소비 전략(technical=trend engine, regime=dormant) 영향 범위 확인 + 필요 시 백테스트.
 - **정규화 함정 정리**: `*_pct` 이름이 fraction을 반환하는 3·5는 호출부가 fraction을 전제하는지 grep 확인 후, 이름 유지(안전) 또는 `atr_fraction`으로 리네이밍(명확). 호출부 단위 검증 필요.

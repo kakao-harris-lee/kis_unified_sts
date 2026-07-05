@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from collections import deque
 
+from shared.indicators.reference import ATRCalculator
+
 from .indicator_candles import Candle
 
 
@@ -199,29 +201,29 @@ class IndicatorCalculationMixin:
 
     @staticmethod
     def _calc_atr_raw(candles: list[Candle], period: int = 14) -> float:
-        """Raw ATR value (non-normalized) for edge filters and stop-loss."""
-        n = len(candles)
-        if n < period + 1:
+        """Raw ATR value (non-normalized) for edge filters and stop-loss.
+
+        Delegates to the canonical ``reference.ATRCalculator`` (``mode="sma"`` --
+        the standalone-ATR convention every consumer already used). Value-identical
+        to the previous inline ``sum(trs[-period:]) / period``; the insufficient-data
+        ``None`` maps back to this function's historical ``0.0`` contract.
+        """
+        if len(candles) < period + 1:
             return 0.0
-        trs: list[float] = []
-        for i in range(1, n):
-            h, lo, pc = candles[i].high, candles[i].low, candles[i - 1].close
-            trs.append(max(h - lo, abs(h - pc), abs(lo - pc)))
-        return sum(trs[-period:]) / period
+        atr = ATRCalculator(period=period, mode="sma").atr_last(
+            [c.high for c in candles],
+            [c.low for c in candles],
+            [c.close for c in candles],
+        )
+        return float(atr) if atr is not None else 0.0
 
     @staticmethod
     def _calc_atr_normalized(candles: list[Candle], period: int = 14) -> float:
-        """ATR / close normalized by price."""
-        n = len(candles)
-        if n < period + 1:
+        """ATR / close normalized by price (reuses _calc_atr_raw)."""
+        if len(candles) < period + 1:
             return 0.0
-        trs: list[float] = []
-        for i in range(1, n):
-            h, lo, pc = candles[i].high, candles[i].low, candles[i - 1].close
-            trs.append(max(h - lo, abs(h - pc), abs(lo - pc)))
-        atr = sum(trs[-period:]) / period
-        close = candles[-1].close
-        return atr / (close + 1e-10)
+        atr = IndicatorCalculationMixin._calc_atr_raw(candles, period)
+        return atr / (candles[-1].close + 1e-10)
 
     @staticmethod
     def _calc_stochastic(

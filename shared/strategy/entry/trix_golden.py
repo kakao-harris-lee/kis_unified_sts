@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from shared.config.mixins import ConfigMixin
+from shared.indicators.reference import ATRCalculator
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.market_time import to_kst
@@ -459,16 +460,14 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
 
     @staticmethod
     def _calc_atr_pct(df: pd.DataFrame, period: int) -> float:
-        """Calculate ATR as percentage of current close (ATR%)."""
-        high = df["high"]
-        low = df["low"]
-        prev_close = df["close"].shift(1)
-        tr = pd.concat(
-            [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
-            axis=1,
-        ).max(axis=1)
-        atr = tr.rolling(period).mean().iloc[-1]
-        close = float(df["close"].iloc[-1])
-        if close <= 0 or pd.isna(atr):
-            return 0.0
-        return float(atr) / close
+        """Calculate ATR as a fraction of current close (ATR/close).
+
+        Delegates to the canonical ``reference.ATRCalculator`` (``mode="sma"``);
+        value-identical to the previous inline SMA-of-True-Range / close.
+        """
+        frac = ATRCalculator(period=period, mode="sma").atr_fraction_last(
+            df["high"].to_numpy(dtype=float),
+            df["low"].to_numpy(dtype=float),
+            df["close"].to_numpy(dtype=float),
+        )
+        return float(frac) if frac is not None else 0.0
