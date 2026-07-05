@@ -11,7 +11,11 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 
-from scripts.analysis.bb_ddof_gate import _calc_bb_population, _delta
+from scripts.analysis.bb_ddof_gate import (
+    _calc_bb_population,
+    _delta,
+    _verdict_lines,
+)
 from services.trading.indicator_calculations import IndicatorCalculationMixin
 
 
@@ -52,3 +56,44 @@ def test_delta_helper_handles_none() -> None:
     assert _delta(1.0, 3.0) == 2.0
     assert _delta(None, 3.0) is None
     assert _delta(1.0, None) is None
+
+
+def test_verdict_refuses_to_decide_on_failed_run() -> None:
+    """A skipped/error arm (empty summary) must NOT read as delegate-safe."""
+    base = {"status": "skipped", "error": "no_data", "summary": {}}
+    pop = {"status": "skipped", "error": "no_data", "summary": {}}
+    text = "\n".join(_verdict_lines(base, pop))
+    assert "Cannot decide" in text
+    assert "delegate-safe" not in text.lower()
+
+
+def test_verdict_gates_on_structural_trade_collapse() -> None:
+    """One arm collapsing to 0 trades gates even when the return delta is tiny."""
+    base = {"status": "ok", "summary": {"closed_trades": 120, "total_return_pct": 0.0}}
+    pop = {"status": "ok", "summary": {"closed_trades": 0, "total_return_pct": 0.0}}
+    text = "\n".join(_verdict_lines(base, pop))
+    assert "GATE" in text and "PASS" not in text
+
+
+def test_verdict_passes_on_neutral_deltas() -> None:
+    """Small return/Sharpe deltas + modest trade move → delegate-safe PASS."""
+    base = {
+        "status": "ok",
+        "summary": {
+            "closed_trades": 137,
+            "total_return_pct": -0.321,
+            "sharpe_ratio": -4.298,
+            "win_rate_pct": 44.5,
+        },
+    }
+    pop = {
+        "status": "ok",
+        "summary": {
+            "closed_trades": 149,
+            "total_return_pct": -0.322,
+            "sharpe_ratio": -4.268,
+            "win_rate_pct": 44.97,
+        },
+    }
+    text = "\n".join(_verdict_lines(base, pop))
+    assert "PASS — delegate-safe" in text
