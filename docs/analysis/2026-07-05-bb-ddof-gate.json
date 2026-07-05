@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "symbols": 73,
+    "start": "2026-03-01",
+    "end": "2026-07-05"
+  },
+  "arm_a": {
+    "status": "ok",
+    "error": null,
+    "summary": {
+      "strategy_id": "bb_reversion",
+      "strategy_name": "bb_reversion",
+      "engine": "backtest_engine",
+      "timeframe": "minute",
+      "initial_capital": 10000000.0,
+      "final_equity": 9967881.0,
+      "total_return_pct": -0.3212,
+      "realized_pnl": -32119.0,
+      "unrealized_pnl": 0.0,
+      "closed_trades": 137,
+      "admitted_entries": 137,
+      "open_positions": 0,
+      "win_rate_pct": 44.53,
+      "max_drawdown_pct": 0.3212,
+      "sharpe_ratio": -4.298,
+      "sortino_ratio": -3.36,
+      "profit_factor": 0.488,
+      "symbols_ran": 73,
+      "positions": []
+    }
+  },
+  "arm_b": {
+    "status": "ok",
+    "error": null,
+    "summary": {
+      "strategy_id": "bb_reversion",
+      "strategy_name": "bb_reversion",
+      "engine": "backtest_engine",
+      "timeframe": "minute",
+      "initial_capital": 10000000.0,
+      "final_equity": 9967794.0,
+      "total_return_pct": -0.3221,
+      "realized_pnl": -32206.0,
+      "unrealized_pnl": 0.0,
+      "closed_trades": 149,
+      "admitted_entries": 149,
+      "open_positions": 0,
+      "win_rate_pct": 44.97,
+      "max_drawdown_pct": 0.3221,
+      "sharpe_ratio": -4.268,
+      "sortino_ratio": -3.392,
+      "profit_factor": 0.521,
+      "symbols_ran": 73,
+      "positions": []
+    }
+  }
+}
