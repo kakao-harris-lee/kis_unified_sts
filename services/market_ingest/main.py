@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from shared.config.runtime_defaults import redis_url_from_env
+from shared.exceptions import APIError, NetworkError, WebSocketDisconnectError
 from shared.stock_universe import (
     build_effective_universe_snapshot,
     parse_effective_universe_codes,
@@ -25,6 +26,26 @@ from shared.stock_universe import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Cold-start feed failures we degrade from fatal to non-fatal. An intentional
+# superset of the tuple caught by
+# ``services/trading/orchestrator._start_market_data_loop``: it adds
+# ``TimeoutError`` and ``ValueError`` on top of that pattern. A KIS
+# ``/oauth2/Approval`` connect-timeout surfaces as ``ConnectionError`` (from
+# ``requests``); a throttled/malformed approval response surfaces as
+# ``ValueError`` (e.g. EGW00201). Both are exactly the crash-loop vectors this
+# daemon must absorb, so ``feed.start()`` failing on any of these keeps the
+# process alive and retries with backoff instead of dying (which restarts the
+# container and re-hammers the approval endpoint).
+_FEED_START_FAILURES = (
+    NetworkError,
+    WebSocketDisconnectError,
+    APIError,
+    OSError,
+    ConnectionError,
+    TimeoutError,
+    ValueError,
+)
 
 SymbolProvider = Callable[[], Awaitable[list[str]]]
 
@@ -121,6 +142,8 @@ class MarketIngestDaemon:
         ws_unhealthy_grace_seconds: float = 120.0,
         session_gate: Callable[[], bool] | None = None,
         rest_rate_limited: Callable[[], bool] | None = None,
+        feed_start_retry_initial_seconds: float = 5.0,
+        feed_start_retry_max_seconds: float = 60.0,
     ) -> None:
         self.asset = asset
         self.feed = feed
@@ -144,9 +167,22 @@ class MarketIngestDaemon:
         # poll instead of blocking minutes inside acquire(). Mirrors the futures
         # _rest_poll_loop is_rate_limited short-circuit.
         self.rest_rate_limited = rest_rate_limited
+        # Cold-start feed retry backoff (exponential, capped). A KIS approval/
+        # connect failure at start() is non-fatal: the daemon stays up, REST
+        # fallback covers the session, and start() is retried on this schedule
+        # instead of crash-looping the container. Mirrors the streaming.yaml
+        # reconnect_initial_delay/reconnect_max_delay convention.
+        self.feed_start_retry_initial_seconds = feed_start_retry_initial_seconds
+        self.feed_start_retry_max_seconds = feed_start_retry_max_seconds
         self._symbols: list[str] = []
         self._stop = asyncio.Event()
         self._rest_active = False
+        self._feed_started = False
+        # The in-flight backoff feed-start retry task. One at a time: cold start
+        # spawns it, and a futures rollover restart replaces it (see
+        # _spawn_feed_start) so a rollover approval failure retries with the same
+        # backoff instead of leaving the feed dark until the next refresh.
+        self._start_task: asyncio.Task[None] | None = None
 
     def _on_tick(
         self, symbol: str, data: dict[str, Any], ts: datetime  # noqa: ARG002
@@ -158,9 +194,14 @@ class MarketIngestDaemon:
     async def _apply_symbols(self, symbols: list[str]) -> None:
         if self.restart_on_symbol_change:
             # Futures feed requires update_symbols BEFORE start(); restart on change.
+            # Re-run start through the SAME backoff retry task as cold start so a
+            # KIS approval/connect failure during a rollover restart retries in
+            # the background instead of crashing the refresh loop or leaving the
+            # feed dark (futures has no REST fallback) until the next refresh.
             await self.feed.stop()
+            self._feed_started = False
             self.feed.update_symbols(symbols)
-            await self.feed.start()
+            await self._spawn_feed_start()
         else:
             # Stock feed accepts live update_symbols (diffs sub/unsub internally).
             self.feed.update_symbols(symbols)
@@ -290,17 +331,99 @@ class MarketIngestDaemon:
                 "REST fallback loop crashed asset=%s: %r", self.asset, exc, exc_info=exc
             )
 
+    async def _start_feed(self) -> bool:
+        """Start the WS feed; a cold-start KIS approval/connect failure is non-fatal.
+
+        Returns True on success (sets ``_feed_started``), False on a caught
+        transient failure. Downgrading the failure keeps the daemon process
+        alive so it can retry with backoff and let REST fallback cover the
+        session — instead of propagating to ``asyncio.run`` and crash-looping
+        the container (the RestartCount=1268 root cause). Mirrors
+        ``services/trading/orchestrator._start_market_data_loop``.
+        """
+        try:
+            await self.feed.start()
+        except _FEED_START_FAILURES as exc:
+            logger.warning(
+                "market-ingest feed start failed asset=%s: %r "
+                "(daemon stays up; REST fallback covers the session, retrying)",
+                self.asset,
+                exc,
+            )
+            self._feed_started = False
+            return False
+        self._feed_started = True
+        logger.info("market-ingest feed started asset=%s", self.asset)
+        return True
+
+    async def _start_feed_with_backoff(self) -> None:
+        """Retry ``_start_feed`` with exponential backoff until it succeeds.
+
+        Runs concurrently with the REST-fallback and refresh loops so a KIS
+        ``/oauth2/Approval`` outage neither crashes the daemon nor blocks data
+        (REST covers the session). Once the feed starts, its own reconnect
+        machinery owns subsequent drops, so this loop exits after first success.
+        """
+        delay = self.feed_start_retry_initial_seconds
+        while not self._stop.is_set():
+            if await self._start_feed():
+                return
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=delay)
+            delay = min(delay * 2, self.feed_start_retry_max_seconds)
+
+    async def _spawn_feed_start(self) -> None:
+        """(Re)start the backoff feed-start retry task, at most one at a time.
+
+        Awaits cancellation of any in-flight task first so a futures rollover
+        restart can never race two ``feed.start()`` loops. Used by both cold
+        start and the rollover restart branch so both get identical backoff.
+        """
+        if self._start_task is not None and not self._start_task.done():
+            self._start_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._start_task
+        task = asyncio.create_task(self._start_feed_with_backoff())
+        task.add_done_callback(self._on_start_task_done)
+        self._start_task = task
+
+    def _on_start_task_done(self, task: asyncio.Task) -> None:
+        """Surface an uncaught crash in the feed-start retry loop.
+
+        asyncio task exceptions are silent unless retrieved; without this an
+        unexpected error in the retry loop would silently disable feed startup
+        for the session. The daemon still survives (REST fallback covers data).
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "market-ingest feed-start retry loop crashed asset=%s: %r",
+                self.asset,
+                exc,
+                exc_info=exc,
+            )
+
     async def run(self) -> None:
         self.feed.set_tick_callback(self._on_tick)
         symbols = await self.symbol_provider()
         self._symbols = symbols
         self.feed.update_symbols(symbols)
-        await self.feed.start()
-        logger.info(
-            "market-ingest started asset=%s symbols=%d", self.asset, len(symbols)
-        )
+        # Wire REST fallback BEFORE starting the feed so a cold-start KIS
+        # approval/connect failure still gets market data during the session
+        # (is_healthy() is False while the feed is not running, so the fallback
+        # loop polls REST once its grace window elapses).
         fallback_task = asyncio.create_task(self._rest_fallback_loop())
         fallback_task.add_done_callback(self._on_fallback_done)
+        # Start the feed via a backoff retry task INSTEAD of a bare await: a bare
+        # await propagates a KIS approval ConnectionError through asyncio.run and
+        # crash-loops the container. The retry task keeps the daemon alive and
+        # re-attempts on the configured backoff.
+        await self._spawn_feed_start()
+        logger.info(
+            "market-ingest running asset=%s symbols=%d", self.asset, len(symbols)
+        )
         try:
             while not self._stop.is_set():
                 with contextlib.suppress(TimeoutError):
@@ -328,11 +451,15 @@ class MarketIngestDaemon:
                         "symbol_provider returned empty list; keeping current symbols"
                     )
         finally:
-            fallback_task.cancel()
-            # Suppress BOTH the expected CancelledError AND any exception the task
-            # already died with (already logged by _on_fallback_done) so feed/
+            # Suppress BOTH the expected CancelledError AND any exception a task
+            # already died with (already logged by its done-callback) so feed/
             # publisher cleanup below always runs and the original error isn't
             # masked.
+            if self._start_task is not None:
+                self._start_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await self._start_task
+            fallback_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await fallback_task
             await self.feed.stop()
@@ -465,6 +592,12 @@ async def _build_and_run() -> int:
         ),
         session_gate=session_gate,
         rest_rate_limited=rest_rate_limited,
+        feed_start_retry_initial_seconds=float(
+            os.environ.get("INGEST_FEED_START_RETRY_INITIAL_SECONDS", "5")
+        ),
+        feed_start_retry_max_seconds=float(
+            os.environ.get("INGEST_FEED_START_RETRY_MAX_SECONDS", "60")
+        ),
     )
 
     loop = asyncio.get_running_loop()
