@@ -327,11 +327,11 @@ def test_capabilities_tier1_flags_are_honest() -> None:
         assert ind.runtime_supported is True, f"{produced} should be runtime true"
         assert ind.backtest_supported is True, f"{produced} should be backtest true"
 
-    # Calculator exists but is NOT wired into the streaming/backtest engine.
+    # Now computed by the declarative builder via the NumpyBackend (ichimoku).
     ichimoku = by_id["ichimoku"]
     assert ichimoku.implemented is True
-    assert ichimoku.runtime_supported is False, "ichimoku is not engine-produced"
-    assert ichimoku.backtest_supported is False, "ichimoku is not engine-produced"
+    assert ichimoku.runtime_supported is True, "ichimoku is now engine-produced"
+    assert ichimoku.backtest_supported is True, "ichimoku is now engine-produced"
 
     # trix exposes both the oscillator value and its signal line.
     assert {o.id for o in by_id["trix"].outputs} == {"value", "signal"}
