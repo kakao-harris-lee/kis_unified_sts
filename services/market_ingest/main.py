@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -24,6 +25,7 @@ from shared.stock_universe import (
     parse_effective_universe_codes,
     select_stock_universe,
 )
+from shared.streaming.data_freshness import DataFreshnessTracker
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +179,18 @@ class MarketIngestDaemon:
         self._symbols: list[str] = []
         self._stop = asyncio.Event()
         self._rest_active = False
+        # Data-freshness: record per-symbol tick arrival and periodically snapshot
+        # it to ``trading:{asset}:data_freshness`` so the dashboard's freshness
+        # panel (services/dashboard/routes/health.py::get_data_freshness) is not
+        # permanently blind. Best-effort and additive — the tracker swallows Redis
+        # failures, so it never perturbs the tick-republish hot path.
+        self._freshness_enabled = (
+            os.environ.get("INGEST_DATA_FRESHNESS_ENABLED", "true").lower() == "true"
+        )
+        self._freshness_interval_s = float(
+            os.environ.get("INGEST_DATA_FRESHNESS_INTERVAL_SECONDS", "5")
+        )
+        self._freshness = DataFreshnessTracker(asset)
         self._feed_started = False
         # The in-flight backoff feed-start retry task. One at a time: cold start
         # spawns it, and a futures rollover restart replaces it (see
@@ -190,6 +204,9 @@ class MarketIngestDaemon:
         # Hot path: republish only. (ts is part of the feed callback contract
         # but the tick stream carries its own timestamp in `data`.)
         self.publisher.publish(self.asset, symbol, data)
+        # Cheap in-memory record (no Redis I/O here); the periodic freshness loop
+        # does the actual write.
+        self._freshness.record_tick(symbol)
 
     async def _apply_symbols(self, symbols: list[str]) -> None:
         if self.restart_on_symbol_change:
@@ -262,6 +279,7 @@ class MarketIngestDaemon:
                 data = await self.rest_price_fetcher(symbol)
                 if data:
                     self.publisher.publish(self.asset, symbol, data)
+                    self._freshness.record_tick(symbol)
                     published += 1
             except Exception:
                 logger.warning(
@@ -329,6 +347,38 @@ class MarketIngestDaemon:
         if exc is not None:
             logger.error(
                 "REST fallback loop crashed asset=%s: %r", self.asset, exc, exc_info=exc
+            )
+
+    async def _freshness_loop(self) -> None:
+        """Periodically snapshot per-symbol tick freshness to Redis.
+
+        Waits one interval before the first write, so short-lived unit-test runs
+        never touch Redis. Fully best-effort: the tracker swallows Redis failures
+        and the write runs off the event loop, so neither a Redis outage nor the
+        write latency can perturb the tick republish path.
+        """
+        if not self._freshness_enabled:
+            return
+        while not self._stop.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self._freshness_interval_s
+                )
+            if self._stop.is_set():
+                break
+            await asyncio.to_thread(self._freshness.write_snapshot, list(self._symbols))
+
+    def _on_freshness_done(self, task: asyncio.Task) -> None:
+        """Surface a freshness-loop crash (asyncio task exceptions are silent)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "data-freshness loop crashed asset=%s: %r",
+                self.asset,
+                exc,
+                exc_info=exc,
             )
 
     async def _start_feed(self) -> bool:
@@ -421,6 +471,8 @@ class MarketIngestDaemon:
         # crash-loops the container. The retry task keeps the daemon alive and
         # re-attempts on the configured backoff.
         await self._spawn_feed_start()
+        freshness_task = asyncio.create_task(self._freshness_loop())
+        freshness_task.add_done_callback(self._on_freshness_done)
         logger.info(
             "market-ingest running asset=%s symbols=%d", self.asset, len(symbols)
         )
@@ -454,14 +506,18 @@ class MarketIngestDaemon:
             # Suppress BOTH the expected CancelledError AND any exception a task
             # already died with (already logged by its done-callback) so feed/
             # publisher cleanup below always runs and the original error isn't
-            # masked.
+            # masked. All three background tasks (feed-start retry, REST fallback,
+            # freshness loop) are cancelled and awaited — none is lost or
+            # double-awaited.
             if self._start_task is not None:
                 self._start_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await self._start_task
             fallback_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await fallback_task
+            freshness_task.cancel()
+            for bg_task in (fallback_task, freshness_task):
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await bg_task
             await self.feed.stop()
             self.publisher.close()
             logger.info("market-ingest stopped asset=%s", self.asset)
