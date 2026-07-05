@@ -27,6 +27,7 @@ from shared.indicators.engine.cache import (
     InMemoryPanelStore,
     PanelStore,
 )
+from shared.indicators.engine.numpy_backend import NumpyBackend
 from shared.indicators.engine.registry import IndicatorEngine, default_engine
 from shared.indicators.engine.spec import (
     IndicatorSpec,
@@ -44,6 +45,7 @@ __all__ = [
     "IndicatorResult",
     "IndicatorSpec",
     "InMemoryPanelStore",
+    "NumpyBackend",
     "OHLCVWindow",
     "PanelStore",
     "TALibBackend",

@@ -26,6 +26,7 @@ from shared.indicators.engine.base import (
     IndicatorComputationError,
     IndicatorResult,
     UnsupportedIndicatorError,
+    last_finite,
 )
 from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow
 
@@ -191,14 +192,6 @@ _TABLE: dict[str, _TalibIndicator] = {
 }
 
 
-def _last_finite(arr: np.ndarray) -> float:
-    """Last finite value of a series, or NaN if none (window too short)."""
-    finite = np.flatnonzero(np.isfinite(arr))
-    if finite.size == 0:
-        return float("nan")
-    return float(arr[int(finite[-1])])
-
-
 class TALibBackend(IndicatorBackend):
     """Compute standard indicators through TA-Lib."""
 
@@ -242,5 +235,5 @@ class TALibBackend(IndicatorBackend):
                 f"{spec.indicator_id} backend did not emit declared outputs: "
                 f"{sorted(missing)}"
             )
-        latest = {output: _last_finite(arr) for output, arr in series.items()}
+        latest = {output: last_finite(arr) for output, arr in series.items()}
         return IndicatorResult(spec=spec, series=series, latest=latest)

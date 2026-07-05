@@ -92,16 +92,18 @@ class IndicatorEngine:
 
 
 def default_engine() -> IndicatorEngine:
-    """Build the standard engine: TA-Lib backend when available.
+    """Build the standard engine: TA-Lib for standard indicators, NumPy for custom.
 
-    Kept dependency-tolerant on purpose — if the TA-Lib wheel is absent the
-    engine is returned empty (every ``resolve`` raises) rather than failing at
-    import, so wiring/tests degrade gracefully. Custom (NumPy/Numba) backends
-    for ``vwap`` / ``rvol`` / ``ichimoku`` register here in WS-A5.
+    TA-Lib is registered first so it wins for the ids it covers; the pure-NumPy
+    backend covers what TA-Lib lacks (``vwap`` / ``rvol`` / ...). Dependency
+    tolerant on purpose — if the TA-Lib wheel is absent only the NumPy backend
+    registers rather than failing at import, so wiring/tests degrade gracefully.
     """
-    engine = IndicatorEngine()
+    from shared.indicators.engine.numpy_backend import NumpyBackend
     from shared.indicators.engine.talib_backend import TALibBackend
 
+    engine = IndicatorEngine()
     if TALibBackend.available():
         engine.register(TALibBackend())
+    engine.register(NumpyBackend())
     return engine

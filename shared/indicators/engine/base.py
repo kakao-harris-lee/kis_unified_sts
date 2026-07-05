@@ -19,6 +19,18 @@ import numpy as np
 from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow, flat_key
 
 
+def last_finite(arr: np.ndarray) -> float:
+    """Return the last finite value of a series, or NaN if none.
+
+    NaN means the window was too short for the indicator to warm up. Shared by
+    every backend so "latest scalar" has one definition.
+    """
+    finite = np.flatnonzero(np.isfinite(arr))
+    if finite.size == 0:
+        return float("nan")
+    return float(arr[int(finite[-1])])
+
+
 class IndicatorError(Exception):
     """Base error for the indicator engine."""
 
