@@ -55,6 +55,17 @@ dependencies = [
     "mplfinance>=0.12",
     "statsmodels>=0.14",
 
+    # Indicator calculation SoT (Track A — see
+    # docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md).
+    # TA-Lib ships prebuilt manylinux wheels (0.5.x+); resolves cleanly on the
+    # python:3.11-slim (Debian/glibc) base images with no C source build.
+    "TA-Lib>=0.5.1",
+    # NOTE: Polars (planned for the cache-engine batch/fan-out, WS-A2/WS-A4) is
+    # intentionally NOT added here yet — no code in this change imports it, and
+    # installing polars surfaces a pre-existing polars-1.x incompatibility in
+    # tests/unit/core/test_data_engine.py. It lands with the WS-A2 batch code
+    # that actually uses it (which also owns that data_engine compat fix).
+
     # HTTP Client
     "requests>=2.31",
     "httpx>=0.25",
@@ -127,6 +138,19 @@ dev = [
 optimization = [
     "optuna>=3.4",
     "optuna-dashboard>=0.14",
+]
+
+# Numba JIT for custom/composite indicators (WS-A5). Isolated as an optional
+# extra: numba's supported-numpy ceiling lags core numpy, so pin/verify numpy
+# alignment when enabling (WS-A5 gate) rather than forcing it on the runtime.
+performance = [
+    "numba>=0.60",
+]
+
+# Vectorized backtesting (WS-A4). Heavy transitive deps (numba, plotly) kept
+# out of the runtime install footprint on purpose.
+backtest = [
+    "vectorbt>=0.26",
 ]
 
 visualization = [
