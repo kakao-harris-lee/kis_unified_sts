@@ -48,15 +48,12 @@ def test_streaming_backend_matches_golden(case) -> None:
     rsi = flat("rsi", {"period": 14}).get("rsi")
     assert rsi == pytest.approx(case["rsi"], abs=1e-12)
 
-    # Bollinger — None below the period (key omitted); tuple otherwise
+    # Bollinger — legacy computes a (partial) band for any len>=2, incl. len<period
     bb = flat("bollinger", {"period": 20, "std": 2.0})
-    if case["bb"] is None:
-        assert "bb_middle" not in bb
-    else:
-        lo, mid, up = case["bb"]
-        assert bb["bb_lower"] == pytest.approx(lo, abs=1e-12)
-        assert bb["bb_middle"] == pytest.approx(mid, abs=1e-12)
-        assert bb["bb_upper"] == pytest.approx(up, abs=1e-12)
+    lo, mid, up = case["bb"]
+    assert bb["bb_lower"] == pytest.approx(lo, abs=1e-12)
+    assert bb["bb_middle"] == pytest.approx(mid, abs=1e-12)
+    assert bb["bb_upper"] == pytest.approx(up, abs=1e-12)
 
     # MFI / ADX — None (insufficient) => key omitted
     mfi = flat("mfi", {"period": 14}).get("mfi")

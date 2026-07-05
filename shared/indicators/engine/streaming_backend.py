@@ -219,16 +219,16 @@ class StreamingCompatBackend(IndicatorBackend):
         if iid == "rsi":
             series = {"value": _scalar(_rsi(close, _int(p, "period", 14)))}
         elif iid == "bollinger":
-            period = _int(p, "period", 20)
-            if len(close) < period:
-                series = {"lower": _NAN, "middle": _NAN, "upper": _NAN}
-            else:
-                lo_, mid, up = _bb(close, period, _float(p, "std", 2.0))
-                series = {
-                    "lower": np.array([lo_]),
-                    "middle": np.array([mid]),
-                    "upper": np.array([up]),
-                }
+            # Match legacy _calc_bb exactly, including its partial-window behavior
+            # for len<period (window = close[-period:]): the runtime callers guard
+            # len>=bb_period, but a non-neutral bb_period (>26) could otherwise
+            # reach here and a NaN would KeyError the (lower, middle, upper) unpack.
+            lo_, mid, up = _bb(close, _int(p, "period", 20), _float(p, "std", 2.0))
+            series = {
+                "lower": np.array([lo_]),
+                "middle": np.array([mid]),
+                "upper": np.array([up]),
+            }
         elif iid == "mfi":
             series = {
                 "value": _scalar(_mfi(high, low, close, vol, _int(p, "period", 14)))
