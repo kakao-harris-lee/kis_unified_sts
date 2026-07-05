@@ -193,14 +193,10 @@ class MarketTickMessage(StreamMessage):
 
         asset_text = _field_text(fields, "asset")
         asset = (
-            asset_text
-            if asset_text in {"stock", "futures"}
-            else _infer_asset(symbol)
+            asset_text if asset_text in {"stock", "futures"} else _infer_asset(symbol)
         )
         event_ts = (
-            _parse_float(fields.get("timestamp"))
-            or default_timestamp
-            or time.time()
+            _parse_float(fields.get("timestamp")) or default_timestamp or time.time()
         )
         name = _first_text(
             fields,

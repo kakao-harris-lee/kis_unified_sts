@@ -410,17 +410,15 @@ class StreamExporter:
         self.bar_1m_low_krw.labels(asset=asset, symbol=symbol, name=symbol_name).set(
             state.low
         )
-        self.bar_1m_close_krw.labels(
-            asset=asset, symbol=symbol, name=symbol_name
-        ).set(state.close)
+        self.bar_1m_close_krw.labels(asset=asset, symbol=symbol, name=symbol_name).set(
+            state.close
+        )
         self.bar_1m_volume.labels(asset=asset, symbol=symbol, name=symbol_name).set(
             state.volume
         )
         self.bar_1m_timestamp_seconds.labels(
             asset=asset, symbol=symbol, name=symbol_name
-        ).set(
-            float(state.minute_epoch)
-        )
+        ).set(float(state.minute_epoch))
         state.published = True
 
     def _housekeeping(self, now: float) -> None:
@@ -430,9 +428,7 @@ class StreamExporter:
             try:
                 self.stream_length.labels(stream=stream).set(self.client.xlen(stream))
             except (redis.RedisError, InfrastructureError) as e:
-                logger.debug(
-                    "Redis xlen operation failed for stream=%s: %s", stream, e
-                )
+                logger.debug("Redis xlen operation failed for stream=%s: %s", stream, e)
 
         # Flush finished minute bars even when there is no tick in next minute.
         for key, state in list(self._bars.items()):

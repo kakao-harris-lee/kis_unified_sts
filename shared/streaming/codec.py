@@ -64,7 +64,9 @@ def _decode_data_field(model_cls: type[T], fields: dict[str, str]) -> dict[str, 
             f"{model_cls.__name__} data field contains invalid JSON"
         ) from exc
     if not isinstance(data, dict):
-        raise StreamDecodeError(f"{model_cls.__name__} data field must be a JSON object")
+        raise StreamDecodeError(
+            f"{model_cls.__name__} data field must be a JSON object"
+        )
     if "schema_version" not in data and "schema_version" in fields:
         data["schema_version"] = fields["schema_version"]
     return data
@@ -141,7 +143,9 @@ def encode(
                 "data": model.model_dump_json(exclude_none=True),
             }
         except Exception as exc:
-            raise StreamEncodeError(f"failed to JSON encode {type(model).__name__}") from exc
+            raise StreamEncodeError(
+                f"failed to JSON encode {type(model).__name__}"
+            ) from exc
 
     fields.update({key: _format_scalar(value) for key, value in data.items()})
     return fields
