@@ -91,7 +91,20 @@ class IndicatorEngine:
         return panel
 
 
+_DAILY_ENGINE: IndicatorEngine | None = None
 _STREAMING_ENGINE: IndicatorEngine | None = None
+
+
+def daily_indicator_engine() -> IndicatorEngine:
+    """Daily-convention engine hosting the exact ``calculate_daily_indicators`` math
+    (pandas ``min_periods`` SMA, ``adjust=False`` EMA, ewm-seeded RSI). Distinct
+    from the intraday streaming/standard engines. Cached module singleton."""
+    global _DAILY_ENGINE
+    if _DAILY_ENGINE is None:
+        from shared.indicators.engine.daily_backend import DailyCompatBackend
+
+        _DAILY_ENGINE = IndicatorEngine([DailyCompatBackend()])
+    return _DAILY_ENGINE
 
 
 def streaming_indicator_engine() -> IndicatorEngine:

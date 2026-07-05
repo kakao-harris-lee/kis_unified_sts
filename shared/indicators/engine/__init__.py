@@ -33,8 +33,10 @@ from shared.indicators.engine.cache import (
     PanelStore,
 )
 from shared.indicators.engine.numpy_backend import NumpyBackend
+from shared.indicators.engine.daily_backend import DailyCompatBackend
 from shared.indicators.engine.registry import (
     IndicatorEngine,
+    daily_indicator_engine,
     default_engine,
     streaming_indicator_engine,
 )
@@ -48,6 +50,7 @@ from shared.indicators.engine.spec import (
 from shared.indicators.engine.talib_backend import TALibBackend
 
 __all__ = [
+    "DailyCompatBackend",
     "IndicatorBackend",
     "IndicatorCacheEngine",
     "IndicatorComputationError",
@@ -64,6 +67,7 @@ __all__ = [
     "StreamingCompatBackend",
     "TALibBackend",
     "UnsupportedIndicatorError",
+    "daily_indicator_engine",
     "default_engine",
     "flat_key",
     "streaming_indicator_engine",
