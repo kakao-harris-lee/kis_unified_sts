@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from services.trading.indicator_calculations import IndicatorCalculationMixin
 from services.trading.indicator_candles import Candle
 from shared.llm.stock_screening import calc_atr_pct
+from shared.regime.adaptive_detector import AdaptiveRegimeDetector
 from shared.strategy.entry.trix_golden import TrixGoldenEntry
 
 _PERIOD = 14
@@ -96,6 +98,20 @@ def test_trix_calc_atr_pct_is_canonical_fraction() -> None:
     assert TrixGoldenEntry._calc_atr_pct(df, _PERIOD) == pytest.approx(
         expected, abs=1e-9
     )
+
+
+def test_regime_calc_atr_is_canonical_sma() -> None:
+    """Phase 1b: the regime detector's ATR delegates to the canonical SMA ATR.
+
+    The detector gates on ``len(df) >= min_bars (50) > period + 1``, so this
+    (steady-state) equality is what the live-but-dormant detector actually sees.
+    """
+    highs, lows, closes = _ohlc()
+    expected = _expected_atr_sma(highs, lows, closes, _PERIOD)
+    got = AdaptiveRegimeDetector()._calc_atr(
+        np.asarray(highs), np.asarray(lows), np.asarray(closes), period=_PERIOD
+    )
+    assert got == pytest.approx(expected, abs=1e-9)
 
 
 def test_atr_consumers_insufficient_data_return_zero() -> None:

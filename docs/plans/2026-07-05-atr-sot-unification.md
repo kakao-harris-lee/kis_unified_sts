@@ -59,15 +59,16 @@ ATRCalculator(period=14, mode="sma"|"wilder")
 | llm `calc_atr_pct`(3) | 한글컬럼 어댑터→`atr_fraction_last` | fraction | ✅ 1a |
 | trix `_calc_atr_pct`(5) | 영문컬럼 어댑터→`atr_fraction_last` | fraction | ✅ 1a (#3와 동일 로직) |
 
-**Phase 1b — 남음 (warmup 동작 변경 → 별도 검증)**: 아래 2개는 이관 시 warmup fallback이 바뀌므로 값-보존이 아님. 별도 브랜치+영향 확인.
+**Phase 1b — regime DONE, technical은 dead code로 판정**:
 
-| 소비자 | 위임 형태 | warmup 변경 |
+| 소비자 | 위임 형태 | 결과 |
 |---|---|---|
-| regime `_calc_atr`(7) | `atr_last(mode=sma)`, None→? | mean(tr) 부분평균 → 정식 SMA/None (regime **dormant**, [[indicator-audit-2026-07-05]]) |
-| technical `_calc_atr`(2) | deque→arrays 어댑터 | mean(H−L) → TR 기반(갭 정확); stateful deque라 리팩터 필요 |
+| regime `_calc_atr`(7) | `atr_last(mode=sma)`, None→0.0 | ✅ **완료**. detector가 `len(df) >= min_bars(50) > period+1`로 게이트하므로 옛 `mean(tr)` warmup 분기는 **도달 불가** → steady-state 값-보존(parity 1e-9). regime **dormant**([[indicator-audit-2026-07-05]]). |
+| technical `_calc_atr`(2) | — | ⛔ **dead code (미이관)**. `shared/indicators/technical.py::TechnicalCalculator`는 `__init__` re-export + docstring 예제에서만 언급, **실 import·인스턴스화·테스트 전무**. trend/engine이 쓰는 건 동명의 별도 `shared/trend/technical_calculator.py`(Wilder ATR)이고 그 TrendEngine조차 live 서비스 미사용. → ATR SoT 대상 아님. 별도 dead-code 검토(제거 후보). |
 
-- **게이트**: 각 소비자 이관 브랜치는 parity 테스트가 before==after(1e-9)를 증명하면 통과. warmup을 실제로 바꾸는 #2/#7은 해당 소비 전략(technical=trend engine, regime=dormant) 영향 범위 확인 + 필요 시 백테스트.
-- **정규화 함정 정리**: `*_pct` 이름이 fraction을 반환하는 3·5는 호출부가 fraction을 전제하는지 grep 확인 후, 이름 유지(안전) 또는 `atr_fraction`으로 리네이밍(명확). 호출부 단위 검증 필요.
+Phase 1 정리: 활성 standalone ATR 5개(6/6b/3/5=1a, 7=1b) 전부 canonical 위임 완료. 남은 divergence는 dead #2와 `shared/trend/technical_calculator`(Wilder, TrendEngine 미가동)뿐.
+
+- **정규화 함정 정리**: `*_pct` 이름이 fraction을 반환하는 3·5는 이관 시 로직이 canonical(`atr_fraction_last`)로 통일됨. 리네이밍은 호출부 광범위라 보류(현행 유지).
 
 ### Phase 2 — Wilder 전환 (전체 백테스트 게이트, 선택)
 standalone ATR을 `mode="wilder"`로 전환해 ADX-internal과 완전 일치시킬지 결정. **라이브 stop distance ~24% 이동** → 시장데이터 백테스트 필수(Sharpe/MDD/승률/거래수 델타). 계산은 이미 canonical이므로 되돌리기보다 `stop_atr_mult` 등 **임계값 재튜닝**이 정석(ADX 게이트 B와 동일 논리, [indicator-m2-handoff](2026-07-04-indicator-m2-handoff.md)). 통과 못 하면 `mode="sma"` 유지.

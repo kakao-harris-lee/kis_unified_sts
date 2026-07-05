@@ -11,7 +11,7 @@ from enum import StrEnum
 import numpy as np
 import pandas as pd
 
-from shared.indicators.reference import ADXCalculator
+from shared.indicators.reference import ADXCalculator, ATRCalculator
 from shared.utils.math import safe_divide
 
 from .models import RegimeSignal
@@ -424,36 +424,28 @@ class AdaptiveRegimeDetector:
         high: np.ndarray,
         low: np.ndarray,
         close: np.ndarray,
-        period: int = 14
+        period: int = 14,
     ) -> float:
         """Calculate Average True Range.
 
+        Delegates to the canonical ``reference.ATRCalculator`` (``mode="sma"`` --
+        the standalone-ATR convention). Value-identical to the previous inline
+        ``rolling(period).mean()`` in the detector's operating range: ``detect``
+        gates on ``len(df) >= min_bars (50) > period + 1``, so the old
+        partial-mean (``mean(tr)``) warmup branch was unreachable here. ``None``
+        (insufficient data) maps to the historical ``0.0``.
+
         Args:
-            high: High prices
-            low: Low prices
-            close: Close prices
-            period: ATR period
+            high: High prices.
+            low: Low prices.
+            close: Close prices.
+            period: ATR period.
 
         Returns:
-            ATR value
+            ATR value (``0.0`` when there is insufficient data).
         """
-        if len(high) < 2:
-            return 0.0
-
-        # True range components
-        tr1 = high[1:] - low[1:]
-        tr2 = np.abs(high[1:] - close[:-1])
-        tr3 = np.abs(low[1:] - close[:-1])
-
-        # Maximum of the three
-        tr = np.maximum(tr1, np.maximum(tr2, tr3))
-
-        # Average over period
-        if len(tr) < period:
-            return float(np.mean(tr))
-
-        atr = pd.Series(tr).rolling(period).mean().iloc[-1]
-        return float(atr) if pd.notna(atr) else 0.0
+        atr = ATRCalculator(period=period, mode="sma").atr_last(high, low, close)
+        return float(atr) if atr is not None else 0.0
 
     def _unknown_signal(self, reason: str = "") -> RegimeSignal:
         """Create UNKNOWN regime signal.
