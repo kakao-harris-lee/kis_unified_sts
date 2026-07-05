@@ -61,8 +61,11 @@ class IndicatorCalculationMixin:
     def _calc_rvol(self, candles: list[Candle]) -> float:
         """RVOL = short-window avg volume / long-window avg volume.
 
-        Intentionally numpy-free (unlike shared.indicators.volume.RVOLCalculator)
-        to keep indicator_engine dependency-light for the hot path.
+        Intentionally numpy-free to keep the streaming indicator hot path
+        dependency-light. Verified bit-identical to the engine's ``rvol`` backend
+        across the runtime's window lengths (see the shadow-parity report), so it
+        is the one delegate-safe indicator — kept inline here only to avoid adding
+        a per-call NumPy window build to the hot path.
         """
         n = len(candles)
         sw = min(self._rvol_short, n)

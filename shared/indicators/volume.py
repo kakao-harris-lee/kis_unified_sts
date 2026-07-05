@@ -1,6 +1,6 @@
 """거래량 지표 계산기
 
-거래량 가속도, VWAP, OBV, RVOL 계산.
+거래량 가속도, VWAP, OBV 계산.
 
 quant_moment_sts의 VolumeAccelerationCalculator, VWAPCalculator를 마이그레이션.
 
@@ -23,11 +23,6 @@ Usage:
     obv_data = obv_calc.calculate(prices=[100, 102, 101, 103], volumes=[1000, 1500, 800, 2000])
     if obv_data.is_accumulating:
         print("기관 매집 감지!")
-
-    # RVOL (Relative Volume)
-    rvol_calc = RVOLCalculator()
-    rvol_data = rvol_calc.calculate(volumes=[100]*20 + [200]*5)
-    print(f"RVOL: {rvol_data.rvol_ratio:.2f}x")
 """
 
 from __future__ import annotations
@@ -130,18 +125,18 @@ class VolumeAccelerationCalculator:
             timestamp: 타임스탬프 (Unix epoch)
         """
         if code not in self._volume_windows:
-            self._volume_windows[code] = deque(
-                maxlen=self.config.window_size * 10
-            )
+            self._volume_windows[code] = deque(maxlen=self.config.window_size * 10)
 
         self._volume_windows[code].append((timestamp, volume))
 
     def calculate(
-        self, code: str, lookback_seconds: int | None = None,
+        self,
+        code: str,
+        lookback_seconds: int | None = None,
         *,
         timestamps: list = None,
-        context_timestamp = None,
-        lookahead_guard = None,
+        context_timestamp=None,
+        lookahead_guard=None,
         context_info: str = None,
     ) -> VolumeAcceleration:
         """거래량 가속도 계산
@@ -170,7 +165,12 @@ class VolumeAccelerationCalculator:
 
         # LookaheadGuard: 시계열 입력이 배열이면 검사
         if lookahead_guard and timestamps is not None and context_timestamp is not None:
-            lookahead_guard.check([v[1] for v in window], timestamps, context_timestamp, context_info or f"volume:{code}")
+            lookahead_guard.check(
+                [v[1] for v in window],
+                timestamps,
+                context_timestamp,
+                context_info or f"volume:{code}",
+            )
 
         now = window[-1][0]
         cutoff_current = now - lookback_seconds
@@ -180,9 +180,7 @@ class VolumeAccelerationCalculator:
         current_vol = sum(vol for ts, vol in window if ts > cutoff_current)
 
         # 이전 윈도우 거래량
-        prev_vol = sum(
-            vol for ts, vol in window if cutoff_prev < ts <= cutoff_current
-        )
+        prev_vol = sum(vol for ts, vol in window if cutoff_prev < ts <= cutoff_current)
 
         # Velocity (1차 도함수)
         velocity = 0.0 if prev_vol == 0 else (current_vol - prev_vol) / prev_vol
@@ -300,9 +298,7 @@ class VWAPCalculator:
         self.config = config or VWAPConfig()
         self._data: dict[str, dict] = {}
 
-    def add_tick(
-        self, code: str, price: float, volume: int, date_str: str
-    ):
+    def add_tick(self, code: str, price: float, volume: int, date_str: str):
         """틱 추가
 
         Args:
@@ -355,9 +351,7 @@ class VWAPCalculator:
             cumulative_volume=data["volume"],
         )
 
-    def calculate_from_list(
-        self, prices: list[float], volumes: list[int]
-    ) -> VWAPData:
+    def calculate_from_list(self, prices: list[float], volumes: list[int]) -> VWAPData:
         """리스트 데이터로 VWAP 계산 (백테스트용)
 
         Args:
@@ -378,9 +372,7 @@ class VWAPCalculator:
 
         vwap = total_pv / total_volume
         current_price = prices[-1]
-        price_vs_vwap = (
-            (current_price - vwap) / vwap * 100 if vwap > 0 else 0.0
-        )
+        price_vs_vwap = (current_price - vwap) / vwap * 100 if vwap > 0 else 0.0
 
         return VWAPData(
             vwap=vwap,
@@ -482,8 +474,10 @@ class OBVCalculator:
         n = min(len(prices), len(volumes))
         if n < 2:
             return OBVData(
-                obv_values=[], obv_sma=0.0,
-                obv_trend=0.0, price_trend=0.0,
+                obv_values=[],
+                obv_sma=0.0,
+                obv_trend=0.0,
+                price_trend=0.0,
                 is_accumulating=False,
             )
 
@@ -499,7 +493,7 @@ class OBVCalculator:
 
         # OBV SMA
         if len(obv) >= self.sma_period:
-            obv_sma = float(np.mean(obv[-self.sma_period:]))
+            obv_sma = float(np.mean(obv[-self.sma_period :]))
         else:
             obv_sma = float(np.mean(obv))
 
@@ -511,7 +505,11 @@ class OBVCalculator:
         price_trend = self._slope(prices[-tp:]) if tp >= 2 else 0.0
 
         # 매집 판정: OBV 상승 + 가격 횡보
-        price_range = (max(prices[-tp:]) - min(prices[-tp:])) / prices[-tp] if prices[-tp] > 0 else 0.0
+        price_range = (
+            (max(prices[-tp:]) - min(prices[-tp:])) / prices[-tp]
+            if prices[-tp] > 0
+            else 0.0
+        )
         is_accumulating = obv_trend > 0 and price_range < price_flat_threshold
 
         return OBVData(
@@ -546,110 +544,3 @@ class OBVCalculator:
             return 0.0
         coeffs = np.polyfit(x, arr, 1)
         return float(coeffs[0] / denom)
-
-
-# =============================================================================
-# RVOL (Relative Volume)
-# =============================================================================
-
-
-@dataclass
-class RVOLData:
-    """RVOL 분석 결과
-
-    Attributes:
-        rvol_ratio: 상대 거래량 비율 (short_avg / long_avg)
-        short_avg: 단기 평균 거래량
-        long_avg: 장기 평균 거래량
-        rvol_trend: RVOL 추세 (단기 거래량이 상승 중인지)
-        is_unusual: 비정상적 거래량 여부 (rvol > threshold)
-    """
-
-    rvol_ratio: float
-    short_avg: float
-    long_avg: float
-    rvol_trend: float
-    is_unusual: bool
-
-
-class RVOLCalculator:
-    """Relative Volume (상대 거래량) 계산기
-
-    RVOL = 단기 평균 거래량 / 장기 평균 거래량
-
-    RVOL > 1.5 = 비정상적 활동
-    RVOL이 며칠에 걸쳐 상승 = 관심 증가 (매집 가능성)
-
-    Usage:
-        calc = RVOLCalculator()
-        data = calc.calculate(volumes=[100]*20 + [200]*5)
-        print(f"RVOL: {data.rvol_ratio:.2f}x")
-    """
-
-    def __init__(
-        self,
-        short_window: int = 5,
-        long_window: int = 20,
-        unusual_threshold: float = 1.5,
-    ):
-        self.short_window = short_window
-        self.long_window = long_window
-        self.unusual_threshold = unusual_threshold
-
-    def calculate(
-        self,
-        volumes: list[int],
-        short_window: int | None = None,
-        long_window: int | None = None,
-    ) -> RVOLData:
-        """RVOL 계산
-
-        Args:
-            volumes: 거래량 리스트 (oldest first)
-            short_window: 단기 윈도우 (None이면 기본값)
-            long_window: 장기 윈도우 (None이면 기본값)
-
-        Returns:
-            RVOLData
-        """
-        sw = short_window or self.short_window
-        lw = long_window or self.long_window
-
-        if len(volumes) < max(sw, lw):
-            return RVOLData(
-                rvol_ratio=1.0, short_avg=0.0, long_avg=0.0,
-                rvol_trend=0.0, is_unusual=False,
-            )
-
-        short_avg = float(np.mean(volumes[-sw:]))
-        long_avg = float(np.mean(volumes[-lw:]))
-
-        if long_avg == 0:
-            return RVOLData(
-                rvol_ratio=1.0, short_avg=short_avg, long_avg=0.0,
-                rvol_trend=0.0, is_unusual=False,
-            )
-
-        rvol_ratio = short_avg / long_avg
-
-        # RVOL 추세: 슬라이딩 윈도우로 RVOL이 상승 중인지 확인
-        rvol_trend = 0.0
-        if len(volumes) >= lw + sw:
-            rvol_series = []
-            for i in range(min(sw, len(volumes) - lw + 1)):
-                end = len(volumes) - sw + i + 1
-                if end > sw and end <= len(volumes):
-                    s_avg = float(np.mean(volumes[end - sw:end]))
-                    l_avg = float(np.mean(volumes[end - lw:end]))
-                    if l_avg > 0:
-                        rvol_series.append(s_avg / l_avg)
-            if len(rvol_series) >= 2:
-                rvol_trend = rvol_series[-1] - rvol_series[0]
-
-        return RVOLData(
-            rvol_ratio=rvol_ratio,
-            short_avg=short_avg,
-            long_avg=long_avg,
-            rvol_trend=rvol_trend,
-            is_unusual=rvol_ratio >= self.unusual_threshold,
-        )
