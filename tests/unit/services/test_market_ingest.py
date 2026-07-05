@@ -287,6 +287,70 @@ async def test_healthy_cold_start_starts_feed_once():
     assert feed.callback is not None
 
 
+class RolloverStartFailFeed(FakeFeed):
+    """Cold start succeeds; the restart for ``fail_symbol`` raises ``fail_times``
+    times before succeeding.
+
+    Models a futures quarterly-rollover restart hitting a transient KIS
+    approval/connect failure (``restart_on_symbol_change=True``). The regression
+    guard: the rollover restart must retry with backoff without killing the
+    refresh loop, and must not leave the feed dark.
+    """
+
+    def __init__(self, *, fail_symbol: str = "B", fail_times: int = 2):
+        super().__init__()
+        self._fail_symbol = fail_symbol
+        self._fail_times = fail_times
+        self._current: list[str] = []
+        self.start_attempts = 0
+        self.rollover_fail_count = 0
+
+    def update_symbols(self, symbols, *args, **kwargs):
+        super().update_symbols(symbols, *args, **kwargs)
+        self._current = list(symbols)
+
+    async def start(self):
+        self.start_attempts += 1
+        if (
+            self._fail_symbol in self._current
+            and self.rollover_fail_count < self._fail_times
+        ):
+            self.rollover_fail_count += 1
+            raise ConnectionError("Approval key request failed (rollover)")
+        self.started += 1
+        self.healthy = True
+
+
+@pytest.mark.asyncio
+async def test_futures_rollover_start_failure_retries_without_killing_loop():
+    """A rollover restart approval failure must retry, not crash the loop.
+
+    Regression for the ``restart_on_symbol_change`` branch: a single bare
+    ``_start_feed()`` (no retry) left the feed dark after a rollover approval
+    failure (futures has no REST fallback). Now it retries on the same backoff.
+    """
+    feed, pub = RolloverStartFailFeed(fail_times=2), FakePublisher()
+    daemon = MarketIngestDaemon(
+        asset="futures",
+        feed=feed,
+        publisher=pub,
+        symbol_provider=_provider([["A"], ["B"]]),
+        refresh_interval_seconds=0.02,
+        restart_on_symbol_change=True,
+        feed_start_retry_initial_seconds=0.02,
+        feed_start_retry_max_seconds=0.02,
+    )
+    task = asyncio.create_task(daemon.run())
+    await asyncio.sleep(0.3)
+    assert not task.done(), "refresh loop must survive a rollover start failure"
+    await daemon.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+    # Rollover restart (B) failed twice, then a retry brought the feed up.
+    assert feed.rollover_fail_count == 2
+    assert ["B"] in feed.symbol_calls, "new rollover contract must be applied"
+    assert feed.started == 2, "cold start (A) + rollover (B) after its retries"
+
+
 def _fetcher(calls: list[str]):
     """Async REST price fetcher recording calls; returns a WS-shaped tick."""
 

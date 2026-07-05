@@ -313,9 +313,12 @@ class KISStockPriceFeed:
             # every attempt). Do NOT clear _running or raise: _running stays
             # True so the WS thread's on_close has already spawned the
             # single-loop-guarded background reconnect, which keeps retrying
-            # until KIS recovers. Raising here instead crash-loops the daemon
-            # (services/market_ingest does not catch start() failures), so the
-            # feed never gets the chance to self-heal.
+            # until KIS recovers. Returning (instead of raising) lets the feed
+            # self-heal in-place without disturbing the caller — a raise here
+            # would force the caller to restart the feed even though the
+            # background reconnect already covers recovery. (Approval-fetch
+            # failures above DO raise; services/market_ingest catches those and
+            # retries start() with backoff rather than crash-looping.)
             logger.warning(
                 "[StockPriceFeed] Initial connect timed out; the feed will keep "
                 "reconnecting in the background"

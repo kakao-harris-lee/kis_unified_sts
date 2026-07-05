@@ -27,14 +27,16 @@ from shared.stock_universe import (
 
 logger = logging.getLogger(__name__)
 
-# Cold-start feed failures we degrade from fatal to non-fatal. A KIS
+# Cold-start feed failures we degrade from fatal to non-fatal. An intentional
+# superset of the tuple caught by
+# ``services/trading/orchestrator._start_market_data_loop``: it adds
+# ``TimeoutError`` and ``ValueError`` on top of that pattern. A KIS
 # ``/oauth2/Approval`` connect-timeout surfaces as ``ConnectionError`` (from
 # ``requests``); a throttled/malformed approval response surfaces as
 # ``ValueError`` (e.g. EGW00201). Both are exactly the crash-loop vectors this
 # daemon must absorb, so ``feed.start()`` failing on any of these keeps the
 # process alive and retries with backoff instead of dying (which restarts the
-# container and re-hammers the approval endpoint). Mirrors the tuple caught by
-# ``services/trading/orchestrator._start_market_data_loop``.
+# container and re-hammers the approval endpoint).
 _FEED_START_FAILURES = (
     NetworkError,
     WebSocketDisconnectError,
@@ -176,6 +178,11 @@ class MarketIngestDaemon:
         self._stop = asyncio.Event()
         self._rest_active = False
         self._feed_started = False
+        # The in-flight backoff feed-start retry task. One at a time: cold start
+        # spawns it, and a futures rollover restart replaces it (see
+        # _spawn_feed_start) so a rollover approval failure retries with the same
+        # backoff instead of leaving the feed dark until the next refresh.
+        self._start_task: asyncio.Task[None] | None = None
 
     def _on_tick(
         self, symbol: str, data: dict[str, Any], ts: datetime  # noqa: ARG002
@@ -187,13 +194,14 @@ class MarketIngestDaemon:
     async def _apply_symbols(self, symbols: list[str]) -> None:
         if self.restart_on_symbol_change:
             # Futures feed requires update_symbols BEFORE start(); restart on change.
-            # Use the guarded start so a KIS approval/connect failure during a
-            # rollover restart degrades to a warning (+ REST fallback) instead of
-            # crashing the refresh loop — same non-fatal contract as cold start.
+            # Re-run start through the SAME backoff retry task as cold start so a
+            # KIS approval/connect failure during a rollover restart retries in
+            # the background instead of crashing the refresh loop or leaving the
+            # feed dark (futures has no REST fallback) until the next refresh.
             await self.feed.stop()
             self._feed_started = False
             self.feed.update_symbols(symbols)
-            await self._start_feed()
+            await self._spawn_feed_start()
         else:
             # Stock feed accepts live update_symbols (diffs sub/unsub internally).
             self.feed.update_symbols(symbols)
@@ -364,6 +372,21 @@ class MarketIngestDaemon:
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
             delay = min(delay * 2, self.feed_start_retry_max_seconds)
 
+    async def _spawn_feed_start(self) -> None:
+        """(Re)start the backoff feed-start retry task, at most one at a time.
+
+        Awaits cancellation of any in-flight task first so a futures rollover
+        restart can never race two ``feed.start()`` loops. Used by both cold
+        start and the rollover restart branch so both get identical backoff.
+        """
+        if self._start_task is not None and not self._start_task.done():
+            self._start_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._start_task
+        task = asyncio.create_task(self._start_feed_with_backoff())
+        task.add_done_callback(self._on_start_task_done)
+        self._start_task = task
+
     def _on_start_task_done(self, task: asyncio.Task) -> None:
         """Surface an uncaught crash in the feed-start retry loop.
 
@@ -397,8 +420,7 @@ class MarketIngestDaemon:
         # await propagates a KIS approval ConnectionError through asyncio.run and
         # crash-loops the container. The retry task keeps the daemon alive and
         # re-attempts on the configured backoff.
-        start_task = asyncio.create_task(self._start_feed_with_backoff())
-        start_task.add_done_callback(self._on_start_task_done)
+        await self._spawn_feed_start()
         logger.info(
             "market-ingest running asset=%s symbols=%d", self.asset, len(symbols)
         )
@@ -433,9 +455,10 @@ class MarketIngestDaemon:
             # already died with (already logged by its done-callback) so feed/
             # publisher cleanup below always runs and the original error isn't
             # masked.
-            start_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await start_task
+            if self._start_task is not None:
+                self._start_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await self._start_task
             fallback_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await fallback_task
