@@ -366,3 +366,20 @@ def test_stock_symbol_selection_applies_overrides_without_effective_snapshot():
         overrides_raw=overrides,
         max_symbols=2,
     ) == ["005930", "035720"]
+
+
+def test_on_tick_records_data_freshness():
+    """Each republished tick is recorded for the periodic freshness snapshot."""
+    daemon = _daemon(FakeFeed(), FakePublisher(), _provider([["005930"]]))
+    daemon._on_tick("005930", {"current_price": 100.0}, datetime.now(UTC))
+    assert "005930" in daemon._freshness._last_tick
+
+
+def test_freshness_snapshot_matches_subscribed_universe():
+    """build_snapshot reports the subscribed symbol count and fresh ticks."""
+    daemon = _daemon(FakeFeed(), FakePublisher(), _provider([["005930", "000660"]]))
+    daemon._symbols = ["005930", "000660"]
+    daemon._on_tick("005930", {"current_price": 100.0}, datetime.now(UTC))
+    snap = daemon._freshness.build_snapshot(daemon._symbols)
+    assert snap["symbol_count"] == 2
+    assert snap["fresh_count"] == 1
