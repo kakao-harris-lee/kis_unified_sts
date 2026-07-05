@@ -39,6 +39,14 @@ _KEY_MARKET_CONTEXT = "trading:{asset}:market_context"
 _KEY_RUNNING_TOTALS = "trading:{asset}:running_totals"
 _KEY_EQUITY_TIMELINE = "trading:{asset}:equity_timeline"
 
+# Pub/sub channels for real-time dashboard invalidation. topic ∈
+# positions|signals|fills. These are deliberately UNSUFFIXED (no
+# TRADING_STATE_KEY_SUFFIX): the dashboard subscriber
+# (services/dashboard/websocket_publisher.py::_pubsub_loop) hardcodes
+# ``trading:events:{positions,signals,fills}`` and derives the WS topic from the
+# channel name, so the producer must publish to those exact channel names.
+_EVENT_CHANNEL = "trading:events:{topic}"
+
 MAX_TRADES = 500
 MAX_SIGNALS = 200
 STATUS_TTL_SECONDS = 86400  # 24h — auto-expire if orchestrator dies
@@ -92,6 +100,35 @@ class TradingStatePublisher:
         self._last_position_publish = 0.0
         self._last_status_publish = 0.0
 
+    # -- Real-time pub/sub notification --------------------------------------
+
+    def _publish_event(self, topic: str, payload: dict[str, Any] | None = None) -> None:
+        """Emit a best-effort pub/sub notification for real-time dashboard refresh.
+
+        Publishes a JSON message to ``trading:events:{topic}`` (topic ∈
+        ``positions``|``signals``|``fills``). The dashboard WebSocket publisher
+        (``services/dashboard/websocket_publisher.py::_pubsub_loop``) subscribes
+        to these channels, derives the WS topic from the channel name, reads
+        ``asset_class`` from the payload, and forwards a
+        ``{topic, asset_class, payload}`` frame to subscribed browsers
+        (``useWebSocket.ts``), which then invalidates the matching React Query
+        cache.
+
+        Additive and fire-and-forget: this runs AFTER the primary Redis write
+        and never raises, so a pub/sub failure cannot disrupt the state write.
+        ``asset_class`` is always forced to this publisher's asset so the
+        frontend invalidates the correct ``[topic, asset_class]`` key.
+        """
+        try:
+            r = _get_redis()
+            message: dict[str, Any] = {"asset_class": self._asset}
+            if payload:
+                message.update(payload)
+            message["asset_class"] = self._asset
+            r.publish(_EVENT_CHANNEL.format(topic=topic), json.dumps(message))
+        except Exception:
+            logger.debug("Failed to publish %s event to pubsub", topic, exc_info=True)
+
     # -- Status ---------------------------------------------------------------
 
     def publish_status(self, status: dict[str, Any]) -> None:
@@ -131,6 +168,9 @@ class TradingStatePublisher:
             pipe.hset(key, position.id, json.dumps(data))
             pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
+            self._publish_event(
+                "positions", {"event": "opened", "id": str(position.id)}
+            )
         except Exception:
             logger.debug("Failed to publish position open", exc_info=True)
 
@@ -153,6 +193,12 @@ class TradingStatePublisher:
             pipe.ltrim(trades_key, 0, MAX_TRADES - 1)
             pipe.expire(trades_key, STATUS_TTL_SECONDS)
             pipe.execute()
+            # A close both mutates the open-positions hash AND appends a fill,
+            # so notify both topics.
+            self._publish_event(
+                "positions", {"event": "closed", "id": str(position.id)}
+            )
+            self._publish_event("fills", {"event": "closed", "id": str(position.id)})
         except Exception:
             logger.debug("Failed to publish position close", exc_info=True)
 
@@ -181,6 +227,9 @@ class TradingStatePublisher:
                 pipe.hset(key, mapping=mapping)
             pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
+            self._publish_event(
+                "positions", {"event": "snapshot", "count": len(positions)}
+            )
         except Exception:
             logger.debug("Failed to publish positions update", exc_info=True)
 
@@ -229,6 +278,7 @@ class TradingStatePublisher:
             pipe.ltrim(key, 0, MAX_SIGNALS - 1)
             pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
+            self._publish_event("signals", {"event": "signal", "side": signal_type})
         except Exception:
             logger.debug("Failed to publish signal", exc_info=True)
 
@@ -263,6 +313,7 @@ class TradingStatePublisher:
             pipe.hset(key, position_id, json.dumps(data))
             pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
+            self._publish_event("positions", {"event": "raw", "id": str(position_id)})
         except Exception:
             logger.debug("Failed to publish raw position", exc_info=True)
 
@@ -272,6 +323,9 @@ class TradingStatePublisher:
             r = _get_redis()
             key = _key(_KEY_POSITIONS, self._asset)
             r.hdel(key, position_id)
+            self._publish_event(
+                "positions", {"event": "removed", "id": str(position_id)}
+            )
         except Exception:
             logger.debug("Failed to remove position", exc_info=True)
 
@@ -287,6 +341,7 @@ class TradingStatePublisher:
         try:
             r = _get_redis()
             r.delete(_key(_KEY_POSITIONS, self._asset))
+            self._publish_event("positions", {"event": "reset"})
         except Exception:
             logger.debug("Failed to reset positions", exc_info=True)
 
@@ -300,6 +355,7 @@ class TradingStatePublisher:
             pipe.ltrim(key, 0, MAX_TRADES - 1)
             pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
+            self._publish_event("fills", {"event": "raw"})
         except Exception:
             logger.debug("Failed to publish raw trade", exc_info=True)
 
@@ -313,6 +369,7 @@ class TradingStatePublisher:
             pipe.ltrim(key, 0, MAX_SIGNALS - 1)
             pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
+            self._publish_event("signals", {"event": "raw"})
         except Exception:
             logger.debug("Failed to publish raw signal", exc_info=True)
 
