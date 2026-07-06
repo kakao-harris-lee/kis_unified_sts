@@ -564,7 +564,9 @@ class TestSetupCEntryAdapterHappyPath:
         ts_naive = datetime(2026, 4, 23, 9, 30)  # 09:30 KST, 10 min after the event
         event = _make_event(
             impact_tier=1,
-            scheduled_at=datetime(2026, 4, 23, 0, 20, tzinfo=UTC),  # 09:20 KST, within window
+            scheduled_at=datetime(
+                2026, 4, 23, 0, 20, tzinfo=UTC
+            ),  # 09:20 KST, within window
         )
         context = EntryContext(
             market_data=_market_data_for_event_breakout(
