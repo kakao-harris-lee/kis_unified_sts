@@ -11,6 +11,7 @@ Cache Engine (WS-A2) builds on — :meth:`compute_many` collapses identical
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 
 from shared.indicators.engine.base import (
@@ -94,6 +95,7 @@ class IndicatorEngine:
 _DAILY_ENGINE: IndicatorEngine | None = None
 _MOMENTUM_ENGINE: IndicatorEngine | None = None
 _STREAMING_ENGINE: IndicatorEngine | None = None
+_RUNTIME_TALIB_ENGINE: IndicatorEngine | None = None
 
 
 def momentum_indicator_engine() -> IndicatorEngine:
@@ -173,8 +175,6 @@ def runtime_indicator_convention() -> str:
     (historical live behavior). Any unrecognized value falls back to ``streaming``
     so a typo can never silently change live signal values.
     """
-    import os
-
     value = os.environ.get(_RUNTIME_CONVENTION_ENV, "streaming").strip().lower()
     return "talib" if value == "talib" else "streaming"
 
@@ -183,11 +183,14 @@ def runtime_indicator_engine() -> IndicatorEngine:
     """Return the engine the runtime ``_calc_*`` delegates should use.
 
     ``streaming`` (default) → :func:`streaming_indicator_engine` (historical
-    values). ``talib`` → :func:`default_engine` (TA-Lib standard, converged with
-    the builder). The convention is process-wide and read per call so a restart
-    with the env flag set is all that is needed to switch; the underlying engines
-    are cached singletons / cheap to build.
+    values). ``talib`` → a cached TA-Lib standard engine (converged with the
+    builder). The convention is process-wide and read per call so a restart with
+    the env flag set is all that is needed to switch; both branches return a
+    cached module singleton, so this is cheap on the per-symbol-per-bar hot path.
     """
     if runtime_indicator_convention() == "talib":
-        return default_engine()
+        global _RUNTIME_TALIB_ENGINE
+        if _RUNTIME_TALIB_ENGINE is None:
+            _RUNTIME_TALIB_ENGINE = default_engine()
+        return _RUNTIME_TALIB_ENGINE
     return streaming_indicator_engine()

@@ -25,6 +25,7 @@ from shared.indicators.engine.base import (
     UnsupportedIndicatorError,
     last_finite,
 )
+from shared.indicators.engine.params import float_param as _float
 from shared.indicators.engine.params import int_param as _int
 from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow
 
@@ -192,7 +193,7 @@ def _donchian(w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
 def _keltner(w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
     """Keltner channels: EMA(typical) middle ± multiplier * ATR(period)."""
     period = _int(p, "period", 20)
-    mult = float(p.get("multiplier", 2.0))
+    mult = _float(p, "multiplier", 2.0)
     typical = (w.high + w.low + w.close) / 3.0
     middle = _ema(typical, period)
     atr = _atr(w.high, w.low, w.close, period)

@@ -276,8 +276,7 @@ def _aroon(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.nda
     return {"up": up, "down": down}
 
 
-def _mom(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
-    return {"value": mod.MOM(w.close, timeperiod=_int(p, "period", 10))}
+# ``momentum`` reuses the existing ``_mom`` (defined above for the ``mom`` id).
 
 
 # --- Phase A: volatility / statistic studies ---------------------------------
