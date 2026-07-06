@@ -39,7 +39,7 @@ from services.trading.indicator_candles import (
     MultiTimeframeCandleAccumulator,
 )
 from services.trading.indicator_queries import IndicatorQueryMixin
-from shared.indicators.volume import VolumeAccelerationCalculator, VWAPCalculator
+from shared.indicators.engine import VolumeAccelerationCalculator, VWAPCalculator
 
 logger = logging.getLogger(__name__)
 
