@@ -124,9 +124,27 @@ def _make_daemon(*, redis, setups, provider, mode: str, gate_redis):
     )
 
 
-async def _run_until_drained(daemon, duration: float = 0.05) -> None:
+async def _run_until_drained(
+    daemon,
+    duration: float = 0.05,
+    *,
+    redis=None,
+    stream: str | None = None,
+    expect: int | None = None,
+) -> None:
     async def _stop_after():
-        await asyncio.sleep(duration)
+        if expect is not None and redis is not None and stream is not None:
+            # Deterministic drain: stop once `expect` candidates have actually
+            # been published, rather than racing a fixed wall-clock window. The
+            # 50 ms default is fine locally but flakes under parallel (`-n auto`)
+            # CPU contention, where the daemon may publish only part of the batch
+            # before `stop()`. ~2 s safety cap so a real hang fails fast.
+            for _ in range(400):
+                if len(await redis.xrange(stream)) >= expect:
+                    break
+                await asyncio.sleep(0.005)
+        else:
+            await asyncio.sleep(duration)
         await daemon.stop()
 
     await asyncio.gather(daemon.run(), _stop_after())
@@ -192,7 +210,7 @@ async def test_shadow_observation_log_is_throttled(redis, gate_redis, caplog):
     )
 
     with caplog.at_level(logging.INFO, logger=LOGGER_NAME):
-        await _run_until_drained(daemon)
+        await _run_until_drained(daemon, redis=redis, stream=CANDIDATE_STREAM, expect=3)
 
     entries = await redis.xrange(CANDIDATE_STREAM)
     assert len(entries) == 3  # every candidate still published
