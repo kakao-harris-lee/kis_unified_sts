@@ -7,8 +7,6 @@ standards in the repo:
     * ADX  -- canonical Wilder-smoothed ADX; proven to (a) sit in [0, 100],
       (b) be much smoother than the raw DX series, and (c) diverge sharply from
       the defective ``adaptive_detector._calc_adx`` (single, SMA-smoothed DX).
-    * Bollinger -- ``ddof`` knob reproduces the repo convention (ddof=1) exactly
-      (matches runtime ``_calc_bb``), and differs from population std (ddof=0).
     * StochRSI  -- values in [0, 100], correct K/D smoothing relationship, and a
       ``latest_values`` dict carrying exactly the flat keys the strategy needs.
 
