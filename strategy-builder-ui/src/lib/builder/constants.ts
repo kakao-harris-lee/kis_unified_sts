@@ -1086,12 +1086,41 @@ export const CANDLESTICK_PATTERNS: IndicatorDefinition[] = [
 // Combined All Indicators
 // ============================================================
 
-// Note: CANDLESTICK_PATTERNS removed - backend (LeanCodeGenerator) does not support them
-// Use only technical indicators for backtest compatibility
+/**
+ * Technical indicators the calculation engine cannot yet compute (no TA-Lib
+ * function and no NumPy backend impl). These are hard-blocked in the picker
+ * (`implemented: false` → Lock, not addable) so a user can never build a
+ * condition that references an indicator the runtime will silently skip
+ * (which would make the signal never fire).
+ *
+ * This is the ONLY hand-maintained gap list: as an indicator gets wired into
+ * `shared/indicators/engine` + `config/strategy_builder/indicators.yaml`,
+ * remove its id here. Candlestick patterns are now engine-backed (A5, TA-Lib
+ * CDL*) so they are NOT in this list — they flow through `withImplementedFlag`
+ * like any other indicator. See docs/plans/2026-07-06-talib-builder-alignment.md.
+ */
+const UNIMPLEMENTED_INDICATOR_IDS = new Set<string>([
+  "accbands", "alma", "alpha", "ao", "augen", "beta", "change", "chop", "cmf",
+  "consecutive", "coppock", "disparity", "dpo", "eom", "fisher", "force",
+  "frama", "ibs", "kst", "kvo", "logr", "mass_index", "pivot", "returns",
+  "rvi", "schaff", "supertrend", "tsi", "vidya", "vortex", "zlema",
+]);
+
+/** Stamp `implemented: false` on an indicator when it is in the gap list. */
+function withImplementedFlag(def: IndicatorDefinition): IndicatorDefinition {
+  if (UNIMPLEMENTED_INDICATOR_IDS.has(def.id)) {
+    return { ...def, implemented: false };
+  }
+  return def;
+}
+
 export const ALL_INDICATORS: IndicatorDefinition[] = [
-  ...INDICATORS,
-  ...CANDLESTICK_PATTERNS,
-];;
+  ...INDICATORS.map(withImplementedFlag),
+  // Candlestick patterns (A5): engine-backed via TA-Lib CDL* (integer signal
+  // +100 bullish / -100 bearish / 0 none). Addable; any future gap-listed id
+  // would fall out via withImplementedFlag.
+  ...CANDLESTICK_PATTERNS.map(withImplementedFlag),
+];
 
 // ============================================================
 // Helper Functions

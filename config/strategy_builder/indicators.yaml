@@ -276,23 +276,714 @@ strategy_builder:
       runtime_supported: true
 
     # -------------------------------------------------------------------------
-    # Tier1 expansion (M1 WS3): indicators already computed by the backend.
-    # Flags below are set from an actual cross-check of what the streaming
-    # StreamingIndicatorEngine / backtest engine produce (see
-    # services/trading/indicator_queries.py + shared/indicators/*).
-    #
-    #   * williams_r/cci/trix/obv are emitted in the momentum_5m bundle
-    #     (get_momentum_indicators -> calculate_all_momentum). They are NOT in
-    #     the flat base indicator path; the description notes this. The live
-    #     engine + backtest both compute them, so runtime/backtest are true
-    #     (same convention already used for macd/stochastic, which are also
-    #     bundle-only, not flat-base keys).
-    #   * mfi/rvol/volume_acceleration ARE emitted as flat keys directly by the
-    #     base path get_indicators().
-    #   * ichimoku has a calculator (shared/indicators/technical.py) but is NOT
-    #     wired into the streaming/backtest indicator engine — nothing calls
-    #     TechnicalCalculator on the runtime path — so runtime/backtest are
-    #     false while implemented stays true (honest "exists but not produced").
+    # Phase A expansion (2026-07-06): TA-Lib-backable indicators wired into the
+    # engine _TABLE. Every id below is computed by default_engine() (TALibBackend),
+    # so runtime/backtest are true. See
+    # docs/plans/2026-07-06-talib-builder-alignment.md.
+    # -------------------------------------------------------------------------
+
+    - id: roc
+      name: Rate of Change
+      name_ko: 변화율
+      category: oscillator
+      description: Percentage rate of change over a configurable period.
+      params:
+        - name: period
+          type: number
+          default: 10
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: dema
+      name: Double EMA
+      name_ko: 이중 지수 이동평균
+      category: moving_average
+      description: Double exponential moving average (reduced lag).
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: tema
+      name: Triple EMA
+      name_ko: 삼중 지수 이동평균
+      category: moving_average
+      description: Triple exponential moving average (further reduced lag).
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: trima
+      name: Triangular MA
+      name_ko: 삼각 이동평균
+      category: moving_average
+      description: Triangular (double-smoothed) moving average.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: kama
+      name: Kaufman Adaptive MA
+      name_ko: 카우프만 적응형 이동평균
+      category: moving_average
+      description: Kaufman adaptive moving average (volatility-adjusted).
+      params:
+        - name: period
+          type: number
+          default: 10
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: wma
+      name: Weighted MA
+      name_ko: 가중 이동평균
+      category: moving_average
+      description: Linearly weighted moving average.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: lwma
+      name: Linear Weighted MA
+      name_ko: 선형 가중 이동평균
+      category: moving_average
+      description: Linear weighted moving average (TA-Lib WMA).
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: t3
+      name: T3 Moving Average
+      name_ko: T3 이동평균
+      category: moving_average
+      description: Tillson T3 smoothed moving average.
+      params:
+        - name: period
+          type: number
+          default: 5
+          min: 1
+          max: 200
+        - name: volume_factor
+          type: number
+          default: 0.7
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: midpoint
+      name: MidPoint
+      name_ko: 중간점
+      category: misc
+      description: Midpoint over period ((highest + lowest close) / 2).
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: midprice
+      name: MidPrice
+      name_ko: 중간가격
+      category: misc
+      description: Midpoint price over period ((highest high + lowest low) / 2).
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: sar
+      name: Parabolic SAR
+      name_ko: 파라볼릭 SAR
+      category: trend
+      description: Parabolic Stop-and-Reverse trend-following indicator.
+      params:
+        - name: af_start
+          type: number
+          default: 0.02
+          min: 0.0
+          max: 1.0
+        - name: af_max
+          type: number
+          default: 0.2
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: adxr
+      name: ADXR
+      name_ko: ADXR
+      category: trend
+      description: Average Directional Movement Index Rating.
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: apo
+      name: APO
+      name_ko: 절대 가격 오실레이터
+      category: oscillator
+      description: Absolute Price Oscillator (fast EMA - slow EMA).
+      params:
+        - name: fast
+          type: number
+          default: 12
+          min: 1
+          max: 100
+        - name: slow
+          type: number
+          default: 26
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: ppo
+      name: PPO
+      name_ko: 비율 가격 오실레이터
+      category: oscillator
+      description: Percentage Price Oscillator ((fast - slow) / slow).
+      params:
+        - name: fast
+          type: number
+          default: 12
+          min: 1
+          max: 100
+        - name: slow
+          type: number
+          default: 26
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: cmo
+      name: CMO
+      name_ko: 챈드 모멘텀 오실레이터
+      category: oscillator
+      description: Chande Momentum Oscillator (range -100..100).
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: bop
+      name: Balance of Power
+      name_ko: 힘의 균형
+      category: misc
+      description: Balance of Power ((close - open) / (high - low)).
+      params: []
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: ultosc
+      name: Ultimate Oscillator
+      name_ko: 얼티밋 오실레이터
+      category: oscillator
+      description: Ultimate Oscillator over three timeframes (range 0..100).
+      params:
+        - name: period1
+          type: number
+          default: 7
+          min: 1
+          max: 100
+        - name: period2
+          type: number
+          default: 14
+          min: 1
+          max: 200
+        - name: period3
+          type: number
+          default: 28
+          min: 1
+          max: 400
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: aroon
+      name: Aroon
+      name_ko: 아룬
+      category: oscillator
+      description: >-
+        Aroon up/down oscillator (range 0..100). TA-Lib uses a single period;
+        emitted as flat keys aroon_up / aroon_down.
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: up
+          name: Aroon Up
+        - id: down
+          name: Aroon Down
+      default_output: up
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: momentum
+      name: Momentum
+      name_ko: 모멘텀
+      category: oscillator
+      description: Momentum (close - close N bars ago).
+      params:
+        - name: period
+          type: number
+          default: 10
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: natr
+      name: NATR
+      name_ko: 정규화 ATR
+      category: volatility
+      description: Normalized Average True Range (ATR as percent of price).
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: std
+      name: Standard Deviation
+      name_ko: 표준편차
+      category: volatility
+      description: Rolling standard deviation of close.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: volatility_ind
+      name: Volatility (StdDev)
+      name_ko: 변동성 (표준편차)
+      category: volatility
+      description: Rolling standard deviation of close (TA-Lib STDDEV).
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: variance
+      name: Variance
+      name_ko: 분산
+      category: volatility
+      description: Rolling variance of close.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: regression
+      name: Linear Regression
+      name_ko: 선형 회귀
+      category: misc
+      description: Linear regression value (TA-Lib LINEARREG) over period.
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: maximum
+      name: Max
+      name_ko: 최댓값
+      category: misc
+      description: Highest close over the period.
+      params:
+        - name: period
+          type: number
+          default: 30
+          min: 1
+          max: 400
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: minimum
+      name: Min
+      name_ko: 최솟값
+      category: misc
+      description: Lowest close over the period.
+      params:
+        - name: period
+          type: number
+          default: 30
+          min: 1
+          max: 400
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: ad
+      name: Chaikin A/D Line
+      name_ko: 차이킨 누적/분산선
+      category: volume
+      description: Chaikin Accumulation/Distribution Line (cumulative).
+      params: []
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: adl
+      name: Accumulation/Distribution
+      name_ko: 누적/분산선
+      category: volume
+      description: Accumulation/Distribution line (TA-Lib AD, cumulative).
+      params: []
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: adosc
+      name: Chaikin A/D Oscillator
+      name_ko: 차이킨 오실레이터
+      category: oscillator
+      description: Chaikin A/D Oscillator (EMA(fast) - EMA(slow) of the A/D line).
+      params:
+        - name: fast
+          type: number
+          default: 3
+          min: 1
+          max: 100
+        - name: slow
+          type: number
+          default: 10
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: cho
+      name: Chaikin Oscillator
+      name_ko: 차이킨 오실레이터 (별칭)
+      category: oscillator
+      description: Chaikin Oscillator (TA-Lib ADOSC).
+      params:
+        - name: fast
+          type: number
+          default: 3
+          min: 1
+          max: 100
+        - name: slow
+          type: number
+          default: 10
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    # -------------------------------------------------------------------------
+    # Phase B expansion (2026-07-06): non-TA-Lib indicators implemented in the
+    # NumPy backend (shared/indicators/engine/numpy_backend.py). Trailing windows
+    # only — no forward shift, so look-ahead free.
+    # -------------------------------------------------------------------------
+
+    - id: donchian
+      name: Donchian Channel
+      name_ko: 돈치안 채널
+      category: volatility
+      description: Rolling highest-high / lowest-low channel over the period.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 200
+      outputs:
+        - id: upper
+          name: Upper
+        - id: lower
+          name: Lower
+      default_output: upper
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: keltner
+      name: Keltner Channel
+      name_ko: 켈트너 채널
+      category: volatility
+      description: EMA(typical) middle band ± multiplier * ATR.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 200
+        - name: multiplier
+          type: number
+          default: 2.0
+          min: 0.1
+          max: 10
+      outputs:
+        - id: upper
+          name: Upper
+        - id: middle
+          name: Middle
+        - id: lower
+          name: Lower
+      default_output: middle
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: vwma
+      name: Volume Weighted MA
+      name_ko: 거래량 가중 이동평균
+      category: volume
+      description: Volume-weighted moving average over the period.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: hma
+      name: Hull Moving Average
+      name_ko: 헐 이동평균
+      category: moving_average
+      description: Hull moving average (reduced-lag weighted MA composite).
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    # -------------------------------------------------------------------------
+    # Tier1 (M1 WS3): all indicators below are computed by the canonical
+    # indicator engine (shared/indicators/engine). As of the TA-Lib
+    # consolidation (#576~#590) + the 2026-07-06 alignment, every id here is in
+    # default_engine().supported_ids():
+    #   * williams_r/cci/trix/obv → TALibBackend (WILLR/CCI/TRIX/OBV).
+    #   * mfi/rvol/volume_acceleration → TALibBackend (mfi) / NumpyBackend.
+    #   * ichimoku → NumpyBackend (_ichimoku, current-bar spans).
+    # The SoT guardrail test (tests/unit/strategy_builder/test_catalog_registry_sot.py)
+    # enforces that every runtime_supported id below is engine-computable.
     # -------------------------------------------------------------------------
 
     - id: williams_r
@@ -301,8 +992,7 @@ strategy_builder:
       category: oscillator
       description: >-
         Williams %R momentum oscillator (range -100..0; < -80 oversold, > -20
-        overbought). Emitted by the runtime in the momentum_5m bundle
-        (get_momentum_indicators), not the flat base indicator path.
+        overbought). Computed by the indicator engine (TA-Lib WILLR).
       params:
         - name: period
           type: number
@@ -322,9 +1012,8 @@ strategy_builder:
       name_ko: CCI
       category: oscillator
       description: >-
-        Commodity Channel Index over typical price. Emitted by the runtime in
-        the momentum_5m bundle (get_momentum_indicators), not the flat base
-        indicator path.
+        Commodity Channel Index over typical price. Computed by the indicator
+        engine (TA-Lib CCI).
       params:
         - name: period
           type: number
@@ -345,8 +1034,8 @@ strategy_builder:
       category: oscillator
       description: >-
         Triple-smoothed EMA rate-of-change oscillator with a signal line.
-        Emitted by the runtime in the momentum_5m bundle
-        (get_momentum_indicators: trix, trix_signal), not the flat base path.
+        Computed by the indicator engine (TA-Lib TRIX + EMA signal); emitted as
+        flat keys trix / trix_signal.
       params:
         - name: n
           type: number
@@ -373,9 +1062,8 @@ strategy_builder:
       name_ko: OBV
       category: volume
       description: >-
-        On-Balance Volume (cumulative signed volume). Emitted by the runtime in
-        the momentum_5m bundle (get_momentum_indicators), not the flat base
-        indicator path. Cumulative — no tunable period.
+        On-Balance Volume (cumulative signed volume). Computed by the indicator
+        engine (TA-Lib OBV). Cumulative — no tunable period.
       params: []
       outputs:
         - id: value
@@ -455,10 +1143,10 @@ strategy_builder:
       name_ko: 일목균형표
       category: trend
       description: >-
-        Ichimoku Cloud spans (Senkou Span A/B and cloud top/bottom). A
-        calculator exists (shared/indicators/technical.py) but it is NOT wired
-        into the streaming/backtest indicator engine yet, so it is not produced
-        at runtime — implemented is true while runtime/backtest are false.
+        Ichimoku Cloud spans (Senkou Span A/B and cloud top/bottom). Computed by
+        the indicator engine NumpyBackend (_ichimoku), reported at the current
+        bar (traditional forward-26 displacement omitted so builder conditions
+        compare against same-bar price).
       params: []
       outputs:
         - id: span_a
@@ -470,6 +1158,904 @@ strategy_builder:
         - id: cloud_bottom
           name: Cloud Bottom
       default_output: cloud_top
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    # -------------------------------------------------------------------------
+    # A5 expansion (2026-07-06): TA-Lib candlestick pattern recognition (CDL*).
+    # Output is an integer signal cast to float: +100 bullish / -100 bearish /
+    # 0 none. Builder conditions express direction with existing operators, e.g.
+    # `value greater_than 0` (bullish), `value less_than 0` (bearish). See
+    # docs/plans/2026-07-06-talib-builder-alignment.md (A5).
+    # -------------------------------------------------------------------------
+
+    - id: doji
+      name: Doji
+      name_ko: "도지"
+      category: candlestick
+      description: >-
+        우유부단 (시가=종가) (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: dragonfly_doji
+      name: Dragonfly Doji
+      name_ko: "잠자리 도지"
+      category: candlestick
+      description: >-
+        긴 아래꼬리, 상승 반전 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: gravestone_doji
+      name: Gravestone Doji
+      name_ko: "비석 도지"
+      category: candlestick
+      description: >-
+        긴 위꼬리, 하락 반전 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: long_legged_doji
+      name: Long Legged Doji
+      name_ko: "긴다리 도지"
+      category: candlestick
+      description: >-
+        극심한 우유부단 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: hammer
+      name: Hammer
+      name_ko: "망치형"
+      category: candlestick
+      description: >-
+        상승 반전 신호 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: hanging_man
+      name: Hanging Man
+      name_ko: "교수형"
+      category: candlestick
+      description: >-
+        하락 반전 신호 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: inverted_hammer
+      name: Inverted Hammer
+      name_ko: "역망치형"
+      category: candlestick
+      description: >-
+        상승 반전 신호 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: shooting_star
+      name: Shooting Star
+      name_ko: "유성형"
+      category: candlestick
+      description: >-
+        하락 반전 신호 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: marubozu
+      name: Marubozu
+      name_ko: "장대봉"
+      category: candlestick
+      description: >-
+        강한 추세 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: closing_marubozu
+      name: Closing Marubozu
+      name_ko: "종가 장대봉"
+      category: candlestick
+      description: >-
+        종가 장대봉 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: spinning_top
+      name: Spinning Top
+      name_ko: "팽이형"
+      category: candlestick
+      description: >-
+        팽이형 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: belt_hold
+      name: Belt Hold
+      name_ko: "띠 잡기"
+      category: candlestick
+      description: >-
+        띠 잡기 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: high_wave
+      name: High Wave Candle
+      name_ko: "큰 파도"
+      category: candlestick
+      description: >-
+        큰 파도 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: rickshaw_man
+      name: Rickshaw Man
+      name_ko: "인력거꾼"
+      category: candlestick
+      description: >-
+        인력거꾼 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: engulfing
+      name: Engulfing
+      name_ko: "장악형"
+      category: candlestick
+      description: >-
+        강한 반전 신호 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: harami
+      name: Harami
+      name_ko: "잉태형"
+      category: candlestick
+      description: >-
+        잉태형 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: harami_cross
+      name: Harami Cross
+      name_ko: "잉태 십자형"
+      category: candlestick
+      description: >-
+        잉태 십자형 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: piercing
+      name: Piercing
+      name_ko: "관통형"
+      category: candlestick
+      description: >-
+        관통형 (상승 반전) (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: dark_cloud_cover
+      name: Dark Cloud Cover
+      name_ko: "먹구름형"
+      category: candlestick
+      description: >-
+        먹구름형 (하락 반전) (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params:
+        - name: penetration
+          type: number
+          default: 0.3
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: counterattack
+      name: Counterattack
+      name_ko: "반격형"
+      category: candlestick
+      description: >-
+        반격형 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: on_neck
+      name: On Neck
+      name_ko: "목 위"
+      category: candlestick
+      description: >-
+        목 위 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: in_neck
+      name: In Neck
+      name_ko: "목 안"
+      category: candlestick
+      description: >-
+        목 안 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: thrusting
+      name: Thrusting
+      name_ko: "밀어붙이기"
+      category: candlestick
+      description: >-
+        밀어붙이기 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: separating_lines
+      name: Separating Lines
+      name_ko: "분리선"
+      category: candlestick
+      description: >-
+        분리선 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: kicking
+      name: Kicking
+      name_ko: "킥킹"
+      category: candlestick
+      description: >-
+        강한 갭 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: matching_low
+      name: Matching Low
+      name_ko: "일치 저가"
+      category: candlestick
+      description: >-
+        일치 저가 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: gap_side_by_side_white
+      name: Gap Side By Side White
+      name_ko: "갭 나란히"
+      category: candlestick
+      description: >-
+        갭 나란히 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: homing_pigeon
+      name: Homing Pigeon
+      name_ko: "귀소비둘기"
+      category: candlestick
+      description: >-
+        귀소비둘기 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: dojistar
+      name: Doji Star
+      name_ko: "도지별"
+      category: candlestick
+      description: >-
+        도지별 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: morning_star
+      name: Morning Star
+      name_ko: "샛별형"
+      category: candlestick
+      description: >-
+        강한 상승 반전 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params:
+        - name: penetration
+          type: number
+          default: 0.3
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: morning_doji_star
+      name: Morning Doji Star
+      name_ko: "샛별 도지"
+      category: candlestick
+      description: >-
+        샛별 도지 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params:
+        - name: penetration
+          type: number
+          default: 0.3
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: evening_star
+      name: Evening Star
+      name_ko: "저녁별형"
+      category: candlestick
+      description: >-
+        강한 하락 반전 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params:
+        - name: penetration
+          type: number
+          default: 0.3
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: evening_doji_star
+      name: Evening Doji Star
+      name_ko: "저녁별 도지"
+      category: candlestick
+      description: >-
+        저녁별 도지 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params:
+        - name: penetration
+          type: number
+          default: 0.3
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: three_white_soldiers
+      name: Three White Soldiers
+      name_ko: "적삼병"
+      category: candlestick
+      description: >-
+        강한 상승 신호 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: three_black_crows
+      name: Three Black Crows
+      name_ko: "흑삼병"
+      category: candlestick
+      description: >-
+        강한 하락 신호 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: three_inside
+      name: Three Inside
+      name_ko: "삼내형"
+      category: candlestick
+      description: >-
+        삼내형 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: three_outside
+      name: Three Outside
+      name_ko: "삼외형"
+      category: candlestick
+      description: >-
+        삼외형 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: abandoned_baby
+      name: Abandoned Baby
+      name_ko: "버려진 아기"
+      category: candlestick
+      description: >-
+        버려진 아기 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params:
+        - name: penetration
+          type: number
+          default: 0.3
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: three_stars_in_south
+      name: Three Stars In South
+      name_ko: "남쪽 삼성"
+      category: candlestick
+      description: >-
+        남쪽 삼성 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: advance_block
+      name: Advance Block
+      name_ko: "진행 차단"
+      category: candlestick
+      description: >-
+        진행 차단 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: stalled_pattern
+      name: Stalled Pattern
+      name_ko: "정체"
+      category: candlestick
+      description: >-
+        정체 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: tasuki_gap
+      name: Tasuki Gap
+      name_ko: "타스키 갭"
+      category: candlestick
+      description: >-
+        타스키 갭 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: upside_gap_two_crows
+      name: Upside Gap Two Crows
+      name_ko: "갭업 두 까마귀"
+      category: candlestick
+      description: >-
+        갭업 두 까마귀 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: three_line_strike
+      name: Three Line Strike
+      name_ko: "삼선 타격"
+      category: candlestick
+      description: >-
+        삼선 타격 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: unique_three_river
+      name: Unique Three River
+      name_ko: "독특한 삼강"
+      category: candlestick
+      description: >-
+        독특한 삼강 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: breakaway
+      name: Breakaway
+      name_ko: "이탈형"
+      category: candlestick
+      description: >-
+        이탈형 (5일) (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: mat_hold
+      name: Mat Hold
+      name_ko: "매트 홀드"
+      category: candlestick
+      description: >-
+        매트 홀드 (5일) (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params:
+        - name: penetration
+          type: number
+          default: 0.3
+          min: 0.0
+          max: 1.0
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: rising_three_methods
+      name: Rising Three Methods
+      name_ko: "상승 삼법"
+      category: candlestick
+      description: >-
+        상승 삼법 (5일) (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: falling_three_methods
+      name: Falling Three Methods
+      name_ko: "하락 삼법"
+      category: candlestick
+      description: >-
+        하락 삼법 (5일) (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: ladder_bottom
+      name: Ladder Bottom
+      name_ko: "사다리 바닥"
+      category: candlestick
+      description: >-
+        사다리 바닥 (5일) (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: concealing_baby_swallow
+      name: Concealing Baby Swallow
+      name_ko: "숨긴 아기 제비"
+      category: candlestick
+      description: >-
+        숨긴 아기 제비 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: stick_sandwich
+      name: Stick Sandwich
+      name_ko: "스틱 샌드위치"
+      category: candlestick
+      description: >-
+        스틱 샌드위치 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: tristar
+      name: TriStar
+      name_ko: "삼성"
+      category: candlestick
+      description: >-
+        삼성 패턴 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: identical_three_crows
+      name: Identical Three Crows
+      name_ko: "동일 흑삼병"
+      category: candlestick
+      description: >-
+        동일 흑삼병 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: two_crows
+      name: Two Crows
+      name_ko: "두 까마귀"
+      category: candlestick
+      description: >-
+        두 까마귀 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: up_down_gap_three_methods
+      name: Up/Down Gap Three Methods
+      name_ko: "갭 삼법"
+      category: candlestick
+      description: >-
+        갭 삼법 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: kicking_by_length
+      name: Kicking By Length
+      name_ko: "길이 기준 키킹"
+      category: candlestick
+      description: >-
+        길이 기준 킥킹 패턴 (TA-Lib CDL pattern; +100 bullish / -100 bearish / 0 none).
+      params: []
+      outputs:
+        - id: value
+          name: "신호"
+      default_output: value
       implemented: true
       backtest_supported: true
       runtime_supported: true
