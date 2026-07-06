@@ -8,8 +8,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Pins match pyproject.toml so the minimal image doesn't drift from the repo.
+# pydantic is required by shared.streaming.codec + shared.models.stream_models
+# (the MarketTickMessage schema the exporter decodes ticks into).
 RUN pip install --upgrade pip && \
-    pip install redis prometheus-client
+    pip install "redis>=5.0" "prometheus-client>=0.19" "pydantic>=2.0"
 
 # Copy only modules required by stream_exporter to keep image small/fast.
 RUN mkdir -p /app/shared/config /app/services/monitoring && \
@@ -18,6 +21,7 @@ COPY shared/__init__.py /app/shared/__init__.py
 COPY shared/config/tls.py /app/shared/config/tls.py
 COPY shared/exceptions /app/shared/exceptions
 COPY shared/streaming /app/shared/streaming
+COPY shared/models /app/shared/models
 COPY services/monitoring/stream_exporter.py /app/services/monitoring/stream_exporter.py
 
 EXPOSE 9093
