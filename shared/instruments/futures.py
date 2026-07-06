@@ -12,6 +12,14 @@ KOSPI_MINI_PREFIX = "105"
 KOSPI200_LEGACY_PREFIX = "A01"
 KOSPI_MINI_LEGACY_PREFIX = "A05"
 
+# Product arg (config `product:` value) → execution-spec / margin-defaults key
+# in config/execution.yaml::futures_contract_spec. Single source shared by the
+# futures margin/context config models (avoids duplicating the mapping).
+PRODUCT_ARG_TO_SPEC_KEY: dict[str, str] = {
+    "mini": "kospi200_mini",
+    "kospi200": "kospi200_full",
+}
+
 # KIS short codes are relative position codes that auto-roll at the broker.
 KIS_SHORT_CODES = {
     "mini_front": "A05601",
@@ -270,6 +278,11 @@ class FuturesContractState:
     roll-window thresholds; the night symbol is optional (resolved elsewhere
     from the KRX night master and passed in). Redis/stream/ledger glue lives in
     :mod:`services.futures_contract.main`.
+
+    Unlike the other three Phase A–D read-models (margin/context/hedge), this
+    state carries NO separate ``degraded``/``missing_components`` field — a
+    missing/stale input surfaces as ``roll_state="unknown"`` instead (mapped to
+    a warn state by the dashboard health card).
     """
 
     schema_version: int
@@ -283,6 +296,9 @@ class FuturesContractState:
     days_to_expiry: int
     roll_state: RollState
     roll_reason: str
+    # ``new_entry_front_allowed`` and ``hedge_front_allowed`` are intentionally
+    # separate fields (the hedge lane reads ``hedge_front_allowed`` on its own)
+    # though every current roll branch sets them to the same value.
     new_entry_front_allowed: bool
     hedge_front_allowed: bool
     source: str
@@ -357,7 +373,7 @@ def compute_contract_state(
         hedge_front_allowed = False
     elif days_to_expiry < 0 or (require_roll_on_expiry_day and days_to_expiry <= 0):
         roll_state = "expired"
-        roll_reason = f"days_to_expiry<={0}"
+        roll_reason = "days_to_expiry<=0"
         new_entry_front_allowed = False
         hedge_front_allowed = False
     elif days_to_expiry <= block_front_new_entries_days:

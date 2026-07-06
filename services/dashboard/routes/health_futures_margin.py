@@ -14,6 +14,7 @@ from services.dashboard.routes.health_ops import (
     _redis_hgetall,
     _timestamp_summary,
 )
+from shared.utils.coercion import to_bool, to_float, to_int
 
 _MARGIN_DEFAULT_KEY = "futures:risk:latest"
 
@@ -85,45 +86,20 @@ def _futures_margin_ops(redis: Any) -> dict[str, Any]:
     else:
         status = "ok"
 
-    def _num(value: Any) -> float | None:
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int | float):
-            return float(value)
-        text = _coerce_redis_text(value)
-        if not text:
-            return None
-        try:
-            return float(text)
-        except (TypeError, ValueError):
-            return None
-
-    def _int(value: Any) -> int | None:
-        num = _num(value)
-        return None if num is None else int(num)
-
-    def _bool(value: Any) -> bool | None:
-        # _redis_hgetall JSON-decodes hash values, so "false"/"true" arrive as
-        # Python bools; a raw str still needs coercion.
-        if isinstance(value, bool):
-            return value
-        text = _coerce_redis_text(value)
-        if not text:
-            return None
-        return text.strip().lower() == "true"
-
     missing = payload.get("missing_components")
     summary.update(
         {
             "status": status,
             "risk_level": risk_level,
-            "margin_usage_pct": _num(payload.get("margin_usage_pct")),
-            "maintenance_buffer_krw": _num(payload.get("maintenance_buffer_krw")),
-            "liquidation_buffer_ticks": _num(payload.get("liquidation_buffer_ticks")),
-            "stress_loss_1atr_krw": _num(payload.get("stress_loss_1atr_krw")),
-            "max_additional_contracts": _int(payload.get("max_additional_contracts")),
-            "account_equity_krw": _num(payload.get("account_equity_krw")),
-            "degraded": _bool(payload.get("degraded")),
+            "margin_usage_pct": to_float(payload.get("margin_usage_pct")),
+            "maintenance_buffer_krw": to_float(payload.get("maintenance_buffer_krw")),
+            "liquidation_buffer_ticks": to_float(
+                payload.get("liquidation_buffer_ticks")
+            ),
+            "stress_loss_1atr_krw": to_float(payload.get("stress_loss_1atr_krw")),
+            "max_additional_contracts": to_int(payload.get("max_additional_contracts")),
+            "account_equity_krw": to_float(payload.get("account_equity_krw")),
+            "degraded": to_bool(payload.get("degraded")),
             "missing_components": missing if isinstance(missing, list) else [],
             "asof": timing["timestamp"],
             "age_s": age_s,

@@ -14,6 +14,7 @@ from services.dashboard.routes.health_ops import (
     _redis_hgetall,
     _timestamp_summary,
 )
+from shared.utils.coercion import to_bool, to_int
 
 _CONTRACT_DEFAULT_KEY = "futures:contract:latest"
 
@@ -80,29 +81,6 @@ def _futures_contract_ops(redis: Any) -> dict[str, Any]:
     else:
         status = "ok"
 
-    def _int(value: Any) -> int | None:
-        # _redis_hgetall JSON-decodes hash values, so a published "8" arrives
-        # as int 8; a raw str/bytes still needs coercion.
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int | float):
-            return int(value)
-        text = _coerce_redis_text(value)
-        if not text:
-            return None
-        try:
-            return int(float(text))
-        except (TypeError, ValueError):
-            return None
-
-    def _bool(value: Any) -> bool | None:
-        if isinstance(value, bool):
-            return value
-        text = _coerce_redis_text(value)
-        if not text:
-            return None
-        return text.strip().lower() == "true"
-
     summary.update(
         {
             "status": status,
@@ -112,11 +90,11 @@ def _futures_contract_ops(redis: Any) -> dict[str, Any]:
             "night_front_symbol": (
                 _coerce_redis_text(payload.get("night_front_symbol")) or None
             ),
-            "days_to_expiry": _int(payload.get("days_to_expiry")),
+            "days_to_expiry": to_int(payload.get("days_to_expiry")),
             "roll_state": roll_state,
             "roll_reason": _coerce_redis_text(payload.get("roll_reason")) or None,
-            "new_entry_front_allowed": _bool(payload.get("new_entry_front_allowed")),
-            "hedge_front_allowed": _bool(payload.get("hedge_front_allowed")),
+            "new_entry_front_allowed": to_bool(payload.get("new_entry_front_allowed")),
+            "hedge_front_allowed": to_bool(payload.get("hedge_front_allowed")),
             "asof": timing["timestamp"],
             "age_s": age_s,
         }

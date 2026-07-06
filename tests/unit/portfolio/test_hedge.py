@@ -815,3 +815,26 @@ class TestHedgeAdviceV2:
         fields = advice_v2_to_latest_fields(v)
         assert fields["margin_after_hedge_pct"] == ""
         assert fields["execution_feasibility"] == "degraded"
+
+
+# ---------------------------------------------------------------------------
+# Enum-drift guard (audit M2): hedge.py hardcodes risk_level / roll_state
+# string sets (advisory-only import ban forbids importing the source modules
+# at runtime). This TEST-ONLY import pins those sets against the canonical
+# enums so a value rename in the source can't silently break the hedge gate.
+# ---------------------------------------------------------------------------
+
+
+class TestEnumDriftGuard:
+    def test_margin_suppress_set_subset_of_risk_levels(self):
+        from shared.risk.futures_margin import RISK_LEVELS
+
+        assert set(RISK_LEVELS) >= hedge_module._MARGIN_SUPPRESSES_ADD
+
+    def test_roll_block_set_subset_of_roll_states(self):
+        import typing
+
+        from shared.instruments.futures import RollState
+
+        roll_states = set(typing.get_args(RollState))
+        assert roll_states >= hedge_module._ROLL_BLOCKS_FRONT_ADD

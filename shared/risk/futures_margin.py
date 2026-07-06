@@ -22,11 +22,14 @@ snapshot fresh?) and ``fail_closed`` (live). A missing/stale snapshot in live
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+from shared.utils.coercion import to_float as _to_float
 
 #: Schema version published in the ``futures:risk:latest`` contract.
 MARGIN_RISK_SCHEMA_VERSION = 1
@@ -101,14 +104,6 @@ class FuturesMarginRiskState:
     degraded: bool
     missing_components: tuple[str, ...]
     asof_ts: datetime
-
-
-def _to_float(value: Any) -> float | None:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    return result if math.isfinite(result) else None
 
 
 def spec_for_symbol(
@@ -228,6 +223,8 @@ def compute_margin_risk(
         )
 
     # --- Stress loss ----------------------------------------------------
+    # The ``* 2.0`` is the fixed "2 ATR adverse move" scenario baked into the
+    # published field name ``stress_loss_2atr_krw`` — not a tunable multiplier.
     stress_loss_1atr: float | None = stress_1atr_krw if atr_covered else None
     stress_loss_2atr: float | None = stress_1atr_krw * 2.0 if atr_covered else None
     # When ATR coverage is partial, expose what we could sum but mark degraded.
@@ -344,8 +341,6 @@ def _fmt(value: float | None) -> str:
 
 def margin_state_to_fields(state: FuturesMarginRiskState) -> dict[str, str]:
     """Flatten a margin-risk state into the ``futures:risk:latest`` hash."""
-    import json
-
     return {
         "schema_version": str(state.schema_version),
         "account_equity_krw": _fmt(state.account_equity_krw),

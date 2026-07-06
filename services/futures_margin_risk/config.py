@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigNotFoundError
+from shared.instruments.futures import PRODUCT_ARG_TO_SPEC_KEY
 
 
 class MarginProductDefault(BaseModel):
@@ -98,24 +99,19 @@ class FuturesMarginConfig(ServiceConfigBase):
     redis: MarginRedisConfig = Field(default_factory=MarginRedisConfig)
     alerts: MarginAlertsConfig = Field(default_factory=MarginAlertsConfig)
 
-    #: product arg → execution-spec key / margin product_defaults key.
-    _PRODUCT_SPEC_KEYS: ClassVar[dict[str, str]] = {
-        "mini": "kospi200_mini",
-        "kospi200": "kospi200_full",
-    }
-
     @model_validator(mode="after")
     def _validate_product(self) -> FuturesMarginConfig:
-        if self.product not in self._PRODUCT_SPEC_KEYS:
+        if self.product not in PRODUCT_ARG_TO_SPEC_KEY:
             raise ValueError(
-                f"product must be 'mini' or 'kospi200', got {self.product!r}"
+                f"product must be one of {sorted(PRODUCT_ARG_TO_SPEC_KEY)}, "
+                f"got {self.product!r}"
             )
         return self
 
     @property
     def reference_spec_key(self) -> str:
         """Execution-spec / product_defaults key for the reference product."""
-        return self._PRODUCT_SPEC_KEYS[self.product]
+        return PRODUCT_ARG_TO_SPEC_KEY[self.product]
 
     @classmethod
     def load_or_default(cls, path: str | None = None) -> FuturesMarginConfig:

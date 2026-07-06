@@ -11,9 +11,15 @@ from .calc import (
     normalize_side,
     validate_price,
 )
+from .coercion import to_bool, to_float, to_int, to_text
 from .math import safe_divide, safe_pct_change
 
 __all__ = [
+    # Coercion utilities (None-returning; for Redis-hash field parsing)
+    "to_float",
+    "to_int",
+    "to_bool",
+    "to_text",
     # Math utilities
     "safe_divide",
     "safe_pct_change",

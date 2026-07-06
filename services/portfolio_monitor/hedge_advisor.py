@@ -47,6 +47,10 @@ from shared.portfolio.hedge import (
     side_sign,
     verify_product_spec,
 )
+from shared.utils.coercion import to_bool as _parse_bool
+from shared.utils.coercion import to_float as _parse_float
+from shared.utils.coercion import to_int as _parse_int
+from shared.utils.coercion import to_text as _parse_str
 
 logger = logging.getLogger(__name__)
 
@@ -195,40 +199,6 @@ def default_hedge_context(
 # ---------------------------------------------------------------------------
 # Market inputs (Redis DB 1 hashes published by upstream engines)
 # ---------------------------------------------------------------------------
-
-
-def _parse_float(value: Any) -> float | None:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    return result if result == result else None
-
-
-def _parse_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _parse_int(value: Any) -> int | None:
-    result = _parse_float(value)
-    return None if result is None else int(result)
-
-
-def _parse_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    text = _parse_str(value)
-    if text is None:
-        return None
-    lowered = text.lower()
-    if lowered in {"true", "1", "yes"}:
-        return True
-    if lowered in {"false", "0", "no"}:
-        return False
-    return None
 
 
 def _parse_kst_naive(value: Any) -> datetime | None:

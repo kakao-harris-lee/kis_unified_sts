@@ -19,11 +19,15 @@ labels + folds already-published inputs. Redis/stream glue lives in
 from __future__ import annotations
 
 import json
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
+
+from shared.utils.coercion import to_bool as _to_bool
+from shared.utils.coercion import to_float as _to_float
+from shared.utils.coercion import to_int as _to_int
+from shared.utils.coercion import to_text as _text
 
 #: Schema version published in the ``futures:context:latest`` contract.
 FUTURES_CONTEXT_SCHEMA_VERSION = 1
@@ -94,42 +98,6 @@ class FuturesMarketContextV2:
     asof_ts: datetime
 
 
-def _to_float(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    return result if math.isfinite(result) else None
-
-
-def _to_int(value: Any) -> int | None:
-    num = _to_float(value)
-    return None if num is None else int(num)
-
-
-def _text(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _to_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    text = _text(value)
-    if text is None:
-        return None
-    lowered = text.lower()
-    if lowered in {"true", "1", "yes"}:
-        return True
-    if lowered in {"false", "0", "no"}:
-        return False
-    return None
-
-
 def classify_basis_regime(
     basis_dev: float | None, thresholds: BasisRegimeThresholds
 ) -> BasisRegime | None:
@@ -160,6 +128,9 @@ def carry_pressure(basis_dev: float | None, days_to_expiry: int | None) -> float
     stronger daily carry pull the fewer days remain. Returns ``basis_dev``
     scaled by ``1 + 1/max(days_to_expiry, 1)``; None when either input is None.
     A non-positive ``days_to_expiry`` (expiry day) uses the strongest scale.
+
+    The ``1 + 1/dte`` factor is a fixed mathematical normalization (the
+    convergence-to-expiry proxy), NOT a tunable — deliberately not config-driven.
     """
     if basis_dev is None or days_to_expiry is None:
         return None

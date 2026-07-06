@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigNotFoundError
+from shared.instruments.futures import PRODUCT_ARG_TO_SPEC_KEY
 
 
 class ContractRollConfig(BaseModel):
@@ -69,9 +70,10 @@ class FuturesContractConfig(ServiceConfigBase):
 
     @model_validator(mode="after")
     def _validate_product(self) -> FuturesContractConfig:
-        if self.product not in {"mini", "kospi200"}:
+        if self.product not in PRODUCT_ARG_TO_SPEC_KEY:
             raise ValueError(
-                f"product must be 'mini' or 'kospi200', got {self.product!r}"
+                f"product must be one of {sorted(PRODUCT_ARG_TO_SPEC_KEY)}, "
+                f"got {self.product!r}"
             )
         return self
 

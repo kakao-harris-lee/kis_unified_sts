@@ -43,6 +43,7 @@ from shared.risk.futures_margin import (
     compute_margin_risk,
     margin_state_to_fields,
 )
+from shared.utils.coercion import to_float as _parse_float
 
 logger = logging.getLogger(__name__)
 
@@ -228,14 +229,6 @@ def _resolve_fail_closed() -> bool:
 # ---------------------------------------------------------------------------
 # Reference price (market:structure:latest fut_close)
 # ---------------------------------------------------------------------------
-
-
-def _parse_float(value: Any) -> float | None:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    return result if result == result else None
 
 
 def read_reference_price(redis: Any) -> float | None:
