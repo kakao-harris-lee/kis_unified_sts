@@ -170,6 +170,265 @@ def _stochrsi(
     return {"k": fastk, "d": fastd}
 
 
+# --- Phase A: additional single-input overlap / MA studies on close ----------
+
+
+def _dema(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.DEMA(w.close, timeperiod=_int(p, "period", 20))}
+
+
+def _tema(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.TEMA(w.close, timeperiod=_int(p, "period", 20))}
+
+
+def _trima(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.TRIMA(w.close, timeperiod=_int(p, "period", 20))}
+
+
+def _kama(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.KAMA(w.close, timeperiod=_int(p, "period", 10))}
+
+
+def _wma(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.WMA(w.close, timeperiod=_int(p, "period", 20))}
+
+
+def _t3(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {
+        "value": mod.T3(
+            w.close,
+            timeperiod=_int(p, "period", 5),
+            vfactor=_float(p, "volume_factor", 0.7),
+        )
+    }
+
+
+def _midpoint(
+    mod: Any, w: OHLCVWindow, p: Mapping[str, float]
+) -> dict[str, np.ndarray]:
+    return {"value": mod.MIDPOINT(w.close, timeperiod=_int(p, "period", 14))}
+
+
+def _midprice(
+    mod: Any, w: OHLCVWindow, p: Mapping[str, float]
+) -> dict[str, np.ndarray]:
+    return {"value": mod.MIDPRICE(w.high, w.low, timeperiod=_int(p, "period", 14))}
+
+
+def _sar(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {
+        "value": mod.SAR(
+            w.high,
+            w.low,
+            acceleration=_float(p, "af_start", 0.02),
+            maximum=_float(p, "af_max", 0.2),
+        )
+    }
+
+
+# --- Phase A: additional momentum / oscillator studies -----------------------
+
+
+def _adxr(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.ADXR(w.high, w.low, w.close, timeperiod=_int(p, "period", 14))}
+
+
+def _apo(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {
+        "value": mod.APO(
+            w.close, fastperiod=_int(p, "fast", 12), slowperiod=_int(p, "slow", 26)
+        )
+    }
+
+
+def _ppo(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {
+        "value": mod.PPO(
+            w.close, fastperiod=_int(p, "fast", 12), slowperiod=_int(p, "slow", 26)
+        )
+    }
+
+
+def _cmo(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.CMO(w.close, timeperiod=_int(p, "period", 14))}
+
+
+def _bop(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.BOP(w.open, w.high, w.low, w.close)}
+
+
+def _ultosc(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {
+        "value": mod.ULTOSC(
+            w.high,
+            w.low,
+            w.close,
+            timeperiod1=_int(p, "period1", 7),
+            timeperiod2=_int(p, "period2", 14),
+            timeperiod3=_int(p, "period3", 28),
+        )
+    }
+
+
+def _aroon(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    # TA-Lib AROON takes a single timeperiod and returns (down, up).
+    down, up = mod.AROON(w.high, w.low, timeperiod=_int(p, "period", 14))
+    return {"up": up, "down": down}
+
+
+# ``momentum`` reuses the existing ``_mom`` (defined above for the ``mom`` id).
+
+
+# --- Phase A: volatility / statistic studies ---------------------------------
+
+
+def _natr(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.NATR(w.high, w.low, w.close, timeperiod=_int(p, "period", 14))}
+
+
+def _stddev(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.STDDEV(w.close, timeperiod=_int(p, "period", 20))}
+
+
+def _var(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.VAR(w.close, timeperiod=_int(p, "period", 20))}
+
+
+def _linearreg(
+    mod: Any, w: OHLCVWindow, p: Mapping[str, float]
+) -> dict[str, np.ndarray]:
+    return {"value": mod.LINEARREG(w.close, timeperiod=_int(p, "period", 14))}
+
+
+def _max(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.MAX(w.close, timeperiod=_int(p, "period", 30))}
+
+
+def _min(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.MIN(w.close, timeperiod=_int(p, "period", 30))}
+
+
+# --- Phase A: volume studies -------------------------------------------------
+
+
+def _ad(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {"value": mod.AD(w.high, w.low, w.close, w.volume)}
+
+
+def _adosc(mod: Any, w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    return {
+        "value": mod.ADOSC(
+            w.high,
+            w.low,
+            w.close,
+            w.volume,
+            fastperiod=_int(p, "fast", 3),
+            slowperiod=_int(p, "slow", 10),
+        )
+    }
+
+
+# --- A5: candlestick pattern recognition -------------------------------------
+#
+# TA-Lib CDL* functions take (open, high, low, close) and return an int32 series
+# of -100 (bearish) / 0 (none) / +100 (bullish); a few also take a ``penetration``
+# double. The signed integer IS the signal, so builder conditions express
+# direction with the existing operators: ``value greater_than 0`` (bullish
+# occurred), ``value less_than 0`` (bearish), ``value equals 100`` (strict).
+#
+# Frontend catalog id -> (CDL function name, has_penetration_param). Some ids
+# intentionally share one CDL function whose signed output distinguishes them
+# (rising/falling three-methods; up/down gap three-methods).
+_CDL_TABLE: dict[str, tuple[str, bool]] = {
+    "doji": ("CDLDOJI", False),
+    "dragonfly_doji": ("CDLDRAGONFLYDOJI", False),
+    "gravestone_doji": ("CDLGRAVESTONEDOJI", False),
+    "long_legged_doji": ("CDLLONGLEGGEDDOJI", False),
+    "hammer": ("CDLHAMMER", False),
+    "hanging_man": ("CDLHANGINGMAN", False),
+    "inverted_hammer": ("CDLINVERTEDHAMMER", False),
+    "shooting_star": ("CDLSHOOTINGSTAR", False),
+    "marubozu": ("CDLMARUBOZU", False),
+    "closing_marubozu": ("CDLCLOSINGMARUBOZU", False),
+    "spinning_top": ("CDLSPINNINGTOP", False),
+    "belt_hold": ("CDLBELTHOLD", False),
+    "high_wave": ("CDLHIGHWAVE", False),
+    "rickshaw_man": ("CDLRICKSHAWMAN", False),
+    "engulfing": ("CDLENGULFING", False),
+    "harami": ("CDLHARAMI", False),
+    "harami_cross": ("CDLHARAMICROSS", False),
+    "piercing": ("CDLPIERCING", False),
+    "dark_cloud_cover": ("CDLDARKCLOUDCOVER", True),
+    "counterattack": ("CDLCOUNTERATTACK", False),
+    "on_neck": ("CDLONNECK", False),
+    "in_neck": ("CDLINNECK", False),
+    "thrusting": ("CDLTHRUSTING", False),
+    "separating_lines": ("CDLSEPARATINGLINES", False),
+    "kicking": ("CDLKICKING", False),
+    "matching_low": ("CDLMATCHINGLOW", False),
+    "gap_side_by_side_white": ("CDLGAPSIDESIDEWHITE", False),
+    "homing_pigeon": ("CDLHOMINGPIGEON", False),
+    "dojistar": ("CDLDOJISTAR", False),
+    "morning_star": ("CDLMORNINGSTAR", True),
+    "morning_doji_star": ("CDLMORNINGDOJISTAR", True),
+    "evening_star": ("CDLEVENINGSTAR", True),
+    "evening_doji_star": ("CDLEVENINGDOJISTAR", True),
+    "three_white_soldiers": ("CDL3WHITESOLDIERS", False),
+    "three_black_crows": ("CDL3BLACKCROWS", False),
+    "three_inside": ("CDL3INSIDE", False),
+    "three_outside": ("CDL3OUTSIDE", False),
+    "abandoned_baby": ("CDLABANDONEDBABY", True),
+    "three_stars_in_south": ("CDL3STARSINSOUTH", False),
+    "advance_block": ("CDLADVANCEBLOCK", False),
+    "stalled_pattern": ("CDLSTALLEDPATTERN", False),
+    "tasuki_gap": ("CDLTASUKIGAP", False),
+    "upside_gap_two_crows": ("CDLUPSIDEGAP2CROWS", False),
+    "three_line_strike": ("CDL3LINESTRIKE", False),
+    "unique_three_river": ("CDLUNIQUE3RIVER", False),
+    "breakaway": ("CDLBREAKAWAY", False),
+    "mat_hold": ("CDLMATHOLD", True),
+    "rising_three_methods": ("CDLRISEFALL3METHODS", False),
+    "falling_three_methods": ("CDLRISEFALL3METHODS", False),
+    "ladder_bottom": ("CDLLADDERBOTTOM", False),
+    "concealing_baby_swallow": ("CDLCONCEALBABYSWALL", False),
+    "stick_sandwich": ("CDLSTICKSANDWICH", False),
+    "tristar": ("CDLTRISTAR", False),
+    "identical_three_crows": ("CDLIDENTICAL3CROWS", False),
+    "two_crows": ("CDL2CROWS", False),
+    "up_down_gap_three_methods": ("CDLXSIDEGAP3METHODS", False),
+    "kicking_by_length": ("CDLKICKINGBYLENGTH", False),
+}
+
+
+def _candlestick(
+    fn_name: str, has_penetration: bool
+) -> Callable[[Any, OHLCVWindow, Mapping[str, float]], dict[str, np.ndarray]]:
+    """Build a compute fn for one TA-Lib CDL* pattern.
+
+    The CDL output is int32 (-100/0/+100); we cast to float64 so it flows through
+    the engine's finite/latest machinery like any other series. ``penetration``
+    (for the few patterns that accept it) is a builder-tunable param.
+    """
+
+    def _compute(
+        mod: Any, w: OHLCVWindow, p: Mapping[str, float]
+    ) -> dict[str, np.ndarray]:
+        cdl = getattr(mod, fn_name)
+        if has_penetration:
+            raw = cdl(
+                w.open,
+                w.high,
+                w.low,
+                w.close,
+                penetration=_float(p, "penetration", 0.3),
+            )
+        else:
+            raw = cdl(w.open, w.high, w.low, w.close)
+        return {"value": np.asarray(raw, dtype=np.float64)}
+
+    return _compute
+
+
 @dataclass(frozen=True)
 class _TalibIndicator:
     """How to compute one indicator via TA-Lib."""
@@ -197,7 +456,48 @@ _TABLE: dict[str, _TalibIndicator] = {
     "stochastic": _TalibIndicator(_stochastic, ("k", "d")),
     "stochrsi": _TalibIndicator(_stochrsi, ("k", "d")),
     "trix": _TalibIndicator(_trix, ("value", "signal")),
+    # Phase A — overlap / moving-average studies
+    "dema": _TalibIndicator(_dema, ("value",)),
+    "tema": _TalibIndicator(_tema, ("value",)),
+    "trima": _TalibIndicator(_trima, ("value",)),
+    "kama": _TalibIndicator(_kama, ("value",)),
+    "wma": _TalibIndicator(_wma, ("value",)),
+    "t3": _TalibIndicator(_t3, ("value",)),
+    "midpoint": _TalibIndicator(_midpoint, ("value",)),
+    "midprice": _TalibIndicator(_midprice, ("value",)),
+    "sar": _TalibIndicator(_sar, ("value",)),
+    # Phase A — momentum / oscillator studies
+    "adxr": _TalibIndicator(_adxr, ("value",)),
+    "apo": _TalibIndicator(_apo, ("value",)),
+    "ppo": _TalibIndicator(_ppo, ("value",)),
+    "cmo": _TalibIndicator(_cmo, ("value",)),
+    "bop": _TalibIndicator(_bop, ("value",)),
+    "ultosc": _TalibIndicator(_ultosc, ("value",)),
+    "aroon": _TalibIndicator(_aroon, ("up", "down")),
+    "momentum": _TalibIndicator(_mom, ("value",)),
+    # Phase A — volatility / statistic studies
+    "natr": _TalibIndicator(_natr, ("value",)),
+    "std": _TalibIndicator(_stddev, ("value",)),
+    "variance": _TalibIndicator(_var, ("value",)),
+    "regression": _TalibIndicator(_linearreg, ("value",)),
+    "maximum": _TalibIndicator(_max, ("value",)),
+    "minimum": _TalibIndicator(_min, ("value",)),
+    # Phase A — volume studies
+    "ad": _TalibIndicator(_ad, ("value",)),
+    "adosc": _TalibIndicator(_adosc, ("value",)),
+    # Phase A — frontend-catalog aliases mapping to the same TA-Lib math as a
+    # canonical id above (kept as distinct ids so the builder catalog's existing
+    # ids resolve without a frontend rename).
+    "lwma": _TalibIndicator(_wma, ("value",)),
+    "volatility_ind": _TalibIndicator(_stddev, ("value",)),
+    "adl": _TalibIndicator(_ad, ("value",)),
+    "cho": _TalibIndicator(_adosc, ("value",)),
 }
+
+# A5 — register every candlestick pattern from _CDL_TABLE (single-output, int
+# signal cast to float). Data-driven: adding a pattern is one _CDL_TABLE entry.
+for _cdl_id, (_cdl_fn, _cdl_pen) in _CDL_TABLE.items():
+    _TABLE[_cdl_id] = _TalibIndicator(_candlestick(_cdl_fn, _cdl_pen), ("value",))
 
 
 class TALibBackend(IndicatorBackend):

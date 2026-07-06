@@ -136,3 +136,43 @@ def test_flat_panel_last_wins_on_flatkey_collision(window: OHLCVWindow) -> None:
     ]
     assert len(engine.compute_many(specs, window)) == 2
     assert engine.flat_panel(specs, window) == {"rsi": 21.0}
+
+
+# --- Phase C: runtime indicator convention gate ------------------------------
+
+
+def test_runtime_convention_defaults_to_streaming(monkeypatch) -> None:
+    """No env var set → streaming (historical live values), never talib."""
+    from shared.indicators.engine.registry import (
+        runtime_indicator_convention,
+        runtime_indicator_engine,
+    )
+
+    monkeypatch.delenv("STS_INDICATOR_CONVENTION", raising=False)
+    assert runtime_indicator_convention() == "streaming"
+    engine = runtime_indicator_engine()
+    assert [b.name for b in engine.backends] == ["streaming_compat"]
+
+
+def test_runtime_convention_unknown_value_falls_back_to_streaming(
+    monkeypatch,
+) -> None:
+    """A typo must never silently switch live signal values to talib."""
+    from shared.indicators.engine.registry import runtime_indicator_convention
+
+    monkeypatch.setenv("STS_INDICATOR_CONVENTION", "taleeb")
+    assert runtime_indicator_convention() == "streaming"
+
+
+def test_runtime_convention_talib_selects_default_engine(monkeypatch) -> None:
+    """The gate flips to the TA-Lib standard engine only for the exact 'talib' value."""
+    pytest.importorskip("talib")
+    from shared.indicators.engine.registry import (
+        runtime_indicator_convention,
+        runtime_indicator_engine,
+    )
+
+    monkeypatch.setenv("STS_INDICATOR_CONVENTION", "talib")
+    assert runtime_indicator_convention() == "talib"
+    engine = runtime_indicator_engine()
+    assert "talib" in {b.name for b in engine.backends}

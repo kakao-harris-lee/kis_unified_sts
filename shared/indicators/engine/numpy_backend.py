@@ -25,6 +25,7 @@ from shared.indicators.engine.base import (
     UnsupportedIndicatorError,
     last_finite,
 )
+from shared.indicators.engine.params import float_param as _float
 from shared.indicators.engine.params import int_param as _int
 from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow
 
@@ -36,6 +37,61 @@ def _rolling_mean(values: np.ndarray, window: int) -> np.ndarray:
         return out
     cumsum = np.cumsum(np.insert(values, 0, 0.0))
     out[window - 1 :] = (cumsum[window:] - cumsum[:-window]) / window
+    return out
+
+
+def _ema(values: np.ndarray, period: int) -> np.ndarray:
+    """EMA (adjust=False, first value seeds); NaN until ``period`` samples."""
+    out = np.full(values.shape, np.nan, dtype=np.float64)
+    n = values.shape[0]
+    if period <= 0 or n < period:
+        return out
+    alpha = 2.0 / (period + 1.0)
+    ema = float(values[:period].mean())
+    out[period - 1] = ema
+    for i in range(period, n):
+        ema = alpha * float(values[i]) + (1.0 - alpha) * ema
+        out[i] = ema
+    return out
+
+
+def _wma(values: np.ndarray, period: int) -> np.ndarray:
+    """Linearly weighted moving average; NaN until ``period`` samples."""
+    out = np.full(values.shape, np.nan, dtype=np.float64)
+    n = values.shape[0]
+    if period <= 0 or n < period:
+        return out
+    weights = np.arange(1, period + 1, dtype=np.float64)
+    wsum = weights.sum()
+    for i in range(period - 1, n):
+        window = values[i - period + 1 : i + 1]
+        out[i] = float(np.dot(window, weights) / wsum)
+    return out
+
+
+def _atr(
+    high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int
+) -> np.ndarray:
+    """Wilder ATR; NaN until warmed up. Used by Keltner channels."""
+    n = close.shape[0]
+    out = np.full(close.shape, np.nan, dtype=np.float64)
+    if period <= 0 or n < period + 1:
+        return out
+    tr = np.empty(n, dtype=np.float64)
+    tr[0] = high[0] - low[0]
+    prev_close = close[:-1]
+    tr[1:] = np.maximum.reduce(
+        [
+            high[1:] - low[1:],
+            np.abs(high[1:] - prev_close),
+            np.abs(low[1:] - prev_close),
+        ]
+    )
+    atr = float(tr[1 : period + 1].mean())
+    out[period] = atr
+    for i in range(period + 1, n):
+        atr = (atr * (period - 1) + tr[i]) / period
+        out[i] = atr
     return out
 
 
@@ -121,11 +177,62 @@ def _ichimoku(w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
     }
 
 
+def _donchian(w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    """Donchian channel: rolling highest high / lowest low over the period.
+
+    Trailing windows only (current bar inclusive) — no forward shift, so builder
+    conditions compare against a look-ahead-free channel.
+    """
+    period = _int(p, "period", 20)
+    return {
+        "upper": _rolling_extreme(w.high, period, True),
+        "lower": _rolling_extreme(w.low, period, False),
+    }
+
+
+def _keltner(w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    """Keltner channels: EMA(typical) middle ± multiplier * ATR(period)."""
+    period = _int(p, "period", 20)
+    mult = _float(p, "multiplier", 2.0)
+    typical = (w.high + w.low + w.close) / 3.0
+    middle = _ema(typical, period)
+    atr = _atr(w.high, w.low, w.close, period)
+    return {
+        "upper": middle + mult * atr,
+        "middle": middle,
+        "lower": middle - mult * atr,
+    }
+
+
+def _vwma(w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    """Volume-weighted moving average: sum(close*vol) / sum(vol) over the window."""
+    period = _int(p, "period", 20)
+    pv = _rolling_mean(w.close * w.volume, period)
+    v = _rolling_mean(w.volume, period)
+    value = np.divide(
+        pv, v, out=np.full(v.shape, np.nan, dtype=np.float64), where=v > 0
+    )
+    return {"value": value}
+
+
+def _hma(w: OHLCVWindow, p: Mapping[str, float]) -> dict[str, np.ndarray]:
+    """Hull moving average: WMA(2*WMA(n/2) - WMA(n), sqrt(n))."""
+    period = _int(p, "period", 20)
+    half = max(1, period // 2)
+    sqrt_n = max(1, int(round(period**0.5)))
+    raw = 2.0 * _wma(w.close, half) - _wma(w.close, period)
+    return {"value": _wma(raw, sqrt_n)}
+
+
 _TABLE = {
     "vwap": _vwap,
     "rvol": _rvol,
     "volume_acceleration": _volume_acceleration,
     "ichimoku": _ichimoku,
+    "donchian": _donchian,
+    "keltner": _keltner,
+    "vwma": _vwma,
+    "hma": _hma,
 }
 
 

@@ -11,6 +11,7 @@ Cache Engine (WS-A2) builds on — :meth:`compute_many` collapses identical
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 
 from shared.indicators.engine.base import (
@@ -94,6 +95,7 @@ class IndicatorEngine:
 _DAILY_ENGINE: IndicatorEngine | None = None
 _MOMENTUM_ENGINE: IndicatorEngine | None = None
 _STREAMING_ENGINE: IndicatorEngine | None = None
+_RUNTIME_TALIB_ENGINE: IndicatorEngine | None = None
 
 
 def momentum_indicator_engine() -> IndicatorEngine:
@@ -154,3 +156,41 @@ def default_engine() -> IndicatorEngine:
         engine.register(TALibBackend())
     engine.register(NumpyBackend())
     return engine
+
+
+# Runtime indicator convention gate (Phase C). Selects which engine the runtime
+# ``_calc_*`` delegates use. Default ``streaming`` preserves the historical live
+# values bit-for-bit (zero live impact); flip to ``talib`` — only after the
+# data-server A/B backtest gate in
+# ``docs/runbooks/streaming-talib-convergence-gate.md`` passes — to converge the
+# runtime onto the same TA-Lib standard the no-code builder already uses.
+# Mirrors the StochRSI default-off precedent (config-gated, additive).
+_RUNTIME_CONVENTION_ENV = "STS_INDICATOR_CONVENTION"
+
+
+def runtime_indicator_convention() -> str:
+    """Return the active runtime indicator convention (``streaming`` | ``talib``).
+
+    Read from the ``STS_INDICATOR_CONVENTION`` env var; defaults to ``streaming``
+    (historical live behavior). Any unrecognized value falls back to ``streaming``
+    so a typo can never silently change live signal values.
+    """
+    value = os.environ.get(_RUNTIME_CONVENTION_ENV, "streaming").strip().lower()
+    return "talib" if value == "talib" else "streaming"
+
+
+def runtime_indicator_engine() -> IndicatorEngine:
+    """Return the engine the runtime ``_calc_*`` delegates should use.
+
+    ``streaming`` (default) → :func:`streaming_indicator_engine` (historical
+    values). ``talib`` → a cached TA-Lib standard engine (converged with the
+    builder). The convention is process-wide and read per call so a restart with
+    the env flag set is all that is needed to switch; both branches return a
+    cached module singleton, so this is cheap on the per-symbol-per-bar hot path.
+    """
+    if runtime_indicator_convention() == "talib":
+        global _RUNTIME_TALIB_ENGINE
+        if _RUNTIME_TALIB_ENGINE is None:
+            _RUNTIME_TALIB_ENGINE = default_engine()
+        return _RUNTIME_TALIB_ENGINE
+    return streaming_indicator_engine()

@@ -27,3 +27,25 @@ def test_runtime_supported_catalog_indicators_are_engine_supported() -> None:
         f"catalog runtime_supported ids not registered in the engine: {missing} "
         "(register them in a backend's _TABLE)"
     )
+
+
+def test_implemented_catalog_indicators_are_engine_supported() -> None:
+    """Every catalog id the builder marks ``implemented`` must be computable.
+
+    ``implemented`` is the flag the picker uses to allow adding an indicator to
+    a strategy; if the engine cannot compute it, the builder evaluator reports it
+    ``missing`` and the condition never fires. This is the backend half of the
+    bidirectional guardrail (the frontend half lives in
+    ``strategy-builder-ui/src/lib/builder/catalogSot.test.ts``).
+    """
+    supported = default_engine().supported_ids()
+    caps = load_capabilities()
+    missing = [
+        indicator.id
+        for indicator in caps.indicators
+        if indicator.implemented and indicator.id not in supported
+    ]
+    assert not missing, (
+        f"catalog implemented ids not computable by the engine: {missing} "
+        "(wire them into a backend's _TABLE or set implemented: false)"
+    )

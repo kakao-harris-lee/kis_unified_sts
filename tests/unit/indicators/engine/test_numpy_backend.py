@@ -24,6 +24,10 @@ def test_supported_ids(backend: NumpyBackend) -> None:
         "rvol",
         "volume_acceleration",
         "ichimoku",
+        "donchian",
+        "keltner",
+        "vwma",
+        "hma",
     }
 
 

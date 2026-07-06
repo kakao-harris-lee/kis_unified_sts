@@ -93,108 +93,11 @@ async def list_custom_strategies() -> dict[str, list[Any]]:
     return {"strategies": []}
 
 
-@router.get("/strategies/indicators")
-async def list_indicators() -> dict[str, Any]:
-    return {
-        "indicators": [
-            {
-                "name": "ma",
-                "label": "이동평균",
-                "params": ["period"],
-                "example": "ma(20)",
-            },
-            {
-                "name": "ema",
-                "label": "지수이동평균",
-                "params": ["period"],
-                "example": "ema(12)",
-            },
-            {"name": "rsi", "label": "RSI", "params": ["period"], "example": "rsi(14)"},
-            {
-                "name": "macd",
-                "label": "MACD",
-                "params": ["fast", "slow", "signal"],
-                "example": "macd(12,26,9)",
-            },
-            {
-                "name": "williams_r",
-                "label": "Williams %R",
-                "params": ["period"],
-                "example": "williams_r(14)",
-            },
-            {
-                "name": "stochastic",
-                "label": "스토캐스틱",
-                "params": ["k_period", "d_period"],
-                "example": "stochastic(14,3)",
-            },
-            {
-                "name": "bollinger",
-                "label": "볼린저 밴드",
-                "params": ["period", "std"],
-                "example": "bollinger(20,2)",
-            },
-            {"name": "vwap", "label": "VWAP", "params": [], "example": "vwap()"},
-            {"name": "adx", "label": "ADX", "params": ["period"], "example": "adx(14)"},
-            {
-                "name": "donchian",
-                "label": "돈치안 채널",
-                "params": ["period"],
-                "example": "donchian(20)",
-            },
-            {
-                "name": "ichimoku",
-                "label": "이치모쿠",
-                "params": ["conversion", "base", "span_b"],
-                "example": "ichimoku(9,26,52)",
-            },
-            {
-                "name": "supertrend",
-                "label": "SuperTrend",
-                "params": ["period", "multiplier"],
-                "example": "supertrend(10,3)",
-            },
-            {
-                "name": "keltner",
-                "label": "켈트너 채널",
-                "params": ["period", "multiplier"],
-                "example": "keltner(20,2)",
-            },
-            {"name": "cci", "label": "CCI", "params": ["period"], "example": "cci(20)"},
-            {"name": "mfi", "label": "MFI", "params": ["period"], "example": "mfi(14)"},
-            {"name": "obv", "label": "OBV", "params": [], "example": "obv()"},
-            {
-                "name": "trix",
-                "label": "TRIX",
-                "params": ["period"],
-                "example": "trix(15)",
-            },
-            {
-                "name": "engulfing",
-                "label": "장악형 캔들",
-                "params": [],
-                "example": "engulfing()",
-            },
-            {
-                "name": "disparity",
-                "label": "이격도",
-                "params": ["period"],
-                "example": "disparity(20)",
-            },
-            {
-                "name": "breakout_margin",
-                "label": "돌파 여유율",
-                "params": ["period"],
-                "example": "breakout_margin(252)",
-            },
-        ],
-        "variables": ["close", "open", "high", "low", "volume", "change"],
-        "operators": {
-            "comparison": [">", "<", ">=", "<=", "=="],
-            "crossover": ["crosses_above", "crosses_below"],
-            "logical": ["AND", "OR"],
-        },
-    }
+# NOTE: the legacy GET /strategies/indicators endpoint (a hand-maintained list of
+# ~19 indicators) was removed 2026-07-06. The builder catalog SoT is
+# config/strategy_builder/indicators.yaml, served by
+# GET /api/strategy-builder/capabilities. See
+# docs/plans/2026-07-06-talib-builder-alignment.md (Phase D).
 
 
 @router.post("/strategies/preview-code")
