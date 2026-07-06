@@ -48,6 +48,14 @@ from shared.indicators.engine.spec import (
     OHLCVWindow,
     flat_key,
 )
+from shared.indicators.engine.stateful import (
+    VolumeAcceleration,
+    VolumeAccelerationCalculator,
+    VolumeConfig,
+    VWAPCalculator,
+    VWAPConfig,
+    VWAPData,
+)
 from shared.indicators.engine.streaming_backend import StreamingCompatBackend
 from shared.indicators.engine.talib_backend import TALibBackend
 
@@ -70,6 +78,12 @@ __all__ = [
     "StreamingCompatBackend",
     "TALibBackend",
     "UnsupportedIndicatorError",
+    "VWAPCalculator",
+    "VWAPConfig",
+    "VWAPData",
+    "VolumeAcceleration",
+    "VolumeAccelerationCalculator",
+    "VolumeConfig",
     "daily_indicator_engine",
     "default_engine",
     "flat_key",
