@@ -454,3 +454,180 @@ class TestMarketStructureHealth:
         body = res.json()
         assert body["market_structure"]["status"] == "ok"
         assert body["ops_summary"]["market_structure"]["snapshot"] == "close"
+
+
+class TestFuturesContractHealth:
+    """futures:contract:latest roll-state read-model (Phase A, shadow)."""
+
+    KST = ZoneInfo("Asia/Seoul")
+
+    def _latest_hash(
+        self, asof: datetime, *, roll_state: str = "normal"
+    ) -> dict[str, object]:
+        return {
+            "futures:contract:latest": {
+                "schema_version": "1",
+                "product": "mini",
+                "front_symbol": "A05607",
+                "next_symbol": "A05608",
+                "night_front_symbol": "1A01609",
+                "days_to_expiry": "8",
+                "roll_state": roll_state,
+                "roll_reason": "days_to_expiry>pre_roll",
+                "new_entry_front_allowed": "true",
+                "hedge_front_allowed": "true",
+                "asof_ts": asof.astimezone(self.KST).replace(tzinfo=None).isoformat(),
+            }
+        }
+
+    def test_unknown_when_redis_unavailable(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        monkeypatch.setattr(health, "_get_redis_client", lambda: None)
+
+        res = client.get("/api/health/futures-contract")
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "unknown"
+        assert body["source"] == "futures:contract:latest"
+        assert body["roll_state"] is None
+
+    def test_fresh_normal_snapshot_is_ok(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=5)
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/futures-contract")
+
+        body = res.json()
+        assert body["status"] == "ok"
+        assert body["product"] == "mini"
+        assert body["front_symbol"] == "A05607"
+        assert body["night_front_symbol"] == "1A01609"
+        assert body["days_to_expiry"] == 8
+        assert body["new_entry_front_allowed"] is True
+
+    def test_expired_roll_state_warns_even_when_fresh(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=5)
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof, roll_state="expired"))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/futures-contract")
+
+        body = res.json()
+        assert body["status"] == "warn"
+        assert body["roll_state"] == "expired"
+
+    def test_summary_exposes_futures_contract(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=10)
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/summary", params={"asset_class": "all"})
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["futures_contract"]["status"] == "ok"
+        assert body["ops_summary"]["futures_contract"]["front_symbol"] == "A05607"
+
+
+class TestFuturesMarginHealth:
+    """futures:risk:latest margin-risk read-model (Phase B, shadow)."""
+
+    KST = ZoneInfo("Asia/Seoul")
+
+    def _latest_hash(
+        self, asof: datetime, *, risk_level: str = "ok"
+    ) -> dict[str, object]:
+        return {
+            "futures:risk:latest": {
+                "schema_version": "1",
+                "account_equity_krw": "50000000.0000",
+                "initial_margin_required_krw": "1600000.0000",
+                "margin_usage_pct": "0.0320",
+                "maintenance_buffer_krw": "48800000.0000",
+                "liquidation_buffer_ticks": "48800.0000",
+                "stress_loss_1atr_krw": "250000.0000",
+                "max_additional_contracts": "24",
+                "risk_level": risk_level,
+                "degraded": "false",
+                "missing_components": json.dumps([]),
+                "asof_ts": asof.astimezone(self.KST).replace(tzinfo=None).isoformat(),
+            }
+        }
+
+    def test_unknown_when_redis_unavailable(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        monkeypatch.setattr(health, "_get_redis_client", lambda: None)
+
+        res = client.get("/api/health/futures-margin")
+
+        body = res.json()
+        assert body["status"] == "unknown"
+        assert body["source"] == "futures:risk:latest"
+        assert body["risk_level"] is None
+
+    def test_fresh_ok_snapshot(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=2)
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/futures-margin")
+
+        body = res.json()
+        assert body["status"] == "ok"
+        assert body["risk_level"] == "ok"
+        assert body["margin_usage_pct"] == pytest.approx(0.032)
+        assert body["max_additional_contracts"] == 24
+        assert body["degraded"] is False
+
+    def test_reduce_only_warns_when_fresh(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=2)
+        fake_redis = FakeRedis(
+            hashes=self._latest_hash(asof, risk_level="reduce_only")
+        )
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/futures-margin")
+
+        body = res.json()
+        assert body["status"] == "warn"
+        assert body["risk_level"] == "reduce_only"
+
+    def test_critical_maps_to_critical(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=2)
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof, risk_level="critical"))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/futures-margin")
+
+        body = res.json()
+        assert body["status"] == "critical"
+        assert body["risk_level"] == "critical"
+
+    def test_summary_exposes_futures_margin(self, client, monkeypatch):
+        from services.dashboard.routes import health
+
+        asof = datetime.now(UTC) - timedelta(minutes=5)
+        fake_redis = FakeRedis(hashes=self._latest_hash(asof))
+        monkeypatch.setattr(health, "_get_redis_client", lambda: fake_redis)
+
+        res = client.get("/api/health/summary", params={"asset_class": "all"})
+
+        body = res.json()
+        assert body["futures_margin"]["status"] == "ok"
+        assert body["ops_summary"]["futures_margin"]["risk_level"] == "ok"

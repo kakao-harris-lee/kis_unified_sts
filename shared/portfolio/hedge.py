@@ -149,6 +149,9 @@ class HedgeRedisConfig(BaseModel):
     stream_ttl_seconds: int = Field(default=86400, gt=0)
     structure_latest_key: str = Field(default="market:structure:latest")
     risk_latest_key: str = Field(default="market:risk:latest")
+    # HedgeAdvisorV2 operational read-models (Phase A/B; read-only inputs).
+    contract_latest_key: str = Field(default="futures:contract:latest")
+    margin_latest_key: str = Field(default="futures:risk:latest")
 
 
 class HedgeAlertsConfig(BaseModel):
@@ -156,6 +159,43 @@ class HedgeAlertsConfig(BaseModel):
 
     enabled: bool = Field(default=True)
     domain: str = Field(default="briefing")
+
+
+class HedgeRiskAdjustmentConfig(BaseModel):
+    """HedgeAdvisorV2 target ratio + feasibility constraints (append-only).
+
+    Introduced by docs/plans/2026-07-05-futures-market-context-hedge-risk-
+    hardening.md §4.4/§6. Everything here is advisory-only: it shapes the v2
+    recommendation (target hedge ratio, margin cap, roll/slippage feasibility)
+    but never places an order. Absent config → validated defaults, so the base
+    18-field lane is unaffected when the section is missing.
+    """
+
+    # Target hedge ratio (0-1) keyed by market-risk band. A band absent here
+    # falls back to 0.0 (no hedge). Band names must match advisory.band_order.
+    target_hedge_ratio_by_band: dict[str, float] = Field(
+        default_factory=lambda: {
+            "LOW": 0.0,
+            "NEUTRAL": 0.0,
+            "ELEVATED": 0.25,
+            "HIGH": 0.50,
+            "CRITICAL": 0.75,
+        }
+    )
+    # Above this estimated entry slippage, cap the delta or mark limited.
+    max_estimated_slippage_ticks: float = Field(default=2.0, gt=0)
+    # When true, a missing/stale margin or contract read forces degraded=0.
+    require_margin_state: bool = Field(default=True)
+    require_contract_state: bool = Field(default=True)
+
+    @model_validator(mode="after")
+    def _validate_ratios(self) -> HedgeRiskAdjustmentConfig:
+        for band, ratio in self.target_hedge_ratio_by_band.items():
+            if not 0.0 <= ratio <= 1.0:
+                raise ValueError(
+                    f"target_hedge_ratio_by_band[{band}]={ratio} must be in [0, 1]"
+                )
+        return self
 
 
 class HedgeAdvisorConfig(ServiceConfigBase):
@@ -172,6 +212,9 @@ class HedgeAdvisorConfig(ServiceConfigBase):
     advisory: HedgeAdvisoryConfig = Field(default_factory=HedgeAdvisoryConfig)
     redis: HedgeRedisConfig = Field(default_factory=HedgeRedisConfig)
     alerts: HedgeAlertsConfig = Field(default_factory=HedgeAlertsConfig)
+    risk_adjustment: HedgeRiskAdjustmentConfig = Field(
+        default_factory=HedgeRiskAdjustmentConfig
+    )
 
     @classmethod
     def load_or_default(cls, path: str | None = None) -> HedgeAdvisorConfig:
@@ -598,3 +641,303 @@ def advice_to_latest_fields(advice: HedgeAdvice) -> dict[str, str]:
         ),
         "asof_ts": advice.asof_ts.isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# HedgeAdvisorV2 — append-only feasibility layer (advisory ONLY, no orders)
+# ---------------------------------------------------------------------------
+#
+# docs/plans/2026-07-05-futures-market-context-hedge-risk-hardening.md §4.4:
+# constrain the recommended contract count by a target hedge ratio (band-
+# driven), the margin cap, roll state, and an estimated-slippage limit. This
+# layer WRAPS the base HedgeAdvice and adds 9 append-only fields; the fixed
+# 18-field contract above is never changed. Everything remains advisory:
+# still no order path, still Redis/ledger/Telegram only.
+#
+# Inputs are dependency-injected (the roll/margin state come from the Phase A/B
+# Redis read-models, read as plain hashes by the runner — this module still
+# imports NO order path). ``estimated_slippage_ticks`` is injected too; there
+# is no published depth/slippage read-model yet, so the runner passes None and
+# the liquidity branch is simply skipped (recorded), mirroring the honest-
+# coverage rule used across this hardening.
+
+ExecutionFeasibility = Literal[
+    "feasible",
+    "limited_by_margin",
+    "limited_by_liquidity",
+    "blocked_by_roll",
+    "degraded",
+]
+OperatorAction = Literal[
+    "none",
+    "review",
+    "place_manual_hedge",
+    "reduce_existing_hedge",
+    "roll_position",
+]
+RollAdjustment = Literal["none", "use_next", "close_front_first", "manual_review"]
+
+#: Roll states (Phase A) that block ADDING front hedge contracts.
+_ROLL_BLOCKS_FRONT_ADD = frozenset({"roll_required", "expired"})
+#: Margin risk levels (Phase B) that suppress auto-recommending MORE hedge.
+_MARGIN_SUPPRESSES_ADD = frozenset({"reduce_only", "block_new_entries", "critical"})
+
+
+@dataclass(frozen=True)
+class HedgeAdviceV2:
+    """Base advice + feasibility-constrained v2 recommendation (advisory ONLY)."""
+
+    base: HedgeAdvice
+    target_hedge_ratio: float | None
+    current_hedge_ratio: float | None
+    delta_short_contracts: int
+    max_contracts_by_margin: int | None
+    margin_after_hedge_pct: float | None
+    estimated_slippage_ticks: float | None
+    roll_adjustment: RollAdjustment
+    execution_feasibility: ExecutionFeasibility
+    operator_action: OperatorAction
+
+
+def target_hedge_ratio_for_band(
+    band: str | None, config: HedgeRiskAdjustmentConfig
+) -> float | None:
+    """Band → target hedge ratio (0-1); None when the band is unknown/absent."""
+    if band is None:
+        return None
+    return config.target_hedge_ratio_by_band.get(band)
+
+
+def current_hedge_ratio(
+    beta_notional: float, futures_net_notional: float
+) -> float | None:
+    """Fraction of the spot β-notional already offset by SHORT futures.
+
+    Futures net notional is signed (short negative): a short offsets the long
+    β-exposure, so the covered fraction is ``-futures_net_notional /
+    beta_notional``. Net-long futures (adding exposure) clamp to 0.0. None when
+    there is no β-notional to hedge.
+    """
+    if beta_notional <= 0:
+        return None
+    return max(-futures_net_notional / beta_notional, 0.0) + 0.0  # normalize -0.0
+
+
+def _roll_adjustment_for_state(
+    roll_state: str | None, needs_add: bool
+) -> tuple[RollAdjustment, bool]:
+    """(roll_adjustment, blocks_add) for a Phase A roll state.
+
+    Only ADDING front contracts is roll-constrained; reducing an existing
+    hedge is always allowed (it de-risks). ``expired`` recommends closing the
+    front first; ``roll_required`` recommends using the next contract.
+    """
+    if not needs_add or roll_state not in _ROLL_BLOCKS_FRONT_ADD:
+        return "none", False
+    if roll_state == "expired":
+        return "close_front_first", True
+    return "use_next", True
+
+
+def compute_hedge_advice_v2(
+    *,
+    base: HedgeAdvice,
+    config: HedgeAdvisorConfig,
+    roll_state: str | None,
+    hedge_front_allowed: bool | None,
+    margin_risk_level: str | None,
+    margin_usage_pct: float | None,
+    max_additional_contracts: int | None,
+    per_contract_initial_margin_krw: float | None,
+    account_equity_krw: float | None,
+    initial_margin_required_krw: float | None,
+    estimated_slippage_ticks: float | None,
+    contract_state_present: bool,
+    margin_state_present: bool,
+) -> HedgeAdviceV2:
+    """Constrain the base recommendation by target ratio / margin / roll / slippage.
+
+    Pure and I/O-free. The runner reads the Phase A ``futures:contract:latest``
+    and Phase B ``futures:risk:latest`` hashes and passes their fields here;
+    this function places no orders and imports no execution path.
+
+    Feasibility precedence (most severe first): ``degraded`` (a required state
+    is missing) → ``blocked_by_roll`` → ``limited_by_margin`` → subject to
+    ``limited_by_liquidity`` → ``feasible``.
+    """
+    ra = config.risk_adjustment
+    contract_value = None
+    if base.futures_price and base.futures_price > 0:
+        contract_value = base.futures_price * base.multiplier
+
+    # --- target vs current ratio ----------------------------------------
+    target_ratio = target_hedge_ratio_for_band(base.band, ra)
+    curr_ratio = current_hedge_ratio(base.beta_notional, base.futures_net_notional)
+
+    # --- required-state gating (fail-safe: degrade to no-op) ------------
+    degraded_missing = False
+    if ra.require_contract_state and not contract_state_present:
+        degraded_missing = True
+    if ra.require_margin_state and not margin_state_present:
+        degraded_missing = True
+
+    # --- raw delta contracts to reach the target ratio ------------------
+    # target short notional = target_ratio * beta_notional; current short
+    # notional = -futures_net_notional. delta_notional > 0 → add shorts.
+    raw_delta = 0
+    if (
+        target_ratio is not None
+        and contract_value
+        and contract_value > 0
+        and base.beta_notional > 0
+    ):
+        target_short_notional = target_ratio * base.beta_notional
+        current_short_notional = -base.futures_net_notional
+        delta_notional = target_short_notional - current_short_notional
+        raw_delta = int(delta_notional / contract_value)  # trunc toward zero
+
+    needs_add = raw_delta > 0
+    roll_adjustment, roll_blocks = _roll_adjustment_for_state(roll_state, needs_add)
+    if hedge_front_allowed is False and needs_add:
+        roll_blocks = True
+        if roll_adjustment == "none":
+            roll_adjustment = "manual_review"
+
+    # --- feasibility folding --------------------------------------------
+    feasibility: ExecutionFeasibility = "feasible"
+    applied_delta = raw_delta
+    max_by_margin = max_additional_contracts
+
+    if degraded_missing:
+        feasibility = "degraded"
+        applied_delta = 0
+    elif needs_add and roll_blocks:
+        feasibility = "blocked_by_roll"
+        applied_delta = 0
+    elif needs_add and margin_risk_level in _MARGIN_SUPPRESSES_ADD:
+        # Margin stress: never auto-recommend MORE hedge; operator reviews
+        # (reducing the underlying risk position is preferred — plan §4.4).
+        feasibility = "limited_by_margin"
+        applied_delta = 0
+    elif needs_add and max_by_margin is not None and raw_delta > max_by_margin:
+        feasibility = "limited_by_margin"
+        applied_delta = max_by_margin
+
+    # Slippage limit (only meaningful when an estimate is supplied AND we are
+    # still adding after the checks above). No published depth read-model yet,
+    # so the runner passes None → this branch is skipped.
+    if (
+        applied_delta > 0
+        and estimated_slippage_ticks is not None
+        and estimated_slippage_ticks > ra.max_estimated_slippage_ticks
+    ):
+        feasibility = "limited_by_liquidity"
+        applied_delta = 0
+
+    # --- margin after the (capped) recommendation -----------------------
+    margin_after_pct = _margin_after_hedge_pct(
+        applied_delta=applied_delta,
+        margin_usage_pct=margin_usage_pct,
+        per_contract_initial_margin_krw=per_contract_initial_margin_krw,
+        initial_margin_required_krw=initial_margin_required_krw,
+        account_equity_krw=account_equity_krw,
+    )
+
+    operator_action = _operator_action(
+        raw_delta=raw_delta,
+        applied_delta=applied_delta,
+        feasibility=feasibility,
+        target_ratio=target_ratio,
+    )
+
+    return HedgeAdviceV2(
+        base=base,
+        target_hedge_ratio=target_ratio,
+        current_hedge_ratio=curr_ratio,
+        delta_short_contracts=applied_delta,
+        max_contracts_by_margin=max_by_margin,
+        margin_after_hedge_pct=margin_after_pct,
+        estimated_slippage_ticks=estimated_slippage_ticks,
+        roll_adjustment=roll_adjustment,
+        execution_feasibility=feasibility,
+        operator_action=operator_action,
+    )
+
+
+def _margin_after_hedge_pct(
+    *,
+    applied_delta: int,
+    margin_usage_pct: float | None,
+    per_contract_initial_margin_krw: float | None,
+    initial_margin_required_krw: float | None,
+    account_equity_krw: float | None,
+) -> float | None:
+    """Predicted margin usage after applying ``applied_delta`` hedge contracts.
+
+    Adding shorts consumes margin; reducing frees it. None when the margin
+    inputs are unavailable.
+    """
+    if (
+        margin_usage_pct is None
+        or per_contract_initial_margin_krw is None
+        or account_equity_krw is None
+        or account_equity_krw <= 0
+    ):
+        return None
+    added_margin = applied_delta * per_contract_initial_margin_krw
+    if initial_margin_required_krw is not None:
+        return (initial_margin_required_krw + added_margin) / account_equity_krw
+    return margin_usage_pct + added_margin / account_equity_krw
+
+
+def _operator_action(
+    *,
+    raw_delta: int,
+    applied_delta: int,
+    feasibility: ExecutionFeasibility,
+    target_ratio: float | None,
+) -> OperatorAction:
+    """Map the constrained recommendation to an operator-facing action."""
+    if feasibility == "degraded":
+        return "review"
+    if raw_delta < 0:
+        # Over-hedged relative to target → reduce the existing short hedge.
+        return "reduce_existing_hedge"
+    if raw_delta == 0:
+        return "none"
+    # raw_delta > 0 (wants more hedge):
+    if feasibility == "blocked_by_roll":
+        return "roll_position"
+    if feasibility in ("limited_by_margin", "limited_by_liquidity"):
+        return "review"
+    if applied_delta > 0:
+        return "place_manual_hedge"
+    return "review"
+
+
+def advice_v2_to_latest_fields(advice_v2: HedgeAdviceV2) -> dict[str, str]:
+    """``portfolio:hedge:latest`` hash — base 18 fields + 9 append-only v2 fields.
+
+    The base 18 keys are byte-identical to :func:`advice_to_latest_fields`
+    (fixed 4B UI contract); the v2 keys are additive, so existing consumers are
+    unaffected and v2-aware consumers get the feasibility view.
+    """
+    fields = advice_to_latest_fields(advice_v2.base)
+    fields.update(
+        {
+            "target_hedge_ratio": _fmt(advice_v2.target_hedge_ratio),
+            "current_hedge_ratio": _fmt(advice_v2.current_hedge_ratio),
+            "delta_short_contracts": str(advice_v2.delta_short_contracts),
+            "max_contracts_by_margin": (
+                ""
+                if advice_v2.max_contracts_by_margin is None
+                else str(advice_v2.max_contracts_by_margin)
+            ),
+            "margin_after_hedge_pct": _fmt(advice_v2.margin_after_hedge_pct),
+            "estimated_slippage_ticks": _fmt(advice_v2.estimated_slippage_ticks),
+            "roll_adjustment": advice_v2.roll_adjustment,
+            "execution_feasibility": advice_v2.execution_feasibility,
+            "operator_action": advice_v2.operator_action,
+        }
+    )
+    return fields

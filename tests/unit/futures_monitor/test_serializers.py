@@ -179,3 +179,45 @@ def test_build_signal_dict_carries_gate_top_level() -> None:
 def test_build_signal_dict_omits_gate_when_absent() -> None:
     d = build_signal_dict(parse_final_signal(_final_fields()))
     assert "market_risk_gate" not in d  # legacy shape preserved bit-for-bit
+
+
+# ---------------------------------------------------------------------------
+# Futures-context passthrough (roadmap hardening Phase C — /signals trace lane)
+# ---------------------------------------------------------------------------
+
+CONTEXT_JSON = (
+    '{"roll_state": "pre_roll", "days_to_expiry": 4, "basis_regime": "contango",'
+    ' "foreign_flow_regime": "buy", "market_risk_band": "ELEVATED",'
+    ' "margin_risk_level": "watch", "degraded": false}'
+)
+
+
+def test_parse_final_signal_passes_futures_context_through() -> None:
+    sig = parse_final_signal(_final_fields(futures_context=CONTEXT_JSON.encode()))
+    ctx = sig["futures_context"]
+    assert ctx["roll_state"] == "pre_roll"
+    assert ctx["days_to_expiry"] == 4
+    assert ctx["basis_regime"] == "contango"
+    assert ctx["degraded"] is False
+
+
+def test_parse_final_signal_context_absent_or_malformed_is_none() -> None:
+    assert parse_final_signal(_final_fields())["futures_context"] is None
+    assert (
+        parse_final_signal(_final_fields(futures_context=b"not-json"))[
+            "futures_context"
+        ]
+        is None
+    )
+
+
+def test_build_signal_dict_carries_context_top_level() -> None:
+    sig = parse_final_signal(_final_fields(futures_context=CONTEXT_JSON.encode()))
+    d = build_signal_dict(sig)
+    assert d["futures_context"]["roll_state"] == "pre_roll"
+    assert d["futures_context"]["margin_risk_level"] == "watch"
+
+
+def test_build_signal_dict_omits_context_when_absent() -> None:
+    d = build_signal_dict(parse_final_signal(_final_fields()))
+    assert "futures_context" not in d  # legacy shape preserved bit-for-bit

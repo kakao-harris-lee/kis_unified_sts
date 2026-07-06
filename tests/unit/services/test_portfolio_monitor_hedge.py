@@ -46,6 +46,8 @@ HEDGE_STREAM = "stream:portfolio.hedge"
 STRUCTURE_KEY = "market:structure:latest"
 RISK_KEY = "market:risk:latest"
 EQUITY_KEY = "portfolio:equity:latest"
+CONTRACT_KEY = "futures:contract:latest"
+MARGIN_KEY = "futures:risk:latest"
 
 #: Product constants mirror config/execution.yaml::futures_contract_spec.
 EXEC_SPECS = {
@@ -73,6 +75,19 @@ _CONTRACT_FIELDS = {
     "degraded",
     "missing_components",
     "asof_ts",
+}
+
+#: HedgeAdvisorV2 append-only fields (published alongside the fixed 18).
+_V2_FIELDS = {
+    "target_hedge_ratio",
+    "current_hedge_ratio",
+    "delta_short_contracts",
+    "max_contracts_by_margin",
+    "margin_after_hedge_pct",
+    "estimated_slippage_ticks",
+    "roll_adjustment",
+    "execution_feasibility",
+    "operator_action",
 }
 
 #: Deterministic daily-return pattern shared by symbol/market series (β = 1).
@@ -172,7 +187,10 @@ class TestPublication:
 
         assert advice is not None
         raw = redis.hgetall(HEDGE_KEY)
-        assert set(raw) == _CONTRACT_FIELDS
+        # Base 18-field contract preserved as a subset; v2 adds 9 append-only.
+        assert set(raw) >= _CONTRACT_FIELDS
+        assert set(raw) >= _V2_FIELDS
+        assert set(raw) == _CONTRACT_FIELDS | _V2_FIELDS
         assert raw["product"] == "mini_kospi200"
         assert raw["multiplier"] == "50000"
         # ₩60M long × β1.0 ÷ (400pt × ₩50k) = 3.0 → floor → 3 contracts.
@@ -183,6 +201,45 @@ class TestPublication:
         assert float(raw["portfolio_beta"]) == pytest.approx(1.0)
         assert datetime.fromisoformat(raw["asof_ts"]) == NOW
         assert 0 < redis.ttl(HEDGE_KEY) <= 86400
+
+    def test_v2_feasibility_from_operational_reads(self, ledger, redis):
+        # Seed the Phase A/B read-models so the v2 layer folds them in.
+        _publish_inputs(redis)  # HIGH band → target ratio 0.50
+        redis.hset(
+            CONTRACT_KEY,
+            mapping={"roll_state": "normal", "hedge_front_allowed": "true"},
+        )
+        redis.hset(
+            MARGIN_KEY,
+            mapping={
+                "risk_level": "ok",
+                "margin_usage_pct": "0.1000",
+                "max_additional_contracts": "10",
+                "per_contract_initial_margin_krw": "1600000.0000",
+                "account_equity_krw": "50000000.0000",
+                "initial_margin_required_krw": "5000000.0000",
+            },
+        )
+        advice = _run(_context(stock=[_stock_position()]), ledger, redis)
+        assert advice is not None
+
+        raw = redis.hgetall(HEDGE_KEY)
+        assert raw["target_hedge_ratio"] == "0.5000"
+        # feasible add recommended (advisory only).
+        assert raw["execution_feasibility"] == "feasible"
+        assert raw["operator_action"] == "place_manual_hedge"
+        assert int(raw["delta_short_contracts"]) >= 1
+
+    def test_v2_degrades_when_operational_reads_missing(self, ledger, redis):
+        # No contract/margin hashes → v2 degrades to a no-op recommendation.
+        _publish_inputs(redis)
+        advice = _run(_context(stock=[_stock_position()]), ledger, redis)
+        assert advice is not None
+        raw = redis.hgetall(HEDGE_KEY)
+        assert raw["execution_feasibility"] == "degraded"
+        assert raw["operator_action"] == "review"
+        # Base 18-field recommendation is still published unchanged.
+        assert raw["recommended_short_contracts"] == "3"
 
     def test_stream_entry_maxlen_and_expire(self, ledger, redis):
         _publish_inputs(redis)

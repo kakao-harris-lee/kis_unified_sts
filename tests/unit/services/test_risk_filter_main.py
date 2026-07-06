@@ -314,6 +314,39 @@ async def test_final_stream_composes_upstream_entry_size_factor(redis, signals_w
 
 
 @pytest.mark.asyncio
+async def test_final_stream_forwards_futures_context_trace(redis, signals_writer):
+    """Phase C: the futures_context trace is forwarded verbatim to the final
+    stream (fixed key contract for the /signals trace lane). Without this the
+    futures_monitor serializers passthrough would always see None."""
+    import asyncio
+    import json
+
+    context_trace = json.dumps(
+        {"roll_state": "pre_roll", "basis_regime": "contango", "degraded": False}
+    )
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+
+    fields = _signal("long").to_stream_dict()
+    fields["signal_id"] = "sig-ctx"
+    fields["futures_context"] = context_trace
+    await redis.xadd(CANDIDATE_STREAM, fields)
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    out = (await redis.xrange(FINAL_STREAM))[0][1]
+    assert json.loads(out[b"futures_context"].decode()) == {
+        "roll_state": "pre_roll",
+        "basis_regime": "contango",
+        "degraded": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_missing_or_invalid_entry_size_factor_is_neutral(redis, signals_writer):
     """Legacy candidates (no gate fields) and malformed factors keep the
     layer-only size_multiplier."""
@@ -341,3 +374,4 @@ async def test_missing_or_invalid_entry_size_factor_is_neutral(redis, signals_wr
     for _msg_id, out in entries:
         assert float(out[b"size_multiplier"]) == pytest.approx(0.5)
         assert b"market_risk_gate" not in out
+        assert b"futures_context" not in out

@@ -127,6 +127,7 @@ def _timestamp_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "last_success_at",
         "last_run_at",
         "asof",
+        "asof_ts",
         "timestamp",
     ):
         parsed = _parse_ops_timestamp(payload.get(field))

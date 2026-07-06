@@ -35,32 +35,46 @@ def _publish_hedge_hash(
     asof: datetime | None = None,
     recommended: str = "3",
     band: str = "HIGH",
+    v2: bool = False,
 ):
     """Fixed Phase 4 contract hash (mini KOSPI200 — O4)."""
     asof = asof or _now_kst_naive()
-    redis.hset(
-        HEDGE_KEY,
-        mapping={
-            "product": "mini_kospi200",
-            "multiplier": "50000",
-            "futures_price": "368.5",
-            "stock_long_notional": "52000000",
-            "portfolio_beta": "1.08",
-            "beta_notional": "56160000",
-            "futures_net_contracts": "-1",
-            "futures_net_notional": "-18425000",
-            "net_beta_exposure": "37735000",
-            "recommended_short_contracts": recommended,
-            "residual_exposure_after": "-13520000",
-            "band": band,
-            "score": "74.2",
-            "advisory_active": advisory_active,
-            "reason": "HIGH 밴드 + 순 β-노출 ₩37.7M > 헤지 임계",
-            "degraded": degraded,
-            "missing_components": json.dumps(["portfolio_beta"]),
-            "asof_ts": asof.isoformat(),
-        },
-    )
+    mapping = {
+        "product": "mini_kospi200",
+        "multiplier": "50000",
+        "futures_price": "368.5",
+        "stock_long_notional": "52000000",
+        "portfolio_beta": "1.08",
+        "beta_notional": "56160000",
+        "futures_net_contracts": "-1",
+        "futures_net_notional": "-18425000",
+        "net_beta_exposure": "37735000",
+        "recommended_short_contracts": recommended,
+        "residual_exposure_after": "-13520000",
+        "band": band,
+        "score": "74.2",
+        "advisory_active": advisory_active,
+        "reason": "HIGH 밴드 + 순 β-노출 ₩37.7M > 헤지 임계",
+        "degraded": degraded,
+        "missing_components": json.dumps(["portfolio_beta"]),
+        "asof_ts": asof.isoformat(),
+    }
+    if v2:
+        # HedgeAdvisorV2 append-only feasibility fields.
+        mapping.update(
+            {
+                "target_hedge_ratio": "0.5000",
+                "current_hedge_ratio": "0.3300",
+                "delta_short_contracts": "1",
+                "max_contracts_by_margin": "10",
+                "margin_after_hedge_pct": "0.1640",
+                "estimated_slippage_ticks": "",
+                "roll_adjustment": "none",
+                "execution_feasibility": "feasible",
+                "operator_action": "place_manual_hedge",
+            }
+        )
+    redis.hset(HEDGE_KEY, mapping=mapping)
 
 
 def _create_hedge_db(tmp_path, rows: list[dict] | None = None, *, alt_schema=False):
@@ -186,6 +200,37 @@ def test_hedge_ok_parses_contract_hash(monkeypatch, redis_client):
     assert hedge["missing_components"] == ["portfolio_beta"]
     assert hedge["stale"] is False
     assert hedge["age_s"] is not None
+
+
+def test_hedge_surfaces_v2_feasibility_fields(monkeypatch, redis_client):
+    _publish_hedge_hash(redis_client, v2=True)
+    client = _client(monkeypatch, redis_client)
+
+    hedge = client.get("/api/portfolio/hedge").json()["hedge"]
+
+    assert hedge["target_hedge_ratio"] == pytest.approx(0.50)
+    assert hedge["current_hedge_ratio"] == pytest.approx(0.33)
+    assert hedge["delta_short_contracts"] == 1
+    assert hedge["max_contracts_by_margin"] == 10
+    assert hedge["margin_after_hedge_pct"] == pytest.approx(0.164)
+    assert hedge["estimated_slippage_ticks"] is None  # "" → None
+    assert hedge["roll_adjustment"] == "none"
+    assert hedge["execution_feasibility"] == "feasible"
+    assert hedge["operator_action"] == "place_manual_hedge"
+
+
+def test_hedge_v2_fields_none_on_pre_v2_hash(monkeypatch, redis_client):
+    # A base (pre-v2) publication has no v2 keys → all v2 fields read None.
+    _publish_hedge_hash(redis_client, v2=False)
+    client = _client(monkeypatch, redis_client)
+
+    hedge = client.get("/api/portfolio/hedge").json()["hedge"]
+
+    assert hedge["execution_feasibility"] is None
+    assert hedge["operator_action"] is None
+    assert hedge["target_hedge_ratio"] is None
+    # Base fields still parse unchanged.
+    assert hedge["recommended_short_contracts"] == 3
 
 
 def test_hedge_unavailable_when_advisor_not_published(monkeypatch, redis_client):

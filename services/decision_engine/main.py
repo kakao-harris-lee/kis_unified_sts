@@ -62,6 +62,8 @@ class DecisionEngineDaemon:
         market_risk_gate_config: MarketRiskGateConfig | None = None,
         market_risk_redis: Any | None = None,
         shadow_gate_log_interval_seconds: float = 300.0,
+        futures_context_redis: Any | None = None,
+        futures_context_key: str = "futures:context:latest",
     ) -> None:
         self.redis = redis
         self.setups = setups
@@ -69,6 +71,12 @@ class DecisionEngineDaemon:
         self.candidate_stream = candidate_stream
         self.candidate_maxlen = candidate_maxlen
         self.tick_interval_seconds = tick_interval_seconds
+        # Optional Phase C structured-context trace (roadmap hardening §C).
+        # A SYNC client reading ``futures:context:latest`` (same pattern as
+        # market_risk_redis). None => unwired: no trace field attached, zero
+        # behavior change. Observational only — never gates or sizes.
+        self.futures_context_redis = futures_context_redis
+        self.futures_context_key = futures_context_key
         # Market-risk ENTRY gate (roadmap §5.2 track C). Config is loaded
         # ONCE at startup by the caller — no YAML reparse on the hot path.
         # ``market_risk_redis`` is a SYNC client (the shared evaluator reads
@@ -193,6 +201,25 @@ class DecisionEngineDaemon:
             )
         )
 
+    def _futures_context_trace(self) -> dict[str, Any] | None:
+        """Read futures:context:latest into a trace payload (or None if unwired).
+
+        Observational only: a missing key / read error / import failure returns
+        None (fail-open) — never blocks or resizes the candidate.
+        """
+        if self.futures_context_redis is None:
+            return None
+        try:
+            raw = self.futures_context_redis.hgetall(self.futures_context_key) or {}
+        except Exception as exc:  # noqa: BLE001 — trace read must not break the tick
+            logger.warning("futures context trace read failed: %s", exc)
+            return None
+        if not raw:
+            return None
+        from shared.models.futures_context import context_trace_payload
+
+        return context_trace_payload({str(k): v for k, v in dict(raw).items()})
+
     async def _publish(
         self, signal, *, gate_decision: MarketRiskGateDecision | None = None
     ) -> None:
@@ -200,6 +227,11 @@ class DecisionEngineDaemon:
         # Issue a fresh signal_id per emission so downstream consumers can
         # de-dupe and trace through risk_filter / order_router / order_fills.
         fields["signal_id"] = uuid.uuid4().hex
+        context_trace = self._futures_context_trace()
+        if context_trace is not None:
+            # Fixed contract: the /signals trace lane reads this exact key.
+            # Attached in EVERY mode (shadow observability) — never gates.
+            fields["futures_context"] = json.dumps(context_trace, ensure_ascii=False)
         if gate_decision is not None:
             # Fixed contract: the /signals trace lane reads this exact key
             # from the signal metadata; gate_trace_payload keys are frozen.
@@ -423,6 +455,9 @@ async def _build_and_run() -> int:
         tick_interval_seconds=60.0,
         market_risk_gate_config=market_risk_gate_config,
         market_risk_redis=market_risk_redis,
+        # Phase C structured-context trace: reuse the sync client that reads
+        # market:risk:latest — it reads futures:context:latest the same way.
+        futures_context_redis=market_risk_redis,
     )
 
     loop = asyncio.get_running_loop()

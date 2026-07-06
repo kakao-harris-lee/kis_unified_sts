@@ -31,15 +31,20 @@ import shared.portfolio.hedge as hedge_module
 from shared.portfolio.hedge import (
     BetaEstimate,
     BetaEstimationConfig,
+    HedgeAdvice,
     HedgeAdvisorConfig,
     advice_to_latest_fields,
+    advice_v2_to_latest_fields,
     compute_hedge_advice,
+    compute_hedge_advice_v2,
     compute_returns,
+    current_hedge_ratio,
     estimate_beta,
     is_price_fresh,
     multiplier_for_symbol,
     product_multipliers,
     side_sign,
+    target_hedge_ratio_for_band,
     verify_product_spec,
 )
 
@@ -630,3 +635,183 @@ class TestLatestFieldsContract:
             advice.recommended_short_contracts
         )
         assert math.isfinite(float(fields["score"]))
+
+
+# ---------------------------------------------------------------------------
+# HedgeAdvisorV2 — feasibility layer (append-only; advisory ONLY)
+# ---------------------------------------------------------------------------
+
+_V2_FIELDS = {
+    "target_hedge_ratio",
+    "current_hedge_ratio",
+    "delta_short_contracts",
+    "max_contracts_by_margin",
+    "margin_after_hedge_pct",
+    "estimated_slippage_ticks",
+    "roll_adjustment",
+    "execution_feasibility",
+    "operator_action",
+}
+
+
+def _base_advice(
+    *, band="HIGH", beta_notional=100_000_000.0, fut_net=0.0, price=400.0
+) -> HedgeAdvice:
+    """A minimal base HedgeAdvice for v2 folding (mini KOSPI200, mult 50k)."""
+    return HedgeAdvice(
+        product="mini_kospi200",
+        multiplier=50_000,
+        futures_price=price,
+        stock_long_notional=beta_notional,
+        portfolio_beta=1.0,
+        beta_notional=beta_notional,
+        futures_net_contracts=int(fut_net / (price * 50_000)) if price else 0,
+        futures_net_notional=fut_net,
+        net_beta_exposure=beta_notional + fut_net,
+        recommended_short_contracts=0,
+        residual_exposure_after=0.0,
+        band=band,
+        score=70.0,
+        advisory_active=True,
+        reason="base",
+        degraded=False,
+        missing_components=(),
+        asof_ts=ASOF,
+    )
+
+
+def _v2(
+    base=None,
+    *,
+    roll_state="normal",
+    hedge_front_allowed=True,
+    margin_risk_level="ok",
+    margin_usage_pct=0.10,
+    max_additional_contracts=10,
+    per_contract_initial_margin_krw=1_600_000.0,
+    account_equity_krw=50_000_000.0,
+    initial_margin_required_krw=5_000_000.0,
+    estimated_slippage_ticks=None,
+    contract_state_present=True,
+    margin_state_present=True,
+):
+    return compute_hedge_advice_v2(
+        base=base if base is not None else _base_advice(),
+        config=HedgeAdvisorConfig(),
+        roll_state=roll_state,
+        hedge_front_allowed=hedge_front_allowed,
+        margin_risk_level=margin_risk_level,
+        margin_usage_pct=margin_usage_pct,
+        max_additional_contracts=max_additional_contracts,
+        per_contract_initial_margin_krw=per_contract_initial_margin_krw,
+        account_equity_krw=account_equity_krw,
+        initial_margin_required_krw=initial_margin_required_krw,
+        estimated_slippage_ticks=estimated_slippage_ticks,
+        contract_state_present=contract_state_present,
+        margin_state_present=margin_state_present,
+    )
+
+
+class TestHedgeAdviceV2:
+    def test_target_ratio_by_band(self):
+        cfg = HedgeAdvisorConfig()
+        assert target_hedge_ratio_for_band("HIGH", cfg.risk_adjustment) == 0.50
+        assert target_hedge_ratio_for_band("CRITICAL", cfg.risk_adjustment) == 0.75
+        assert target_hedge_ratio_for_band("LOW", cfg.risk_adjustment) == 0.0
+        assert target_hedge_ratio_for_band(None, cfg.risk_adjustment) is None
+
+    def test_current_hedge_ratio_from_signed_notional(self):
+        # short futures offset -60M against 100M β-notional → 0.6 covered.
+        assert current_hedge_ratio(100_000_000.0, -60_000_000.0) == pytest.approx(0.6)
+        # net-long futures add exposure → clamp to 0.0 (not negative).
+        assert current_hedge_ratio(100_000_000.0, 20_000_000.0) == 0.0
+        assert current_hedge_ratio(0.0, -10.0) is None
+
+    def test_feasible_recommends_place_manual_hedge(self):
+        # HIGH target 0.5 × 100M = 50M short; contract value 400×50k=20M →
+        # 50M/20M = 2.5 → trunc 2 contracts.
+        v = _v2()
+        assert v.target_hedge_ratio == 0.50
+        assert v.delta_short_contracts == 2
+        assert v.execution_feasibility == "feasible"
+        assert v.operator_action == "place_manual_hedge"
+
+    def test_margin_cap_limits_delta(self):
+        v = _v2(max_additional_contracts=1)
+        assert v.delta_short_contracts == 1
+        assert v.execution_feasibility == "limited_by_margin"
+        assert v.operator_action == "review"
+
+    def test_margin_stress_level_suppresses_add(self):
+        v = _v2(margin_risk_level="reduce_only")
+        assert v.delta_short_contracts == 0
+        assert v.execution_feasibility == "limited_by_margin"
+        assert v.operator_action == "review"
+
+    def test_roll_required_blocks_front_add(self):
+        v = _v2(roll_state="roll_required", hedge_front_allowed=False)
+        assert v.delta_short_contracts == 0
+        assert v.execution_feasibility == "blocked_by_roll"
+        assert v.roll_adjustment == "use_next"
+        assert v.operator_action == "roll_position"
+
+    def test_expired_roll_recommends_close_front_first(self):
+        v = _v2(roll_state="expired", hedge_front_allowed=False)
+        assert v.execution_feasibility == "blocked_by_roll"
+        assert v.roll_adjustment == "close_front_first"
+
+    def test_slippage_limit_blocks_when_estimate_supplied(self):
+        v = _v2(estimated_slippage_ticks=5.0)  # > default 2.0
+        assert v.delta_short_contracts == 0
+        assert v.execution_feasibility == "limited_by_liquidity"
+
+    def test_missing_margin_state_degrades_to_noop(self):
+        v = _v2(
+            margin_state_present=False,
+            margin_risk_level=None,
+            margin_usage_pct=None,
+            max_additional_contracts=None,
+            per_contract_initial_margin_krw=None,
+            account_equity_krw=None,
+            initial_margin_required_krw=None,
+        )
+        assert v.delta_short_contracts == 0
+        assert v.execution_feasibility == "degraded"
+        assert v.operator_action == "review"
+
+    def test_over_hedged_recommends_reduce(self):
+        # LOW band → target 0.0, but 60M short already on → reduce.
+        v = _v2(base=_base_advice(band="LOW", fut_net=-60_000_000.0))
+        assert v.current_hedge_ratio == pytest.approx(0.6)
+        assert v.delta_short_contracts < 0
+        assert v.operator_action == "reduce_existing_hedge"
+
+    def test_zero_target_no_existing_is_none_action(self):
+        v = _v2(base=_base_advice(band="NEUTRAL"))
+        assert v.target_hedge_ratio == 0.0
+        assert v.delta_short_contracts == 0
+        assert v.operator_action == "none"
+
+    def test_margin_after_hedge_reflects_added_contracts(self):
+        v = _v2()  # 2 contracts × 1.6M added on 5M base / 50M equity.
+        assert v.margin_after_hedge_pct == pytest.approx(
+            (5_000_000 + 2 * 1_600_000) / 50_000_000
+        )
+
+    def test_v2_fields_preserve_base_18_and_append_9(self):
+        fields = advice_v2_to_latest_fields(_v2())
+        assert set(advice_to_latest_fields(_v2().base)) <= set(fields)
+        assert set(fields) >= _V2_FIELDS
+        assert len(fields) == 27
+        assert all(isinstance(value, str) for value in fields.values())
+
+    def test_v2_fields_null_markers_when_degraded(self):
+        v = _v2(
+            margin_state_present=False,
+            margin_usage_pct=None,
+            per_contract_initial_margin_krw=None,
+            account_equity_krw=None,
+        )
+        fields = advice_v2_to_latest_fields(v)
+        assert fields["margin_after_hedge_pct"] == ""
+        assert fields["execution_feasibility"] == "degraded"

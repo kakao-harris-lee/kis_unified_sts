@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Query
 
 from services.dashboard.domain.assets import normalize_asset_class
+from services.dashboard.routes.health_futures_contract import _futures_contract_ops
+from services.dashboard.routes.health_futures_margin import _futures_margin_ops
 from services.dashboard.routes.health_market_structure import _market_structure_ops
 from services.dashboard.routes.health_ops import (
     _aggregate_mode,
@@ -176,6 +178,22 @@ async def get_market_structure_health() -> dict[str, Any]:
     return summary
 
 
+@router.get("/futures-contract")
+async def get_futures_contract_health() -> dict[str, Any]:
+    """Futures contract / roll-state read-model (Phase A, shadow read-only)."""
+    summary = _futures_contract_ops(_get_redis_client())
+    summary["checked_at"] = datetime.now(UTC).isoformat()
+    return summary
+
+
+@router.get("/futures-margin")
+async def get_futures_margin_health() -> dict[str, Any]:
+    """Futures margin-risk read-model (Phase B, shadow read-only)."""
+    summary = _futures_margin_ops(_get_redis_client())
+    summary["checked_at"] = datetime.now(UTC).isoformat()
+    return summary
+
+
 def _bytes_or_str_to_bool(value: Any) -> bool:
     """Coerce a Redis return value (str / bytes / None) into a bool."""
     if value is None:
@@ -321,6 +339,8 @@ def _build_ops_summary(
     forecasting_summary = _forecasting_ops(forecasting)
     kill_summary = _kill_switch_ops(kill_switch)
     market_structure = _market_structure_ops(redis)
+    futures_contract = _futures_contract_ops(redis)
+    futures_margin = _futures_margin_ops(redis)
 
     asset_rows: dict[str, dict[str, Any]] = {}
     for target in _ops_targets(asset):
@@ -374,6 +394,8 @@ def _build_ops_summary(
         "producers": producers_summary,
         "forecasting": forecasting_summary,
         "market_structure": market_structure,
+        "futures_contract": futures_contract,
+        "futures_margin": futures_margin,
         "pipeline": pipeline_summary,
         "mode": mode_summary,
         "assets": asset_rows,
@@ -426,6 +448,8 @@ async def get_health_summary(
         "producers": ops_summary["producers"],
         "forecasting": ops_summary["forecasting"],
         "market_structure": ops_summary["market_structure"],
+        "futures_contract": ops_summary["futures_contract"],
+        "futures_margin": ops_summary["futures_margin"],
         "pipeline": ops_summary["pipeline"],
         "mode": ops_summary["mode"],
     }

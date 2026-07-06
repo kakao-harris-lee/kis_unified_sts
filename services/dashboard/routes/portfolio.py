@@ -408,6 +408,19 @@ def _hedge_summary(redis: Any) -> dict[str, Any] | None:
         "reason": _coerce_text(payload.get("reason")),
         "degraded": _coerce_bool(payload.get("degraded")) or False,
         "missing_components": _parse_json_list(payload.get("missing_components")),
+        # HedgeAdvisorV2 feasibility fields (append-only; absent on pre-v2
+        # publications → None, so the card degrades gracefully).
+        "target_hedge_ratio": _coerce_float(payload.get("target_hedge_ratio")),
+        "current_hedge_ratio": _coerce_float(payload.get("current_hedge_ratio")),
+        "delta_short_contracts": _coerce_int(payload.get("delta_short_contracts")),
+        "max_contracts_by_margin": _coerce_int(payload.get("max_contracts_by_margin")),
+        "margin_after_hedge_pct": _coerce_float(payload.get("margin_after_hedge_pct")),
+        "estimated_slippage_ticks": _coerce_float(
+            payload.get("estimated_slippage_ticks")
+        ),
+        "roll_adjustment": _coerce_text(payload.get("roll_adjustment")),
+        "execution_feasibility": _coerce_text(payload.get("execution_feasibility")),
+        "operator_action": _coerce_text(payload.get("operator_action")),
         "asof": asof.isoformat() if asof else None,
         "age_s": age_s,
         "stale": age_s is not None and age_s > _HEDGE_STALE_SECONDS,

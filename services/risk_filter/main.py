@@ -36,6 +36,10 @@ _STREAM_TTL_SECONDS = 86400
 # gate (roadmap §5.2 track C). Optional — absent on legacy candidates.
 _ENTRY_SIZE_FACTOR_FIELD = b"entry_size_factor"
 _MARKET_RISK_GATE_FIELD = b"market_risk_gate"
+# Structured futures-context trace (roadmap hardening Phase C). Attached by the
+# decision_engine; forwarded verbatim to the final stream for the /signals
+# trace lane (same passthrough contract as market_risk_gate). Optional.
+_FUTURES_CONTEXT_FIELD = b"futures_context"
 
 
 def _entry_size_factor(fields: dict[bytes, bytes]) -> float:
@@ -212,6 +216,16 @@ class RiskFilterDaemon(StreamStage):
                         gate_trace.decode("utf-8", errors="replace")
                         if isinstance(gate_trace, bytes)
                         else str(gate_trace)
+                    )
+                context_trace = fields.get(_FUTURES_CONTEXT_FIELD)
+                if context_trace:
+                    # Forward the Phase C futures-context trace unchanged —
+                    # fixed ``futures_context`` key contract for the /signals
+                    # trace lane (futures_monitor serializers passthrough).
+                    fields_out["futures_context"] = (
+                        context_trace.decode("utf-8", errors="replace")
+                        if isinstance(context_trace, bytes)
+                        else str(context_trace)
                     )
                 await self.redis.xadd(
                     self.final_stream,

@@ -1,0 +1,53 @@
+# Futures contract / roll-state read-model (shadow, read-only).
+#
+# Source: docs/plans/2026-07-05-futures-market-context-hedge-risk-hardening.md
+# §4.1 / §6. Published by services/futures_contract/main.py as a single Redis
+# contract (futures:contract:latest hash + stream:futures.contract) so new
+# entry, hedge, and night-capture all read the SAME front/next/night codes and
+# roll classification. This lane touches NO order path.
+#
+# Roll policy (days_to_expiry, KST trade-date basis):
+#   dte > pre_roll_days                          -> normal
+#   block_front_new_entries_days < dte <= pre    -> pre_roll
+#   0 < dte <= block_front_new_entries_days      -> roll_required
+#   dte <= 0 (or expiry day if require_roll...)  -> expired
+#   night master missing (when required)         -> unknown
+
+futures_contract:
+  enabled: true
+
+  # Product whose contract state is published. mini = 미니 KOSPI200 (A05/105),
+  # kospi200 = 풀 KOSPI200 (A01/101). Env-overridable for operator switches.
+  product: "${FUTURES_TRADING_PRODUCT:mini}"
+
+  roll:
+    # Front new-entry begins to warn once inside this many days of expiry.
+    pre_roll_days: 5
+    # Front new-entry is blocked once inside this many days of expiry.
+    block_front_new_entries_days: 2
+    # Treat the expiry day itself as expired (block front new-entry + hedge).
+    require_roll_on_expiry_day: true
+    # Liquidity-based front/next flip (not implemented yet; calendar only).
+    liquidity_flip_enabled: false
+
+  night_master:
+    # When true, the night front symbol is REQUIRED; a missing/stale night
+    # code degrades roll_state to unknown (live fail-closed downstream).
+    enabled: true
+    # Age (calendar days) after which a manually-set night code is stale.
+    stale_after_days: 20
+    # Allow operator manual_override of the night symbol.
+    manual_override_allowed: true
+    # Manually-maintained night front symbol (8-char). Kept in sync with
+    # config/night_futures.yaml::night_close_capture.tr_key on contract roll.
+    # Empty -> resolved from the night collector config at publish time.
+    night_front_symbol: ""
+    night_next_symbol: ""
+
+  redis:
+    latest_key: "futures:contract:latest"
+    latest_ttl_seconds: 86400          # 24h (48h fallback allowed on close/premarket)
+    latest_ttl_fallback_seconds: 172800
+    stream_key: "stream:futures.contract"
+    stream_maxlen: 5000
+    stream_ttl_seconds: 86400

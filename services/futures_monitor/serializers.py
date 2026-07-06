@@ -70,6 +70,10 @@ def parse_final_signal(fields: dict[bytes, bytes]) -> dict[str, Any]:
         # decision_engine, forwarded verbatim by risk_filter — roadmap
         # Phase 2D). Passthrough-only: None on pre-gate records.
         "market_risk_gate": _json_dict(_s(fields, "market_risk_gate")),
+        # Structured futures-context trace (context_trace_payload JSON attached
+        # by decision_engine — roadmap hardening Phase C). Passthrough-only:
+        # None on records published before the context lane was wired.
+        "futures_context": _json_dict(_s(fields, "futures_context")),
     }
 
 
@@ -153,4 +157,10 @@ def build_signal_dict(sig: dict[str, Any]) -> dict[str, Any]:
         # the top-level ``market_risk_gate`` key first. Attached only when
         # present so pre-gate records keep their exact legacy shape.
         data["market_risk_gate"] = gate
+    context = sig.get("futures_context")
+    if isinstance(context, dict):
+        # Phase C structured-context trace (roll/basis/foreign/margin +
+        # degraded). Attached only when present so pre-context records keep
+        # their exact legacy shape.
+        data["futures_context"] = context
     return data

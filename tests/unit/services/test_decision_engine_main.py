@@ -172,6 +172,75 @@ async def test_publish_logs_signal_published_audit_record(
 
 
 @pytest.mark.asyncio
+async def test_publish_attaches_futures_context_trace_when_wired(redis):
+    import json
+
+    import fakeredis
+
+    sync = fakeredis.FakeStrictRedis(decode_responses=True)
+    sync.hset(
+        "futures:context:latest",
+        mapping={
+            "roll_state": "pre_roll",
+            "days_to_expiry": "4",
+            "new_entry_front_allowed": "true",
+            "basis_regime": "contango",
+            "foreign_flow_regime": "buy",
+            "market_risk_band": "ELEVATED",
+            "margin_risk_level": "watch",
+            "margin_usage_pct": "0.5",
+            "degraded": "false",
+            "asof_ts": "2026-07-01T10:00:00",
+        },
+    )
+    daemon = DecisionEngineDaemon(
+        redis=redis,
+        setups=[],
+        context_provider=lambda: None,
+        candidate_stream=CANDIDATE_STREAM,
+        candidate_maxlen=1000,
+        tick_interval_seconds=0.001,
+        futures_context_redis=sync,
+    )
+    await daemon._publish(_AlwaysSetup().check(_ctx()))
+
+    entries = await redis.xrange(CANDIDATE_STREAM)
+    trace = json.loads(entries[0][1][b"futures_context"].decode())
+    assert trace["roll_state"] == "pre_roll"
+    assert trace["days_to_expiry"] == 4
+    assert trace["basis_regime"] == "contango"
+    assert trace["margin_risk_level"] == "watch"
+    assert trace["degraded"] is False
+
+
+@pytest.mark.asyncio
+async def test_publish_no_futures_context_field_when_unwired(redis, context_provider):
+    daemon = _make_daemon(redis=redis, setups=[], context_provider=context_provider)
+    await daemon._publish(_AlwaysSetup().check(_ctx()))
+    entries = await redis.xrange(CANDIDATE_STREAM)
+    assert b"futures_context" not in entries[0][1]
+
+
+@pytest.mark.asyncio
+async def test_publish_futures_context_missing_key_is_noop(redis):
+    import fakeredis
+
+    sync = fakeredis.FakeStrictRedis(decode_responses=True)  # empty — no key
+    daemon = DecisionEngineDaemon(
+        redis=redis,
+        setups=[],
+        context_provider=lambda: None,
+        candidate_stream=CANDIDATE_STREAM,
+        candidate_maxlen=1000,
+        tick_interval_seconds=0.001,
+        futures_context_redis=sync,
+    )
+    await daemon._publish(_AlwaysSetup().check(_ctx()))
+    entries = await redis.xrange(CANDIDATE_STREAM)
+    assert b"futures_context" not in entries[0][1]
+
+
+@pytest.mark.asyncio
 async def test_publish_does_not_log_success_when_ttl_refresh_fails(
     redis, context_provider, caplog, monkeypatch
 ):

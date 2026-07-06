@@ -36,9 +36,11 @@ from typing import Any
 from shared.portfolio.hedge import (
     BetaEstimate,
     HedgeAdvice,
+    HedgeAdviceV2,
     HedgeAdvisorConfig,
-    advice_to_latest_fields,
+    advice_v2_to_latest_fields,
     compute_hedge_advice,
+    compute_hedge_advice_v2,
     estimate_beta,
     is_price_fresh,
     product_multipliers,
@@ -203,6 +205,32 @@ def _parse_float(value: Any) -> float | None:
     return result if result == result else None
 
 
+def _parse_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _parse_int(value: Any) -> int | None:
+    result = _parse_float(value)
+    return None if result is None else int(result)
+
+
+def _parse_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = _parse_str(value)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if lowered in {"true", "1", "yes"}:
+        return True
+    if lowered in {"false", "0", "no"}:
+        return False
+    return None
+
+
 def _parse_kst_naive(value: Any) -> datetime | None:
     if not value:
         return None
@@ -282,12 +310,69 @@ def build_betas(
 # ---------------------------------------------------------------------------
 
 
-def publish_advice(redis: Any, config: HedgeAdvisorConfig, advice: HedgeAdvice) -> None:
+def read_operational_inputs(
+    redis: Any, config: HedgeAdvisorConfig
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(contract, margin) hashes from the Phase A/B read-models (read-only).
+
+    Read as plain Redis hashes — this keeps the advisory-only import guard
+    intact (no order-path import). A missing/failed read returns ``{}`` and the
+    v2 layer degrades to a no-op recommendation.
+    """
+    contract: dict[str, Any] = {}
+    margin: dict[str, Any] = {}
+    try:
+        contract = dict(redis.hgetall(config.redis.contract_latest_key) or {})
+    except Exception as exc:  # noqa: BLE001 — degraded, not fatal
+        logger.warning("futures contract read failed: %s", exc)
+    try:
+        margin = dict(redis.hgetall(config.redis.margin_latest_key) or {})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("futures margin read failed: %s", exc)
+    return contract, margin
+
+
+def build_advice_v2(
+    advice: HedgeAdvice,
+    config: HedgeAdvisorConfig,
+    contract: Mapping[str, Any],
+    margin: Mapping[str, Any],
+) -> HedgeAdviceV2:
+    """Fold the base advice + Phase A/B hashes into a v2 feasibility view.
+
+    No published depth/slippage read-model exists yet, so
+    ``estimated_slippage_ticks`` is None (the liquidity branch is skipped).
+    """
+    return compute_hedge_advice_v2(
+        base=advice,
+        config=config,
+        roll_state=_parse_str(contract.get("roll_state")),
+        hedge_front_allowed=_parse_bool(contract.get("hedge_front_allowed")),
+        margin_risk_level=_parse_str(margin.get("risk_level")),
+        margin_usage_pct=_parse_float(margin.get("margin_usage_pct")),
+        max_additional_contracts=_parse_int(margin.get("max_additional_contracts")),
+        per_contract_initial_margin_krw=_parse_float(
+            margin.get("per_contract_initial_margin_krw")
+        ),
+        account_equity_krw=_parse_float(margin.get("account_equity_krw")),
+        initial_margin_required_krw=_parse_float(
+            margin.get("initial_margin_required_krw")
+        ),
+        estimated_slippage_ticks=None,
+        contract_state_present=bool(contract),
+        margin_state_present=bool(margin),
+    )
+
+
+def publish_advice(
+    redis: Any, config: HedgeAdvisorConfig, advice: HedgeAdviceV2
+) -> None:
     """Publish ``portfolio:hedge:latest`` + ``stream:portfolio.hedge``.
 
-    Hash field names are a FIXED contract with the 4B UI lane — do not rename.
+    Base 18 field names are a FIXED contract with the 4B UI lane; the 9 v2
+    fields are append-only (existing consumers unaffected).
     """
-    fields = advice_to_latest_fields(advice)
+    fields = advice_v2_to_latest_fields(advice)
     redis_cfg = config.redis
     # delete-then-hset so stale fields from a previous publish never linger.
     redis.delete(redis_cfg.latest_key)
@@ -467,7 +552,28 @@ def run_hedge_advice(
         json.dumps(list(advice.missing_components), ensure_ascii=False),
     )
 
-    publish_advice(redis, config, advice)
+    # HedgeAdvisorV2 feasibility layer — read the Phase A/B operational
+    # read-models (plain hashes; no order-path import) and publish the base
+    # 18 fields + 9 append-only v2 fields.
+    contract, margin = read_operational_inputs(redis, config)
+    advice_v2 = build_advice_v2(advice, config, contract, margin)
+    logger.info(
+        "hedge advice v2 %s: target_ratio=%s current_ratio=%s delta=%d"
+        " feasibility=%s operator_action=%s roll_adj=%s",
+        trade_date,
+        advice_v2.target_hedge_ratio,
+        (
+            "-"
+            if advice_v2.current_hedge_ratio is None
+            else f"{advice_v2.current_hedge_ratio:.2f}"
+        ),
+        advice_v2.delta_short_contracts,
+        advice_v2.execution_feasibility,
+        advice_v2.operator_action,
+        advice_v2.roll_adjustment,
+    )
+
+    publish_advice(redis, config, advice_v2)
 
     try:
         recorded, newly_active = record_advice_if_changed(ledger, advice, trade_date)

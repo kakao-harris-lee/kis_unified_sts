@@ -1,0 +1,43 @@
+# Futures structured market context v2 (read-model, shadow).
+#
+# Source: docs/plans/2026-07-05-futures-market-context-hedge-risk-hardening.md
+# §4.3 / §C. Published by services/futures_context/main.py as
+# futures:context:latest (hash) + stream:futures.context. This is a STRUCTURED
+# context for strategies/gates to read — NOT the LLM narrative MarketContext.
+# It composes existing read-models (contract + market structure + market risk +
+# margin) into one snapshot; it computes NO new market data and touches NO order
+# path.
+#
+# Naming discipline (§3.2): the composite 0-100 Market Risk Score is published
+# here as `market_risk_score` — never confused with the LLM MarketContext's own
+# `risk_score`.
+
+futures_context:
+  enabled: true
+  product: "${FUTURES_TRADING_PRODUCT:mini}"
+
+  # Upstream read-model keys (read-only inputs; published by other lanes).
+  inputs:
+    contract_latest_key: "futures:contract:latest"    # Phase A
+    structure_latest_key: "market:structure:latest"   # market_structure_collector
+    risk_latest_key: "market:risk:latest"             # market_risk_engine
+    margin_latest_key: "futures:risk:latest"          # Phase B
+
+  # basis_regime classification on basis_dev (index points from fair value).
+  # |dev| < fair_band -> fair; then mild -> (deep_)contango/backwardation.
+  basis_regime:
+    fair_band_points: 0.25
+    deep_band_points: 1.0
+
+  # foreign_flow_regime classification on fut_foreign_net_qty (today's net
+  # contracts). |qty| < neutral -> neutral; then -> (strong_)buy/sell.
+  foreign_flow_regime:
+    neutral_qty: 2000
+    strong_qty: 8000
+
+  redis:
+    latest_key: "futures:context:latest"
+    latest_ttl_seconds: 86400          # 24h
+    stream_key: "stream:futures.context"
+    stream_maxlen: 5000
+    stream_ttl_seconds: 86400

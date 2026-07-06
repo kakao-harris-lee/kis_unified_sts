@@ -70,8 +70,35 @@ redis:
   # Inputs (read-only): published by market_structure_collector / market_risk_engine.
   structure_latest_key: "market:structure:latest"
   risk_latest_key: "market:risk:latest"
+  # HedgeAdvisorV2 operational inputs (read-only): Phase A contract state +
+  # Phase B margin risk. Read as plain hashes — the hedge lane imports NO
+  # order path (pinned by test_hedge.py::TestExecutionImportGuard).
+  contract_latest_key: "futures:contract:latest"
+  margin_latest_key: "futures:risk:latest"
 
 # --- Telegram advisory (one message when advisory_active newly turns on).
 alerts:
   enabled: true
   domain: "briefing"
+
+# --- HedgeAdvisorV2 feasibility layer (append-only; advisory ONLY).
+# docs/plans/2026-07-05-futures-market-context-hedge-risk-hardening.md §4.4/§6.
+# Constrains the recommended contract count by a band-driven target hedge
+# ratio, the margin cap (Phase B futures:risk:latest), roll state (Phase A
+# futures:contract:latest), and an estimated-slippage limit. Still no orders:
+# this only shapes the recommendation the operator reads.
+risk_adjustment:
+  # Target hedge ratio (0-1) by market-risk band. Bands must match
+  # advisory.band_order; an absent band falls back to 0.0 (no hedge).
+  target_hedge_ratio_by_band:
+    LOW: 0.0
+    NEUTRAL: 0.0
+    ELEVATED: 0.25
+    HIGH: 0.50
+    CRITICAL: 0.75
+  # Above this estimated entry slippage, the added delta is capped/limited.
+  max_estimated_slippage_ticks: 2.0
+  # Require the Phase A/B read-models; a missing one degrades the v2 view to
+  # a no-op recommendation (operator_action=review) rather than guessing.
+  require_margin_state: true
+  require_contract_state: true
