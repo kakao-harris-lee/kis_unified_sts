@@ -30,7 +30,6 @@ from shared.indicators.momentum import RSICalculator
 from shared.indicators.reference import (
     ADXCalculator,
     ATRCalculator,
-    BollingerBandsCalculator,
     StochRSICalculator,
     wilder_rma,
     wilder_rsi,
@@ -98,15 +97,6 @@ _ADX_RUNTIME_WILDER = 31.719136  # from test_calc_parity (runtime _calc_adx)
 # yields the canonical Wilder ADX (== _ADX_REF) instead of the old defective
 # single-bar DX (15.873272).
 _ADX_DETECTOR_WILDER = 31.634448  # was 15.873272 (defective single-bar DX)
-
-# Bollinger (last bar).
-_BB_LOWER_DDOF1 = 99.902454
-_BB_MID = 107.210789
-_BB_UPPER_DDOF1 = 114.519124
-_BB_LOWER_DDOF0 = 100.087505
-_BB_UPPER_DDOF0 = 114.334073
-_BB_BANDWIDTH = 0.136336
-_BB_PERCENT_B = 0.447245
 
 # StochRSI (last bar) + prior-bar %K.
 _STOCHRSI_K = 11.901304
@@ -253,83 +243,6 @@ def test_adx_flat_market_is_zero() -> None:
     adx = out["adx"].dropna()
     if not adx.empty:
         assert float(adx.iloc[-1]) == pytest.approx(0.0, abs=1e-9)
-
-
-# ---------------------------------------------------------------------------
-# 2) Bollinger -- ddof knob
-# ---------------------------------------------------------------------------
-
-
-def test_bollinger_ddof1_snapshot_and_ordering(frame: pd.DataFrame) -> None:
-    """Default (ddof=1) reproduces the repo convention with correct ordering."""
-    out = BollingerBandsCalculator(period=20, num_std=2.0, ddof=1).calculate(frame)
-    lower = float(out["bb_lower"].iloc[-1])
-    mid = float(out["bb_middle"].iloc[-1])
-    upper = float(out["bb_upper"].iloc[-1])
-
-    assert lower < mid < upper
-    assert lower == pytest.approx(_BB_LOWER_DDOF1, abs=_TOL)
-    assert mid == pytest.approx(_BB_MID, abs=_TOL)
-    assert upper == pytest.approx(_BB_UPPER_DDOF1, abs=_TOL)
-
-
-def test_bollinger_matches_runtime_calc_bb(
-    frame: pd.DataFrame, ohlcv: dict[str, list[float]]
-) -> None:
-    """Reference BB (ddof=1) matches runtime ``_calc_bb`` (also ddof=1).
-
-    A ``must-agree`` pair: both use period=20, num_std=2.0, sample std. This
-    proves the reference is a drop-in for the runtime Bollinger convention.
-    """
-    from services.trading.indicator_calculations import IndicatorCalculationMixin
-
-    class _Host(IndicatorCalculationMixin):
-        def __init__(self) -> None:
-            self.bb_period = 20
-            self.bb_std = 2.0
-            self.rsi_period = 14
-
-    rt_lower, rt_mid, rt_upper = _Host()._calc_bb(ohlcv["close"])
-
-    out = BollingerBandsCalculator(period=20, num_std=2.0, ddof=1).calculate(frame)
-    assert float(out["bb_lower"].iloc[-1]) == pytest.approx(rt_lower, abs=1e-6)
-    assert float(out["bb_middle"].iloc[-1]) == pytest.approx(rt_mid, abs=1e-6)
-    assert float(out["bb_upper"].iloc[-1]) == pytest.approx(rt_upper, abs=1e-6)
-
-
-def test_bollinger_ddof0_differs_from_ddof1(ohlcv: dict[str, list[float]]) -> None:
-    """Population std (ddof=0) yields tighter bands and is distinct from ddof=1."""
-    out0 = BollingerBandsCalculator(period=20, num_std=2.0, ddof=0).calculate(
-        pd.DataFrame(ohlcv)
-    )
-    lower0 = float(out0["bb_lower"].iloc[-1])
-    upper0 = float(out0["bb_upper"].iloc[-1])
-
-    assert lower0 == pytest.approx(_BB_LOWER_DDOF0, abs=_TOL)
-    assert upper0 == pytest.approx(_BB_UPPER_DDOF0, abs=_TOL)
-    # ddof=0 bands are strictly inside ddof=1 bands (population std < sample std).
-    assert lower0 > _BB_LOWER_DDOF1
-    assert upper0 < _BB_UPPER_DDOF1
-
-
-def test_bollinger_ratio_features(frame: pd.DataFrame) -> None:
-    """Bandwidth and %B are emitted and take sane, snapshot-stable values."""
-    out = BollingerBandsCalculator(period=20, num_std=2.0, ddof=1).calculate(frame)
-    bandwidth = float(out["bb_bandwidth"].iloc[-1])
-    percent_b = float(out["bb_percent_b"].iloc[-1])
-
-    assert bandwidth > 0.0
-    assert bandwidth == pytest.approx(_BB_BANDWIDTH, abs=_TOL)
-    assert percent_b == pytest.approx(_BB_PERCENT_B, abs=_TOL)
-    # %B in [0, 1] means price is inside the bands (true for this sample).
-    assert 0.0 <= percent_b <= 1.0
-
-
-def test_bollinger_warmup_is_nan(frame: pd.DataFrame) -> None:
-    """Rows before a full window are NaN (min_periods=period, no partial bands)."""
-    out = BollingerBandsCalculator(period=20).calculate(frame)
-    assert out["bb_middle"].iloc[:19].isna().all()
-    assert not math.isnan(out["bb_middle"].iloc[19])
 
 
 # ---------------------------------------------------------------------------

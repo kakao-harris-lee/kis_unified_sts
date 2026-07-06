@@ -56,16 +56,6 @@ from shared.indicators.engine import (
 logger = logging.getLogger(__name__)
 
 
-def ema(series: pd.Series, span: int) -> pd.Series:
-    """Exponential Moving Average (adjust=False for HTS compatibility).
-
-    Public EMA primitive (part of this module's API). The indicator calculators
-    themselves no longer use it — their math is delegated to the engine — but it
-    is kept for external callers.
-    """
-    return series.ewm(span=span, adjust=False).mean()
-
-
 # The indicator math lives in the engine's MomentumCompatBackend
 # (shared/indicators/engine/momentum_backend.py) — the exact pandas conventions,
 # reproduced bit-for-bit. These calculator classes are thin, value-preserving

@@ -14,10 +14,6 @@ regime paths:
       returns a single, SMA-smoothed DX (no directional-movement rule, no final
       DX smoothing). This class is the correct implementation the detector should
       delegate to.
-    * ``BollingerBandsCalculator`` -- Bollinger Bands with an explicit ``ddof``
-      knob. The repo convention is sample std (``ddof=1``, matching Polars
-      ``rolling_std``); most third-party libraries default to population std
-      (``ddof=0``). Making the convention explicit prevents silent drift.
     * ``StochRSICalculator``       -- Stochastic RSI computed on a Wilder RSI
       series. There is currently NO producer of ``stochrsi_k``/``stochrsi_d`` in
       the codebase even though ``StochRSITrendEntry`` consumes them, so that
@@ -316,101 +312,6 @@ class ADXCalculator:
         if valid.size == 0:
             return None
         return float(valid[-1])
-
-
-# ---------------------------------------------------------------------------
-# Bollinger Bands -- ddof-parameterized
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class BollingerConfig:
-    """Bollinger Bands configuration.
-
-    Attributes:
-        period: Moving-average / rolling-std window (default 20).
-        num_std: Band width in standard deviations (default 2.0).
-        ddof: Delta degrees of freedom for the rolling std. Default 1 (sample
-            std) matches the repo convention and Polars ``rolling_std``; pass 0
-            for population std (the common third-party default).
-    """
-
-    period: int = 20
-    num_std: float = 2.0
-    ddof: int = 1
-
-
-class BollingerBandsCalculator:
-    """Bollinger Bands with an explicit ``ddof`` convention knob.
-
-    Formula:
-        mid   = SMA(close, period)
-        sigma = rolling_std(close, period, ddof)
-        upper = mid + num_std * sigma
-        lower = mid - num_std * sigma
-
-    Convention note: the repo standard is ``ddof=1`` (sample standard
-    deviation), matching ``services/trading/indicator_calculations._calc_bb``
-    and Polars ``rolling_std``. TA-Lib / numpy default to ``ddof=0``
-    (population). This class defaults to the repo convention but exposes
-    ``ddof`` so a caller can reproduce either family exactly.
-
-    Also emits ``bb_bandwidth`` and ``bb_percent_b`` (ratio features that
-    transfer across contract sizes, e.g. F200 <-> mini).
-    """
-
-    def __init__(self, period: int = 20, num_std: float = 2.0, ddof: int = 1):
-        self.config = BollingerConfig(period=period, num_std=num_std, ddof=ddof)
-
-    def calculate(
-        self,
-        df: pd.DataFrame,
-        *,
-        lookahead_guard: Any = None,
-        context_timestamp: Any = None,
-        context_info: str | None = None,
-    ) -> pd.DataFrame:
-        """Add ``bb_lower``, ``bb_middle``, ``bb_upper``, ``bb_bandwidth``,
-        ``bb_percent_b`` columns to ``df``.
-
-        Args:
-            df: DataFrame with a ``close`` column.
-            lookahead_guard: Optional ``LookaheadGuard`` for backtest assertions.
-            context_timestamp: Reference timestamp for the guard.
-            context_info: Optional context label for guard messages.
-
-        Returns:
-            The same DataFrame with Bollinger columns added.
-        """
-        close = df["close"]
-        if lookahead_guard is not None and context_timestamp is not None:
-            timestamps = df["timestamp"].tolist() if "timestamp" in df.columns else None
-            lookahead_guard.check(
-                close.tolist(),
-                timestamps,
-                context_timestamp,
-                context_info or "reference:bollinger_close",
-            )
-
-        period = self.config.period
-        mid = close.rolling(window=period, min_periods=period).mean()
-        sigma = close.rolling(window=period, min_periods=period).std(
-            ddof=self.config.ddof
-        )
-        upper = mid + self.config.num_std * sigma
-        lower = mid - self.config.num_std * sigma
-
-        width = upper - lower
-        with np.errstate(divide="ignore", invalid="ignore"):
-            bandwidth = np.where(mid != 0.0, width / mid, np.nan)
-            percent_b = np.where(width != 0.0, (close - lower) / width, np.nan)
-
-        df["bb_lower"] = lower
-        df["bb_middle"] = mid
-        df["bb_upper"] = upper
-        df["bb_bandwidth"] = bandwidth
-        df["bb_percent_b"] = percent_b
-        return df
 
 
 # ---------------------------------------------------------------------------

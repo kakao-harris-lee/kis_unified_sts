@@ -19,32 +19,7 @@ from shared.indicators.momentum import (
     StochasticCalculator,
     TRIXCalculator,
     calculate_all_momentum,
-    ema,
 )
-
-# =============================================================================
-# EMA helper
-# =============================================================================
-
-
-class TestEMA:
-    def test_ema_basic(self):
-        """EMA with adjust=False produces correct output for simple series."""
-        s = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0])
-        result = ema(s, span=3)
-        # adjust=False EMA with span=3 → alpha = 2/(3+1) = 0.5
-        # EMA[0]=1.0, EMA[1]=0.5*2+0.5*1=1.5, EMA[2]=0.5*3+0.5*1.5=2.25, ...
-        assert result.iloc[0] == pytest.approx(1.0)
-        assert result.iloc[1] == pytest.approx(1.5)
-        assert result.iloc[2] == pytest.approx(2.25)
-
-    def test_ema_constant_series(self):
-        """EMA of constant series is that constant."""
-        s = pd.Series([5.0] * 20)
-        result = ema(s, span=10)
-        for val in result:
-            assert val == pytest.approx(5.0)
-
 
 # =============================================================================
 # TRIX Calculator
