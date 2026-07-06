@@ -40,6 +40,8 @@ from shared.indicators.engine.registry import (
     daily_indicator_engine,
     default_engine,
     momentum_indicator_engine,
+    runtime_indicator_convention,
+    runtime_indicator_engine,
     streaming_indicator_engine,
 )
 from shared.indicators.engine.shadow import ShadowDelta
@@ -88,6 +90,8 @@ __all__ = [
     "default_engine",
     "flat_key",
     "momentum_indicator_engine",
+    "runtime_indicator_convention",
+    "runtime_indicator_engine",
     "streaming_indicator_engine",
     "window_from_bars",
     "window_from_records",

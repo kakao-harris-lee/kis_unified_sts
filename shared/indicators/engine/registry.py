@@ -154,3 +154,40 @@ def default_engine() -> IndicatorEngine:
         engine.register(TALibBackend())
     engine.register(NumpyBackend())
     return engine
+
+
+# Runtime indicator convention gate (Phase C). Selects which engine the runtime
+# ``_calc_*`` delegates use. Default ``streaming`` preserves the historical live
+# values bit-for-bit (zero live impact); flip to ``talib`` — only after the
+# data-server A/B backtest gate in
+# ``docs/runbooks/streaming-talib-convergence-gate.md`` passes — to converge the
+# runtime onto the same TA-Lib standard the no-code builder already uses.
+# Mirrors the StochRSI default-off precedent (config-gated, additive).
+_RUNTIME_CONVENTION_ENV = "STS_INDICATOR_CONVENTION"
+
+
+def runtime_indicator_convention() -> str:
+    """Return the active runtime indicator convention (``streaming`` | ``talib``).
+
+    Read from the ``STS_INDICATOR_CONVENTION`` env var; defaults to ``streaming``
+    (historical live behavior). Any unrecognized value falls back to ``streaming``
+    so a typo can never silently change live signal values.
+    """
+    import os
+
+    value = os.environ.get(_RUNTIME_CONVENTION_ENV, "streaming").strip().lower()
+    return "talib" if value == "talib" else "streaming"
+
+
+def runtime_indicator_engine() -> IndicatorEngine:
+    """Return the engine the runtime ``_calc_*`` delegates should use.
+
+    ``streaming`` (default) → :func:`streaming_indicator_engine` (historical
+    values). ``talib`` → :func:`default_engine` (TA-Lib standard, converged with
+    the builder). The convention is process-wide and read per call so a restart
+    with the env flag set is all that is needed to switch; the underlying engines
+    are cached singletons / cheap to build.
+    """
+    if runtime_indicator_convention() == "talib":
+        return default_engine()
+    return streaming_indicator_engine()

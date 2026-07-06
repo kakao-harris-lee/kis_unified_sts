@@ -3,11 +3,17 @@
 The RSI / Bollinger / MFI / ADX / Stochastic / RVOL math no longer lives here —
 it was retired into the engine's :class:`StreamingCompatBackend`
 (``shared/indicators/engine/streaming_backend.py``) so the platform has one place
-that computes each indicator. These ``_calc_*`` methods are now thin,
-value-preserving delegates to :func:`streaming_indicator_engine` (the runtime's
-convention set), keeping their exact signatures + None/sentinel contracts so every
-call site (``indicator_queries``) is unchanged. Bit-identity to the previous
-inline math is pinned by ``test_streaming_backend_golden.py``.
+that computes each indicator. These ``_calc_*`` methods are thin delegates to
+:func:`runtime_indicator_engine`, keeping their exact signatures + None/sentinel
+contracts so every call site (``indicator_queries``) is unchanged.
+
+:func:`runtime_indicator_engine` is the Phase C convention gate: by default it
+returns :func:`streaming_indicator_engine` (historical live values, bit-identity
+pinned by ``test_streaming_backend_golden.py``); with
+``STS_INDICATOR_CONVENTION=talib`` it returns :func:`default_engine` (TA-Lib
+standard, converged with the no-code builder). The flag is off by default so live
+values are unchanged until the data-server backtest gate
+(``docs/runbooks/streaming-talib-convergence-gate.md``) passes.
 
 The daily-EMA / high-N / ATR accessors below remain here: ATR already delegates to
 the canonical ``reference.ATRCalculator``; the daily trackers are stateful session
@@ -21,7 +27,7 @@ from collections import deque
 from shared.indicators.engine import (
     IndicatorSpec,
     OHLCVWindow,
-    streaming_indicator_engine,
+    runtime_indicator_engine,
     window_from_bars,
 )
 from shared.indicators.reference import ATRCalculator
@@ -40,7 +46,7 @@ class IndicatorCalculationMixin:
     def _calc_bb(self, closes: list[float]) -> tuple[float, float, float]:
         """Bollinger Bands (sample std, ddof=1) via the streaming-compat engine."""
         flat = (
-            streaming_indicator_engine()
+            runtime_indicator_engine()
             .compute(
                 IndicatorSpec.create(
                     "bollinger", {"period": self.bb_period, "std": self.bb_std}
@@ -60,7 +66,7 @@ class IndicatorCalculationMixin:
         if not closes:  # legacy _calc_rsi([]) -> 50.0 (len < period+1 branch)
             return 50.0
         flat = (
-            streaming_indicator_engine()
+            runtime_indicator_engine()
             .compute(
                 IndicatorSpec.create("rsi", {"period": self.rsi_period}),
                 _close_window(closes),
@@ -74,7 +80,7 @@ class IndicatorCalculationMixin:
         if not candles:
             return 1.0
         flat = (
-            streaming_indicator_engine()
+            runtime_indicator_engine()
             .compute(
                 IndicatorSpec.create(
                     "rvol",
@@ -240,7 +246,7 @@ class IndicatorCalculationMixin:
         if not candles:
             return 50.0, 50.0
         flat = (
-            streaming_indicator_engine()
+            runtime_indicator_engine()
             .compute(
                 IndicatorSpec.create(
                     "stochastic", {"k_period": period, "d_period": smooth}
@@ -256,7 +262,7 @@ class IndicatorCalculationMixin:
         if not candles:
             return None
         flat = (
-            streaming_indicator_engine()
+            runtime_indicator_engine()
             .compute(
                 IndicatorSpec.create("mfi", {"period": period}),
                 window_from_bars(candles),
@@ -272,7 +278,7 @@ class IndicatorCalculationMixin:
         if not candles:
             return None
         flat = (
-            streaming_indicator_engine()
+            runtime_indicator_engine()
             .compute(
                 IndicatorSpec.create("adx", {"period": period}),
                 window_from_bars(candles),
