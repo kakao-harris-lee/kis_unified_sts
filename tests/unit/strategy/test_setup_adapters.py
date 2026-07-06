@@ -298,13 +298,14 @@ class TestSetupAEntryAdapterHappyPath:
     async def test_signal_timestamp_is_utc_when_context_timestamp_is_naive(self):
         """Even a tz-naive context.timestamp must produce a tz-aware UTC signal.
 
-        Naive timestamps are treated as UTC internally.  09:30 KST = 00:30 UTC,
-        so we supply a naive UTC timestamp of 00:30 (= 09:30 KST) to stay
-        inside the Setup A valid window (10–90 min after open).
+        A naive context.timestamp is KST wall-clock for the session-window gate
+        (build_setup_market_context), so 09:30 sits inside Setup A's 10–90 min
+        window after the 08:45 open. The emitted signal timestamp is still
+        normalized to tz-aware UTC by decision_signal_to_orchestrator_signal.
         """
         adapter = _setup_a_adapter()
-        # Naive timestamp treated as UTC: 00:30 UTC = 09:30 KST — within valid window.
-        ts_naive = datetime(2026, 4, 23, 0, 30)
+        # Naive timestamp is KST wall-clock: 09:30 KST = 45 min after open (in window).
+        ts_naive = datetime(2026, 4, 23, 9, 30)
         context = EntryContext(
             market_data=_market_data_for_gap_reversion(
                 current_price=348.8,
@@ -559,11 +560,13 @@ class TestSetupCEntryAdapterHappyPath:
     async def test_signal_timestamp_utc_when_context_timestamp_is_naive(self):
         """Naive context.timestamp must still yield tz-aware UTC signal."""
         adapter = _setup_c_adapter()
-        # Naive UTC timestamp
-        ts_naive = datetime(2026, 4, 23, 0, 30)  # midnight UTC ≈ 09:30 KST
+        # Naive context.timestamp is KST wall-clock for the session window.
+        ts_naive = datetime(2026, 4, 23, 9, 30)  # 09:30 KST, 10 min after the event
         event = _make_event(
             impact_tier=1,
-            scheduled_at=datetime(2026, 4, 23, 0, 20, tzinfo=UTC),  # within window
+            scheduled_at=datetime(
+                2026, 4, 23, 0, 20, tzinfo=UTC
+            ),  # 09:20 KST, within window
         )
         context = EntryContext(
             market_data=_market_data_for_event_breakout(
