@@ -51,25 +51,6 @@ export async function executeStrategy(
   return apiPost<ExecuteResponse>("/api/strategies/execute", request);
 }
 
-export interface IndicatorsResponse {
-  indicators: Array<{
-    name: string;
-    label: string;
-    params: string[];
-    example: string;
-  }>;
-  variables: string[];
-  operators: {
-    comparison: string[];
-    crossover: string[];
-    logical: string[];
-  };
-}
-
-export async function listIndicators(): Promise<IndicatorsResponse> {
-  return apiGet<IndicatorsResponse>("/api/strategies/indicators");
-}
-
 export interface BuildRequest {
   name: string;
   buy_condition: string;
