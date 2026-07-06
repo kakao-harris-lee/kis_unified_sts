@@ -79,16 +79,27 @@ class TestToBool:
 
 
 def test_no_execution_import():
-    """coercion must stay stdlib-only so the hedge lane can import it."""
+    """coercion must stay stdlib-only so the hedge lane can import it.
+
+    Checked in a CLEAN subprocess: an in-process ``sys.modules`` scan is polluted
+    by any sibling test in the same xdist worker that already imported
+    ``shared.execution``, which made this assertion flaky (order-dependent).
+    A fresh interpreter that imports only ``shared.utils.coercion`` is hermetic.
+    """
+    import subprocess
     import sys
 
-    import shared.utils.coercion  # noqa: F401
-
-    bad = [
-        n
-        for n in sys.modules
-        if n == "shared.execution" or n.startswith("shared.execution.")
-    ]
-    assert bad == []
+    probe = (
+        "import sys, shared.utils.coercion\n"
+        "bad = [n for n in sys.modules "
+        "if n == 'shared.execution' or n.startswith('shared.execution.')]\n"
+        "assert not bad, bad\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True
+    )
+    assert (
+        result.returncode == 0
+    ), f"coercion pulled in shared.execution:\n{result.stderr}"
     # sanity: module uses math for isfinite
     assert math.isfinite(1.0)
