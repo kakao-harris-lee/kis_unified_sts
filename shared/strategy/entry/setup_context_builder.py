@@ -63,7 +63,14 @@ def build_setup_market_context(context: EntryContext) -> MarketContext | None:
     if timestamp is None:
         timestamp = datetime.now(UTC)
     if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=UTC)
+        # A naive timestamp is KST wall-clock time — this is the repo convention
+        # for backtest bars (session 08:45–15:45 KST) and matches the canonical
+        # to_kst/_to_kst helpers (shared/strategy/market_time.py, entry/gates.py).
+        # Mislabeling it UTC here shifted every backtest bar +9h, tripping the
+        # setups' minutes_since_open() time-window gate → 0 trades. Live is
+        # unaffected: the orchestrator always passes a tz-aware UTC timestamp,
+        # so this branch is only reached by the (KST-naive) backtest path.
+        timestamp = timestamp.replace(tzinfo=KST)
     timestamp_kst = timestamp.astimezone(KST)
 
     raw_events: list[Any] = (context.metadata or {}).get("scheduled_events", [])
