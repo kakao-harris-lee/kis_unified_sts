@@ -39,8 +39,15 @@ def record_recent_exit_cooldown(
     code = str(getattr(signal, "code", "") or getattr(closed, "code", "") or "")
     if not code:
         return
+    # Key on the POSITION's (entry) strategy, NOT the exit generator's name. The
+    # re-entry signal that must be blocked carries the entry strategy (e.g.
+    # "setup_d_vwap_reversion"), whereas the exit signal carries the exit
+    # generator's name (e.g. "setup_target_exit"). Under symbol_strategy scope,
+    # keying on the exit generator makes the recorded key never match the block
+    # key, so the guard silently no-ops — the 2026-07-07 futures churn (a 30-min
+    # stop_loss cooldown that failed to block 1-2 min re-entries).
     strategy = str(
-        getattr(signal, "strategy", "") or getattr(closed, "strategy", "") or ""
+        getattr(closed, "strategy", "") or getattr(signal, "strategy", "") or ""
     )
     key = reentry_guard_key(config, code, strategy)
 

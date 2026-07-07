@@ -39,24 +39,31 @@ class EntryReentryGuardConfig:
         reasons: dict[str, float] = {}
         if isinstance(raw_reasons, dict):
             for reason, seconds in raw_reasons.items():
-                if not isinstance(seconds, (int, float)):
+                # Coerce numeric strings — env-interpolated YAML (``${VAR:180}``)
+                # arrives as a string, so a strict isinstance check would disable
+                # the whole guard on any env-overridable cooldown.
+                try:
+                    value = float(seconds)
+                except (TypeError, ValueError):
                     raise TypeError(
                         "entry_reentry_guard.reason_cooldown_seconds values "
                         f"must be numeric, got {type(seconds)} for {reason}"
-                    )
-                if float(seconds) < 0:
+                    ) from None
+                if value < 0:
                     raise ValueError(
                         "entry_reentry_guard.reason_cooldown_seconds values "
                         f"must be non-negative, got {seconds} for {reason}"
                     )
-                reasons[str(reason).lower()] = float(seconds)
+                reasons[str(reason).lower()] = value
 
-        default_cooldown = raw.get("default_cooldown_seconds", 900.0)
-        if not isinstance(default_cooldown, (int, float)):
+        raw_default = raw.get("default_cooldown_seconds", 900.0)
+        try:
+            default_cooldown = float(raw_default)
+        except (TypeError, ValueError):
             raise TypeError(
                 "entry_reentry_guard.default_cooldown_seconds must be numeric"
-            )
-        if float(default_cooldown) < 0:
+            ) from None
+        if default_cooldown < 0:
             raise ValueError(
                 "entry_reentry_guard.default_cooldown_seconds must be non-negative"
             )

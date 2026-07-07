@@ -42,13 +42,19 @@ entry_reentry_guard:
     momentum_decay: 1800           # 30 min after failed momentum follow-through
     vwap_breakdown: 1800           # 30 min after structural intraday breakdown
     trailing_stop: 600             # 10 min after profit-protecting exit
-  # Futures override (merged when asset_class==futures). Shorter than stock —
-  # futures has more intraday opportunity, but a shake-out stop must NOT be
-  # followed by immediate re-entry (round-trip slippage churn). Setup A/C.
+  # Futures override (merged when asset_class==futures). SHORT cooldowns — the
+  # active futures setups are mean-reversion (Setup A/C/D), where the reversal
+  # that ends a losing streak IS the winning trade, so a long post-stop cooldown
+  # cuts the strategy's edge. On 2026-07-07 a 30-min stop_loss cooldown would
+  # have cut both reversal wins (10:40 +20, 14:28 +39) → net worse than nothing;
+  # a 3-min cooldown skips only the sub-3-min impulsive re-chases (all losers
+  # that day) and keeps the reversals (+10 vs −8 actual). Keep stop_loss <= ~3
+  # min; >4 min starts cutting fast reversals. See
+  # docs/superpowers/specs/2026-07-08-reentry-guard-fix.md.
   futures:
     default_cooldown_seconds: 600  # 10 min for ordinary exits (target/session)
     reason_cooldown_seconds:
-      stop_loss: 1800              # 30 min after a shake-out stop
+      stop_loss: ${FUTURES_REENTRY_STOP_LOSS_COOLDOWN_SECONDS:180}  # 3 min (was 1800 — cut reversals)
       momentum_decay: 900          # 15 min
       vwap_breakdown: 900          # 15 min
       trailing_stop: 600           # 10 min
