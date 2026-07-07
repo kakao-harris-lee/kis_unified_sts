@@ -82,9 +82,6 @@ def _ttl() -> dict[str, int]:
         "audit": _env_int(
             "STOCK_UNIVERSE_AUDIT_TTL_SECONDS", DEFAULT_AUDIT_TTL_SECONDS
         ),
-        "override_default": _env_int(
-            "STOCK_UNIVERSE_OVERRIDE_DEFAULT_TTL_SECONDS", DEFAULT_UNIVERSE_TTL_SECONDS
-        ),
         "source_stale": _env_int(
             "STOCK_UNIVERSE_SOURCE_STALE_SECONDS", DEFAULT_SOURCE_STALE_SECONDS
         ),
