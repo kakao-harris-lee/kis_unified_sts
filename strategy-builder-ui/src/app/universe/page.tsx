@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  Ban,
   CheckCircle2,
   ListFilter,
   Pin,
+  Plus,
   RefreshCcw,
   RotateCw,
   Trash2,
@@ -22,11 +22,14 @@ import { useToast } from "@/components/ui";
 import { universeApi } from "@/lib/dashboard/api";
 import type {
   UniverseOverridePayload,
+  UniverseResolveResponse,
   UniverseResponse,
   UniverseRow,
   UniverseSource,
 } from "@/lib/dashboard/universe";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
+
+const RESOLVE_DEBOUNCE_MS = 300;
 
 function fmtDateTime(v?: string | null): string {
   if (!v) return "-";
@@ -158,11 +161,11 @@ function SourceBadges({ sources }: { sources: string[] }) {
 
 function UniverseTable({
   rows,
-  onAction,
+  onPin,
   busy,
 }: {
   rows: UniverseRow[];
-  onAction: (row: UniverseRow, action: UniverseOverridePayload["action"]) => void;
+  onPin: (row: UniverseRow) => void;
   busy: boolean;
 }) {
   return (
@@ -223,33 +226,13 @@ function UniverseTable({
                 <div className="inline-flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => onAction(row, "include")}
+                    onClick={() => onPin(row)}
                     disabled={busy}
                     className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                     aria-label={`Pin ${row.code}`}
-                    title="Pin"
+                    title="Pin to My List"
                   >
                     <Pin className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onAction(row, "exclude")}
-                    disabled={busy}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                    aria-label={`Block ${row.code}`}
-                    title="Block"
-                  >
-                    <Ban className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onAction(row, "remove")}
-                    disabled={busy}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                    aria-label={`Remove override for ${row.code}`}
-                    title="Remove override"
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </div>
               </td>
@@ -268,13 +251,87 @@ function UniverseTable({
   );
 }
 
+function MyListTable({
+  rows,
+  onRemove,
+  busy,
+}: {
+  rows: UniverseRow[];
+  onRemove: (row: UniverseRow) => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
+        <caption className="sr-only">Manually added symbols (My List)</caption>
+        <thead className="bg-slate-50 dark:bg-slate-800/70">
+          <tr>
+            {["Symbol", "Entry", "Added", "Actions"].map((h, i) => (
+              <th
+                key={h}
+                scope="col"
+                className={`px-3 py-2 font-semibold text-slate-600 dark:text-slate-300 ${
+                  i === 0 ? "text-left" : "text-right"
+                }`}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          {rows.map((row) => (
+            <tr key={row.code} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+              <td className="px-3 py-3">
+                <SymbolLabel
+                  code={row.code}
+                  name={row.name}
+                  nameClassName="text-slate-900 dark:text-slate-100"
+                />
+              </td>
+              <td className="px-3 py-3 text-right">
+                <StateBadge
+                  ok={row.new_entries_allowed}
+                  label={row.new_entries_allowed ? "active" : "blocked"}
+                />
+              </td>
+              <td className="px-3 py-3 text-right text-xs text-slate-500">
+                {fmtDateTime(row.override_detail?.created_at)}
+              </td>
+              <td className="px-3 py-3 text-right">
+                <div className="inline-flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onRemove(row)}
+                    disabled={busy}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    aria-label={`Remove ${row.code} from My List`}
+                    title="Remove"
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td className="px-3 py-8 text-center text-sm text-slate-500" colSpan={4}>
+                아직 추가한 종목이 없습니다 — 위에서 추가하세요
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function UniversePage() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [symbol, setSymbol] = useState("");
-  const [name, setName] = useState("");
-  const [reason, setReason] = useState("");
-  const [ttlHours, setTtlHours] = useState(24);
+  const [addCode, setAddCode] = useState("");
+  const [resolved, setResolved] = useState<UniverseResolveResponse | null>(null);
 
   const {
     data,
@@ -295,7 +352,8 @@ export default function UniversePage() {
     onSuccess: (next) => {
       queryClient.setQueryData(["trading-universe"], next);
       toast.success("Universe updated");
-      setReason("");
+      setAddCode("");
+      setResolved(null);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Universe update failed");
@@ -313,43 +371,66 @@ export default function UniversePage() {
     },
   });
 
-  const activeCount = data?.codes.length ?? 0;
-  const marketDataCount = data?.market_data_codes.length ?? 0;
-  const blockedCount = useMemo(
-    () => data?.rows.filter((row) => row.override === "manual_exclude").length ?? 0,
+  const trimmedCode = addCode.trim();
+  const codeValid = /^[0-9]{6}$/.test(trimmedCode);
+  // Only trust `resolved` when it matches the code currently in the input;
+  // this avoids a stale name flashing while a new code's resolve is in flight.
+  const resolvedForCode = resolved && resolved.code === trimmedCode ? resolved : null;
+
+  useEffect(() => {
+    if (!codeValid) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      universeApi
+        .resolve(trimmedCode)
+        .then((r) => setResolved(r.data))
+        .catch(() => setResolved(null));
+    }, RESOLVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [trimmedCode, codeValid]);
+
+  const myList = useMemo(
+    () => (data?.rows ?? []).filter((row) => row.override === "manual_include"),
     [data],
   );
+  const systemRows = useMemo(
+    () => (data?.rows ?? []).filter((row) => row.override !== "manual_include"),
+    [data],
+  );
+
+  const activeCount = data?.codes.length ?? 0;
   const staleSources = data?.sources.filter((source) => source.stale).length ?? 0;
   const busy = mutation.isPending || recompute.isPending;
 
-  const submit = (
-    action: UniverseOverridePayload["action"],
-    selected?: Pick<UniverseRow, "code" | "name">,
-  ) => {
-    const targetSymbol = (selected?.code ?? symbol).trim();
-    const targetName = selected?.name ?? name;
-    if (!targetSymbol) {
-      toast.error("Symbol is required");
-      return;
-    }
-    if (action !== "remove" && !reason.trim()) {
-      toast.error("Reason is required");
+  const addToMyList = () => {
+    if (!codeValid) {
+      toast.error("6자리 종목코드를 입력하세요");
       return;
     }
     mutation.mutate({
-      action,
-      symbol: targetSymbol,
-      name: targetName || undefined,
-      reason: action === "remove" ? reason || undefined : reason.trim(),
-      ttl_seconds: Math.max(1, ttlHours) * 3600,
+      action: "include",
+      symbol: trimmedCode,
+      name: resolvedForCode?.name ?? undefined,
       operator: "dashboard",
     });
   };
 
-  const onRowAction = (row: UniverseRow, action: UniverseOverridePayload["action"]) => {
-    setSymbol(row.code);
-    setName(row.name ?? "");
-    submit(action, row);
+  const pin = (row: UniverseRow) => {
+    mutation.mutate({
+      action: "include",
+      symbol: row.code,
+      name: row.name ?? undefined,
+      operator: "dashboard",
+    });
+  };
+
+  const remove = (row: UniverseRow) => {
+    mutation.mutate({
+      action: "remove",
+      symbol: row.code,
+      operator: "dashboard",
+    });
   };
 
   return (
@@ -407,9 +488,9 @@ export default function UniversePage() {
           ) : null}
 
           <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-            <StatCell label="Active Entries" value={`${activeCount}/${data?.max_symbols ?? 0}`} />
-            <StatCell label="Market Data" value={`${marketDataCount}`} />
-            <StatCell label="Manual Blocks" value={`${blockedCount}`} />
+            <StatCell label="My List" value={`${myList.length}`} />
+            <StatCell label="System Found" value={`${systemRows.length}`} />
+            <StatCell label="Effective" value={`${activeCount}/${data?.max_symbols ?? 0}`} />
             <StatCell label="Stale Sources" value={`${staleSources}`} />
           </section>
 
@@ -425,89 +506,73 @@ export default function UniversePage() {
             </div>
           )}
 
-          <section className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="grid gap-2 lg:grid-cols-[140px_180px_1fr_120px_auto]">
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                Symbol
-                <input
-                  value={symbol}
-                  onChange={(event) => setSymbol(event.target.value)}
-                  className="mt-1 h-9 w-full rounded border border-slate-200 bg-white px-2 font-mono text-sm text-slate-900 outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                  placeholder="005930"
-                />
-              </label>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                Name
-                <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  className="mt-1 h-9 w-full rounded border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                  placeholder="삼성전자"
-                />
-              </label>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                Reason
-                <input
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                  className="mt-1 h-9 w-full rounded border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                  placeholder="operator override"
-                />
-              </label>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                Hours
-                <input
-                  type="number"
-                  min={1}
-                  max={168}
-                  value={ttlHours}
-                  onChange={(event) => setTtlHours(Number(event.target.value))}
-                  className="mt-1 h-9 w-full rounded border border-slate-200 bg-white px-2 text-right text-sm text-slate-900 outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                />
-              </label>
-              <div className="flex items-end gap-1">
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                My List
+              </h2>
+              <span className="text-sm text-slate-500">{myList.length} symbols</span>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                <div className="flex-1">
+                  <input
+                    value={addCode}
+                    onChange={(event) =>
+                      setAddCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 6))
+                    }
+                    inputMode="numeric"
+                    maxLength={6}
+                    className="h-10 w-full rounded border border-slate-200 bg-white px-3 font-mono text-sm text-slate-900 outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                    placeholder="005930"
+                    aria-label="종목코드 추가"
+                  />
+                  <div className="mt-1.5 min-h-[1.25rem] text-xs">
+                    {codeValid && resolvedForCode?.known && (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        {resolvedForCode.name} · {trimmedCode}
+                      </span>
+                    )}
+                    {codeValid && resolvedForCode && !resolvedForCode.known && (
+                      <span className="text-slate-500 dark:text-slate-400">
+                        이름 확인 예정 · {trimmedCode}
+                      </span>
+                    )}
+                    {codeValid && !resolvedForCode && (
+                      <span className="text-slate-400 dark:text-slate-500">확인 중…</span>
+                    )}
+                    {!codeValid && addCode.length > 0 && (
+                      <span className="text-rose-600 dark:text-rose-400">
+                        6자리 종목코드를 입력하세요
+                      </span>
+                    )}
+                  </div>
+                </div>
                 <button
                   type="button"
-                  onClick={() => submit("include")}
-                  disabled={busy}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded border border-slate-200 text-slate-700 transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                  aria-label="Pin symbol"
-                  title="Pin"
+                  onClick={addToMyList}
+                  disabled={!codeValid || busy}
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-white transition hover:bg-primary-dark disabled:opacity-40"
                 >
-                  <Pin className="h-4 w-4" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => submit("exclude")}
-                  disabled={busy}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded border border-slate-200 text-slate-700 transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                  aria-label="Block symbol"
-                  title="Block"
-                >
-                  <Ban className="h-4 w-4" aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => submit("remove")}
-                  disabled={busy}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded border border-slate-200 text-slate-700 transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                  aria-label="Remove symbol override"
-                  title="Remove override"
-                >
-                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  추가
                 </button>
               </div>
             </div>
+
+            <MyListTable rows={myList} onRemove={remove} busy={busy} />
           </section>
 
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Effective Universe
+                System Found
               </h2>
-              <span className="text-sm text-slate-500">{data?.rows.length ?? 0} symbols</span>
+              <span className="text-sm text-slate-500">{systemRows.length} symbols</span>
             </div>
-            <UniverseTable rows={data?.rows ?? []} onAction={onRowAction} busy={busy} />
+            <UniverseTable rows={systemRows} onPin={pin} busy={busy} />
           </section>
 
           <section className="space-y-3">
