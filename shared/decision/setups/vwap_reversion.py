@@ -273,7 +273,9 @@ class SetupDConfig(ServiceConfigBase):
         description=(
             "Minimum VWAP observations before the trend gate activates. Below "
             "this the gate is PERMISSIVE (does not block) — no meaningful "
-            "session trend yet (e.g. the first minutes after the open)."
+            "session trend yet (e.g. the first minutes after the open). Must be "
+            "<= trend_window_bars, else the window (capped at trend_window_bars) "
+            "never reaches warmup and the gate stays permanently permissive."
         ),
     )
     trend_block_threshold: float = Field(
