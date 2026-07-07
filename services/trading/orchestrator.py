@@ -864,6 +864,11 @@ class TradingOrchestrator:
                 risk_params, self.config.initial_capital
             )
             risk_config = RiskConfig.from_dict(risk_params)
+            # daily_loss_limit_points is in index points (futures-native); it is
+            # meaningless against KRW-denominated stock PnL, so scope it to the
+            # futures path. The unit-free consecutive-loss breaker applies to all.
+            if self.config.asset_class != "futures":
+                risk_config.daily_loss_limit_points = 0.0
             self._risk_manager = RiskManager(risk_config)
             logger.info(
                 "Risk manager initialized: daily_loss_limit=%.1f%%, max_positions=%d",

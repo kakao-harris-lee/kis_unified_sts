@@ -19,6 +19,28 @@ risk_management:
   # RISK_INITIAL_CAPITAL is explicitly set.
   initial_capital: ${RISK_INITIAL_CAPITAL:10000000}
 
+  # Futures-native circuit breakers. The daily_loss_limit_pct above is
+  # KRW-%-of-capital and is mis-scaled for a single futures contract (notional
+  # ~30x the risk capital → it can never trip), so a genuinely catastrophic
+  # futures day currently cannot halt trading. These unit-safe breakers restore
+  # that backstop. Both reset at the daily reset. 0 disables.
+  #
+  # max_consecutive_losses is unit-free and applies to any asset class.
+  # daily_loss_limit_points is in the position's native PnL unit (index points
+  # for futures) — the orchestrator disables it off the futures path since it is
+  # meaningless against KRW-denominated stock PnL.
+  #
+  # CATASTROPHIC-ONLY thresholds. A loss-streak breaker structurally fights a
+  # mean-reversion strategy (the reversal that ends a losing streak IS the win),
+  # so tight thresholds cut the strategy's edge — on 2026-07-07 (-4.9% day, cum
+  # realized low -47.5 pts, max streak 8) any tight setting netted worse than
+  # doing nothing. These defaults (10 / 60) sit ABOVE that day, so they only fire
+  # on a day worse than -4.9%. Entry-quality churn is handled upstream by the
+  # Setup D trend filter (PR #599), not here. See
+  # docs/superpowers/specs/2026-07-08-futures-risk-circuit-breaker-design.md.
+  max_consecutive_losses: ${RISK_MAX_CONSECUTIVE_LOSSES:10}
+  daily_loss_limit_points: ${RISK_DAILY_LOSS_LIMIT_POINTS:60}
+
   # =============================================================================
   # Portfolio Drawdown Monitoring
   # =============================================================================

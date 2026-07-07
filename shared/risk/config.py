@@ -395,6 +395,14 @@ class RiskConfig:
     max_total_positions: int = 20
     initial_capital: int = 10_000_000
 
+    # Futures-native circuit breakers (0 = disabled). The KRW %-of-capital
+    # daily_loss_limit_pct above is mis-scaled for a single futures contract
+    # (notional ~30x the risk capital), so these unit-safe breakers halt new
+    # entries on a losing streak instead. Both reset on the daily reset.
+    max_consecutive_losses: int = 0  # halt after N consecutive losing closes
+    daily_loss_limit_points: float = 0.0  # halt when session realized PnL <= -this
+    #   (in the position's native PnL unit — index points for futures)
+
     # Sub-configurations
     drawdown: DrawdownConfig = field(default_factory=DrawdownConfig)
     asset_limits: dict[str, AssetLimits] = field(default_factory=dict)
@@ -426,6 +434,16 @@ class RiskConfig:
             raise ValueError(
                 f"initial_capital must be between {MIN_CAPITAL} and {MAX_CAPITAL}, "
                 f"got {self.initial_capital}"
+            )
+
+        if self.max_consecutive_losses < 0:
+            raise ValueError(
+                f"max_consecutive_losses must be >= 0, got {self.max_consecutive_losses}"
+            )
+
+        if self.daily_loss_limit_points < 0:
+            raise ValueError(
+                f"daily_loss_limit_points must be >= 0, got {self.daily_loss_limit_points}"
             )
 
     def _set_defaults(self):
@@ -466,6 +484,8 @@ class RiskConfig:
         daily_loss_limit_pct = float(data.get("daily_loss_limit_pct", 5.0))
         max_total_positions = int(data.get("max_total_positions", 20))
         initial_capital = int(data.get("initial_capital", 10_000_000))
+        max_consecutive_losses = int(data.get("max_consecutive_losses", 0))
+        daily_loss_limit_points = float(data.get("daily_loss_limit_points", 0.0))
 
         # Parse sub-configurations
         drawdown_data = data.get("drawdown", {})
@@ -494,6 +514,8 @@ class RiskConfig:
             daily_loss_limit_pct=daily_loss_limit_pct,
             max_total_positions=max_total_positions,
             initial_capital=initial_capital,
+            max_consecutive_losses=max_consecutive_losses,
+            daily_loss_limit_points=daily_loss_limit_points,
             drawdown=drawdown,
             asset_limits=asset_limits,
             position_sizing=position_sizing,
