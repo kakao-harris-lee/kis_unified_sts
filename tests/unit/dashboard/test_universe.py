@@ -164,3 +164,62 @@ async def test_universe_override_publishes_snapshot_and_audit(monkeypatch):
 
     audit_response = await universe.get_trading_universe_audit()
     assert audit_response["events"][0]["symbol"] == "000660"
+
+
+@pytest.mark.asyncio
+async def test_include_override_is_permanent_by_default(monkeypatch):
+    universe, fake = _client(
+        monkeypatch,
+        {
+            "system:trade_targets:latest": {
+                "codes": ["005930"],
+                "names": {"005930": "삼성전자"},
+            },
+        },
+    )
+
+    body = await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(
+            action="include",
+            symbol="000660",
+            name="SK하이닉스",
+        )
+    )
+
+    assert "000660" in body["codes"]
+    overrides = json.loads(fake.payloads["stock:universe:overrides"])
+    entry = overrides["manual_include"]["000660"]
+    # Permanent: no expiry stamped.
+    assert entry.get("expires_at") is None
+    # Overrides key must not silently expire permanent picks.
+    assert "stock:universe:overrides" not in fake.expirations
+
+
+@pytest.mark.asyncio
+async def test_include_override_honors_explicit_ttl(monkeypatch):
+    universe, fake = _client(monkeypatch, {})
+
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(
+            action="include",
+            symbol="000660",
+            ttl_seconds=3600,
+        )
+    )
+
+    overrides = json.loads(fake.payloads["stock:universe:overrides"])
+    entry = overrides["manual_include"]["000660"]
+    assert entry.get("expires_at") is not None  # explicit TTL still respected
+    # Key TTL should cover the requested horizon (not truncate it).
+    assert fake.expirations["stock:universe:overrides"] >= 3600
+
+
+@pytest.mark.asyncio
+async def test_include_override_allows_missing_reason(monkeypatch):
+    universe, fake = _client(monkeypatch, {})
+
+    body = await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="000660")
+    )
+
+    assert "000660" in body["codes"]  # no reason_required error

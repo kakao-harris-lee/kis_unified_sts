@@ -114,11 +114,14 @@ def _json_dumps(payload: dict[str, Any] | list[Any]) -> str:
 
 
 def _redis_set_json(
-    redis: Any, key: str, payload: dict[str, Any], ttl_seconds: int
+    redis: Any, key: str, payload: dict[str, Any], ttl_seconds: int | None
 ) -> None:
     if redis is None:
         return
     encoded = _json_dumps(payload)
+    if ttl_seconds is None:
+        redis.set(key, encoded)
+        return
     try:
         redis.set(key, encoded, ex=ttl_seconds)
     except TypeError:
@@ -156,6 +159,37 @@ def _effective_snapshot_ttl(snapshot: dict[str, Any], default_ttl: int) -> int:
                 if expires_at is not None:
                     expiries.append(max(1, int((expires_at - now).total_seconds())))
     return min(default_ttl, min(expiries)) if expiries else default_ttl
+
+
+def _overrides_key_ttl(overrides: dict[str, Any], default_ttl: int) -> int | None:
+    """TTL for the overrides key, or None to leave it without expiry.
+
+    If any active override is permanent (no ``expires_at``), the key must not
+    expire — a Redis-level TTL would silently drop permanent operator picks
+    once it lapses. Otherwise keep at least the default and extend to the
+    furthest explicit expiry.
+    """
+    now = datetime.now(UTC)
+    max_expiry_ttl = 0
+    has_permanent = False
+    for bucket in ("manual_include", "manual_exclude"):
+        raw_bucket = overrides.get(bucket)
+        if not isinstance(raw_bucket, dict):
+            continue
+        for item in raw_bucket.values():
+            if not isinstance(item, dict):
+                continue
+            expires_at = _parse_dt(item.get("expires_at"))
+            if expires_at is None:
+                has_permanent = True
+            else:
+                max_expiry_ttl = max(
+                    max_expiry_ttl,
+                    int((expires_at - now).total_seconds()),
+                )
+    if has_permanent:
+        return None
+    return max(default_ttl, max_expiry_ttl)
 
 
 def _read_open_positions() -> tuple[list[str], dict[str, str]]:
@@ -247,14 +281,21 @@ def _append_audit(redis: Any, event: dict[str, Any]) -> None:
         return
 
 
-def _override_expiry(request: UniverseOverrideRequest, now: datetime) -> str:
+def _override_expiry(request: UniverseOverrideRequest, now: datetime) -> str | None:
+    """Return an ISO expiry, or None for a permanent override.
+
+    Permanent (None) applies when the operator supplies neither an explicit
+    ``expires_at`` nor a ``ttl_seconds``. Operator "My List" picks are meant to
+    persist until explicitly removed.
+    """
     if request.expires_at is not None:
         expires = request.expires_at
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=UTC)
         return expires.astimezone(UTC).isoformat()
-    ttl_seconds = request.ttl_seconds or _ttl()["override_default"]
-    return (now + timedelta(seconds=ttl_seconds)).isoformat()
+    if request.ttl_seconds is not None:
+        return (now + timedelta(seconds=request.ttl_seconds)).isoformat()
+    return None
 
 
 def _clean_symbol(symbol: str) -> str:
@@ -339,11 +380,6 @@ async def update_trading_universe_override(
     symbol = _clean_symbol(request.symbol)
     if not symbol:
         raise HTTPException(status_code=400, detail="symbol_required")
-    if (
-        request.action in {"include", "exclude"}
-        and not str(request.reason or "").strip()
-    ):
-        raise HTTPException(status_code=400, detail="reason_required")
 
     now = datetime.now(UTC)
     overrides = _load_overrides(redis)
@@ -388,7 +424,12 @@ async def update_trading_universe_override(
         "manual_exclude": exclude,
         "updated_at": now.isoformat(),
     }
-    _redis_set_json(redis, _keys()["overrides"], next_overrides, _ttl()["overrides"])
+    _redis_set_json(
+        redis,
+        _keys()["overrides"],
+        next_overrides,
+        _overrides_key_ttl(next_overrides, _ttl()["overrides"]),
+    )
     _append_audit(redis, event)
     snapshot = _build_snapshot(redis)
     _publish_snapshot(redis, snapshot)
