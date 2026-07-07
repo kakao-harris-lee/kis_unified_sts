@@ -226,6 +226,67 @@ async def test_include_override_allows_missing_reason(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_override_rejects_when_limit_reached(monkeypatch):
+    monkeypatch.setenv("STOCK_UNIVERSE_MAX_OVERRIDES", "2")
+    universe, _fake = _client(monkeypatch, {})
+
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="000660")
+    )
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="005930")
+    )
+
+    with pytest.raises(universe.HTTPException) as excinfo:
+        await universe.update_trading_universe_override(
+            universe.UniverseOverrideRequest(action="include", symbol="035720")
+        )
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail == "override_limit_reached"
+
+
+@pytest.mark.asyncio
+async def test_override_update_existing_allowed_at_limit(monkeypatch):
+    monkeypatch.setenv("STOCK_UNIVERSE_MAX_OVERRIDES", "2")
+    universe, _fake = _client(monkeypatch, {})
+
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="000660")
+    )
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="005930")
+    )
+
+    # Re-including an already-present symbol is an update, not a new entry —
+    # must not be blocked by the cap.
+    body = await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(
+            action="include", symbol="000660", reason="updated note"
+        )
+    )
+    assert "000660" in body["codes"]
+
+
+@pytest.mark.asyncio
+async def test_override_remove_not_blocked_by_limit(monkeypatch):
+    monkeypatch.setenv("STOCK_UNIVERSE_MAX_OVERRIDES", "2")
+    universe, _fake = _client(monkeypatch, {})
+
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="000660")
+    )
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="005930")
+    )
+
+    # At the cap, removing an existing entry must always be allowed.
+    body = await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="remove", symbol="000660")
+    )
+    assert "000660" not in body["codes"]
+
+
+@pytest.mark.asyncio
 async def test_resolve_returns_known_name(monkeypatch):
     universe, _fake = _client(
         monkeypatch,

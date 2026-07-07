@@ -187,6 +187,11 @@ def _overrides_key_ttl(overrides: dict[str, Any], default_ttl: int) -> int | Non
                     int((expires_at - now).total_seconds()),
                 )
     if has_permanent:
+        # Sanctioned exception to the repo's Redis-TTL-everything rule:
+        # operator permanent picks must not silently expire. Unbounded growth
+        # of this non-expiring key is instead bounded by the
+        # STOCK_UNIVERSE_MAX_OVERRIDES cap enforced in
+        # update_trading_universe_override.
         return None
     return max(default_ttl, max_expiry_ttl)
 
@@ -430,6 +435,16 @@ async def update_trading_universe_override(
     overrides = _load_overrides(redis)
     include = dict(overrides.get("manual_include") or {})
     exclude = dict(overrides.get("manual_exclude") or {})
+
+    if request.action in ("include", "exclude"):
+        # A symbol already present in either bucket is an update (or a move
+        # between include/exclude with no net growth) — never capped. Only a
+        # genuinely new symbol can push the combined bucket size over the cap.
+        is_new_symbol = symbol not in include and symbol not in exclude
+        if is_new_symbol:
+            max_overrides = _env_int("STOCK_UNIVERSE_MAX_OVERRIDES", 200)
+            if len(include) + len(exclude) + 1 > max_overrides:
+                raise HTTPException(status_code=409, detail="override_limit_reached")
 
     event = {
         "action": request.action,
