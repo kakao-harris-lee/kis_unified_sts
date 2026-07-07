@@ -216,6 +216,58 @@ describe("/universe page", () => {
     expect(payload).not.toHaveProperty("ttl_seconds");
   });
 
+  it("includes the typed note as reason when Add is clicked", async () => {
+    const user = userEvent.setup();
+    vi.mocked(universeApi.updateOverride).mockResolvedValue(
+      axiosResponse(baseUniverse()),
+    );
+    renderWithQueryClient(<UniversePage />);
+
+    await screen.findByRole("heading", { name: "My List" });
+
+    const input = screen.getByPlaceholderText("005930");
+    await user.type(input, "005930");
+    const noteInput = screen.getByPlaceholderText("메모 (선택)");
+    await user.type(noteInput, "관심종목");
+
+    await waitFor(() => expect(universeApi.resolve).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "추가" })).toBeEnabled());
+
+    await user.click(screen.getByRole("button", { name: "추가" }));
+
+    await waitFor(() =>
+      expect(universeApi.updateOverride).toHaveBeenCalledWith({
+        action: "include",
+        symbol: "005930",
+        name: "삼성전자",
+        reason: "관심종목",
+        operator: "dashboard",
+      }),
+    );
+  });
+
+  it("still enables Add and omits reason when the note is left empty", async () => {
+    const user = userEvent.setup();
+    vi.mocked(universeApi.updateOverride).mockResolvedValue(
+      axiosResponse(baseUniverse()),
+    );
+    renderWithQueryClient(<UniversePage />);
+
+    await screen.findByRole("heading", { name: "My List" });
+
+    const input = screen.getByPlaceholderText("005930");
+    await user.type(input, "005930");
+
+    await waitFor(() => expect(universeApi.resolve).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "추가" })).toBeEnabled());
+
+    await user.click(screen.getByRole("button", { name: "추가" }));
+
+    await waitFor(() => expect(universeApi.updateOverride).toHaveBeenCalled());
+    const payload = vi.mocked(universeApi.updateOverride).mock.calls[0][0];
+    expect(payload.reason).toBeUndefined();
+  });
+
   it('shows "확인 중…" while resolve is pending, then the resolved name once it settles', async () => {
     const user = userEvent.setup();
     let settleResolve!: (value: AxiosResponse<{

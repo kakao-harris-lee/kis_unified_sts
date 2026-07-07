@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,7 @@ from shared.stock_universe import (
 )
 
 router = APIRouter(prefix="/api/trading/universe", tags=["trading"])
+logger = logging.getLogger(__name__)
 
 
 class UniverseOverrideRequest(BaseModel):
@@ -465,6 +467,15 @@ async def update_trading_universe_override(
         }
         exclude.pop(symbol, None)
         event["expires_at"] = include[symbol]["expires_at"]
+        if include[symbol]["expires_at"] is None and not include[symbol]["reason"]:
+            # No real per-user identity exists (single shared API key), so we
+            # cannot attribute this permanent, trace-less pick to an operator
+            # — surface it in logs as the next-best traceability signal.
+            logger.warning(
+                "permanent manual include added without reason: symbol=%s operator=%s",
+                symbol,
+                request.operator,
+            )
     elif request.action == "exclude":
         exclude[symbol] = {
             "reason": str(request.reason or "").strip(),

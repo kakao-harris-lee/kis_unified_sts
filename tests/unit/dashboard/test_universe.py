@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import sys
 import types
 
@@ -284,6 +285,50 @@ async def test_override_remove_not_blocked_by_limit(monkeypatch):
         universe.UniverseOverrideRequest(action="remove", symbol="000660")
     )
     assert "000660" not in body["codes"]
+
+
+@pytest.mark.asyncio
+async def test_permanent_include_without_reason_logs_warning(monkeypatch, caplog):
+    universe, _fake = _client(monkeypatch, {})
+
+    with caplog.at_level(logging.WARNING, logger="services.dashboard.routes.universe"):
+        await universe.update_trading_universe_override(
+            universe.UniverseOverrideRequest(action="include", symbol="000660")
+        )
+
+    assert any(
+        record.levelno == logging.WARNING and "000660" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_include_with_reason_no_warning(monkeypatch, caplog):
+    universe, _fake = _client(monkeypatch, {})
+
+    with caplog.at_level(logging.WARNING, logger="services.dashboard.routes.universe"):
+        await universe.update_trading_universe_override(
+            universe.UniverseOverrideRequest(
+                action="include", symbol="000660", reason="operator pick"
+            )
+        )
+
+    assert not any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_temporary_include_without_reason_no_warning(monkeypatch, caplog):
+    """Only *permanent* reason-less includes are worth flagging."""
+    universe, _fake = _client(monkeypatch, {})
+
+    with caplog.at_level(logging.WARNING, logger="services.dashboard.routes.universe"):
+        await universe.update_trading_universe_override(
+            universe.UniverseOverrideRequest(
+                action="include", symbol="000660", ttl_seconds=3600
+            )
+        )
+
+    assert not any(record.levelno == logging.WARNING for record in caplog.records)
 
 
 @pytest.mark.asyncio

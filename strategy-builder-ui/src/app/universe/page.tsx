@@ -331,6 +331,7 @@ export default function UniversePage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [addCode, setAddCode] = useState("");
+  const [noteInput, setNoteInput] = useState("");
   const [resolved, setResolved] = useState<UniverseResolveResponse | null>(null);
 
   const {
@@ -353,6 +354,7 @@ export default function UniversePage() {
       queryClient.setQueryData(["trading-universe"], next);
       toast.success("Universe updated");
       setAddCode("");
+      setNoteInput("");
       setResolved(null);
     },
     onError: (error) => {
@@ -412,6 +414,7 @@ export default function UniversePage() {
       action: "include",
       symbol: trimmedCode,
       name: resolvedForCode?.name ?? undefined,
+      reason: noteInput.trim() || undefined,
       operator: "dashboard",
     });
   };
@@ -553,6 +556,15 @@ export default function UniversePage() {
                       </span>
                     )}
                   </div>
+                </div>
+                <div className="flex-1">
+                  <input
+                    value={noteInput}
+                    onChange={(event) => setNoteInput(event.target.value)}
+                    className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                    placeholder="메모 (선택)"
+                    aria-label="메모 (선택)"
+                  />
                 </div>
                 <button
                   type="button"
