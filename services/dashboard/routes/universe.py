@@ -21,8 +21,8 @@ from shared.stock_universe import (
     DEFAULT_UNIVERSE_TTL_SECONDS,
     build_effective_universe_snapshot,
     decode_payload,
+    merge_names,
 )
-from shared.stock_universe.effective import extract_names
 
 router = APIRouter(prefix="/api/trading/universe", tags=["trading"])
 
@@ -307,37 +307,28 @@ _CODE_RE = re.compile(r"^[0-9]{6}$")
 def _build_name_map(redis: Any) -> dict[str, str]:
     """Merge code->name across every raw universe source + open positions.
 
-    Mirrors the priority order of ``shared.stock_universe.effective._merge_names``
-    (the function that populates the ``name`` shown in the universe table once a
-    stock has been added), so the name confirmed here matches what the table
-    will later display: trade_targets, daily_watchlist, screener_universe,
-    theme_targets, daily_indicators (first source wins), then open positions,
-    then override-carried names (lowest priority, gap-fill only).
+    Delegates to ``shared.stock_universe.merge_names`` — the single source of
+    the merge-order truth also used by ``build_effective_universe_snapshot``
+    — so the name confirmed here can never drift from what the universe table
+    displays. Payloads are passed positionally in the same order the snapshot
+    uses (trade_targets, daily_watchlist, screener_universe, theme_targets,
+    daily_indicators: first source wins), then open positions, then
+    override-carried names (lowest priority, gap-fill only).
     """
     keys = _keys()
-    names: dict[str, str] = {}
-    for source_key in (
-        "trade_targets",
-        "daily_watchlist",
-        "screener_universe",
-        "theme_targets",
-        "daily_indicators",
-    ):
-        payload = decode_payload(_redis_get(redis, keys[source_key]))
-        for code, name in extract_names(payload).items():
-            names.setdefault(code, name)
+    payloads = [
+        decode_payload(_redis_get(redis, keys[source_key]))
+        for source_key in (
+            "trade_targets",
+            "daily_watchlist",
+            "screener_universe",
+            "theme_targets",
+            "daily_indicators",
+        )
+    ]
     _open_codes, open_names = _read_open_positions()
-    for code, name in open_names.items():
-        names.setdefault(str(code).strip(), name)
     overrides = _load_overrides(redis)
-    for bucket in ("manual_include", "manual_exclude"):
-        for code, item in (overrides.get(bucket) or {}).items():
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            if name:
-                names.setdefault(str(code).strip(), name)
-    return names
+    return merge_names(*payloads, existing_names=open_names, overrides=overrides)
 
 
 @router.get("/resolve")

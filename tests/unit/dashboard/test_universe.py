@@ -367,3 +367,21 @@ async def test_resolve_finds_name_from_manual_include_override(monkeypatch):
     body = await universe.resolve_universe_symbol(code="005930")
 
     assert body == {"code": "005930", "name": "삼성전자", "known": True}
+
+
+def test_merge_names_is_importable_from_package():
+    """``merge_names`` is the shared single source of merge-order truth.
+
+    universe.py's ``_build_name_map`` and effective.py's
+    ``build_effective_universe_snapshot`` must both delegate to this one
+    function via the public package surface, not a private duplicate.
+    """
+    from shared.stock_universe import merge_names
+
+    assert (
+        merge_names(
+            {"names": {"005930": "삼성전자(a)"}},
+            {"names": {"005930": "삼성전자(b)"}},
+        )
+        == {"005930": "삼성전자(a)"}
+    )
