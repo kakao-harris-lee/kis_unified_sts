@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -21,6 +22,7 @@ from shared.stock_universe import (
     build_effective_universe_snapshot,
     decode_payload,
 )
+from shared.stock_universe.effective import extract_names
 
 router = APIRouter(prefix="/api/trading/universe", tags=["trading"])
 
@@ -297,6 +299,45 @@ def _override_expiry(request: UniverseOverrideRequest, now: datetime) -> str | N
 
 def _clean_symbol(symbol: str) -> str:
     return str(symbol or "").strip()
+
+
+_CODE_RE = re.compile(r"^\d{6}$")
+
+
+def _build_name_map(redis: Any) -> dict[str, str]:
+    """Merge code->name across every raw universe source + open positions."""
+    keys = _keys()
+    names: dict[str, str] = {}
+    for source_key in (
+        "screener_universe",
+        "trade_targets",
+        "daily_watchlist",
+        "daily_indicators",
+        "theme_targets",
+    ):
+        payload = decode_payload(_redis_get(redis, keys[source_key]))
+        for code, name in extract_names(payload).items():
+            names.setdefault(code, name)
+    _open_codes, open_names = _read_open_positions()
+    for code, name in open_names.items():
+        names.setdefault(str(code).strip(), name)
+    return names
+
+
+@router.get("/resolve")
+async def resolve_universe_symbol(
+    code: str = Query(...),
+) -> dict[str, Any]:
+    """Resolve a 6-digit code to a display name the system already knows.
+
+    Returns ``known=False`` with ``name=None`` for a valid code the system has
+    not seen yet (still addable — the operator confirms by code).
+    """
+    cleaned = _clean_symbol(code)
+    if not _CODE_RE.match(cleaned):
+        raise HTTPException(status_code=400, detail="invalid_code")
+    name = _build_name_map(_get_redis_client()).get(cleaned)
+    return {"code": cleaned, "name": name, "known": name is not None}
 
 
 @router.get("")

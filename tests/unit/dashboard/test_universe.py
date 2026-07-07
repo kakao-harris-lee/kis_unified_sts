@@ -223,3 +223,38 @@ async def test_include_override_allows_missing_reason(monkeypatch):
     )
 
     assert "000660" in body["codes"]  # no reason_required error
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_known_name(monkeypatch):
+    universe, _fake = _client(
+        monkeypatch,
+        {
+            "system:trade_targets:latest": {
+                "codes": ["005930"],
+                "names": {"005930": "삼성전자"},
+            },
+        },
+    )
+
+    body = await universe.resolve_universe_symbol(code="005930")
+
+    assert body == {"code": "005930", "name": "삼성전자", "known": True}
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_pending_for_unknown_code(monkeypatch):
+    universe, _fake = _client(monkeypatch, {})
+
+    body = await universe.resolve_universe_symbol(code="123456")
+
+    assert body == {"code": "123456", "name": None, "known": False}
+
+
+@pytest.mark.asyncio
+async def test_resolve_rejects_bad_code(monkeypatch):
+    universe, _fake = _client(monkeypatch, {})
+
+    with pytest.raises(universe.HTTPException) as excinfo:
+        await universe.resolve_universe_symbol(code="12ab")
+    assert excinfo.value.status_code == 400
