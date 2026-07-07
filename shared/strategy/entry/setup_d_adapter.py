@@ -117,6 +117,11 @@ class SetupDEntryAdapter(EntrySignalGenerator[SetupDEntryConfig]):
             reversal_confirm_requires_price_turn=(
                 config.reversal_confirm_requires_price_turn
             ),
+            trend_filter_enabled=config.trend_filter_enabled,
+            trend_window_bars=config.trend_window_bars,
+            trend_warmup_bars=config.trend_warmup_bars,
+            trend_block_threshold=config.trend_block_threshold,
+            against_trend_extreme_atr_mult=config.against_trend_extreme_atr_mult,
         )
         self._setup = SetupDVWAPReversion(config=setup_cfg)
         self._gate_cfg = gate_cfg

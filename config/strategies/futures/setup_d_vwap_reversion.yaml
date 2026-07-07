@@ -87,6 +87,26 @@ strategy:
       # Drops edge-of-band signals where the VWAP extension is only barely 1.8×ATR.
       min_confidence: 0.6
 
+      # Session-VWAP-slope trend gate (long/short symmetric). Blocks a
+      # COUNTER-trend fade — buying dips while the session VWAP grinds down, or
+      # shorting pops while it grinds up — when the trend is strong, UNLESS the
+      # stretch is climactic (abs(z) >= against_trend_extreme_atr_mult), which is
+      # the mean-reversion edge we keep. Trend score = net session-VWAP drift
+      # over trend_window_bars, in ATR units; reset per KST session. Self-computed
+      # and causal (identical in backtest and live).
+      #
+      # Motivated by 2026-07-07: Setup D took 13 straight LONG dip-buys into a
+      # -4.9% one-way downtrend (11 stop-outs). See
+      # docs/superpowers/specs/2026-07-07-setup-d-trend-filter-design.md.
+      #
+      # SHIPS OFF (enabled: false). Enabling is a validated config flip gated on
+      # the walk-forward acceptance criteria in the design spec; rollback = false.
+      trend_filter_enabled: false
+      trend_window_bars: 30              # ~30-min VWAP-drift lookback
+      trend_warmup_bars: 10              # permissive below this many observations
+      trend_block_threshold: 1.0         # block when |VWAP drift| >= 1.0×ATR
+      against_trend_extreme_atr_mult: 2.6  # climax override (>= extreme_atr_mult 1.8)
+
       # Regime direction block: LLM regime labels where the corresponding
       # direction is suppressed.  Fading a VWAP spike against a strong trending
       # regime is the dominant failure mode on trend-continuation days.

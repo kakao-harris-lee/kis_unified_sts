@@ -84,7 +84,7 @@ is a non-negotiable repo rule).
 from __future__ import annotations
 
 from collections import deque
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import ClassVar
 
 import numpy as np
@@ -250,6 +250,50 @@ class SetupDConfig(ServiceConfigBase):
             "toward VWAP versus the prior close."
         ),
     )
+    trend_filter_enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for the session-VWAP-slope trend gate. When enabled, "
+            "a COUNTER-trend fade on a strongly trending session is blocked "
+            "unless the VWAP stretch is climactic (see "
+            "against_trend_extreme_atr_mult). Ships off so activation is an "
+            "explicit, validated config flip. Long/short symmetric."
+        ),
+    )
+    trend_window_bars: int = Field(
+        default=30,
+        description=(
+            "Trailing window (bars) of session VWAP values over which the trend "
+            "score (net VWAP drift in ATR units) is computed. ~30 = 30 minutes. "
+            "Reset per KST session date (day-only futures)."
+        ),
+    )
+    trend_warmup_bars: int = Field(
+        default=10,
+        description=(
+            "Minimum VWAP observations before the trend gate activates. Below "
+            "this the gate is PERMISSIVE (does not block) — no meaningful "
+            "session trend yet (e.g. the first minutes after the open)."
+        ),
+    )
+    trend_block_threshold: float = Field(
+        default=1.0,
+        ge=0.0,
+        description=(
+            "Block a counter-trend fade only when abs(trend_score) >= this many "
+            "ATRs of net VWAP drift over the window. Higher = only block on the "
+            "strongest trend days."
+        ),
+    )
+    against_trend_extreme_atr_mult: float = Field(
+        default=2.6,
+        description=(
+            "Climax override: a counter-trend fade is allowed anyway when "
+            "abs(z) >= this many ATRs (a climactic flush = the mean-reversion "
+            "edge). Effectively clamped to >= extreme_atr_mult at runtime so the "
+            "override can never be looser than the fade trigger itself."
+        ),
+    )
 
 
 class SetupDVWAPReversion(Setup):
@@ -287,6 +331,12 @@ class SetupDVWAPReversion(Setup):
         # per-bar high/low; this is the only range definition reproducible in the
         # orchestrator path, where last_15min_high/low has no live producer.
         self._close_window: deque[float] = deque(maxlen=self.config.range_window_bars)
+        # Causal rolling window of session VWAP values for the trend gate. Holds
+        # only VWAPs observed at or before the current bar (appended AFTER the
+        # read) and is reset per KST session date (day-only futures) so the
+        # overnight gap never enters the slope. See ``_trend_score``.
+        self._vwap_window: deque[float] = deque(maxlen=self.config.trend_window_bars)
+        self._trend_session_date: date | None = None
         self.last_signal_details: dict[str, float | int | bool | str | None] = {}
 
     def _reject(self, reason: str) -> None:
@@ -347,6 +397,32 @@ class SetupDVWAPReversion(Setup):
         self._close_window.append(close)
         return rng
 
+    def _trend_score(self, vwap: float, atr: float, session_date: date) -> float | None:
+        """Return the causal session-VWAP trend score, or None during warmup.
+
+        The score is the net drift of the session VWAP over the trailing
+        ``trend_window_bars`` observations, in ATR units:
+        ``(vwap_now - vwap_oldest) / atr``. Positive → VWAP grinding up,
+        negative → grinding down. The window is reset whenever ``session_date``
+        changes (futures is day-only, so the KST date boundary is the session
+        boundary) to keep the overnight gap out of the slope. The current VWAP is
+        appended AFTER the read (strictly causal — the score never includes the
+        bar it gates). Returns ``None`` until ``trend_warmup_bars`` observations
+        exist, so the caller treats the gate as permissive (never silently dead).
+        """
+        if self._trend_session_date != session_date:
+            self._vwap_window.clear()
+            self._trend_session_date = session_date
+
+        if len(self._vwap_window) >= self.config.trend_warmup_bars and atr > 0:
+            score: float | None = (vwap - self._vwap_window[0]) / atr
+        else:
+            score = None  # warmup — permissive
+
+        # Append AFTER reading (strictly causal: score excludes the current bar).
+        self._vwap_window.append(vwap)
+        return score
+
     def check(self, ctx: FuturesMarketView) -> Signal | None:  # noqa: PLR0911
         """Evaluate *ctx* and return a Signal when all conditions are met.
 
@@ -381,6 +457,10 @@ class SetupDVWAPReversion(Setup):
         prev_close = self._close_window[-1] if self._close_window else None
         vol_ref = self._vol_reference(atr)
         recent_range = self._self_range(ctx.current_price)
+        # Causal session-VWAP trend score (None during warmup → gate permissive).
+        # Computed on EVERY in-window bar so the VWAP history stays continuous,
+        # exactly like the vol/close windows above.
+        trend_score = self._trend_score(ctx.vwap, atr, ctx.now.date())
         gate_active = vol_ref is not None and vol_ref > 0
         vol_ratio = atr / vol_ref if gate_active else 0.0
         if c.min_atr_ratio > 0 and gate_active and vol_ratio < c.min_atr_ratio:
@@ -394,6 +474,29 @@ class SetupDVWAPReversion(Setup):
             direction = "long"  # fade the down-spike back toward VWAP
         else:
             return self._reject(f"not_extreme(z={z:+.2f},need±{c.extreme_atr_mult})")
+
+        # 4.5 Trend-day guard (optional, config-gated, long/short symmetric).
+        #     Block a COUNTER-trend fade (long while the session VWAP is grinding
+        #     down / short while it grinds up) when the trend is strong, UNLESS
+        #     the stretch is climactic — a climactic flush is the mean-reversion
+        #     edge we want to keep. trend_score is the causal net VWAP drift over
+        #     trend_window_bars in ATR units (None during warmup → permissive).
+        trend_override = False
+        if c.trend_filter_enabled and trend_score is not None:
+            against_trend = (direction == "long" and trend_score < 0) or (
+                direction == "short" and trend_score > 0
+            )
+            if against_trend and abs(trend_score) >= c.trend_block_threshold:
+                # Clamp so the override can never be looser than the fade trigger.
+                override_mult = max(
+                    c.against_trend_extreme_atr_mult, c.extreme_atr_mult
+                )
+                if abs(z) >= override_mult:
+                    trend_override = True  # climactic flush → allow
+                else:
+                    return self._reject(
+                        f"against_trend(score={trend_score:+.2f},z={z:+.2f})"
+                    )
 
         # 5. Stall confirmation — spike must be near (not blown through) the
         #    self-computed recent extreme on its side, so we fade a stalling
@@ -487,6 +590,10 @@ class SetupDVWAPReversion(Setup):
             "stall_buffer": stall_buffer,
             "prev_close": prev_close,
             "prev_z": prev_z,
+            "trend_filter_active": c.trend_filter_enabled and trend_score is not None,
+            "trend_score": trend_score,
+            "trend_window_count": len(self._vwap_window),
+            "against_trend_override": trend_override,
             "reversal_confirm_enabled": c.reversal_confirm_enabled,
             "reversal_price_turn": reversal_price_turn,
             "reversal_z_improvement": reversal_z_improvement,

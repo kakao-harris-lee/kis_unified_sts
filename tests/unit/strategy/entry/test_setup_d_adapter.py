@@ -72,6 +72,51 @@ def _context(md: dict, ts: datetime) -> EntryContext:
     return EntryContext(market_data=md, indicators=md, timestamp=ts, metadata={})
 
 
+class TestSetupDAdapterTrendFilter:
+    """The trend_filter_* config plumbs through the adapter into the setup."""
+
+    @pytest.mark.asyncio
+    async def test_trend_filter_blocks_shallow_counter_trend(self):
+        # Filter ON; vol + stall gates disabled to isolate the trend gate.
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(
+                trend_filter_enabled=True,
+                min_atr_ratio=0.0,
+                stall_buffer_atr_mult=100.0,
+                trend_warmup_bars=10,
+                trend_window_bars=30,
+            )
+        )
+        # Warm 30 non-firing bars whose VWAP grinds down 130 → 101 (strong
+        # downtrend), price == vwap (z == 0, never fires — only seeds the window).
+        step = (101.0 - 130.0) / 29
+        for i in range(30):
+            v = 130.0 + step * i
+            await adapter.generate(_context(_md(current_price=v, vwap=v), _utc(2, 0)))
+        # A shallow counter-trend long (z=-2.0, below the 2.6 climax override)
+        # into the downtrend is blocked → the field reached the setup.
+        sig = await adapter.generate(
+            _context(_md(current_price=96.0, vwap=100.0), _utc(2, 0))
+        )
+        assert sig is None
+
+    @pytest.mark.asyncio
+    async def test_trend_filter_off_by_default_lets_dip_fire(self):
+        # Same downtrend + shallow dip, but the filter defaults off → fires.
+        adapter = SetupDEntryAdapter(
+            SetupDEntryConfig(min_atr_ratio=0.0, stall_buffer_atr_mult=100.0)
+        )
+        step = (101.0 - 130.0) / 29
+        for i in range(30):
+            v = 130.0 + step * i
+            await adapter.generate(_context(_md(current_price=v, vwap=v), _utc(2, 0)))
+        sig = await adapter.generate(
+            _context(_md(current_price=96.0, vwap=100.0), _utc(2, 0))
+        )
+        assert sig is not None
+        assert sig.metadata["signal_direction"] == "long"
+
+
 class TestSetupDAdapterFires:
     @pytest.mark.asyncio
     async def test_up_spike_emits_short_signal(self):
