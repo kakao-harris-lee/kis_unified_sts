@@ -315,6 +315,34 @@ class SetupDEntryConfig(ServiceConfigBase):
         default=True,
         description="Require the latest close to move back toward VWAP.",
     )
+    trend_filter_enabled: bool = Field(
+        default=False,
+        description=(
+            "Session-VWAP-slope trend gate: block a counter-trend fade on a "
+            "strongly trending session unless the stretch is climactic. Ships "
+            "off. Mirrors SetupDConfig."
+        ),
+    )
+    trend_window_bars: int = Field(
+        default=30,
+        description="Trailing window (bars) of session VWAP for the trend score.",
+    )
+    trend_warmup_bars: int = Field(
+        default=10,
+        description="Min VWAP observations before the trend gate activates.",
+    )
+    trend_block_threshold: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Block only when abs(trend_score) >= this many ATRs of drift.",
+    )
+    against_trend_extreme_atr_mult: float = Field(
+        default=2.6,
+        description=(
+            "Climax override: allow the counter-trend fade when abs(z) >= this "
+            "many ATRs (clamped to >= extreme_atr_mult at runtime)."
+        ),
+    )
     long_blocked_regimes: list[str] = Field(
         default_factory=list,
         description=(

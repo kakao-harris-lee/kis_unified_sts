@@ -126,6 +126,11 @@ def test_setup_d_entry_config_defaults():
         "reversal_confirm_enabled": False,
         "reversal_confirm_atr_mult": 0.2,
         "reversal_confirm_requires_price_turn": True,
+        "trend_filter_enabled": False,
+        "trend_window_bars": 30,
+        "trend_warmup_bars": 10,
+        "trend_block_threshold": 1.0,
+        "against_trend_extreme_atr_mult": 2.6,
         "long_blocked_regimes": [],
         "short_blocked_regimes": [],
     }
