@@ -528,7 +528,11 @@ export default function UniversePage() {
                     placeholder="005930"
                     aria-label="종목코드 추가"
                   />
-                  <div className="mt-1.5 min-h-[1.25rem] text-xs">
+                  <div
+                    className="mt-1.5 min-h-[1.25rem] text-xs"
+                    aria-live="polite"
+                    aria-atomic="true"
+                  >
                     {codeValid && resolvedForCode?.known && (
                       <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
                         <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />

@@ -216,6 +216,42 @@ describe("/universe page", () => {
     expect(payload).not.toHaveProperty("ttl_seconds");
   });
 
+  it('shows "확인 중…" while resolve is pending, then the resolved name once it settles', async () => {
+    const user = userEvent.setup();
+    let settleResolve!: (value: AxiosResponse<{
+      code: string;
+      name: string | null;
+      known: boolean;
+    }>) => void;
+    const deferred = new Promise<AxiosResponse<{
+      code: string;
+      name: string | null;
+      known: boolean;
+    }>>((resolve) => {
+      settleResolve = resolve;
+    });
+    vi.mocked(universeApi.resolve).mockReturnValue(
+      deferred as ReturnType<typeof universeApi.resolve>,
+    );
+
+    renderWithQueryClient(<UniversePage />);
+    await screen.findByRole("heading", { name: "My List" });
+
+    const input = screen.getByPlaceholderText("005930");
+    await user.type(input, "005930");
+
+    // The debounce has fired and resolve() is in flight but not yet settled.
+    await waitFor(() => expect(universeApi.resolve).toHaveBeenCalledWith("005930"));
+    expect(screen.getByText("확인 중…")).toBeInTheDocument();
+
+    settleResolve(axiosResponse({ code: "005930", name: "삼성전자", known: true }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/삼성전자 · 005930/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("확인 중…")).not.toBeInTheDocument();
+  });
+
   it("still enables Add and shows the pending label for an unknown code", async () => {
     const user = userEvent.setup();
     vi.mocked(universeApi.resolve).mockResolvedValue(
