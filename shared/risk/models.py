@@ -27,6 +27,8 @@ class BlockReason(Enum):
     MAX_POSITIONS = "max_positions"
     DRAWDOWN_CRITICAL = "drawdown_critical"
     MANUAL = "manual"
+    CONSECUTIVE_LOSSES = "consecutive_losses"
+    DAILY_LOSS_LIMIT_POINTS = "daily_loss_limit_points"
 
 
 @dataclass
@@ -242,6 +244,10 @@ class RiskState:
     daily_realized_pnl: float = 0.0
     daily_pnl_pct: float = 0.0
 
+    # Consecutive losing closes this session (futures circuit breaker). Reset to
+    # 0 on a winning/flat close and on the daily reset.
+    consecutive_losses: int = 0
+
     # Drawdown tracking
     peak_portfolio_value: float = 0.0
     current_portfolio_value: float = 0.0
@@ -348,6 +354,7 @@ class RiskState:
         self.daily_pnl = 0.0
         self.daily_realized_pnl = 0.0
         self.daily_pnl_pct = 0.0
+        self.consecutive_losses = 0
         self.last_reset_date = date.today()
         self.alerts_sent.clear()
 
@@ -363,6 +370,7 @@ class RiskState:
             "daily_pnl": self.daily_pnl,
             "daily_realized_pnl": self.daily_realized_pnl,
             "daily_pnl_pct": self.daily_pnl_pct,
+            "consecutive_losses": self.consecutive_losses,
             "peak_portfolio_value": self.peak_portfolio_value,
             "current_portfolio_value": self.current_portfolio_value,
             "drawdown_pct": self.drawdown_pct,
@@ -402,6 +410,7 @@ class RiskState:
             daily_pnl=data.get("daily_pnl", 0.0),
             daily_realized_pnl=data.get("daily_realized_pnl", 0.0),
             daily_pnl_pct=data.get("daily_pnl_pct", 0.0),
+            consecutive_losses=data.get("consecutive_losses", 0),
             peak_portfolio_value=data.get("peak_portfolio_value", 0.0),
             current_portfolio_value=data.get("current_portfolio_value", 0.0),
             drawdown_pct=data.get("drawdown_pct", 0.0),

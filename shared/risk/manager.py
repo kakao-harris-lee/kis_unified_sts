@@ -191,6 +191,39 @@ class RiskManager:
             self.state.block_trading(BlockReason.DAILY_LOSS_LIMIT)
             return False
 
+        # Consecutive-loss circuit breaker (futures-native, unit-free). Halts new
+        # entries for the session after N consecutive losing closes. 0 = disabled.
+        if (
+            self.config.max_consecutive_losses > 0
+            and self.state.consecutive_losses >= self.config.max_consecutive_losses
+        ):
+            logger.warning(
+                "Cannot open position for %s: consecutive-loss limit breached "
+                "(%d / %d)",
+                asset_class,
+                self.state.consecutive_losses,
+                self.config.max_consecutive_losses,
+            )
+            self.state.block_trading(BlockReason.CONSECUTIVE_LOSSES)
+            return False
+
+        # Daily-loss-in-points circuit breaker (session cumulative realized PnL in
+        # the position's native unit — index points for futures). 0 = disabled.
+        # Sidesteps the points-vs-KRW mismatch in the %-of-capital check above.
+        if (
+            self.config.daily_loss_limit_points > 0
+            and self.state.daily_realized_pnl <= -self.config.daily_loss_limit_points
+        ):
+            logger.warning(
+                "Cannot open position for %s: daily loss-in-points limit breached "
+                "(%.2f / -%.2f pts)",
+                asset_class,
+                self.state.daily_realized_pnl,
+                self.config.daily_loss_limit_points,
+            )
+            self.state.block_trading(BlockReason.DAILY_LOSS_LIMIT_POINTS)
+            return False
+
         # Check maximum total positions
         if self.metrics.total_positions >= self.config.max_total_positions:
             logger.warning(
@@ -258,6 +291,12 @@ class RiskManager:
         """
         self._check_and_reset_daily()
         self.state.daily_realized_pnl += float(pnl)
+        # Track the losing streak for the consecutive-loss circuit breaker: a
+        # losing close extends it, a winning/flat close resets it.
+        if float(pnl) < 0:
+            self.state.consecutive_losses += 1
+        else:
+            self.state.consecutive_losses = 0
         self.metrics.total_realized_pnl = self.state.daily_realized_pnl
         self.metrics.portfolio_value = (
             self.config.initial_capital
@@ -415,11 +454,18 @@ class RiskManager:
         self._current_portfolio_value = baseline_value
         self._last_reset_date = self.state.last_reset_date
 
-        # Auto-unblock if configured
+        # Auto-unblock if configured. Covers every session-scoped auto-block
+        # (daily loss %, consecutive losses, daily loss-in-points) — all clear at
+        # the new session; a MANUAL block is intentionally left in place.
+        session_block_reasons = (
+            BlockReason.DAILY_LOSS_LIMIT,
+            BlockReason.CONSECUTIVE_LOSSES,
+            BlockReason.DAILY_LOSS_LIMIT_POINTS,
+        )
         if (
             self.config.monitoring.auto_unblock_on_reset
             and self.state.is_blocked
-            and self.state.block_reason == BlockReason.DAILY_LOSS_LIMIT
+            and self.state.block_reason in session_block_reasons
         ):
             logger.info("Auto-unblocking trading after daily reset")
             self.state.unblock_trading()
