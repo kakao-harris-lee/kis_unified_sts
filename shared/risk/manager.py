@@ -292,7 +292,10 @@ class RiskManager:
         self._check_and_reset_daily()
         self.state.daily_realized_pnl += float(pnl)
         # Track the losing streak for the consecutive-loss circuit breaker: a
-        # losing close extends it, a winning/flat close resets it.
+        # losing close extends it, a winning/flat close resets it. NOTE: this is
+        # per close *event*. The active futures strategies (Setup A/C/D) close the
+        # whole 1-contract position at once, so a close == a trade; a strategy that
+        # scales out a losing position in partial closes would count each partial.
         if float(pnl) < 0:
             self.state.consecutive_losses += 1
         else:

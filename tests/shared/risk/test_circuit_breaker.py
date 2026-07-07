@@ -72,6 +72,19 @@ def test_consecutive_losses_disabled_when_zero():
     assert mgr.can_open_position("futures") is True
 
 
+def test_block_latches_for_session_even_after_a_win():
+    """Once the breaker halts, a later winning close resets the streak counter but
+    does NOT unblock — the halt latches until the daily reset (session halt)."""
+    mgr = _mgr(max_consecutive_losses=3)
+    for _ in range(3):
+        mgr.record_realized_pnl(-5.0)
+    assert mgr.can_open_position("futures") is False  # halted
+    mgr.record_realized_pnl(+50.0)  # a win closes (counter resets to 0) ...
+    assert mgr.state.consecutive_losses == 0
+    assert mgr.state.is_blocked is True  # ... but the session halt stays latched
+    assert mgr.can_open_position("futures") is False
+
+
 # ---------------------------------------------------------------------------
 # Daily-loss-in-points breaker
 # ---------------------------------------------------------------------------
