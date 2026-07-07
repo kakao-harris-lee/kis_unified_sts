@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -39,26 +40,37 @@ class EntryReentryGuardConfig:
         reasons: dict[str, float] = {}
         if isinstance(raw_reasons, dict):
             for reason, seconds in raw_reasons.items():
-                if not isinstance(seconds, (int, float)):
+                # Coerce numeric strings — env-interpolated YAML (``${VAR:180}``)
+                # arrives as a string, so a strict isinstance check would disable
+                # the whole guard on any env-overridable cooldown.
+                try:
+                    value = float(seconds)
+                except (TypeError, ValueError):
                     raise TypeError(
                         "entry_reentry_guard.reason_cooldown_seconds values "
                         f"must be numeric, got {type(seconds)} for {reason}"
-                    )
-                if float(seconds) < 0:
+                    ) from None
+                # Reject non-finite (nan/inf): a nan/inf cooldown makes the guard
+                # block permanently (remaining <= 0 never true), silently
+                # suppressing all re-entries.
+                if not math.isfinite(value) or value < 0:
                     raise ValueError(
-                        "entry_reentry_guard.reason_cooldown_seconds values "
-                        f"must be non-negative, got {seconds} for {reason}"
+                        "entry_reentry_guard.reason_cooldown_seconds values must "
+                        f"be finite and non-negative, got {seconds} for {reason}"
                     )
-                reasons[str(reason).lower()] = float(seconds)
+                reasons[str(reason).lower()] = value
 
-        default_cooldown = raw.get("default_cooldown_seconds", 900.0)
-        if not isinstance(default_cooldown, (int, float)):
+        raw_default = raw.get("default_cooldown_seconds", 900.0)
+        try:
+            default_cooldown = float(raw_default)
+        except (TypeError, ValueError):
             raise TypeError(
                 "entry_reentry_guard.default_cooldown_seconds must be numeric"
-            )
-        if float(default_cooldown) < 0:
+            ) from None
+        if not math.isfinite(default_cooldown) or default_cooldown < 0:
             raise ValueError(
-                "entry_reentry_guard.default_cooldown_seconds must be non-negative"
+                "entry_reentry_guard.default_cooldown_seconds must be finite "
+                "and non-negative"
             )
 
         scope = str(raw.get("scope", "symbol_strategy"))
