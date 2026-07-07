@@ -13,6 +13,16 @@ Error taxonomy:
 - Parse error        -> XACK (poison-pill drop)
 - Broker raises      -> NO XACK (retry)
 - Fill logging raises-> NO XACK
+
+Telegram interactive-alerts (design doc
+docs/plans/2026-07-07-telegram-interactive-alerts-design.md) adds an
+``intent=close`` branch: the telegram_bot XADDs a close request onto the
+same ``signal.final.stock[.shadow]`` stream carrying ``intent=close`` +
+``code`` (the bot never calls the broker directly — wallet authority stays
+here). Stock is long-only and paper-only, so a close is always a SELL for
+the held quantity, read from ``stock:daemon:positions`` (never trusted from
+the message) via the same ``VirtualBroker.submit_order`` path the entry
+branch uses.
 """
 
 from __future__ import annotations
@@ -77,6 +87,128 @@ class StockOrderRouterDaemon(StreamStage):
         self.broker = broker
         self.fill_logger = fill_logger
         self.positions_key = positions_key
+        self.close_count: int = 0
+
+    async def _execute_stock_close(self, fields: dict[bytes, bytes]) -> bool:
+        """Handle an ``intent=close`` message by SELLing the held quantity.
+
+        The telegram_bot XADDs ``intent=close`` + ``code`` onto the same
+        ``signal.final.stock[.shadow]`` stream (design doc
+        docs/plans/2026-07-07-telegram-interactive-alerts-design.md, "Close
+        execution preserves the wallet-authority invariant") — the bot never
+        calls the broker directly. Stock is long-only and paper-only, so a
+        close is always a SELL for the held quantity, read from
+        ``stock:daemon:positions`` (never trusted from the message) rather
+        than from the incoming fields.
+
+        Removes the position record (HDEL) only after the fill is
+        successfully logged, mirroring ``services/stock_exit/daemon.py``'s
+        HDEL-before-PnL ordering for the authoritative-close half of that
+        contract (fill logging failure here leaves the record in place so a
+        retry does not silently lose the position).
+        """
+        code = fields.get(b"code", b"").decode("utf-8", errors="replace")
+        if not code:
+            logger.warning("intent=close message missing code; dropping")
+            return True  # poison-pill: consume
+
+        try:
+            raw = await self.redis.hget(self.positions_key, code)
+        except Exception:
+            logger.exception(
+                "close: positions hash read failed code=%s; leaving pending", code
+            )
+            return False  # leave pending — transient Redis issue
+
+        if raw is None:
+            logger.warning(
+                "close: no open position for code=%s; nothing to close", code
+            )
+            return True  # final state: nothing to sell, consumed
+
+        try:
+            record = json.loads(
+                raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+            )
+        except (TypeError, ValueError):
+            logger.warning("close: unparseable position record code=%s; dropping", code)
+            return True  # poison-pill: consume
+
+        quantity = int(record.get("quantity", 0) or 0)
+        entry_price = float(record.get("entry_price", 0.0) or 0.0)
+        signal_id = str(record.get("signal_id", "")) or f"close-{code}"
+        strategy = str(record.get("strategy", ""))
+        if quantity <= 0:
+            logger.warning(
+                "close: recorded quantity<=0 for code=%s; nothing to close", code
+            )
+            return True
+
+        try:
+            order = await self.broker.submit_order(
+                symbol=code,
+                side=OrderSide.SELL,
+                quantity=quantity,
+                price=entry_price,
+                order_type=OrderType.MARKET,
+                market_price=entry_price,
+            )
+        except Exception:
+            logger.exception("close: broker raised code=%s; leaving pending", code)
+            return False
+
+        if not order.filled:
+            logger.info(
+                "close: stock paper sell not filled code=%s reason=%s",
+                code,
+                order.rejection_reason,
+            )
+            return (
+                True  # final state, consumed — position stays open for a future retry
+            )
+
+        filled_price = float(order.fill_price or entry_price)
+        now_ms = int(time.time() * 1000)
+        slippage_krw = abs(filled_price - entry_price)
+
+        try:
+            await self.fill_logger.log_fill(
+                signal_id=signal_id,
+                order_id=order.order_id,
+                symbol=code,
+                side="SELL",
+                order_type="market",
+                requested_price=entry_price,
+                filled_price=filled_price,
+                tick_size_points=0.0,
+                slippage_ticks=slippage_krw,
+                quantity=quantity,
+                requested_at_ms=now_ms,
+                filled_at_ms=now_ms,
+                venue="KRX",
+                trade_role="exit",
+                strategy=strategy,
+            )
+        except Exception:
+            logger.exception(
+                "close: fill logging failed code=%s; leaving pending (position kept)",
+                code,
+            )
+            return False
+
+        try:
+            await self.redis.hdel(self.positions_key, code)
+        except Exception:
+            # WARN (not exception-only): fill is already published; a stale
+            # record is the lesser risk (mirrors the entry branch's stance).
+            logger.warning(
+                "close: position hdel failed code=%s — fill published, record stale",
+                code,
+                exc_info=True,
+            )
+
+        self.close_count += 1
+        return True
 
     async def handle_message(
         self,
@@ -84,6 +216,9 @@ class StockOrderRouterDaemon(StreamStage):
         msg_id: bytes,  # noqa: ARG002
         fields: dict[bytes, bytes],
     ) -> bool:
+        if fields.get(b"intent", b"").decode("utf-8", errors="replace") == "close":
+            return await self._execute_stock_close(fields)
+
         try:
             signal_id, signal = stock_signal_from_stream_fields(fields)
             size_multiplier = float(

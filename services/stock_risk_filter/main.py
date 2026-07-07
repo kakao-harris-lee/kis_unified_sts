@@ -38,12 +38,17 @@ from shared.config.runtime_defaults import redis_url_from_env
 from shared.risk.layer import RiskFilterLayer
 from shared.risk.runtime_state import RuntimeRiskState
 from shared.strategy.market_time import now_kst
+from shared.streaming.approval_gate import ApprovalGateConfig, is_gated, record_pending
 from shared.streaming.stage import StreamStage
 from shared.streaming.stock_keys import stock_daemon_positions_key
 
 logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400
+
+# Asset-class tag for the pending-approval hash key / HASH field id (see
+# shared/streaming/approval_keys.py). Fixed for this daemon — stock only.
+_ASSET = "stock"
 
 
 class StockRiskFilterDaemon(StreamStage):
@@ -63,6 +68,7 @@ class StockRiskFilterDaemon(StreamStage):
         xread_block_ms: int,
         batch_size: int,
         clock: Callable[[], datetime] | None = None,
+        approval_gate_config: ApprovalGateConfig | None = None,
     ) -> None:
         super().__init__(
             redis=redis,
@@ -77,6 +83,10 @@ class StockRiskFilterDaemon(StreamStage):
         self.runtime_state = runtime_state
         self.final_stream = final_stream
         self.final_maxlen = final_maxlen
+        # Telegram interactive-alerts approval gate (Method A). Defaults to a
+        # fully-inert config (enabled=False) so existing behavior is
+        # unchanged unless an operator opts a strategy/symbol in.
+        self.approval_gate_config = approval_gate_config or ApprovalGateConfig()
         # KST "now" provider — injectable so tests can pin the day boundary.
         self._clock = clock if clock is not None else now_kst
         # In-memory guard: the KST date we last reset (or confirmed reset) for.
@@ -166,6 +176,19 @@ class StockRiskFilterDaemon(StreamStage):
             fields_out = dict(passthrough)
             fields_out["size_multiplier"] = str(result.size_multiplier)
             fields_out["filtered_at_ms"] = str(int(time.time() * 1000))
+            if is_gated(signal.strategy, signal.code, self.approval_gate_config):
+                # Telegram interactive-alerts approval gate (Method A): hold
+                # the fully-assembled final-stream dict for operator approval
+                # instead of XADDing to signal.final.stock. The bot replays
+                # fields_out verbatim on approval.
+                await record_pending(
+                    self.redis,
+                    _ASSET,
+                    signal_id,
+                    fields_out,
+                    self.approval_gate_config.pending_ttl_seconds,
+                )
+                return True  # consumed: held pending, not XADDed
             await self.redis.xadd(
                 self.final_stream,
                 fields_out,
@@ -261,6 +284,9 @@ async def _build_and_run() -> int:
         has_open_position_provider=_has_open_position,
     )
     runtime_state = RuntimeRiskState(redis=redis_client, asset_class="stock")
+    # Loaded once at startup (not on the hot path) — inert by default
+    # (config/telegram_bot.yaml::approval_gate.enabled = false).
+    approval_gate_config = ApprovalGateConfig.from_yaml()
 
     worker_id = f"stock-risk-filter-{socket.gethostname()}-{os.getpid()}"
     daemon = StockRiskFilterDaemon(
@@ -274,6 +300,7 @@ async def _build_and_run() -> int:
         final_maxlen=10_000,
         xread_block_ms=2000,
         batch_size=10,
+        approval_gate_config=approval_gate_config,
     )
 
     loop = asyncio.get_running_loop()

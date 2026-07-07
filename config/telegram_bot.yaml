@@ -1,0 +1,25 @@
+# Telegram interactive-alerts configuration.
+# Design: docs/plans/2026-07-07-telegram-interactive-alerts-design.md
+#
+# Loaded by:
+#   telegram_bot:    services/telegram_bot/config.py::TelegramBotConfig.from_yaml()
+#   approval_gate:   shared/streaming/approval_gate.py::ApprovalGateConfig.from_yaml()
+#
+# Both sections default to enabled: false — this feature is inert until an
+# operator opts in (see design doc's Rollout section: enable the bot first,
+# verify /positions and /help with zero order impact, THEN gate one strategy
+# on paper).
+
+telegram_bot:
+  enabled: false
+  # Allowed chat_id whitelist — inbound commands/callbacks from any other
+  # chat_id are ignored. Reuses the existing per-domain env vars already
+  # wired for outbound notifications (shared/notification/telegram.py).
+  allowed_chat_ids: ["${TELEGRAM_STOCK_CHAT_ID}", "${TELEGRAM_FUTURES_CHAT_ID}"]
+  poll_interval_seconds: 2
+
+approval_gate:
+  enabled: false
+  gated_strategies: []      # e.g. ["setup_a_gap_reversion"]
+  gated_symbols: []
+  pending_ttl_seconds: 86400

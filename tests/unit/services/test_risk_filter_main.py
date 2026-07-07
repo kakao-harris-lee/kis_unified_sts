@@ -1,5 +1,6 @@
 """Tests for services/risk_filter/main.py — Phase 4 Task 11."""
 
+import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
@@ -14,6 +15,8 @@ from services.risk_filter.main import (
 )
 from shared.decision.signal import Signal
 from shared.risk.layer import LayerResult, RiskFilterLayer
+from shared.streaming.approval_gate import ApprovalGateConfig
+from shared.streaming.approval_keys import approval_field_id, pending_approval_key
 
 CANDIDATE_STREAM = "signal.candidate.futures"
 FINAL_STREAM = "signal.final.futures"
@@ -55,7 +58,7 @@ def signals_writer():
     return AsyncMock()
 
 
-def _make_daemon(*, redis, signals_writer, layer):
+def _make_daemon(*, redis, signals_writer, layer, approval_gate_config=None):
     runtime_state = AsyncMock()
     runtime_state.snapshot = AsyncMock(return_value=AsyncMock())
     return RiskFilterDaemon(
@@ -70,6 +73,7 @@ def _make_daemon(*, redis, signals_writer, layer):
         final_maxlen=1000,
         xread_block_ms=10,
         batch_size=10,
+        approval_gate_config=approval_gate_config,
     )
 
 
@@ -375,3 +379,112 @@ async def test_missing_or_invalid_entry_size_factor_is_neutral(redis, signals_wr
         assert float(out[b"size_multiplier"]) == pytest.approx(0.5)
         assert b"market_risk_gate" not in out
         assert b"futures_context" not in out
+
+
+# ---------------------------------------------------------------------------
+# Telegram interactive-alerts approval gate (Method A) — 2026-07-07 design doc
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gated_signal_recorded_pending_no_final(redis, signals_writer):
+    """A signal whose strategy matches the gate is held pending, not XADDed."""
+    import asyncio
+
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    gate_config = ApprovalGateConfig(
+        enabled=True, gated_strategies=["A_gap_reversion"], gated_symbols=[]
+    )
+    daemon = _make_daemon(
+        redis=redis,
+        signals_writer=signals_writer,
+        layer=layer,
+        approval_gate_config=gate_config,
+    )
+    await _publish_candidate(redis, _signal("long"))
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    # No entry reached the final stream.
+    assert await redis.xrange(FINAL_STREAM) == []
+    # Pending hash holds the full stream-dict, keyed by "{asset}:{signal_id}".
+    key = pending_approval_key("futures")
+    field = approval_field_id("futures", "sig-1")
+    raw = await redis.hget(key, field)
+    assert raw is not None
+    stored = json.loads(raw)
+    assert stored["setup_type"] == "A_gap_reversion"
+    assert stored["signal_id"] == "sig-1"
+    # TTL applied per config.pending_ttl_seconds.
+    ttl = await redis.ttl(key)
+    assert 0 < ttl <= gate_config.pending_ttl_seconds
+
+
+@pytest.mark.asyncio
+async def test_non_gated_signal_flows_to_final_no_pending(redis, signals_writer):
+    """A signal that does not match the (enabled) gate flows through unchanged."""
+    import asyncio
+
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    gate_config = ApprovalGateConfig(
+        enabled=True, gated_strategies=["some_other_strategy"], gated_symbols=[]
+    )
+    daemon = _make_daemon(
+        redis=redis,
+        signals_writer=signals_writer,
+        layer=layer,
+        approval_gate_config=gate_config,
+    )
+    await _publish_candidate(redis, _signal("long"))
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    entries = await redis.xrange(FINAL_STREAM)
+    assert len(entries) == 1
+    key = pending_approval_key("futures")
+    assert await redis.hlen(key) == 0
+
+
+@pytest.mark.asyncio
+async def test_gate_disabled_flows_to_final_no_pending(redis, signals_writer):
+    """Gate disabled (default) — behavior identical to today even if the
+    strategy/symbol lists would otherwise match."""
+    import asyncio
+
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    gate_config = ApprovalGateConfig(
+        enabled=False, gated_strategies=["A_gap_reversion"], gated_symbols=[]
+    )
+    daemon = _make_daemon(
+        redis=redis,
+        signals_writer=signals_writer,
+        layer=layer,
+        approval_gate_config=gate_config,
+    )
+    await _publish_candidate(redis, _signal("long"))
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    entries = await redis.xrange(FINAL_STREAM)
+    assert len(entries) == 1
+    key = pending_approval_key("futures")
+    assert await redis.hlen(key) == 0
+
+
+def test_daemon_defaults_to_inert_approval_gate_config(redis, signals_writer):
+    """No approval_gate_config passed -> defaults to a fully-inert config."""
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    assert daemon.approval_gate_config.enabled is False
