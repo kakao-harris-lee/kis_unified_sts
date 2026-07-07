@@ -301,19 +301,27 @@ def _clean_symbol(symbol: str) -> str:
     return str(symbol or "").strip()
 
 
-_CODE_RE = re.compile(r"^\d{6}$")
+_CODE_RE = re.compile(r"^[0-9]{6}$")
 
 
 def _build_name_map(redis: Any) -> dict[str, str]:
-    """Merge code->name across every raw universe source + open positions."""
+    """Merge code->name across every raw universe source + open positions.
+
+    Mirrors the priority order of ``shared.stock_universe.effective._merge_names``
+    (the function that populates the ``name`` shown in the universe table once a
+    stock has been added), so the name confirmed here matches what the table
+    will later display: trade_targets, daily_watchlist, screener_universe,
+    theme_targets, daily_indicators (first source wins), then open positions,
+    then override-carried names (lowest priority, gap-fill only).
+    """
     keys = _keys()
     names: dict[str, str] = {}
     for source_key in (
-        "screener_universe",
         "trade_targets",
         "daily_watchlist",
-        "daily_indicators",
+        "screener_universe",
         "theme_targets",
+        "daily_indicators",
     ):
         payload = decode_payload(_redis_get(redis, keys[source_key]))
         for code, name in extract_names(payload).items():
@@ -321,6 +329,14 @@ def _build_name_map(redis: Any) -> dict[str, str]:
     _open_codes, open_names = _read_open_positions()
     for code, name in open_names.items():
         names.setdefault(str(code).strip(), name)
+    overrides = _load_overrides(redis)
+    for bucket in ("manual_include", "manual_exclude"):
+        for code, item in (overrides.get(bucket) or {}).items():
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if name:
+                names.setdefault(str(code).strip(), name)
     return names
 
 
