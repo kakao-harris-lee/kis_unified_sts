@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -49,10 +50,13 @@ class EntryReentryGuardConfig:
                         "entry_reentry_guard.reason_cooldown_seconds values "
                         f"must be numeric, got {type(seconds)} for {reason}"
                     ) from None
-                if value < 0:
+                # Reject non-finite (nan/inf): a nan/inf cooldown makes the guard
+                # block permanently (remaining <= 0 never true), silently
+                # suppressing all re-entries.
+                if not math.isfinite(value) or value < 0:
                     raise ValueError(
-                        "entry_reentry_guard.reason_cooldown_seconds values "
-                        f"must be non-negative, got {seconds} for {reason}"
+                        "entry_reentry_guard.reason_cooldown_seconds values must "
+                        f"be finite and non-negative, got {seconds} for {reason}"
                     )
                 reasons[str(reason).lower()] = value
 
@@ -63,9 +67,10 @@ class EntryReentryGuardConfig:
             raise TypeError(
                 "entry_reentry_guard.default_cooldown_seconds must be numeric"
             ) from None
-        if default_cooldown < 0:
+        if not math.isfinite(default_cooldown) or default_cooldown < 0:
             raise ValueError(
-                "entry_reentry_guard.default_cooldown_seconds must be non-negative"
+                "entry_reentry_guard.default_cooldown_seconds must be finite "
+                "and non-negative"
             )
 
         scope = str(raw.get("scope", "symbol_strategy"))

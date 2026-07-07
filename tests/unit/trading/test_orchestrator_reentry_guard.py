@@ -62,6 +62,20 @@ def test_reentry_guard_config_coerces_numeric_strings() -> None:
     assert cfg.cooldown_for("stop_loss") == 180.0
 
 
+def test_reentry_guard_config_rejects_non_finite() -> None:
+    """nan/inf must be rejected — a non-finite cooldown would make the guard block
+    permanently (remaining <= 0 never true)."""
+    import pytest
+
+    for bad in ("nan", "inf", "-inf", float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            EntryReentryGuardConfig.from_dict(
+                {"reason_cooldown_seconds": {"stop_loss": bad}}
+            )
+    with pytest.raises(ValueError):
+        EntryReentryGuardConfig.from_dict({"default_cooldown_seconds": "inf"})
+
+
 def test_records_stop_loss_exit_and_blocks_same_strategy_reentry() -> None:
     orch = _make_orchestrator()
     closed = SimpleNamespace(code="064400", strategy="momentum_breakout")
@@ -166,8 +180,11 @@ def test_reentry_guard_applies_to_futures() -> None:
     assert block["reason"] == "stop_loss"
 
 
-def test_load_guard_config_applies_futures_override() -> None:
+def test_load_guard_config_applies_futures_override(monkeypatch) -> None:
     # execution.yaml: futures override -> shorter cooldowns than stock.
+    # stop_loss is env-overridable (${FUTURES_REENTRY_STOP_LOSS_COOLDOWN_SECONDS:180})
+    # — clear the override so the assertion tests the shipped default, not the env.
+    monkeypatch.delenv("FUTURES_REENTRY_STOP_LOSS_COOLDOWN_SECONDS", raising=False)
     stock = _make_orchestrator(asset_class="stock")
     futures = _make_orchestrator(asset_class="futures")
 
