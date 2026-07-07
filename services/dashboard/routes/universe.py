@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -20,9 +22,11 @@ from shared.stock_universe import (
     DEFAULT_UNIVERSE_TTL_SECONDS,
     build_effective_universe_snapshot,
     decode_payload,
+    merge_names,
 )
 
 router = APIRouter(prefix="/api/trading/universe", tags=["trading"])
+logger = logging.getLogger(__name__)
 
 
 class UniverseOverrideRequest(BaseModel):
@@ -82,9 +86,6 @@ def _ttl() -> dict[str, int]:
         "audit": _env_int(
             "STOCK_UNIVERSE_AUDIT_TTL_SECONDS", DEFAULT_AUDIT_TTL_SECONDS
         ),
-        "override_default": _env_int(
-            "STOCK_UNIVERSE_OVERRIDE_DEFAULT_TTL_SECONDS", DEFAULT_UNIVERSE_TTL_SECONDS
-        ),
         "source_stale": _env_int(
             "STOCK_UNIVERSE_SOURCE_STALE_SECONDS", DEFAULT_SOURCE_STALE_SECONDS
         ),
@@ -114,11 +115,14 @@ def _json_dumps(payload: dict[str, Any] | list[Any]) -> str:
 
 
 def _redis_set_json(
-    redis: Any, key: str, payload: dict[str, Any], ttl_seconds: int
+    redis: Any, key: str, payload: dict[str, Any], ttl_seconds: int | None
 ) -> None:
     if redis is None:
         return
     encoded = _json_dumps(payload)
+    if ttl_seconds is None:
+        redis.set(key, encoded)
+        return
     try:
         redis.set(key, encoded, ex=ttl_seconds)
     except TypeError:
@@ -156,6 +160,42 @@ def _effective_snapshot_ttl(snapshot: dict[str, Any], default_ttl: int) -> int:
                 if expires_at is not None:
                     expiries.append(max(1, int((expires_at - now).total_seconds())))
     return min(default_ttl, min(expiries)) if expiries else default_ttl
+
+
+def _overrides_key_ttl(overrides: dict[str, Any], default_ttl: int) -> int | None:
+    """TTL for the overrides key, or None to leave it without expiry.
+
+    If any active override is permanent (no ``expires_at``), the key must not
+    expire — a Redis-level TTL would silently drop permanent operator picks
+    once it lapses. Otherwise keep at least the default and extend to the
+    furthest explicit expiry.
+    """
+    now = datetime.now(UTC)
+    max_expiry_ttl = 0
+    has_permanent = False
+    for bucket in ("manual_include", "manual_exclude"):
+        raw_bucket = overrides.get(bucket)
+        if not isinstance(raw_bucket, dict):
+            continue
+        for item in raw_bucket.values():
+            if not isinstance(item, dict):
+                continue
+            expires_at = _parse_dt(item.get("expires_at"))
+            if expires_at is None:
+                has_permanent = True
+            else:
+                max_expiry_ttl = max(
+                    max_expiry_ttl,
+                    int((expires_at - now).total_seconds()),
+                )
+    if has_permanent:
+        # Sanctioned exception to the repo's Redis-TTL-everything rule:
+        # operator permanent picks must not silently expire. Unbounded growth
+        # of this non-expiring key is instead bounded by the
+        # STOCK_UNIVERSE_MAX_OVERRIDES cap enforced in
+        # update_trading_universe_override.
+        return None
+    return max(default_ttl, max_expiry_ttl)
 
 
 def _read_open_positions() -> tuple[list[str], dict[str, str]]:
@@ -247,18 +287,71 @@ def _append_audit(redis: Any, event: dict[str, Any]) -> None:
         return
 
 
-def _override_expiry(request: UniverseOverrideRequest, now: datetime) -> str:
+def _override_expiry(request: UniverseOverrideRequest, now: datetime) -> str | None:
+    """Return an ISO expiry, or None for a permanent override.
+
+    Permanent (None) applies when the operator supplies neither an explicit
+    ``expires_at`` nor a ``ttl_seconds``. Operator "My List" picks are meant to
+    persist until explicitly removed.
+    """
     if request.expires_at is not None:
         expires = request.expires_at
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=UTC)
         return expires.astimezone(UTC).isoformat()
-    ttl_seconds = request.ttl_seconds or _ttl()["override_default"]
-    return (now + timedelta(seconds=ttl_seconds)).isoformat()
+    if request.ttl_seconds is not None:
+        return (now + timedelta(seconds=request.ttl_seconds)).isoformat()
+    return None
 
 
 def _clean_symbol(symbol: str) -> str:
     return str(symbol or "").strip()
+
+
+_CODE_RE = re.compile(r"^[0-9]{6}$")
+
+
+def _build_name_map(redis: Any) -> dict[str, str]:
+    """Merge code->name across every raw universe source + open positions.
+
+    Delegates to ``shared.stock_universe.merge_names`` — the single source of
+    the merge-order truth also used by ``build_effective_universe_snapshot``
+    — so the name confirmed here can never drift from what the universe table
+    displays. Payloads are passed positionally in the same order the snapshot
+    uses (trade_targets, daily_watchlist, screener_universe, theme_targets,
+    daily_indicators: first source wins), then open positions, then
+    override-carried names (lowest priority, gap-fill only).
+    """
+    keys = _keys()
+    payloads = [
+        decode_payload(_redis_get(redis, keys[source_key]))
+        for source_key in (
+            "trade_targets",
+            "daily_watchlist",
+            "screener_universe",
+            "theme_targets",
+            "daily_indicators",
+        )
+    ]
+    _open_codes, open_names = _read_open_positions()
+    overrides = _load_overrides(redis)
+    return merge_names(*payloads, existing_names=open_names, overrides=overrides)
+
+
+@router.get("/resolve")
+async def resolve_universe_symbol(
+    code: str = Query(...),
+) -> dict[str, Any]:
+    """Resolve a 6-digit code to a display name the system already knows.
+
+    Returns ``known=False`` with ``name=None`` for a valid code the system has
+    not seen yet (still addable — the operator confirms by code).
+    """
+    cleaned = _clean_symbol(code)
+    if not _CODE_RE.match(cleaned):
+        raise HTTPException(status_code=400, detail="invalid_code")
+    name = _build_name_map(_get_redis_client()).get(cleaned)
+    return {"code": cleaned, "name": name, "known": name is not None}
 
 
 @router.get("")
@@ -339,16 +432,21 @@ async def update_trading_universe_override(
     symbol = _clean_symbol(request.symbol)
     if not symbol:
         raise HTTPException(status_code=400, detail="symbol_required")
-    if (
-        request.action in {"include", "exclude"}
-        and not str(request.reason or "").strip()
-    ):
-        raise HTTPException(status_code=400, detail="reason_required")
 
     now = datetime.now(UTC)
     overrides = _load_overrides(redis)
     include = dict(overrides.get("manual_include") or {})
     exclude = dict(overrides.get("manual_exclude") or {})
+
+    if request.action in ("include", "exclude"):
+        # A symbol already present in either bucket is an update (or a move
+        # between include/exclude with no net growth) — never capped. Only a
+        # genuinely new symbol can push the combined bucket size over the cap.
+        is_new_symbol = symbol not in include and symbol not in exclude
+        if is_new_symbol:
+            max_overrides = _env_int("STOCK_UNIVERSE_MAX_OVERRIDES", 200)
+            if len(include) + len(exclude) + 1 > max_overrides:
+                raise HTTPException(status_code=409, detail="override_limit_reached")
 
     event = {
         "action": request.action,
@@ -369,6 +467,15 @@ async def update_trading_universe_override(
         }
         exclude.pop(symbol, None)
         event["expires_at"] = include[symbol]["expires_at"]
+        if include[symbol]["expires_at"] is None and not include[symbol]["reason"]:
+            # No real per-user identity exists (single shared API key), so we
+            # cannot attribute this permanent, trace-less pick to an operator
+            # — surface it in logs as the next-best traceability signal.
+            logger.warning(
+                "permanent manual include added without reason: symbol=%s operator=%s",
+                symbol,
+                request.operator,
+            )
     elif request.action == "exclude":
         exclude[symbol] = {
             "reason": str(request.reason or "").strip(),
@@ -388,7 +495,12 @@ async def update_trading_universe_override(
         "manual_exclude": exclude,
         "updated_at": now.isoformat(),
     }
-    _redis_set_json(redis, _keys()["overrides"], next_overrides, _ttl()["overrides"])
+    _redis_set_json(
+        redis,
+        _keys()["overrides"],
+        next_overrides,
+        _overrides_key_ttl(next_overrides, _ttl()["overrides"]),
+    )
     _append_audit(redis, event)
     snapshot = _build_snapshot(redis)
     _publish_snapshot(redis, snapshot)

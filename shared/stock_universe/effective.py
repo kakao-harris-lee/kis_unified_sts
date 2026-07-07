@@ -325,11 +325,20 @@ def effective_snapshot_has_expired_overrides(
     return False
 
 
-def _merge_names(
+def merge_names(
     *payloads: dict[str, Any] | None,
     existing_names: dict[str, str] | None = None,
     overrides: dict[str, Any] | None = None,
 ) -> dict[str, str]:
+    """Merge code->name across universe source payloads, positions, overrides.
+
+    This is the single source of truth for the merge-order priority used both
+    when building the effective universe snapshot and when resolving a
+    display name for a code (e.g. ``/api/trading/universe/resolve``):
+    payloads win in the order passed (first match wins), then
+    ``existing_names`` (open positions), then override-carried names
+    (lowest priority, gap-fill only).
+    """
     names: dict[str, str] = {}
     for payload in payloads:
         for code, name in extract_names(payload).items():
@@ -431,7 +440,7 @@ def build_effective_universe_snapshot(
     )
     market_data_codes = ordered_unique([*active_codes, *existing_codes])
 
-    names = _merge_names(
+    names = merge_names(
         trade_targets,
         daily_watchlist,
         screener,

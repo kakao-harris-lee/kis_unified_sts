@@ -62,6 +62,12 @@ export interface UniverseAuditResponse {
   events: Array<Record<string, unknown>>;
 }
 
+export interface UniverseResolveResponse {
+  code: string;
+  name: string | null;
+  known: boolean;
+}
+
 export interface UniverseOverridePayload {
   action: 'include' | 'exclude' | 'remove';
   symbol: string;
@@ -80,6 +86,10 @@ export const universeApi = {
     ),
   getAudit: (params?: { limit?: number }) =>
     apiClient.get<UniverseAuditResponse>('/api/trading/universe/audit', { params }),
+  resolve: (code: string) =>
+    apiClient.get<UniverseResolveResponse>('/api/trading/universe/resolve', {
+      params: { code },
+    }),
   recompute: () =>
     apiClient.post<UniverseResponse>('/api/trading/universe/recompute'),
   updateOverride: (payload: UniverseOverridePayload) =>

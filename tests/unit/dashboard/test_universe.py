@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import sys
 import types
 
@@ -164,3 +165,329 @@ async def test_universe_override_publishes_snapshot_and_audit(monkeypatch):
 
     audit_response = await universe.get_trading_universe_audit()
     assert audit_response["events"][0]["symbol"] == "000660"
+
+
+@pytest.mark.asyncio
+async def test_include_override_is_permanent_by_default(monkeypatch):
+    universe, fake = _client(
+        monkeypatch,
+        {
+            "system:trade_targets:latest": {
+                "codes": ["005930"],
+                "names": {"005930": "삼성전자"},
+            },
+        },
+    )
+
+    body = await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(
+            action="include",
+            symbol="000660",
+            name="SK하이닉스",
+        )
+    )
+
+    assert "000660" in body["codes"]
+    overrides = json.loads(fake.payloads["stock:universe:overrides"])
+    entry = overrides["manual_include"]["000660"]
+    # Permanent: no expiry stamped.
+    assert entry.get("expires_at") is None
+    # Overrides key must not silently expire permanent picks.
+    assert "stock:universe:overrides" not in fake.expirations
+
+
+@pytest.mark.asyncio
+async def test_include_override_honors_explicit_ttl(monkeypatch):
+    universe, fake = _client(monkeypatch, {})
+
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(
+            action="include",
+            symbol="000660",
+            ttl_seconds=3600,
+        )
+    )
+
+    overrides = json.loads(fake.payloads["stock:universe:overrides"])
+    entry = overrides["manual_include"]["000660"]
+    assert entry.get("expires_at") is not None  # explicit TTL still respected
+    # Key TTL should cover the requested horizon (not truncate it).
+    assert fake.expirations["stock:universe:overrides"] >= 3600
+
+
+@pytest.mark.asyncio
+async def test_include_override_allows_missing_reason(monkeypatch):
+    universe, fake = _client(monkeypatch, {})
+
+    body = await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="000660")
+    )
+
+    assert "000660" in body["codes"]  # no reason_required error
+
+
+@pytest.mark.asyncio
+async def test_override_rejects_when_limit_reached(monkeypatch):
+    monkeypatch.setenv("STOCK_UNIVERSE_MAX_OVERRIDES", "2")
+    universe, _fake = _client(monkeypatch, {})
+
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="000660")
+    )
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="005930")
+    )
+
+    with pytest.raises(universe.HTTPException) as excinfo:
+        await universe.update_trading_universe_override(
+            universe.UniverseOverrideRequest(action="include", symbol="035720")
+        )
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail == "override_limit_reached"
+
+
+@pytest.mark.asyncio
+async def test_override_update_existing_allowed_at_limit(monkeypatch):
+    monkeypatch.setenv("STOCK_UNIVERSE_MAX_OVERRIDES", "2")
+    universe, _fake = _client(monkeypatch, {})
+
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="000660")
+    )
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="005930")
+    )
+
+    # Re-including an already-present symbol is an update, not a new entry —
+    # must not be blocked by the cap.
+    body = await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(
+            action="include", symbol="000660", reason="updated note"
+        )
+    )
+    assert "000660" in body["codes"]
+
+
+@pytest.mark.asyncio
+async def test_override_remove_not_blocked_by_limit(monkeypatch):
+    monkeypatch.setenv("STOCK_UNIVERSE_MAX_OVERRIDES", "2")
+    universe, _fake = _client(monkeypatch, {})
+
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="000660")
+    )
+    await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="include", symbol="005930")
+    )
+
+    # At the cap, removing an existing entry must always be allowed.
+    body = await universe.update_trading_universe_override(
+        universe.UniverseOverrideRequest(action="remove", symbol="000660")
+    )
+    assert "000660" not in body["codes"]
+
+
+@pytest.mark.asyncio
+async def test_permanent_include_without_reason_logs_warning(monkeypatch, caplog):
+    universe, _fake = _client(monkeypatch, {})
+
+    with caplog.at_level(logging.WARNING, logger="services.dashboard.routes.universe"):
+        await universe.update_trading_universe_override(
+            universe.UniverseOverrideRequest(action="include", symbol="000660")
+        )
+
+    assert any(
+        record.levelno == logging.WARNING and "000660" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_include_with_reason_no_warning(monkeypatch, caplog):
+    universe, _fake = _client(monkeypatch, {})
+
+    with caplog.at_level(logging.WARNING, logger="services.dashboard.routes.universe"):
+        await universe.update_trading_universe_override(
+            universe.UniverseOverrideRequest(
+                action="include", symbol="000660", reason="operator pick"
+            )
+        )
+
+    assert not any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_temporary_include_without_reason_no_warning(monkeypatch, caplog):
+    """Only *permanent* reason-less includes are worth flagging."""
+    universe, _fake = _client(monkeypatch, {})
+
+    with caplog.at_level(logging.WARNING, logger="services.dashboard.routes.universe"):
+        await universe.update_trading_universe_override(
+            universe.UniverseOverrideRequest(
+                action="include", symbol="000660", ttl_seconds=3600
+            )
+        )
+
+    assert not any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_known_name(monkeypatch):
+    universe, _fake = _client(
+        monkeypatch,
+        {
+            "system:trade_targets:latest": {
+                "codes": ["005930"],
+                "names": {"005930": "삼성전자"},
+            },
+        },
+    )
+
+    body = await universe.resolve_universe_symbol(code="005930")
+
+    assert body == {"code": "005930", "name": "삼성전자", "known": True}
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_pending_for_unknown_code(monkeypatch):
+    universe, _fake = _client(monkeypatch, {})
+
+    body = await universe.resolve_universe_symbol(code="123456")
+
+    assert body == {"code": "123456", "name": None, "known": False}
+
+
+@pytest.mark.asyncio
+async def test_resolve_rejects_bad_code(monkeypatch):
+    universe, _fake = _client(monkeypatch, {})
+
+    with pytest.raises(universe.HTTPException) as excinfo:
+        await universe.resolve_universe_symbol(code="12ab")
+    assert excinfo.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_resolve_rejects_full_width_digits(monkeypatch):
+    """Full-width/Unicode digits must not falsely satisfy the 6-digit check."""
+    universe, _fake = _client(monkeypatch, {})
+
+    with pytest.raises(universe.HTTPException) as excinfo:
+        # U+FF10..U+FF15 = full-width "005930"
+        await universe.resolve_universe_symbol(code="００５９３０")
+    assert excinfo.value.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "redis_key",
+    [
+        "system:universe:latest",  # screener_universe
+        "system:daily_watchlist:latest",  # daily_watchlist
+        "system:theme_targets:latest",  # theme_targets
+        "system:daily_indicators:latest",  # daily_indicators
+    ],
+)
+async def test_resolve_finds_name_in_each_raw_source(monkeypatch, redis_key):
+    """Every raw source key feeds the name map, not just trade_targets.
+
+    Uses the ``names`` dict shape ``extract_names`` understands. Note: of
+    these four, only screener_universe (services/screener.py) and
+    theme_targets (services/theme_discovery.py) actually publish a ``names``
+    dict in production today. daily_watchlist (services/daily_scanner.py,
+    scripts/daily_indicator_scanner.py's compat payload) and daily_indicators
+    (scripts/daily_indicator_scanner.py) currently publish only scoring
+    diagnostics under ``metadata`` (e.g. ``trade_trend_priority``), with no
+    ``name``/``stock_name``/``prdt_name`` field — so in practice those two
+    keys never carry a resolvable name today. This test still proves
+    ``_build_name_map`` wires every source key through ``extract_names``
+    correctly, independent of what today's producers happen to publish.
+    """
+    universe, _fake = _client(
+        monkeypatch,
+        {
+            redis_key: {
+                "codes": ["005930"],
+                "names": {"005930": "삼성전자"},
+            },
+        },
+    )
+
+    body = await universe.resolve_universe_symbol(code="005930")
+
+    assert body == {"code": "005930", "name": "삼성전자", "known": True}
+
+
+@pytest.mark.asyncio
+async def test_resolve_prefers_trade_targets_over_screener_universe(monkeypatch):
+    """Merge order must match ``_merge_names``: trade_targets wins first."""
+    universe, _fake = _client(
+        monkeypatch,
+        {
+            "system:trade_targets:latest": {
+                "codes": ["005930"],
+                "names": {"005930": "삼성전자(fusion)"},
+            },
+            "system:universe:latest": {
+                "codes": ["005930"],
+                "names": {"005930": "삼성전자(screener)"},
+            },
+        },
+    )
+
+    body = await universe.resolve_universe_symbol(code="005930")
+
+    assert body == {"code": "005930", "name": "삼성전자(fusion)", "known": True}
+
+
+@pytest.mark.asyncio
+async def test_resolve_finds_name_from_open_positions(monkeypatch):
+    universe, _fake = _client(monkeypatch, {})
+    monkeypatch.setattr(
+        universe,
+        "_read_open_positions",
+        lambda: (["005930"], {"005930": "삼성전자"}),
+    )
+
+    body = await universe.resolve_universe_symbol(code="005930")
+
+    assert body == {"code": "005930", "name": "삼성전자", "known": True}
+
+
+@pytest.mark.asyncio
+async def test_resolve_finds_name_from_manual_include_override(monkeypatch):
+    universe, fake = _client(monkeypatch, {})
+    fake.payloads["stock:universe:overrides"] = {
+        "manual_include": {
+            "005930": {
+                "reason": "",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "expires_at": None,
+                "operator": None,
+                "name": "삼성전자",
+            }
+        },
+        "manual_exclude": {},
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    body = await universe.resolve_universe_symbol(code="005930")
+
+    assert body == {"code": "005930", "name": "삼성전자", "known": True}
+
+
+def test_merge_names_is_importable_from_package():
+    """``merge_names`` is the shared single source of merge-order truth.
+
+    universe.py's ``_build_name_map`` and effective.py's
+    ``build_effective_universe_snapshot`` must both delegate to this one
+    function via the public package surface, not a private duplicate.
+    """
+    from shared.stock_universe import merge_names
+
+    assert (
+        merge_names(
+            {"names": {"005930": "삼성전자(a)"}},
+            {"names": {"005930": "삼성전자(b)"}},
+        )
+        == {"005930": "삼성전자(a)"}
+    )
