@@ -415,6 +415,16 @@ def main() -> None:
     p.add_argument("--oos-days", type=int, default=10)
     p.add_argument("--step-days", type=int, default=10)
     p.add_argument("--output", default=".superpowers/sdd/setup_d_walkforward.json")
+    # Trend filter (2026-07-07): compare baseline (off) vs filter-on to validate.
+    p.add_argument(
+        "--trend-filter",
+        action="store_true",
+        help="Enable the session-VWAP-slope trend gate (default off = baseline).",
+    )
+    p.add_argument("--trend-window-bars", type=int, default=30)
+    p.add_argument("--trend-warmup-bars", type=int, default=10)
+    p.add_argument("--trend-block-threshold", type=float, default=1.0)
+    p.add_argument("--against-trend-extreme-atr-mult", type=float, default=2.6)
     args = p.parse_args()
 
     start = pd.Timestamp(args.start).date()
@@ -428,9 +438,25 @@ def main() -> None:
         df["timestamp"].dt.date.nunique(),
     )
 
-    config = SetupDConfig()
+    config = SetupDConfig(
+        trend_filter_enabled=args.trend_filter,
+        trend_window_bars=args.trend_window_bars,
+        trend_warmup_bars=args.trend_warmup_bars,
+        trend_block_threshold=args.trend_block_threshold,
+        against_trend_extreme_atr_mult=args.against_trend_extreme_atr_mult,
+    )
     print(f"\n{'#'*62}")
     print("  SETUP D — High-Vol Intraday VWAP Reversion — Walk-Forward")
+    print(
+        f"  Trend filter: {'ON' if config.trend_filter_enabled else 'OFF (baseline)'}"
+        + (
+            f"  (window={config.trend_window_bars} warmup={config.trend_warmup_bars} "
+            f"block>={config.trend_block_threshold}ATR "
+            f"climax>={config.against_trend_extreme_atr_mult}ATR)"
+            if config.trend_filter_enabled
+            else ""
+        )
+    )
     print(
         f"  Symbol: {SYMBOL}  Window: {df['timestamp'].min().date()} ~ "
         f"{df['timestamp'].max().date()} ({df['timestamp'].dt.date.nunique()} days)"

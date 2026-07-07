@@ -1,7 +1,8 @@
 # Setup D Trend Filter — Design
 
 - Date: 2026-07-07
-- Status: approved, implementing
+- Status: implemented + validated — **ships OFF by default** (acceptance criteria
+  for enabling NOT met on the available data; see Validation Results)
 - Branch: `feat/setup-d-trend-filter`
 - Owner: futures strategy
 
@@ -135,6 +136,43 @@ Validation: `against_trend_extreme_atr_mult >= extreme_atr_mult`.
    confirm the gate would have blocked the 11 losing dip-buys (illustrative, not
    part of the statistical ship gate — 07-07 is outside the trusted backtest
    window).
+
+## Validation Results (2026-07-07)
+
+Walk-forward via `walkforward_setup_d_vwap_reversion.py` (new `--trend-filter` +
+threshold flags), clean `2025-12-01 … 2026-04-30` `101S6000` window, trading-day
+folds (40d IS / 10d OOS / step 10). OOS = concatenated non-overlapping folds.
+
+| config | full Sharpe | OOS Sharpe | OOS pts | OOS trades | both sides + |
+|---|---|---|---|---|---|
+| **baseline (off)** | 2.746 | **2.135** | +175.7 | 135 | yes (L+130.5 / S+45.2) |
+| on, window30 block1.0 (defaults) | 2.621 | 1.921 | +155.3 | 131 | yes |
+| on, block1.5 | 2.661 | 2.013 | +164.1 | 133 | yes |
+| on, block2.5 / 3.0 | 2.749 | 2.135 | +175.7 | 135 | yes (blocks nothing) |
+| on, window60/90 block1.0 | — | 1.894 | +152.6 | 130 | yes |
+
+**Findings:**
+1. **Any setting that actually blocks trades is a mild net negative on this
+   window** (OOS Sharpe 1.89–2.01, −11 to −23 pts). Only `block_threshold ≥ 2.5`
+   matches baseline — because at that level it blocks essentially nothing here.
+2. **The window contains no one-way trend-day disaster** (it is the Dec–Apr bull
+   period), so the filter's protective benefit **cannot be demonstrated
+   in-sample**. It removes marginally-profitable counter-trend fades that, in a
+   choppy-but-drifting bull, still mean-revert.
+3. **The 07-07 grind is too slow for a 30-bar VWAP slope to catch cleanly.**
+   Session VWAP drifted ≈ −0.11 pt/min; over 30 bars that is ≈ −3 pts / ATR ≈ 4
+   → trend_score ≈ −0.8, right at the block threshold. Catching such a slow grind
+   needs a longer window (which, per the sweep, costs *more* on normal days) or a
+   different metric — a **price-below-VWAP persistence** measure would be far more
+   sensitive to a persistent one-sided session than VWAP slope.
+
+**Decision (matches the plan's fallback):** land the mechanism **off by default**
+(`trend_filter_enabled: false`), fully tested and reproducible via the harness
+flags. Do **not** enable. Next steps before any activation:
+- Enable in **paper** (futures paper = zero real orders) to observe on live
+  trend days and collect 07-07-class samples the backtest window lacks.
+- With those samples, calibrate `trend_window_bars` / `trend_block_threshold`, or
+  switch the metric to price-below-VWAP persistence (follow-up).
 
 ## Scope guard
 
