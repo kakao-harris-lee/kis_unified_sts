@@ -22,7 +22,7 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
   schedules, and feature gates belong in YAML/env/config files, not hardcoded
   branches.
 - DRY: shared behavior belongs in `shared/`; avoid duplicating logic in
-  `domains/` or per-asset service code.
+  per-asset service code.
 - Redis: use DB 1 for this project (`redis://localhost:6379/1` unless an env file
   intentionally overrides it). New Redis keys need TTLs; default operational TTL
   is 24h, accumulation snapshots use 48h.
@@ -119,7 +119,7 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/ -v --cov=shared --cov=services --cov=domains
+pytest tests/ -v --cov=shared --cov=services
 ruff check .
 black --check .
 mypy shared/ --ignore-missing-imports --no-error-summary

@@ -65,7 +65,11 @@ def test_offline_report_shape_and_no_live_http_by_default(tmp_path: Path) -> Non
         "mlflow_tracking",
         "workbench_qa_artifacts",
         "strategy_lab_workflow",
+        "indicator_engine_deps",
     }
+    # The dev venv running this suite has TA-Lib installed (it is a core
+    # dependency), so the section passes; vectorbt stays informational.
+    assert report["sections"]["indicator_engine_deps"]["status"] == "pass"
     assert report["sections"]["runtime_storage_smoke"]["status"] == "action_required"
     assert report["sections"]["workbench_qa_artifacts"]["status"] == "pass"
     assert report["sections"]["strategy_lab_workflow"]["status"] == "action_required"

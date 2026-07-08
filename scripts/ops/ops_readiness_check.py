@@ -28,6 +28,7 @@ SECTION_NAMES = (
     "mlflow_tracking",
     "workbench_qa_artifacts",
     "strategy_lab_workflow",
+    "indicator_engine_deps",
 )
 
 WORKBENCH_QA_DOCS = ("docs/testing/quant-ops-workbench-2026-06-25.md",)
@@ -276,6 +277,39 @@ def check_live_http(
     }
 
 
+def check_indicator_engine_deps() -> dict[str, Any]:
+    """Verify the indicator-engine native dependencies in THIS environment.
+
+    A missing TA-Lib wheel makes the engine's TA-Lib backend degrade
+    gracefully, which lets indicator shadow-parity gates silently skip on
+    the deploy host instead of failing — so surface it as an operator
+    action item. vectorbt is an optional ``.[backtest]`` extra (WS-A4/P3)
+    and is reported as informational only.
+    """
+    try:
+        import talib  # noqa: F401
+
+        talib_check = _check(STATUS_PASS, "talib imports in this environment.")
+    except Exception as exc:  # pragma: no cover - depends on host env
+        talib_check = _check(
+            STATUS_ACTION_REQUIRED,
+            f"talib import failed ({exc}); run: pip install -e '.[dev]'",
+        )
+    try:
+        import vectorbt  # noqa: F401
+
+        vectorbt_check = _check(
+            STATUS_PASS, "vectorbt (optional backtest extra) is importable."
+        )
+    except Exception:
+        vectorbt_check = _check(
+            STATUS_PASS,
+            "vectorbt not installed — optional .[backtest] extra, only needed "
+            "for vectorbt backtest (WS-A4/P3) work.",
+        )
+    return _section({"talib": talib_check, "vectorbt_optional": vectorbt_check})
+
+
 def _external_operations(sections: dict[str, dict[str, Any]]) -> list[str]:
     operations: list[str] = []
     if sections["runtime_storage_smoke"]["status"] != STATUS_PASS:
@@ -289,6 +323,10 @@ def _external_operations(sections: dict[str, dict[str, Any]]) -> list[str]:
     if sections["strategy_lab_workflow"]["status"] != STATUS_PASS:
         operations.append(
             "Strategy Lab backtest/paper feedback and reactivation-gate depth"
+        )
+    if sections["indicator_engine_deps"]["status"] != STATUS_PASS:
+        operations.append(
+            "install TA-Lib in the runtime venv (pip install -e '.[dev]')"
         )
     return operations
 
@@ -308,6 +346,7 @@ def build_report(
         "mlflow_tracking": check_mlflow_tracking(repo_root),
         "workbench_qa_artifacts": check_workbench_qa_artifacts(repo_root),
         "strategy_lab_workflow": check_strategy_lab_workflow(repo_root),
+        "indicator_engine_deps": check_indicator_engine_deps(),
     }
     live_http_checks = check_live_http(
         require_live_http=require_live_http,

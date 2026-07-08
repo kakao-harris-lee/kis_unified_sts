@@ -1,14 +1,30 @@
 """Basis calculator for statistical arbitrage."""
+
 import logging
 import time
 from collections import deque
+from dataclasses import dataclass
 
 import numpy as np
 
 from .config import ArbitrageConfig
-from .models import BasisData
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BasisData:
+    """Current basis state for arbitrage."""
+
+    timestamp: float
+    spot_index: float  # KOSPI200 index
+    futures_price: float  # Mini futures mid price
+    fair_value: float  # Theoretical fair value
+    basis: float  # futures - fair_value
+    basis_zscore: float  # Standardized basis
+    days_to_expiry: int
+    rolling_mean: float
+    rolling_std: float
 
 
 class BasisCalculator:
@@ -38,7 +54,7 @@ class BasisCalculator:
         spot_index: float,
         futures_price: float,
         days_to_expiry: int,
-        timestamp: float | None = None
+        timestamp: float | None = None,
     ) -> BasisData:
         """Update basis calculation with new prices."""
         timestamp = timestamp or time.time()
@@ -68,7 +84,7 @@ class BasisCalculator:
             basis_zscore=basis_zscore,
             days_to_expiry=days_to_expiry,
             rolling_mean=rolling_mean,
-            rolling_std=rolling_std
+            rolling_std=rolling_std,
         )
 
         return self._last_data
@@ -100,7 +116,7 @@ class BasisCalculator:
         if z > threshold:
             return True, "SELL"  # Basis too high, sell futures
         elif z < -threshold:
-            return True, "BUY"   # Basis too low, buy futures
+            return True, "BUY"  # Basis too low, buy futures
 
         return False, None
 
