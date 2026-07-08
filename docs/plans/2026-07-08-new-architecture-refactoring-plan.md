@@ -44,7 +44,8 @@
   `shared/ml`(pycache만 잔존), `shared/trend`(880, 런타임 importer 0),
   `shared/ensemble`(435), `shared/arbitrage`(332, 소비자 미배선),
   `shared/position`(~694, test-only 고아 — PositionTracker로 대체됨),
-  빈 `domains/` + CLAUDE.md의 vestigial 참조 정리. 각 삭제 전 cron/CLI 참조 재확인.
+  CLAUDE.md의 vestigial `domains/` 참조 정리(디렉토리 자체는 `336df723`에서 이미 제거됨).
+  각 삭제 전 cron/CLI 참조 재확인.
   ⚠️ `market_structure_collector`/`market_risk_engine`은 통합투자시스템 P0/P1 소속 — 삭제 금지.
 - [ ] `shared/position/monitor.py` dead stub(:137 항상 False) 및
   `exit_checker.py`(three_stage와 중복 상태머신) 정리 — 소비자 확인 후 three_stage로 단일화.

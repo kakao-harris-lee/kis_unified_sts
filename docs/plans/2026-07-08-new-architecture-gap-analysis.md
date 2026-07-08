@@ -303,7 +303,7 @@ LIVE 유지: `services/trading/position_tracker.py`(~2,300), `shared/paper/broke
   - `shared/ensemble`(435) — importer 0, RL 시대 잔재
   - `shared/arbitrage`(332) — 유일 소비자가 compose 미등록 서비스
   - `shared/position`(~694) — test-only 고아 (PositionTracker로 대체됨)
-  - `domains/` — 빈 디렉토리 (CLAUDE.md 참조가 vestigial)
+  - `domains/` — 이미 제거됨(`336df723`, 2026-06-25) — CLAUDE.md의 참조(`--cov=domains` 등)만 vestigial
   - 주의: `market_structure_collector`/`market_risk_engine`은 통합투자시스템 P0/P1 소속으로
     scheduler 이미지 리빌드 대기 상태 — dormant로 오판하고 삭제하면 안 됨.
 - 활성 전략: 주식 3/16(momentum_breakout, pattern_pullback, williams_r),
