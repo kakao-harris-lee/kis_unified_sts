@@ -35,11 +35,13 @@ from shared.indicators.engine.cache import (
 from shared.indicators.engine.daily_backend import DailyCompatBackend
 from shared.indicators.engine.momentum_backend import MomentumCompatBackend
 from shared.indicators.engine.numpy_backend import NumpyBackend
+from shared.indicators.engine.reference_backend import ReferenceBackend
 from shared.indicators.engine.registry import (
     IndicatorEngine,
     daily_indicator_engine,
     default_engine,
     momentum_indicator_engine,
+    reference_indicator_engine,
     runtime_indicator_convention,
     runtime_indicator_engine,
     streaming_indicator_engine,
@@ -76,6 +78,7 @@ __all__ = [
     "OHLCVBar",
     "OHLCVWindow",
     "PanelStore",
+    "ReferenceBackend",
     "ShadowDelta",
     "StreamingCompatBackend",
     "TALibBackend",
@@ -90,6 +93,7 @@ __all__ = [
     "default_engine",
     "flat_key",
     "momentum_indicator_engine",
+    "reference_indicator_engine",
     "runtime_indicator_convention",
     "runtime_indicator_engine",
     "streaming_indicator_engine",

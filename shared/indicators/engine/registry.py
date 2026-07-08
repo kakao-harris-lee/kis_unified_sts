@@ -96,6 +96,20 @@ _DAILY_ENGINE: IndicatorEngine | None = None
 _MOMENTUM_ENGINE: IndicatorEngine | None = None
 _STREAMING_ENGINE: IndicatorEngine | None = None
 _RUNTIME_TALIB_ENGINE: IndicatorEngine | None = None
+_REFERENCE_ENGINE: IndicatorEngine | None = None
+
+
+def reference_indicator_engine() -> IndicatorEngine:
+    """Reference-convention engine hosting the exact ``shared.indicators.reference``
+    math (Wilder RSI / canonical Wilder ADX / StochRSI / ATR sma+wilder / regime
+    MFI — NaN warmup, reference flat-window sentinels; P1-a absorption). Distinct
+    from the other engines; cached module singleton."""
+    global _REFERENCE_ENGINE
+    if _REFERENCE_ENGINE is None:
+        from shared.indicators.engine.reference_backend import ReferenceBackend
+
+        _REFERENCE_ENGINE = IndicatorEngine([ReferenceBackend()])
+    return _REFERENCE_ENGINE
 
 
 def momentum_indicator_engine() -> IndicatorEngine:
