@@ -781,8 +781,8 @@ class ReferenceBackend(IndicatorBackend):
     of its own, so the reference convention has exactly one home. Registered
     via :func:`shared.indicators.engine.registry.reference_indicator_engine`
     and comparable against :class:`~shared.indicators.engine.talib_backend.
-    TALibBackend` through the same :class:`~shared.indicators.engine.shadow.
-    ShadowDelta` mechanism as the other compat backends.
+    TALibBackend` through the :class:`~shared.indicators.engine.shadow.
+    ShadowDelta` mechanism (the P1-c convention-flip gate).
 
     Indicator ids (reference conventions, ``NaN`` warmup preserved):
 
