@@ -65,10 +65,10 @@ jobs:
         run: |
           pytest tests/ --ignore=tests/performance -n auto -m "not serial" \
             --timeout=180 --timeout-method=thread \
-            -q --cov=shared --cov=services --cov=domains --cov-report= && \
+            -q --cov=shared --cov=services --cov-report= && \
           pytest tests/ --ignore=tests/performance -m serial \
             --timeout=180 --timeout-method=thread \
-            -q --cov=shared --cov=services --cov=domains --cov-append \
+            -q --cov=shared --cov=services --cov-append \
             --cov-report=xml --cov-report=term-missing
         env:
           REDIS_URL: redis://localhost:6379/1
@@ -129,6 +129,33 @@ jobs:
       - name: Run mypy
         run: mypy shared/ --ignore-missing-imports --no-error-summary || true
         continue-on-error: true
+
+  backtest-extra:
+    # Advisory (non-gating): verifies the optional vectorbt stack (.[backtest],
+    # WS-A4/P3 vectorbt engine work) still resolves and imports alongside the
+    # runtime deps. Heavy transitive deps (numba/plotly) stay out of the
+    # gating `test` job on purpose.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install backtest extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,backtest]"
+
+      - name: Import smoke
+        run: |
+          python -c "import talib; import vectorbt; print('vectorbt', vectorbt.__version__)"
 
   performance:
     runs-on: ubuntu-latest
