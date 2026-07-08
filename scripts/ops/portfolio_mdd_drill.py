@@ -186,16 +186,25 @@ def run_dry_drill() -> int:
         suspend_key = "futures:live:suspended"
         latest_key = config.monitor.redis.latest_key
 
+        # The drill replays fixed calendar days, so the filter's staleness
+        # clock must follow the simulated day (not wall time) or snapshots
+        # older than stale_max_age_seconds fail open once real time moves
+        # past start_day + the allowance.
+        sim_clock = {"now": datetime.combine(start_day, datetime.min.time())}
         mdd_filter = PortfolioMddFilter(
             reduce_size_factor=reduce_factor,
             latest_key=latest_key,
             stale_max_age_seconds=93600,
             snapshot_provider=lambda: redis.hgetall(latest_key) or None,
+            now_provider=lambda: sim_clock["now"],
         )
 
         cumulative_pnl = 0.0
         for index, step in enumerate(steps):
             day = start_day + timedelta(days=index)
+            sim_clock["now"] = datetime.combine(day, datetime.min.time()).replace(
+                hour=19
+            )
             target_equity = capital_total * step.equity_ratio
             delta = target_equity - capital_total - cumulative_pnl
             cumulative_pnl += delta
@@ -222,7 +231,7 @@ def run_dry_drill() -> int:
                 calendar=_AlwaysOpenCalendar(),
                 notifier=None,
                 trade_date=day,
-                now=datetime.combine(day, datetime.min.time()).replace(hour=19),
+                now=sim_clock["now"],
                 sentinel_path=str(sentinel),
                 suspend_key=suspend_key,
             )
