@@ -55,6 +55,8 @@ from shared.indicators.engine.spec import (
     flat_key,
 )
 from shared.indicators.engine.stateful import (
+    MinuteReturnTracker,
+    SpikeHitWindow,
     VolumeAcceleration,
     VolumeAccelerationCalculator,
     VolumeConfig,
@@ -76,6 +78,7 @@ __all__ = [
     "IndicatorResult",
     "IndicatorSpec",
     "InMemoryPanelStore",
+    "MinuteReturnTracker",
     "MomentumCompatBackend",
     "NumpyBackend",
     "OHLCVBar",
@@ -83,6 +86,7 @@ __all__ = [
     "PanelStore",
     "ReferenceBackend",
     "ShadowDelta",
+    "SpikeHitWindow",
     "StreamingCompatBackend",
     "TALibBackend",
     "UnsupportedIndicatorError",
