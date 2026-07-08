@@ -1,7 +1,8 @@
 """Offline ops readiness checklist for common runtime follow-ups.
 
-The default mode is intentionally offline: it reads repository files and
-configuration only. Live HTTP probes run only when explicitly requested.
+The default mode is intentionally offline: it reads repository files,
+configuration, and locally installed packages only. Live HTTP probes run
+only when explicitly requested.
 """
 
 from __future__ import annotations
