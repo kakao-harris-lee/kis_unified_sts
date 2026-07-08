@@ -197,9 +197,7 @@ class _FrozenEnricher:
         self._vwap_pv_sum: dict[str, float] = {}
         self._vwap_v_sum: dict[str, float] = {}
         self._recent_volumes: dict[str, deque] = defaultdict(lambda: deque(maxlen=5))
-        self._all_bar_volumes: dict[str, deque] = defaultdict(
-            lambda: deque(maxlen=500)
-        )
+        self._all_bar_volumes: dict[str, deque] = defaultdict(lambda: deque(maxlen=500))
 
     def enrich(self, bar: dict, timestamp: datetime) -> dict:
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
@@ -270,7 +268,9 @@ class _FrozenEnricher:
         else:
             bar["rvol"] = 1.0
 
-        self._vwap_pv_sum[code] = self._vwap_pv_sum.get(code, 0) + typical_price * volume
+        self._vwap_pv_sum[code] = (
+            self._vwap_pv_sum.get(code, 0) + typical_price * volume
+        )
         self._vwap_v_sum[code] = self._vwap_v_sum.get(code, 0) + volume
         vwap_v = self._vwap_v_sum[code]
         bar["vwap"] = self._vwap_pv_sum[code] / vwap_v if vwap_v > 0 else close
@@ -405,9 +405,9 @@ class TestEnricherGolden:
                     f"numeric drift in enricher field '{key}' at {ts}: "
                     f"{got[key]!r} != {want[key]!r}"
                 )
-                assert type(got[key]) is type(want[key]), (
-                    f"type drift in enricher field '{key}' at {ts}"
-                )
+                assert type(got[key]) is type(
+                    want[key]
+                ), f"type drift in enricher field '{key}' at {ts}"
 
     def test_enrich_spot_pins(self):
         bars = _minute_bars()

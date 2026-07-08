@@ -2,7 +2,8 @@
 
 일봉 전략을 BacktestEngine에 연결하기 위한 어댑터.
 1분봉 어댑터(BacktestStrategyAdapter)와 달리 StreamingIndicatorEngine을 사용하지 않고,
-pandas rolling으로 SMA/RSI/ATR을 사전 계산하여 on_bar()에서 조회합니다.
+backtest-convention 지표 엔진(shared/indicators/engine/backtest_backend.py)으로
+SMA/RSI/ATR을 사전 계산하여 on_bar()에서 조회합니다.
 
 Usage:
     adapted = DailyBacktestAdapter(trading_strategy, strategy_config)
@@ -23,6 +24,11 @@ import pandas as pd
 from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
 from shared.config import ConfigLoader
+from shared.indicators.engine import (
+    IndicatorSpec,
+    OHLCVWindow,
+    backtest_indicator_engine,
+)
 from shared.indicators.momentum import calculate_all_momentum
 from shared.models.position import Position as ModelPosition
 from shared.models.position import PositionSide
@@ -254,27 +260,45 @@ class DailyBacktestAdapter:
         """Pre-compute all indicators for the entire daily DataFrame.
 
         Computes SMA(200), SMA(20), SMA(60), RSI(5), ATR(22), Highest High(22).
+
+        Indicator math is delegated to the backtest-convention indicator engine
+        (``shared/indicators/engine/backtest_backend.py``) — the exact pandas
+        conventions previously hand-rolled here, reproduced bit-for-bit (pinned
+        by ``tests/unit/backtest/test_indicator_delegation_golden.py``). All
+        series are trailing (rolling/ewm) computed over the full frame before
+        the bar loop; ``on_bar``/``check_exit`` only ever read the current bar's
+        row, so look-ahead safety is unchanged.
         """
         df = data.copy()
 
-        # SMA
-        df["sma_200"] = (
-            df["close"]
-            .rolling(window=self._sma_long, min_periods=self._sma_long)
-            .mean()
+        engine = backtest_indicator_engine()
+        window = OHLCVWindow.from_sequences(
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            volume=df["volume"],
         )
-        df["sma_20"] = (
-            df["close"]
-            .rolling(window=self._sma_short, min_periods=self._sma_short)
-            .mean()
+
+        def _series(indicator_id: str, params: dict[str, float]) -> np.ndarray:
+            return engine.compute(
+                IndicatorSpec.create(indicator_id, params), window
+            ).series["value"]
+
+        # SMA (full-window min_periods contract: under-warmed values stay NaN)
+        df["sma_200"] = _series(
+            "sma", {"period": self._sma_long, "min_periods": self._sma_long}
         )
-        df["sma_60"] = (
-            df["close"].rolling(window=self._sma_mid, min_periods=self._sma_mid).mean()
+        df["sma_20"] = _series(
+            "sma", {"period": self._sma_short, "min_periods": self._sma_short}
+        )
+        df["sma_60"] = _series(
+            "sma", {"period": self._sma_mid, "min_periods": self._sma_mid}
         )
         df["sma_60_prev"] = df["sma_60"].shift(self._mid_trend_lookback)
 
-        # RSI
-        df["rsi_5"] = self._compute_rsi(df["close"], self._rsi_period)
+        # RSI (backtest daily convention: NaN warmup / NaN on zero-loss windows)
+        df["rsi_5"] = _series("rsi", {"period": self._rsi_period})
 
         # Technical-consensus indicators (RSI / Williams %R / MACD).
         momentum = calculate_all_momentum(
@@ -292,35 +316,16 @@ class DailyBacktestAdapter:
         df["prev_williams_r"] = df["williams_r"].shift(1)
         df["macd_hist"] = momentum["macd_oscillator"]
         df["prev_macd_hist"] = df["macd_hist"].shift(1)
-        df["ma20"] = df["close"].rolling(window=20, min_periods=1).mean()
-        volume_avg = (
-            df["volume"]
-            .shift(1)
-            .rolling(window=max(1, int(self._volume_lookback)), min_periods=1)
-            .mean()
+        df["ma20"] = _series("sma", {"period": 20, "min_periods": 1})
+        df["volume_ratio"] = _series(
+            "volume_ratio", {"lookback": max(1, int(self._volume_lookback))}
         )
-        df["volume_ratio"] = np.where(volume_avg > 0, df["volume"] / volume_avg, 1.0)
 
-        # ATR (True Range based)
-        high = df["high"]
-        low = df["low"]
-        prev_close = df["close"].shift(1)
-        tr = pd.concat(
-            [
-                (high - low),
-                (high - prev_close).abs(),
-                (low - prev_close).abs(),
-            ],
-            axis=1,
-        ).max(axis=1)
-        df["atr"] = tr.rolling(
-            window=self._atr_period, min_periods=self._atr_period
-        ).mean()
+        # ATR (SMA-of-TR, bar-0 TR = high-low)
+        df["atr"] = _series("atr", {"period": self._atr_period})
 
-        # Highest High (lookback)
-        df["highest_high"] = (
-            df["high"].rolling(window=self._lookback_period, min_periods=1).max()
-        )
+        # Highest High (lookback, partial windows from bar 0)
+        df["highest_high"] = _series("highest_high", {"period": self._lookback_period})
 
         # Store as list of dicts for O(1) lookup
         indicator_cols = [
@@ -372,20 +377,6 @@ class DailyBacktestAdapter:
             f"DailyBacktestAdapter: pre-computed {len(self._precomputed)} bars, "
             f"{valid_count} valid (warmup={warmup})"
         )
-
-    @staticmethod
-    def _compute_rsi(series: pd.Series, period: int) -> pd.Series:
-        """Compute RSI using exponential moving average (Wilder's method)."""
-        delta = series.diff()
-        gain = delta.where(delta > 0, 0.0)
-        loss = (-delta).where(delta < 0, 0.0)
-
-        avg_gain = gain.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
-
-        rs = avg_gain / avg_loss.replace(0, float("nan"))
-        rsi = 100.0 - (100.0 / (1.0 + rs))
-        return rsi
 
     def set_position(self, position: dict[str, Any] | None) -> None:
         """BacktestEngine → adapter position sync."""

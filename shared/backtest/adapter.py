@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any
@@ -26,6 +27,12 @@ from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
 from shared.config import ConfigLoader
 from shared.indicators.contracts import IndicatorContract
+from shared.indicators.engine import (
+    IndicatorSpec,
+    OHLCVWindow,
+    VWAPCalculator,
+    backtest_indicator_engine,
+)
 from shared.indicators.resolver import StreamingIndicatorResolver
 from shared.models.position import Position as ModelPosition
 from shared.models.position import PositionSide
@@ -34,6 +41,26 @@ from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 from shared.strategy.decision_cadence import DecisionCadenceGate
 
 logger = logging.getLogger(__name__)
+
+# The enricher's rvol requires this many observed bar volumes before it stops
+# reporting the neutral 1.0 (mirrors the historical inline threshold).
+_RVOL_MIN_BARS = 20
+
+
+def _volume_window(volumes: list[float]) -> OHLCVWindow:
+    """Engine window for volume-only indicators (price columns unused)."""
+    zeros = [0.0] * len(volumes)
+    return OHLCVWindow.from_sequences(
+        open=zeros, high=zeros, low=zeros, close=zeros, volume=volumes
+    )
+
+
+def _high_window(highs: list[float]) -> OHLCVWindow:
+    """Engine window for high-based indicators (other columns unused)."""
+    zeros = [0.0] * len(highs)
+    return OHLCVWindow.from_sequences(
+        open=highs, high=highs, low=highs, close=highs, volume=zeros
+    )
 
 
 class _MarketDataEnricher:
@@ -49,6 +76,14 @@ class _MarketDataEnricher:
       - vwap: intraday volume-weighted average price
       - volume_velocity / volume_acceleration: volume derivatives
       - accumulation_score: heuristic based on recent volume patterns
+
+    Indicator math is delegated to the indicator package: session VWAP goes
+    through the stateful ``VWAPCalculator`` and high_N / rvol / volume
+    velocity+acceleration through :func:`backtest_indicator_engine` (values
+    bit-identical to the previously inline math — pinned by
+    ``tests/unit/backtest/test_indicator_delegation_golden.py``). Warmup
+    fallbacks (1.0 rvol, 0.0 derivatives, close-as-vwap) stay here as adapter
+    policy. All windows are trailing (current bar and earlier) — no look-ahead.
     """
 
     def __init__(self, breakout_period: int = 5, rvol_avg_days: int = 5):
@@ -72,9 +107,11 @@ class _MarketDataEnricher:
         self._daily_highs: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
         self._daily_volumes: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
 
-        # Intraday VWAP
-        self._vwap_pv_sum: dict[str, float] = {}  # sum(price * volume)
-        self._vwap_v_sum: dict[str, float] = {}  # sum(volume)
+        # Intraday session VWAP (typical-price ticks; resets on KST date change)
+        self._vwap = VWAPCalculator()
+
+        # Backtest-convention indicator engine (single owner of the math)
+        self._indicator_engine = backtest_indicator_engine()
 
         # Volume velocity/acceleration (rolling 3-bar)
         self._recent_volumes: dict[str, deque] = defaultdict(lambda: deque(maxlen=5))
@@ -139,10 +176,9 @@ class _MarketDataEnricher:
                 day_vol = self._daily_volume.get(code, 0)
                 if day_vol > 0:
                     self._daily_volumes[code].append(day_vol)
-            # Reset intraday accumulators
+            # Reset intraday accumulators (session VWAP resets itself on the
+            # date_str change inside VWAPCalculator.add_tick)
             self._daily_volume[code] = 0.0
-            self._vwap_pv_sum[code] = 0.0
-            self._vwap_v_sum[code] = 0.0
             self._current_date[code] = date_str
 
         # Update daily close/high tracking (last bar of day wins)
@@ -184,48 +220,56 @@ class _MarketDataEnricher:
         else:
             bar["change_pct"] = 0.0
 
-        # high_N: N-day rolling high (for volume_accumulation)
+        # high_N: N-day rolling high (for volume_accumulation).
+        # Exclude today — breakout above previous N-day high. Delegated to the
+        # standard donchian upper channel over the prior daily highs (rolling
+        # max is exact float math, so this matches the historical inline max);
+        # a shorter-than-N history clamps the period (partial-window fallback).
         period = self._breakout_period
         highs = list(self._daily_highs[code])
-        if len(highs) >= period + 1:
-            # Exclude today — breakout above previous N-day high
-            bar[f"high_{period}"] = max(highs[-(period + 1) : -1])
-        elif len(highs) >= 2:
-            bar[f"high_{period}"] = max(highs[:-1])
+        if len(highs) >= 2:
+            prior_highs = highs[:-1]
+            upper = self._indicator_engine.compute(
+                IndicatorSpec.create(
+                    "donchian", {"period": min(period, len(prior_highs))}
+                ),
+                _high_window(prior_highs),
+            ).series["upper"][-1]
+            bar[f"high_{period}"] = float(upper)
         else:
             bar[f"high_{period}"] = high
 
-        # rvol: relative volume per bar (for volume_accumulation)
-        # Compare current bar volume to average bar volume
+        # rvol: relative volume per bar (for volume_accumulation) — current bar
+        # volume vs the mean of all previous tracked bar volumes; neutral 1.0
+        # until warm (engine emits NaN below _RVOL_MIN_BARS or on a zero mean)
         self._all_bar_volumes[code].append(volume)
         bar_vols = list(self._all_bar_volumes[code])
-        if len(bar_vols) >= 20:
-            avg_bar_vol = sum(bar_vols[:-1]) / (len(bar_vols) - 1)
-            bar["rvol"] = volume / avg_bar_vol if avg_bar_vol > 0 else 1.0
-        else:
-            bar["rvol"] = 1.0
+        rvol = self._indicator_engine.compute(
+            IndicatorSpec.create("rvol_prev_mean", {"min_bars": _RVOL_MIN_BARS}),
+            _volume_window(bar_vols),
+        ).series["value"][-1]
+        bar["rvol"] = float(rvol) if math.isfinite(rvol) else 1.0
 
-        # VWAP (for volume_accumulation)
-        self._vwap_pv_sum[code] = (
-            self._vwap_pv_sum.get(code, 0) + typical_price * volume
-        )
-        self._vwap_v_sum[code] = self._vwap_v_sum.get(code, 0) + volume
-        vwap_v = self._vwap_v_sum[code]
-        bar["vwap"] = self._vwap_pv_sum[code] / vwap_v if vwap_v > 0 else close
+        # VWAP (for volume_accumulation): stateful session VWAP over typical
+        # price; falls back to close until the session has traded volume
+        self._vwap.add_tick(code, price=typical_price, volume=volume, date_str=date_str)
+        vwap_data = self._vwap.calculate(code, current_price=close)
+        bar["vwap"] = vwap_data.vwap if vwap_data.cumulative_volume > 0 else close
 
-        # Volume velocity & acceleration
+        # Volume velocity & acceleration (first/second difference of bar
+        # volume; 0.0 until enough bars — engine emits NaN warmup)
         self._recent_volumes[code].append(volume)
         vols = list(self._recent_volumes[code])
-        if len(vols) >= 2:
-            bar["volume_velocity"] = vols[-1] - vols[-2]
-        else:
-            bar["volume_velocity"] = 0.0
-        if len(vols) >= 3:
-            v1 = vols[-1] - vols[-2]
-            v0 = vols[-2] - vols[-3]
-            bar["volume_acceleration"] = v1 - v0
-        else:
-            bar["volume_acceleration"] = 0.0
+        kinetics = self._indicator_engine.compute(
+            IndicatorSpec.create("volume_velocity", {}),
+            _volume_window(vols),
+        ).series
+        velocity = kinetics["value"][-1]
+        acceleration = kinetics["acceleration"][-1]
+        bar["volume_velocity"] = float(velocity) if math.isfinite(velocity) else 0.0
+        bar["volume_acceleration"] = (
+            float(acceleration) if math.isfinite(acceleration) else 0.0
+        )
 
         # Update prev_day_close at every bar (so last bar of day is accurate)
         self._prev_day_close[code] = close

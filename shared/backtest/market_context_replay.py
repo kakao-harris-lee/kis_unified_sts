@@ -32,6 +32,11 @@ import pandas as pd
 
 from shared.decision.context import MarketContext, ScheduledEvent
 from shared.execution.contract_spec import ContractSpec
+from shared.indicators.engine import (
+    IndicatorSpec,
+    OHLCVWindow,
+    backtest_indicator_engine,
+)
 from shared.macro.base import MacroSnapshot
 
 KST = ZoneInfo("Asia/Seoul")
@@ -44,35 +49,6 @@ _ATR_PERIOD: int = 14
 
 # Stub spread: Phase 3 uses LOB-free simulation; real spread comes in Phase 4.
 _STUB_SPREAD_TICKS: float = 1.0
-
-
-def _compute_atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> np.ndarray:
-    """Vectorised ATR-14 using Wilder's method (simple approximation).
-
-    Returns an array of length ``len(closes)`` where the first
-    ``_ATR_PERIOD`` values are computed from partial windows.
-    We use the simpler (EWM) Wilder smoothing approximation here:
-    TR = max(high - low, |high - prev_close|, |low - prev_close|)
-    ATR = rolling mean of TR over _ATR_PERIOD (Wilder exponential).
-
-    For backtest use the exact method is less important than consistency
-    with the live indicator engine.  We use a rolling mean for simplicity.
-    """
-    n = len(closes)
-    tr = np.empty(n)
-    tr[0] = highs[0] - lows[0]
-    for i in range(1, n):
-        tr[i] = max(
-            highs[i] - lows[i],
-            abs(highs[i] - closes[i - 1]),
-            abs(lows[i] - closes[i - 1]),
-        )
-    # Rolling mean ATR (Wilder uses EWM but rolling mean is acceptable for backtest)
-    atr = np.empty(n)
-    for i in range(n):
-        start = max(0, i - _ATR_PERIOD + 1)
-        atr[i] = tr[start : i + 1].mean()
-    return atr
 
 
 @dataclass
@@ -185,7 +161,16 @@ class MarketContextReplay:
     # ------------------------------------------------------------------
 
     def _precompute(self) -> None:
-        """Compute ATR series and 90th-percentile ATR over the full DataFrame."""
+        """Compute ATR series and 90th-percentile ATR over the full DataFrame.
+
+        The ATR math is delegated to the backtest-convention indicator engine
+        (``atr_partial``: TR seed high-low at bar 0, partial-window means —
+        the replay's historical convention, bit-identical; pinned by
+        ``tests/unit/backtest/test_indicator_delegation_golden.py``). The ATR
+        at bar ``i`` uses only bars ``<= i`` (trailing windows, no look-ahead);
+        ``atr_90th_percentile`` is intentionally a fixed full-series reference,
+        unchanged from the pre-delegation behavior.
+        """
         df = self.df
         if len(df) < 2:
             # Not enough data — fill with zeros; harness will yield nothing anyway.
@@ -193,11 +178,21 @@ class MarketContextReplay:
             self._atr_90th = 0.0
             return
 
-        highs = df["high"].to_numpy(dtype=float)
-        lows = df["low"].to_numpy(dtype=float)
-        closes = df["close"].to_numpy(dtype=float)
-
-        self._atr_series = _compute_atr(highs, lows, closes)
+        window = OHLCVWindow.from_sequences(
+            open=df["open"].to_numpy(dtype=float),
+            high=df["high"].to_numpy(dtype=float),
+            low=df["low"].to_numpy(dtype=float),
+            close=df["close"].to_numpy(dtype=float),
+            volume=df["volume"].to_numpy(dtype=float),
+        )
+        self._atr_series = (
+            backtest_indicator_engine()
+            .compute(
+                IndicatorSpec.create("atr_partial", {"period": _ATR_PERIOD}),
+                window,
+            )
+            .series["value"]
+        )
         # 90th percentile over the entire series (as a fixed reference)
         self._atr_90th = float(np.nanpercentile(self._atr_series, 90))
 

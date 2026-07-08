@@ -92,6 +92,7 @@ class IndicatorEngine:
         return panel
 
 
+_BACKTEST_ENGINE: IndicatorEngine | None = None
 _DAILY_ENGINE: IndicatorEngine | None = None
 _MOMENTUM_ENGINE: IndicatorEngine | None = None
 _STREAMING_ENGINE: IndicatorEngine | None = None
@@ -122,6 +123,26 @@ def momentum_indicator_engine() -> IndicatorEngine:
 
         _MOMENTUM_ENGINE = IndicatorEngine([MomentumCompatBackend()])
     return _MOMENTUM_ENGINE
+
+
+def backtest_indicator_engine() -> IndicatorEngine:
+    """Backtest-adapter-convention engine (P1-b1 delegation target).
+
+    Hosts the exact hand-rolled math the ``shared/backtest`` adapters carried
+    inline (see :mod:`shared.indicators.engine.backtest_backend`), moved
+    verbatim so backtest values stay bit-identical. The standard NumPy backend
+    registers second so standard window indicators whose conventions already
+    match a backtest site exactly (e.g. ``donchian`` — rolling max is exact
+    float math) resolve through the same engine handle. Cached module
+    singleton — adapters call it per bar.
+    """
+    global _BACKTEST_ENGINE
+    if _BACKTEST_ENGINE is None:
+        from shared.indicators.engine.backtest_backend import BacktestCompatBackend
+        from shared.indicators.engine.numpy_backend import NumpyBackend
+
+        _BACKTEST_ENGINE = IndicatorEngine([BacktestCompatBackend(), NumpyBackend()])
+    return _BACKTEST_ENGINE
 
 
 def daily_indicator_engine() -> IndicatorEngine:
