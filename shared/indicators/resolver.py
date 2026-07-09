@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
 from shared.indicators.contracts import IndicatorContract, IndicatorKind
 
 
@@ -43,7 +44,9 @@ class StreamingIndicatorResolver:
                     else:
                         result[k] = v
             else:
-                ohlcv = self.engine.get_recent_candles(symbol, limit=240)
+                ohlcv = self.engine.get_recent_candles(
+                    symbol, limit=LIVE_CANDLE_HISTORY_MAXLEN
+                )
                 if ohlcv:
                     result["ohlcv"] = ohlcv
 

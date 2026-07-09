@@ -39,6 +39,7 @@ from services.trading.indicator_candles import (
     MultiTimeframeCandleAccumulator,
 )
 from services.trading.indicator_queries import IndicatorQueryMixin
+from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
 from shared.indicators.engine import VolumeAccelerationCalculator, VWAPCalculator
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ class StreamingIndicatorEngine(IndicatorQueryMixin, IndicatorCalculationMixin):
         bb_period: int = 20,
         bb_std: float = 2.0,
         rsi_period: int = 14,
-        candle_maxlen: int = 240,
+        candle_maxlen: int = LIVE_CANDLE_HISTORY_MAXLEN,
         high_period: int = 5,
         rvol_short: int = 5,
         rvol_long: int = 20,

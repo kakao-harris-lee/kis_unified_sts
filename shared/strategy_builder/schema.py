@@ -10,6 +10,8 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
+from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
+
 # Builder input models accept BOTH the frontend's camelCase payload (via the
 # generated alias) and snake_case (populate_by_name) used by tests / the
 # materialized YAML. model_dump(by_alias=False, the default) keeps snake_case
@@ -177,14 +179,25 @@ class BuilderCondition(BaseModel):
     left: ConditionOperand
     operator: ConditionOperator
     right: ConditionOperand
-    # Trailing window (bars) for the percentile_rank_* operators; ignored (and
-    # must stay None) for scalar/cross operators so pre-v2 states hash unchanged.
+    # Trailing window (bars) for the percentile_rank_* operators; other
+    # operators simply ignore it. Optional (default None) so pre-v2 states
+    # serialize — and therefore hash — unchanged. Bounded above by the live
+    # candle-history depth (see validate_percentile_shape).
     window: int | None = Field(default=None, ge=2)
 
     model_config = _BUILDER_MODEL_CONFIG
 
     @model_validator(mode="after")
     def validate_percentile_shape(self) -> BuilderCondition:
+        if self.window is not None and self.window > LIVE_CANDLE_HISTORY_MAXLEN:
+            raise ValueError(
+                f"window={self.window} exceeds the live candle-history depth "
+                f"({LIVE_CANDLE_HISTORY_MAXLEN} bars, "
+                "shared.indicators.constants.LIVE_CANDLE_HISTORY_MAXLEN): the "
+                "streaming runtime can never fill such a window, so the "
+                "condition would evaluate in backtests but stay permanently "
+                "missing live (parity trap)"
+            )
         if self.operator in PERCENTILE_OPERATORS:
             if self.window is None:
                 raise ValueError(

@@ -143,6 +143,44 @@ def test_scalar_operators_do_not_require_window() -> None:
     assert condition.window is None
 
 
+def test_percentile_window_capped_at_live_candle_history() -> None:
+    # The live runtime keeps at most LIVE_CANDLE_HISTORY_MAXLEN completed
+    # candles; a larger window would evaluate in backtests but stay
+    # permanently missing live (parity trap), so the schema rejects it.
+    from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
+
+    with pytest.raises(ValidationError, match="live candle-history"):
+        _rsi_condition(
+            ConditionOperator.PERCENTILE_RANK_ABOVE,
+            90.0,
+            window=LIVE_CANDLE_HISTORY_MAXLEN + 1,
+        )
+
+
+def test_percentile_window_at_cap_is_accepted() -> None:
+    from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
+
+    condition = _rsi_condition(
+        ConditionOperator.PERCENTILE_RANK_ABOVE,
+        90.0,
+        window=LIVE_CANDLE_HISTORY_MAXLEN,
+    )
+    assert condition.window == LIVE_CANDLE_HISTORY_MAXLEN
+
+
+def test_window_cap_single_source_matches_live_runtime_default() -> None:
+    """The schema cap and the live engine's candle history depth must share
+    one constant — if either side hardcodes a different number the
+    backtest/live parity guarantee silently breaks."""
+    import inspect
+
+    from services.trading.indicator_engine import StreamingIndicatorEngine
+    from shared.indicators.constants import LIVE_CANDLE_HISTORY_MAXLEN
+
+    signature = inspect.signature(StreamingIndicatorEngine.__init__)
+    assert signature.parameters["candle_maxlen"].default == LIVE_CANDLE_HISTORY_MAXLEN
+
+
 # --- exit primitive / gates models --------------------------------------
 
 
@@ -205,6 +243,61 @@ def test_validate_exit_primitive_enforces_asset_class_restriction() -> None:
 def test_validate_exit_primitive_allows_three_stage_for_stock() -> None:
     state = _state(exit_primitive=ExitPrimitiveRef(primitive="three_stage"))
     assert validate_exit_primitive(state) is None
+
+
+def test_validate_exit_primitive_rejects_uncataloged_registry_exit() -> None:
+    # track_a_exit is a real ExitRegistry component but deliberately NOT in
+    # the builder catalog (its default eod_close would violate the "no blanket
+    # stock EOD liquidation" rule). The catalog is an allow-list: registered
+    # but uncataloged names must be rejected with an actionable message.
+    state = _state(exit_primitive=ExitPrimitiveRef(primitive="track_a_exit"))
+    error = validate_exit_primitive(state)
+    assert error is not None
+    assert "track_a_exit" in error
+    assert "not exposed to the builder" in error
+    assert "catalog entry" in error
+
+
+@pytest.mark.parametrize(
+    ("primitive", "asset_class"),
+    [
+        ("three_stage", "stock"),
+        ("atr_dynamic", "stock"),
+        ("atr_dynamic", "futures"),
+        ("chandelier_exit", "stock"),
+        ("chandelier_exit", "futures"),
+        ("momentum_decay", "stock"),
+        ("momentum_decay", "futures"),
+        ("setup_target_exit", "futures"),
+    ],
+)
+def test_cataloged_primitives_stay_allowed(primitive: str, asset_class: str) -> None:
+    state = _state(
+        asset_class=asset_class,
+        exit_primitive=ExitPrimitiveRef(primitive=primitive),
+    )
+    assert validate_exit_primitive(state) is None
+
+
+def test_catalog_exit_primitives_are_registered() -> None:
+    """Catalog <-> registry SoT guardrail: the allow-list must be a subset of
+    the ExitRegistry (a typo'd or stale catalog entry would otherwise pass
+    validation but fail at factory create)."""
+    from shared.strategy.registry import ExitRegistry, register_builtin_components
+    from shared.strategy_builder.catalog import exit_primitive_definitions
+
+    register_builtin_components()
+    definitions = exit_primitive_definitions()
+    assert definitions, "catalog exit_primitives must not be empty"
+    unregistered = sorted(
+        name for name in definitions if not ExitRegistry.is_registered(name)
+    )
+    assert (
+        not unregistered
+    ), f"catalog exit_primitives not registered in ExitRegistry: {unregistered}"
+    assert (
+        "builder_v1_exit" not in definitions
+    ), "the builder's own declarative exit must not be catalog-exposed"
 
 
 # --- yaml round-trip for v2 fields ---------------------------------------

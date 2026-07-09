@@ -539,3 +539,105 @@ async def test_composite_exit_first_trigger_wins() -> None:
     assert triggered2
     assert signal2 is not None
     assert signal2.strategy == exit_a.name
+
+
+# --- composite per-position state cleanup (leak prevention) -----------------
+
+
+class _StubExit:
+    """Duck-typed child exit that optionally always triggers."""
+
+    def __init__(self, trigger: bool):
+        self.trigger = trigger
+        self.closed_keys: list[str] = []
+
+    @property
+    def name(self) -> str:
+        return "stub_exit"
+
+    async def should_exit(self, context):
+        from shared.models.signal import ExitSignal
+
+        if not self.trigger:
+            return False, None
+        position = context.position
+        return True, ExitSignal(
+            code=position.code,
+            position_id=str(getattr(position, "id", "") or ""),
+            reason=ExitReason.STRATEGY_EXIT,
+            strategy=self.name,
+        )
+
+    async def scan_positions(self, positions, market_data, market_state=None):
+        signals = []
+        for position in positions:
+            ctx = ExitContext(
+                position=position,
+                market_data=market_data.get(position.code, {}),
+                indicators={},
+                timestamp=datetime(2026, 7, 8, 1, 0, tzinfo=UTC),
+            )
+            triggered, signal = await self.should_exit(ctx)
+            if triggered and signal is not None:
+                signals.append(signal)
+        return signals
+
+    def update_state(self, context) -> None:
+        return None
+
+    def on_position_closed(self, pos_key: str) -> None:
+        self.closed_keys.append(pos_key)
+
+
+@pytest.mark.asyncio
+async def test_composite_cleans_trailing_state_when_other_child_wins() -> None:
+    # The declarative trailing exit arms its per-position extreme but the stub
+    # primitive closes the position — without the cleanup hook the extreme
+    # would leak onto a future position that reuses the same key.
+    declarative = _exit(trailing_stop_pct=3.0)
+    stub = _StubExit(trigger=True)
+    composite = FirstTriggerExit([declarative, stub])
+    pos = _Pos("005930", entry_price=10000.0)
+    ctx = ExitContext(
+        position=pos,
+        market_data={"close": 11000.0},  # arms trailing (extreme=11000), no trigger
+        indicators={},
+        timestamp=datetime(2026, 7, 8, 1, 0, tzinfo=UTC),
+    )
+    triggered, signal = await composite.should_exit(ctx)
+    assert triggered
+    assert signal is not None
+    assert signal.strategy == "stub_exit"
+    assert declarative._extreme == {}  # no leaked per-position state
+
+
+@pytest.mark.asyncio
+async def test_composite_notifies_all_children_when_declarative_wins() -> None:
+    declarative = _exit(stop_loss_pct=5.0)
+    stub = _StubExit(trigger=False)
+    composite = FirstTriggerExit([declarative, stub])
+    pos = _Pos("005930", entry_price=10000.0)
+    ctx = ExitContext(
+        position=pos,
+        market_data={"close": 9400.0},  # -6% -> declarative stop fires
+        indicators={},
+        timestamp=datetime(2026, 7, 8, 1, 0, tzinfo=UTC),
+    )
+    triggered, _signal = await composite.should_exit(ctx)
+    assert triggered
+    assert stub.closed_keys == ["pos_1"]
+
+
+@pytest.mark.asyncio
+async def test_composite_scan_positions_cleans_state_per_signal() -> None:
+    declarative = _exit(trailing_stop_pct=3.0)
+    stub = _StubExit(trigger=True)
+    composite = FirstTriggerExit([declarative, stub])
+    pos = _Pos("005930", entry_price=10000.0)
+    # Arm the trailing extreme via the scan path (declarative sees the cycle
+    # first, records the peak, does not trigger; stub then closes).
+    signals = await composite.scan_positions([pos], {"005930": {"close": 11000.0}})
+    assert len(signals) == 1
+    assert signals[0].strategy == "stub_exit"
+    assert declarative._extreme == {}
+    assert stub.closed_keys == ["pos_1"]

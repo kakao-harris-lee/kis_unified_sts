@@ -124,6 +124,8 @@
 - 레거시 경로의 `StreamingIndicatorResolver`(flat scalar)와 builder 경로의
   `IndicatorContext`(DataFrame)를 `IndicatorSpec`/`flat_key` 기준으로 정렬 —
   지시서의 "Indicator Context" 단일화. 캐시(`IndicatorCacheEngine`)로 중복 계산 제거.
+- 후보(P2-a 리뷰 follow-up): `StrategyFactory.create`의 builder_v1 특례 블록
+  (스트리밍 가드/게이트 주입/exit 프리미티브 조합)을 별도 builder-브릿지 모듈로 추출.
 
 ### P2-c. 활성 전략 파일럿 마이그레이션 (신호 동등성 게이트)
 - 순서: `williams_r`(순수 조건) → `pattern_pullback`/`momentum_breakout`(조건+쿨다운) →

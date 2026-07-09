@@ -121,6 +121,19 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
             return f"builder_v1_exit::{self._state.metadata.id}"
         return "builder_v1_exit"
 
+    def on_position_closed(self, pos_key: str) -> None:
+        """Release per-position trailing state after the position exits.
+
+        Optional cleanup hook called by composing exits (``FirstTriggerExit``)
+        when another child closes the position, so this exit's favorable
+        extreme does not leak onto a future position reusing the same key.
+
+        Args:
+            pos_key: Position id (falling back to symbol code) — the same key
+                used by the internal extreme map.
+        """
+        self._extreme.pop(pos_key, None)
+
     async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         position = context.position
         market_data = context.market_data or {}
