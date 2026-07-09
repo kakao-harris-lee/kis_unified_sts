@@ -100,14 +100,25 @@
 **목표**: "YAML만 작성하면 실행"을 builder_v1 승격으로 달성. 레거시 YAML은 계속 동작(호환 유지).
 
 ### P2-a. 스키마/어휘 확장 (선행 조건)
-- [ ] `signal_direction` 산출: 조건 그룹별 long/short 방향 — **선물 대칭 불변식 충족에 필수**
+- [x] `signal_direction` 산출: 조건 그룹별 long/short 방향 — **선물 대칭 불변식 충족에 필수**
   (현재 builder entry는 Phase 1 long-only).
-- [ ] 연산자/피연산자 어휘 확장: percentile/rank(예: Setup D ATR-percentile 게이트),
+  — 완료: `BuilderState.entry_short` 그룹(선물 전용, 스키마 검증) + 브리지가
+  `signal_direction`/`matched_group` 산출, exit 브리지 완전 sign-symmetric.
+- [x] 연산자/피연산자 어휘 확장: percentile/rank(예: Setup D ATR-percentile 게이트),
   지표-대-지표 시계열 비교 확장, 시간 필터(no_entry_after 등 — KST).
-- [ ] exit 어휘: 선언형 stop/target/trailing에 더해 **명명된 exit 프리미티브 참조**
+  — 부분 완료: `percentile_rank_above/below`(+조건별 `window`) 출하(지표-대-지표
+  비교는 기존 operand 모델로 이미 표현 가능); **잔여**: 시간 필터(no_entry_after,
+  KST)는 P2-c 파일럿에서 필요 시 후속 PR.
+- [x] exit 어휘: 선언형 stop/target/trailing에 더해 **명명된 exit 프리미티브 참조**
   (`exit: {primitive: three_stage, params: …}`) — 상태머신 exit를 스키마에서 조합 가능하게.
-- [ ] 게이트 훅: regime gate/LLM veto/쿨다운을 스키마 필드로 (쿨다운·재진입은
+  — 완료: `BuilderState.exit_primitive` → factory가 `FirstTriggerExit`로 조합,
+  ExitRegistry SoT 검증 + 카탈로그 asset-class 제한(three_stage=stock-only).
+- [x] 게이트 훅: regime gate/LLM veto/쿨다운을 스키마 필드로 (쿨다운·재진입은
   개별 entry의 state dict에서 프레임워크 공통 게이트로 이동 — #601 재발 방지).
+  — 완료(2/3): `gates.regime_gate`(기존 프레임워크 RegimeGate 재사용) +
+  `gates.cooldown_seconds`(브리지 소비, deploy 파라미터와 max 병합); **LLM veto는
+  보류** — 프레임워크 수준 attach 훅이 없어(Setup 어댑터 내부 전용) 신규 LLM
+  배선 없이는 passthrough 필드가 무의미. 훅이 생기면 필드만 추가.
 
 ### P2-b. 파이프라인 통일
 - 레거시 경로의 `StreamingIndicatorResolver`(flat scalar)와 builder 경로의
