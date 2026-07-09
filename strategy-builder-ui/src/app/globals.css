@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Class-based dark mode: next-themes toggles `.dark` on <html>. This makes
+   every existing `dark:` utility resolve against the class instead of the
+   OS media query. next-themes runs with defaultTheme="system" + enableSystem,
+   so users on OS dark still get `.dark` applied — behavior parity preserved. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   /* Brand */
   --color-primary: #245bee;
@@ -54,20 +60,18 @@
   --foreground: var(--color-text-primary);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #0f172a;
-    --color-bg-secondary: #1e293b;
-    --color-surface: #1e293b;
-    --color-border: #334155;
-    --color-text-primary: #f1f5f9;
-    --color-text-secondary: #94a3b8;
-    --color-text-muted: #64748b;
-    --color-primary-bg: rgba(36, 91, 238, 0.15);
+.dark {
+  --color-bg: #0f172a;
+  --color-bg-secondary: #1e293b;
+  --color-surface: #1e293b;
+  --color-border: #334155;
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+  --color-primary-bg: rgba(36, 91, 238, 0.15);
 
-    --background: var(--color-bg);
-    --foreground: var(--color-text-primary);
-  }
+  --background: var(--color-bg);
+  --foreground: var(--color-text-primary);
 }
 
 @theme inline {
@@ -265,10 +269,8 @@ body {
   box-shadow: 0 0 0 2px var(--color-primary-bg), 0 0 0 4px var(--color-primary);
 }
 
-@media (prefers-color-scheme: dark) {
-  .toggle-switch {
-    background: #475569;
-  }
+.dark .toggle-switch {
+  background: #475569;
 }
 
 /* 포커스 링 */
@@ -317,10 +319,8 @@ body {
   border-radius: var(--radius-full);
 }
 
-@media (prefers-color-scheme: dark) {
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: #475569;
-  }
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #475569;
 }
 
 /* 숫자 고정폭 */
@@ -372,14 +372,12 @@ input[type="range"].range-blue::-webkit-slider-thumb {
   background: var(--color-primary);
 }
 
-@media (prefers-color-scheme: dark) {
-  input[type="range"] {
-    background: #334155;
-  }
+.dark input[type="range"] {
+  background: #334155;
+}
 
-  input[type="range"]::-webkit-slider-thumb {
-    border-color: #1e293b;
-  }
+.dark input[type="range"]::-webkit-slider-thumb {
+  border-color: #1e293b;
 }
 
 /* Reduced motion */
