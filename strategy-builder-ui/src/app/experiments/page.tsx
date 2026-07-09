@@ -33,6 +33,7 @@ import {
   type StrategyStatus,
 } from "@/lib/api/experiments";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
+import HeuristicProgressBar from "./components/HeuristicProgressBar";
 
 const chartColors = [
   "#ef4444", "#2563eb", "#16a34a", "#ca8a04", "#9333ea",
@@ -445,7 +446,12 @@ export default function ExperimentsPage() {
               {running || runMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               실행
             </button>
-            {running && <span className="text-sm text-slate-500">실행 중... (백테스트는 수 분 걸릴 수 있습니다)</span>}
+            {running && (
+              <>
+                <span className="text-sm text-slate-500">실행 중... (백테스트는 수 분 걸릴 수 있습니다)</span>
+                <HeuristicProgressBar startedAt={job.data?.started_at ?? job.data?.created_at} />
+              </>
+            )}
             {job.data?.status === "failed" && (
               <span className="inline-flex items-center gap-1 text-sm text-rose-600"><AlertCircle className="h-4 w-4" /> 실패: {job.data.error}</span>
             )}
