@@ -596,6 +596,103 @@ async def latest_paper_comparison() -> dict[str, Any]:
     return _compare_latest_to_paper(report)
 
 
+def _normalize_cumulative(
+    points: list[tuple[str, float]],
+) -> dict[str, float]:
+    """Index an equity series to a cumulative-return % from its first point."""
+    if not points:
+        return {}
+    base = points[0][1]
+    if not base:
+        return {}
+    return {d: (v / base - 1.0) * 100.0 for d, v in points}
+
+
+def _divergence_series(
+    report: dict[str, Any] | None,
+    paper_points: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Join the backtest equity curve(s) against the paper portfolio equity on
+    trade_date, both indexed to cumulative-return %, and emit a per-date
+    divergence (paper − backtest) so the UI can chart drift over time.
+
+    Aggregate paper equity is portfolio-wide, so the backtest side is the
+    equal-weight mean of the report's per-strategy equity curves over the same
+    dates — a portfolio-level proxy, not per-strategy attribution.
+    """
+    if not report:
+        return {"status": "no_report", "points": [], "as_of": _now_iso()}
+
+    equity_curves = (
+        report.get("equity_curves")
+        if isinstance(report.get("equity_curves"), dict)
+        else {}
+    )
+    # Mean backtest equity across strategies per date (equal weight).
+    bt_by_date: dict[str, list[float]] = {}
+    for curve in equity_curves.values():
+        if not isinstance(curve, list):
+            continue
+        for pt in curve:
+            d = pt.get("date")
+            v = _to_float(pt.get("equity"))
+            if d and v is not None:
+                bt_by_date.setdefault(str(d), []).append(v)
+    bt_points = [(d, sum(vs) / len(vs)) for d, vs in sorted(bt_by_date.items()) if vs]
+
+    paper_pts = [
+        (str(p["trade_date"]), _to_float(p.get("total_equity")))
+        for p in paper_points
+        if p.get("trade_date") and _to_float(p.get("total_equity")) is not None
+    ]
+    paper_pts = [(d, v) for d, v in paper_pts if v is not None]
+
+    bt_cum = _normalize_cumulative(bt_points)
+    paper_cum = _normalize_cumulative(paper_pts)
+
+    shared_dates = sorted(set(bt_cum) & set(paper_cum))
+    points = [
+        {
+            "trade_date": d,
+            "backtest_cum_pct": round(bt_cum[d], 4),
+            "paper_cum_pct": round(paper_cum[d], 4),
+            "divergence_pct": round(paper_cum[d] - bt_cum[d], 4),
+        }
+        for d in shared_dates
+    ]
+    missing: list[str] = []
+    if not bt_cum:
+        missing.append("backtest_equity_curve")
+    if not paper_cum:
+        missing.append("paper_equity_history")
+    if not points and not missing:
+        missing.append("no_overlapping_dates")
+    return {
+        "status": "ok" if points else "insufficient_data",
+        "as_of": _now_iso(),
+        "points": points,
+        "missing_evidence": missing,
+    }
+
+
+@router.get("/latest/divergence")
+async def latest_divergence(days: int = 90) -> dict[str, Any]:
+    """Backtest-vs-paper cumulative-return divergence over time (§ Tier-2 C)."""
+    paths = _report_paths()
+    try:
+        report = _read_report(paths[0]) if paths else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        report = None
+
+    # Reuse the portfolio route's daily equity reader (same source the /risk
+    # equity chart uses) for the paper side.
+    from services.dashboard.routes.portfolio import get_portfolio_equity_history
+
+    paper = await get_portfolio_equity_history(days=days)
+    paper_points = paper.get("points", []) if isinstance(paper, dict) else []
+    return _divergence_series(report, paper_points)
+
+
 @router.get("/strategies")
 async def strategy_catalog() -> dict[str, Any]:
     return {"strategies": _strategy_catalog()}

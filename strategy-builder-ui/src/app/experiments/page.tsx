@@ -24,6 +24,7 @@ import {
   getExperimentJob,
   getExperimentStrategies,
   getLatestExperiment,
+  getLatestExperimentDivergence,
   getLatestExperimentPaperComparison,
   runExperiment,
   type ExperimentPaperComparisonRow,
@@ -33,6 +34,7 @@ import {
   type StrategyStatus,
 } from "@/lib/api/experiments";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
+import DivergenceChart from "./components/DivergenceChart";
 import HeuristicProgressBar from "./components/HeuristicProgressBar";
 
 const chartColors = [
@@ -347,6 +349,11 @@ export default function ExperimentsPage() {
     queryFn: getLatestExperiment,
     refetchInterval: QUERY_INTERVALS_MS.experiments,
   });
+  const divergence = useQuery({
+    queryKey: ["experiment-divergence"],
+    queryFn: getLatestExperimentDivergence,
+    refetchInterval: QUERY_INTERVALS_MS.experiments,
+  });
   const catalog = useQuery({
     queryKey: ["experiment-strategies"],
     queryFn: getExperimentStrategies,
@@ -471,6 +478,14 @@ export default function ExperimentsPage() {
             </div>
           )}
           <ReportView report={report} />
+          {divergence.data ? (
+            <div className="mt-4">
+              <DivergenceChart
+                points={divergence.data.points}
+                status={divergence.data.status}
+              />
+            </div>
+          ) : null}
         </>
       ) : (
         !latest.isLoading && (

@@ -279,6 +279,23 @@ def _ledger_symbol_names(
     return names
 
 
+def _slippage_bps(
+    requested_price: float | None, filled_price: float | None, side: str
+) -> float | None:
+    """Signed execution slippage in bps vs requested (arrival) price.
+
+    Positive = adverse (paid more on a buy / received less on a sell).
+    None when the requested price is missing/zero.
+    """
+    if not requested_price or filled_price is None:
+        return None
+    raw = (filled_price - requested_price) / requested_price
+    # Sell fills are adverse when filled BELOW requested → flip sign so positive
+    # is always "worse for us" regardless of side.
+    signed = -raw if side.upper() in {"SELL", "SHORT"} else raw
+    return round(signed * 10_000, 2)
+
+
 def _ledger_fill_to_dict(fill: dict) -> dict:
     payload = fill.get("payload") if isinstance(fill.get("payload"), dict) else {}
     role = payload.get("trade_role", "")
@@ -286,13 +303,16 @@ def _ledger_fill_to_dict(fill: dict) -> dict:
     if isinstance(filled_at, datetime):
         filled_at = filled_at.isoformat()
     symbol = fill.get("symbol") or payload.get("symbol") or payload.get("code", "")
+    side = fill.get("side") or payload.get("side", "")
+    filled_price = fill.get("price") or payload.get("filled_price", 0.0)
+    requested_price = payload.get("requested_price")
     return {
         "signal_id": payload.get("signal_id", ""),
         "symbol": symbol,
         "code": symbol,
         "name": _name_from_payload(fill, payload),
-        "side": fill.get("side") or payload.get("side", ""),
-        "filled_price": fill.get("price") or payload.get("filled_price", 0.0),
+        "side": side,
+        "filled_price": filled_price,
         "quantity": fill.get("quantity") or payload.get("quantity", 0),
         "filled_at": filled_at,
         "trade_role": "entry" if role == "entry" else "exit",
@@ -300,6 +320,12 @@ def _ledger_fill_to_dict(fill: dict) -> dict:
         or payload.get("asset_class")
         or "unknown",
         "order_id": fill.get("order_id") or payload.get("order_id", ""),
+        # Execution-quality fields (TCA). Present when the fill logger recorded a
+        # requested/arrival price; older rows may omit them (→ null).
+        "requested_price": requested_price,
+        "tick_size_points": payload.get("tick_size_points"),
+        "slippage_ticks": payload.get("slippage_ticks"),
+        "slippage_bps": _slippage_bps(requested_price, filled_price, side),
     }
 
 

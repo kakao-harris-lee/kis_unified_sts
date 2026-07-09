@@ -15,6 +15,8 @@ interface Fill {
   quantity: number
   filled_at: string
   trade_role: 'entry' | 'exit'
+  // Execution quality (TCA). null on legacy fills without a requested price.
+  slippage_bps?: number | null
 }
 
 const MAX_ITEMS = 5
@@ -55,7 +57,18 @@ export default function FillsListCompact() {
               nameClassName="text-slate-800"
             />
           </div>
-          <span className="shrink-0 text-slate-500">{f.filled_price.toLocaleString()} × {f.quantity}</span>
+          <span className="shrink-0 text-slate-500">
+            {f.filled_price.toLocaleString()} × {f.quantity}
+            {f.slippage_bps != null && (
+              <span
+                className={`ml-1 ${f.slippage_bps > 0 ? 'text-rose-600' : 'text-emerald-600'}`}
+                title="체결 슬리피지 (요청가 대비 bps · 양수=불리)"
+              >
+                {f.slippage_bps > 0 ? '+' : ''}
+                {f.slippage_bps.toFixed(0)}bp
+              </span>
+            )}
+          </span>
         </div>
       ))}
       {(!data || data.fills.length === 0) && (

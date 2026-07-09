@@ -145,6 +145,24 @@ export async function getLatestExperimentPaperComparison(): Promise<ExperimentPa
   return apiGet<ExperimentPaperComparison>("/api/experiments/latest/compare-paper");
 }
 
+export interface DivergencePoint {
+  trade_date: string;
+  backtest_cum_pct: number;
+  paper_cum_pct: number;
+  divergence_pct: number;
+}
+
+export interface ExperimentDivergence {
+  status: "ok" | "no_report" | "insufficient_data";
+  as_of: string;
+  points: DivergencePoint[];
+  missing_evidence?: string[];
+}
+
+export async function getLatestExperimentDivergence(): Promise<ExperimentDivergence> {
+  return apiGet<ExperimentDivergence>("/api/experiments/latest/divergence");
+}
+
 export async function runExperiment(
   body: RunExperimentRequest,
 ): Promise<ExperimentJob> {
