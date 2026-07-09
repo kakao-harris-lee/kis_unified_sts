@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import math
 
 from shared.strategy_builder.schema import (
+    PERCENTILE_OPERATORS,
     BuilderCondition,
     BuilderSignal,
     BuilderState,
@@ -103,6 +105,11 @@ class StrategyBuilderEvaluator:
         right_values, right_missing = self._resolve_operand(condition.right, series)
         missing = left_missing + right_missing
 
+        if condition.operator in PERCENTILE_OPERATORS:
+            return self._evaluate_percentile_condition(
+                condition, left_values, right_values, missing
+            )
+
         current_left = self._latest(left_values)
         current_right = self._latest(right_values)
         previous_left = self._previous(left_values)
@@ -125,6 +132,73 @@ class StrategyBuilderEvaluator:
             right_value=current_right,
             previous_left_value=previous_left,
             previous_right_value=previous_right,
+            missing=missing,
+        )
+
+    def _evaluate_percentile_condition(
+        self,
+        condition: BuilderCondition,
+        left_values: list[float] | None,
+        right_values: list[float] | None,
+        missing: list[str],
+    ) -> ConditionEvaluation:
+        """Evaluate a percentile_rank_* condition (schema v2).
+
+        Computes the percentile rank (0-100, inclusive of the value itself) of
+        the latest left-operand value within the trailing ``condition.window``
+        bars, then compares it against the right-operand threshold. Windows
+        with too little (finite) history report a ``missing`` marker so the
+        condition group fails safe — mirroring absent-indicator behavior.
+
+        Args:
+            condition: Percentile condition (window validated by the schema).
+            left_values: Resolved left-operand series (or None when missing).
+            right_values: Resolved right-operand values (threshold constant).
+            missing: Missing-operand markers accumulated by the caller.
+
+        Returns:
+            ConditionEvaluation whose ``left_value`` is the computed rank and
+            ``right_value`` the threshold.
+        """
+        window = int(condition.window or 0)
+        threshold = self._latest(right_values)
+        rank: float | None = None
+        missing = list(missing)
+
+        if not missing:
+            label = self._operand_label(condition.left)
+            if left_values is None or len(left_values) < window:
+                missing.append(f"{label}[window={window}]")
+            else:
+                window_values = [
+                    float(value)
+                    for value in left_values[-window:]
+                    if math.isfinite(float(value))
+                ]
+                current = float(left_values[-1])
+                if not math.isfinite(current) or len(window_values) < 2:
+                    missing.append(f"{label}[window={window}]")
+                else:
+                    below_or_equal = sum(
+                        1 for value in window_values if value <= current
+                    )
+                    rank = round(100.0 * below_or_equal / len(window_values), 4)
+
+        passed = False
+        if not missing and rank is not None and threshold is not None:
+            if condition.operator == ConditionOperator.PERCENTILE_RANK_ABOVE:
+                passed = rank >= threshold
+            else:
+                passed = rank <= threshold
+
+        return ConditionEvaluation(
+            condition_id=condition.id,
+            label=self._condition_label(condition),
+            passed=passed,
+            left_value=rank,
+            right_value=threshold,
+            previous_left_value=None,
+            previous_right_value=None,
             missing=missing,
         )
 
@@ -193,9 +267,12 @@ class StrategyBuilderEvaluator:
         return False
 
     def _condition_label(self, condition: BuilderCondition) -> str:
+        operator_label = condition.operator.value
+        if condition.operator in PERCENTILE_OPERATORS:
+            operator_label = f"{operator_label}(window={condition.window})"
         return (
             f"{self._operand_label(condition.left)} "
-            f"{condition.operator.value} "
+            f"{operator_label} "
             f"{self._operand_label(condition.right)}"
         )
 

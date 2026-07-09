@@ -44,6 +44,20 @@ class ConditionOperator(StrEnum):
     EQUALS = "equals"
     CROSS_ABOVE = "cross_above"
     CROSS_BELOW = "cross_below"
+    # Percentile-rank operators (schema v2): compare the percentile rank of the
+    # latest left-operand value within a trailing window (``BuilderCondition.window``
+    # bars) against the right-operand threshold (0-100). Enables conditions like
+    # "ATR in the top 10% of the trailing 120 bars" (Setup D-class volatility gates).
+    PERCENTILE_RANK_ABOVE = "percentile_rank_above"
+    PERCENTILE_RANK_BELOW = "percentile_rank_below"
+
+
+PERCENTILE_OPERATORS: frozenset[ConditionOperator] = frozenset(
+    {
+        ConditionOperator.PERCENTILE_RANK_ABOVE,
+        ConditionOperator.PERCENTILE_RANK_BELOW,
+    }
+)
 
 
 class ConditionLogic(StrEnum):
@@ -161,13 +175,98 @@ class BuilderCondition(BaseModel):
     left: ConditionOperand
     operator: ConditionOperator
     right: ConditionOperand
+    # Trailing window (bars) for the percentile_rank_* operators; ignored (and
+    # must stay None) for scalar/cross operators so pre-v2 states hash unchanged.
+    window: int | None = Field(default=None, ge=2)
 
     model_config = _BUILDER_MODEL_CONFIG
+
+    @model_validator(mode="after")
+    def validate_percentile_shape(self) -> BuilderCondition:
+        if self.operator in PERCENTILE_OPERATORS:
+            if self.window is None:
+                raise ValueError(
+                    f"operator {self.operator.value} requires 'window' "
+                    "(trailing bars, integer >= 2)"
+                )
+            if self.left.type == OperandType.VALUE:
+                raise ValueError(
+                    f"operator {self.operator.value} needs a series on the left "
+                    "(indicator or price operand, not a constant value)"
+                )
+            if self.right.type != OperandType.VALUE or not (
+                0.0 <= float(self.right.value or 0.0) <= 100.0
+            ):
+                raise ValueError(
+                    f"operator {self.operator.value} requires a value operand "
+                    "between 0 and 100 on the right (percentile threshold)"
+                )
+        return self
 
 
 class BuilderConditionGroup(BaseModel):
     logic: ConditionLogic = ConditionLogic.AND
     conditions: list[BuilderCondition] = Field(default_factory=list)
+
+    model_config = _BUILDER_MODEL_CONFIG
+
+
+class ExitPrimitiveRef(BaseModel):
+    """Reference to a registered exit component (``ExitRegistry`` name).
+
+    Lets a builder strategy compose a stateful exit primitive (e.g.
+    ``three_stage``, ``atr_dynamic``, ``chandelier_exit``, ``momentum_decay``)
+    with the declarative stop/target/trailing risk block. Name resolution
+    against the registry happens at strategy-build/validation time (the schema
+    layer stays import-cycle free); unknown names are rejected there with the
+    list of available primitives.
+    """
+
+    primitive: str = Field(min_length=1, max_length=64)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = _BUILDER_MODEL_CONFIG
+
+    @field_validator("primitive")
+    @classmethod
+    def primitive_not_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("exit primitive name must not be blank")
+        return normalized
+
+
+class BuilderRegimeGate(BaseModel):
+    """Schema hook for the existing framework regime gate.
+
+    Field names and defaults mirror ``regime_gate_cfg_from_yaml``
+    (``shared/strategy/gates/regime_gate.py``); the factory dumps this model
+    into that loader so the builder reuses the framework gate unchanged.
+    """
+
+    enabled: bool = False
+    regime_percentile_max: float = Field(default=60.0, ge=0.0, le=100.0)
+    impact_score_max: int = Field(default=70, ge=0, le=100)
+    event_window_minutes: int = Field(default=15, ge=0)
+    require_overnight_us_direction: bool = False
+    permissive_on_missing: bool = True
+
+    model_config = _BUILDER_MODEL_CONFIG
+
+
+class BuilderGates(BaseModel):
+    """Optional entry gates for a builder strategy (schema v2).
+
+    ``regime_gate`` reuses the framework RegimeGate attachment; ``cooldown_seconds``
+    is consumed by the builder entry bridge (the effective cooldown is the max of
+    this and the deploy-time ``cooldown_seconds`` param, i.e. most conservative).
+    No LLM-veto field yet: the platform has no framework-level veto hook to
+    attach to (it lives inside the Setup adapters), so adding one here would
+    require new LLM plumbing — deferred.
+    """
+
+    regime_gate: BuilderRegimeGate | None = None
+    cooldown_seconds: int | None = Field(default=None, ge=0)
 
     model_config = _BUILDER_MODEL_CONFIG
 
@@ -193,15 +292,32 @@ class BuilderState(BaseModel):
     asset_class: Literal["stock", "futures"] = "stock"
     indicators: list[BuilderIndicator] = Field(default_factory=list)
     entry: BuilderConditionGroup = Field(default_factory=BuilderConditionGroup)
+    # Schema v2: optional short-entry condition group. ``entry`` stays the long
+    # group; when ``entry_short`` matches (and ``entry`` did not), the runtime
+    # bridge emits ``signal_direction="short"``. Futures-only — the stock paper
+    # pipeline cannot execute short entries.
+    entry_short: BuilderConditionGroup | None = None
     exit: BuilderConditionGroup = Field(default_factory=BuilderConditionGroup)
     risk: RiskManagement = Field(default_factory=RiskManagement)
+    # Schema v2: optional named exit primitive composed with the risk block.
+    exit_primitive: ExitPrimitiveRef | None = None
+    # Schema v2: optional entry gates (regime gate / cooldown).
+    gates: BuilderGates | None = None
 
     model_config = _BUILDER_MODEL_CONFIG
+
+    def condition_groups(self) -> list[tuple[str, BuilderConditionGroup]]:
+        """Return the named condition groups present on this state."""
+        groups: list[tuple[str, BuilderConditionGroup]] = [("entry", self.entry)]
+        if self.entry_short is not None:
+            groups.append(("entry_short", self.entry_short))
+        groups.append(("exit", self.exit))
+        return groups
 
     @model_validator(mode="after")
     def validate_condition_aliases(self) -> BuilderState:
         aliases = {indicator.alias for indicator in self.indicators}
-        for group_name, group in (("entry", self.entry), ("exit", self.exit)):
+        for group_name, group in self.condition_groups():
             for condition in group.conditions:
                 for operand in (condition.left, condition.right):
                     if (
@@ -212,6 +328,20 @@ class BuilderState(BaseModel):
                             f"{group_name} condition references unknown indicator alias "
                             f"{operand.indicator_alias}"
                         )
+        return self
+
+    @model_validator(mode="after")
+    def validate_short_entries_futures_only(self) -> BuilderState:
+        if (
+            self.entry_short is not None
+            and self.entry_short.conditions
+            and self.asset_class != "futures"
+        ):
+            raise ValueError(
+                "entry_short (short entries) is only supported for "
+                f"asset_class='futures'; got asset_class={self.asset_class!r}. "
+                "The stock paper pipeline is long-only."
+            )
         return self
 
 
@@ -261,6 +391,25 @@ class BuilderSignal(BaseModel):
     lab_signal_id: str | None = None
 
 
+class ExitPrimitiveDefinition(BaseModel):
+    """Catalog metadata for an exit primitive exposed to the builder UI.
+
+    ``id`` must be an ``ExitRegistry`` component name (the registry is the
+    validation SoT); ``asset_classes`` restricts which asset classes may
+    reference it (e.g. ``three_stage`` is stock-only per operational rule).
+    """
+
+    id: str
+    name: str | None = None
+    name_ko: str | None = None
+    description: str | None = None
+    asset_classes: list[Literal["stock", "futures"]] = Field(
+        default_factory=lambda: ["stock", "futures"]
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class BuilderCapabilities(BaseModel):
     indicators: list[IndicatorDefinition]
     operators: list[ConditionOperator]
@@ -268,3 +417,7 @@ class BuilderCapabilities(BaseModel):
     risk_fields: dict[str, Any]
     default_order_amount: float
     ttl_seconds: int
+    # Schema v2 vocabulary (additive; defaults keep older payload consumers working).
+    directions: list[str] = Field(default_factory=lambda: ["long"])
+    exit_primitives: list[ExitPrimitiveDefinition] = Field(default_factory=list)
+    gate_fields: dict[str, Any] = Field(default_factory=dict)
