@@ -8,6 +8,8 @@ exactly as before.
 
 from __future__ import annotations
 
+import pytest
+
 from shared.indicators.contracts import IndicatorContract, IndicatorKind
 from shared.indicators.engine.spec import IndicatorSpec
 from shared.indicators.resolver import StreamingIndicatorResolver
@@ -86,3 +88,35 @@ def test_resolver_fulfils_spec_derived_keys_as_base_payload() -> None:
     payload = resolver.collect_entry_indicators("005930")
     assert payload["rsi"] == 47.1
     assert payload["bb_upper"] == 71000.0
+
+
+def test_conflicting_specs_collapsing_to_one_key_raise() -> None:
+    """rsi is not period-keyed: rsi(7) and rsi(21) both flatten to "rsi" —
+    ambiguous, so from_specs must refuse instead of silently keeping one."""
+    with pytest.raises(ValueError, match="flat key collision"):
+        IndicatorContract.from_specs(
+            [
+                IndicatorSpec.create("rsi", {"period": 7}),
+                IndicatorSpec.create("rsi", {"period": 21}),
+            ]
+        )
+
+
+def test_identical_duplicate_specs_do_not_raise() -> None:
+    contract = IndicatorContract.from_specs(
+        [
+            IndicatorSpec.create("rsi", {"period": 14}),
+            IndicatorSpec.create("rsi", {"period": 14}),
+        ]
+    )
+    assert contract.required_keys == ("rsi", "rsi")
+
+
+def test_period_keyed_specs_with_different_periods_coexist() -> None:
+    contract = IndicatorContract.from_specs(
+        [
+            IndicatorSpec.create("ema", {"period": 5}),
+            IndicatorSpec.create("ema", {"period": 20}),
+        ]
+    )
+    assert contract.required_keys == ("ema_5", "ema_20")

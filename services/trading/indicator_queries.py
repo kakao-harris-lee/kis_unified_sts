@@ -628,7 +628,13 @@ class IndicatorQueryMixin:
             logger.error(f"Momentum indicator calculation failed for {symbol}: {e}")
             return {}
 
-        # Extract last-bar values
+        # Extract last-bar values. NOTE: these are HTS-compatible momentum-
+        # bundle keys (macd_line/macd_oscillator/sto_k/sto_d), a DELIBERATE
+        # divergence from the flat_key catalog (macd/macd_hist/stoch_k/
+        # stoch_d): they live under the strategy's momentum_{tf} namespace —
+        # not the flat base payload — and momentum consumers (trix_golden,
+        # macd_ema_crossover, williams_r) read these exact names. Same
+        # documented-divergence policy as the feature-bundle normalized atr.
         last = df.iloc[-1]
         result: dict[str, Any] = {
             "trix": float(last.get("trix", 0)),

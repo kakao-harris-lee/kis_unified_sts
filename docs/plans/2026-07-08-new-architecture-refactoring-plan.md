@@ -136,7 +136,7 @@
   유지; 의도된 분기(momentum 번들 HTS 키, feature 번들 정규화 atr)는 주석으로
   문서화. 추가로 `IndicatorContract.from_specs`(additive)로 typed 요청
   (IndicatorSpec+output→flat key)을 계약에서 선언 가능 — resolver 무변경 충족.
-- [x] 캐시(`IndicatorCacheEngine`)로 중복 계산 제거.
+- [x] 캐시(`CachingIndicatorEngine`)로 중복 계산 제거.
   — 완료: builder 평가 경로는 전 시리즈가 필요해(cross/percentile 연산자)
   flat `PanelStore`로는 부족 → `cache.py`에 `CachingIndicatorEngine`
   (compute(spec, window)를 spec 동일성+window 내용 해시로 메모이즈, LRU) 추가,

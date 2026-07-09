@@ -176,12 +176,36 @@ class IndicatorContract:
         Additive API: contracts built via :meth:`from_required_keys` are
         unaffected. Intended consumer: P2-c pilot strategies (declarative
         migration) declaring typed requirements instead of magic strings.
+
+        Limits (same fail-safe semantics as string contracts, stated up
+        front): a spec outside the live BASE payload vocabulary is silently
+        unresolved at runtime — the resolver only fills keys the engine
+        publishes, so the strategy sees a missing key, not an error. And
+        ``flat_key`` embeds params in the key ONLY for period-keyed
+        indicators (``sma``/``ema``): for every other indicator the params do
+        not appear in the key, so e.g. ``rsi(7)`` and ``rsi(21)`` would both
+        map to ``rsi``. Requesting such conflicting specs is ambiguous and
+        raises ``ValueError`` (see below) instead of silently keeping one.
+
+        Raises:
+            ValueError: if two different ``(spec, output)`` requests collapse
+                onto the same flat key (params not representable in the key).
         """
         typed_keys: list[str] = []
         typed_requests: list[IndicatorRequest] = []
+        seen: dict[str, tuple[IndicatorSpec, str]] = {}
         for item in specs:
             spec, output = item if isinstance(item, tuple) else (item, "value")
             key = flat_key(spec.indicator_id, output, spec.param_map)
+            prior = seen.get(key)
+            if prior is not None and prior != (spec, output):
+                raise ValueError(
+                    f"flat key collision: {spec.key!r} (output {output!r}) and "
+                    f"{prior[0].key!r} (output {prior[1]!r}) both map to "
+                    f"{key!r} — the flat vocabulary cannot distinguish these "
+                    "params; request only one variant per flat key"
+                )
+            seen[key] = (spec, output)
             typed_keys.append(key)
             typed_requests.append(
                 IndicatorRequest(

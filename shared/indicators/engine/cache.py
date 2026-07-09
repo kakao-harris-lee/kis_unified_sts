@@ -1,17 +1,23 @@
-"""Indicator Cache Engine (WS-A2) — dedup + pluggable panel store.
+"""Indicator Cache Engine (WS-A2) — dedup for both cache shapes.
 
-Computes a deduplicated flat indicator panel per symbol through an
-:class:`IndicatorEngine` and publishes it to a :class:`PanelStore`. This is the
-structural core of the roadmap's cache engine: the requested spec set is unified
-once, so ten strategies asking for ``rsi(14)`` cost one computation per symbol,
-and every consumer (builder evaluator, strategies, backtest) reads the same flat
-panel — collapsing the historic runtime/backtest dual path.
+Two complementary cache classes live here; know which one is actually wired:
 
-Incremental (``talib.stream``) and parallel (Polars / process pool) execution
-are refinements of :meth:`IndicatorCacheEngine.refresh_many` tracked as
-follow-ups; the interfaces here do not change when they land. The Redis-backed
-:class:`PanelStore` (TTL-managed, DB 1) likewise drops in without touching the
-engine.
+* :class:`CachingIndicatorEngine` — **production-wired** (P2-b). Memoizes full
+  ``compute(spec, window)`` results (whole series) by (spec identity, window
+  content token). The builder_v1 entry/exit bridges share the
+  :func:`cached_default_engine` process singleton, so N builder strategies
+  requesting the same spec on the same symbol/bar compute it once.
+* :class:`IndicatorCacheEngine` + :class:`PanelStore` — the flat *scalar*
+  panel half ("latest values per symbol"). Structurally complete but **not
+  yet wired into any runtime**; it is the drop-in for scalar consumers
+  (runtime cache writer, dashboards) and for a Redis-backed cross-process
+  store (TTL-managed, DB 1) as a P3+ follow-up.
+
+Shared idea: the requested spec set is deduplicated by ``IndicatorSpec``
+identity, so ten strategies asking for ``rsi(14)`` cost one computation per
+symbol. Incremental (``talib.stream``) and parallel (Polars / process pool)
+execution are refinements of :meth:`IndicatorCacheEngine.refresh_many` tracked
+as follow-ups; the interfaces here do not change when they land.
 """
 
 from __future__ import annotations
