@@ -176,3 +176,146 @@ async def test_short_direction_is_dropped_no_order() -> None:
     assert ack is True  # consumed (stock is long-only), no order placed
     assert await redis.xrange("order.fill.stock.shadow") == []
     assert await redis.hget("trading:stock:positions", "005930") is None
+
+
+# -----------------------------------------------------------------------------
+# Telegram interactive-alerts — intent=close branch
+# -----------------------------------------------------------------------------
+
+POSITIONS_KEY = "trading:stock:positions"
+
+
+def _open_position(
+    *,
+    code: str = "005930",
+    quantity: int = 10,
+    entry_price: float = 71000.0,
+    signal_id: str = "sig-open-1",
+    strategy: str = "vr_composite",
+) -> str:
+    return json.dumps(
+        {
+            "code": code,
+            "name": "n",
+            "entry_price": entry_price,
+            "quantity": quantity,
+            "opened_at_ms": 1000,
+            "state": "SURVIVAL",
+            "signal_id": signal_id,
+            "strategy": strategy,
+        }
+    )
+
+
+def _close_fields(code: str = "005930") -> dict[str, str]:
+    return {"intent": "close", "code": code, "signal_id": "close-req-1"}
+
+
+@pytest.mark.asyncio
+async def test_close_sells_held_quantity_and_hdels_position() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    await redis.hset(POSITIONS_KEY, "005930", _open_position(quantity=10))
+
+    ack = await daemon.handle_message(b"1-0", _encode(_close_fields()))
+
+    assert ack is True
+    fills = await redis.xrange("order.fill.stock.shadow")
+    assert len(fills) == 1
+    _id, f = fills[0]
+    assert f[b"symbol"] == b"005930"
+    assert f[b"side"] == b"SELL"
+    assert f[b"trade_role"] == b"exit"
+    assert int(f[b"quantity"]) == 10
+    assert f[b"strategy"] == b"vr_composite"
+    assert await redis.hget(POSITIONS_KEY, "005930") is None
+    assert daemon.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_reads_quantity_from_hash_not_message() -> None:
+    """Quantity must come from the positions hash, never the inbound message."""
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    await redis.hset(POSITIONS_KEY, "005930", _open_position(quantity=7))
+    fields = _close_fields()
+    fields["quantity"] = "999"  # attacker/bug-controlled field must be ignored
+
+    await daemon.handle_message(b"1-0", _encode(fields))
+
+    fills = await redis.xrange("order.fill.stock.shadow")
+    assert int(fills[0][1][b"quantity"]) == 7
+
+
+@pytest.mark.asyncio
+async def test_close_no_open_position_is_noop_consumed() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+
+    ack = await daemon.handle_message(b"1-0", _encode(_close_fields()))
+
+    assert ack is True  # final state: nothing to sell, consumed
+    assert await redis.xrange("order.fill.stock.shadow") == []
+    assert daemon.close_count == 0
+
+
+@pytest.mark.asyncio
+async def test_close_missing_code_is_poison_pill() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+
+    ack = await daemon.handle_message(b"1-0", _encode({"intent": "close"}))
+
+    assert ack is True
+    assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_close_broker_raises_leaves_position_and_retries() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    await redis.hset(POSITIONS_KEY, "005930", _open_position(quantity=10))
+
+    class _RaisingBroker:
+        async def submit_order(self, **kwargs: Any) -> VirtualOrder:  # noqa: ARG002
+            raise RuntimeError("broker down")
+
+    daemon.broker = _RaisingBroker()  # type: ignore[assignment]
+
+    ack = await daemon.handle_message(b"1-0", _encode(_close_fields()))
+
+    assert ack is False  # NO XACK — retry
+    assert await redis.hget(POSITIONS_KEY, "005930") is not None  # position kept
+
+
+@pytest.mark.asyncio
+async def test_close_unfilled_sell_keeps_position_open() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    daemon.broker = _UnfilledBroker()  # type: ignore[assignment]
+    await redis.hset(POSITIONS_KEY, "005930", _open_position(quantity=10))
+
+    ack = await daemon.handle_message(b"1-0", _encode(_close_fields()))
+
+    assert ack is True  # final state, consumed — retried close would resubmit
+    assert await redis.hget(POSITIONS_KEY, "005930") is not None
+    assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_close_fill_log_failure_leaves_position_for_retry() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    daemon.fill_logger = _RaisingFillLogger(
+        redis=redis,
+        stream="order.fill.stock.shadow",
+        maxlen=1000,
+        asset_class="stock",
+    )
+    await redis.hset(POSITIONS_KEY, "005930", _open_position(quantity=10))
+
+    ack = await daemon.handle_message(b"1-0", _encode(_close_fields()))
+
+    assert ack is False  # NO XACK — retry
+    # Position must NOT be removed when the fill could not be logged.
+    assert await redis.hget(POSITIONS_KEY, "005930") is not None

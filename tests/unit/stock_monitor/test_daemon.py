@@ -26,7 +26,7 @@ class _FakeNotifier:
     def __init__(self) -> None:
         self.messages: list[str] = []
 
-    async def send_message(self, message: str) -> None:
+    async def send_message(self, message: str, **_kwargs: object) -> None:
         self.messages.append(message)
 
 
@@ -445,9 +445,7 @@ async def test_consume_loop_logs_audit_context_before_poison_pill_ack(
     ]
     messages = [record.getMessage() for record in caplog.records]
     drop_log = next(
-        message
-        for message in messages
-        if "event=stream_message_dropped" in message
+        message for message in messages if "event=stream_message_dropped" in message
     )
     assert "stream=signal.final.stock.shadow" in drop_log
     assert "consumer_group=stock_monitor" in drop_log
@@ -491,9 +489,7 @@ async def test_consume_loop_logs_ack_failed_when_poison_pill_xack_fails(
     messages = [record.getMessage() for record in caplog.records]
     assert not any("event=stream_message_dropped" in message for message in messages)
     ack_log = next(
-        message
-        for message in messages
-        if "event=stream_message_ack_failed" in message
+        message for message in messages if "event=stream_message_ack_failed" in message
     )
     assert "stream=signal.final.stock.shadow" in ack_log
     assert "consumer_group=stock_monitor" in ack_log

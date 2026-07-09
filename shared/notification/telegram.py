@@ -8,6 +8,19 @@ Includes trading hours awareness to avoid notifications outside market hours.
 import logging
 import os
 from datetime import datetime, time
+from typing import TYPE_CHECKING
+
+from shared.notification.formatting import (
+    format_buy_fill,
+    format_buy_signal,
+    format_sell_fill,
+    format_sell_signal,
+    is_stock_code,
+    stock_link_button,
+)
+
+if TYPE_CHECKING:
+    from telegram import InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +98,7 @@ class TelegramNotifier:
         disable_notification: bool = False,
         is_critical: bool = False,
         raise_on_error: bool = False,
+        reply_markup: "InlineKeyboardMarkup | None" = None,
     ):
         """기본 메시지 전송
 
@@ -93,6 +107,7 @@ class TelegramNotifier:
             disable_notification: 알림음 비활성화 여부
             is_critical: 중요 알림 여부 (True면 시간 제한 무시)
             raise_on_error: 전송 실패를 호출자에게 전파할지 여부
+            reply_markup: 인라인 키보드 (예: 네이버 증권 링크 버튼). None이면 미첨부.
         """
         if not self.bot or not self.chat_id:
             logger.debug("Telegram bot not configured. Skipping notification.")
@@ -112,6 +127,7 @@ class TelegramNotifier:
                 text=message,
                 disable_notification=disable_notification,
                 parse_mode="HTML",
+                reply_markup=reply_markup,
             )
             logger.debug(f"Sent Telegram message: {message[:50]}...")
         except Exception as e:
@@ -163,20 +179,16 @@ class TelegramNotifier:
             confidence: 신뢰도 (0.0 ~ 1.0)
             reason: 추가 사유
         """
-        msg = "🟢 <b>매수 시그널</b>\n"
-        msg += f"종목: {name} ({code})\n"
-        msg += f"가격: {price:,}원\n"
-        msg += f"전략: {strategy}\n"
-
-        if confidence is not None:
-            msg += f"신뢰도: {confidence:.1%}\n"
-
-        if reason:
-            msg += f"사유: {reason}\n"
-
-        msg += f"시간: {datetime.now().strftime('%H:%M:%S')}"
-
-        await self.send_message(msg)
+        msg = format_buy_signal(
+            code=code,
+            name=name,
+            price=price,
+            strategy=strategy,
+            confidence=confidence,
+            reason=reason,
+        )
+        reply_markup = stock_link_button(code) if is_stock_code(code) else None
+        await self.send_message(msg, reply_markup=reply_markup)
 
     async def send_buy_executed(
         self,
@@ -197,15 +209,16 @@ class TelegramNotifier:
             amount: 체결 금액
             strategy: 전략명
         """
-        msg = "✅ <b>매수 체결</b>\n"
-        msg += f"종목: {name} ({code})\n"
-        msg += f"체결가: {price:,}원\n"
-        msg += f"수량: {quantity}주\n"
-        msg += f"금액: {amount:,}원\n"
-        msg += f"전략: {strategy}\n"
-        msg += f"시간: {datetime.now().strftime('%H:%M:%S')}"
-
-        await self.send_message(msg)
+        msg = format_buy_fill(
+            code=code,
+            name=name,
+            price=price,
+            quantity=quantity,
+            amount=amount,
+            strategy=strategy,
+        )
+        reply_markup = stock_link_button(code) if is_stock_code(code) else None
+        await self.send_message(msg, reply_markup=reply_markup)
 
     async def send_sell_signal(
         self,
@@ -226,22 +239,16 @@ class TelegramNotifier:
             profit_rate: 수익률
             holding_time: 보유 시간
         """
-        emoji = "🔴" if profit_rate and profit_rate < 0 else "🟡"
-        msg = f"{emoji} <b>매도 시그널</b>\n"
-        msg += f"종목: {name} ({code})\n"
-        msg += f"가격: {price:,}원\n"
-        msg += f"사유: {reason}\n"
-
-        if profit_rate is not None:
-            sign = "+" if profit_rate >= 0 else ""
-            msg += f"수익률: {sign}{profit_rate:.2%}\n"
-
-        if holding_time:
-            msg += f"보유시간: {holding_time}\n"
-
-        msg += f"시간: {datetime.now().strftime('%H:%M:%S')}"
-
-        await self.send_message(msg)
+        msg = format_sell_signal(
+            code=code,
+            name=name,
+            price=price,
+            reason=reason,
+            profit_rate=profit_rate,
+            holding_time=holding_time,
+        )
+        reply_markup = stock_link_button(code) if is_stock_code(code) else None
+        await self.send_message(msg, reply_markup=reply_markup)
 
     async def send_sell_executed(
         self,
@@ -264,18 +271,17 @@ class TelegramNotifier:
             profit: 손익 (원)
             profit_rate: 수익률
         """
-        emoji = "✅" if profit >= 0 else "❌"
-        sign = "+" if profit >= 0 else ""
-
-        msg = f"{emoji} <b>매도 체결</b>\n"
-        msg += f"종목: {name} ({code})\n"
-        msg += f"체결가: {price:,}원\n"
-        msg += f"수량: {quantity}주\n"
-        msg += f"금액: {amount:,}원\n"
-        msg += f"손익: {sign}{profit:,}원 ({sign}{profit_rate:.2%})\n"
-        msg += f"시간: {datetime.now().strftime('%H:%M:%S')}"
-
-        await self.send_message(msg)
+        msg = format_sell_fill(
+            code=code,
+            name=name,
+            price=price,
+            quantity=quantity,
+            amount=amount,
+            profit=profit,
+            profit_rate=profit_rate,
+        )
+        reply_markup = stock_link_button(code) if is_stock_code(code) else None
+        await self.send_message(msg, reply_markup=reply_markup)
 
     async def send_daily_summary(
         self, total_trades: int, win_trades: int, total_profit: int, win_rate: float

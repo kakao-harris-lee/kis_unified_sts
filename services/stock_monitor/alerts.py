@@ -16,6 +16,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from shared.notification.formatting import (
+    format_notable_exit,
+    is_stock_code,
+    stock_link_button,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,10 +62,10 @@ class AlertSink:
         self.pnl_alert_pct = pnl_alert_pct
         self.digest = SessionDigest()
 
-    async def _dispatch(self, message: str) -> None:
+    async def _dispatch(self, message: str, *, reply_markup: Any | None = None) -> None:
         if self.mode == "live" and self.notifier is not None:
             try:
-                await self.notifier.send_message(message)
+                await self.notifier.send_message(message, reply_markup=reply_markup)
             except Exception:
                 logger.warning("telegram send failed", exc_info=True)
         else:
@@ -73,10 +79,11 @@ class AlertSink:
         self.digest.add(pnl=pnl)  # every exit counts toward the daily digest
         if abs(pnl_pct) < self.pnl_alert_pct:
             return  # routine exit -> digest only, no alert
-        icon = "🟢" if pnl >= 0 else "🔴"
-        await self._dispatch(
-            f"{icon} <b>주목 청산</b> {code}\nPnL {pnl:,.0f}원 ({pnl_pct:+.2f}%)"
-        )
+        message = format_notable_exit(code=code, pnl=pnl, pnl_pct=pnl_pct)
+        # Naver Finance has no futures item page — only attach for stock codes
+        # (futures instrument codes, e.g. "101V3000", are not 6-digit numeric).
+        reply_markup = stock_link_button(code) if is_stock_code(code) else None
+        await self._dispatch(message, reply_markup=reply_markup)
 
     async def send_health(self, message: str) -> None:
         await self._dispatch(f"⚠️ <b>헬스 이상</b>\n{message}")

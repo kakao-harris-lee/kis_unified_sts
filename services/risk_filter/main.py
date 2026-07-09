@@ -26,11 +26,21 @@ from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.signal import Signal
 from shared.risk.layer import RiskFilterLayer
 from shared.risk.runtime_state import RuntimeRiskState
+from shared.streaming.approval_gate import (
+    ApprovalGateConfig,
+    is_gated,
+    log_gate_config,
+    record_pending,
+)
 from shared.streaming.stage import StreamStage
 
 logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400
+
+# Asset-class tag for the pending-approval hash key / HASH field id (see
+# shared/streaming/approval_keys.py). Fixed for this daemon — futures only.
+_ASSET = "futures"
 
 # Candidate-stream fields attached by the decision_engine market-risk ENTRY
 # gate (roadmap §5.2 track C). Optional — absent on legacy candidates.
@@ -145,6 +155,7 @@ class RiskFilterDaemon(StreamStage):
         final_maxlen: int,
         xread_block_ms: int,
         batch_size: int,
+        approval_gate_config: ApprovalGateConfig | None = None,
     ) -> None:
         super().__init__(
             redis=redis,
@@ -160,6 +171,10 @@ class RiskFilterDaemon(StreamStage):
         self.runtime_state = runtime_state
         self.final_stream = final_stream
         self.final_maxlen = final_maxlen
+        # Telegram interactive-alerts approval gate (Method A). Defaults to a
+        # fully-inert config (enabled=False) so existing behavior is
+        # unchanged unless an operator opts a strategy/symbol in.
+        self.approval_gate_config = approval_gate_config or ApprovalGateConfig()
 
     async def handle_message(
         self, msg_id: bytes, fields: dict[bytes, bytes]  # noqa: ARG002
@@ -227,6 +242,21 @@ class RiskFilterDaemon(StreamStage):
                         if isinstance(context_trace, bytes)
                         else str(context_trace)
                     )
+                if is_gated(
+                    signal.setup_type, signal.symbol, self.approval_gate_config
+                ):
+                    # Telegram interactive-alerts approval gate (Method A):
+                    # hold the fully-assembled final-stream dict for operator
+                    # approval instead of XADDing to signal.final.futures.
+                    # The bot replays fields_out verbatim on approval.
+                    await record_pending(
+                        self.redis,
+                        _ASSET,
+                        signal_id,
+                        fields_out,
+                        self.approval_gate_config.pending_ttl_seconds,
+                    )
+                    return True  # consumed: held pending, not XADDed
                 await self.redis.xadd(
                     self.final_stream,
                     fields_out,
@@ -278,6 +308,10 @@ async def _build_and_run() -> int:
         redis=redis_client, asset_class="futures", key_suffix=risk_state_suffix
     )
     signals_writer = SignalsAllWriter(archive_client=None, batch_size=10)
+    # Loaded once at startup (not on the hot path) — inert by default
+    # (config/telegram_bot.yaml::approval_gate.enabled = false).
+    approval_gate_config = ApprovalGateConfig.from_yaml()
+    log_gate_config(approval_gate_config, asset="futures")
 
     worker_id = f"risk-filter-{socket.gethostname()}-{os.getpid()}"
     daemon = RiskFilterDaemon(
@@ -292,6 +326,7 @@ async def _build_and_run() -> int:
         final_maxlen=10_000,
         xread_block_ms=2000,
         batch_size=10,
+        approval_gate_config=approval_gate_config,
     )
 
     loop = asyncio.get_running_loop()

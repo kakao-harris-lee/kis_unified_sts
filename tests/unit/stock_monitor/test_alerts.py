@@ -5,14 +5,17 @@ from __future__ import annotations
 import pytest
 
 from services.stock_monitor.alerts import AlertSink, SessionDigest
+from shared.notification.formatting import stock_link_button
 
 
 class _FakeNotifier:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.reply_markups: list[object] = []
 
-    async def send_message(self, message: str, **_kwargs: object) -> None:
+    async def send_message(self, message: str, **kwargs: object) -> None:
         self.sent.append(message)
+        self.reply_markups.append(kwargs.get("reply_markup"))
 
 
 @pytest.mark.asyncio
@@ -40,6 +43,47 @@ async def test_exit_at_threshold_is_alerted() -> None:
     # gate is strict `<`, so pnl_pct == threshold IS notable
     await sink.on_exit(code="005930", pnl=30000.0, pnl_pct=3.0)
     assert len(n.sent) == 1 and "005930" in n.sent[0]
+
+
+@pytest.mark.asyncio
+async def test_notable_exit_uses_concise_format_and_stock_link() -> None:
+    """A notable exit on a stock code renders the concise format + Naver link."""
+    n = _FakeNotifier()
+    sink = AlertSink(notifier=n, mode="live", pnl_alert_pct=3.0)
+    await sink.on_exit(code="005930", pnl=-50000.0, pnl_pct=-5.0)
+
+    assert len(n.sent) == 1
+    message = n.sent[0]
+    assert message.startswith("🔴 주목 청산 · 005930")
+    assert "-50,000원" in message
+    assert "-5.00%" in message
+    assert "━━━" not in message  # old hand-built divider is gone
+
+    assert n.reply_markups[0] == stock_link_button("005930")
+
+
+@pytest.mark.asyncio
+async def test_notable_exit_positive_pnl_uses_green_emoji() -> None:
+    n = _FakeNotifier()
+    sink = AlertSink(notifier=n, mode="live", pnl_alert_pct=3.0)
+    await sink.on_exit(code="005930", pnl=30000.0, pnl_pct=4.5)
+
+    assert n.sent[0].startswith("🟢 주목 청산 · 005930")
+    assert "+30,000원" in n.sent[0]
+    assert "+4.50%" in n.sent[0]
+
+
+@pytest.mark.asyncio
+async def test_notable_exit_no_naver_link_for_futures_code() -> None:
+    """Futures instrument codes (e.g. "101V3000") have no Naver item page —
+    the exit alert must NOT attach a reply_markup for them."""
+    n = _FakeNotifier()
+    sink = AlertSink(notifier=n, mode="live", pnl_alert_pct=3.0)
+    await sink.on_exit(code="101V3000", pnl=-15000.0, pnl_pct=-4.0)
+
+    assert len(n.sent) == 1
+    assert "101V3000" in n.sent[0]
+    assert n.reply_markups[0] is None
 
 
 @pytest.mark.asyncio

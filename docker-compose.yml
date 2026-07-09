@@ -406,6 +406,33 @@ services:
       TZ: "Asia/Seoul"
 
   # =============================================================================
+  # Telegram interactive-alerts bot — single python-telegram-bot Application in
+  # LONG-POLLING mode (inbound-only: approve/reject/close button taps +
+  # /positions, /pending, /help, /start). No webhook, no public URL, no Caddy
+  # route — the service does not publish a host port. Profile-gated AND
+  # config-gated: `telegram_bot.enabled: false` (config/telegram_bot.yaml) is
+  # the default even when this profile is started, so bringing the container
+  # up is not itself sufficient to activate the bot (see design doc's Rollout
+  # section — docs/plans/2026-07-07-telegram-interactive-alerts-design.md).
+  # =============================================================================
+  telegram_bot:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-telegram-bot
+    profiles: ["telegram-bot"]
+    command: ["python", "-m", "services.telegram_bot.main"]
+    environment:
+      <<: [*redis-runtime-env, *alert-runtime-env]
+      PYTHONPATH: "/app"
+      TZ: "Asia/Seoul"
+      # Must match stock-risk-filter's/futures-risk-filter's mode env vars
+      # exactly (docker-compose.yml stock-risk-filter / futures-risk-filter)
+      # so _final_stream_for() in services/telegram_bot/handlers.py resolves
+      # to the SAME signal.final.{asset}[.shadow] stream those daemons read
+      # from — otherwise approve/close XADDs land on the wrong stream.
+      STOCK_RISK_FILTER: "${STOCK_PIPELINE_MODE:-shadow}"
+      FUTURES_RISK_FILTER: "${FUTURES_PIPELINE_MODE:-shadow}"
+
+  # =============================================================================
   # Producers — market-hours daemons that feed the trading pipeline
   # (system:universe / dip_candidates / trade_targets). Self-gate to the KRX
   # regular session (idle off-hours), so they can run as always-on services.

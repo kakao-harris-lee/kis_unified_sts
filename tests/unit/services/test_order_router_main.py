@@ -728,3 +728,281 @@ async def test_no_feed_starts_no_monitor(redis):
     await daemon.on_startup()
     assert daemon._exit_task is None
     await daemon.on_shutdown()  # no-op, must not raise
+
+
+# -----------------------------------------------------------------------------
+# Telegram interactive-alerts — intent=close branch
+# -----------------------------------------------------------------------------
+
+POSITIONS_KEY = "futures:monitor:positions"
+
+
+def _position_record(
+    *,
+    symbol: str = "A05603",
+    side: str = "long",
+    quantity: int = 1,
+    entry_price: float = 331.20,
+    signal_id: str = "sig-open-1",
+) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "symbol": symbol,
+            "side": side,
+            "entry_price": entry_price,
+            "quantity": quantity,
+            "opened_at_ms": 1000,
+            "setup_type": "A_gap_reversion",
+            "signal_id": signal_id,
+            "high_water": entry_price,
+            "low_water": entry_price,
+        }
+    )
+
+
+async def _publish_close(redis, *, symbol: str = "A05603") -> None:
+    await redis.xadd(
+        FINAL_STREAM,
+        {"intent": "close", "symbol": symbol, "signal_id": "close-req-1"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_close_paper_mode_flattens_and_logs_force_close(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """close_executor=None (paper) synthesizes the fill and logs force_close."""
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    await redis.hset(POSITIONS_KEY, "A05603", _position_record(quantity=2))
+    await _publish_close(redis)
+
+    await _run_one_batch(daemon)
+
+    fill_logger.log_fill.assert_awaited_once()
+    kwargs = fill_logger.log_fill.call_args.kwargs
+    assert kwargs["symbol"] == "A05603"
+    assert kwargs["side"] == "short"  # opposite of the held "long" side
+    assert kwargs["quantity"] == 2
+    assert kwargs["trade_role"] == "force_close"
+    assert daemon.close_count == 1
+    # No entry-side order was placed via the passive path.
+    kis.place_futures_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_close_short_position_flattens_with_long_side(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """Held short -> closing side is long (long/short symmetry preserved)."""
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    await redis.hset(
+        POSITIONS_KEY, "A05603", _position_record(side="short", quantity=1)
+    )
+    await _publish_close(redis)
+
+    await _run_one_batch(daemon)
+
+    kwargs = fill_logger.log_fill.call_args.kwargs
+    assert kwargs["side"] == "long"
+
+
+@pytest.mark.asyncio
+async def test_close_no_open_position_is_noop_consumed(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """No record in the positions hash -> consumed, no fill logged."""
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    await _publish_close(redis)
+
+    await _run_one_batch(daemon)
+
+    fill_logger.log_fill.assert_not_awaited()
+    assert daemon.close_count == 0
+    pending = await redis.xpending(FINAL_STREAM, GROUP)
+    if isinstance(pending, dict):
+        assert int(pending.get("pending", 0)) == 0
+    elif pending:
+        assert int(pending[0]) == 0
+
+
+@pytest.mark.asyncio
+async def test_close_skips_entry_only_guards(redis, kis, fill_logger, pseudo_oco):
+    """position_size_cap / daily_trade_cap must NOT block a close."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(
+        enabled=True, max_position_size_contracts=1, max_daily_trades=1
+    )
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+    )
+    # Exhaust the daily-trade cap (max=1) with an entry signal first, so a
+    # would-be entry at this point is blocked — then prove a close still
+    # goes through despite both the exhausted cap and the oversized quantity.
+    await _publish_final(redis, _signal("long"), signal_id="sig-entry-1")
+    await redis.hset(POSITIONS_KEY, "A05603", _position_record(quantity=5))
+    await _publish_close(redis)
+
+    await _run_one_batch(daemon)
+
+    assert daemon.daily_trade_blocked_count == 0  # the close never touches this counter
+    kwargs = fill_logger.log_fill.call_args_list[-1].kwargs
+    assert kwargs["quantity"] == 5  # not clamped by the position-size cap
+    assert kwargs["trade_role"] == "force_close"
+    assert daemon.position_size_capped_count == 0
+    assert daemon.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_live_suspended_skips_and_xacks(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """live_mode_guard suspension still blocks a close (still a live order)."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=False)  # Gate 2 not complete -> suspended
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+    )
+    await redis.hset(POSITIONS_KEY, "A05603", _position_record())
+    await _publish_close(redis)
+
+    await _run_one_batch(daemon)
+
+    fill_logger.log_fill.assert_not_awaited()
+    assert daemon.live_suspended_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_symbol_lock_blocks_foreign_symbol(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """symbol_lock still applies to a close on a non-locked symbol."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True, symbol_lock_enabled=True)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+        locked_symbol="A05603",
+    )
+    await redis.hset(POSITIONS_KEY, "A05604", _position_record(symbol="A05604"))
+    await _publish_close(redis, symbol="A05604")
+
+    await _run_one_batch(daemon)
+
+    fill_logger.log_fill.assert_not_awaited()
+    assert daemon.symbol_lock_blocked_count == 1
+
+
+@pytest.mark.asyncio
+async def test_close_live_mode_uses_close_executor(redis, fill_logger, pseudo_oco):
+    """live close_executor set -> flatten() drives the placed order + fill."""
+    from shared.execution.passive_maker import Fill
+
+    close_executor = AsyncMock()
+    close_executor.flatten.return_value = Fill(
+        order_id="LIVE-CLOSE-1", price=330.90, quantity=1, filled_at_ms=5000
+    )
+    kis = AsyncMock()
+    passive = AsyncMock()
+    passive.fill_logger = fill_logger
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=passive,
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        xread_block_ms=10,
+        batch_size=10,
+        passive_timeout_seconds=5,
+        close_executor=close_executor,
+    )
+    await redis.hset(POSITIONS_KEY, "A05603", _position_record(quantity=1))
+    await _publish_close(redis)
+
+    await _run_one_batch(daemon)
+
+    close_executor.flatten.assert_awaited_once()
+    flatten_kwargs = close_executor.flatten.call_args.kwargs
+    assert flatten_kwargs["symbol"] == "A05603"
+    assert flatten_kwargs["side"] == "short"
+    assert flatten_kwargs["quantity"] == 1
+    kwargs = fill_logger.log_fill.call_args.kwargs
+    assert kwargs["filled_price"] == 330.90
+    assert daemon.close_count == 1
+    _ = kis  # unused placeholder kept for readability of the setup above
+
+
+@pytest.mark.asyncio
+async def test_close_live_mode_executor_blocked_leaves_pending(
+    redis, fill_logger, pseudo_oco
+):
+    """close_executor.flatten() returning None (guard-blocked) -> NO XACK, retried."""
+    close_executor = AsyncMock()
+    close_executor.flatten.return_value = None
+    passive = AsyncMock()
+    passive.fill_logger = fill_logger
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=passive,
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        xread_block_ms=10,
+        batch_size=10,
+        passive_timeout_seconds=5,
+        close_executor=close_executor,
+    )
+    await redis.hset(POSITIONS_KEY, "A05603", _position_record(quantity=1))
+    await _publish_close(redis)
+
+    await _run_one_batch(daemon)
+
+    fill_logger.log_fill.assert_not_awaited()
+    pending = await redis.xpending(FINAL_STREAM, GROUP)
+    if isinstance(pending, dict):
+        assert int(pending.get("pending", 0)) == 1
+    elif pending:
+        assert int(pending[0]) == 1
+
+
+@pytest.mark.asyncio
+async def test_close_missing_symbol_field_is_poison_pill(
+    redis, kis, fill_logger, pseudo_oco
+):
+    daemon = _make_daemon(
+        redis=redis, kis=kis, fill_logger=fill_logger, pseudo_oco=pseudo_oco
+    )
+    await redis.xadd(FINAL_STREAM, {"intent": "close"})
+
+    await _run_one_batch(daemon)
+
+    pending = await redis.xpending(FINAL_STREAM, GROUP)
+    if isinstance(pending, dict):
+        assert int(pending.get("pending", 0)) == 0
+    elif pending:
+        assert int(pending[0]) == 0
