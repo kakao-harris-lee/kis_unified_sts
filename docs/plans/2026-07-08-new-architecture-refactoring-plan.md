@@ -125,10 +125,26 @@
   배선 없이는 passthrough 필드가 무의미. 훅이 생기면 필드만 추가.
 
 ### P2-b. 파이프라인 통일
-- 레거시 경로의 `StreamingIndicatorResolver`(flat scalar)와 builder 경로의
+- [x] 레거시 경로의 `StreamingIndicatorResolver`(flat scalar)와 builder 경로의
   `IndicatorContext`(DataFrame)를 `IndicatorSpec`/`flat_key` 기준으로 정렬 —
-  지시서의 "Indicator Context" 단일화. 캐시(`IndicatorCacheEngine`)로 중복 계산 제거.
-- 후보(P2-a 리뷰 follow-up): `StrategyFactory.create`의 builder_v1 특례 블록
+  지시서의 "Indicator Context" 단일화.
+  — 완료: 2026-07-09 드리프트 감사 결과 0(양 경로의 계산측은 이미
+  `flat_latest()`→`flat_key` 경유). 잔여 수동 매핑이던 라이브 페이로드 조립
+  (`services/trading/indicator_queries.py`)의 키 리터럴을 `flat_key` 유도
+  상수로 교체(키/값 불변 — 페이로드 키셋 핀 + flat_key 카탈로그 골든 핀이
+  tripwire). builder `alias.output` 컬럼은 사용자 별칭 스코프로 의도된 설계라
+  유지; 의도된 분기(momentum 번들 HTS 키, feature 번들 정규화 atr)는 주석으로
+  문서화. 추가로 `IndicatorContract.from_specs`(additive)로 typed 요청
+  (IndicatorSpec+output→flat key)을 계약에서 선언 가능 — resolver 무변경 충족.
+- [x] 캐시(`IndicatorCacheEngine`)로 중복 계산 제거.
+  — 완료: builder 평가 경로는 전 시리즈가 필요해(cross/percentile 연산자)
+  flat `PanelStore`로는 부족 → `cache.py`에 `CachingIndicatorEngine`
+  (compute(spec, window)를 spec 동일성+window 내용 해시로 메모이즈, LRU) 추가,
+  `cached_default_engine()` 프로세스 싱글턴을 builder_v1 entry/exit가 공유.
+  같은 심볼/바에서 N개 전략이 공유하는 spec은 1회 계산(counting-backend
+  compute-once 테스트), 값 불변은 Indicator Context 골든 값 핀으로 증명.
+  Redis 교차프로세스 패널 공유는 P3+ 후속(in-process only, 신규 Redis 키 없음).
+- [ ] 후보(P2-a 리뷰 follow-up): `StrategyFactory.create`의 builder_v1 특례 블록
   (스트리밍 가드/게이트 주입/exit 프리미티브 조합)을 별도 builder-브릿지 모듈로 추출.
 
 ### P2-c. 활성 전략 파일럿 마이그레이션 (신호 동등성 게이트)
