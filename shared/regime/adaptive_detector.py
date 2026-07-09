@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from shared.indicators.reference import ADXCalculator, ATRCalculator
+from shared.indicators.series import sma
 from shared.utils.math import safe_divide
 
 from .models import RegimeSignal
@@ -199,9 +200,9 @@ class AdaptiveRegimeDetector:
         atr = self._calc_atr(high, low, close, period=self.config.atr_period)
         atr_ratio = safe_divide(atr, close[-1], default=0.0)
 
-        # 4. SMA trend
-        sma_fast = pd.Series(close).rolling(self.config.sma_fast).mean().iloc[-1]
-        sma_slow = pd.Series(close).rolling(self.config.sma_slow).mean().iloc[-1]
+        # 4. SMA trend (series.sma — plain rolling mean convention)
+        sma_fast = sma(pd.Series(close), self.config.sma_fast).iloc[-1]
+        sma_slow = sma(pd.Series(close), self.config.sma_slow).iloc[-1]
         trend_pct = safe_divide(sma_fast - sma_slow, sma_slow, default=0.0)
 
         return {
