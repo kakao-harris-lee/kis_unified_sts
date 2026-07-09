@@ -30,9 +30,12 @@ STREAMING_UNSUPPORTED_OPERATORS: frozenset[ConditionOperator] = frozenset()
 def unsupported_streaming_operators(state: BuilderState) -> list[ConditionOperator]:
     """Return the distinct streaming-unsupported operators used by ``state``.
 
-    Scans both the entry and exit condition groups. Always returns an empty list
-    now that the full-series context supports every operator, but the scan is
-    kept so re-introducing an unsupported operator is a one-line change above.
+    Scans every condition group (entry, entry_short when present, exit). Always
+    returns an empty list now that the full-series context supports every
+    operator — including the schema-v2 percentile_rank_* operators, which only
+    need the trailing window the Indicator Context already carries — but the
+    scan is kept so re-introducing an unsupported operator is a one-line change
+    above.
 
     Args:
         state: Parsed builder state.
@@ -44,7 +47,7 @@ def unsupported_streaming_operators(state: BuilderState) -> list[ConditionOperat
     if not STREAMING_UNSUPPORTED_OPERATORS:
         return []
     found: set[ConditionOperator] = set()
-    for group in (state.entry, state.exit):
+    for _name, group in state.condition_groups():
         for condition in group.conditions:
             if condition.operator in STREAMING_UNSUPPORTED_OPERATORS:
                 found.add(condition.operator)

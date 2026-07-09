@@ -11,6 +11,7 @@ import yaml
 from shared.strategy_builder.schema import (
     BuilderCapabilities,
     ConditionOperator,
+    ExitPrimitiveDefinition,
     IndicatorDefinition,
 )
 
@@ -37,21 +38,36 @@ def load_capabilities() -> BuilderCapabilities:
         if isinstance(item, dict)
     ]
     operators = [
-        ConditionOperator(operator)
-        for operator in config.get("operators", [])
+        ConditionOperator(operator) for operator in config.get("operators", [])
     ]
     return BuilderCapabilities(
         indicators=indicators,
         operators=operators,
-        price_fields=list(config.get("price_fields", ["close", "open", "high", "low", "volume"])),
+        price_fields=list(
+            config.get("price_fields", ["close", "open", "high", "low", "volume"])
+        ),
         risk_fields=dict(config.get("risk_fields", {})),
         default_order_amount=float(config.get("default_order_amount", 1_000_000)),
         ttl_seconds=int(config.get("ttl_seconds", 86400)),
+        directions=list(config.get("directions", ["long"])),
+        exit_primitives=[
+            ExitPrimitiveDefinition.model_validate(item)
+            for item in config.get("exit_primitives", [])
+            if isinstance(item, dict)
+        ],
+        gate_fields=dict(config.get("gate_fields", {})),
     )
 
 
 def indicator_by_id() -> dict[str, IndicatorDefinition]:
     return {indicator.id: indicator for indicator in load_capabilities().indicators}
+
+
+def exit_primitive_definitions() -> dict[str, ExitPrimitiveDefinition]:
+    """Catalog exit-primitive metadata keyed by ExitRegistry name."""
+    return {
+        primitive.id: primitive for primitive in load_capabilities().exit_primitives
+    }
 
 
 def get_builder_ttl_seconds() -> int:

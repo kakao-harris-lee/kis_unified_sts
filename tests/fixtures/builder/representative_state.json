@@ -1,0 +1,111 @@
+{
+  "metadata": {
+    "id": "rep_v1_state",
+    "name": "Representative v1 State",
+    "description": "Golden fixture: exercises indicator/value/price operands and threshold + cross operators.",
+    "category": "custom",
+    "tags": ["strategy_builder", "golden"],
+    "author": "STS"
+  },
+  "asset_class": "stock",
+  "indicators": [
+    {
+      "id": "ind_rsi14",
+      "indicator_id": "rsi",
+      "alias": "rsi",
+      "display_name": null,
+      "params": {"period": 14},
+      "output": "value"
+    },
+    {
+      "id": "ind_sma5",
+      "indicator_id": "sma",
+      "alias": "sma_fast",
+      "display_name": null,
+      "params": {"period": 5},
+      "output": "value"
+    },
+    {
+      "id": "ind_sma20",
+      "indicator_id": "sma",
+      "alias": "sma_slow",
+      "display_name": null,
+      "params": {"period": 20},
+      "output": "value"
+    }
+  ],
+  "entry": {
+    "logic": "AND",
+    "conditions": [
+      {
+        "id": "cond_entry_rsi",
+        "left": {
+          "type": "indicator",
+          "indicator_alias": "rsi",
+          "indicator_output": "value"
+        },
+        "operator": "greater_than",
+        "right": {"type": "value", "value": 30.0}
+      },
+      {
+        "id": "cond_entry_cross",
+        "left": {
+          "type": "indicator",
+          "indicator_alias": "sma_fast",
+          "indicator_output": "value"
+        },
+        "operator": "cross_above",
+        "right": {
+          "type": "indicator",
+          "indicator_alias": "sma_slow",
+          "indicator_output": "value"
+        }
+      },
+      {
+        "id": "cond_entry_price",
+        "left": {"type": "price", "price_field": "close"},
+        "operator": "greater_equal",
+        "right": {
+          "type": "indicator",
+          "indicator_alias": "sma_slow",
+          "indicator_output": "value"
+        }
+      }
+    ]
+  },
+  "exit": {
+    "logic": "OR",
+    "conditions": [
+      {
+        "id": "cond_exit_rsi",
+        "left": {
+          "type": "indicator",
+          "indicator_alias": "rsi",
+          "indicator_output": "value"
+        },
+        "operator": "greater_than",
+        "right": {"type": "value", "value": 70.0}
+      },
+      {
+        "id": "cond_exit_cross",
+        "left": {
+          "type": "indicator",
+          "indicator_alias": "sma_fast",
+          "indicator_output": "value"
+        },
+        "operator": "cross_below",
+        "right": {
+          "type": "indicator",
+          "indicator_alias": "sma_slow",
+          "indicator_output": "value"
+        }
+      }
+    ]
+  },
+  "risk": {
+    "order_amount": 1000000.0,
+    "stop_loss": {"enabled": true, "percent": 5.0},
+    "take_profit": {"enabled": false, "percent": 10.0},
+    "trailing_stop": {"enabled": false, "percent": 3.0}
+  }
+}

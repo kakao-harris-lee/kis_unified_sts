@@ -10,12 +10,77 @@ strategy_builder:
     - equals
     - cross_above
     - cross_below
+    # Schema v2: percentile rank of the latest left value within a trailing
+    # `window` (bars) vs a 0-100 threshold, e.g. "ATR in the top 10% of the
+    # trailing 120 bars" = atr percentile_rank_above 90 (window: 120).
+    - percentile_rank_above
+    - percentile_rank_below
   price_fields:
     - close
     - open
     - high
     - low
     - volume
+  # Schema v2: signal directions the builder can express. `entry` is the long
+  # group; short entries go in the optional `entry_short` group (futures-only —
+  # the stock paper pipeline is long-only).
+  directions:
+    - long
+    - short
+  # Schema v2: named exit primitives (ExitRegistry names) a builder strategy
+  # may reference via `exit_primitive: {primitive: ..., params: {...}}`.
+  # The registry is the validation SoT; this list is UI discovery metadata plus
+  # optional per-primitive asset-class restrictions.
+  exit_primitives:
+    - id: three_stage
+      name: Three-Stage Exit
+      name_ko: "3단계 청산"
+      description: "생존→본전→극대화 3단계 상태머신 청산 (주식 전용 운영 규칙)"
+      asset_classes: [stock]
+    - id: atr_dynamic
+      name: ATR Dynamic Exit
+      name_ko: "ATR 동적 청산"
+      description: "ATR 배수 기반 동적 손절/트레일링 청산"
+    - id: chandelier_exit
+      name: Chandelier Exit
+      name_ko: "샹들리에 청산"
+      description: "최고가 대비 ATR 배수 트레일링 청산"
+    - id: momentum_decay
+      name: Momentum Decay Exit
+      name_ko: "모멘텀 소진 청산"
+      description: "모멘텀 소진 체크 래더 기반 청산"
+    - id: setup_target_exit
+      name: Setup Target Exit
+      name_ko: "셋업 목표가 청산"
+      description: "Setup A/C/D 목표가/손절 청산 (선물 전용)"
+      asset_classes: [futures]
+  # Schema v2: entry-gate hook metadata (BuilderState.gates). regime_gate
+  # mirrors shared/strategy/gates/regime_gate.py::regime_gate_cfg_from_yaml;
+  # cooldown_seconds is enforced by the builder entry bridge (max of schema
+  # value and the deploy-time param). No llm_veto field: no framework-level
+  # veto hook exists to attach to (Setup-adapter internal only).
+  gate_fields:
+    regime_gate:
+      enabled:
+        default: false
+      regime_percentile_max:
+        default: 60.0
+        min: 0
+        max: 100
+      impact_score_max:
+        default: 70
+        min: 0
+        max: 100
+      event_window_minutes:
+        default: 15
+        min: 0
+      require_overnight_us_direction:
+        default: false
+      permissive_on_missing:
+        default: true
+    cooldown_seconds:
+      default: 0
+      min: 0
   risk_fields:
     order_amount:
       default: 1000000

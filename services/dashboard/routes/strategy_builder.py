@@ -15,6 +15,7 @@ from shared.strategy_builder import (
     builder_state_to_yaml,
     load_capabilities,
     preview_python,
+    validate_exit_primitive,
     yaml_to_builder_state,
 )
 from shared.strategy_lab.order_bridge import StrategyLabOrderBridge
@@ -28,6 +29,9 @@ class ValidateResponse(BaseModel):
     draft_id: str
     required_indicators: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Schema v2: hard validation failures (e.g. unknown exit primitive) that
+    # would make StrategyFactory skip the strategy at roster-build time.
+    errors: list[str] = Field(default_factory=list)
 
 
 class PreviewYamlResponse(BaseModel):
@@ -132,7 +136,9 @@ async def preview_signals(request: PreviewSignalRequest) -> PreviewSignalRespons
     for signal in signals:
         lab_signal = evaluator.to_lab_signal(signal)
         lab_store.store_signal(lab_signal)
-        stored_signal = signal.model_copy(update={"lab_signal_id": lab_signal.signal_id})
+        stored_signal = signal.model_copy(
+            update={"lab_signal_id": lab_signal.signal_id}
+        )
         builder_store.store_signal(stored_signal)
         stored_signals.append(stored_signal)
     return PreviewSignalResponse(
@@ -184,13 +190,21 @@ def _validate_response(state: BuilderState) -> ValidateResponse:
     evaluator = _evaluator()
     aliases = sorted({indicator.alias for indicator in state.indicators})
     warnings: list[str] = []
-    if not state.entry.conditions:
+    errors: list[str] = []
+    has_short_entries = state.entry_short is not None and bool(
+        state.entry_short.conditions
+    )
+    if not state.entry.conditions and not has_short_entries:
         warnings.append("Entry conditions are empty.")
     if not state.exit.conditions:
         warnings.append("Exit conditions are empty.")
+    primitive_error = validate_exit_primitive(state)
+    if primitive_error is not None:
+        errors.append(primitive_error)
     return ValidateResponse(
-        valid=True,
+        valid=not errors,
         draft_id=evaluator.draft_id(state),
         required_indicators=aliases,
         warnings=warnings,
+        errors=errors,
     )

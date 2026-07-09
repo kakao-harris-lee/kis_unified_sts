@@ -188,9 +188,10 @@ def _validate_builder_state(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(
             status_code=400, detail=f"Invalid BuilderState: {exc}"
         ) from exc
-    # Builder→paper supports stock and (long-only, paper) futures. Futures
-    # live activation stays behind config/futures_live.yaml + the Redis
-    # suspend flag — registration only materializes a paper YAML.
+    # Builder→paper supports stock and futures (short entries via entry_short
+    # are futures-only, enforced by the schema). Futures live activation stays
+    # behind config/futures_live.yaml + the Redis suspend flag — registration
+    # only materializes a paper YAML.
     if state.asset_class not in ("stock", "futures"):
         raise HTTPException(
             status_code=400,
@@ -199,6 +200,14 @@ def _validate_builder_state(payload: dict[str, Any]) -> dict[str, Any]:
                 "(expected 'stock' or 'futures')."
             ),
         )
+    # Schema v2: reject unknown/incompatible exit primitives at registration
+    # (ExitRegistry is the SoT) so the operator sees the failure here rather
+    # than a factory warning-and-skip at roster build.
+    from shared.strategy_builder.exit_primitives import validate_exit_primitive
+
+    primitive_error = validate_exit_primitive(state)
+    if primitive_error is not None:
+        raise HTTPException(status_code=400, detail=primitive_error)
     # `mode="json"` dumps StrEnum values as plain strings so yaml.safe_dump
     # can serialize the result without a custom representer. Datetimes/UUIDs
     # are similarly coerced into strings.
