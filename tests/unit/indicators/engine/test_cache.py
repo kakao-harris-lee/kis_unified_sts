@@ -7,11 +7,14 @@ once per symbol" guarantee without TA-Lib.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from shared.indicators.engine.base import IndicatorBackend, IndicatorResult
 from shared.indicators.engine.cache import (
+    CachingIndicatorEngine,
     IndicatorCacheEngine,
     InMemoryPanelStore,
+    cached_default_engine,
 )
 from shared.indicators.engine.registry import IndicatorEngine
 from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow
@@ -118,3 +121,88 @@ class TestIndicatorCacheEngine:
         assert panels["005930"] == {"rsi": 1.0, "atr": 1.0}
         # 2 unique specs x 2 symbols = 4 computations.
         assert len(backend.calls) == 4
+
+
+def _multi_window(*closes: float) -> OHLCVWindow:
+    values = list(closes)
+    return OHLCVWindow.from_sequences(
+        open=values, high=values, low=values, close=values, volume=values
+    )
+
+
+class TestCachingIndicatorEngine:
+    """Series-level memoization for the builder evaluation path (P2-b)."""
+
+    def _engine(self, ids: set[str]) -> tuple[CachingIndicatorEngine, CountingBackend]:
+        backend = CountingBackend(ids)
+        return CachingIndicatorEngine([backend]), backend
+
+    def test_same_spec_and_window_computes_once(self) -> None:
+        engine, backend = self._engine({"rsi"})
+        spec = IndicatorSpec.create("rsi", {"period": 14})
+        window = _multi_window(1.0, 2.0, 3.0)
+        first = engine.compute(spec, window)
+        second = engine.compute(spec, window)
+        assert len(backend.calls) == 1
+        assert second is first  # memo hit returns the identical result object
+        assert engine.hits == 1 and engine.misses == 1
+
+    def test_equal_window_content_hits_across_instances(self) -> None:
+        # Content-addressed: a NEW but byte-identical window (e.g. the same
+        # bar seen by another strategy) is a hit, never a recompute.
+        engine, backend = self._engine({"rsi"})
+        spec = IndicatorSpec.create("rsi", {"period": 14})
+        engine.compute(spec, _multi_window(1.0, 2.0, 3.0))
+        engine.compute(spec, _multi_window(1.0, 2.0, 3.0))
+        assert len(backend.calls) == 1
+
+    def test_new_bar_recomputes(self) -> None:
+        engine, backend = self._engine({"rsi"})
+        spec = IndicatorSpec.create("rsi", {"period": 14})
+        engine.compute(spec, _multi_window(1.0, 2.0, 3.0))
+        engine.compute(spec, _multi_window(2.0, 3.0, 4.0))  # window advanced
+        assert len(backend.calls) == 2
+
+    def test_different_params_are_distinct_entries(self) -> None:
+        engine, backend = self._engine({"rsi"})
+        window = _multi_window(1.0, 2.0, 3.0)
+        engine.compute(IndicatorSpec.create("rsi", {"period": 14}), window)
+        engine.compute(IndicatorSpec.create("rsi", {"period": 7}), window)
+        assert len(backend.calls) == 2
+
+    def test_lru_evicts_oldest(self) -> None:
+        backend = CountingBackend({"rsi"})
+        engine = CachingIndicatorEngine([backend], maxsize=1)
+        spec = IndicatorSpec.create("rsi", {"period": 14})
+        first, second = _multi_window(1.0), _multi_window(2.0)
+        engine.compute(spec, first)
+        engine.compute(spec, second)  # evicts `first`
+        engine.compute(spec, first)  # recompute after eviction
+        assert len(backend.calls) == 3
+
+    def test_flat_panel_and_compute_many_go_through_memo(self) -> None:
+        engine, backend = self._engine({"rsi"})
+        spec = IndicatorSpec.create("rsi", {"period": 14})
+        window = _multi_window(1.0, 2.0, 3.0)
+        engine.compute(spec, window)
+        engine.flat_panel([spec], window)
+        engine.compute_many([spec], window)
+        assert len(backend.calls) == 1
+
+    def test_cache_clear_resets(self) -> None:
+        engine, backend = self._engine({"rsi"})
+        spec = IndicatorSpec.create("rsi", {"period": 14})
+        window = _multi_window(1.0, 2.0, 3.0)
+        engine.compute(spec, window)
+        engine.cache_clear()
+        engine.compute(spec, window)
+        assert len(backend.calls) == 2
+        assert engine.hits == 0 and engine.misses == 1
+
+    def test_rejects_non_positive_maxsize(self) -> None:
+        with pytest.raises(ValueError):
+            CachingIndicatorEngine([], maxsize=0)
+
+    def test_cached_default_engine_is_a_shared_singleton(self) -> None:
+        assert cached_default_engine() is cached_default_engine()
+        assert isinstance(cached_default_engine(), CachingIndicatorEngine)

@@ -50,7 +50,7 @@ from datetime import datetime
 from typing import Any
 
 from shared.config.mixins import ConfigMixin
-from shared.indicators.engine import default_engine, window_from_records
+from shared.indicators.engine import cached_default_engine, window_from_records
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.gates.adapter_helper import (
@@ -89,7 +89,11 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
     ):
         super().__init__(config)
         self._evaluator = StrategyBuilderEvaluator()
-        self._engine = default_engine()
+        # Shared process-wide caching engine: N builder strategies asking for
+        # the same (spec, window) compute it once per symbol/bar (P2-b).
+        # Value-identical to default_engine() — backends are pure, pinned by
+        # test_indicator_context_golden.py.
+        self._engine = cached_default_engine()
         self._state: BuilderState | None = None
         self._last_signal_at: dict[str, datetime] = {}
         # Framework RegimeGate attachment. The factory overwrites this from the

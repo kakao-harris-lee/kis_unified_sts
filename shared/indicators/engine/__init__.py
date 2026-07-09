@@ -29,9 +29,11 @@ from shared.indicators.engine.base import (
     UnsupportedIndicatorError,
 )
 from shared.indicators.engine.cache import (
+    CachingIndicatorEngine,
     IndicatorCacheEngine,
     InMemoryPanelStore,
     PanelStore,
+    cached_default_engine,
 )
 from shared.indicators.engine.daily_backend import DailyCompatBackend
 from shared.indicators.engine.momentum_backend import MomentumCompatBackend
@@ -69,6 +71,7 @@ from shared.indicators.engine.talib_backend import TALibBackend
 
 __all__ = [
     "BacktestCompatBackend",
+    "CachingIndicatorEngine",
     "DailyCompatBackend",
     "IndicatorBackend",
     "IndicatorCacheEngine",
@@ -97,6 +100,7 @@ __all__ = [
     "VolumeAccelerationCalculator",
     "VolumeConfig",
     "backtest_indicator_engine",
+    "cached_default_engine",
     "daily_indicator_engine",
     "default_engine",
     "flat_key",

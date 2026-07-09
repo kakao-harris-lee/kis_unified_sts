@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from shared.config.mixins import ConfigMixin
-from shared.indicators.engine import default_engine, window_from_records
+from shared.indicators.engine import cached_default_engine, window_from_records
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_time import to_kst
@@ -81,7 +81,10 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
     def __init__(self, config: BuilderStrategyExitConfig):
         super().__init__(config)
         self._evaluator = StrategyBuilderEvaluator()
-        self._engine = default_engine()
+        # Shared with the paired builder_v1 entry (cached_default_engine is a
+        # process singleton), so exit evaluation of the same bar/window reuses
+        # the entry pass's memoized series instead of recomputing them.
+        self._engine = cached_default_engine()
         self._state: BuilderState | None = None
         # Per-position favorable extreme since entry (running max price for
         # longs, running min for shorts), for the trailing stop. Keyed by
