@@ -146,7 +146,9 @@ class BuilderIndicator(BaseModel):
             raise ValueError("alias must not be blank")
         safe = normalized.replace("_", "")
         if not safe.isalnum() or normalized[0].isdigit():
-            raise ValueError("alias must be alphanumeric/underscore and not start with a digit")
+            raise ValueError(
+                "alias must be alphanumeric/underscore and not start with a digit"
+            )
         return normalized
 
 
@@ -280,9 +282,15 @@ class RiskToggle(BaseModel):
 
 class RiskManagement(BaseModel):
     order_amount: float = Field(default=1_000_000, ge=0)
-    stop_loss: RiskToggle = Field(default_factory=lambda: RiskToggle(enabled=True, percent=5.0))
-    take_profit: RiskToggle = Field(default_factory=lambda: RiskToggle(enabled=False, percent=10.0))
-    trailing_stop: RiskToggle = Field(default_factory=lambda: RiskToggle(enabled=False, percent=3.0))
+    stop_loss: RiskToggle = Field(
+        default_factory=lambda: RiskToggle(enabled=True, percent=5.0)
+    )
+    take_profit: RiskToggle = Field(
+        default_factory=lambda: RiskToggle(enabled=False, percent=10.0)
+    )
+    trailing_stop: RiskToggle = Field(
+        default_factory=lambda: RiskToggle(enabled=False, percent=3.0)
+    )
 
     model_config = _BUILDER_MODEL_CONFIG
 
@@ -357,7 +365,11 @@ class SymbolSeries(BaseModel):
     def ensure_tz_aware(cls, values: list[datetime]) -> list[datetime]:
         result: list[datetime] = []
         for value in values:
-            result.append(value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC))
+            result.append(
+                value.replace(tzinfo=UTC)
+                if value.tzinfo is None
+                else value.astimezone(UTC)
+            )
         return result
 
 
@@ -391,6 +403,11 @@ class BuilderSignal(BaseModel):
     lab_signal_id: str | None = None
 
 
+def _all_asset_classes() -> list[Literal["stock", "futures"]]:
+    """Default asset classes for a catalog exit primitive (unrestricted)."""
+    return ["stock", "futures"]
+
+
 class ExitPrimitiveDefinition(BaseModel):
     """Catalog metadata for an exit primitive exposed to the builder UI.
 
@@ -404,7 +421,7 @@ class ExitPrimitiveDefinition(BaseModel):
     name_ko: str | None = None
     description: str | None = None
     asset_classes: list[Literal["stock", "futures"]] = Field(
-        default_factory=lambda: ["stock", "futures"]
+        default_factory=_all_asset_classes
     )
 
     model_config = ConfigDict(extra="forbid")

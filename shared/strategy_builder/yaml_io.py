@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import yaml
 
 from shared.strategy_builder.schema import (
@@ -72,7 +74,9 @@ def yaml_to_builder_state(content: str) -> BuilderState:
             id=str(metadata.get("id") or strategy.get("id") or "custom_strategy"),
             name=str(metadata.get("name") or strategy.get("id") or "Custom Strategy"),
             description=str(metadata.get("description") or ""),
-            category=str(metadata.get("category") or strategy.get("category") or "custom"),
+            category=str(
+                metadata.get("category") or strategy.get("category") or "custom"
+            ),
             tags=list(metadata.get("tags") or []),
             author=str(metadata.get("author") or "STS"),
         ),
@@ -94,8 +98,12 @@ def yaml_to_builder_state(content: str) -> BuilderState:
         risk=RiskManagement(
             order_amount=float(risk.get("order_amount", 1_000_000)),
             stop_loss=_risk_toggle(risk.get("stop_loss"), enabled=True, percent=5.0),
-            take_profit=_risk_toggle(risk.get("take_profit"), enabled=False, percent=10.0),
-            trailing_stop=_risk_toggle(risk.get("trailing_stop"), enabled=False, percent=3.0),
+            take_profit=_risk_toggle(
+                risk.get("take_profit"), enabled=False, percent=10.0
+            ),
+            trailing_stop=_risk_toggle(
+                risk.get("trailing_stop"), enabled=False, percent=3.0
+            ),
         ),
     )
 
@@ -171,7 +179,7 @@ def _gates_from_yaml(data: object) -> BuilderGates | None:
 
 
 def _condition_to_yaml(condition: BuilderCondition) -> dict:
-    data = {
+    data: dict[str, Any] = {
         "id": condition.id,
         "left": _operand_to_yaml(condition.left),
         "operator": condition.operator.value,
@@ -223,7 +231,9 @@ def _operand_from_yaml(data: dict) -> ConditionOperand:
     if operand_type == OperandType.VALUE:
         return ConditionOperand(type=operand_type, value=float(data.get("value", 0)))
     if operand_type == OperandType.PRICE:
-        return ConditionOperand(type=operand_type, price_field=data.get("price_field", "close"))
+        return ConditionOperand(
+            type=operand_type, price_field=data.get("price_field", "close")
+        )
     return ConditionOperand(
         type=operand_type,
         indicator_alias=str(data.get("indicator_alias")),
@@ -231,7 +241,9 @@ def _operand_from_yaml(data: dict) -> ConditionOperand:
     )
 
 
-def _legacy_compare_operand(value: object, compare_output: object | None) -> ConditionOperand:
+def _legacy_compare_operand(
+    value: object, compare_output: object | None
+) -> ConditionOperand:
     if isinstance(value, (int, float)):
         return ConditionOperand(type=OperandType.VALUE, value=float(value))
     if isinstance(value, str) and value in {"close", "open", "high", "low", "volume"}:

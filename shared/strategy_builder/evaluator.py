@@ -69,7 +69,8 @@ class StrategyBuilderEvaluator:
                 side=side,
                 strength=strength,
                 reason=reason,
-                reference_price=self._latest(item.fields.get("close")) or self._latest_any(item),
+                reference_price=self._latest(item.fields.get("close"))
+                or self._latest_any(item),
                 orderability=self._orderability(side, selected.missing),
                 matched_conditions=selected.evaluations,
                 indicator_values=self._latest_indicators(item),
@@ -83,12 +84,16 @@ class StrategyBuilderEvaluator:
         logic: ConditionLogic,
         series: SymbolSeries,
     ) -> _GroupEvaluation:
-        evaluations = [self.evaluate_condition(condition, series) for condition in conditions]
+        evaluations = [
+            self.evaluate_condition(condition, series) for condition in conditions
+        ]
         if not evaluations:
             return _GroupEvaluation(False, 0.0, [], ["no_conditions"])
 
         passed_count = sum(1 for evaluation in evaluations if evaluation.passed)
-        missing = sorted({missing for evaluation in evaluations for missing in evaluation.missing})
+        missing = sorted(
+            {missing for evaluation in evaluations for missing in evaluation.missing}
+        )
         if logic == ConditionLogic.AND:
             passed = passed_count == len(evaluations) and not missing
         else:
@@ -261,9 +266,19 @@ class StrategyBuilderEvaluator:
         if operator == ConditionOperator.EQUALS:
             return left == right
         if operator == ConditionOperator.CROSS_ABOVE:
-            return previous_left is not None and previous_right is not None and previous_left <= previous_right and left > right
+            return (
+                previous_left is not None
+                and previous_right is not None
+                and previous_left <= previous_right
+                and left > right
+            )
         if operator == ConditionOperator.CROSS_BELOW:
-            return previous_left is not None and previous_right is not None and previous_left >= previous_right and left < right
+            return (
+                previous_left is not None
+                and previous_right is not None
+                and previous_left >= previous_right
+                and left < right
+            )
         return False
 
     def _condition_label(self, condition: BuilderCondition) -> str:

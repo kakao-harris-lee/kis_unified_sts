@@ -4,11 +4,19 @@ Pairs with ``shared.strategy.entry.builder_strategy.BuilderStrategyEntry``.
 Reads the same ``BuilderState`` and evaluates the exit-condition group
 plus the risk toggles (stop_loss / take_profit / trailing_stop) every cycle.
 
-The trailing stop keeps a per-position high-water-mark (peak price since
-entry). It arms only once the position has shown a profit (HWM above the
-entry price) so it never doubles as a second stop-loss; once armed it
-exits when price retraces ``trailing_stop_pct`` below the peak. Builder
-drafts are long-only (stock), so the peak is the running max price.
+Direction (schema v2): every branch is sign-symmetric. PnL percent is
+side-aware (``short`` positions profit when price falls), and the trailing
+stop tracks the *favorable extreme* — the running high for longs and the
+running low for shorts. It arms only once the position has shown a profit
+(extreme beyond the entry price) so it never doubles as a second stop-loss;
+once armed it exits when price retraces ``trailing_stop_pct`` against the
+extreme. Positions without a ``side`` attribute are treated as long, so
+pre-v2 behavior is unchanged.
+
+Named exit primitives (schema v2): when ``BuilderState.exit_primitive``
+references a registered exit component, the strategy factory composes that
+primitive with this declarative exit via ``FirstTriggerExit`` — this class
+itself stays purely declarative.
 """
 
 from __future__ import annotations
@@ -29,6 +37,25 @@ from shared.strategy_builder.indicator_context import build_indicator_context
 from shared.strategy_builder.schema import BuilderState, SymbolSeries
 
 logger = logging.getLogger(__name__)
+
+
+def _position_direction(position: Any) -> str:
+    """Resolve a position's direction ('long' | 'short'); defaults to long.
+
+    Accepts ``PositionSide`` enums, plain strings, or absent attributes so
+    stubs and legacy long-only positions keep their pre-v2 behavior.
+
+    Args:
+        position: Position-like object (may expose a ``side`` attribute).
+
+    Returns:
+        ``"short"`` when the position side resolves to short, else ``"long"``.
+    """
+    side = getattr(position, "side", None)
+    raw = getattr(side, "value", side)
+    if isinstance(raw, str) and raw.strip().lower() == "short":
+        return "short"
+    return "long"
 
 
 @dataclass
@@ -56,10 +83,11 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         self._evaluator = StrategyBuilderEvaluator()
         self._engine = default_engine()
         self._state: BuilderState | None = None
-        # Per-position peak price since entry, for the trailing stop. Keyed by
+        # Per-position favorable extreme since entry (running max price for
+        # longs, running min for shorts), for the trailing stop. Keyed by
         # position id (falls back to code). Persists across cycles because the
         # exit instance is long-lived; cleared whenever a position exits.
-        self._hwm: dict[str, float] = {}
+        self._extreme: dict[str, float] = {}
         self._parse_state()
         self._is_futures = (
             self._state is not None and self._state.asset_class == "futures"
@@ -108,24 +136,38 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         entry_price = float(position.entry_price or 0)
         if entry_price <= 0:
             return False, None
-        pnl_pct = (current_price - entry_price) / entry_price * 100.0
+        direction = _position_direction(position)
+        sign = -1.0 if direction == "short" else 1.0
+        # Side-aware PnL: positive when the position is in profit, for both
+        # directions (a short profits when price falls).
+        pnl_pct = sign * (current_price - entry_price) / entry_price * 100.0
 
         pos_key = str(getattr(position, "id", "") or position.code)
-        # Seed the peak from the position's persisted high-water-mark so the
-        # trailing stop survives a process restart (Redis restores
-        # highest_price); falls back to entry_price for a fresh position.
-        hwm_seed = float(getattr(position, "highest_price", None) or entry_price)
-        # Track the running peak price every cycle so the trailing stop
-        # measures retrace from the high, not just the latest tick.
+        # Seed the favorable extreme from the position's persisted price
+        # extremes so the trailing stop survives a process restart (Redis
+        # restores highest/lowest price); falls back to entry_price for a
+        # fresh position.
+        if direction == "short":
+            extreme_seed = float(getattr(position, "lowest_price", None) or entry_price)
+        else:
+            extreme_seed = float(
+                getattr(position, "highest_price", None) or entry_price
+            )
+        # Track the running favorable extreme every cycle so the trailing stop
+        # measures retrace from the extreme, not just the latest tick.
         if self.config.trailing_stop_pct > 0:
-            self._hwm[pos_key] = max(self._hwm.get(pos_key, hwm_seed), current_price)
+            previous = self._extreme.get(pos_key, extreme_seed)
+            if direction == "short":
+                self._extreme[pos_key] = min(previous, current_price)
+            else:
+                self._extreme[pos_key] = max(previous, current_price)
 
         # Futures auto-enforced safety (cannot be disabled by the user).
         if self._is_futures and self._safety is not None:
             # EOD time close (KST) — highest priority.
             now_kst = to_kst(context.timestamp)
             if now_kst.time() >= self._safety.eod_close_time:
-                self._hwm.pop(pos_key, None)
+                self._extreme.pop(pos_key, None)
                 return True, self._make_signal(
                     position=position,
                     current_price=current_price,
@@ -137,11 +179,12 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
                 )
             # Hard-stop cap: take the tighter of the user's stop and the cap;
             # the cap also applies when the user disabled their stop (<= 0).
+            # pnl_pct is side-aware, so the cap is symmetric for shorts.
             cap = self._safety.hard_stop_pct
             user_stop = self.config.stop_loss_pct
             effective_stop = cap if user_stop <= 0 else min(user_stop, cap)
             if pnl_pct <= -effective_stop:
-                self._hwm.pop(pos_key, None)
+                self._extreme.pop(pos_key, None)
                 note = (
                     "futures_hard_stop"
                     if effective_stop == cap
@@ -159,7 +202,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
 
         # 1) Hard stop loss
         if self.config.stop_loss_pct > 0 and pnl_pct <= -self.config.stop_loss_pct:
-            self._hwm.pop(pos_key, None)
+            self._extreme.pop(pos_key, None)
             return True, self._make_signal(
                 position=position,
                 current_price=current_price,
@@ -172,7 +215,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
 
         # 2) Take profit
         if self.config.take_profit_pct > 0 and pnl_pct >= self.config.take_profit_pct:
-            self._hwm.pop(pos_key, None)
+            self._extreme.pop(pos_key, None)
             return True, self._make_signal(
                 position=position,
                 current_price=current_price,
@@ -184,22 +227,31 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
             )
 
         # 3) Trailing stop — only after the position has shown a profit
-        #    (peak above entry), so it never fires as a second stop-loss.
+        #    (favorable extreme beyond entry), so it never fires as a second
+        #    stop-loss. Sign-symmetric: longs retrace down from the peak,
+        #    shorts retrace up from the trough.
         if self.config.trailing_stop_pct > 0:
-            peak = self._hwm.get(pos_key, hwm_seed)
-            if peak > entry_price:
-                stop_price = peak * (1.0 - self.config.trailing_stop_pct / 100.0)
-                if current_price <= stop_price:
-                    self._hwm.pop(pos_key, None)
-                    return True, self._make_signal(
-                        position=position,
-                        current_price=current_price,
-                        entry_price=entry_price,
-                        pnl_pct=pnl_pct,
-                        reason=ExitReason.TRAILING_STOP,
-                        confidence=1.0,
-                        note="trailing_stop",
-                    )
+            extreme = self._extreme.get(pos_key, extreme_seed)
+            retrace = self.config.trailing_stop_pct / 100.0
+            if direction == "short":
+                armed = extreme < entry_price
+                stop_price = extreme * (1.0 + retrace)
+                hit = current_price >= stop_price
+            else:
+                armed = extreme > entry_price
+                stop_price = extreme * (1.0 - retrace)
+                hit = current_price <= stop_price
+            if armed and hit:
+                self._extreme.pop(pos_key, None)
+                return True, self._make_signal(
+                    position=position,
+                    current_price=current_price,
+                    entry_price=entry_price,
+                    pnl_pct=pnl_pct,
+                    reason=ExitReason.TRAILING_STOP,
+                    confidence=1.0,
+                    note="trailing_stop",
+                )
 
         # 4) Builder exit conditions
         if self._state is None or not self._state.exit.conditions:
@@ -218,7 +270,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         if not evaluation.passed or evaluation.score < self.config.min_confidence:
             return False, None
 
-        self._hwm.pop(pos_key, None)
+        self._extreme.pop(pos_key, None)
         return True, self._make_signal(
             position=position,
             current_price=current_price,
@@ -262,7 +314,8 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         note: str,
     ) -> ExitSignal:
         quantity = int(getattr(position, "quantity", 0))
-        profit_amount = (current_price - entry_price) * max(quantity, 0)
+        sign = -1.0 if _position_direction(position) == "short" else 1.0
+        profit_amount = sign * (current_price - entry_price) * max(quantity, 0)
         return ExitSignal(
             code=position.code,
             name=getattr(position, "name", "") or "",
