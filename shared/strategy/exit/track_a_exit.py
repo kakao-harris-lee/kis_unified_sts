@@ -26,6 +26,7 @@ from datetime import datetime, time
 from typing import Any
 
 from shared.config.mixins import ConfigMixin
+from shared.indicators.series import window_extremes
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
@@ -79,6 +80,11 @@ def max_adverse_move_in_window(
     Only prices whose timestamp falls within ``[current_ts - window_seconds, current_ts]``
     are considered.  ``current_price`` itself is always included as the latest point.
 
+    The rolling-window extrema math is owned by the indicator package
+    (``shared.indicators.series.window_extremes``, P1-b2); this function keeps
+    only the side-aware adverse-move interpretation. Value-identical to the
+    previous inline max/min.
+
     Args:
         side: Position direction (LONG or SHORT).
         current_price: Latest price (most recent data point).
@@ -89,21 +95,16 @@ def max_adverse_move_in_window(
     Returns:
         Maximum adverse move in price units (≥ 0 when adverse, ≤ 0 when favorable).
     """
-    from datetime import timedelta
-
-    cutoff = current_ts - timedelta(seconds=window_seconds)
-    in_window = [price for ts, price in history if ts >= cutoff]
-    if not in_window:
+    extremes = window_extremes(history, window_seconds, current_ts)
+    if extremes is None:
         return 0.0
+    peak, trough = extremes
 
     if side == PositionSide.LONG:
         # Worst price in window is the highest (best) entry price; we moved adversely DOWN.
-        peak = max(in_window)
         return peak - current_price
-    else:
-        # Worst price in window is the lowest (best) entry price; we moved adversely UP.
-        trough = min(in_window)
-        return current_price - trough
+    # Worst price in window is the lowest (best) entry price; we moved adversely UP.
+    return current_price - trough
 
 
 def catastrophic_stop_hit(side: PositionSide, entry_price: float, current_price: float, atr: float, catastrophic_atr_mult: float) -> bool:

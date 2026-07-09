@@ -28,6 +28,7 @@ import pandas as pd
 
 from shared.config.mixins import ConfigMixin
 from shared.indicators.momentum import DivergenceDetector
+from shared.indicators.series import swing_low
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
@@ -578,13 +579,13 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
 
     @staticmethod
     def _find_swing_low(df: pd.DataFrame, lookback: int) -> float | None:
-        """Find the swing low (lowest low) over the last N bars before the signal bar."""
-        if len(df) < lookback + 1:
-            return None
-        lows = df["low"].iloc[-(lookback + 1) : -1]
-        if lows.empty:
-            return None
-        return float(lows.min())
+        """Swing low over the last N bars before the signal bar.
+
+        Delegates the rolling-extrema math to the indicator package
+        (``shared.indicators.series.swing_low``, P1-b2); value-identical to the
+        previous inline slice-and-min.
+        """
+        return swing_low(df["low"], lookback)
 
     @staticmethod
     def _calc_profit_pct(position: Position, current_price: float) -> float:
