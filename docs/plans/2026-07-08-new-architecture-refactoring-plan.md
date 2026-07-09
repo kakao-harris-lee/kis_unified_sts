@@ -87,9 +87,13 @@
   `STS_INDICATOR_CONVENTION=talib` flip. **flip은 운영자 게이트** (paper 관찰 1주 권장).
 - flip 후 Compat 백엔드(streaming/momentum/daily/backtest) 및 위임 shell 제거.
 - **P1-b에서 추가된 인터림 사본도 이 단계에서 수렴**: `shared/indicators/series.py`의
-  stateless 프리미티브 6종(ema/sma/rolling_return_std/rvol_last/swing_low/window_extremes,
-  #608 — resolver/IndicatorBackend 밖에 있어 shadow-parity가 자동 커버하지 않음)과
+  stateless 프리미티브(resolver/IndicatorBackend 밖에 있어 shadow-parity가 자동 커버하지
+  않음) — #608의 6종(ema/sma/rolling_return_std/rvol_last/swing_low/window_extremes) +
+  #610의 9종(rolling_std/rsi_sma[Cutler — daily_scanner 관례]/macd_lines[adjust=True
+  레거시 포함]/trailing_max/trailing_change_pct/relative_strength_pct[diff-form ROC]/
+  trailing_mean_ratio/normalized_slope/atr_series_padded[bar-0 padded]) — 과
   `backtest_backend.py`·compat 백엔드들의 중복 `_ema/_sma` 계열을 엔진 단일 구현으로 통합.
+  trailing_max의 period<=0 경계(구 사이트별 상이 동작 → 현재 0.0 통일)도 이때 재검토.
 
 **게이트**: shadow-parity 리포트(전 지표 safe 분류) + 백테스트 트레이드 동등성 + pytest green.
 **산출 효과**: `reference.py`(689) + Compat 3개(~560) + 산재 사이트 수백 LOC 소멸,
