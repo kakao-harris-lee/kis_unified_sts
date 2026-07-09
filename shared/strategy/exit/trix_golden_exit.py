@@ -49,7 +49,9 @@ class TrixGoldenExitConfig(ConfigMixin):
 
     # Partial exit
     partial_exit_ratio: float = 0.5
-    partial_exit_enabled: bool = False  # v2: 분할청산 비활성화 (승자를 일찍 자르지 않음)
+    partial_exit_enabled: bool = (
+        False  # v2: 분할청산 비활성화 (승자를 일찍 자르지 않음)
+    )
 
     # Minimum hold time (stop loss와 EOD 제외)
     min_hold_minutes: int = 60  # 60분 최소 보유 (60분 WR 56.2% 근거)
@@ -155,9 +157,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
     # Main Interface
     # -------------------------------------------------------------------------
 
-    async def should_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, ExitSignal | None]:
+    async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         """Check if position should exit."""
         signal = self._check_position(
             position=context.position,
@@ -365,10 +365,10 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
             return None
 
         # --- Priority 5: Bearish Divergence ---
-        if (
-            len(df) >= self.config.divergence_lookback
-            and self._divergence_detector.detect_bearish(df["close"], df["trix"])
-        ):
+        bearish_divergence = len(df) >= self.config.divergence_lookback and (
+            self._divergence_detector.detect_bearish(df["close"], df["trix"])
+        )
+        if bearish_divergence:
             logger.warning(
                 "[%s] BEARISH DIVERGENCE detected for %s! Full exit.",
                 self.name,

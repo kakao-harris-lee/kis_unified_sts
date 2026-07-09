@@ -75,9 +75,13 @@ class TrixGoldenConfig(ConfigMixin):
     rvol_threshold: float = 1.2
 
     # 변동성 필터 (고변동 종목 차단)
-    max_atr_pct: float = 0.0  # ATR% 상한 (0 = 비활성). 예: 0.008 = ATR이 종가의 0.8% 초과 시 차단
+    max_atr_pct: float = (
+        0.0  # ATR% 상한 (0 = 비활성). 예: 0.008 = ATR이 종가의 0.8% 초과 시 차단
+    )
     atr_period: int = 14
-    max_return_vol: float = 0.0  # 수익률 변동성 상한 (0 = 비활성). 예: 0.008 = 5분봉 수익률 std > 0.8% 차단
+    max_return_vol: float = (
+        0.0  # 수익률 변동성 상한 (0 = 비활성). 예: 0.008 = 5분봉 수익률 std > 0.8% 차단
+    )
     return_vol_period: int = 60  # rolling window (5분봉 60개 = ~5시간)
 
     # Market state filter
@@ -126,7 +130,6 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         super().__init__(config)
         self._last_signal_at: dict[str, datetime] = {}
         self._daily_signal_count: dict[str, int] = {}  # "code:date" → count
-
 
     def _validate_config(self) -> None:
         """설정 유효성 검증."""
@@ -177,7 +180,10 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         # Daily signal frequency limit (과진동 종목 자동 차단)
         if self.config.max_signals_per_day > 0:
             day_key = f"{code}:{now.strftime('%Y-%m-%d')}"
-            if self._daily_signal_count.get(day_key, 0) >= self.config.max_signals_per_day:
+            if (
+                self._daily_signal_count.get(day_key, 0)
+                >= self.config.max_signals_per_day
+            ):
                 return None
 
         # Market state filter
@@ -241,7 +247,9 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         # Track daily signal count
         if self.config.max_signals_per_day > 0:
             day_key = f"{code}:{now.strftime('%Y-%m-%d')}"
-            self._daily_signal_count[day_key] = self._daily_signal_count.get(day_key, 0) + 1
+            self._daily_signal_count[day_key] = (
+                self._daily_signal_count.get(day_key, 0) + 1
+            )
 
         return Signal(
             code=code,
@@ -343,8 +351,13 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
                 return False
 
         # 수익률 변동성 필터 (indicator-package rolling std of returns)
-        if self.config.max_return_vol > 0 and len(df) >= self.config.return_vol_period + 1:
-            vol = rolling_return_std(df["close"], self.config.return_vol_period).iloc[-1]
+        if (
+            self.config.max_return_vol > 0
+            and len(df) >= self.config.return_vol_period + 1
+        ):
+            vol = rolling_return_std(df["close"], self.config.return_vol_period).iloc[
+                -1
+            ]
             if not pd.isna(vol) and vol > self.config.max_return_vol:
                 return False
 
@@ -389,9 +402,7 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         trix_prev = df["trix"].iloc[-2]
         trix_signal_prev = df["trix_signal"].iloc[-2]
 
-        if not (
-            trix_current > trix_signal_current and trix_prev <= trix_signal_prev
-        ):
+        if not (trix_current > trix_signal_current and trix_prev <= trix_signal_prev):
             return False
 
         # MACD Oscillator > 0
@@ -421,7 +432,9 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
 
         # TRIX strength: spread normalized
         trix_spread = df["trix"].iloc[i] - df["trix_signal"].iloc[i]
-        trix_score = min(1.0, max(0.0, abs(trix_spread) * self.config.trix_spread_scale))
+        trix_score = min(
+            1.0, max(0.0, abs(trix_spread) * self.config.trix_spread_scale)
+        )
         scores.append(trix_score)
 
         # TRIX acceleration (positive delta)
@@ -443,7 +456,11 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
                 sma_dist = (close - sma_now) / sma_now
                 sma_score = min(
                     1.0,
-                    max(0.0, self.config.sma_dist_base + sma_dist * self.config.sma_dist_scale),
+                    max(
+                        0.0,
+                        self.config.sma_dist_base
+                        + sma_dist * self.config.sma_dist_scale,
+                    ),
                 )
                 scores.append(sma_score)
 

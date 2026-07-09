@@ -108,9 +108,7 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             raise ValueError("volume_multiplier must be > 0")
         mode = str(self.config.volume_gate_mode).lower()
         if mode not in ("cumulative", "rvol", "either", "both"):
-            raise ValueError(
-                "volume_gate_mode must be cumulative|rvol|either|both"
-            )
+            raise ValueError("volume_gate_mode must be cumulative|rvol|either|both")
         if self.config.min_rvol < 0:
             raise ValueError("min_rvol must be >= 0")
         if self.config.min_day_range_pct < 0:
@@ -127,7 +125,9 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             raise ValueError("spike_lookback_minutes must be >= 0")
         if self.config.min_spike_hits < 0:
             raise ValueError("min_spike_hits must be >= 0")
-        if self.config.entry_cutoff_hour != -1 and not (0 <= self.config.entry_cutoff_hour <= 23):
+        if self.config.entry_cutoff_hour != -1 and not (
+            0 <= self.config.entry_cutoff_hour <= 23
+        ):
             raise ValueError("entry_cutoff_hour must be -1 or 0..23")
         if not (0 <= self.config.entry_cutoff_minute <= 59):
             raise ValueError("entry_cutoff_minute must be 0..59")
@@ -179,9 +179,8 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
         )
         minutes_since_open = (now - open_dt).total_seconds() / 60.0
 
-        if (
-            self.config.only_first_minutes > 0
-            and minutes_since_open > float(self.config.only_first_minutes)
+        if self.config.only_first_minutes > 0 and minutes_since_open > float(
+            self.config.only_first_minutes
         ):
             return None
         if self.config.entry_cutoff_hour >= 0:
@@ -287,7 +286,10 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
                 self._minute_returns.commit(code, minute_key, close)
                 return None
 
-        if self.config.min_return_1m_pct > 0 and ret_1m_pct < self.config.min_return_1m_pct:
+        if (
+            self.config.min_return_1m_pct > 0
+            and ret_1m_pct < self.config.min_return_1m_pct
+        ):
             self._minute_returns.commit(code, minute_key, close)
             return None
 
@@ -298,7 +300,10 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             + self.config.score_weight_change_pct * max(change_pct, 0.0)
             + self.config.score_weight_range_pos * max(range_pos, 0.0)
         )
-        if self.config.min_signal_score >= 0 and signal_score < self.config.min_signal_score:
+        if (
+            self.config.min_signal_score >= 0
+            and signal_score < self.config.min_signal_score
+        ):
             self._minute_returns.commit(code, minute_key, close)
             return None
 

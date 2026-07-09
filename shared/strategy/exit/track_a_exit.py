@@ -18,6 +18,7 @@ Either path fires the ``FORCE_CLOSE`` signal.  The price history is kept in
 ``position.metadata["crash_price_history"]`` (list of ``[iso_ts, price]`` pairs),
 pruned to the rolling window each tick.
 """
+
 from __future__ import annotations
 
 import logging
@@ -43,13 +44,25 @@ logger = logging.getLogger(__name__)
 _CRASH_HISTORY_KEY = "crash_price_history"
 
 
-def trail_stop_price(side: PositionSide, favorable_extreme: float, atr: float, trail_atr_mult: float) -> float:
+def trail_stop_price(
+    side: PositionSide, favorable_extreme: float, atr: float, trail_atr_mult: float
+) -> float:
     """LONG: extreme - mult*atr ; SHORT: extreme + mult*atr."""
     offset = trail_atr_mult * atr
-    return favorable_extreme - offset if side == PositionSide.LONG else favorable_extreme + offset
+    return (
+        favorable_extreme - offset
+        if side == PositionSide.LONG
+        else favorable_extreme + offset
+    )
 
 
-def trail_activated(side: PositionSide, entry_price: float, favorable_extreme: float, atr: float, trail_activate_atr_mult: float) -> bool:
+def trail_activated(
+    side: PositionSide,
+    entry_price: float,
+    favorable_extreme: float,
+    atr: float,
+    trail_activate_atr_mult: float,
+) -> bool:
     """True when profit in ATR units >= trail_activate_atr_mult."""
     threshold = trail_activate_atr_mult * atr
     if side == PositionSide.LONG:
@@ -57,7 +70,13 @@ def trail_activated(side: PositionSide, entry_price: float, favorable_extreme: f
     return (entry_price - favorable_extreme) >= threshold
 
 
-def crash_triggered(side: PositionSide, current_price: float, prev_price: float, atr: float, crash_atr_mult: float) -> bool:
+def crash_triggered(
+    side: PositionSide,
+    current_price: float,
+    prev_price: float,
+    atr: float,
+    crash_atr_mult: float,
+) -> bool:
     """True when a single adverse move >= crash_atr_mult*atr."""
     threshold = crash_atr_mult * atr
     if side == PositionSide.LONG:
@@ -107,7 +126,13 @@ def max_adverse_move_in_window(
     return current_price - trough
 
 
-def catastrophic_stop_hit(side: PositionSide, entry_price: float, current_price: float, atr: float, catastrophic_atr_mult: float) -> bool:
+def catastrophic_stop_hit(
+    side: PositionSide,
+    entry_price: float,
+    current_price: float,
+    atr: float,
+    catastrophic_atr_mult: float,
+) -> bool:
     """True when loss from entry >= catastrophic_atr_mult*atr."""
     threshold = catastrophic_atr_mult * atr
     if side == PositionSide.LONG:
@@ -121,7 +146,9 @@ class TrackAExitConfig(ConfigMixin):
     trail_activate_atr_mult: float = 2.0
     crash_atr_mult: float = 3.5
     crash_cooldown_minutes: int = 30
-    crash_window_seconds: float = 60.0  # I1: rolling window for windowed crash detection
+    crash_window_seconds: float = (
+        60.0  # I1: rolling window for windowed crash detection
+    )
     catastrophic_atr_mult: float = 6.0
     eod_close_enabled: bool = True
     eod_close_hour: int = 15
@@ -228,11 +255,16 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         return parsed
 
     def _check_position(
-        self, position: Position, snapshot: dict[str, Any], bar_ts: datetime | None = None
+        self,
+        position: Position,
+        snapshot: dict[str, Any],
+        bar_ts: datetime | None = None,
     ) -> ExitSignal | None:
         current_price = get_price_from_snapshot(snapshot)
         if current_price is None:
-            current_price = position.current_price if position.current_price > 0 else None
+            current_price = (
+                position.current_price if position.current_price > 0 else None
+            )
         if current_price is None or position.entry_price <= 0:
             return None
 
@@ -247,9 +279,13 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         prev_price = float(position.metadata.get("prev_price", current_price))
         profit_pct = self._calc_profit_pct(position, current_price)
         profit_amount = self._calc_profit_amount(position, current_price)
-        holding_minutes = int((to_kst(now) - to_kst(position.entry_time)).total_seconds() / 60)
+        holding_minutes = int(
+            (to_kst(now) - to_kst(position.entry_time)).total_seconds() / 60
+        )
         favorable_extreme = (
-            position.highest_price if position.side == PositionSide.LONG else position.lowest_price
+            position.highest_price
+            if position.side == PositionSide.LONG
+            else position.lowest_price
         )
 
         # Update prev_price and rolling crash history each tick before any early return.
@@ -259,7 +295,11 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         # p1: crash guard — single-tick OR windowed adverse move >= crash_atr_mult * ATR
         if atr > 0:
             single_tick_crash = crash_triggered(
-                position.side, current_price, prev_price, atr, self.config.crash_atr_mult
+                position.side,
+                current_price,
+                prev_price,
+                atr,
+                self.config.crash_atr_mult,
             )
             windowed_crash = (
                 max_adverse_move_in_window(
@@ -274,9 +314,12 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
             if single_tick_crash or windowed_crash:
                 crash_path = "single_tick" if single_tick_crash else "windowed"
                 return self._create_exit_signal(
-                    position=position, current_price=current_price,
-                    profit_pct=profit_pct, profit_amount=profit_amount,
-                    reason=ExitReason.FORCE_CLOSE, priority=1,
+                    position=position,
+                    current_price=current_price,
+                    profit_pct=profit_pct,
+                    profit_amount=profit_amount,
+                    reason=ExitReason.FORCE_CLOSE,
+                    priority=1,
                     holding_minutes=holding_minutes,
                     metadata={
                         "exit_type": "crash_guard",
@@ -289,19 +332,30 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
 
         # p2: catastrophic backstop — total loss from entry >= catastrophic_atr_mult * ATR
         if atr > 0 and catastrophic_stop_hit(
-            position.side, position.entry_price, current_price, atr, self.config.catastrophic_atr_mult
+            position.side,
+            position.entry_price,
+            current_price,
+            atr,
+            self.config.catastrophic_atr_mult,
         ):
             return self._create_exit_signal(
-                position=position, current_price=current_price,
-                profit_pct=profit_pct, profit_amount=profit_amount,
-                reason=ExitReason.STOP_LOSS, priority=2,
+                position=position,
+                current_price=current_price,
+                profit_pct=profit_pct,
+                profit_amount=profit_amount,
+                reason=ExitReason.STOP_LOSS,
+                priority=2,
                 holding_minutes=holding_minutes,
                 metadata={"exit_type": "catastrophic_stop", "atr": atr},
             )
 
         # p3: trailing stop — only after trail activation threshold is reached
         if atr > 0 and trail_activated(
-            position.side, position.entry_price, favorable_extreme, atr, self.config.trail_activate_atr_mult
+            position.side,
+            position.entry_price,
+            favorable_extreme,
+            atr,
+            self.config.trail_activate_atr_mult,
         ):
             trail = trail_stop_price(
                 position.side, favorable_extreme, atr, self.config.trail_atr_mult
@@ -313,9 +367,12 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
             )
             if crossed:
                 return self._create_exit_signal(
-                    position=position, current_price=current_price,
-                    profit_pct=profit_pct, profit_amount=profit_amount,
-                    reason=ExitReason.TRAILING_STOP, priority=3,
+                    position=position,
+                    current_price=current_price,
+                    profit_pct=profit_pct,
+                    profit_amount=profit_amount,
+                    reason=ExitReason.TRAILING_STOP,
+                    priority=3,
                     holding_minutes=holding_minutes,
                     metadata={
                         "exit_type": "trail_stop",
@@ -328,9 +385,12 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
         # p4: EOD close
         if self._should_eod_close(now):
             return self._create_exit_signal(
-                position=position, current_price=current_price,
-                profit_pct=profit_pct, profit_amount=profit_amount,
-                reason=ExitReason.EOD_CLOSE, priority=4,
+                position=position,
+                current_price=current_price,
+                profit_pct=profit_pct,
+                profit_amount=profit_amount,
+                reason=ExitReason.EOD_CLOSE,
+                priority=4,
                 holding_minutes=holding_minutes,
                 metadata={"exit_type": "eod_close"},
             )
@@ -392,10 +452,16 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
     ) -> ExitSignal:
         logger.info(
             "[%s] Exit: %s reason=%s price=%.2f pnl=%+.2f%%",
-            self.name, position.code, reason.value, current_price, profit_pct * 100,
+            self.name,
+            position.code,
+            reason.value,
+            current_price,
+            profit_pct * 100,
         )
         high_since_entry = (
-            position.highest_price if position.side == PositionSide.LONG else position.lowest_price
+            position.highest_price
+            if position.side == PositionSide.LONG
+            else position.lowest_price
         )
         return ExitSignal(
             code=position.code,
