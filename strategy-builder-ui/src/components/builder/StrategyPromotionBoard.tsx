@@ -93,6 +93,9 @@ const COLUMNS: Array<{
   id: PromotionColumnId;
   title: string;
   empty: string;
+  // notWired: the pipeline has no evidence source feeding this column yet, so
+  // it can never be populated (distinct from a wired column that is merely at 0).
+  notWired?: boolean;
 }> = [
   {
     id: "draft",
@@ -127,7 +130,8 @@ const COLUMNS: Array<{
   {
     id: "live_gated",
     title: "Live Gated",
-    empty: "Display-only. No live approval evidence source is available.",
+    empty: "미배선 — 라이브 승격 근거 소스가 아직 없습니다 (표시 전용).",
+    notWired: true,
   },
 ];
 
@@ -633,13 +637,27 @@ export function StrategyPromotionBoard({
           {COLUMNS.map((column) => {
             const columnCards = cardsByColumn.get(column.id) ?? [];
             return (
-              <div key={column.id} className="rounded-lg border border-slate-200 bg-slate-50/70 p-2 dark:border-slate-700 dark:bg-slate-950/50">
+              <div
+                key={column.id}
+                className={`rounded-lg border p-2 ${
+                  column.notWired
+                    ? "border-dashed border-slate-300 bg-slate-100/60 dark:border-slate-700 dark:bg-slate-950/30"
+                    : "border-slate-200 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-950/50"
+                }`}
+              >
                 <div className="mb-2 flex items-center justify-between gap-2 px-1">
                   <h3 className="text-xs font-semibold uppercase text-slate-600 dark:text-slate-300">
                     {column.title}
                   </h3>
-                  <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-900 dark:text-slate-400">
-                    {columnCards.length}
+                  <span
+                    className="rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-900 dark:text-slate-400"
+                    title={
+                      column.notWired
+                        ? "미배선 — 승격 근거 소스 없음"
+                        : undefined
+                    }
+                  >
+                    {column.notWired ? "N/A" : columnCards.length}
                   </span>
                 </div>
                 <div className="space-y-2">

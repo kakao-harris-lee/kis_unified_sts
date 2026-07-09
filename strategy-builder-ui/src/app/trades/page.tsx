@@ -15,7 +15,13 @@ function Trades() {
       <div className="max-w-[1400px] mx-auto px-2 sm:px-4 lg:px-6 pt-2 pb-24 lg:pb-2">
         <div className="space-y-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <h1 className="text-2xl font-bold">Trade History</h1>
+            <div>
+              <h1 className="text-2xl font-bold">Trade History</h1>
+              <p className="text-xs text-slate-500">
+                Live = 실시간 Redis 스트림(진행/최근 체결), History = 마감 후 DB 원장.
+                한 트레이드는 청산·정산되면 Live에서 History로 이동합니다.
+              </p>
+            </div>
             <TradesTabList activeTab={activeTab} onChange={setActiveTab} />
           </div>
 

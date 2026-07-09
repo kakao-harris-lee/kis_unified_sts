@@ -14,6 +14,8 @@ import SymbolLabel from "@/components/dashboard/SymbolLabel";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
 import { useAssetClass } from "@/contexts/dashboard/AssetClassContext";
 import { portfolioApi, reportsApi, tradingApi } from "@/lib/dashboard/api";
+import { marketRiskApi } from "@/lib/dashboard/marketRisk";
+import type { MarketRiskHistory } from "@/lib/dashboard/marketRisk";
 import type { FeedbackListResponse } from "@/lib/dashboard/reports";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 import type {
@@ -32,6 +34,7 @@ import {
   EquityCurveChart,
   MddStageChart,
 } from "./components/PortfolioEquityChart";
+import RegimeEquityChart from "./components/RegimeEquityChart";
 import RollingStatsChart from "./components/RollingStatsChart";
 import UnderwaterChart from "./components/UnderwaterChart";
 
@@ -248,6 +251,15 @@ export default function RiskPage() {
           .then((r) => r.data),
       refetchInterval: QUERY_INTERVALS_MS.experiments,
     });
+  // 통합 레짐 히스토리 (Market Risk 엔진) — 자산 곡선 regime 오버레이용.
+  // trade_date로 equity 히스토리와 조인. 엔진 미발행 시 빈 배열 → 밴드 없이 곡선만.
+  const { data: regimeHistory } = useQueryWithError<MarketRiskHistory>({
+    queryKey: ["market-risk-history", EQUITY_HISTORY_DAYS],
+    queryFn: () =>
+      marketRiskApi.getHistory({ days: EQUITY_HISTORY_DAYS }).then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.experiments,
+  });
+
   // 헤지 어드바이저 (Phase 4B §6.2) — 순 β-노출 셀 전용, 권고 전용 표시.
   const { data: hedgeLatest, refetch: refetchHedge } =
     useQueryWithError<PortfolioHedgeLatest>({
@@ -358,6 +370,14 @@ export default function RiskPage() {
           <div className="grid gap-2 lg:grid-cols-2">
             <UnderwaterChart points={equityPoints} />
             <RollingStatsChart points={equityPoints} />
+          </div>
+
+          {/* 자산 곡선 + 통합 레짐 배경 밴드 (90일) — 전폭 */}
+          <div className="grid gap-2">
+            <RegimeEquityChart
+              equity={equityPoints}
+              regimeHistory={regimeHistory?.points ?? []}
+            />
           </div>
 
           {/* 성과 피드백 요약 (Phase 6B §8 — 표시 전용, 판정 자료) */}
