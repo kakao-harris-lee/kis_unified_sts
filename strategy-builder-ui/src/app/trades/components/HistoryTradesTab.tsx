@@ -9,11 +9,16 @@ import SideBadge from '@/components/dashboard/SideBadge';
 import StatCard from '@/components/dashboard/StatCard';
 import LifecycleTimeline from '@/components/dashboard/LifecycleTimeline';
 import SymbolLabel, { symbolDisplayText } from '@/components/dashboard/SymbolLabel';
+import { useHighlightParam } from '@/hooks/dashboard/useHighlightParam';
 import {
   pnlTone,
   useHistoryTradesQueries,
   type DbTrade,
 } from '../hooks';
+
+// Ring applied to a row deep-linked via ?highlight=<trade_id>.
+const HIGHLIGHT_RING = 'ring-2 ring-amber-500 ring-inset';
+const historyTradeDomId = (id: string) => `trade-${id}`;
 
 function LifecycleIconButton({
   label,
@@ -87,6 +92,8 @@ export function HistoryTradesTab() {
     error: lifecycleError,
     refetch: refetchLifecycle,
   } = lifecycleQuery;
+
+  const highlightId = useHighlightParam(historyTradeDomId, !!trades?.length);
 
   const isLoading = statsLoading || tradesLoading;
   const hasError = statsError || tradesError || positionsError;
@@ -336,7 +343,10 @@ export function HistoryTradesTab() {
               {trades.map((trade) => (
                 <div
                   key={trade.id}
-                  className="bg-white rounded-lg p-4 border border-slate-200"
+                  id={historyTradeDomId(trade.id)}
+                  className={`bg-white rounded-lg p-4 border border-slate-200 ${
+                    highlightId === trade.id ? HIGHLIGHT_RING : ''
+                  }`}
                 >
                   <div className="flex items-center justify-between mb-3">
                     <SymbolLabel
@@ -416,7 +426,13 @@ export function HistoryTradesTab() {
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {trades.map((trade) => (
-                      <tr key={trade.id} className="hover:bg-slate-100">
+                      <tr
+                        key={trade.id}
+                        id={historyTradeDomId(trade.id)}
+                        className={`hover:bg-slate-100 ${
+                          highlightId === trade.id ? HIGHLIGHT_RING : ''
+                        }`}
+                      >
                         <td className="px-4 py-3 text-sm text-slate-500">
                           {trade.exit_date ? new Date(trade.exit_date).toLocaleString() : '-'}
                         </td>
