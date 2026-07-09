@@ -20,9 +20,9 @@ standard/reference implementations — P1-c convention-flip candidates):
   contract, ``min_periods=1`` for its ``ma20``).
 * ``rsi`` — the daily backtest Wilder-EMA RSI: ``ewm(alpha=1/period)`` on
   ``where``-clamped gains/losses. Unlike ``shared.indicators.reference.wilder_rsi``
-  it emits **NaN** (not 100/0/50) on zero-loss / zero-gain / flat windows, and
-  the ``where(..., 0.0)`` fill makes bar 0 a hard zero rather than NaN, which
-  shifts the ewm seed one bar earlier.
+  it emits **NaN** (not 100/50) on zero-loss / flat windows (zero-gain windows
+  yield ``0.0``, matching the reference), and the ``where(..., 0.0)`` fill makes
+  bar 0 a hard zero rather than NaN, which shifts the ewm seed one bar earlier.
 * ``atr`` — SMA-of-TR where bar 0's TR is ``high-low`` (the pandas
   ``concat(...).max(axis=1)`` NaN-skip) and warmup is ``min_periods=period``.
   Differs from ``reference.ATRCalculator(mode="sma")`` only in that bar-0 TR
