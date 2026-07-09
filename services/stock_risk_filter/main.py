@@ -38,7 +38,12 @@ from shared.config.runtime_defaults import redis_url_from_env
 from shared.risk.layer import RiskFilterLayer
 from shared.risk.runtime_state import RuntimeRiskState
 from shared.strategy.market_time import now_kst
-from shared.streaming.approval_gate import ApprovalGateConfig, is_gated, record_pending
+from shared.streaming.approval_gate import (
+    ApprovalGateConfig,
+    is_gated,
+    log_gate_config,
+    record_pending,
+)
 from shared.streaming.stage import StreamStage
 from shared.streaming.stock_keys import stock_daemon_positions_key
 
@@ -287,6 +292,7 @@ async def _build_and_run() -> int:
     # Loaded once at startup (not on the hot path) — inert by default
     # (config/telegram_bot.yaml::approval_gate.enabled = false).
     approval_gate_config = ApprovalGateConfig.from_yaml()
+    log_gate_config(approval_gate_config, asset="stock")
 
     worker_id = f"stock-risk-filter-{socket.gethostname()}-{os.getpid()}"
     daemon = StockRiskFilterDaemon(

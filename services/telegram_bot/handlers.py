@@ -29,6 +29,8 @@ import uuid
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
+from redis.exceptions import WatchError
+
 from shared.notification.formatting import approval_buttons, close_button
 from shared.streaming.approval_keys import pending_approval_key
 from shared.streaming.trading_state import TradingStateReader
@@ -134,6 +136,54 @@ def _decode_value(raw: Any) -> str:
     return raw.decode() if isinstance(raw, bytes) else str(raw)
 
 
+async def _claim_pending(redis: Any, key: str, field: str) -> str | None:
+    """Atomically HGET-then-HDEL *field* from the pending-approval HASH *key*.
+
+    This is the linchpin of approve-callback idempotency. Redis's native
+    HGETDEL (server-side atomic HGET+HDEL) only exists from Redis 8.0
+    onward, but this repo's deployed Redis is pinned to ``redis:7-alpine``
+    everywhere (docker-compose.yml, .devcontainer/, CI) — so HGETDEL is not
+    an option. A Lua ``EVAL`` script would give the same atomicity, but
+    fakeredis's scripting support requires the optional ``lupa`` C-extension
+    (not a declared dependency of this project — ``pyproject.toml`` /
+    ``uv.lock`` have plain ``fakeredis`` only), so it isn't usable here
+    without adding a new dependency. Instead this uses redis-py's standard
+    ``WATCH``/``MULTI``/``EXEC`` optimistic-locking pipeline (zero extra
+    dependencies, identical behavior against real Redis 7 and vanilla
+    fakeredis): watch *key*, read the field, and if it's still present when
+    the transaction commits, delete it in the same round-trip. If ANYTHING
+    else touches *key* between the watch and the commit (a concurrent
+    approve on another field, a racing :func:`reject_callback` HDEL, etc.),
+    Redis aborts the transaction (``WatchError``) and this loops to retry —
+    so whichever caller's transaction is the first to commit against an
+    unchanged *key* is the one and only "winner" that gets a non-``None``
+    value back; every other caller for the SAME field observes ``None``.
+
+    Returns:
+        The JSON-encoded pending record, or ``None`` if already claimed/
+        never existed (caller should treat this as "expired / already
+        handled").
+    """
+    async with redis.pipeline(transaction=True) as pipe:
+        while True:
+            try:
+                await pipe.watch(key)
+                raw = await pipe.hget(key, field)
+                if raw is None:
+                    await pipe.reset()
+                    return None
+                pipe.multi()
+                pipe.hdel(key, field)
+                results = await pipe.execute()
+                # results[0] is HDEL's "fields removed" count. A concurrent
+                # winner could have deleted the field between our HGET and
+                # MULTI/EXEC without changing the watched key's version in a
+                # way WATCH would catch on some backends — guard explicitly.
+                return _decode_value(raw) if results[0] else None
+            except WatchError:
+                continue
+
+
 # ---------------------------------------------------------------------------
 # Approve / reject (pending-approval resolution)
 # ---------------------------------------------------------------------------
@@ -143,11 +193,31 @@ def _decode_value(raw: Any) -> str:
 async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle ``approve:{approval_id}``: replay the pending signal to final.
 
-    Loads the pending record from ``signal:pending_approval:{asset}`` (field =
-    approval_id); if present, XADDs the stored fields dict verbatim to
-    ``signal.final.{asset}``, HDELs the pending field, and edits the message
-    to a "승인됨" state. If the pending record is missing (already resolved
-    or expired), edits the message to "만료됨" without touching any stream.
+    Atomically claims (get-and-delete, see :func:`_claim_pending`) the
+    pending record from ``signal:pending_approval:{asset}`` (field =
+    approval_id) BEFORE doing anything else. Only the caller that wins the
+    claim proceeds to XADD the stored fields dict verbatim to
+    ``signal.final.{asset}`` and edit the message to a "승인됨" state. If the
+    claim comes back empty (already claimed by an earlier approve/reject, or
+    never existed / expired), edits the message to "만료됨" without touching
+    any stream — this is what makes a double-tap (or a retried callback)
+    safe: the second call can never re-observe the value once the first has
+    claimed it, so it can never XADD a duplicate order.
+
+    Ordering note (money-moving correctness): the claim happens strictly
+    before the XADD. If the process crashes/dies in the narrow window AFTER
+    the claim succeeds but BEFORE the XADD completes, the pending record is
+    already gone and the signal is lost — the operator has to re-approve
+    from a fresh signal (annoying, but recoverable). The old ordering
+    (XADD first, HDEL last) had the opposite failure mode: a crash between
+    XADD and HDEL left the order already placed on the final stream AND the
+    pending record + buttons still live, so a re-tap would replay the same
+    fields and place a SECOND real order (double-order bug). Losing an
+    approval is the safe direction to fail in for money-moving code; placing
+    a duplicate order is not. We deliberately do not try to make
+    claim+XADD one atomic distributed transaction across two Redis
+    operations — that would need cross-command coordination this stack
+    doesn't have, and the lost-approval fallback is an acceptable trade.
     """
     query = update.callback_query
     assert query is not None  # CallbackQueryHandler guarantees this
@@ -159,24 +229,34 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     redis = context.bot_data["redis"]
     key = pending_approval_key(asset)
-    raw = await redis.hget(key, approval_id)
+    raw = await _claim_pending(redis, key, approval_id)
     if raw is None:
         await query.edit_message_text("⌛ 만료됨", reply_markup=None)
         return
 
-    fields = json.loads(_decode_value(raw))
+    fields = json.loads(raw)
     final_stream = _final_stream_for(asset)
     await redis.xadd(
         final_stream, fields, maxlen=_FINAL_STREAM_MAXLEN, approximate=True
     )
     await redis.expire(final_stream, _STREAM_TTL_SECONDS)
-    await redis.hdel(key, approval_id)
     await query.edit_message_text("✅ 승인됨", reply_markup=None)
 
 
 @_require_allowed_chat
 async def reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle ``reject:{approval_id}``: discard the pending signal, no order."""
+    """Handle ``reject:{approval_id}``: discard the pending signal, no order.
+
+    Plain HDEL is fine here (no XADD to protect against duplicating) — and
+    it stays safe even if it races an in-flight :func:`approve_callback`:
+    this HDEL either lands before approve's ``WATCH`` (approve then sees the
+    field already gone and reports "만료됨") or after approve's transaction
+    already committed (this HDEL is then a no-op on an already-missing
+    field), or it lands mid-transaction and trips approve's ``WatchError``
+    retry, which then re-reads and finds the field gone. Every ordering
+    ends the same way: exactly one of approve/reject ever proceeds past the
+    claim for a given approval_id.
+    """
     query = update.callback_query
     assert query is not None
     await query.answer()

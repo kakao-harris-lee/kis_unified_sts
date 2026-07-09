@@ -15,6 +15,7 @@ from shared.notification.formatting import (
     format_buy_signal,
     format_sell_fill,
     format_sell_signal,
+    is_stock_code,
     naver_stock_url,
     stock_link_button,
 )
@@ -167,3 +168,61 @@ def test_format_buy_signal_defaults_footer_to_current_kst_when_no_timestamp():
     )
     footer = msg.splitlines()[-1]
     assert footer.startswith("bb_reversion · ")
+
+
+# ---------------------------------------------------------------------------
+# is_stock_code — stock vs futures code-shape guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("code", ["005930", "000660", "123456"])
+def test_is_stock_code_true_for_six_digit_codes(code):
+    assert is_stock_code(code) is True
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "101V3000",  # futures instrument code (alphanumeric)
+        "101S6000",
+        "12345",  # too short
+        "1234567",  # too long
+        "",
+    ],
+)
+def test_is_stock_code_false_for_non_stock_shapes(code):
+    assert is_stock_code(code) is False
+
+
+# ---------------------------------------------------------------------------
+# HTML escaping — parse_mode="HTML" safety for dynamic free-text fields
+# ---------------------------------------------------------------------------
+
+
+def test_format_buy_signal_escapes_html_sensitive_name_and_strategy():
+    msg = format_buy_signal(
+        code="005930",
+        name="<b>탈출</b>",
+        price=71200,
+        strategy="bb & reversion",
+        reason="a<b",
+    )
+    assert "<b>탈출</b>" not in msg
+    assert "&lt;b&gt;탈출&lt;/b&gt;" in msg
+    assert "bb &amp; reversion" in msg
+    assert "a&lt;b" in msg
+
+
+def test_format_sell_fill_escapes_html_sensitive_strategy():
+    msg = format_sell_fill(
+        code="005930",
+        name="삼성전자",
+        price=73000,
+        quantity=10,
+        amount=730000,
+        profit=18000,
+        profit_rate=0.025,
+        strategy="<i>fast exit</i>",
+    )
+    assert "<i>fast exit</i>" not in msg
+    assert "&lt;i&gt;fast exit&lt;/i&gt;" in msg

@@ -10,6 +10,7 @@ import pytest
 from shared.streaming.approval_gate import (
     ApprovalGateConfig,
     is_gated,
+    log_gate_config,
     record_pending,
 )
 from shared.streaming.approval_keys import (
@@ -58,6 +59,18 @@ class TestIsGated:
         # "005930" only matches on the strategy field, not the symbol field.
         assert is_gated("bb_reversion", "005930", config) is False
 
+    def test_matches_strategy_case_insensitively(self):
+        config = _config(gated_strategies=["A_gap_reversion"])
+        assert is_gated("a_gap_reversion", "A05603", config) is True
+
+    def test_matches_symbol_case_insensitively(self):
+        config = _config(gated_symbols=["A05603"])
+        assert is_gated("bb_reversion", "a05603", config) is True
+
+    def test_matches_strategy_ignoring_surrounding_whitespace(self):
+        config = _config(gated_strategies=[" A_gap_reversion "])
+        assert is_gated("A_gap_reversion", "A05603", config) is True
+
 
 class TestApprovalGateConfigDefaults:
     def test_defaults_are_fully_inert(self):
@@ -66,6 +79,35 @@ class TestApprovalGateConfigDefaults:
         assert config.gated_strategies == []
         assert config.gated_symbols == []
         assert config.pending_ttl_seconds == 86400
+
+
+class TestLogGateConfig:
+    """Startup safeguard: an operator should see exactly what's gated in logs."""
+
+    def test_logs_when_enabled_with_gated_strategies(self, caplog):
+        config = _config(gated_strategies=["A_gap_reversion"])
+        with caplog.at_level("INFO"):
+            log_gate_config(config, asset="futures")
+        assert any("A_gap_reversion" in record.message for record in caplog.records)
+        assert any("futures" in record.message for record in caplog.records)
+
+    def test_logs_when_enabled_with_gated_symbols(self, caplog):
+        config = _config(gated_symbols=["005930"])
+        with caplog.at_level("INFO"):
+            log_gate_config(config, asset="stock")
+        assert any("005930" in record.message for record in caplog.records)
+
+    def test_no_log_when_disabled(self, caplog):
+        config = _config(enabled=False, gated_strategies=["A_gap_reversion"])
+        with caplog.at_level("INFO"):
+            log_gate_config(config, asset="futures")
+        assert caplog.records == []
+
+    def test_no_log_when_lists_empty(self, caplog):
+        config = _config(enabled=True)
+        with caplog.at_level("INFO"):
+            log_gate_config(config, asset="futures")
+        assert caplog.records == []
 
 
 @pytest.fixture

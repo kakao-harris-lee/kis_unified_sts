@@ -424,6 +424,13 @@ services:
       <<: [*redis-runtime-env, *alert-runtime-env]
       PYTHONPATH: "/app"
       TZ: "Asia/Seoul"
+      # Must match stock-risk-filter's/futures-risk-filter's mode env vars
+      # exactly (docker-compose.yml stock-risk-filter / futures-risk-filter)
+      # so _final_stream_for() in services/telegram_bot/handlers.py resolves
+      # to the SAME signal.final.{asset}[.shadow] stream those daemons read
+      # from — otherwise approve/close XADDs land on the wrong stream.
+      STOCK_RISK_FILTER: "${STOCK_PIPELINE_MODE:-shadow}"
+      FUTURES_RISK_FILTER: "${FUTURES_PIPELINE_MODE:-shadow}"
 
   # =============================================================================
   # Producers — market-hours daemons that feed the trading pipeline

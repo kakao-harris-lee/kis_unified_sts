@@ -20,6 +20,12 @@ telegram_bot:
 
 approval_gate:
   enabled: false
-  gated_strategies: []      # e.g. ["setup_a_gap_reversion"]
+  # gated_strategies matches the *runtime* strategy identifier, NOT the YAML
+  # strategy-file / EntryRegistry name:
+  #   - futures: Signal.setup_type, e.g. ["A_gap_reversion", "C_event_reaction"]
+  #     (NOT "setup_a_gap_reversion" — that's only the config/strategies file name).
+  #   - stock: signal.strategy, e.g. ["bb_reversion", "opening_volume_surge"]
+  #     (these already match TradingStrategy.name 1:1 for stock).
+  gated_strategies: []      # e.g. ["A_gap_reversion", "C_event_reaction"]
   gated_symbols: []
   pending_ttl_seconds: 86400

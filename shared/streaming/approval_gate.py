@@ -50,7 +50,12 @@ class ApprovalGateConfig(ServiceConfigBase):
     )
     gated_strategies: list[str] = Field(
         default_factory=list,
-        description="Strategy names held for approval, e.g. ['setup_a_gap_reversion'].",
+        description=(
+            "Strategy identifiers held for approval — matches "
+            "Signal.setup_type for futures (e.g. 'A_gap_reversion', "
+            "'C_event_reaction') or signal.strategy for stock (e.g. "
+            "'bb_reversion'), NOT the YAML strategy-file name."
+        ),
     )
     gated_symbols: list[str] = Field(
         default_factory=list,
@@ -66,6 +71,36 @@ class ApprovalGateConfig(ServiceConfigBase):
     )
 
 
+def log_gate_config(config: ApprovalGateConfig, *, asset: str) -> None:
+    """Log which strategies/symbols are gated at daemon startup.
+
+    A typo/case/rename in ``gated_strategies``/``gated_symbols`` silently
+    gates nothing (see :func:`is_gated`) — there is no runtime signal that a
+    configured value never matches. This INFO line is the cheap safeguard:
+    an operator can eyeball the log at startup and confirm the intended
+    strategy/symbol identifiers are the ones actually gated, instead of only
+    discovering a no-op gate when an expected approval never arrives.
+
+    No-ops (nothing is logged) when the gate is disabled or both lists are
+    empty, since that is the default/inert state and would otherwise log on
+    every daemon start.
+
+    Args:
+        config: Loaded :class:`ApprovalGateConfig`.
+        asset: Asset class for log context, e.g. "futures" or "stock".
+    """
+    if not config.enabled:
+        return
+    if not config.gated_strategies and not config.gated_symbols:
+        return
+    logger.info(
+        "approval_gate[%s] enabled: gating strategies=%s symbols=%s",
+        asset,
+        config.gated_strategies,
+        config.gated_symbols,
+    )
+
+
 def is_gated(strategy: str, symbol: str, config: ApprovalGateConfig) -> bool:
     """Return True if a signal for *strategy*/*symbol* must be held for approval.
 
@@ -75,8 +110,16 @@ def is_gated(strategy: str, symbol: str, config: ApprovalGateConfig) -> bool:
     even with ``enabled=True`` — the operator must opt specific
     strategies/symbols in.
 
+    Comparison is case-insensitive and ignores surrounding whitespace on both
+    sides (the signal's value and the configured list entries), so a stray
+    case slip in ``config/telegram_bot.yaml`` (e.g. "a_gap_reversion" vs the
+    real ``Signal.setup_type`` value "A_gap_reversion") still gates instead of
+    silently matching nothing.
+
     Args:
-        strategy: The signal's strategy/setup name (e.g. "bb_reversion").
+        strategy: The signal's strategy/setup name — ``Signal.setup_type``
+            for futures (e.g. "A_gap_reversion"), ``signal.strategy`` for
+            stock (e.g. "bb_reversion").
         symbol: The signal's symbol/code (e.g. "005930").
         config: Loaded :class:`ApprovalGateConfig`.
 
@@ -86,7 +129,11 @@ def is_gated(strategy: str, symbol: str, config: ApprovalGateConfig) -> bool:
     """
     if not config.enabled:
         return False
-    return strategy in config.gated_strategies or symbol in config.gated_symbols
+    norm_strategy = strategy.strip().casefold()
+    norm_symbol = symbol.strip().casefold()
+    gated_strategies = {s.strip().casefold() for s in config.gated_strategies}
+    gated_symbols = {s.strip().casefold() for s in config.gated_symbols}
+    return norm_strategy in gated_strategies or norm_symbol in gated_symbols
 
 
 async def record_pending(

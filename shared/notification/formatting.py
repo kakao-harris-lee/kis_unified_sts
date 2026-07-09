@@ -25,10 +25,19 @@ callback_data scheme (bot-service handlers MUST parse exactly this):
     are ``uuid4().hex`` (32 hex chars), so worst case
     (``"approve:futures:" + 32 hex chars`` = 48 bytes) is comfortably under
     the limit.
+
+HTML escaping: ``TelegramNotifier`` sends every message with
+``parse_mode="HTML"``. All free-text dynamic fields interpolated by the
+``format_*`` functions below (stock/instrument name, strategy, sell reason,
+holding-time label) are run through :func:`html.escape` so a name or
+strategy containing ``<``, ``>``, or ``&`` cannot break Telegram's HTML
+parser or inject markup. Numeric/code fields (price, code, quantity) are not
+escaped since they cannot contain those characters.
 """
 
 from __future__ import annotations
 
+import html
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -86,6 +95,30 @@ def _footer(strategy: str, generated_at: datetime | None) -> str:
     """
     ts = _hhmm(generated_at)
     return f"{strategy} · {ts}" if strategy else ts
+
+
+def is_stock_code(code: str) -> bool:
+    """Return whether *code* looks like a 6-digit KRX stock code.
+
+    Mirrors the stock/futures shape check used elsewhere (e.g.
+    ``shared/models/stream_models.py::_infer_asset``,
+    ``shared/execution/executor.py::_is_futures_code``): stock codes are
+    6 numeric digits (``"005930"``); futures codes are alphanumeric
+    (``"101V3000"``). Callers use this to decide whether a Naver Finance
+    link is meaningful for *code* — there is no Naver item page for futures.
+    """
+    return code.isdigit() and len(code) == 6
+
+
+def _escape(text: str) -> str:
+    """Escape *text* for safe interpolation into an HTML-parse-mode message.
+
+    All formatters in this module render messages Telegram sends with
+    ``parse_mode="HTML"``; any dynamic free-text field (strategy name, sell
+    reason, stock name) that could contain ``<``, ``>``, or ``&`` must be
+    escaped to avoid Telegram parse errors or HTML injection.
+    """
+    return html.escape(text, quote=False)
 
 
 # ---------------------------------------------------------------------------
@@ -187,14 +220,14 @@ def format_buy_signal(
     generated_at: datetime | None = None,
 ) -> str:
     """Format a buy-signal notification (see module docstring for the style)."""
-    header = f"🟢 매수 시그널 · {name}"
+    header = f"🟢 매수 시그널 · {_escape(name)}"
     parts = [code, f"{price:,.0f}원"]
     if confidence is not None:
         parts.append(f"신뢰도 {confidence:.0%}")
     if reason:
-        parts.append(reason)
+        parts.append(_escape(reason))
     numbers = " · ".join(parts)
-    return "\n".join([header, numbers, _footer(strategy, generated_at)])
+    return "\n".join([header, numbers, _footer(_escape(strategy), generated_at)])
 
 
 def format_sell_signal(
@@ -214,16 +247,16 @@ def format_sell_signal(
     🔴 when *profit_rate* is known and negative, 🟡 otherwise.
     """
     emoji = "🔴" if profit_rate is not None and profit_rate < 0 else "🟡"
-    header = f"{emoji} 매도 시그널 · {name}"
+    header = f"{emoji} 매도 시그널 · {_escape(name)}"
     parts = [code, f"{price:,.0f}원"]
     if profit_rate is not None:
         sign = "+" if profit_rate >= 0 else ""
         parts.append(f"{sign}{profit_rate:.2%}")
-    parts.append(reason)
+    parts.append(_escape(reason))
     if holding_time:
-        parts.append(holding_time)
+        parts.append(_escape(holding_time))
     numbers = " · ".join(parts)
-    return "\n".join([header, numbers, _footer(strategy, generated_at)])
+    return "\n".join([header, numbers, _footer(_escape(strategy), generated_at)])
 
 
 def format_buy_fill(
@@ -244,9 +277,9 @@ def format_buy_fill(
         005930 · 10주 @ 71,200 (712,000원)
         bb_reversion · 10:32
     """
-    header = f"✅ 매수 체결 · {name}"
+    header = f"✅ 매수 체결 · {_escape(name)}"
     numbers = f"{code} · {quantity}주 @ {price:,.0f} ({amount:,.0f}원)"
-    return "\n".join([header, numbers, _footer(strategy, generated_at)])
+    return "\n".join([header, numbers, _footer(_escape(strategy), generated_at)])
 
 
 def format_sell_fill(
@@ -268,9 +301,34 @@ def format_sell_fill(
     """
     emoji = "✅" if profit >= 0 else "❌"
     sign = "+" if profit >= 0 else ""
-    header = f"{emoji} 매도 체결 · {name}"
+    header = f"{emoji} 매도 체결 · {_escape(name)}"
     numbers = (
         f"{code} · {quantity}주 @ {price:,.0f} ({amount:,.0f}원) · "
         f"{sign}{profit:,.0f}원 ({sign}{profit_rate:.2%})"
     )
-    return "\n".join([header, numbers, _footer(strategy, generated_at)])
+    return "\n".join([header, numbers, _footer(_escape(strategy), generated_at)])
+
+
+def format_notable_exit(
+    *,
+    code: str,
+    pnl: float,
+    pnl_pct: float,
+    generated_at: datetime | None = None,
+) -> str:
+    """Format a "notable exit" alert (2 lines: header + PnL, no footer strategy).
+
+    Used by ``services/stock_monitor/alerts.py::AlertSink.on_exit`` — the
+    monitor bridge, unlike ``TelegramNotifier``, does not carry a stock/
+    instrument name or strategy at the exit-fill call site (only ``code``,
+    ``pnl``, ``pnl_pct``), so this formatter renders the concise style with
+    just what is available rather than dropping the alert entirely.
+
+    Emoji mirrors :func:`format_sell_fill`: 🟢 when *pnl* is non-negative,
+    🔴 otherwise.
+    """
+    emoji = "🟢" if pnl >= 0 else "🔴"
+    sign = "+" if pnl >= 0 else ""
+    header = f"{emoji} 주목 청산 · {code}"
+    numbers = f"{sign}{pnl:,.0f}원 ({pnl_pct:+.2f}%)"
+    return "\n".join([header, numbers, _hhmm(generated_at)])
