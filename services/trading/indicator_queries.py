@@ -5,13 +5,52 @@ from __future__ import annotations
 import logging
 import math
 from datetime import UTC, datetime
+from functools import cache
 from typing import Any
 
 from shared.exceptions import ValidationError
+from shared.indicators.engine.spec import flat_key
 
 from .indicator_candles import Candle, MultiTimeframeCandleAccumulator
 
 logger = logging.getLogger("services.trading.indicator_engine")
+
+# Flat payload key names derived from the shared ``flat_key`` catalog
+# (``shared/indicators/engine/spec.py``) — the single naming source of truth
+# for both indicator-context paths (P2-b). These ARE the live payload contract
+# consumed via StreamingIndicatorResolver; the exact strings are pinned by
+# ``tests/unit/trading/test_indicator_payload_key_pins.py`` and the catalog by
+# ``tests/unit/indicators/engine/test_flat_key_catalog_golden.py``.
+# Runtime-only keys with no engine vocabulary (high_N, ema_aligned,
+# ema_daily_aligned, volume_velocity/acceleration, the feature-bundle ratio
+# keys) stay literal below.
+_KEY_BB_LOWER = flat_key("bollinger", "lower")
+_KEY_BB_MIDDLE = flat_key("bollinger", "middle")
+_KEY_BB_UPPER = flat_key("bollinger", "upper")
+_KEY_RSI = flat_key("rsi")
+_KEY_MFI = flat_key("mfi")
+_KEY_ADX = flat_key("adx")
+_KEY_VWAP = flat_key("vwap")
+_KEY_RVOL = flat_key("rvol")
+_KEY_ATR = flat_key("atr")
+_KEY_VOLUME_MA = flat_key("volume_ma")
+_KEY_STOCH_K = flat_key("stochastic", "k")
+_KEY_STOCH_D = flat_key("stochastic", "d")
+_KEY_STOCHRSI_K = flat_key("stochrsi", "k")
+_KEY_STOCHRSI_D = flat_key("stochrsi", "d")
+_KEY_MACD = flat_key("macd")
+_KEY_MACD_SIGNAL = flat_key("macd", "signal")
+_KEY_MACD_HIST = flat_key("macd", "histogram")
+
+
+@cache
+def _ema_key(period: int) -> str:
+    """Period-keyed EMA payload key (``ema_5`` / ``ema_20`` / ...).
+
+    Memoized — called per symbol per bar on the hot path, over a small
+    config-driven period set.
+    """
+    return flat_key("ema", params={"period": period})
 
 
 class IndicatorQueryMixin:
@@ -72,10 +111,10 @@ class IndicatorQueryMixin:
         rsi = self._calc_rsi(closes)
 
         result: dict[str, float] = {
-            "bb_lower": bb_lower,
-            "bb_middle": bb_middle,
-            "bb_upper": bb_upper,
-            "rsi": rsi,
+            _KEY_BB_LOWER: bb_lower,
+            _KEY_BB_MIDDLE: bb_middle,
+            _KEY_BB_UPPER: bb_upper,
+            _KEY_RSI: rsi,
         }
 
         # StochRSI producer (flat keys consumed by StochRSITrendEntry). Config-
@@ -98,26 +137,26 @@ class IndicatorQueryMixin:
                 k_period=self._stochrsi_k_period,
                 d_period=self._stochrsi_d_period,
             ).latest_values(pd.DataFrame({"close": closes}))
-            result["stochrsi_k"] = sr["stochrsi_k"]
-            result["stochrsi_d"] = sr["stochrsi_d"]
-            result["stochrsi_k_prev"] = sr["stochrsi_k_prev"]
+            result[_KEY_STOCHRSI_K] = sr["stochrsi_k"]
+            result[_KEY_STOCHRSI_D] = sr["stochrsi_d"]
+            result[f"{_KEY_STOCHRSI_K}_prev"] = sr["stochrsi_k_prev"]
 
         # MFI needs volume data; only compute if candles have volume
         mfi = self._calc_mfi(candles)
         if mfi is not None:
-            result["mfi"] = mfi
+            result[_KEY_MFI] = mfi
 
         # ADX (Average Directional Index)
         adx = self._calc_adx(candles)
         if adx is not None:
-            result["adx"] = adx
+            result[_KEY_ADX] = adx
 
         # Volume indicators
         current_close = closes[-1]
 
         # VWAP
         vwap_data = self._vwap_calc.calculate(symbol, current_close)
-        result["vwap"] = vwap_data.vwap
+        result[_KEY_VWAP] = vwap_data.vwap
 
         # Volume velocity & acceleration
         vol_accel = self._vol_accel_calc.calculate(symbol)
@@ -125,26 +164,26 @@ class IndicatorQueryMixin:
         result["volume_acceleration"] = vol_accel.acceleration
 
         # RVOL (from candle volumes, inline — avoids numpy dependency)
-        result["rvol"] = self._calc_rvol(candles)
+        result[_KEY_RVOL] = self._calc_rvol(candles)
 
         # High over N previous trading days (for breakout detection)
         result[f"high_{self._high_period}"] = self._calc_high_n(symbol, candles)
 
         # Raw ATR (non-normalized) for edge filters and stop-loss calculations
-        result["atr"] = self._calc_atr_raw(candles)
+        result[_KEY_ATR] = self._calc_atr_raw(candles)
 
         # Volume moving average (20-period SMA of candle volumes)
         volumes = [c.volume for c in candles]
         vol_window = min(self.bb_period, len(volumes))
         if vol_window > 0:
-            result["volume_ma"] = sum(volumes[-vol_window:]) / vol_window
+            result[_KEY_VOLUME_MA] = sum(volumes[-vol_window:]) / vol_window
         else:
-            result["volume_ma"] = 0.0
+            result[_KEY_VOLUME_MA] = 0.0
 
         # EMA absolute values for trend mode (configurable periods)
         n = len(closes)
         for period in self._ema_periods:
-            key = f"ema_{period}"
+            key = _ema_key(period)
             if n >= period:
                 result[key] = self._ema_last(closes, period)
             else:
@@ -152,9 +191,9 @@ class IndicatorQueryMixin:
         # EMA alignment: fastest > middle > slowest (confirmed uptrend, intraday)
         if len(self._ema_periods) >= 3:
             sorted_periods = sorted(self._ema_periods)
-            fast_key = f"ema_{sorted_periods[0]}"
-            mid_key = f"ema_{sorted_periods[1]}"
-            slow_key = f"ema_{sorted_periods[2]}"
+            fast_key = _ema_key(sorted_periods[0])
+            mid_key = _ema_key(sorted_periods[1])
+            slow_key = _ema_key(sorted_periods[2])
             result["ema_aligned"] = (
                 result[slow_key] > 0
                 and result[fast_key] > result[mid_key] > result[slow_key]
@@ -252,7 +291,7 @@ class IndicatorQueryMixin:
                 result[f"ma_ratio_{w}"] = 1.0
 
         # 5. rsi (reuse existing method)
-        result["rsi"] = self._calc_rsi(closes)
+        result[_KEY_RSI] = self._calc_rsi(closes)
 
         # 6. bb_position (reference: / (bb_upper - bb_lower + 1e-10))
         bb_lower, bb_middle, bb_upper = self._calc_bb(closes)
@@ -292,9 +331,9 @@ class IndicatorQueryMixin:
         ema26 = self._ema_series(closes, 26)
         macd_series = [f - s for f, s in zip(ema12, ema26)]
         macd_sig = self._ema_series(macd_series, 9)
-        result["macd"] = macd_series[-1]
-        result["macd_signal"] = macd_sig[-1]
-        result["macd_hist"] = macd_series[-1] - macd_sig[-1]
+        result[_KEY_MACD] = macd_series[-1]
+        result[_KEY_MACD_SIGNAL] = macd_sig[-1]
+        result[_KEY_MACD_HIST] = macd_series[-1] - macd_sig[-1]
 
         # 14-15. sma_ratio_60, 120
         for w in (60, 120):
@@ -314,13 +353,15 @@ class IndicatorQueryMixin:
         result["bb_lower_dist"] = (cur_close - bb_lower) / (cur_close + 1e-10)
         result["bb_width"] = (bb_upper - bb_lower) / (bb_middle + 1e-10)
 
-        # 22. atr (normalized by close)
-        result["atr"] = self._calc_atr_normalized(candles)
+        # 22. atr — same flat key as the base payload but NORMALIZED by close
+        # (deliberate semantic divergence; the resolver's feature_ prefix rule
+        # keeps both reachable when a strategy requests ohlcv + base).
+        result[_KEY_ATR] = self._calc_atr_normalized(candles)
 
         # 23-24. stochastic
         stoch_k, stoch_d = self._calc_stochastic(candles)
-        result["stoch_k"] = stoch_k
-        result["stoch_d"] = stoch_d
+        result[_KEY_STOCH_K] = stoch_k
+        result[_KEY_STOCH_D] = stoch_d
 
         # 25. price_change_5
         result["price_change_5"] = (
@@ -488,10 +529,10 @@ class IndicatorQueryMixin:
         rsi = self._calc_rsi(closes)
 
         result: dict[str, float] = {
-            "bb_lower": bb_lower,
-            "bb_middle": bb_middle,
-            "bb_upper": bb_upper,
-            "rsi": rsi,
+            _KEY_BB_LOWER: bb_lower,
+            _KEY_BB_MIDDLE: bb_middle,
+            _KEY_BB_UPPER: bb_upper,
+            _KEY_RSI: rsi,
         }
 
         self._mtf_base_cache[cache_key] = (candle_count, result.copy())
@@ -587,7 +628,13 @@ class IndicatorQueryMixin:
             logger.error(f"Momentum indicator calculation failed for {symbol}: {e}")
             return {}
 
-        # Extract last-bar values
+        # Extract last-bar values. NOTE: these are HTS-compatible momentum-
+        # bundle keys (macd_line/macd_oscillator/sto_k/sto_d), a DELIBERATE
+        # divergence from the flat_key catalog (macd/macd_hist/stoch_k/
+        # stoch_d): they live under the strategy's momentum_{tf} namespace —
+        # not the flat base payload — and momentum consumers (trix_golden,
+        # macd_ema_crossover, williams_r) read these exact names. Same
+        # documented-divergence policy as the feature-bundle normalized atr.
         last = df.iloc[-1]
         result: dict[str, Any] = {
             "trix": float(last.get("trix", 0)),

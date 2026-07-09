@@ -21,8 +21,9 @@ Two responsibilities live here:
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 import numpy as np
@@ -121,8 +122,13 @@ class OHLCVWindow:
     """A bounded OHLCV window fed to a backend.
 
     Arrays are float64 and C-contiguous (TA-Lib requires this). ``eq=False``
-    avoids ambiguous element-wise ``__eq__`` on the ndarray fields — windows are
-    never compared or hashed.
+    avoids ambiguous element-wise ``__eq__`` on the ndarray fields — windows
+    are never compared with ``==`` or used as dict keys directly; the caching
+    identity is the explicit :meth:`content_token` digest.
+
+    Immutability contract: the arrays must not be mutated after construction —
+    every backend and the cache engine rely on this (the cached
+    ``content_token`` and memoized results would silently go stale otherwise).
     """
 
     open: np.ndarray
@@ -130,6 +136,32 @@ class OHLCVWindow:
     low: np.ndarray
     close: np.ndarray
     volume: np.ndarray
+    # Lazily computed by content_token(); cached because one evaluation cycle
+    # asks for the token once per indicator over the SAME window object.
+    _content_token: bytes | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    def content_token(self) -> bytes:
+        """16-byte content digest of the window (computed once, then cached).
+
+        Content-addressed on purpose: two windows with identical bytes yield
+        identical indicator series (backends are pure), so a cache keyed on
+        this token can never serve a wrong value — even across symbols. The
+        arrays are hashed zero-copy through the buffer protocol (they are
+        C-contiguous float64 per the class contract); a length prefix per
+        column keeps unequal-length windows unambiguous.
+        """
+        token = self._content_token
+        if token is None:
+            digest = hashlib.blake2b(digest_size=16)
+            for arr in (self.open, self.high, self.low, self.close, self.volume):
+                data = arr if arr.flags["C_CONTIGUOUS"] else np.ascontiguousarray(arr)
+                digest.update(arr.shape[0].to_bytes(8, "little"))
+                digest.update(data.data)  # zero-copy memoryview
+            token = digest.digest()
+            object.__setattr__(self, "_content_token", token)
+        return token
 
     @classmethod
     def from_sequences(

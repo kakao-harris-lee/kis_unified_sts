@@ -1,14 +1,22 @@
 """Indicator request contracts for multi-timeframe composition.
 
 This module provides a small typed layer that normalizes legacy indicator
-strings (e.g. ``momentum_5m``) into explicit request objects.
+strings (e.g. ``momentum_5m``) into explicit request objects. Builder-style
+typed requirements are also expressible: :meth:`IndicatorContract.from_specs`
+turns ``IndicatorSpec`` requests (indicator id + params) into the canonical
+flat keys the resolver already fulfils, so new strategies can declare
+``rsi(period=14)`` instead of the magic string ``"rsi"`` (P2-b). Legacy
+string contracts are untouched.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+
+from shared.indicators.engine.spec import IndicatorSpec, flat_key
 
 # Required-key pattern for the post-event trading-range high/low (Setup C's
 # 15-minute breakout range). The minutes are encoded in the key itself
@@ -57,12 +65,19 @@ class Timeframe:
 
 @dataclass(frozen=True)
 class IndicatorRequest:
-    """A concrete indicator request."""
+    """A concrete indicator request.
+
+    ``spec`` is optionally carried when the request was declared as a typed
+    :class:`IndicatorSpec` (via :meth:`IndicatorContract.from_specs`) instead
+    of a legacy string — consumers that understand specs (cache engine,
+    builder plumbing) can read the id/params back without re-parsing the key.
+    """
 
     kind: IndicatorKind
     name: str
     timeframe: Timeframe | None = None
     source_key: str = ""
+    spec: IndicatorSpec | None = None
 
     @property
     def key(self) -> str:
@@ -138,6 +153,73 @@ class IndicatorContract:
         """
         intraday = [tf for tf in self.mtf_timeframes if tf < 1440]
         return max(intraday) if intraday else None
+
+    @classmethod
+    def from_specs(
+        cls,
+        specs: Iterable[IndicatorSpec | tuple[IndicatorSpec, str]],
+        *,
+        extra_keys: Iterable[str] = (),
+    ) -> IndicatorContract:
+        """Build a contract from builder-style typed indicator requests.
+
+        Each item is an :class:`IndicatorSpec` (single-output ``value``
+        assumed) or a ``(spec, output)`` pair for multi-output indicators. The
+        required key is derived through the shared ``flat_key`` catalog —
+        ``IndicatorSpec.create("bollinger", {"period": 20, "std": 2})`` with
+        output ``"upper"`` yields ``bb_upper`` — exactly the key the live
+        payload publishes, so the resolver fulfils these as plain BASE keys
+        with no behavior change. ``extra_keys`` are parsed through the legacy
+        string path (``ohlcv`` / ``momentum_5m`` / ``mtf_base_15m`` / ...) so
+        typed and string requirements can be mixed.
+
+        Additive API: contracts built via :meth:`from_required_keys` are
+        unaffected. Intended consumer: P2-c pilot strategies (declarative
+        migration) declaring typed requirements instead of magic strings.
+
+        Limits (same fail-safe semantics as string contracts, stated up
+        front): a spec outside the live BASE payload vocabulary is silently
+        unresolved at runtime — the resolver only fills keys the engine
+        publishes, so the strategy sees a missing key, not an error. And
+        ``flat_key`` embeds params in the key ONLY for period-keyed
+        indicators (``sma``/``ema``): for every other indicator the params do
+        not appear in the key, so e.g. ``rsi(7)`` and ``rsi(21)`` would both
+        map to ``rsi``. Requesting such conflicting specs is ambiguous and
+        raises ``ValueError`` (see below) instead of silently keeping one.
+
+        Raises:
+            ValueError: if two different ``(spec, output)`` requests collapse
+                onto the same flat key (params not representable in the key).
+        """
+        typed_keys: list[str] = []
+        typed_requests: list[IndicatorRequest] = []
+        seen: dict[str, tuple[IndicatorSpec, str]] = {}
+        for item in specs:
+            spec, output = item if isinstance(item, tuple) else (item, "value")
+            key = flat_key(spec.indicator_id, output, spec.param_map)
+            prior = seen.get(key)
+            if prior is not None and prior != (spec, output):
+                raise ValueError(
+                    f"flat key collision: {spec.key!r} (output {output!r}) and "
+                    f"{prior[0].key!r} (output {prior[1]!r}) both map to "
+                    f"{key!r} — the flat vocabulary cannot distinguish these "
+                    "params; request only one variant per flat key"
+                )
+            seen[key] = (spec, output)
+            typed_keys.append(key)
+            typed_requests.append(
+                IndicatorRequest(
+                    kind=IndicatorKind.BASE,
+                    name=key,
+                    source_key=spec.key,
+                    spec=spec,
+                )
+            )
+        legacy = cls.from_required_keys(list(extra_keys))
+        return cls(
+            required_keys=(*typed_keys, *legacy.required_keys),
+            requests=(*typed_requests, *legacy.requests),
+        )
 
     @classmethod
     def from_required_keys(cls, keys: list[str] | tuple[str, ...]) -> IndicatorContract:
