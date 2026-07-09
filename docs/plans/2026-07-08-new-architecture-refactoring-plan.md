@@ -138,6 +138,51 @@
   YAML 교체. 표현 불가 판정이 나면 레거시 컴포넌트로 존치하고 사유를 카탈로그에 기록
   (하이브리드 최종 상태 허용 — 단 신규 전략은 선언형 기본).
 
+**파일럿 1차 결과 (2026-07-10, 활성 주식 3전략):**
+
+- [x] **동등성 하네스 출하** — `tests/unit/strategy_builder/migration/harness.py`:
+  레거시/선언형 양쪽을 동일 결정론 KST 바 시퀀스로 실 `BacktestStrategyAdapter`
+  경로에 태워 진입 신호 시퀀스(타임스탬프/방향/가격, 비교 가능 시 confidence)를
+  비교. 셀프체크가 PASS(명령형 SMA cross ≡ builder_v1 상태, 쿨다운 포함
+  완전 동일)와 FAIL(규칙 다르면 divergence 보고) 양방향을 고정.
+- [x] **선행 조건 수정** — resolver가 feature 번들 warm(≥26봉) 이후 `ohlcv`
+  계약을 드롭해 builder_v1 전략이 라이브/백테스트 모두에서 영구 무신호였던
+  버그 수정(`shared/indicators/resolver.py`). 이 수정 없이는 어떤 선언형
+  마이그레이션도 어댑터 경로에서 검증 불가.
+- [x] `williams_r` — **DEFERRED (표현 불가, 레거시 YAML 활성 유지)**.
+  게이트 증거: `tests/unit/strategy_builder/migration/test_williams_r_migration_gate.py`
+  (동일 시장 이벤트 2건에서 후보는 09:09 개장-스킵 창 안에서 발화, 레거시는
+  5분봉 W%R로 13:45 발화 → 시퀀스 불일치). 부족 어휘:
+  1. **진입 세션 시간 필터** (`skip_market_open/close_minutes`, KST) — P2-a 잔여
+     항목과 동일.
+  2. **지표 타임프레임** — 레거시는 `momentum_5m`(닫힌 5분봉) W%R,
+     `BuilderIndicator`에는 timeframe 필드 없음(1분 OHLCV 윈도 고정).
+  3. **market-state allow/block 리스트 게이트** — `gates.regime_gate`
+     (percentile/impact)와 다른 메커니즘.
+  4. **동적 사이징 메타데이터** (`position_size_multiplier` 과확장 축소).
+- [x] `pattern_pullback` — **DEFERRED (후보 구성 자체가 불가)**. 부족 어휘:
+  1. **중첩 조건 그룹(OR-of-AND)** — 패턴 리스트 10개 = OR, 패턴별 조건 = AND;
+     `BuilderConditionGroup`은 평면 단일 logic.
+  2. **일봉 타임프레임 지표 소싱** — sma_200/rsi_5/atr/highest_high가 daily 캔들
+     기반(빌더 컨텍스트는 1분 윈도만).
+  3. **피연산자 산술** — `atr/close` 비율, 60일 수익률, `sma_60 > sma_60_prev`
+     (전일값 비교) 표현 불가.
+  4. 패턴 순위 기반 `entry_priority`/confidence 사다리 메타데이터.
+- [x] `momentum_breakout` — **DEFERRED (미션 예상대로 스키마 어휘 초과)**. 부족 어휘:
+  1. **daily_watchlist/동적 스크리너 유니버스 게이트** (context metadata).
+  2. **accumulation_score 게이트** (스크리너 메타데이터).
+  3. **레짐 조건부 trend mode** — 모드 전환이 임계값·쿨다운·exit 오버라이드를
+     동시에 바꿈(조건이 아니라 파라미터 세트 스위칭).
+  4. 진입 세션 시간 필터(williams_r #1과 동일).
+  5. ATR-엣지 피연산자 산술(`atr/close >= round_trip_cost × ratio`).
+  6. intrabar reclaim OR-분기 + 모드별 이중 쿨다운.
+- 종합: **마이그레이션 완료 0건 — 선언형 YAML은 출하하지 않음**(동등성 미증명
+  버전 출하 금지 원칙). 다음 어휘 확장 우선순위(별도 PR, P2-a 후속):
+  ① 세션 시간 필터 + ② 지표 타임프레임(이 둘이 williams_r을 언블록) →
+  ③ 중첩 그룹/피연산자 산술(pattern_pullback) → ④ 메타데이터 게이트
+  (momentum_breakout; watchlist·score는 스키마보다 프레임워크 게이트 후보).
+  Setup A/C/D는 이번 파일럿 범위 밖(context 필드 의존).
+
 ### P2-d. Builder UI 정합
 - 신규 스키마 필드(방향/exit 프리미티브/게이트)를 UI 카탈로그·`/capabilities`에 노출.
 - `config/strategies/built/golden_cross.yaml`의 stale "cross 스트리밍 불가" 주석 정리.
