@@ -1,0 +1,105 @@
+strategy:
+  name: golden_cross
+  asset_class: stock
+  # Disabled: this builder_v1 strategy uses cross_above/cross_below on
+  # arbitrary-period SMA operands, which the decoupled streaming runtime cannot
+  # evaluate (no cross-cycle history series, no arbitrary-period SMA keys). While
+  # enabled it never traded — StrategyFactory skipped it with a warning and
+  # BuilderStrategyEntry logged a startup ERROR on every boot. Re-enable only once
+  # streaming cross support lands. See shared/strategy_builder/runtime_support.py
+  # and tests/unit/config/test_built_strategies_streaming_compat.py.
+  enabled: false
+  description: 단기 MA가 장기 MA를 상향 돌파 시 매수
+  entry:
+    type: builder_v1
+    params:
+      builder_state: &id001
+        metadata:
+          id: golden_cross
+          name: 골든크로스
+          description: 단기 MA가 장기 MA를 상향 돌파 시 매수
+          category: trend
+          tags:
+          - ma
+          - crossover
+          - trend
+          author: KIS
+        asset_class: stock
+        indicators:
+        - id: sma_1
+          indicator_id: sma
+          alias: sma_fast
+          display_name: null
+          params:
+            period: 5
+          output: value
+        - id: sma_2
+          indicator_id: sma
+          alias: sma_slow
+          display_name: null
+          params:
+            period: 20
+          output: value
+        entry:
+          logic: AND
+          conditions:
+          - id: entry_1
+            left:
+              type: indicator
+              indicator_alias: sma_fast
+              indicator_output: value
+              value: null
+              price_field: null
+            operator: cross_above
+            right:
+              type: indicator
+              indicator_alias: sma_slow
+              indicator_output: value
+              value: null
+              price_field: null
+        exit:
+          logic: AND
+          conditions:
+          - id: exit_1
+            left:
+              type: indicator
+              indicator_alias: sma_fast
+              indicator_output: value
+              value: null
+              price_field: null
+            operator: cross_below
+            right:
+              type: indicator
+              indicator_alias: sma_slow
+              indicator_output: value
+              value: null
+              price_field: null
+        risk:
+          order_amount: 1000000.0
+          stop_loss:
+            enabled: true
+            percent: 5.0
+          take_profit:
+            enabled: false
+            percent: 10.0
+          trailing_stop:
+            enabled: false
+            percent: 3.0
+      cooldown_seconds: 0
+      min_confidence: 0.5
+  exit:
+    type: builder_v1_exit
+    params:
+      builder_state: *id001
+      stop_loss_pct: 5.0
+      take_profit_pct: 10.0
+      trailing_stop_pct: 0.0
+      min_confidence: 0.5
+  position:
+    type: fixed
+    params:
+      order_amount_per_stock: 1000000
+  _builder_meta:
+    registered_at: '2026-06-13T06:20:15.592687+00:00'
+    schema_version: builder_v1
+    source: kis-builder/register-paper
