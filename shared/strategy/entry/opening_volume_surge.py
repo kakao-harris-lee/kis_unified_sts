@@ -10,13 +10,15 @@ Notes:
     after-close watchlist, but this entry is purely intraday volume-based.
   - "Execution rate" isn't directly available in our current quote schema;
     we approximate strength using price position within day's range and % change.
+  - The 1-minute return and RVOL spike-hit window are tracked by the indicator
+    package's stateful quote trackers (``shared.indicators.engine.stateful``,
+    P1-b2); this entry keeps only the thresholds and the composite score.
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, time
 
@@ -26,6 +28,7 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo
 
 from shared.config.mixins import ConfigMixin
+from shared.indicators.engine.stateful import MinuteReturnTracker, SpikeHitWindow
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.entry.gates import MarketSessionWindow, is_in_entry_session
@@ -84,9 +87,13 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
     CONFIG_CLASS = OpeningVolumeSurgeConfig
 
     def __init__(self, config: OpeningVolumeSurgeConfig):
-        self._last_minute_close: dict[str, tuple[int, float]] = {}
-        self._spike_windows: dict[str, deque[tuple[int, int]]] = {}
         super().__init__(config)
+        self._minute_returns = MinuteReturnTracker()
+        self._spike_hits = (
+            SpikeHitWindow(lookback_minutes=config.spike_lookback_minutes)
+            if config.spike_lookback_minutes > 0
+            else None
+        )
 
     def _validate_config(self):
         if self.config.only_first_minutes < 0:
@@ -101,9 +108,7 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             raise ValueError("volume_multiplier must be > 0")
         mode = str(self.config.volume_gate_mode).lower()
         if mode not in ("cumulative", "rvol", "either", "both"):
-            raise ValueError(
-                "volume_gate_mode must be cumulative|rvol|either|both"
-            )
+            raise ValueError("volume_gate_mode must be cumulative|rvol|either|both")
         if self.config.min_rvol < 0:
             raise ValueError("min_rvol must be >= 0")
         if self.config.min_day_range_pct < 0:
@@ -120,7 +125,9 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             raise ValueError("spike_lookback_minutes must be >= 0")
         if self.config.min_spike_hits < 0:
             raise ValueError("min_spike_hits must be >= 0")
-        if self.config.entry_cutoff_hour != -1 and not (0 <= self.config.entry_cutoff_hour <= 23):
+        if self.config.entry_cutoff_hour != -1 and not (
+            0 <= self.config.entry_cutoff_hour <= 23
+        ):
             raise ValueError("entry_cutoff_hour must be -1 or 0..23")
         if not (0 <= self.config.entry_cutoff_minute <= 59):
             raise ValueError("entry_cutoff_minute must be 0..59")
@@ -172,9 +179,8 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
         )
         minutes_since_open = (now - open_dt).total_seconds() / 60.0
 
-        if (
-            self.config.only_first_minutes > 0
-            and minutes_since_open > float(self.config.only_first_minutes)
+        if self.config.only_first_minutes > 0 and minutes_since_open > float(
+            self.config.only_first_minutes
         ):
             return None
         if self.config.entry_cutoff_hour >= 0:
@@ -265,39 +271,26 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             return None
 
         minute_key = int(now.timestamp() // 60)
-        ret_1m_pct = 0.0
-        prev_minute_close = self._last_minute_close.get(code)
-        if prev_minute_close is not None:
-            prev_minute_key, prev_close = prev_minute_close
-            if minute_key > prev_minute_key and prev_close > 0:
-                ret_1m_pct = (close / prev_close - 1.0) * 100.0
+        ret_1m_pct = self._minute_returns.return_pct(code, minute_key, close)
 
         spike_hits_window = 0
         if (
             self.config.rvol_spike_threshold > 0
-            and self.config.spike_lookback_minutes > 0
+            and self._spike_hits is not None
             and self.config.min_spike_hits > 0
         ):
-            dq = self._spike_windows.get(code)
-            if dq is None:
-                dq = deque()
-                self._spike_windows[code] = dq
-
-            if not dq or dq[-1][0] != minute_key:
-                hit = 1 if rvol >= self.config.rvol_spike_threshold else 0
-                dq.append((minute_key, hit))
-
-            min_allowed = minute_key - self.config.spike_lookback_minutes + 1
-            while dq and dq[0][0] < min_allowed:
-                dq.popleft()
-
-            spike_hits_window = sum(v for _, v in dq)
+            spike_hits_window = self._spike_hits.record_and_count(
+                code, minute_key, rvol >= self.config.rvol_spike_threshold
+            )
             if spike_hits_window < self.config.min_spike_hits:
-                self._last_minute_close[code] = (minute_key, close)
+                self._minute_returns.commit(code, minute_key, close)
                 return None
 
-        if self.config.min_return_1m_pct > 0 and ret_1m_pct < self.config.min_return_1m_pct:
-            self._last_minute_close[code] = (minute_key, close)
+        if (
+            self.config.min_return_1m_pct > 0
+            and ret_1m_pct < self.config.min_return_1m_pct
+        ):
+            self._minute_returns.commit(code, minute_key, close)
             return None
 
         vol_ratio = volume / prev_day_volume if prev_day_volume > 0 else 0.0
@@ -307,12 +300,15 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             + self.config.score_weight_change_pct * max(change_pct, 0.0)
             + self.config.score_weight_range_pos * max(range_pos, 0.0)
         )
-        if self.config.min_signal_score >= 0 and signal_score < self.config.min_signal_score:
-            self._last_minute_close[code] = (minute_key, close)
+        if (
+            self.config.min_signal_score >= 0
+            and signal_score < self.config.min_signal_score
+        ):
+            self._minute_returns.commit(code, minute_key, close)
             return None
 
         confidence = min(1.0, max(0.5, vol_ratio / 2.0))
-        self._last_minute_close[code] = (minute_key, close)
+        self._minute_returns.commit(code, minute_key, close)
 
         logger.info(
             f"Opening volume surge ENTRY: {code} "

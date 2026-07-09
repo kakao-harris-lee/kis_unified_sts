@@ -24,6 +24,7 @@ import pandas as pd
 
 from shared.config.mixins import ConfigMixin
 from shared.indicators.reference import ATRCalculator
+from shared.indicators.series import rolling_return_std, rvol_last, sma
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.market_time import to_kst
@@ -74,9 +75,13 @@ class TrixGoldenConfig(ConfigMixin):
     rvol_threshold: float = 1.2
 
     # 변동성 필터 (고변동 종목 차단)
-    max_atr_pct: float = 0.0  # ATR% 상한 (0 = 비활성). 예: 0.008 = ATR이 종가의 0.8% 초과 시 차단
+    max_atr_pct: float = (
+        0.0  # ATR% 상한 (0 = 비활성). 예: 0.008 = ATR이 종가의 0.8% 초과 시 차단
+    )
     atr_period: int = 14
-    max_return_vol: float = 0.0  # 수익률 변동성 상한 (0 = 비활성). 예: 0.008 = 5분봉 수익률 std > 0.8% 차단
+    max_return_vol: float = (
+        0.0  # 수익률 변동성 상한 (0 = 비활성). 예: 0.008 = 5분봉 수익률 std > 0.8% 차단
+    )
     return_vol_period: int = 60  # rolling window (5분봉 60개 = ~5시간)
 
     # Market state filter
@@ -125,7 +130,6 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         super().__init__(config)
         self._last_signal_at: dict[str, datetime] = {}
         self._daily_signal_count: dict[str, int] = {}  # "code:date" → count
-
 
     def _validate_config(self) -> None:
         """설정 유효성 검증."""
@@ -176,7 +180,10 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         # Daily signal frequency limit (과진동 종목 자동 차단)
         if self.config.max_signals_per_day > 0:
             day_key = f"{code}:{now.strftime('%Y-%m-%d')}"
-            if self._daily_signal_count.get(day_key, 0) >= self.config.max_signals_per_day:
+            if (
+                self._daily_signal_count.get(day_key, 0)
+                >= self.config.max_signals_per_day
+            ):
                 return None
 
         # Market state filter
@@ -240,7 +247,9 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         # Track daily signal count
         if self.config.max_signals_per_day > 0:
             day_key = f"{code}:{now.strftime('%Y-%m-%d')}"
-            self._daily_signal_count[day_key] = self._daily_signal_count.get(day_key, 0) + 1
+            self._daily_signal_count[day_key] = (
+                self._daily_signal_count.get(day_key, 0) + 1
+            )
 
         return Signal(
             code=code,
@@ -341,34 +350,31 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
             if atr_pct > self.config.max_atr_pct:
                 return False
 
-        # 수익률 변동성 필터 (rolling std of returns)
-        if self.config.max_return_vol > 0 and len(df) >= self.config.return_vol_period + 1:
-            returns = df["close"].pct_change()
-            vol = returns.rolling(self.config.return_vol_period).std().iloc[-1]
+        # 수익률 변동성 필터 (indicator-package rolling std of returns)
+        if (
+            self.config.max_return_vol > 0
+            and len(df) >= self.config.return_vol_period + 1
+        ):
+            vol = rolling_return_std(df["close"], self.config.return_vol_period).iloc[
+                -1
+            ]
             if not pd.isna(vol) and vol > self.config.max_return_vol:
                 return False
 
         # Uncorrelated filters
         if self.config.use_uncorrelated_filters:
-            # Price > SMA (trend confirmation)
+            # Price > SMA (trend confirmation; indicator-package math)
             if self.config.require_above_sma:
                 close = float(df["close"].iloc[-1])
-                sma = df["close"].rolling(self.config.sma_period).mean()
-                if pd.isna(sma.iloc[-1]) or close <= float(sma.iloc[-1]):
+                sma_last = sma(df["close"], self.config.sma_period).iloc[-1]
+                if pd.isna(sma_last) or close <= float(sma_last):
                     return False
 
-            # RVOL filter (volume confirmation)
+            # RVOL filter (volume confirmation; indicator-package math)
             if self.config.rvol_filter:
                 rvol = market_data.get("rvol")
                 if rvol is None and "volume" in df.columns:
-                    vol_ma = (
-                        df["volume"]
-                        .rolling(self.config.sma_period)
-                        .mean()
-                        .iloc[-1]
-                    )
-                    if vol_ma > 0:
-                        rvol = float(df["volume"].iloc[-1]) / float(vol_ma)
+                    rvol = rvol_last(df["volume"], self.config.sma_period)
                 if rvol is not None and float(rvol) < self.config.rvol_threshold:
                     return False
 
@@ -396,9 +402,7 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         trix_prev = df["trix"].iloc[-2]
         trix_signal_prev = df["trix_signal"].iloc[-2]
 
-        if not (
-            trix_current > trix_signal_current and trix_prev <= trix_signal_prev
-        ):
+        if not (trix_current > trix_signal_current and trix_prev <= trix_signal_prev):
             return False
 
         # MACD Oscillator > 0
@@ -428,7 +432,9 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
 
         # TRIX strength: spread normalized
         trix_spread = df["trix"].iloc[i] - df["trix_signal"].iloc[i]
-        trix_score = min(1.0, max(0.0, abs(trix_spread) * self.config.trix_spread_scale))
+        trix_score = min(
+            1.0, max(0.0, abs(trix_spread) * self.config.trix_spread_scale)
+        )
         scores.append(trix_score)
 
         # TRIX acceleration (positive delta)
@@ -442,17 +448,19 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         cci_score = max(0.2, min(1.0, 1.0 - cci / self.config.cci_norm_range))
         scores.append(cci_score)
 
-        # Price vs SMA (if available)
+        # Price vs SMA (if available; indicator-package math)
         if "close" in df.columns and len(df) >= self.config.sma_period:
             close = float(df["close"].iloc[i])
-            sma = float(
-                df["close"].rolling(self.config.sma_period).mean().iloc[i]
-            )
-            if sma > 0:
-                sma_dist = (close - sma) / sma
+            sma_now = float(sma(df["close"], self.config.sma_period).iloc[i])
+            if sma_now > 0:
+                sma_dist = (close - sma_now) / sma_now
                 sma_score = min(
                     1.0,
-                    max(0.0, self.config.sma_dist_base + sma_dist * self.config.sma_dist_scale),
+                    max(
+                        0.0,
+                        self.config.sma_dist_base
+                        + sma_dist * self.config.sma_dist_scale,
+                    ),
                 )
                 scores.append(sma_score)
 

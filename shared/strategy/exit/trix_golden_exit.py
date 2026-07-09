@@ -28,6 +28,7 @@ import pandas as pd
 
 from shared.config.mixins import ConfigMixin
 from shared.indicators.momentum import DivergenceDetector
+from shared.indicators.series import swing_low
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
@@ -48,7 +49,9 @@ class TrixGoldenExitConfig(ConfigMixin):
 
     # Partial exit
     partial_exit_ratio: float = 0.5
-    partial_exit_enabled: bool = False  # v2: 분할청산 비활성화 (승자를 일찍 자르지 않음)
+    partial_exit_enabled: bool = (
+        False  # v2: 분할청산 비활성화 (승자를 일찍 자르지 않음)
+    )
 
     # Minimum hold time (stop loss와 EOD 제외)
     min_hold_minutes: int = 60  # 60분 최소 보유 (60분 WR 56.2% 근거)
@@ -154,9 +157,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
     # Main Interface
     # -------------------------------------------------------------------------
 
-    async def should_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, ExitSignal | None]:
+    async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         """Check if position should exit."""
         signal = self._check_position(
             position=context.position,
@@ -364,10 +365,10 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
             return None
 
         # --- Priority 5: Bearish Divergence ---
-        if (
-            len(df) >= self.config.divergence_lookback
-            and self._divergence_detector.detect_bearish(df["close"], df["trix"])
-        ):
+        bearish_divergence = len(df) >= self.config.divergence_lookback and (
+            self._divergence_detector.detect_bearish(df["close"], df["trix"])
+        )
+        if bearish_divergence:
             logger.warning(
                 "[%s] BEARISH DIVERGENCE detected for %s! Full exit.",
                 self.name,
@@ -578,13 +579,13 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
 
     @staticmethod
     def _find_swing_low(df: pd.DataFrame, lookback: int) -> float | None:
-        """Find the swing low (lowest low) over the last N bars before the signal bar."""
-        if len(df) < lookback + 1:
-            return None
-        lows = df["low"].iloc[-(lookback + 1) : -1]
-        if lows.empty:
-            return None
-        return float(lows.min())
+        """Swing low over the last N bars before the signal bar.
+
+        Delegates the rolling-extrema math to the indicator package
+        (``shared.indicators.series.swing_low``, P1-b2); value-identical to the
+        previous inline slice-and-min.
+        """
+        return swing_low(df["low"], lookback)
 
     @staticmethod
     def _calc_profit_pct(position: Position, current_price: float) -> float:

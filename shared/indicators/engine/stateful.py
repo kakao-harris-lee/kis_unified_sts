@@ -2,7 +2,7 @@
 
 The engine's :class:`~shared.indicators.engine.base.IndicatorBackend` is a *pure,
 stateless* ``compute(spec, window) -> values`` function — the right model for
-indicators that are a function of a bounded OHLCV window. But two runtime
+indicators that are a function of a bounded OHLCV window. But a few runtime
 indicators are fundamentally **stateful**: they accumulate raw ticks over a
 session and cannot be reconstructed from a bar window without changing their
 meaning:
@@ -13,6 +13,12 @@ meaning:
   which is a cumulative-over-window typical-price VWAP — a different indicator.)
 * :class:`VolumeAccelerationCalculator` — velocity/acceleration of volume over
   trailing *tick-second* windows. (Distinct from the bar-based ``volume_acceleration``.)
+* :class:`MinuteReturnTracker` / :class:`SpikeHitWindow` — minute-keyed
+  per-symbol quote trackers (1-minute close-to-close return; rolling count of
+  per-minute threshold hits). Absorbed from the ``opening_volume_surge`` entry
+  strategy's inline state — a last-value dict and per-symbol deques (P1-b2,
+  ``docs/plans/2026-07-08-new-architecture-refactoring-plan.md`` §3); the
+  strategy keeps its thresholds/score composition and only reads these values.
 
 They are therefore a first-class *category* of their own — kept here, under the
 engine package, so all indicator computation lives in one place, but with their
@@ -392,3 +398,105 @@ class VWAPCalculator:
             self._data.pop(code, None)
         else:
             self._data.clear()
+
+
+class MinuteReturnTracker:
+    """Per-symbol 1-minute close-to-close return, minute-keyed.
+
+    Stateful quote tracker: the caller derives a monotonically increasing
+    ``minute_key`` (e.g. ``int(ts.timestamp() // 60)``) and controls when the
+    reference close is committed, so read and write points can differ (a
+    strategy may abandon a bar after reading the return without committing).
+
+    Value contract (pinned by the P1-b2 golden tests): the return is
+    ``(close / prev_close - 1) * 100`` only when ``minute_key`` is strictly
+    greater than the committed key and the committed close is positive;
+    otherwise ``0.0``.
+    """
+
+    def __init__(self) -> None:
+        self._last_close: dict[str, tuple[int, float]] = {}
+
+    def return_pct(self, code: str, minute_key: int, close: float) -> float:
+        """Return the 1-minute return (%) vs the last committed close.
+
+        Pure read — does not mutate state.
+
+        Args:
+            code: Symbol code.
+            minute_key: Minute bucket of ``close`` (epoch minutes).
+            close: Current price.
+
+        Returns:
+            Percent return, or ``0.0`` when no valid reference exists.
+        """
+        prev = self._last_close.get(code)
+        if prev is None:
+            return 0.0
+        prev_minute_key, prev_close = prev
+        if minute_key > prev_minute_key and prev_close > 0:
+            return (close / prev_close - 1.0) * 100.0
+        return 0.0
+
+    def commit(self, code: str, minute_key: int, close: float) -> None:
+        """Persist ``close`` as the reference for the next minute's return."""
+        self._last_close[code] = (minute_key, close)
+
+    def reset(self, code: str | None = None) -> None:
+        """Clear tracked state for ``code`` (or all symbols when ``None``)."""
+        if code:
+            self._last_close.pop(code, None)
+        else:
+            self._last_close.clear()
+
+
+class SpikeHitWindow:
+    """Rolling count of per-minute threshold hits within a lookback window.
+
+    Stateful quote tracker keyed by symbol: each minute contributes at most one
+    (minute_key, hit) observation — repeat calls within the same minute reuse
+    the first observation. Entries older than
+    ``minute_key - lookback_minutes + 1`` are pruned before counting.
+
+    The threshold decision itself (e.g. ``rvol >= spike_threshold``) belongs to
+    the caller; this class only owns the rolling-window bookkeeping.
+    """
+
+    def __init__(self, lookback_minutes: int) -> None:
+        if lookback_minutes <= 0:
+            raise ValueError(f"lookback_minutes must be > 0, got {lookback_minutes}")
+        self.lookback_minutes = lookback_minutes
+        self._windows: dict[str, deque[tuple[int, int]]] = {}
+
+    def record_and_count(self, code: str, minute_key: int, hit: bool) -> int:
+        """Record this minute's hit flag and return the in-window hit count.
+
+        Args:
+            code: Symbol code.
+            minute_key: Minute bucket (epoch minutes), non-decreasing per code.
+            hit: Whether this minute's observation passed the caller threshold.
+
+        Returns:
+            Number of hit-minutes within the lookback window (current minute
+            included).
+        """
+        dq = self._windows.get(code)
+        if dq is None:
+            dq = deque()
+            self._windows[code] = dq
+
+        if not dq or dq[-1][0] != minute_key:
+            dq.append((minute_key, 1 if hit else 0))
+
+        min_allowed = minute_key - self.lookback_minutes + 1
+        while dq and dq[0][0] < min_allowed:
+            dq.popleft()
+
+        return sum(v for _, v in dq)
+
+    def reset(self, code: str | None = None) -> None:
+        """Clear tracked state for ``code`` (or all symbols when ``None``)."""
+        if code:
+            self._windows.pop(code, None)
+        else:
+            self._windows.clear()

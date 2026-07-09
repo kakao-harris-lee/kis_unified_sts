@@ -5,7 +5,9 @@ Bidirectional trend-follow:
 - SHORT on MACD bearish crossover with EMA-fast < EMA-slow downtrend confirmation.
 
 Uses 15-minute MACD line/signal already produced by IndicatorEngine momentum DF.
-EMA-fast/EMA-slow are computed inline from `close` to keep the entry self-contained.
+EMA-fast/EMA-slow and the volume-MA confirmation delegate to the indicator
+package's series primitives (``shared.indicators.series``, P1-b2) — the entry
+only composes the crossover/regime conditions.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from shared.config.mixins import ConfigMixin
+from shared.indicators.series import ema, sma
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.gates.adapter_helper import (
@@ -239,14 +242,10 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
         if self.config.use_hist_filter and abs(osc_now) < self.config.hist_min_abs:
             return None
 
-        # EMA regime filter
+        # EMA regime filter (indicator-package math, strategy only reads values)
         close_series = df["close"]
-        ema_fast = close_series.ewm(
-            span=self.config.ema_fast_period, adjust=False
-        ).mean()
-        ema_slow = close_series.ewm(
-            span=self.config.ema_slow_period, adjust=False
-        ).mean()
+        ema_fast = ema(close_series, self.config.ema_fast_period)
+        ema_slow = ema(close_series, self.config.ema_slow_period)
         close_now = float(close_series.iloc[-1])
         ema_fast_now = float(ema_fast.iloc[-1])
         ema_slow_now = float(ema_slow.iloc[-1])
@@ -271,7 +270,7 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
         if len(df) < period + 1:
             return False
         vol = float(df["volume"].iloc[-1])
-        vol_ma = float(df["volume"].rolling(period).mean().iloc[-1])
+        vol_ma = float(sma(df["volume"], period).iloc[-1])
         if vol_ma <= 0:
             return False
         return vol >= self.config.volume_threshold * vol_ma
