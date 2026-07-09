@@ -338,6 +338,46 @@ class RuntimeLedgerRecordMixin:
             rows = self._require_conn().execute(sql, params).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    def query_position_snapshots_daily(
+        self,
+        asset_class: str | None = None,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Latest snapshot per (position_id, day) for exposure-over-time charts.
+
+        Groups by position_id AND snapshot day, taking the max row_id in each
+        day (so a position contributes one row per day it was live). Read-only.
+        """
+        sql = """
+            SELECT ps.*
+            FROM position_snapshots ps
+            JOIN (
+                SELECT position_id, substr(snapshot_time, 1, 10) AS day,
+                       MAX(row_id) AS row_id
+                FROM position_snapshots
+                GROUP BY position_id, substr(snapshot_time, 1, 10)
+            ) latest
+              ON ps.position_id = latest.position_id
+             AND ps.row_id = latest.row_id
+            WHERE 1=1
+        """
+        params: list[Any] = []
+        if asset_class:
+            sql += " AND ps.asset_class = ?"
+            params.append(asset_class)
+        if start:
+            sql += " AND substr(ps.snapshot_time, 1, 10) >= ?"
+            params.append(start)
+        if end:
+            sql += " AND substr(ps.snapshot_time, 1, 10) <= ?"
+            params.append(end)
+        sql += " ORDER BY ps.snapshot_time ASC, ps.position_id ASC"
+        with self._lock:
+            rows = self._require_conn().execute(sql, params).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     def query_trades(
         self, filters: Mapping[str, Any] | None = None
     ) -> list[dict[str, Any]]:
