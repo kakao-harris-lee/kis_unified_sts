@@ -1,6 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider } from "next-themes";
 import { useState } from "react";
 import { AuthProvider } from "@/contexts";
 import { AssetClassProvider } from "@/contexts/dashboard/AssetClassContext";
@@ -30,16 +31,20 @@ export function Providers({ children }: ProvidersProps) {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>
-      {/* Single /ws subscription → React Query invalidation. Mounted here so it
-          lives under QueryClientProvider and mounts exactly once for the app. */}
-      <RealtimeBridge />
-      <AuthProvider>
-        <AssetClassProvider>
-          <ToastProvider>{children}</ToastProvider>
-        </AssetClassProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+    // defaultTheme="system" + enableSystem preserves the prior behavior: users
+    // on OS dark still land in dark on first visit (no stored preference yet).
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <QueryClientProvider client={queryClient}>
+        {/* Single /ws subscription → React Query invalidation. Mounted here so it
+            lives under QueryClientProvider and mounts exactly once for the app. */}
+        <RealtimeBridge />
+        <AuthProvider>
+          <AssetClassProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </AssetClassProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks";
 import { SettingsModal } from "@/components/settings";
+import ThemeToggle from "@/components/layout/ThemeToggle";
 
 // Dashboard items first (Cockpit / Positions / Signals / Trades),
 // strategy items last (builder / execute). Order matches the
@@ -116,6 +117,9 @@ export function Navigation() {
                   {modeLabel}
                 </span>
               )}
+
+              {/* 테마 토글 (시스템/라이트/다크) */}
+              <ThemeToggle />
 
               {/* 설정 버튼 (톱니바퀴) */}
               <button

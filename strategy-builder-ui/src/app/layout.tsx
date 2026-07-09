@@ -33,7 +33,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko">
+    // suppressHydrationWarning: next-themes sets the theme class on <html>
+    // before hydration, which would otherwise trip a mismatch warning.
+    <html lang="ko" suppressHydrationWarning>
       <body
         className={`${notoSansKR.variable} ${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
       >
