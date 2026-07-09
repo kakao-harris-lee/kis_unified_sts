@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 from shared.indicators.reference import ATRCalculator
+from shared.indicators.series import trailing_change_pct, trailing_max
 
 from .data_classes import BacktestResult, Signal, StockInfo, TechnicalAnalysis
 
@@ -135,24 +136,27 @@ def calc_consecutive_up(returns: pd.Series) -> int:
 
 
 def calc_momentum_metrics(close: pd.Series, lookback: int) -> dict[str, float]:
-    """Compute multi‑horizon return and proximity metrics."""
+    """Compute multi‑horizon return and proximity metrics.
+
+    ROC math delegates to ``series.trailing_change_pct`` (ratio form over
+    exactly ``days`` bar-to-bar moves; insufficient history / zero base map
+    back to the historical 0.0) and the lookback high to
+    ``series.trailing_max``.
+    """
     metrics: dict[str, float] = {}
     if close is None or len(close) < 2:
         return metrics
 
     def _ret(days: int) -> float:
-        if len(close) <= days:
-            return 0.0
-        prev = float(close.iloc[-days - 1])
-        cur = float(close.iloc[-1])
-        return ((cur / prev) - 1.0) * 100 if prev else 0.0
+        change = trailing_change_pct(close, days)
+        return change if change is not None else 0.0
 
     metrics["ret_5d"] = _ret(5)
     metrics["ret_20d"] = _ret(20)
     metrics["ret_60d"] = _ret(60)
 
-    window = close.tail(min(len(close), lookback))
-    high = float(window.max()) if len(window) else 0.0
+    high_val = trailing_max(close, lookback)
+    high = float(high_val) if high_val is not None else 0.0
     metrics["high_lookback"] = high
     metrics["high_proximity"] = float(close.iloc[-1] / high) if high else 0.0
     return metrics

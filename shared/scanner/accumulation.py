@@ -28,6 +28,12 @@ import pandas as pd
 import redis
 
 from shared.config.tls import build_redis_tls_params
+from shared.indicators.series import (
+    atr_series_padded,
+    normalized_slope,
+    relative_strength_pct,
+    trailing_mean_ratio,
+)
 from shared.indicators.volume import OBVCalculator
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
@@ -77,29 +83,20 @@ def _calculate_atr(df: pd.DataFrame, period: int = 14) -> np.ndarray:
         df: DataFrame with 'high', 'low', 'close' columns
         period: ATR period (default 14)
 
+    Delegates to ``series.atr_series_padded`` (first-bar TR seeded with
+    ``prev_close = close[0]``, ``rolling(period, min_periods=1)`` mean — the
+    padded no-NaN-warmup convention this scanner has always used;
+    value-identical, golden-pinned).
+
     Returns:
         Array of ATR values
     """
-    high = df["high"].values
-    low = df["low"].values
-    close = df["close"].values
-
-    # True Range = max of:
-    # 1. high - low
-    # 2. abs(high - prev_close)
-    # 3. abs(low - prev_close)
-    prev_close = np.roll(close, 1)
-    prev_close[0] = close[0]  # First value has no previous
-
-    tr1 = high - low
-    tr2 = np.abs(high - prev_close)
-    tr3 = np.abs(low - prev_close)
-
-    true_range = np.maximum(tr1, np.maximum(tr2, tr3))
-
-    # ATR = SMA of True Range
-    atr = pd.Series(true_range).rolling(window=period, min_periods=1).mean().values
-    return atr
+    return atr_series_padded(
+        df["high"].to_numpy(dtype=float),
+        df["low"].to_numpy(dtype=float),
+        df["close"].to_numpy(dtype=float),
+        period=period,
+    )
 
 
 def _calculate_obv_score(df: pd.DataFrame) -> tuple[float, float]:
@@ -117,23 +114,11 @@ def _calculate_obv_score(df: pd.DataFrame) -> tuple[float, float]:
     obv_data = calculator.calculate(prices, volumes)
     obv_values = obv_data.obv_values
 
-    # Linear regression on OBV to detect trend
-    x = np.arange(len(obv_values))
-    y = np.array(obv_values)
-
-    if len(x) < 2:
+    # Mean-normalized linear-regression slope of OBV (series.normalized_slope;
+    # None covers both the <2-points and zero-mean guards).
+    slope = normalized_slope(obv_values)
+    if slope is None:
         return 0.0, 0.0
-
-    # Normalize y to avoid scale issues
-    y_mean = np.mean(y)
-    if y_mean == 0:
-        return 0.0, 0.0
-
-    y_norm = y / y_mean
-
-    # Fit line: y = mx + b
-    coeffs = np.polyfit(x, y_norm, 1)
-    slope = coeffs[0]
 
     # Score based on positive slope strength
     # Strong uptrend: slope > 0.02 → 40 pts
@@ -160,15 +145,12 @@ def _calculate_rvol_score(df: pd.DataFrame) -> tuple[float, float, float, float]
     if len(df) < 20:
         return 0.0, 0.0, 0.0, 0.0
 
-    volumes = df["volume"].values
+    # 5d/20d trailing-mean volume ratio (series.trailing_mean_ratio; ratio is
+    # None when the 20d mean is zero).
+    rvol_ratio, avg_5d, avg_20d = trailing_mean_ratio(df["volume"].values, 5, 20)
 
-    avg_5d = np.mean(volumes[-5:])
-    avg_20d = np.mean(volumes[-20:])
-
-    if avg_20d == 0:
+    if rvol_ratio is None:
         return 0.0, 0.0, avg_5d, avg_20d
-
-    rvol_ratio = avg_5d / avg_20d
 
     # Score based on RVOL ratio
     # Strong buildup: rvol > 1.5 → 30 pts
@@ -245,22 +227,11 @@ def _calculate_strength_score(df: pd.DataFrame, market_df: pd.DataFrame) -> floa
     Returns:
         Relative strength score (0-10)
     """
-    if len(df) < 20 or len(market_df) < 20:
+    # 20d window-edge relative strength (series.relative_strength_pct; None
+    # covers the insufficient-length and zero-start-price guards).
+    relative_strength = relative_strength_pct(df["close"], market_df["close"], 20)
+    if relative_strength is None:
         return 0.0
-
-    # Calculate % change over last 20 days
-    stock_start = df["close"].iloc[-20]
-    stock_end = df["close"].iloc[-1]
-    market_start = market_df["close"].iloc[-20]
-    market_end = market_df["close"].iloc[-1]
-
-    if stock_start == 0 or market_start == 0:
-        return 0.0
-
-    stock_pct = (stock_end - stock_start) / stock_start * 100
-    market_pct = (market_end - market_start) / market_start * 100
-
-    relative_strength = stock_pct - market_pct
 
     # Score based on relative strength
     # Strong outperformance: RS > +5% → 10 pts

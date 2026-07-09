@@ -15,6 +15,7 @@ import requests
 from shared.calendar import MarketCalendar
 from shared.collector.historical.futures import KIS_SHORT_CODES, KOSPI200F_FRONT_CODE
 from shared.config.secrets import SecretsManager
+from shared.indicators.series import macd_lines, rolling_std, rsi_sma, sma
 from shared.kis.auth import KISAuthConfig, KISAuthManager
 
 from .config import LLMConfig
@@ -40,22 +41,14 @@ class StockTechnicalAnalyzer:
 
     @staticmethod
     def calculate_rsi(prices: pd.Series, period: int = 14) -> float:
-        """RSI 계산"""
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
+        """RSI 계산 (SMA 관례 — ``series.rsi_sma``; warmup/flat은 50.0)"""
+        rsi = rsi_sma(prices, period)
         return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
 
     @staticmethod
     def calculate_macd(prices: pd.Series) -> tuple[float, float, float]:
-        """MACD 계산"""
-        ema12 = prices.ewm(span=12, adjust=False).mean()
-        ema26 = prices.ewm(span=26, adjust=False).mean()
-        macd = ema12 - ema26
-        signal = macd.ewm(span=9, adjust=False).mean()
-        hist = macd - signal
+        """MACD 계산 (``series.macd_lines``, adjust=False 관례)"""
+        macd, signal, hist = macd_lines(prices)
         return (
             macd.iloc[-1] if not pd.isna(macd.iloc[-1]) else 0,
             signal.iloc[-1] if not pd.isna(signal.iloc[-1]) else 0,
@@ -64,9 +57,9 @@ class StockTechnicalAnalyzer:
 
     @staticmethod
     def calculate_bollinger(prices: pd.Series, period: int = 20) -> float:
-        """볼린저 밴드 위치 계산 (0~1)"""
-        ma = prices.rolling(window=period).mean()
-        std = prices.rolling(window=period).std()
+        """볼린저 밴드 위치 계산 (0~1; ``series.sma``/``series.rolling_std``)"""
+        ma = sma(prices, period)
+        std = rolling_std(prices, period)
         upper = ma + 2 * std
         lower = ma - 2 * std
 
@@ -82,8 +75,8 @@ class StockTechnicalAnalyzer:
 
     @staticmethod
     def calculate_ma(prices: pd.Series, period: int) -> float:
-        """이동평균 계산"""
-        ma = prices.rolling(window=period).mean()
+        """이동평균 계산 (``series.sma``; warmup은 현재가 폴백)"""
+        ma = sma(prices, period)
         return ma.iloc[-1] if not pd.isna(ma.iloc[-1]) else prices.iloc[-1]
 
     def analyze(self, df: pd.DataFrame) -> TechnicalAnalysis:
@@ -279,9 +272,9 @@ class FuturesTechnicalAnalyzer:
         df: pd.DataFrame,
         index_price: float,
     ) -> tuple[float, float, float]:
-        ma5 = df["close"].rolling(5).mean().iloc[-1]
-        ma20 = df["close"].rolling(20).mean().iloc[-1]
-        ma60 = df["close"].rolling(60).mean().iloc[-1]
+        ma5 = sma(df["close"], 5).iloc[-1]
+        ma20 = sma(df["close"], 20).iloc[-1]
+        ma60 = sma(df["close"], 60).iloc[-1]
         if pd.isna(ma5):
             ma5 = index_price
         if pd.isna(ma20):
@@ -292,22 +285,17 @@ class FuturesTechnicalAnalyzer:
 
     @staticmethod
     def _compute_rsi(df: pd.DataFrame) -> float:
-        delta = df["close"].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        rsi = (100 - (100 / (1 + rs))).iloc[-1]
+        """SMA 관례 RSI (``series.rsi_sma``; warmup/flat은 50.0)."""
+        rsi = rsi_sma(df["close"], 14).iloc[-1]
         if pd.isna(rsi):
             rsi = 50.0
         return float(rsi)
 
     @staticmethod
     def _compute_macd_hist(df: pd.DataFrame) -> float:
-        ema12 = df["close"].ewm(span=12).mean()
-        ema26 = df["close"].ewm(span=26).mean()
-        macd = ema12 - ema26
-        signal = macd.ewm(span=9).mean()
-        return float((macd - signal).iloc[-1])
+        """MACD 히스토그램 (``series.macd_lines``, 레거시 adjust=True 관례)."""
+        _, _, hist = macd_lines(df["close"], adjust=True)
+        return float(hist.iloc[-1])
 
     @staticmethod
     def _compute_pivot_points(df: pd.DataFrame) -> tuple[float, float, float]:
@@ -634,8 +622,8 @@ class StockBacktester:
     def backtest_ma_crossover(self, df: pd.DataFrame, short: int = 5, long: int = 20) -> BacktestResult:
         """이동평균 크로스오버"""
         df = df.copy()
-        df['ma_short'] = df['종가'].rolling(short).mean()
-        df['ma_long'] = df['종가'].rolling(long).mean()
+        df["ma_short"] = sma(df["종가"], short)
+        df["ma_long"] = sma(df["종가"], long)
 
         trades = []
         position = 0
@@ -666,11 +654,7 @@ class StockBacktester:
         """RSI 역추세 전략"""
         df = df.copy()
 
-        delta = df['종가'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
+        df["rsi"] = rsi_sma(df["종가"], 14)
 
         trades = []
         position = 0

@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pandas as pd
 
+from shared.indicators.series import rolling_std, sma
 from shared.utils.math import safe_divide
 
 from .models import RegimeConfig, RegimeSignal, RegimeState
@@ -41,10 +42,10 @@ class StockRegimeDetector:
                 confidence_threshold=self.config.confidence_threshold,
             )
 
-        # Calculate indicators
+        # Calculate indicators (series.sma — plain rolling mean convention)
         close = df["close"]
-        sma_fast = close.rolling(self.config.sma_fast).mean()
-        sma_slow = close.rolling(self.config.sma_slow).mean()
+        sma_fast = sma(close, self.config.sma_fast)
+        sma_slow = sma(close, self.config.sma_slow)
 
         # Current values
         current_sma_fast = sma_fast.iloc[-1]
@@ -57,13 +58,19 @@ class StockRegimeDetector:
             default=0.0,
         )
 
-        # Calculate volatility (handle empty or all-NaN returns)
+        # Calculate volatility (handle empty or all-NaN returns). The dropna()
+        # precedes the rolling window (historical convention), so the plain
+        # series.rolling_std primitive is used rather than rolling_return_std.
         returns = close.pct_change().dropna()
         if len(returns) < self.config.volatility_window:
             volatility = 0.0
         else:
-            vol_series = returns.rolling(self.config.volatility_window).std()
-            volatility = vol_series.iloc[-1] if len(vol_series) > 0 and pd.notna(vol_series.iloc[-1]) else 0.0
+            vol_series = rolling_std(returns, self.config.volatility_window)
+            volatility = (
+                vol_series.iloc[-1]
+                if len(vol_series) > 0 and pd.notna(vol_series.iloc[-1])
+                else 0.0
+            )
 
         # Determine regime
         indicators = {

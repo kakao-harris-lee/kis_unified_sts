@@ -15,14 +15,21 @@ standard, converged with the no-code builder). The flag is off by default so liv
 values are unchanged until the data-server backtest gate
 (``docs/runbooks/streaming-talib-convergence-gate.md``) passes.
 
-The daily-EMA / high-N / ATR accessors below remain here: ATR already delegates to
-the canonical ``reference.ATRCalculator``; the daily trackers are stateful session
-aggregators, not window indicators.
+The daily-EMA / high-N / ATR accessors below remain here as thin shells: ATR
+delegates to the canonical ``reference.ATRCalculator``; the EMA math
+(``_ema_series`` / ``_ema_last`` / ``_calc_daily_ema_aligned``) and the
+trailing-max math (``_calc_high_n``) delegate to ``shared.indicators.series``
+(P1-b item 3; ``series.ema`` is empirically bit-identical to the manual
+``alpha = 2/(span+1)`` loop these methods carried — pinned by
+``tests/unit/trading/test_p1b3_trading_residuals_golden.py``). Only the
+stateful session aggregation (day rollover of highs/closes) stays here.
 """
 
 from __future__ import annotations
 
 from collections import deque
+
+import pandas as pd
 
 from shared.indicators.engine import (
     IndicatorSpec,
@@ -31,6 +38,8 @@ from shared.indicators.engine import (
     window_from_bars,
 )
 from shared.indicators.reference import ATRCalculator
+from shared.indicators.series import ema as series_ema
+from shared.indicators.series import trailing_max
 
 from .indicator_candles import Candle
 
@@ -147,6 +156,10 @@ class IndicatorCalculationMixin:
         Uses daily close prices tracked by _update_daily_close().
         Includes today's last close for responsiveness.
         Returns False if insufficient daily data.
+
+        EMA math delegates to ``series.ema`` (bit-identical to the manual
+        loop this method carried); only the session-close assembly and the
+        alignment gate stay here.
         """
         daily = self._daily_closes.get(symbol)
         if not daily:
@@ -162,14 +175,11 @@ class IndicatorCalculationMixin:
         if len(closes) < max_period:
             return False
 
-        # Compute EMA for each period
-        ema_values: dict[int, float] = {}
-        for period in self._daily_ema_periods:
-            alpha = 2.0 / (period + 1)
-            ema_val = closes[0]
-            for price in closes[1:]:
-                ema_val = alpha * price + (1 - alpha) * ema_val
-            ema_values[period] = ema_val
+        closes_series = pd.Series(closes)
+        ema_values: dict[int, float] = {
+            period: float(series_ema(closes_series, period).iloc[-1])
+            for period in self._daily_ema_periods
+        }
 
         sorted_periods = sorted(self._daily_ema_periods)
         fast = ema_values[sorted_periods[0]]
@@ -182,35 +192,26 @@ class IndicatorCalculationMixin:
 
         Uses daily session highs tracked by _update_daily_high().
         Falls back to intraday candle high if insufficient daily history.
+        Window max delegates to ``series.trailing_max``.
         """
         daily = self._daily_highs.get(symbol)
         if daily and len(daily) > 0:
-            period = min(self._high_period, len(daily))
-            return max(list(daily)[-period:])
+            value = trailing_max(list(daily), self._high_period)
+            return float(value) if value is not None else 0.0
 
         # Fallback: use intraday candle highs (e.g. during first day)
-        period = min(self._high_period, len(candles))
-        if period == 0:
-            return 0.0
-        return max(c.high for c in candles[-period:])
+        value = trailing_max([c.high for c in candles], self._high_period)
+        return float(value) if value is not None else 0.0
 
     @staticmethod
     def _ema_series(values: list[float], span: int) -> list[float]:
-        """EMA series matching pandas ewm(span=span, adjust=False)."""
-        alpha = 2.0 / (span + 1)
-        result = [values[0]]
-        for v in values[1:]:
-            result.append(alpha * v + (1 - alpha) * result[-1])
-        return result
+        """EMA series (``series.ema``, i.e. pandas ewm(span=span, adjust=False))."""
+        return series_ema(pd.Series(values), span).tolist()
 
     @staticmethod
     def _ema_last(values: list[float], span: int) -> float:
-        """Last EMA value only (avoids list allocation)."""
-        alpha = 2.0 / (span + 1)
-        ema = values[0]
-        for v in values[1:]:
-            ema = alpha * v + (1 - alpha) * ema
-        return ema
+        """Last EMA value only (``series.ema`` tail)."""
+        return float(series_ema(pd.Series(values), span).iloc[-1])
 
     @staticmethod
     def _calc_atr_raw(candles: list[Candle], period: int = 14) -> float:

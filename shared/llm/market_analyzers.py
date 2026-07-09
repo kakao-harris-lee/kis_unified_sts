@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from shared.indicators.series import macd_lines, rsi_sma, sma
+
 from .config import LLMConfig
 from .data_classes import (
     BondData,
@@ -332,16 +334,12 @@ class IndexAnalyzer(BaseAnalyzer):
 
             vol_ratio = df["Volume"].tail(5).mean() / df["Volume"].tail(20).mean()
 
-            # RSI
-            delta = df["Close"].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            rs = gain / loss
-            rsi = (100 - (100 / (1 + rs))).iloc[-1]
+            # RSI (SMA 관례 — series.rsi_sma)
+            rsi = rsi_sma(df["Close"], 14).iloc[-1]
 
-            # 추세
-            ma5 = df["Close"].rolling(5).mean().iloc[-1]
-            ma20 = df["Close"].rolling(20).mean().iloc[-1]
+            # 추세 (series.sma)
+            ma5 = sma(df["Close"], 5).iloc[-1]
+            ma20 = sma(df["Close"], 20).iloc[-1]
 
             if price > ma5 > ma20:
                 trend = "상승"
@@ -432,23 +430,16 @@ class TechnicalAnalyzerForFutures(BaseAnalyzer):
         index_price = df["close"].iloc[-1]
         index_change = (df["close"].iloc[-1] / df["close"].iloc[-2] - 1) * 100
 
-        ma5 = df["close"].rolling(5).mean().iloc[-1]
-        ma20 = df["close"].rolling(20).mean().iloc[-1]
-        ma60 = df["close"].rolling(60).mean().iloc[-1]
+        ma5 = sma(df["close"], 5).iloc[-1]
+        ma20 = sma(df["close"], 20).iloc[-1]
+        ma60 = sma(df["close"], 60).iloc[-1]
 
-        # RSI
-        delta = df["close"].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        rsi = (100 - (100 / (1 + rs))).iloc[-1]
+        # RSI (SMA 관례 — series.rsi_sma)
+        rsi = rsi_sma(df["close"], 14).iloc[-1]
 
-        # MACD
-        ema12 = df["close"].ewm(span=12).mean()
-        ema26 = df["close"].ewm(span=26).mean()
-        macd = ema12 - ema26
-        signal = macd.ewm(span=9).mean()
-        macd_hist = (macd - signal).iloc[-1]
+        # MACD (series.macd_lines, 레거시 adjust=True 관례)
+        _, _, hist = macd_lines(df["close"], adjust=True)
+        macd_hist = hist.iloc[-1]
 
         # 피봇
         pivot = (df["high"].iloc[-1] + df["low"].iloc[-1] + df["close"].iloc[-1]) / 3

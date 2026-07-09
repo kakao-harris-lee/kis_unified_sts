@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import ClassVar
 
+import pandas as pd
 from pydantic import Field
 
 from shared.collector.historical.calendar import (
@@ -30,6 +31,8 @@ from shared.collector.historical.calendar import (
 )
 from shared.config.base import ServiceConfigBase
 from shared.exceptions import InfrastructureError
+from shared.indicators.reference import ATRCalculator
+from shared.indicators.series import rsi_sma
 from shared.scanner.trade_trend_priority import TradeTrendPriorityRanker
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
@@ -152,7 +155,13 @@ def _sma(values: list[float], period: int) -> float | None:
 
 
 def _rsi(closes: list[float], period: int) -> float | None:
-    """Wilder's RSI over the last ``period + 1`` closes.
+    """Trailing-window simple-average RSI over the last ``period + 1`` closes.
+
+    Delegates to ``series.rsi_sma`` (Cutler convention — plain mean of the
+    last ``period`` gains/losses; historically mislabeled "Wilder" here).
+    Zero-loss windows, including perfectly flat ones (``rsi_sma`` NaN), keep
+    the historical 100.0 contract. Value-identical to the previous inline
+    loop (golden-pinned).
 
     Args:
         closes: Sequence of closing prices (oldest → newest).
@@ -165,29 +174,17 @@ def _rsi(closes: list[float], period: int) -> float | None:
         return None
 
     window = closes[-(period + 1) :]
-    gains: list[float] = []
-    losses: list[float] = []
-    for i in range(1, len(window)):
-        delta = window[i] - window[i - 1]
-        if delta >= 0:
-            gains.append(delta)
-            losses.append(0.0)
-        else:
-            gains.append(0.0)
-            losses.append(-delta)
-
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
-
-    if avg_loss == 0:
-        return 100.0
-
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
+    value = rsi_sma(pd.Series(window), period).iloc[-1]
+    return 100.0 if pd.isna(value) else float(value)
 
 
 def _atr(bars: list[DailyBar], period: int) -> float | None:
     """Average True Range over the last ``period`` bars.
+
+    Delegates to the canonical ``reference.ATRCalculator`` (``mode="sma"``)
+    on the trailing ``period + 1``-bar window — the plain mean of the last
+    ``period`` True Ranges, value-identical to the previous inline loop
+    (golden-pinned).
 
     Args:
         bars: Sequence of DailyBar (oldest → newest).
@@ -200,19 +197,11 @@ def _atr(bars: list[DailyBar], period: int) -> float | None:
         return None
 
     window = bars[-(period + 1) :]
-    true_ranges: list[float] = []
-    for i in range(1, len(window)):
-        prev_close = window[i - 1].close
-        high = window[i].high
-        low = window[i].low
-        tr = max(
-            high - low,
-            abs(high - prev_close),
-            abs(low - prev_close),
-        )
-        true_ranges.append(tr)
-
-    return sum(true_ranges) / period
+    return ATRCalculator(period=period, mode="sma").atr_last(
+        [b.high for b in window],
+        [b.low for b in window],
+        [b.close for b in window],
+    )
 
 
 # ---------------------------------------------------------------------------
