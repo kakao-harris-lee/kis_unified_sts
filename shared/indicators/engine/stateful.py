@@ -280,14 +280,15 @@ class VWAPCalculator:
         self.config = config or VWAPConfig()
         self._data: dict[str, dict] = {}
 
-    def add_tick(self, code: str, price: float, volume: int, date_str: str):
+    def add_tick(self, code: str, price: float, volume: float, date_str: str):
         """틱 추가
 
         Args:
             code: 종목코드
             price: 체결가
-            volume: 체결량
-            date_str: 날짜 문자열 (YYYYMMDD, 일자 변경 감지용)
+            volume: 체결량 (int 틱 카운트 또는 float 바 볼륨 — 누적 합산만 수행)
+            date_str: 날짜 문자열 (YYYYMMDD 또는 YYYY-MM-DD — 일자 변경 감지용
+                단순 문자열 비교)
         """
         if code not in self._data:
             self._data[code] = {"pv": 0.0, "volume": 0, "date": date_str}

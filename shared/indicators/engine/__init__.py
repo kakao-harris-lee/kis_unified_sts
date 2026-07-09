@@ -20,6 +20,7 @@ from shared.indicators.engine.adapters import (
     window_from_bars,
     window_from_records,
 )
+from shared.indicators.engine.backtest_backend import BacktestCompatBackend
 from shared.indicators.engine.base import (
     IndicatorBackend,
     IndicatorComputationError,
@@ -38,6 +39,7 @@ from shared.indicators.engine.numpy_backend import NumpyBackend
 from shared.indicators.engine.reference_backend import ReferenceBackend
 from shared.indicators.engine.registry import (
     IndicatorEngine,
+    backtest_indicator_engine,
     daily_indicator_engine,
     default_engine,
     momentum_indicator_engine,
@@ -64,6 +66,7 @@ from shared.indicators.engine.streaming_backend import StreamingCompatBackend
 from shared.indicators.engine.talib_backend import TALibBackend
 
 __all__ = [
+    "BacktestCompatBackend",
     "DailyCompatBackend",
     "IndicatorBackend",
     "IndicatorCacheEngine",
@@ -89,6 +92,7 @@ __all__ = [
     "VolumeAcceleration",
     "VolumeAccelerationCalculator",
     "VolumeConfig",
+    "backtest_indicator_engine",
     "daily_indicator_engine",
     "default_engine",
     "flat_key",
