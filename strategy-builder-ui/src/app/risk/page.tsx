@@ -16,6 +16,11 @@ import { useAssetClass } from "@/contexts/dashboard/AssetClassContext";
 import { portfolioApi, reportsApi, tradingApi } from "@/lib/dashboard/api";
 import { marketRiskApi } from "@/lib/dashboard/marketRisk";
 import type { MarketRiskHistory } from "@/lib/dashboard/marketRisk";
+import { analyticsApi } from "@/lib/dashboard/analytics";
+import type {
+  ExposureHistory,
+  StrategyCorrelation,
+} from "@/lib/dashboard/analytics";
 import type { FeedbackListResponse } from "@/lib/dashboard/reports";
 import { QUERY_INTERVALS_MS } from "@/lib/dashboard/queryIntervals";
 import type {
@@ -34,6 +39,8 @@ import {
   EquityCurveChart,
   MddStageChart,
 } from "./components/PortfolioEquityChart";
+import CorrelationHeatmap from "./components/CorrelationHeatmap";
+import ExposureHistoryChart from "./components/ExposureHistoryChart";
 import RegimeEquityChart from "./components/RegimeEquityChart";
 import RollingStatsChart from "./components/RollingStatsChart";
 import UnderwaterChart from "./components/UnderwaterChart";
@@ -260,6 +267,24 @@ export default function RiskPage() {
     refetchInterval: QUERY_INTERVALS_MS.experiments,
   });
 
+  // 전략 상관 히트맵 + 심볼별 노출 추이 (Tier-3 G) — 집중위험/거짓 분산 관찰.
+  const { data: strategyCorrelation } = useQueryWithError<StrategyCorrelation>({
+    queryKey: ["analytics-strategy-correlation", selectedAsset],
+    queryFn: () =>
+      analyticsApi
+        .getStrategyCorrelation({ asset_class: selectedAsset })
+        .then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.experiments,
+  });
+  const { data: exposureHistory } = useQueryWithError<ExposureHistory>({
+    queryKey: ["analytics-exposure-history", selectedAsset],
+    queryFn: () =>
+      analyticsApi
+        .getExposureHistory({ asset_class: selectedAsset })
+        .then((r) => r.data),
+    refetchInterval: QUERY_INTERVALS_MS.experiments,
+  });
+
   // 헤지 어드바이저 (Phase 4B §6.2) — 순 β-노출 셀 전용, 권고 전용 표시.
   const { data: hedgeLatest, refetch: refetchHedge } =
     useQueryWithError<PortfolioHedgeLatest>({
@@ -378,6 +403,12 @@ export default function RiskPage() {
               equity={equityPoints}
               regimeHistory={regimeHistory?.points ?? []}
             />
+          </div>
+
+          {/* 전략 상관 히트맵 + 심볼별 노출 추이 (집중위험/거짓 분산) */}
+          <div className="grid gap-2 lg:grid-cols-2">
+            <CorrelationHeatmap data={strategyCorrelation} />
+            <ExposureHistoryChart data={exposureHistory} />
           </div>
 
           {/* 성과 피드백 요약 (Phase 6B §8 — 표시 전용, 판정 자료) */}

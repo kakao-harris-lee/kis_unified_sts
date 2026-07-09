@@ -110,6 +110,16 @@ class RuntimeLedger(Protocol):
         """Load latest open position snapshots."""
         ...
 
+    def query_position_snapshots_daily(
+        self,
+        asset_class: str | None = None,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Latest position snapshot per (position_id, day) for exposure history."""
+        ...
+
     def query_trades(
         self, filters: Mapping[str, Any] | None = None
     ) -> list[dict[str, Any]]:
