@@ -18,6 +18,7 @@ import HeaderBar from "@/components/dashboard/HeaderBar";
 import ErrorMessage from "@/components/dashboard/ErrorMessage";
 import RefreshIndicator from "@/components/dashboard/RefreshIndicator";
 import SymbolLabel from "@/components/dashboard/SymbolLabel";
+import { useAssetClass } from "@/contexts/dashboard/AssetClassContext";
 import useQueryWithError from "@/hooks/dashboard/useQueryWithError";
 import {
   eventContextApi,
@@ -452,6 +453,7 @@ function uniqueMessages(data?: EventContextDiagnosticsResponse): string[] {
 }
 
 export default function EventContextPage() {
+  const { selectedAsset } = useAssetClass();
   const {
     data,
     isLoading,
@@ -460,10 +462,10 @@ export default function EventContextPage() {
     dataUpdatedAt,
     isFetching,
   } = useQueryWithError<EventContextDiagnosticsResponse>({
-    queryKey: ["event-context-diagnostics", "futures"],
+    queryKey: ["event-context-diagnostics", selectedAsset],
     queryFn: () =>
       eventContextApi
-        .getDiagnostics({ asset_class: "futures" })
+        .getDiagnostics({ asset_class: selectedAsset })
         .then((r) => normalizeEventContextDiagnostics(r.data)),
     refetchInterval: QUERY_INTERVALS_MS.slow,
   });
@@ -495,7 +497,11 @@ export default function EventContextPage() {
                 <p className="text-sm text-slate-500">
                   {data
                     ? `${data.asset_class} · ${fmtDateTime(data.generated_at)}`
-                    : "futures · Setup C source health"}
+                    : `${selectedAsset} · Setup C source health`}
+                </p>
+                <p className="text-xs text-slate-400">
+                  참고: Event Score/Timeline은 자산군 무관 전역 집계입니다
+                  (asset-scoped 아님).
                 </p>
               </div>
             </div>
@@ -618,6 +624,16 @@ export default function EventContextPage() {
           </section>
 
           <section className="space-y-3">
+            {setupC?.enabled === false ? (
+              <div
+                role="status"
+                className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+              >
+                Setup C는{" "}
+                {selectedAsset === "stock" ? "주식(stock)" : selectedAsset}에는
+                적용되지 않습니다 — 선물(futures) 전용 전략입니다.
+              </div>
+            ) : null}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">

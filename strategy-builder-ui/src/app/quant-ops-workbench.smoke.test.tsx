@@ -553,9 +553,12 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
   });
 
   it("renders /event-context sparse diagnostics and empty operator state", async () => {
+    // The AssetClassContext mock returns selectedAsset="stock", so the page
+    // queries asset_class=stock; the backend returns Setup C enabled=false for
+    // stock (setup_c_not_applicable_to_stock), so this fixture mirrors that.
     vi.mocked(eventContextApi.getDiagnostics).mockResolvedValue(
       axiosResponse({
-        asset_class: "futures",
+        asset_class: "stock",
         generated_at: "2026-06-22T09:12:00+09:00",
         event_scores: {
           latest_score_at: null,
@@ -572,7 +575,7 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
         source_timeline: [],
         setup_c: {
           strategy: "setup_c_event_reaction",
-          enabled: true,
+          enabled: false,
           window_minutes: 90,
           min_impact_tier: 2,
           last_eval_at: null,
@@ -602,6 +605,59 @@ describe("Quant Ops Workbench UI smoke coverage", () => {
     expect(await screen.findByText(/Missing event context evidence:/)).toBeInTheDocument();
     expect(screen.getByText("No event-score source breakdown")).toBeInTheDocument();
     expect(screen.getByText("No additional notes from diagnostics.")).toBeInTheDocument();
+    // Setup C N/A banner appears for stock (enabled=false).
+    expect(await screen.findByText(/적용되지 않습니다/)).toBeInTheDocument();
+    // Query threaded the selected asset class.
+    expect(eventContextApi.getDiagnostics).toHaveBeenCalledWith({
+      asset_class: "stock",
+    });
+  });
+
+  it("does not render the Setup C N/A banner when enabled is true", async () => {
+    vi.mocked(eventContextApi.getDiagnostics).mockResolvedValue(
+      axiosResponse({
+        asset_class: "futures",
+        generated_at: "2026-06-22T09:12:00+09:00",
+        event_scores: {
+          latest_score_at: null,
+          age_seconds: null,
+          total_count: 0,
+          recent_count: 0,
+          sparsity_ratio: 0,
+          sparse: true,
+          status: "sparse",
+          by_source: [],
+          by_impact_tier: {},
+          warnings: [],
+        },
+        source_timeline: [],
+        setup_c: {
+          strategy: "setup_c_event_reaction",
+          enabled: true,
+          window_minutes: 90,
+          min_impact_tier: 2,
+          last_eval_at: null,
+          last_reject_reason: null,
+          candidate_count: 0,
+          blocked_count: 0,
+          missing_count: 0,
+          candidates: [],
+          blocked: [],
+          missing_evidence: [],
+          blocked_reason_distribution: [],
+          notes: [],
+        },
+        missing_evidence: [],
+        notes: [],
+      }),
+    );
+
+    renderWithQueryClient(<EventContextPage />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Event Context Diagnostics" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/적용되지 않습니다/)).not.toBeInTheDocument();
   });
 
   it("exposes accessible loading status for /event-context while diagnostics are pending", async () => {

@@ -78,7 +78,16 @@ export default function GlobalIndicators() {
       >
         ● Data {(minFreshRatio * 100).toFixed(0)}%
       </span>
-      <span className={`px-2 py-0.5 rounded ${pnlPositive ? 'bg-emerald-700' : 'bg-rose-700'}`}>
+      {/* PnL 칩은 KR 방향 관례를 따른다: 이익 = 빨강(--color-profit),
+          손실 = 파랑(--color-loss). 이웃 Process/Data/Kill 칩은 방향이 아닌
+          상태(good/bad) idiom(emerald/rose/amber)이라 그대로 둔다. */}
+      <span
+        className={`px-2 py-0.5 rounded text-white ${
+          pnlPositive
+            ? 'bg-[var(--color-profit)]'
+            : 'bg-[var(--color-loss)]'
+        }`}
+      >
         ₩{data.today_pnl.toLocaleString()}
       </span>
       <span className={`px-2 py-0.5 rounded ${killOn ? 'bg-rose-700' : 'bg-slate-700'}`}>

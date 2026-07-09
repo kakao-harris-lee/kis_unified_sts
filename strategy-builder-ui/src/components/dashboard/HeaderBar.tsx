@@ -1,4 +1,5 @@
 import AssetClassTabs from './AssetClassTabs'
+import ColorConventionLegend from './ColorConventionLegend'
 import GlobalIndicators from './GlobalIndicators'
 
 export default function HeaderBar() {
@@ -11,7 +12,8 @@ export default function HeaderBar() {
             <AssetClassTabs />
           </div>
         </div>
-        <div className="sm:ml-auto">
+        <div className="sm:ml-auto flex items-center gap-3">
+          <ColorConventionLegend />
           <GlobalIndicators />
         </div>
       </div>

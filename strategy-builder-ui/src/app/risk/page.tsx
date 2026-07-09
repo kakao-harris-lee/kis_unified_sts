@@ -32,6 +32,7 @@ import {
   EquityCurveChart,
   MddStageChart,
 } from "./components/PortfolioEquityChart";
+import UnderwaterChart from "./components/UnderwaterChart";
 
 const EQUITY_HISTORY_DAYS = 90;
 
@@ -350,6 +351,11 @@ export default function RiskPage() {
               points={equityPoints}
               stages={equityLatest?.stages ?? null}
             />
+          </div>
+
+          {/* Underwater 낙폭 (누적 최고점 대비, 90일) — 전폭 */}
+          <div className="grid gap-2">
+            <UnderwaterChart points={equityPoints} />
           </div>
 
           {/* 성과 피드백 요약 (Phase 6B §8 — 표시 전용, 판정 자료) */}
