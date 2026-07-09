@@ -225,6 +225,35 @@ describe("DecisionTracePanel", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("No LLM market context");
   });
 
+  it("does not render a Trade ID link when trade_id is null", () => {
+    render(
+      <DecisionTracePanel
+        trace={baseTrace}
+        onClose={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+    // trade_id is null in baseTrace → plain "not available", no link.
+    expect(
+      screen.queryByRole("link", { name: /trd-/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("deep-links Trade ID to /trades?highlight=<id> when present", () => {
+    render(
+      <DecisionTracePanel
+        trace={{
+          ...baseTrace,
+          lineage: { ...baseTrace.lineage, trade_id: "trd-42" },
+        }}
+        onClose={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+    const link = screen.getByRole("link", { name: "trd-42" });
+    expect(link).toHaveAttribute("href", "/trades?highlight=trd-42");
+  });
+
   it("exposes close and refresh controls", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

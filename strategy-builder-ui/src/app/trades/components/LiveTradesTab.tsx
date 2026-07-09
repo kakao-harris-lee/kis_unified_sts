@@ -20,12 +20,17 @@ import SideBadge from '@/components/dashboard/SideBadge';
 import StrategySelect from '@/components/dashboard/StrategySelect';
 import LifecycleTimeline from '@/components/dashboard/LifecycleTimeline';
 import SymbolLabel, { symbolDisplayText } from '@/components/dashboard/SymbolLabel';
+import { useHighlightParam } from '@/hooks/dashboard/useHighlightParam';
 import {
   buildCumulativePnlData,
   pnlTone,
   useLiveTradesQueries,
   type Trade,
 } from '../hooks';
+
+// Ring applied to a row deep-linked via ?highlight=<trade_id>.
+const HIGHLIGHT_RING = 'ring-2 ring-amber-500 ring-inset';
+const liveTradeDomId = (id: string) => `trade-${id}`;
 
 function LifecycleIconButton({
   label,
@@ -97,6 +102,11 @@ export function LiveTradesTab() {
     error: strategyError,
     refetch: refetchStrategy,
   } = byStrategyQuery;
+
+  const highlightId = useHighlightParam(
+    liveTradeDomId,
+    !!tradesData?.trades.length,
+  );
 
   const cumulativePnlData = buildCumulativePnlData(tradesData?.trades);
   const selectedLifecycleLabel = selectedLifecycleTrade
@@ -250,7 +260,10 @@ export function LiveTradesTab() {
             {tradesData?.trades.map((trade) => (
               <div
                 key={trade.id}
-                className="bg-white rounded-lg p-4 border border-slate-200"
+                id={liveTradeDomId(trade.id)}
+                className={`bg-white rounded-lg p-4 border border-slate-200 ${
+                  highlightId === trade.id ? HIGHLIGHT_RING : ''
+                }`}
               >
                 <div className="flex items-center justify-between mb-3">
                   <SymbolLabel
@@ -334,7 +347,13 @@ export function LiveTradesTab() {
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {tradesData?.trades.map((trade) => (
-                    <tr key={trade.id} className="hover:bg-slate-100">
+                    <tr
+                      key={trade.id}
+                      id={liveTradeDomId(trade.id)}
+                      className={`hover:bg-slate-100 ${
+                        highlightId === trade.id ? HIGHLIGHT_RING : ''
+                      }`}
+                    >
                       <td className="px-4 py-3 text-sm text-slate-500">
                         {new Date(trade.exit_time).toLocaleString()}
                       </td>

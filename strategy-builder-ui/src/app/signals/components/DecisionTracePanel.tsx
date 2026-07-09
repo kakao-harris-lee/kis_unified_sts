@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -232,6 +233,38 @@ function Field({
   );
 }
 
+/**
+ * Like Field, but when `href` and a non-empty `value` are present, renders the
+ * value as a client-side link. Falls back to plain Field text when the id is
+ * absent — so a null lineage id shows "not available", never a dead link.
+ */
+function LineageLinkField({
+  label,
+  value,
+  href,
+}: {
+  label: string;
+  value: string | null | undefined;
+  href: string;
+}) {
+  if (value === null || value === undefined || value === "") {
+    return <Field label={label} value={value} />;
+  }
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] font-medium uppercase text-slate-500">
+        {label}
+      </div>
+      <Link
+        href={href}
+        className="mt-1 block break-words text-sm font-semibold text-primary underline-offset-2 hover:underline focus-ring"
+      >
+        {displayValue(value)}
+      </Link>
+    </div>
+  );
+}
+
 function GapAlert({ gap }: { gap: DecisionTraceEvidenceGap }) {
   const tone =
     gap.severity === "error"
@@ -429,7 +462,17 @@ export default function DecisionTracePanel({
                 <Field label="Order ID" value={trace.lineage.order_id} />
                 <Field label="Fill ID" value={trace.lineage.fill_id} />
                 <Field label="Position ID" value={trace.lineage.position_id} />
-                <Field label="Trade ID" value={trace.lineage.trade_id} />
+                {/* trade_id is the one lineage id with a direct row match in
+                    /trades (Live Trade.id / History DbTrade.id); order/fill/
+                    position ids have no row-level target yet, so they stay
+                    plain text. */}
+                <LineageLinkField
+                  label="Trade ID"
+                  value={trace.lineage.trade_id}
+                  href={`/trades?highlight=${encodeURIComponent(
+                    trace.lineage.trade_id ?? "",
+                  )}`}
+                />
               </div>
               {trace.lifecycle.steps.length > 0 ? (
                 <div className="space-y-2">
