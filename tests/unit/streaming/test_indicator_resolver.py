@@ -28,7 +28,9 @@ class _FakeEngine:
 
 
 def test_collect_entry_indicators_uses_features_and_multi_timeframe_momentum():
-    engine = _FakeEngine(indicator_features={"feature_score": 0.7})
+    engine = _FakeEngine(
+        indicator_features={"feature_score": 0.7}, ohlcv=[{"close": 100.0}]
+    )
     resolver = StreamingIndicatorResolver(
         engine=engine,
         required_keys=["rsi", "ohlcv", "momentum_5m", "momentum_1h"],
@@ -38,7 +40,10 @@ def test_collect_entry_indicators_uses_features_and_multi_timeframe_momentum():
 
     assert indicators["rsi"] == 55.0
     assert indicators["feature_score"] == 0.7
-    assert "ohlcv" not in indicators
+    # The "ohlcv" contract is fulfilled EVEN when the feature bundle is warm.
+    # (The old else-branch dropped it once >= 26 candles existed, silencing
+    # every OHLCV-computing strategy — builder_v1 — live and in backtests.)
+    assert indicators["ohlcv"] == [{"close": 100.0}]
     assert indicators["momentum_5m"]["trix"] == 5.0
     assert indicators["momentum_1h"]["trix"] == 60.0
     assert engine.momentum_timeframes == [5, 60]
