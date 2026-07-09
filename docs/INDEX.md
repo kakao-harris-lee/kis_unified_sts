@@ -48,6 +48,7 @@ authoritative Stock + Futures roadmap that supersedes scattered plan docs.
 | [runbooks/har-rv-log-rv-validation.md](runbooks/har-rv-log-rv-validation.md) | HAR-RV raw-vs-log validation report workflow before `rv_target: log` cutover. |
 | [runbooks/setup-c-event-score-observation.md](runbooks/setup-c-event-score-observation.md) | Setup C event-score history readiness observation. |
 | [runbooks/stock-strategy-reactivation.md](runbooks/stock-strategy-reactivation.md) | `technical_consensus` / `momentum_breakout` evidence review before reactivation changes. |
+| [runbooks/telegram-interactive-alerts.md](runbooks/telegram-interactive-alerts.md) | Telegram interactive-alerts bot (approve/reject 게이트 + 포지션 청산): config, non-obvious 운영 사실, 롤아웃/롤백. |
 | [runbooks/track-a-quarterly-rebalancing.md](runbooks/track-a-quarterly-rebalancing.md) | 트랙 A 분기 리밸런싱 체크리스트 — Kill Criteria 점검, 섹터 비중, Tier 간 자금 이동, 기록 절차 (수동 트랙). |
 | [plans/2026-06-22-quant-ops-workbench-uiux.md](plans/2026-06-22-quant-ops-workbench-uiux.md) | Quant Ops Workbench UI/UX 계획 — cockpit, signal trace, risk, backtest-vs-paper, promotion gates. |
 | [superpowers/specs/2026-06-27-signals-decision-trace-design.md](superpowers/specs/2026-06-27-signals-decision-trace-design.md) | Signal Decision Trace design — LLM context, strategy evidence, risk/orderability, lifecycle, scorecard, and evidence gaps. |
