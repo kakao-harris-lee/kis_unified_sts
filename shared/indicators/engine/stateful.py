@@ -2,7 +2,7 @@
 
 The engine's :class:`~shared.indicators.engine.base.IndicatorBackend` is a *pure,
 stateless* ``compute(spec, window) -> values`` function — the right model for
-indicators that are a function of a bounded OHLCV window. But two runtime
+indicators that are a function of a bounded OHLCV window. But a few runtime
 indicators are fundamentally **stateful**: they accumulate raw ticks over a
 session and cannot be reconstructed from a bar window without changing their
 meaning:
@@ -16,7 +16,7 @@ meaning:
 * :class:`MinuteReturnTracker` / :class:`SpikeHitWindow` — minute-keyed
   per-symbol quote trackers (1-minute close-to-close return; rolling count of
   per-minute threshold hits). Absorbed from the ``opening_volume_surge`` entry
-  strategy's inline deques (P1-b2,
+  strategy's inline state — a last-value dict and per-symbol deques (P1-b2,
   ``docs/plans/2026-07-08-new-architecture-refactoring-plan.md`` §3); the
   strategy keeps its thresholds/score composition and only reads these values.
 

@@ -85,7 +85,11 @@
 - shadow-parity를 gated 지표(atr, bb_width ~2.53%, stoch_k)까지 수렴시킨 뒤
   백테스트 재현 게이트(활성 6전략, 동일 기간 동일 트레이드) 통과 시
   `STS_INDICATOR_CONVENTION=talib` flip. **flip은 운영자 게이트** (paper 관찰 1주 권장).
-- flip 후 Compat 백엔드 3개(streaming/momentum/daily) 및 위임 shell 제거.
+- flip 후 Compat 백엔드(streaming/momentum/daily/backtest) 및 위임 shell 제거.
+- **P1-b에서 추가된 인터림 사본도 이 단계에서 수렴**: `shared/indicators/series.py`의
+  stateless 프리미티브 6종(ema/sma/rolling_return_std/rvol_last/swing_low/window_extremes,
+  #608 — resolver/IndicatorBackend 밖에 있어 shadow-parity가 자동 커버하지 않음)과
+  `backtest_backend.py`·compat 백엔드들의 중복 `_ema/_sma` 계열을 엔진 단일 구현으로 통합.
 
 **게이트**: shadow-parity 리포트(전 지표 safe 분류) + 백테스트 트레이드 동등성 + pytest green.
 **산출 효과**: `reference.py`(689) + Compat 3개(~560) + 산재 사이트 수백 LOC 소멸,
