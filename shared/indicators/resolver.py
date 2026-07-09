@@ -43,12 +43,19 @@ class StreamingIndicatorResolver:
                         result[f"feature_{k}"] = v
                     else:
                         result[k] = v
-            else:
-                ohlcv = self.engine.get_recent_candles(
-                    symbol, limit=LIVE_CANDLE_HISTORY_MAXLEN
-                )
-                if ohlcv:
-                    result["ohlcv"] = ohlcv
+            # ALWAYS fulfil the declared "ohlcv" contract, independent of the
+            # feature bundle. The old else-branch only attached the candle
+            # window while get_indicator_features() was cold (< 26 candles), so
+            # any strategy that computes its own indicators from OHLCV history
+            # (builder_v1 declares required_indicators == ["ohlcv"]) went
+            # permanently dark once the engine warmed — in live paper AND in
+            # the BacktestStrategyAdapter path (P2-c signal-equivalence
+            # precondition).
+            ohlcv = self.engine.get_recent_candles(
+                symbol, limit=LIVE_CANDLE_HISTORY_MAXLEN
+            )
+            if ohlcv:
+                result["ohlcv"] = ohlcv
 
         for req in self.contract.momentum_requests:
             timeframe = req.timeframe.minutes if req.timeframe else 5
