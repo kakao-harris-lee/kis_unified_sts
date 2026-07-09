@@ -499,10 +499,6 @@ export default function EventContextPage() {
                     ? `${data.asset_class} · ${fmtDateTime(data.generated_at)}`
                     : `${selectedAsset} · Setup C source health`}
                 </p>
-                <p className="text-xs text-slate-400">
-                  참고: Event Score/Timeline은 자산군 무관 전역 집계입니다
-                  (asset-scoped 아님).
-                </p>
               </div>
             </div>
             <div className="flex items-center gap-2">

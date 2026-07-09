@@ -222,7 +222,22 @@ def test_event_context_surfaces_event_score_history_count_and_freshness(
 
 
 def test_event_context_marks_setup_c_not_applicable_for_stock(monkeypatch, tmp_path):
-    redis = _FakeRedis()
+    # Populate the (futures) event keys so we can prove the stock request does
+    # NOT leak them — event-reaction is futures-only.
+    redis = _FakeRedis(
+        values={
+            "forecast:event:latest": json.dumps(
+                {"impact_score": 88, "impact_tier": 1, "event_type": "BOK"}
+            )
+        },
+        hashes={
+            "trading:futures:setup_eval": {
+                "setup_c_event_reaction": json.dumps(
+                    {"outcome": "fired", "reason": "ok"}
+                )
+            }
+        },
+    )
     client, scheduled_path = _client(monkeypatch, tmp_path, redis)
     scheduled_path.write_text("events: []\n", encoding="utf-8")
 
@@ -234,6 +249,44 @@ def test_event_context_marks_setup_c_not_applicable_for_stock(monkeypatch, tmp_p
     assert body["setup_c"]["enabled"] is False
     assert body["setup_c"]["root_cause"] == "not_applicable"
     assert body["setup_c"]["blocked_reasons"] == {"setup_c_not_applicable_to_stock": 1}
+    # The three futures-only sections must be not-applicable for stock, NOT the
+    # populated futures data above (asset-scoping fix).
+    assert body["event_score"]["available"] is False
+    assert body["event_score"]["status"] == "not_applicable"
+    assert body["setup_eval"]["available"] is False
+    assert body["setup_eval"]["status"] == "not_applicable"
+    assert body["source_timeline"] == []
+    assert body["status"] == "ok"
+
+
+def test_event_context_futures_still_shows_event_sections(monkeypatch, tmp_path):
+    # Regression: futures must still surface the event score/setup eval it did
+    # before the stock asset-scoping change.
+    redis = _FakeRedis(
+        values={
+            "forecast:event:latest": json.dumps(
+                {"impact_score": 88, "impact_tier": 1, "event_type": "BOK"}
+            )
+        },
+        hashes={
+            "trading:futures:setup_eval": {
+                "setup_c_event_reaction": json.dumps(
+                    {"outcome": "reject", "reason": "no_event_in_window"}
+                )
+            }
+        },
+    )
+    client, scheduled_path = _client(monkeypatch, tmp_path, redis)
+    scheduled_path.write_text("events: []\n", encoding="utf-8")
+
+    response = client.get("/api/event-context/diagnostics?asset_class=futures")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["asset_class"] == "futures"
+    assert body["event_score"]["status"] != "not_applicable"
+    assert body["setup_eval"]["status"] != "not_applicable"
+    assert len(body["source_timeline"]) > 0
 
 
 def test_event_context_marks_malformed_runtime_payloads(monkeypatch, tmp_path):
