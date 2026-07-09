@@ -189,16 +189,6 @@ class TestCachingIndicatorEngine:
         engine.compute_many([spec], window)
         assert len(backend.calls) == 1
 
-    def test_cache_clear_resets(self) -> None:
-        engine, backend = self._engine({"rsi"})
-        spec = IndicatorSpec.create("rsi", {"period": 14})
-        window = _multi_window(1.0, 2.0, 3.0)
-        engine.compute(spec, window)
-        engine.cache_clear()
-        engine.compute(spec, window)
-        assert len(backend.calls) == 2
-        assert engine.hits == 0 and engine.misses == 1
-
     def test_rejects_non_positive_maxsize(self) -> None:
         with pytest.raises(ValueError):
             CachingIndicatorEngine([], maxsize=0)

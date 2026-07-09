@@ -16,7 +16,6 @@ engine.
 
 from __future__ import annotations
 
-import hashlib
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
@@ -28,7 +27,9 @@ from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow
 # Default LRU bound for the series-panel memo (CachingIndicatorEngine).
 # Sized so one full evaluation cycle (symbols x unique specs) fits: entries
 # from past bars never recur (the key is the window content), so LRU evicts
-# them naturally. Tunable per instance via the constructor.
+# them naturally. Memory bound: 2048 entries x a few float64 series of a few
+# hundred bars each is on the order of tens of MB worst case, and only while
+# fresher entries have not yet displaced them. Tunable per instance.
 DEFAULT_SERIES_CACHE_MAXSIZE = 2048
 
 
@@ -112,21 +113,6 @@ class IndicatorCacheEngine:
         return self._store.read(symbol)
 
 
-def _window_token(window: OHLCVWindow) -> bytes:
-    """Content digest of an OHLCV window (the memo key's window half).
-
-    Content-addressed on purpose: two windows with identical bytes yield
-    identical indicator series (backends are pure), so sharing a cached result
-    across callers — even across symbols — can never change a value. Hashing
-    ~5 x N float64 arrays is microseconds versus a TA-Lib/pandas compute.
-    """
-    digest = hashlib.blake2b(digest_size=16)
-    for arr in (window.open, window.high, window.low, window.close, window.volume):
-        digest.update(arr.tobytes())
-        digest.update(str(arr.shape[0]).encode())
-    return digest.digest()
-
-
 class CachingIndicatorEngine(IndicatorEngine):
     """An :class:`IndicatorEngine` that memoizes ``compute`` per (spec, window).
 
@@ -134,9 +120,12 @@ class CachingIndicatorEngine(IndicatorEngine):
     :class:`IndicatorCacheEngine`/:class:`PanelStore` pair above serves scalar
     consumers, while the no-code builder evaluator needs the FULL series (its
     cross/percentile operators require prior values). Memoizing
-    ``compute(spec, window)`` by (spec identity, window content) means N
-    builder strategies sharing ``rsi(14)`` on the same symbol/bar compute it
-    once — and entry + exit evaluations of the same bar share results too.
+    ``compute(spec, window)`` by (spec identity,
+    :meth:`OHLCVWindow.content_token`) means N builder strategies sharing
+    ``rsi(14)`` on the same symbol/bar compute it once — and entry + exit
+    evaluations of the same bar share results too. The token is cached on the
+    window object, so one evaluation cycle hashes each window once, not once
+    per indicator.
 
     Purity contract: backends are pure functions of (spec, window), pinned by
     the golden backend tests, so a cache hit is value-identical by
@@ -167,7 +156,7 @@ class CachingIndicatorEngine(IndicatorEngine):
 
     def compute(self, spec: IndicatorSpec, window: OHLCVWindow) -> IndicatorResult:
         """Compute one spec, returning the memoized result on a content hit."""
-        key = (spec, _window_token(window))
+        key = (spec, window.content_token())
         cached = self._memo.get(key)
         if cached is not None:
             self._memo.move_to_end(key)
@@ -179,12 +168,6 @@ class CachingIndicatorEngine(IndicatorEngine):
         while len(self._memo) > self._maxsize:
             self._memo.popitem(last=False)
         return result
-
-    def cache_clear(self) -> None:
-        """Drop all memoized results (test/diagnostic hook)."""
-        self._memo.clear()
-        self.hits = 0
-        self.misses = 0
 
 
 _SHARED_CACHED_ENGINE: CachingIndicatorEngine | None = None

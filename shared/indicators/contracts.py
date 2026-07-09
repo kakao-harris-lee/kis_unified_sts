@@ -154,11 +154,6 @@ class IndicatorContract:
         intraday = [tf for tf in self.mtf_timeframes if tf < 1440]
         return max(intraday) if intraday else None
 
-    @property
-    def spec_requests(self) -> tuple[IndicatorRequest, ...]:
-        """Requests declared as typed specs (see :meth:`from_specs`)."""
-        return tuple(req for req in self.requests if req.spec is not None)
-
     @classmethod
     def from_specs(
         cls,
@@ -179,7 +174,8 @@ class IndicatorContract:
         typed and string requirements can be mixed.
 
         Additive API: contracts built via :meth:`from_required_keys` are
-        unaffected.
+        unaffected. Intended consumer: P2-c pilot strategies (declarative
+        migration) declaring typed requirements instead of magic strings.
         """
         typed_keys: list[str] = []
         typed_requests: list[IndicatorRequest] = []

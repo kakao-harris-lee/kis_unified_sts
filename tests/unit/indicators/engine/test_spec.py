@@ -90,3 +90,46 @@ class TestOHLCVWindow:
                 close=[1, 2, 3],  # longer
                 volume=[10, 20],
             )
+
+
+class TestWindowContentToken:
+    """OHLCVWindow.content_token — the cache engine's window identity."""
+
+    def _window(self, values: list[float]) -> OHLCVWindow:
+        return OHLCVWindow.from_sequences(
+            open=values, high=values, low=values, close=values, volume=values
+        )
+
+    def test_equal_content_yields_equal_token(self) -> None:
+        assert (
+            self._window([1.0, 2.0]).content_token()
+            == self._window([1.0, 2.0]).content_token()
+        )
+
+    def test_different_content_yields_different_token(self) -> None:
+        assert (
+            self._window([1.0, 2.0]).content_token()
+            != self._window([1.0, 3.0]).content_token()
+        )
+
+    def test_token_is_cached_on_the_window(self) -> None:
+        window = self._window([1.0, 2.0, 3.0])
+        assert window.content_token() is window.content_token()  # computed once
+
+    def test_column_boundary_is_unambiguous(self) -> None:
+        # Same flattened bytes, different column split -> different token.
+        a = OHLCVWindow.from_sequences(
+            open=[1.0, 2.0],
+            high=[3.0, 4.0],
+            low=[1.0, 2.0],
+            close=[3.0, 4.0],
+            volume=[0.0, 0.0],
+        )
+        b = OHLCVWindow.from_sequences(
+            open=[1.0, 2.0],
+            high=[3.0, 4.0],
+            low=[3.0, 4.0],
+            close=[1.0, 2.0],
+            volume=[0.0, 0.0],
+        )
+        assert a.content_token() != b.content_token()

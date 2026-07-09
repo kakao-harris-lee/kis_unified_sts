@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import UTC, datetime
+from functools import cache
 from typing import Any
 
 from shared.exceptions import ValidationError
@@ -42,8 +43,13 @@ _KEY_MACD_SIGNAL = flat_key("macd", "signal")
 _KEY_MACD_HIST = flat_key("macd", "histogram")
 
 
+@cache
 def _ema_key(period: int) -> str:
-    """Period-keyed EMA payload key (``ema_5`` / ``ema_20`` / ...)."""
+    """Period-keyed EMA payload key (``ema_5`` / ``ema_20`` / ...).
+
+    Memoized — called per symbol per bar on the hot path, over a small
+    config-driven period set.
+    """
     return flat_key("ema", params={"period": period})
 
 

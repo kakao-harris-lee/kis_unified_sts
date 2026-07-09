@@ -59,14 +59,14 @@ def test_extra_keys_go_through_legacy_string_parsing() -> None:
     assert len(contract.momentum_requests) == 1
     assert len(contract.mtf_base_requests) == 1
     # Only the typed request carries a spec.
-    assert len(contract.spec_requests) == 1
-    assert contract.spec_requests[0].name == "rsi"
+    typed = [req for req in contract.requests if req.spec is not None]
+    assert len(typed) == 1
+    assert typed[0].name == "rsi"
 
 
 def test_legacy_string_contract_is_unchanged() -> None:
     contract = IndicatorContract.from_required_keys(["rsi", "bb_upper", "ohlcv"])
     assert contract.required_keys == ("rsi", "bb_upper", "ohlcv")
-    assert contract.spec_requests == ()
     assert all(req.spec is None for req in contract.requests)
 
 
