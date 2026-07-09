@@ -883,6 +883,28 @@ def _setup_c_diagnostics(
     )
 
 
+# Event-reaction (Setup C) is a futures-only strategy (config asset_class:
+# futures; the decision_engine that runs it publishes signal.candidate.futures).
+# There is no stock event-score / setup-eval producer, so for stock these
+# sections must report "not applicable" rather than leaking the global futures
+# event data under a stock request. Setup C itself already gates to
+# not_applicable for stock inside _setup_c_diagnostics.
+_NOT_APPLICABLE_STATUS = "not_applicable"
+
+
+def _event_score_not_applicable() -> EventScoreSummary:
+    return EventScoreSummary(
+        available=False,
+        status=_NOT_APPLICABLE_STATUS,
+        sparse=True,
+        recent_count=0,
+    )
+
+
+def _setup_eval_not_applicable() -> SetupEvalSummary:
+    return SetupEvalSummary(available=False, status=_NOT_APPLICABLE_STATUS)
+
+
 @router.get("/diagnostics", response_model=EventContextDiagnosticsResponse)
 async def get_event_context_diagnostics(
     asset_class: str = Query(default="futures"),
@@ -895,28 +917,46 @@ async def get_event_context_diagnostics(
     cfg = _load_setup_c_config()
     strategy_params = _load_strategy_setup_c_params()
     config_warnings = _config_warnings(cfg, strategy_params)
-    event_history_source = _event_score_history_source(redis, now=now)
-    event_score = _event_score_summary(
-        redis,
-        now,
-        history_source=event_history_source,
-    )
-    setup_eval = _setup_eval_summary(redis, now)
+
+    # Setup C / event context is futures-only. For stock, short-circuit the
+    # event-score, setup-eval, and Setup-C-linked timeline rows to
+    # "not_applicable" instead of reading the global (futures) event keys.
+    event_applicable = asset != "stock"
+
+    if event_applicable:
+        event_history_source = _event_score_history_source(redis, now=now)
+        event_score = _event_score_summary(
+            redis,
+            now,
+            history_source=event_history_source,
+        )
+        setup_eval = _setup_eval_summary(redis, now)
+    else:
+        event_score = _event_score_not_applicable()
+        setup_eval = _setup_eval_not_applicable()
+        event_history_source = None
+
     events = _load_events()
 
-    sources = [
-        _source_from_setup_eval(setup_eval),
-        _source_from_event_score(event_score),
-        event_history_source,
-        _source_from_stream(redis, name="news_raw", key=_NEWS_RAW_STREAM, now=now),
-        _source_from_stream(
-            redis, name="news_scored", key=_NEWS_SCORED_STREAM, now=now
-        ),
-        _source_from_stream(
-            redis, name="macro_overnight", key=_MACRO_OVERNIGHT_STREAM, now=now
-        ),
-        _scheduled_source(events, now=now),
-    ]
+    if event_applicable:
+        sources = [
+            _source_from_setup_eval(setup_eval),
+            _source_from_event_score(event_score),
+            event_history_source,
+            _source_from_stream(redis, name="news_raw", key=_NEWS_RAW_STREAM, now=now),
+            _source_from_stream(
+                redis, name="news_scored", key=_NEWS_SCORED_STREAM, now=now
+            ),
+            _source_from_stream(
+                redis, name="macro_overnight", key=_MACRO_OVERNIGHT_STREAM, now=now
+            ),
+            _scheduled_source(events, now=now),
+        ]
+    else:
+        # Stock: no event-reaction sources apply. Return an empty timeline
+        # rather than global news/macro rows that aren't asset-scoped.
+        sources = []
+
     setup_c = _setup_c_diagnostics(
         asset_class=asset,
         cfg=cfg,
@@ -933,18 +973,26 @@ async def get_event_context_diagnostics(
             + setup_c.missing_event_sources
         )
     )
-    notes = [
-        "setup_c_latest_eval is the direct runtime reject/fired source when the adapter has published it.",
-        "forecast_event_history is a bounded Redis list retained alongside the latest EventScore key.",
-        "candidate_count counts scheduled events qualifying for the Setup C event window; breakout and risk gates are runtime-only unless setup_c_latest_eval is available.",
-    ]
-    if config_warnings:
-        notes.append(
-            "setup_c config mismatch detected between decision_engine.yaml and strategy YAML."
-        )
-    if redis is None:
-        notes.append("redis_unavailable: stream/key diagnostics are degraded.")
-    status = "degraded" if missing or config_warnings else "ok"
+    if event_applicable:
+        notes = [
+            "setup_c_latest_eval is the direct runtime reject/fired source when the adapter has published it.",
+            "forecast_event_history is a bounded Redis list retained alongside the latest EventScore key.",
+            "candidate_count counts scheduled events qualifying for the Setup C event window; breakout and risk gates are runtime-only unless setup_c_latest_eval is available.",
+        ]
+        if config_warnings:
+            notes.append(
+                "setup_c config mismatch detected between decision_engine.yaml and strategy YAML."
+            )
+        if redis is None:
+            notes.append("redis_unavailable: stream/key diagnostics are degraded.")
+        status = "degraded" if missing or config_warnings else "ok"
+    else:
+        # Stock: event-reaction (Setup C) is futures-only, so these sections are
+        # not applicable rather than degraded.
+        notes = [
+            "event_context (Setup C event-reaction) is futures-only; event score, setup eval, and source timeline are not applicable for stock.",
+        ]
+        status = "ok"
 
     return EventContextDiagnosticsResponse(
         status=status,
