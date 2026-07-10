@@ -28,6 +28,8 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from shared.utils.coercion import to_bool
+
 logger = logging.getLogger(__name__)
 
 # Default loader is imported lazily inside the runner so importing this module
@@ -295,6 +297,31 @@ def _run_registry_strategy(
             "(valid: legacy | vectorbt)",
             sid,
             engine_backend,
+        )
+        engine_backend = "legacy"
+
+    # Explicit legacy-exit escape hatch (plan §5 P3-c): a strategy whose exit is
+    # a state machine the vectorbt runner cannot express (e.g. three_stage's
+    # staged partial exits) sets `strategy.backtest.legacy_exit: true` to force
+    # the legacy engine WITHOUT even attempting the runner — an operator-visible
+    # marker, not a reliance on the runner's own refusal+fallback. Coerced as a
+    # tri-state (bool / "true"/"1"/"yes" …); an unrecognized value is NOT
+    # silently honored — warn and ignore it, mirroring the unknown-engine path.
+    raw_legacy_exit = bt.get("legacy_exit", False)
+    legacy_exit = to_bool(raw_legacy_exit)
+    if legacy_exit is None:
+        logger.warning(
+            "experiment %s: unrecognized backtest.legacy_exit %r — ignoring "
+            "(expected true/false)",
+            sid,
+            raw_legacy_exit,
+        )
+        legacy_exit = False
+    if legacy_exit and engine_backend != "legacy":
+        logger.info(
+            "experiment %s: backtest.legacy_exit=true — forcing legacy engine "
+            "(state-machine exit); vectorbt runner not attempted",
+            sid,
         )
         engine_backend = "legacy"
     position_params = (
