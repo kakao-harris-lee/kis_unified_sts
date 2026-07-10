@@ -149,8 +149,11 @@ performance = [
 
 # Vectorized backtesting (WS-A4). Heavy transitive deps (numba, plotly) kept
 # out of the runtime install footprint on purpose.
+# >=1.0: shared/backtest/vbt_runner.py is written against the 1.0.0 API where
+# Portfolio.trades.records is a pandas DataFrame (0.26-era returns a numpy
+# structured array), so the old >=0.26 floor would silently break the runner.
 backtest = [
-    "vectorbt>=0.26",
+    "vectorbt>=1.0",
 ]
 
 visualization = [
