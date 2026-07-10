@@ -44,6 +44,28 @@ if _env_file.exists():
     except ImportError:
         pass
 
+# Scrub Telegram credentials for the whole pytest session. The .env loaded
+# above carries the operator's real TELEGRAM_*_BOT_TOKEN/CHAT_ID (on the
+# paper/live host), and tests that start a real TradingOrchestrator without
+# mocking `_notify` (e.g. test_orchestrator_lifecycle) would otherwise send
+# real "🚀 Trading Started" / "🛑 Trading Stopped" messages to the operator's
+# Telegram during a test run. Blanking the credentials makes orchestrator
+# `_notify`/`resolve_domain_credentials` short-circuit ("Telegram not
+# configured") instead of hitting the network. Tests that exercise Telegram
+# routing self-provision credentials via monkeypatch, which auto-restores
+# per test and is unaffected by this session-level scrub.
+for _tg_key in (
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHAT_ID",
+    "TELEGRAM_STOCK_BOT_TOKEN",
+    "TELEGRAM_STOCK_CHAT_ID",
+    "TELEGRAM_FUTURES_BOT_TOKEN",
+    "TELEGRAM_FUTURES_CHAT_ID",
+    "TELEGRAM_BRIEFING_BOT_TOKEN",
+    "TELEGRAM_BRIEFING_CHAT_ID",
+):
+    os.environ.pop(_tg_key, None)
+
 # Cap MLflow's HTTP retry budget for tests so dashboard tests don't spend
 # 4+ minutes retrying against an unreachable tracking server. Default is 7
 # retries with exponential backoff. Set BEFORE any test imports MLflow so
