@@ -283,6 +283,10 @@ def _run_registry_strategy(
         )
 
     bt = strategy_config.get("strategy", {}).get("backtest", {})
+    # Opt-in backend seam (plan 2026-07-08 §5 P3-a): default stays the legacy
+    # BacktestEngine; `strategy.backtest.engine: vectorbt` routes through the
+    # VectorbtRunner with automatic legacy fallback on NotImplementedError.
+    engine_backend = str(bt.get("engine", "") or "legacy").lower()
     position_params = (
         strategy_config.get("strategy", {}).get("position", {}).get("params", {})
     )
@@ -299,6 +303,19 @@ def _run_registry_strategy(
     closed = winners = 0
     gains = losses = 0.0
     ran = 0
+    used_backends: set[str] = set()
+
+    def _build_adapter() -> Any:
+        # Fresh strategy + adapter per attempt — a mid-run vectorbt refusal
+        # leaves the previous adapter warm/dirty, so the legacy fallback must
+        # never reuse it.
+        trading_strategy = StrategyFactory.create(strategy_config)
+        return (
+            DailyBacktestAdapter(trading_strategy, strategy_config)
+            if timeframe == "daily"
+            else BacktestStrategyAdapter(trading_strategy, strategy_config)
+        )
+
     for symbol, df in frames.items():
         try:
             config = BacktestConfig.stock(
@@ -309,13 +326,24 @@ def _run_registry_strategy(
             )
             if "risk" in bt:
                 config.risk = RiskConfig.from_dict(bt["risk"])
-            trading_strategy = StrategyFactory.create(strategy_config)
-            adapted = (
-                DailyBacktestAdapter(trading_strategy, strategy_config)
-                if timeframe == "daily"
-                else BacktestStrategyAdapter(trading_strategy, strategy_config)
-            )
-            result = BacktestEngine(adapted, config).run(df)
+            result = None
+            if engine_backend == "vectorbt":
+                from shared.backtest.vbt_runner import VectorbtRunner
+
+                try:
+                    result = VectorbtRunner(_build_adapter(), config).run(df)
+                    used_backends.add("vectorbt")
+                except NotImplementedError as unsupported:
+                    logger.warning(
+                        "experiment %s/%s: vectorbt runner unsupported (%s); "
+                        "falling back to legacy engine",
+                        sid,
+                        symbol,
+                        unsupported,
+                    )
+            if result is None:
+                result = BacktestEngine(_build_adapter(), config).run(df)
+                used_backends.add("backtest_engine")
         except Exception as exc:  # noqa: BLE001 - isolate per-symbol failure
             logger.warning("experiment %s/%s failed", sid, symbol, exc_info=True)
             coverage[symbol] = {
@@ -341,10 +369,10 @@ def _run_registry_strategy(
 
     equity_curve = _aggregate_equity(per_curves, cap_per_symbol)
     metrics = _portfolio_metrics(equity_curve, total_capital)
-    summary = {
+    summary: dict[str, Any] = {
         "strategy_id": sid,
         "strategy_name": name,
-        "engine": "backtest_engine",
+        "engine": ("vectorbt" if used_backends == {"vectorbt"} else "backtest_engine"),
         "timeframe": timeframe,
         "initial_capital": total_capital,
         "final_equity": _finite(metrics["final_equity"], 0),
