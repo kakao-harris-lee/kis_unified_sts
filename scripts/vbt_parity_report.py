@@ -231,10 +231,15 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
         "| final capital / Sharpe / Sortino / exit_reasons | **bit-동일** (resolver 가 "
         "legacy 연산 순서 유지) |"
     )
+    # 관측 잔차는 하드코딩하지 않고 이번 실행의 실측치에서 계산한다 —
+    # 표와 헤드라인이 어긋난 채 커밋되는 드리프트 방지 (리뷰 지적 사항).
+    synth_eq_max = max(r["eq_max"] for r in rows) if rows else 0.0
+    real_obs = f", 실데이터 ≤{real['eq_max']:.1e}" if real is not None else ""
     a(
         "| 자산곡선 / MDD | vectorbt cash·assets 시프트 재구성 — 부동소수 결합순서 "
         "ulp 잔차만 허용 (합성 `atol=1e-6` KRW / 실데이터 1e8 자본 스케일 "
-        "`atol=1e-4` KRW; 관측치는 각각 ≤4e-9, ≤3e-3) |"
+        f"`atol=1e-4` KRW; 이번 실행 관측치: 합성 ≤{synth_eq_max:.1e}"
+        f"{real_obs}) |"
     )
     a("| `result.to_dict()` (라운딩 후) | **완전 일치** |")
     a("")

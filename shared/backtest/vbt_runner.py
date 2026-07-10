@@ -15,11 +15,15 @@ docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md §WS-A4.
    같은 bar t 의 종가로 체결한다(다음 bar 아님 — engine._process_bar 참조).
    러너는 ``Portfolio.from_orders(price=close)`` 로 동일 bar 종가 체결을
    재현한다. 진입은 레거시보다 이른 bar 에 체결될 수 없다(look-ahead 안전).
-2. **look-ahead 안전 / LookaheadGuard 보존**: 시그널은 레거시와 동일한
+2. **look-ahead 안전 / LookaheadGuard 의미 보존**: 시그널은 레거시와 동일한
    :class:`BacktestStrategyAdapter` 를 timestamp 순서로 한 bar 씩 먹여
-   사전계산한다. 어댑터의 지표 엔진은 결정 시점 t 에서 bar ≤ t 만 관측하며
-   (레거시와 bit-동일한 호출 순서), 지표 계층에 배선된 LookaheadGuard 검사도
-   그대로 실행된다. 러너는 미래 구간 배열을 어떤 경로로도 선노출하지 않는다.
+   사전계산한다. 안전성은 **구조적**이다 — 어댑터의 지표 엔진은 결정 시점
+   t 에서 bar ≤ t 만 관측하고(레거시와 bit-동일한 호출 순서), 러너는 미래
+   구간 배열을 어떤 경로로도 선노출하지 않는다. 지표 계층의 LookaheadGuard
+   는 optional 파라미터라 이 경로에서는 레거시 엔진과 똑같이 **미주입
+   dormant 상태**다(legacy engine 의 자체 guard 인스턴스도 미소비 장식) —
+   guard 검사가 능동 실행되는 것이 아니라, guard 가 잡도록 설계된 위반이
+   구조적으로 발생할 수 없다는 의미에서 의미론이 보존된다.
 3. **비용 모델(한국 주식)**: 레거시는 진입 시 현금을
    ``price*qty*(1+commission+slippage)`` 만큼 차감하고, 청산 시
    ``price*qty*(1-commission-slippage-tax)`` 를 회수한다(매도세는 매도측만).

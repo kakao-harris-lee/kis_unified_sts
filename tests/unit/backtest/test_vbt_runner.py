@@ -181,23 +181,22 @@ class _LastBarBuyer:
         return SignalType.BUY if self._i == self._last_idx else SignalType.HOLD
 
 
-class _FakeExitGenerator:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
 class _FakeTradingStrategy:
-    def __init__(self, exit_name: str) -> None:
-        self.exit = _FakeExitGenerator(exit_name)
+    def __init__(self, exit_generator) -> None:
+        self.exit = exit_generator
 
 
 class _FakeAdapter:
-    """BacktestStrategyAdapter 모양의 스텁 (`_strategy` 노출)."""
+    """BacktestStrategyAdapter 모양의 스텁 (`_strategy` 노출).
+
+    exit 생성기는 **실제 인스턴스**를 받는다 — 게이트가 읽는 `.name` 이 실
+    클래스의 값과 어긋난 채 fake 문자열로 통과하는 fidelity 갭을 막기 위함.
+    """
 
     name = "fake_adapter"
 
-    def __init__(self, exit_name: str) -> None:
-        self._strategy = _FakeTradingStrategy(exit_name)
+    def __init__(self, exit_generator) -> None:
+        self._strategy = _FakeTradingStrategy(exit_generator)
 
     def on_bar(self, bar: dict) -> SignalType:
         return SignalType.HOLD
@@ -325,11 +324,26 @@ class TestExpressibilityGate:
         with pytest.raises(NotImplementedError, match="multi-symbol"):
             runner.run(df)
 
-    @pytest.mark.parametrize("exit_name", ["three_stage", "momentum_decay"])
-    def test_stateful_exit_generator_denied(self, exit_name):
-        assert exit_name not in EXPRESSIBLE_EXIT_GENERATORS
-        runner = VectorbtRunner(_FakeAdapter(exit_name), BacktestConfig.stock())
-        with pytest.raises(NotImplementedError, match=exit_name):
+    @pytest.mark.parametrize("exit_cls_path", ["three_stage", "momentum_decay"])
+    def test_stateful_exit_generator_denied(self, exit_cls_path):
+        """실제 상태머신 exit 클래스 인스턴스가 게이트에서 거부되는지.
+
+        fake 문자열 대신 실 클래스(NAME 상수)의 `.name` 을 게이트에 통과시켜,
+        클래스 이름이 바뀌어도 게이트와 테스트가 함께 어긋나는 fidelity 갭을
+        차단한다.
+        """
+        if exit_cls_path == "three_stage":
+            from shared.strategy.exit.three_stage import ThreeStageExit as exit_cls
+        else:
+            from shared.strategy.exit.momentum_decay import (
+                MomentumDecayExit as exit_cls,
+            )
+
+        exit_generator = exit_cls(exit_cls.CONFIG_CLASS())
+        assert exit_generator.name == exit_cls.NAME
+        assert exit_generator.name not in EXPRESSIBLE_EXIT_GENERATORS
+        runner = VectorbtRunner(_FakeAdapter(exit_generator), BacktestConfig.stock())
+        with pytest.raises(NotImplementedError, match=exit_generator.name):
             runner.run(_make_minute_data(days=1))
 
     def test_unknown_protocol_without_opt_in_denied(self):
