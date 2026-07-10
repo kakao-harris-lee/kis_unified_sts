@@ -46,9 +46,16 @@ docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md §WS-A4.
 ========================================================================
 
 - 선물(point_value > 1), ATS 시뮬레이션, 멀티심볼 프레임, 공매도 진입.
-- 상태머신형 exit (three_stage / momentum_decay 등): 허용목록
-  (:data:`EXPRESSIBLE_EXIT_GENERATORS`) 밖의 exit 생성기는 전부 거부 —
-  조용한 근사 금지, 호출자는 legacy 엔진으로 폴백한다.
+- Exit 생성기 허용목록 (:data:`EXPRESSIBLE_EXIT_GENERATORS`): legacy 엔진과의
+  dual-run parity 증거가 있는 exit 만 통과한다 — v1(P3-b) williams_r_exit,
+  P3-c 확장 atr_dynamic / chandelier_exit. 목록 밖(three_stage 등)은 전부 거부
+  (조용한 근사 금지, 호출자는 legacy 폴백). 러너는 어댑터를 legacy 와 동일한
+  bar/호출 순서로 재생성하므로 상태머신 exit 도 *기계적으로는* 지원하나, 이
+  목록은 표현가능성 제한이 아니라 **parity 증거** 게이트다. three_stage 만
+  부분(스테이지) 청산이라 ``from_orders`` 풀포지션 원장으로 구조적 표현 불가 →
+  영구 제외(2차 vbt custom order func 트랙에서 재검토). exit 가 상태머신을
+  강제하는 전략은 config ``backtest.legacy_exit: true`` 로 legacy 를 명시
+  강제한다 (experiment_runner seam; plan §5 P3-c).
 - 동일 bar 내 *같은 포지션의* 진입+강제청산(마지막 bar 진입 → END_OF_DATA):
   ``from_orders`` 는 컬럼당 bar 당 주문 1건이므로 거부한다.
   (레거시가 허용하는 동일 bar "청산 → 재진입"은 지원한다 — 아래 참조.)
@@ -91,10 +98,22 @@ from shared.backtest.result import BacktestResult, BacktestTrade
 
 logger = logging.getLogger(__name__)
 
-# Exit 생성기 허용목록: 시그널/포지션 필드의 결정론적(무상태) 함수임이 검증된
-# 것만 등재한다. 여기 없는 exit 는 stateful 이거나 parity 미검증 → legacy 폴백.
-# (three_stage, momentum_decay 등 상태머신 exit 는 의도적으로 제외 — P3-c.)
-EXPRESSIBLE_EXIT_GENERATORS: frozenset[str] = frozenset({"williams_r_exit"})
+# Exit 생성기 허용목록: legacy BacktestEngine 과 VectorbtRunner 의 dual-run
+# parity 증거가 있는 exit 만 등재한다. 러너는 어댑터를 legacy 와 동일한 bar/호출
+# 순서로 재생성하므로 상태머신 exit 도 기계적으로는 지원한다(_resolve docstring) —
+# 이 목록은 표현가능성 제한이 아니라 parity **증거** 게이트다. 여기 없는 exit 는
+# 증거 미비(또는 구조적 표현 불가) → legacy 폴백.
+#   v1 (P3-b): williams_r_exit
+#   P3-c 확장: atr_dynamic     — 트레일링 ATR + momentum decay + max_hold_days
+#             chandelier_exit — 일봉 트레일링 스탑 (atr/highest_high 주입 의존)
+# 각 이름의 parity 는 tests/unit/backtest/test_vbt_runner.py::TestRealExitParity
+# 가 실제 exit 클래스 인스턴스로 시나리오 × 리스크 매트릭스에서 고정한다.
+# three_stage 는 부분(스테이지) 청산이라 from_orders 풀포지션 원장으로 표현 불가 →
+# 영구 제외 (2차 vbt custom order func 트랙). 상태머신 exit 강제 전략은 config
+# `backtest.legacy_exit: true` 로 legacy 를 명시 강제한다 (experiment_runner seam).
+EXPRESSIBLE_EXIT_GENERATORS: frozenset[str] = frozenset(
+    {"williams_r_exit", "atr_dynamic", "chandelier_exit"}
+)
 
 _CROSS_CHECK_RTOL = 1e-6
 
