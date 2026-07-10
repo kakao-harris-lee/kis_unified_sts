@@ -5,155 +5,58 @@
 williams_r 윈도우에 대해 두 엔진을 돌리고 지표 델타 표와 Optuna-style
 스윕 속도 비교를 markdown 으로 출력한다.
 
+시나리오/전략/완화설정은 머지 게이트인
+``tests/unit/backtest/test_vbt_runner.py`` / ``test_vbt_runner_realdata.py``
+에서 **직접 import** 한다 — 리포트가 게이트와 다른 매트릭스를 돌려 놓고
+PASS 를 찍는 드리프트를 구조적으로 차단하기 위함이다.
+
 Usage:
     PYTHONPATH=. .venv/bin/python scripts/vbt_parity_report.py \
         [--out docs/plans/2026-07-10-vbt-parity-report.md]
 
-vectorbt(`pip install -e ".[backtest]"`) 필요. 실데이터 섹션은
-`data/market/stock/minute` 이 없으면 자동 생략된다.
+vectorbt(`pip install -e ".[backtest]"`) + dev extra 필요. 실데이터 섹션은
+`data/market/stock/minute` 이 없으면 자동 생략된다. 어느 한 셀이라도
+parity 가 깨지면 exit code 1 (실데이터 포함).
 """
 
 from __future__ import annotations
 
 import argparse
-import copy
 import logging
-import math
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from shared.backtest import BacktestConfig, BacktestEngine
 from shared.backtest.config import RiskConfig
-from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.vbt_runner import VectorbtRunner
+
+# 게이트 테스트의 시나리오/전략/윈도우를 그대로 소비한다 (드리프트 차단).
+from tests.unit.backtest.test_vbt_runner import (
+    _RISK_VARIANTS,
+    _SCENARIOS,
+    _make_minute_data,
+    _MeanRevertStrategy,
+)
+from tests.unit.backtest.test_vbt_runner_realdata import (
+    _END as _REAL_END,
+)
+from tests.unit.backtest.test_vbt_runner_realdata import (
+    _START as _REAL_START,
+)
+from tests.unit.backtest.test_vbt_runner_realdata import (
+    _SYMBOL as _REAL_SYMBOL,
+)
+from tests.unit.backtest.test_vbt_runner_realdata import (
+    _load_config as _load_relaxed_williams_r_config,
+)
 
 logging.disable(logging.WARNING)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_OUT = _REPO_ROOT / "docs" / "plans" / "2026-07-10-vbt-parity-report.md"
-
-_REAL_SYMBOL = "005930"
-_REAL_START = date(2026, 6, 1)
-_REAL_END = date(2026, 6, 12)
-
-
-# ── 합성 데이터/전략 (tests/unit/backtest/test_vbt_runner.py 와 동일 규약) ──
-
-
-def make_minute_data(
-    *,
-    seed: int = 7,
-    days: int = 4,
-    bars_per_day: int = 200,
-    drift: float = 0.0,
-    vol: float = 0.0015,
-    gap_pct: float = 0.0,
-) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    rows: list[dict] = []
-    price = 10_000.0
-    for d in range(days):
-        base = datetime(2026, 6, 1, 9, 0) + timedelta(days=d)
-        if d > 0 and gap_pct:
-            price *= 1 + (gap_pct if d % 2 else -gap_pct)
-        for i in range(bars_per_day):
-            price *= 1 + drift + rng.normal(0, vol)
-            rows.append(
-                {
-                    "code": "005930",
-                    "name": "005930",
-                    "datetime": base + timedelta(minutes=i),
-                    "open": round(price * 0.999, 2),
-                    "high": round(price * 1.001, 2),
-                    "low": round(price * 0.998, 2),
-                    "close": round(price, 2),
-                    "volume": int(1000 + rng.integers(0, 500)),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-def make_chop_data(days: int = 3, bars_per_day: int = 200) -> pd.DataFrame:
-    rows: list[dict] = []
-    k = 0
-    for d in range(days):
-        base = datetime(2026, 6, 1, 9, 0) + timedelta(days=d)
-        for i in range(bars_per_day):
-            price = 10_000 + 120 * math.sin(k / 9.0)
-            rows.append(
-                {
-                    "code": "005930",
-                    "name": "005930",
-                    "datetime": base + timedelta(minutes=i),
-                    "open": round(price - 3, 2),
-                    "high": round(price + 6, 2),
-                    "low": round(price - 6, 2),
-                    "close": round(price, 2),
-                    "volume": 1_000 + k,
-                }
-            )
-            k += 1
-    return pd.DataFrame(rows)
-
-
-class MeanRevertStrategy:
-    vbt_signal_expressible = True
-    name = "synthetic_mr"
-
-    def __init__(self, buy_gap=0.997, sell_gap=1.006, profit_target=1.004):
-        self._buy_gap = buy_gap
-        self._sell_gap = sell_gap
-        self._profit_target = profit_target
-        self.closes: list[float] = []
-        self._pos: dict | None = None
-
-    def set_position(self, position):
-        self._pos = position
-
-    def check_exit(self, bar):
-        if self._pos is None:
-            return (False, None)
-        if bar["close"] >= self._pos["entry_price"] * self._profit_target:
-            return (True, ExitReason.INDICATOR_EXIT)
-        return (False, None)
-
-    def on_bar(self, bar):
-        self.closes.append(bar["close"])
-        if len(self.closes) < 20:
-            return SignalType.HOLD
-        ma = sum(self.closes[-20:]) / 20
-        if self._pos is None and bar["close"] < ma * self._buy_gap:
-            return SignalType.BUY
-        if self._pos is not None and bar["close"] > ma * self._sell_gap:
-            return SignalType.SELL
-        return SignalType.HOLD
-
-
-SCENARIOS = {
-    "trend_up": lambda: make_minute_data(seed=11, drift=0.0004),
-    "trend_down": lambda: make_minute_data(seed=12, drift=-0.0004),
-    "chop": make_chop_data,
-    "gap_days": lambda: make_minute_data(seed=13, gap_pct=0.02),
-    "random_walk": lambda: make_minute_data(seed=42),
-}
-
-RISK_VARIANTS = {
-    "default": {},
-    "tight_sl_tp": {"stop_loss_pct": 0.3, "take_profit_pct": 0.4},
-    "trailing": {
-        "trailing_stop_enabled": True,
-        "trailing_stop_trigger_pct": 0.2,
-        "trailing_stop_distance_pct": 0.15,
-    },
-    "max_hold_bars": {"max_hold_bars": 15},
-    "force_close_time": {"force_close_time": "11:30"},
-    "max_daily_trades": {"max_daily_trades": 1},
-    "close_on_day_change": {"close_on_day_change": True},
-}
 
 
 def _delta_row(label, res_l, res_v):
@@ -180,20 +83,20 @@ def _delta_row(label, res_l, res_v):
 
 def run_synthetic_matrix() -> list[dict]:
     rows = []
-    for s_name, s_fn in SCENARIOS.items():
-        for r_name, r_dict in RISK_VARIANTS.items():
-            data = s_fn()
+    for s_name, s_fn in _SCENARIOS.items():
+        data = s_fn()  # 시나리오당 1회 생성 (리스크 변형과 무관)
+        for r_name, r_dict in _RISK_VARIANTS.items():
             config = BacktestConfig.stock(initial_capital=10_000_000)
             config.risk = RiskConfig.from_dict(r_dict)
-            res_l = BacktestEngine(MeanRevertStrategy(), config).run(data.copy())
-            res_v = VectorbtRunner(MeanRevertStrategy(), config).run(data.copy())
+            res_l = BacktestEngine(_MeanRevertStrategy(), config).run(data.copy())
+            res_v = VectorbtRunner(_MeanRevertStrategy(), config).run(data.copy())
             rows.append(_delta_row(f"{s_name} × {r_name}", res_l, res_v))
-    # 동일 bar 청산→재진입 케이스
-    data = make_minute_data(seed=7, days=2)
+    # 동일 bar 청산→재진입 케이스 (게이트 테스트와 동일 파라미터)
+    data = _make_minute_data(seed=7, days=2)
     config = BacktestConfig.stock(initial_capital=10_000_000)
 
     def mk():
-        return MeanRevertStrategy(buy_gap=1.0, sell_gap=1.02, profit_target=1.001)
+        return _MeanRevertStrategy(buy_gap=1.0, sell_gap=1.02, profit_target=1.001)
 
     res_l = BacktestEngine(mk(), config).run(data.copy())
     res_v = VectorbtRunner(mk(), config).run(data.copy())
@@ -206,7 +109,6 @@ def run_real_data() -> dict | None:
     if not data_dir.exists():
         return None
     from shared.backtest.adapter import BacktestStrategyAdapter
-    from shared.config.loader import ConfigLoader
     from shared.storage.market_data_store import load_market_bars_for_backtest
     from shared.strategy.registry import StrategyFactory, register_builtin_components
 
@@ -221,12 +123,7 @@ def run_real_data() -> dict | None:
     if df.empty:
         return None
 
-    sc = copy.deepcopy(ConfigLoader.load_strategy("stock", "williams_r"))
-    ep = sc["strategy"]["entry"]["params"]
-    ep["market_state_filter"]["enabled"] = False
-    ep["trend_filter"] = False
-    ep["volume_confirm"] = False
-    ep["signal_cooldown_seconds"] = 1800
+    sc = _load_relaxed_williams_r_config()
     bt = sc["strategy"]["backtest"]
     pp = sc["strategy"]["position"]["params"]
     config = BacktestConfig.stock(
@@ -256,7 +153,7 @@ def run_real_data() -> dict | None:
 
 def run_speed_sweep(n_evals: int = 20) -> dict:
     """Optuna-style 파라미터 스윕 (n_evals × 양 엔진) 벽시계 비교."""
-    data = make_minute_data(seed=42, days=4)
+    data = _make_minute_data(seed=42, days=4)
     rng = np.random.default_rng(0)
     params = [
         {
@@ -268,16 +165,16 @@ def run_speed_sweep(n_evals: int = 20) -> dict:
     config = BacktestConfig.stock(initial_capital=10_000_000)
 
     # warmup (vectorbt/numba JIT 1회 비용 제외)
-    VectorbtRunner(MeanRevertStrategy(), config).run(data.copy())
+    VectorbtRunner(_MeanRevertStrategy(), config).run(data.copy())
 
     t0 = time.perf_counter()
     for p in params:
-        BacktestEngine(MeanRevertStrategy(**p), config).run(data.copy())
+        BacktestEngine(_MeanRevertStrategy(**p), config).run(data.copy())
     t_legacy = time.perf_counter() - t0
 
     t0 = time.perf_counter()
     for p in params:
-        VectorbtRunner(MeanRevertStrategy(**p), config).run(data.copy())
+        VectorbtRunner(_MeanRevertStrategy(**p), config).run(data.copy())
     t_vbt = time.perf_counter() - t0
 
     return {
@@ -312,6 +209,16 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
         "- 러너: `shared/backtest/vbt_runner.py` (opt-in `strategy.backtest.engine: "
         "vectorbt`; 기본값 legacy)"
     )
+    a(
+        "- 시나리오·전략·완화설정은 머지 게이트 테스트 모듈에서 직접 import — "
+        "리포트와 게이트가 항상 같은 매트릭스를 돌린다."
+    )
+    a(
+        "- CI: 게이트 잡(`test`)은 vectorbt 미설치라 vectorbt-의존 parity 케이스를 "
+        "skip 하고 마스킹/게이트/seam 계층만 강제한다. parity 스위트 전체는 "
+        "advisory `backtest-extra` 레인과 이 스크립트(배포 호스트)에서 돈다 — "
+        "**운영자 flip 전 재실행 필수** (exit code 가 실데이터 포함 전 셀 판정)."
+    )
     a("")
     a("## 허용오차 정책")
     a("")
@@ -326,7 +233,8 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
     )
     a(
         "| 자산곡선 / MDD | vectorbt cash·assets 시프트 재구성 — 부동소수 결합순서 "
-        "ulp 잔차만 허용 (`atol=1e-6` KRW, 관측치는 ≤4e-9) |"
+        "ulp 잔차만 허용 (합성 `atol=1e-6` KRW / 실데이터 1e8 자본 스케일 "
+        "`atol=1e-4` KRW; 관측치는 각각 ≤4e-9, ≤3e-3) |"
     )
     a("| `result.to_dict()` (라운딩 후) | **완전 일치** |")
     a("")
@@ -368,7 +276,7 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
             "off, cooldown 1800s — 해당 필터는 이 윈도우에서 신호를 전부 차단"
             "(backtest 경로는 일봉 미시딩 → trend_filter 상시 False). parity 는 "
             "*동일 신호에 대한 체결/포트폴리오 계층* 검증이므로 유효하며, 완화는 "
-            "양 엔진에 동일 적용됐다."
+            "양 엔진에 동일 적용됐다 (설정 소스: test_vbt_runner_realdata._load_config)."
         )
         a("")
         a("| 항목 | 값 |")
@@ -443,16 +351,15 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
         "매핑 (매도 정산 후 매수 순서 보존)."
     )
     a(
-        "6. 미지원(→`NotImplementedError`, legacy 폴백): 선물, ATS, 멀티심볼 "
-        "프레임, 공매도 진입, 비허용 exit 생성기(three_stage/momentum_decay 등 "
-        "상태머신), 마지막 bar 진입+동일 bar END_OF_DATA 청산."
+        "6. 미지원(→`NotImplementedError`, legacy 폴백): vectorbt 미설치 환경, "
+        "선물, ATS, 멀티심볼 프레임, 공매도 진입, regime gate 경로, 비허용 exit "
+        "생성기(three_stage/momentum_decay 등 상태머신), 마지막 bar 진입+동일 "
+        "bar END_OF_DATA 청산."
     )
     a("")
     a("## 판정")
     a("")
-    ok = all(r["trades_match"] and r["dict_match"] for r in rows) and (
-        real is None or (real["trades_match"] and real["dict_match"])
-    )
+    ok = _all_pass(rows, real)
     a(
         "**PASS** — 전 시나리오 트레이드 시퀀스/지표 일치 (허용오차 내)."
         if ok
@@ -466,6 +373,14 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
     )
     a("")
     return "\n".join(lines)
+
+
+def _all_pass(rows: list[dict], real: dict | None) -> bool:
+    """합성 + 실데이터 전 셀 판정 (exit code 와 markdown 판정의 단일 소스)."""
+    ok = all(r["trades_match"] and r["dict_match"] for r in rows)
+    if real is not None:
+        ok = ok and real["trades_match"] and real["dict_match"]
+    return ok
 
 
 def main() -> None:
@@ -484,8 +399,10 @@ def main() -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(report, encoding="utf-8")
     print(f"wrote {args.out}")
-    bad = [r["label"] for r in rows if not (r["trades_match"] and r["dict_match"])]
-    if bad:
+    if not _all_pass(rows, real):
+        bad = [r["label"] for r in rows if not (r["trades_match"] and r["dict_match"])]
+        if real is not None and not (real["trades_match"] and real["dict_match"]):
+            bad.append(real["label"])
         raise SystemExit(f"parity FAILED: {bad}")
 
 

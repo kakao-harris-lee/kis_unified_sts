@@ -65,8 +65,10 @@ import 하지 않는다(런타임 이미지 보호). 실제 사용 지점에서 
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -81,7 +83,6 @@ from shared.backtest.engine import (
     SignalType,
     StrategyProtocol,
 )
-from shared.backtest.lookahead_guard import LookaheadGuard, LookaheadGuardMode
 from shared.backtest.result import BacktestResult, BacktestTrade
 
 logger = logging.getLogger(__name__)
@@ -90,9 +91,6 @@ logger = logging.getLogger(__name__)
 # 것만 등재한다. 여기 없는 exit 는 stateful 이거나 parity 미검증 → legacy 폴백.
 # (three_stage, momentum_decay 등 상태머신 exit 는 의도적으로 제외 — P3-c.)
 EXPRESSIBLE_EXIT_GENERATORS: frozenset[str] = frozenset({"williams_r_exit"})
-
-# 커스텀(비-TradingStrategy) 전략 객체가 러너 사용을 명시 opt-in 하는 속성.
-SIGNAL_EXPRESSIBLE_ATTR = "vbt_signal_expressible"
 
 _CROSS_CHECK_RTOL = 1e-6
 
@@ -136,7 +134,6 @@ class _ResolvedRun:
     daily_returns: list[float]  # 레거시 정의: 일별 실현 PnL(KRW)
     final_capital: float
     closes: np.ndarray
-    timestamps: list[datetime] = field(default_factory=list)
     # 일자 변경 강제청산(close_on_day_change)이 발생한 bar 의 청산 비용.
     # legacy 는 이 청산만 equity 기록 *이전에* 처리한다(다른 모든 주문은
     # equity 기록 이후) — 자산곡선 재구성 시 해당 bar 에서 비용을 차감.
@@ -167,21 +164,16 @@ class VectorbtRunner:
             strategy: 전략 어댑터 (BacktestEngine 과 동일 프로토콜:
                 on_bar 필수, check_exit/set_position/prescan_data 선택).
             config: 백테스트 설정 (기본값은 legacy 와 동일).
-            gate: Optional RegimeGate — legacy engine 과 동일 의미론.
+            gate: Optional RegimeGate — 시그니처는 legacy engine 과 동일하나
+                gate 경로는 parity 미검증이므로 현재는 명시 거부된다
+                (None 이 아니면 run() 이 VectorbtNotSupportedError).
         """
         self.strategy = strategy
         self.config = config or BacktestConfig()
         self._gate = gate
-
-        # LookaheadGuard wiring — legacy engine 과 동일한 구성 계약 유지.
-        mode = (
-            self.config.lookahead_guard_mode.lower()
-            if hasattr(self.config, "lookahead_guard_mode")
-            else "assert"
-        )
-        if mode not in ("off", "warn", "assert"):
-            mode = "assert"
-        self.lookahead_guard = LookaheadGuard(mode=LookaheadGuardMode(mode))
+        # NOTE: LookaheadGuard 는 러너가 아니라 어댑터의 지표 계층에 배선되어
+        # 있다 (모듈 docstring §2). 러너 자체 guard 인스턴스는 만들지 않는다 —
+        # legacy engine 의 self.lookahead_guard 도 동일하게 미소비 장식이었다.
 
     # ------------------------------------------------------------------
     # Public API
@@ -236,9 +228,14 @@ class VectorbtRunner:
             )
         if self.config.ats_enabled:
             raise VectorbtNotSupportedError("ATS venue simulation")
+        if self._gate is not None:
+            raise VectorbtNotSupportedError(
+                "regime gate path is parity-unverified for the vectorbt runner"
+            )
         if "code" in data.columns:
-            codes = data["code"].astype(str).fillna("DEFAULT").nunique()
-            if codes > 1:
+            # dropna=False: NaN code 는 하나의 값으로 계수 (legacy 는 NaN 을
+            # "DEFAULT" 로 정규화하므로 단일 심볼 판정 목적에는 동치).
+            if data["code"].nunique(dropna=False) > 1:
                 raise VectorbtNotSupportedError(
                     "multi-symbol frame (shared-capital path) — 심볼별 프레임으로 분리 필요"
                 )
@@ -252,10 +249,26 @@ class VectorbtRunner:
                 raise VectorbtNotSupportedError(
                     f"exit generator '{exit_name}' is stateful or parity-unverified"
                 )
-        elif not getattr(self.strategy, SIGNAL_EXPRESSIBLE_ATTR, False):
+        elif not getattr(self.strategy, "vbt_signal_expressible", False):
             raise VectorbtNotSupportedError(
                 "unknown strategy protocol — set "
-                f"`{SIGNAL_EXPRESSIBLE_ATTR} = True` to opt in"
+                "`vbt_signal_expressible = True` to opt in"
+            )
+
+        # vectorbt 미설치(backtest extra 없는 런타임 이미지/호스트)도 어댑터를
+        # 구동하기 *전에* 거부해 seam 이 legacy 로 깨끗이 폴백하게 한다 —
+        # lazy import 시점(_simulate)까지 가면 전체 해석 비용을 낭비하고
+        # ModuleNotFoundError 가 폴백 경로를 우회한다 (TA-Lib 미설치 함정과
+        # 동일 클래스). find_spec 자체가 던지는 예외(차단 finder, 깨진 설치)도
+        # "사용 불가" 로 취급한다. 구성/전략 게이트 뒤에 두어 미설치 환경에서도
+        # 구체적 거부 사유가 먼저 보이게 한다.
+        try:
+            vbt_available = importlib.util.find_spec("vectorbt") is not None
+        except (ImportError, ValueError):
+            vbt_available = False
+        if not vbt_available:
+            raise VectorbtNotSupportedError(
+                "vectorbt is not installed — pip install -e '.[backtest]'"
             )
 
     # ------------------------------------------------------------------
@@ -301,7 +314,6 @@ class VectorbtRunner:
         strategy: Any = self.strategy
         has_check_exit = hasattr(strategy, "check_exit")
         has_set_position = hasattr(strategy, "set_position")
-        timestamps: list[datetime] = []
 
         def emit_order(idx: int, col: int, qty: float, fee: float, what: str) -> None:
             if not math.isnan(size[idx, col]):
@@ -429,11 +441,9 @@ class VectorbtRunner:
             daily_trades += 1
             # 이 bar 에서 이미 청산이 나갔으면(동일 bar 재진입) 반대 컬럼으로
             # 라우팅하고, call_seq 로 "청산 컬럼 먼저" 실행을 강제한다.
-            entry_col = 0
-            if not math.isnan(size[idx, 0]):
-                entry_col = 1
-            if entry_col == 1 and not math.isnan(size[idx, 1]):
-                raise VectorbtNotSupportedError(f"more than two orders at bar {idx}")
+            # (단일 포지션 불변식 → bar 당 주문은 최대 청산 1 + 진입 1;
+            # 그 밖의 충돌은 emit_order 의 컬럼 충돌 가드가 잡는다.)
+            entry_col = 1 if not math.isnan(size[idx, 0]) else 0
             if entry_col == 0 and not math.isnan(size[idx, 1]):
                 # 청산이 col1 에 있고 진입이 col0 → col1 을 먼저 실행.
                 call_seq[idx] = (1, 0)
@@ -448,7 +458,6 @@ class VectorbtRunner:
             code = str(bar.get("code", "DEFAULT") or "DEFAULT")
             name = bar.get("name", code)
             last_price = float(current_price)
-            timestamps.append(timestamp)
 
             # 일자 변경 체크 (legacy: force close → 일별 PnL 롤오버)
             if last_date is not None and timestamp.date() != last_date.date():
@@ -500,13 +509,9 @@ class VectorbtRunner:
 
             signal = self.strategy.on_bar(bar)
 
-            if self._gate is not None and signal in (SignalType.BUY, SignalType.SELL):
-                direction = "long" if signal == SignalType.BUY else "short"
-                allow, _reason, _regime_pct = self._gate.allow(
-                    ts=timestamp, asset=code, signal_direction=direction
-                )
-                if not allow:
-                    signal = SignalType.HOLD
+            # NOTE: legacy engine 의 gate 훅은 여기서 시그널을 필터링하지만,
+            # gate 경로는 parity 미검증이라 _ensure_supported 가 gate!=None 을
+            # 사전 거부한다 — parity 검증 후 legacy 와 동일 위치에 복원할 것.
 
             # 4. 시그널 처리
             if pos is None:
@@ -550,7 +555,6 @@ class VectorbtRunner:
             daily_returns=daily_returns,
             final_capital=capital,
             closes=closes,
-            timestamps=timestamps,
             day_change_fc_fees=day_change_fc_fees,
         )
 
@@ -670,11 +674,17 @@ class VectorbtRunner:
         self, data: pd.DataFrame, resolved: _ResolvedRun, portfolio: Any
     ) -> BacktestResult:
         """vectorbt Portfolio 출력 → 레거시 BacktestResult 계약."""
-        records = portfolio.trades.records
-        self._cross_check(resolved, portfolio, records)
+        # 청산 순서(legacy trades 리스트 순서)로 한 번만 정렬해 cross-check 와
+        # 트레이드 조립이 같은 행 순서를 공유한다 (단일 포지션 → exit_idx 유일).
+        rec_sorted = portfolio.trades.records.sort_values(
+            ["exit_idx", "entry_idx"]
+        ).reset_index(drop=True)
+        self._cross_check(resolved, portfolio, rec_sorted)
 
-        trades = self._trades_from_records(records, resolved)
-        equity_curve = self._legacy_equity_curve(resolved, portfolio)
+        trades = self._trades_from_records(rec_sorted, resolved)
+        equity_curve = self._legacy_equity_curve(
+            resolved, portfolio, data["datetime"].tolist()
+        )
 
         start_date = data["datetime"].iloc[0]
         end_date = data["datetime"].iloc[-1]
@@ -744,37 +754,36 @@ class VectorbtRunner:
         )
 
     def _cross_check(
-        self, resolved: _ResolvedRun, portfolio: Any, records: pd.DataFrame
+        self, resolved: _ResolvedRun, portfolio: Any, rec_sorted: pd.DataFrame
     ) -> None:
-        """resolver 원장과 vectorbt 원장의 구조적 일치를 강제(내부 불변식)."""
-        if len(records) != len(resolved.events):
+        """resolver 원장과 vectorbt 원장의 구조적 일치를 강제(내부 불변식).
+
+        ``rec_sorted`` 는 _build_result 가 (exit_idx, entry_idx) 로 정렬해 준
+        트레이드 레코드 — _trades_from_records 와 같은 행 순서를 공유한다.
+        """
+        if len(rec_sorted) != len(resolved.events):
             raise RuntimeError(
                 "vectorbt parity cross-check failed: trade count "
-                f"{len(records)} != {len(resolved.events)}"
+                f"{len(rec_sorted)} != {len(resolved.events)}"
             )
-        if len(records) and int((records["status"] != 1).sum()) != 0:
+        if len(rec_sorted) and int((rec_sorted["status"] != 1).sum()) != 0:
             raise RuntimeError(
                 "vectorbt parity cross-check failed: open trade in records"
             )
 
-        rec_sorted = records.sort_values(["exit_idx", "entry_idx"]).reset_index(
-            drop=True
-        )
-        for i, event in enumerate(resolved.events):
-            row = rec_sorted.iloc[i]
+        rows: Iterable[Any] = rec_sorted.itertuples(index=False)
+        for event, row in zip(resolved.events, rows):
             ok = (
-                int(row["entry_idx"]) == event.entry_idx
-                and int(row["exit_idx"]) == event.exit_idx
-                and int(row["size"]) == event.quantity
+                int(row.entry_idx) == event.entry_idx
+                and int(row.exit_idx) == event.exit_idx
+                and int(row.size) == event.quantity
                 and math.isclose(
-                    float(row["entry_price"]), event.entry_price, rel_tol=1e-12
+                    float(row.entry_price), event.entry_price, rel_tol=1e-12
                 )
-                and math.isclose(
-                    float(row["exit_price"]), event.exit_price, rel_tol=1e-12
-                )
+                and math.isclose(float(row.exit_price), event.exit_price, rel_tol=1e-12)
             )
             # vbt pnl 은 진입 수수료 포함 → 레거시 규약과의 관계 검증.
-            legacy_pnl_from_vbt = float(row["pnl"]) + float(row["entry_fees"])
+            legacy_pnl_from_vbt = float(row.pnl) + float(row.entry_fees)
             ok = ok and math.isclose(
                 legacy_pnl_from_vbt,
                 event.pnl,
@@ -783,8 +792,9 @@ class VectorbtRunner:
             )
             if not ok:
                 raise RuntimeError(
-                    f"vectorbt parity cross-check failed at trade {i}: "
-                    f"vbt={row.to_dict()} vs event={event}"
+                    "vectorbt parity cross-check failed at trade "
+                    f"({event.entry_idx}->{event.exit_idx}): "
+                    f"vbt={row} vs event={event}"
                 )
 
         final_cash = float(portfolio.cash().iloc[-1])
@@ -800,20 +810,17 @@ class VectorbtRunner:
             )
 
     def _trades_from_records(
-        self, records: pd.DataFrame, resolved: _ResolvedRun
+        self, rec_sorted: pd.DataFrame, resolved: _ResolvedRun
     ) -> list[BacktestTrade]:
         """vbt 트레이드 레코드 + resolver 이벤트 → BacktestTrade (legacy 규약).
 
         가격/인덱스/수량은 vbt 레코드에서, 레거시 전용 규약 필드(pnl 의 진입비
         제외, commission=청산수수료+매도세, exit_reason)는 resolver 이벤트에서
-        채운다. 두 원장의 일치는 _cross_check 가 선행 보장.
+        채운다. ``rec_sorted`` 정렬과 행 대응 일치는 _cross_check 가 선행 보장.
         """
-        rec_sorted = records.sort_values(["exit_idx", "entry_idx"]).reset_index(
-            drop=True
-        )
         trades: list[BacktestTrade] = []
-        for i, event in enumerate(resolved.events):
-            row = rec_sorted.iloc[i]
+        rows: Iterable[Any] = rec_sorted.itertuples(index=False)
+        for event, row in zip(resolved.events, rows):
             trades.append(
                 BacktestTrade(
                     code=event.code,
@@ -822,9 +829,9 @@ class VectorbtRunner:
                     side=event.side,
                     entry_time=event.entry_time,
                     exit_time=event.exit_time,
-                    entry_price=float(row["entry_price"]),
-                    exit_price=float(row["exit_price"]),
-                    quantity=int(row["size"]),
+                    entry_price=float(row.entry_price),
+                    exit_price=float(row.exit_price),
+                    quantity=int(row.size),
                     pnl=event.pnl,
                     pnl_pct=event.pnl_pct,
                     commission=event.commission,
@@ -835,7 +842,10 @@ class VectorbtRunner:
         return trades
 
     def _legacy_equity_curve(
-        self, resolved: _ResolvedRun, portfolio: Any
+        self,
+        resolved: _ResolvedRun,
+        portfolio: Any,
+        timestamps: list[datetime],
     ) -> list[tuple[datetime, float]]:
         """레거시 자산곡선 재구성: bar t 주문 처리 *이전* 상태를 close[t] 마킹.
 
@@ -857,7 +867,7 @@ class VectorbtRunner:
         # (cash[t-1] + qty*close[t] - fee == 청산 정산 후 자본).
         for idx, fee in resolved.day_change_fc_fees.items():
             equity[idx] -= fee
-        return list(zip(resolved.timestamps, equity.tolist()))
+        return list(zip(timestamps, equity.tolist()))
 
     # ------------------------------------------------------------------
     # Legacy metric formulas (parity-pinned; engine._generate_result 참조)
@@ -865,18 +875,14 @@ class VectorbtRunner:
 
     @staticmethod
     def _legacy_max_drawdown(equity_curve: list[tuple[datetime, float]]) -> float:
+        # legacy engine._calculate_max_drawdown 의 벡터화 등가형 — 원소별
+        # 연산(러닝 피크 대비 (peak-v)/peak*100 의 최대)이 동일해 bit-parity.
         if not equity_curve:
             return 0.0
-        values = [v for _, v in equity_curve]
-        peak = values[0]
-        max_dd = 0.0
-        for value in values:
-            if value > peak:
-                peak = value
-            dd = (peak - value) / peak * 100
-            if dd > max_dd:
-                max_dd = dd
-        return max_dd
+        values = np.array([v for _, v in equity_curve], dtype=np.float64)
+        peaks = np.maximum.accumulate(values)
+        drawdowns = (peaks - values) / peaks * 100
+        return float(np.max(drawdowns)) if len(drawdowns) else 0.0
 
     @staticmethod
     def _legacy_sharpe(

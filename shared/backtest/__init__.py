@@ -39,7 +39,7 @@ from shared.backtest.result import (
 # 않는다 — 모듈 자체는 vectorbt 를 lazy import 하지만, opt-in 백엔드라는
 # 의도를 import 경로(`from shared.backtest.vbt_runner import VectorbtRunner`)
 # 로도 드러낸다. `import shared.backtest` 는 vectorbt 없이 항상 동작해야
-# 한다 (tests/unit/backtest/test_vbt_runner_gating.py 가 고정).
+# 한다 (tests/unit/backtest/test_vbt_runner.py::TestImportIsolation 이 고정).
 
 __all__ = [
     # Result

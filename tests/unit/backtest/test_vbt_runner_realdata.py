@@ -19,7 +19,6 @@ import copy
 from datetime import date
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.backtest, pytest.mark.slow]
@@ -100,14 +99,9 @@ def test_williams_r_real_minute_parity():
     # 검증 윈도우는 실거래가 발생하도록 선정됨 — 공허 parity 방지.
     assert res_legacy.total_trades > 0
 
-    assert res_legacy.total_trades == res_vbt.total_trades
-    for a, b in zip(res_legacy.trades, res_vbt.trades):
-        assert a.to_dict() == b.to_dict()
-    assert res_legacy.final_capital == res_vbt.final_capital
-    assert res_legacy.sharpe_ratio == res_vbt.sharpe_ratio
-    assert res_legacy.sortino_ratio == res_vbt.sortino_ratio
-    assert res_legacy.to_dict() == res_vbt.to_dict()
+    # 합성 매트릭스와 동일한 parity 계약 (단일 헬퍼 공유). equity_atol 만
+    # 1e-4 KRW 로 완화: 초기자본 1e8 스케일에서의 부동소수 ulp 잔차
+    # (상대 ~1e-12) — 여전히 원 단위 이하로 무의미한 크기다.
+    from tests.unit.backtest.test_vbt_runner import _assert_parity
 
-    eq_l = np.array([v for _, v in res_legacy.equity_curve])
-    eq_v = np.array([v for _, v in res_vbt.equity_curve])
-    np.testing.assert_allclose(eq_v, eq_l, rtol=0, atol=1e-4)
+    _assert_parity(res_legacy, res_vbt, equity_atol=1e-4)

@@ -236,6 +236,11 @@
   (속도는 현 단계 개선 없음 — 어댑터 시그널 패스가 지배; 정직 기록).
   활성 3전략 전체 커버리지(momentum_breakout/pattern_pullback)는 exit
   허용목록 확장 후 후속.
+  ⚠️ CI 한계: 머지 게이트 `test` 잡은 vectorbt 미설치라 vectorbt-의존
+  parity 케이스를 skip 한다(마스킹/게이트/seam 계층만 강제). parity 스위트
+  전체는 advisory `backtest-extra` 레인(continue-on-error)과 배포 호스트에서
+  돈다 — **운영자 flip 전 `scripts/vbt_parity_report.py` 재실행이 필수 게이트**
+  (exit code 가 실데이터 포함 전 셀 판정).
 - [ ] 통과 후 `engine.py` 이벤트 루프·수제 성과지표(§3.2의 3벌)를 제거하고
   experiment_runner/optimizer 백엔드 교체 — **미착수** (운영자 flip 게이트;
   paper 관찰 + 허용목록 확장 선행). 미통과 항목은 원인 규명 전 교체 금지.

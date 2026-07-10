@@ -208,7 +208,7 @@ class _FakeAdapter:
 # ---------------------------------------------------------------------------
 
 
-def _assert_parity(res_legacy, res_vbt) -> None:
+def _assert_parity(res_legacy, res_vbt, *, equity_atol: float = 1e-6) -> None:
     # 트레이드 시퀀스: 시각/가격/수량/pnl/사유까지 dict 레벨 완전 일치.
     assert res_legacy.total_trades == res_vbt.total_trades
     for a, b in zip(res_legacy.trades, res_vbt.trades):
@@ -230,7 +230,7 @@ def _assert_parity(res_legacy, res_vbt) -> None:
     assert ts_l == ts_v
     eq_l = np.array([v for _, v in res_legacy.equity_curve])
     eq_v = np.array([v for _, v in res_vbt.equity_curve])
-    np.testing.assert_allclose(eq_v, eq_l, rtol=0, atol=1e-6)
+    np.testing.assert_allclose(eq_v, eq_l, rtol=0, atol=equity_atol)
 
     # MDD 는 자산곡선 파생 → 동일 잔차 허용.
     assert math.isclose(
@@ -344,15 +344,50 @@ class TestExpressibilityGate:
             runner.run(_make_minute_data(days=1))
 
     def test_short_entry_denied_mid_run(self):
+        # 동적 게이트 (_resolve 도중) — vectorbt 설치 환경에서만 도달
+        # (미설치 환경은 정적 availability 게이트가 선행 거부).
+        pytest.importorskip("vectorbt")
         runner = VectorbtRunner(_ShortSeller(), BacktestConfig.stock())
         with pytest.raises(NotImplementedError, match="short entry"):
             runner.run(_make_minute_data(days=1))
 
     def test_last_bar_entry_forced_close_collision_denied(self):
+        pytest.importorskip("vectorbt")
         df = _make_minute_data(days=1, bars_per_day=50)
         runner = VectorbtRunner(_LastBarBuyer(len(df) - 1), BacktestConfig.stock())
         with pytest.raises(NotImplementedError, match="collision"):
             runner.run(df)
+
+    def test_regime_gate_denied(self):
+        runner = VectorbtRunner(
+            _MeanRevertStrategy(), BacktestConfig.stock(), gate=object()
+        )
+        with pytest.raises(NotImplementedError, match="gate"):
+            runner.run(_make_minute_data(days=1))
+
+    def test_missing_vectorbt_denied_before_adapter(self, monkeypatch):
+        """vectorbt 미설치는 어댑터를 건드리기 *전에* 정적으로 거부된다.
+
+        → seam 이 같은 어댑터로 legacy 폴백해도 안전하고, ModuleNotFoundError
+        가 폴백 경로를 우회하는 일이 없다 (finder B 리뷰 지적 사항).
+        """
+        import importlib.abc
+
+        class _Block(importlib.abc.MetaPathFinder):
+            def find_spec(self, name, path=None, target=None):
+                if name == "vectorbt" or name.startswith("vectorbt."):
+                    raise ImportError("vectorbt masked for test")
+                return None
+
+        for mod in [m for m in sys.modules if m.split(".")[0] == "vectorbt"]:
+            monkeypatch.delitem(sys.modules, mod)
+        monkeypatch.setattr(sys, "meta_path", [_Block(), *sys.meta_path])
+
+        strategy = _MeanRevertStrategy()
+        runner = VectorbtRunner(strategy, BacktestConfig.stock())
+        with pytest.raises(NotImplementedError, match="not installed"):
+            runner.run(_make_minute_data(days=1))
+        assert strategy.closes == []  # on_bar 미호출 — 어댑터 오염 없음
 
     def test_gate_refusal_precedes_adapter_state(self):
         """정적 게이트는 어댑터를 건드리기 전에 거부한다 → 폴백 안전."""
@@ -552,6 +587,20 @@ class TestExperimentSeam:
         )
         assert report["summaries"][0]["engine"] == "backtest_engine"
 
+    def test_unknown_engine_value_warns_and_uses_legacy(self, monkeypatch, caplog):
+        """엔진 키 오타('vbt' 등)는 조용히 무시되지 않고 경고 후 legacy."""
+        import logging as _logging
+
+        from shared.backtest.experiment_runner import run_stock_experiment
+
+        _patch_engine_key(monkeypatch, "vbt")
+        with caplog.at_level(_logging.WARNING, logger="shared.backtest"):
+            report = run_stock_experiment(
+                self._spec(), bar_loader=_daily_loader, now=datetime(2026, 6, 1)
+            )
+        assert report["summaries"][0]["engine"] == "backtest_engine"
+        assert any("unknown backtest engine" in r.message for r in caplog.records)
+
     def test_unsupported_exit_falls_back_to_legacy(self, monkeypatch):
         """engine=vectorbt 라도 비허용 exit(pattern_pullback)면 legacy 폴백.
 
@@ -603,3 +652,5 @@ class TestExperimentSeam:
         status = {s["strategy_id"]: s["status"] for s in report["status_by_strategy"]}
         assert status["williams_r"] == "ok"
         assert report["summaries"][0]["engine"] == "vectorbt"
+        # 혼합 실행 식별용 per-symbol 백엔드 기록 (P3-b 관찰 증거 오염 방지).
+        assert report["data_coverage"]["005930"]["engine"] == "vectorbt"
