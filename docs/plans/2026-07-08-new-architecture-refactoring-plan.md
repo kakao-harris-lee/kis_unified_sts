@@ -51,7 +51,8 @@
   `exit_checker.py`(three_stage와 중복 상태머신) 정리 — 소비자 확인 후 three_stage로 단일화.
 - [ ] **TA-Lib 설치 게이트**: CI와 배포 호스트 .venv에 TA-Lib 존재를 검증하는 체크 추가
   (미설치 시 shadow-parity가 조용히 스킵되는 기존 함정 차단).
-- [ ] vectorbt CI 레인: `.[backtest]` extra 설치 + import smoke 테스트 (P3 준비).
+- [x] vectorbt CI 레인: `.[backtest]` extra 설치 + import smoke 테스트 (P3 준비).
+  P3-a 에서 VectorbtRunner parity 스위트 실행으로 확장됨 (advisory lane).
 - [ ] stale worktree(~11개) prune (repo 위생, 커밋 대상 아님).
 
 **게이트**: 전체 pytest green, 활성 6전략 paper 무영향.
@@ -210,22 +211,34 @@
 **목표**: 커스텀 이벤트 루프·성과지표 3중 중복을 vectorbt로 대체. 소비자 API는 계약 유지.
 
 ### P3-a. 주식 경로 (본체)
-- 신규 `VectorbtRunner`: (P1의) TA-Lib 지표 시리즈 + (P2의) 선언형 조건 →
-  entries/exits boolean 배열 → `vbt.Portfolio.from_signals`.
-  비용 모델은 한국 매도세/수수료/슬리피지를 vbt fees/slippage 파라미터로 매핑
-  (ats_simulator 경로는 옵션 유지).
-- `BacktestResult`/`BacktestTrade`/`to_metrics_dict()`는 **어댑터로 유지** —
-  `Portfolio.stats()`/`trades.records`에서 채운다. 소비자(experiment_runner, optimizer,
-  CLI :132/:180/:451/:826, dashboard `/experiments`)는 무수정이 목표.
-- 심볼별 독립 백테스트 + 등가중 집계 및 리포트 스키마
-  `{experiment, data_coverage, summaries[], equity_curves{}, trades[]}` 보존 (하드 계약).
-- `LookaheadGuard` 의미 보존: 시리즈 사전계산은 shift 규율로 look-ahead 차단, 계약 테스트 추가.
+- [x] 신규 `VectorbtRunner`(`shared/backtest/vbt_runner.py`) — **1차 형태 완료**.
+  시그널/체결 해석은 legacy 와 동일한 어댑터 순차 패스(신호 parity 구조 보장),
+  포트폴리오 원장은 `vbt.Portfolio.from_orders`(2컬럼 cash-sharing 그룹).
+  선언형 조건 → boolean 배열 사전계산으로의 전환(진짜 벡터화 가속)은 P1/P2
+  결합 시 후속 — 그때 `from_signals` 경로 검토.
+  비용 모델: 매도세 비대칭 때문에 vbt `fees` 비율 대신 주문별 절대 `fixed_fees`
+  로 정확 매핑 (ats_simulator 경로는 미지원 → legacy 폴백).
+- [x] `BacktestResult`/`BacktestTrade` 어댑터 유지 — `trades.records`/cash/assets
+  에서 채움. 소비자 무수정 (experiment_runner 는 opt-in seam 만 추가,
+  `strategy.backtest.engine: vectorbt`, 기본값 legacy).
+- [x] 심볼별 독립 백테스트 전제 유지 (러너는 단일 심볼 프레임 전용; 멀티심볼은
+  명시 거부 → legacy 폴백). 리포트 스키마 무변경.
+- [x] `LookaheadGuard` 의미 보존 — 어댑터 순차 구동으로 결정 시점 t 에 bar ≤ t
+  만 관측 (vbt_runner docstring §2 + parity 스위트).
+- [x] 상태머신 exit 감지 → `NotImplementedError('legacy engine required')`
+  (허용목록 `EXPRESSIBLE_EXIT_GENERATORS`, v1 = williams_r_exit).
 
 ### P3-b. Parity 게이트 (WS-A4 게이트 그대로)
-- 활성 주식 3전략 × 신뢰 데이터 윈도우에서 기존 `BacktestEngine` 대비
-  총수익/샤프/MDD/트레이드 수 일치(허용오차 문서화) + Optuna 스윕 속도 개선 측정.
-- 통과 후 `engine.py` 이벤트 루프·수제 성과지표(§3.2의 3벌)를 제거하고
-  experiment_runner/optimizer 백엔드 교체. 미통과 항목은 원인 규명 전 교체 금지.
+- [x] Parity 스위트 (`tests/unit/backtest/test_vbt_runner.py` + `_realdata.py`):
+  합성 5시나리오 × 7리스크 매트릭스 + 실데이터 williams_r(005930 분봉,
+  2026-06-01~12, 11 trades) — 트레이드 시퀀스/총수익/샤프/MDD **완전 일치**.
+  허용오차 정책·스윕 속도 측정: `docs/plans/2026-07-10-vbt-parity-report.md`
+  (속도는 현 단계 개선 없음 — 어댑터 시그널 패스가 지배; 정직 기록).
+  활성 3전략 전체 커버리지(momentum_breakout/pattern_pullback)는 exit
+  허용목록 확장 후 후속.
+- [ ] 통과 후 `engine.py` 이벤트 루프·수제 성과지표(§3.2의 3벌)를 제거하고
+  experiment_runner/optimizer 백엔드 교체 — **미착수** (운영자 flip 게이트;
+  paper 관찰 + 허용목록 확장 선행). 미통과 항목은 원인 규명 전 교체 금지.
 
 ### P3-c. 상태머신 exit 처리
 - three_stage 등 신호 사전계산으로 표현 불가한 exit는 1차로 기존 이벤트 루프 경로를
