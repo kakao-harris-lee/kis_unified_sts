@@ -283,6 +283,20 @@ def _run_registry_strategy(
         )
 
     bt = strategy_config.get("strategy", {}).get("backtest", {})
+    # Opt-in backend seam (plan 2026-07-08 §5 P3-a): default stays the legacy
+    # BacktestEngine; `strategy.backtest.engine: vectorbt` routes through the
+    # VectorbtRunner with automatic legacy fallback on NotImplementedError /
+    # ImportError. Unknown values fall back to legacy WITH a warning so a
+    # typo ("vbt") cannot silently produce a legacy run labeled as intended.
+    engine_backend = str(bt.get("engine", "") or "legacy").lower()
+    if engine_backend not in ("legacy", "vectorbt"):
+        logger.warning(
+            "experiment %s: unknown backtest engine %r — using legacy "
+            "(valid: legacy | vectorbt)",
+            sid,
+            engine_backend,
+        )
+        engine_backend = "legacy"
     position_params = (
         strategy_config.get("strategy", {}).get("position", {}).get("params", {})
     )
@@ -299,6 +313,19 @@ def _run_registry_strategy(
     closed = winners = 0
     gains = losses = 0.0
     ran = 0
+    used_backends: set[str] = set()
+
+    def _build_adapter() -> Any:
+        # Fresh strategy + adapter per attempt — a mid-run vectorbt refusal
+        # leaves the previous adapter warm/dirty, so the legacy fallback must
+        # never reuse it.
+        trading_strategy = StrategyFactory.create(strategy_config)
+        return (
+            DailyBacktestAdapter(trading_strategy, strategy_config)
+            if timeframe == "daily"
+            else BacktestStrategyAdapter(trading_strategy, strategy_config)
+        )
+
     for symbol, df in frames.items():
         try:
             config = BacktestConfig.stock(
@@ -309,13 +336,30 @@ def _run_registry_strategy(
             )
             if "risk" in bt:
                 config.risk = RiskConfig.from_dict(bt["risk"])
-            trading_strategy = StrategyFactory.create(strategy_config)
-            adapted = (
-                DailyBacktestAdapter(trading_strategy, strategy_config)
-                if timeframe == "daily"
-                else BacktestStrategyAdapter(trading_strategy, strategy_config)
-            )
-            result = BacktestEngine(adapted, config).run(df)
+            result = None
+            symbol_backend = "backtest_engine"
+            if engine_backend == "vectorbt":
+                from shared.backtest.vbt_runner import VectorbtRunner
+
+                try:
+                    result = VectorbtRunner(_build_adapter(), config).run(df)
+                    symbol_backend = "vectorbt"
+                except (NotImplementedError, ImportError) as unsupported:
+                    # NotImplementedError: 러너 표현범위 밖 (정상 폴백 경로).
+                    # ImportError: vectorbt 자체가 없는 환경 — 러너의 사전
+                    # 가드가 대부분 잡지만(find_spec), 깨진 설치 등 늦게
+                    # 터지는 케이스도 legacy 로 폴백해야 한다.
+                    logger.warning(
+                        "experiment %s/%s: vectorbt runner unavailable/"
+                        "unsupported (%s); falling back to legacy engine",
+                        sid,
+                        symbol,
+                        unsupported,
+                    )
+            if result is None:
+                result = BacktestEngine(_build_adapter(), config).run(df)
+                symbol_backend = "backtest_engine"
+            used_backends.add(symbol_backend)
         except Exception as exc:  # noqa: BLE001 - isolate per-symbol failure
             logger.warning("experiment %s/%s failed", sid, symbol, exc_info=True)
             coverage[symbol] = {
@@ -323,6 +367,10 @@ def _run_registry_strategy(
                 "error": f"{type(exc).__name__}: {exc}",
             }
             continue
+        # 어떤 백엔드가 이 심볼을 처리했는지 리포트에 남긴다 — 혼합 실행을
+        # 로그 없이 식별할 수 있어야 P3-b 관찰 증거가 오염되지 않는다.
+        if isinstance(coverage.get(symbol), dict):
+            coverage[symbol]["engine"] = symbol_backend
         ran += 1
         per_curves.append(_daily_equity_points(result.equity_curve))
         trades.extend(_trades_from_result(sid, name, result))
@@ -341,10 +389,16 @@ def _run_registry_strategy(
 
     equity_curve = _aggregate_equity(per_curves, cap_per_symbol)
     metrics = _portfolio_metrics(equity_curve, total_capital)
-    summary = {
+    summary: dict[str, Any] = {
         "strategy_id": sid,
         "strategy_name": name,
-        "engine": "backtest_engine",
+        # 전 심볼 단일 백엔드일 때만 그 이름을 쓰고, 부분 폴백은 "mixed" 로
+        # 명시한다 (per-symbol 백엔드는 coverage[symbol]["engine"] 참조).
+        "engine": (
+            "vectorbt"
+            if used_backends == {"vectorbt"}
+            else ("mixed" if "vectorbt" in used_backends else "backtest_engine")
+        ),
         "timeframe": timeframe,
         "initial_capital": total_capital,
         "final_equity": _finite(metrics["final_equity"], 0),

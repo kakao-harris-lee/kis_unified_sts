@@ -157,6 +157,10 @@ jobs:
         run: |
           python -c "import talib; import vectorbt; print('vectorbt', vectorbt.__version__)"
 
+      - name: VectorbtRunner parity suite (P3-a/b)
+        run: |
+          pytest tests/unit/backtest/test_vbt_runner.py -q
+
   performance:
     runs-on: ubuntu-latest
     # Run on PRs to main and weekly schedule
