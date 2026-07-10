@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import subprocess
 import sys
@@ -31,6 +32,11 @@ from shared.backtest.vbt_runner import (
     EXPRESSIBLE_EXIT_GENERATORS,
     VectorbtRunner,
 )
+from shared.models.position import Position as ModelPosition
+from shared.models.position import PositionSide
+from shared.strategy.base import ExitContext
+from shared.strategy.exit.atr_dynamic import ATRDynamicExit, ATRDynamicExitConfig
+from shared.strategy.exit.chandelier_exit import ChandelierExit, ChandelierExitConfig
 
 pytestmark = pytest.mark.backtest
 
@@ -202,6 +208,155 @@ class _FakeAdapter:
         return SignalType.HOLD
 
 
+def _with_exit_indicators(data: pd.DataFrame) -> pd.DataFrame:
+    """exit 생성기가 읽는 지표 컬럼을 결정론적으로 주입.
+
+    legacy 어댑터(BacktestStrategyAdapter.check_exit)는 이 값을 지표 리졸버에서
+    채워 ``exit_market_data = {**bar, **indicators}`` 로 exit 에 노출한다. 합성
+    parity 의 관건은 **두 엔진이 동일 bar 를 먹인다**는 것이므로, 동일한 병합
+    경로(:class:`_RealExitStrategy.check_exit`)에 결정론적 컬럼을 주입하면 충분
+    하다(새 주입 경로를 발명하지 않음). atr 은 절대값(>0.5)이라 ATRDynamicExit
+    의 normalized-ATR 감지에 걸리지 않는다. volume_velocity 는 음/양 혼합
+    사이클로 주입해 atr_dynamic 의 momentum_decay 분기(retracement > ATR &&
+    velocity < 0)가 결정론적으로 발화 가능하게 한다 (decay 미사용 exit 는 무시).
+    """
+    df = data.copy()
+    df["atr"] = (df["close"] * 0.004).round(4)
+    df["highest_high"] = df["high"]
+    df["volume_velocity"] = (np.arange(len(df)) % 5) - 2.0  # -2..2 사이클
+    return df
+
+
+class _RealExitStrategy:
+    """합성 진입(entry-only) + **실제** exit 생성기 — 어댑터와 동형.
+
+    :class:`BacktestStrategyAdapter` 를 축약 재현한다: 러너의 허용목록 게이트가
+    읽는 ``_strategy.exit`` 에 실제 exit 인스턴스를 노출하고(이름 drift 방지),
+    ``check_exit`` 에서 그 exit 의 async ``should_exit(ExitContext)`` 를 어댑터와
+    동일한 방식(지표를 market_data/indicators 로 병합)으로 구동한다. 진입만 내고
+    (SELL 없음) 청산은 전적으로 실 exit 생성기(+엔진 리스크 안전장치)가 담당하므로,
+    legacy 와 vbt 두 엔진이 exit 결정을 동일하게 재생하는지를 직접 고정한다.
+    """
+
+    vbt_signal_expressible = True
+
+    def __init__(self, exit_generator, *, name: str):
+        self.name = name
+        # 게이트가 underlying.exit.name 을 읽는다 → 실제 클래스의 name 을 통과.
+        self._strategy = _FakeTradingStrategy(exit_generator)
+        self._exit = exit_generator
+        self._loop = asyncio.new_event_loop()
+        self._closes: list[float] = []
+        self._pos: dict | None = None
+        self._n: int | None = None
+        self._i = -1
+
+    def prescan_data(self, data: pd.DataFrame) -> None:
+        self._n = len(data)
+
+    def set_position(self, position: dict | None) -> None:
+        self._pos = position
+
+    def on_bar(self, bar: dict) -> SignalType:
+        self._i += 1
+        self._closes.append(bar["close"])
+        if len(self._closes) < 20:
+            return SignalType.HOLD
+        # 마지막 bar 진입은 END_OF_DATA 강제청산과 동일 bar 충돌(문서화된 러너
+        # 거부, parity 이슈 아님)을 유발해 dual-run 을 중단시키므로 회피한다.
+        if self._n is not None and self._i >= self._n - 2:
+            return SignalType.HOLD
+        ma = sum(self._closes[-20:]) / 20
+        if self._pos is None and bar["close"] < ma * 0.999:
+            return SignalType.BUY
+        return SignalType.HOLD
+
+    def check_exit(self, bar: dict) -> tuple[bool, ExitReason | None]:
+        if self._pos is None:
+            return (False, None)
+        pos = self._pos
+        ts = bar["datetime"]
+        # 어댑터처럼 지표를 market_data/indicators 로 병합해 exit 에 노출.
+        indicators = {k: bar[k] for k in ("atr", "highest_high") if k in bar}
+        position = ModelPosition(
+            id="bt_real_exit",
+            code=str(bar.get("code", "005930")),
+            name=str(bar.get("code", "005930")),
+            strategy=self.name,
+            side=PositionSide.LONG if pos["side"] == "BUY" else PositionSide.SHORT,
+            entry_price=float(pos["entry_price"]),
+            quantity=pos["quantity"],
+            entry_time=pos.get("entry_time", ts),
+            current_price=float(bar.get("close", 0) or 0),
+            highest_price=float(pos.get("highest_price", pos["entry_price"])),
+            lowest_price=float(pos.get("lowest_price", pos["entry_price"])),
+            metadata=dict(pos.get("metadata", {}) or {}),
+        )
+        context = ExitContext(
+            position=position,
+            market_data={**bar, **indicators},
+            indicators=indicators,
+            timestamp=ts,
+        )
+        should_exit, sig = self._loop.run_until_complete(
+            self._exit.should_exit(context)
+        )
+        if should_exit and sig:
+            try:
+                return (True, ExitReason(sig.reason.value))
+            except ValueError:
+                return (True, ExitReason.STRATEGY_EXIT)
+        return (False, None)
+
+
+def _atr_dynamic_strategy() -> _RealExitStrategy:
+    return _RealExitStrategy(
+        ATRDynamicExit(
+            ATRDynamicExitConfig(
+                stop_atr_multiplier=2.5,
+                trail_activation_atr=1.0,
+                trail_atr_multiplier=2.0,
+                max_loss_pct=5.0,
+            )
+        ),
+        name="atr_dynamic_synth",
+    )
+
+
+def _chandelier_strategy() -> _RealExitStrategy:
+    return _RealExitStrategy(
+        ChandelierExit(
+            ChandelierExitConfig(
+                atr_multiplier=3.0, hard_stop_pct=-0.07, max_hold_days=60
+            )
+        ),
+        name="chandelier_synth",
+    )
+
+
+def _atr_dynamic_decay_strategy() -> _RealExitStrategy:
+    """배포 momentum_breakout 의 exit 설정 그대로 — decay/max_hold 분기 커버.
+
+    config/strategies/stock/momentum_breakout.yaml::strategy.exit.params 와 동일
+    (stop 2.0 / act 2.0 / mult 1.5 / momentum_decay_exit true / max_hold_days 8;
+    eod_close 는 배포값도 false — wall-clock 의존이라 테스트에서도 끔). 합성
+    4일 윈도우에서 max_hold_days=8 은 발화하지 않지만 분기 평가는 매 bar 돈다;
+    momentum_decay 발화는 non-vacuity 테스트가 별도 고정한다.
+    """
+    return _RealExitStrategy(
+        ATRDynamicExit(
+            ATRDynamicExitConfig(
+                stop_atr_multiplier=2.0,
+                trail_activation_atr=2.0,
+                trail_atr_multiplier=1.5,
+                momentum_decay_exit=True,
+                max_hold_days=8,
+            )
+        ),
+        name="atr_dynamic_decay_synth",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Parity assertion helper
 # ---------------------------------------------------------------------------
@@ -209,6 +364,9 @@ class _FakeAdapter:
 
 def _assert_parity(res_legacy, res_vbt, *, equity_atol: float = 1e-6) -> None:
     # 트레이드 시퀀스: 시각/가격/수량/pnl/사유까지 dict 레벨 완전 일치.
+    # (가격 포함 — 러너가 트레이드 가격을 resolver 이벤트의 bar 종가 원본에서
+    # 채우므로, vbt 레코드의 value/size 재구성 ULP 잔차가 계약에 새지 않는다.
+    # 레코드 ↔ 이벤트의 가격 일치 자체는 러너 _cross_check 가 독립 강제.)
     assert res_legacy.total_trades == res_vbt.total_trades
     for a, b in zip(res_legacy.trades, res_vbt.trades):
         assert a.to_dict() == b.to_dict()
@@ -411,6 +569,37 @@ class TestExpressibilityGate:
             runner.run(_make_minute_data(days=1))
         assert strategy.closes == []  # on_bar 미호출
 
+    def test_daily_adapter_denied(self):
+        """DailyBacktestAdapter 경로는 parity 미검증 → 정적 거부 (P3-c).
+
+        chandelier_exit 허용목록 등재가 daily 전략(pattern_pullback)을 무증거로
+        vbt 에 태우지 않도록 하는 게이트. vectorbt 불필요(정적 거부).
+        """
+        from shared.backtest.daily_adapter import DailyBacktestAdapter
+        from shared.config.loader import ConfigLoader
+        from shared.strategy.registry import (
+            StrategyFactory,
+            register_builtin_components,
+        )
+
+        register_builtin_components()
+        cfg = ConfigLoader.load_strategy("stock", "pattern_pullback")
+        adapter = DailyBacktestAdapter(StrategyFactory.create(cfg), cfg)
+        runner = VectorbtRunner(adapter, BacktestConfig.stock())
+        with pytest.raises(NotImplementedError, match="daily adapter"):
+            runner.run(_make_minute_data(days=1))
+
+    def test_real_exit_instance_names_are_allowlisted(self):
+        """parity 픽스처의 실 exit 인스턴스 `.name` ↔ 허용목록 정합 (vbt 불필요).
+
+        parity 매트릭스 자체는 vectorbt-게이트라 머지 게이트 CI(vectorbt 미설치)
+        에서 skip 된다 — 이 테스트는 이름/허용목록 드리프트(클래스 rename 등)만
+        떼어 vbt 없이 항상 강제한다.
+        """
+        for label, factory in sorted(_REAL_EXIT_FACTORIES.items()):
+            exit_name = factory()._strategy.exit.name
+            assert exit_name in EXPRESSIBLE_EXIT_GENERATORS, (label, exit_name)
+
 
 # ---------------------------------------------------------------------------
 # 3. Parity 게이트 (P3-b) — vectorbt 필요
@@ -534,6 +723,78 @@ class TestParityGate:
 
 
 # ---------------------------------------------------------------------------
+# 3b. 상태머신 exit parity (P3-c) — 실제 ATRDynamicExit / ChandelierExit
+# ---------------------------------------------------------------------------
+
+
+# 팩토리 키 = 리포트/파라미터 라벨. 인스턴스의 실제 exit `.name`(허용목록 판정
+# 대상)과의 정합은 test_real_exit_instance_names_are_allowlisted 가 핀한다.
+_REAL_EXIT_FACTORIES = {
+    "atr_dynamic": _atr_dynamic_strategy,
+    "atr_dynamic_decay": _atr_dynamic_decay_strategy,  # 배포 momentum_breakout 설정
+    "chandelier_exit": _chandelier_strategy,
+}
+
+# 게이트 매트릭스(_SCENARIOS/_RISK_VARIANTS)에서 파생 — 리터럴 복제로 두
+# 매트릭스가 어긋나는 드리프트 방지. 부분집합만 사용(전 조합은 P3-b 합성 전략
+# 매트릭스가 커버; 여기서는 exit 생성기 자체의 분기 커버가 목적).
+_REAL_EXIT_SCENARIOS = {
+    name: (lambda _f=_SCENARIOS[name]: _with_exit_indicators(_f()))
+    for name in ("trend_up", "trend_down", "chop")
+}
+
+_REAL_EXIT_RISK = {name: _RISK_VARIANTS[name] for name in ("default", "tight_sl_tp")}
+
+
+class TestRealExitParity:
+    """실제 상태머신 exit 클래스(ATRDynamicExit / ChandelierExit) dual-run parity.
+
+    P3-c 허용목록 확장 증거: 각 exit 를 legacy BacktestEngine 과 VectorbtRunner
+    양쪽에 동일 어댑터 프로토콜(:class:`_RealExitStrategy`)로 구동해 트레이드
+    시퀀스(가격 포함 완전 일치)/자본/지표가 일치함을 고정한다.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_vectorbt(self):
+        pytest.importorskip("vectorbt")
+
+    @pytest.mark.parametrize("exit_label", sorted(_REAL_EXIT_FACTORIES))
+    @pytest.mark.parametrize("scenario", sorted(_REAL_EXIT_SCENARIOS))
+    @pytest.mark.parametrize("risk_name", sorted(_REAL_EXIT_RISK))
+    def test_real_exit_scenario_risk_parity(self, exit_label, scenario, risk_name):
+        make = _REAL_EXIT_FACTORIES[exit_label]
+        # 허용목록 전제 가드 — 인스턴스의 실제 exit `.name` 이 등재돼 있어야
+        # 러너가 게이트를 통과한다 (라벨이 아니라 .name 이 판정 대상).
+        assert make()._strategy.exit.name in EXPRESSIBLE_EXIT_GENERATORS
+        data = _REAL_EXIT_SCENARIOS[scenario]()
+        config = BacktestConfig.stock(initial_capital=10_000_000)
+        config.risk = RiskConfig.from_dict(_REAL_EXIT_RISK[risk_name])
+        res_legacy, res_vbt = _run_both(data, config, make)
+        _assert_parity(res_legacy, res_vbt)
+
+    @pytest.mark.parametrize("exit_label", sorted(_REAL_EXIT_FACTORIES))
+    def test_real_exit_is_exercised_not_vacuous(self, exit_label):
+        """허용목록 확장이 공허(무거래/END_OF_DATA-only) parity 로 통과하지 않는지.
+
+        기본 리스크는 엔진 트레일링을 비활성화하므로 ``trailing_stop`` /
+        ``momentum_decay`` 사유는 오직 실 exit 생성기만 낼 수 있다 → 그 사유의
+        존재가 생성기가 실제로 청산을 구동했다는 증거다(엔진 안전장치가 아니라).
+        decay 변형은 momentum_decay 분기 발화까지 고정한다(배포 설정 커버).
+        """
+        make = _REAL_EXIT_FACTORIES[exit_label]
+        data = _REAL_EXIT_SCENARIOS["trend_down"]()
+        config = BacktestConfig.stock(initial_capital=10_000_000)
+        res = BacktestEngine(make(), config).run(data)
+        assert res.total_trades > 0
+        generator_only = {"trailing_stop", "momentum_decay"}
+        assert any(
+            res.exit_reasons.get(r, 0) > 0 for r in generator_only
+        ), res.exit_reasons
+        if exit_label == "atr_dynamic_decay":
+            assert res.exit_reasons.get("momentum_decay", 0) > 0, res.exit_reasons
+
+
+# ---------------------------------------------------------------------------
 # 4. Experiment runner seam — opt-in + 폴백
 # ---------------------------------------------------------------------------
 
@@ -615,19 +876,42 @@ class TestExperimentSeam:
         assert report["summaries"][0]["engine"] == "backtest_engine"
         assert any("unknown backtest engine" in r.message for r in caplog.records)
 
-    def test_unsupported_exit_falls_back_to_legacy(self, monkeypatch):
-        """engine=vectorbt 라도 비허용 exit(pattern_pullback)면 legacy 폴백.
+    def _spec_three_stage(self):
+        """three_stage(스테이지별 부분청산 상태머신) exit 전략 — 영구 legacy 대상.
 
-        게이트가 vectorbt lazy import *이전에* 거부하므로 이 테스트는
-        vectorbt 설치 여부와 무관하게 통과해야 한다.
+        pattern_pullback/momentum_breakout 의 exit(chandelier_exit/atr_dynamic)은
+        P3-c 에서 허용목록에 올랐으므로, "비허용 exit → 폴백" 계약은 표현 불가한
+        상태머신 exit(three_stage)로 고정해야 한다.
+        """
+        from shared.backtest.experiment_runner import ExperimentSpec
+
+        return ExperimentSpec.from_dict(
+            {
+                "id": "vbt_seam_three_stage",
+                "strategies": [{"type": "registry", "name": "opening_volume_surge"}],
+                "symbols": ["005930"],
+                "start": "2024-06-01",
+                "end": "2026-06-01",
+                "initial_capital": 10_000_000,
+            }
+        )
+
+    def test_unsupported_exit_falls_back_to_legacy(self, monkeypatch):
+        """engine=vectorbt 라도 표현 불가 exit(three_stage)면 legacy 폴백.
+
+        three_stage 는 스테이지별 부분청산이라 ``from_orders`` 풀포지션 원장으로
+        표현 불가 → 허용목록 영구 제외(plan §5 P3-c). 게이트가 vectorbt lazy
+        import *이전에* 거부하므로 이 테스트는 vectorbt 설치 여부와 무관하게
+        통과해야 한다.
         """
         from shared.backtest.experiment_runner import run_stock_experiment
 
         now = datetime(2026, 6, 1)
-        baseline = run_stock_experiment(self._spec(), bar_loader=_daily_loader, now=now)
+        spec = self._spec_three_stage()
+        baseline = run_stock_experiment(spec, bar_loader=_daily_loader, now=now)
 
         _patch_engine_key(monkeypatch, "vectorbt")
-        report = run_stock_experiment(self._spec(), bar_loader=_daily_loader, now=now)
+        report = run_stock_experiment(spec, bar_loader=_daily_loader, now=now)
 
         summ = report["summaries"][0]
         assert summ["engine"] == "backtest_engine"  # 폴백됨
@@ -667,4 +951,180 @@ class TestExperimentSeam:
         assert status["williams_r"] == "ok"
         assert report["summaries"][0]["engine"] == "vectorbt"
         # 혼합 실행 식별용 per-symbol 백엔드 기록 (P3-b 관찰 증거 오염 방지).
+        assert report["data_coverage"]["005930"]["engine"] == "vectorbt"
+
+    def _patch_config(self, monkeypatch, **backtest_overrides) -> None:
+        """실 전략 YAML 로드 후 strategy.backtest 의 임의 키를 주입."""
+        import copy
+
+        from shared.config.loader import ConfigLoader
+
+        real_load = ConfigLoader.load_strategy.__func__
+
+        def patched(cls, asset_class, strategy_name, use_cache=True):
+            cfg = copy.deepcopy(real_load(cls, asset_class, strategy_name, use_cache))
+            bt = cfg.setdefault("strategy", {}).setdefault("backtest", {})
+            bt.update(backtest_overrides)
+            return cfg
+
+        monkeypatch.setattr(ConfigLoader, "load_strategy", classmethod(patched))
+
+    @staticmethod
+    def _minute_loader(*, symbol, asset_class, timeframe, start, end):
+        return _make_minute_data(seed=3, days=2, code=symbol)
+
+    def _williams_spec(self):
+        from shared.backtest.experiment_runner import ExperimentSpec
+
+        return ExperimentSpec.from_dict(
+            {
+                "id": "vbt_seam_legacy_exit",
+                "strategies": [{"type": "registry", "name": "williams_r"}],
+                "symbols": ["005930"],
+                "start": "2026-06-01",
+                "end": "2026-06-03",
+                "initial_capital": 10_000_000,
+            }
+        )
+
+    def test_legacy_exit_flag_forces_legacy_over_vectorbt(self, monkeypatch, caplog):
+        """backtest.legacy_exit=true 는 engine=vectorbt 여도 러너 시도 없이 legacy 강제.
+
+        허용목록에 오른 exit(williams_r)라도 플래그가 있으면 vbt 를 아예 시도하지
+        않는 명시적 escape hatch (plan §5 P3-c). vectorbt 설치 여부와 무관하게
+        legacy 로 가므로(러너 미시도) importorskip 불필요.
+        """
+        import logging as _logging
+
+        from shared.backtest.experiment_runner import run_stock_experiment
+
+        self._patch_config(monkeypatch, engine="vectorbt", legacy_exit=True)
+        with caplog.at_level(_logging.INFO, logger="shared.backtest"):
+            report = run_stock_experiment(
+                self._williams_spec(),
+                bar_loader=self._minute_loader,
+                now=datetime(2026, 6, 3),
+            )
+        assert report["summaries"][0]["engine"] == "backtest_engine"
+        assert report["data_coverage"]["005930"]["engine"] == "backtest_engine"
+        assert any("legacy_exit=true" in r.message for r in caplog.records)
+
+    def test_legacy_exit_unrecognized_value_warns_and_is_ignored(
+        self, monkeypatch, caplog
+    ):
+        """해석 불가 legacy_exit 값은 조용히 무시하지 않고 경고 후 플래그 미설정.
+
+        (엔진 키 오타 처리와 동일 정책 — 애매값을 True 로 오인해 legacy 를 강제
+        하지 않는다.) vectorbt 설치 여부와 무관하게 경고 발생만 고정한다.
+        """
+        import logging as _logging
+
+        from shared.backtest.experiment_runner import run_stock_experiment
+
+        self._patch_config(monkeypatch, engine="vectorbt", legacy_exit="maybe")
+        with caplog.at_level(_logging.WARNING, logger="shared.backtest"):
+            run_stock_experiment(
+                self._williams_spec(),
+                bar_loader=self._minute_loader,
+                now=datetime(2026, 6, 3),
+            )
+        assert any(
+            "unrecognized backtest.legacy_exit" in r.message for r in caplog.records
+        )
+
+    def test_legacy_exit_bare_key_is_unset_without_warning(self, monkeypatch, caplog):
+        """빈 키(`legacy_exit:` → None)는 미설정 — 경고 없이 무시."""
+        import logging as _logging
+
+        from shared.backtest.experiment_runner import run_stock_experiment
+
+        self._patch_config(monkeypatch, legacy_exit=None)
+        with caplog.at_level(_logging.WARNING, logger="shared.backtest"):
+            report = run_stock_experiment(
+                self._williams_spec(),
+                bar_loader=self._minute_loader,
+                now=datetime(2026, 6, 3),
+            )
+        assert report["summaries"][0]["engine"] == "backtest_engine"  # 기본 legacy
+        assert not any("legacy_exit" in r.message for r in caplog.records)
+
+    def test_parity_cross_check_failure_falls_back_to_legacy(self, monkeypatch, caplog):
+        """러너 cross-check 불일치(VectorbtParityError)는 심볼 드랍이 아니라 폴백.
+
+        과거엔 (NotImplementedError, ImportError)만 잡아 RuntimeError 가
+        per-symbol except 로 떨어졌다 → loaded:False 로 등가중 집계에서 조용히
+        탈락. 이제 legacy 폴백으로 결과를 보존하고 조사용 경고만 남긴다.
+        vectorbt 설치 여부와 무관(runner.run 을 직접 스텁).
+        """
+        import logging as _logging
+
+        from shared.backtest import vbt_runner as vbt_mod
+        from shared.backtest.experiment_runner import run_stock_experiment
+
+        def _raise_parity(self, data):
+            raise vbt_mod.VectorbtParityError(
+                "vectorbt parity cross-check failed: synthetic-test"
+            )
+
+        monkeypatch.setattr(vbt_mod.VectorbtRunner, "run", _raise_parity)
+        self._patch_config(monkeypatch, engine="vectorbt")
+        with caplog.at_level(_logging.WARNING, logger="shared.backtest"):
+            report = run_stock_experiment(
+                self._williams_spec(),
+                bar_loader=self._minute_loader,
+                now=datetime(2026, 6, 3),
+            )
+        summ = report["summaries"][0]
+        assert summ["engine"] == "backtest_engine"  # legacy 폴백 (드랍 아님)
+        cov = report["data_coverage"]["005930"]
+        assert cov.get("loaded") is not False  # 심볼이 집계에서 탈락하지 않음
+        assert cov["engine"] == "backtest_engine"
+        assert any("parity cross-check FAILED" in r.message for r in caplog.records)
+
+    def test_daily_strategy_falls_back_to_legacy_via_daily_gate(self, monkeypatch):
+        """pattern_pullback(daily, chandelier_exit)은 exit 허용에도 daily 게이트로 폴백.
+
+        chandelier_exit 가 허용목록에 있어도 DailyBacktestAdapter 경로는 parity
+        미검증 → 정적 거부 → legacy. 게이트가 vectorbt lazy import 이전에
+        거부하므로 vectorbt 설치 여부와 무관하게 통과해야 한다.
+        """
+        from shared.backtest.experiment_runner import run_stock_experiment
+
+        now = datetime(2026, 6, 1)
+        baseline = run_stock_experiment(self._spec(), bar_loader=_daily_loader, now=now)
+
+        _patch_engine_key(monkeypatch, "vectorbt")
+        report = run_stock_experiment(self._spec(), bar_loader=_daily_loader, now=now)
+
+        summ = report["summaries"][0]
+        assert summ["engine"] == "backtest_engine"  # daily 게이트 폴백
+        base_summ = baseline["summaries"][0]
+        for key in ("final_equity", "total_return_pct", "closed_trades"):
+            assert summ[key] == base_summ[key], key
+
+    def test_momentum_breakout_minute_routes_to_vectorbt(self, monkeypatch):
+        """momentum_breakout(atr_dynamic exit, 분봉)은 engine=vectorbt 라우팅 e2e."""
+        pytest.importorskip("vectorbt")
+        from shared.backtest.experiment_runner import (
+            ExperimentSpec,
+            run_stock_experiment,
+        )
+
+        _patch_engine_key(monkeypatch, "vectorbt")
+        spec = ExperimentSpec.from_dict(
+            {
+                "id": "vbt_seam_mb",
+                "strategies": [{"type": "registry", "name": "momentum_breakout"}],
+                "symbols": ["005930"],
+                "start": "2026-06-01",
+                "end": "2026-06-03",
+                "initial_capital": 10_000_000,
+            }
+        )
+        report = run_stock_experiment(
+            spec, bar_loader=self._minute_loader, now=datetime(2026, 6, 3)
+        )
+        status = {s["strategy_id"]: s["status"] for s in report["status_by_strategy"]}
+        assert status["momentum_breakout"] == "ok"
+        assert report["summaries"][0]["engine"] == "vectorbt"
         assert report["data_coverage"]["005930"]["engine"] == "vectorbt"

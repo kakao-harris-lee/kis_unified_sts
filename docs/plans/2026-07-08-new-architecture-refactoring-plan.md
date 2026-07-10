@@ -246,9 +246,53 @@
   paper 관찰 + 허용목록 확장 선행). 미통과 항목은 원인 규명 전 교체 금지.
 
 ### P3-c. 상태머신 exit 처리
-- three_stage 등 신호 사전계산으로 표현 불가한 exit는 1차로 기존 이벤트 루프 경로를
-  `legacy_exit=true` 플래그로 존치, 2차로 vbt custom order func 이관 검토.
-  **parity 불가 전략을 억지로 vbt에 밀어넣지 않는다.**
+- [x] **`legacy_exit: true` 명시 플래그** (experiment_runner seam) —
+  `strategy.backtest.legacy_exit: true` 면 `engine: vectorbt` 여도 러너를 아예
+  시도하지 않고 legacy 를 강제한다 (상태머신 exit 전략의 operator escape hatch /
+  명시 마커). `shared.utils.coercion.to_bool` tri-state 강제(bool / "true"/"1"/
+  "yes" …); 해석 불가 값은 조용히 True 로 오인하지 않고 **경고 후 무시**
+  (unknown-engine 키 처리와 동일 정책; 빈 키 `legacy_exit:`=None 은 미설정으로
+  경고 없이 무시). 강제 시 info 로그 1줄로 사유를 남긴다.
+  ⚠️ **잠재 리스크(이연)**: 이 게이트는 현재 experiment seam 에만 산다 —
+  향후 다른 vbt 소비자(optimizer/CLI 백테스트/P3-d)가 생기면 반드시
+  `backtest.legacy_exit` 를 동일하게 존중해야 한다(또는 그 시점에 게이트를
+  `_ensure_supported` 로 이동).
+- [x] **허용목록 확장 (parity 증거 수반)** — `EXPRESSIBLE_EXIT_GENERATORS` 에
+  `atr_dynamic`, `chandelier_exit` 등재. 실제 exit 클래스(ATRDynamicExit /
+  ChandelierExit) 인스턴스를 legacy `BacktestEngine` vs `VectorbtRunner` 이중
+  구동으로 합성 시나리오(trend_up / trend_down / chop) × 리스크(default /
+  tight_sl_tp) 매트릭스에서 검증 — 트레이드 시퀀스 **가격 포함 완전 일치**
+  (러너가 트레이드 가격을 resolver 이벤트의 bar 종가 원본에서 채우도록 교정;
+  vbt 레코드 value/size 재구성 ULP 잔차는 계약에 새지 않고 `_cross_check` 가
+  레코드↔이벤트 일치를 별도 강제). exit 생성기가 실제로 청산을 구동함을
+  non-vacuity 가드(`trailing_stop`/`momentum_decay` 사유 존재)로 고정.
+  배포 momentum_breakout 의 exit 설정(momentum_decay_exit=true, max_hold_days)
+  그대로의 `atr_dynamic_decay` 변형까지 매트릭스에 포함(decay 분기 발화 검증).
+  `tests/unit/backtest/test_vbt_runner.py::TestRealExitParity` (합성 18 케이스 +
+  non-vacuity 3; 매트릭스는 P3-b `_SCENARIOS`/`_RISK_VARIANTS` 에서 파생).
+  `scripts/vbt_parity_report.py` 도 동일 픽스처를 import 해 실 exit 매트릭스를
+  리포트/exit-code 판정에 포함(운영자 flip 게이트 커버). → **활성 3전략
+  (williams_r / momentum_breakout / pattern_pullback) exit 전부 허용목록 통과**:
+  williams_r_exit(P3-b) + atr_dynamic + chandelier_exit. 러너는 어댑터를 legacy
+  순서로 재생성하므로 상태머신 exit 도 기계적으로 지원 — 허용목록은 **표현가능성
+  제한이 아니라 parity 증거 게이트**임을 docstring/주석에 명시.
+  ⚠️ **일봉 어댑터 경로는 별도 게이트**: `DailyBacktestAdapter` 는 parity
+  미검증이라 `_ensure_supported` 가 정적으로 거부한다(legacy 폴백) — daily
+  전략(pattern_pullback)은 exit 가 허용목록에 있어도 legacy 로 돈다.
+  chandelier_exit 의 vbt 적격성은 분봉 어댑터 경로 한정.
+- [x] **cross-check 폴백 배선** — 러너 내부 resolver↔vbt 원장 cross-check
+  불일치는 전용 `VectorbtParityError`(RuntimeError) 로 승격, experiment seam 이
+  이를 잡아 legacy 폴백한다(fresh adapter 재생성). 과거엔 per-symbol except 로
+  떨어져 심볼이 등가중 집계에서 조용히 탈락했다 — 이제 결과 보존 + 조사용 경고.
+- [x] **three_stage 영구 제외** — 스테이지별 *부분* 청산이라 `from_orders`
+  풀포지션 원장으로 구조적 표현 불가 → 허용목록 미등재 유지(2차 vbt custom order
+  func 트랙에서 재검토; 이번 범위 밖). seam 폴백 계약을 three_stage
+  (`opening_volume_surge`)로 재고정(`test_unsupported_exit_falls_back_to_legacy`;
+  chandelier/atr 이 허용되면서 기존 pattern_pullback 예시가 무효화됨), 게이트 거부
+  는 실 클래스 name 으로 핀(`test_stateful_exit_generator_denied`).
+  **parity 불가 전략을 억지로 vbt 에 밀어넣지 않는다** 원칙 준수 — 이번 확장은
+  atr_dynamic / chandelier 둘 다 parity 통과라 강제 배제 사례 없음(불통과 시
+  허용목록 제외 + 원인 기록 규약).
 
 ### P3-d. 선물 트랙 (후행)
 - `decision_harness`의 틱-PnL·컨텍스트 replay·다음바 시가 체결은 특수성이 커서

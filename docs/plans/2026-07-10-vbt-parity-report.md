@@ -1,6 +1,6 @@
-# VectorbtRunner Parity Report (P3-b / WS-A4 gate evidence)
+# VectorbtRunner Parity Report (P3-b/P3-c / WS-A4 gate evidence)
 
-- 생성: 2026-07-10 16:15 KST, `scripts/vbt_parity_report.py`
+- 생성: 2026-07-10 22:23 KST, `scripts/vbt_parity_report.py`
 - vectorbt 1.0.0 / legacy `shared/backtest/engine.py` BacktestEngine
 - Plan: `docs/plans/2026-07-08-new-architecture-refactoring-plan.md` §5, `docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md` §WS-A4
 - 러너: `shared/backtest/vbt_runner.py` (opt-in `strategy.backtest.engine: vectorbt`; 기본값 legacy)
@@ -18,10 +18,10 @@
 
 초과 드리프트는 `tests/unit/backtest/test_vbt_runner.py` parity 스위트가 실패시킨다 (머지 게이트).
 
-## 합성 시나리오 × 리스크 매트릭스
+## 합성 시나리오 × 리스크 매트릭스 (P3-b, 합성 진입+청산 전략)
 
-| 시나리오 × 리스크 | trades | trade seq | Δreturn(%p) | ΔSharpe | ΔMDD(%p) | Δfinal(KRW) | equity maxΔ(KRW) | reasons | to_dict |
-|---|---|---|---|---|---|---|---|---|
+| 케이스 | trades | trade seq | Δreturn(%p) | ΔSharpe | ΔMDD(%p) | Δfinal(KRW) | equity maxΔ(KRW) | reasons | to_dict |
+|---|---|---|---|---|---|---|---|---|---|
 | trend_up × default | 8 | ✅ exact | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.00e+00 | ✅ | ✅ |
 | trend_up × tight_sl_tp | 10 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.86e-14 | 0.00e+00 | 3.73e-09 | ✅ | ✅ |
 | trend_up × trailing | 8 | ✅ exact | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.00e+00 | ✅ | ✅ |
@@ -59,6 +59,31 @@
 | random_walk × close_on_day_change | 14 | ✅ exact | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.00e+00 | 1.86e-09 | ✅ | ✅ |
 | same_bar_reentry × default | 15 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.87e-14 | 0.00e+00 | 1.86e-09 | ✅ | ✅ |
 
+## 실 exit 생성기 매트릭스 (P3-c 허용목록 증거)
+
+실제 exit 클래스 인스턴스(ATRDynamicExit / ChandelierExit — `atr_dynamic_decay` 는 배포 momentum_breakout 의 exit 설정 그대로)를 TestRealExitParity 와 동일한 픽스처로 이중 구동. 트레이드 시퀀스는 가격 포함 **완전 일치** 기준이다(러너가 트레이드 가격을 resolver 이벤트의 bar 종가 원본에서 채움).
+
+| 케이스 | trades | trade seq | Δreturn(%p) | ΔSharpe | ΔMDD(%p) | Δfinal(KRW) | equity maxΔ(KRW) | reasons | to_dict |
+|---|---|---|---|---|---|---|---|---|---|
+| atr_dynamic × trend_up × default | 7 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.83e-14 | 0.00e+00 | 3.73e-09 | ✅ | ✅ |
+| atr_dynamic × trend_up × tight_sl_tp | 17 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.86e-14 | 0.00e+00 | 1.86e-09 | ✅ | ✅ |
+| atr_dynamic × trend_down × default | 33 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.87e-14 | 0.00e+00 | 3.73e-09 | ✅ | ✅ |
+| atr_dynamic × trend_down × tight_sl_tp | 101 | ✅ exact | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.00e+00 | 7.45e-09 | ✅ | ✅ |
+| atr_dynamic × chop × default | 21 | ✅ exact | 0.00e+00 | 0.00e+00 | 3.72e-14 | 0.00e+00 | 3.73e-09 | ✅ | ✅ |
+| atr_dynamic × chop × tight_sl_tp | 64 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.12e-13 | 0.00e+00 | 1.30e-08 | ✅ | ✅ |
+| atr_dynamic_decay × trend_up × default | 15 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.84e-14 | 0.00e+00 | 3.73e-09 | ✅ | ✅ |
+| atr_dynamic_decay × trend_up × tight_sl_tp | 18 | ✅ exact | 0.00e+00 | 0.00e+00 | 3.72e-14 | 0.00e+00 | 5.59e-09 | ✅ | ✅ |
+| atr_dynamic_decay × trend_down × default | 74 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.49e-13 | 0.00e+00 | 1.49e-08 | ✅ | ✅ |
+| atr_dynamic_decay × trend_down × tight_sl_tp | 109 | ✅ exact | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.00e+00 | 7.45e-09 | ✅ | ✅ |
+| atr_dynamic_decay × chop × default | 40 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.84e-14 | 0.00e+00 | 5.59e-09 | ✅ | ✅ |
+| atr_dynamic_decay × chop × tight_sl_tp | 64 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.12e-13 | 0.00e+00 | 1.30e-08 | ✅ | ✅ |
+| chandelier_exit × trend_up × default | 6 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.83e-14 | 0.00e+00 | 3.73e-09 | ✅ | ✅ |
+| chandelier_exit × trend_up × tight_sl_tp | 17 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.86e-14 | 0.00e+00 | 1.86e-09 | ✅ | ✅ |
+| chandelier_exit × trend_down × default | 29 | ✅ exact | 0.00e+00 | 0.00e+00 | 3.77e-14 | 0.00e+00 | 7.45e-09 | ✅ | ✅ |
+| chandelier_exit × trend_down × tight_sl_tp | 101 | ✅ exact | 0.00e+00 | 0.00e+00 | 0.00e+00 | 0.00e+00 | 7.45e-09 | ✅ | ✅ |
+| chandelier_exit × chop × default | 13 | ✅ exact | 0.00e+00 | 0.00e+00 | 3.72e-14 | 0.00e+00 | 3.73e-09 | ✅ | ✅ |
+| chandelier_exit × chop × tight_sl_tp | 64 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.12e-13 | 0.00e+00 | 1.30e-08 | ✅ | ✅ |
+
 ## 실데이터 — williams_r (활성 주식 전략, 레지스트리 경로)
 
 - 데이터: `005930` 실 분봉 parquet 3397 bars, 2026-06-01 ~ 2026-06-12 (KST)
@@ -73,13 +98,13 @@
 | Δfinal capital | 0.00e+00 KRW |
 | equity maxΔ | 0.00e+00 KRW |
 | to_dict 일치 | ✅ |
-| 실행 시간 | legacy 13.6s / vectorbt 13.7s |
+| 실행 시간 | legacy 13.7s / vectorbt 13.5s |
 
 ## 속도 — Optuna-style 스윕 (비게이트, 참고용)
 
 - 합성 800 bars × 20 param evals, JIT warmup 제외
-- 경량 합성 전략: legacy 0.13s / vectorbt runner 0.44s → **vectorbt 가 3.35× 느림** (eval 당 vbt Portfolio 구성 고정 오버헤드 ~15ms)
-- 실전략(williams_r, 3397 bars): legacy 13.6s / vectorbt 13.7s → **1.01×** — 시그널 생성(어댑터/지표)이 지배해 오버헤드가 상쇄됨
+- 경량 합성 전략: legacy 0.14s / vectorbt runner 0.45s → **vectorbt 가 3.31× 느림** (eval 당 vbt Portfolio 구성 고정 오버헤드 ~16ms)
+- 실전략(williams_r, 3397 bars): legacy 13.7s / vectorbt 13.5s → **0.99×** — 시그널 생성(어댑터/지표)이 지배해 오버헤드가 상쇄됨
 
 **정직한 결론**: 현 단계 러너는 시그널 생성을 legacy 와 동일한 어댑터 순차 패스로 수행하므로(신호 parity 를 구조적으로 보장하기 위한 설계) 스윕 가속은 아직 없다 — 트리비얼 전략에선 오히려 vbt 고정비만큼 느리고, 실전략에선 동률이다. 본격적 벡터화 가속은 P1/P2(선언형 조건 → boolean 배열 사전계산)가 어댑터 순차 패스를 대체할 때 실현된다 — plan §5 P3-a 첫 항목. 이 PR 의 가치는 속도가 아니라 **계약 이전**(BacktestResult 를 vectorbt Portfolio 원장으로 채우는 검증된 경로 + parity 게이트)이다.
 
@@ -92,10 +117,10 @@
 3. legacy `BacktestTrade.pnl` 은 진입비 제외 규약 → vbt 트레이드 pnl + entry_fees 로 보정 (cross-check 로 강제).
 4. Sharpe/Sortino 는 legacy 자체 정의(일별 실현 PnL KRW) 재현 — vbt 네이티브 통계 전환은 legacy 제거 시 별도 결정.
 5. 동일 bar 청산→재진입: 2컬럼 cash-sharing 그룹 + per-bar `call_seq` 로 매핑 (매도 정산 후 매수 순서 보존).
-6. 미지원(→`NotImplementedError`, legacy 폴백): vectorbt 미설치 환경, 선물, ATS, 멀티심볼 프레임, 공매도 진입, regime gate 경로, 비허용 exit 생성기(three_stage/momentum_decay 등 상태머신), 마지막 bar 진입+동일 bar END_OF_DATA 청산.
+6. 미지원(→`NotImplementedError`, legacy 폴백): vectorbt 미설치 환경, 선물, ATS, 멀티심볼 프레임, 공매도 진입, regime gate 경로, DailyBacktestAdapter(일봉 어댑터) 경로(parity 미검증 — daily 전략은 exit 가 허용목록에 있어도 legacy), 허용목록 밖 exit 생성기(허용목록 = williams_r_exit / atr_dynamic / chandelier_exit — P3-c 확장; three_stage 는 부분청산이라 구조적 표현 불가로 영구 제외), 마지막 bar 진입+동일 bar END_OF_DATA 청산. 상태머신 exit 강제 전략은 `backtest.legacy_exit: true` 로 legacy 를 명시 강제할 수 있다(P3-c escape hatch). 러너 내부 cross-check 불일치(`VectorbtParityError`)도 seam 에서 legacy 폴백된다(심볼 드랍 아님, 조사용 경고).
 
 ## 판정
 
-**PASS** — 전 시나리오 트레이드 시퀀스/지표 일치 (허용오차 내).
+**PASS** — 전 시나리오(합성 + 실 exit 생성기) 트레이드 시퀀스/지표 일치 (허용오차 내).
 
 운영자 flip(experiment 경로 `backtest.engine: vectorbt`) 은 본 증거 + paper 관찰을 근거로 별도 게이트에서 결정한다. 이 PR 은 기본값을 변경하지 않는다.

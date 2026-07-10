@@ -28,6 +28,8 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from shared.utils.coercion import to_bool
+
 logger = logging.getLogger(__name__)
 
 # Default loader is imported lazily inside the runner so importing this module
@@ -297,6 +299,32 @@ def _run_registry_strategy(
             engine_backend,
         )
         engine_backend = "legacy"
+
+    # Explicit legacy-exit escape hatch (plan §5 P3-c): a strategy whose exit is
+    # a state machine the vectorbt runner cannot express (e.g. three_stage's
+    # staged partial exits) sets `strategy.backtest.legacy_exit: true` to force
+    # the legacy engine WITHOUT even attempting the runner — an operator-visible
+    # marker, not a reliance on the runner's own refusal+fallback. Coerced as a
+    # tri-state (bool / "true"/"1"/"yes" …); an unrecognized value is NOT
+    # silently honored — warn and ignore it, mirroring the unknown-engine path.
+    raw_legacy_exit = bt.get("legacy_exit", False)
+    # 빈 키(`legacy_exit:` → None)는 "미설정"이다 — 경고 없이 False 취급.
+    legacy_exit = False if raw_legacy_exit is None else to_bool(raw_legacy_exit)
+    if legacy_exit is None:
+        logger.warning(
+            "experiment %s: unrecognized backtest.legacy_exit %r — ignoring "
+            "(expected true/false)",
+            sid,
+            raw_legacy_exit,
+        )
+        legacy_exit = False
+    if legacy_exit and engine_backend != "legacy":
+        logger.info(
+            "experiment %s: backtest.legacy_exit=true — forcing legacy engine "
+            "(state-machine exit); vectorbt runner not attempted",
+            sid,
+        )
+        engine_backend = "legacy"
     position_params = (
         strategy_config.get("strategy", {}).get("position", {}).get("params", {})
     )
@@ -339,7 +367,10 @@ def _run_registry_strategy(
             result = None
             symbol_backend = "backtest_engine"
             if engine_backend == "vectorbt":
-                from shared.backtest.vbt_runner import VectorbtRunner
+                from shared.backtest.vbt_runner import (
+                    VectorbtParityError,
+                    VectorbtRunner,
+                )
 
                 try:
                     result = VectorbtRunner(_build_adapter(), config).run(df)
@@ -355,6 +386,20 @@ def _run_registry_strategy(
                         sid,
                         symbol,
                         unsupported,
+                    )
+                except VectorbtParityError as parity_err:
+                    # 러너 내부 cross-check(resolver 원장 ↔ vbt 원장) 불일치 —
+                    # 러너 결함 신호다. 심볼을 버리면(per-symbol except 로 떨어져
+                    # loaded:False) 등가중 집계가 조용히 왜곡되므로, legacy 로
+                    # 폴백해 결과를 보존하고 조사용 경고만 남긴다. 폴백은 아래
+                    # _build_adapter() 재호출로 fresh adapter 를 쓴다(오염 무관).
+                    logger.warning(
+                        "experiment %s/%s: vectorbt parity cross-check FAILED "
+                        "(%s); falling back to legacy engine — investigate "
+                        "vbt_runner",
+                        sid,
+                        symbol,
+                        parity_err,
                     )
             if result is None:
                 result = BacktestEngine(_build_adapter(), config).run(df)

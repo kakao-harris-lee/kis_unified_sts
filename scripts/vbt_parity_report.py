@@ -35,6 +35,9 @@ from shared.backtest.vbt_runner import VectorbtRunner
 
 # 게이트 테스트의 시나리오/전략/윈도우를 그대로 소비한다 (드리프트 차단).
 from tests.unit.backtest.test_vbt_runner import (
+    _REAL_EXIT_FACTORIES,
+    _REAL_EXIT_RISK,
+    _REAL_EXIT_SCENARIOS,
     _RISK_VARIANTS,
     _SCENARIOS,
     _make_minute_data,
@@ -101,6 +104,26 @@ def run_synthetic_matrix() -> list[dict]:
     res_l = BacktestEngine(mk(), config).run(data.copy())
     res_v = VectorbtRunner(mk(), config).run(data.copy())
     rows.append(_delta_row("same_bar_reentry × default", res_l, res_v))
+    return rows
+
+
+def run_real_exit_matrix() -> list[dict]:
+    """P3-c 허용목록 exit(실 클래스) 매트릭스 — 게이트 픽스처 그대로 소비.
+
+    atr_dynamic / atr_dynamic_decay(배포 momentum_breakout 설정) /
+    chandelier_exit 를 TestRealExitParity 와 동일한 시나리오 × 리스크로 이중
+    구동한다. 이 행들도 exit code 판정(_all_pass)에 포함된다.
+    """
+    rows = []
+    for e_name, factory in _REAL_EXIT_FACTORIES.items():
+        for s_name, s_fn in _REAL_EXIT_SCENARIOS.items():
+            data = s_fn()
+            for r_name, r_dict in _REAL_EXIT_RISK.items():
+                config = BacktestConfig.stock(initial_capital=10_000_000)
+                config.risk = RiskConfig.from_dict(r_dict)
+                res_l = BacktestEngine(factory(), config).run(data.copy())
+                res_v = VectorbtRunner(factory(), config).run(data.copy())
+                rows.append(_delta_row(f"{e_name} × {s_name} × {r_name}", res_l, res_v))
     return rows
 
 
@@ -186,12 +209,14 @@ def run_speed_sweep(n_evals: int = 20) -> dict:
     }
 
 
-def render(rows: list[dict], real: dict | None, speed: dict) -> str:
+def render(
+    rows: list[dict], exit_rows: list[dict], real: dict | None, speed: dict
+) -> str:
     import vectorbt as vbt
 
     lines: list[str] = []
     a = lines.append
-    a("# VectorbtRunner Parity Report (P3-b / WS-A4 gate evidence)")
+    a("# VectorbtRunner Parity Report (P3-b/P3-c / WS-A4 gate evidence)")
     a("")
     a(
         f"- 생성: {datetime.now().strftime('%Y-%m-%d %H:%M')} KST, "
@@ -233,7 +258,8 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
     )
     # 관측 잔차는 하드코딩하지 않고 이번 실행의 실측치에서 계산한다 —
     # 표와 헤드라인이 어긋난 채 커밋되는 드리프트 방지 (리뷰 지적 사항).
-    synth_eq_max = max(r["eq_max"] for r in rows) if rows else 0.0
+    all_synth = rows + exit_rows
+    synth_eq_max = max(r["eq_max"] for r in all_synth) if all_synth else 0.0
     real_obs = f", 실데이터 ≤{real['eq_max']:.1e}" if real is not None else ""
     a(
         "| 자산곡선 / MDD | vectorbt cash·assets 시프트 재구성 — 부동소수 결합순서 "
@@ -248,22 +274,38 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
         "실패시킨다 (머지 게이트)."
     )
     a("")
-    a("## 합성 시나리오 × 리스크 매트릭스")
+
+    def _matrix_table(matrix_rows: list[dict]) -> None:
+        a(
+            "| 케이스 | trades | trade seq | Δreturn(%p) | ΔSharpe | "
+            "ΔMDD(%p) | Δfinal(KRW) | equity maxΔ(KRW) | reasons | to_dict |"
+        )
+        a("|---" * 10 + "|")
+        for r in matrix_rows:
+            a(
+                f"| {r['label']} | {r['trades']} | "
+                f"{'✅ exact' if r['trades_match'] else '❌'} | "
+                f"{r['d_return']:.2e} | {r['d_sharpe']:.2e} | {r['d_mdd']:.2e} | "
+                f"{r['d_final']:.2e} | {r['eq_max']:.2e} | "
+                f"{'✅' if r['reasons_match'] else '❌'} | "
+                f"{'✅' if r['dict_match'] else '❌'} |"
+            )
+
+    a("## 합성 시나리오 × 리스크 매트릭스 (P3-b, 합성 진입+청산 전략)")
+    a("")
+    _matrix_table(rows)
+    a("")
+    a("## 실 exit 생성기 매트릭스 (P3-c 허용목록 증거)")
     a("")
     a(
-        "| 시나리오 × 리스크 | trades | trade seq | Δreturn(%p) | ΔSharpe | "
-        "ΔMDD(%p) | Δfinal(KRW) | equity maxΔ(KRW) | reasons | to_dict |"
+        "실제 exit 클래스 인스턴스(ATRDynamicExit / ChandelierExit — "
+        "`atr_dynamic_decay` 는 배포 momentum_breakout 의 exit 설정 그대로)를 "
+        "TestRealExitParity 와 동일한 픽스처로 이중 구동. 트레이드 시퀀스는 "
+        "가격 포함 **완전 일치** 기준이다(러너가 트레이드 가격을 resolver "
+        "이벤트의 bar 종가 원본에서 채움)."
     )
-    a("|---|---|---|---|---|---|---|---|---|")
-    for r in rows:
-        a(
-            f"| {r['label']} | {r['trades']} | "
-            f"{'✅ exact' if r['trades_match'] else '❌'} | "
-            f"{r['d_return']:.2e} | {r['d_sharpe']:.2e} | {r['d_mdd']:.2e} | "
-            f"{r['d_final']:.2e} | {r['eq_max']:.2e} | "
-            f"{'✅' if r['reasons_match'] else '❌'} | "
-            f"{'✅' if r['dict_match'] else '❌'} |"
-        )
+    a("")
+    _matrix_table(exit_rows)
     a("")
     if real is not None:
         a("## 실데이터 — williams_r (활성 주식 전략, 레지스트리 경로)")
@@ -357,16 +399,23 @@ def render(rows: list[dict], real: dict | None, speed: dict) -> str:
     )
     a(
         "6. 미지원(→`NotImplementedError`, legacy 폴백): vectorbt 미설치 환경, "
-        "선물, ATS, 멀티심볼 프레임, 공매도 진입, regime gate 경로, 비허용 exit "
-        "생성기(three_stage/momentum_decay 등 상태머신), 마지막 bar 진입+동일 "
-        "bar END_OF_DATA 청산."
+        "선물, ATS, 멀티심볼 프레임, 공매도 진입, regime gate 경로, "
+        "DailyBacktestAdapter(일봉 어댑터) 경로(parity 미검증 — daily 전략은 "
+        "exit 가 허용목록에 있어도 legacy), 허용목록 밖 exit 생성기(허용목록 = "
+        "williams_r_exit / atr_dynamic / chandelier_exit — P3-c 확장; "
+        "three_stage 는 부분청산이라 구조적 표현 불가로 영구 제외), 마지막 bar "
+        "진입+동일 bar END_OF_DATA 청산. 상태머신 exit 강제 전략은 "
+        "`backtest.legacy_exit: true` 로 legacy 를 명시 강제할 수 있다(P3-c "
+        "escape hatch). 러너 내부 cross-check 불일치(`VectorbtParityError`)도 "
+        "seam 에서 legacy 폴백된다(심볼 드랍 아님, 조사용 경고)."
     )
     a("")
     a("## 판정")
     a("")
-    ok = _all_pass(rows, real)
+    ok = _all_pass(rows + exit_rows, real)
     a(
-        "**PASS** — 전 시나리오 트레이드 시퀀스/지표 일치 (허용오차 내)."
+        "**PASS** — 전 시나리오(합성 + 실 exit 생성기) 트레이드 시퀀스/지표 "
+        "일치 (허용오차 내)."
         if ok
         else "**FAIL** — 위 표에서 ❌ 항목 확인."
     )
@@ -395,17 +444,22 @@ def main() -> None:
 
     print("running synthetic matrix ...")
     rows = run_synthetic_matrix()
+    print("running real-exit matrix (P3-c) ...")
+    exit_rows = run_real_exit_matrix()
     print("running real-data window ...")
     real = run_real_data()
     print("running speed sweep ...")
     speed = run_speed_sweep()
 
-    report = render(rows, real, speed)
+    report = render(rows, exit_rows, real, speed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(report, encoding="utf-8")
     print(f"wrote {args.out}")
-    if not _all_pass(rows, real):
-        bad = [r["label"] for r in rows if not (r["trades_match"] and r["dict_match"])]
+    all_rows = rows + exit_rows
+    if not _all_pass(all_rows, real):
+        bad = [
+            r["label"] for r in all_rows if not (r["trades_match"] and r["dict_match"])
+        ]
         if real is not None and not (real["trades_match"] and real["dict_match"]):
             bad.append(real["label"])
         raise SystemExit(f"parity FAILED: {bad}")
