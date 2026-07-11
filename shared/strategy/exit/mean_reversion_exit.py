@@ -24,7 +24,12 @@ from typing import Any
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
-from shared.risk.primitives import extreme_since_entry, profit_amount, profit_pct
+from shared.risk.primitives import (
+    extreme_since_entry,
+    normalize_atr,
+    profit_amount,
+    profit_pct,
+)
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_classifier import is_bear_regime
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
@@ -273,7 +278,8 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         """Get ATR value from indicators or market data.
 
         ATR can be either normalized (ratio) or absolute.
-        If normalized (< 1.0), convert back using close price.
+        If normalized (< 0.5), convert back using close price via the
+        ``normalize_atr`` risk primitive.
         """
         atr = float(indicators.get("atr", 0) or 0)
         if atr <= 0:
@@ -281,19 +287,11 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         if atr <= 0:
             return 0.0
 
-        # Detect normalized ATR (ratio form, typically 0.001~0.05)
-        # KRX stocks have min tick 1 KRW, so absolute ATR is always >= 1.
-        # Use 0.5 threshold to safely distinguish normalized from absolute.
-        if atr < 0.5:
-            close = float(
-                market_data.get("close", 0)
-                or indicators.get("close", 0)
-                or 0
-            )
-            if close > 0:
-                atr = atr * close
-
-        return atr
+        # Dict extraction / key fallback (atr, close) stays at this call site;
+        # the normalized-ratio arithmetic lives in the ``normalize_atr``
+        # primitive (threshold 0.5, reference == close).
+        close = float(market_data.get("close", 0) or indicators.get("close", 0) or 0)
+        return normalize_atr(atr, close, normalized_below=0.5)
 
     @staticmethod
     def _get_current_price(
