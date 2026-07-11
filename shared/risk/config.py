@@ -678,6 +678,60 @@ class MarginGateFilterSettings(BaseModel):
     )
 
 
+class LeverageFilterSettings(BaseModel):
+    """Gross notional / equity leverage cap (Phase 4-g, plan §6(d) / 설계 2.6).
+
+    Introduces the first leverage constraint in the repo. The filter computes
+    ``Σ|quantity · price · multiplier| / equity`` from an injected position+equity
+    snapshot and rejects new entries above ``max_gross_leverage`` — but only in
+    ``enforce`` mode. The contract multiplier is resolved via
+    :func:`shared.risk.futures_margin.spec_for_symbol` (DRY, no hardcoded
+    constant); the cap is asset-specific (e.g. futures 3.0, cash stock 1.0).
+
+    ``enabled`` defaults to ``False`` (filter never constructed) and ``mode``
+    defaults to ``shadow`` (built-but-observation-only), so the filter is
+    **structurally inert** until an operator opts in AND flips ``mode`` to
+    ``enforce`` AND a snapshot provider is wired (a follow-up — no daemon wires
+    one in this landing). Even armed it fails OPEN on a missing provider /
+    non-positive equity / corrupt snapshot, so the shadow daemons are unaffected.
+
+    Applies to both assets (unlike the futures-only margin gate): the stock
+    chain uses multiplier 1 (no ``product_specs``), the futures chain resolves
+    per-contract multipliers from the margin spec map.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Build the leverage filter in the layer chain",
+    )
+    mode: Literal["shadow", "enforce"] = Field(
+        default="shadow",
+        description=(
+            "shadow = built but passes every signal (observation-only); "
+            "enforce = reject new entries when gross_leverage exceeds the cap. "
+            "Default shadow keeps the filter inert until an operator flip."
+        ),
+    )
+    max_gross_leverage: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Cap on Σ|notional| / equity. None disables the check (fail-open). "
+            "Asset-specific: e.g. 3.0 for futures, 1.0 for a cash stock account. "
+            "Must be > 0 (a 0 cap would reject every non-empty book)."
+        ),
+    )
+    stale_max_age_seconds: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "When set, fail-open on a snapshot whose asof_ts (KST-naive ISO) is "
+            "missing / unparseable / older than this (positive-form staleness, "
+            "#458). None (default) disables the staleness gate."
+        ),
+    )
+
+
 class CoreSectorCapSettings(BaseModel):
     """Rule 2 — sector cap on Track B open-position notional (Phase 5B §7.2).
 
@@ -844,6 +898,14 @@ class FuturesRiskConfig(ServiceConfigBase):
             "Futures margin-risk new-entry gate (Phase 4-f) — futures-only; "
             "from_config builds it only when _asset_class == 'futures', so the "
             "inherited field on StockRiskConfig never grows a stock-chain filter"
+        ),
+    )
+    leverage: LeverageFilterSettings = Field(
+        default_factory=LeverageFilterSettings,
+        description=(
+            "Gross notional / equity leverage cap (Phase 4-g) — both assets; "
+            "asset-specific cap. Structurally inert (enabled=false / shadow / no "
+            "provider wired) until a follow-up wires a snapshot provider + flip"
         ),
     )
 
