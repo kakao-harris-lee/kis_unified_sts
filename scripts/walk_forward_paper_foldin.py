@@ -186,6 +186,7 @@ def run(args: argparse.Namespace) -> int:
     # Stage 2: bootstrap on combined data. Skip when no backtest source given
     # (paper-only mode is enough for the paper rules to evaluate).
     bootstrap_gate: dict = {}
+    parity_failed_windows = 0
     if args.data:
         logger.info("running bootstrap gate on backtest data %s", args.data)
         # Defer to walk_forward_bootstrap; we just synthesize an args namespace.
@@ -216,12 +217,13 @@ def run(args: argparse.Namespace) -> int:
             with_risk_filters=args.with_risk_filters,
             setup_a_params=args.setup_a_params,
             setup_c_params=args.setup_c_params,
+            engine=args.engine,
         )
 
         all_is: list[float] = []
         all_oos: list[float] = []
         for i, sample in enumerate(samples):
-            is_evs, oos_evs = _run_one_bootstrap(
+            is_evs, oos_evs, parity_failed = _run_one_bootstrap(
                 sample_idx=i,
                 sample_df=sample,
                 is_months=args.is_months,
@@ -230,10 +232,18 @@ def run(args: argparse.Namespace) -> int:
             )
             all_is.extend(is_evs)
             all_oos.extend(oos_evs)
+            parity_failed_windows += parity_failed
             if (i + 1) % max(1, args.n_samples // 10) == 0:
                 logger.info("bootstrap progress %d/%d", i + 1, args.n_samples)
 
         bootstrap_gate = _evaluate_bootstrap_gate(all_is, all_oos)
+        if parity_failed_windows:
+            logger.warning(
+                "%d window(s) fell back to the pure harness after a vectorbt "
+                "parity failure — results are still harness(SoT)-accurate, "
+                "but investigate (scripts/vbt_parity_report.py)",
+                parity_failed_windows,
+            )
 
     overall_pass = (
         paper_gate["rule3_paper_median_positive"]["passed"]
@@ -244,6 +254,8 @@ def run(args: argparse.Namespace) -> int:
 
     output = {
         "paper_since": str(paper_since),
+        "engine": args.engine,
+        "parity_failed_windows": parity_failed_windows,
         "paper_gate": paper_gate,
         "bootstrap_gate": bootstrap_gate,
         "final_signoff_passes": overall_pass,
@@ -283,6 +295,15 @@ def main() -> int:
     parser.add_argument("--with-risk-filters", action="store_true")
     parser.add_argument("--setup-a-params", type=str, default=None)
     parser.add_argument("--setup-c-params", type=str, default=None)
+    parser.add_argument(
+        "--engine",
+        choices=["harness", "vectorbt"],
+        default="harness",
+        help="Backtest engine for the bootstrap stage: 'harness' (default, "
+        "BacktestDecisionHarness) or 'vectorbt' (opt-in VbtHarnessRunner — "
+        "same harness plus a from_orders parity cross-check; requires the "
+        'backtest extra: pip install -e ".[backtest]").',
+    )
     parser.add_argument("--paper-sharpe-min", type=float, default=0.5)
     parser.add_argument("--out", default="results/phase3_final_signoff.json")
     args = parser.parse_args()

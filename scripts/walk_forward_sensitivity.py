@@ -66,6 +66,7 @@ def run(args: argparse.Namespace) -> int:
         _run_on_window,
         _split_folds,
     )
+    from shared.backtest.harness_engine import ENGINE_VECTORBT_PARITY_FAILED
     from shared.backtest.macro_history import (
         fetch_macro_history,
         make_macro_provider,
@@ -136,6 +137,7 @@ def run(args: argparse.Namespace) -> int:
     )
 
     results = []
+    parity_failed_windows = 0
     for i, raw_cfg in enumerate(perturbed):
         # Cast to SetupAConfig (Pydantic re-validates ranges).
         try:
@@ -149,7 +151,7 @@ def run(args: argparse.Namespace) -> int:
         oos_evs = []
         for _is_df, oos_df in folds:
             try:
-                oos_result = _run_on_window(
+                oos_result, oos_engine = _run_on_window(
                     oos_df,
                     args.symbol,
                     None,
@@ -160,7 +162,9 @@ def run(args: argparse.Namespace) -> int:
                     macro_provider=macro_provider,
                     min_volume=args.min_volume,
                     scheduled_events=scheduled,
+                    engine=args.engine,
                 )
+                parity_failed_windows += oos_engine == ENGINE_VECTORBT_PARITY_FAILED
                 oos_evs.append(_aggregate(oos_result)["ev_ticks"])
             except Exception:
                 logger.exception("config %d fold failed; skipping", i)
@@ -191,6 +195,14 @@ def run(args: argparse.Namespace) -> int:
     pct_positive = n_positive / n_total if n_total else 0.0
     passed = pct_positive >= args.min_pass_rate
 
+    if parity_failed_windows:
+        logger.warning(
+            "%d window(s) fell back to the pure harness after a vectorbt "
+            "parity failure — results are still harness(SoT)-accurate, but "
+            "investigate (scripts/vbt_parity_report.py)",
+            parity_failed_windows,
+        )
+
     output = {
         "n_configs": n_total,
         "n_positive": n_positive,
@@ -198,6 +210,8 @@ def run(args: argparse.Namespace) -> int:
         "min_pass_rate": args.min_pass_rate,
         "perturbed_pct": args.pct,
         "perturbed_fields": list(_PERTURBED_FIELDS),
+        "engine": args.engine,
+        "parity_failed_windows": parity_failed_windows,
         "passed": passed,
         "configs": results,
     }
@@ -236,6 +250,15 @@ def main() -> int:
         type=str,
         default=None,
         help="Path to Optuna JSON; if given, perturbation centres on tuned params.",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["harness", "vectorbt"],
+        default="harness",
+        help="Backtest engine: 'harness' (default, BacktestDecisionHarness) "
+        "or 'vectorbt' (opt-in VbtHarnessRunner — same harness plus a "
+        "from_orders parity cross-check; requires the backtest extra: "
+        'pip install -e ".[backtest]").',
     )
     parser.add_argument("--out", default="results/phase3_sensitivity.json")
     args = parser.parse_args()

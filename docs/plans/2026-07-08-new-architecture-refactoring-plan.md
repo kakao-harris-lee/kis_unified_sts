@@ -327,9 +327,25 @@
   채움 = vectorbt 불필요, + 대칭 매트릭스 parity·사이저 스케일·음성 tamper =
   `importorskip`). `scripts/vbt_parity_report.py` 가 동일 픽스처를 import 해
   선물 매트릭스를 리포트/exit-code 판정에 포함(주식 **및** 선물 동시 PASS 요구).
-- ⏸️ **walk-forward 스크립트(`scripts/walk_forward_*.py`) 배선은 이연** — 계획대로
-  harness 소비자 교체는 후속. 이관 전까지 선물 백테스트는 현행 harness 유지
-  (2중 체제 명시).
+- [x] **walk-forward/optimizer 스크립트 `--engine` opt-in 배선 완료** (P3-d 후속) —
+  공유 chokepoint `shared/backtest/harness_engine.py::run_futures_backtest`
+  (`(setups, filter_layer, state, tick_size_points, replay, *, engine, sizer,
+  account_equity_krw) -> (HarnessResult, 사용엔진라벨)`) 를 신설하고, 5개 스크립트
+  (`walk_forward_phase3` / `walk_forward_bootstrap` / `walk_forward_sensitivity` /
+  `walk_forward_paper_foldin` / `optimize_decision_engine`) 전부에
+  `--engine {harness,vectorbt}` (기본 `harness`) 를 추가했다. 위임 체인
+  (bootstrap→phase3 `_run_on_window`, sensitivity→phase3, paper_foldin→bootstrap
+  Namespace 재구성)에 engine 인자를 전파. **엔진 시맨틱**: `harness`=현행 그대로,
+  `vectorbt`=`VbtHarnessRunner`(미설치 `VbtHarnessNotSupportedError` 는 폴백 없이
+  전파 — 명시 opt-in 수동 스크립트라 조용한 폴백보다 명시 실패가 안전),
+  `VbtHarnessParityError` 는 warning 로그 후 순수 harness 재실행으로 SoT 결과 복원
+  (라벨 `vectorbt_parity_failed`, vbt_parity_report.py 패턴 — 결과 정확성 불변,
+  파리티 실패는 조사 신호). 출력 JSON 에 사용 엔진 라벨 + 파리티 실패 창 개수 기록.
+  테스트 `tests/unit/backtest/test_harness_engine.py` (라우팅 fake 4계약 + 실
+  harness/vectorbt 경로 + 5스크립트 `--help` 스모크). **메모리 실측**: dense
+  from_orders 행렬 피크 RSS — 41k분봉×500트레이드=1.2GB, ×1000=2.1GB (호스트 가용
+  대비 안전, 폴드 단위 창은 훨씬 작음). 기본값이 `harness` 이므로 2중 체제
+  (harness=SoT, vectorbt=opt-in 대조)는 그대로 유지된다.
 - 📝 **정직한 가치 노트**: 이 래퍼는 harness 의 per-trade tick P&L·진입/청산 bar·
   가격·방향·size 를 **구조적으로 다른 두 번째 계산**으로 재확인하는 opt-in 독립
   검증 도구다. harness 를 대체하지 않으며(equity curve/Sharpe/MDD 이관 대상

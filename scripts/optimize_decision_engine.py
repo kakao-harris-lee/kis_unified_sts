@@ -42,7 +42,12 @@ except ImportError as exc:
         " project optimization extra)."
     ) from exc
 
-from shared.backtest.decision_harness import BacktestDecisionHarness  # noqa: E402
+from shared.backtest.harness_engine import (  # noqa: E402
+    ENGINE_HARNESS,
+    ENGINE_VECTORBT_PARITY_FAILED,
+    SUPPORTED_ENGINES,
+    run_futures_backtest,
+)
 from shared.backtest.macro_history import (  # noqa: E402
     fetch_macro_history,
     make_macro_provider,
@@ -79,6 +84,8 @@ def _objective_a(
     min_volume,
     filter_layer: RiskFilterLayer,
     scheduled_events: list[ScheduledEvent],
+    engine: str = ENGINE_HARNESS,
+    engine_stats: dict | None = None,
 ) -> float:
     cfg = SetupAConfig(
         min_kr_gap_pct=trial.suggest_float("min_kr_gap_pct", 0.2, 0.6),
@@ -96,6 +103,8 @@ def _objective_a(
         min_volume,
         filter_layer,
         scheduled_events,
+        engine=engine,
+        engine_stats=engine_stats,
     )
 
 
@@ -108,6 +117,8 @@ def _objective_c(
     min_volume,
     filter_layer: RiskFilterLayer,
     scheduled_events: list[ScheduledEvent],
+    engine: str = ENGINE_HARNESS,
+    engine_stats: dict | None = None,
 ) -> float:
     cfg = SetupCConfig(
         # Keep the wide window_minutes (for KR-session overnight events —
@@ -129,6 +140,8 @@ def _objective_c(
         min_volume,
         filter_layer,
         scheduled_events,
+        engine=engine,
+        engine_stats=engine_stats,
     )
 
 
@@ -141,7 +154,15 @@ def _run_and_score(
     min_volume,
     filter_layer,
     scheduled_events,
+    engine: str = ENGINE_HARNESS,
+    engine_stats: dict | None = None,
 ) -> float:
+    """Run one trial's backtest and return EV per trade in ticks.
+
+    ``engine_stats`` (mutable, shared across trials) accumulates
+    ``parity_failed_trials`` when the vectorbt cross-check falls back to the
+    pure harness — surfaced in the output JSON.
+    """
     replay = MarketContextReplay(
         df=df,
         symbol=symbol,
@@ -156,13 +177,18 @@ def _run_and_score(
         macro_provider=macro_provider,
         min_volume=min_volume,
     )
-    harness = BacktestDecisionHarness(
-        setups=setups,
-        filter_layer=filter_layer,
-        state=RiskStateSnapshot(),
-        tick_size_points=spec.tick_size_points,
+    result, engine_label = run_futures_backtest(
+        setups,
+        filter_layer,
+        RiskStateSnapshot(),
+        spec.tick_size_points,
+        replay,
+        engine=engine,
     )
-    result = harness.run(replay)
+    if engine_stats is not None and engine_label == ENGINE_VECTORBT_PARITY_FAILED:
+        engine_stats["parity_failed_trials"] = (
+            engine_stats.get("parity_failed_trials", 0) + 1
+        )
     total_trades = sum(s.trades for s in result.per_setup.values())
     if total_trades < 10:
         return -1e6  # penalize param sets that barely trade
@@ -207,6 +233,16 @@ def main() -> int:
         help="Scheduled-events YAML (required for Setup C to fire). "
         "Set empty string to disable.",
     )
+    p.add_argument(
+        "--engine",
+        choices=list(SUPPORTED_ENGINES),
+        default=ENGINE_HARNESS,
+        help="Backtest engine: 'harness' (default, BacktestDecisionHarness) "
+        "or 'vectorbt' (opt-in VbtHarnessRunner — same harness plus a "
+        "from_orders parity cross-check; requires the backtest extra: "
+        'pip install -e ".[backtest]"). Parity failures log a warning and '
+        "fall back to the pure harness (counted in the output JSON).",
+    )
     args = p.parse_args()
 
     df = pd.read_csv(args.data)
@@ -245,6 +281,7 @@ def main() -> int:
 
     study = optuna.create_study(direction="maximize")
     objective = _objective_a if args.setup == "a" else _objective_c
+    engine_stats: dict = {"parity_failed_trials": 0}
     study.optimize(
         lambda t: objective(
             t,
@@ -255,15 +292,27 @@ def main() -> int:
             args.min_volume,
             filter_layer,
             scheduled_events,
+            args.engine,
+            engine_stats,
         ),
         n_trials=args.trials,
     )
+
+    if engine_stats["parity_failed_trials"]:
+        logger.warning(
+            "%d trial(s) fell back to the pure harness after a vectorbt "
+            "parity failure — scores are still harness(SoT)-accurate, but "
+            "investigate (scripts/vbt_parity_report.py)",
+            engine_stats["parity_failed_trials"],
+        )
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(
         json.dumps(
             {
                 "setup": args.setup,
+                "engine": args.engine,
+                "parity_failed_trials": engine_stats["parity_failed_trials"],
                 "best_value": study.best_value,
                 "best_params": study.best_params,
                 "trials": [
