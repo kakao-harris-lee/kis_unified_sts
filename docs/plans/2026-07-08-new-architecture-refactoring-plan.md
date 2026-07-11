@@ -294,13 +294,48 @@
   atr_dynamic / chandelier 둘 다 parity 통과라 강제 배제 사례 없음(불통과 시
   허용목록 제외 + 원인 기록 규약).
 
-### P3-d. 선물 트랙 (후행)
-- `decision_harness`의 틱-PnL·컨텍스트 replay·다음바 시가 체결은 특수성이 커서
-  주식 경로 안정화 후 `vbt.Portfolio.from_orders` 매핑을 별도 검토.
-- walk-forward 스크립트(`scripts/walk_forward_*.py`)는 harness 소비자이므로 그다음.
-- 이관 전까지 선물 백테스트는 현행 harness 유지 (2중 체제 명시).
+### P3-d. 선물 트랙 (from_orders 컴포지션 래퍼)
+- [x] **`from_orders` 매핑 완료** — `decision_harness`의 틱-PnL·컨텍스트 replay·
+  다음바 시가 체결을 `vbt.Portfolio.from_orders` 원장으로 매핑하는 검토가
+  끝나 `shared/backtest/vbt_harness_runner.py::VbtHarnessRunner` 로 구현됐다.
+- [x] **컴포지션 래퍼 (resolve-pass 복제 아님)** — 주식
+  `VectorbtRunner`(전 원장을 vbt `Portfolio` 로 재도출)와 달리, 이 클래스는 fill/
+  exit 세맨틱을 재구현하지 않는다. `BacktestDecisionHarness` 가 **유일 SoT**로
+  남고 `run` 은 실제 harness 를 그대로 실행해 `HarnessResult` 를 **무변형 반환**
+  한다. vbt 층은 harness 자체 트레이드 레코드로 *독립* `from_orders` 원장을 세워
+  harness 의 tick 회계를 재현하는지만 대조한다(리던던트 계산 parity).
+- [x] **cross-check 스펙** — 멀티바 트레이드(`exit_bar_index > fill_bar_index`)는
+  각 `vbt.Portfolio.from_orders` 컬럼 1개로 인코딩(진입 `dir×size` / 청산
+  `-dir×size`), entry/exit idx·price·direction·size·pnl 을 행별 대조한다
+  (`pnl = ticks_net × tick_size × size_contracts`). 슬리피지는 `fill_price` 에
+  내재하므로 vbt `slippage=0`(이중계상 금지), 비용은 `fees=0`.
+- [x] **same-bar carve-out** — fill==exit bar 트레이드(세션 경계 EOD-on-fill /
+  last-bar fallback)는 `from_orders`(컬럼/bar 당 1주문)로 표현 불가라 컬럼에서
+  제외하고 **해석적으로** 검증한다: harness 가 이들 청산을 체결 bar 종가로
+  마킹하므로 `exit_price == close[fill_bar_index]` 확인 + 그 tick 을 헤드라인
+  tick 합 불변식(`from_orders pnl 합 + samebar tick 합 == 전체 tick 합`)에 봉합.
+- [x] **`legacy_exit` N/A 근거** — P3-c 의 `backtest.legacy_exit` escape hatch 는
+  여기 해당 없음. harness 는 strategy-config exit 생성기가 없다 — 모든 Signal 이
+  자체 `stop_loss`/`take_profit`/`valid_until` 를 들고 fill 시뮬레이터가 직접
+  해소한다. "opt-in" = `BacktestDecisionHarness` 대신 이 클래스를 고르는 것,
+  escape hatch = harness 를 직접 쓰는 것 — 존중할 per-strategy 플래그가 없다.
+- [x] **테스트/리포트 배선** — `tests/unit/backtest/test_vbt_harness_runner.py`
+  (import 격리 / 정적 게이트 / `_build_order_arrays` 인코딩 / harness bar-index
+  채움 = vectorbt 불필요, + 대칭 매트릭스 parity·사이저 스케일·음성 tamper =
+  `importorskip`). `scripts/vbt_parity_report.py` 가 동일 픽스처를 import 해
+  선물 매트릭스를 리포트/exit-code 판정에 포함(주식 **및** 선물 동시 PASS 요구).
+- ⏸️ **walk-forward 스크립트(`scripts/walk_forward_*.py`) 배선은 이연** — 계획대로
+  harness 소비자 교체는 후속. 이관 전까지 선물 백테스트는 현행 harness 유지
+  (2중 체제 명시).
+- 📝 **정직한 가치 노트**: 이 래퍼는 harness 의 per-trade tick P&L·진입/청산 bar·
+  가격·방향·size 를 **구조적으로 다른 두 번째 계산**으로 재확인하는 opt-in 독립
+  검증 도구다. harness 를 대체하지 않으며(equity curve/Sharpe/MDD 이관 대상
+  자체가 없음 — 소비자는 tick 합과 per-setup 통계만 읽음), harness 가 여전히
+  기본값이자 SoT 다. 아무것도 기본적으로 이 클래스로 라우팅되지 않는다.
 
-**게이트**: P3-b parity + 소비자 계약 테스트(experiment 리포트 스키마 golden test) + CI green.
+**게이트**: harness↔from_orders parity(대칭 매트릭스, 멀티바/같은-bar 커버리지 +
+non-vacuity) + `_build_order_arrays`/bar-index 단위 테스트 + CI green (parity 층은
+vectorbt 필요 → 머지 게이트는 정적 층만, 전 매트릭스는 배포 호스트 스크립트).
 
 ## 6. Phase 4 — Risk Engine 통합 (지시서 §8)
 

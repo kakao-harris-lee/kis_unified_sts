@@ -95,6 +95,14 @@ class TradeRecord:
     layer_result: LayerResult
     size_contracts: int = 1  # contracts sized by the injected PositionSizer
     ticks_net_total: float = 0.0  # ticks_net × size_contracts (for portfolio P&L)
+    # Bar indices (into the replay DataFrame) where the fill and the exit
+    # executed. Populated by ``_simulate_fill`` — additive, semantics-neutral
+    # bookkeeping consumed by :class:`~shared.backtest.vbt_harness_runner.
+    # VbtHarnessRunner` to build an independent ``vbt.Portfolio.from_orders``
+    # ledger for parity cross-check. ``None`` only on records not produced by
+    # the fill simulator (e.g. hand-built test fixtures).
+    fill_bar_index: int | None = None
+    exit_bar_index: int | None = None
 
 
 @dataclass
@@ -391,6 +399,11 @@ class BacktestDecisionHarness:
 
         exit_price: float | None = None
         exit_reason: str | None = None
+        # Bar index (into the replay DataFrame) where the exit executes. Set at
+        # every exit branch: equals the loop var ``j`` for in-loop stop/target/
+        # time exits, and ``last_same_session_idx`` for EOD/fallback exits.
+        # Additive bookkeeping only — no effect on exit_price / exit_reason.
+        exit_bar_idx: int | None = None
 
         # Iterate bars after the fill bar to find exit
         last_same_session_idx = fill_bar
@@ -399,6 +412,7 @@ class BacktestDecisionHarness:
             if signal_session is not None and session_dates[j] != signal_session:
                 exit_price = closes[last_same_session_idx]
                 exit_reason = "eod_exit"
+                exit_bar_idx = last_same_session_idx
                 break
             last_same_session_idx = j
 
@@ -419,6 +433,7 @@ class BacktestDecisionHarness:
                 if bar_ts_aware > vu:
                     exit_price = bar_close
                     exit_reason = "time_exit"
+                    exit_bar_idx = j
                     break
 
             if is_long:
@@ -428,10 +443,12 @@ class BacktestDecisionHarness:
                 if hit_stop:
                     exit_price = stop
                     exit_reason = "loss"
+                    exit_bar_idx = j
                     break
                 if hit_target:
                     exit_price = target
                     exit_reason = "win"
+                    exit_bar_idx = j
                     break
             else:
                 # Short
@@ -440,10 +457,12 @@ class BacktestDecisionHarness:
                 if hit_stop:
                     exit_price = stop
                     exit_reason = "loss"
+                    exit_bar_idx = j
                     break
                 if hit_target:
                     exit_price = target
                     exit_reason = "win"
+                    exit_bar_idx = j
                     break
 
         if exit_price is None:
@@ -451,6 +470,7 @@ class BacktestDecisionHarness:
             # Fall back to the last same-session close (never cross a session boundary).
             exit_price = closes[last_same_session_idx]
             exit_reason = "time_exit"
+            exit_bar_idx = last_same_session_idx
 
         # Compute P&L in ticks
         if is_long:
@@ -471,4 +491,6 @@ class BacktestDecisionHarness:
             exit_reason=exit_reason,
             ticks_net=ticks_raw,
             layer_result=layer_result,
+            fill_bar_index=fill_bar,
+            exit_bar_index=exit_bar_idx,
         )

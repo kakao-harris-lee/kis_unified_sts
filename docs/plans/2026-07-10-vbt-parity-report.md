@@ -1,6 +1,6 @@
 # VectorbtRunner Parity Report (P3-b/P3-c / WS-A4 gate evidence)
 
-- 생성: 2026-07-10 22:23 KST, `scripts/vbt_parity_report.py`
+- 생성: 2026-07-11 09:46 KST, `scripts/vbt_parity_report.py`
 - vectorbt 1.0.0 / legacy `shared/backtest/engine.py` BacktestEngine
 - Plan: `docs/plans/2026-07-08-new-architecture-refactoring-plan.md` §5, `docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md` §WS-A4
 - 러너: `shared/backtest/vbt_runner.py` (opt-in `strategy.backtest.engine: vectorbt`; 기본값 legacy)
@@ -84,6 +84,20 @@
 | chandelier_exit × chop × default | 13 | ✅ exact | 0.00e+00 | 0.00e+00 | 3.72e-14 | 0.00e+00 | 3.73e-09 | ✅ | ✅ |
 | chandelier_exit × chop × tight_sl_tp | 64 | ✅ exact | 0.00e+00 | 0.00e+00 | 1.12e-13 | 0.00e+00 | 1.30e-08 | ✅ | ✅ |
 
+## 선물 harness 매트릭스 (P3-d — resolver 원장 ↔ from_orders 원장)
+
+`shared/backtest/vbt_harness_runner.py::VbtHarnessRunner` 는 선물 harness의 **컴포지션 래퍼**다 — `BacktestDecisionHarness` 가 여전히 SoT(결과 무변형 반환)이고, 이 섹션은 그 harness 트레이드 레코드로 세운 `vbt.Portfolio.from_orders` 원장이 harness 의 tick 회계를 재현하는지를 검증한다. **주의**: 위 주식 섹션과 달리 이것은 legacy-vs-vbt 두 독립 엔진 비교가 아니라 **harness resolver 원장 ↔ from_orders 원장 구성** 대조다(harness 가 유일 엔진). 멀티바 트레이드(`exit_bar > fill_bar`)만 컬럼당 1개로 `from_orders` 에 태우고, 같은-bar 트레이드(`==`, EOD-on-fill/last-bar)는 표현 불가라 종가 일치로 해석 검증한다. 픽스처는 게이트 `tests/unit/backtest/test_vbt_harness_runner.py` 를 그대로 import.
+
+| 케이스 | trades | multibar | samebar | parity |
+|---|---|---|---|---|
+| symmetric_mix | 8 | 7 | 1 | ✅ |
+| long_only | 3 | 3 | 0 | ✅ |
+| short_only | 2 | 2 | 0 | ✅ |
+| sizer_scaled | 1 | 1 | 0 | ✅ |
+| zero_signal | 0 | 0 | 0 | ✅ |
+| gap_past_stop | 0 | 0 | 0 | ✅ |
+| no_next_bar | 0 | 0 | 0 | ✅ |
+
 ## 실데이터 — williams_r (활성 주식 전략, 레지스트리 경로)
 
 - 데이터: `005930` 실 분봉 parquet 3397 bars, 2026-06-01 ~ 2026-06-12 (KST)
@@ -98,13 +112,13 @@
 | Δfinal capital | 0.00e+00 KRW |
 | equity maxΔ | 0.00e+00 KRW |
 | to_dict 일치 | ✅ |
-| 실행 시간 | legacy 13.7s / vectorbt 13.5s |
+| 실행 시간 | legacy 14.2s / vectorbt 13.9s |
 
 ## 속도 — Optuna-style 스윕 (비게이트, 참고용)
 
 - 합성 800 bars × 20 param evals, JIT warmup 제외
-- 경량 합성 전략: legacy 0.14s / vectorbt runner 0.45s → **vectorbt 가 3.31× 느림** (eval 당 vbt Portfolio 구성 고정 오버헤드 ~16ms)
-- 실전략(williams_r, 3397 bars): legacy 13.7s / vectorbt 13.5s → **0.99×** — 시그널 생성(어댑터/지표)이 지배해 오버헤드가 상쇄됨
+- 경량 합성 전략: legacy 0.13s / vectorbt runner 0.46s → **vectorbt 가 3.42× 느림** (eval 당 vbt Portfolio 구성 고정 오버헤드 ~16ms)
+- 실전략(williams_r, 3397 bars): legacy 14.2s / vectorbt 13.9s → **0.98×** — 시그널 생성(어댑터/지표)이 지배해 오버헤드가 상쇄됨
 
 **정직한 결론**: 현 단계 러너는 시그널 생성을 legacy 와 동일한 어댑터 순차 패스로 수행하므로(신호 parity 를 구조적으로 보장하기 위한 설계) 스윕 가속은 아직 없다 — 트리비얼 전략에선 오히려 vbt 고정비만큼 느리고, 실전략에선 동률이다. 본격적 벡터화 가속은 P1/P2(선언형 조건 → boolean 배열 사전계산)가 어댑터 순차 패스를 대체할 때 실현된다 — plan §5 P3-a 첫 항목. 이 PR 의 가치는 속도가 아니라 **계약 이전**(BacktestResult 를 vectorbt Portfolio 원장으로 채우는 검증된 경로 + parity 게이트)이다.
 
@@ -121,6 +135,6 @@
 
 ## 판정
 
-**PASS** — 전 시나리오(합성 + 실 exit 생성기) 트레이드 시퀀스/지표 일치 (허용오차 내).
+**PASS** — 주식(합성 + 실 exit 생성기 + 실데이터) 트레이드 시퀀스/지표 일치 **및** 선물 harness resolver 원장 ↔ from_orders 원장 tick 회계 일치 (허용오차 내).
 
 운영자 flip(experiment 경로 `backtest.engine: vectorbt`) 은 본 증거 + paper 관찰을 근거로 별도 게이트에서 결정한다. 이 PR 은 기본값을 변경하지 않는다.
