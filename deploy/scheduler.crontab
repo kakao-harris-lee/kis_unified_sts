@@ -165,6 +165,41 @@
 */30 9-15 * * 1-5  cd /app && python -m services.market_risk_engine.main intraday
 45 18 * * 1-5  cd /app && python -m services.market_risk_engine.main close
 
+# --- Futures read-models (new-architecture plan §7 / Phase A-C — shadow, advisory-only) ---
+# docs/plans/2026-07-08-new-architecture-refactoring-plan.md §7. Three one-shot
+# publishers that compute read-only Redis read-models; they touch NO order path
+# (no order_router / place_order / executor import — advisory-only invariant), so
+# scheduling them cannot change any trade. Cadence is dependency-ordered so each
+# folds fresh upstream and honours its own key TTL. Futures regular session opens
+# 08:45 KST, day-only (#552) — the pre-open + intraday runs cover the open.
+#
+# futures_contract → futures:contract:latest (roll-state / front-next-night code).
+#   Calendar-only, so daily 1-2x is enough; premarket/close modes write the 48h
+#   TTL fallback (survives holidays). Mirrors market_structure_collector's
+#   premarket(08:00)/close(18:40) cadence so roll-state is ready before the 08:45
+#   open and refreshed after the session.
+0  8  * * 1-5  cd /app && python -m services.futures_contract.main premarket
+40 18 * * 1-5  cd /app && python -m services.futures_contract.main close
+#
+# futures_margin_risk → futures:risk:latest (account margin usage / liq buffer).
+#   Short 15m TTL (live account state) ⇒ 15-min cadence keeps the key continuously
+#   fresh across the session, with a run landing on the 08:45 open. Reads
+#   market:structure:latest fut_close (reference price) + futures trading-state
+#   positions; the pre-open runs publish a flat/ok state (no day positions before
+#   08:45) and keep the key warm. Mode is an informational label here.
+*/15 8-15 * * 1-5  cd /app && python -m services.futures_margin_risk.main intraday
+#
+# futures_context → futures:context:latest (folds contract + market:structure +
+#   market:risk + futures:risk into ONE regime-classified hash; 24h TTL). Runs
+#   AFTER its four inputs and offset off their publish minutes (:10/:40 vs
+#   market_risk :00/:30 and margin :00/:15/:30/:45) so it never reads a hash
+#   mid delete+hset. Premarket 08:10 composition stays live (24h TTL) through the
+#   08:45 open; close 18:50 folds the finalized EOD contract/structure/risk (margin
+#   has expired post-session → context degrades gracefully, by design).
+10 8  * * 1-5  cd /app && python -m services.futures_context.main premarket
+10,40 9-15 * * 1-5  cd /app && python -m services.futures_context.main intraday
+50 18 * * 1-5  cd /app && python -m services.futures_context.main close
+
 # --- Portfolio equity snapshot + unified monthly-MDD monitor (Phase 3B) ---
 # 19:00 KST after the 18:45 market-risk close run. Track B/C equity =
 # capital_base (config/portfolio.yaml) + RuntimeLedger track-tagged realized
