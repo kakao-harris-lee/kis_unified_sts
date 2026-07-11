@@ -38,6 +38,20 @@ risk:
     enabled: false
     max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}      # World-A risk_management.max_total_positions
     max_positions_per_asset: ${RISK_FUTURES_MAX_POSITIONS:5} # World-A asset_limits.futures.max_positions
+  # Phase 4-f: 선물 증거금 진입 게이트 (shared/risk/futures_margin.py 읽기모델을
+  # World-B RiskFilterLayer 진입 게이트로 배선). FUTURES-ONLY — from_config가
+  # _asset_class == 'futures'일 때만 필터를 만든다(risk_stock에는 추가하지 않음).
+  # 기본 enabled:false ⇒ 필터 자체를 만들지 않음(구조적 무동작). enabled:true여도
+  # mode:shadow(기본)면 관측 전용(모든 신호 통과). enforce여도 스냅샷 없음/stale/
+  # 손상이면 fail-open — 발행 서비스 services/futures_margin_risk가 dormant(compose
+  # 프로파일 부재)인 동안 futures:risk:latest가 없어 게이트 무동작.
+  # 실효 활성화 = P5(발행자 기동) + 운영자 mode:enforce flip. 임계값은 발행측
+  # config/futures_margin.yaml에만 있으며 여기서 중복하지 않는다(risk_level만 소비).
+  margin_gate:
+    enabled: false
+    mode: shadow          # shadow(관측) | enforce(차단) — 운영자 flip
+    latest_key: "futures:risk:latest"
+    stale_max_age_seconds: 1200   # 20m — 발행자 ≤15m TTL 계정상태 캐던스 + 여유
 
 trading_windows:
   - "09:00-10:30"

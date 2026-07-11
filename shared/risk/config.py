@@ -620,6 +620,55 @@ class ConcurrentPositionsFilterSettings(BaseModel):
     )
 
 
+class MarginGateFilterSettings(BaseModel):
+    """Futures margin-risk new-entry gate (Phase 4-f, plan §6(d) / 설계 2.7).
+
+    Wires the futures margin read-model (``shared/risk/futures_margin.py``,
+    published to ``futures:risk:latest`` by ``services/futures_margin_risk``)
+    into the World-B ``RiskFilterLayer`` as a new-entry gate. The filter reads
+    the already-classified ``risk_level`` and only *branches* on it — every
+    threshold lives on the publish side (``config/futures_margin.yaml``), so no
+    threshold is duplicated here.
+
+    ``enabled`` defaults to ``False`` (filter never constructed) and ``mode``
+    defaults to ``shadow`` (built-but-observation-only), so the filter is
+    **structurally inert** until an operator opts in AND flips ``mode`` to
+    ``enforce`` AND the ``futures_margin_risk`` publisher is live. Even armed it
+    fails OPEN on a missing/stale/corrupt snapshot (dormant publisher → pass).
+
+    Futures-only: ``RiskFilterLayer.from_config`` builds this filter solely when
+    the config's ``_asset_class`` is ``"futures"``, so the stock chain never
+    grows it even though ``StockRiskConfig`` inherits this block.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Build the margin_gate filter in the futures layer chain",
+    )
+    mode: Literal["shadow", "enforce"] = Field(
+        default="shadow",
+        description=(
+            "shadow = built but passes every signal (observation-only); "
+            "enforce = reject new entries when risk_level is block_new_entries/"
+            "critical. Default shadow keeps the filter inert until an operator "
+            "flip (the margin publisher carries no mode field of its own)."
+        ),
+    )
+    latest_key: str = Field(
+        default="futures:risk:latest",
+        description="Redis hash published by services/futures_margin_risk",
+    )
+    stale_max_age_seconds: int = Field(
+        default=1200,
+        gt=0,
+        description=(
+            "Fail-open when the snapshot asof_ts (KST-naive ISO) is older than "
+            "this. 20m covers the publisher's short (≤15m TTL) account-state "
+            "cadence with slack; the key's own 15m TTL is the harder bound."
+        ),
+    )
+
+
 class CoreSectorCapSettings(BaseModel):
     """Rule 2 — sector cap on Track B open-position notional (Phase 5B §7.2).
 
@@ -779,6 +828,14 @@ class FuturesRiskConfig(ServiceConfigBase):
     concurrent_positions: ConcurrentPositionsFilterSettings = Field(
         default_factory=ConcurrentPositionsFilterSettings,
         description="Total + per-asset concurrent-entry caps (Phase 4-e)",
+    )
+    margin_gate: MarginGateFilterSettings = Field(
+        default_factory=MarginGateFilterSettings,
+        description=(
+            "Futures margin-risk new-entry gate (Phase 4-f) — futures-only; "
+            "from_config builds it only when _asset_class == 'futures', so the "
+            "inherited field on StockRiskConfig never grows a stock-chain filter"
+        ),
     )
 
 
