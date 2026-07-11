@@ -13,7 +13,7 @@ import fakeredis.aioredis
 import pytest
 
 from shared.risk.runtime_state import RuntimeRiskState
-from shared.risk.state import RiskState, RiskStateSnapshot
+from shared.risk.state import RiskStateSnapshot, RiskStateStore
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -157,7 +157,7 @@ async def test_weekly_survives_idle_beyond_24h(redis, clock):
 @pytest.mark.asyncio
 async def test_migration_fallback_uses_base_weekly_when_period_absent(redis, clock):
     # Pre-period-hash deployment state: only the main HASH exists.
-    legacy = RiskState(redis, "futures")
+    legacy = RiskStateStore(redis, "futures")
     snap = RiskStateSnapshot(weekly_pnl_krw=-4_000_000.0)
     await legacy.save(snap)
 
@@ -169,7 +169,7 @@ async def test_migration_fallback_uses_base_weekly_when_period_absent(redis, clo
 
 @pytest.mark.asyncio
 async def test_first_trade_seeds_period_from_base_weekly(redis, clock):
-    legacy = RiskState(redis, "futures")
+    legacy = RiskStateStore(redis, "futures")
     await legacy.save(RiskStateSnapshot(weekly_pnl_krw=-4_000_000.0))
 
     state = make_state(redis, clock)
