@@ -31,9 +31,18 @@ import numpy as np
 
 from shared.backtest import BacktestConfig, BacktestEngine
 from shared.backtest.config import RiskConfig
+from shared.backtest.vbt_harness_runner import (
+    VbtHarnessParityError,
+    _build_order_arrays,
+)
 from shared.backtest.vbt_runner import VectorbtRunner
 
 # 게이트 테스트의 시나리오/전략/윈도우를 그대로 소비한다 (드리프트 차단).
+from tests.unit.backtest.test_vbt_harness_runner import (
+    HARNESS_PARITY_SCENARIOS,
+    _run_harness_only,
+    run_harness_and_runner,
+)
 from tests.unit.backtest.test_vbt_runner import (
     _REAL_EXIT_FACTORIES,
     _REAL_EXIT_RISK,
@@ -127,6 +136,49 @@ def run_real_exit_matrix() -> list[dict]:
     return rows
 
 
+def run_futures_matrix() -> list[dict]:
+    """P3-d 선물 harness 매트릭스 — harness 원장 ↔ from_orders 원장 대조.
+
+    주식 섹션(legacy `BacktestEngine` vs `VectorbtRunner` 두 **독립 엔진** 비교)과
+    달리, 여기서는 harness 가 유일 엔진이다. 검증 대상은 harness(SoT)의 트레이드
+    레코드로 세운 ``vbt.Portfolio.from_orders`` 원장이 harness 의 tick 회계를
+    재현하는지 — **같은 계산의 두 원장 구성**이지 두 엔진의 결과 비교가 아니다.
+    게이트 픽스처(``test_vbt_harness_runner``)를 그대로 소비해 리포트/게이트
+    드리프트를 구조적으로 차단한다. 이 행들도 exit code 판정(_futures_all_pass)에
+    포함된다.
+    """
+    rows = []
+    for label, factory in HARNESS_PARITY_SCENARIOS.items():
+        df, script, sizer, eq = factory()
+        detail: str | None = None
+        try:
+            _, runner_result = run_harness_and_runner(
+                df, script, sizer=sizer, account_equity_krw=eq
+            )
+            trades = runner_result.trades
+            parity_ok = True
+        except VbtHarnessParityError as exc:
+            # parity 실패라도 개수를 0 으로 조작하지 않는다 — 순수 harness(SoT)를
+            # 다시 돌려 실제 트레이드 개수를 복원하고 ❌ + 사유로 렌더한다.
+            trades = _run_harness_only(
+                df, script, sizer=sizer, account_equity_krw=eq
+            ).trades
+            parity_ok = False
+            detail = str(exc)[:200]
+        arrays = _build_order_arrays(trades, len(df))
+        rows.append(
+            {
+                "label": label,
+                "trades": len(trades),
+                "multibar": len(arrays.multibar),
+                "samebar": len(arrays.samebar),
+                "parity_ok": parity_ok,
+                "detail": detail,
+            }
+        )
+    return rows
+
+
 def run_real_data() -> dict | None:
     data_dir = _REPO_ROOT / "data" / "market" / "stock" / "minute"
     if not data_dir.exists():
@@ -210,7 +262,11 @@ def run_speed_sweep(n_evals: int = 20) -> dict:
 
 
 def render(
-    rows: list[dict], exit_rows: list[dict], real: dict | None, speed: dict
+    rows: list[dict],
+    exit_rows: list[dict],
+    real: dict | None,
+    speed: dict,
+    futures_rows: list[dict],
 ) -> str:
     import vectorbt as vbt
 
@@ -307,6 +363,40 @@ def render(
     a("")
     _matrix_table(exit_rows)
     a("")
+    a("## 선물 harness 매트릭스 (P3-d — resolver 원장 ↔ from_orders 원장)")
+    a("")
+    a(
+        "`shared/backtest/vbt_harness_runner.py::VbtHarnessRunner` 는 선물 harness의 "
+        "**컴포지션 래퍼**다 — `BacktestDecisionHarness` 가 여전히 SoT(결과 무변형 "
+        "반환)이고, 이 섹션은 그 harness 트레이드 레코드로 세운 "
+        "`vbt.Portfolio.from_orders` 원장이 harness 의 tick 회계를 재현하는지를 "
+        "검증한다. **주의**: 위 주식 섹션과 달리 이것은 legacy-vs-vbt 두 독립 "
+        "엔진 비교가 아니라 **harness resolver 원장 ↔ from_orders 원장 구성** "
+        "대조다(harness 가 유일 엔진). 멀티바 트레이드(`exit_bar > fill_bar`)만 "
+        "컬럼당 1개로 `from_orders` 에 태우고, 같은-bar 트레이드(`==`, EOD-on-fill/"
+        "last-bar)는 표현 불가라 종가 일치 확인 + tick P&L 을 fill/exit 가격에서 "
+        "**해석적으로 재계산**해 검증한다(헤드라인 tick 합은 same-bar 에 대해 "
+        "대수적으로 공허하므로 이 재계산이 실제 tick 회계 검증이다). 픽스처는 게이트 "
+        "`tests/unit/backtest/test_vbt_harness_runner.py` 를 그대로 import."
+    )
+    a("")
+    a("| 케이스 | trades | multibar | samebar | parity |")
+    a("|---|---|---|---|---|")
+    for r in futures_rows:
+        a(
+            f"| {r['label']} | {r['trades']} | {r['multibar']} | "
+            f"{r['samebar']} | {'✅' if r['parity_ok'] else '❌ (아래 상세)'} |"
+        )
+    a("")
+    futures_failed = [r for r in futures_rows if not r.get("parity_ok")]
+    if futures_failed:
+        # 실패 행은 trades 를 0 으로 조작하지 않고 순수 harness 재실행으로 실제
+        # 개수를 복원했다 — 예외 메시지를 함께 노출해 조사 가능하게 한다.
+        a("**실패 행 상세** (parity ❌ — 개수는 순수 harness 재실행으로 복원):")
+        a("")
+        for r in futures_failed:
+            a(f"- `{r['label']}`: {r.get('detail') or 'parity mismatch (detail 없음)'}")
+        a("")
     if real is not None:
         a("## 실데이터 — williams_r (활성 주식 전략, 레지스트리 경로)")
         a("")
@@ -412,12 +502,16 @@ def render(
     a("")
     a("## 판정")
     a("")
-    ok = _all_pass(rows + exit_rows, real)
+    stock_ok = _all_pass(rows + exit_rows, real)
+    futures_ok = _futures_all_pass(futures_rows)
     a(
-        "**PASS** — 전 시나리오(합성 + 실 exit 생성기) 트레이드 시퀀스/지표 "
-        "일치 (허용오차 내)."
-        if ok
-        else "**FAIL** — 위 표에서 ❌ 항목 확인."
+        "**PASS** — 주식(합성 + 실 exit 생성기 + 실데이터) 트레이드 시퀀스/지표 "
+        "일치 **및** 선물 harness resolver 원장 ↔ from_orders 원장 tick 회계 일치 "
+        "(허용오차 내)."
+        if (stock_ok and futures_ok)
+        else "**FAIL** — 위 표에서 ❌ 항목 확인 "
+        f"(주식 {'PASS' if stock_ok else 'FAIL'} / "
+        f"선물 {'PASS' if futures_ok else 'FAIL'})."
     )
     a("")
     a(
@@ -437,6 +531,11 @@ def _all_pass(rows: list[dict], real: dict | None) -> bool:
     return ok
 
 
+def _futures_all_pass(rows: list[dict]) -> bool:
+    """선물 harness 매트릭스 전 셀 parity 판정 (exit code/markdown 단일 소스)."""
+    return all(r["parity_ok"] for r in rows)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT)
@@ -446,22 +545,27 @@ def main() -> None:
     rows = run_synthetic_matrix()
     print("running real-exit matrix (P3-c) ...")
     exit_rows = run_real_exit_matrix()
+    print("running futures harness matrix (P3-d) ...")
+    futures_rows = run_futures_matrix()
     print("running real-data window ...")
     real = run_real_data()
     print("running speed sweep ...")
     speed = run_speed_sweep()
 
-    report = render(rows, exit_rows, real, speed)
+    report = render(rows, exit_rows, real, speed, futures_rows)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(report, encoding="utf-8")
     print(f"wrote {args.out}")
     all_rows = rows + exit_rows
-    if not _all_pass(all_rows, real):
+    stock_ok = _all_pass(all_rows, real)
+    futures_ok = _futures_all_pass(futures_rows)
+    if not (stock_ok and futures_ok):
         bad = [
             r["label"] for r in all_rows if not (r["trades_match"] and r["dict_match"])
         ]
         if real is not None and not (real["trades_match"] and real["dict_match"]):
             bad.append(real["label"])
+        bad += [f"futures:{r['label']}" for r in futures_rows if not r["parity_ok"]]
         raise SystemExit(f"parity FAILED: {bad}")
 
 
