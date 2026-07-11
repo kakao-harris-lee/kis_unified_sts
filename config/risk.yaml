@@ -34,6 +34,9 @@ risk:
   #  max_positions_per_asset=asset_limits.futures.max_positions) — P4-h2 통일 대비.
   # 캡은 World-A risk_management.yaml과 동일한 env 인다이렉션(${VAR:default})을
   # 재사용 — 같은 env 변수로 두 세계가 함께 움직인다(P4-h2 수렴 대비).
+  # 운영자 flip(2026-07-12): margin_gate/leverage와 달리 count provider 미배선 —
+  # enforce로 켜도 fail-open no-op(실차단 불가)이므로 그대로 disabled 유지.
+  # count provider 배선(P4-h2) 후 flip.
   concurrent_positions:
     enabled: false
     max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}      # World-A risk_management.max_total_positions
@@ -47,9 +50,13 @@ risk:
   # 프로파일 부재)인 동안 futures:risk:latest가 없어 게이트 무동작.
   # 실효 활성화 = P5(발행자 기동) + 운영자 mode:enforce flip. 임계값은 발행측
   # config/futures_margin.yaml에만 있으며 여기서 중복하지 않는다(risk_level만 소비).
+  # 운영자 flip(2026-07-12): shadow→enforce. P4-f 게이트 코드 + 발행자
+  # (services/futures_margin_risk 스케줄) 배선 완료 후 활성화. fail-open 보존 —
+  # 스냅샷 없음/stale/provider None이면 여전히 통과, risk_level ∈
+  # {block_new_entries, critical}일 때만 실제 차단.
   margin_gate:
-    enabled: false
-    mode: shadow          # shadow(관측) | enforce(차단) — 운영자 flip
+    enabled: true
+    mode: enforce         # 운영자 flip(2026-07-12): shadow→enforce (차단). fail-open 보존
     latest_key: "futures:risk:latest"
     # 발행자 latest_ttl_seconds=900s(15m) 미만으로 둬 stale 분기가 실제 도달
     # 가능하게 한다: 900s 지나면 키 만료(부재→pass)라 stale 경로가 죽지만, TTL
@@ -61,11 +68,15 @@ risk:
   # 재사용 — 하드코딩 상수 0. 기본 enabled:false ⇒ 필터 미구성. enabled:true여도
   # mode:shadow(기본)면 관측 전용, 스냅샷 provider 미배선이면 fail-open(현 착지는 어떤
   # 데몬도 provider를 주입하지 않아 구조적 무동작). equity<=0 → fail-open(0 나눗셈 방지).
-  # 경계는 strict '>' (정확히 cap → 통과, 초과 → 거절). 실효 활성화 = 후속(provider 배선
-  # + futures product_specs) + 운영자 mode:enforce flip.
+  # 경계는 strict '>' (정확히 cap → 통과, 초과 → 거절). 실효 활성화 = provider 배선
+  # (P5-3 risk_filter 데몬 position/equity provider) + 운영자 mode:enforce flip.
+  # 운영자 flip(2026-07-12): shadow→enforce. P4-g 게이트 + P5-3 provider 배선 완료
+  # 후 활성화. fail-open 보존 — provider 없음/빈 positions/equity<=0/stale이면
+  # 여전히 통과, gross_leverage > cap일 때만 실제 차단. caveat: equity는 현재
+  # FuturesMarginConfig static fallback — 정밀도는 live equity provider 후속.
   leverage:
-    enabled: false
-    mode: shadow            # shadow(관측) | enforce(차단) — 운영자 flip
+    enabled: true
+    mode: enforce           # 운영자 flip(2026-07-12): shadow→enforce (차단). fail-open 보존
     max_gross_leverage: 3.0 # 선물 그로스 레버리지 상한 (자산별)
     # stale_max_age_seconds: 미설정 ⇒ staleness 게이트 비활성(스냅샷 신선 신뢰).
     #   설정 시 asof_ts 없음/파싱실패/초과 → stale → fail-open pass(양성형, #458).
@@ -101,15 +112,20 @@ risk_stock:
   # asset_limits.stock.max_positions=15). P4-h2 두 세계 통일 대비.
   # 캡은 World-A risk_management.yaml과 동일한 env 인다이렉션을 재사용
   # (total은 futures와 같은 RISK_MAX_TOTAL_POSITIONS 공유). P4-h2 통일 대비.
+  # 운영자 flip(2026-07-12): count provider 미배선 → enforce여도 fail-open no-op
+  # 이므로 그대로 disabled 유지. count provider 배선(P4-h2) 후 flip.
   concurrent_positions:
     enabled: false
     max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}     # World-A risk_management.max_total_positions
     max_positions_per_asset: ${RISK_STOCK_MAX_POSITIONS:15} # World-A asset_limits.stock.max_positions
   # Phase 4-g: 주식 그로스 레버리지 캡 — risk.leverage와 동일 의미. 현금 계좌라 상한 1.0
-  # (승수 1). 기본 enabled:false ⇒ 무동작. 상세는 risk.leverage 주석 참조.
+  # (승수 1). 상세는 risk.leverage 주석 참조. 운영자 flip(2026-07-12): shadow→enforce.
+  # P4-g 게이트 + P5-3 stock_risk_filter provider(_build_leverage_provider) 배선 완료
+  # 후 활성화. fail-open 보존 — provider 없음/빈 positions/equity<=0이면 여전히 통과,
+  # gross_leverage > 1.0일 때만 실제 차단.
   leverage:
-    enabled: false
-    mode: shadow
+    enabled: true
+    mode: enforce           # 운영자 flip(2026-07-12): shadow→enforce (차단). fail-open 보존
     max_gross_leverage: 1.0 # 현금 주식 계좌 — 무레버리지
   # Phase 5B Track A/B 상관관계 규칙 (설계서 §7.2 / roadmap §5.1) — 주식 전용
   # (StockRiskConfig에만 존재; 선물 체인은 이 필터들을 만들지 않는다).

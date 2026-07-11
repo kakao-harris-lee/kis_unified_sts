@@ -78,17 +78,31 @@ class TestFuturesRiskConfigFromYaml:
         config = FuturesRiskConfig.from_yaml()
         assert config.max_spread_ticks == 2
 
-    def test_leverage_block_ships_inert(self) -> None:
-        """Phase 4-g futures leverage cap ships DISABLED + shadow + cap 3.0
-        (structurally inert). Pinning the shipped values here fails the build if
-        the block is ever accidentally flipped to enabled:true, the cap is
-        typo'd, or the sub-block is mis-nested (sibling core_correlation has the
-        same style of pin)."""
+    def test_leverage_block_ships_enforced(self) -> None:
+        """Phase 4-g futures leverage cap ships ENABLED + enforce + cap 3.0 after
+        the operator flip (2026-07-12): P4-g gate + P5-3 provider wiring complete.
+        Pinning the shipped values here fails the build if the block is ever
+        accidentally reverted to shadow/disabled, the cap is typo'd, or the
+        sub-block is mis-nested. The filter remains fail-open on missing/stale/
+        no-provider data — only gross_leverage > cap rejects a new entry."""
         lev = FuturesRiskConfig.from_yaml().leverage
-        assert lev.enabled is False
-        assert lev.mode == "shadow"
+        assert lev.enabled is True
+        assert lev.mode == "enforce"
         assert lev.max_gross_leverage == 3.0
         assert lev.stale_max_age_seconds is None
+
+    def test_margin_gate_block_ships_enforced(self) -> None:
+        """Phase 4-f futures margin gate ships ENABLED + enforce after the
+        operator flip (2026-07-12): P4-f gate + services/futures_margin_risk
+        publisher wiring complete. Pinning the shipped values fails the build on
+        an accidental revert to shadow/disabled or a mis-nested sub-block. The
+        gate stays fail-open on missing/stale/corrupt snapshots — only
+        risk_level in {block_new_entries, critical} rejects a new entry."""
+        mg = FuturesRiskConfig.from_yaml().margin_gate
+        assert mg.enabled is True
+        assert mg.mode == "enforce"
+        assert mg.latest_key == "futures:risk:latest"
+        assert mg.stale_max_age_seconds == 600
 
 
 # ---------------------------------------------------------------------------
