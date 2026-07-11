@@ -348,6 +348,13 @@ def _build_config_dict(
         ),
         "futures_tick_max": futures_config.get("tick_max", 2000),
         "futures_tick_symbol": futures_config.get("tick_symbol", ""),
+        "futures_structure_key": futures_config.get(
+            "structure_key", "market:structure:latest"
+        ),
+        "futures_structure_stale_seconds": futures_config.get(
+            "structure_stale_seconds", 86400
+        ),
+        "futures_flow_foreign_weight": futures_config.get("flow_foreign_weight", 5.0),
         # KRX API settings
         "krx_api_key": os.environ.get("KRX_API_KEY", krx_config.get("api_key", "")),
         "krx_base_url": krx_config.get(
@@ -686,6 +693,20 @@ class LLMConfig(ServiceConfigBase):
     )
     futures_tick_max: int = Field(default=2000, description="Maximum ticks to fetch")
     futures_tick_symbol: str = Field(default="", description="Futures symbol")
+    futures_structure_key: str = Field(
+        default="market:structure:latest",
+        description="Market-structure read-model hash key (foreign futures flow)",
+    )
+    futures_structure_stale_seconds: int = Field(
+        default=86400,
+        description="Max age (s) of the market-structure snapshot before "
+        "foreign flow degrades to None",
+    )
+    futures_flow_foreign_weight: float = Field(
+        default=5.0,
+        description="Directional weight for foreign futures net flow in "
+        "flow_score (bounded ± contribution, mirrors put-call term)",
+    )
 
     # KRX Open API 설정
     krx_api_key: str = Field(default="", description="KRX API key")
@@ -830,6 +851,18 @@ class LLMConfig(ServiceConfigBase):
         if "futures_tick_symbol" not in env_vars:
             env_vars["futures_tick_symbol"] = os.environ.get(
                 "LLM_FUTURES_TICK_SYMBOL", ""
+            )
+        if "futures_structure_key" not in env_vars:
+            env_vars["futures_structure_key"] = os.environ.get(
+                "LLM_FUTURES_STRUCTURE_KEY", "market:structure:latest"
+            )
+        if "futures_structure_stale_seconds" not in env_vars:
+            env_vars["futures_structure_stale_seconds"] = int(
+                os.environ.get("LLM_FUTURES_STRUCTURE_STALE_SECONDS", "86400")
+            )
+        if "futures_flow_foreign_weight" not in env_vars:
+            env_vars["futures_flow_foreign_weight"] = float(
+                os.environ.get("LLM_FUTURES_FLOW_FOREIGN_WEIGHT", "5.0")
             )
 
         # Apply user overrides

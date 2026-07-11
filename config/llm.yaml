@@ -137,6 +137,11 @@ futures:
   stop_loss_pt: 3.0         # 손절 포인트
   take_profit_pt: 5.0       # 익절 포인트
 
+  # 외국인 선물 흐름 (market-structure read-model 소싱; 신규 키 없음)
+  structure_key: "market:structure:latest"  # 외인선물 순매수 스냅샷 해시
+  structure_stale_seconds: 86400            # 스냅샷 최대 허용 age(초) — 초과 시 degrade
+  flow_foreign_weight: 5.0                  # flow_score 외인 방향 가중(±, put-call과 정합)
+
   # Futures-specific LLM prompt addendum (Phase 1.1-a)
   # Injected as additional system prompt context when LLMContextPublisher is
   # initialized with asset_class="futures". Focuses the LLM on KOSPI200 futures
