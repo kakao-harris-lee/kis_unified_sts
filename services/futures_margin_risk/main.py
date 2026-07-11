@@ -43,7 +43,17 @@ from shared.risk.futures_margin import (
     compute_margin_risk,
     margin_state_to_fields,
 )
+from shared.risk.product_specs import (
+    build_product_specs,
+    load_execution_contract_specs,
+)
 from shared.utils.coercion import to_float as _parse_float
+
+# ``build_product_specs`` moved to ``shared/risk/product_specs.py`` (P5-3 F3) so
+# both this publisher and ``services/risk_filter``'s leverage wiring import it
+# from the shared seam (no service→service dependency). Re-exported here to keep
+# ``from services.futures_margin_risk.main import build_product_specs`` working.
+__all__ = ["build_product_specs"]
 
 logger = logging.getLogger(__name__)
 
@@ -77,41 +87,6 @@ class MarginRunContext:
     notifier: Any | None = None
     ledger: Any | None = None
     extra_missing: list[str] = field(default_factory=list)
-
-
-def build_product_specs(
-    config: FuturesMarginConfig, execution_specs: Mapping[str, Any]
-) -> dict[str, MarginProductSpec]:
-    """Merge execution-spec constants with margin-config rates per product.
-
-    ``execution_specs`` is ``config/execution.yaml::futures_contract_spec``.
-    A product configured in the margin YAML but absent from the execution spec
-    is skipped (logged) — its symbol simply won't resolve a spec at compute.
-    """
-    specs: dict[str, MarginProductSpec] = {}
-    for key, defaults in config.product_defaults.items():
-        exec_spec = execution_specs.get(key)
-        if not isinstance(exec_spec, Mapping):
-            logger.warning(
-                "futures_contract_spec.%s missing — margin product %s skipped",
-                key,
-                key,
-            )
-            continue
-        multiplier = exec_spec.get("multiplier_krw_per_point")
-        tick = exec_spec.get("tick_size_points")
-        if multiplier is None or tick is None:
-            logger.warning("futures_contract_spec.%s missing multiplier/tick", key)
-            continue
-        specs[key] = MarginProductSpec(
-            multiplier_krw_per_point=float(multiplier),
-            tick_size_points=float(tick),
-            initial_margin_rate=defaults.initial_margin_rate,
-            maintenance_margin_rate=defaults.maintenance_margin_rate,
-            stress_gap_points=defaults.stress_gap_points,
-            symbol_prefixes=tuple(defaults.symbol_prefixes),
-        )
-    return specs
 
 
 def _thresholds(config: FuturesMarginConfig) -> MarginThresholds:
@@ -168,15 +143,8 @@ def default_margin_context(
     config: FuturesMarginConfig | None = None,
 ) -> MarginRunContext:
     """Build the production run context (real trading-state / config fallback)."""
-    from shared.config.loader import ConfigLoader
-
     config = config or FuturesMarginConfig.load_or_default()
-    execution_yaml = ConfigLoader.load("execution.yaml")
-    execution_specs = (
-        execution_yaml.get("futures_contract_spec", {})
-        if isinstance(execution_yaml, dict)
-        else {}
-    )
+    execution_specs = load_execution_contract_specs()
     product_specs = build_product_specs(config, execution_specs)
 
     fail_closed = _resolve_fail_closed()
