@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from shared.decision.signal import Signal
 from shared.risk.filters.base import FilterResult, RiskFilter
+from shared.risk.primitives.breakers import loss_fraction_exceeds
 from shared.risk.state import RiskStateSnapshot
 
 
@@ -79,9 +80,17 @@ class WeeklyMDDFilter(RiskFilter):
             the limit, otherwise ``passed=False`` with
             ``skip_reason="weekly_mdd_exceeded"``.
         """
-        loss_fraction = state_snapshot.weekly_pnl_krw / self.account_equity_krw
-
-        if loss_fraction < -self.weekly_mdd_limit_pct:
+        # Shared loss-fraction predicate (P4-d). Strict boundary
+        # (``inclusive=False``) and guardless division
+        # (``equity_nonpositive="raise"``) reproduce this filter's exact prior
+        # behavior: ``weekly_pnl_krw / account_equity_krw < -weekly_mdd_limit_pct``.
+        if loss_fraction_exceeds(
+            state_snapshot.weekly_pnl_krw,
+            self.account_equity_krw,
+            self.weekly_mdd_limit_pct,
+            inclusive=False,
+            equity_nonpositive="raise",
+        ):
             return FilterResult(
                 passed=False,
                 filter_name=self.name,

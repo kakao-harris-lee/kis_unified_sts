@@ -32,6 +32,7 @@ from zoneinfo import ZoneInfo
 
 from shared.decision.signal import Signal
 from shared.risk.filters.base import FilterResult, RiskFilter
+from shared.risk.primitives.breakers import consecutive_exceeds
 from shared.risk.state import RiskStateSnapshot
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,10 @@ class ConsecutiveLossFilter(RiskFilter):
         """
         losses = state_snapshot.consecutive_losses
 
-        if losses >= self.hard_threshold:
+        # Shared raw-count predicate (P4-d). Only the ``>=`` threshold math is
+        # shared; the size-reduction multiplier, KST persist window, and floor
+        # policy below stay filter-owned. Hard and soft stay distinct tiers.
+        if consecutive_exceeds(losses, self.hard_threshold):
             return FilterResult(
                 passed=False,
                 filter_name=self.name,
@@ -132,7 +136,7 @@ class ConsecutiveLossFilter(RiskFilter):
             )
 
         window_until = self._reduce_window_until(state_snapshot)
-        reduce_active = losses >= self.soft_threshold
+        reduce_active = consecutive_exceeds(losses, self.soft_threshold)
         if not reduce_active and window_until is not None:
             reduce_active = self._signal_time_kst(signal) < window_until
 
