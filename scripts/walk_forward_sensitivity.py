@@ -30,6 +30,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+# stdlib-only by contract — safe to import eagerly without slowing --help.
+from shared.backtest.engine_cli import (  # noqa: E402
+    ENGINE_VECTORBT_PARITY_FAILED,
+    add_engine_argument,
+    warn_parity_failures,
+)
+
 logger = logging.getLogger(__name__)
 
 # Top 3 sensitive parameters per Optuna importance ranking
@@ -70,6 +77,7 @@ def run(args: argparse.Namespace) -> int:
         fetch_macro_history,
         make_macro_provider,
     )
+    from shared.backtest.vbt_harness_runner import VbtHarnessNotSupportedError
     from shared.decision.context import load_scheduled_events
     from shared.decision.setups.event_reaction import (
         EventTradeTracker,
@@ -136,6 +144,7 @@ def run(args: argparse.Namespace) -> int:
     )
 
     results = []
+    parity_failed_windows = 0
     for i, raw_cfg in enumerate(perturbed):
         # Cast to SetupAConfig (Pydantic re-validates ranges).
         try:
@@ -149,7 +158,7 @@ def run(args: argparse.Namespace) -> int:
         oos_evs = []
         for _is_df, oos_df in folds:
             try:
-                oos_result = _run_on_window(
+                oos_result, oos_engine = _run_on_window(
                     oos_df,
                     args.symbol,
                     None,
@@ -160,8 +169,15 @@ def run(args: argparse.Namespace) -> int:
                     macro_provider=macro_provider,
                     min_volume=args.min_volume,
                     scheduled_events=scheduled,
+                    engine=args.engine,
                 )
+                parity_failed_windows += oos_engine == ENGINE_VECTORBT_PARITY_FAILED
                 oos_evs.append(_aggregate(oos_result)["ev_ticks"])
+            except VbtHarnessNotSupportedError:
+                # engine="vectorbt" without vectorbt installed: every fold
+                # would fail identically — swallowing this yields a silent
+                # 0-fold run. Propagate (explicit opt-in, explicit failure).
+                raise
             except Exception:
                 logger.exception("config %d fold failed; skipping", i)
                 continue
@@ -191,6 +207,8 @@ def run(args: argparse.Namespace) -> int:
     pct_positive = n_positive / n_total if n_total else 0.0
     passed = pct_positive >= args.min_pass_rate
 
+    warn_parity_failures(logger, parity_failed_windows)
+
     output = {
         "n_configs": n_total,
         "n_positive": n_positive,
@@ -198,6 +216,8 @@ def run(args: argparse.Namespace) -> int:
         "min_pass_rate": args.min_pass_rate,
         "perturbed_pct": args.pct,
         "perturbed_fields": list(_PERTURBED_FIELDS),
+        "engine": args.engine,
+        "parity_failed_windows": parity_failed_windows,
         "passed": passed,
         "configs": results,
     }
@@ -237,6 +257,7 @@ def main() -> int:
         default=None,
         help="Path to Optuna JSON; if given, perturbation centres on tuned params.",
     )
+    add_engine_argument(parser)
     parser.add_argument("--out", default="results/phase3_sensitivity.json")
     args = parser.parse_args()
     return run(args)

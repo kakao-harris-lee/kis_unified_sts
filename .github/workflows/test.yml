@@ -157,9 +157,11 @@ jobs:
         run: |
           python -c "import talib; import vectorbt; print('vectorbt', vectorbt.__version__)"
 
-      - name: VectorbtRunner parity suite (P3-a/b)
+      - name: Vectorbt parity suites (P3-a/b/d + engine selector)
         run: |
-          pytest tests/unit/backtest/test_vbt_runner.py -q
+          pytest tests/unit/backtest/test_vbt_runner.py \
+            tests/unit/backtest/test_vbt_harness_runner.py \
+            tests/unit/backtest/test_harness_engine.py -q
 
   performance:
     runs-on: ubuntu-latest

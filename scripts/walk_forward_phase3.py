@@ -38,10 +38,14 @@ if str(_REPO_ROOT) not in sys.path:
 
 import pandas as pd  # noqa: E402
 
-from shared.backtest.decision_harness import (  # noqa: E402
-    BacktestDecisionHarness,
-    HarnessResult,
+from shared.backtest.decision_harness import HarnessResult  # noqa: E402
+from shared.backtest.engine_cli import (  # noqa: E402
+    ENGINE_HARNESS,
+    ENGINE_VECTORBT_PARITY_FAILED,
+    add_engine_argument,
+    warn_parity_failures,
 )
+from shared.backtest.harness_engine import run_futures_backtest  # noqa: E402
 from shared.backtest.macro_history import (  # noqa: E402
     fetch_macro_history,
     make_macro_provider,
@@ -83,6 +87,11 @@ class FoldResult:
     oos_win_rate: float
     oos_ev_ticks: float
     passes_gate: bool
+    # Engine labels actually used per window ("harness" | "vectorbt" |
+    # "vectorbt_parity_failed") — appended fields so existing JSON consumers
+    # keep their columns.
+    is_engine: str = ENGINE_HARNESS
+    oos_engine: str = ENGINE_HARNESS
 
 
 def _run_on_window(
@@ -96,7 +105,14 @@ def _run_on_window(
     macro_provider=None,
     min_volume: int = 0,
     scheduled_events: list[ScheduledEvent] | None = None,
-) -> HarnessResult:
+    *,
+    engine: str = ENGINE_HARNESS,
+) -> tuple[HarnessResult, str]:
+    """Run one (IS or OOS) window; returns ``(result, engine_label)``.
+
+    ``engine_label`` is the engine that actually produced the result — see
+    :func:`shared.backtest.harness_engine.run_futures_backtest`.
+    """
     replay = MarketContextReplay(
         df=df,
         symbol=symbol,
@@ -106,13 +122,14 @@ def _run_on_window(
         macro_provider=macro_provider,
         min_volume=min_volume,
     )
-    harness = BacktestDecisionHarness(
-        setups=[setup_a, setup_c],
-        filter_layer=filter_layer,
-        state=RiskStateSnapshot(),
-        tick_size_points=spec.tick_size_points,
+    return run_futures_backtest(
+        [setup_a, setup_c],
+        filter_layer,
+        RiskStateSnapshot(),
+        spec.tick_size_points,
+        replay,
+        engine=engine,
     )
-    return harness.run(replay)
 
 
 def _split_folds(
@@ -234,7 +251,7 @@ def run(args: argparse.Namespace) -> int:
 
     results: list[FoldResult] = []
     for idx, (is_df, oos_df) in enumerate(folds):
-        is_result = _run_on_window(
+        is_result, is_engine = _run_on_window(
             is_df,
             args.symbol,
             macro,
@@ -245,8 +262,9 @@ def run(args: argparse.Namespace) -> int:
             macro_provider,
             args.min_volume,
             scheduled_events,
+            engine=args.engine,
         )
-        oos_result = _run_on_window(
+        oos_result, oos_engine = _run_on_window(
             oos_df,
             args.symbol,
             macro,
@@ -257,6 +275,7 @@ def run(args: argparse.Namespace) -> int:
             macro_provider,
             args.min_volume,
             scheduled_events,
+            engine=args.engine,
         )
 
         is_setup_agg = _aggregate(is_result)
@@ -277,6 +296,8 @@ def run(args: argparse.Namespace) -> int:
             oos_win_rate=oos_setup_agg["win_rate"],
             oos_ev_ticks=oos_setup_agg["ev_ticks"],
             passes_gate=passes_gate,
+            is_engine=is_engine,
+            oos_engine=oos_engine,
         )
         results.append(fr)
         logger.info("fold %d: %s", idx, asdict(fr))
@@ -286,6 +307,14 @@ def run(args: argparse.Namespace) -> int:
         json.dumps([asdict(r) for r in results], indent=2, default=str)
     )
     logger.info("wrote %d fold results → %s", len(results), args.out)
+
+    parity_failed = sum(
+        (r.is_engine == ENGINE_VECTORBT_PARITY_FAILED)
+        + (r.oos_engine == ENGINE_VECTORBT_PARITY_FAILED)
+        for r in results
+    )
+    logger.info("engine=%s parity_failed_windows=%d", args.engine, parity_failed)
+    warn_parity_failures(logger, parity_failed)
 
     n_pass = sum(1 for r in results if r.passes_gate)
     logger.info(
@@ -346,6 +375,7 @@ def main() -> int:
         "Merges best_params over the YAML defaults (preserving "
         "window_minutes from YAML since the Optuna search does not tune it).",
     )
+    add_engine_argument(p)
     p.add_argument(
         "--skip-risk-filters",
         action="store_true",

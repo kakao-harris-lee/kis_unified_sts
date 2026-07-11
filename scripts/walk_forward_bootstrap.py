@@ -53,6 +53,10 @@ if str(_REPO_ROOT) not in sys.path:
 # Setup/RiskFilter wiring.
 from scripts.walk_forward_phase3 import _split_folds  # noqa: E402
 from shared.backtest.bootstrap import stationary_block_bootstrap  # noqa: E402
+from shared.backtest.engine_cli import (  # noqa: E402
+    add_engine_argument,
+    warn_parity_failures,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,17 +117,21 @@ def _run_one_bootstrap(
     is_months: int,
     oos_months: int,
     args: argparse.Namespace,
-) -> tuple[list[float], list[float]]:
+) -> tuple[list[float], list[float], int]:
     """Run walk-forward folds on one bootstrap sample.
 
-    Returns ``(is_ev_per_fold, oos_ev_per_fold)``. Empty lists when the
-    sample has insufficient span for any fold.
+    Returns ``(is_ev_per_fold, oos_ev_per_fold, parity_failed_windows)``.
+    Empty lists when the sample has insufficient span for any fold.
+    ``parity_failed_windows`` counts IS/OOS windows whose vectorbt parity
+    cross-check fell back to the pure harness (0 with ``engine="harness"``).
     """
     # Lazy imports — defer heavy modules until we actually need them.
     import json as _json
 
     from scripts.walk_forward_phase3 import _aggregate, _run_on_window
+    from shared.backtest.engine_cli import ENGINE_VECTORBT_PARITY_FAILED
     from shared.backtest.macro_history import fetch_macro_history, make_macro_provider
+    from shared.backtest.vbt_harness_runner import VbtHarnessNotSupportedError
     from shared.decision.context import load_scheduled_events
     from shared.decision.setups.event_reaction import (
         EventTradeTracker,
@@ -138,9 +146,11 @@ def _run_one_bootstrap(
     from shared.risk.config import FuturesRiskConfig, load_trading_windows
     from shared.risk.layer import RiskFilterLayer
 
+    engine = args.engine
+
     folds = _split_folds(sample_df, is_months, oos_months)
     if not folds:
-        return [], []
+        return [], [], 0
 
     registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
     spec = registry.specs[args.contract]
@@ -191,9 +201,10 @@ def _run_one_bootstrap(
 
     is_ev_list: list[float] = []
     oos_ev_list: list[float] = []
+    parity_failed = 0
     for fold_id, (is_df, oos_df) in enumerate(folds):
         try:
-            is_result = _run_on_window(
+            is_result, is_engine = _run_on_window(
                 is_df,
                 args.symbol,
                 None,
@@ -204,8 +215,12 @@ def _run_one_bootstrap(
                 macro_provider=macro_provider,
                 min_volume=args.min_volume,
                 scheduled_events=scheduled,
+                engine=engine,
             )
-            oos_result = _run_on_window(
+            # Count parity fallbacks per window immediately after each run —
+            # if only the OOS run raises below, the IS fallback still counts.
+            parity_failed += is_engine == ENGINE_VECTORBT_PARITY_FAILED
+            oos_result, oos_engine = _run_on_window(
                 oos_df,
                 args.symbol,
                 None,
@@ -216,7 +231,14 @@ def _run_one_bootstrap(
                 macro_provider=macro_provider,
                 min_volume=args.min_volume,
                 scheduled_events=scheduled,
+                engine=engine,
             )
+            parity_failed += oos_engine == ENGINE_VECTORBT_PARITY_FAILED
+        except VbtHarnessNotSupportedError:
+            # engine="vectorbt" without vectorbt installed: every fold would
+            # fail identically — swallowing this yields a silent 0-backtest
+            # run. Propagate (explicit opt-in, explicit failure).
+            raise
         except Exception:
             logger.exception(
                 "bootstrap %d fold %d failed; skipping", sample_idx, fold_id
@@ -228,7 +250,7 @@ def _run_one_bootstrap(
         is_ev_list.append(is_summary["ev_ticks"])
         oos_ev_list.append(oos_summary["ev_ticks"])
 
-    return is_ev_list, oos_ev_list
+    return is_ev_list, oos_ev_list, parity_failed
 
 
 def run(args: argparse.Namespace) -> int:
@@ -257,8 +279,9 @@ def run(args: argparse.Namespace) -> int:
 
     all_is_ev: list[float] = []
     all_oos_ev: list[float] = []
+    parity_failed_windows = 0
     for i, sample_df in enumerate(samples):
-        is_evs, oos_evs = _run_one_bootstrap(
+        is_evs, oos_evs, parity_failed = _run_one_bootstrap(
             sample_idx=i,
             sample_df=sample_df,
             is_months=args.is_months,
@@ -267,6 +290,7 @@ def run(args: argparse.Namespace) -> int:
         )
         all_is_ev.extend(is_evs)
         all_oos_ev.extend(oos_evs)
+        parity_failed_windows += parity_failed
         if (i + 1) % max(1, args.n_samples // 10) == 0:
             logger.info(
                 "progress %d/%d samples; cumulative folds: IS=%d OOS=%d",
@@ -286,12 +310,16 @@ def run(args: argparse.Namespace) -> int:
 
     gate_result = _evaluate_bootstrap_gate(all_is_ev, all_oos_ev)
 
+    warn_parity_failures(logger, parity_failed_windows)
+
     output = {
         "n_samples": args.n_samples,
         "mean_block_minutes": args.mean_block_minutes,
         "seed": args.seed,
         "is_months": args.is_months,
         "oos_months": args.oos_months,
+        "engine": args.engine,
+        "parity_failed_windows": parity_failed_windows,
         "gate": gate_result,
     }
 
@@ -377,6 +405,7 @@ def main() -> int:
         default=None,
         help="Path to Optuna JSON with tuned Setup C params (best_params section).",
     )
+    add_engine_argument(parser)
     parser.add_argument("--out", default="results/phase3_bootstrap.json")
     args = parser.parse_args()
 
