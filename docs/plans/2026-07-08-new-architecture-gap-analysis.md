@@ -231,7 +231,8 @@ LIVE 유지: `services/trading/position_tracker.py`(~2,300), `shared/paper/broke
 ### 4.2 구조 문제 — "두 세계"
 
 - `RiskState` 클래스 2개: `risk/models.py:222`(in-process KRW dataclass) vs
-  `risk/state.py:62`(Redis HASH) — #600 혼동의 원천.
+  `risk/state.py`(Redis HASH) — #600 혼동의 원천. **P4-h1(#624)에서 후자를
+  `RiskStateStore`로 개명해 이름충돌 해소**(전자는 orchestrator 전용, P6 소멸 예정).
 - 오케스트레이터 2개: `RiskManager.can_open_position`(모놀리식 전용) vs
   `RiskFilterLayer.evaluate`(디커플 전용) — 필터 로직 미공유.
 - 설정 스키마 2벌: dataclass `RiskConfig` vs pydantic `FuturesRiskConfig`/`StockRiskConfig`

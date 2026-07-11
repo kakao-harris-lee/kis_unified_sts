@@ -1,6 +1,6 @@
 """Redis-backed risk state persistence for intraday trading sessions.
 
-Provides ``RiskStateSnapshot`` (mutable dataclass) and ``RiskState``
+Provides ``RiskStateSnapshot`` (mutable dataclass) and ``RiskStateStore``
 (Redis HASH writer/reader) for Phase 3 risk filter infrastructure.
 
 Key: ``risk:state:{asset_class}`` — Redis HASH with 24-hour TTL.
@@ -15,8 +15,8 @@ from dataclasses import dataclass
 class RiskStateSnapshot:
     """Mutable snapshot of intraday risk metrics.
 
-    All fields default to zero; populated by ``RiskState.load()`` and
-    written back via ``RiskState.save()``.
+    All fields default to zero; populated by ``RiskStateStore.load()`` and
+    written back via ``RiskStateStore.save()``.
 
     Attributes:
         daily_pnl_krw: Realised + unrealised daily P&L in KRW.
@@ -59,7 +59,7 @@ _FIELD_MAP: dict[str, type] = {
 }
 
 
-class RiskState:
+class RiskStateStore:
     """Redis-backed risk state store for a single asset class.
 
     Reads and writes a ``RiskStateSnapshot`` as a Redis HASH at

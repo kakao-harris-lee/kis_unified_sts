@@ -9,7 +9,7 @@ fill handler + kill_switch monitor) need higher-level operations:
   * reset_daily — zeros the daily counters at the 09:00 KST session start
   * should_reset_daily — calendar-day boundary check
 
-This wraps the existing Phase 3 :class:`RiskState` Redis HASH writer and
+This wraps the existing Phase 3 :class:`RiskStateStore` Redis HASH writer and
 adds two sibling HASHes:
 
   * ``risk:state:{asset_class}:meta`` — daily-reset bookkeeping
@@ -59,7 +59,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from shared.risk.state import RiskState, RiskStateSnapshot
+from shared.risk.state import RiskStateSnapshot, RiskStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ class RuntimeRiskState:
         # (F-1). Default "" → identical keys to before (stock + all existing
         # callers unaffected). Colon-delimited to match the key convention.
         suffix = f":{key_suffix}" if key_suffix else ""
-        self._risk_state = RiskState(
+        self._risk_state = RiskStateStore(
             redis, asset_class, key=f"risk:state:{asset_class}{suffix}"
         )
         self._meta_key = f"risk:state:{asset_class}{suffix}:meta"
