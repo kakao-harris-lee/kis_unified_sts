@@ -1,11 +1,20 @@
 # KIS scheduler crontab — run by the `scheduler` compose service via supercronic.
-# Times are KST (the service sets TZ=Asia/Seoul; supercronic honours TZ).
+# Times are KST. Timezone is pinned in-file by the CRON_TZ line below (supercronic
+# honours CRON_TZ/TZ set inside the crontab), so the schedule stays KST-native even
+# if the container TZ env is ever dropped (project rule: cron ALWAYS KST).
 # Replaces the host crontab KIS jobs (cron→compose migration,
 # docs/plans/archive/2026-06-09-cron-to-compose-scheduler.md). One-shot jobs only — the
 # market-hours daemons (screener/fusion) are separate compose services.
 #
 # Entrypoints run from /app (the app image); no host .sh wrappers, no `sts`
 # console-script (PYTHONPATH=/app is set on the service for `-m cli.main`).
+
+# CRON_TZ pins the schedule timezone in-file: supercronic honours a CRON_TZ/TZ
+# assignment inside the crontab and it takes precedence over the container TZ env
+# for schedule interpretation. This is defence in depth — every job below stays
+# KST-native even if the container's TZ=Asia/Seoul is ever dropped. Mirrors the
+# committed LIVE crontab (deploy/cron/kis-live.crontab.example).
+CRON_TZ=Asia/Seoul
 
 # --- pre-market (06:30) ---
 30 6  * * 1-5  cd /app && python scripts/llm_premarket_briefing.py
@@ -164,6 +173,61 @@
 5  8  * * 1-5  cd /app && python -m services.market_risk_engine.main premarket
 */30 9-15 * * 1-5  cd /app && python -m services.market_risk_engine.main intraday
 45 18 * * 1-5  cd /app && python -m services.market_risk_engine.main close
+
+# --- Futures read-models (new-architecture plan §7 / Phase A-C — shadow, advisory-only) ---
+# docs/plans/2026-07-08-new-architecture-refactoring-plan.md §7. Three one-shot
+# publishers that compute read-only Redis read-models; they touch NO order path
+# (no order_router / place_order / executor import — advisory-only invariant), so
+# scheduling them cannot change any trade. Cadence is dependency-ordered (each
+# publisher runs after the inputs it reads) and honours its own key TTL. HONEST
+# freshness caveat: the upstreams are NOT all intraday-fresh — market:risk:latest
+# (*/30 09–15) and the account margin/positions ARE re-published intraday, but
+# market:structure:latest and futures:contract:latest publish only premarket(08:00)
+# + close(18:40). So an intraday context fold composes fresh market_risk+margin over
+# a premarket structure/contract snapshot that is present-but-stale under its
+# 24/48h TTL (not re-flagged stale here — that flagging is a scoped follow-up, out
+# of P5-1 scope). Futures regular session opens
+# 08:45 KST, day-only (#552) — the pre-open + intraday runs cover the open.
+#
+# futures_contract → futures:contract:latest (roll-state / front-next-night code).
+#   Calendar-only, so daily 1-2x is enough; premarket/close modes write the 48h
+#   TTL fallback (survives holidays). Mirrors market_structure_collector's
+#   premarket(08:00)/close(18:40) cadence so roll-state is ready before the 08:45
+#   open and refreshed after the session.
+0  8  * * 1-5  cd /app && python -m services.futures_contract.main premarket
+40 18 * * 1-5  cd /app && python -m services.futures_contract.main close
+#
+# futures_margin_risk → futures:risk:latest (account margin usage / liq buffer).
+#   Short 900s (15m) TTL (live account state). A */15 cadence has TWO problems it
+#   fixes: (a) it fired at :00, racing the market_structure_collector /
+#   market_risk_engine delete+hset on the same minute; (b) a 900s cadence == the
+#   900s TTL leaves ZERO slack (the key expires the instant before the next
+#   publish). So run every 10 min off :00 (600s < 900s ⇒ 300s of continuous
+#   overlap, key never lapses) at :02–:52; the 08:42 run lands a fresh snapshot
+#   ~3 min before the 08:45 open. Reads market:structure:latest fut_close
+#   (reference price) + futures trading-state positions; the pre-open runs publish
+#   a flat/ok state (no day positions before 08:45) and keep the key warm. Mode is
+#   an informational label here.
+2,12,22,32,42,52 8-15 * * 1-5  cd /app && python -m services.futures_margin_risk.main intraday
+#
+# futures_context → futures:context:latest (folds contract + market:structure +
+#   market:risk + futures:risk into ONE regime-classified hash; 24h TTL). Runs
+#   AFTER its four inputs and offset off their publish minutes (:10/:40 vs
+#   market_risk :00/:30 and margin :02–:52/10m) so it never shares a minute with a
+#   delete+hset. HONEST freshness: an intraday fold is fresh ONLY for the
+#   market_risk regime + account margin/positions; the structure basis/foreign-flow
+#   and contract roll are the premarket(08:00) snapshots held under their 24/48h TTL
+#   (present-but-stale, not re-flagged — scoped follow-up). Premarket 08:10
+#   composition stays live (24h TTL) through the 08:45 open; close 18:50 folds the
+#   finalized EOD contract/structure/risk (margin has expired post-session →
+#   context degrades gracefully, by design).
+10 8  * * 1-5  cd /app && python -m services.futures_context.main premarket
+10,40 9-15 * * 1-5  cd /app && python -m services.futures_context.main intraday
+# Close-of-regular-session capture (15:45 KST): the intraday cadence ends at 15:40
+# but the day-only futures session closes ~15:45, leaving a 15:40→18:50 gap. This
+# run folds the close-tick with fresh market_risk (15:30) + margin (15:42).
+45 15 * * 1-5  cd /app && python -m services.futures_context.main intraday
+50 18 * * 1-5  cd /app && python -m services.futures_context.main close
 
 # --- Portfolio equity snapshot + unified monthly-MDD monitor (Phase 3B) ---
 # 19:00 KST after the 18:45 market-risk close run. Track B/C equity =
