@@ -92,6 +92,62 @@ def test_malformed_record_is_dropped(sync_redis) -> None:
     assert codes == {"A005930"}
 
 
+def test_non_dict_json_record_drops_only_that_leg(sync_redis) -> None:
+    """F2: a record that decodes to VALID but non-dict JSON (bare number / list /
+    string) must drop ONLY that leg, not null the whole snapshot.
+
+    ``record.get("code", code)`` is the first access, so before the
+    ``isinstance(record, dict)`` guard a non-dict record raised AttributeError,
+    which the per-leg ``except`` (KeyError/TypeError/ValueError/JSONDecodeError)
+    does NOT catch → it escaped into ``leverage_provider._read``'s broad guard
+    and nulled the WHOLE snapshot (violating "drop only the malformed leg" — the
+    same lenience ``core_correlation`` applies)."""
+    sync_redis.hset(
+        _KEY,
+        "A005930",
+        json.dumps({"code": "A005930", "quantity": 10, "entry_price": 5000.0}),
+    )
+    sync_redis.hset(_KEY, "NUM", json.dumps(42))  # bare number
+    sync_redis.hset(_KEY, "LIST", json.dumps([1, 2]))  # bare list
+    sync_redis.hset(_KEY, "STR", json.dumps("oops"))  # bare string
+    provider = m._build_leverage_provider(_cfg(enabled=True), sync_redis, _KEY)
+    snap = provider()
+    assert snap is not None  # whole snapshot preserved, not nulled
+    assert {p["code"] for p in snap["positions"]} == {"A005930"}
+
+
+def test_reads_order_router_write_schema_roundtrip(sync_redis) -> None:
+    """F5 (#601 class): pin the read side to the order_router WRITE schema.
+
+    ``services/stock_order_router/main.py`` (lines ~311-325) writes each open
+    position as the dict mirrored below (code / name / entry_price / quantity /
+    opened_at_ms / state / signal_id / strategy). The provider reads
+    code / quantity / entry_price straight off it. This round-trip fails if the
+    provider stops parsing that writer shape — e.g. a field rename drifts the two
+    sides apart and silently zeroes leverage. (A shared schema constant would
+    also catch a WRITER-side rename, but that is an order_router-scoped change;
+    this read-side pin keeps the P5-3 scope contained while still failing loudly
+    on read/write drift.)"""
+    # Mirror services/stock_order_router/main.py:311-325 exactly.
+    writer_record = {
+        "code": "A005930",
+        "name": "삼성전자",
+        "entry_price": 71000.0,
+        "quantity": 10,
+        "opened_at_ms": 1_700_000_000_000,
+        "state": "SURVIVAL",
+        "signal_id": "sig-1",
+        "strategy": "bb_reversion",
+    }
+    sync_redis.hset(_KEY, writer_record["code"], json.dumps(writer_record))
+    provider = m._build_leverage_provider(_cfg(enabled=True), sync_redis, _KEY)
+    snap = provider()
+    assert snap is not None
+    (leg,) = snap["positions"]
+    # Only the three fields the filter needs; entry_price → current_price slot.
+    assert leg == {"code": "A005930", "quantity": 10, "current_price": 71000.0}
+
+
 def test_redis_error_fails_open() -> None:
     """A sync client whose hgetall raises → provider returns None (no raise)."""
 

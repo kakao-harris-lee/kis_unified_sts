@@ -20,6 +20,8 @@ from services.futures_margin_risk.main import (
     build_product_specs,
     run_margin_risk,
 )
+from shared.risk.futures_margin import spec_for_symbol
+from shared.risk.product_specs import load_execution_contract_specs
 
 _NOW = datetime(2026, 7, 1, 10, 0)
 
@@ -68,6 +70,36 @@ def test_build_product_specs_merges_execution_constants():
     assert specs["kospi200_mini"].tick_size_points == 0.02
     assert specs["kospi200_mini"].initial_margin_rate == 0.08
     assert specs["kospi200_full"].multiplier_krw_per_point == 250000
+
+
+def test_shipped_config_resolves_live_codes_to_nonunit_multiplier():
+    """F4 (#601 class): the SHIPPED execution.yaml + futures_margin.yaml must
+    resolve representative live/backtest trade codes to a real per-contract
+    multiplier — never the 1.0 fallback a prefix drift would silently produce.
+
+    The other build_product_specs tests use hand-made ``_EXECUTION_SPECS`` dicts,
+    so they cannot catch a drift between the shipped ``futures_contract_spec``
+    keys and the margin ``product_defaults`` ``symbol_prefixes``. If either
+    drifts, ``spec_for_symbol`` returns ``None`` → LeverageFilter multiplier 1.0
+    (~250,000x understatement, gate ineffective) with only a log line. This test
+    is the regression pin for that class of silent understatement.
+    """
+    config = FuturesMarginConfig.load_or_default()
+    specs = build_product_specs(config, load_execution_contract_specs())
+    assert specs, "shipped config resolved 0 product specs (spec/prefix drift)"
+
+    # kospi200_mini prefixes: A05 (live), 105 (backtest) → 50,000 KRW/pt.
+    mini = spec_for_symbol("A05603", specs)
+    assert mini is not None, "A05603 resolved no spec (mini prefix drift)"
+    assert mini.multiplier_krw_per_point == 50_000.0
+    assert mini.multiplier_krw_per_point != 1.0
+
+    # kospi200_full prefixes: A01 (live near-month), 101 (연결선물) → 250,000 KRW/pt.
+    for code in ("101S6000", "A01V3000"):
+        full = spec_for_symbol(code, specs)
+        assert full is not None, f"{code} resolved no spec (full prefix drift)"
+        assert full.multiplier_krw_per_point == 250_000.0
+        assert full.multiplier_krw_per_point != 1.0
 
 
 def test_run_publishes_latest_hash_and_stream():

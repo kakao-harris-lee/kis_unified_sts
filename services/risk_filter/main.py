@@ -318,21 +318,36 @@ def _build_leverage_wiring(
         return None, None
     try:
         from services.futures_margin_risk.config import FuturesMarginConfig
-        from services.futures_margin_risk.main import build_product_specs
-        from shared.config.loader import ConfigLoader
         from shared.risk.leverage_provider import build_leverage_snapshot_provider
+        from shared.risk.product_specs import (
+            build_product_specs,
+            load_execution_contract_specs,
+        )
         from shared.streaming.trading_state import TradingStateReader
 
         margin_config = FuturesMarginConfig.load_or_default()
-        execution_yaml = ConfigLoader.load("execution.yaml")
-        execution_specs = (
-            execution_yaml.get("futures_contract_spec", {})
-            if isinstance(execution_yaml, dict)
-            else {}
-        )
+        execution_specs = load_execution_contract_specs()
         product_specs = build_product_specs(margin_config, execution_specs)
+        if not product_specs:
+            # F1 (#601 class): an empty spec map means EVERY futures symbol falls
+            # back to multiplier 1.0 (~250,000x understatement for a full-size
+            # contract) AND the LeverageFilter's per-symbol drift warning never
+            # fires (it needs a non-empty product_specs to reach that path), so
+            # the understatement would otherwise be *silent*. The filter itself
+            # stays fail-open (no hard failure) — this only adds observability.
+            logger.warning(
+                "futures leverage: 0 product specs resolved from execution.yaml "
+                "— leverage will understate, gate ineffective"
+            )
 
         reader = TradingStateReader("futures")
+        # F6(a): the equity denominator is the margin config's STATIC fallback,
+        # captured once here in a startup lambda. The margin daemon re-reads
+        # ``fallback_account_equity_krw`` per compute; today both are identical
+        # (both the static fallback — the KIS futures balance endpoint is REST-
+        # unstable / mock-blocked). They DIVERGE if the margin lane is later
+        # wired to a live broker-equity snapshot (per-compute) while this stays a
+        # one-shot capture — unify then (P4-h2 follow-up).
         equity = margin_config.fallback_account_equity_krw
         provider = build_leverage_snapshot_provider(
             positions_provider=reader.get_positions,

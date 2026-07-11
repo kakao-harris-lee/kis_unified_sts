@@ -277,6 +277,15 @@ def _build_leverage_provider(
             for code, record_json in dict(raw).items():
                 try:
                     record = json.loads(record_json)
+                    # F2: a bare number/list/str decodes as valid JSON but has no
+                    # ``.get`` / ``[...]``; ``record.get("code", code)`` is the
+                    # first access, so a non-dict record raises AttributeError,
+                    # which the per-leg except below does NOT catch → it escapes
+                    # into leverage_provider._read's broad guard and nulls the
+                    # WHOLE snapshot (violating "drop only the malformed leg").
+                    # Guard explicitly so a non-dict record drops that leg only.
+                    if not isinstance(record, dict):
+                        continue
                     positions.append(
                         {
                             "code": record.get("code", code),
@@ -286,6 +295,10 @@ def _build_leverage_provider(
                             # leverage). A malformed leg is dropped (fail-open,
                             # understating leverage) rather than poisoning the
                             # whole read — same lenience as core_correlation.
+                            # (F6(b): the futures provider instead nulls the WHOLE
+                            # snapshot on a corrupt leg — a leg-drop vs
+                            # whole-snapshot-None asymmetry tracked for a future
+                            # unify; F2 narrows but does not remove it.)
                             "current_price": record["entry_price"],
                         }
                     )
