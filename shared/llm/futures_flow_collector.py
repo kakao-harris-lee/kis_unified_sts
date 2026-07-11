@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from shared.calendar import MarketCalendar
 from shared.features.ofi import OFICalculator, OFIConfig
@@ -24,6 +25,8 @@ from .krx_api_client import KRXOpenAPIClient
 
 logger = logging.getLogger("shared.llm.collectors")
 
+KST = ZoneInfo("Asia/Seoul")
+
 
 class FuturesFlowCollector(DataCollector):
     """수급 데이터 수집"""
@@ -35,20 +38,44 @@ class FuturesFlowCollector(DataCollector):
         self._krx_client = KRXOpenAPIClient(self.config)
 
     def collect(self) -> tuple[FlowData | None, list[str]]:
-        """수급 데이터 수집 (투자자별 수급 제외, 실제 데이터만 사용)"""
-        missing: list[str] = ["investor_flow_excluded"]
+        """수급 데이터 수집 (외국인 선물 흐름 + 베이시스/풋콜/미시구조).
+
+        외국인 선물 순매수(``fut_foreign_net_qty``)와 다일 누적(``cum20``)을 시장구조
+        read-model(``market:structure:latest``)에서 소싱한다. 소스 부재/stale 시엔
+        graceful degrade — 해당 마커를 ``missing``에 기록하고 값은 ``None``으로
+        폴백한다(fail-safe; LLM 서사 분석은 외인 흐름 없이도 계속 진행).
+        기관 선물(institution)은 read-model 소스가 없어 범위 밖(None 유지).
+        """
+        missing: list[str] = []
         base_date = self._get_last_trading_date()
 
         basis, put_call = self._collect_basis_putcall(base_date, missing)
         micro_data, micro_missing = self._collect_microstructure()
         missing.extend(micro_missing)
+        foreign_net, foreign_cum20, foreign_missing = self._collect_foreign_flow()
+        missing.extend(foreign_missing)
 
         missing = self._dedupe_missing(missing)
-        if basis is None and put_call is None and not micro_data:
+        if (
+            basis is None
+            and put_call is None
+            and not micro_data
+            and foreign_net is None
+        ):
             return None, missing
 
-        flow_score = self._compute_flow_score(basis, put_call, micro_data)
-        flow_data = self._build_flow_data(basis, put_call, micro_data, flow_score)
+        flow_score = self._compute_flow_score(
+            basis,
+            put_call,
+            micro_data,
+            foreign_net,
+            self.config.futures_flow_foreign_weight,
+            self.config.futures_flow_foreign_deadband,
+            self.config.futures_flow_foreign_full_scale,
+        )
+        flow_data = self._build_flow_data(
+            basis, put_call, micro_data, flow_score, foreign_net, foreign_cum20
+        )
         return flow_data, missing
 
     def _collect_basis_putcall(
@@ -82,6 +109,79 @@ class FuturesFlowCollector(DataCollector):
             missing.extend(["basis", "put_call_ratio"])
         return basis, put_call
 
+    def _collect_foreign_flow(
+        self,
+    ) -> tuple[float | None, float | None, list[str]]:
+        """Read foreign-futures net flow from the market-structure read-model.
+
+        Sources the ``market:structure:latest`` hash published by
+        ``services/market_structure_collector`` (KIS FHPTJ04030000 daily
+        snapshot). Returns ``(net_qty, cum20, missing)`` where ``net_qty`` is the
+        day's foreign net contracts and ``cum20`` is the rolling ~20-trading-day
+        cumulative (``fut_foreign_net_qty_cum20`` — NOT a 5-day figure).
+
+        Fail-safe: a missing/empty/stale hash, an unreachable Redis, or an absent
+        field degrades to ``(None, None, [marker])`` so the LLM narrative still
+        runs without foreign flow — it never raises.
+        """
+        key = self.config.futures_structure_key
+        try:
+            client = RedisClient.get_client()
+            raw = client.hgetall(key) or {}
+        except Exception as e:  # noqa: BLE001 — degraded source must not raise
+            logger.debug(f"market-structure hash fetch failed ({key}): {e}")
+            return None, None, ["foreign_futures_unavailable"]
+
+        fields = {str(k): v for k, v in dict(raw).items()}
+        if not fields:
+            return None, None, ["foreign_futures_unavailable"]
+        if self._structure_is_stale(fields):
+            return None, None, ["foreign_futures_stale"]
+
+        foreign_net = self._to_float(fields.get("fut_foreign_net_qty"))
+        foreign_cum20 = self._to_float(fields.get("fut_foreign_net_qty_cum20"))
+        missing = [] if foreign_net is not None else ["foreign_futures"]
+        return foreign_net, foreign_cum20, missing
+
+    def _structure_is_stale(self, fields: dict[str, Any]) -> bool:
+        """Whether the snapshot's asof timestamp is older than the configured
+        bound.
+
+        Positive-form staleness (memory #458): a missing or unparseable
+        ``asof_ts`` is treated as STALE (→ degrade to None), never as fresh, so a
+        corrupt/legacy hash with no usable timestamp can't push a days-old
+        foreign net into the flow score as if it were live. Consistent with the
+        margin_gate (P4-f) staleness gate. The normal publisher path always
+        writes ``asof_ts``, so this only defends against corrupt/legacy hashes.
+
+        When the gate is disabled (``stale_after <= 0``) nothing is ever stale.
+        """
+        stale_after = self.config.futures_structure_stale_seconds
+        if stale_after <= 0:
+            return False
+        asof = self._parse_structure_asof(fields.get("asof_ts") or fields.get("asof"))
+        if asof is None:
+            return True
+        # asof is KST-naive (publisher writes KST-naive; tz-aware values are
+        # converted to KST in _parse_structure_asof). Container TZ=Asia/Seoul →
+        # naive now() is KST, so the comparison is apples-to-apples.
+        return (datetime.now() - asof).total_seconds() > stale_after
+
+    @staticmethod
+    def _parse_structure_asof(value: Any) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+        # Convert tz-aware timestamps to KST before stripping tzinfo (#593): a
+        # naive strip keeps the wall clock, so a UTC-tagged asof would skew the
+        # age by +9h. Naive values pass through unchanged. Mirrors margin_gate.
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(KST).replace(tzinfo=None)
+        return parsed
+
     @staticmethod
     def _dedupe_missing(missing: list[str]) -> list[str]:
         return list(dict.fromkeys(missing)) if missing else missing
@@ -91,6 +191,10 @@ class FuturesFlowCollector(DataCollector):
         basis: float | None,
         put_call: float | None,
         micro_data: dict[str, Any],
+        foreign_futures: float | None = None,
+        foreign_weight: float = 0.0,
+        foreign_deadband: float = 0.0,
+        foreign_full_scale: float = 0.0,
     ) -> float:
         flow_score = 0.0
         if basis is not None:
@@ -101,10 +205,50 @@ class FuturesFlowCollector(DataCollector):
             elif put_call < 0.9:
                 flow_score -= 5
 
+        flow_score += FuturesFlowCollector._foreign_flow_contribution(
+            foreign_futures, foreign_weight, foreign_deadband, foreign_full_scale
+        )
+
         micro_score = micro_data.get("microstructure_score") if micro_data else None
         if micro_score is not None:
             flow_score += micro_score
         return flow_score
+
+    @staticmethod
+    def _foreign_flow_contribution(
+        foreign_futures: float | None,
+        foreign_weight: float,
+        deadband: float,
+        full_scale: float,
+    ) -> float:
+        """Directional, deadbanded, magnitude-scaled foreign-flow term.
+
+        Foreign futures net-buy is a directional signal: net long (positive) is
+        bullish, net short (negative) bearish. Unlike a sign-only term (which
+        saturates at ±weight for *any* nonzero net and could flip a near-zero
+        flow_score on noise), this applies a deadband and a bounded linear ramp:
+
+        * ``|net| <= deadband`` → 0 contribution (noise-level net is ignored);
+        * ``deadband < |net| < full_scale`` → linearly scaled toward ±weight;
+        * ``|net| >= full_scale`` → saturates at ±weight (bounded).
+
+        The sign follows the net direction; the weight/deadband/full_scale are all
+        config-driven. Mirrors the put-call band + microstructure magnitude scaling
+        already used in :meth:`_compute_flow_score`.
+
+        A degenerate ``full_scale <= deadband`` (or both left at the 0.0 defaults,
+        i.e. a caller that did not thread the config through) falls back to a
+        sign-only term above the deadband so the term never divides by zero.
+        """
+        if foreign_futures is None or not foreign_weight:
+            return 0.0
+        magnitude = abs(foreign_futures)
+        if magnitude <= deadband:
+            return 0.0
+        span = full_scale - deadband
+        fraction = 1.0 if span <= 0 else min((magnitude - deadband) / span, 1.0)
+        contribution = fraction * foreign_weight
+        return contribution if foreign_futures > 0 else -contribution
 
     @staticmethod
     def _build_flow_data(
@@ -112,14 +256,21 @@ class FuturesFlowCollector(DataCollector):
         put_call: float | None,
         micro_data: dict[str, Any],
         flow_score: float,
+        foreign_futures: float | None = None,
+        foreign_futures_cum20: float | None = None,
     ) -> FlowData:
         micro_score = micro_data.get("microstructure_score") if micro_data else None
         return FlowData(
-            foreign_futures=None,
+            foreign_futures=foreign_futures,
+            # institution_futures has no market-structure source today (the
+            # read-model publishes only foreign net); left None (out of scope).
             institution_futures=None,
             retail_futures=None,
+            # foreign_futures_5d has no 5-day source in market:structure; the
+            # available multi-day figure is the 20-day cum (foreign_futures_cum20).
             foreign_futures_5d=None,
             institution_futures_5d=None,
+            foreign_futures_cum20=foreign_futures_cum20,
             basis=round(basis, 2) if basis is not None else None,
             put_call_ratio=round(put_call, 2) if put_call is not None else None,
             orderbook_imbalance=(

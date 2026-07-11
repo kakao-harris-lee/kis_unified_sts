@@ -137,6 +137,14 @@ futures:
   stop_loss_pt: 3.0         # 손절 포인트
   take_profit_pt: 5.0       # 익절 포인트
 
+  # 외국인 선물 흐름 (market-structure read-model 소싱; 신규 키 없음)
+  structure_key: "market:structure:latest"  # 외인선물 순매수 스냅샷 해시
+  structure_stale_seconds: 86400            # 스냅샷 최대 허용 age(초) — 초과/무타임스탬프 시 degrade
+  flow_foreign_weight: 5.0                  # flow_score 외인 방향 가중(±, put-call과 정합)
+  flow_foreign_deadband: 2000               # |net| 이하는 flow_score 외인항 0 기여(노이즈 데드밴드)
+  flow_foreign_full_scale: 15000            # |net| 이상에서 외인항이 ±weight로 포화(사이 구간 선형)
+  flow_foreign_catalyst_cum20_threshold: 50000  # 20일 누적 외인 순매수 catalyst 발동 임계(계약)
+
   # Futures-specific LLM prompt addendum (Phase 1.1-a)
   # Injected as additional system prompt context when LLMContextPublisher is
   # initialized with asset_class="futures". Focuses the LLM on KOSPI200 futures

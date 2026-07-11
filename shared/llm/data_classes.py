@@ -288,6 +288,10 @@ class FlowData:
     foreign_futures_5d: float | None = None
     institution_futures_5d: float | None = None
 
+    # Multi-day cumulative foreign futures net (source: market-structure
+    # ``fut_foreign_net_qty_cum20`` — rolling sum over ~20 trading days, NOT 5d).
+    foreign_futures_cum20: float | None = None
+
     # Market indicators
     basis: float | None = None
     put_call_ratio: float | None = None
