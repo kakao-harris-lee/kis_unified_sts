@@ -27,6 +27,17 @@ risk:
     enabled: true
     latest_key: "portfolio:equity:latest"
     stale_max_age_seconds: 93600   # 26h — daily 19:00 KST cadence + slack
+  # Phase 4-e: 총량 + 자산별 동시진입 캡 (World-A RiskManager 능력의 World-B 이식).
+  # 기본 enabled:false ⇒ 필터 자체를 만들지 않음(구조적 무동작). enabled:true여도
+  # count provider 미주입/캡 미설정이면 fail-open(통과). 캡 키명은 World-A와 정합
+  # (max_total_positions=risk_management.max_total_positions,
+  #  max_positions_per_asset=asset_limits.futures.max_positions) — P4-h2 통일 대비.
+  # 캡은 World-A risk_management.yaml과 동일한 env 인다이렉션(${VAR:default})을
+  # 재사용 — 같은 env 변수로 두 세계가 함께 움직인다(P4-h2 수렴 대비).
+  concurrent_positions:
+    enabled: false
+    max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}      # World-A risk_management.max_total_positions
+    max_positions_per_asset: ${RISK_FUTURES_MAX_POSITIONS:5} # World-A asset_limits.futures.max_positions
 
 trading_windows:
   - "09:00-10:30"
@@ -54,6 +65,15 @@ risk_stock:
     enabled: true
     latest_key: "portfolio:equity:latest"
     stale_max_age_seconds: 93600
+  # Phase 4-e: 주식 총량 + 자산별 동시진입 캡 — risk.concurrent_positions와 동일 의미.
+  # 기본 enabled:false ⇒ 무동작. 캡 키명은 World-A와 정합(max_positions_per_asset=
+  # asset_limits.stock.max_positions=15). P4-h2 두 세계 통일 대비.
+  # 캡은 World-A risk_management.yaml과 동일한 env 인다이렉션을 재사용
+  # (total은 futures와 같은 RISK_MAX_TOTAL_POSITIONS 공유). P4-h2 통일 대비.
+  concurrent_positions:
+    enabled: false
+    max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}     # World-A risk_management.max_total_positions
+    max_positions_per_asset: ${RISK_STOCK_MAX_POSITIONS:15} # World-A asset_limits.stock.max_positions
   # Phase 5B Track A/B 상관관계 규칙 (설계서 §7.2 / roadmap §5.1) — 주식 전용
   # (StockRiskConfig에만 존재; 선물 체인은 이 필터들을 만들지 않는다).
   # 두 규칙 모두 트랙 A 수동 원장(config/portfolio/core_holdings.yaml)을 읽으며,

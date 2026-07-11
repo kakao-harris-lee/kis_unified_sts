@@ -23,6 +23,7 @@ filter requires I/O, without changing the public sync API.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from shared.portfolio.core_holdings import CoreHoldings
     from shared.risk.config import FuturesRiskConfig
     from shared.risk.state import RiskStateSnapshot
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,9 @@ class RiskFilterLayer:
         current_atr_provider: Callable[[], float] | None = None,
         current_spread_provider: Callable[[], float] | None = None,
         has_open_position_provider: Callable[[str], bool] | None = None,
+        open_positions_count_provider: (
+            Callable[[], Mapping[str, int] | None] | None
+        ) = None,
         portfolio_snapshot_provider: Callable[[], dict | None] | None = None,
         core_holdings_provider: Callable[[], CoreHoldings | None] | None = None,
         stock_positions_provider: (
@@ -121,6 +127,13 @@ class RiskFilterLayer:
            ≠ enforce passes), so enabling it under the default shadow mode
            is a no-op. ``portfolio_snapshot_provider`` overrides the default
            lazy sync-Redis reader (tests / backtests).
+
+        Phase 4-e optionally appends the total + per-asset concurrency gate
+        when ``config.concurrent_positions.enabled`` (default ``False`` ⇒ never
+        built): :class:`ConcurrentPositionsFilter` ports the World-A
+        ``RiskManager`` ``max_total_positions`` / per-asset caps into World-B.
+        Fail-open — without ``open_positions_count_provider`` or a configured
+        cap it passes every signal, so it is inert until an operator wires it.
 
         Phase 5B appends the stock-only Track A/B correlation filters when
         the config object carries a ``core_correlation`` block (i.e. for
@@ -201,6 +214,54 @@ class RiskFilterLayer:
                     latest_key=portfolio_settings.latest_key,
                     stale_max_age_seconds=portfolio_settings.stale_max_age_seconds,
                     snapshot_provider=portfolio_snapshot_provider,
+                )
+            )
+
+        # Phase 4-e: total + per-asset concurrency caps (World-A RiskManager
+        # capability ported to World-B). Structurally inert unless
+        # ``concurrent_positions.enabled`` — even then it fails open without an
+        # injected count provider or a configured cap, so the shadow daemons'
+        # pass-through behaviour is unchanged by default.
+        concurrent_settings = getattr(config, "concurrent_positions", None)
+        if concurrent_settings is not None and concurrent_settings.enabled:
+            from shared.risk.filters.concurrent_positions import (
+                ConcurrentPositionsFilter,
+            )
+
+            # Fail-fast on the per-asset binding: every FuturesRiskConfig (and
+            # its StockRiskConfig subclass) declares ``_asset_class``, so a
+            # missing/blank value means a future subclass forgot to — raise
+            # loudly rather than silently mis-bind the per-asset cap to
+            # "futures" (which would gate stock entries against the futures cap).
+            asset_class = getattr(config, "_asset_class", None)
+            if not asset_class:
+                raise ValueError(
+                    f"{type(config).__name__} has no _asset_class; "
+                    "ConcurrentPositionsFilter cannot bind its per-asset cap. "
+                    "Every FuturesRiskConfig subclass must declare _asset_class "
+                    "(e.g. 'futures' / 'stock')."
+                )
+
+            # Observability: an enabled filter with no count provider is a
+            # silent fail-open no-op. Log once at build time so operators can
+            # tell 'inert because unwired' apart from 'active and passing'
+            # (provider wiring lands in P4-h2 / P4-f).
+            if open_positions_count_provider is None:
+                logger.warning(
+                    "ConcurrentPositionsFilter enabled for asset_class=%s but no "
+                    "count provider wired — filter is inert (fail-open pass on "
+                    "every signal)",
+                    asset_class,
+                )
+
+            filters.append(
+                ConcurrentPositionsFilter(
+                    asset_class=asset_class,
+                    open_positions_count_provider=open_positions_count_provider,
+                    max_total_positions=concurrent_settings.max_total_positions,
+                    max_positions_per_asset=(
+                        concurrent_settings.max_positions_per_asset
+                    ),
                 )
             )
 

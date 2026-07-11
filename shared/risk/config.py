@@ -581,6 +581,45 @@ class PortfolioMddFilterSettings(BaseModel):
     )
 
 
+class ConcurrentPositionsFilterSettings(BaseModel):
+    """Total + per-asset concurrent-entry caps (Phase 4-e).
+
+    Ports the World-A ``RiskManager`` concurrency caps (``max_total_positions``
+    and per-asset ``asset_limits.*.max_positions``) into the decoupled
+    ``RiskFilterLayer``. The cap field names are kept aligned with the World-A
+    keys so the P4-h2 two-world config unification can converge on one source.
+
+    ``enabled`` defaults to ``False`` so the filter is **structurally inert**
+    (never even constructed) until an operator opts in — the shadow daemons'
+    existing pass-through behaviour is unchanged. Even when enabled the filter
+    fails OPEN whenever the count provider or both caps are absent.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Build the concurrent_positions filter in the layer chain",
+    )
+    max_total_positions: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Portfolio-wide open-position cap (aligned with World-A "
+            "risk_management.max_total_positions). None disables the total check. "
+            "Must be > 0 (a 0 cap would reject every entry — matches World-A "
+            "MIN_POSITIONS=1)."
+        ),
+    )
+    max_positions_per_asset: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Per-asset-class open-position cap (aligned with World-A "
+            "asset_limits.<asset>.max_positions). None disables the per-asset "
+            "check. Must be > 0."
+        ),
+    )
+
+
 class CoreSectorCapSettings(BaseModel):
     """Rule 2 — sector cap on Track B open-position notional (Phase 5B §7.2).
 
@@ -674,6 +713,9 @@ class FuturesRiskConfig(ServiceConfigBase):
     _default_config_file: ClassVar[str] = "risk.yaml"
     _default_section: ClassVar[str] = "risk"
     _env_prefix: ClassVar[str] = "RISK_"
+    #: Asset class this config drives — used to bind the per-asset concurrency
+    #: cap (ConcurrentPositionsFilter). StockRiskConfig overrides it.
+    _asset_class: ClassVar[str] = "futures"
 
     account_equity_krw: int = Field(
         default=5_000_000,
@@ -734,6 +776,10 @@ class FuturesRiskConfig(ServiceConfigBase):
         default_factory=PortfolioMddFilterSettings,
         description="Unified portfolio-MDD circuit-breaker filter (Phase 3B)",
     )
+    concurrent_positions: ConcurrentPositionsFilterSettings = Field(
+        default_factory=ConcurrentPositionsFilterSettings,
+        description="Total + per-asset concurrent-entry caps (Phase 4-e)",
+    )
 
 
 class StockRiskConfig(FuturesRiskConfig):
@@ -746,6 +792,7 @@ class StockRiskConfig(FuturesRiskConfig):
 
     _default_section: ClassVar[str] = "risk_stock"
     _env_prefix: ClassVar[str] = "STOCK_RISK_"
+    _asset_class: ClassVar[str] = "stock"
 
     core_correlation: CoreCorrelationSettings = Field(
         default_factory=CoreCorrelationSettings,
