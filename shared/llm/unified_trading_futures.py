@@ -152,6 +152,7 @@ class FuturesAnalysisMixin:
             overall_score *= 0.8
         return overall_score
 
+    @staticmethod
     def _determine_futures_bias(overall_score: float) -> MarketBias:
         if overall_score >= 30:
             return MarketBias.STRONG_BULLISH
@@ -306,6 +307,7 @@ class FuturesAnalysisMixin:
             catalysts=catalysts,
         )
 
+    @staticmethod
     def _build_futures_analysis_data(
         overall_score: float,
         overall_bias: MarketBias,
