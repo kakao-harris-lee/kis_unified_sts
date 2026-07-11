@@ -27,7 +27,7 @@ P4-h2 delegates ONLY gate 3's ``>=`` comparison to
 boundary). Gate 2 stays inline: the manager compares a *percent-space*
 ``daily_pnl_pct`` (``(pnl/capital)*100``) against a percent limit, and its
 production branch reads a **pre-derived stored** ``state.daily_pnl_pct`` that
-can diverge from ``daily_pnl/capital`` (case ``E4``) — neither is representable
+can diverge from ``daily_pnl/capital`` (cases ``E4``/``E5``) — neither is representable
 by the fraction-space ``loss_fraction_exceeds`` primitive without changing the
 float-rounding path / re-deriving, so forcing it would break behavior-0.
 """
@@ -237,14 +237,34 @@ CASES: list[Case] = [
         expect_blocked=True,
         expect_reason="daily_loss_limit",
     ),
-    # E4 pins that the state path reads the STORED daily_pnl_pct, NOT a fresh
-    # daily_pnl/capital division: daily_pnl=-9M (=-90%) but stored pct=0 -> pass.
-    # This is exactly what a naive loss_fraction_exceeds delegation would break.
+    # E4/E5 pin that the state path reads the STORED daily_pnl_pct, NOT a fresh
+    # daily_pnl/capital division: daily_pnl=-9M (=-90%) but the stored pct is
+    # within limit -> pass. This is exactly what a naive loss_fraction_exceeds
+    # delegation (re-deriving pnl/capital) would break.
+    #
+    # E4 uses stored pct = 0.0. That is a weak witness: 0.0 is also what a
+    # daily-reset / ignore-state bug would leave behind, so "passed" does not
+    # by itself prove the STORED value was consumed.
     Case(
         "E4-dl-state-reads-stored-pct-not-daily-pnl",
         daily_pnl=-9_000_000,
         daily_pnl_pct=0.0,
         expect_result=True,
+    ),
+    # E5 is the strong witness: a NONZERO within-limit stored pct that cannot be
+    # confused with a reset/ignore sentinel. limit=3.0% so the gate compares
+    # daily_pnl_pct >= -3.0. Stored pct=-1.0 -> -1.0 >= -3.0 -> True (pass),
+    # while a naive re-derivation from daily_pnl would give -9M/10M = -90% ->
+    # -90.0 >= -3.0 -> False (block). The two paths give OPPOSITE results, so a
+    # green here proves the stored pct (-1.0), not daily_pnl, drives the gate.
+    Case(
+        "E5-dl-state-nonzero-stored-pct-beats-daily-pnl-rederive",
+        daily_loss_limit_pct=3.0,
+        daily_pnl=-9_000_000,  # -90% if naively re-derived -> would block
+        daily_pnl_pct=-1.0,  # stored, within -3.0% limit -> passes
+        expect_result=True,
+        expect_blocked=False,
+        expect_reason=None,
     ),
     # ---- Group F: daily-loss in points (PRESERVED) -----------------------
     Case(
