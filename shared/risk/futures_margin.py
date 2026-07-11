@@ -34,6 +34,13 @@ from shared.utils.coercion import to_float as _to_float
 #: Schema version published in the ``futures:risk:latest`` contract.
 MARGIN_RISK_SCHEMA_VERSION = 1
 
+#: Single source of truth for the Redis hash key of the margin-risk snapshot.
+#: The publisher (``services/futures_margin_risk``) writes it and the consumer
+#: (``shared/risk/filters/margin_gate.py`` via ``MarginGateFilterSettings``)
+#: reads it; both derive their config default from this constant so a rename can
+#: never desync publish/consume into a silently-inert gate (P4-f review F2).
+MARGIN_RISK_LATEST_KEY = "futures:risk:latest"
+
 #: Risk levels, low → high (index = severity ordinal).
 RISK_LEVELS: tuple[str, ...] = (
     "ok",

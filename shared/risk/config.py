@@ -551,6 +551,9 @@ from typing import Literal  # noqa: E402 — grouped with the deferred imports
 from pydantic import BaseModel, Field  # noqa: E402 — deferred import (circulars)
 
 from shared.config.base import ServiceConfigBase  # noqa: E402
+from shared.risk.futures_margin import (  # noqa: E402 — publish-side SoT constant
+    MARGIN_RISK_LATEST_KEY,
+)
 
 
 class PortfolioMddFilterSettings(BaseModel):
@@ -616,6 +619,61 @@ class ConcurrentPositionsFilterSettings(BaseModel):
             "Per-asset-class open-position cap (aligned with World-A "
             "asset_limits.<asset>.max_positions). None disables the per-asset "
             "check. Must be > 0."
+        ),
+    )
+
+
+class MarginGateFilterSettings(BaseModel):
+    """Futures margin-risk new-entry gate (Phase 4-f, plan §6(d) / 설계 2.7).
+
+    Wires the futures margin read-model (``shared/risk/futures_margin.py``,
+    published to ``futures:risk:latest`` by ``services/futures_margin_risk``)
+    into the World-B ``RiskFilterLayer`` as a new-entry gate. The filter reads
+    the already-classified ``risk_level`` and only *branches* on it — every
+    threshold lives on the publish side (``config/futures_margin.yaml``), so no
+    threshold is duplicated here.
+
+    ``enabled`` defaults to ``False`` (filter never constructed) and ``mode``
+    defaults to ``shadow`` (built-but-observation-only), so the filter is
+    **structurally inert** until an operator opts in AND flips ``mode`` to
+    ``enforce`` AND the ``futures_margin_risk`` publisher is live. Even armed it
+    fails OPEN on a missing/stale/corrupt snapshot (dormant publisher → pass).
+
+    Futures-only: ``RiskFilterLayer.from_config`` builds this filter solely when
+    the config's ``_asset_class`` is ``"futures"``, so the stock chain never
+    grows it even though ``StockRiskConfig`` inherits this block.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Build the margin_gate filter in the futures layer chain",
+    )
+    mode: Literal["shadow", "enforce"] = Field(
+        default="shadow",
+        description=(
+            "shadow = built but passes every signal (observation-only); "
+            "enforce = reject new entries when risk_level is block_new_entries/"
+            "critical. Default shadow keeps the filter inert until an operator "
+            "flip (the margin publisher carries no mode field of its own)."
+        ),
+    )
+    latest_key: str = Field(
+        default=MARGIN_RISK_LATEST_KEY,
+        description=(
+            "Redis hash published by services/futures_margin_risk. Default is the "
+            "shared publish-side SoT constant (MARGIN_RISK_LATEST_KEY) so a rename "
+            "cannot desync publisher/consumer into a silently-inert gate (F2)."
+        ),
+    )
+    stale_max_age_seconds: int = Field(
+        default=600,
+        gt=0,
+        description=(
+            "Fail-open when the snapshot asof_ts (KST-naive ISO) is older than "
+            "this. Kept BELOW the publisher's 900s (15m) latest_ttl_seconds so "
+            "the stale branch is actually reachable: past 900s the key expires "
+            "(absent → pass), but a snapshot aged 600-900s within the TTL window "
+            "is treated stale here rather than trusted as a live block (F4)."
         ),
     )
 
@@ -779,6 +837,14 @@ class FuturesRiskConfig(ServiceConfigBase):
     concurrent_positions: ConcurrentPositionsFilterSettings = Field(
         default_factory=ConcurrentPositionsFilterSettings,
         description="Total + per-asset concurrent-entry caps (Phase 4-e)",
+    )
+    margin_gate: MarginGateFilterSettings = Field(
+        default_factory=MarginGateFilterSettings,
+        description=(
+            "Futures margin-risk new-entry gate (Phase 4-f) — futures-only; "
+            "from_config builds it only when _asset_class == 'futures', so the "
+            "inherited field on StockRiskConfig never grows a stock-chain filter"
+        ),
     )
 
 

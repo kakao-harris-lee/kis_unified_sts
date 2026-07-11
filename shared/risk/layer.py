@@ -98,6 +98,7 @@ class RiskFilterLayer:
             Callable[[], Mapping[str, int] | None] | None
         ) = None,
         portfolio_snapshot_provider: Callable[[], dict | None] | None = None,
+        margin_snapshot_provider: Callable[[], Mapping[str, str] | None] | None = None,
         core_holdings_provider: Callable[[], CoreHoldings | None] | None = None,
         stock_positions_provider: (
             Callable[[], Mapping[str, float] | None] | None
@@ -134,6 +135,18 @@ class RiskFilterLayer:
         ``RiskManager`` ``max_total_positions`` / per-asset caps into World-B.
         Fail-open — without ``open_positions_count_provider`` or a configured
         cap it passes every signal, so it is inert until an operator wires it.
+
+        Phase 4-f optionally appends the futures-only margin-risk new-entry gate
+        when ``config.margin_gate.enabled`` AND ``config._asset_class`` is
+        ``"futures"`` (so the block inherited by ``StockRiskConfig`` never grows
+        a stock-chain filter): :class:`MarginGateFilter` reads the
+        ``futures:risk:latest`` snapshot and rejects new entries when its
+        published ``risk_level`` is ``block_new_entries``/``critical`` — but only
+        in ``enforce`` mode. Default ``mode='shadow'`` passes every signal, and
+        even in ``enforce`` a missing/stale/corrupt snapshot fails open, so while
+        the ``services/futures_margin_risk`` publisher is dormant it is inert.
+        ``margin_snapshot_provider`` overrides the default lazy sync-Redis reader
+        (tests / backtests).
 
         Phase 5B appends the stock-only Track A/B correlation filters when
         the config object carries a ``core_correlation`` block (i.e. for
@@ -262,6 +275,51 @@ class RiskFilterLayer:
                     max_positions_per_asset=(
                         concurrent_settings.max_positions_per_asset
                     ),
+                )
+            )
+
+        # Phase 4-f: futures margin-risk new-entry gate (World-B wiring of the
+        # shared/risk/futures_margin.py read-model). FUTURES-ONLY — built only
+        # when the config's asset class is 'futures', so the field inherited by
+        # StockRiskConfig never grows a stock-chain filter. Structurally inert:
+        # ``margin_gate.enabled`` defaults False (never built) and ``mode``
+        # defaults 'shadow' (built but passes every signal). Even in enforce
+        # mode it fails open on a missing/stale/corrupt snapshot, so while the
+        # ``services/futures_margin_risk`` publisher is dormant (no compose
+        # profile) the gate has no effect. Effective activation = P5 (publisher
+        # live) + operator flip of ``mode`` to 'enforce'.
+        margin_settings = getattr(config, "margin_gate", None)
+        margin_asset_class = getattr(config, "_asset_class", None)
+        if (
+            margin_settings is not None
+            and margin_settings.enabled
+            and margin_asset_class == "futures"
+        ):
+            from shared.risk.filters.margin_gate import MarginGateFilter
+
+            # Observability: distinguish 'inert because unwired/dormant' from
+            # 'armed and passing'. In enforce mode the gate depends on the
+            # futures_margin_risk publisher being live; if that service is
+            # dormant the snapshot is always absent and the gate fails open.
+            if margin_settings.mode == "enforce":
+                logger.warning(
+                    "MarginGateFilter armed (mode=enforce) — depends on the "
+                    "services/futures_margin_risk publisher; while that service "
+                    "is dormant (compose profile absent) futures:risk:latest is "
+                    "absent and the gate fails open (inert)"
+                )
+            else:
+                logger.info(
+                    "MarginGateFilter built in shadow mode — observation-only, "
+                    "passes every signal (effective enforcement needs mode=enforce)"
+                )
+
+            filters.append(
+                MarginGateFilter(
+                    mode=margin_settings.mode,
+                    latest_key=margin_settings.latest_key,
+                    stale_max_age_seconds=margin_settings.stale_max_age_seconds,
+                    snapshot_provider=margin_snapshot_provider,
                 )
             )
 
