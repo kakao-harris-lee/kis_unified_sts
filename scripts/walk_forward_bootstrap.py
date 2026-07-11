@@ -53,6 +53,10 @@ if str(_REPO_ROOT) not in sys.path:
 # Setup/RiskFilter wiring.
 from scripts.walk_forward_phase3 import _split_folds  # noqa: E402
 from shared.backtest.bootstrap import stationary_block_bootstrap  # noqa: E402
+from shared.backtest.engine_cli import (  # noqa: E402
+    add_engine_argument,
+    warn_parity_failures,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +129,9 @@ def _run_one_bootstrap(
     import json as _json
 
     from scripts.walk_forward_phase3 import _aggregate, _run_on_window
-    from shared.backtest.harness_engine import ENGINE_VECTORBT_PARITY_FAILED
+    from shared.backtest.engine_cli import ENGINE_VECTORBT_PARITY_FAILED
     from shared.backtest.macro_history import fetch_macro_history, make_macro_provider
+    from shared.backtest.vbt_harness_runner import VbtHarnessNotSupportedError
     from shared.decision.context import load_scheduled_events
     from shared.decision.setups.event_reaction import (
         EventTradeTracker,
@@ -141,7 +146,7 @@ def _run_one_bootstrap(
     from shared.risk.config import FuturesRiskConfig, load_trading_windows
     from shared.risk.layer import RiskFilterLayer
 
-    engine = getattr(args, "engine", "harness")
+    engine = args.engine
 
     folds = _split_folds(sample_df, is_months, oos_months)
     if not folds:
@@ -212,6 +217,9 @@ def _run_one_bootstrap(
                 scheduled_events=scheduled,
                 engine=engine,
             )
+            # Count parity fallbacks per window immediately after each run —
+            # if only the OOS run raises below, the IS fallback still counts.
+            parity_failed += is_engine == ENGINE_VECTORBT_PARITY_FAILED
             oos_result, oos_engine = _run_on_window(
                 oos_df,
                 args.symbol,
@@ -225,15 +233,18 @@ def _run_one_bootstrap(
                 scheduled_events=scheduled,
                 engine=engine,
             )
+            parity_failed += oos_engine == ENGINE_VECTORBT_PARITY_FAILED
+        except VbtHarnessNotSupportedError:
+            # engine="vectorbt" without vectorbt installed: every fold would
+            # fail identically — swallowing this yields a silent 0-backtest
+            # run. Propagate (explicit opt-in, explicit failure).
+            raise
         except Exception:
             logger.exception(
                 "bootstrap %d fold %d failed; skipping", sample_idx, fold_id
             )
             continue
 
-        parity_failed += (is_engine == ENGINE_VECTORBT_PARITY_FAILED) + (
-            oos_engine == ENGINE_VECTORBT_PARITY_FAILED
-        )
         is_summary = _aggregate(is_result)
         oos_summary = _aggregate(oos_result)
         is_ev_list.append(is_summary["ev_ticks"])
@@ -299,13 +310,7 @@ def run(args: argparse.Namespace) -> int:
 
     gate_result = _evaluate_bootstrap_gate(all_is_ev, all_oos_ev)
 
-    if parity_failed_windows:
-        logger.warning(
-            "%d window(s) fell back to the pure harness after a vectorbt "
-            "parity failure — results are still harness(SoT)-accurate, but "
-            "investigate (scripts/vbt_parity_report.py)",
-            parity_failed_windows,
-        )
+    warn_parity_failures(logger, parity_failed_windows)
 
     output = {
         "n_samples": args.n_samples,
@@ -400,15 +405,7 @@ def main() -> int:
         default=None,
         help="Path to Optuna JSON with tuned Setup C params (best_params section).",
     )
-    parser.add_argument(
-        "--engine",
-        choices=["harness", "vectorbt"],
-        default="harness",
-        help="Backtest engine: 'harness' (default, BacktestDecisionHarness) "
-        "or 'vectorbt' (opt-in VbtHarnessRunner — same harness plus a "
-        "from_orders parity cross-check; requires the backtest extra: "
-        'pip install -e ".[backtest]").',
-    )
+    add_engine_argument(parser)
     parser.add_argument("--out", default="results/phase3_bootstrap.json")
     args = parser.parse_args()
 

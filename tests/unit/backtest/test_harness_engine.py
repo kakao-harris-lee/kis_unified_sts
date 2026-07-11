@@ -8,8 +8,10 @@ optimizer 스크립트들의 단일 chokepoint 다. 검증 계약:
 2. ``engine="vectorbt"``: :class:`VbtHarnessRunner`. vectorbt 미설치
    (:class:`VbtHarnessNotSupportedError`)는 **폴백 없이 전파** (명시 opt-in
    수동 스크립트 — 조용한 폴백 금지).
-3. :class:`VbtHarnessParityError` 는 warning 로그 후 순수 harness 재실행으로
-   결과 복원 — 라벨 ``"vectorbt_parity_failed"`` (vbt_parity_report.py 패턴).
+3. :class:`VbtHarnessParityError` 는 warning 로그 후 ``exc.harness_result``
+   (1차 harness 결과)로 SoT 복원 — **재실행 없음** (stateful setup 은 재실행
+   시 트레이드 소실). 라벨 ``"vectorbt_parity_failed"``. ``harness_result``
+   가 없으면 :class:`RuntimeError` (조용한 재실행 금지).
 4. 미지 engine 값은 :class:`ValueError`.
 
 라우팅 로직은 모듈 어트리뷰트 monkeypatch(가짜 엔진)로, 실경로는
@@ -20,6 +22,7 @@ optimizer 스크립트들의 단일 chokepoint 다. 검증 계약:
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import subprocess
 import sys
@@ -61,6 +64,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _SENTINEL_HARNESS_RESULT = object()
 _SENTINEL_VBT_RESULT = object()
+# 러너 1차 실행에서 확정돼 VbtHarnessParityError.harness_result 로 전파되는
+# SoT 결과 (실제 러너가 raise 전에 실어 주는 것을 흉내낸다).
+_SENTINEL_FIRST_RUN_RESULT = object()
 _SENTINEL_REPLAY = object()
 
 
@@ -82,7 +88,7 @@ class _FakeHarness:
 
 
 def _make_fake_runner(behavior: str):
-    """behavior: 'ok' | 'parity_error' | 'not_supported'."""
+    """behavior: 'ok' | 'parity_error' | 'parity_error_bare' | 'not_supported'."""
 
     class _FakeRunner:
         instances: list = []
@@ -109,7 +115,13 @@ def _make_fake_runner(behavior: str):
 
         def run(self, replay):
             if behavior == "parity_error":
-                raise VbtHarnessParityError("injected parity mismatch")
+                # 실제 러너처럼 1차 harness(SoT) 결과를 예외에 실어 전파.
+                err = VbtHarnessParityError("injected parity mismatch")
+                err.harness_result = _SENTINEL_FIRST_RUN_RESULT
+                raise err
+            if behavior == "parity_error_bare":
+                # harness_result 미탑재 — 폴백 불가, RuntimeError 여야 한다.
+                raise VbtHarnessParityError("injected parity mismatch (bare)")
             if behavior == "not_supported":
                 raise VbtHarnessNotSupportedError(
                     "vectorbt not installed — pip install -e '.[backtest]'"
@@ -187,21 +199,38 @@ class TestRouting:
             _call(ENGINE_VECTORBT)
         assert _FakeHarness.instances == []  # 폴백 실행이 없었다는 증거
 
-    def test_parity_error_falls_back_to_harness(self, monkeypatch, caplog):
-        """(c) ParityError → warning 로그 + 순수 harness 재실행 + 전용 라벨."""
+    def test_parity_error_restores_first_run_result_without_rerun(
+        self, monkeypatch, caplog
+    ):
+        """(c) ParityError → warning 로그 + exc.harness_result 복원 + 전용 라벨.
+
+        harness 는 **재실행되지 않는다** — stateful setup(Setup C 의
+        EventTradeTracker)은 재실행 시 트레이드가 소실되므로, 1차 실행 결과가
+        예외에 실려 그대로 복원돼야 한다.
+        """
         fake_runner = _make_fake_runner("parity_error")
         monkeypatch.setattr(harness_engine, "BacktestDecisionHarness", _FakeHarness)
         monkeypatch.setattr(harness_engine, "VbtHarnessRunner", fake_runner)
 
         with caplog.at_level(logging.WARNING, logger="shared.backtest.harness_engine"):
             result, label = _call(ENGINE_VECTORBT)
-        assert result is _SENTINEL_HARNESS_RESULT
+        assert result is _SENTINEL_FIRST_RUN_RESULT
         assert label == ENGINE_VECTORBT_PARITY_FAILED
-        assert len(_FakeHarness.instances) == 1  # SoT 복원 재실행
+        assert _FakeHarness.instances == []  # 재실행 없음이 계약
         assert any(
             "parity" in rec.message and "injected parity mismatch" in rec.getMessage()
             for rec in caplog.records
         )
+
+    def test_parity_error_without_result_raises_instead_of_rerun(self, monkeypatch):
+        """(c') harness_result 없는 ParityError → RuntimeError (조용한 재실행 금지)."""
+        fake_runner = _make_fake_runner("parity_error_bare")
+        monkeypatch.setattr(harness_engine, "BacktestDecisionHarness", _FakeHarness)
+        monkeypatch.setattr(harness_engine, "VbtHarnessRunner", fake_runner)
+
+        with pytest.raises(RuntimeError, match="harness_result"):
+            _call(ENGINE_VECTORBT)
+        assert _FakeHarness.instances == []  # 재실행 폴백이 없었다는 증거
 
     @pytest.mark.parametrize(
         "bad", ["bogus", "", "HARNESS", "vbt", ENGINE_VECTORBT_PARITY_FAILED]
@@ -220,7 +249,7 @@ class TestRouting:
 # ---------------------------------------------------------------------------
 
 
-def _real_call(engine: str):
+def _real_call(engine: str, *, setup_cls=_ScriptedSetup):
     df, script, sizer, eq = scenario_symmetric_mix()
     replay = MarketContextReplay(
         df=df,
@@ -230,7 +259,7 @@ def _real_call(engine: str):
         contract_spec=CONTRACT_SPEC,
     )
     return run_futures_backtest(
-        [_ScriptedSetup(script)],
+        [setup_cls(script)],
         RiskFilterLayer(filters=[]),
         RiskStateSnapshot(),
         TICK_SIZE_POINTS,
@@ -260,6 +289,50 @@ class TestRealEngines:
         ]
 
 
+class _OneShotSetup(_ScriptedSetup):
+    """상태 소비 setup — 시그널을 1회만 발화(check 가 script 를 pop).
+
+    Setup C 의 ``EventTradeTracker``(1차 실행에서 이벤트를 mark, reset 없음)를
+    최소로 재현한다: harness 를 **재실행**하면 script 가 이미 소비돼 트레이드
+    0건이 된다 — parity 폴백이 재실행이면 이 테스트가 잡아낸다.
+    """
+
+    def check(self, ctx):
+        return self._script.pop(ctx.now, None)
+
+
+class TestParityFallbackStatefulRegression:
+    def test_fallback_preserves_first_run_result_for_stateful_setup(
+        self, monkeypatch, caplog
+    ):
+        """(F1 회귀) 상태 소비 setup + 강제 parity 실패 → 1차 결과 그대로 복원.
+
+        ``VbtHarnessRunner._cross_check`` 를 실패로 강제해 실제 run() 경로가
+        1차 harness 결과를 예외에 실어 전파하고, 엔진 선택기가 재실행 없이
+        그 결과를 복원함을 종단으로 검증한다 (재실행이면 0 트레이드).
+        """
+        pytest.importorskip("vectorbt")
+        from shared.backtest.vbt_harness_runner import VbtHarnessRunner
+
+        def _forced_mismatch(self, result, df):
+            raise VbtHarnessParityError("forced parity mismatch (test)")
+
+        monkeypatch.setattr(VbtHarnessRunner, "_cross_check", _forced_mismatch)
+
+        # 기준선: 동일 시나리오의 1차(유일) harness 실행 결과.
+        baseline, _ = _real_call(ENGINE_HARNESS, setup_cls=_OneShotSetup)
+        assert len(baseline.trades) == 8  # scenario_symmetric_mix 검증값
+
+        with caplog.at_level(logging.WARNING, logger="shared.backtest.harness_engine"):
+            result, label = _real_call(ENGINE_VECTORBT, setup_cls=_OneShotSetup)
+        assert label == ENGINE_VECTORBT_PARITY_FAILED
+        # 재실행이었다면 _OneShotSetup 의 script 소비로 트레이드가 소실된다.
+        assert len(result.trades) == len(baseline.trades) == 8
+        assert [t.ticks_net for t in result.trades] == [
+            t.ticks_net for t in baseline.trades
+        ]
+
+
 # ---------------------------------------------------------------------------
 # argparse smoke — all 5 scripts expose --engine in --help.
 # ---------------------------------------------------------------------------
@@ -276,6 +349,13 @@ _SCRIPTS = [
 class TestArgparseSmoke:
     @pytest.mark.parametrize("script", _SCRIPTS)
     def test_help_exposes_engine_flag(self, script):
+        if (
+            script == "scripts/optimize_decision_engine.py"
+            and importlib.util.find_spec("optuna") is None
+        ):
+            # optimize_decision_engine.py 는 optuna 미설치 시 argparse 전에
+            # SystemExit — optuna 없는 CI(gating test job)에서는 스킵.
+            pytest.skip("optuna not installed — script exits before argparse")
         proc = subprocess.run(
             [sys.executable, script, "--help"],
             capture_output=True,

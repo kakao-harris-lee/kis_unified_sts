@@ -39,12 +39,13 @@ if str(_REPO_ROOT) not in sys.path:
 import pandas as pd  # noqa: E402
 
 from shared.backtest.decision_harness import HarnessResult  # noqa: E402
-from shared.backtest.harness_engine import (  # noqa: E402
+from shared.backtest.engine_cli import (  # noqa: E402
     ENGINE_HARNESS,
     ENGINE_VECTORBT_PARITY_FAILED,
-    SUPPORTED_ENGINES,
-    run_futures_backtest,
+    add_engine_argument,
+    warn_parity_failures,
 )
+from shared.backtest.harness_engine import run_futures_backtest  # noqa: E402
 from shared.backtest.macro_history import (  # noqa: E402
     fetch_macro_history,
     make_macro_provider,
@@ -313,13 +314,7 @@ def run(args: argparse.Namespace) -> int:
         for r in results
     )
     logger.info("engine=%s parity_failed_windows=%d", args.engine, parity_failed)
-    if parity_failed:
-        logger.warning(
-            "%d window(s) fell back to the pure harness after a vectorbt "
-            "parity failure — results are still harness(SoT)-accurate, but "
-            "investigate (scripts/vbt_parity_report.py)",
-            parity_failed,
-        )
+    warn_parity_failures(logger, parity_failed)
 
     n_pass = sum(1 for r in results if r.passes_gate)
     logger.info(
@@ -380,16 +375,7 @@ def main() -> int:
         "Merges best_params over the YAML defaults (preserving "
         "window_minutes from YAML since the Optuna search does not tune it).",
     )
-    p.add_argument(
-        "--engine",
-        choices=list(SUPPORTED_ENGINES),
-        default=ENGINE_HARNESS,
-        help="Backtest engine: 'harness' (default, BacktestDecisionHarness) "
-        "or 'vectorbt' (opt-in VbtHarnessRunner — runs the same harness plus "
-        "a from_orders parity cross-check; requires the backtest extra: "
-        'pip install -e ".[backtest]"). Parity failures log a warning and '
-        "fall back to the pure harness (label 'vectorbt_parity_failed').",
-    )
+    add_engine_argument(p)
     p.add_argument(
         "--skip-risk-filters",
         action="store_true",

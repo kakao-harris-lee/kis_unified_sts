@@ -30,6 +30,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+# stdlib-only by contract — safe to import eagerly without slowing --help.
+from shared.backtest.engine_cli import (  # noqa: E402
+    ENGINE_VECTORBT_PARITY_FAILED,
+    add_engine_argument,
+    warn_parity_failures,
+)
+
 logger = logging.getLogger(__name__)
 
 # Top 3 sensitive parameters per Optuna importance ranking
@@ -66,11 +73,11 @@ def run(args: argparse.Namespace) -> int:
         _run_on_window,
         _split_folds,
     )
-    from shared.backtest.harness_engine import ENGINE_VECTORBT_PARITY_FAILED
     from shared.backtest.macro_history import (
         fetch_macro_history,
         make_macro_provider,
     )
+    from shared.backtest.vbt_harness_runner import VbtHarnessNotSupportedError
     from shared.decision.context import load_scheduled_events
     from shared.decision.setups.event_reaction import (
         EventTradeTracker,
@@ -166,6 +173,11 @@ def run(args: argparse.Namespace) -> int:
                 )
                 parity_failed_windows += oos_engine == ENGINE_VECTORBT_PARITY_FAILED
                 oos_evs.append(_aggregate(oos_result)["ev_ticks"])
+            except VbtHarnessNotSupportedError:
+                # engine="vectorbt" without vectorbt installed: every fold
+                # would fail identically — swallowing this yields a silent
+                # 0-fold run. Propagate (explicit opt-in, explicit failure).
+                raise
             except Exception:
                 logger.exception("config %d fold failed; skipping", i)
                 continue
@@ -195,13 +207,7 @@ def run(args: argparse.Namespace) -> int:
     pct_positive = n_positive / n_total if n_total else 0.0
     passed = pct_positive >= args.min_pass_rate
 
-    if parity_failed_windows:
-        logger.warning(
-            "%d window(s) fell back to the pure harness after a vectorbt "
-            "parity failure — results are still harness(SoT)-accurate, but "
-            "investigate (scripts/vbt_parity_report.py)",
-            parity_failed_windows,
-        )
+    warn_parity_failures(logger, parity_failed_windows)
 
     output = {
         "n_configs": n_total,
@@ -251,15 +257,7 @@ def main() -> int:
         default=None,
         help="Path to Optuna JSON; if given, perturbation centres on tuned params.",
     )
-    parser.add_argument(
-        "--engine",
-        choices=["harness", "vectorbt"],
-        default="harness",
-        help="Backtest engine: 'harness' (default, BacktestDecisionHarness) "
-        "or 'vectorbt' (opt-in VbtHarnessRunner — same harness plus a "
-        "from_orders parity cross-check; requires the backtest extra: "
-        'pip install -e ".[backtest]").',
-    )
+    add_engine_argument(parser)
     parser.add_argument("--out", default="results/phase3_sensitivity.json")
     args = parser.parse_args()
     return run(args)

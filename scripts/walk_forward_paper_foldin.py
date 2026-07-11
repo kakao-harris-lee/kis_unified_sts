@@ -44,6 +44,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+# stdlib-only by contract — safe to import eagerly without slowing --help.
+from shared.backtest.engine_cli import (  # noqa: E402
+    add_engine_argument,
+    warn_parity_failures,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -237,13 +243,7 @@ def run(args: argparse.Namespace) -> int:
                 logger.info("bootstrap progress %d/%d", i + 1, args.n_samples)
 
         bootstrap_gate = _evaluate_bootstrap_gate(all_is, all_oos)
-        if parity_failed_windows:
-            logger.warning(
-                "%d window(s) fell back to the pure harness after a vectorbt "
-                "parity failure — results are still harness(SoT)-accurate, "
-                "but investigate (scripts/vbt_parity_report.py)",
-                parity_failed_windows,
-            )
+        warn_parity_failures(logger, parity_failed_windows)
 
     overall_pass = (
         paper_gate["rule3_paper_median_positive"]["passed"]
@@ -252,10 +252,14 @@ def run(args: argparse.Namespace) -> int:
     if bootstrap_gate:
         overall_pass = overall_pass and bootstrap_gate["passes_gate"]
 
+    # engine/parity fields describe the bootstrap stage only — in paper-only
+    # mode (--data "") the backtest engine never ran, so record null instead
+    # of a misleading engine label / zero count.
+    ran_bootstrap = bool(args.data)
     output = {
         "paper_since": str(paper_since),
-        "engine": args.engine,
-        "parity_failed_windows": parity_failed_windows,
+        "engine": args.engine if ran_bootstrap else None,
+        "parity_failed_windows": parity_failed_windows if ran_bootstrap else None,
         "paper_gate": paper_gate,
         "bootstrap_gate": bootstrap_gate,
         "final_signoff_passes": overall_pass,
@@ -295,14 +299,10 @@ def main() -> int:
     parser.add_argument("--with-risk-filters", action="store_true")
     parser.add_argument("--setup-a-params", type=str, default=None)
     parser.add_argument("--setup-c-params", type=str, default=None)
-    parser.add_argument(
-        "--engine",
-        choices=["harness", "vectorbt"],
-        default="harness",
-        help="Backtest engine for the bootstrap stage: 'harness' (default, "
-        "BacktestDecisionHarness) or 'vectorbt' (opt-in VbtHarnessRunner — "
-        "same harness plus a from_orders parity cross-check; requires the "
-        'backtest extra: pip install -e ".[backtest]").',
+    add_engine_argument(
+        parser,
+        extra_help="Applies to the bootstrap stage only (ignored in "
+        "paper-only mode, i.e. --data '').",
     )
     parser.add_argument("--paper-sharpe-min", type=float, default=0.5)
     parser.add_argument("--out", default="results/phase3_final_signoff.json")

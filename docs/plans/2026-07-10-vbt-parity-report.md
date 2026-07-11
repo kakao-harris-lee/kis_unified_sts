@@ -1,6 +1,6 @@
 # VectorbtRunner Parity Report (P3-b/P3-c / WS-A4 gate evidence)
 
-- 생성: 2026-07-11 10:20 KST, `scripts/vbt_parity_report.py`
+- 생성: 2026-07-11 19:36 KST, `scripts/vbt_parity_report.py`
 - vectorbt 1.0.0 / legacy `shared/backtest/engine.py` BacktestEngine
 - Plan: `docs/plans/2026-07-08-new-architecture-refactoring-plan.md` §5, `docs/plans/2026-07-05-indicator-engine-and-stream-schema-roadmap.md` §WS-A4
 - 러너: `shared/backtest/vbt_runner.py` (opt-in `strategy.backtest.engine: vectorbt`; 기본값 legacy)
@@ -112,13 +112,13 @@
 | Δfinal capital | 0.00e+00 KRW |
 | equity maxΔ | 0.00e+00 KRW |
 | to_dict 일치 | ✅ |
-| 실행 시간 | legacy 14.3s / vectorbt 13.9s |
+| 실행 시간 | legacy 14.1s / vectorbt 13.9s |
 
 ## 속도 — Optuna-style 스윕 (비게이트, 참고용)
 
 - 합성 800 bars × 20 param evals, JIT warmup 제외
-- 경량 합성 전략: legacy 0.14s / vectorbt runner 0.47s → **vectorbt 가 3.31× 느림** (eval 당 vbt Portfolio 구성 고정 오버헤드 ~16ms)
-- 실전략(williams_r, 3397 bars): legacy 14.3s / vectorbt 13.9s → **0.97×** — 시그널 생성(어댑터/지표)이 지배해 오버헤드가 상쇄됨
+- 경량 합성 전략: legacy 0.13s / vectorbt runner 0.47s → **vectorbt 가 3.50× 느림** (eval 당 vbt Portfolio 구성 고정 오버헤드 ~17ms)
+- 실전략(williams_r, 3397 bars): legacy 14.1s / vectorbt 13.9s → **0.99×** — 시그널 생성(어댑터/지표)이 지배해 오버헤드가 상쇄됨
 
 **정직한 결론**: 현 단계 러너는 시그널 생성을 legacy 와 동일한 어댑터 순차 패스로 수행하므로(신호 parity 를 구조적으로 보장하기 위한 설계) 스윕 가속은 아직 없다 — 트리비얼 전략에선 오히려 vbt 고정비만큼 느리고, 실전략에선 동률이다. 본격적 벡터화 가속은 P1/P2(선언형 조건 → boolean 배열 사전계산)가 어댑터 순차 패스를 대체할 때 실현된다 — plan §5 P3-a 첫 항목. 이 PR 의 가치는 속도가 아니라 **계약 이전**(BacktestResult 를 vectorbt Portfolio 원장으로 채우는 검증된 경로 + parity 게이트)이다.
 

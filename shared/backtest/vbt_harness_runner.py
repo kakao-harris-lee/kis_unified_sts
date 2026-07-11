@@ -129,7 +129,19 @@ class VbtHarnessParityError(RuntimeError):
     "표현 불가"(:class:`VbtHarnessNotSupportedError`)가 아니라 **대조 로직 자체의
     결함** 신호다. harness 결과는 이미 확정돼 반환 가능한 상태이므로, 이 예외는
     from_orders 매핑/대조가 harness 의 tick 회계를 재현하지 못했음을 뜻한다 —
-    조사 대상."""
+    조사 대상.
+
+    Attributes:
+        harness_result: 1차 실행에서 이미 확정된 harness(SoT) 결과 —
+            :meth:`VbtHarnessRunner.run` 이 cross-check 실패를 전파할 때 실어
+            준다(additive 필드). 소비자(``harness_engine`` 의 parity 폴백)는
+            harness 를 **재실행하지 않고** 이 결과를 그대로 복원해야 한다:
+            stateful setup(예: Setup C 의 ``EventTradeTracker`` 가 1차 실행에서
+            이벤트를 mark)은 재실행 시 트레이드가 소실된다. ``_cross_check`` 를
+            직접 호출하는 경로(테스트 등)에서는 ``None`` 일 수 있다.
+    """
+
+    harness_result: HarnessResult | None = None
 
 
 @dataclass
@@ -286,7 +298,9 @@ class VbtHarnessRunner:
             VbtHarnessNotSupportedError: vectorbt 미설치 — harness 를 구동하기
                 *전에* 정적으로 거부한다(호출자는 harness 를 직접 쓸 것).
             VbtHarnessParityError: from_orders 원장이 harness tick 회계와
-                불일치(내부 불변식 위반).
+                불일치(내부 불변식 위반). 확정된 1차 harness 결과를
+                ``exc.harness_result`` 에 실어 전파한다 — 소비자는 재실행 대신
+                이 결과로 SoT 를 복원할 것.
         """
         # 0. 정적 게이트 — harness 실행 *전에* vectorbt 가용성을 판별한다.
         #    VectorbtRunner._ensure_supported 와 동일 프로브를 공유한다
@@ -300,8 +314,17 @@ class VbtHarnessRunner:
         # 1. 실제 production harness 실행 — 결과가 SoT, 무변형 반환.
         result = self._harness.run(replay)
 
-        # 2. 독립 from_orders 원장으로 tick 회계 재현 검증.
-        self._cross_check(result, replay.df)
+        # 2. 독립 from_orders 원장으로 tick 회계 재현 검증. 대조 실패 시 확정된
+        #    SoT 결과를 예외에 실어 전파한다 — 소비자가 harness 를 재실행하면
+        #    stateful setup(EventTradeTracker 등)의 소비된 상태 때문에 트레이드가
+        #    소실되므로, 이 필드가 재실행 없는 복원의 유일 경로다. _cross_check
+        #    내부의 모든 raise(분류/carve-out/원장 대조 + _build_order_arrays /
+        #    _verify_multibar_ledger 경유 포함)가 이 한 지점을 지난다.
+        try:
+            self._cross_check(result, replay.df)
+        except VbtHarnessParityError as exc:
+            exc.harness_result = result
+            raise
 
         # 3. harness 결과 그대로 반환.
         return result
