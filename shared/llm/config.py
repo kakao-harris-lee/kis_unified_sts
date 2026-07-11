@@ -355,6 +355,15 @@ def _build_config_dict(
             "structure_stale_seconds", 86400
         ),
         "futures_flow_foreign_weight": futures_config.get("flow_foreign_weight", 5.0),
+        "futures_flow_foreign_deadband": futures_config.get(
+            "flow_foreign_deadband", 2000.0
+        ),
+        "futures_flow_foreign_full_scale": futures_config.get(
+            "flow_foreign_full_scale", 15000.0
+        ),
+        "futures_flow_foreign_catalyst_cum20_threshold": futures_config.get(
+            "flow_foreign_catalyst_cum20_threshold", 50000.0
+        ),
         # KRX API settings
         "krx_api_key": os.environ.get("KRX_API_KEY", krx_config.get("api_key", "")),
         "krx_base_url": krx_config.get(
@@ -707,6 +716,26 @@ class LLMConfig(ServiceConfigBase):
         description="Directional weight for foreign futures net flow in "
         "flow_score (bounded ± contribution, mirrors put-call term)",
     )
+    futures_flow_foreign_deadband: float = Field(
+        default=2000.0,
+        description="Foreign futures net (abs contracts) at/below which the "
+        "flow_score foreign term contributes 0 — a deadband so noise-level net "
+        "can't flip a near-zero flow_score (mirrors the put-call 1.1/0.9 band)",
+    )
+    futures_flow_foreign_full_scale: float = Field(
+        default=15000.0,
+        description="Foreign futures net (abs contracts) at which the flow_score "
+        "foreign term reaches the full ±weight; between deadband and full_scale "
+        "the contribution scales linearly, then saturates (magnitude-scaled like "
+        "the microstructure terms, ~a strong single-day directional flow)",
+    )
+    futures_flow_foreign_catalyst_cum20_threshold: float = Field(
+        default=50000.0,
+        description="20-day cumulative foreign net (contracts) above which the "
+        "deterministic '외국인 20일 누적 순매수' catalyst fires. Window-scaled from the "
+        "legacy 5-day >15000 bar (~3000/day sustained → ~60000 over 20d); 50000 "
+        "is a slightly conservative threshold that filters oscillating flows",
+    )
 
     # KRX Open API 설정
     krx_api_key: str = Field(default="", description="KRX API key")
@@ -863,6 +892,20 @@ class LLMConfig(ServiceConfigBase):
         if "futures_flow_foreign_weight" not in env_vars:
             env_vars["futures_flow_foreign_weight"] = float(
                 os.environ.get("LLM_FUTURES_FLOW_FOREIGN_WEIGHT", "5.0")
+            )
+        if "futures_flow_foreign_deadband" not in env_vars:
+            env_vars["futures_flow_foreign_deadband"] = float(
+                os.environ.get("LLM_FUTURES_FLOW_FOREIGN_DEADBAND", "2000.0")
+            )
+        if "futures_flow_foreign_full_scale" not in env_vars:
+            env_vars["futures_flow_foreign_full_scale"] = float(
+                os.environ.get("LLM_FUTURES_FLOW_FOREIGN_FULL_SCALE", "15000.0")
+            )
+        if "futures_flow_foreign_catalyst_cum20_threshold" not in env_vars:
+            env_vars["futures_flow_foreign_catalyst_cum20_threshold"] = float(
+                os.environ.get(
+                    "LLM_FUTURES_FLOW_FOREIGN_CATALYST_CUM20_THRESHOLD", "50000.0"
+                )
             )
 
         # Apply user overrides

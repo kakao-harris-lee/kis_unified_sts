@@ -201,30 +201,47 @@ class FuturesAnalysisMixin:
         risks: list[str] = []
 
         self._append_global_catalysts(global_data, catalysts)
-        self._append_flow_catalysts(flow_data, catalysts)
+        self._append_flow_catalysts(
+            flow_data,
+            catalysts,
+            self.config.futures_flow_foreign_catalyst_cum20_threshold,
+        )
         self._append_flow_risks(flow_data, risks)
         self._append_market_risks(global_data, high_events, technical, risks)
         self._append_missing_source_risks(missing_sources, risks)
 
         return catalysts, risks
 
-    def _append_global_catalysts(global_data, catalysts: list[str]) -> None:
+    @staticmethod
+    def _append_global_catalysts(global_data: Any, catalysts: list[str]) -> None:
         if global_data and global_data.sp500_change_pct > 0.5:
             catalysts.append(f"미국 증시 강세 ({global_data.sp500_change_pct:+.1f}%)")
 
-    def _append_flow_catalysts(flow_data, catalysts: list[str]) -> None:
+    @staticmethod
+    def _append_flow_catalysts(
+        flow_data: Any,
+        catalysts: list[str],
+        cum20_threshold: float,
+    ) -> None:
+        # Re-pointed off the always-None ``foreign_futures_5d`` (F2): the flow
+        # collector never sources a 5-day figure, so that catalyst could never
+        # fire. The live multi-day figure from market:structure is the 20-day
+        # cumulative foreign net (``foreign_futures_cum20``), which preserves the
+        # original "sustained foreign accumulation" intent. The threshold is
+        # window-scaled + config-driven; ``None`` (no source) → no catalyst.
         if (
             flow_data
-            and flow_data.foreign_futures_5d is not None
-            and flow_data.foreign_futures_5d > 15000
+            and flow_data.foreign_futures_cum20 is not None
+            and flow_data.foreign_futures_cum20 > cum20_threshold
         ):
             catalysts.append(
-                f"외국인 5일 순매수 ({flow_data.foreign_futures_5d:+,.0f})"
+                f"외국인 20일 누적 순매수 ({flow_data.foreign_futures_cum20:+,.0f})"
             )
         if flow_data and flow_data.basis is not None and flow_data.basis < -1:
             catalysts.append(f"선물 저평가 (베이시스 {flow_data.basis:.2f}pt)")
 
-    def _append_flow_risks(flow_data, risks: list[str]) -> None:
+    @staticmethod
+    def _append_flow_risks(flow_data: Any, risks: list[str]) -> None:
         if not flow_data or flow_data.microstructure_score is None:
             return
         if flow_data.microstructure_score <= -6:
@@ -232,8 +249,9 @@ class FuturesAnalysisMixin:
                 f"단기 주문흐름 매도 우위 (점수 {flow_data.microstructure_score:+.1f})"
             )
 
+    @staticmethod
     def _append_market_risks(
-        global_data,
+        global_data: Any,
         high_events: list[Any],
         technical: dict[str, Any] | None,
         risks: list[str],
@@ -247,6 +265,7 @@ class FuturesAnalysisMixin:
         elif technical and technical["rsi"] < 30:
             risks.append(f"RSI {technical['rsi']:.0f} 과매도")
 
+    @staticmethod
     def _append_missing_source_risks(
         missing_sources: list[str], risks: list[str]
     ) -> None:

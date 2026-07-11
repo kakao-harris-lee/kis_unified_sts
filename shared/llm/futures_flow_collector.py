@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from shared.calendar import MarketCalendar
 from shared.features.ofi import OFICalculator, OFIConfig
@@ -23,6 +24,8 @@ from .data_classes import FlowData
 from .krx_api_client import KRXOpenAPIClient
 
 logger = logging.getLogger("shared.llm.collectors")
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 class FuturesFlowCollector(DataCollector):
@@ -67,6 +70,8 @@ class FuturesFlowCollector(DataCollector):
             micro_data,
             foreign_net,
             self.config.futures_flow_foreign_weight,
+            self.config.futures_flow_foreign_deadband,
+            self.config.futures_flow_foreign_full_scale,
         )
         flow_data = self._build_flow_data(
             basis, put_call, micro_data, flow_score, foreign_net, foreign_cum20
@@ -140,15 +145,26 @@ class FuturesFlowCollector(DataCollector):
 
     def _structure_is_stale(self, fields: dict[str, Any]) -> bool:
         """Whether the snapshot's asof timestamp is older than the configured
-        bound. Missing/unparseable timestamps are treated as fresh so a
-        present-but-untimestamped hash is not falsely degraded."""
+        bound.
+
+        Positive-form staleness (memory #458): a missing or unparseable
+        ``asof_ts`` is treated as STALE (→ degrade to None), never as fresh, so a
+        corrupt/legacy hash with no usable timestamp can't push a days-old
+        foreign net into the flow score as if it were live. Consistent with the
+        margin_gate (P4-f) staleness gate. The normal publisher path always
+        writes ``asof_ts``, so this only defends against corrupt/legacy hashes.
+
+        When the gate is disabled (``stale_after <= 0``) nothing is ever stale.
+        """
         stale_after = self.config.futures_structure_stale_seconds
         if stale_after <= 0:
             return False
         asof = self._parse_structure_asof(fields.get("asof_ts") or fields.get("asof"))
         if asof is None:
-            return False
-        # asof_ts is naive KST (container TZ=Asia/Seoul → naive now() is KST).
+            return True
+        # asof is KST-naive (publisher writes KST-naive; tz-aware values are
+        # converted to KST in _parse_structure_asof). Container TZ=Asia/Seoul →
+        # naive now() is KST, so the comparison is apples-to-apples.
         return (datetime.now() - asof).total_seconds() > stale_after
 
     @staticmethod
@@ -159,7 +175,12 @@ class FuturesFlowCollector(DataCollector):
             parsed = datetime.fromisoformat(str(value))
         except (TypeError, ValueError):
             return None
-        return parsed.replace(tzinfo=None) if parsed.tzinfo is not None else parsed
+        # Convert tz-aware timestamps to KST before stripping tzinfo (#593): a
+        # naive strip keeps the wall clock, so a UTC-tagged asof would skew the
+        # age by +9h. Naive values pass through unchanged. Mirrors margin_gate.
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(KST).replace(tzinfo=None)
+        return parsed
 
     @staticmethod
     def _dedupe_missing(missing: list[str]) -> list[str]:
@@ -172,6 +193,8 @@ class FuturesFlowCollector(DataCollector):
         micro_data: dict[str, Any],
         foreign_futures: float | None = None,
         foreign_weight: float = 0.0,
+        foreign_deadband: float = 0.0,
+        foreign_full_scale: float = 0.0,
     ) -> float:
         flow_score = 0.0
         if basis is not None:
@@ -182,20 +205,50 @@ class FuturesFlowCollector(DataCollector):
             elif put_call < 0.9:
                 flow_score -= 5
 
-        # Foreign futures net-buy is a directional flow signal: net long
-        # (positive) is bullish, net short (negative) is bearish. Bounded ±
-        # contribution mirrors the put-call term (sign only, no magnitude
-        # threshold); the weight is config-driven (futures_flow_foreign_weight).
-        if foreign_futures is not None and foreign_weight:
-            if foreign_futures > 0:
-                flow_score += foreign_weight
-            elif foreign_futures < 0:
-                flow_score -= foreign_weight
+        flow_score += FuturesFlowCollector._foreign_flow_contribution(
+            foreign_futures, foreign_weight, foreign_deadband, foreign_full_scale
+        )
 
         micro_score = micro_data.get("microstructure_score") if micro_data else None
         if micro_score is not None:
             flow_score += micro_score
         return flow_score
+
+    @staticmethod
+    def _foreign_flow_contribution(
+        foreign_futures: float | None,
+        foreign_weight: float,
+        deadband: float,
+        full_scale: float,
+    ) -> float:
+        """Directional, deadbanded, magnitude-scaled foreign-flow term.
+
+        Foreign futures net-buy is a directional signal: net long (positive) is
+        bullish, net short (negative) bearish. Unlike a sign-only term (which
+        saturates at ±weight for *any* nonzero net and could flip a near-zero
+        flow_score on noise), this applies a deadband and a bounded linear ramp:
+
+        * ``|net| <= deadband`` → 0 contribution (noise-level net is ignored);
+        * ``deadband < |net| < full_scale`` → linearly scaled toward ±weight;
+        * ``|net| >= full_scale`` → saturates at ±weight (bounded).
+
+        The sign follows the net direction; the weight/deadband/full_scale are all
+        config-driven. Mirrors the put-call band + microstructure magnitude scaling
+        already used in :meth:`_compute_flow_score`.
+
+        A degenerate ``full_scale <= deadband`` (or both left at the 0.0 defaults,
+        i.e. a caller that did not thread the config through) falls back to a
+        sign-only term above the deadband so the term never divides by zero.
+        """
+        if foreign_futures is None or not foreign_weight:
+            return 0.0
+        magnitude = abs(foreign_futures)
+        if magnitude <= deadband:
+            return 0.0
+        span = full_scale - deadband
+        fraction = 1.0 if span <= 0 else min((magnitude - deadband) / span, 1.0)
+        contribution = fraction * foreign_weight
+        return contribution if foreign_futures > 0 else -contribution
 
     @staticmethod
     def _build_flow_data(
