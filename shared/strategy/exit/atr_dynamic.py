@@ -25,6 +25,13 @@ from typing import Any
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
+from shared.risk.primitives import (
+    abs_stop_hit,
+    atr_stop_level,
+    extreme_since_entry,
+    profit_amount,
+    profit_pct,
+)
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
@@ -252,14 +259,15 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
         #    (check peak/trough reached, not current profit — position may have retraced)
         if atr > 0 and position.entry_price > 0:
             trail_activation_distance = atr * trail_act
-            trail_distance = atr * trail_mult
 
             if position.side == PositionSide.LONG:
                 # Activation: best price ever achieved >= entry + trail_activation_distance
                 best_price = high_since_entry
                 if best_price >= position.entry_price + trail_activation_distance:
-                    trail_stop_price = best_price - trail_distance
-                    if current_price <= trail_stop_price:
+                    trail_stop_price = atr_stop_level(
+                        best_price, atr, trail_mult, position.side
+                    )
+                    if abs_stop_hit(position.side, current_price, trail_stop_price):
                         return self._create_exit_signal(
                             position=position,
                             current_price=current_price,
@@ -280,8 +288,10 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
                 # For short, high_since_entry actually holds the lowest price reached
                 best_price = high_since_entry  # lowest price seen
                 if best_price <= position.entry_price - trail_activation_distance:
-                    trail_stop_price = best_price + trail_distance
-                    if current_price >= trail_stop_price:
+                    trail_stop_price = atr_stop_level(
+                        best_price, atr, trail_mult, position.side
+                    )
+                    if abs_stop_hit(position.side, current_price, trail_stop_price):
                         return self._create_exit_signal(
                             position=position,
                             current_price=current_price,
@@ -376,29 +386,16 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
 
     @staticmethod
     def _calc_profit_pct(position: Position, current_price: float) -> float:
-        if position.entry_price <= 0:
-            return 0.0
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) / position.entry_price
-        return (current_price - position.entry_price) / position.entry_price
+        return profit_pct(position, current_price)
 
     @staticmethod
     def _calc_profit_amount(position: Position, current_price: float) -> float:
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) * position.quantity
-        return (current_price - position.entry_price) * position.quantity
+        return profit_amount(position, current_price)
 
     @staticmethod
     def _get_extreme_since_entry(position: Position, current_price: float) -> float:
         """Return high_since_entry for LONG, low_since_entry for SHORT."""
-        if position.side == PositionSide.SHORT:
-            return min(
-                position.lowest_price
-                if position.lowest_price < float("inf")
-                else position.entry_price,
-                current_price,
-            )
-        return max(position.highest_price or position.entry_price, current_price)
+        return extreme_since_entry(position, current_price)
 
     def _create_exit_signal(
         self,

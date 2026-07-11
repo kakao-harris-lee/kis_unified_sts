@@ -1,15 +1,18 @@
-"""Unit + differential tests for ``shared.risk.primitives.stops``.
+"""Unit + golden tests for ``shared.risk.primitives.stops``.
 
-Differential contracts (read-only legacy imports):
-- ``abs_stop_hit`` == ``momentum_decay._stop_hit`` / ``three_stage._stop_hit``
-  / ``setup_target_exit._price_crossed(trigger="stop")`` (inclusive) and the
-  ``chandelier_exit`` strict-``<`` cross (``inclusive=False``).
-- ``atr_stop_level`` == ``track_a_exit.trail_stop_price`` and the chandelier
-  level formula (``highest_high - atr * multiplier``).
-- ``pct_trailing_stop_level`` == ``three_stage._calculate_trailing_stop``
-  (clamping via ``position.stop_price`` stays at the call site; tested with
-  ``stop_price == 0`` where the legacy clamp is inert).
-- ``pct_stop_hit`` == the legacy ``profit_pct <= stop_loss_pct`` condition.
+Test contract (post P4-b): every stop primitive is pinned to **independent
+golden values** — the expected result is restated from the documented formula
+or written as a literal, never read back from an exit class.
+
+    Why not differential vs the legacy call sites? P4-b rewired
+    ``momentum_decay._stop_hit`` / ``three_stage._stop_hit`` /
+    ``setup_target._price_crossed(trigger="stop")`` → :func:`abs_stop_hit`,
+    ``track_a_exit.trail_stop_price`` → :func:`atr_stop_level`, and
+    ``three_stage._calculate_trailing_stop`` → :func:`pct_trailing_stop_level`
+    (gap selection stays at the call site). Comparing a primitive against a
+    method that now *delegates* to it is a tautology (``f(x) == f(x)``) with no
+    independent cross-check, so the grids below compare against the hand-derived
+    formula instead — same input width, real regression protection.
 """
 
 from __future__ import annotations
@@ -24,25 +27,11 @@ from shared.risk.primitives.stops import (
     pct_trailing_stop_level,
     trailing_stop_hit,
 )
-from shared.strategy.exit.momentum_decay import MomentumDecayExit
-from shared.strategy.exit.setup_target_exit import SetupTargetExit
-from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
-from shared.strategy.exit.track_a_exit import trail_stop_price
 from tests.unit.risk.primitives.helpers import make_position
 
 SIDES = [PositionSide.LONG, PositionSide.SHORT]
-STOP_HIT_LEGACY = [MomentumDecayExit, ThreeStageExit]
 PRICES = [95.0, 99.999, 100.0, 100.001, 105.0]
 STOPS = [98.0, 100.0, 102.0]
-
-
-def _three_stage_trailing_stop(
-    config: ThreeStageExitConfig, position, high_since_entry: float
-) -> float:
-    """Call the legacy instance method without running heavy __init__."""
-    exit_obj = object.__new__(ThreeStageExit)
-    exit_obj.config = config
-    return exit_obj._calculate_trailing_stop(position, high_since_entry)
 
 
 class TestAbsStopHitUnit:
@@ -82,34 +71,26 @@ class TestAbsStopHitUnit:
         ) == abs_stop_hit(PositionSide.SHORT, entry + offset + 1, entry + offset)
 
 
-class TestDifferentialAbsStopHit:
-    """abs_stop_hit == legacy _stop_hit / _price_crossed(trigger='stop')."""
+class TestAbsStopHitGolden:
+    """abs_stop_hit pinned to the direction-aware inclusive-cross formula.
 
-    @pytest.mark.parametrize("legacy_cls", STOP_HIT_LEGACY)
-    @pytest.mark.parametrize("side", SIDES)
-    @pytest.mark.parametrize("current", PRICES)
-    @pytest.mark.parametrize("stop", STOPS)
-    def test_stop_hit_grid_equivalence(
-        self, legacy_cls: type, side: PositionSide, current: float, stop: float
-    ) -> None:
-        pos = make_position(side, 100.0)
-        assert abs_stop_hit(side, current, stop) == legacy_cls._stop_hit(
-            pos, current, stop
-        )
+    Golden: LONG fires when ``current <= stop``; SHORT fires when
+    ``current >= stop``. This single golden subsumes the former differential
+    tests against ``momentum_decay._stop_hit`` / ``three_stage._stop_hit`` /
+    ``setup_target._price_crossed(trigger="stop")`` — all of which delegate to
+    ``abs_stop_hit`` after P4-b, so those comparisons were tautological.
+    """
 
     @pytest.mark.parametrize("side", SIDES)
     @pytest.mark.parametrize("current", PRICES)
     @pytest.mark.parametrize("stop", STOPS)
-    def test_setup_target_price_crossed_equivalence(
-        self, side: PositionSide, current: float, stop: float
-    ) -> None:
-        assert abs_stop_hit(side, current, stop) == SetupTargetExit._price_crossed(
-            side=side, current_price=current, trigger_price=stop, trigger="stop"
-        )
+    def test_grid_golden(self, side: PositionSide, current: float, stop: float) -> None:
+        expected = current <= stop if side == PositionSide.LONG else current >= stop
+        assert abs_stop_hit(side, current, stop) is expected
 
 
 class TestPctStopHit:
-    """pct_stop_hit unit + differential against the legacy condition."""
+    """pct_stop_hit unit + golden against the independent profit formula."""
 
     def test_long_stop_fires_at_threshold(self) -> None:
         pos = make_position(PositionSide.LONG, 100.0)
@@ -130,18 +111,31 @@ class TestPctStopHit:
     @pytest.mark.parametrize("side", SIDES)
     @pytest.mark.parametrize("factor", [0.9, 0.97, 0.98, 1.0, 1.02, 1.03, 1.1])
     @pytest.mark.parametrize("threshold", [-0.03, -0.02, 0.0])
-    def test_differential_vs_legacy_condition(
+    def test_grid_golden(
         self, side: PositionSide, factor: float, threshold: float
     ) -> None:
-        """Matches ``_calc_profit_pct(...) <= stop_loss_pct`` (momentum_decay/three_stage Stage-1)."""
-        pos = make_position(side, 100.0)
-        current = 100.0 * factor
-        legacy_fires = MomentumDecayExit._calc_profit_pct(pos, current) <= threshold
-        assert pct_stop_hit(pos, current, threshold) == legacy_fires
+        """Fires iff the side-aware profit ratio <= threshold.
+
+        Golden profit is restated from the spec (``(current - entry) / entry``
+        for LONG, mirror for SHORT) using the same ``current`` the primitive
+        sees, so the boolean is float-stable at the -0.02/-0.03 boundaries and
+        independent of the primitive's own arithmetic (the old
+        ``_calc_profit_pct(...) <= threshold`` derivation delegated to
+        ``profit_pct`` after P4-b and was tautological).
+        """
+        entry = 100.0
+        pos = make_position(side, entry)
+        current = entry * factor
+        if side == PositionSide.LONG:
+            expected_profit = (current - entry) / entry
+        else:
+            expected_profit = (entry - current) / entry
+        expected = expected_profit <= threshold
+        assert pct_stop_hit(pos, current, threshold) is expected
 
 
 class TestAtrStopLevel:
-    """atr_stop_level unit + differential against track_a / chandelier."""
+    """atr_stop_level unit + golden."""
 
     def test_long_level_below_reference(self) -> None:
         assert atr_stop_level(100.0, 2.0, 1.5, PositionSide.LONG) == 97.0
@@ -161,20 +155,30 @@ class TestAtrStopLevel:
     @pytest.mark.parametrize("extreme", [95.0, 100.0, 351.25])
     @pytest.mark.parametrize("atr", [0.4, 2.0, 12.5])
     @pytest.mark.parametrize("mult", [1.0, 2.0, 3.5])
-    def test_differential_vs_track_a_trail_stop_price(
+    def test_grid_golden(
         self, side: PositionSide, extreme: float, atr: float, mult: float
     ) -> None:
-        assert atr_stop_level(extreme, atr, mult, side) == trail_stop_price(
-            side, extreme, atr, mult
-        )
+        """LONG: ``extreme - mult*atr`` ; SHORT: ``extreme + mult*atr``.
+
+        Independent formula (formerly compared against
+        ``track_a_exit.trail_stop_price``, which delegates to this primitive
+        after P4-b — a tautology).
+        """
+        offset = mult * atr
+        expected = extreme - offset if side == PositionSide.LONG else extreme + offset
+        assert atr_stop_level(extreme, atr, mult, side) == expected
 
     @pytest.mark.parametrize("highest_high", [100.0, 351.25, 70000.0])
     @pytest.mark.parametrize("atr", [0.4, 2.0, 350.0])
     @pytest.mark.parametrize("mult", [2.0, 3.0])
-    def test_differential_vs_chandelier_level_formula(
+    def test_chandelier_level_golden(
         self, highest_high: float, atr: float, mult: float
     ) -> None:
-        """chandelier_stop = highest_high - atr * multiplier (LONG-shaped)."""
+        """chandelier_stop = highest_high - atr * multiplier (LONG-shaped).
+
+        The reference level is computed inline (independent), and the strict
+        ``close < chandelier_stop`` cross semantics are pinned directly.
+        """
         chandelier_stop = highest_high - atr * mult
         assert atr_stop_level(highest_high, atr, mult, PositionSide.LONG) == (
             chandelier_stop
@@ -187,7 +191,7 @@ class TestAtrStopLevel:
 
 
 class TestPctTrailingStopLevel:
-    """pct_trailing_stop_level unit + differential against three_stage."""
+    """pct_trailing_stop_level unit + golden."""
 
     def test_long_level(self) -> None:
         assert pct_trailing_stop_level(110.0, 0.03, PositionSide.LONG) == pytest.approx(
@@ -209,36 +213,37 @@ class TestPctTrailingStopLevel:
     @pytest.mark.parametrize("extreme", [104.0, 110.0, 351.25])
     @pytest.mark.parametrize("gap", [-0.05, -0.03, -0.015])
     @pytest.mark.parametrize("side", SIDES)
-    def test_differential_vs_three_stage_normal_gap(
-        self, extreme: float, gap: float, side: PositionSide
-    ) -> None:
-        """Matches _calculate_trailing_stop with the overshoot branch off.
+    def test_grid_golden(self, extreme: float, gap: float, side: PositionSide) -> None:
+        """LONG: ``extreme*(1-|gap|)`` ; SHORT: ``extreme*(1+|gap|)``.
 
-        stop_price == 0 keeps the legacy ``position.stop_price`` clamp inert
-        (clamping is call-site state, not primitive math).
+        Independent formula (formerly compared against
+        ``three_stage._calculate_trailing_stop`` with the overshoot branch off,
+        which delegates the level math to this primitive after P4-b).
         """
-        config = ThreeStageExitConfig(
-            trailing_stop_pct=gap, overshoot_threshold_pct=10.0
-        )
-        pos = make_position(side, 100.0)
-        assert pos.stop_price == 0.0
-        expected = _three_stage_trailing_stop(config, pos, extreme)
+        g = abs(gap)
+        if side == PositionSide.LONG:
+            expected = extreme * (1 - g)
+        else:
+            expected = extreme * (1 + g)
         assert pct_trailing_stop_level(extreme, gap, side) == pytest.approx(expected)
 
-    @pytest.mark.parametrize("side", SIDES)
-    def test_differential_vs_three_stage_overshoot_gap(
-        self, side: PositionSide
+    @pytest.mark.parametrize(
+        ("side", "extreme", "expected"),
+        [
+            (PositionSide.LONG, 110.0, 108.35),  # 110 * (1 - 0.015)
+            (PositionSide.SHORT, 90.0, 91.35),  # 90 * (1 + 0.015)
+        ],
+    )
+    def test_overshoot_gap_level_golden(
+        self, side: PositionSide, extreme: float, expected: float
     ) -> None:
-        """Overshoot branch: legacy switches to overshoot_trailing_pct."""
-        config = ThreeStageExitConfig(
-            trailing_stop_pct=-0.03,
-            overshoot_threshold_pct=0.05,
-            overshoot_trailing_pct=-0.015,
-        )
-        pos = make_position(side, 100.0)
-        # 10% favorable move → overshoot branch active.
-        extreme = 110.0 if side == PositionSide.LONG else 90.0
-        expected = _three_stage_trailing_stop(config, pos, extreme)
+        """Primitive level for the tightened overshoot gap (0.015).
+
+        WHICH gap ``three_stage`` selects under overshoot (``trailing_stop_pct``
+        vs ``overshoot_trailing_pct``) is exit-generator logic covered by
+        ``three_stage``'s own tests; here we only pin the primitive level math
+        for the tightened gap value with an independent golden.
+        """
         assert pct_trailing_stop_level(extreme, -0.015, side) == pytest.approx(expected)
 
 

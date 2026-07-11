@@ -39,6 +39,13 @@ from typing import TYPE_CHECKING, Any
 
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
+from shared.risk.primitives import (
+    abs_stop_hit,
+    extreme_since_entry,
+    pct_trailing_stop_level,
+    profit_amount,
+    profit_pct,
+)
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_classifier import is_bear_regime
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
@@ -328,37 +335,22 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
     @staticmethod
     def _calc_profit_pct(position: Position, current_price: float) -> float:
         """Side-aware profit percentage (ratio, e.g. 0.05 = +5%)."""
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) / position.entry_price
-        return (current_price - position.entry_price) / position.entry_price
+        return profit_pct(position, current_price)
 
     @staticmethod
     def _calc_profit_amount(position: Position, current_price: float) -> float:
         """Side-aware profit amount."""
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) * position.quantity
-        return (current_price - position.entry_price) * position.quantity
+        return profit_amount(position, current_price)
 
     @staticmethod
     def _get_extreme_since_entry(position: Position, current_price: float) -> float:
         """Most favorable price since entry (high for LONG, low for SHORT)."""
-        if position.side == PositionSide.SHORT:
-            return min(
-                (
-                    position.lowest_price
-                    if position.lowest_price < float("inf")
-                    else position.entry_price
-                ),
-                current_price,
-            )
-        return max(position.highest_price or position.entry_price, current_price)
+        return extreme_since_entry(position, current_price)
 
     @staticmethod
     def _stop_hit(position: Position, current_price: float, stop_price: float) -> bool:
         """Check if stop price is hit (direction-aware)."""
-        if position.side == PositionSide.SHORT:
-            return current_price >= stop_price
-        return current_price <= stop_price
+        return abs_stop_hit(position.side, current_price, stop_price)
 
     # -------------------------------------------------------------------------
     # Position Check Logic
@@ -609,15 +601,14 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         else:
             gap = abs(c.trailing_stop_pct)
 
-        if is_short:
-            trailing_stop_price = high_since_entry * (1 + gap)
-            # Position의 stop_price와 비교 (SHORT: 더 낮은 값 유지)
-            if position.stop_price > 0:
+        trailing_stop_price = pct_trailing_stop_level(
+            high_since_entry, gap, position.side
+        )
+        # Position의 stop_price와 비교 (SHORT: 더 낮은 값 / LONG: 더 높은 값 유지)
+        if position.stop_price > 0:
+            if is_short:
                 trailing_stop_price = min(trailing_stop_price, position.stop_price)
-        else:
-            trailing_stop_price = high_since_entry * (1 - gap)
-            # Position의 stop_price와 비교 (LONG: 더 높은 값 유지)
-            if position.stop_price > 0:
+            else:
                 trailing_stop_price = max(trailing_stop_price, position.stop_price)
 
         return trailing_stop_price

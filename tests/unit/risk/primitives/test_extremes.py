@@ -1,8 +1,17 @@
-"""Unit + differential tests for ``shared.risk.primitives.extremes``.
+"""Unit + golden tests for ``shared.risk.primitives.extremes``.
 
-Differential contract: bit-for-bit equal to the 5 legacy
-``_get_extreme_since_entry`` copies (``atr_dynamic``, ``mean_reversion_exit``,
-``momentum_decay``, ``three_stage``, ``williams_r_exit``).
+Test contract (post P4-b): ``extreme_since_entry`` is pinned to **independent
+golden values** — ``max(high, current)`` for LONG, ``min(low, current)`` for
+SHORT, with the ``highest_price == 0.0`` / ``lowest_price == inf`` unset
+sentinels falling back to ``entry_price``.
+
+    Why not differential vs the 5 legacy ``_get_extreme_since_entry`` copies
+    (``atr_dynamic``, ``mean_reversion_exit``, ``momentum_decay``,
+    ``three_stage``, ``williams_r_exit``)? P4-b rewired those copies to
+    delegate to this primitive, so ``primitive(x) == LegacyClass.
+    _get_extreme_since_entry(x)`` became a tautology with no independent
+    cross-check. The grids below keep the same input width but compare against
+    the hand-derived min/max so a max↔min or fallback regression is caught.
 
 ``builder_strategy_exit`` / ``trix_golden_exit`` keep extremes in private
 per-position dicts (not ``Position`` attributes) and are intentionally out of
@@ -16,20 +25,7 @@ import pytest
 
 from shared.models.position import PositionSide
 from shared.risk.primitives.extremes import extreme_since_entry
-from shared.strategy.exit.atr_dynamic import ATRDynamicExit
-from shared.strategy.exit.mean_reversion_exit import MeanReversionExit
-from shared.strategy.exit.momentum_decay import MomentumDecayExit
-from shared.strategy.exit.three_stage import ThreeStageExit
-from shared.strategy.exit.williams_r_exit import WilliamsRExit
 from tests.unit.risk.primitives.helpers import make_position
-
-EXTREME_LEGACY = [
-    ATRDynamicExit,
-    MeanReversionExit,
-    MomentumDecayExit,
-    ThreeStageExit,
-    WilliamsRExit,
-]
 
 ENTRIES = [70.0, 100.0, 250.5, 70000.0]
 MOVE_FACTORS = [0.85, 0.95, 1.0, 1.001, 1.12]
@@ -77,52 +73,53 @@ class TestExtremeSinceEntryUnit:
         assert long_extreme - entry == pytest.approx(entry - short_extreme)
 
 
-class TestDifferentialExtremeSinceEntry:
-    """extreme_since_entry == legacy _get_extreme_since_entry on the grid."""
+class TestExtremeSinceEntryGolden:
+    """extreme_since_entry pinned to the independent min/max formula."""
 
-    @pytest.mark.parametrize("legacy_cls", EXTREME_LEGACY)
     @pytest.mark.parametrize("entry", ENTRIES)
     @pytest.mark.parametrize("high_factor", [1.0, 1.03, 1.15])
     @pytest.mark.parametrize("current_factor", MOVE_FACTORS)
-    def test_long_grid_equivalence(
+    def test_long_grid_golden(
         self,
-        legacy_cls: type,
         entry: float,
         high_factor: float,
         current_factor: float,
     ) -> None:
-        pos = make_position(PositionSide.LONG, entry, highest_price=entry * high_factor)
+        """LONG favorable extreme == ``max(tracked_high, current)``."""
+        high = entry * high_factor
         current = entry * current_factor
-        assert extreme_since_entry(pos, current) == (
-            legacy_cls._get_extreme_since_entry(pos, current)
-        )
+        pos = make_position(PositionSide.LONG, entry, highest_price=high)
+        assert extreme_since_entry(pos, current) == max(high, current)
 
-    @pytest.mark.parametrize("legacy_cls", EXTREME_LEGACY)
     @pytest.mark.parametrize("entry", ENTRIES)
     @pytest.mark.parametrize("low_factor", [0.85, 0.97, 1.0])
     @pytest.mark.parametrize("current_factor", MOVE_FACTORS)
-    def test_short_grid_equivalence(
+    def test_short_grid_golden(
         self,
-        legacy_cls: type,
         entry: float,
         low_factor: float,
         current_factor: float,
     ) -> None:
-        pos = make_position(PositionSide.SHORT, entry, lowest_price=entry * low_factor)
+        """SHORT favorable extreme == ``min(tracked_low, current)``."""
+        low = entry * low_factor
         current = entry * current_factor
-        assert extreme_since_entry(pos, current) == (
-            legacy_cls._get_extreme_since_entry(pos, current)
-        )
+        pos = make_position(PositionSide.SHORT, entry, lowest_price=low)
+        assert extreme_since_entry(pos, current) == min(low, current)
 
-    @pytest.mark.parametrize("legacy_cls", EXTREME_LEGACY)
-    def test_unset_extremes_equivalence(self, legacy_cls: type) -> None:
-        """Legacy unset sentinels (0.0 high / inf low) match bit-for-bit."""
+    def test_unset_extremes_golden(self) -> None:
+        """Unset sentinels (0.0 high / inf low) fall back to entry_price.
+
+        entry == 100: LONG → ``max(100, current)``, SHORT → ``min(100, current)``.
+        Expected values are independent literals, not read from any exit copy.
+        """
         long_pos = make_position(PositionSide.LONG, 100.0, highest_price=0.0)
         short_pos = make_position(PositionSide.SHORT, 100.0, lowest_price=float("inf"))
-        for current in (95.0, 100.0, 105.0):
-            assert extreme_since_entry(long_pos, current) == (
-                legacy_cls._get_extreme_since_entry(long_pos, current)
-            )
-            assert extreme_since_entry(short_pos, current) == (
-                legacy_cls._get_extreme_since_entry(short_pos, current)
-            )
+        # (current, long_expected = max(100, current), short_expected = min(100, current))
+        cases = [
+            (95.0, 100.0, 95.0),
+            (100.0, 100.0, 100.0),
+            (105.0, 105.0, 100.0),
+        ]
+        for current, long_expected, short_expected in cases:
+            assert extreme_since_entry(long_pos, current) == long_expected
+            assert extreme_since_entry(short_pos, current) == short_expected
