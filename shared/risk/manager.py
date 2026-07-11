@@ -58,6 +58,7 @@ from shared.risk.models import (
     PortfolioMetrics,
     RiskState,
 )
+from shared.risk.primitives.breakers import consecutive_exceeds
 
 if TYPE_CHECKING:
     from shared.models.position import Position
@@ -193,9 +194,14 @@ class RiskManager:
 
         # Consecutive-loss circuit breaker (futures-native, unit-free). Halts new
         # entries for the session after N consecutive losing closes. 0 = disabled.
-        if (
-            self.config.max_consecutive_losses > 0
-            and self.state.consecutive_losses >= self.config.max_consecutive_losses
+        # The ``> 0`` disable gate is an *activation* condition (kept here); the
+        # ``>=`` threshold comparison is the P4-d shared predicate. Delegating it
+        # to ``consecutive_exceeds`` (inclusive=True default) makes the breaker the
+        # single source for this raw integer ``>=`` — it was the fourth inline copy
+        # (kill ConsecutiveLossesCondition + filter hard/soft were the other three).
+        # Boundary is exact (integer comparison), so this is behavior-0.
+        if self.config.max_consecutive_losses > 0 and consecutive_exceeds(
+            self.state.consecutive_losses, self.config.max_consecutive_losses
         ):
             logger.warning(
                 "Cannot open position for %s: consecutive-loss limit breached "
@@ -370,6 +376,18 @@ class RiskManager:
 
         Returns:
             True if within limit, False if limit breached
+
+        Note (P4-h2): deliberately NOT delegated to the P4-d
+        ``loss_fraction_exceeds`` breaker primitive. This gate works in
+        *percent space* — it compares ``daily_pnl_pct = (pnl/capital)*100``
+        against a percent limit (``-daily_loss_limit_pct``) — whereas the
+        primitive works in *fraction space* (``pnl/equity`` vs a fraction
+        limit). Routing this through the breaker (limit ``/100``) would change
+        the IEEE-754 rounding path, and the production branch below consumes a
+        pre-derived stored ``state.daily_pnl_pct`` that can diverge from a fresh
+        ``daily_pnl/capital`` division (e.g. restored independently from Redis),
+        which the fraction primitive cannot represent without re-deriving.
+        Forcing it would break behavior-0, so this comparison is preserved.
         """
         # Calculate daily P&L percentage
         # Use internal test attributes if set, otherwise use state
