@@ -78,6 +78,18 @@ class TestFuturesRiskConfigFromYaml:
         config = FuturesRiskConfig.from_yaml()
         assert config.max_spread_ticks == 2
 
+    def test_leverage_block_ships_inert(self) -> None:
+        """Phase 4-g futures leverage cap ships DISABLED + shadow + cap 3.0
+        (structurally inert). Pinning the shipped values here fails the build if
+        the block is ever accidentally flipped to enabled:true, the cap is
+        typo'd, or the sub-block is mis-nested (sibling core_correlation has the
+        same style of pin)."""
+        lev = FuturesRiskConfig.from_yaml().leverage
+        assert lev.enabled is False
+        assert lev.mode == "shadow"
+        assert lev.max_gross_leverage == 3.0
+        assert lev.stale_max_age_seconds is None
+
 
 # ---------------------------------------------------------------------------
 # Test 2: Default values (no YAML)

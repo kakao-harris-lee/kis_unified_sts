@@ -28,6 +28,16 @@ multiplier 1) uses a multiplier of ``1.0``. Understating a futures multiplier
 (unresolved spec) only *understates* leverage, so it can never cause a spurious
 reject — it is fail-open-safe.
 
+When ``product_specs`` *is* supplied (a futures wiring) but a held position's
+``code`` resolves no spec — e.g. the code prefix has drifted from the configured
+product prefixes — the ``1.0`` fallback is retained (still fail-open-safe) but a
+throttled *one-warning-per-symbol* ``logger.warning`` fires so the under-counting
+is observable, mirroring the margin read-model's ``missing_components`` /
+``degraded`` convention (:func:`futures_margin.compute_margin_risk` records
+``margin_product:{symbol}``). Memory #601: a symbol-prefix mismatch must never
+fail *silently*. The provider's position ``code`` MUST therefore align with the
+futures product-spec prefixes or leverage is understated.
+
 Fail-OPEN design (shadow-first rollout — mirrors :class:`MarginGateFilter` and
 :class:`ConcurrentPositionsFilter`)
 -----------------------------------------------------------------------------
@@ -63,10 +73,21 @@ Provider contract
   ``code`` (symbol), ``quantity`` (magnitude; may be signed — ``abs`` is taken
   either way), and ``current_price``. It MUST **exclude the pending candidate**
   being evaluated (leverage is measured on the current book, not the hypothetical
-  post-entry book) and cover every asset the equity denominator spans.
+  post-entry book) and cover every asset the equity denominator spans. For the
+  futures chain the ``code`` MUST match a configured product-spec prefix (see
+  **Multiplier**); a mismatch defaults the per-contract multiplier to ``1.0`` and
+  understates leverage (fail-open-safe, but a throttled warning fires). A single
+  snapshot may carry BOTH a long (+N) and a short (−N) of the same symbol (a
+  hedge book) — each contributes ``|N|`` to the gross sum, so gross is a SUM of
+  absolute notionals, never a NET that would cancel to zero.
 * ``equity_krw`` — account equity in KRW (broker snapshot or the config/env
-  fallback the margin/kill lanes use, e.g. ``account_equity_krw`` /
-  ``KIS_FUTURES_EQUITY_KRW``). The leverage *denominator* is equity, not cash.
+  fallback the margin/kill lanes use). The leverage *denominator* is equity, not
+  cash. The **canonical** futures margin read-model publishes account equity
+  under ``account_equity_krw`` (:func:`futures_margin.margin_state_to_fields`);
+  this filter reads ``equity_krw`` first and falls back to
+  ``account_equity_krw``, so a follow-up that reuses the margin snapshot as the
+  provider is not silently inert (review F1). ``KIS_FUTURES_EQUITY_KRW`` is the
+  usual env fallback source.
 * ``asof_ts`` — optional KST-naive ISO-8601 timestamp; only consulted when
   ``stale_max_age_seconds`` is set.
 
@@ -154,6 +175,10 @@ class LeverageFilter(RiskFilter):
         self.max_gross_leverage: float | None = max_gross_leverage
         self._snapshot_provider = snapshot_provider
         self._product_specs = product_specs
+        #: Symbols already warned about (unresolved spec → 1.0 fallback). Throttles
+        #: the F2 observability warning to once per symbol — :meth:`check` runs per
+        #: signal on the hot path, so an un-deduped warning would flood the log.
+        self._warned_unresolved_symbols: set[str] = set()
         self.stale_max_age_seconds: int | None = stale_max_age_seconds
         self._now_provider = now_provider or (
             lambda: datetime.now(KST).replace(tzinfo=None)
@@ -231,7 +256,15 @@ class LeverageFilter(RiskFilter):
             ):
                 return None
 
+            # Equity denominator. ``equity_krw`` is this filter's own key; the
+            # canonical futures margin read-model publishes account equity under
+            # ``account_equity_krw`` (futures_margin.margin_state_to_fields), so
+            # accept it as an alias (review F1) — a follow-up that reuses the
+            # margin snapshot as the provider would otherwise read None here and
+            # go silently inert. Both reads stay inside this one fail-open guard.
             equity = to_float(raw.get("equity_krw"))
+            if equity is None:
+                equity = to_float(raw.get("account_equity_krw"))
             if equity is None or equity <= 0:
                 # Missing / non-positive equity → fail open (also the 0-division
                 # guard: a bad denominator can never manufacture a block).
@@ -284,15 +317,35 @@ class LeverageFilter(RiskFilter):
     def _multiplier_for(self, symbol: str) -> float:
         """Resolve the per-contract multiplier via the margin SoT (DRY).
 
-        ``None`` product_specs (stock chain / unwired) → ``1.0`` for every
-        symbol. A resolved spec contributes its ``multiplier_krw_per_point``; an
-        unresolved futures symbol falls back to ``1.0`` (understates leverage,
-        fail-open-safe).
+        ``None`` product_specs (stock chain / unwired) → ``1.0`` for every symbol
+        (cash equities: the *correct* value, not a degraded fallback — no
+        warning). A resolved spec contributes its ``multiplier_krw_per_point``.
+
+        When product_specs *are* supplied (a futures wiring) but ``symbol``
+        resolves no spec, the multiplier still falls back to ``1.0`` (understates
+        leverage, fail-open-safe) but a throttled ``logger.warning`` fires once
+        per symbol so the under-counting is observable — mirroring the margin
+        read-model recording ``margin_product:{symbol}`` as a missing/degraded
+        component (memory #601: a prefix mismatch must never fail silently). The
+        provider's position ``code`` must align with the futures product-spec
+        prefixes; a drift both understates leverage and surfaces via this warning.
         """
         if not self._product_specs:
             return 1.0
         spec = spec_for_symbol(symbol, self._product_specs)
-        return spec.multiplier_krw_per_point if spec is not None else 1.0
+        if spec is not None:
+            return spec.multiplier_krw_per_point
+        # product_specs given but this symbol matched no prefix → 1.0 (understated,
+        # fail-open-safe). Warn once per symbol (throttled — hot path).
+        if symbol not in self._warned_unresolved_symbols:
+            self._warned_unresolved_symbols.add(symbol)
+            logger.warning(
+                "leverage: no futures product spec for symbol %r; multiplier "
+                "defaults to 1.0 (leverage understated, fail-open-safe) — check "
+                "position code aligns with configured product prefixes",
+                symbol or "unknown",
+            )
+        return 1.0
 
     def _is_stale(self, asof_raw: Any) -> bool:
         """True when asof_ts is missing/unparseable/too old (→ fail open).

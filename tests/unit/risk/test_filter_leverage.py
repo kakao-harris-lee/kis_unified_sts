@@ -12,6 +12,7 @@ absolute notional preserves long/short symmetry for free. Applies to both assets
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -397,6 +398,169 @@ def test_unresolved_futures_symbol_understates_leverage_fails_open() -> None:
         ),
         product_specs=_PRODUCT_SPECS,
     )
+    assert f.check(_make_signal(), _snap()).passed is True
+
+
+# ---------------------------------------------------------------------------
+# (F1) equity key alias — equity_krw and canonical account_equity_krw accepted
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("equity_key", ["equity_krw", "account_equity_krw"])
+def test_equity_key_alias_over_cap_rejects(equity_key: str) -> None:
+    """The canonical futures margin read-model publishes equity as
+    ``account_equity_krw`` (futures_margin.margin_state_to_fields), while this
+    filter's own key is ``equity_krw``. Both must drive the SAME verdict so a
+    follow-up reusing the margin snapshot as the provider is not silently inert
+    (review F1). Here gross 1.1 > cap 1.0 → reject under either key."""
+    snap = {
+        equity_key: 1_000_000.0,
+        "positions": [_pos(quantity=11, price=100_000.0)],
+    }
+    f = _filter(mode="enforce", max_gross_leverage=1.0, provider=lambda: snap)
+    result = f.check(_make_signal(), _snap())
+    assert result.passed is False
+    assert result.skip_reason == SKIP_LEVERAGE
+
+
+@pytest.mark.parametrize("equity_key", ["equity_krw", "account_equity_krw"])
+def test_equity_key_alias_under_cap_passes(equity_key: str) -> None:
+    # gross 0.5 < cap 1.0 → pass under either equity key.
+    snap = {
+        equity_key: 1_000_000.0,
+        "positions": [_pos(quantity=5, price=100_000.0)],
+    }
+    f = _filter(mode="enforce", max_gross_leverage=1.0, provider=lambda: snap)
+    assert f.check(_make_signal(), _snap()).passed is True
+
+
+def test_equity_prefers_equity_krw_over_alias() -> None:
+    """When BOTH keys are present, ``equity_krw`` wins — the alias is only a
+    fallback for a missing/None primary. equity_krw 1M → gross 1.1 > cap → reject;
+    the huge account_equity_krw would PASS if it were consulted."""
+    snap = {
+        "equity_krw": 1_000_000.0,
+        "account_equity_krw": 1_000_000_000.0,
+        "positions": [_pos(quantity=11, price=100_000.0)],
+    }
+    f = _filter(mode="enforce", max_gross_leverage=1.0, provider=lambda: snap)
+    assert f.check(_make_signal(), _snap()).passed is False
+
+
+def test_neither_equity_key_present_fails_open() -> None:
+    """No equity under EITHER key → missing denominator → fail-open pass, even
+    for a book that would be wildly over-leveraged."""
+    snap = {"positions": [_pos(quantity=1000, price=100_000.0)]}
+    f = _filter(mode="enforce", max_gross_leverage=1.0, provider=lambda: snap)
+    result = f.check(_make_signal(), _snap())
+    assert result.passed is True
+    assert result.skip_reason is None
+
+
+# ---------------------------------------------------------------------------
+# (F2) unresolved futures multiplier — 1.0 fallback stays safe but is OBSERVABLE
+# ---------------------------------------------------------------------------
+
+
+def test_unresolved_symbol_warns_once_throttled(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """product_specs supplied but the symbol resolves no spec → 1.0 fallback
+    (fail-open-safe) AND a throttled one-warning-per-symbol logger.warning, so
+    the leverage under-count is observable (mirrors the margin read-model's
+    degraded/missing_components convention, memory #601). Repeated evaluations
+    of the same symbol emit the warning exactly ONCE (hot-path throttle)."""
+    f = _filter(
+        mode="enforce",
+        max_gross_leverage=3.0,
+        provider=lambda: _snapshot(
+            positions=[_pos(code="ZZZ999", quantity=1, price=360.0)],
+            equity=1_000_000.0,
+        ),
+        product_specs=_PRODUCT_SPECS,
+    )
+    with caplog.at_level(logging.WARNING, logger="shared.risk.filters.leverage"):
+        for _ in range(3):
+            assert f.check(_make_signal(), _snap()).passed is True
+    warns = [r for r in caplog.records if "no futures product spec" in r.getMessage()]
+    assert len(warns) == 1
+    assert "ZZZ999" in warns[0].getMessage()
+
+
+def test_resolved_symbol_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """A symbol that DOES resolve a spec must not emit the unresolved warning."""
+    f = _filter(
+        mode="enforce",
+        max_gross_leverage=3.0,
+        provider=lambda: _snapshot(
+            positions=[_pos(quantity=1, price=360.0)], equity=1_000_000.0
+        ),
+        product_specs=_PRODUCT_SPECS,
+    )
+    with caplog.at_level(logging.WARNING, logger="shared.risk.filters.leverage"):
+        f.check(_make_signal(), _snap())
+    assert not [
+        r for r in caplog.records if "no futures product spec" in r.getMessage()
+    ]
+
+
+def test_stock_chain_no_specs_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """product_specs=None (stock/cash chain) → multiplier 1.0 is the CORRECT
+    value, not a degraded fallback → NO warning, even though nothing resolves."""
+    f = _filter(
+        mode="enforce",
+        max_gross_leverage=3.0,
+        provider=lambda: _snapshot(
+            positions=[_pos(code="005930", quantity=1, price=360.0)],
+            equity=1_000_000.0,
+        ),
+        product_specs=None,
+    )
+    with caplog.at_level(logging.WARNING, logger="shared.risk.filters.leverage"):
+        f.check(_make_signal(), _snap())
+    assert not [
+        r for r in caplog.records if "no futures product spec" in r.getMessage()
+    ]
+
+
+# ---------------------------------------------------------------------------
+# (F5) hedge book — gross is a SUM of |notional|, never a self-cancelling NET
+# ---------------------------------------------------------------------------
+
+
+def test_hedge_book_gross_not_net_rejects() -> None:
+    """A fully-hedged book (same symbol long +N AND short −N in ONE snapshot) has
+    NET quantity 0 but GROSS |N|+|N|. The filter sums absolute notionals, so a
+    high-leverage hedge book still breaches the cap and rejects — a NET
+    calculation would cancel to 0 and never fire. Regression guard for ``abs``
+    removal in ``_gross_notional``."""
+    # +6 and -6 @ 100k, mult 1: gross = (|6|+|6|) * 100_000 = 1.2M; NET would be 0.
+    # equity 1M → gross leverage 1.2 > cap 1.0 → reject.
+    hedge_snap = _snapshot(
+        positions=[
+            _pos(quantity=6, price=100_000.0),
+            _pos(quantity=-6, price=100_000.0),
+        ],
+        equity=1_000_000.0,
+    )
+    f = _filter(mode="enforce", max_gross_leverage=1.0, provider=lambda: hedge_snap)
+    result = f.check(_make_signal(), _snap())
+    assert result.passed is False
+    assert result.skip_reason == SKIP_LEVERAGE
+
+
+def test_small_hedge_book_under_cap_passes() -> None:
+    """Contrast to bound the reject to hedge MAGNITUDE, not the mere presence of
+    a short: the same two-legged shape at low notional (gross 0.4) passes — the
+    reject above is driven by gross size, and a short never auto-rejects."""
+    small_hedge = _snapshot(
+        positions=[
+            _pos(quantity=2, price=100_000.0),
+            _pos(quantity=-2, price=100_000.0),
+        ],
+        equity=1_000_000.0,
+    )  # gross = (|2|+|2|) * 100_000 = 400_000 → 0.4 < cap 1.0 → pass
+    f = _filter(mode="enforce", max_gross_leverage=1.0, provider=lambda: small_hedge)
     assert f.check(_make_signal(), _snap()).passed is True
 
 

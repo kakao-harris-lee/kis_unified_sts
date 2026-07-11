@@ -18,6 +18,18 @@ def test_stock_trading_windows_are_korean_equity_session():
     assert load_stock_trading_windows() == ["09:00-15:30"]
 
 
+def test_stock_risk_config_loads_leverage_block():
+    """Phase 4-g stock leverage cap ships DISABLED + shadow with cap 1.0 (cash
+    account — no leverage; multiplier 1). Pinning the shipped values fails the
+    build on an accidental enabled:true, a cap typo, or a mis-nested block —
+    same guard style as test_stock_risk_config_loads_core_correlation_block."""
+    lev = StockRiskConfig.from_yaml().leverage
+    assert lev.enabled is False
+    assert lev.mode == "shadow"
+    assert lev.max_gross_leverage == 1.0
+    assert lev.stale_max_age_seconds is None
+
+
 def test_stock_risk_config_loads_core_correlation_block():
     """Phase 5B Track A/B correlation knobs come from risk.yaml risk_stock."""
     cfg = StockRiskConfig.from_yaml()
