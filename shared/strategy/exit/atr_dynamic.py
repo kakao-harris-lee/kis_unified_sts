@@ -29,6 +29,7 @@ from shared.risk.primitives import (
     abs_stop_hit,
     atr_stop_level,
     extreme_since_entry,
+    normalize_atr,
     profit_amount,
     profit_pct,
 )
@@ -359,19 +360,14 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
     def _get_atr(snapshot: dict[str, Any], current_price: float) -> float:
         """Get ATR absolute value from snapshot.
 
-        If ATR is normalized (ratio < 0.5), convert to absolute using current_price.
+        If ATR is normalized (ratio < 0.5), convert to absolute using
+        current_price via the ``normalize_atr`` risk primitive.
         """
-        atr = float(snapshot.get("atr", 0) or 0)
-        if atr <= 0:
-            return 0.0
-
-        # Detect normalized ATR (ratio form, typically 0.001~0.05)
-        # KRX stocks/futures have absolute ATR >= 1 (min tick 0.01~0.05).
-        # Use 0.5 threshold to safely distinguish normalized from absolute.
-        if atr < 0.5 and current_price > 0:
-            atr = atr * current_price
-
-        return atr
+        return normalize_atr(
+            float(snapshot.get("atr", 0) or 0),
+            current_price,
+            normalized_below=0.5,
+        )
 
     @staticmethod
     def _get_current_price(
