@@ -94,7 +94,9 @@ registry가 관장하지 않는 **서비스 조립 루트와 인프라 어댑터
   `shared/risk/config.py::RiskConfig`(:376)를 `ServiceConfigBase` 기반으로 이관하고
   `FuturesRiskConfig`/`StockRiskConfig`와 키 중복(`max_consecutive_losses` vs
   `consecutive_loss_hard_threshold`) 정리. **이는 P4의 기존 항목이므로 신규 작업 아님.**
-- `RiskState` 2벌(`models.py:222` dataclass vs `state.py:62` Redis HASH) 단일화도 P4 소속.
+- `RiskState` 2벌(`models.py:222` dataclass vs `state.py` Redis HASH) 단일화도 P4 소속.
+  P4-h1(#624)에서 후자를 `RiskStateStore`로 개명해 이름충돌을 해소했다(전자는
+  orchestrator 전용으로 P6에 소멸 예정).
 
 ### 3.2 P2 연동 — 전략 config 검증 수렴
 - 레거시 전략 YAML 검증을 **builder_v1 Pydantic 스키마로 수렴**한다. 컴포넌트
