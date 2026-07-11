@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from shared.decision.signal import Signal
     from shared.portfolio.core_holdings import CoreHoldings
     from shared.risk.config import FuturesRiskConfig
+    from shared.risk.futures_margin import MarginProductSpec
     from shared.risk.state import RiskStateSnapshot
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,10 @@ class RiskFilterLayer:
         ) = None,
         portfolio_snapshot_provider: Callable[[], dict | None] | None = None,
         margin_snapshot_provider: Callable[[], Mapping[str, str] | None] | None = None,
+        leverage_snapshot_provider: (
+            Callable[[], Mapping[str, object] | None] | None
+        ) = None,
+        leverage_product_specs: Mapping[str, MarginProductSpec] | None = None,
         core_holdings_provider: Callable[[], CoreHoldings | None] | None = None,
         stock_positions_provider: (
             Callable[[], Mapping[str, float] | None] | None
@@ -147,6 +152,15 @@ class RiskFilterLayer:
         the ``services/futures_margin_risk`` publisher is dormant it is inert.
         ``margin_snapshot_provider`` overrides the default lazy sync-Redis reader
         (tests / backtests).
+
+        Phase 4-g optionally appends the gross-leverage cap for BOTH assets when
+        ``config.leverage.enabled`` (default ``False`` ⇒ never built):
+        :class:`LeverageFilter` rejects new entries when
+        ``Σ|notional| / equity`` exceeds ``max_gross_leverage`` — but only in
+        ``enforce`` mode with a wired ``leverage_snapshot_provider``. No daemon
+        wires a provider in this landing, so it is structurally inert.
+        ``leverage_product_specs`` supplies the per-contract multipliers for the
+        futures chain (stock uses multiplier 1); both are follow-up wiring.
 
         Phase 5B appends the stock-only Track A/B correlation filters when
         the config object carries a ``core_correlation`` block (i.e. for
@@ -320,6 +334,40 @@ class RiskFilterLayer:
                     latest_key=margin_settings.latest_key,
                     stale_max_age_seconds=margin_settings.stale_max_age_seconds,
                     snapshot_provider=margin_snapshot_provider,
+                )
+            )
+
+        # Phase 4-g: gross notional / equity leverage cap. BOTH ASSETS (unlike
+        # the futures-only margin gate) — the stock chain caps a cash account at
+        # leverage 1.0, the futures chain at e.g. 3.0. Structurally inert:
+        # ``leverage.enabled`` defaults False (never built) and ``mode`` defaults
+        # 'shadow' (built but passes every signal). Even in enforce mode it fails
+        # open without a wired snapshot provider, so while no daemon injects one
+        # (this landing) the gate has no effect. Effective activation = a
+        # follow-up wiring a position+equity provider (and, for futures, the real
+        # ``leverage_product_specs``) + operator flip of ``mode`` to 'enforce'.
+        leverage_settings = getattr(config, "leverage", None)
+        if leverage_settings is not None and leverage_settings.enabled:
+            from shared.risk.filters.leverage import LeverageFilter
+
+            # Observability: an enabled filter with no snapshot provider is a
+            # silent fail-open no-op. Log once at build time so operators can
+            # tell 'inert because unwired' apart from 'armed and passing'
+            # (provider wiring lands in a follow-up).
+            if leverage_snapshot_provider is None:
+                logger.warning(
+                    "LeverageFilter enabled (mode=%s) but no snapshot provider "
+                    "wired — filter is inert (fail-open pass on every signal)",
+                    leverage_settings.mode,
+                )
+
+            filters.append(
+                LeverageFilter(
+                    mode=leverage_settings.mode,
+                    max_gross_leverage=leverage_settings.max_gross_leverage,
+                    snapshot_provider=leverage_snapshot_provider,
+                    product_specs=leverage_product_specs,
+                    stale_max_age_seconds=leverage_settings.stale_max_age_seconds,
                 )
             )
 
