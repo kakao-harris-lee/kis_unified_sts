@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from shared.config.runtime_defaults import redis_url_from_env
+from shared.risk.primitives.breakers import consecutive_exceeds, loss_fraction_exceeds
 from shared.risk.runtime_state import RuntimeRiskState
 
 logger = logging.getLogger(__name__)
@@ -83,13 +84,17 @@ class DailyLossCondition(KillCondition):
         self.equity_krw = equity_krw
 
     def check(self, *, snapshot: Any) -> bool:
-        # Compare loss-as-fraction-of-equity directly so the threshold is
-        # immune to float drift in (limit_pct * equity_krw). "At or beyond
-        # limit" — equality fires the kill switch per spec §6.1.
-        if self.equity_krw <= 0:
-            return False
-        loss_pct = -snapshot.daily_pnl_krw / self.equity_krw
-        return loss_pct >= self.limit_pct
+        # Shared loss-fraction predicate (P4-d). ``inclusive=True`` keeps the
+        # "at or beyond limit" boundary (equality fires the kill switch per
+        # spec §6.1); ``equity_nonpositive="safe"`` keeps the ``equity <= 0``
+        # guard (no trip). Threshold and force-flatten action are unchanged.
+        return loss_fraction_exceeds(
+            snapshot.daily_pnl_krw,
+            self.equity_krw,
+            self.limit_pct,
+            inclusive=True,
+            equity_nonpositive="safe",
+        )
 
 
 class WeeklyLossCondition(KillCondition):
@@ -100,10 +105,15 @@ class WeeklyLossCondition(KillCondition):
         self.equity_krw = equity_krw
 
     def check(self, *, snapshot: Any) -> bool:
-        if self.equity_krw <= 0:
-            return False
-        loss_pct = -snapshot.weekly_pnl_krw / self.equity_krw
-        return loss_pct >= self.limit_pct
+        # Shared loss-fraction predicate (P4-d) — inclusive boundary +
+        # equity<=0 safe guard, weekly window. Threshold/action unchanged.
+        return loss_fraction_exceeds(
+            snapshot.weekly_pnl_krw,
+            self.equity_krw,
+            self.limit_pct,
+            inclusive=True,
+            equity_nonpositive="safe",
+        )
 
 
 class MonthlyLossCondition(KillCondition):
@@ -133,10 +143,17 @@ class MonthlyLossCondition(KillCondition):
         self.equity_krw = equity_krw
 
     def check(self, *, snapshot: Any) -> bool:
-        if self.equity_krw <= 0:
-            return False
-        loss_pct = -snapshot.monthly_pnl_krw / self.equity_krw
-        return loss_pct >= self.limit_pct
+        # Shared loss-fraction predicate (P4-d) — inclusive boundary +
+        # equity<=0 safe guard, monthly window. The month-long latch
+        # semantics (sentinel + period-HASH TTL, documented above) and the
+        # 15% threshold are unchanged; only the fraction math is deduped.
+        return loss_fraction_exceeds(
+            snapshot.monthly_pnl_krw,
+            self.equity_krw,
+            self.limit_pct,
+            inclusive=True,
+            equity_nonpositive="safe",
+        )
 
 
 class ConsecutiveLossesCondition(KillCondition):
@@ -146,7 +163,9 @@ class ConsecutiveLossesCondition(KillCondition):
         self.threshold = threshold
 
     def check(self, *, snapshot: Any) -> bool:
-        return snapshot.consecutive_losses >= self.threshold
+        # Shared raw-count predicate (P4-d): ``consecutive_losses >= threshold``.
+        # Catastrophic-only threshold (#600) and force-flatten action unchanged.
+        return consecutive_exceeds(snapshot.consecutive_losses, self.threshold)
 
 
 class _ProviderBackedCondition(KillCondition):
