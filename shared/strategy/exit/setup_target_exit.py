@@ -15,6 +15,7 @@ from typing import Any
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
+from shared.risk.primitives import abs_stop_hit, profit_amount, profit_pct
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
@@ -198,29 +199,20 @@ class SetupTargetExit(ExitSignalGenerator[SetupTargetExitConfig]):
         trigger_price: float,
         trigger: str,
     ) -> bool:
+        if trigger == "stop":
+            return abs_stop_hit(side, current_price, trigger_price)
+        # Take-profit: favorable-side cross (mirror of the stop direction).
         if side == PositionSide.LONG:
-            return (
-                current_price <= trigger_price
-                if trigger == "stop"
-                else current_price >= trigger_price
-            )
-        return (
-            current_price >= trigger_price
-            if trigger == "stop"
-            else current_price <= trigger_price
-        )
+            return current_price >= trigger_price
+        return current_price <= trigger_price
 
     @staticmethod
     def _calc_profit_pct(position: Position, current_price: float) -> float:
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) / position.entry_price
-        return (current_price - position.entry_price) / position.entry_price
+        return profit_pct(position, current_price)
 
     @staticmethod
     def _calc_profit_amount(position: Position, current_price: float) -> float:
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) * position.quantity
-        return (current_price - position.entry_price) * position.quantity
+        return profit_amount(position, current_price)
 
     def _create_exit_signal(
         self,

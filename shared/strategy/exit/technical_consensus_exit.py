@@ -10,6 +10,7 @@ from typing import Any
 
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
+from shared.risk.primitives import profit_amount, profit_pct
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
@@ -244,17 +245,11 @@ class TechnicalConsensusExit(ExitSignalGenerator[TechnicalConsensusExitConfig]):
 
     @staticmethod
     def _calc_profit_pct(position: Position, current_price: float) -> float:
-        if position.entry_price <= 0:
-            return 0.0
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) / position.entry_price
-        return (current_price - position.entry_price) / position.entry_price
+        return profit_pct(position, current_price)
 
     @staticmethod
     def _calc_profit_amount(position: Position, current_price: float) -> float:
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) * position.quantity
-        return (current_price - position.entry_price) * position.quantity
+        return profit_amount(position, current_price)
 
     @staticmethod
     def _get_high_since_entry(position: Position, current_price: float) -> float:

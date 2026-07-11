@@ -40,6 +40,13 @@ from shared.calendar import get_market_calendar
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
+from shared.risk.primitives import (
+    abs_stop_hit,
+    extreme_since_entry,
+    pct_trailing_stop_level,
+    profit_amount,
+    profit_pct,
+)
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import (
     get_numeric_field,
@@ -204,34 +211,22 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
     @staticmethod
     def _calc_profit_pct(position: Position, current_price: float) -> float:
         """Side-aware profit percentage."""
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) / position.entry_price
-        return (current_price - position.entry_price) / position.entry_price
+        return profit_pct(position, current_price)
 
     @staticmethod
     def _calc_profit_amount(position: Position, current_price: float) -> float:
         """Side-aware profit amount."""
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) * position.quantity
-        return (current_price - position.entry_price) * position.quantity
+        return profit_amount(position, current_price)
 
     @staticmethod
     def _get_extreme_since_entry(position: Position, current_price: float) -> float:
         """Most favorable price since entry (high for LONG, low for SHORT)."""
-        if position.side == PositionSide.SHORT:
-            return min(
-                position.lowest_price if position.lowest_price < float("inf")
-                else position.entry_price,
-                current_price,
-            )
-        return max(position.highest_price or position.entry_price, current_price)
+        return extreme_since_entry(position, current_price)
 
     @staticmethod
     def _stop_hit(position: Position, current_price: float, stop_price: float) -> bool:
         """Check if stop price is hit (direction-aware)."""
-        if position.side == PositionSide.SHORT:
-            return current_price >= stop_price
-        return current_price <= stop_price
+        return abs_stop_hit(position.side, current_price, stop_price)
 
     # -------------------------------------------------------------------------
     # Main Interface
@@ -586,13 +581,13 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
 
         # Calculate trailing stop price (side-aware)
         is_short = position.side == PositionSide.SHORT
-        if is_short:
-            trailing_stop_price = high_since_entry * (1 + trailing_gap)
-            if position.stop_price > 0:
+        trailing_stop_price = pct_trailing_stop_level(
+            high_since_entry, trailing_gap, position.side
+        )
+        if position.stop_price > 0:
+            if is_short:
                 trailing_stop_price = min(trailing_stop_price, position.stop_price)
-        else:
-            trailing_stop_price = high_since_entry * (1 - trailing_gap)
-            if position.stop_price > 0:
+            else:
                 trailing_stop_price = max(trailing_stop_price, position.stop_price)
 
         # Check if trailing stop hit

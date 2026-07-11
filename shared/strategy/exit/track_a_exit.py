@@ -30,6 +30,12 @@ from shared.config.mixins import ConfigMixin
 from shared.indicators.series import window_extremes
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
+from shared.risk.primitives import (
+    abs_stop_hit,
+    atr_stop_level,
+    profit_amount,
+    profit_pct,
+)
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
@@ -48,12 +54,7 @@ def trail_stop_price(
     side: PositionSide, favorable_extreme: float, atr: float, trail_atr_mult: float
 ) -> float:
     """LONG: extreme - mult*atr ; SHORT: extreme + mult*atr."""
-    offset = trail_atr_mult * atr
-    return (
-        favorable_extreme - offset
-        if side == PositionSide.LONG
-        else favorable_extreme + offset
-    )
+    return atr_stop_level(favorable_extreme, atr, trail_atr_mult, side)
 
 
 def trail_activated(
@@ -134,10 +135,8 @@ def catastrophic_stop_hit(
     catastrophic_atr_mult: float,
 ) -> bool:
     """True when loss from entry >= catastrophic_atr_mult*atr."""
-    threshold = catastrophic_atr_mult * atr
-    if side == PositionSide.LONG:
-        return (entry_price - current_price) >= threshold
-    return (current_price - entry_price) >= threshold
+    level = atr_stop_level(entry_price, atr, catastrophic_atr_mult, side)
+    return abs_stop_hit(side, current_price, level)
 
 
 @dataclass
@@ -428,15 +427,11 @@ class TrackAExit(ExitSignalGenerator[TrackAExitConfig]):
 
     @staticmethod
     def _calc_profit_pct(position: Position, current_price: float) -> float:
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) / position.entry_price
-        return (current_price - position.entry_price) / position.entry_price
+        return profit_pct(position, current_price)
 
     @staticmethod
     def _calc_profit_amount(position: Position, current_price: float) -> float:
-        if position.side == PositionSide.SHORT:
-            return (position.entry_price - current_price) * position.quantity
-        return (current_price - position.entry_price) * position.quantity
+        return profit_amount(position, current_price)
 
     def _create_exit_signal(
         self,

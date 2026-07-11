@@ -145,19 +145,19 @@ class TestDifferentialProfitPct:
 
     @pytest.mark.parametrize("legacy_cls", UNGUARDED_LEGACY)
     @pytest.mark.parametrize("side", SIDES)
-    def test_zero_entry_unguarded_legacy_raises(
+    def test_zero_entry_formerly_unguarded_now_guarded(
         self, legacy_cls: type, side: PositionSide
     ) -> None:
-        """Unguarded copies (track_a 등) raise ZeroDivisionError on entry == 0.
+        """Formerly-unguarded copies now delegate to the guarded primitive (P4-b).
 
-        The primitive intentionally unifies on the guarded behavior (0.0,
-        matching ``Position.profit_rate``); this test pins the known legacy
-        difference so the P4-b substitution is a deliberate, documented
-        behavior unification rather than an accident.
+        Before P4-b these copies raised ``ZeroDivisionError`` on entry == 0.
+        The P4-b substitution rewires them to :func:`profit_pct`, unifying on
+        the guarded behavior (0.0, matching ``Position.profit_rate``). This
+        edge is unreachable in production (entry price is always > 0); the test
+        pins that the deliberate, documented unification has landed.
         """
         pos = make_position(side, 0.0)
-        with pytest.raises(ZeroDivisionError):
-            legacy_cls._calc_profit_pct(pos, 100.0)
+        assert legacy_cls._calc_profit_pct(pos, 100.0) == 0.0
         assert profit_pct(pos, 100.0) == 0.0
 
 
