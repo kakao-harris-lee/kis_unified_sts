@@ -91,6 +91,9 @@ class RiskFilterLayer:
         current_atr_provider: Callable[[], float] | None = None,
         current_spread_provider: Callable[[], float] | None = None,
         has_open_position_provider: Callable[[str], bool] | None = None,
+        open_positions_count_provider: (
+            Callable[[], Mapping[str, int] | None] | None
+        ) = None,
         portfolio_snapshot_provider: Callable[[], dict | None] | None = None,
         core_holdings_provider: Callable[[], CoreHoldings | None] | None = None,
         stock_positions_provider: (
@@ -121,6 +124,13 @@ class RiskFilterLayer:
            ≠ enforce passes), so enabling it under the default shadow mode
            is a no-op. ``portfolio_snapshot_provider`` overrides the default
            lazy sync-Redis reader (tests / backtests).
+
+        Phase 4-e optionally appends the total + per-asset concurrency gate
+        when ``config.concurrent_positions.enabled`` (default ``False`` ⇒ never
+        built): :class:`ConcurrentPositionsFilter` ports the World-A
+        ``RiskManager`` ``max_total_positions`` / per-asset caps into World-B.
+        Fail-open — without ``open_positions_count_provider`` or a configured
+        cap it passes every signal, so it is inert until an operator wires it.
 
         Phase 5B appends the stock-only Track A/B correlation filters when
         the config object carries a ``core_correlation`` block (i.e. for
@@ -201,6 +211,28 @@ class RiskFilterLayer:
                     latest_key=portfolio_settings.latest_key,
                     stale_max_age_seconds=portfolio_settings.stale_max_age_seconds,
                     snapshot_provider=portfolio_snapshot_provider,
+                )
+            )
+
+        # Phase 4-e: total + per-asset concurrency caps (World-A RiskManager
+        # capability ported to World-B). Structurally inert unless
+        # ``concurrent_positions.enabled`` — even then it fails open without an
+        # injected count provider or a configured cap, so the shadow daemons'
+        # pass-through behaviour is unchanged by default.
+        concurrent_settings = getattr(config, "concurrent_positions", None)
+        if concurrent_settings is not None and concurrent_settings.enabled:
+            from shared.risk.filters.concurrent_positions import (
+                ConcurrentPositionsFilter,
+            )
+
+            filters.append(
+                ConcurrentPositionsFilter(
+                    asset_class=getattr(config, "_asset_class", "futures"),
+                    open_positions_count_provider=open_positions_count_provider,
+                    max_total_positions=concurrent_settings.max_total_positions,
+                    max_positions_per_asset=(
+                        concurrent_settings.max_positions_per_asset
+                    ),
                 )
             )
 
