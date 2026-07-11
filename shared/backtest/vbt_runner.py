@@ -126,6 +126,22 @@ EXPRESSIBLE_EXIT_GENERATORS: frozenset[str] = frozenset(
 _CROSS_CHECK_RTOL = 1e-6
 
 
+def vectorbt_available() -> bool:
+    """vectorbt(``backtest`` extra) 가 이 환경에서 import 가능한지 정적 판별.
+
+    ``find_spec`` 자체가 던지는 예외(차단 finder / 깨진 설치)도 "미설치"로
+    취급한다. 어댑터/harness 를 구동하기 *전에* 호출해, seam 이 legacy 로 깨끗이
+    폴백하거나(:class:`VectorbtRunner._ensure_supported`) harness 구동을 건너뛰게
+    (:class:`~shared.backtest.vbt_harness_runner.VbtHarnessRunner.run`) 한다 —
+    lazy import 시점까지 가면 전체 해석 비용을 낭비하고 ``ModuleNotFoundError`` 가
+    폴백 경로를 우회한다 (TA-Lib 미설치 함정과 동일 클래스).
+    """
+    try:
+        return importlib.util.find_spec("vectorbt") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 class VectorbtNotSupportedError(NotImplementedError):
     """이 전략/설정 조합은 vectorbt 러너로 표현 불가 — legacy engine required."""
 
@@ -310,17 +326,10 @@ class VectorbtRunner:
             )
 
         # vectorbt 미설치(backtest extra 없는 런타임 이미지/호스트)도 어댑터를
-        # 구동하기 *전에* 거부해 seam 이 legacy 로 깨끗이 폴백하게 한다 —
-        # lazy import 시점(_simulate)까지 가면 전체 해석 비용을 낭비하고
-        # ModuleNotFoundError 가 폴백 경로를 우회한다 (TA-Lib 미설치 함정과
-        # 동일 클래스). find_spec 자체가 던지는 예외(차단 finder, 깨진 설치)도
-        # "사용 불가" 로 취급한다. 구성/전략 게이트 뒤에 두어 미설치 환경에서도
-        # 구체적 거부 사유가 먼저 보이게 한다.
-        try:
-            vbt_available = importlib.util.find_spec("vectorbt") is not None
-        except (ImportError, ValueError):
-            vbt_available = False
-        if not vbt_available:
+        # 구동하기 *전에* 거부해 seam 이 legacy 로 깨끗이 폴백하게 한다
+        # (:func:`vectorbt_available` 근거는 그 함수 docstring). 구성/전략 게이트
+        # 뒤에 두어 미설치 환경에서도 구체적 거부 사유가 먼저 보이게 한다.
+        if not vectorbt_available():
             raise VectorbtNotSupportedError(
                 "vectorbt is not installed — pip install -e '.[backtest]'"
             )

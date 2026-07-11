@@ -16,12 +16,14 @@ harness's tick accounting (a redundant-computation parity check).
 Honest value note
 ------------------
 (a) This wrapper adds an **independent from_orders ledger verification** of the
-    harness's per-trade tick P&L, entry/exit bars, prices, direction and size.
-    It does **not** replace the harness. The harness has no equity curve /
-    Sharpe / MDD to migrate (its consumers — walk-forward scripts, experiment
-    reports — read only tick sums and per-setup stats), so there is no metric
-    surface to move onto vectorbt. The value is a second, structurally
-    different computation of the same P&L that must agree.
+    harness's per-trade tick P&L, entry/exit bars, prices, direction and size
+    (for multi-bar trades), plus an **independent analytic recomputation** of
+    the same-bar trades' tick P&L from their fill/exit prices (see the same-bar
+    carve-out below). It does **not** replace the harness. The harness has no
+    equity curve / Sharpe / MDD to migrate (its consumers — walk-forward
+    scripts, experiment reports — read only tick sums and per-setup stats), so
+    there is no metric surface to move onto vectorbt. The value is a second,
+    structurally different computation of the same P&L that must agree.
 (b) ``backtest.legacy_exit`` (the stock-path escape hatch) is **N/A** here.
     The harness has no strategy-config exit generators — every Signal carries
     its own ``stop_loss`` / ``take_profit`` / ``valid_until`` and the fill
@@ -38,11 +40,15 @@ Same-bar carve-out
 harness trade whose fill and exit land on the **same** bar (session boundary
 forcing EOD close on the fill bar, or the last-bar fallback) therefore cannot
 be expressed as an entry+exit pair in one column. Such trades are verified
-**analytically** instead: the harness marks their exit at that bar's close, so
-the cross-check asserts ``exit_price == close[fill_bar_index]`` and folds their
-tick P&L into the headline-sum invariant. Only multi-bar trades
-(``exit_bar_index > fill_bar_index``) are routed through ``from_orders`` — one
-column each.
+**analytically** instead: the cross-check asserts (1) ``exit_price ==
+close[fill_bar_index]`` (the harness marks their exit at that bar's close) and
+(2) that ``ticks_net`` equals the tick P&L **independently recomputed** from the
+fill/exit prices — ``(exit - fill) / tick`` for a long, ``(fill - exit) / tick``
+for a short. The recomputation is load-bearing: the headline tick-sum invariant
+is algebraically *vacuous* for same-bar trades (their term appears identically
+in both ``samebar_pnl`` and ``all_pnl`` and cancels), so without it their P&L
+would go unchecked. Only multi-bar trades (``exit_bar_index > fill_bar_index``)
+are routed through ``from_orders`` — one column each.
 
 vectorbt is a ``backtest`` extra dependency (excluded from the runtime image),
 so it is never imported at module top level — only lazily inside
@@ -52,7 +58,6 @@ docs/plans/2026-07-08-new-architecture-refactoring-plan.md §5 (P3-d).
 
 from __future__ import annotations
 
-import importlib.util
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -66,6 +71,10 @@ from shared.backtest.decision_harness import (
     TradeRecord,
 )
 from shared.backtest.market_context_replay import MarketContextReplay
+from shared.backtest.vbt_runner import vectorbt_available
+from shared.decision.setup_base import Setup
+from shared.risk.layer import RiskFilterLayer
+from shared.risk.state import RiskStateSnapshot
 
 # from_orders 원장 대조는 결정론적 산술이므로 엄격한 허용오차를 쓴다
 # (VectorbtRunner 의 _CROSS_CHECK_RTOL 1e-6 보다 타이트 — 여기서는 두 원장이
@@ -82,6 +91,25 @@ _STATUS_CLOSED: int = 1
 # from_orders 진입 현금 — 숏 진입도 커버하도록 넉넉히(체결가는 명시 price 배열이
 # 지배하므로 실제 자본은 결과에 영향 없음; 모든 트레이드가 청산 완료라 마킹만).
 _INIT_CASH: float = 1e12
+
+
+def _close(a: float, b: float, *, scale: float = 0.0) -> bool:
+    """모듈 parity 허용오차로 감싼 ``math.isclose`` — tolerance 정책의 단일 소스.
+
+    Args:
+        a: 비교 좌변.
+        b: 비교 우변.
+        scale: pnl-크기 변형용. 부동소수 누적오차가 (거의 0 일 수 있는) net 이
+            아니라 누적 크기에 비례하는 합계 비교에서 ``abs_tol`` 을
+            ``max(_PARITY_ATOL, abs(scale) * _PARITY_RTOL)`` 로 넓힌다. 기본
+            ``0.0`` 이면 ``abs_tol == _PARITY_ATOL`` 로 엄격 비교.
+    """
+    return math.isclose(
+        a,
+        b,
+        rel_tol=_PARITY_RTOL,
+        abs_tol=max(_PARITY_ATOL, abs(scale) * _PARITY_RTOL),
+    )
 
 
 class VbtHarnessNotSupportedError(NotImplementedError):
@@ -133,17 +161,41 @@ def _build_order_arrays(trades: list[TradeRecord], n_bars: int) -> _OrderArrays:
     같은-bar 트레이드(``==``)는 한 컬럼/한 bar 에 진입+청산 2주문을 담을 수 없어
     제외하고 :attr:`_OrderArrays.samebar` 로 넘긴다(호출자가 해석적으로 검증).
 
+    이 함수는 주문 배열을 만드는 유일한 통로다(cross-check **와** parity 리포트가
+    모두 여기로 흐른다). 따라서 ``fill_bar_index`` / ``exit_bar_index`` None 검사를
+    여기 chokepoint 에 두어, ``_simulate_fill`` 을 거치지 않은 레코드(예: 손으로
+    만든 픽스처)를 bare ``TypeError`` 가 아니라 :class:`VbtHarnessParityError` 로
+    거부한다.
+
     Args:
-        trades: harness ``HarnessResult.trades`` — 모든 레코드의
-            ``fill_bar_index`` / ``exit_bar_index`` 가 채워져 있어야 한다
-            (:meth:`VbtHarnessRunner._cross_check` 가 선행 보장).
+        trades: harness ``HarnessResult.trades``.
         n_bars: replay DataFrame 길이(주문 배열의 행 수).
 
     Returns:
         :class:`_OrderArrays`.
+
+    Raises:
+        VbtHarnessParityError: 어떤 레코드든 ``fill_bar_index`` 또는
+            ``exit_bar_index`` 가 ``None`` 일 때.
     """
-    multibar = [t for t in trades if t.exit_bar_index > t.fill_bar_index]  # type: ignore[operator]
-    samebar = [t for t in trades if t.exit_bar_index == t.fill_bar_index]
+    multibar: list[TradeRecord] = []
+    samebar: list[TradeRecord] = []
+    for t in trades:
+        fill_bar = t.fill_bar_index
+        exit_bar = t.exit_bar_index
+        if fill_bar is None or exit_bar is None:
+            raise VbtHarnessParityError(
+                "trade record missing fill/exit bar index "
+                f"(setup={t.setup_type}, bar={t.bar_index}) — not produced "
+                "by _simulate_fill?"
+            )
+        if exit_bar > fill_bar:
+            multibar.append(t)
+        elif exit_bar == fill_bar:
+            samebar.append(t)
+        # exit_bar < fill_bar 는 _simulate_fill 산출로는 불가능하다 — 만약
+        # 발생하면 여기서 드롭되고 _cross_check 의 분류 완전성 검사
+        # (multibar + samebar == total)가 잡는다.
     n_cols = len(multibar)
 
     size = np.full((n_bars, n_cols), np.nan, dtype=np.float64)
@@ -151,8 +203,9 @@ def _build_order_arrays(trades: list[TradeRecord], n_bars: int) -> _OrderArrays:
     for i, t in enumerate(multibar):
         direction = 1.0 if t.direction == "long" else -1.0
         contracts = float(t.size_contracts)
-        fill_idx = int(t.fill_bar_index)  # type: ignore[arg-type]
-        exit_idx = int(t.exit_bar_index)  # type: ignore[arg-type]
+        fill_idx = t.fill_bar_index
+        exit_idx = t.exit_bar_index
+        assert fill_idx is not None and exit_idx is not None  # 위 chokepoint 보장
         # 진입: 롱=+수량 / 숏=-수량 (direction="both", size_type="amount").
         size[fill_idx, i] = direction * contracts
         price[fill_idx, i] = t.fill_price
@@ -185,9 +238,9 @@ class VbtHarnessRunner:
 
     def __init__(
         self,
-        setups: list[Any],
-        filter_layer: Any,
-        state: Any,
+        setups: list[Setup],
+        filter_layer: RiskFilterLayer,
+        state: RiskStateSnapshot,
         tick_size_points: float,
         *,
         sizer: Any | None = None,
@@ -236,13 +289,10 @@ class VbtHarnessRunner:
                 불일치(내부 불변식 위반).
         """
         # 0. 정적 게이트 — harness 실행 *전에* vectorbt 가용성을 판별한다.
-        #    find_spec 자체가 던지는 예외(마스킹 finder / 깨진 설치)도 "미설치"로
-        #    취급한다 (VectorbtRunner._ensure_supported 와 동일 방어).
-        try:
-            vbt_available = importlib.util.find_spec("vectorbt") is not None
-        except (ImportError, ValueError):
-            vbt_available = False
-        if not vbt_available:
+        #    VectorbtRunner._ensure_supported 와 동일 프로브를 공유한다
+        #    (shared.backtest.vbt_runner.vectorbt_available — find_spec 예외까지
+        #    "미설치"로 취급).
+        if not vectorbt_available():
             raise VbtHarnessNotSupportedError(
                 "vectorbt not installed — pip install -e '.[backtest]'"
             )
@@ -268,18 +318,24 @@ class VbtHarnessRunner:
         """
         trades = result.trades
 
-        # 인덱스가 채워져 있어야 한다 — _simulate_fill 산출 레코드만 대상.
+        # ticks_net_total 항등식 — 소비자(decision_harness run() 레벨에서 채우고,
+        # walk-forward/experiment 리포트가 **합산**하는 필드)를 전 트레이드
+        # (멀티바 + 같은-bar)에 대해 강제한다: ticks_net_total == ticks_net ×
+        # size_contracts.
         for t in trades:
-            if t.fill_bar_index is None or t.exit_bar_index is None:
+            if not _close(t.ticks_net_total, t.ticks_net * t.size_contracts):
                 raise VbtHarnessParityError(
-                    "trade record missing fill/exit bar index "
-                    f"(setup={t.setup_type}, bar={t.bar_index}) — not produced "
-                    "by _simulate_fill?"
+                    "ticks_net_total invariant violated "
+                    f"(setup={t.setup_type}, bar={t.bar_index}): "
+                    f"{t.ticks_net_total} != ticks_net {t.ticks_net} × "
+                    f"size {t.size_contracts}"
                 )
 
         n_bars = len(df)
         closes = df["close"].to_numpy(dtype=float)
         tick = self._tick_size
+        # _build_order_arrays 가 None fill/exit 인덱스를 VbtHarnessParityError 로
+        # 거부하는 유일 chokepoint 다 (여기 중복 가드 불필요).
         arrays = _build_order_arrays(trades, n_bars)
 
         # 분류 완전성: 모든 트레이드는 멀티바 또는 같은-bar 중 정확히 하나.
@@ -293,18 +349,28 @@ class VbtHarnessRunner:
 
         # 같은-bar carve-out (해석적): harness 는 이들 청산을 체결 bar 종가로
         # 마킹한다(EOD-on-fill-bar / last-bar fallback 양 경로). from_orders 는
-        # 컬럼/bar 당 1주문이라 표현 불가 → 종가 일치만 직접 확인.
+        # 컬럼/bar 당 1주문이라 표현 불가 → (1) 종가 일치 확인 + (2) tick P&L 을
+        # fill/exit 가격에서 **독립 재계산**해 대조한다. 헤드라인 tick 합
+        # 불변식은 같은-bar 트레이드에 대해 대수적으로 공허하므로(samebar_pnl 와
+        # all_pnl 이 동일한 t.ticks_net 에서 파생돼 상쇄) tick 회계를 실제로
+        # 검증하는 것은 이 재계산이다.
         for t in arrays.samebar:
             fill_idx = int(t.fill_bar_index)  # type: ignore[arg-type]
-            if not math.isclose(
-                float(t.exit_price),
-                float(closes[fill_idx]),
-                rel_tol=_PARITY_RTOL,
-                abs_tol=_PARITY_ATOL,
-            ):
+            if not _close(float(t.exit_price), float(closes[fill_idx])):
                 raise VbtHarnessParityError(
                     "same-bar trade exit price "
                     f"{t.exit_price} != fill-bar close {closes[fill_idx]} "
+                    f"(setup={t.setup_type}, bar={t.bar_index})"
+                )
+            if t.direction == "long":
+                expected_ticks = (float(t.exit_price) - float(t.fill_price)) / tick
+            else:
+                expected_ticks = (float(t.fill_price) - float(t.exit_price)) / tick
+            if not _close(float(t.ticks_net), expected_ticks):
+                raise VbtHarnessParityError(
+                    "same-bar trade ticks_net "
+                    f"{t.ticks_net} != recomputed {expected_ticks} from fill "
+                    f"{t.fill_price} / exit {t.exit_price} "
                     f"(setup={t.setup_type}, bar={t.bar_index})"
                 )
 
@@ -315,14 +381,13 @@ class VbtHarnessRunner:
 
         # 헤드라인 tick-PnL 합 불변식: from_orders pnl 합 + 같은-bar tick 합
         # == 전체 트레이드 tick 합. (멀티바/같은-bar 두 경로를 봉합.)
+        # tolerance 는 net(레그 상쇄로 ≈0 가능)이 아니라 실제 누적된 gross 크기로
+        # 스케일한다 — 평균회귀 런은 net≈0 이어도 gross 가 크고, 부동소수 누적
+        # 오차는 net 이 아니라 gross 에 비례하기 때문.
         samebar_pnl = sum(t.ticks_net * tick * t.size_contracts for t in arrays.samebar)
         all_pnl = sum(t.ticks_net * tick * t.size_contracts for t in trades)
-        if not math.isclose(
-            records_pnl_sum + samebar_pnl,
-            all_pnl,
-            rel_tol=_PARITY_RTOL,
-            abs_tol=max(_PARITY_ATOL, abs(all_pnl) * _PARITY_RTOL),
-        ):
+        gross = sum(abs(t.ticks_net) * tick * t.size_contracts for t in trades)
+        if not _close(records_pnl_sum + samebar_pnl, all_pnl, scale=gross):
             raise VbtHarnessParityError(
                 "headline tick-PnL sum mismatch: "
                 f"from_orders {records_pnl_sum} + samebar {samebar_pnl} "
@@ -369,48 +434,44 @@ class VbtHarnessRunner:
         # 2. col 순 정렬 → 컬럼 i ↔ multibar[i] 대응.
         rec_sorted = records.sort_values("col").reset_index(drop=True)
 
-        # 3. 행별 대조 (idx/price/direction/size/pnl).
+        # 3. 행별 대조 (idx/price/direction/size/pnl) — 필드별로 비교해 어긋난
+        #    필드명·기대값·실제값을 정확히 지목한다.
         for t, row in zip(arrays.multibar, rec_sorted.itertuples(index=False)):
             dir_code = (
                 _DIRECTION_LONG_CODE if t.direction == "long" else _DIRECTION_SHORT_CODE
             )
             # ticks_net 은 계약당 → tick_size × size_contracts 로 총 pnl 환산.
             expected_pnl = t.ticks_net * tick * t.size_contracts
-            ok = (
-                int(row.entry_idx) == int(t.fill_bar_index)  # type: ignore[arg-type]
-                and int(row.exit_idx) == int(t.exit_bar_index)  # type: ignore[arg-type]
-                and int(row.direction) == dir_code
-                and math.isclose(
-                    float(row.entry_price),
-                    float(t.fill_price),
-                    rel_tol=_PARITY_RTOL,
-                    abs_tol=_PARITY_ATOL,
+            mismatches: list[str] = []
+            if int(row.entry_idx) != int(t.fill_bar_index):  # type: ignore[arg-type]
+                mismatches.append(
+                    f"entry_idx (expected {t.fill_bar_index}, got {int(row.entry_idx)})"
                 )
-                and math.isclose(
-                    float(row.exit_price),
-                    float(t.exit_price),
-                    rel_tol=_PARITY_RTOL,
-                    abs_tol=_PARITY_ATOL,
+            if int(row.exit_idx) != int(t.exit_bar_index):  # type: ignore[arg-type]
+                mismatches.append(
+                    f"exit_idx (expected {t.exit_bar_index}, got {int(row.exit_idx)})"
                 )
-                and math.isclose(
-                    float(row.size),
-                    float(t.size_contracts),
-                    rel_tol=_PARITY_RTOL,
-                    abs_tol=_PARITY_ATOL,
+            if int(row.direction) != dir_code:
+                mismatches.append(
+                    f"direction (expected {dir_code}, got {int(row.direction)})"
                 )
-                and math.isclose(
-                    float(row.pnl),
-                    expected_pnl,
-                    rel_tol=_PARITY_RTOL,
-                    abs_tol=max(_PARITY_ATOL, abs(expected_pnl) * _PARITY_RTOL),
+            if not _close(float(row.entry_price), float(t.fill_price)):
+                mismatches.append(
+                    f"entry_price (expected {t.fill_price}, got {row.entry_price})"
                 )
-            )
-            if not ok:
+            if not _close(float(row.exit_price), float(t.exit_price)):
+                mismatches.append(
+                    f"exit_price (expected {t.exit_price}, got {row.exit_price})"
+                )
+            if not _close(float(row.size), float(t.size_contracts)):
+                mismatches.append(f"size (expected {t.size_contracts}, got {row.size})")
+            if not _close(float(row.pnl), expected_pnl, scale=expected_pnl):
+                mismatches.append(f"pnl (expected {expected_pnl}, got {row.pnl})")
+            if mismatches:
                 raise VbtHarnessParityError(
                     "from_orders parity mismatch for multibar trade "
                     f"(setup={t.setup_type}, fill_bar={t.fill_bar_index}, "
-                    f"exit_bar={t.exit_bar_index}): vbt row={row} vs "
-                    f"harness ticks_net={t.ticks_net} size={t.size_contracts}"
+                    f"exit_bar={t.exit_bar_index}): " + "; ".join(mismatches)
                 )
 
         return float(records["pnl"].sum())

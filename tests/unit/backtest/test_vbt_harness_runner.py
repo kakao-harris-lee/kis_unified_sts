@@ -54,9 +54,9 @@ from shared.backtest.vbt_harness_runner import (
     _build_order_arrays,
 )
 from shared.decision.signal import Signal
-from shared.execution.contract_spec import ContractSpec
 from shared.risk.layer import LayerResult, RiskFilterLayer
 from shared.risk.state import RiskStateSnapshot
+from tests.integration.test_backtest_harness import MINI_SPEC as CONTRACT_SPEC
 
 pytestmark = pytest.mark.backtest
 
@@ -74,14 +74,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 KST = ZoneInfo("Asia/Seoul")
 TICK_SIZE_POINTS: float = 0.05
-CONTRACT_SPEC = ContractSpec(
-    name="kospi200_mini",
-    multiplier_krw_per_point=100_000,
-    tick_size_points=TICK_SIZE_POINTS,
-    tick_value_krw=5_000,
-    commission_rate=0.000015,
-    symbol_prefix="A05",
-)
+# CONTRACT_SPEC 는 tests/integration/test_backtest_harness.py::MINI_SPEC 를 그대로
+# 재사용한다 (동일 값이던 로컬 리터럴을 제거 → 단일 소스). 세 번째 사본은 아래
+# TestImportIsolation 의 subprocess 문자열에 있으며, 그 코드는 자기완결이어야
+# 하므로 인라인 ContractSpec(...) 을 유지한다. MINI_SPEC.tick_size_points 는
+# TICK_SIZE_POINTS(0.05)와 일치한다.
 _D1, _D2, _D3 = "2025-01-02", "2025-01-03", "2025-01-04"
 
 
@@ -703,6 +700,59 @@ class TestParity:
         tampered = copy.deepcopy(harness_result)
         mb = next(t for t in tampered.trades if t.exit_bar_index > t.fill_bar_index)
         mb.ticks_net += 5.0
+        mb.ticks_net_total = mb.ticks_net * mb.size_contracts  # F2 불변식은 유지
+        runner = VbtHarnessRunner(
+            [_ScriptedSetup(script)],
+            RiskFilterLayer(filters=[]),
+            RiskStateSnapshot(),
+            TICK_SIZE_POINTS,
+            sizer=sizer,
+            account_equity_krw=eq,
+        )
+        with pytest.raises(VbtHarnessParityError):
+            runner._cross_check(tampered, df)
+
+    def test_negative_tamper_samebar_ticks_raises(self):
+        """같은-bar 트레이드의 ticks_net 조작을 해석적 재계산이 검출해야 한다.
+
+        헤드라인 tick 합 불변식은 같은-bar 트레이드에 대해 대수적으로 공허하므로
+        (그 항이 samebar_pnl 과 all_pnl 에 동일하게 들어가 상쇄), 종가 마킹은
+        건드리지 않고 ``ticks_net`` 만 어긋내면 **오직** 같은-bar 해석적 tick
+        재계산(``ticks_net == (exit-fill)/tick``)만이 이를 검출한다. F2
+        불변식(``ticks_net_total``)은 함께 맞춰 두어 이 경로만 격리한다.
+        """
+        df, script, sizer, eq = scenario_symmetric_mix()
+        harness_result, _ = run_harness_and_runner(
+            df, script, sizer=sizer, account_equity_krw=eq
+        )
+        tampered = copy.deepcopy(harness_result)
+        sb = next(t for t in tampered.trades if t.exit_bar_index == t.fill_bar_index)
+        sb.ticks_net += 5.0
+        sb.ticks_net_total = sb.ticks_net * sb.size_contracts  # F2 불변식은 유지
+        runner = VbtHarnessRunner(
+            [_ScriptedSetup(script)],
+            RiskFilterLayer(filters=[]),
+            RiskStateSnapshot(),
+            TICK_SIZE_POINTS,
+            sizer=sizer,
+            account_equity_krw=eq,
+        )
+        with pytest.raises(VbtHarnessParityError):
+            runner._cross_check(tampered, df)
+
+    def test_negative_tamper_ticks_net_total_raises(self):
+        """소비자 합산 필드(``ticks_net_total``) 조작을 cross-check 가 검출.
+
+        ``ticks_net`` / 가격은 그대로 두고 ``ticks_net_total`` 만 어긋내면
+        from_orders 원장·같은-bar 재계산은 통과하지만, 전 트레이드 대상
+        ``ticks_net_total == ticks_net × size_contracts`` 불변식이 걸린다.
+        """
+        df, script, sizer, eq = scenario_symmetric_mix()
+        harness_result, _ = run_harness_and_runner(
+            df, script, sizer=sizer, account_equity_krw=eq
+        )
+        tampered = copy.deepcopy(harness_result)
+        tampered.trades[0].ticks_net_total += 3.0
         runner = VbtHarnessRunner(
             [_ScriptedSetup(script)],
             RiskFilterLayer(filters=[]),

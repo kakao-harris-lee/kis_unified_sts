@@ -311,9 +311,12 @@
   내재하므로 vbt `slippage=0`(이중계상 금지), 비용은 `fees=0`.
 - [x] **same-bar carve-out** — fill==exit bar 트레이드(세션 경계 EOD-on-fill /
   last-bar fallback)는 `from_orders`(컬럼/bar 당 1주문)로 표현 불가라 컬럼에서
-  제외하고 **해석적으로** 검증한다: harness 가 이들 청산을 체결 bar 종가로
-  마킹하므로 `exit_price == close[fill_bar_index]` 확인 + 그 tick 을 헤드라인
-  tick 합 불변식(`from_orders pnl 합 + samebar tick 합 == 전체 tick 합`)에 봉합.
+  제외하고 **해석적으로** 검증한다: (1) `exit_price == close[fill_bar_index]`
+  확인(harness 가 이들 청산을 체결 bar 종가로 마킹) + (2) tick P&L 을 fill/exit
+  가격에서 **독립 재계산**(`ticks_net == (exit-fill)/tick` long / `(fill-exit)/tick`
+  short)해 대조한다. 헤드라인 tick 합 불변식(`from_orders pnl 합 + samebar tick 합
+  == 전체 tick 합`)은 같은-bar 항이 양변에서 상쇄돼 **대수적으로 공허**하므로,
+  같은-bar tick 회계를 실제로 검증하는 것은 이 독립 재계산이다.
 - [x] **`legacy_exit` N/A 근거** — P3-c 의 `backtest.legacy_exit` escape hatch 는
   여기 해당 없음. harness 는 strategy-config exit 생성기가 없다 — 모든 Signal 이
   자체 `stop_loss`/`take_profit`/`valid_until` 를 들고 fill 시뮬레이터가 직접

@@ -40,6 +40,7 @@ from shared.backtest.vbt_runner import VectorbtRunner
 # 게이트 테스트의 시나리오/전략/윈도우를 그대로 소비한다 (드리프트 차단).
 from tests.unit.backtest.test_vbt_harness_runner import (
     HARNESS_PARITY_SCENARIOS,
+    _run_harness_only,
     run_harness_and_runner,
 )
 from tests.unit.backtest.test_vbt_runner import (
@@ -149,15 +150,21 @@ def run_futures_matrix() -> list[dict]:
     rows = []
     for label, factory in HARNESS_PARITY_SCENARIOS.items():
         df, script, sizer, eq = factory()
+        detail: str | None = None
         try:
             _, runner_result = run_harness_and_runner(
                 df, script, sizer=sizer, account_equity_krw=eq
             )
             trades = runner_result.trades
             parity_ok = True
-        except VbtHarnessParityError:
-            trades = []
+        except VbtHarnessParityError as exc:
+            # parity 실패라도 개수를 0 으로 조작하지 않는다 — 순수 harness(SoT)를
+            # 다시 돌려 실제 트레이드 개수를 복원하고 ❌ + 사유로 렌더한다.
+            trades = _run_harness_only(
+                df, script, sizer=sizer, account_equity_krw=eq
+            ).trades
             parity_ok = False
+            detail = str(exc)[:200]
         arrays = _build_order_arrays(trades, len(df))
         rows.append(
             {
@@ -166,6 +173,7 @@ def run_futures_matrix() -> list[dict]:
                 "multibar": len(arrays.multibar),
                 "samebar": len(arrays.samebar),
                 "parity_ok": parity_ok,
+                "detail": detail,
             }
         )
     return rows
@@ -366,7 +374,9 @@ def render(
         "엔진 비교가 아니라 **harness resolver 원장 ↔ from_orders 원장 구성** "
         "대조다(harness 가 유일 엔진). 멀티바 트레이드(`exit_bar > fill_bar`)만 "
         "컬럼당 1개로 `from_orders` 에 태우고, 같은-bar 트레이드(`==`, EOD-on-fill/"
-        "last-bar)는 표현 불가라 종가 일치로 해석 검증한다. 픽스처는 게이트 "
+        "last-bar)는 표현 불가라 종가 일치 확인 + tick P&L 을 fill/exit 가격에서 "
+        "**해석적으로 재계산**해 검증한다(헤드라인 tick 합은 same-bar 에 대해 "
+        "대수적으로 공허하므로 이 재계산이 실제 tick 회계 검증이다). 픽스처는 게이트 "
         "`tests/unit/backtest/test_vbt_harness_runner.py` 를 그대로 import."
     )
     a("")
@@ -375,9 +385,18 @@ def render(
     for r in futures_rows:
         a(
             f"| {r['label']} | {r['trades']} | {r['multibar']} | "
-            f"{r['samebar']} | {'✅' if r['parity_ok'] else '❌'} |"
+            f"{r['samebar']} | {'✅' if r['parity_ok'] else '❌ (아래 상세)'} |"
         )
     a("")
+    futures_failed = [r for r in futures_rows if not r.get("parity_ok")]
+    if futures_failed:
+        # 실패 행은 trades 를 0 으로 조작하지 않고 순수 harness 재실행으로 실제
+        # 개수를 복원했다 — 예외 메시지를 함께 노출해 조사 가능하게 한다.
+        a("**실패 행 상세** (parity ❌ — 개수는 순수 harness 재실행으로 복원):")
+        a("")
+        for r in futures_failed:
+            a(f"- `{r['label']}`: {r.get('detail') or 'parity mismatch (detail 없음)'}")
+        a("")
     if real is not None:
         a("## 실데이터 — williams_r (활성 주식 전략, 레지스트리 경로)")
         a("")

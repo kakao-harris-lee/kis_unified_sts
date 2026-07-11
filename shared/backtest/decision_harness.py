@@ -399,10 +399,12 @@ class BacktestDecisionHarness:
 
         exit_price: float | None = None
         exit_reason: str | None = None
-        # Bar index (into the replay DataFrame) where the exit executes. Set at
-        # every exit branch: equals the loop var ``j`` for in-loop stop/target/
-        # time exits, and ``last_same_session_idx`` for EOD/fallback exits.
-        # Additive bookkeeping only — no effect on exit_price / exit_reason.
+        # Bar index (into the replay DataFrame) where the exit executes. Tracked
+        # unconditionally alongside ``last_same_session_idx`` on each same-session
+        # bar, so any in-loop stop/target/time exit inherits the current ``j``.
+        # The EOD branch (which breaks *before* that assignment) and the post-loop
+        # fallback both override it with ``last_same_session_idx``. Additive
+        # bookkeeping only — no effect on exit_price / exit_reason.
         exit_bar_idx: int | None = None
 
         # Iterate bars after the fill bar to find exit
@@ -415,6 +417,7 @@ class BacktestDecisionHarness:
                 exit_bar_idx = last_same_session_idx
                 break
             last_same_session_idx = j
+            exit_bar_idx = j
 
             bar_high = highs[j]
             bar_low = lows[j]
@@ -433,7 +436,6 @@ class BacktestDecisionHarness:
                 if bar_ts_aware > vu:
                     exit_price = bar_close
                     exit_reason = "time_exit"
-                    exit_bar_idx = j
                     break
 
             if is_long:
@@ -443,12 +445,10 @@ class BacktestDecisionHarness:
                 if hit_stop:
                     exit_price = stop
                     exit_reason = "loss"
-                    exit_bar_idx = j
                     break
                 if hit_target:
                     exit_price = target
                     exit_reason = "win"
-                    exit_bar_idx = j
                     break
             else:
                 # Short
@@ -457,12 +457,10 @@ class BacktestDecisionHarness:
                 if hit_stop:
                     exit_price = stop
                     exit_reason = "loss"
-                    exit_bar_idx = j
                     break
                 if hit_target:
                     exit_price = target
                     exit_reason = "win"
-                    exit_bar_idx = j
                     break
 
         if exit_price is None:
