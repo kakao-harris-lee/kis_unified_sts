@@ -214,11 +214,11 @@ class RiskManager:
         # to ``consecutive_exceeds`` (inclusive=True default) makes the breaker the
         # single source for this raw integer ``>=`` — this was the fourth inline
         # copy consolidated (kill ConsecutiveLossesCondition + filter hard/soft
-        # were the other three). Census caveat: a FIFTH inline
-        # ``consecutive_losses >= threshold`` copy still lives in
-        # ``shared/strategy/position/sizers.py:356`` (the futures position-sizer
-        # soft-reduce tier). It is out of P4-h2 scope — left for a follow-up / P6
-        # cleanup, not resolved here — so this census stays honest about it.
+        # were the other three). Census status: the FIFTH (and final) inline
+        # ``consecutive_losses >= threshold`` copy — the futures position-sizer
+        # soft-reduce tier in ``shared/strategy/position/sizers.py`` — was
+        # delegated to ``consecutive_exceeds`` in P6 (behavior-0), closing the
+        # census. All five raw-count comparisons now route through this predicate.
         # Boundary is exact (integer comparison), so this is behavior-0.
         if self.config.max_consecutive_losses > 0 and consecutive_exceeds(
             self.state.consecutive_losses, self.config.max_consecutive_losses

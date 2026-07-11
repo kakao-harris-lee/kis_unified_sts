@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
+from shared.risk.primitives.breakers import consecutive_exceeds
 from shared.strategy.base import PositionSizer
 from shared.strategy.registry import SizerRegistry
 
@@ -350,10 +351,13 @@ class FixedFractionalFuturesSizer(PositionSizer["FixedFractionalFuturesConfig"])
         raw_size = target_risk_krw / max(krw_per_contract, 1.0)
         size = max(1, min(int(raw_size), c.max_position_size))
 
-        # 연속 손실 감지 시 절반으로 축소
-        if (
-            self.state is not None
-            and self.state.consecutive_losses >= c.soft_reduce_threshold
+        # 연속 손실 감지 시 절반으로 축소. ``self.state is not None`` 은 활성화
+        # 게이트(무변경)이고, 정수 ``>=`` 임계 비교는 P4-d 공유 프리미티브
+        # ``consecutive_exceeds`` 에 위임한다(inclusive=True 기본 → count >=
+        # threshold, behavior-0). 이로써 census의 다섯 번째(마지막) 인라인 copy가
+        # 소거된다.
+        if self.state is not None and consecutive_exceeds(
+            self.state.consecutive_losses, c.soft_reduce_threshold
         ):
             size = max(1, size // 2)
 
