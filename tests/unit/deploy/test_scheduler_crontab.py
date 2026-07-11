@@ -97,11 +97,17 @@ def _expand_field(field: str, lo: int, hi: int) -> set[int]:
     return out
 
 
+# supercronic honours ``NAME=value`` environment assignments inside the crontab
+# (e.g. ``CRON_TZ=Asia/Seoul``). These are not schedulable rows, so skip them when
+# parsing — they have no 5-field time spec.
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
 def _data_rows() -> list[CronRow]:
     rows: list[CronRow] = []
     for line in _CRONTAB.read_text().splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if not stripped or stripped.startswith("#") or _ENV_ASSIGN.match(stripped):
             continue
         rows.append(CronRow(stripped))
     return rows
