@@ -11,7 +11,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+import pytest
+
 from shared.decision.signal import Signal
+from shared.risk.config import ConcurrentPositionsFilterSettings
 from shared.risk.filters.concurrent_positions import (
     SKIP_PER_ASSET,
     SKIP_TOTAL,
@@ -264,3 +267,23 @@ def test_only_per_asset_cap_configured() -> None:
     )
     # futures overflow ignored (unset total cap); stock below per-asset → pass.
     assert f.check(_make_signal(), _snap()).passed is True
+
+
+# ---------------------------------------------------------------------------
+# Settings validation — caps must be > 0 (World-A MIN_POSITIONS=1 parity)
+# ---------------------------------------------------------------------------
+
+
+def test_settings_defaults_disabled() -> None:
+    s = ConcurrentPositionsFilterSettings()
+    assert s.enabled is False
+    assert s.max_total_positions is None
+    assert s.max_positions_per_asset is None
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_settings_reject_non_positive_caps(bad: int) -> None:
+    with pytest.raises(ValueError):
+        ConcurrentPositionsFilterSettings(max_total_positions=bad)
+    with pytest.raises(ValueError):
+        ConcurrentPositionsFilterSettings(max_positions_per_asset=bad)

@@ -601,16 +601,21 @@ class ConcurrentPositionsFilterSettings(BaseModel):
     )
     max_total_positions: int | None = Field(
         default=None,
+        gt=0,
         description=(
             "Portfolio-wide open-position cap (aligned with World-A "
-            "risk_management.max_total_positions). None disables the total check."
+            "risk_management.max_total_positions). None disables the total check. "
+            "Must be > 0 (a 0 cap would reject every entry — matches World-A "
+            "MIN_POSITIONS=1)."
         ),
     )
     max_positions_per_asset: int | None = Field(
         default=None,
+        gt=0,
         description=(
             "Per-asset-class open-position cap (aligned with World-A "
-            "asset_limits.<asset>.max_positions). None disables the per-asset check."
+            "asset_limits.<asset>.max_positions). None disables the per-asset "
+            "check. Must be > 0."
         ),
     )
 
