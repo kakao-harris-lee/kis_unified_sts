@@ -58,6 +58,7 @@ from shared.risk.models import (
     PortfolioMetrics,
     RiskState,
 )
+from shared.risk.primitives.breakers import consecutive_exceeds
 
 if TYPE_CHECKING:
     from shared.models.position import Position
@@ -149,12 +150,27 @@ class RiskManager:
     def can_open_position(self, asset_class: str) -> bool:
         """Check if a new position can be opened for the given asset class
 
-        Enforces:
-        1. Daily loss limit not breached
-        2. Not manually blocked
-        3. Maximum total positions not exceeded
-        4. Maximum positions per asset class not exceeded
-        5. Critical drawdown not reached
+        Short-circuit chain of independent gates — the first failing gate wins
+        and the rest are not evaluated. Enforced in this exact order (a
+        delegation must not reorder it):
+
+            1. Not blocked            → returns False, keeps existing reason
+            2. Daily loss limit (percent-space) not breached
+                                      → auto-blocks DAILY_LOSS_LIMIT
+            3. Consecutive-loss circuit breaker not tripped
+                                      → auto-blocks CONSECUTIVE_LOSSES
+            4. Daily loss-in-points circuit breaker not tripped
+                                      → auto-blocks DAILY_LOSS_LIMIT_POINTS
+            5. Maximum total positions not exceeded    → returns False, no latch
+            6. Maximum positions per asset class not exceeded
+                                                       → returns False, no latch
+            7. Critical drawdown level not reached     → returns False, no latch
+
+        Gates 2-4 latch a session auto-block (cleared on the next daily reset);
+        gates 5-7 only refuse the entry without latching. Gate 3's ``>=``
+        threshold comparison is delegated to ``consecutive_exceeds`` (P4-d);
+        every other gate stays inline (see the notes below and on
+        ``_check_daily_loss_limit``).
 
         Args:
             asset_class: Asset class name ('stock', 'futures')
@@ -193,9 +209,19 @@ class RiskManager:
 
         # Consecutive-loss circuit breaker (futures-native, unit-free). Halts new
         # entries for the session after N consecutive losing closes. 0 = disabled.
-        if (
-            self.config.max_consecutive_losses > 0
-            and self.state.consecutive_losses >= self.config.max_consecutive_losses
+        # The ``> 0`` disable gate is an *activation* condition (kept here); the
+        # ``>=`` threshold comparison is the P4-d shared predicate. Delegating it
+        # to ``consecutive_exceeds`` (inclusive=True default) makes the breaker the
+        # single source for this raw integer ``>=`` — this was the fourth inline
+        # copy consolidated (kill ConsecutiveLossesCondition + filter hard/soft
+        # were the other three). Census caveat: a FIFTH inline
+        # ``consecutive_losses >= threshold`` copy still lives in
+        # ``shared/strategy/position/sizers.py:356`` (the futures position-sizer
+        # soft-reduce tier). It is out of P4-h2 scope — left for a follow-up / P6
+        # cleanup, not resolved here — so this census stays honest about it.
+        # Boundary is exact (integer comparison), so this is behavior-0.
+        if self.config.max_consecutive_losses > 0 and consecutive_exceeds(
+            self.state.consecutive_losses, self.config.max_consecutive_losses
         ):
             logger.warning(
                 "Cannot open position for %s: consecutive-loss limit breached "
@@ -370,6 +396,18 @@ class RiskManager:
 
         Returns:
             True if within limit, False if limit breached
+
+        Note (P4-h2): deliberately NOT delegated to the P4-d
+        ``loss_fraction_exceeds`` breaker primitive. This gate works in
+        *percent space* — it compares ``daily_pnl_pct = (pnl/capital)*100``
+        against a percent limit (``-daily_loss_limit_pct``) — whereas the
+        primitive works in *fraction space* (``pnl/equity`` vs a fraction
+        limit). Routing this through the breaker (limit ``/100``) would change
+        the IEEE-754 rounding path, and the production branch below consumes a
+        pre-derived stored ``state.daily_pnl_pct`` that can diverge from a fresh
+        ``daily_pnl/capital`` division (e.g. restored independently from Redis),
+        which the fraction primitive cannot represent without re-deriving.
+        Forcing it would break behavior-0, so this comparison is preserved.
         """
         # Calculate daily P&L percentage
         # Use internal test attributes if set, otherwise use state
