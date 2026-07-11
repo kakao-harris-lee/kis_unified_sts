@@ -22,13 +22,14 @@ Flag routing (STOCK_RISK_FILTER env var):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import socket
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from services.stock_risk_filter.codec import (
     decode_fields,
@@ -46,6 +47,9 @@ from shared.streaming.approval_gate import (
 )
 from shared.streaming.stage import StreamStage
 from shared.streaming.stock_keys import stock_daemon_positions_key
+
+if TYPE_CHECKING:
+    from shared.risk.config import StockRiskConfig
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +242,77 @@ def _streams_for(mode: str) -> tuple[str, str]:
     return "signal.candidate.stock", "signal.final.stock"
 
 
+def _build_leverage_provider(
+    config: StockRiskConfig,
+    sync_redis: Any,
+    positions_key: str,
+) -> Callable[[], Mapping[str, Any] | None] | None:
+    """Build the LeverageFilter snapshot provider for the stock chain (P5-3).
+
+    Reuses the existing M4 ``stock_daemon_positions_key`` hash (written by
+    ``services/stock_order_router``) and ``StockRiskConfig.account_equity_krw``
+    — DRY, and NO new Redis key. The stock positions hash carries ``entry_price``
+    (not ``current_price``), so each record is normalized to the filter's
+    contract by mapping ``entry_price`` into ``current_price``: the resulting
+    gross-leverage is measured on entry notional, the same basis
+    ``core_correlation``'s Track B sector-cap uses. Cash equities have contract
+    multiplier 1, so no ``product_specs`` map is needed (the filter defaults to
+    1.0 when ``product_specs`` is ``None``).
+
+    Read-only (reuses the daemon's open-position sync client). Only built when
+    ``leverage.enabled``; the default (disabled) path returns ``None`` so the
+    filter is never constructed and behaviour is unchanged. Any failure fails
+    OPEN (returns ``None`` → inert filter). Enforcement stays a separate operator
+    decision (``leverage.mode`` flip to ``enforce``).
+    """
+    leverage_settings = getattr(config, "leverage", None)
+    if leverage_settings is None or not leverage_settings.enabled:
+        return None
+    try:
+        from shared.risk.leverage_provider import build_leverage_snapshot_provider
+
+        def _positions() -> list[dict[str, Any]]:
+            raw = sync_redis.hgetall(positions_key)
+            positions: list[dict[str, Any]] = []
+            for code, record_json in dict(raw).items():
+                try:
+                    record = json.loads(record_json)
+                    positions.append(
+                        {
+                            "code": record.get("code", code),
+                            "quantity": record["quantity"],
+                            # Stock hash has entry_price, not current_price;
+                            # use it as the notional price (entry-notional
+                            # leverage). A malformed leg is dropped (fail-open,
+                            # understating leverage) rather than poisoning the
+                            # whole read — same lenience as core_correlation.
+                            "current_price": record["entry_price"],
+                        }
+                    )
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+            return positions
+
+        equity = config.account_equity_krw
+        provider = build_leverage_snapshot_provider(
+            positions_provider=_positions,
+            equity_provider=lambda: equity,
+        )
+        logger.info(
+            "Stock LeverageFilter provider wired (mode=%s, equity=%.0f) — "
+            "read-only; enforcement still gated by mode=enforce",
+            leverage_settings.mode,
+            float(equity),
+        )
+        return provider
+    except Exception:
+        logger.exception(
+            "stock leverage provider wiring failed; LeverageFilter left inert "
+            "(fail-open)"
+        )
+        return None
+
+
 async def _build_and_run() -> int:
     """Flag-gated production entrypoint.
 
@@ -283,10 +358,12 @@ async def _build_and_run() -> int:
             )
             return True  # fail-closed: block re-entry on uncertainty
 
+    leverage_provider = _build_leverage_provider(config, sync_redis, positions_key)
     layer = RiskFilterLayer.from_config(
         config=config,
         trading_windows=windows,
         has_open_position_provider=_has_open_position,
+        leverage_snapshot_provider=leverage_provider,
     )
     runtime_state = RuntimeRiskState(redis=redis_client, asset_class="stock")
     # Loaded once at startup (not on the hot path) — inert by default

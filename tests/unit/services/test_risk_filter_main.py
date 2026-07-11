@@ -488,3 +488,70 @@ def test_daemon_defaults_to_inert_approval_gate_config(redis, signals_writer):
     layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
     daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
     assert daemon.approval_gate_config.enabled is False
+
+
+# ---------------------------------------------------------------------------
+# P5-3: LeverageFilter provider wiring (_build_leverage_wiring)
+# ---------------------------------------------------------------------------
+
+
+def test_build_leverage_wiring_disabled_returns_none() -> None:
+    """Default (leverage.enabled=False): no provider/specs wired, no config load
+    — the disabled path is behaviour-0."""
+    from types import SimpleNamespace
+
+    from services.risk_filter.main import _build_leverage_wiring
+
+    cfg = SimpleNamespace(leverage=SimpleNamespace(enabled=False, mode="shadow"))
+    assert _build_leverage_wiring(cfg) == (None, None)
+
+
+def test_build_leverage_wiring_no_leverage_attr_returns_none() -> None:
+    """A config object with no ``leverage`` attribute (defensive) → (None, None)."""
+    from types import SimpleNamespace
+
+    from services.risk_filter.main import _build_leverage_wiring
+
+    assert _build_leverage_wiring(SimpleNamespace()) == (None, None)
+
+
+def test_build_leverage_wiring_enabled_wires_provider(monkeypatch) -> None:
+    """enabled → reuses the margin read-model sources: TradingStateReader for
+    positions + FuturesMarginConfig equity + build_product_specs multiplier map.
+    The provider yields the {positions, equity_krw} snapshot the filter reads."""
+    from types import SimpleNamespace
+
+    import shared.streaming.trading_state as ts
+    from services.risk_filter.main import _build_leverage_wiring
+
+    legs = [{"code": "A05603", "quantity": 2, "current_price": 300.0}]
+    monkeypatch.setattr(
+        ts.TradingStateReader, "get_positions", lambda self: legs, raising=True
+    )
+    cfg = SimpleNamespace(leverage=SimpleNamespace(enabled=True, mode="shadow"))
+    provider, specs = _build_leverage_wiring(cfg)
+
+    assert provider is not None
+    # Futures multiplier map is non-empty (execution.yaml + margin.yaml merge).
+    assert specs
+    snap = provider()
+    assert snap is not None
+    assert snap["equity_krw"] > 0  # FuturesMarginConfig fallback equity
+    assert list(snap["positions"]) == legs
+
+
+def test_build_leverage_wiring_provider_fails_open_on_read_error(monkeypatch) -> None:
+    """A raising positions read → provider returns None (never propagates)."""
+    from types import SimpleNamespace
+
+    import shared.streaming.trading_state as ts
+    from services.risk_filter.main import _build_leverage_wiring
+
+    def _boom(self):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(ts.TradingStateReader, "get_positions", _boom, raising=True)
+    cfg = SimpleNamespace(leverage=SimpleNamespace(enabled=True, mode="enforce"))
+    provider, _specs = _build_leverage_wiring(cfg)
+    assert provider is not None
+    assert provider() is None

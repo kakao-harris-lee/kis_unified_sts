@@ -19,12 +19,17 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from shared.config.runtime_defaults import redis_url_from_env
 from shared.decision.signal import Signal
 from shared.risk.layer import RiskFilterLayer
+
+if TYPE_CHECKING:
+    from shared.risk.config import FuturesRiskConfig
+    from shared.risk.futures_margin import MarginProductSpec
 from shared.risk.runtime_state import RuntimeRiskState
 from shared.streaming.approval_gate import (
     ApprovalGateConfig,
@@ -277,6 +282,78 @@ class RiskFilterDaemon(StreamStage):
         await self.signals_writer.flush()
 
 
+def _build_leverage_wiring(
+    risk_config: FuturesRiskConfig,
+) -> tuple[
+    Callable[[], Mapping[str, Any] | None] | None,
+    Mapping[str, MarginProductSpec] | None,
+]:
+    """Build the ``(snapshot_provider, product_specs)`` for the LeverageFilter (P5-3).
+
+    Reuses the futures margin read-model's sources so the leverage denominator
+    and per-contract multipliers stay consistent with the margin lane — DRY,
+    and NO new Redis key:
+
+    * open positions ← the same ``trading:futures:positions`` hash the margin
+      publisher reads (:class:`~shared.streaming.trading_state.TradingStateReader`);
+      its records already carry ``code`` / ``quantity`` / ``current_price``;
+    * account equity ← ``FuturesMarginConfig.fallback_account_equity_krw`` (the
+      exact denominator the margin daemon uses when no live broker snapshot is
+      available — the futures balance endpoint is REST-unstable / mock-blocked);
+    * multiplier map ← :func:`build_product_specs` (execution.yaml contract
+      constants merged with margin.yaml rates) — the same spec map the margin
+      read-model resolves ``spec_for_symbol`` against.
+
+    Read-only: no order path is touched. Only built when ``leverage.enabled``,
+    so the default (disabled) path wires nothing and behaviour is unchanged even
+    though the filter itself is never constructed then either. Any failure fails
+    OPEN — returns ``(None, None)`` so the filter (if built) stays inert and
+    passes every signal — mirroring the fail-open contract in
+    ``shared/risk/filters/leverage.py``. Enforcement remains a separate operator
+    decision (``leverage.mode`` flip to ``enforce``); this wiring only makes the
+    shadow filter able to *compute* gross leverage.
+    """
+    leverage_settings = getattr(risk_config, "leverage", None)
+    if leverage_settings is None or not leverage_settings.enabled:
+        return None, None
+    try:
+        from services.futures_margin_risk.config import FuturesMarginConfig
+        from services.futures_margin_risk.main import build_product_specs
+        from shared.config.loader import ConfigLoader
+        from shared.risk.leverage_provider import build_leverage_snapshot_provider
+        from shared.streaming.trading_state import TradingStateReader
+
+        margin_config = FuturesMarginConfig.load_or_default()
+        execution_yaml = ConfigLoader.load("execution.yaml")
+        execution_specs = (
+            execution_yaml.get("futures_contract_spec", {})
+            if isinstance(execution_yaml, dict)
+            else {}
+        )
+        product_specs = build_product_specs(margin_config, execution_specs)
+
+        reader = TradingStateReader("futures")
+        equity = margin_config.fallback_account_equity_krw
+        provider = build_leverage_snapshot_provider(
+            positions_provider=reader.get_positions,
+            equity_provider=lambda: equity,
+        )
+        logger.info(
+            "LeverageFilter provider wired (mode=%s, equity=%.0f, %d product specs)"
+            " — read-only; enforcement still gated by mode=enforce",
+            leverage_settings.mode,
+            equity,
+            len(product_specs),
+        )
+        return provider, product_specs
+    except Exception:
+        logger.exception(
+            "futures leverage provider wiring failed; LeverageFilter left inert "
+            "(fail-open)"
+        )
+        return None, None
+
+
 async def _build_and_run() -> int:
     """Production entrypoint. Wires Redis + optional CH + RiskFilterLayer."""
     import os
@@ -303,7 +380,13 @@ async def _build_and_run() -> int:
 
     risk_config = FuturesRiskConfig.from_yaml()
     trading_windows = load_trading_windows()
-    layer = RiskFilterLayer.from_config(risk_config, trading_windows)
+    leverage_provider, leverage_product_specs = _build_leverage_wiring(risk_config)
+    layer = RiskFilterLayer.from_config(
+        risk_config,
+        trading_windows,
+        leverage_snapshot_provider=leverage_provider,
+        leverage_product_specs=leverage_product_specs,
+    )
     runtime_state = RuntimeRiskState(
         redis=redis_client, asset_class="futures", key_suffix=risk_state_suffix
     )
