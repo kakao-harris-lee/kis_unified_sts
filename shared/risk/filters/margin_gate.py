@@ -97,6 +97,34 @@ _BLOCKING_RISK_LEVELS: frozenset[str] = frozenset({"block_new_entries", "critica
 _KNOWN_RISK_LEVELS: frozenset[str] = frozenset(RISK_LEVELS)
 
 
+def _validate_blocking_subset() -> None:
+    """Fail loudly at import if a blocking level is no longer a published level.
+
+    ``_BLOCKING_RISK_LEVELS`` is a hand-picked subset of the publish-side SoT
+    (:data:`shared.risk.futures_margin.RISK_LEVELS`), while ``_KNOWN_RISK_LEVELS``
+    auto-tracks that SoT. If the publisher ever renames a blocking level (e.g.
+    ``critical`` → ``catastrophic``), the renamed string still lands in KNOWN but
+    the stale literal here would fall out of the SoT — a NEW entry carrying the
+    renamed severity would then be *unknown* and fail OPEN, silently killing the
+    gate (the recurring SoT-drift failure mode, memory #601/#533/#537).
+
+    A plain ``assert`` would be stripped under ``python -O``, so this raises
+    explicitly at module load. The regression test ``test_blocking_levels_
+    subset_of_sot`` pins the same invariant.
+    """
+    orphaned = _BLOCKING_RISK_LEVELS - _KNOWN_RISK_LEVELS
+    if orphaned:
+        raise RuntimeError(
+            "margin_gate blocking levels not in publisher SoT RISK_LEVELS: "
+            f"{sorted(orphaned)} (RISK_LEVELS={list(RISK_LEVELS)}). A publish-side "
+            "risk_level rename dropped a blocking level — update "
+            "_BLOCKING_RISK_LEVELS to match shared.risk.futures_margin.RISK_LEVELS."
+        )
+
+
+_validate_blocking_subset()
+
+
 def _default_snapshot_provider(
     latest_key: str,
 ) -> Callable[[], Mapping[str, str] | None]:
@@ -223,6 +251,13 @@ class MarginGateFilter(RiskFilter):
 
         Returns a plain ``{str: str}`` dict, or ``None`` (⇒ pass) when the
         provider raises, returns ``None``, or returns a non-``Mapping``.
+
+        Byte-string values are NOT decoded: the production reader uses
+        ``decode_responses=True`` so the hash is always ``{str: str}``. A raw
+        ``bytes`` client is unsupported — its keys/values ``str()``-coerce to
+        ``"b'...'"`` reprs, so ``asof_ts``/``risk_level`` miss their lookups and
+        the signal fails OPEN (stale/unknown path), never a spurious block. Pinned
+        by ``test_bytes_snapshot_fails_open``.
         """
         try:
             raw = self._snapshot_provider()

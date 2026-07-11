@@ -51,7 +51,10 @@ risk:
     enabled: false
     mode: shadow          # shadow(관측) | enforce(차단) — 운영자 flip
     latest_key: "futures:risk:latest"
-    stale_max_age_seconds: 1200   # 20m — 발행자 ≤15m TTL 계정상태 캐던스 + 여유
+    # 발행자 latest_ttl_seconds=900s(15m) 미만으로 둬 stale 분기가 실제 도달
+    # 가능하게 한다: 900s 지나면 키 만료(부재→pass)라 stale 경로가 죽지만, TTL
+    # 이내라도 600~900s 된 스냅샷은 여기서 stale 처리(라이브 차단 오신뢰 방지, F4).
+    stale_max_age_seconds: 600    # 10m — 발행 TTL(900s) 미만
 
 trading_windows:
   - "09:00-10:30"

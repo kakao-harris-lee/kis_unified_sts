@@ -551,6 +551,9 @@ from typing import Literal  # noqa: E402 — grouped with the deferred imports
 from pydantic import BaseModel, Field  # noqa: E402 — deferred import (circulars)
 
 from shared.config.base import ServiceConfigBase  # noqa: E402
+from shared.risk.futures_margin import (  # noqa: E402 — publish-side SoT constant
+    MARGIN_RISK_LATEST_KEY,
+)
 
 
 class PortfolioMddFilterSettings(BaseModel):
@@ -655,16 +658,22 @@ class MarginGateFilterSettings(BaseModel):
         ),
     )
     latest_key: str = Field(
-        default="futures:risk:latest",
-        description="Redis hash published by services/futures_margin_risk",
+        default=MARGIN_RISK_LATEST_KEY,
+        description=(
+            "Redis hash published by services/futures_margin_risk. Default is the "
+            "shared publish-side SoT constant (MARGIN_RISK_LATEST_KEY) so a rename "
+            "cannot desync publisher/consumer into a silently-inert gate (F2)."
+        ),
     )
     stale_max_age_seconds: int = Field(
-        default=1200,
+        default=600,
         gt=0,
         description=(
             "Fail-open when the snapshot asof_ts (KST-naive ISO) is older than "
-            "this. 20m covers the publisher's short (≤15m TTL) account-state "
-            "cadence with slack; the key's own 15m TTL is the harder bound."
+            "this. Kept BELOW the publisher's 900s (15m) latest_ttl_seconds so "
+            "the stale branch is actually reachable: past 900s the key expires "
+            "(absent → pass), but a snapshot aged 600-900s within the TTL window "
+            "is treated stale here rather than trusted as a live block (F4)."
         ),
     )
 

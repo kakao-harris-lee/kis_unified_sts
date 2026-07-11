@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigNotFoundError
 from shared.instruments.futures import PRODUCT_ARG_TO_SPEC_KEY
+from shared.risk.futures_margin import MARGIN_RISK_LATEST_KEY
 
 
 class MarginProductDefault(BaseModel):
@@ -69,7 +70,7 @@ class MarginThresholdsConfig(BaseModel):
 class MarginRedisConfig(BaseModel):
     """Redis publication contract (latest hash + stream + short TTLs)."""
 
-    latest_key: str = Field(default="futures:risk:latest")
+    latest_key: str = Field(default=MARGIN_RISK_LATEST_KEY)
     latest_ttl_seconds: int = Field(default=900, gt=0)
     stream_key: str = Field(default="stream:futures.risk")
     stream_maxlen: int = Field(default=5000, gt=0)

@@ -66,7 +66,7 @@ def _filter(
     *,
     mode: str = "enforce",
     provider=None,
-    stale_max_age_seconds: int = 1200,
+    stale_max_age_seconds: int = 600,
 ) -> MarginGateFilter:
     return MarginGateFilter(
         mode=mode,
@@ -105,15 +105,17 @@ def test_no_snapshot_passes() -> None:
 
 
 def test_stale_snapshot_passes() -> None:
-    stale = _snapshot(risk_level="critical", asof=_NOW - timedelta(seconds=1201))
+    # 1s past the (default 600s) stale bound → fail open, even when critical.
+    stale = _snapshot(risk_level="critical", asof=_NOW - timedelta(seconds=601))
     f = _filter(mode="enforce", provider=lambda: stale)
     assert f.check(_make_signal(), _snap()).passed is True
 
 
 def test_fresh_boundary_not_stale() -> None:
     # age == stale_max_age_seconds is NOT stale (> boundary), so a fresh
-    # critical snapshot at exactly the age bound still rejects.
-    edge = _snapshot(risk_level="critical", asof=_NOW - timedelta(seconds=1200))
+    # critical snapshot at exactly the age bound still rejects. The helper's
+    # stale_max_age_seconds (600) is the SoT for this boundary.
+    edge = _snapshot(risk_level="critical", asof=_NOW - timedelta(seconds=600))
     f = _filter(mode="enforce", provider=lambda: edge)
     assert f.check(_make_signal(), _snap()).passed is False
 
@@ -265,12 +267,91 @@ def test_settings_defaults_disabled_and_shadow() -> None:
     assert s.enabled is False
     assert s.mode == "shadow"
     assert s.latest_key == "futures:risk:latest"
-    assert s.stale_max_age_seconds == 1200
+    # Kept below the publisher's 900s TTL so the stale branch is reachable (F4).
+    assert s.stale_max_age_seconds == 600
 
 
 def test_settings_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError):
         MarginGateFilterSettings(mode="live")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# SoT coupling — pin drift-prone couplings the gate depends on (P4-f review)
+# ---------------------------------------------------------------------------
+
+
+def test_blocking_levels_subset_of_sot() -> None:
+    """F1: every blocking level must still exist in the publisher SoT.
+
+    ``_BLOCKING_RISK_LEVELS`` is hand-maintained; ``RISK_LEVELS`` is the
+    publish-side source of truth. If a publish-side rename drops a blocking
+    level, a NEW entry carrying the renamed severity would be *unknown* and fail
+    OPEN, silently killing the gate. The module enforces this at import; this
+    test pins the same invariant and documents the coupling.
+    """
+    from shared.risk.filters.margin_gate import (
+        _BLOCKING_RISK_LEVELS,
+        _validate_blocking_subset,
+    )
+    from shared.risk.futures_margin import RISK_LEVELS
+
+    assert _BLOCKING_RISK_LEVELS.issubset(RISK_LEVELS)
+    # The load-time guard must also accept the current (valid) state.
+    _validate_blocking_subset()
+
+
+def test_validate_blocking_subset_raises_on_orphan(monkeypatch) -> None:
+    """F1: a blocking level not in RISK_LEVELS must raise at validation time
+    (simulates a publish-side rename that orphaned a stale blocking literal)."""
+    import shared.risk.filters.margin_gate as mg
+
+    monkeypatch.setattr(mg, "_BLOCKING_RISK_LEVELS", frozenset({"catastrophic"}))
+    monkeypatch.setattr(mg, "_KNOWN_RISK_LEVELS", frozenset(mg.RISK_LEVELS))
+    with pytest.raises(RuntimeError, match="not in publisher SoT"):
+        mg._validate_blocking_subset()
+
+
+def test_margin_snapshot_key_matches_publisher() -> None:
+    """F2: the consumer's default snapshot key must equal the publisher's.
+
+    Both derive from the shared ``MARGIN_RISK_LATEST_KEY`` SoT constant; this
+    pins that they stay identical so a rename can never desync publish/consume
+    into a permanently empty (silently inert) gate.
+    """
+    from services.futures_margin_risk.config import MarginRedisConfig
+    from shared.risk.config import MarginGateFilterSettings
+    from shared.risk.futures_margin import MARGIN_RISK_LATEST_KEY
+
+    consumer_key = MarginGateFilterSettings().latest_key
+    publisher_key = MarginRedisConfig().latest_key
+    assert consumer_key == publisher_key == MARGIN_RISK_LATEST_KEY
+
+
+# ---------------------------------------------------------------------------
+# F3: raw-bytes snapshot (non-decoded client) → fail OPEN
+# ---------------------------------------------------------------------------
+
+
+def test_bytes_snapshot_fails_open() -> None:
+    """A raw ``bytes`` hash (no ``decode_responses=True``) must fail OPEN.
+
+    The production reader decodes responses, so the hash is always ``{str: str}``.
+    If a raw-bytes provider is injected, ``str()`` coercion yields ``"b'...'"``
+    reprs whose keys miss the ``asof_ts``/``risk_level`` lookups → treated as
+    stale/unknown → pass. This locks the current (fail-open) behavior and the
+    docstring contract, so a would-be block level in bytes never becomes a
+    spurious rejection.
+    """
+    bytes_snapshot = {
+        b"risk_level": b"critical",
+        b"asof_ts": _NOW.isoformat().encode(),
+        b"degraded": b"false",
+    }
+    f = _filter(mode="enforce", provider=lambda: bytes_snapshot)  # type: ignore[arg-type]
+    result = f.check(_make_signal(), _snap())
+    assert result.passed is True
+    assert result.skip_reason is None
 
 
 # ---------------------------------------------------------------------------
