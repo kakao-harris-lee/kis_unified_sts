@@ -191,6 +191,44 @@ def test_concurrent_positions_binds_stock_asset_class() -> None:
     assert filt.max_positions_per_asset == 15
 
 
+def test_concurrent_positions_warns_when_enabled_but_unwired(caplog) -> None:
+    """F5: enabling the filter without a count provider must emit exactly one
+    build-time warning so operators can tell 'inert (unwired)' from
+    'active + passing'."""
+    import logging
+
+    cfg = _cfg()
+    cfg.concurrent_positions.enabled = True
+    with caplog.at_level(logging.WARNING, logger="shared.risk.layer"):
+        RiskFilterLayer.from_config(cfg, trading_windows=["09:00-15:30"])
+    warnings = [r.getMessage() for r in caplog.records if r.name == "shared.risk.layer"]
+    assert sum("no count provider wired" in m for m in warnings) == 1
+
+
+def test_concurrent_positions_no_warning_when_disabled(caplog) -> None:
+    """Default (disabled) config must not emit the unwired warning at all."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="shared.risk.layer"):
+        RiskFilterLayer.from_config(_cfg(), trading_windows=["09:00-15:30"])
+    assert not any("count provider wired" in r.getMessage() for r in caplog.records)
+
+
+def test_concurrent_positions_no_warning_when_wired(caplog) -> None:
+    """Enabled + wired must not emit the unwired warning (it is active, not inert)."""
+    import logging
+
+    cfg = _cfg()
+    cfg.concurrent_positions.enabled = True
+    with caplog.at_level(logging.WARNING, logger="shared.risk.layer"):
+        RiskFilterLayer.from_config(
+            cfg,
+            trading_windows=["09:00-15:30"],
+            open_positions_count_provider=lambda: {},
+        )
+    assert not any("no count provider wired" in r.getMessage() for r in caplog.records)
+
+
 def test_concurrent_positions_noop_equivalence() -> None:
     """Inert proof: a layer WITH the enabled filter but NO count provider
     yields the identical LayerResult as a layer WITHOUT the filter."""

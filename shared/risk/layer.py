@@ -23,6 +23,7 @@ filter requires I/O, without changing the public sync API.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from shared.portfolio.core_holdings import CoreHoldings
     from shared.risk.config import FuturesRiskConfig
     from shared.risk.state import RiskStateSnapshot
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -225,9 +228,35 @@ class RiskFilterLayer:
                 ConcurrentPositionsFilter,
             )
 
+            # Fail-fast on the per-asset binding: every FuturesRiskConfig (and
+            # its StockRiskConfig subclass) declares ``_asset_class``, so a
+            # missing/blank value means a future subclass forgot to — raise
+            # loudly rather than silently mis-bind the per-asset cap to
+            # "futures" (which would gate stock entries against the futures cap).
+            asset_class = getattr(config, "_asset_class", None)
+            if not asset_class:
+                raise ValueError(
+                    f"{type(config).__name__} has no _asset_class; "
+                    "ConcurrentPositionsFilter cannot bind its per-asset cap. "
+                    "Every FuturesRiskConfig subclass must declare _asset_class "
+                    "(e.g. 'futures' / 'stock')."
+                )
+
+            # Observability: an enabled filter with no count provider is a
+            # silent fail-open no-op. Log once at build time so operators can
+            # tell 'inert because unwired' apart from 'active and passing'
+            # (provider wiring lands in P4-h2 / P4-f).
+            if open_positions_count_provider is None:
+                logger.warning(
+                    "ConcurrentPositionsFilter enabled for asset_class=%s but no "
+                    "count provider wired — filter is inert (fail-open pass on "
+                    "every signal)",
+                    asset_class,
+                )
+
             filters.append(
                 ConcurrentPositionsFilter(
-                    asset_class=getattr(config, "_asset_class", "futures"),
+                    asset_class=asset_class,
                     open_positions_count_provider=open_positions_count_provider,
                     max_total_positions=concurrent_settings.max_total_positions,
                     max_positions_per_asset=(

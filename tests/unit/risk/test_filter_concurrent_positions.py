@@ -10,6 +10,8 @@ boundary the monolithic RiskManager uses.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -23,9 +25,12 @@ from shared.risk.filters.concurrent_positions import (
 from shared.risk.state import RiskStateSnapshot
 
 _SYMBOL = "A05603"
+#: Deterministic KST timestamp inside the ``09:00-10:30`` window used by the
+#: from_config chain tests so TradingHoursFilter (filter #1) never rejects.
+_IN_WINDOW_KST = datetime(2026, 7, 10, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
 
 
-def _make_signal(symbol: str = _SYMBOL) -> Signal:
+def _make_signal(symbol: str = _SYMBOL, generated_at: datetime | None = None) -> Signal:
     return Signal(
         setup_type="test_setup",
         direction="long",
@@ -34,6 +39,7 @@ def _make_signal(symbol: str = _SYMBOL) -> Signal:
         stop_loss=355.0,
         take_profit=370.0,
         confidence=0.8,
+        generated_at=generated_at,
     )
 
 
@@ -241,6 +247,87 @@ def test_provider_returns_none_fails_open() -> None:
     )
     result = f.check(_make_signal(), _snap())
     assert result.passed is True
+
+
+# ---------------------------------------------------------------------------
+# F1 — corrupt provider return must fail OPEN, never raise into the daemon
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_value", [None, "", "nan", "abc", float("nan")])
+def test_provider_non_int_value_fails_open(bad_value: object) -> None:
+    """A non-int-coercible value (Redis stores counts as strings) must fail
+    OPEN inside the guard, not raise ``int()`` out of check() into the guardless
+    layer/daemon path (which would fail CLOSED — poison message, stalled pipe)."""
+    f = ConcurrentPositionsFilter(
+        asset_class="stock",
+        open_positions_count_provider=lambda: {"stock": bad_value},  # type: ignore[dict-item]
+        max_total_positions=1,
+        max_positions_per_asset=1,
+    )
+    result = f.check(_make_signal(), _snap())
+    assert result.passed is True
+    assert result.skip_reason is None
+
+
+@pytest.mark.parametrize("bad_return", [[1, 2, 3], "not-a-mapping", 42, (1, 2)])
+def test_provider_non_mapping_fails_open(bad_return: object) -> None:
+    """A non-Mapping return (e.g. a list) must fail OPEN via the isinstance
+    guard — a bare ``counts.values()`` would raise AttributeError otherwise."""
+    f = ConcurrentPositionsFilter(
+        asset_class="stock",
+        open_positions_count_provider=lambda: bad_return,  # type: ignore[return-value]
+        max_total_positions=1,
+        max_positions_per_asset=1,
+    )
+    assert f.check(_make_signal(), _snap()).passed is True
+
+
+# ---------------------------------------------------------------------------
+# F3(c) — from_config end-to-end: enabled filter + provider + cap breach must
+# make RiskFilterLayer.evaluate actually reject through the full chain.
+# ---------------------------------------------------------------------------
+
+
+def test_from_config_chain_rejects_when_total_cap_breached() -> None:
+    from shared.risk.config import FuturesRiskConfig
+    from shared.risk.layer import RiskFilterLayer
+
+    cfg = FuturesRiskConfig()
+    cfg.concurrent_positions.enabled = True
+    cfg.concurrent_positions.max_total_positions = 20
+    cfg.concurrent_positions.max_positions_per_asset = 5
+
+    layer = RiskFilterLayer.from_config(
+        cfg,
+        trading_windows=["09:00-10:30"],
+        # 12 + 8 == 20 == cap → the concurrency gate short-circuits the chain.
+        open_positions_count_provider=lambda: {"futures": 12, "stock": 8},
+        portfolio_snapshot_provider=lambda: None,  # hermetic (no real Redis)
+    )
+    result = layer.evaluate(_make_signal(generated_at=_IN_WINDOW_KST), _snap())
+    assert result.passed is False
+    assert result.skip_reason == SKIP_TOTAL
+
+
+def test_from_config_chain_passes_when_below_cap() -> None:
+    from shared.risk.config import FuturesRiskConfig
+    from shared.risk.layer import RiskFilterLayer
+
+    cfg = FuturesRiskConfig()
+    cfg.concurrent_positions.enabled = True
+    cfg.concurrent_positions.max_total_positions = 20
+    cfg.concurrent_positions.max_positions_per_asset = 5
+
+    layer = RiskFilterLayer.from_config(
+        cfg,
+        trading_windows=["09:00-10:30"],
+        open_positions_count_provider=lambda: {"futures": 2, "stock": 1},
+        portfolio_snapshot_provider=lambda: None,
+    )
+    result = layer.evaluate(_make_signal(generated_at=_IN_WINDOW_KST), _snap())
+    assert result.passed is True
+    assert result.skip_reason is None
 
 
 # ---------------------------------------------------------------------------
