@@ -6,6 +6,9 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
@@ -192,3 +195,35 @@ class TestSentinel:
         assert len(payload["mismatched"]) == 1
         assert payload["mismatched"][0]["redis"]["side"] == "long"
         assert payload["mismatched"][0]["broker"]["side"] == "short"
+
+
+class TestFetchBrokerPositionsConstruction:
+    """Regression: KISClient is constructed config-only (no auth_manager kwarg).
+
+    Guards the crash where the script called
+    ``KISClient(config=..., auth_manager=...)`` against a constructor that takes
+    ``config`` only — an unconditional ``TypeError`` on every operator run with
+    zero test coverage. The REAL ``KISClient`` constructor is exercised here (so
+    a re-introduced bad kwarg fails loudly); only the network read
+    ``get_futures_balance`` is stubbed. No KIS network / live order is touched.
+    """
+
+    @pytest.mark.asyncio
+    async def test_construction_and_balance_read_no_typeerror(self, monkeypatch):
+        import shared.kis.client as kis_client_mod
+
+        raw = [
+            {"code": "A05603", "side": "2", "quantity": 1},
+            {"code": "A05604", "side": "1", "quantity": 0},  # closed → filtered
+        ]
+        balance_mock = AsyncMock(return_value=raw)
+        monkeypatch.setattr(
+            kis_client_mod.KISClient, "get_futures_balance", balance_mock
+        )
+
+        # Exercises the real KISClient(config=...) construction inside the script.
+        result = await _module._fetch_broker_positions()
+
+        # Zero-quantity (closed) positions are filtered out.
+        assert result == [{"code": "A05603", "side": "2", "quantity": 1}]
+        assert balance_mock.await_count == 1
