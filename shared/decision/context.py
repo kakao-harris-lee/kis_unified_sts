@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -94,6 +94,22 @@ class MarketContext:
                 best_elapsed = elapsed
 
         return best
+
+
+#: Canonical ``MarketContext`` field names — the single source of truth for the
+#: live↔replay field-fill parity contract. Because it derives from
+#: :func:`dataclasses.fields`, adding a field to :class:`MarketContext`
+#: automatically extends this tuple, which makes the parity contract
+#: (``tests/unit/decision/test_market_context_parity.py``) fail until BOTH
+#: producers explicitly populate the new field:
+#:   * the canonical assembler :func:`build_market_context` (a named parameter), and
+#:   * the backtest replay
+#:     :class:`shared.backtest.market_context_replay.MarketContextReplay`
+#:     (a keyword in its direct ``MarketContext(...)`` construction).
+#: This is the structural guard against the #533/#537 class of silent
+#: field-fill divergence (a field that one producer computes and the other
+#: silently leaves at its dataclass default).
+MARKET_CONTEXT_FIELDS: tuple[str, ...] = tuple(f.name for f in fields(MarketContext))
 
 
 def load_scheduled_events(path: str) -> list[ScheduledEvent]:
