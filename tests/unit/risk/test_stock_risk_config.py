@@ -19,15 +19,18 @@ def test_stock_trading_windows_are_korean_equity_session():
 
 
 def test_stock_risk_config_loads_leverage_block():
-    """Phase 4-g stock leverage cap ships ENABLED + enforce with cap 1.0 (cash
-    account — no leverage; multiplier 1) after the operator flip (2026-07-12):
-    P4-g gate + P5-3 stock_risk_filter provider wiring complete. Pinning the
-    shipped values fails the build on an accidental revert to shadow/disabled, a
-    cap typo, or a mis-nested block. The filter stays fail-open on missing/
-    no-provider data — only gross_leverage > 1.0 rejects a new entry."""
+    """Phase 4-g stock leverage cap ships ENABLED + shadow with cap 1.0 (cash
+    account — no leverage; multiplier 1). Operator decision (2026-07-12): the
+    enforce flip was reverted to shadow for stock only because equity (10M) vs
+    pattern_pullback sizing (25M/pos) mismatch would freeze the whole stock book
+    on a single fill (gross_leverage 2.5x > 1.0). enabled stays True so the
+    filter still computes/logs gross leverage for observation; shadow means it
+    never blocks. Pinning the shipped values fails the build on an accidental
+    flip back to enforce, a cap typo, or a mis-nested block. (Futures
+    leverage/margin_gate remain enforce — see test_risk_config.)"""
     lev = StockRiskConfig.from_yaml().leverage
     assert lev.enabled is True
-    assert lev.mode == "enforce"
+    assert lev.mode == "shadow"
     assert lev.max_gross_leverage == 1.0
     assert lev.stale_max_age_seconds is None
 

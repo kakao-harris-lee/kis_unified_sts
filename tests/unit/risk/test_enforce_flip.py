@@ -1,9 +1,12 @@
 """Enforce-flip integration tests — operator flip 2026-07-12 (shadow→enforce).
 
-Proves the shipped ``config/risk.yaml`` ``margin_gate`` + ``leverage`` flip does
-exactly what the operator intended: a *real* threshold violation REJECTS a new
-entry, while missing / stale / no-provider data still fails OPEN so paper signals
-are never spuriously blocked.
+Proves the shipped ``config/risk.yaml`` does exactly what the operator intended:
+the futures ``margin_gate`` + futures ``leverage`` ship in ``enforce`` (a *real*
+threshold violation REJECTS a new entry), while missing / stale / no-provider
+data still fails OPEN so paper signals are never spuriously blocked. Stock
+``leverage`` intentionally stays in ``shadow`` (operator decision 2026-07-12:
+equity 10M vs pattern_pullback 25M/pos sizing would freeze the whole stock book
+on a single fill), so an over-cap stock book is only observed, never blocked.
 
 These complement the config-load pins in ``test_risk_config`` /
 ``test_stock_risk_config`` (which assert the YAML values) by exercising the
@@ -22,7 +25,7 @@ shipped config. ``portfolio_snapshot_provider`` / ``core_holdings_provider`` /
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -42,6 +45,15 @@ _ProductSpecs = Mapping[str, MarginProductSpec] | None
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 KST = ZoneInfo("Asia/Seoul")
 _ALWAYS_OPEN = ["00:00-23:59"]
+#: Fixed KST-aware timestamp inside the ``_ALWAYS_OPEN`` window used as every
+#: signal's ``generated_at``. Pinning it (rather than ``datetime.now()``) makes
+#: TradingHoursFilter (filter #1) deterministic: the half-open ``[00:00, 23:59)``
+#: window has a 60-second gap at 23:59:00-23:59:59 KST, so a wall-clock ``now()``
+#: landing in that minute would spuriously reject and flake the suite (memory
+#: #437). 10:00 KST mirrors ``_IN_WINDOW_KST`` in test_filter_leverage. Nothing
+#: in the risk layer checks ``valid_until`` against wall-clock, so a fixed date
+#: is safe.
+_IN_WINDOW_KST = datetime(2026, 7, 10, 10, 0, tzinfo=KST)
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +63,6 @@ def _config_dir(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _signal() -> Signal:
-    now = datetime.now(UTC)
     return Signal(
         setup_type="A_gap_reversion",
         direction="long",
@@ -61,8 +72,8 @@ def _signal() -> Signal:
         take_profit=352.0,
         confidence=0.7,
         reason_tags=["test"],
-        valid_until=now + timedelta(minutes=10),
-        generated_at=now,
+        valid_until=_IN_WINDOW_KST + timedelta(minutes=10),
+        generated_at=_IN_WINDOW_KST,
     )
 
 
@@ -211,23 +222,29 @@ def test_futures_leverage_enforce_under_cap_passes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# leverage enforce — stock (cap 1.0). Over cap REJECTS; fail-open PASSES.
+# leverage SHADOW — stock (cap 1.0, observe-only). Operator decision 2026-07-12:
+# stock leverage stays shadow (over-block risk — equity 10M vs pattern_pullback
+# 25M/pos sizing), so even an over-cap book is only computed/logged, never
+# blocked. Contrast the futures enforce cases above.
 # ---------------------------------------------------------------------------
 
 
-def test_stock_leverage_enforce_over_cap_rejects() -> None:
-    """gross/equity = 21_300_000 / 10_000_000 = 2.13 > 1.0 → reject."""
+def test_stock_leverage_shadow_over_cap_still_passes() -> None:
+    """gross/equity = 21_300_000 / 10_000_000 = 2.13 > cap 1.0, but the shipped
+    stock leverage block is mode:shadow → the breach is observed, NOT blocked
+    (would REJECT under enforce). Guards the operator decision to keep stock
+    leverage in shadow so a single fill cannot freeze the whole stock book."""
     snapshot = {
         "positions": [{"code": "A005930", "quantity": 300, "current_price": 71000.0}],
         "equity_krw": 10_000_000.0,
     }
     layer = _stock_layer(leverage_snapshot_provider=lambda: snapshot)
     result = layer.evaluate(_signal(), RiskStateSnapshot())
-    assert result.passed is False
-    assert result.skip_reason == SKIP_LEVERAGE
+    assert result.passed is True
+    assert result.skip_reason is None
 
 
-def test_stock_leverage_enforce_under_cap_passes() -> None:
+def test_stock_leverage_shadow_under_cap_passes() -> None:
     snapshot = {
         "positions": [{"code": "A005930", "quantity": 100, "current_price": 71000.0}],
         "equity_krw": 10_000_000.0,  # 7_100_000 / 10_000_000 = 0.71 <= 1.0
