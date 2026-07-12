@@ -2,7 +2,7 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.7 Draft
+**Version**: 0.8 Draft
 **Status**: Working Draft
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
@@ -655,6 +655,368 @@ SAFE-020
 
 ---
 
+## CONST-009
+
+### Title
+
+Pre-Trade Constitutional Assurance
+
+### Classification
+
+Constitutional Requirement
+
+### Priority
+
+Critical
+
+### Requirement
+
+Every trading action SHALL satisfy all constitutional requirements BEFORE execution.
+
+No constitutional requirement SHALL be evaluated only after capital has been exposed.
+
+### Constraint
+
+Post-trade validation SHALL NOT substitute pre-trade assurance.
+
+### Rationale
+
+Executed trades are irreversible.
+
+Risk prevention must therefore precede execution.
+
+### Failure Scenario
+
+Risk validation occurs after order submission.
+
+↓
+
+Oversized position is accepted.
+
+↓
+
+Capital impairment occurs.
+
+### Risk of Violation
+
+Critical
+
+Permanent capital loss.
+
+### Verification
+
+RFC-001 SHALL demonstrate pre-trade constitutional enforcement.
+
+### Derived Requirements
+
+SAFE-021
+
+SAFE-022
+
+### Traceability
+
+RFC-001
+
+RFC-005
+
+---
+
+## CONST-010
+
+### Title
+
+Fail-Closed Configuration
+
+### Classification
+
+Constitutional Requirement
+
+### Priority
+
+Critical
+
+### Requirement
+
+Whenever constitutional safety configuration cannot be verified, the Trading Operating System SHALL transition to the constitutional safe state.
+
+### Constraint
+
+Missing, invalid, corrupted, or unreadable configuration SHALL NEVER increase operational authority.
+
+### Rationale
+
+Unknown safety configuration must never produce unknown risk.
+
+### Failure Scenario
+
+Daily loss limit cannot be loaded.
+
+↓
+
+Trading continues.
+
+↓
+
+Unlimited exposure.
+
+### Risk of Violation
+
+Critical
+
+Unlimited operational risk.
+
+### Verification
+
+Safety Case SHALL define configuration validation.
+
+### Derived Requirements
+
+SAFE-030
+
+SAFE-031
+
+---
+
+## CONST-011
+
+### Title
+
+Independent Safety Authority
+
+### Classification
+
+Constitutional Requirement
+
+### Priority
+
+Critical
+
+### Requirement
+
+The Trading Operating System SHALL always maintain an operational authority capable of suspending autonomous trading.
+
+The authority SHALL remain logically independent from Decision Generation.
+
+### Constraint
+
+Decision components SHALL NOT disable constitutional safety authority.
+
+### Rationale
+
+Software defects must never disable their own containment mechanisms.
+
+### Failure Scenario
+
+Decision engine becomes unstable.
+
+↓
+
+Safety authority fails simultaneously.
+
+↓
+
+Trading continues.
+
+### Risk of Violation
+
+Critical
+
+Runaway autonomous execution.
+
+### Verification
+
+Architecture SHALL demonstrate independence of constitutional safety authority.
+
+### Derived Requirements
+
+ARCH-011
+
+SAFE-041
+
+---
+
+## CONST-012
+
+### Title
+
+Safe Operational State
+
+### Classification
+
+Constitutional Requirement
+
+### Priority
+
+Critical
+
+### Requirement
+
+The Trading Operating System SHALL always possess a constitutionally defined safe operational state.
+
+The definition of that state SHALL account for current exposure.
+
+### Constraint
+
+Safe state SHALL NOT be interpreted as simple inactivity.
+
+### Rationale
+
+Existing exposure continues to carry risk.
+
+Safety therefore depends upon current position.
+
+### Failure Scenario
+
+Market data fails.
+
+↓
+
+System stops generating signals.
+
+↓
+
+Open leveraged position remains unmanaged.
+
+### Risk of Violation
+
+Critical
+
+Uncontrolled exposure.
+
+### Verification
+
+RFC-001 SHALL define constitutional safe-state behaviour.
+
+### Derived Requirements
+
+SAFE-051
+
+SAFE-052
+
+---
+
+## CONST-013
+
+### Title
+
+Safe Operational Start
+
+### Classification
+
+Constitutional Requirement
+
+### Priority
+
+Critical
+
+### Requirement
+
+Following system startup, restart, recovery, or communication loss, autonomous trading SHALL NOT resume until operational state has been constitutionally validated.
+
+### Constraint
+
+Unknown operational state SHALL prohibit new autonomous decisions.
+
+### Rationale
+
+Recovery introduces uncertainty.
+
+Uncertainty must be eliminated before trading resumes.
+
+### Failure Scenario
+
+Application restarts.
+
+↓
+
+Internal state differs from operational state.
+
+↓
+
+Trading resumes immediately.
+
+### Risk of Violation
+
+Critical
+
+Incorrect exposure.
+
+### Verification
+
+Architecture SHALL define operational validation.
+
+### Derived Requirements
+
+ARCH-015
+
+SAFE-060
+
+---
+
+## CONST-014
+
+### Title
+
+Irreversibility Principle
+
+### Classification
+
+Constitutional Requirement
+
+### Priority
+
+Critical
+
+### Requirement
+
+The Trading Operating System SHALL recognize that execution transfers real capital.
+
+Execution SHALL therefore be treated as an irreversible operation.
+
+Constitutional assurance SHALL always precede execution.
+
+### Constraint
+
+Replay, logging, audit, or monitoring SHALL NEVER replace preventive assurance.
+
+### Rationale
+
+Financial loss cannot always be recovered.
+
+The prevention of irreversible mistakes is therefore constitutionally superior to post-event diagnosis.
+
+### Failure Scenario
+
+Incorrect order executes.
+
+↓
+
+Replay identifies root cause.
+
+↓
+
+Capital cannot be recovered.
+
+### Risk of Violation
+
+Critical
+
+Permanent financial loss.
+
+### Verification
+
+All downstream specifications SHALL preserve pre-execution assurance.
+
+### Derived Requirements
+
+SAFE-070
+
+ARCH-020
+
+TEST-001
+
+---
+
 # 8. Constitutional Axioms
 
 The following axioms define the philosophical foundation of the Trading Operating System.
@@ -931,3 +1293,7 @@ Applied PATCH-0001
 v0.7
 
 Applied PATCH-0002
+
+v0.8
+
+Applied PATCH-0003
