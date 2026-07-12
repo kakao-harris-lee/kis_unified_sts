@@ -2,7 +2,7 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.8 Draft
+**Version**: 0.10 Draft
 **Status**: Working Draft
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
@@ -137,26 +137,121 @@ Low
 
 Constitutional Requirements SHALL normally be classified as Critical.
 
+### Constitutional Precedence
+
+Classification as Critical SHALL NOT imply that all constitutional requirements are equal when they conflict.
+
+Where two constitutional requirements conflict, the interpretation that provides greater operational safety, stronger capital preservation and lower systemic risk SHALL prevail.
+
+The constitutional objectives SHALL be ordered as follows.
+
+```
+Survivability
+        │
+        ▼
+Capital Preservation
+        │
+        ▼
+Positive Expectancy
+```
+
+Preventive and safety requirements SHALL take precedence over performance objectives.
+
+No optimization, performance improvement or feature addition SHALL weaken a higher-precedence requirement to satisfy a lower-precedence one.
+
+Safety-favoring resolution preserves survivability under uncertainty, which is the constitution's highest objective.
+
 ---
 
 # 6. Definitions
 
-Minimum constitutional definitions.
+The following terms SHALL carry the following constitutional meaning.
 
-- Deterministic Decision
-- Decision Context
-- Positive Expectancy
-- Capital Preservation
-- Operational Safety
-- Replay
-- Approval
-- Intent
-- Decision Quality
-- Survivability
+Definitions establish principle-level meaning only.
+
+They SHALL NOT prescribe implementation.
+
+**Survivability**
+
+The capacity of the system to remain solvent and able to continue making decisions indefinitely, such that no event or sequence of events causes permanent, unrecoverable capital impairment.
+
+**Capital Preservation**
+
+The protection of operating capital from impairment that would threaten survivability, taking precedence over the pursuit of return.
+
+**Positive Expectancy**
+
+The statistically expected value of the complete decision process, evaluated over a population of decisions rather than any individual trade.
+
+**Decision Quality**
+
+The degree to which a decision was correct given the information constitutionally available when it was made, independent of its individual outcome.
+
+**Deterministic Decision**
+
+A decision that, given identical Decision Context, always yields the same result; determinism applies to the decision process, not to market outcomes.
+
+**Decision Context**
+
+The complete, immutable, read-only information a decision consumes; its concrete taxonomy is defined by Architecture RFCs.
+
+**Critical Uncertainty**
+
+A condition in which the system cannot establish, within constitutional bounds, that its Decision Context is complete, current and internally consistent.
+
+**Operational Safety**
+
+The property that the system's behaviour remains within constitutional safety limits under all conditions, including failure.
+
+**Operational Safety Limits**
+
+Constitutionally mandated, externally configured bounds on exposure, loss and action beyond which trading SHALL NOT proceed; an absent or invalid limit is a bound of zero.
+
+**Constitutional Safe State**
+
+An operational state in which no new exposure is created and every existing position remains within constitutional risk bounds under active protective control; defined relative to current exposure and never mere inactivity.
+
+**Autonomous Trading**
+
+Any creation, modification or cancellation of orders performed by the system without contemporaneous human authorization.
+
+**Approval**
+
+The independent authority that accepts or rejects a proposed trading action before execution, distinct from the component that generated it.
+
+**Decision Generation**
+
+The activity of producing a proposed trading action from Decision Context and interpretation, prior to Approval.
+
+**Intent**
+
+The trading action a decision was constitutionally meant to produce, against which any emitted order is validated.
+
+**Constitutional Assurance**
+
+Demonstrable confirmation, before an action is transmitted for execution, that the action satisfies all applicable constitutional requirements.
+
+**Authoritative Source**
+
+The single source recognized under CONST-008 as ground truth for positions, orders and account state, superseding the system's internal representation.
+
+**Operational State**
+
+The true state of positions, orders and account held by the Authoritative Source, as distinct from the system's internal representation of it.
+
+**Constitutionally Validated**
+
+The condition in which Operational State has been reconciled against the Authoritative Source and confirmed consistent within constitutional bounds.
+
+**Replay**
+
+The reconstruction of a past decision and its execution from recorded inputs for audit purposes; replay is diagnostic and SHALL NOT substitute for preventive assurance.
 
 ### Rationale
 
 Normative requirements require unambiguous terminology.
+
+Undefined terms in a constitution propagate divergent interpretations into every downstream specification.
 
 ---
 
@@ -348,9 +443,9 @@ Critical
 
 ### Requirement
 
-The Trading Operating System SHALL always transition to the safest operational state whenever critical uncertainty exceeds predefined constitutional limits.
+The Trading Operating System SHALL always transition to the safest operational state, as defined by CONST-012, whenever critical uncertainty exceeds predefined constitutional limits.
 
-The preferred failure mode SHALL always be refusal to trade.
+The preferred failure mode SHALL always be to refuse new trading while ensuring existing exposure remains managed in accordance with CONST-012.
 
 ### Constraint
 
@@ -488,7 +583,9 @@ Operational safety limits SHALL be externally configurable.
 
 ### Constraint
 
-Trading SHALL NOT continue once constitutional safety limits have been exceeded.
+Any trading action that would cause a constitutional safety limit to be exceeded SHALL be rejected before execution.
+
+If a constitutional safety limit is nonetheless exceeded, trading SHALL NOT continue.
 
 ### Rationale
 
@@ -1210,9 +1307,19 @@ Evidence MAY include
 - Audit Reports
 - Formal Review
 
+### Verification Obligation
+
+Every constitutional requirement's verification obligation SHALL be discharged by its referenced specification before the system is operated in reliance on that requirement.
+
+An undischarged verification obligation SHALL be treated as unverified safety configuration under CONST-010 and SHALL force the constitutional safe state.
+
+A constitutional requirement whose verification has not been demonstrated SHALL NOT be relied upon as an operational safety guarantee.
+
 ### Rationale
 
 Verification requires objective evidence.
+
+Unverified safety guarantees provide no protection and SHALL NOT be relied upon.
 
 ---
 
@@ -1297,3 +1404,11 @@ Applied PATCH-0002
 v0.8
 
 Applied PATCH-0003
+
+v0.9
+
+Applied PATCH-0004
+
+v0.10
+
+Applied PATCH-0005
