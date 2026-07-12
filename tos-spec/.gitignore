@@ -1,0 +1,8 @@
+# Working artifacts for the specification.
+# Patch proposals and review notes are recorded in git history and git notes,
+# not tracked as files in the published spec tree.
+**/patches/
+**/reviews/
+
+# mdbook build output
+/book/
