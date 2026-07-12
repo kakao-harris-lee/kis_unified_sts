@@ -168,7 +168,7 @@ async def _fetch_redis_positions() -> list[dict[str, Any]]:
 
 
 async def _fetch_broker_positions() -> list[dict[str, Any]]:
-    from shared.kis.auth import KISAuthConfig, KISAuthManager
+    from shared.kis.auth import KISAuthConfig
     from shared.kis.client import KISClient
 
     auth_config = KISAuthConfig(
@@ -176,8 +176,9 @@ async def _fetch_broker_positions() -> list[dict[str, Any]]:
         app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
         is_real=os.environ.get("KIS_FUTURES_MARKET", "real").lower() == "real",
     )
-    auth = KISAuthManager(auth_config)
-    client = KISClient(config=auth_config, auth_manager=auth)
+    # KISClient builds/reuses its own KISAuthManager singleton from config
+    # (KISAuthManager.get_instance(config)); it takes config only.
+    client = KISClient(config=auth_config)
     try:
         positions = await client.get_futures_balance(
             account_no=os.environ.get("KIS_FUTURES_ACCOUNT_NO", "")
