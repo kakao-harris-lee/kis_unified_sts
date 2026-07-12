@@ -12,8 +12,10 @@ from bar data.
 
 That bypass is the parity hazard behind #533/#537: a field the replay computes
 (``last_15min_high``/``last_15min_low``) was silently defaulted on the live side
-to ``current_price``, collapsing Setup C/D's breakout range so it could NEVER
-fire live while the replay happily produced breakouts. The pre-existing
+to ``current_price``, collapsing Setup C's breakout range so it could NEVER
+fire live while the replay happily produced breakouts (Setup D also fades a
+15-min range, but self-computes it from closes and does NOT read
+``ctx.last_15min_*`` — see ``_SETUP_READ_FIELDS`` below). The pre-existing
 ``tests/unit/strategy/test_setup_c_15min_range_wiring.py`` locks that ONE field
 pair through the live engine; this file adds the *structural* contract so the
 NEXT field added to one producer but not the other fails loudly, not silently.
@@ -85,9 +87,9 @@ _SETUP_READ_FIELDS: frozenset[str] = frozenset(
         "atr_14",
         "prev_close",  # Setup A gap
         "today_open",  # Setup A gap
-        "last_15min_high",  # Setup C/D breakout range
-        "last_15min_low",  # Setup C breakout range
-        "vwap",  # Setup D VWAP-stretch
+        "last_15min_high",  # Setup C breakout range (Setup D self-computes its own)
+        "last_15min_low",  # Setup C breakout range (Setup D self-computes its own)
+        "vwap",  # Setup D VWAP-stretch (z = (price - vwap) / atr)
         "macro_overnight",  # Setup A overnight bias
         "scheduled_events",  # Setup C event window
         "market_open_hour",  # all: minutes_since_open()
@@ -123,6 +125,107 @@ def _ctx_attrs_read_by_setups() -> set[str]:
     return attrs
 
 
+def _ctx_alias_bindings() -> list[str]:
+    """Find every place a setup ALIASES the ``ctx`` param instead of reading it directly.
+
+    ``_ctx_attrs_read_by_setups`` only sees ``ctx.<attr>`` / ``context.<attr>``
+    where the receiver is the *bare* ``ctx``/``context`` Name. A setup that
+    rebinds the context to another name (``mv = ctx; mv.vwap``), stashes it on
+    ``self`` (``self._ctx = ctx``), or forwards it to a helper (``_read(ctx)``)
+    would read fields through a binding the AST scan cannot see — making the
+    coverage guard below pass *vacuously* (false green: a newly-read field would
+    be invisible). This locks the current "read ``ctx.<field>`` directly only"
+    pattern; any future aliasing trips the guard loudly. A full data-flow
+    analysis is intentionally out of scope — we lock today's pattern and force a
+    conscious decision (extend the scan, or refactor) when it changes.
+
+    Note: aliasing via the *parameter name* itself (``def check(self, mv):``) is
+    already caught by the existing ``assert consumed`` guard — that scan would
+    then find zero ``ctx.<field>`` reads. This covers the remaining vectors where
+    the param stays ``ctx`` but is re-bound / forwarded mid-body.
+    """
+    alias_names = {"ctx", "context"}
+    bindings: list[str] = []
+    for mod in (gap_reversion, event_reaction, vwap_reversion):
+        mod_name = mod.__name__.rsplit(".", 1)[-1]
+        tree = ast.parse(inspect.getsource(mod))
+        for node in ast.walk(tree):
+            # (1) Rebinding the whole context: ``mv = ctx``, ``self._ctx = ctx``,
+            #     ``mv: X = ctx``, or the walrus ``(mv := ctx)``. Keyed on the RHS
+            #     being a bare ctx/context Name (``x = ctx.attr`` is a field read,
+            #     NOT an alias — its RHS is an Attribute, so it is ignored).
+            value = None
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                value = node.value
+            if isinstance(value, ast.Name) and value.id in alias_names:
+                bindings.append(
+                    f"{mod_name}:{getattr(node, 'lineno', '?')} rebinds "
+                    f"'{value.id}' to another binding"
+                )
+            # (2) Forwarding the bare context into a call: ``_read(ctx)``. Method
+            #     calls ON ctx (``ctx.find_recent_event(...)``) are fine — there
+            #     ctx is the receiver (Call.func is an Attribute), not an argument.
+            if isinstance(node, ast.Call):
+                for arg in (*node.args, *(kw.value for kw in node.keywords)):
+                    if isinstance(arg, ast.Name) and arg.id in alias_names:
+                        bindings.append(
+                            f"{mod_name}:{getattr(node, 'lineno', '?')} forwards "
+                            f"'{arg.id}' as a call argument"
+                        )
+    return bindings
+
+
+def _builder_marketcontext_threading() -> dict[str, set[str]]:
+    """Map each kwarg of build_market_context's ``MarketContext(...)`` to the
+    parameter Names threaded into that kwarg's value expression.
+
+    Lets the field-threading test (F3) assert not merely that a parameter EXISTS
+    on the signature, but that the builder actually PASSES it into the constructed
+    dataclass and derives the field's value from the same-named parameter. The
+    failure a name-only check misses: a new field given a dataclass default plus a
+    no-op builder parameter that is never forwarded into ``MarketContext(...)``.
+    """
+    tree = ast.parse(inspect.getsource(build_market_context))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "MarketContext"
+        ):
+            return {
+                kw.arg: {n.id for n in ast.walk(kw.value) if isinstance(n, ast.Name)}
+                for kw in node.keywords
+                if kw.arg is not None
+            }
+    raise AssertionError(
+        "no MarketContext(...) construction found in build_market_context — "
+        "the threading guard cannot introspect the builder's field fill"
+    )
+
+
+def _fcp_builder_call_kwargs() -> set[str]:
+    """Keyword names the decoupled FuturesContextProvider passes to build_market_context.
+
+    The decoupled live producer omits ``vwap`` (and atr_90th / spread), relying on
+    the F-4 builder defaults. This AST-pins that omission so the #533/#537-class
+    Setup-D-inert gap is contract-visible (see the vwap divergence test below).
+    """
+    from services.decision_engine import context_provider as fcp_mod
+
+    tree = ast.parse(inspect.getsource(fcp_mod))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_market_context"
+        ):
+            return {kw.arg for kw in node.keywords if kw.arg is not None}
+    raise AssertionError(
+        "no build_market_context(...) call found in FuturesContextProvider — "
+        "the decoupled-vwap-gap pin cannot introspect the provider"
+    )
+
+
 def _replay_constructor_kwargs() -> set[str]:
     """AST-extract the keyword names of the ``MarketContext(...)`` call in replay.
 
@@ -149,17 +252,60 @@ def _replay_constructor_kwargs() -> set[str]:
 
 
 def test_builder_signature_threads_every_contract_field() -> None:
-    """The canonical assembler exposes every MarketContext field as a parameter.
+    """The canonical assembler exposes AND threads every MarketContext field.
 
-    A new field on ``MarketContext`` that is not threaded through
-    ``build_market_context`` would be silently defaulted for BOTH live producers.
+    Two layers, because "the parameter exists" is not "the parameter is used":
+      * signature — every field is a named parameter (a new field with no
+        parameter would be silently defaulted for BOTH live producers); and
+      * threading (F3) — the builder's ``return MarketContext(...)`` actually
+        passes every contract field as a keyword, and each field's value
+        references the same-named parameter. Guards the failure a name-only check
+        misses: a new field added with a dataclass default plus a no-op parameter
+        that is never forwarded into the constructed context (so the builder
+        compiles, the signature check passes, yet the field is silently defaulted).
     """
+    contract = set(MARKET_CONTEXT_FIELDS)
+
     params = set(inspect.signature(build_market_context).parameters)
     params.discard("config_path")  # builder-internal I/O knob, not a MC field
-    assert params == set(MARKET_CONTEXT_FIELDS), (
+    assert params == contract, (
         "build_market_context parameters drifted from MarketContext fields: "
-        f"missing={set(MARKET_CONTEXT_FIELDS) - params}, "
-        f"extra={params - set(MARKET_CONTEXT_FIELDS)}"
+        f"missing={contract - params}, extra={params - contract}"
+    )
+
+    threading = _builder_marketcontext_threading()
+    passed = set(threading)
+    assert passed == contract, (
+        "build_market_context's MarketContext(...) construction does not pass "
+        "every contract field as a keyword: "
+        f"missing={contract - passed}, extra={passed - contract}"
+    )
+    not_threaded = {
+        field for field in contract if field not in threading.get(field, set())
+    }
+    assert not not_threaded, (
+        "build_market_context names these fields in MarketContext(...) but never "
+        "threads the same-named parameter into their value — a no-op parameter / "
+        f"constant fill that would silently default the field: {not_threaded}"
+    )
+
+
+def test_setups_do_not_alias_the_context() -> None:
+    """Setups must read ``ctx.<field>`` directly — never alias/stash/forward ctx (F2).
+
+    The field-coverage guard (``test_setup_read_field_list_covers_all_setup_consumption``)
+    AST-scans for bare ``ctx.<attr>`` reads. If a setup aliased the context
+    (``mv = ctx``), stashed it (``self._ctx = ctx``), or forwarded it into a
+    helper, a newly-read field would be invisible to that scan and the coverage
+    guard would pass vacuously. Locking the no-alias pattern keeps the parity
+    contract from silently going blind.
+    """
+    aliases = _ctx_alias_bindings()
+    assert not aliases, (
+        "a setup aliases/forwards the MarketContext instead of reading "
+        "ctx.<field> directly — the parity field-coverage scan can no longer see "
+        "every read. Refactor to read fields directly, or extend the AST scan to "
+        f"follow the alias, THEN update this guard: {aliases}"
     )
 
 
@@ -425,18 +571,50 @@ def test_spread_default_policy_is_shared_constant() -> None:
 
 
 def test_vwap_default_is_current_price_but_replay_computes_real_vwap() -> None:
-    """DOCUMENTED divergence: builder defaults vwap→current_price; replay computes.
+    """DOCUMENTED, LOAD-BEARING divergence + KNOWN F-9 gap (F1).
 
-    The F-4 builder falls back ``vwap := current_price`` when vwap is omitted.
-    The decoupled live producer (``FuturesContextProvider``) omits vwap, so the
-    decoupled-live vwap always equals current_price — while the replay carries a
-    real session VWAP. Setup D reads vwap, so this divergence is a latent
-    behaviour gap on the decoupled path (dormant today; orchestrator-only trades
-    and its ``setup_context_builder`` reads vwap from market_data). Recorded here
-    as an intentional, contract-visible difference — NOT asserted equal.
+    The F-4 builder falls back ``vwap := current_price`` when vwap is omitted, and
+    the decoupled live producer ``services/decision_engine.FuturesContextProvider``
+    OMITS vwap (AST-pinned below). So on the decoupled path vwap always equals
+    current_price → Setup D's fade trigger ``z = (current_price - vwap) / atr``
+    collapses to 0 → Setup D can NEVER fire live on the decoupled path. That is
+    exactly the #533/#537 silent-inert failure mode — latent today ONLY because
+    futures trade through the ORCHESTRATOR path (``setup_context_builder`` threads
+    a real vwap from market_data), not the decoupled engine (dormant, F-9-gated).
+
+    Why vwap is NOT made a required builder parameter here (blast-radius verdict):
+    the ``vwap := current_price`` fallback is a DELIBERATE default-policy contract
+    (section (c) of this file) with live dependents that would regress if it were
+    removed —
+      * ``services/decision_engine/context_provider.py`` (omits vwap),
+      * ``tests/unit/decision_engine/test_context_provider.py`` (asserts
+        ``ctx.vwap == ctx.current_price``), and
+      * ``tests/unit/decision/test_build_market_context.py`` (asserts the vwap
+        default is applied when omitted).
+    Removing the fallback is therefore an **F-9 decoupled-cutover precondition**,
+    not a code-review fix: at F-9 the FuturesContextProvider must first source a
+    real session VWAP (the real StreamingIndicatorEngine already exposes one via
+    ``get_indicators()['vwap']`` — see the fake-engine contract note in
+    test_context_provider.py), and only THEN can build_market_context's vwap be
+    flipped to required (dropping the fallback) so the omission becomes a loud
+    TypeError instead of a silent Setup-D-inert. Recorded here as an intentional,
+    contract-visible difference — NOT asserted equal on the value side.
     """
     built_default = build_market_context(**_builder_minimal_kwargs())
     assert built_default.vwap == built_default.current_price  # F-4 fallback
+
+    # Pin the decoupled producer's omission. When the F-9 fix wires a real vwap
+    # into FuturesContextProvider, THIS assertion trips — deliberately — forcing
+    # the vwap→required flip (and this docstring) to be revisited together, rather
+    # than the gap being closed on one side and left silent on the other.
+    fcp_kwargs = _fcp_builder_call_kwargs()
+    assert "vwap" not in fcp_kwargs, (
+        "FuturesContextProvider now threads vwap into build_market_context — the "
+        "decoupled Setup-D-inert gap is being closed. This is the F-9 cutover "
+        "moment: also make build_market_context's vwap a REQUIRED parameter (drop "
+        "the vwap:=current_price fallback) so a future omission fails loudly, then "
+        "update this pin."
+    )
 
     rows = _two_session_rows()
     ctx = _replay_ctx_at(rows, _PICK)

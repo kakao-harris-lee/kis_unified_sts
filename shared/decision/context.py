@@ -216,6 +216,17 @@ def build_market_context(
     atr_90th→atr_14*1.5, spread→1.0. ``current_spread_ticks`` is uncomputable
     from the OHLCV-only tick stream, so the decoupled path always defaults it.
 
+    ⚠ F-9 PRECONDITION — ``vwap`` is intentionally still optional (fallback
+    ``vwap := current_price``). Setup D (VWAP reversion) DOES read vwap; on the
+    decoupled ``FuturesContextProvider`` (which omits vwap) the fallback makes
+    Setup D's ``z = (price - vwap)/atr`` collapse to 0 → Setup D silently inert.
+    This is dormant today (futures trade the orchestrator path, which threads a
+    real vwap). Before the F-9 decoupled cutover, the provider must source a real
+    session VWAP (engine ``get_indicators()['vwap']``); only THEN make ``vwap``
+    required (drop this fallback) so a future omission is a loud TypeError, not a
+    silent #533/#537-class inert. Contract-pinned in
+    ``tests/unit/decision/test_market_context_parity.py``.
+
     ``market_open_hour`` / ``market_open_minute`` set the session open anchor
     used by ``minutes_since_open()``. When omitted they are read from
     ``config/market_schedule.yaml::market_schedule.futures.regular.open``
