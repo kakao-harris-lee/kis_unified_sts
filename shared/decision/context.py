@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -94,6 +94,22 @@ class MarketContext:
                 best_elapsed = elapsed
 
         return best
+
+
+#: Canonical ``MarketContext`` field names — the single source of truth for the
+#: live↔replay field-fill parity contract. Because it derives from
+#: :func:`dataclasses.fields`, adding a field to :class:`MarketContext`
+#: automatically extends this tuple, which makes the parity contract
+#: (``tests/unit/decision/test_market_context_parity.py``) fail until BOTH
+#: producers explicitly populate the new field:
+#:   * the canonical assembler :func:`build_market_context` (a named parameter), and
+#:   * the backtest replay
+#:     :class:`shared.backtest.market_context_replay.MarketContextReplay`
+#:     (a keyword in its direct ``MarketContext(...)`` construction).
+#: This is the structural guard against the #533/#537 class of silent
+#: field-fill divergence (a field that one producer computes and the other
+#: silently leaves at its dataclass default).
+MARKET_CONTEXT_FIELDS: tuple[str, ...] = tuple(f.name for f in fields(MarketContext))
 
 
 def load_scheduled_events(path: str) -> list[ScheduledEvent]:
@@ -199,6 +215,17 @@ def build_market_context(
     orchestrator (setup_adapters) builders stay consistent: vwap→current_price,
     atr_90th→atr_14*1.5, spread→1.0. ``current_spread_ticks`` is uncomputable
     from the OHLCV-only tick stream, so the decoupled path always defaults it.
+
+    ⚠ F-9 PRECONDITION — ``vwap`` is intentionally still optional (fallback
+    ``vwap := current_price``). Setup D (VWAP reversion) DOES read vwap; on the
+    decoupled ``FuturesContextProvider`` (which omits vwap) the fallback makes
+    Setup D's ``z = (price - vwap)/atr`` collapse to 0 → Setup D silently inert.
+    This is dormant today (futures trade the orchestrator path, which threads a
+    real vwap). Before the F-9 decoupled cutover, the provider must source a real
+    session VWAP (engine ``get_indicators()['vwap']``); only THEN make ``vwap``
+    required (drop this fallback) so a future omission is a loud TypeError, not a
+    silent #533/#537-class inert. Contract-pinned in
+    ``tests/unit/decision/test_market_context_parity.py``.
 
     ``market_open_hour`` / ``market_open_minute`` set the session open anchor
     used by ``minutes_since_open()``. When omitted they are read from
