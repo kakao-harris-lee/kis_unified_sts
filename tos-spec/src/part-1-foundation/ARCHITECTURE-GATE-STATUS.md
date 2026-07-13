@@ -3,7 +3,7 @@
 - **Date:** 2026-07-13
 - **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-012
 - **Architecture Documentation:** Phase B decision set and the follow-on RCL consensus decision are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-011 PASS at document-review level; ADR-002-012 awaits independent document review; no status or live-readiness promotion
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-012 PASS at document-review level; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -123,11 +123,10 @@ Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 th
 
 ### 4.1 Latest Review Disposition
 
-The latest architecture review passed ADR-002-002 through ADR-002-011 without identifying a document-level unsafe path. ADR-002-012 was authored after that review and is outside its reviewed set. The disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
+The latest architecture review passed ADR-002-012 with no Critical or Major finding after adversarially tracing all 27 specified unsafe sequences. Its sole Minor finding was the risk that ADR-002-007 §9.4 could be read as permitting a host-local capability claim; §9.4 now explicitly requires ADR-002-012's quorum-committed `ClaimCapabilityAndMarkSendStarted` transition and Commit Proof. The durable review record is attached as a git note to commit `f6a5200f`. This disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
 
 ```text
-ADR-002-002 through ADR-002-011 status: Proposed
-ADR-002-012 status: Proposed; independent document review pending
+ADR-002-002 through ADR-002-012 status: Proposed
 ADR acceptance: NO
 Restricted-live readiness: NO
 Production readiness: NO
@@ -180,7 +179,7 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Independently review ADR-002-012; select a conforming RCL replicated-state-machine product, voter/failure-domain topology, hard-fence profile, Commit Proof, and egress-currentness implementation substrate.
+1. Select and security-review a conforming RCL replicated-state-machine product, voter/failure-domain topology, hard-fence profile, Commit Proof, and egress-currentness implementation substrate.
 2. Assign implementation owners, evidence owners, and independent reviewers for all 147 items in EVIDENCE-REGISTER-002.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, and live-authorization state-machine models.

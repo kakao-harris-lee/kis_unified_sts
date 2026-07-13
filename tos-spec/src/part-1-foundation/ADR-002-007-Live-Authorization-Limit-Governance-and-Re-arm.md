@@ -308,6 +308,8 @@ The Egress Gateway SHALL be the only holder of a usable live order credential an
 3. durably claim the capability nonce exactly once and append `SEND_STARTED` with the same generation vector, capacity identity, attempt identity, and broker-request identity;
 4. begin the broker socket write within `B_capability_claim_to_send` without an intervening unfenced queue, proxy, credential holder, or retry layer.
 
+Under ADR-002-012 §12, the durable claim and `SEND_STARTED` are one quorum-committed `ClaimCapabilityAndMarkSendStarted` Safety Commit Log transition and produce consumer-verifiable Commit Proof before the broker write. A host-local journal, local database transaction, or evidence append cannot satisfy this claim.
+
 If durable claim, evidence persistence, currentness, or local ordering is unavailable or ambiguous, no send is permitted. A crash or ambiguity after durable `SEND_STARTED` and before Final Quantity Proof is treated as potentially transmitted: the attempt remains `UNKNOWN`, its worst-case economic effect remains capacity-covered, and the capability is never reusable. Capability expiry or authority expiry after `SEND_STARTED` does not expire economic effect.
 
 ### 9.5 Restrictive Races and Protective Exception
