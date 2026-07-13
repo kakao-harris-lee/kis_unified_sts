@@ -23,6 +23,9 @@ baseline:
   effective_principal_graph_id: TBD
   effective_principal_graph_generation: null
   effective_principal_graph_digest: TBD
+  evidence_integrity_policy_id: TBD
+  evidence_integrity_policy_generation: null
+  evidence_integrity_policy_digest: TBD
   consumer_compatibility_manifest_ids: []
   broker_capability_profile_version: TBD
   verification_profile_version: TBD
@@ -69,6 +72,13 @@ artifacts:
   break_glass_events: []
   identity_delegation_and_revocation: []
   human_authority_compromise: []
+  safety_evidence_envelopes: []
+  evidence_commit_receipts: []
+  evidence_integrity_anchors: []
+  evidence_gap_records: []
+  evidence_access_redaction_and_exports: []
+  replay_capsules_and_results: []
+  chain_of_custody: []
   restrictive_overrides: []
   configuration_rollback_restore: []
   state_dimensions: []

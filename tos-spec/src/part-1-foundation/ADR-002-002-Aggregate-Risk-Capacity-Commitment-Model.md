@@ -1619,6 +1619,7 @@ ADR-002-002 may move from **Proposed** to **Accepted** only when:
 - the ADR-002-013 final-egress boundary, exact claim binding, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;
 - the ADR-002-014 canonical envelope/profile validation and committed-generation activation are implemented and their required SPG evidence passes;
 - ADR-002-015 human approval and break-glass paths cannot mutate or release capacity and their required HAG evidence passes;
+- ADR-002-016 capacity, claim, send, release, UNKNOWN, recovery, and rejection evidence is durably ordered, gap-detected, retained, and replayable without becoming capacity authority, and applicable ERI evidence passes;
 - protective pool and sub-ledger semantics are demonstrated;
 - broker-specific Final Quantity Proof rules exist;
 - all Critical acceptance criteria pass;

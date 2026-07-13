@@ -519,7 +519,8 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 3. dedicated evidence items are registered for every `PR-AC-*` case;
 4. required EV-L1, EV-L2, and EV-L3 evidence covers partial-fill and failure interleavings;
 5. Risk Capacity Ledger, Cancellation Arbiter, ADR-002-013 final egress and credential/route boundary, and recovery behavior receive independent review with applicable EGRESS evidence;
-6. residual broker-resource and market-liquidity risks are explicitly accepted;
-7. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+6. ADR-002-016 preserves request, old/new order, claim, first-byte, ACK, fill, cancel, gap, overlap, Final Quantity Proof, and recovery lineage without using missing evidence as release proof, and applicable ERI evidence passes;
+7. residual broker-resource and market-liquidity risks are explicitly accepted;
+8. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship of this ADR does not prove safe replacement and does not authorize restricted-live or production operation.

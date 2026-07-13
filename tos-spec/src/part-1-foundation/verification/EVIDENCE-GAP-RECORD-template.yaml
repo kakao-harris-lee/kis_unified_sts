@@ -1,0 +1,52 @@
+gap_id: TBD
+status: SUSPECTED
+detected_by: TBD
+detected_at_time_snapshot_id: TBD
+evidence_integrity_policy_id: TBD
+evidence_integrity_policy_generation: null
+
+affected_scope:
+  environments: []
+  safety_cells: []
+  capacity_domains: []
+  accounts: []
+  brokers: []
+  instruments: []
+  source_continuity_ids: []
+  authority_generations: []
+  profile_generations: []
+  egress_generations: []
+
+gap:
+  gap_type: UNKNOWN
+  expected_record_classes: []
+  missing_or_conflicting_ids: []
+  expected_sequence_start: null
+  expected_sequence_end: null
+  observed_branches: []
+  affected_causal_roots: []
+  economic_effect_unknown: true
+
+response:
+  new_risk_blocked: true
+  containment_generation: null
+  capacity_treatment: CONSERVATIVE_UNKNOWN
+  existing_protection_preserved: true
+  escalation_id: TBD
+
+repair:
+  recovered_record_ids: []
+  recovery_sources: []
+  repair_method: null
+  remaining_uncertainty: UNKNOWN
+  independently_reviewed: false
+
+authority_effect:
+  closes_unknown: false
+  releases_capacity: false
+  creates_live_authorization: false
+  may_rearm: false
+
+authorization_notice: >-
+  This SUSPECTED gap remains unresolved, keeps affected state conservative, and
+  grants no capacity release, live authorization, broker transmission, or re-arm authority.

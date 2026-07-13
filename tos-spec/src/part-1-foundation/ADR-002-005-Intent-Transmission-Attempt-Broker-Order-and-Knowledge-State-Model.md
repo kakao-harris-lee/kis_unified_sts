@@ -258,6 +258,7 @@ ADR-002-005 may move from **Proposed** to **Accepted** only when:
 - all CPL coupling invariants are demonstrated under fault injection;
 - restart reconstructs a conservative composite state in tests;
 - no implementation collapses dimensions or advances conservatism-reducing transitions without the defined proof;
+- ADR-002-016 immutable causal evidence preserves each dimension owner and transition independently, detects gaps, and replays without mutating live state;
 - independent review confirms the model against RFC-001 SAFE-020/021/022/024/025 and ADR-002-002.
 
 Until then, this ADR authorizes design and implementation-planning work only; it does not authorize live trading.

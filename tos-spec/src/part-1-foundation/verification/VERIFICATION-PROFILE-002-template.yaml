@@ -24,6 +24,9 @@ scope:
   effective_principal_graph_id: TBD
   effective_principal_graph_generation: null
   effective_principal_graph_digest: TBD
+  evidence_integrity_policy_id: TBD
+  evidence_integrity_policy_generation: null
+  evidence_integrity_policy_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -221,6 +224,20 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+  B_evidence_gap_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
+  B_evidence_gap_contain:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
 limits:
   MAX_normal_capability_age_ms: null
   MAX_time_health_snapshot_age_ms: null
@@ -231,6 +248,8 @@ limits:
   MAX_human_approval_age_ms: null
   MAX_human_session_age_ms: null
   MAX_human_delegation_age_ms: null
+  MIN_evidence_retention_ms: null
+  MAX_replay_start_delay_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

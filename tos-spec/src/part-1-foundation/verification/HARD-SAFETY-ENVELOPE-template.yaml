@@ -85,6 +85,7 @@ mandatory_constraints:
   consensus_model: ADR-002-012
   egress_security_model: ADR-002-013
   human_authority_model: ADR-002-015
+  evidence_integrity_model: ADR-002-016
   prohibited_fallbacks: []
   required_fail_closed_conditions: []
 
@@ -101,6 +102,9 @@ references:
   verification_profile_digest: TBD
   failure_domain_allocation_matrix_id: TBD
   failure_domain_allocation_matrix_digest: TBD
+  evidence_integrity_policy_id: TBD
+  evidence_integrity_policy_generation: null
+  evidence_integrity_policy_digest: TBD
   calendars: []
   policy_artifacts: []
 

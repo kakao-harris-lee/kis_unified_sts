@@ -627,8 +627,9 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;
 - the selected currentness distribution and fenced irreversible-send protocol in §§9.1–9.5 is implemented and independently security-reviewed;
 - the applicable ADR-002-013 final-egress trust boundary, proof validation, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;
+- ADR-002-016 exact approval, authority, invalidation, HALT, recovery, re-arm, pre-effect, and send evidence is durably captured, gap-contained, and replayable without creating or reviving permission, and applicable ERI evidence passes;
 - every invalidation trigger fails closed within its approved bound;
-- `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, and `B_egress_hard_fence` are approved, measured, and enforced at every final egress;
+- `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, `B_egress_hard_fence`, `B_evidence_persist`, `B_evidence_gap_detect`, and `B_evidence_gap_contain` are approved, measured, and enforced at every applicable boundary;
 - automatic re-arm and stale authorization replay are demonstrably impossible;
 - partial re-arm cannot expand beyond its exact scope;
 - VER-002-001 and the Evidence Register cover every Critical acceptance case;

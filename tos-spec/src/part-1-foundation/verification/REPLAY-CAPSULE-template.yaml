@@ -1,0 +1,73 @@
+replay_capsule_id: TBD
+version: "TBD"
+status: DRAFT
+content_digest: TBD
+created_by: TBD
+
+baseline:
+  repository_commit_sha: TBD
+  build_artifact_digest: TBD
+  rfc_adr_versions: []
+  hard_safety_envelope_digest: TBD
+  runtime_safety_profile_digest: TBD
+  safety_configuration_activation_record_digest: TBD
+  human_authority_policy_digest: TBD
+  effective_principal_graph_digest: TBD
+  broker_capability_profile_digest: TBD
+  evidence_integrity_policy_digest: TBD
+  verification_profile_version: TBD
+  schema_and_migration_digests: []
+  deployment_manifest_digest: TBD
+  workload_identity_and_key_generations: []
+  test_harness_digest: TBD
+
+inputs:
+  raw_evidence_record_ids: []
+  raw_evidence_record_digests: []
+  integrity_anchor_ids: []
+  normalized_view_versions: []
+  initial_authoritative_snapshot_digests: []
+  committed_prefixes: []
+  time_health_snapshot_ids: []
+  random_seeds: []
+  fault_schedule_digest: TBD
+  broker_stub_or_archive_digest: TBD
+  external_input_digests: []
+
+determinism:
+  scheduler_identity: TBD
+  dependency_archive_digest: TBD
+  documented_nondeterministic_boundaries: []
+  comparison_rule_id: TBD
+  tolerances: []
+
+isolation:
+  environment_id: non-live-replay
+  live_credentials_present: false
+  live_broker_route_reachable: false
+  production_mutation_endpoint_reachable: false
+  live_approval_or_authorization_consumable: false
+
+expected:
+  state_digest: TBD
+  decision_digests: []
+  denial_digests: []
+  transmission_attempt_digests: []
+  invariant_report_digest: TBD
+
+result:
+  state: NOT_RUN
+  actual_state_digest: null
+  divergence_report_digest: null
+  creates_authority: false
+  may_mutate_live_state: false
+  may_rearm: false
+
+review:
+  independent_reviewer: TBD
+  evidence_location: TBD
+  review_result: NOT_REVIEWED
+
+authorization_notice: >-
+  This DRAFT replay capsule is non-live and non-authorizing. A replay result cannot
+  mutate production state, release capacity, transmit to a broker, or re-arm authority.

@@ -670,6 +670,7 @@ The mechanism class is selected. The following product and deployment choices re
 11. Which numeric commit, currentness, claim-to-send, failure-detection, and recovery bounds are approved?
 12. How are consensus, membership, snapshot, and restore administration protected by multi-party control?
 13. Which ADR-002-015 Approval Set identity, request digest, policy/graph generation, and single-use consumption command are ordered without giving approval services RCL, Live Authorization, or egress authority?
+14. Which ADR-002-016 pre-effect receipt, source sequence, integrity anchor, gap detector, retention, and Replay Capsule mechanisms preserve the committed log history without becoming capacity authority?
 
 Unresolved questions reduce availability or keep the scope non-live. They SHALL NOT weaken any invariant.
 
@@ -687,10 +688,11 @@ ADR-002-012 SHALL remain **Proposed** until all of the following are complete:
 6. the applicable ADR-002-013 Quorum Commit Certificate validation, exact egress-principal binding, credential/route confinement, and Hard Egress Fence are implemented and their required EGRESS evidence passes;
 7. the applicable ADR-002-014 Profile Generation, Activation Record, stale-base rejection, and restore non-revival ordering are implemented and their required SPG evidence passes;
 8. the applicable ADR-002-015 Approval Set consumption, stale/replayed approval rejection, Human HALT ordering, and authority separation are implemented and their required HAG evidence passes;
-9. membership change, quorum loss, snapshot, restore, and disaster-recovery procedures are implemented and security-reviewed;
-10. `RCLP-EV-001` through `RCLP-EV-012` are registered, executed at their required levels, retained, and independently reviewed;
-11. applicable RC, SA, REARM, FD, and cross-system evidence passes;
-12. numeric bounds and the Failure-Domain Allocation Matrix are approved;
-13. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+9. ADR-002-016 immutable committed-transition evidence, causal completeness, fork/gap detection, retention, and isolated replay are implemented and their required ERI evidence passes;
+10. membership change, quorum loss, snapshot, restore, and disaster-recovery procedures are implemented and security-reviewed;
+11. `RCLP-EV-001` through `RCLP-EV-012` are registered, executed at their required levels, retained, and independently reviewed;
+12. applicable RC, SA, REARM, FD, and cross-system evidence passes;
+13. numeric bounds and the Failure-Domain Allocation Matrix are approved;
+14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship and document review do not satisfy these conditions. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.

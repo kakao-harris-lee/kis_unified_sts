@@ -640,6 +640,7 @@ The security architecture is selected. The following product, broker, topology, 
 12. Which independently controlled identities approve credential, route, deployment, trust-bundle, and re-arm changes?
 13. How does egress verify ADR-002-014 Canonical Semantic Digests, Profile Generations, and Consumer Compatibility without a permissive cache or floating reference?
 14. Which ADR-002-015 Human HALT authenticator, policy/graph generation, replay fence, local deny latch, and later reconciliation mechanism is accepted directly at final egress?
+15. Which ADR-002-016 Evidence Commit Receipt, emergency durable journal, source sequence, integrity anchor, and gap-containment mechanism binds exact pre-effect and `SEND_STARTED` evidence without becoming transmission authority?
 
 Unresolved questions reduce availability or keep the affected scope non-live. They SHALL NOT create a permissive default.
 
@@ -659,8 +660,9 @@ ADR-002-013 SHALL remain **Proposed** until all of the following are complete:
 8. `EGRESS-EV-001` through `EGRESS-EV-012` and applicable SA, BC, REARM, FD, RCLP, and cross-system evidence pass at their required levels and receive independent review;
 9. ADR-002-014 exact committed envelope/profile digests, Profile Generation, compatibility, restrictive precedence, and mixed-version denial are enforced at egress and their applicable SPG evidence passes;
 10. ADR-002-015 Human HALT and approval references are authenticated, replay-fenced, directionally restricted, and unable to create direct broker or permissive authority, and their applicable HAG evidence passes;
-11. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, failure-domain, session, and claim-to-send bounds are approved and measured;
-12. no unresolved bypass or overlapping old/new egress authority remains;
-13. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+11. ADR-002-016 exact pre-effect and `SEND_STARTED` durability, evidence receipt validation, emergency journal, causal completeness, and replay isolation are implemented and their applicable ERI evidence passes;
+12. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
+13. no unresolved bypass or overlapping old/new egress authority remains;
+14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, architecture review, credential inventory, route diagram, secret scan, or written acceptance case does not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.

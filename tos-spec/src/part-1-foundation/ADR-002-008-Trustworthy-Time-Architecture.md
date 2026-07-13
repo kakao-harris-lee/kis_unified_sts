@@ -519,6 +519,7 @@ ADR-002-008 may move from **Proposed** to **Accepted** only when:
 - the Time Health generation distribution and consumer receipt-anchor mechanism in §22.6 is selected, implemented, and independently reviewed;
 - final egress rejects stale or untrusted time;
 - ADR-002-014 profile and approval expiry, time-invalid activation, and time-recovery non-revival rules are implemented and their applicable SPG evidence passes;
+- ADR-002-016 source continuity, trustworthy-time evidence, causal ordering, gap handling, and replay prohibit cross-host monotonic comparison and preserve uncertainty, and applicable ERI evidence passes;
 - no recovery path revives old authority or automatically re-arms;
 - VER-002-001 and the Evidence Register cover every Critical acceptance case;
 - retained evidence is immutable and independently reviewed.

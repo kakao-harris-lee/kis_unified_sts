@@ -505,7 +505,7 @@ Metrics SHALL include current policy and graph generations, active principals an
 
 Critical alerts include one effective principal counted twice, self-approval chain, unbound or replayed approval, quorum reduction, break-glass expansion attempt, direct broker route, approval-driven capacity release, HALT path failure, stale approval consumed, compromised approver still active, or automatic re-arm.
 
-Evidence and notification do not substitute for enforcement.
+Evidence and notification do not substitute for enforcement. ADR-002-016 governs immutable custody, causal completeness, gap containment, redaction, and isolated replay of these records; the Evidence Store and replay system receive no human-approval, HALT, capacity, or transmission authority.
 
 ---
 
@@ -655,6 +655,7 @@ The architecture is selected. The following product, organization, policy, and p
 10. Which human-requested containment actions are pre-defined, and how are external/manual broker actions governed?
 11. What compromise scope and previously consumed approvals require immediate suspension versus narrower containment?
 12. What `B_human_halt_to_commit`, session-age, approval-age, delegation-age, notification, and review bounds are approved?
+13. Which ADR-002-016 durable ordinary and emergency evidence paths, source identities, integrity anchors, gap detectors, protected raw tier, and replay isolation preserve human and break-glass history without delaying restrictive HALT behind the ordinary pipeline?
 
 Unresolved questions reduce authority or keep the affected scope non-live. They SHALL NOT lower quorum, expand break-glass, or create a permissive default.
 
@@ -672,8 +673,9 @@ ADR-002-015 SHALL remain **Proposed** until all of the following are complete:
 6. ADR-002-007 re-arm, ADR-002-012 ordering, ADR-002-013 egress, and ADR-002-014 configuration governance enforce exact current approval artifacts without collapsing authority;
 7. compromise, delegation, roster, workflow, identity-provider, authenticator, rollback, partition, and recovery behavior is security-reviewed;
 8. `HAG-EV-001` through `HAG-EV-012` and applicable SA, REARM, TIME, FD, RCLP, EGRESS, SPG, BC, and cross-system evidence pass at required levels and receive independent review;
-9. `B_human_halt_to_commit`, `B_halt_to_egress`, and applicable session, approval, delegation, revocation, evidence, identity-fence, and recovery bounds are approved and measured;
-10. no unresolved shared-account, self-approval, effective-principal, direct broker, or automatic re-arm bypass remains;
-11. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+9. ADR-002-016 ordinary and emergency evidence durability, human-record causal completeness, gap handling, retention, redaction, and replay isolation are implemented and their applicable ERI evidence passes;
+10. `B_human_halt_to_commit`, `B_halt_to_egress`, and applicable session, approval, delegation, revocation, evidence, identity-fence, and recovery bounds are approved and measured;
+11. no unresolved shared-account, self-approval, effective-principal, direct broker, or automatic re-arm bypass remains;
+12. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, policy drafting, two account names, ticket approval, successful authentication, audit logs, written cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, direct human capacity mutation, direct broker transmission, or automatic re-arm.

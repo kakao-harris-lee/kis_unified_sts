@@ -62,6 +62,8 @@ evidence_and_reconciliation:
   unknown_blocks_new_risk: true
   missing_ack_is_non_acceptance: false
   cancel_ack_is_final_quantity_proof: false
+  pre_effect_durability_required: true
+  evidence_gap_blocks_new_risk: true
 
 time:
   trustworthy_time_generation: null
@@ -88,6 +90,9 @@ references:
   effective_principal_graph_id: TBD
   effective_principal_graph_generation: null
   effective_principal_graph_digest: TBD
+  evidence_integrity_policy_id: TBD
+  evidence_integrity_policy_generation: null
+  evidence_integrity_policy_digest: TBD
   broker_capability_profiles: []
   verification_profile_id: TBD
   verification_profile_version: TBD

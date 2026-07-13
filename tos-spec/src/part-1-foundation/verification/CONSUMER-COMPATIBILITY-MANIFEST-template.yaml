@@ -24,6 +24,8 @@ supported_contracts:
   boundary_semantics: []
   calculation_models: []
   failure_semantics: []
+  evidence_envelope_schema_versions: []
+  evidence_integrity_policy_versions: []
 
 attestation:
   profile_generation: null

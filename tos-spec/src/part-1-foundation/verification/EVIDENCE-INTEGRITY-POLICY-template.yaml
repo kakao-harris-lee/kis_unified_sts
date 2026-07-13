@@ -1,0 +1,86 @@
+policy_id: TBD
+version: "TBD"
+generation: null
+status: DRAFT
+content_digest: TBD
+canonicalization_version: TBD
+approved_by: []
+effective_from: null
+expires_at: null
+
+scope:
+  environments: []
+  safety_cells: []
+  capacity_domains: []
+  accounts: []
+  brokers: []
+  record_classes: []
+
+durability:
+  default_class: DENY_IF_UNSPECIFIED
+  record_class_rules: []
+  required_replication: null
+  acknowledgement_rule: TBD
+  emergency_journal_required: true
+  emergency_journal_failure_response: APPLY_RESTRICTION_AND_HARD_FENCE
+  ordinary_memory_buffer_is_durable: false
+
+integrity:
+  canonical_serialization: TBD
+  content_digest_algorithm: TBD
+  source_authentication: TBD
+  segment_commitment: TBD
+  external_anchor: TBD
+  anchor_cadence_ms: null
+  key_rotation_policy: TBD
+  conflicting_record_id_response: CONTAIN
+  fork_or_rollback_response: CONTAIN
+
+completeness:
+  required_causal_parent_rules: []
+  source_sequence_rules: []
+  B_evidence_gap_detect_ms: null
+  B_evidence_gap_contain_ms: null
+  unresolved_gap_response: STOP_NEW_RISK
+
+retention:
+  record_class_rules: []
+  legal_hold_policy: TBD
+  compaction_policy: TBD
+  deletion_policy: TBD
+  economic_effect_dominates_retention: true
+  retain_failed_and_inconclusive: true
+
+access_and_redaction:
+  raw_custodians: []
+  reviewer_roles: []
+  export_roles: []
+  deletion_approver_roles: []
+  redaction_profiles: []
+  usable_credentials_permitted: false
+  access_audit_required: true
+
+replay:
+  isolated_runtime_identity: TBD
+  live_credentials_permitted: false
+  live_broker_route_permitted: false
+  production_mutation_permitted: false
+  deterministic_boundary_policy: TBD
+  unsupported_baseline_result: UNSUPPORTED_BASELINE
+  divergence_result: DIVERGED
+
+authority_effect:
+  creates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  permits_broker_transmission: false
+  may_rearm: false
+
+review:
+  independent_reviewer: TBD
+  evidence_location: TBD
+  approval_record: TBD
+
+authorization_notice: >-
+  This DRAFT policy is not active, is incomplete, and grants no capacity, live
+  authorization, protective classification, broker transmission, or re-arm authority.

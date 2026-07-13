@@ -500,9 +500,10 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 3. the ADR-002-007 §§9.1–9.5 protocol and ADR-002-013 final-egress security boundary have an approved implementation substrate, isolated credential/route topology, Hard Egress Fence, executed EGRESS evidence, and numeric bounds;
 4. ADR-002-014 exact-generation activation, Consumer Compatibility Manifest, mixed-version denial, and rollback fencing are implemented across the approved Failure-Domain Allocation Matrix, and applicable SPG evidence passes;
 5. ADR-002-015 Human HALT, human identity, approval, effective-principal, and notification paths have approved failure-domain allocation and applicable HAG evidence passes;
-6. dedicated evidence items are registered for every `FD-AC-*` case;
-7. required EV-L1, EV-L2, and EV-L3 fault evidence is executed and retained;
-8. all isolation claims and residual common modes receive independent review;
-9. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+6. ADR-002-016 ordinary evidence ingress/store, emergency journal, integrity anchor, archive, key custody, and replay runtime have explicit failure-domain allocation, gap containment, and applicable ERI evidence;
+7. dedicated evidence items are registered for every `FD-AC-*` case;
+8. required EV-L1, EV-L2, and EV-L3 fault evidence is executed and retained;
+9. all isolation claims and residual common modes receive independent review;
+10. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship of this ADR does not satisfy these conditions and does not authorize restricted-live or production operation.

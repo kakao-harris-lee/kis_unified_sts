@@ -1378,6 +1378,7 @@ ADR-002-004 may move from **Proposed** to **Accepted** only when:
 - ADR-002-013 credential, route, principal, Commit-Proof, and egress fencing are implemented and their required EGRESS evidence passes;
 - ADR-002-014 binds each claimed Broker Capability Profile to one canonical Safety Configuration Bundle, and the required SPG evidence passes;
 - ADR-002-015 human approval and break-glass controls cannot use portal, dealer, support, or emergency broker authority as compliant TOS egress, and their required HAG evidence passes;
+- ADR-002-016 raw broker, portal, dealer, support, session, query-page, correction, and external-activity evidence is durably retained and replayable without turning omission into proof, and applicable ERI evidence passes;
 - all Critical acceptance criteria pass;
 - capability drift causes fail-closed behavior;
 - VER-002-001 evidence entries are complete and independently reviewed;

@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **183**
-- NOT_IMPLEMENTED: **183**
+- Total evidence items: **195**
+- NOT_IMPLEMENTED: **195**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -206,6 +206,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | HAG-EV-010 | Human Authority Governance | Dual-Control Re-arm and Narrow Scope | ADR-002-015 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | HAG-EV-011 | Human Authority Governance | Approval and Economic-State Continuity and Non-Revival | ADR-002-015 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 | HAG-EV-012 | Human Authority Governance | Human Authority Replay and Evidence Completeness | ADR-002-015 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-001 | Evidence and Replay Integrity | Complete Immutable Causal Evidence Chain | ADR-002-016 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-002 | Evidence and Replay Integrity | Pre-Effect Durability and Exact Receipt Binding | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-003 | Evidence and Replay Integrity | Evidence Outage and Emergency Path Confinement | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-004 | Evidence and Replay Integrity | Duplicate, Reorder, Conflict, and Continuity Safety | ADR-002-016 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-005 | Evidence and Replay Integrity | Mutation, Deletion, Fork, Anchor, and Restore Detection | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-006 | Evidence and Replay Integrity | Causal Ordering and Trustworthy-Time Ambiguity | ADR-002-016 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-007 | Evidence and Replay Integrity | Isolated Deterministic Replay and Divergence | ADR-002-016 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-008 | Evidence and Replay Integrity | Historical Baseline and Schema Evolution Replay | ADR-002-016 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-009 | Evidence and Replay Integrity | Redaction Export Secret and Chain-of-Custody Safety | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-010 | Evidence and Replay Integrity | Retention Compaction Supersession and Deletion Safety | ADR-002-016 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-011 | Evidence and Replay Integrity | Broker External and Non-Trade Evidence Conservatism | ADR-002-016 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| ERI-EV-012 | Evidence and Replay Integrity | Recovery Non-Revival and Incident Reconstruction | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

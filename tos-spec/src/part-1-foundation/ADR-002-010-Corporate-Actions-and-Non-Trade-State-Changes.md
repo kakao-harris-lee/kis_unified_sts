@@ -500,7 +500,8 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 3. numeric event, freshness, reconciliation, and settlement bounds receive human approval;
 4. dedicated evidence items are registered for every `NT-AC-*` case;
 5. required EV-L1, EV-L2, and EV-L3 evidence is executed across correction and failure paths;
-6. source common modes, broker residuals, and delivery obligations receive independent review;
-7. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+6. ADR-002-016 preserves raw source events, corrections, transition lineage, gaps, conservative ambiguity, and deterministic replay without rewriting external facts, and applicable ERI evidence passes;
+7. source common modes, broker residuals, and delivery obligations receive independent review;
+8. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship of this ADR does not prove non-trade-event safety and does not authorize restricted-live or production operation.

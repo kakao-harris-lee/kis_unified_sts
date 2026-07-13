@@ -23,6 +23,9 @@ bundle:
   effective_principal_graph_id: TBD
   effective_principal_graph_generation: null
   effective_principal_graph_digest: TBD
+  evidence_integrity_policy_id: TBD
+  evidence_integrity_policy_generation: null
+  evidence_integrity_policy_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 

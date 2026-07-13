@@ -972,6 +972,7 @@ ADR-002-003 may move from **Proposed** to **Accepted** only when:
 - the applicable ADR-002-013 final-egress confinement and Hard Egress Fence are implemented and their required EGRESS evidence passes;
 - the applicable ADR-002-014 profile-generation, restrictive-precedence, compatibility, and rollback fences are implemented and their required SPG evidence passes;
 - the applicable ADR-002-015 effective-human-principal, approval, Human HALT, break-glass, compromise, and recovery mechanisms are implemented and their required HAG evidence passes;
+- ADR-002-016 authority, epoch, lease, partition, HALT, recovery, and denial evidence is durably captured, gap-detected, retained, and replayable without becoming authority, and applicable ERI evidence passes;
 - stale-epoch rejection is enforced by Risk Capacity Ledger and broker egress;
 - no direct live broker bypass exists;
 - normal authority fails closed under partition;

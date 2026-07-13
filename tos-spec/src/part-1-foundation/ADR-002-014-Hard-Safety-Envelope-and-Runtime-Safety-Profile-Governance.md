@@ -651,6 +651,7 @@ The architecture is selected. The following product, schema, governance, topolog
 10. How are emergency envelope tightening and Restrictive Overrides distributed when the ordinary configuration plane is impaired?
 11. What retention and proof establish the highest committed configuration history after disaster recovery?
 12. Which numeric validity, approval, restriction-propagation, and review bounds are approved?
+13. Which ADR-002-016 Evidence Integrity Policy, canonical evidence envelope, integrity anchor, gap detector, retention rule, and Replay Capsule preserve every configuration decision without becoming activation authority?
 
 Unresolved questions reduce authority or keep the affected scope non-live. They SHALL NOT create a permissive default.
 
@@ -669,7 +670,8 @@ ADR-002-014 SHALL remain **Proposed** until all of the following are complete:
 7. rollback, restore, cache, expiry, mixed-version, emergency restriction, and software-compatibility fencing are implemented and security-reviewed;
 8. no configuration transition releases capacity, expires economic effect, treats missing ACK as non-acceptance, or treats cancel ACK as Final Quantity Proof;
 9. `SPG-EV-001` through `SPG-EV-012` and applicable REARM, FD, RCLP, EGRESS, SA, and cross-system evidence pass at required levels and receive independent review;
-10. applicable activation, revocation, restriction-propagation, time, evidence, and egress bounds are approved and measured;
-11. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+10. ADR-002-016 artifact, decision, denial, activation, restriction, rollback, restore, and consumer evidence is immutable, causally complete, gap-checked, and replayable, and applicable ERI evidence passes;
+11. applicable activation, revocation, restriction-propagation, time, evidence, and egress bounds are approved and measured;
+12. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, signatures, successful parsing, repository merge, staged distribution, written acceptance cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, configuration-driven capacity mutation, or automatic re-arm.

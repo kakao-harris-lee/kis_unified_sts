@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-13
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-015
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-015; implementation evidence has not been executed
-- **Extension State:** ADR-002-005/006/007/008/009/010/011/012/013/014/015 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, PR-EV-001..012, RCLP-EV-001..012, EGRESS-EV-001..012, SPG-EV-001..012, and HAG-EV-001..012. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-016
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-016; implementation evidence has not been executed
+- **Extension State:** ADR-002-005/006/007/008/009/010/011/012/013/014/015/016 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, PR-EV-001..012, RCLP-EV-001..012, EGRESS-EV-001..012, SPG-EV-001..012, HAG-EV-001..012, and ERI-EV-001..012. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -85,6 +85,7 @@ Every evidence run SHALL bind to an immutable baseline containing:
 - Runtime Safety Profile version;
 - Human Authority Policy generation and digest;
 - Effective Principal Graph generation and digest;
+- Evidence Integrity Policy generation and digest;
 - Broker Capability Profile version;
 - Verification Profile version;
 - database/schema migration version;
@@ -197,6 +198,8 @@ B_non_trade_transition_apply
 B_non_trade_reconcile
 B_operator_escalation
 B_evidence_persist
+B_evidence_gap_detect
+B_evidence_gap_contain
 MAX_normal_capability_age
 MAX_time_health_snapshot_age
 MAX_degraded_lease_holdover
@@ -206,6 +209,8 @@ MAX_unresolved_send_per_scope
 MAX_human_approval_age
 MAX_human_session_age
 MAX_human_delegation_age
+MIN_evidence_retention
+MAX_replay_start_delay
 ```
 
 For every bound, the profile SHALL include:
@@ -246,13 +251,16 @@ Every fault test SHALL retain, as applicable:
 18. Human Authority Policy and Effective Principal Graph generations;
 19. approval request, attestation, set, consumption, delegation, and revocation records;
 20. Human HALT, local latch, authoritative commit, egress receipt, and break-glass records;
-21. mode transitions;
-22. metrics and alerts;
-23. invariant-evaluation report;
-24. final-state snapshot;
-25. pass/fail decision;
-26. reviewer identity and review result;
-27. artifact digests and chain-of-custody record.
+21. Safety Evidence Envelopes, commit receipts, source continuity, and causal indexes;
+22. integrity segments, external anchors, key/store generations, and gap records;
+23. raw/normalized/redacted view lineage, access/export records, and Replay Capsules;
+24. mode transitions;
+25. metrics and alerts;
+26. invariant-evaluation report;
+27. final-state snapshot;
+28. pass/fail decision;
+29. reviewer identity and review result;
+30. artifact digests and chain-of-custody record.
 
 Redaction SHALL preserve fields needed to verify identity, ordering, quantity, and economic effect.
 
@@ -267,6 +275,7 @@ evidence/
   manifest.yaml
   baseline.yaml
   verification-profile.yaml
+  evidence-integrity-policy.yaml
   traceability.csv
   broker-capability-profile.yaml
   runs/
@@ -284,6 +293,9 @@ evidence/
       protective-replacement/
       non-trade-events/
       human-authority/
+      evidence-integrity/
+      replay/
+      chain-of-custody/
       metrics/
       final-state.json
       invariant-report.json
@@ -299,6 +311,8 @@ Equivalent structures are permitted if they preserve all required properties.
 ---
 
 ## 9. Evidence Integrity
+
+ADR-002-016 is normative for Safety Evidence Envelopes, pre-effect durability, commit receipts, source continuity, causal completeness, integrity anchoring, gap handling, retention, redaction, access, isolated replay, and recovery. This section adds run-package rules and does not create a separate or weaker evidence path.
 
 ### 9.1 Append-Only Run Record
 
@@ -1641,7 +1655,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 194. Model-Based and Property Verification
+# Part XVI — Evidence and Replay Integrity Evidence
+
+## 194. ERI-EV-001 — Complete Immutable Causal Evidence Chain
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-016 ERI-AC-001
+- **Injection:** Exercise proposed, approved, denied, transmitted, acknowledged, filled, cancelled, corrected, quarantined, recovered, and failed paths; omit each mandatory record class and causal parent at every owning boundary.
+- **Expected:** Complete paths produce immutable source-attributed chains; every mandatory omission creates an Evidence Gap, denies a completeness claim, and cannot be repaired by inferring a convenient downstream result.
+
+## 195. ERI-EV-002 — Pre-Effect Durability and Exact Receipt Binding
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-016 ERI-AC-002
+- **Injection:** Delay, drop, forge, replay, substitute, partially persist, or acknowledge without required durability the exact pre-effect and `SEND_STARTED` records; race first broker byte against persistence and alter request, scope, policy, store, principal, or egress generation.
+- **Expected:** Final egress sends no first byte before exact verifiable durability; a receipt proves custody only, stale or mismatched receipts are rejected, and post-claim ambiguity remains potentially live and capacity-covered.
+
+## 196. ERI-EV-003 — Evidence Outage and Emergency Path Confinement
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-016 ERI-AC-003
+- **Injection:** Fail, partition, pause, saturate, corrupt, or exhaust ordinary evidence ingress, primary storage, and the emergency journal while new-risk requests, Human HALT, existing protection, and separately authorized containment race at multiple egress boundaries.
+- **Expected:** New risk is denied; valid restrictive HALT is still applied and hard-fences transmission even when emergency durability is ambiguous, a Critical gap is raised, protective requests still pass every non-evidence safety gate, existing protection is not blindly cancelled, and no emergency path creates permissive authority.
+
+## 197. ERI-EV-004 — Duplicate, Reorder, Conflict, and Continuity Safety
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-016 ERI-AC-004
+- **Injection:** Duplicate, delay, reorder, truncate, partially deliver, reuse identities with changed bytes, restart sequences, change continuity identities, deliver children before parents, and claim competing exclusive transitions or effects.
+- **Expected:** Exact duplicates are idempotent, changed-byte reuse and semantic conflicts contain scope, continuity resets are explicit, incomplete chains remain gaps, and no ordering artifact clears UNKNOWN or releases capacity.
+
+## 198. ERI-EV-005 — Mutation, Deletion, Fork, Anchor, and Restore Detection
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-016 ERI-AC-005
+- **Injection:** Mutate, delete, substitute, truncate, fork, roll back, compact unsafely, restore an old backup, roll back source/store keys, skip anchors, and corrupt primary and replica histories under insider and infrastructure compromise.
+- **Expected:** Content commitments, source identity, segment chaining, external anchors, continuity generations, and independent inventory detect every required defect; all branches are preserved and affected scope remains contained and non-live.
+
+## 199. ERI-EV-006 — Causal Ordering and Trustworthy-Time Ambiguity
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-016 ERI-AC-006
+- **Injection:** Skew, step, freeze, and disagree clocks; reset process continuity; reorder HALT, authority, capacity, capability claim, first byte, ACK, fill, cancel, replace, correction, and external events across hosts and overlapping uncertainty intervals.
+- **Expected:** Reconstruction uses authoritative log positions, egress sequence, source sequence, causal links, and bounded time intervals; cross-host monotonic values are never subtracted and unresolved order is explicit and restrictive.
+
+## 200. ERI-EV-007 — Isolated Deterministic Replay and Divergence
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-016 ERI-AC-007
+- **Injection:** Replay complete and incomplete capsules while exposing candidate live credentials, signer, route, production state endpoint, Approval Set, Live Authorization, capacity API, and nondeterministic schedules; alter one safety-relevant input and output.
+- **Expected:** Replay cannot reach or mutate live systems, exact inputs reproduce the approved safety-relevant result, and missing, unsupported, corrupted, or divergent inputs produce a non-PASS state with no authority or re-arm effect.
+
+## 201. ERI-EV-008 — Historical Baseline and Schema Evolution Replay
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-016 ERI-AC-008
+- **Injection:** Change schema, canonicalization, parser, dependency, software, deployment, envelope/profile, human policy/graph, broker profile, evidence policy, migration, and normalized-view version; remove historical artifacts and compare historical versus current-rule evaluation.
+- **Expected:** Historical replay binds and uses the exact historical baseline, current-rule analysis is distinct, and any unavailable or incompatible baseline is `UNSUPPORTED_BASELINE` or `INCONCLUSIVE`, never silently migrated to PASS.
+
+## 202. ERI-EV-009 — Redaction, Export, Secret, and Chain-of-Custody Safety
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-016 ERI-AC-009
+- **Injection:** Redact or export identity, scope, sign, unit, quantity, ordering, outcome, and economic-effect fields; attempt unauthorized raw access and export; insert usable credentials, keys, session material, and bearer tokens; break custody metadata.
+- **Expected:** Required review semantics and original digests remain verifiable, insufficient views cannot PASS, access/export is attributable, usable secrets are rejected or trigger compromise response, and chain of custody is complete without granting trading authority.
+
+## 203. ERI-EV-010 — Retention, Compaction, Supersession, and Deletion Safety
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-016 ERI-AC-010
+- **Injection:** Expire, compact, supersede, archive, release legal hold, and request deletion while open orders, potentially-live attempts, UNKNOWN, positions, capacity, incidents, failed evidence, and accepted verification scope remain; attempt single-admin destructive action.
+- **Expected:** Economic and verification horizons dominate retention, reconstructability and tombstones survive approved compaction, negative evidence remains linked, destructive action is dual-controlled and ineligible while obligations remain, and no lifecycle action releases capacity or authority.
+
+## 204. ERI-EV-011 — Broker, External, and Non-Trade Evidence Conservatism
+
+- **Minimum Level:** EV-L2/EV-L3 plus applicable broker evidence
+- **Supports:** ADR-002-016 ERI-AC-011
+- **Injection:** Lose ACK, receive cancel ACK without final quantity, omit query pages, delay or correct fills, change broker cursor/session, create portal/dealer activity, and inject assignment, exercise, transfer, fee, and corporate-action events with incomplete provenance.
+- **Expected:** Raw broker semantics and completeness metadata are retained; no omission proves non-effect, no cancel ACK becomes Final Quantity Proof, external/non-trade facts remain attributed, and affected uncertainty consumes conservative capacity and blocks new risk.
+
+## 205. ERI-EV-012 — Recovery Non-Revival and Incident Reconstruction
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-016 ERI-AC-012
+- **Injection:** Fail over and recover evidence store, ingestion, keys, anchors, emergency journal, archive, and replay service; restore conflicting histories; repair gaps; complete replay while old approvals, authority, profiles, credentials, HALT state, orders, fills, UNKNOWN, and capacity exist.
+- **Expected:** Recovery creates new continuity and preserves branches, gaps, economic effects, and restrictive state; it creates no permission or automatic re-arm, and an independent reviewer reconstructs facts, inferences, uncertainty, custody, exposure, and gate impact.
+
+---
+
+## 206. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -1659,6 +1761,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Egress Generation, active-principal, credential, route, session, Commit-Proof, hard-fence, and downstream-intermediary state;
 - Hard Safety Envelope, Runtime Safety Profile, canonical bundle, approval, compatibility, Profile Generation, activation, restriction, expiry, rollback, and restore state;
 - Human Authority Policy, Effective Principal Graph, Approval Request, attestation, quorum, Approval Set consumption, delegation, Human HALT, break-glass, compromise, and recovery state;
+- Safety Evidence Envelope, Evidence Commit Receipt, source/store/key continuity, causal graph, integrity segment/anchor, Evidence Gap, retention, redaction, Replay Capsule, divergence, and recovery state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -1694,13 +1797,18 @@ No account, credential, device, session, delegation, service identity, or recove
 No approval artifact, human session, or break-glass command creates capacity, Live Authorization, protective classification, or broker transmission authority
 No stale, changed, expired, revoked, consumed, compromised, or recovered approval context creates permission or automatic re-arm
 No Human HALT path requires a permissive quorum or permits a later stale generation to clear its restrictive effect
+No evidence record, receipt, anchor, replay result, or incident report creates capacity, approval, Live Authorization, protective classification, transmission authority, or re-arm permission
+No risk-increasing first broker byte precedes exact durable pre-effect and SEND_STARTED evidence
+No missing, forked, truncated, conflicting, expired, redacted, or unsupported evidence produces a permissive or PASS result
+No replay principal reaches a live credential, broker route, production mutation endpoint, live approval, or consumable authority
+No retention, compaction, deletion, restore, or evidence recovery expires economic effect, releases capacity, clears UNKNOWN, or revives authority
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 195. Fault-Injection Requirements
+## 207. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -1713,6 +1821,7 @@ The test harness SHALL support controlled injection at least for:
 - credential/session compromise, stale egress resume, signer and trust-bundle rollback, route/endpoint substitution, proof corruption, downstream replay, and hard-fence delay beyond `B_egress_hard_fence`;
 - envelope/profile semantic mutation, omitted and unknown fields, canonicalization disagreement, partial distribution, mixed generation, incompatible consumer, stale-base activation, approval compromise, Restrictive Override race, expiry recovery, and configuration rollback/restore;
 - common-control identity collapse, shared accounts, self-approval chains, stale Effective Principal Graph, quorum and role drift, delegation and roster change, identity-provider and workflow outage, authenticator recovery, stale Approval Set replay, duplicate consumption, approver compromise, break-glass expansion, and Human HALT propagation beyond `B_human_halt_to_commit`;
+- evidence pre-effect receipt delay/substitution, store and ingress outage, source-sequence reset, duplicate conflict, missing causal parent, record mutation/deletion/truncation/fork, key and anchor rollback, conflicting restore, schema/canonicalization drift, unsafe redaction/export, premature compaction/deletion, replay divergence, and replay-to-live boundary exposure;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -1736,7 +1845,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 196. Broker Verification Safety Rules
+## 208. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -1754,7 +1863,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 197. Continuous Conformance Evidence
+## 209. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -1770,6 +1879,7 @@ After approval, continuous monitors SHALL detect at least:
 - Egress Generation, active-principal, usable-credential, broker-session, route-policy, trust-bundle, Quorum Commit Certificate, or hard-fence contradiction;
 - Hard Safety Envelope, Runtime Safety Profile, Canonical Semantic Digest, approval, Consumer Compatibility Manifest, Profile Generation, Activation Record, or restrictive-generation contradiction;
 - Human Authority Policy, Effective Principal Graph, counted effective principals, role/conflict decision, Approval Request, attestation, Approval Set, consumption, delegation, identity recovery, Human HALT, local latch, break-glass, or compromise contradiction;
+- Safety Evidence Envelope, commit receipt, source/store/key continuity, required record class, causal closure, integrity anchor, gap bound, retention, redaction/export, Replay Capsule, replay isolation, or chain-of-custody contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -1786,7 +1896,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 198. Residual Risk Register
+## 210. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -1807,7 +1917,7 @@ Every unresolved limitation SHALL record:
 
 ---
 
-## 199. Independent Review Checklist
+## 211. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -1826,6 +1936,7 @@ The reviewer SHALL confirm:
 - the effective Final Egress Trust Boundary includes every signer, session, proxy, queue, route, and credential authority, and its Quorum Commit Certificate and hard-fence behavior match ADR-002-013;
 - every safety-configuration consumer reproduces the canonical semantics and exact committed bundle, and approval, activation, restriction, rollback, restore, and compatibility behavior match ADR-002-014;
 - every counted human is one current attributable effective natural person, and policy, graph, exact request, attestation, quorum, consumption, delegation, HALT, break-glass, compromise, and non-revival behavior match ADR-002-015;
+- every required record is source-attributed, causally complete, durably ordered at the correct effect boundary, integrity-anchored, retained, redacted without semantic loss, and replayed only in an isolated non-authorizing environment under ADR-002-016;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -1835,13 +1946,14 @@ The reviewer SHALL confirm:
 
 ---
 
-## 200. Approval Gates by ADR
+## 212. Approval Gates by ADR
 
 ### ADR-002-002
 
 Requires:
 
 - RC-EV-001 through RC-EV-018;
+- ERI-EV-001 through ERI-EV-005, ERI-EV-007, and ERI-EV-010 through ERI-EV-012;
 - SPG-EV-001, SPG-EV-002, SPG-EV-004 through SPG-EV-006, and SPG-EV-011;
 - HAG-EV-006, HAG-EV-007, and HAG-EV-011;
 - X-EV-001 through X-EV-004, X-EV-007, X-EV-009, and X-EV-012;
@@ -1853,6 +1965,7 @@ Requires:
 Requires:
 
 - SA-EV-001 through SA-EV-015;
+- ERI-EV-001, ERI-EV-003 through ERI-EV-007, ERI-EV-010, and ERI-EV-012;
 - SPG-EV-004, SPG-EV-006, SPG-EV-007, SPG-EV-010, and SPG-EV-011;
 - EGRESS-EV-002, EGRESS-EV-004, EGRESS-EV-007 through EGRESS-EV-010, and EGRESS-EV-012;
 - HAG-EV-005, HAG-EV-008, HAG-EV-009, and HAG-EV-011;
@@ -1865,6 +1978,7 @@ Requires:
 Requires:
 
 - BC-EV-001 through BC-EV-022 for each approved broker profile, with `NOT_APPLICABLE` justified by profile scope where valid;
+- ERI-EV-001, ERI-EV-004, ERI-EV-005, and ERI-EV-007 through ERI-EV-012;
 - SPG-EV-004, SPG-EV-010, and SPG-EV-011;
 - EGRESS-EV-001 through EGRESS-EV-003, EGRESS-EV-008, EGRESS-EV-010, EGRESS-EV-011, and EGRESS-EV-012;
 - HAG-EV-006, HAG-EV-007, HAG-EV-009, and HAG-EV-011;
@@ -1877,6 +1991,7 @@ Requires:
 Requires:
 
 - STATE-EV-001 through STATE-EV-005;
+- ERI-EV-001, ERI-EV-004, ERI-EV-006 through ERI-EV-008, and ERI-EV-010 through ERI-EV-012;
 - RC-EV-003, RC-EV-004, RC-EV-006 through RC-EV-008, RC-EV-010, RC-EV-011, RC-EV-017, and SA-EV-006;
 - model-based exploration of orthogonality, CPL-1 through CPL-7, and conservative direction;
 - state-transition ownership security assessment and independent review.
@@ -1886,6 +2001,7 @@ Requires:
 Requires:
 
 - RECON-EV-001 through RECON-EV-005;
+- ERI-EV-001, ERI-EV-004 through ERI-EV-008, and ERI-EV-010 through ERI-EV-012;
 - RC-EV-005, RC-EV-007, RC-EV-010, RC-EV-011, SA-EV-011, BC-EV-006, and BC-EV-017;
 - approved field-specific proof, freshness, source-independence, and conservative-bound rules;
 - reconciliation and evidence-independence review.
@@ -1895,6 +2011,7 @@ Requires:
 Requires:
 
 - REARM-EV-001 through REARM-EV-012;
+- ERI-EV-001 through ERI-EV-007, ERI-EV-010, and ERI-EV-012;
 - SPG-EV-001 through SPG-EV-012;
 - EGRESS-EV-004 through EGRESS-EV-010 and EGRESS-EV-012;
 - HAG-EV-001 through HAG-EV-012;
@@ -1907,6 +2024,7 @@ Requires:
 Requires:
 
 - TIME-EV-001 through TIME-EV-010;
+- ERI-EV-001, ERI-EV-004 through ERI-EV-008, ERI-EV-010, and ERI-EV-012;
 - SPG-EV-001, SPG-EV-008, SPG-EV-010, and SPG-EV-011;
 - HAG-EV-002, HAG-EV-004, and HAG-EV-011;
 - SA-EV-005, SA-EV-006, SA-EV-011, and X-EV-008;
@@ -1918,6 +2036,7 @@ Requires:
 Requires:
 
 - FD-EV-001 through FD-EV-012;
+- ERI-EV-003, ERI-EV-005, ERI-EV-007, ERI-EV-009, ERI-EV-010, and ERI-EV-012;
 - SPG-EV-004, SPG-EV-005, SPG-EV-007, and SPG-EV-009 through SPG-EV-011;
 - EGRESS-EV-001 through EGRESS-EV-003 and EGRESS-EV-006 through EGRESS-EV-010;
 - HAG-EV-001, HAG-EV-005, HAG-EV-008, and HAG-EV-009;
@@ -1930,6 +2049,7 @@ Requires:
 Requires:
 
 - NT-EV-001 through NT-EV-012;
+- ERI-EV-001, ERI-EV-004 through ERI-EV-008, and ERI-EV-010 through ERI-EV-012;
 - RC-EV-010, RC-EV-015, BC-EV-008, BC-EV-019, X-EV-010, TIME-EV-008, and REARM-EV-003;
 - HAG-EV-007, HAG-EV-009, and HAG-EV-011;
 - approved source-authority, transition-envelope, RCL remap, event-time, and broker-treatment rules;
@@ -1940,6 +2060,7 @@ Requires:
 Requires:
 
 - PR-EV-001 through PR-EV-012;
+- ERI-EV-001 through ERI-EV-007 and ERI-EV-010 through ERI-EV-012;
 - EGRESS-EV-006, EGRESS-EV-007, EGRESS-EV-011, and EGRESS-EV-012;
 - HAG-EV-006, HAG-EV-007, and HAG-EV-011;
 - RC-EV-005 through RC-EV-008, BC-EV-002, BC-EV-003, BC-EV-007 through BC-EV-010, BC-EV-012 through BC-EV-014, X-EV-005, and X-EV-006;
@@ -1951,6 +2072,7 @@ Requires:
 Requires:
 
 - RCLP-EV-001 through RCLP-EV-012;
+- ERI-EV-001, ERI-EV-002, ERI-EV-004 through ERI-EV-008, ERI-EV-010, and ERI-EV-012;
 - SPG-EV-004, SPG-EV-005, SPG-EV-007, and SPG-EV-010;
 - EGRESS-EV-004 through EGRESS-EV-009;
 - HAG-EV-002, HAG-EV-004, HAG-EV-005, and HAG-EV-010;
@@ -1963,6 +2085,7 @@ Requires:
 Requires:
 
 - EGRESS-EV-001 through EGRESS-EV-012;
+- ERI-EV-001 through ERI-EV-007, ERI-EV-009, ERI-EV-011, and ERI-EV-012;
 - SPG-EV-004, SPG-EV-006, SPG-EV-007, SPG-EV-010, and SPG-EV-011;
 - HAG-EV-005 through HAG-EV-007, HAG-EV-009, and HAG-EV-011;
 - SA-EV-008, SA-EV-009, SA-EV-012, SA-EV-013, BC-EV-001, BC-EV-002, BC-EV-003, BC-EV-014, BC-EV-015, BC-EV-020, BC-EV-021, REARM-EV-008, REARM-EV-010, REARM-EV-011, FD-EV-001 through FD-EV-007, FD-EV-009, RCLP-EV-002, RCLP-EV-003, RCLP-EV-006 through RCLP-EV-009, RCLP-EV-012, X-EV-001 through X-EV-004, X-EV-006, X-EV-009, X-EV-011, and X-EV-012;
@@ -1975,6 +2098,7 @@ Requires:
 Requires:
 
 - SPG-EV-001 through SPG-EV-012;
+- ERI-EV-001, ERI-EV-004 through ERI-EV-010, and ERI-EV-012;
 - HAG-EV-001 through HAG-EV-004, HAG-EV-006, and HAG-EV-008 through HAG-EV-010;
 - RC-EV-001, RC-EV-002, RC-EV-009, RC-EV-013, RC-EV-017, SA-EV-001, SA-EV-002, SA-EV-008 through SA-EV-010, SA-EV-013, BC-EV-015, REARM-EV-001, REARM-EV-004 through REARM-EV-006, REARM-EV-008 through REARM-EV-012, TIME-EV-001, TIME-EV-006, TIME-EV-009, FD-EV-002, FD-EV-007, FD-EV-009, FD-EV-012, RCLP-EV-002, RCLP-EV-003, RCLP-EV-005, RCLP-EV-008 through RCLP-EV-010, RCLP-EV-012, EGRESS-EV-003 through EGRESS-EV-007, EGRESS-EV-009, EGRESS-EV-012, X-EV-002, X-EV-003, X-EV-007 through X-EV-009, and X-EV-012;
 - approved canonical artifact schemas, semantic normalization, comparison rules, envelope and profile governance, Consumer Compatibility Manifest, Profile Generation, Activation Record, and Restrictive Override protocol;
@@ -1986,10 +2110,21 @@ Requires:
 Requires:
 
 - HAG-EV-001 through HAG-EV-012;
+- ERI-EV-001, ERI-EV-003 through ERI-EV-010, and ERI-EV-012;
 - SA-EV-009, SA-EV-010, SA-EV-012, SA-EV-013, REARM-EV-002 through REARM-EV-005, REARM-EV-008 through REARM-EV-012, TIME-EV-007, TIME-EV-009, FD-EV-001, FD-EV-003, FD-EV-005, FD-EV-006, FD-EV-009, RCLP-EV-005 through RCLP-EV-009, EGRESS-EV-001 through EGRESS-EV-003, EGRESS-EV-005 through EGRESS-EV-010, EGRESS-EV-012, SPG-EV-001, SPG-EV-004 through SPG-EV-010, SPG-EV-012, X-EV-006, X-EV-007, X-EV-009, and X-EV-012;
 - approved Human Authority Policy, Effective Principal Graph, Approval Request, Approval Attestation, Approval Set, consumption, delegation, Human HALT, break-glass, compromise, and recovery mechanisms;
 - approved and measured `B_human_halt_to_commit`, `B_halt_to_egress`, and applicable human session, approval, delegation, revocation, identity-fence, notification, evidence, and recovery bounds;
 - independent identity, authentication, effective-control, workflow, quorum, separation-of-duties, break-glass, HALT-path, approval-consumption, compromise, and bypass security assessment.
+
+### ADR-002-016
+
+Requires:
+
+- ERI-EV-001 through ERI-EV-012;
+- STATE-EV-001 through STATE-EV-005, RECON-EV-001 through RECON-EV-005, RCLP-EV-003, RCLP-EV-006, RCLP-EV-009, RCLP-EV-010, RCLP-EV-012, EGRESS-EV-002, EGRESS-EV-005 through EGRESS-EV-007, EGRESS-EV-009, EGRESS-EV-012, SPG-EV-003, SPG-EV-007, SPG-EV-010 through SPG-EV-012, HAG-EV-004, HAG-EV-005, HAG-EV-009, HAG-EV-011, and HAG-EV-012;
+- approved Safety Evidence Envelope, Evidence Integrity Policy, Evidence Commit Receipt, Integrity Anchor, Evidence Gap, retention/redaction/access rules, and Replay Capsule schemas;
+- approved and measured `B_evidence_persist`, `B_evidence_gap_detect`, `B_evidence_gap_contain`, and applicable retention, replay, egress, time, broker, and recovery bounds;
+- independent storage, ingestion, source identity, cryptographic integrity, key custody, emergency-journal, access, redaction/export, retention/deletion, backup/restore, replay-isolation, and live-boundary security assessment.
 
 ### Production Restricted Live Gate
 
@@ -2005,12 +2140,12 @@ Requires:
 
 ---
 
-## 201. Current Evidence Readiness Assessment
+## 213. Current Evidence Readiness Assessment
 
 As of 2026-07-13:
 
 ```text
-Evidence specification (registered scope): COMPLETE
+Evidence specification: REGISTERED; NOT EXECUTED
 Evidence register: CREATED
 Test harness: NOT ASSESSED
 Implementation instrumentation: NOT ASSESSED
@@ -2029,6 +2164,7 @@ RCL persistence, consensus, and writer-fencing evidence: NOT EXECUTED
 Egress credential, route, Commit-Proof, and hard-fence evidence: NOT EXECUTED
 Safety profile and Hard Safety Envelope governance evidence: NOT EXECUTED
 Human authority, dual-control, HALT, and break-glass governance evidence: NOT EXECUTED
+Evidence integrity, audit, gap, retention, and deterministic replay evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -2037,13 +2173,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 202. Required Next Execution Sequence
+## 214. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, and human-authority governance models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, and evidence-integrity/replay models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -2056,7 +2192,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 203. Verification Specification Approval Gate
+## 215. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

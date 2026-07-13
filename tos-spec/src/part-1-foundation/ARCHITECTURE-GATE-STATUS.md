@@ -1,9 +1,9 @@
 # TOS Safety Architecture Gate Status
 
 - **Date:** 2026-07-13
-- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-015
-- **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, and human-authority governance decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-015 PASS at document-review level; no status or live-readiness promotion
+- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-016
+- **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, and evidence-integrity/replay decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-015 PASS at document-review level; ADR-002-016 awaits independent document review; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -29,8 +29,9 @@ The following design decisions now have normative documents:
 14. ADR-002-013 Egress Gateway Credential, Route, and Commit-Proof Security
 15. ADR-002-014 Hard Safety Envelope and Runtime Safety Profile Governance
 16. ADR-002-015 Human Safety Authority, Dual Control, and Break-Glass Governance
-17. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
-18. Evidence Register and configuration/evidence templates
+17. ADR-002-016 Safety Evidence, Audit, and Deterministic Replay Integrity
+18. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
+19. Evidence Register and configuration/evidence templates
 
 ---
 
@@ -52,6 +53,9 @@ The current bundle decides:
 - Approval Requests, Attestations, and Approval Sets bind one exact current context; a set is consumed once and is never configuration, capacity, protective-classification, Live Authorization, or broker-transmission authority.
 - one current authenticated Human Safety Principal may invoke a monotonic restrictive HALT without a permissive quorum; break-glass can only deny, narrow, HALT, or request separately authorized containment.
 - delegation, roster change, identity recovery, approval expiry/revocation, workflow recovery, or compromise cannot multiply quorum, erase economic effect, or automatically re-arm.
+- safety evidence is source-attributed, immutable, causally linked, integrity-anchored, gap-detected, retention-governed, and replayed only in an isolated non-authorizing environment.
+- exact pre-effect and `SEND_STARTED` evidence durability is required before risk-increasing first broker byte; an Evidence Commit Receipt proves custody only and creates no permission.
+- evidence gaps, forks, restore conflicts, replay divergence, and evidence-service recovery fail closed, preserve economic effect, and cannot release capacity, clear UNKNOWN, or re-arm.
 - Aggregate Risk Authority owns policy evaluation but does not independently mutate capacity.
 - stale capacity writers are fenced by monotonic epochs.
 - Broker Adapter or broker-egress gateway is the final transmission enforcement point.
@@ -101,7 +105,7 @@ The review files were section-level amendments, not canonical-document diffs. Th
 | Protective capacity | §21 | Distinguished reservation from priority; added intermediate-state proof, replacement gaps, ownership, and cancellation arbitration | SAFE-001, 002, 040, 043, 048 |
 | Reconciliation and recovery | §15 and §23 | Added per-field bounds, external-detection bound, startup barrier, and explicit non-automatic re-arm gate | SAFE-022, 023, 024, 041, 044, 046, 048 |
 | Failure domains and verification | §24 and §29 | Added common-mode allocation and measurable trigger/detection/containment/pass-fail obligations | SAFE-011, 041, 045, 048, 051, 052 |
-| ADR backlog and findings | §26 and §31 | Preserved IDs ADR-002-002 through 015 and mapped A-01 through A-14 to canonical sections | Corrected the erroneous “009 through 017” history note |
+| ADR backlog and findings | §26 and §31 | Preserved IDs ADR-002-002 through 016 and mapped A-01 through A-14 to canonical sections | Corrected the erroneous “009 through 017” history note |
 
 ### 3.2 ADR-002-001 v0.2
 
@@ -120,27 +124,27 @@ The review files were section-level amendments, not canonical-document diffs. Th
 
 - RFC-000 was not changed because no contradiction was found.
 - Patch-local section numbers are provenance only; canonical section numbers now govern.
-- ADR IDs remain ADR-002-001 through ADR-002-015; ADR-002-002 through ADR-002-015 remain Proposed.
+- ADR IDs remain ADR-002-001 through ADR-002-016; ADR-002-002 through ADR-002-016 remain Proposed.
 - Every `SAFE-xxx` identifier in the RFC-002 and ADR-002-001 traceability tables exists in RFC-001.
-- The Evidence Register contains 183 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, and HAG coverage for ADR-002-005 through ADR-002-015. Registration created no verification evidence or live authority.
+- The Evidence Register contains 195 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, HAG, and ERI coverage for ADR-002-005 through ADR-002-016. Registration created no verification evidence or live authority.
 
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
 
-ADR-002-005 through ADR-002-015 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, and human-authority-governance authorship are complete, but none of those decisions is accepted.
+ADR-002-005 through ADR-002-016 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, and evidence-integrity/replay authorship are complete, but none of those decisions is accepted.
 
-ADR-002-007 selects the egress-currentness protocol, ADR-002-012 selects quorum ordering and RCL writer fencing, ADR-002-013 selects the effective final-egress security boundary, ADR-002-014 selects immutable safety-configuration artifacts and activation, and ADR-002-015 selects effective-human identity, exact approvals, dual control, independent Human HALT, and break-glass confinement. The conforming replicated-state-machine product, non-exportable signer or credential service, configuration registry/signing substrate, semantic-normalization and compatibility-manifest implementation, human identity provider, phishing-resistant authenticator, Effective Principal Graph, approval workflow, quorum and delegation policy, Approval Set consumption mechanism, restrictive HALT ingress/latch, voter and Active Egress Principal topology, identity-aware route, proof encoding/cryptography, authenticated session transport, broker hard-fence mechanism, numeric bounds, and concrete Failure-Domain Allocation Matrix remain acceptance blockers. Other blockers remain for safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, and Time Health Snapshot distribution.
+ADR-002-007 selects the egress-currentness protocol, ADR-002-012 selects quorum ordering and RCL writer fencing, ADR-002-013 selects the effective final-egress security boundary, ADR-002-014 selects immutable safety-configuration artifacts and activation, ADR-002-015 selects effective-human identity, exact approvals, dual control, independent Human HALT, and break-glass confinement, and ADR-002-016 selects immutable causal evidence, pre-effect durability, integrity anchoring, gap containment, protected retention, and isolated deterministic replay. The conforming replicated-state-machine product, non-exportable signer or credential service, configuration registry/signing substrate, semantic-normalization and compatibility-manifest implementation, human identity provider, phishing-resistant authenticator, Effective Principal Graph, approval workflow, quorum and delegation policy, Approval Set consumption mechanism, restrictive HALT ingress/latch, evidence store and acknowledgement mechanism, independent emergency journal, source identity and sequence scheme, external integrity anchor, gap detector, protected raw tier, redaction/export control, retention/deletion policy, isolated replay substrate, voter and Active Egress Principal topology, identity-aware route, proof encoding/cryptography, authenticated session transport, broker hard-fence mechanism, numeric bounds, and concrete Failure-Domain Allocation Matrix remain acceptance blockers. Other blockers remain for safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, and Time Health Snapshot distribution.
 
-Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-015, but all remain `NOT_IMPLEMENTED`. Verification Profile `0.6-PROPOSED` additionally binds the proposed human-authority policy and effective-principal graph identities and adds the unapproved `B_human_halt_to_commit` bound. The profile remains unapproved with `approved_by: []`; unresolved values reduce authority and keep live operation prohibited.
+Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-016, but all remain `NOT_IMPLEMENTED`. Verification Profile `0.7-PROPOSED` additionally binds the proposed Evidence Integrity Policy and adds unapproved `B_evidence_gap_detect` and `B_evidence_gap_contain` bounds while retaining all earlier unapproved bounds. The profile remains unapproved with `approved_by: []`; unresolved values reduce authority and keep live operation prohibited.
 
 ### 4.1 Latest Review Disposition
 
-The latest completed architecture review passed ADR-002-015 and its integration with no Critical or Major finding. Its sole Minor finding identified a dangling `ADR-002-003 §9.5` citation in the ADR-002-015 `Refines` header; the reference now identifies existing ADR-002-003 §9 without changing any safety rule. The review confirmed that all 22 adversarial sequences were blocked by explicit rules, all 12 HAG acceptance cases had one-to-one evidence registration, and the human-authority templates remained non-authorizing and fail-closed. This document-review disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
+The latest completed architecture review passed ADR-002-015 and its integration with no Critical or Major finding. Its sole Minor finding identified a dangling `ADR-002-003 §9.5` citation in the ADR-002-015 `Refines` header; the reference now identifies existing ADR-002-003 §9 without changing any safety rule. The review confirmed that all 22 adversarial sequences were blocked by explicit rules, all 12 HAG acceptance cases had one-to-one evidence registration, and the human-authority templates remained non-authorizing and fail-closed. Commit `fdce384e` records the correction and review disposition. ADR-002-016 was authored after that review and is outside its reviewed set. This document-review disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
 
 ```text
-ADR-002-002 through ADR-002-015 status: Proposed
-ADR-002-015 independent document review: PASS; Critical 0, Major 0, Minor 1 corrected
+ADR-002-002 through ADR-002-015 status: Proposed; document review PASS
+ADR-002-016 status: Proposed; independent document review pending
 ADR acceptance: NO
 Restricted-live readiness: NO
 Production readiness: NO
@@ -170,11 +174,13 @@ The Proposed status is preserved because the applicable approval gates, includin
 | ADR-002-013 | Proposed | YES | NO |
 | ADR-002-014 | Proposed | YES | NO |
 | ADR-002-015 | Proposed | YES | NO |
+| ADR-002-016 | Proposed | YES | NO |
 | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
-| Verification Profile 0.6 | `PROPOSED`, `approved_by: []` | YES, as draft | NO |
+| Verification Profile 0.7 | `PROPOSED`, `approved_by: []` | YES, as draft | NO |
 | Broker-specific Capability Profile | Template only | YES | NO |
 | Human authority artifacts | Templates only, all non-authorizing | YES | NO |
-| Verification evidence | 183 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Evidence integrity and replay artifacts | Templates only, all DRAFT/unverified/non-authorizing | YES | NO |
+| Verification evidence | 195 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
 
 ---
 
@@ -198,8 +204,8 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
-2. Assign implementation owners, evidence owners, and independent reviewers for all 183 items in EVIDENCE-REGISTER-002.csv.
+1. Independently review ADR-002-016; select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, protected-retention, isolated-replay, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 195 items in EVIDENCE-REGISTER-002.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, exact-approval, and Human HALT state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.

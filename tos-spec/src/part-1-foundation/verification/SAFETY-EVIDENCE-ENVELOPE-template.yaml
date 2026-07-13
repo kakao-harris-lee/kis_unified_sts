@@ -1,0 +1,91 @@
+evidence_record_id: TBD
+status: DRAFT
+idempotency_id: TBD
+record_class: TBD
+record_outcome: AMBIGUOUS
+schema_id: TBD
+schema_version: TBD
+evidence_integrity_policy_id: TBD
+evidence_integrity_policy_generation: null
+evidence_integrity_policy_digest: TBD
+
+source:
+  principal_id: TBD
+  effective_principal_id: null
+  workload_identity: TBD
+  environment_id: TBD
+  deployment_id: TBD
+  process_continuity_id: TBD
+  key_generation: null
+  local_sequence: null
+  authoritative_log_position: null
+
+scope:
+  safety_cell_id: TBD
+  capacity_domain_id: TBD
+  account_id: TBD
+  broker_id: TBD
+  venue_id: null
+  instrument_id: null
+  strategy_id: null
+
+subjects:
+  intent_id: null
+  transmission_attempt_id: null
+  broker_order_id: null
+  fill_id: null
+  position_id: null
+  capacity_allocation_id: null
+  command_id: null
+  approval_set_id: null
+  live_authorization_id: null
+  profile_generation: null
+  halt_generation: null
+  non_trade_event_id: null
+
+causality:
+  correlation_id: TBD
+  causal_links: []
+  previous_authoritative_revision: null
+  resulting_authoritative_revision: null
+
+payload:
+  content_type: TBD
+  raw_payload_digest: TBD
+  canonical_payload_digest: TBD
+  byte_length: null
+  encrypted_location: TBD
+  confidentiality_class: RESTRICTED
+  redaction_profile_id: null
+
+time_evidence:
+  trustworthy_time_snapshot_id: TBD
+  source_wall_time: null
+  local_monotonic_value: null
+  monotonic_continuity_id: TBD
+  uncertainty_ms: null
+
+integrity:
+  source_signature_or_mac: TBD
+  integrity_key_id: TBD
+  predecessor_commitment: TBD
+  segment_id: TBD
+  evidence_commit_receipt_id: null
+
+lifecycle:
+  durability_class: DENY_IF_UNSPECIFIED
+  retention_class: TBD
+  legal_hold_ids: []
+  supersedes_record_id: null
+  corrected_by_record_id: null
+
+authority_effect:
+  creates_authority: false
+  may_mutate_live_state: false
+  may_transmit_to_broker: false
+  may_release_capacity: false
+  may_rearm: false
+
+authorization_notice: >-
+  This DRAFT evidence envelope records no proven fact until durably verified and
+  grants no capacity, live authorization, broker transmission, or re-arm authority.
