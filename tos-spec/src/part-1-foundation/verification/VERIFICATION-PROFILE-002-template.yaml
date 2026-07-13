@@ -116,6 +116,62 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: RESTRICT_OR_CONTAIN
+  B_failure_domain_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
+  B_failure_domain_contain:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_protection_gap:
+    value_ms: null
+    semantics: broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONTAIN
+  B_protection_overlap:
+    value_ms: null
+    semantics: broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONTAIN
+  B_protective_replacement_contain:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_non_trade_event_detect:
+    value_ms: null
+    semantics: source_and_broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONTAIN
+  B_non_trade_transition_apply:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: REMAIN_HALTED
+  B_non_trade_reconcile:
+    value_ms: null
+    semantics: source_and_broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: QUARANTINE_UNKNOWN
   B_operator_escalation:
     value_ms: null
     semantics: hard_maximum

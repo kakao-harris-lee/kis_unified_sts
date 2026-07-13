@@ -934,7 +934,8 @@ This ADR interfaces with:
 4. ADR-002-008 — Trustworthy Time Architecture;
 5. ADR-002-007 — Live Authorization, Limit Governance, and Re-arm;
 6. ADR-002-005 — Intent, Transmission Attempt, Broker Order, and Knowledge State Model;
-7. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
+7. ADR-002-009 — Failure-Domain Isolation and Deployment Safety;
+8. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
 
 ---
 

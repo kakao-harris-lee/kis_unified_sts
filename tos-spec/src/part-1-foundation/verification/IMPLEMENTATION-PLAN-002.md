@@ -2,8 +2,8 @@
 
 - **Status:** PROPOSED PLAN — not approved; no implementation code has been written.
 - **Date:** 2026-07-13
-- **Covers:** ARCHITECTURE-GATE-STATUS §7 steps 3–13 for the current registered VER scope (implementation, fault injection, evidence execution, independent review). ADR-002-007/008 have dedicated cases; ADR-002-005/006 require a later VER, register, and plan extension.
-- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..008, VER-002-001. Current VER and Evidence Register coverage includes ADR-002-001..004 and dedicated ADR-002-007/008 cases; registration is not executed evidence.
+- **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..011 evidence cases.
+- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..011, VER-002-001. Current VER and Evidence Register coverage includes 135 items and one-to-one dedicated acceptance cases for ADR-002-005..011; registration is not executed evidence.
 - **Authorization:** This plan authorizes nothing. Production, live, and ADR-Accepted status remain NO.
 
 ---
@@ -30,8 +30,8 @@ This document exists so those gates are explicit and ratifiable, not bypassed.
 | Input | Owner | Why it blocks |
 |---|---|---|
 | Approve/replace bounds in `VERIFICATION-PROFILE-002.yaml` | Safety/Risk authority | Tests need pass/fail thresholds; unapproved bounds are not bounds |
-| Measure broker-specific bounds from a KIS Capability Profile | Broker/Exec eng | `B_final_quantity_proof`, `B_late_fill_observation`, rate/session, query consistency |
-| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (89 items); independence is mandatory |
+| Measure broker-specific bounds from a KIS Capability Profile | Broker/Exec eng | Final Quantity Proof, late fill, rate/session, query, replacement gap/overlap, and non-trade detection/reconciliation |
+| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (135 items); independence is mandatory |
 | Approve this plan and the scoping decision (§2) | Architecture board | Determines what code is written and where |
 
 I will not fabricate any of these. I can *draft candidates* (done for bounds; role scheme in §3) for you to ratify.
@@ -64,6 +64,7 @@ Role placeholders for `EVIDENCE-REGISTER-002`; a single person may hold several,
 subject to the exclusions:
 
 - **RC-Impl / SA-Impl / TT-Impl / LA-Impl / BC-Impl** — implement Risk Capacity, Safety Authority, Trustworthy Time, Live Authorization, and Broker layers.
+- **State-Impl / Recon-Impl / FD-Impl / PR-Impl / NT-Impl** — implement orthogonal state, evidence confidence, failure-domain fencing, protective replacement, and non-trade transition layers.
 - **Harness-Eng** — deterministic fault injection + evidence capture.
 - **Evidence-Owner** — runs a case, produces the manifest + artifacts.
 - **Independent-Safety-Reviewer** — signs evidence; MUST NOT be any Impl role or the architecture author.
@@ -82,16 +83,22 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
 - Implement the **capacity state machine** (ADR-002-002 §10: COMMITTED_UNBOUND … RELEASED)
   and **authority epoch/lease**, **Time Health/continuity**, and **Live Authorization/revocation**
   models (ADR-002-003/007/008) as pure, non-transmitting models.
+- Implement pure models for the five orthogonal state dimensions and CPL invariants, per-field
+  evidence confidence, Failure-Domain Allocation Matrix, protection gap/overlap, and conservative
+  non-trade transition envelope (ADR-002-005/006/009/011/010).
 - Property/model tests for INV-001..012 and AC-001..018 (concurrency, crash points,
   cancel-crossing-fill, replace overlap, TTL, UNKNOWN, protective lease partition), plus
-  time continuity, snapshot age, non-revivable authorization, partial scope, and restrictive-generation precedence.
-- Deliverable: EV-L1 evidence for RC-EV/SA-EV/TIME-EV/REARM-EV items marked EV-L1-reachable.
+  time continuity, snapshot age, non-revivable authorization, partial scope, restrictive-generation
+  precedence, state ownership, evidence conflict, replacement interleavings, and non-trade idempotency.
+- Deliverable: EV-L1 evidence for every RC/SA/TIME/REARM/STATE/RECON/FD/PR/NT item marked EV-L1-reachable.
 
 ### Phase 2 — Component fault tests (EV-L2)
 - Durable **single-writer Risk Capacity Ledger** with compare-and-set + monotonic
   fencing epoch; **Safety Authority epoch registry**; durable evidence identities +
   write-ahead `SEND_STARTED`; Time Health generation and consumer receipt-anchor model;
   Live Authorization revocation/HALT generation model.
+- Durable orthogonal-state ownership, reconciliation-confidence bounds, deployment and credential
+  identities, replacement workflow lineage, and non-trade event/version lineage.
 - Component-level fault injection (missing input, stale epoch, crash-at-boundary).
 - Deliverable: EV-L2 evidence (e.g., RC-EV-009, RC-EV-018, SA-EV-005/015).
 
@@ -101,21 +108,23 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   split-brain / partition / restart harness.
 - Fence the validation decision and irreversible simulated send boundary against current
   authority, revocation, HALT, and Time Health generations.
-- Execute the EV-L3 RC-EV / SA-EV / TIME-EV / REARM-EV set; measure `B_*` bounds against
+- Execute the EV-L3 RC-EV / SA-EV / TIME-EV / REARM-EV / STATE-EV / RECON-EV / FD-EV /
+  PR-EV / NT-EV set; measure `B_*` bounds against
   `VERIFICATION-PROFILE-002`.
 - Deliverable: EV-L3 evidence; measured detection/containment bounds.
 
 ### Phase 4 — Broker Capability Profile & sandbox (EV-L4)
 - Complete the first **KIS Broker Capability Profile** (`BROKER-CAPABILITY-PROFILE-template.yaml`):
-  order identity/idempotency, cancel semantics, query completeness, rate/session, late-fill.
+  order identity/idempotency, cancel and atomic-replace semantics, query completeness, rate/session,
+  late-fill, corporate-action/open-order adjustment, derivative lifecycle, and settlement behavior.
 - KIS **sandbox** probes; derive broker-specific bounds; run BC-EV items.
 - Deliverable: EV-L4 evidence + a versioned Capability Profile.
 
 ### Phase 5 — Independent review & ADR re-evaluation
 - **Independent** reviewer (not me, not an Impl role) signs each evidence run.
-- Only then may ADR-002-001..004 be re-evaluated toward `Accepted`, and only within the
-  proven scope. ADR-002-007/008 require their registered cases to be executed; ADR-002-005/006
-  additionally require dedicated registration and execution. Restricted live (EV-L5) is a
+- Only then may ADR-002-001..011 be re-evaluated toward `Accepted`, and only within the
+  proven scope. Every registered case must be executed at its required evidence level; registration
+  alone satisfies no acceptance criterion. Restricted live (EV-L5) is a
   separate, later, human-authorized gate.
 
 ---
@@ -134,7 +143,7 @@ implementation code before this plan and the scoping decision are approved.
 
 ## 6. Immediate decision requested
 
-1. Approve (or amend) `VERIFICATION-PROFILE-002.yaml` proposed bounds, including the currently null egress-currentness bounds, and provide the KIS-measured ones.
+1. Approve (or amend) `VERIFICATION-PROFILE-002.yaml` proposed bounds, including the currently null egress-currentness, failure-domain, replacement, and non-trade bounds, and provide the KIS-measured ones.
 2. Choose the scoping option in §2 (new subsystem vs. refactor).
 3. Approve this plan so Phase 1 (EV-L1 models + property tests, non-transmitting) can begin.
 4. Name the independent reviewer (or confirm it is external to this work).

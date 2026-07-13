@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **89**
-- NOT_IMPLEMENTED: **89**
+- Total evidence items: **135**
+- NOT_IMPLEMENTED: **135**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -112,6 +112,52 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | REARM-EV-010 | Live Authorization and Re-arm | Final Egress Authorization Currentness | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | REARM-EV-011 | Live Authorization and Re-arm | HALT Restrictive Precedence | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
 | REARM-EV-012 | Live Authorization and Re-arm | Authorization Evidence Replay | ADR-002-007 | EV-L2 | NOT_IMPLEMENTED | TBD | TBD |
+| STATE-EV-001 | Orthogonal State | Orthogonal Composite Persistence | ADR-002-005 | EV-L1/2 | NOT_IMPLEMENTED | TBD | TBD |
+| STATE-EV-002 | Orthogonal State | Conservative Direction | ADR-002-005 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| STATE-EV-003 | Orthogonal State | Cross-Dimension Coupling | ADR-002-005 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| STATE-EV-004 | Orthogonal State | Conservative Restart Reconstruction | ADR-002-005 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| STATE-EV-005 | Orthogonal State | Dimension Transition Ownership | ADR-002-005 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RECON-EV-001 | Reconciliation Confidence | Single Evidence-Path Corruption | ADR-002-006 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RECON-EV-002 | Reconciliation Confidence | Query Omission and Negative Evidence | ADR-002-006 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| RECON-EV-003 | Reconciliation Confidence | Conflicting Fill Quantity | ADR-002-006 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RECON-EV-004 | Reconciliation Confidence | Freshness and Time-Confidence Loss | ADR-002-006 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RECON-EV-005 | Reconciliation Confidence | Field-Specific Capacity Release Proof | ADR-002-006 | EV-L3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-001 | Failure Domain | Strategy-to-Safety Isolation | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-002 | Failure Domain | Stale Deployment and Duplicate Active Generation | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-003 | Failure Domain | Control-Plane-to-Egress Partition | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-004 | Failure Domain | Cache Failure Cannot Create Permission | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-005 | Failure Domain | Restrictive Event Distribution Failure | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-006 | Failure Domain | Live and Non-Live Environment Isolation | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-007 | Failure Domain | Risk Capacity Ledger Failover Fence | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-008 | Failure Domain | Shared Time Common Mode | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-009 | Failure Domain | Partial Deployment and Configuration Rollback | ADR-002-009 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-010 | Failure Domain | Shared Broker Resource Exhaustion | ADR-002-009 | EV-L3/5 | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-011 | Failure Domain | Safety-Cell Blast-Radius Containment | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| FD-EV-012 | Failure Domain | Region and Datastore Recovery | ADR-002-009 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-001 | Protective Replacement | Overlap-First Replacement | ADR-002-011 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-002 | Protective Replacement | Cancel-First Admission Gate | ADR-002-011 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-003 | Protective Replacement | Missing ACK Replacement Ambiguity | ADR-002-011 | EV-L3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-004 | Protective Replacement | Cancel ACK Is Not Final Quantity Proof | ADR-002-011 | EV-L3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-005 | Protective Replacement | Partial-Fill Interleavings | ADR-002-011 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-006 | Protective Replacement | New Protection Sufficiency Proof | ADR-002-011 | EV-L3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-007 | Protective Replacement | Protective Broker-Resource Exhaustion | ADR-002-011 | EV-L3/5 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-008 | Protective Replacement | Replacement Authority Expiry | ADR-002-011 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-009 | Protective Replacement | Replacement Crash and Failover | ADR-002-011 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-010 | Protective Replacement | Replacement Partition | ADR-002-011 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-011 | Protective Replacement | HALT and Replacement Precedence | ADR-002-011 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| PR-EV-012 | Protective Replacement | Broker-Proven Atomic Replace Scope | ADR-002-011 | EV-L3/5 | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-001 | Non-Trade Events | Split and Reverse-Split Transition | ADR-002-010 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-002 | Non-Trade Events | Multi-Leg Merger and Spin-Off | ADR-002-010 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-003 | Non-Trade Events | Instrument Identity Change | ADR-002-010 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-004 | Non-Trade Events | Option Exercise and Assignment | ADR-002-010 | EV-L3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-005 | Non-Trade Events | Futures Expiry and Settlement | ADR-002-010 | EV-L3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-006 | Non-Trade Events | Broker Open-Order Adjustment | ADR-002-010 | EV-L3/5 | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-007 | Non-Trade Events | Conflicting Effective-Time Window | ADR-002-010 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-008 | Non-Trade Events | Unattributed Correction and Transfer | ADR-002-010 | EV-L3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-009 | Non-Trade Events | Non-Permissive Partial Local Application | ADR-002-010 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-010 | Non-Trade Events | Correction and Reversal Idempotency | ADR-002-010 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-011 | Non-Trade Events | Non-Trade Restart and Replay | ADR-002-010 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| NT-EV-012 | Non-Trade Events | Event Completion Cannot Re-arm | ADR-002-010 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

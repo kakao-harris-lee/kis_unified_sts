@@ -397,6 +397,8 @@ After restart or failover:
 
 Rolling deployment SHALL NOT temporarily create multiple egress paths or mixed safety versions.
 
+ADR-002-009 governs the required deployment identity, hard fencing, Failure-Domain Allocation Matrix, and common-mode evidence for these claims.
+
 ---
 
 ## 16. Final Egress Enforcement
@@ -418,6 +420,8 @@ Any missing, stale, conflicting, unverifiable, or out-of-scope fact is denial be
 The complete validation decision and the irreversible broker-send boundary SHALL be fenced against the same authority, revocation, and HALT generations accepted by that egress. If that egress accepted a restrictive generation before the send boundary, the transmission SHALL be denied. If their local race ordering cannot be positively established, the safer restrictive state wins and the transmission SHALL be denied. Every final egress SHALL accept the restrictive generation within the applicable propagation bound; a transmission occurring before local acceptance remains potentially live, capacity-covered, measured against that bound, and retained as evidence. A successful check followed by an unfenced queue, proxy, or credential holder is not final egress enforcement.
 
 No internal control is sufficient if an identity can bypass this final gate and reach the broker directly.
+
+ADR-002-009 governs the physical and logical isolation of this path. ADR-002-011 governs protective replacement at this gate, and ADR-002-010 governs any transmitted action required by a non-trade event.
 
 ---
 

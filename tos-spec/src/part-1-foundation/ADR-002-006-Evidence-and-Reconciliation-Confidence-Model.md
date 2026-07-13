@@ -163,15 +163,15 @@ The **Reconciliation Service** is the sole owner of the Knowledge dimension (ADR
 
 ## 13. Verification and Acceptance Criteria
 
-Under VER-002-001 (EV-L2/L3; RC-EV-005/007/010/011, SA-EV-011):
+Under VER-002-001 (EV-L2/L3), the following criteria map one-to-one to RECON-EV-001 through RECON-EV-005 and may additionally rely on RC-EV-005/007/010/011 and SA-EV-011:
 
-- **AC-006-1:** injected corruption of any single evidence path does not cause an unsafe state to be accepted as `RECONCILED`.
-- **AC-006-2:** a hidden-then-reappearing order (query omission) never releases capacity from absence alone.
-- **AC-006-3:** conflicting fill-quantity evidence holds the field at its conservative upper bound and quarantines capacity.
-- **AC-006-4:** freshness expiry moves a field to `STALE` and blocks new risk; loss of time confidence fails closed.
-- **AC-006-5:** capacity release occurs only after the field-specific proof rule (incl. Final Quantity Proof) is met.
+- **AC-006-1:** injected corruption of any single evidence path does not cause an unsafe state to be accepted as `RECONCILED` (`RECON-EV-001`).
+- **AC-006-2:** a hidden-then-reappearing order (query omission) never releases capacity from absence alone (`RECON-EV-002`).
+- **AC-006-3:** conflicting fill-quantity evidence holds the field at its conservative upper bound and quarantines capacity (`RECON-EV-003`).
+- **AC-006-4:** freshness expiry moves a field to `STALE` and blocks new risk; loss of time confidence fails closed (`RECON-EV-004`).
+- **AC-006-5:** capacity release occurs only after the field-specific proof rule, including Final Quantity Proof, is met (`RECON-EV-005`).
 
-A written test is not evidence; execution, artifacts, and independent review are required.
+Registration is not execution. A written test is not evidence; execution, artifacts, and independent review are required.
 
 ---
 

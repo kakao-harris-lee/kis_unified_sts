@@ -1135,7 +1135,7 @@ Recognized events SHALL remap position usage, quantity, instrument identity, and
 
 When identity or valuation cannot be established, the affected exposure becomes `QUARANTINED_UNKNOWN` or `TRAPPED_CONSUMED`, and new risk remains blocked for the affected scope.
 
-Detailed event modeling is delegated to the Corporate Actions and Non-Trade State Changes ADR.
+Detailed event modeling is delegated to ADR-002-010 — Corporate Actions and Non-Trade State Changes.
 
 ---
 
@@ -1538,8 +1538,10 @@ This ADR depends on or creates mandatory interfaces with:
 5. **ADR-002-006 — Evidence and Reconciliation Confidence Model**;
 6. **ADR-002-008 — Trustworthy Time Architecture**;
 7. **ADR-002-007 — Live Authorization, Limit Governance, and Re-arm**;
-8. **Corporate Actions and Non-Trade State Changes ADR**;
-9. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
+8. **ADR-002-009 — Failure-Domain Isolation and Deployment Safety**;
+9. **ADR-002-010 — Corporate Actions and Non-Trade State Changes**;
+10. **ADR-002-011 — Protective Replacement and Protection-Gap Control**;
+11. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
 
 This ADR owns capacity semantics. It does not duplicate the full authority election, broker protocol, or evidence-confidence decisions of those ADRs.
 

@@ -232,15 +232,15 @@ Intent=ACTIVE    Attempt=ACK_OBSERVED       Broker=FILLED          Knowledge=REC
 
 ## 17. Verification and Acceptance Criteria
 
-Demonstrated via model/property tests (EV-L1) and fault tests (EV-L2/L3) under VER-002-001. At minimum:
+Demonstrated via model/property tests (EV-L1) and fault tests (EV-L2/L3) under VER-002-001. The following criteria map one-to-one to STATE-EV-001 through STATE-EV-005 and may additionally rely on the listed cross-domain evidence:
 
-- **AC-005-1 — Orthogonality:** the composite states in §14 are all representable and persisted; no dimension is forced by another except through the CPL invariants.
-- **AC-005-2 — Conservative direction:** no injected timeout/absence/restart advances any dimension to a less-conservative value (maps to RC-EV-003/004, RC-EV-011).
-- **AC-005-3 — Coupling:** every CPL invariant holds under partial fill, cancel-crossing-fill, replace overlap, and UNKNOWN (RC-EV-006/007/008/010).
-- **AC-005-4 — Restart:** post-restart, `SEND_STARTED`/non-terminal orders are `POTENTIALLY_LIVE`/`UNKNOWN`; knowledge is never `RECONCILED` without re-derivation (RC-EV-017, SA-EV-006).
-- **AC-005-5 — Ownership:** an attempt to transition a dimension by a non-owner is rejected and evidenced.
+- **AC-005-1 — Orthogonality:** the composite states in §14 are all representable and persisted; no dimension is forced by another except through the CPL invariants (`STATE-EV-001`).
+- **AC-005-2 — Conservative direction:** no injected timeout/absence/restart advances any dimension to a less-conservative value (`STATE-EV-002`; additionally RC-EV-003/004 and RC-EV-011).
+- **AC-005-3 — Coupling:** every CPL invariant holds under partial fill, cancel-crossing-fill, replace overlap, and UNKNOWN (`STATE-EV-003`; additionally RC-EV-006/007/008/010).
+- **AC-005-4 — Restart:** post-restart, `SEND_STARTED`/non-terminal orders are `POTENTIALLY_LIVE`/`UNKNOWN`; knowledge is never `RECONCILED` without re-derivation (`STATE-EV-004`; additionally RC-EV-017 and SA-EV-006).
+- **AC-005-5 — Ownership:** an attempt to transition a dimension by a non-owner is rejected and evidenced (`STATE-EV-005`).
 
-A written test is not evidence (VER-002-001 §5); execution, artifacts, and independent review are required.
+Registration is not execution. A written test is not evidence (VER-002-001 §5); execution, artifacts, and independent review are required.
 
 ---
 

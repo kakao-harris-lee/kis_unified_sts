@@ -1,8 +1,8 @@
 # TOS Safety Architecture Gate Status
 
 - **Date:** 2026-07-13
-- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-008
-- **Architecture Documentation:** Consolidated for the current Proposed gate; ADR-002-009 through ADR-002-011 remain open
+- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-011
+- **Architecture Documentation:** Phase B decision set authored and Phase C acceptance cases registered; every ADR remains Proposed and execution evidence remains open
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -21,8 +21,11 @@ The following design decisions now have normative documents:
 7. ADR-002-006 Evidence and Reconciliation Confidence Model
 8. ADR-002-007 Live Authorization, Limit Governance, and Re-arm
 9. ADR-002-008 Trustworthy Time Architecture
-10. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
-11. Evidence Register and configuration/evidence templates
+10. ADR-002-009 Failure-Domain Isolation and Deployment Safety
+11. ADR-002-011 Protective Replacement and Protection-Gap Control
+12. ADR-002-010 Corporate Actions and Non-Trade State Changes
+13. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
+14. Evidence Register and configuration/evidence templates
 
 ---
 
@@ -53,6 +56,10 @@ The current bundle decides:
 - health restoration, restart, failover, reconciliation, configuration change, or deployment cannot automatically re-arm risk-increasing live operation.
 - re-arm requires explicit scoped human governance, fresh authority, current reconciled state, and final enforcement at broker egress.
 - restrictive time, revocation, and HALT generations have explicit egress-containment bounds; an unfenced check-then-send path is prohibited.
+- failure-domain independence is an evidence-backed property; logical service separation, cache health, and redundancy count do not prove isolation.
+- deployment, rollback, split-brain, credential, broker-session, and shared infrastructure common modes are explicitly allocated, fenced, and bounded by Safety Cell.
+- protective replacement is one safety workflow that accounts for both protection gaps and simultaneous old/new execution before cancellation or submission.
+- corporate actions and non-trade state changes are first-class economic events with conservative pre/post transition envelopes and RCL-only capacity remapping.
 
 ---
 
@@ -93,23 +100,19 @@ The review files were section-level amendments, not repository-aware diffs. Thei
 
 - RFC-000 was not changed because no contradiction was found.
 - Patch-local section numbers are provenance only; canonical section numbers now govern.
-- ADR IDs remain ADR-002-001 through ADR-002-011; ADR-002-002 through ADR-002-008 remain Proposed.
+- ADR IDs remain ADR-002-001 through ADR-002-011; ADR-002-002 through ADR-002-011 remain Proposed.
 - Every `SAFE-xxx` identifier in the RFC-002 and ADR-002-001 traceability tables exists in RFC-001.
-- The Evidence Register contains 89 `NOT_IMPLEMENTED` items, including dedicated TIME-EV-001..010 and REARM-EV-001..012 coverage. Registration created no verification evidence or live authority.
+- The Evidence Register contains 135 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, and NT coverage for ADR-002-005 through ADR-002-011. Registration created no verification evidence or live authority.
 
 ---
 
-## 4. Remaining Architecture ADRs
+## 4. Remaining Architecture and Acceptance Work
 
-ADR-002-005 through ADR-002-008 are now authored as `Proposed`. The following decisions remain Required and do not block non-live implementation of the current verification harness:
+ADR-002-005 through ADR-002-011 are authored as `Proposed`. Phase B authorship is complete, but none of those decisions is accepted.
 
-- ADR-002-009 — Failure-Domain Isolation and Deployment Safety
-- ADR-002-010 — Corporate Actions and Non-Trade State Changes
-- ADR-002-011 — Protective Replacement and Protection-Gap Control
+Acceptance-blocking mechanism decisions remain for Risk Capacity Ledger consensus and fencing, egress currentness and fenced send, the concrete Failure-Domain Allocation Matrix and deployment profile, safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, Time Health Snapshot distribution, and authenticated human dual-control roles.
 
-Some of these are required before production approval even when the current ADR acceptance tests pass.
-
-Acceptance-blocking implementation decisions also remain for the currentness distribution and fenced-send mechanism, the numeric egress-containment bounds, Time Health Snapshot distribution, and authenticated human dual-control roles. The corresponding Verification Profile values remain unapproved; unresolved choices reduce authority and keep live operation prohibited.
+Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-011, but all remain `NOT_IMPLEMENTED`. All numeric Verification Profile values remain unapproved. These unresolved items reduce authority and keep live operation prohibited.
 
 ---
 
@@ -126,9 +129,12 @@ Acceptance-blocking implementation decisions also remain for the currentness dis
 | ADR-002-006 | Proposed | YES | NO |
 | ADR-002-007 | Proposed | YES | NO |
 | ADR-002-008 | Proposed | YES | NO |
+| ADR-002-009 | Proposed | YES | NO |
+| ADR-002-010 | Proposed | YES | NO |
+| ADR-002-011 | Proposed | YES | NO |
 | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
 | Broker-specific Capability Profile | Template only | YES | NO |
-| Verification evidence | 89 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Verification evidence | 135 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
 
 ---
 
@@ -152,11 +158,11 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Complete ADR-002-009, then ADR-002-011, then ADR-002-010.
-2. Extend VER-002-001 and EVIDENCE-REGISTER-002 for ADR-002-005 and ADR-002-006; ADR-002-007/008 cases are registered but not implemented.
-3. Assign owners and reviewers in EVIDENCE-REGISTER-002.csv.
-4. Approve numeric bounds in VERIFICATION-PROFILE-002.
-5. Implement capacity, authority, trustworthy-time, and live-authorization state-machine models.
+1. Select and review the RCL fencing, egress-currentness, deployment-isolation, protective-replacement, and non-trade transition mechanisms.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 135 items in EVIDENCE-REGISTER-002.csv.
+3. Approve numeric bounds in VERIFICATION-PROFILE-002.
+4. Implement capacity, authority, trustworthy-time, and live-authorization state-machine models.
+5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.
 6. Implement durable evidence identities and event capture.
 7. Implement epoch/fencing and final egress checks.
 8. Complete the first broker-specific Capability Profile.

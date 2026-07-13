@@ -963,6 +963,8 @@ A cancellation request or cancel acknowledgement SHALL NOT release risk capacity
 
 Unless that profile proves atomic cancel/replace semantics, the system SHALL reserve the worst credible overlap of the original and replacement orders and account for any interval of reduced or absent protection.
 
+ADR-002-011 defines the normative protective-replacement workflow, Cancellation Arbiter rules, Protection Sufficiency Proof, gap and overlap controls, and acceptance gates.
+
 ### 13.4 Restart
 
 After restart, potentially live orders SHALL remain potentially live until reconciled.
@@ -1073,6 +1075,8 @@ No future exit assumption SHALL create additional risk authority.
 External activity and recognized non-trade changes SHALL enter the reconciliation and capacity models as first-class inputs.
 
 Corporate actions, symbol or instrument-identity changes, expiry, exercise, assignment, rollover, broker administrative adjustments, account transfers, delisting, and suspension changes SHALL NOT be assumed to be fills. Unrecognized changes SHALL be treated as Unattributed External Exposure.
+
+ADR-002-010 defines the normative event identity, conservative transition envelope, Risk Capacity Ledger remapping, open-order treatment, and recovery requirements.
 
 ---
 
@@ -1380,6 +1384,8 @@ When a broker cannot atomically replace a protective order:
 * broker-specific residual risk SHALL be approved;
 * capacity calculation SHALL account for the more conservative of order overlap or protection absence.
 
+ADR-002-011 governs every protective-replacement mode and requires dedicated evidence before any broker or order scope may claim safe replacement.
+
 ### 21.5 Protective Ownership and Cancellation
 
 Every protective order SHALL carry one ownership classification: `STRATEGY_OWNED`, `EXECUTION_OWNED`, `SAFETY_OWNED`, or `OPERATOR_OWNED`.
@@ -1496,6 +1502,8 @@ For each shared dependency, the matrix SHALL identify affected authorities, fail
 
 Logical service separation SHALL NOT be presented as proof of physical failure independence.
 
+ADR-002-009 defines the normative matrix fields, isolation invariants, deployment fencing, Safety Cell blast-radius rules, and acceptance gates.
+
 ---
 
 ## 25. Security-Relevant Architecture
@@ -1531,11 +1539,11 @@ The following ADRs are initially required.
 | ADR-002-006 | Evidence and Reconciliation Confidence Model                          | Proposed |
 | ADR-002-007 | Live Authorization, Limit Governance, and Re-arm                      | Proposed |
 | ADR-002-008 | Trustworthy Time Architecture                                         | Proposed |
-| ADR-002-009 | Failure-Domain Isolation and Deployment Safety                        | Required |
-| ADR-002-010 | Corporate Actions and Non-Trade State Changes                         | Required |
-| ADR-002-011 | Protective Replacement and Protection-Gap Control                     | Required |
+| ADR-002-009 | Failure-Domain Isolation and Deployment Safety                        | Proposed |
+| ADR-002-010 | Corporate Actions and Non-Trade State Changes                         | Proposed |
+| ADR-002-011 | Protective Replacement and Protection-Gap Control                     | Proposed |
 
-ADR-002-002 through ADR-002-008 are authored (co-located ADR files, `Proposed`). ADR-002-009 through ADR-002-011 remain Required backlog, with the remaining recommended design order ADR-002-009 → ADR-002-011 → ADR-002-010 (CODEX-START-HERE §11). VER-002-001 and the Evidence Register cover ADR-002-001 through ADR-002-004 plus dedicated TIME-EV and REARM-EV cases for ADR-002-008 and ADR-002-007. ADR-002-005 and ADR-002-006 still require dedicated registration before acceptance; all current evidence remains unexecuted under `verification/`.
+ADR-002-002 through ADR-002-011 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 is complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-011, including one-to-one dedicated cases for ADR-002-005 through ADR-002-011. All 135 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
 
 ---
 
@@ -1584,7 +1592,7 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
 ## 28. Open Architectural Decisions
 
-ADR-002-005 through ADR-002-008 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, and re-arm governance models. Their listed implementation questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices also remain open and SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
+ADR-002-005 through ADR-002-011 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, and non-trade-event models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
 
 1. Which persistence and consensus mechanism implements the Risk Capacity Ledger's required semantics?
 2. How are writer and Authority Epoch fencing tokens propagated and validated at broker egress?
@@ -1707,5 +1715,7 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Added re-arm governance prohibiting automatic re-arm.
 * Added the Failure-Domain Allocation requirement.
 * Added verification and acceptance-bound requirements.
-* Expanded the ADR backlog through ADR-002-011 and registered ADR-002-002 through ADR-002-008 as Proposed.
+* Expanded the ADR register through ADR-002-011 and registered ADR-002-002 through ADR-002-011 as Proposed.
+* Added the Phase B failure-domain isolation, protective-replacement, and corporate-action/non-trade decisions without changing verification or live-readiness status.
+* Expanded VER-002-001 and the Evidence Register to 135 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-011.
 * Resolves review findings A-01 through A-14.

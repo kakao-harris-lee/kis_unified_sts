@@ -31,8 +31,12 @@ artifacts:
   authority_events: []
   ledger_transitions: []
   egress_decisions: []
+  state_dimensions: []
   broker_raw: []
   reconciliation: []
+  failure_domain: []
+  protective_replacement: []
+  non_trade_events: []
   metrics: []
   final_state: null
   invariant_report: null

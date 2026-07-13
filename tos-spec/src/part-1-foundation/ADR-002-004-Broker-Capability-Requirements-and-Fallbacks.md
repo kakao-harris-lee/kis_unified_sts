@@ -1326,9 +1326,11 @@ This ADR interfaces with:
 3. ADR-002-003 — Safety Authority Validity, Epoch Fencing, and Partition Behavior;
 4. ADR-002-005 — Intent, Transmission Attempt, Broker Order, and Knowledge State Model;
 5. ADR-002-006 — Evidence and Reconciliation Confidence Model;
-6. Corporate Actions and Non-Trade State Changes ADR;
+6. ADR-002-010 — Corporate Actions and Non-Trade State Changes;
 7. ADR-002-008 — Trustworthy Time Architecture;
-8. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
+8. ADR-002-009 — Failure-Domain Isolation and Deployment Safety;
+9. ADR-002-011 — Protective Replacement and Protection-Gap Control;
+10. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
 
 Broker-specific profiles are implementation-controlled safety artifacts, not substitutes for this ADR.
 

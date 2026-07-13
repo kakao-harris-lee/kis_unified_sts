@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-13
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002; ADR-002-003; ADR-002-004; ADR-002-007; ADR-002-008
-- **Current Evidence State:** Specification and dedicated ADR-002-007/008 evidence cases defined; implementation evidence not yet executed
-- **Extension State:** ADR-002-007 and ADR-002-008 map one-to-one to REARM-EV-001..012 and TIME-EV-001..010. ADR-002-005 and ADR-002-006 still require dedicated registration before acceptance
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-011
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-011; implementation evidence has not been executed
+- **Extension State:** ADR-002-005/006/007/008/009/010/011 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, and PR-EV-001..012. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -147,6 +147,15 @@ Controlled production-scope tests with tightly bounded economic risk or no risk-
 
 Runtime monitoring continuously detects drift from verified assumptions.
 
+### Composite Evidence-Level Notation
+
+The Evidence Register uses the following normative shorthand:
+
+- `EV-Ln+X` requires the named EV-Ln evidence **and** the supplementary evidence or assessment `X`; `+X` never replaces or lowers EV-Ln. `+Broker` requires applicable Broker Capability Profile evidence at the broker level required by that profile and approval gate. `+Security` requires an independent security-boundary assessment covering identity, credential, authorization, fencing, and bypass paths.
+- `EV-Ln/Lm` is staged scope, not a free choice between levels. EV-Ln is the earliest non-live evidence stage; EV-Lm is additionally required before accepting a scope that depends on the integrated, broker, restricted-production, or continuous semantics represented by EV-Lm. If the applicable ADR gate, Verification Profile, or Broker Capability Profile does not resolve the scope, the higher level applies for acceptance.
+- Short forms such as `EV-L2/3` mean `EV-L2/EV-L3`. Combined forms such as `EV-L1/3+Broker` apply both rules: staged EV-L1/EV-L3 evidence plus the required broker evidence.
+- `Profile-dependent` SHALL be resolved to an exact minimum level by an approved Verification Profile and, where applicable, Broker Capability Profile before the item may become `READY`. Missing resolution is a blocker and SHALL NOT default to the lowest level.
+
 Each acceptance criterion SHALL state the minimum evidence level. A lower level cannot substitute for a required higher level.
 
 ---
@@ -173,6 +182,14 @@ B_protective_request_start
 B_protective_request_complete
 B_broker_query_consistency
 B_rate_limit_recovery
+B_failure_domain_detect
+B_failure_domain_contain
+B_protection_gap
+B_protection_overlap
+B_protective_replacement_contain
+B_non_trade_event_detect
+B_non_trade_transition_apply
+B_non_trade_reconcile
 B_operator_escalation
 B_evidence_persist
 MAX_normal_capability_age
@@ -213,14 +230,18 @@ Every fault test SHALL retain, as applicable:
 10. Broker Adapter egress decisions;
 11. raw broker requests and responses with secrets removed;
 12. broker order, fill, position, balance, and margin evidence;
-13. reconciliation evidence and confidence bounds;
-14. mode transitions;
-15. metrics and alerts;
-16. invariant-evaluation report;
-17. final-state snapshot;
-18. pass/fail decision;
-19. reviewer identity and review result;
-20. artifact digests and chain-of-custody record.
+13. orthogonal state-dimension transitions and ownership decisions;
+14. reconciliation evidence and confidence bounds;
+15. failure-domain, topology, deployment, credential, and common-mode identity;
+16. protective obligation, replacement workflow, gap, overlap, and proof evidence;
+17. non-trade event versions, transition envelopes, corrections, and lineage;
+18. mode transitions;
+19. metrics and alerts;
+20. invariant-evaluation report;
+21. final-state snapshot;
+22. pass/fail decision;
+23. reviewer identity and review result;
+24. artifact digests and chain-of-custody record.
 
 Redaction SHALL preserve fields needed to verify identity, ordering, quantity, and economic effect.
 
@@ -245,8 +266,12 @@ evidence/
       ledger-transitions.jsonl
       authority-events.jsonl
       egress-decisions.jsonl
+      state-dimensions/
       broker-raw/
       reconciliation/
+      failure-domain/
+      protective-replacement/
+      non-trade-events/
       metrics/
       final-state.json
       invariant-report.json
@@ -910,7 +935,349 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 100. Model-Based and Property Verification
+# Part VII — Orthogonal Trading State Evidence
+
+## 100. STATE-EV-001 — Orthogonal Composite Persistence
+
+- **Minimum Level:** EV-L1/EV-L2
+- **Supports:** ADR-002-005 AC-005-1
+- **Injection:** Generate every valid composite in ADR-002-005 §14 plus boundary combinations where one dimension changes while the other four remain unchanged; persist, reload, and replay each state.
+- **Expected:** Every valid composite remains representable and durable; no dimension is silently derived from another except through an explicit CPL invariant and owned transition.
+
+## 101. STATE-EV-002 — Conservative Direction
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-005 AC-005-2
+- **Injection:** Apply timeout, ACK loss, query omission, cache miss, process restart, authority expiry, and operator assertion at every non-terminal state.
+- **Expected:** No dimension moves to a less-conservative value; UNKNOWN remains capacity-consuming and no missing evidence proves rejection, cancellation, non-fill, or release.
+
+## 102. STATE-EV-003 — Cross-Dimension Coupling
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-005 AC-005-3
+- **Injection:** Explore partial fill, cancel-crossing-fill, late fill, replacement overlap, broker UNKNOWN, knowledge conflict, and trapped exposure in every relevant ordering.
+- **Expected:** CPL-1 through CPL-7 always hold; the Risk Capacity Ledger alone performs capacity transitions and any violated coupling causes immediate new-risk containment.
+
+## 103. STATE-EV-004 — Conservative Restart Reconstruction
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-005 AC-005-4
+- **Injection:** Crash at each attempt and broker-order boundary, including after durable `SEND_STARTED`, after network transmission, and before evidence persistence; then restart with incomplete stores and stale caches.
+- **Expected:** Potentially live attempts and non-terminal orders reconstruct as `POTENTIALLY_LIVE` or `UNKNOWN`; Knowledge is re-derived and never defaults to `RECONCILED`.
+
+## 104. STATE-EV-005 — Dimension Transition Ownership
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-005 AC-005-5
+- **Injection:** Have every non-owner identity attempt direct and indirect mutation of Intent, Attempt, Broker Order, Knowledge, and Capacity dimensions, including replay and stale-writer paths.
+- **Expected:** Every unauthorized mutation is rejected and evidenced; cross-dimension effects occur only through the defined owning authority and stale epochs remain fenced.
+
+---
+
+# Part VIII — Evidence and Reconciliation Confidence Evidence
+
+## 105. RECON-EV-001 — Single Evidence-Path Corruption
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-006 AC-006-1
+- **Injection:** Corrupt each evidence path independently and then corrupt nominally different paths sharing one parser, source, clock, or transport dependency.
+- **Expected:** A single or common-mode-corrupted path cannot establish `CORROBORATED` or `RECONCILED`; affected fields use conservative bounds and block new risk.
+
+## 106. RECON-EV-002 — Query Omission and Negative Evidence
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-006 AC-006-2
+- **Injection:** Hide a live order from one page, query, session, and stream, then reveal it through a later query or fill while pagination and history windows vary.
+- **Expected:** Absence never proves non-existence or terminal quantity, capacity is not released, and the reappearing order is reconciled without discarding its economic effect.
+
+## 107. RECON-EV-003 — Conflicting Fill Quantity
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-006 AC-006-3
+- **Injection:** Provide divergent cumulative fill, remaining quantity, position, and correction evidence from independent paths in multiple arrival orders.
+- **Expected:** Each conflicting field remains at its adverse conservative bound, Capacity becomes `QUARANTINED_UNKNOWN`, and no blended score or preferred source authorizes new risk.
+
+## 108. RECON-EV-004 — Freshness and Time-Confidence Loss
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-006 AC-006-4
+- **Injection:** Age each field across its approved freshness horizon, lose trustworthy time, restart the receipt-anchor owner, and restore time with a new generation.
+- **Expected:** Aged or time-unverifiable fields become `STALE` or `UNKNOWN`, block dependent new risk, and do not become current merely because time service recovers.
+
+## 109. RECON-EV-005 — Field-Specific Capacity Release Proof
+
+- **Minimum Level:** EV-L3 plus broker evidence
+- **Supports:** ADR-002-006 AC-006-5
+- **Injection:** Offer cancel ACK, terminal status without quantity, single-source query, late correction, and finally complete broker-profile-specific Final Quantity Proof.
+- **Expected:** Only the complete field-specific proof permits the Risk Capacity Ledger to release the corresponding capacity; all weaker evidence preserves conservative commitment.
+
+---
+
+# Part IX — Failure-Domain Isolation Evidence
+
+## 110. FD-EV-001 — Strategy-to-Safety Isolation
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-009 FD-AC-001
+- **Injection:** Crash and compromise strategy, orchestration, UI, and ordinary operator identities; attempt authority grant, capacity mutation, epoch change, and direct broker transmission.
+- **Expected:** The failure cannot grant safety authority, mutate capacity, or bypass final egress; availability may fall but new risk remains denied.
+
+## 111. FD-EV-002 — Stale Deployment and Duplicate Active Generation
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-009 FD-AC-002
+- **Injection:** Run old and new deployments concurrently with network and broker reachability; delay cooperative shutdown and replay old credentials, epochs, profiles, and capabilities.
+- **Expected:** Only one current writer and authorized egress generation can mutate or transmit; every stale generation is hard-fenced.
+
+## 112. FD-EV-003 — Control-Plane-to-Egress Partition
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-009 FD-AC-003
+- **Injection:** Partition Safety Control Plane, Risk Capacity Ledger, revocation, and time-currentness paths from egress while leaving broker connectivity available.
+- **Expected:** Final egress blocks new risk within approved containment bounds; potentially transmitted effects remain tracked and capacity-covered.
+
+## 113. FD-EV-004 — Cache Failure Cannot Create Permission
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-009 FD-AC-004
+- **Injection:** Evict, expire, corrupt, restart, and partition caches and serve stale replica values for authority, epoch, capacity, quantity, and proof state.
+- **Expected:** Cache failure or miss cannot grant permission, establish Final Quantity Proof, or release capacity; the affected scope fails closed.
+
+## 114. FD-EV-005 — Restrictive Event Distribution Failure
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-009 FD-AC-005
+- **Injection:** Delay, lose, duplicate, reorder, and replay HALT, revocation, time-degradation, capability-withdrawal, and epoch events across every egress consumer.
+- **Expected:** No egress accepts an older permissive generation after the applicable bound; unverifiable currentness is denial and unsafe event delivery is not treated as authority.
+
+## 115. FD-EV-006 — Live and Non-Live Environment Isolation
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-009 FD-AC-006
+- **Injection:** Cross-use non-live workload identities, secrets, routes, account identifiers, configurations, and broker sessions against live egress and accounts.
+- **Expected:** Every cross-environment attempt is prevented at identity, route, allowlist, credential, or final egress boundaries and produces no live economic effect.
+
+## 116. FD-EV-007 — Risk Capacity Ledger Failover Fence
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-009 FD-AC-007
+- **Injection:** Partition the active writer, promote a replacement, resume the stale writer, restore an old snapshot, and deliver delayed mutation commands.
+- **Expected:** Stale writers cannot mutate, conservative commitments survive or reconstruct, and UNKNOWN state is never released by failover.
+
+## 117. FD-EV-008 — Shared Time Common Mode
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-009 FD-AC-008
+- **Injection:** Corrupt a clock, synchronization daemon, upstream reference, hypervisor, or network path shared by authority issuer and multiple egress checkers.
+- **Expected:** The dependency is classified as common-mode; affected authority reduces at all egress paths and recovered time does not revive old authorization.
+
+## 118. FD-EV-009 — Partial Deployment and Configuration Rollback
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-009 FD-AC-009
+- **Injection:** Distribute mixed binaries, schemas, risk libraries, parsers, and profiles; fail mid-deployment and roll back while old instances remain reachable.
+- **Expected:** Mixed or partial generations default to denied transmission, stale instances are fenced, and any resumed scope requires a new Live Authorization.
+
+## 119. FD-EV-010 — Shared Broker Resource Exhaustion
+
+- **Minimum Level:** EV-L3/EV-L5
+- **Supports:** ADR-002-009 FD-AC-010
+- **Injection:** Exhaust broker session, account, open-order, submission, cancellation, query, and rate-limit resources with ordinary and protective traffic.
+- **Expected:** The declared common mode is observed; priority is never reported as reserved capacity and the system restricts or contains before making an unsupported protective guarantee.
+
+## 120. FD-EV-011 — Safety-Cell Blast-Radius Containment
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-009 FD-AC-011
+- **Injection:** Fail each cell-local dependency and then each dependency shared across cells, including account, session, credential, egress, and ledger resources.
+- **Expected:** Effects remain within the declared aggregate blast radius or authoritative containment escalates to the broader scope without distributing capacity beyond aggregate limits.
+
+## 121. FD-EV-012 — Region and Datastore Recovery
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-009 FD-AC-012
+- **Injection:** Recover after region loss, datastore rollback, credential compromise, and unreachable old instances; replay prior authority and clear local runtime state.
+- **Expected:** New generations fence prior identities, UNKNOWN economic state and capacity survive, reconciliation precedes authority, and no automatic re-arm occurs.
+
+---
+
+# Part X — Protective Replacement Evidence
+
+## 122. PR-EV-001 — Overlap-First Replacement
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-011 PR-AC-001
+- **Injection:** Exercise simultaneous old/new fills, partial fills, delayed acknowledgements, and adverse price movement across overlap-first replacement.
+- **Expected:** Capacity covers the maximum simultaneous effect, required protection remains sufficient, and over-close or reversal cannot exceed the hard envelope.
+
+## 123. PR-EV-002 — Cancel-First Admission Gate
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-011 PR-AC-002
+- **Injection:** Omit or corrupt each gap, capacity, time, capability, broker-resource, authority, and containment prerequisite individually and in combinations.
+- **Expected:** Cancel-first replacement is denied unless every prerequisite is current and proven; UNKNOWN never substitutes for permission.
+
+## 124. PR-EV-003 — Missing ACK Replacement Ambiguity
+
+- **Minimum Level:** EV-L3 plus broker evidence
+- **Supports:** ADR-002-011 PR-AC-003
+- **Injection:** Drop old-cancel and new-submit responses after broker acceptance and attempt retry with the same and different client identifiers.
+- **Expected:** Acceptance remains UNKNOWN, all credible old/new effects remain capacity-covered, and no unsafe duplicate action is transmitted.
+
+## 125. PR-EV-004 — Cancel ACK Is Not Final Quantity Proof
+
+- **Minimum Level:** EV-L3 plus broker evidence
+- **Supports:** ADR-002-011 PR-AC-004
+- **Injection:** Return cancel ACK followed by late fill, correction, query omission, and session reconnect before complete terminal-quantity evidence.
+- **Expected:** Old-order capacity and executable possibility remain until Final Quantity Proof; cancel ACK alone never completes replacement.
+
+## 126. PR-EV-005 — Partial-Fill Interleavings
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-011 PR-AC-005
+- **Injection:** Enumerate old fill, new fill, cancel, ACK, position update, and exposure-change orderings at zero, partial, and full quantities.
+- **Expected:** Every fill recomputes obligation, overlap/gap risk, capacity, cancellation, and egress conformance atomically and conservatively.
+
+## 127. PR-EV-006 — New Protection Sufficiency Proof
+
+- **Minimum Level:** EV-L3 plus broker evidence
+- **Supports:** ADR-002-011 PR-AC-006
+- **Injection:** Provide broker ACK while varying wrong quantity, side, instrument, trigger, session, leaves quantity, stale evidence, and contradicted exposure.
+- **Expected:** ACK alone never establishes sufficient protection; every required field, profile, freshness, and exposure relation must pass.
+
+## 128. PR-EV-007 — Protective Broker-Resource Exhaustion
+
+- **Minimum Level:** EV-L3/EV-L5
+- **Supports:** ADR-002-011 PR-AC-007
+- **Injection:** Exhaust broker session, rate, order-count, cancel, query, and shared route capacity immediately before and during replacement.
+- **Expected:** Existing protection is not blindly removed, unsupported reservation is not claimed, new risk is blocked, and containment follows the authorized fallback.
+
+## 129. PR-EV-008 — Replacement Authority Expiry
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-011 PR-AC-008
+- **Injection:** Expire or revoke replacement authority before first leg, between legs, after broker transmission, and while final proof is pending.
+- **Expected:** New transmission stops, but old/new economic effects and capacity remain until proven; expiry never completes or erases the workflow.
+
+## 130. PR-EV-009 — Replacement Crash and Failover
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-011 PR-AC-009
+- **Injection:** Crash and fail over the workflow owner and Risk Capacity Ledger writer at every durable boundary while resuming stale instances.
+- **Expected:** Commitments and lineage recover, stale writers are fenced, both orders reconcile before action, and any continuation uses new authority.
+
+## 131. PR-EV-010 — Replacement Partition
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-011 PR-AC-010
+- **Injection:** Partition control plane, ledger, reconciliation, egress, and broker paths independently during each replacement mode.
+- **Expected:** New risk is blocked, gap/overlap capacity remains conservative, potentially live orders remain represented, and only authorized containment may proceed.
+
+## 132. PR-EV-011 — HALT and Replacement Precedence
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-011 PR-AC-011
+- **Injection:** Race HALT with replacement planning, cancellation authorization, both transmissions, and broker evidence; include an existing order still required for protection.
+- **Expected:** HALT blocks ordinary initiation, only newly authorized HALT-compatible containment may proceed, and necessary existing protection is not blindly cancelled.
+
+## 133. PR-EV-012 — Broker-Proven Atomic Replace Scope
+
+- **Minimum Level:** EV-L3/EV-L5
+- **Supports:** ADR-002-011 PR-AC-012
+- **Injection:** Exercise each claimed atomic replace across order type, venue, session, partial-fill state, response loss, reconnect, and broker failure; then use the claim outside its profile scope.
+- **Expected:** Atomic treatment is allowed only where exact semantics are evidenced; every unsupported or drifted scope falls back to conservative non-atomic handling.
+
+---
+
+# Part XI — Corporate Actions and Non-Trade Evidence
+
+## 134. NT-EV-001 — Split and Reverse-Split Transition
+
+- **Minimum Level:** EV-L1/EV-L3 plus broker evidence
+- **Supports:** ADR-002-010 NT-AC-001
+- **Injection:** Apply split and reverse-split ratios with fractional entitlement, broker rounding, cash-in-lieu, open orders, protection, and partial broker application.
+- **Expected:** Quantity, price, multiplier, order, protection, and capacity use the conservative transition envelope until field-level reconciliation completes.
+
+## 135. NT-EV-002 — Multi-Leg Merger and Spin-Off
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-010 NT-AC-002
+- **Injection:** Transform one instrument into multiple instruments and cash legs with delayed, partial, corrected, and source-conflicted delivery.
+- **Expected:** Capacity covers every credible old/new leg without favorable unknown netting and no leg disappears before proof.
+
+## 136. NT-EV-003 — Instrument Identity Change
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-010 NT-AC-003
+- **Injection:** Change symbol, identifier, venue, contract, multiplier, and listing while old orders, intents, and market data remain active.
+- **Expected:** Stable lineage is preserved, existing intent is not silently redirected, and any new or replacement transmission requires current authority and egress validation.
+
+## 137. NT-EV-004 — Option Exercise and Assignment
+
+- **Minimum Level:** EV-L3 plus broker evidence
+- **Supports:** ADR-002-010 NT-AC-004
+- **Injection:** Delay or omit exercise/assignment notice, apply partial assignment, and vary cash, underlying, collateral, and settlement results around expiry.
+- **Expected:** Every credible resulting exposure consumes prior capacity; absence of notice never proves no assignment and unsupported scope blocks new risk before the boundary.
+
+## 138. NT-EV-005 — Futures Expiry and Settlement
+
+- **Minimum Level:** EV-L3 plus broker evidence
+- **Supports:** ADR-002-010 NT-AC-005
+- **Injection:** Exercise cash settlement, physical delivery, delayed settlement, contract conversion, suspension, and inability to trade after expiry.
+- **Expected:** Trading end never implies zero risk; delivery, settlement, trapped exposure, and capacity remain represented until reconciled.
+
+## 139. NT-EV-006 — Broker Open-Order Adjustment
+
+- **Minimum Level:** EV-L3/EV-L5
+- **Supports:** ADR-002-010 NT-AC-006
+- **Injection:** Have the broker resize, reprice, remap, cancel, duplicate, or recreate open and protective orders across an event, with delayed and missing reports.
+- **Expected:** Potentially live old/new orders remain capacity-covered until field-level reconciliation and Final Quantity Proof; broker adjustment is never assumed.
+
+## 140. NT-EV-007 — Conflicting Effective-Time Window
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-010 NT-AC-007
+- **Injection:** Disagree announcement, ex, effective, expiry, payable, and settlement times across independent sources while clock and calendar generations change.
+- **Expected:** New risk is blocked from the earliest credible boundary through the latest credible completion; recovered time or later data does not retroactively authorize action.
+
+## 141. NT-EV-008 — Unattributed Correction and Transfer
+
+- **Minimum Level:** EV-L3 plus broker evidence
+- **Supports:** ADR-002-010 NT-AC-008
+- **Injection:** Apply broker correction, transfer, journal, fee, tax, cash, collateral, and unexplained position changes with incomplete or conflicting provenance.
+- **Expected:** Unattributed state remains UNKNOWN and capacity-consuming, blocks new risk, and cannot be relabeled merely to make reconciliation pass.
+
+## 142. NT-EV-009 — Non-Permissive Partial Local Application
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-010 NT-AC-009
+- **Injection:** Fail between instrument, projection, capacity, protection, authority, and audit updates in every ordering and restart from each partial state.
+- **Expected:** Consumers use the conservative transition envelope; no partial state exposes more capacity, protection, or authority than the complete safe transition.
+
+## 143. NT-EV-010 — Correction and Reversal Idempotency
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-010 NT-AC-010
+- **Injection:** Duplicate, reorder, correct, reverse, replay, and supersede event versions while retaining the same and conflicting source identifiers.
+- **Expected:** Each economic effect applies exactly once, history remains immutable, and correction uses new lineage rather than destructive overwrite.
+
+## 144. NT-EV-011 — Non-Trade Restart and Replay
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-010 NT-AC-011
+- **Injection:** Restart during pending, applied-local, conflicted, correction, and reconciliation states; replay with stale writers and missing external connectivity.
+- **Expected:** Pending events, transition envelopes, RCL commitments, UNKNOWN state, and lineage survive; stale writers are fenced and replay does not prove broker truth.
+
+## 145. NT-EV-012 — Event Completion Cannot Re-arm
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-010 NT-AC-012
+- **Injection:** Mark events complete, restore feeds and time, reconcile broker state, restart services, and replay prior Live Authorization and capabilities.
+- **Expected:** No completion or recovery event automatically re-arms or revives old authorization; a fresh governed re-arm workflow is required.
+
+---
+
+## 146. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -921,6 +1288,11 @@ Before restricted live operation, the following state models SHALL be explored w
 - degraded protective lease ownership;
 - Trustworthy Time health, continuity, snapshot age, and recovery generation;
 - Live Authorization, revocation generation, partial scope, and HALT precedence;
+- orthogonal state dimensions, conservative direction, and transition ownership;
+- field-level evidence confidence, conflict, freshness, and proof rules;
+- failure-domain allocation, stale deployment, and Safety Cell containment;
+- protective-replacement gap, overlap, and partial-fill interleavings;
+- non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
 - external activity and evidence conflicts.
 
@@ -937,13 +1309,18 @@ Issuer and consumer monotonic clocks are never directly compared across continui
 No restrictive time, revocation, or HALT generation is accepted after its egress containment bound
 No check-then-send gap can outrun a restrictive generation at the irreversible send boundary
 No non-permissive Live Authorization state returns to ACTIVE
+No non-owner mutates a state dimension
+No evidence conflict or staleness reduces a conservative bound
+No shared failure is claimed as independent without evidence
+No protective replacement step exceeds committed overlap or gap risk
+No partial non-trade transition exposes a more permissive state
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 101. Fault-Injection Requirements
+## 147. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -964,13 +1341,17 @@ The test harness SHALL support controlled injection at least for:
 - stale deployment reactivation;
 - query omission and pagination truncation;
 - external manual activity;
-- corporate-action event.
+- corporate-action event, correction, reversal, and partial local application;
+- dimension-owner impersonation and stale mutation;
+- cache eviction, stale replica, and common-mode dependency failure;
+- mixed-version deployment and environment-identity crossover;
+- protective replacement at each gap, overlap, fill, and proof boundary.
 
 Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 102. Broker Verification Safety Rules
+## 148. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -988,7 +1369,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 103. Continuous Conformance Evidence
+## 149. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -1005,13 +1386,18 @@ After approval, continuous monitors SHALL detect at least:
 - Time Health snapshot age or generation-propagation bound misses;
 - revocation or HALT egress-containment bound misses;
 - unsafe currentness-cache age or check-then-send gaps;
-- automatic or unauthorized re-arm.
+- automatic or unauthorized re-arm;
+- non-owner state mutation or collapsed state dimensions;
+- stale or conflicted evidence accepted as reconciled;
+- undeclared failure-domain or blast-radius expansion;
+- unbounded protective gap, overlap, or replacement proof age;
+- unresolved non-trade transition or duplicate event application.
 
 A continuous violation invalidates the corresponding evidence item and may revert the ADR/profile status to `EXPIRED` or `CONTRADICTORY`.
 
 ---
 
-## 104. Residual Risk Register
+## 150. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -1032,7 +1418,7 @@ Every unresolved limitation SHALL record:
 
 ---
 
-## 105. Independent Review Checklist
+## 151. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -1045,6 +1431,10 @@ The reviewer SHALL confirm:
 - containment bounds are measured, not assumed;
 - cross-host snapshot age uses consumer receipt monotonic time and includes transport uncertainty;
 - revocation and HALT races were injected at the irreversible egress boundary;
+- state ownership and conservative-direction violations were negatively tested;
+- failure-domain independence claims match the actual deployment and credential paths;
+- protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
+- non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
 - failed and inconclusive runs are retained;
 - residual risk does not contradict RFC-000/RFC-001;
@@ -1052,7 +1442,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 106. Approval Gates by ADR
+## 152. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -1081,6 +1471,24 @@ Requires:
 - restricted production evidence for safety-critical live semantics;
 - independent review.
 
+### ADR-002-005
+
+Requires:
+
+- STATE-EV-001 through STATE-EV-005;
+- RC-EV-003, RC-EV-004, RC-EV-006 through RC-EV-008, RC-EV-010, RC-EV-011, RC-EV-017, and SA-EV-006;
+- model-based exploration of orthogonality, CPL-1 through CPL-7, and conservative direction;
+- state-transition ownership security assessment and independent review.
+
+### ADR-002-006
+
+Requires:
+
+- RECON-EV-001 through RECON-EV-005;
+- RC-EV-005, RC-EV-007, RC-EV-010, RC-EV-011, SA-EV-011, BC-EV-006, and BC-EV-017;
+- approved field-specific proof, freshness, source-independence, and conservative-bound rules;
+- reconciliation and evidence-independence review.
+
 ### ADR-002-007
 
 Requires:
@@ -1099,6 +1507,33 @@ Requires:
 - approved and measured `B_time_health_to_egress`, `MAX_time_health_snapshot_age`, and applicable clock, suspension, holdover, freshness, and session bounds;
 - time-source/common-mode review and independent review.
 
+### ADR-002-009
+
+Requires:
+
+- FD-EV-001 through FD-EV-012;
+- SA-EV-001, SA-EV-002, SA-EV-008, SA-EV-013 through SA-EV-015, BC-EV-015, BC-EV-020, X-EV-002, X-EV-003, and X-EV-009;
+- an approved Failure-Domain Allocation Matrix, deployment profile, RCL fencing mechanism, and egress-currentness mechanism;
+- failure-domain security assessment and independent review.
+
+### ADR-002-010
+
+Requires:
+
+- NT-EV-001 through NT-EV-012;
+- RC-EV-010, RC-EV-015, BC-EV-008, BC-EV-019, X-EV-010, TIME-EV-008, and REARM-EV-003;
+- approved source-authority, transition-envelope, RCL remap, event-time, and broker-treatment rules;
+- broker-profile evidence for every supported event/instrument scope and independent review.
+
+### ADR-002-011
+
+Requires:
+
+- PR-EV-001 through PR-EV-012;
+- RC-EV-005 through RC-EV-008, BC-EV-002, BC-EV-003, BC-EV-007 through BC-EV-010, BC-EV-012 through BC-EV-014, X-EV-005, and X-EV-006;
+- approved and measured gap, overlap, Final Quantity Proof, completion, and containment bounds;
+- broker-profile evidence for every claimed replacement mode and independent review.
+
 ### Production Restricted Live Gate
 
 Requires:
@@ -1113,7 +1548,7 @@ Requires:
 
 ---
 
-## 107. Current Evidence Readiness Assessment
+## 153. Current Evidence Readiness Assessment
 
 As of 2026-07-13:
 
@@ -1128,6 +1563,11 @@ Broker capability evidence: NOT EXECUTED
 Cross-system evidence: NOT EXECUTED
 Trustworthy Time evidence: NOT EXECUTED
 Live Authorization and re-arm evidence: NOT EXECUTED
+Orthogonal trading state evidence: NOT EXECUTED
+Evidence and reconciliation confidence evidence: NOT EXECUTED
+Failure-domain isolation evidence: NOT EXECUTED
+Protective replacement evidence: NOT EXECUTED
+Corporate action and non-trade evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -1136,24 +1576,26 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 108. Required Next Execution Sequence
+## 154. Required Next Execution Sequence
 
 ```text
-1. Implement trace and evidence identities.
-2. Implement model/property tests for capacity, authority, trustworthy-time, and Live Authorization state machines.
-3. Build deterministic fault-injection harness.
-4. Complete one broker Capability Profile at document/evidence level.
-5. Execute component tests.
-6. Execute integrated fault tests.
-7. Execute broker sandbox tests where meaningful.
-8. Execute approved restricted production capability probes.
-9. Run independent evidence review.
-10. Update ADR status only after gates pass.
+1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
+2. Approve the Verification Profile bounds and scope.
+3. Implement trace and evidence identities.
+4. Implement model/property tests for all ADR-002 state, authority, time, failure-domain, replacement, and non-trade models.
+5. Build deterministic fault-injection harness.
+6. Complete one broker Capability Profile at document/evidence level.
+7. Execute component tests.
+8. Execute integrated fault tests.
+9. Execute broker sandbox tests where meaningful.
+10. Execute approved restricted production capability probes only after their separate human gate.
+11. Run independent evidence review.
+12. Update ADR status only after gates pass.
 ```
 
 ---
 
-## 109. Verification Specification Approval Gate
+## 155. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

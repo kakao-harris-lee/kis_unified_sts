@@ -375,6 +375,8 @@ Requires a newly established `TRUSTED` generation for re-arm readiness. It SHALL
 
 ## 15. Failure-Domain Requirements
 
+ADR-002-009 governs the Failure-Domain Allocation Matrix and acceptance of every time-source, synchronization, host, network, hypervisor, calendar, and shared egress dependency described in this section.
+
 The implementation SHALL document whether the following are independent or common-mode:
 
 - reference clocks and upstream operators;
