@@ -11,7 +11,7 @@
 #   - `approved_by` lists the accountable authority (separation of duties:
 #     the identity approving bounds SHALL NOT also arm live trading);
 #   - `effective_from` / `review_due` are set.
-# Values below marked MEASURE are deliberately left null pending KIS measurement.
+# Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
 version: "0.3-PROPOSED"
@@ -23,7 +23,7 @@ review_due: null
 scope:
   environment: non-live-test   # applies to EV-L1..L3 test harness only
   accounts: []                 # assign approved test account scope
-  broker_capability_profiles: []   # link approved KIS Capability Profile(s)
+  broker_capability_profiles: []   # link approved Broker Capability Profile(s)
   hard_safety_envelope_version: TBD
   runtime_safety_profile_version: TBD
 
@@ -82,7 +82,7 @@ bounds:
     measurement_source: ledger_and_egress_decision_log
     failure_response: HALT
   B_external_activity_detect:
-    value_ms: null   # MEASURE: bounded by KIS account-event/poll cadence
+    value_ms: null   # MEASURE: bounded by the broker account-event/poll cadence
     semantics: hard_maximum
     owner: TBD
     rationale: "MEASURE from Broker Capability Profile. For a poll-only broker this is bounded by the poll interval; new-action size must be constrained so plausible external activity in this window cannot breach the Hard Safety Envelope (ADR-002-002 §23.4)."
@@ -106,7 +106,7 @@ bounds:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
     owner: TBD
-    rationale: "MEASURE. Time within which Final Quantity Proof (final filled qty + zero remaining) can be established for a given KIS order type; drives how long capacity stays RELEASE_PENDING_PROOF (ADR-002-002 §16)."
+    rationale: "MEASURE. Time within which Final Quantity Proof (final filled qty + zero remaining) can be established for a given broker and order type; drives how long capacity stays RELEASE_PENDING_PROOF (ADR-002-002 §16)."
     measurement_source: broker_capability_profile
     failure_response: QUARANTINE_UNKNOWN
   B_late_fill_observation:
@@ -138,10 +138,10 @@ bounds:
     measurement_source: broker_capability_profile
     failure_response: CONSERVATIVE_UNKNOWN
   B_rate_limit_recovery:
-    value_ms: null   # MEASURE (KIS ~ per-second REST limit)
+    value_ms: null   # MEASURE per broker, account, session, and endpoint class
     semantics: broker_specific
     owner: TBD
-    rationale: "MEASURE. Recovery time after hitting the KIS account rate limit; protective/reconciliation traffic budget must survive this (ADR-002-001 §7.5)."
+    rationale: "MEASURE. Recovery time after hitting the applicable broker account or session rate limit; protective/reconciliation traffic budget must survive this (ADR-002-001 §7.5)."
     measurement_source: broker_capability_profile
     failure_response: RESTRICT_OR_CONTAIN
   B_failure_domain_detect:

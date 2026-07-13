@@ -269,25 +269,18 @@ Rollback is a new deployment generation. It SHALL NOT reuse stale authority mere
 
 An incomplete deployment, failed migration, partial configuration distribution, or unknown active instance SHALL invalidate normal live authority for the affected scope until fencing and reconciliation establish exclusivity.
 
-### 10.1 Current Repository Topology and Required Migration
+### 10.1 Greenfield Egress and Credential Boundary
 
-The current `kis_unified_sts` runtime is not a conforming restricted-live TOS deployment:
-
-- `services/trading/orchestrator.py` and `services/order_router/main.py` can each construct `OrderExecutor` and reach broker-order transmission;
-- `shared/execution/kis_futures_adapter.py` invokes private `OrderExecutor` send and cancel methods, so upstream guard success is separated from the actual irreversible send boundary;
-- `docker-compose.yml` distributes KIS application, account, and token-cache access to multiple trading and market-data runtimes rather than confining usable live order credentials to one approved egress identity;
-- `shared/execution/live_mode_guard.py`, the `futures:live:suspended` Redis flag, local sentinel files, and kill-switch streams are restrictive operational inputs but do not carry the ordered generations, single-use claims, durable send boundary, or non-bypassable identity isolation required by ADR-002-007.
-
-These paths SHALL NOT be described as accepted TOS enforcement. The required migration target is:
+Every conforming TOS deployment SHALL implement the following boundary:
 
 1. one approved Egress Gateway identity per declared Safety Cell holds the usable live order credential and broker-order network route;
-2. orchestrators, order routers, recovery tools, adapters, and administrative processes submit non-transmitting intents or capability requests as applicable; market-data services remain read-only; none can directly reach a live broker-order endpoint;
-3. `OrderExecutor` broker POST and cancel behavior moves behind the Egress Gateway's fenced capability-claim and `SEND_STARTED` boundary;
+2. strategy, orchestration, recovery, reconciliation, administrative, and market-data components hold no usable live order credential or direct broker-order route;
+3. all broker submission, cancellation, and replacement operations exist only behind the Egress Gateway's fenced capability-claim and `SEND_STARTED` boundary;
 4. market-data access uses separate non-ordering credentials and routes where the broker supports them; any broker-enforced inability to separate credentials is recorded as a common mode and mitigated by a non-bypassable order-route boundary;
-5. existing Redis flags, streams, and sentinels may trip a monotonic restrictive input but their absence, deletion, expiry, or recovery never establishes current permission or clears the deny latch;
-6. the current SQLite runtime ledger and Redis deployment are not treated as the sole Risk Capacity Ledger, currentness sequencer, or authoritative fencing substrate without a separately approved mechanism and executed partition/failover evidence.
+5. operational flags, event streams, caches, and sentinels may trip a monotonic restrictive input but their absence, deletion, expiry, or recovery never establishes current permission or clears the deny latch;
+6. cache or ordinary local application storage is not treated as the sole Risk Capacity Ledger, Currentness Sequencer, or authoritative fencing substrate without a separately approved mechanism and executed partition/failover evidence.
 
-Until credential inventory, route confinement, direct-path removal, and bypass testing prove this topology, restricted-live and production gates remain `NO`.
+Until credential inventory, route confinement, bypass prevention, and fault testing prove this boundary, restricted-live and production gates remain `NO`.
 
 ---
 

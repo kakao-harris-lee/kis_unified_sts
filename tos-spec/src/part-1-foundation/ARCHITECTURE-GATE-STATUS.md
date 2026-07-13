@@ -67,7 +67,7 @@ The current bundle decides:
 
 ## 3. Repository Merge Map
 
-The review files were section-level amendments, not repository-aware diffs. Their normative content was consolidated into the canonical RFC and ADR sections as follows.
+The review files were section-level amendments, not canonical-document diffs. Their normative content was consolidated into the canonical RFC and ADR sections as follows.
 
 ### 3.1 RFC-002 v0.2
 
@@ -112,7 +112,7 @@ The review files were section-level amendments, not repository-aware diffs. Thei
 
 ADR-002-005 through ADR-002-011 are authored as `Proposed`. Phase B authorship is complete, but none of those decisions is accepted.
 
-The egress-currentness protocol is selected in ADR-002-007 §§9.1–9.5, but its linearizable substrate, authenticated session transport, cryptographic format, durable journal, numeric bounds, and credential/route migration remain acceptance blockers. The current repository still has multiple direct `OrderExecutor` paths and broadly distributed KIS access, so it is explicitly nonconforming for restricted live. Other acceptance-blocking mechanism decisions remain for Risk Capacity Ledger consensus and fencing, the concrete Failure-Domain Allocation Matrix and deployment profile, safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, Time Health Snapshot distribution, and authenticated human dual-control roles.
+The egress-currentness protocol is selected in ADR-002-007 §§9.1–9.5, but its linearizable substrate, authenticated session transport, cryptographic format, durable journal, numeric bounds, and credential/route isolation remain acceptance blockers. Other acceptance-blocking mechanism decisions remain for Risk Capacity Ledger consensus and fencing, the concrete Failure-Domain Allocation Matrix and deployment profile, safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, Time Health Snapshot distribution, and authenticated human dual-control roles.
 
 Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-011, but all remain `NOT_IMPLEMENTED`. All numeric Verification Profile values remain unapproved. These unresolved items reduce authority and keep live operation prohibited.
 

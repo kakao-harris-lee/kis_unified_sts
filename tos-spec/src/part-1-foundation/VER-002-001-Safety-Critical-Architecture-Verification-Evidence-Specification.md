@@ -918,8 +918,8 @@ An untested Critical requirement blocks production approval.
 
 - **Minimum Level:** EV-L3 plus security assessment
 - **Supports:** ADR-002-007 REARM-AC-010
-- **Injection:** Present stale, wrong-scope, wrong-version, over-age, wrong-generation, wrong-deployment, reused-nonce, post-deny-latch, and bypassed authorization; pause currentness renewal; delay a restrictive push; crash or restart egress before claim, after durable claim/`SEND_STARTED`, and before the first broker byte; insert an unfenced queue or proxy; and invoke every repository path that previously called `OrderExecutor` directly.
-- **Expected:** Only the credential-confined Egress Gateway can claim and transmit; the nonce is durable and single-use; the irreversible send begins within `B_capability_claim_to_send` against the same current generation vector; no upstream success, direct adapter call, Redis flag state, queue, cache, or alternate credential path permits transmission. Every post-claim ambiguity is `UNKNOWN`, remains potentially live and capacity-covered, and cannot reuse the capability.
+- **Injection:** Present stale, wrong-scope, wrong-version, over-age, wrong-generation, wrong-deployment, reused-nonce, post-deny-latch, and bypassed authorization; pause currentness renewal; delay a restrictive push; crash or restart egress before claim, after durable claim/`SEND_STARTED`, and before the first broker byte; insert an unfenced queue or proxy; and attempt transmission through alternate broker clients, credentials, routes, and administrative paths.
+- **Expected:** Only the credential-confined Egress Gateway can claim and transmit; the nonce is durable and single-use; the irreversible send begins within `B_capability_claim_to_send` against the same current generation vector; no upstream success, alternate client call, operational flag state, queue, cache, or alternate credential path permits transmission. Every post-claim ambiguity is `UNKNOWN`, remains potentially live and capacity-covered, and cannot reuse the capability.
 
 ## 98. REARM-EV-011 — HALT Restrictive Precedence
 
