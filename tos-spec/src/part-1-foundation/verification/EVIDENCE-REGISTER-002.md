@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **171**
-- NOT_IMPLEMENTED: **171**
+- Total evidence items: **183**
+- NOT_IMPLEMENTED: **183**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -194,6 +194,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | SPG-EV-010 | Safety Profile Governance | Consumer, Software, and Broker Compatibility Drift | ADR-002-014 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
 | SPG-EV-011 | Safety Profile Governance | Missing or Contradictory Configuration Containment | ADR-002-014 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
 | SPG-EV-012 | Safety Profile Governance | Configuration Decision Replay and Evidence Completeness | ADR-002-014 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-001 | Human Authority Governance | Effective Principal Collapse and Quorum Independence | ADR-002-015 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-002 | Human Authority Governance | Exact Approval Context Binding | ADR-002-015 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-003 | Human Authority Governance | Separation of Duties and Self-Approval Prevention | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-004 | Human Authority Governance | Approval Replay, Expiry, Revocation, and Consumption | ADR-002-015 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-005 | Human Authority Governance | Independent Human HALT Availability and Propagation | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-006 | Human Authority Governance | Break-Glass Directional Confinement | ADR-002-015 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-007 | Human Authority Governance | Human Protective Request Cannot Bypass Safety | ADR-002-015 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-008 | Human Authority Governance | Delegation, Roster, and Identity Recovery Fencing | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-009 | Human Authority Governance | Approver and Workflow Compromise Containment | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-010 | Human Authority Governance | Dual-Control Re-arm and Narrow Scope | ADR-002-015 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-011 | Human Authority Governance | Approval and Economic-State Continuity and Non-Revival | ADR-002-015 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-012 | Human Authority Governance | Human Authority Replay and Evidence Completeness | ADR-002-015 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

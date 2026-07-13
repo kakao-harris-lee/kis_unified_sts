@@ -1,0 +1,64 @@
+artifact_type: HUMAN_APPROVAL_SET
+schema_version: "TBD"
+approval_set_id: TBD
+status: DRAFT
+request_id: TBD
+request_digest: TBD
+
+policy:
+  human_authority_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
+
+quorum:
+  required_distinct_effective_principals: null
+  counted_effective_principal_ids: []
+  required_roles: []
+  satisfied_roles: []
+  common_control_collapsed: false
+  conflicts_rejected: false
+  quorum_satisfied: false
+
+approval_attestation_ids: []
+approval_attestation_digests: []
+
+validation:
+  request_current: false
+  exact_context_current: false
+  all_attestations_current: false
+  all_artifacts_current: false
+  replay_checked: false
+  validation_record_id: null
+
+consumption:
+  single_use: true
+  consumed: false
+  consumed_at: null
+  downstream_decision_type: null
+  downstream_decision_id: null
+  ordered_revision: null
+  duplicate_consumption_result: DENY
+
+authority_separation:
+  creates_configuration_activation: false
+  creates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_broker_transmission: false
+
+validity:
+  issued_at: null
+  expires_at: null
+  revoked_at: null
+
+integrity:
+  approval_set_digest: TBD
+  signatures: []
+
+authorization_notice: >-
+  This DRAFT set does not satisfy quorum and grants no authority. Even a valid
+  Approval Set is only one input to a separately enforced exact downstream
+  decision and cannot mutate capacity or transmit to a broker.

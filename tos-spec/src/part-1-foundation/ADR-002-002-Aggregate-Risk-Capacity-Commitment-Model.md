@@ -1544,7 +1544,8 @@ This ADR depends on or creates mandatory interfaces with:
 11. **ADR-002-012 — Risk Capacity Ledger Persistence, Consensus, and Writer Fencing**;
 12. **ADR-002-013 — Egress Gateway Credential, Route, and Commit-Proof Security**;
 13. **ADR-002-014 — Hard Safety Envelope and Runtime Safety Profile Governance**;
-14. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
+14. **ADR-002-015 — Human Safety Authority, Dual Control, and Break-Glass Governance**;
+15. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
 
 This ADR owns capacity semantics. It does not duplicate the full authority election, broker protocol, or evidence-confidence decisions of those ADRs.
 
@@ -1617,6 +1618,7 @@ ADR-002-002 may move from **Proposed** to **Accepted** only when:
 - the ADR-002-012 persistence, consensus, and writer-fencing mechanism is implemented for the applicable Capacity Domain and its required RCLP evidence passes;
 - the ADR-002-013 final-egress boundary, exact claim binding, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;
 - the ADR-002-014 canonical envelope/profile validation and committed-generation activation are implemented and their required SPG evidence passes;
+- ADR-002-015 human approval and break-glass paths cannot mutate or release capacity and their required HAG evidence passes;
 - protective pool and sub-ledger semantics are demonstrated;
 - broker-specific Final Quantity Proof rules exist;
 - all Critical acceptance criteria pass;

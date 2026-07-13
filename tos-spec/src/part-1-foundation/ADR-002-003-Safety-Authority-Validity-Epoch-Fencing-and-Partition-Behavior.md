@@ -938,7 +938,8 @@ This ADR interfaces with:
 8. ADR-002-012 — Risk Capacity Ledger Persistence, Consensus, and Writer Fencing;
 9. ADR-002-013 — Egress Gateway Credential, Route, and Commit-Proof Security;
 10. ADR-002-014 — Hard Safety Envelope and Runtime Safety Profile Governance;
-11. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
+11. ADR-002-015 — Human Safety Authority, Dual Control, and Break-Glass Governance;
+12. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
 
 ---
 
@@ -955,7 +956,7 @@ The following may remain open while Proposed but must be resolved before Accepte
 7. How is lease-exclusive scope represented and serialized?
 8. How is a safer-state message authenticated when current permissive authority is unavailable?
 9. How are authority keys rotated without overlapping permissive issuers?
-10. What operator roles implement re-arm dual control?
+10. Which ADR-002-015 effective-principal, quorum, authentication, delegation, approval-consumption, and Human HALT mechanisms implement re-arm dual control?
 
 When a broker or runtime cannot meet the required fencing semantics, degraded or live scope must be reduced.
 
@@ -970,6 +971,7 @@ ADR-002-003 may move from **Proposed** to **Accepted** only when:
 - the applicable ADR-002-012 epoch-ordering and writer-fencing mechanism is implemented and its required RCLP evidence passes;
 - the applicable ADR-002-013 final-egress confinement and Hard Egress Fence are implemented and their required EGRESS evidence passes;
 - the applicable ADR-002-014 profile-generation, restrictive-precedence, compatibility, and rollback fences are implemented and their required SPG evidence passes;
+- the applicable ADR-002-015 effective-human-principal, approval, Human HALT, break-glass, compromise, and recovery mechanisms are implemented and their required HAG evidence passes;
 - stale-epoch rejection is enforced by Risk Capacity Ledger and broker egress;
 - no direct live broker bypass exists;
 - normal authority fails closed under partition;

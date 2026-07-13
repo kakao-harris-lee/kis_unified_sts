@@ -1,0 +1,122 @@
+artifact_type: HUMAN_AUTHORITY_POLICY
+schema_version: "TBD"
+canonicalization_version: "TBD"
+artifact_id: TBD
+policy_generation: null
+status: DRAFT
+activation_state: NOT_ACTIVE
+created_at: null
+author_effective_principal_id: TBD
+predecessor_generation: null
+change_classification: UNCLASSIFIED
+
+scope:
+  environments: []
+  safety_cells: []
+  accounts: []
+  portfolios: []
+  strategies: []
+  instruments: []
+  venues: []
+  brokers: []
+  action_classes: []
+
+roles: []
+
+authority_directions:
+  halt_or_deny:
+    minimum_distinct_effective_principals: 1
+    restrictive_only: true
+  request_containment_or_protection:
+    proposal_only: true
+    protective_classification_bypass: false
+  approve_authority_increase_or_rearm:
+    minimum_distinct_effective_principals: 2
+    exact_context_binding_required: true
+    single_use_consumption_required: true
+  capacity_mutation:
+    human_authority: PROHIBITED
+  broker_transmission:
+    human_authority: PROHIBITED
+
+separation_of_duties:
+  effective_principal_collapse_required: true
+  self_approval_chain: PROHIBITED
+  required_distinct_roles: []
+  prohibited_role_combinations: []
+  conflict_rules: []
+
+identity_and_authentication:
+  natural_person_proof: TBD
+  phishing_resistant_authentication_required: true
+  approved_authenticator_classes: []
+  device_attestation_required: true
+  session_rules: {}
+  recovery_may_restore_approval: false
+  unknown_effective_control: DENY_AUTHORITY_INCREASE
+
+delegation:
+  allowed: false
+  transitive: false
+  maximum_scope: {}
+  maximum_age_ms: null
+  grantor_must_retain_authority: true
+  revocation_invalidates_pending_authority: true
+  may_multiply_quorum: false
+
+break_glass:
+  enabled: false
+  allowed_commands: []
+  restrictive_only: true
+  may_expand_authority: false
+  may_mutate_capacity: false
+  may_classify_protective: false
+  may_issue_live_authorization: false
+  may_hold_broker_credential_or_route: false
+  may_transmit_to_broker: false
+  may_auto_revert: false
+  may_rearm: false
+
+human_halt:
+  enabled: false
+  independent_path_required: true
+  monotonic_restrictive_latch_required: true
+  direct_permissive_command: PROHIBITED
+  current_policy_and_principal_required: true
+  approved_authenticators: []
+  failure_domains: []
+
+approval_lifecycle:
+  attestation_decisions: [APPROVE, DENY, ABSTAIN]
+  terminal_state_revival: PROHIBITED
+  context_change_invalidates: true
+  approval_expiry_releases_capacity: false
+  approval_expiry_expires_economic_effect: false
+  recovery_may_rearm: false
+
+references:
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
+  hard_safety_envelope_id: TBD
+  runtime_safety_profile_id: TBD
+  verification_profile_id: TBD
+  verification_profile_version: TBD
+
+validity:
+  not_before: null
+  expires_at: null
+  review_due_at: null
+  invalidation_conditions: []
+
+integrity:
+  canonical_semantic_digest: TBD
+  byte_digest: TBD
+  signatures: []
+  revocation_record: null
+
+authorization_notice: >-
+  This DRAFT policy is NOT_ACTIVE and grants no approval, configuration,
+  capacity, Live Authorization, protective classification, broker transmission,
+  or re-arm authority. Empty, null, TBD, stale, unresolved, unapproved, or
+  incompatible fields fail closed.

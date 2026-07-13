@@ -1,0 +1,80 @@
+artifact_type: HUMAN_APPROVAL_REQUEST
+schema_version: "TBD"
+canonicalization_version: "TBD"
+request_id: TBD
+request_type: TBD
+request_nonce: TBD
+status: DRAFT
+created_at: null
+predecessor_request_id: null
+creation_generation: null
+
+requested_action:
+  authority_direction: AUTHORITY_INCREASING
+  action: TBD
+  maximum_authority: {}
+  reason: TBD
+  consumption_rule: SINGLE_USE
+
+scope:
+  environment: TBD
+  safety_cells: []
+  accounts: []
+  portfolios: []
+  strategies: []
+  instruments: []
+  venues: []
+  brokers: []
+  action_classes: []
+  time_scope: {}
+
+evidence_and_artifacts:
+  recovery_evidence_package_id: TBD
+  readiness_decision_id: TBD
+  hard_safety_envelope_id: TBD
+  hard_safety_envelope_generation: null
+  hard_safety_envelope_digest: TBD
+  runtime_safety_profile_id: TBD
+  runtime_safety_profile_generation: null
+  runtime_safety_profile_digest: TBD
+  human_authority_policy_id: TBD
+  human_authority_policy_generation: null
+  human_authority_policy_digest: TBD
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
+  broker_capability_profile_ids: []
+  verification_profile_id: TBD
+  verification_profile_version: TBD
+  failure_domain_allocation_matrix_id: TBD
+  software_and_deployment_digests: []
+
+currentness_generations:
+  rcl_revision: null
+  writer_epoch: null
+  authority_epoch: null
+  trustworthy_time_generation: null
+  revocation_generation: null
+  halt_generation: null
+  egress_generation: null
+
+unresolved_state: []
+residual_risks: []
+scope_reductions: []
+required_independent_inputs: []
+required_reviewer_roles: []
+invalidation_conditions: []
+
+validity:
+  not_before: null
+  expires_at: null
+
+integrity:
+  canonical_request_digest: TBD
+  byte_digest: TBD
+  signatures: []
+
+authorization_notice: >-
+  This DRAFT request is a proposal only. It grants no approval, activation,
+  capacity, Live Authorization, protective classification, broker transmission,
+  or re-arm authority.

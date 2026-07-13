@@ -641,7 +641,7 @@ The architecture is selected. The following product, schema, governance, topolog
 
 1. Which canonical artifact format and semantic-normalization algorithm are approved?
 2. Which signing, approval-workflow, registry, and revocation mechanisms enforce independent envelope and profile governance?
-3. What approval quorum, expiry, delegation, and emergency-role policies apply to envelope and authority-increasing profile changes?
+3. Which ADR-002-015 effective-principal, approval quorum, expiry, delegation, consumption, compromise, and emergency-role policies apply to envelope and authority-increasing profile changes?
 4. Which deterministic comparison system proves a change restrictive across scalar, set, vector, conditional, fallback, and time dimensions?
 5. How are Consumer Compatibility Manifests generated, authenticated, and checked across mixed-version deployment?
 6. Which ADR-002-012 command schema and namespace commit Profile Generations without collapsing separation of duties?
@@ -662,13 +662,14 @@ ADR-002-014 SHALL remain **Proposed** until all of the following are complete:
 
 1. canonical Hard Safety Envelope, Runtime Safety Profile, Safety Configuration Bundle, and Consumer Compatibility Manifest schemas are approved;
 2. envelope, profile, validation, activation, restriction, and live-arming authorities are implemented with reviewed separation of duties;
-3. semantic comparison covers every Critical unit, scope, aggregate, fallback, compatibility, and economic-effect dimension;
-4. the ADR-002-012 Profile Generation and Activation Record ordering is implemented without creating a capacity or approval bypass;
-5. every permission-creating consumer and ADR-002-013 final egress enforces exact committed digests, generations, compatibility, and restrictive precedence;
-6. rollback, restore, cache, expiry, mixed-version, emergency restriction, and software-compatibility fencing are implemented and security-reviewed;
-7. no configuration transition releases capacity, expires economic effect, treats missing ACK as non-acceptance, or treats cancel ACK as Final Quantity Proof;
-8. `SPG-EV-001` through `SPG-EV-012` and applicable REARM, FD, RCLP, EGRESS, SA, and cross-system evidence pass at required levels and receive independent review;
-9. applicable activation, revocation, restriction-propagation, time, evidence, and egress bounds are approved and measured;
-10. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+3. ADR-002-015 Human Authority Policy, effective-principal independence, approval-set consumption, and break-glass confinement are implemented and their required HAG evidence passes;
+4. semantic comparison covers every Critical unit, scope, aggregate, fallback, compatibility, and economic-effect dimension;
+5. the ADR-002-012 Profile Generation and Activation Record ordering is implemented without creating a capacity or approval bypass;
+6. every permission-creating consumer and ADR-002-013 final egress enforces exact committed digests, generations, compatibility, and restrictive precedence;
+7. rollback, restore, cache, expiry, mixed-version, emergency restriction, and software-compatibility fencing are implemented and security-reviewed;
+8. no configuration transition releases capacity, expires economic effect, treats missing ACK as non-acceptance, or treats cancel ACK as Final Quantity Proof;
+9. `SPG-EV-001` through `SPG-EV-012` and applicable REARM, FD, RCLP, EGRESS, SA, and cross-system evidence pass at required levels and receive independent review;
+10. applicable activation, revocation, restriction-propagation, time, evidence, and egress bounds are approved and measured;
+11. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, signatures, successful parsing, repository merge, staged distribution, written acceptance cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, configuration-driven capacity mutation, or automatic re-arm.

@@ -601,7 +601,7 @@ These costs are accepted because live availability and opportunity are subordina
 
 The following may remain open while Proposed but SHALL be resolved before acceptance:
 
-1. What human roles, quorum, authentication, and approval expiry implement dual control?
+1. Which conforming ADR-002-015 effective-principal, role, quorum, authentication, approval-expiry, consumption, delegation, and Human HALT mechanisms implement dual control?
 2. What service stores and signs Recovery Evidence Packages and authorization records?
 3. Which conforming ADR-002-012 consensus product and ADR-002-013 credential, route, principal, Quorum Commit Certificate, authenticated session, and hard-fence mechanisms implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, and `B_egress_hard_fence`?
 4. What exact scope dimensions and risk vectors are supported by the first restricted-live profile?
@@ -621,6 +621,7 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 
 - Hard Safety Envelope and Runtime Safety Profile governance is implemented with atomic activation;
 - ADR-002-014 canonical artifacts, separated governance, committed Profile Generation, mixed-version denial, restrictive precedence, and rollback/restore fencing are implemented and their required SPG evidence passes;
+- ADR-002-015 effective Human Safety Principal, exact Approval Set, one-human restrictive HALT, break-glass confinement, compromise, and approval non-revival are implemented and their required HAG evidence passes;
 - all roles and separation-of-duty controls are defined and enforced;
 - the Recovery Evidence Package and Live Authorization contracts are implemented;
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;

@@ -1,0 +1,50 @@
+artifact_type: EFFECTIVE_PRINCIPAL_GRAPH
+schema_version: "TBD"
+canonicalization_version: "TBD"
+artifact_id: TBD
+graph_generation: null
+status: DRAFT
+resolved: false
+created_at: null
+predecessor_generation: null
+
+scope:
+  environments: []
+  safety_cells: []
+  organizations: []
+
+natural_person_principals: []
+accounts_and_aliases: []
+authenticators_devices_and_sessions: []
+service_identities_credentials_and_keys: []
+roles_and_groups: []
+delegations: []
+administrative_control_edges: []
+recovery_and_impersonation_edges: []
+common_control_equivalence_classes: []
+conflicts_of_interest: []
+unknown_or_unresolved_edges: []
+
+resolution_contract:
+  common_effective_control_counts_once: true
+  unknown_control_denies_authority_increase: true
+  shared_or_generic_identity_is_human_principal: false
+  organization_or_device_separation_proves_independence: false
+  quorum_independence_proven: false
+
+validity:
+  not_before: null
+  expires_at: null
+  review_due_at: null
+  invalidation_conditions: []
+
+integrity:
+  canonical_semantic_digest: TBD
+  byte_digest: TBD
+  signatures: []
+  revocation_record: null
+
+authorization_notice: >-
+  This unresolved DRAFT graph proves no principal independence and grants no
+  approval or live authority. Any unknown, stale, contradictory, or incomplete
+  effective-control relationship denies authority increase.

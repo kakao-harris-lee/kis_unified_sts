@@ -17,12 +17,23 @@ bundle:
   verification_profile_version: TBD
   verification_profile_digest: TBD
   failure_domain_allocation_matrix_id: TBD
+  human_authority_policy_id: TBD
+  human_authority_policy_generation: null
+  human_authority_policy_digest: TBD
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 
 governance:
   change_classification: UNCLASSIFIED
   approval_policy_id: TBD
+  approval_request_id: TBD
+  approval_request_digest: TBD
+  approval_set_id: TBD
+  approval_set_digest: TBD
+  approval_set_consumption_record: null
   approval_records: []
   approvals_valid_until: null
   validator_identity: TBD

@@ -17,6 +17,12 @@ baseline:
   runtime_safety_profile_digest: TBD
   safety_configuration_activation_record_id: TBD
   safety_configuration_activation_record_digest: TBD
+  human_authority_policy_id: TBD
+  human_authority_policy_generation: null
+  human_authority_policy_digest: TBD
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
   consumer_compatibility_manifest_ids: []
   broker_capability_profile_version: TBD
   verification_profile_version: TBD
@@ -53,6 +59,16 @@ artifacts:
   profile_generation_transitions: []
   consumer_compatibility_attestations: []
   configuration_approval_and_sod: []
+  human_authority_policies: []
+  effective_principal_graphs: []
+  human_approval_requests: []
+  human_approval_attestations: []
+  human_approval_sets: []
+  human_approval_consumption: []
+  human_halt_commands: []
+  break_glass_events: []
+  identity_delegation_and_revocation: []
+  human_authority_compromise: []
   restrictive_overrides: []
   configuration_rollback_restore: []
   state_dimensions: []

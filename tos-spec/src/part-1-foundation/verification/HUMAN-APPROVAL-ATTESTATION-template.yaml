@@ -1,0 +1,40 @@
+artifact_type: HUMAN_APPROVAL_ATTESTATION
+schema_version: "TBD"
+attestation_id: TBD
+status: DRAFT
+decision: null
+request_id: TBD
+request_digest: TBD
+
+principal:
+  human_safety_principal_id: TBD
+  effective_principal_id: TBD
+  effective_principal_graph_generation: null
+  role: TBD
+  authenticator_class: TBD
+  device_attestation: TBD
+  session_id: TBD
+
+review:
+  reviewed_input_digests: []
+  independent_recomputation_result: null
+  conflicts_checked: false
+  scope_checked: false
+  current_context_checked: false
+  notes: []
+
+validity:
+  issued_at: null
+  expires_at: null
+  trustworthy_time_generation: null
+  revoked_at: null
+  revocation_reason: null
+
+integrity:
+  attestation_digest: TBD
+  signatures: []
+
+authorization_notice: >-
+  This DRAFT attestation has no decision or signature and grants no authority.
+  An attestation is never capacity, configuration activation, Live Authorization,
+  protective classification, or broker transmission authority.

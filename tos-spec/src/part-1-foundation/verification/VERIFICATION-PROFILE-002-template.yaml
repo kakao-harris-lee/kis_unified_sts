@@ -18,6 +18,12 @@ scope:
   runtime_safety_profile_digest: TBD
   safety_configuration_activation_record_id: TBD
   safety_configuration_activation_record_digest: TBD
+  human_authority_policy_id: TBD
+  human_authority_policy_generation: null
+  human_authority_policy_digest: TBD
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -47,6 +53,13 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+  B_human_halt_to_commit:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: LATCH_LOCAL_HALT_AND_ESCALATE
   B_time_health_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -215,6 +228,9 @@ limits:
   MAX_clock_drift_ppm: null
   MAX_process_suspension_ms: null
   MAX_unresolved_send_per_scope: 1
+  MAX_human_approval_age_ms: null
+  MAX_human_session_age_ms: null
+  MAX_human_delegation_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

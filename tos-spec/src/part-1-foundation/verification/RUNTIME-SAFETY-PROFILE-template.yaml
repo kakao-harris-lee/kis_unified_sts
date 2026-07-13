@@ -82,6 +82,12 @@ failure_responses:
   automatic_revert: PROHIBITED
 
 references:
+  human_authority_policy_id: TBD
+  human_authority_policy_generation: null
+  human_authority_policy_digest: TBD
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
   broker_capability_profiles: []
   verification_profile_id: TBD
   verification_profile_version: TBD
@@ -100,6 +106,8 @@ compatibility:
 
 governance:
   policy_id: TBD
+  approval_request_id: TBD
+  approval_set_id: TBD
   required_approval_roles: []
   approved_by: []
   approval_expires_at: null

@@ -1332,7 +1332,8 @@ This ADR interfaces with:
 9. ADR-002-011 — Protective Replacement and Protection-Gap Control;
 10. ADR-002-013 — Egress Gateway Credential, Route, and Commit-Proof Security;
 11. ADR-002-014 — Hard Safety Envelope and Runtime Safety Profile Governance;
-12. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
+12. ADR-002-015 — Human Safety Authority, Dual Control, and Break-Glass Governance;
+13. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
 
 Broker-specific profiles are implementation-controlled safety artifacts, not substitutes for this ADR.
 
@@ -1376,6 +1377,7 @@ ADR-002-004 may move from **Proposed** to **Accepted** only when:
 - rate/session guarantee levels are honestly classified;
 - ADR-002-013 credential, route, principal, Commit-Proof, and egress fencing are implemented and their required EGRESS evidence passes;
 - ADR-002-014 binds each claimed Broker Capability Profile to one canonical Safety Configuration Bundle, and the required SPG evidence passes;
+- ADR-002-015 human approval and break-glass controls cannot use portal, dealer, support, or emergency broker authority as compliant TOS egress, and their required HAG evidence passes;
 - all Critical acceptance criteria pass;
 - capability drift causes fail-closed behavior;
 - VER-002-001 evidence entries are complete and independently reviewed;

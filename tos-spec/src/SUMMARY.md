@@ -23,6 +23,7 @@
 - [ADR-002-012 — RCL Persistence, Consensus, and Writer Fencing](part-1-foundation/ADR-002-012-Risk-Capacity-Ledger-Persistence-Consensus-and-Writer-Fencing.md)
 - [ADR-002-013 — Egress Gateway Credential, Route, and Commit-Proof Security](part-1-foundation/ADR-002-013-Egress-Gateway-Credential-Route-and-Commit-Proof-Security.md)
 - [ADR-002-014 — Hard Safety Envelope and Runtime Safety Profile Governance](part-1-foundation/ADR-002-014-Hard-Safety-Envelope-and-Runtime-Safety-Profile-Governance.md)
+- [ADR-002-015 — Human Safety Authority, Dual Control, and Break-Glass Governance](part-1-foundation/ADR-002-015-Human-Safety-Authority-Dual-Control-and-Break-Glass-Governance.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)

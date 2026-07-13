@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "0.5-PROPOSED"
+version: "0.6-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -34,6 +34,12 @@ scope:
   runtime_safety_profile_digest: TBD
   safety_configuration_activation_record_id: TBD
   safety_configuration_activation_record_digest: TBD
+  human_authority_policy_id: TBD
+  human_authority_policy_generation: null
+  human_authority_policy_digest: TBD
+  effective_principal_graph_id: TBD
+  effective_principal_graph_generation: null
+  effective_principal_graph_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -65,9 +71,16 @@ bounds:
     value_ms: null   # APPROVE after HALT generation propagation and fenced-send design are selected
     semantics: hard_maximum
     owner: TBD
-    rationale: "MEASURE. Maximum interval from authenticated HALT acceptance to denial of later risk-increasing transmissions at every final egress (ADR-002-007 §§16-17)."
+    rationale: "MEASURE. Maximum interval from authoritative HALT commit, or a final egress's locally verified acceptance of the same restrictive command, to denial of later risk-increasing transmissions at every affected final egress (ADR-002-007 §§16-17; ADR-002-015 §15)."
     measurement_source: halt_and_egress_boundary_log
     failure_response: HALT
+  B_human_halt_to_commit:
+    value_ms: null   # APPROVE after the independent human HALT ingress, local latch, and authoritative commit path are implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from acceptance of a current authenticated Human HALT Command to an authoritative monotonic HALT commit or a proven local restrictive egress latch. It precedes or overlaps B_halt_to_egress but cannot be hidden inside it (ADR-002-015 §15)."
+    measurement_source: human_halt_ingress_local_latch_and_safety_commit_log
+    failure_response: LATCH_LOCAL_HALT_AND_ESCALATE
   B_time_health_to_egress:
     value_ms: null   # APPROVE after Time Health currentness distribution is selected
     semantics: hard_maximum
@@ -237,6 +250,9 @@ limits:
   MAX_clock_drift_ppm: 200                    # PROPOSED: beyond this, time confidence is lost -> fail closed (ADR-002-003)
   MAX_process_suspension_ms: 2000             # PROPOSED: a process suspended longer than this is fenced on resume
   MAX_unresolved_send_per_scope: 1            # from template: at most one unresolved send per scope
+  MAX_human_approval_age_ms: null             # APPROVE per approval type; stale or unknown age denies authority increase
+  MAX_human_session_age_ms: null              # APPROVE per human authority direction; unknown age denies the command
+  MAX_human_delegation_age_ms: null           # APPROVE per delegation policy; expiry never transfers or revives approval
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

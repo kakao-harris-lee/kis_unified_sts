@@ -1,0 +1,62 @@
+artifact_type: HUMAN_HALT_COMMAND
+schema_version: "TBD"
+command_id: TBD
+command_nonce: TBD
+status: DRAFT
+issued_at: null
+expires_at: null
+
+principal:
+  human_safety_principal_id: TBD
+  effective_principal_id: TBD
+  human_authority_policy_id: TBD
+  human_authority_policy_generation: null
+  authenticator_class: TBD
+  session_id: TBD
+
+scope:
+  environments: []
+  safety_cells: []
+  accounts: []
+  portfolios: []
+  strategies: []
+  instruments: []
+  venues: []
+  brokers: []
+  action_classes: []
+
+direction:
+  restrictive_only: true
+  requested_restriction: TBD
+  may_create_permission: false
+  may_mutate_capacity: false
+  may_classify_protective: false
+  may_issue_live_authorization: false
+  may_transmit_to_broker: false
+  may_auto_revert: false
+  may_rearm: false
+
+ordering:
+  trustworthy_time_generation: null
+  predecessor_halt_generation: null
+  committed_halt_generation: null
+  authoritative_commit_revision: null
+  locally_latched_egress_ids: []
+  acknowledged_egress_ids: []
+  result_ambiguous: true
+
+evidence:
+  authentication_record_id: null
+  local_latch_records: []
+  authoritative_commit_record_id: null
+  egress_receipt_records: []
+  notification_records: []
+
+integrity:
+  command_digest: TBD
+  signatures: []
+
+authorization_notice: >-
+  This DRAFT command is uncommitted and grants no permissive, capacity, Live
+  Authorization, protective-classification, or broker-transmission authority.
+  An ambiguous result is treated as possibly applied and cannot justify re-arm.
