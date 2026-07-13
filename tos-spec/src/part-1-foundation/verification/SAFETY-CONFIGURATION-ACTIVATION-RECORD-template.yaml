@@ -1,0 +1,70 @@
+record_type: SAFETY_CONFIGURATION_ACTIVATION_RECORD
+schema_version: "TBD"
+record_id: TBD
+status: DRAFT
+profile_generation: null
+predecessor_profile_generation: null
+scope: {}
+
+bundle:
+  hard_safety_envelope_id: TBD
+  hard_safety_envelope_generation: null
+  hard_safety_envelope_digest: TBD
+  runtime_safety_profile_id: TBD
+  runtime_safety_profile_digest: TBD
+  broker_capability_profile_ids: []
+  verification_profile_id: TBD
+  verification_profile_version: TBD
+  verification_profile_digest: TBD
+  failure_domain_allocation_matrix_id: TBD
+  referenced_artifact_digests: []
+  canonical_bundle_digest: TBD
+
+governance:
+  change_classification: UNCLASSIFIED
+  approval_policy_id: TBD
+  approval_records: []
+  approvals_valid_until: null
+  validator_identity: TBD
+  semantic_validation_record: TBD
+  separation_of_duties_proof: TBD
+
+compatibility:
+  required_consumers: []
+  consumer_attestations: []
+  all_required_consumers_compatible: false
+
+ordering:
+  safety_commit_log_cluster_id: TBD
+  capacity_domain: TBD
+  command_id: TBD
+  committed_revision: null
+  membership_generation: null
+  restore_generation: null
+  writer_epoch: null
+  quorum_commit_certificate: null
+
+restrictive_effect:
+  prior_live_authority_suspended: false
+  revocation_generation: null
+  halt_generation: null
+  restrictive_override_id: null
+  automatic_revert: PROHIBITED
+
+validity:
+  not_before: null
+  expires_at: null
+  trustworthy_time_generation: null
+
+live_authorization:
+  created_by_activation: false
+  fresh_governed_rearm_required: true
+  authorization_id: null
+
+integrity:
+  record_digest: TBD
+  signatures: []
+
+authorization_notice: >-
+  This DRAFT record is uncommitted and grants no activation, capacity, Live
+  Authorization, or transmission authority.

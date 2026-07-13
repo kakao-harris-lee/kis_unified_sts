@@ -501,6 +501,7 @@ The following may remain open while Proposed but SHALL be resolved before accept
 5. What broker timestamps may be used for attribution or ordering per Broker Capability Profile?
 6. Which mechanism distributes current Time Health generations and revocation evidence without unsafe caching or a circular dependency while meeting `B_time_health_to_egress` and `MAX_time_health_snapshot_age`?
 7. Which common-mode time failures require physical isolation?
+8. How do ADR-002-014 artifact, approval, activation, and compatibility validity intervals bind the Time Health generation without allowing time recovery to revive authority?
 
 Unresolved answers reduce authority; they do not weaken the rules above.
 
@@ -517,6 +518,7 @@ ADR-002-008 may move from **Proposed** to **Accepted** only when:
 - freshness, ordering, session, holdover, restart, and recovery behaviors are demonstrated;
 - the Time Health generation distribution and consumer receipt-anchor mechanism in §22.6 is selected, implemented, and independently reviewed;
 - final egress rejects stale or untrusted time;
+- ADR-002-014 profile and approval expiry, time-invalid activation, and time-recovery non-revival rules are implemented and their applicable SPG evidence passes;
 - no recovery path revives old authority or automatically re-arms;
 - VER-002-001 and the Evidence Register cover every Critical acceptance case;
 - retained evidence is immutable and independently reviewed.

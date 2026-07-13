@@ -1,0 +1,52 @@
+artifact_type: CONSUMER_COMPATIBILITY_MANIFEST
+schema_version: "TBD"
+artifact_id: TBD
+status: DRAFT
+consumer:
+  logical_role: TBD
+  workload_identity: TBD
+  software_artifact_digest: TBD
+  configuration_digest: TBD
+  deployment_identity: TBD
+  environment: TBD
+  safety_cells: []
+
+supported_contracts:
+  envelope_schema_versions: []
+  profile_schema_versions: []
+  canonicalization_versions: []
+  field_paths: []
+  units: []
+  currencies: []
+  multipliers: []
+  numeric_types: []
+  rounding_modes: []
+  boundary_semantics: []
+  calculation_models: []
+  failure_semantics: []
+
+attestation:
+  profile_generation: null
+  envelope_artifact_id: TBD
+  envelope_canonical_semantic_digest: TBD
+  profile_artifact_id: TBD
+  profile_canonical_semantic_digest: TBD
+  referenced_artifact_digests: []
+  reproduced_semantic_digest: TBD
+  compatible: false
+  attested_at: null
+  expires_at: null
+  signer_identity: TBD
+  signatures: []
+
+fail_closed_contract:
+  unknown_field: DENY
+  unsupported_schema: DENY
+  digest_mismatch: DENY
+  mixed_generation: DENY
+  stale_attestation: DENY
+  missing_activation_record: DENY
+
+authorization_notice: >-
+  This DRAFT manifest is not a compatibility attestation and grants no live
+  authority. compatible remains false until independently verified.

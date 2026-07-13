@@ -10,7 +10,14 @@ baseline:
   rfc_versions: []
   adr_versions: []
   hard_safety_envelope_version: TBD
+  hard_safety_envelope_generation: null
+  hard_safety_envelope_digest: TBD
   runtime_safety_profile_version: TBD
+  runtime_safety_profile_generation: null
+  runtime_safety_profile_digest: TBD
+  safety_configuration_activation_record_id: TBD
+  safety_configuration_activation_record_digest: TBD
+  consumer_compatibility_manifest_ids: []
   broker_capability_profile_version: TBD
   verification_profile_version: TBD
   schema_version: TBD
@@ -41,6 +48,13 @@ artifacts:
   route_and_endpoint_policy: []
   commit_proof_validation: []
   hard_egress_fence: []
+  safety_configuration_bundles: []
+  canonical_semantic_validation: []
+  profile_generation_transitions: []
+  consumer_compatibility_attestations: []
+  configuration_approval_and_sod: []
+  restrictive_overrides: []
+  configuration_rollback_restore: []
   state_dimensions: []
   broker_raw: []
   reconciliation: []

@@ -1331,7 +1331,8 @@ This ADR interfaces with:
 8. ADR-002-009 — Failure-Domain Isolation and Deployment Safety;
 9. ADR-002-011 — Protective Replacement and Protection-Gap Control;
 10. ADR-002-013 — Egress Gateway Credential, Route, and Commit-Proof Security;
-11. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
+11. ADR-002-014 — Hard Safety Envelope and Runtime Safety Profile Governance;
+12. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
 
 Broker-specific profiles are implementation-controlled safety artifacts, not substitutes for this ADR.
 
@@ -1374,6 +1375,7 @@ ADR-002-004 may move from **Proposed** to **Accepted** only when:
 - external-activity and polling bounds are measured;
 - rate/session guarantee levels are honestly classified;
 - ADR-002-013 credential, route, principal, Commit-Proof, and egress fencing are implemented and their required EGRESS evidence passes;
+- ADR-002-014 binds each claimed Broker Capability Profile to one canonical Safety Configuration Bundle, and the required SPG evidence passes;
 - all Critical acceptance criteria pass;
 - capability drift causes fail-closed behavior;
 - VER-002-001 evidence entries are complete and independently reviewed;

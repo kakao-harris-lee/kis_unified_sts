@@ -731,6 +731,8 @@ Responsibilities:
 
 The Hard Safety Envelope SHALL NOT be modifiable by normal strategy operation.
 
+ADR-002-014 defines the normative immutable envelope artifact, independent governance, generation, semantic comparison, activation, restriction, rollback, restore, compatibility, and evidence contract.
+
 ---
 
 ### 10.13 Live Authorization Service
@@ -816,6 +818,8 @@ Responsibilities:
 * fail closed when correctness cannot be proven.
 
 The Safety Profile Validator SHALL be independent from strategy configuration and SHALL NOT expand the Hard Safety Envelope. The identity permitted to approve or publish a Runtime Safety Profile SHALL NOT also arm live trading.
+
+ADR-002-014 defines the complete Safety Configuration Bundle, canonical semantic validation, consumer-compatibility attestations, quorum-committed Profile Generation, break-before-make atomic activation, restrictive precedence, and rollback non-revival rules.
 
 ---
 
@@ -1546,8 +1550,9 @@ The following ADRs are initially required.
 | ADR-002-011 | Protective Replacement and Protection-Gap Control                     | Proposed |
 | ADR-002-012 | Risk Capacity Ledger Persistence, Consensus, and Writer Fencing        | Proposed |
 | ADR-002-013 | Egress Gateway Credential, Route, and Commit-Proof Security             | Proposed |
+| ADR-002-014 | Hard Safety Envelope and Runtime Safety Profile Governance               | Proposed |
 
-ADR-002-002 through ADR-002-013 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus and final-egress security decisions ADR-002-012 → ADR-002-013 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-013, including one-to-one dedicated cases for ADR-002-005 through ADR-002-013. All 159 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
+ADR-002-002 through ADR-002-014 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus, final-egress security, and safety-configuration governance decisions ADR-002-012 → ADR-002-013 → ADR-002-014 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-014, including one-to-one dedicated cases for ADR-002-005 through ADR-002-014. All 171 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
 
 ---
 
@@ -1596,16 +1601,17 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
 ## 28. Open Architectural Decisions
 
-ADR-002-005 through ADR-002-013 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, and final-egress security models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
+ADR-002-005 through ADR-002-014 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, final-egress security, and safety-configuration governance models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
 
 1. Which conforming replicated-state-machine product, storage engine, voter topology, and durability configuration implement ADR-002-012's selected quorum Safety Commit Log mechanism?
 2. Which conforming non-exportable signer or credential service, identity-aware order route, Quorum Commit Certificate format, Active Egress Principal topology, and Hard Egress Fence implement ADR-002-013 while carrying ADR-002-007 and ADR-002-012 generations to the broker-send boundary?
-3. What deployment topology provides the required failure-domain isolation?
-4. What numeric detection, containment, protective-gap, lease, and retry bounds are approved?
-5. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
-6. Which broker resources can be physically or logically reserved for protection?
-7. How are corporate actions and other non-trade changes attributed and remapped?
-8. What restricted-production evidence is required beyond non-live verification?
+3. Which canonical artifact, semantic-normalization, approval, registry, signing, compatibility-manifest, and activation mechanisms implement ADR-002-014 without collapsing configuration governance, capacity, and live-arming authority?
+4. What deployment topology provides the required failure-domain isolation?
+5. What numeric detection, containment, protective-gap, lease, and retry bounds are approved?
+6. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
+7. Which broker resources can be physically or logically reserved for protection?
+8. How are corporate actions and other non-trade changes attributed and remapped?
+9. What restricted-production evidence is required beyond non-live verification?
 
 Open decisions SHALL NOT be resolved by informal implementation convention.
 
@@ -1636,7 +1642,7 @@ At minimum, the verification set SHALL include:
 * process restart with a live or UNKNOWN broker order;
 * external HTS order and broker-query omission;
 * clock fault and time-source loss during partition;
-* invalid Safety Profile and Hard Safety Envelope expansion attempt;
+* invalid Safety Profile, Hard Safety Envelope expansion, semantic/unit ambiguity, partial activation, mixed generation, incompatible consumer, stale-base race, rollback/restore, expiry recovery, and unauthorized expand-and-arm attempt;
 * non-live environment attempting to reach live egress;
 * protective reserve exhaustion and ordinary traffic blocking the protective path;
 * corporate action or instrument-identity change;
@@ -1721,9 +1727,10 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Added re-arm governance prohibiting automatic re-arm.
 * Added the Failure-Domain Allocation requirement.
 * Added verification and acceptance-bound requirements.
-* Expanded the ADR register through ADR-002-013 and registered ADR-002-002 through ADR-002-013 as Proposed.
+* Expanded the ADR register through ADR-002-014 and registered ADR-002-002 through ADR-002-014 as Proposed.
 * Added the Phase B failure-domain isolation, protective-replacement, and corporate-action/non-trade decisions without changing verification or live-readiness status.
 * Selected the quorum-replicated deterministic Safety Commit Log mechanism class for RCL persistence, consensus, writer fencing, currentness ordering, and recovery in ADR-002-012; concrete products and deployment values remain open.
 * Defined the effective Final Egress Trust Boundary, credential and route confinement, quorum-sufficient Commit Proof validation, and stale-egress hard fencing in ADR-002-013.
-* Expanded VER-002-001 and the Evidence Register to 159 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-013.
+* Defined immutable Hard Safety Envelope and Runtime Safety Profile artifacts, separated governance, canonical semantic validation, committed Profile Generations, break-before-make activation, restrictive precedence, and rollback non-revival in ADR-002-014.
+* Expanded VER-002-001 and the Evidence Register to 171 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-014.
 * Resolves review findings A-01 through A-14.

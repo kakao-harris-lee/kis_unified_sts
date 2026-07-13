@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **159**
-- NOT_IMPLEMENTED: **159**
+- Total evidence items: **171**
+- NOT_IMPLEMENTED: **171**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -182,6 +182,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | EGRESS-EV-010 | Egress Security | Credential Compromise and Unknown Revocation | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | TBD | TBD |
 | EGRESS-EV-011 | Egress Security | Degraded Protective Egress Exclusivity | ADR-002-013 | EV-L3/5+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 | EGRESS-EV-012 | Egress Security | Manual Authority and Recovery Cannot Re-arm | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-001 | Safety Profile Governance | Envelope Governance and Non-Silent Expansion | ADR-002-014 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-002 | Safety Profile Governance | Semantic Units, Numeric, and Cross-Field Validation | ADR-002-014 | EV-L1/2 | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-003 | Safety Profile Governance | Schema, Omission, and Canonicalization Safety | ADR-002-014 | EV-L1/2+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-004 | Safety Profile Governance | Atomic Mixed-Generation Activation | ADR-002-014 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-005 | Safety Profile Governance | Concurrent and Stale-Base Activation | ADR-002-014 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-006 | Safety Profile Governance | Restrictive Precedence and Economic Continuity | ADR-002-014 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-007 | Safety Profile Governance | Rollback, Restore, and Historical Replay Fencing | ADR-002-014 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-008 | Safety Profile Governance | Expiry and Recovery Non-Revival | ADR-002-014 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-009 | Safety Profile Governance | Separation of Duties and Break-Glass Confinement | ADR-002-014 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-010 | Safety Profile Governance | Consumer, Software, and Broker Compatibility Drift | ADR-002-014 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-011 | Safety Profile Governance | Missing or Contradictory Configuration Containment | ADR-002-014 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SPG-EV-012 | Safety Profile Governance | Configuration Decision Replay and Evidence Completeness | ADR-002-014 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

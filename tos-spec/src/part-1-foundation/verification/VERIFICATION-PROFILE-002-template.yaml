@@ -8,8 +8,16 @@ scope:
   environment: TBD
   accounts: []
   broker_capability_profiles: []
+  hard_safety_envelope_id: TBD
   hard_safety_envelope_version: TBD
+  hard_safety_envelope_generation: null
+  hard_safety_envelope_digest: TBD
+  runtime_safety_profile_id: TBD
   runtime_safety_profile_version: TBD
+  runtime_safety_profile_generation: null
+  runtime_safety_profile_digest: TBD
+  safety_configuration_activation_record_id: TBD
+  safety_configuration_activation_record_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null

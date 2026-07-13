@@ -605,7 +605,7 @@ The following may remain open while Proposed but SHALL be resolved before accept
 2. What service stores and signs Recovery Evidence Packages and authorization records?
 3. Which conforming ADR-002-012 consensus product and ADR-002-013 credential, route, principal, Quorum Commit Certificate, authenticated session, and hard-fence mechanisms implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, and `B_egress_hard_fence`?
 4. What exact scope dimensions and risk vectors are supported by the first restricted-live profile?
-5. How are atomic profile activation and rollback implemented across failure domains?
+5. Which canonical artifact, semantic validation, compatibility-manifest, approval, and ADR-002-012 ordering mechanisms implement ADR-002-014 atomic activation and rollback fencing across failure domains?
 6. Which changes require full re-arm versus immediate scoped suspension and later re-evaluation?
 7. What maximum readiness age, authorization duration, and invalidation bounds are approved?
 8. How are emergency operator credentials isolated from limit and live-arming credentials?
@@ -620,6 +620,7 @@ Unresolved answers reduce authority or keep the system non-live.
 ADR-002-007 may move from **Proposed** to **Accepted** only when:
 
 - Hard Safety Envelope and Runtime Safety Profile governance is implemented with atomic activation;
+- ADR-002-014 canonical artifacts, separated governance, committed Profile Generation, mixed-version denial, restrictive precedence, and rollback/restore fencing are implemented and their required SPG evidence passes;
 - all roles and separation-of-duty controls are defined and enforced;
 - the Recovery Evidence Package and Live Authorization contracts are implemented;
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;

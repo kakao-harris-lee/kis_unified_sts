@@ -1,0 +1,123 @@
+artifact_type: RUNTIME_SAFETY_PROFILE
+schema_version: "TBD"
+canonicalization_version: "TBD"
+artifact_id: TBD
+profile_generation: null
+status: DRAFT
+activation_state: NOT_ACTIVE
+created_at: null
+author: TBD
+predecessor_generation: null
+change_classification: UNCLASSIFIED
+
+hard_safety_envelope:
+  artifact_id: TBD
+  envelope_generation: null
+  canonical_semantic_digest: TBD
+
+scope:
+  environment: TBD
+  safety_cells: []
+  accounts: []
+  portfolios: []
+  strategies: []
+  instruments: []
+  venues: []
+  brokers: []
+  order_types: []
+  action_classes: []
+  sessions: []
+
+permissions:
+  normal_new_risk: false
+  recovery_only: false
+  protective: false
+  degraded_protective: false
+  live_arming: false
+
+limits:
+  per_action: {}
+  aggregate: {}
+  quantities: {}
+  notionals: {}
+  risk_vectors: {}
+  margin: {}
+  leverage: {}
+  concentration: {}
+  liquidity: {}
+  rates: {}
+  sessions: {}
+  unresolved_state: {}
+
+protective_controls:
+  exclusive_preissued_capacity_required: true
+  priority_is_reserved_capacity: false
+  lease_rules: {}
+  replacement_rules: {}
+  ownership_rules: {}
+
+evidence_and_reconciliation:
+  confidence_rules: {}
+  freshness_rules: {}
+  unknown_blocks_new_risk: true
+  missing_ack_is_non_acceptance: false
+  cancel_ack_is_final_quantity_proof: false
+
+time:
+  trustworthy_time_generation: null
+  calendars: []
+  freshness_bounds: {}
+  expiry_rules: {}
+  holdover_rules: {}
+  recovery_may_rearm: false
+
+failure_responses:
+  missing_value: DENY
+  unknown_field: REJECT_PROFILE
+  incompatible_consumer: DENY
+  mixed_generation: DENY
+  stale_generation: DENY
+  untrusted_time: STOP_NEW_RISK
+  profile_contradiction: HALT_OR_CONTAIN
+  automatic_revert: PROHIBITED
+
+references:
+  broker_capability_profiles: []
+  verification_profile_id: TBD
+  verification_profile_version: TBD
+  verification_profile_digest: TBD
+  failure_domain_allocation_matrix_id: TBD
+  failure_domain_allocation_matrix_digest: TBD
+  software_artifacts: []
+  deployment_artifacts: []
+  credential_route_profiles: []
+  policy_artifacts: []
+
+compatibility:
+  required_consumer_manifests: []
+  required_schema_versions: []
+  required_canonicalization_versions: []
+
+governance:
+  policy_id: TBD
+  required_approval_roles: []
+  approved_by: []
+  approval_expires_at: null
+  author_approver_live_armer_separated: true
+
+validity:
+  not_before: null
+  expires_at: null
+  review_due_at: null
+  invalidation_conditions: []
+
+integrity:
+  canonical_semantic_digest: TBD
+  byte_digest: TBD
+  signatures: []
+  revocation_record: null
+
+authorization_notice: >-
+  This DRAFT template is NOT_ACTIVE and grants no live authority. Activation is
+  separate from ADR-002-007 governed live arming. Empty, null, TBD, missing,
+  unapproved, unverified, stale, or incompatible fields fail closed.

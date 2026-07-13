@@ -1543,7 +1543,8 @@ This ADR depends on or creates mandatory interfaces with:
 10. **ADR-002-011 — Protective Replacement and Protection-Gap Control**;
 11. **ADR-002-012 — Risk Capacity Ledger Persistence, Consensus, and Writer Fencing**;
 12. **ADR-002-013 — Egress Gateway Credential, Route, and Commit-Proof Security**;
-13. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
+13. **ADR-002-014 — Hard Safety Envelope and Runtime Safety Profile Governance**;
+14. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
 
 This ADR owns capacity semantics. It does not duplicate the full authority election, broker protocol, or evidence-confidence decisions of those ADRs.
 
@@ -1615,6 +1616,7 @@ ADR-002-002 may move from **Proposed** to **Accepted** only when:
 - the Ledger technology and fencing mechanism are selected and demonstrated;
 - the ADR-002-012 persistence, consensus, and writer-fencing mechanism is implemented for the applicable Capacity Domain and its required RCLP evidence passes;
 - the ADR-002-013 final-egress boundary, exact claim binding, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;
+- the ADR-002-014 canonical envelope/profile validation and committed-generation activation are implemented and their required SPG evidence passes;
 - protective pool and sub-ledger semantics are demonstrated;
 - broker-specific Final Quantity Proof rules exist;
 - all Critical acceptance criteria pass;

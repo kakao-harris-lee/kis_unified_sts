@@ -1,0 +1,115 @@
+artifact_type: HARD_SAFETY_ENVELOPE
+schema_version: "TBD"
+canonicalization_version: "TBD"
+artifact_id: TBD
+envelope_generation: null
+status: DRAFT
+activation_state: NOT_ACTIVE
+created_at: null
+author: TBD
+predecessor_generation: null
+change_classification: UNCLASSIFIED
+
+scope:
+  environment: TBD
+  safety_cells: []
+  accounts: []
+  portfolios: []
+  strategies: []
+  instruments: []
+  venues: []
+  brokers: []
+  action_classes: []
+
+governance:
+  policy_id: TBD
+  required_approval_roles: []
+  minimum_approval_quorum: null
+  approved_by: []
+  approval_expires_at: null
+  live_armer_must_be_distinct: true
+  strategy_identity_prohibited: true
+  break_glass_may_expand: false
+
+semantic_contract:
+  explicit_defaults_required: true
+  unknown_fields: REJECT
+  duplicate_keys: REJECT
+  floating_references: PROHIBITED
+  executable_includes: PROHIBITED
+  implicit_unit_conversion: PROHIBITED
+  incomparable_change_classification: AUTHORITY_INCREASING
+  numeric_rules:
+    nan: REJECT
+    infinity: REJECT
+    overflow: REJECT
+    underflow: REJECT
+    rounding_mode: TBD
+    boundary_semantics: TBD
+
+mandatory_dimensions: []
+
+maximum_authority:
+  permissions: []
+  accounts: []
+  instruments: []
+  venues: []
+  brokers: []
+  order_types: []
+  action_classes: []
+  quantities: {}
+  notionals: {}
+  risk_vectors: {}
+  margin: {}
+  leverage: {}
+  concentration: {}
+  liquidity: {}
+  rates: {}
+  sessions: {}
+  protective_capacity: {}
+
+mandatory_constraints:
+  worst_case_effect_model: TBD
+  aggregate_capacity_model: ADR-002-002
+  safety_authority_model: ADR-002-003
+  broker_capability_model: ADR-002-004
+  live_authorization_model: ADR-002-007
+  trustworthy_time_model: ADR-002-008
+  failure_domain_model: ADR-002-009
+  consensus_model: ADR-002-012
+  egress_security_model: ADR-002-013
+  prohibited_fallbacks: []
+  required_fail_closed_conditions: []
+
+compatibility:
+  minimum_software_versions: []
+  required_consumer_manifest_schemas: []
+  required_profile_schema_versions: []
+  required_canonicalization_versions: []
+
+references:
+  broker_capability_profiles: []
+  verification_profile_id: TBD
+  verification_profile_version: TBD
+  verification_profile_digest: TBD
+  failure_domain_allocation_matrix_id: TBD
+  failure_domain_allocation_matrix_digest: TBD
+  calendars: []
+  policy_artifacts: []
+
+validity:
+  not_before: null
+  expires_at: null
+  review_due_at: null
+  trustworthy_time_generation: null
+  invalidation_conditions: []
+
+integrity:
+  canonical_semantic_digest: TBD
+  byte_digest: TBD
+  signatures: []
+  revocation_record: null
+
+authorization_notice: >-
+  This DRAFT template grants no live authority. Empty, null, TBD, missing,
+  unapproved, unverified, or inactive fields fail closed.

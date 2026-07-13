@@ -484,6 +484,7 @@ These costs are accepted because safety claims without failure-domain proof are 
 4. Which dependencies require physical separation, and which common modes will be explicitly accepted as residual risk?
 5. How will region loss and broker-session continuity be tested without creating live economic effect?
 6. Which numeric propagation, detection, containment, and recovery bounds will be approved in the Verification Profile?
+7. Which ADR-002-014 consumers must attest to the exact bundle and compatibility generation in each Safety Cell before activation?
 
 Open questions may only reduce scope or block acceptance. They SHALL NOT weaken the invariants in this ADR.
 
@@ -496,9 +497,10 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 1. a concrete deployment profile and Failure-Domain Allocation Matrix are approved;
 2. the applicable ADR-002-012 quorum, writer-fencing, membership, and recovery mechanisms are implemented and their required RCLP evidence passes;
 3. the ADR-002-007 §§9.1–9.5 protocol and ADR-002-013 final-egress security boundary have an approved implementation substrate, isolated credential/route topology, Hard Egress Fence, executed EGRESS evidence, and numeric bounds;
-4. dedicated evidence items are registered for every `FD-AC-*` case;
-5. required EV-L1, EV-L2, and EV-L3 fault evidence is executed and retained;
-6. all isolation claims and residual common modes receive independent review;
-7. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+4. ADR-002-014 exact-generation activation, Consumer Compatibility Manifest, mixed-version denial, and rollback fencing are implemented across the approved Failure-Domain Allocation Matrix, and applicable SPG evidence passes;
+5. dedicated evidence items are registered for every `FD-AC-*` case;
+6. required EV-L1, EV-L2, and EV-L3 fault evidence is executed and retained;
+7. all isolation claims and residual common modes receive independent review;
+8. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship of this ADR does not satisfy these conditions and does not authorize restricted-live or production operation.

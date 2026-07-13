@@ -1,4 +1,9 @@
 profile_identity:
+  artifact_id: TBD
+  schema_version: TBD
+  canonicalization_version: TBD
+  canonical_semantic_digest: TBD
+  byte_digest: TBD
   broker_id: TBD
   api_product: TBD
   api_version: TBD
@@ -14,6 +19,7 @@ profile_identity:
   effective_from: null
   expires_at: null
   approvers: []
+  revocation_record: null
 
 live_scope:
   conformance_class: CLASS-D
