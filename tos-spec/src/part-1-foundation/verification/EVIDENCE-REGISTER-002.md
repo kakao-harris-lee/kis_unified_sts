@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **67**
-- NOT_IMPLEMENTED: **67**
+- Total evidence items: **89**
+- NOT_IMPLEMENTED: **89**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -90,6 +90,28 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | X-EV-010 | Cross-System | Corporate Action During Open Order | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
 | X-EV-011 | Cross-System | Broker Capability Drift During Live Session | ADR-002-002/003/004 | EV-L3/5 | NOT_IMPLEMENTED | TBD | TBD |
 | X-EV-012 | Cross-System | Recovery and Partial Re-arm | ADR-002-002/003/004 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-001 | Trustworthy Time | Wall-Clock Rollback and Jump | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-002 | Trustworthy Time | Clock Freeze | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-003 | Trustworthy Time | Reference-Source Disagreement | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-004 | Trustworthy Time | Monotonic Discontinuity | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-005 | Trustworthy Time | Restart and Suspension | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-006 | Trustworthy Time | Holdover Boundary | ADR-002-008 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-007 | Trustworthy Time | Freshness and Ordering Ambiguity | ADR-002-008 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-008 | Trustworthy Time | Session-Boundary Uncertainty | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-009 | Trustworthy Time | Time Recovery Generation | ADR-002-008 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| TIME-EV-010 | Trustworthy Time | Egress Time Currentness | ADR-002-008 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-001 | Live Authorization and Re-arm | Default Non-Live | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-002 | Live Authorization and Re-arm | Complete Re-arm Gate | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-003 | Live Authorization and Re-arm | Automatic Re-arm Prevention | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-004 | Live Authorization and Re-arm | Fresh Authorization Identity | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-005 | Live Authorization and Re-arm | Human Dual Control | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-006 | Live Authorization and Re-arm | Atomic Safety Configuration | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-007 | Live Authorization and Re-arm | UNKNOWN and Conservative Capacity | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-008 | Live Authorization and Re-arm | Continuous Invalidation Bound | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-009 | Live Authorization and Re-arm | Partial Re-arm Scope | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-010 | Live Authorization and Re-arm | Final Egress Authorization Currentness | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-011 | Live Authorization and Re-arm | HALT Restrictive Precedence | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| REARM-EV-012 | Live Authorization and Re-arm | Authorization Evidence Replay | ADR-002-007 | EV-L2 | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

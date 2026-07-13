@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Aggregate risk-capacity calculation, reservation identity, atomic commitment, concurrency, protective pools, order-attempt binding, partial fills, release proof, crash recovery, split-brain prevention, UNKNOWN orders, external exposure, and trapped exposure
 - **Supersedes:** None
-- **Amends:** RFC-002 capacity semantics; ADR-002-001 protective-capacity semantics through its v0.2 patch
+- **Amends:** RFC-002 v0.2 capacity semantics and consolidated ADR-002-001 v0.2 protective-capacity semantics
 
 ---
 
@@ -1531,13 +1531,13 @@ This ADR does not prohibit any specific technology. The chosen technology must d
 
 This ADR depends on or creates mandatory interfaces with:
 
-1. **ADR-002-001 — Degraded-Mode Protective Capacity**, amended by its v0.2 patch;
+1. **ADR-002-001 — Degraded-Mode Protective Capacity v0.2**;
 2. **ADR-002-003 — Safety Authority Validity, Epoch Fencing, and Partition Behavior**;
 3. **ADR-002-004 — Broker Capability Requirements and Fallbacks**;
-4. **Intent, Transmission Attempt, Broker Order, and Knowledge State ADR**;
-5. **Evidence and Reconciliation Confidence ADR**;
-6. **Trustworthy Time Architecture ADR**;
-7. **Live Authorization, Limit Governance, and Re-arm ADR**;
+4. **ADR-002-005 — Intent, Transmission Attempt, Broker Order, and Knowledge State Model**;
+5. **ADR-002-006 — Evidence and Reconciliation Confidence Model**;
+6. **ADR-002-008 — Trustworthy Time Architecture**;
+7. **ADR-002-007 — Live Authorization, Limit Governance, and Re-arm**;
 8. **Corporate Actions and Non-Trade State Changes ADR**;
 9. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
 

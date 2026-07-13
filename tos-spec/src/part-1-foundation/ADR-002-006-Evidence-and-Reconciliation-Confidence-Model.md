@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Representation of safety-relevant knowledge as per-field evidence with conservative bounds; corroboration and independence rules; conflict, negative-evidence, and freshness handling; the conditions under which knowledge may become `RECONCILED`; and reconciliation triggers
 - **Supersedes:** None
-- **Amends:** RFC-002 §15 (Reconciliation) and §31 reconciliation amendments (makes the confidence model normative)
+- **Amends:** RFC-002 §15 State Authority and Reconciliation (makes the confidence model normative)
 - **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-031, SAFE-034; ADR-002-005 (Knowledge dimension), ADR-002-002 (capacity coupling), ADR-002-004 (broker evidence + Final Quantity Proof), ADR-002-003 (time/authority currentness)
 
 ---
@@ -27,7 +27,7 @@ No single source SHALL be treated as unconditional truth where a single-source e
 
 ## 2. Context
 
-RFC-002 §31 (reconciliation amendments) requires per-field confidence and forbids a single blended score for risk release. ADR-002-002 §22 requires conservative-bound use and forbids optimistically freeing capacity. ADR-002-005 defines the Knowledge dimension but not how confidence is computed or when `RECONCILED` is justified. This ADR fills that gap.
+RFC-002 §15.1 requires per-field confidence and forbids a single blended score for risk release. ADR-002-002 §22 requires conservative-bound use and forbids optimistically freeing capacity. ADR-002-005 defines the Knowledge dimension but not how confidence is computed or when `RECONCILED` is justified. This ADR fills that gap.
 
 The failure this prevents: a system that reduces many independent uncertainties (does the order exist? what quantity filled? what is the position? is margin sufficient?) to one number will release capacity or authorize risk when the *aggregate* number looks acceptable while a *specific* field is dangerously wrong.
 
@@ -52,7 +52,7 @@ The failure this prevents: a system that reduces many independent uncertainties 
 
 ## 5. Per-Field Evidence
 
-Reconciliation SHALL maintain independent evidence for at least these safety-relevant fields (RFC-002 §31; ADR-002-002 §22.1):
+Reconciliation SHALL maintain independent evidence for at least these safety-relevant fields (RFC-002 §15.1; ADR-002-002 §22.1):
 
 ```text
 order existence            broker order identity
@@ -83,7 +83,7 @@ For risk decisions the system SHALL use the **conservative bound** of a field:
 
 ## 6. Corroboration and Independence
 
-- A **Corroborating Evidence Path** (RFC-002 §31; ADR-002-002 definitions) is one sufficiently independent from another that a single defect is not expected to corrupt both in the same way (e.g., outbound send record vs. broker order-status query vs. fill stream vs. position query vs. independently retained audit).
+- A **Corroborating Evidence Path** (RFC-002 §15.1; ADR-002-002 definitions) is one sufficiently independent from another that a single defect is not expected to corrupt both in the same way (e.g., outbound send record vs. broker order-status query vs. fill stream vs. position query vs. independently retained audit).
 - `CORROBORATED` requires ≥2 such paths agreeing within an approved tolerance.
 - Where only one path exists (`SINGLE_SOURCE`), the dependency and residual risk SHALL be explicitly recorded, independently reviewed, and constrained to conservative operating authority (SAFE-023). A proposing component SHALL NOT unilaterally declare corroboration infeasible.
 - The required degree of independence SHALL scale with hazard severity.
@@ -146,7 +146,7 @@ The **Reconciliation Service** is the sole owner of the Knowledge dimension (ADR
 
 ## 11. Alternatives Considered
 
-- **Single blended confidence score. Rejected.** Masks a dangerous single-field error behind an acceptable aggregate (RFC-002 §31).
+- **Single blended confidence score. Rejected.** Masks a dangerous single-field error behind an acceptable aggregate (RFC-002 §15.1).
 - **Broker query as absolute truth. Rejected.** A single external response may be delayed, incomplete, inconsistent, or wrong (ADR-002-002 §30.5).
 - **Optimistic midpoint estimates. Rejected.** Understates adverse exposure; violates conservative-bound use.
 - **Absence as proof of non-existence. Rejected.** Ignores pagination, eventual consistency, and query omission.

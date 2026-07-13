@@ -1324,10 +1324,10 @@ This ADR interfaces with:
 1. ADR-002-001 — Degraded-Mode Protective Capacity;
 2. ADR-002-002 — Aggregate Risk-Capacity Commitment Model;
 3. ADR-002-003 — Safety Authority Validity, Epoch Fencing, and Partition Behavior;
-4. Intent, Transmission Attempt, Broker Order, and Knowledge State ADR;
-5. Evidence and Reconciliation Confidence ADR;
+4. ADR-002-005 — Intent, Transmission Attempt, Broker Order, and Knowledge State Model;
+5. ADR-002-006 — Evidence and Reconciliation Confidence Model;
 6. Corporate Actions and Non-Trade State Changes ADR;
-7. Trustworthy Time Architecture ADR;
+7. ADR-002-008 — Trustworthy Time Architecture;
 8. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
 
 Broker-specific profiles are implementation-controlled safety artifacts, not substitutes for this ADR.

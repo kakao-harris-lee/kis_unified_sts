@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** The orthogonal state dimensions of the trading-action lifecycle; per-dimension states, transitions, transition ownership, cross-dimension coupling invariants, conservative-direction rules, persistence, and restart semantics
 - **Supersedes:** None
-- **Amends:** RFC-002 §12 Intent Lifecycle and the §31 Orthogonal State Model requirement (makes the dimension model normative and complete)
+- **Amends:** RFC-002 §12 Orthogonal Trading State Model (makes the dimension model normative and complete)
 - **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-020, SAFE-021, SAFE-022, SAFE-024, SAFE-025, SAFE-030; ADR-002-002 (Capacity dimension), ADR-002-003 (authority epochs), ADR-002-004 (broker evidence semantics), ADR-002-001 v0.2 (protective actions)
 
 ---
@@ -30,7 +30,7 @@ Each dimension has an independent state, an exclusive transition authority, and 
 
 ## 2. Context
 
-RFC-002 §31 requires orthogonal state modeling; this ADR makes it complete and normative. A single enum forces false coupling: e.g., marking an order `CANCELLED` in one field implicitly asserts the broker cannot fill it, that no capacity is consumed, and that state is known — three independent claims that can each be false. Real execution routinely produces states such as:
+RFC-002 §12 requires orthogonal state modeling; this ADR makes it complete and normative. A single enum forces false coupling: e.g., marking an order `CANCELLED` in one field implicitly asserts the broker cannot fill it, that no capacity is consumed, and that state is known — three independent claims that can each be false. Real execution routinely produces states such as:
 
 ```text
 Intent:      APPROVED
@@ -197,7 +197,7 @@ No component SHALL write a dimension it does not own. Cross-dimension effects oc
 - All five dimensions SHALL be durable and reconstructable after crash, restart, or failover.
 - On restart, any Attempt that reached `SEND_STARTED` and any Broker Order that is not provably terminal SHALL be treated as `POTENTIALLY_LIVE`/`UNKNOWN` until reconciled (ADR-002-002 §21; handoff §8.2).
 - Knowledge SHALL be re-derived from evidence, defaulting to `UNOBSERVED`/`CONFLICTED`, never to `RECONCILED`.
-- No new risk SHALL be authorized until the Recovery Coordinator clears the startup barrier (RFC-002 §31 re-arm governance; ADR-002-002 §21.6).
+- No new risk SHALL be authorized until the Recovery Coordinator clears the startup barrier (RFC-002 §15.5 and §23; ADR-002-002 §21.6).
 
 ---
 

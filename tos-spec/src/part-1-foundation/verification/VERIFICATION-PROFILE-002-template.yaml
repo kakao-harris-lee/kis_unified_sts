@@ -25,6 +25,27 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+  B_revocation_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_halt_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_time_health_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
   B_stale_epoch_reject:
     value_ms: null
     semantics: hard_maximum
@@ -111,6 +132,7 @@ bounds:
     failure_response: STOP_NEW_RISK
 limits:
   MAX_normal_capability_age_ms: null
+  MAX_time_health_snapshot_age_ms: null
   MAX_degraded_lease_holdover_ms: null
   MAX_clock_drift_ppm: null
   MAX_process_suspension_ms: null

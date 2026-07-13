@@ -931,9 +931,9 @@ This ADR interfaces with:
 1. ADR-002-001 — Degraded-Mode Protective Capacity;
 2. ADR-002-002 — Aggregate Risk-Capacity Commitment Model;
 3. ADR-002-004 — Broker Capability Requirements and Fallbacks;
-4. Trustworthy Time Architecture ADR;
-5. Live Authorization, Limit Governance, and Re-arm ADR;
-6. Intent, Transmission Attempt, Broker Order, and Knowledge State ADR;
+4. ADR-002-008 — Trustworthy Time Architecture;
+5. ADR-002-007 — Live Authorization, Limit Governance, and Re-arm;
+6. ADR-002-005 — Intent, Transmission Attempt, Broker Order, and Knowledge State Model;
 7. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
 
 ---

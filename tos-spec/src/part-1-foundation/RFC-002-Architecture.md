@@ -935,7 +935,7 @@ Capacity: POTENTIALLY_LIVE
 
 An UNKNOWN broker order, transmission outcome, exposure, or evidence condition SHALL NOT be treated as rejected, cancelled, unfilled, safe to retry, or safe to release capacity.
 
-Potentially-Live Quantity SHALL remain covered by committed or quarantined capacity until Final Quantity Proof or confirmed-position transfer is complete.
+Any such UNKNOWN condition SHALL consume conservative capacity and block new risk in the affected scope. Potentially-Live Quantity SHALL remain covered by committed or quarantined capacity until Final Quantity Proof or confirmed-position transfer is complete.
 
 ### 12.2 State Transition Authority
 
@@ -1529,13 +1529,13 @@ The following ADRs are initially required.
 | ADR-002-004 | Broker Capability Requirements and Fallbacks                          | Proposed |
 | ADR-002-005 | Intent, Transmission Attempt, Broker Order, and Knowledge State Model | Proposed |
 | ADR-002-006 | Evidence and Reconciliation Confidence Model                          | Proposed |
-| ADR-002-007 | Live Authorization, Limit Governance, and Re-arm                      | Required |
-| ADR-002-008 | Trustworthy Time Architecture                                         | Required |
+| ADR-002-007 | Live Authorization, Limit Governance, and Re-arm                      | Proposed |
+| ADR-002-008 | Trustworthy Time Architecture                                         | Proposed |
 | ADR-002-009 | Failure-Domain Isolation and Deployment Safety                        | Required |
 | ADR-002-010 | Corporate Actions and Non-Trade State Changes                         | Required |
 | ADR-002-011 | Protective Replacement and Protection-Gap Control                     | Required |
 
-ADR-002-002 through ADR-002-006 are authored (co-located ADR files, `Proposed`). ADR-002-007 through ADR-002-011 remain Required backlog, being drafted in the recommended design order (008 → 007 → 009 → 011 → 010; CODEX-START-HERE §11). Verification of ADR-002-001 through ADR-002-004 is specified by VER-002-001, with the Evidence Register and templates under `verification/`.
+ADR-002-002 through ADR-002-008 are authored (co-located ADR files, `Proposed`). ADR-002-009 through ADR-002-011 remain Required backlog, with the remaining recommended design order ADR-002-009 → ADR-002-011 → ADR-002-010 (CODEX-START-HERE §11). VER-002-001 and the Evidence Register cover ADR-002-001 through ADR-002-004 plus dedicated TIME-EV and REARM-EV cases for ADR-002-008 and ADR-002-007. ADR-002-005 and ADR-002-006 still require dedicated registration before acceptance; all current evidence remains unexecuted under `verification/`.
 
 ---
 
@@ -1584,20 +1584,16 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
 ## 28. Open Architectural Decisions
 
-The following questions remain open in v0.2 and SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
+ADR-002-005 through ADR-002-008 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, and re-arm governance models. Their listed implementation questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices also remain open and SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
 
 1. Which persistence and consensus mechanism implements the Risk Capacity Ledger's required semantics?
 2. How are writer and Authority Epoch fencing tokens propagated and validated at broker egress?
-3. What are the detailed orthogonal state transitions and transition owners?
-4. How are evidence confidence and conservative bounds represented per field?
-5. How is trustworthy time established, degraded, and re-established after restart?
-6. What deployment topology provides the required failure-domain isolation?
-7. What numeric detection, containment, protective-gap, lease, and retry bounds are approved?
-8. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
-9. Which broker resources can be physically or logically reserved for protection?
-10. How are corporate actions and other non-trade changes attributed and remapped?
-11. What operator dual-control and credential workflow governs recovery and re-arm?
-12. What restricted-production evidence is required beyond non-live verification?
+3. What deployment topology provides the required failure-domain isolation?
+4. What numeric detection, containment, protective-gap, lease, and retry bounds are approved?
+5. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
+6. Which broker resources can be physically or logically reserved for protection?
+7. How are corporate actions and other non-trade changes attributed and remapped?
+8. What restricted-production evidence is required beyond non-live verification?
 
 Open decisions SHALL NOT be resolved by informal implementation convention.
 
@@ -1711,5 +1707,5 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Added re-arm governance prohibiting automatic re-arm.
 * Added the Failure-Domain Allocation requirement.
 * Added verification and acceptance-bound requirements.
-* Expanded the ADR backlog through ADR-002-011 and registered ADR-002-002 through ADR-002-004 as Proposed.
+* Expanded the ADR backlog through ADR-002-011 and registered ADR-002-002 through ADR-002-008 as Proposed.
 * Resolves review findings A-01 through A-14.

@@ -43,9 +43,30 @@ bounds:
     value_ms: 500
     semantics: hard_maximum
     owner: TBD
-    rationale: "PROPOSED. After partition/stale-authority detection, new risk-increasing transmission authority revoked within this bound. SHALL be <= B_authority_partition_detect budget for total time-to-safe."
+    rationale: "PROPOSED. After a loss condition is detected, the authoritative new-risk permission is revoked within this bound. Final egress denial then follows within B_revocation_to_egress; neither interval may be hidden in cache or retry delay."
     measurement_source: egress_decision_log
     failure_response: HALT_OR_CONTAIN
+  B_revocation_to_egress:
+    value_ms: null   # APPROVE after currentness mechanism and failure-domain design are selected
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed authoritative revocation/restriction generation to denial at every final egress (ADR-002-007 §§9, 16)."
+    measurement_source: authority_and_egress_generation_log
+    failure_response: HALT
+  B_halt_to_egress:
+    value_ms: null   # APPROVE after HALT generation propagation and fenced-send design are selected
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from authenticated HALT acceptance to denial of later risk-increasing transmissions at every final egress (ADR-002-007 §§16-17)."
+    measurement_source: halt_and_egress_boundary_log
+    failure_response: HALT
+  B_time_health_to_egress:
+    value_ms: null   # APPROVE after Time Health currentness distribution is selected
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from a less-trusted Time Health generation to rejection of dependent transmission at every final egress (ADR-002-008 §§8, 14.6)."
+    measurement_source: time_health_and_egress_generation_log
+    failure_response: STOP_NEW_RISK
   B_stale_epoch_reject:
     value_ms: 0
     semantics: hard_maximum
@@ -133,6 +154,7 @@ bounds:
 
 limits:
   MAX_normal_capability_age_ms: 1000          # PROPOSED: max age of a normal transmission capability before re-verification
+  MAX_time_health_snapshot_age_ms: null       # APPROVE: max consumer-held Time Health proof age, including transport uncertainty
   MAX_degraded_lease_holdover_ms: 5000        # PROPOSED: max monotonic lifetime of a pre-issued degraded protective lease
   MAX_clock_drift_ppm: 200                    # PROPOSED: beyond this, time confidence is lost -> fail closed (ADR-002-003)
   MAX_process_suspension_ms: 2000             # PROPOSED: a process suspended longer than this is fenced on resume
