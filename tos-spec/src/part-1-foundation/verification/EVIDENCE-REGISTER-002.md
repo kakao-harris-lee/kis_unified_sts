@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **135**
-- NOT_IMPLEMENTED: **135**
+- Total evidence items: **147**
+- NOT_IMPLEMENTED: **147**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -158,6 +158,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | NT-EV-010 | Non-Trade Events | Correction and Reversal Idempotency | ADR-002-010 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 | NT-EV-011 | Non-Trade Events | Non-Trade Restart and Replay | ADR-002-010 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
 | NT-EV-012 | Non-Trade Events | Event Completion Cannot Re-arm | ADR-002-010 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-001 | RCL Persistence and Consensus | Quorum-Serialized Concurrent Commitment | ADR-002-012 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-002 | RCL Persistence and Consensus | Minority Leader With Broker Reachability | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-003 | RCL Persistence and Consensus | Stale Writer Resume | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-004 | RCL Persistence and Consensus | Quorum Loss Preserves Capacity | ADR-002-012 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-005 | RCL Persistence and Consensus | Commit Response Loss and Crash Idempotency | ADR-002-012 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-006 | RCL Persistence and Consensus | Capacity-to-Capability Commit Ordering | ADR-002-012 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-007 | RCL Persistence and Consensus | Quorum-Committed Claim and Send Boundary | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-008 | RCL Persistence and Consensus | Stale Read Cannot Create Permission | ADR-002-012 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-009 | RCL Persistence and Consensus | Joint Membership and Removed-Voter Fence | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-010 | RCL Persistence and Consensus | Snapshot, Compaction, and Restore Integrity | ADR-002-012 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-011 | RCL Persistence and Consensus | Protective Sub-Ledger Rejoin | ADR-002-012 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
+| RCLP-EV-012 | RCL Persistence and Consensus | Disaster Recovery and Conflicting History | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

@@ -20,6 +20,7 @@
 - [ADR-002-009 — Failure-Domain Isolation and Deployment Safety](part-1-foundation/ADR-002-009-Failure-Domain-Isolation-and-Deployment-Safety.md)
 - [ADR-002-010 — Corporate Actions and Non-Trade State Changes](part-1-foundation/ADR-002-010-Corporate-Actions-and-Non-Trade-State-Changes.md)
 - [ADR-002-011 — Protective Replacement and Protection-Gap Control](part-1-foundation/ADR-002-011-Protective-Replacement-and-Protection-Gap-Control.md)
+- [ADR-002-012 — RCL Persistence, Consensus, and Writer Fencing](part-1-foundation/ADR-002-012-Risk-Capacity-Ledger-Persistence-Consensus-and-Writer-Fencing.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)

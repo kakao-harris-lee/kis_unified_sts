@@ -1541,7 +1541,8 @@ This ADR depends on or creates mandatory interfaces with:
 8. **ADR-002-009 — Failure-Domain Isolation and Deployment Safety**;
 9. **ADR-002-010 — Corporate Actions and Non-Trade State Changes**;
 10. **ADR-002-011 — Protective Replacement and Protection-Gap Control**;
-11. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
+11. **ADR-002-012 — Risk Capacity Ledger Persistence, Consensus, and Writer Fencing**;
+12. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
 
 This ADR owns capacity semantics. It does not duplicate the full authority election, broker protocol, or evidence-confidence decisions of those ADRs.
 
@@ -1551,7 +1552,7 @@ This ADR owns capacity semantics. It does not duplicate the full authority elect
 
 The following questions may remain open during Proposed status but must be resolved before Accepted status:
 
-1. What datastore or replicated state machine provides the linearizable Ledger?
+1. Which conforming product and deployment profile implement ADR-002-012's quorum-replicated deterministic Safety Commit Log?
 2. What exact scope is assigned to one writer epoch: account, portfolio, or global TOS?
 3. How is current epoch exposed to Broker Adapter without creating a new common-mode bypass?
 4. How are position-usage updates and reservation transfers represented transactionally?
@@ -1611,6 +1612,7 @@ ADR-002-002 may move from **Proposed** to **Accepted** only when:
 - ADR-002-004 is Accepted and an approved broker-specific Capability Profile exists;
 - Safety Profile Validator and Recovery Coordinator are defined;
 - the Ledger technology and fencing mechanism are selected and demonstrated;
+- the ADR-002-012 persistence, consensus, and writer-fencing mechanism is implemented for the applicable Capacity Domain and its required RCLP evidence passes;
 - Broker Adapter is the enforced final egress gate;
 - protective pool and sub-ledger semantics are demonstrated;
 - broker-specific Final Quantity Proof rules exist;

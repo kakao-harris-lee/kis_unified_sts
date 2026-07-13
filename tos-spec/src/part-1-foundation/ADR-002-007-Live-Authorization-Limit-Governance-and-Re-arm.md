@@ -601,7 +601,7 @@ The following may remain open while Proposed but SHALL be resolved before accept
 
 1. What human roles, quorum, authentication, and approval expiry implement dual control?
 2. What service stores and signs Recovery Evidence Packages and authorization records?
-3. Which linearizable consensus, authenticated session transport, cryptographic format, and durable egress journal implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, and `B_capability_claim_to_send`?
+3. Which conforming ADR-002-012 product, authenticated session transport, Commit Proof format, and durable egress journal implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, and `B_capability_claim_to_send`?
 4. What exact scope dimensions and risk vectors are supported by the first restricted-live profile?
 5. How are atomic profile activation and rollback implemented across failure domains?
 6. Which changes require full re-arm versus immediate scoped suspension and later re-evaluation?

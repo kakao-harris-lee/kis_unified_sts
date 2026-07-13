@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-13
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-011
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-011; implementation evidence has not been executed
-- **Extension State:** ADR-002-005/006/007/008/009/010/011 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, and PR-EV-001..012. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-012
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-012; implementation evidence has not been executed
+- **Extension State:** ADR-002-005/006/007/008/009/010/011/012 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, PR-EV-001..012, and RCLP-EV-001..012. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -1278,11 +1278,100 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 146. Model-Based and Property Verification
+# Part XII — RCL Persistence, Consensus, and Writer-Fencing Evidence
+
+## 146. RCLP-EV-001 — Quorum-Serialized Concurrent Commitment
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-012 RCLP-AC-001
+- **Injection:** Submit concurrent capacity requests that individually fit but jointly exceed one or more shared constraints while changing proposal order, leader, voter delay, and retry timing.
+- **Expected:** One committed total order preserves every aggregate invariant; at most the admissible subset commits and no unit of headroom is double-spent.
+
+## 147. RCLP-EV-002 — Minority Leader With Broker Reachability
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-012 RCLP-AC-002
+- **Injection:** Partition the former leader with fewer than quorum voters while preserving its keys, process state, stale reads, clients, and broker-network reachability.
+- **Expected:** It cannot commit, mutate RCL state, authorize or claim capability, produce accepted Commit Proof, or cause broker transmission.
+
+## 148. RCLP-EV-003 — Stale Writer Resume
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-012 RCLP-AC-003
+- **Injection:** Pause a writer, elect and activate a newer Writer Epoch, then resume the old writer with delayed commands, capabilities, sessions, and administrative credentials.
+- **Expected:** Consensus, RCL, Currentness Sequencer, and egress reject every stale generation without relying on voluntary shutdown.
+
+## 149. RCLP-EV-004 — Quorum Loss Preserves Capacity
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-012 RCLP-AC-004
+- **Injection:** Remove quorum during committed reservations, potentially-live sends, UNKNOWN orders, trapped exposure, protective pools, and release-pending proof while other dependencies remain reachable.
+- **Expected:** Normal mutation, capability authorization, claim, release, and send stop; every existing economic effect remains conservatively capacity-covered and quorum recovery does not auto-re-arm.
+
+## 150. RCLP-EV-005 — Commit Response Loss and Crash Idempotency
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-012 RCLP-AC-005
+- **Injection:** Drop responses and crash leader/client before proposal, after follower persistence, after quorum commit, after state-machine application, and before client receipt; retry identical and conflicting command identities.
+- **Expected:** Uncommitted commands grant nothing; committed commands survive exactly once; identical retry returns the stable result and conflicting duplicate content is rejected.
+
+## 151. RCLP-EV-006 — Capacity-to-Capability Commit Ordering
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-012 RCLP-AC-006
+- **Injection:** Attempt capability authorization against uncommitted, stale-revision, released, wrong-domain, wrong-epoch, wrong-profile, and insufficient capacity while racing revocation and quarantine.
+- **Expected:** Only an authorization ordered after the exact active capacity revision and current generation vector commits; a signature without that committed reference grants nothing.
+
+## 152. RCLP-EV-007 — Quorum-Committed Claim and Send Boundary
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-012 RCLP-AC-007
+- **Injection:** Reuse nonce, race HALT/revocation, lose quorum, exceed `B_capability_claim_to_send`, and crash before claim, after committed claim/`SEND_STARTED`, before first broker byte, and after an ambiguous send.
+- **Expected:** Claim commits exactly once before send; a stale or uncommitted claim cannot transmit; post-claim ambiguity remains `UNKNOWN`, potentially live, and capacity-covered with no blind retry.
+
+## 153. RCLP-EV-008 — Stale Read Cannot Create Permission
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-012 RCLP-AC-008
+- **Injection:** Serve follower, cache, snapshot, projection, and pre-failover reads that omit reservations, epochs, claims, UNKNOWN, or restrictions; use them for release, authorization, and egress validation attempts.
+- **Expected:** Every permissive consumer requires a linearizable committed-prefix proof; stale reads remain display-only and cannot reduce capacity or create authority.
+
+## 154. RCLP-EV-009 — Joint Membership and Removed-Voter Fence
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-012 RCLP-AC-009
+- **Injection:** Add, remove, replace, partition, pause, and resume voters during joint configuration; attempt simultaneous replacement and removed-voter proof issuance.
+- **Expected:** One authoritative committed history persists, required configuration overlap is proven, uncaught-up nodes do not vote, and removed voters cannot commit or support currentness.
+
+## 155. RCLP-EV-010 — Snapshot, Compaction, and Restore Integrity
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-012 RCLP-AC-010
+- **Injection:** Omit or corrupt idempotency keys, capability-use records, non-terminal allocations, generations, tombstones, and log segments; restore older and mixed-generation material.
+- **Expected:** Incomplete material is rejected; valid restore advances Restore Generation, remains non-live, preserves conservative economic state, fences prior authority, and detects rollback.
+
+## 156. RCLP-EV-011 — Protective Sub-Ledger Rejoin
+
+- **Minimum Level:** EV-L3
+- **Supports:** ADR-002-012 RCLP-AC-011
+- **Injection:** Partition after lease issuance, consume locally, lose ACK, restart owners, attempt overlapping lease use, expire authority, and rejoin with delayed or conflicting local and broker evidence.
+- **Expected:** Parent capacity is never enlarged, recycled, or reassigned from expiry; overlap is rejected and rejoin uses explicit conservative reconciliation rather than last-write-wins merge.
+
+## 157. RCLP-EV-012 — Disaster Recovery and Conflicting History
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-012 RCLP-AC-012
+- **Injection:** Lose the normal quorum, present divergent voter/snapshot/backup histories, keep the former cluster's status uncertain, and attempt forced promotion, old capability replay, and automatic re-arm.
+- **Expected:** Recovery remains non-live, fences the former authority, covers the worst credible economic union, advances cluster/restore/writer generations, and requires reconciliation plus explicit governed re-arm.
+
+---
+
+## 158. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
 - capacity reservation and release;
+- quorum commit, committed-prefix durability, command idempotency, membership change, and restore generation;
 - concurrent writer and epoch fencing;
 - send/ACK/fill/cancel/replace ordering;
 - Safety Authority failover and partition;
@@ -1315,13 +1404,15 @@ No evidence conflict or staleness reduces a conservative bound
 No shared failure is claimed as independent without evidence
 No protective replacement step exceeds committed overlap or gap risk
 No partial non-trade transition exposes a more permissive state
+No minority, stale writer, stale read, snapshot, or restore can create capacity or transmission authority
+No capability authorization or send claim precedes its exact quorum-committed capacity state
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 147. Fault-Injection Requirements
+## 159. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -1330,6 +1421,7 @@ The test harness SHALL support controlled injection at least for:
 - network partition by direction;
 - message drop, duplicate, delay, and reorder;
 - datastore leader failover;
+- quorum loss, minority leader survival, joint membership change, removed-voter resume, and conflicting restore history;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -1353,7 +1445,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 148. Broker Verification Safety Rules
+## 160. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -1371,7 +1463,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 149. Continuous Conformance Evidence
+## 161. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -1381,6 +1473,7 @@ After approval, continuous monitors SHALL detect at least:
 - external detection bound misses;
 - late fills beyond profile;
 - unexplained capacity release;
+- quorum, committed-prefix, Writer Epoch, membership-generation, Restore Generation, or Commit Proof contradiction;
 - duplicate broker identity;
 - egress bypass attempts;
 - protective reserve guarantee degradation;
@@ -1399,7 +1492,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 150. Residual Risk Register
+## 162. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -1420,7 +1513,7 @@ Every unresolved limitation SHALL record:
 
 ---
 
-## 151. Independent Review Checklist
+## 163. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -1435,6 +1528,7 @@ The reviewer SHALL confirm:
 - revocation and HALT races were injected at the irreversible egress boundary;
 - state ownership and conservative-direction violations were negatively tested;
 - failure-domain independence claims match the actual deployment and credential paths;
+- quorum placement, durable-commit configuration, linearizable reads, membership changes, snapshot/restore, and egress Commit Proof match ADR-002-012;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -1444,7 +1538,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 152. Approval Gates by ADR
+## 164. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -1536,6 +1630,15 @@ Requires:
 - approved and measured gap, overlap, Final Quantity Proof, completion, and containment bounds;
 - broker-profile evidence for every claimed replacement mode and independent review.
 
+### ADR-002-012
+
+Requires:
+
+- RCLP-EV-001 through RCLP-EV-012;
+- RC-EV-001 through RC-EV-004, RC-EV-009, RC-EV-012, RC-EV-013, RC-EV-017, RC-EV-018, SA-EV-001 through SA-EV-003, SA-EV-008, SA-EV-013 through SA-EV-015, REARM-EV-008, REARM-EV-010, FD-EV-002 through FD-EV-005, FD-EV-007, FD-EV-009, and FD-EV-012;
+- approved Capacity Domain, failure-tolerance model, membership protocol, Commit Proof, snapshot/restore, and disaster-recovery rules;
+- consensus/fencing security assessment and independent review.
+
 ### Production Restricted Live Gate
 
 Requires:
@@ -1550,7 +1653,7 @@ Requires:
 
 ---
 
-## 153. Current Evidence Readiness Assessment
+## 165. Current Evidence Readiness Assessment
 
 As of 2026-07-13:
 
@@ -1570,6 +1673,7 @@ Evidence and reconciliation confidence evidence: NOT EXECUTED
 Failure-domain isolation evidence: NOT EXECUTED
 Protective replacement evidence: NOT EXECUTED
 Corporate action and non-trade evidence: NOT EXECUTED
+RCL persistence, consensus, and writer-fencing evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -1578,13 +1682,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 154. Required Next Execution Sequence
+## 166. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 state, authority, time, failure-domain, replacement, and non-trade models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, and non-trade models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -1597,7 +1701,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 155. Verification Specification Approval Gate
+## 167. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

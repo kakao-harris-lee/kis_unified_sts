@@ -2,8 +2,8 @@
 
 - **Status:** PROPOSED PLAN — not approved; no implementation code has been written.
 - **Date:** 2026-07-13
-- **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..011 evidence cases.
-- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..011, VER-002-001. Current VER and Evidence Register coverage includes 135 items and one-to-one dedicated acceptance cases for ADR-002-005..011; registration is not executed evidence.
+- **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..012 evidence cases.
+- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..012, VER-002-001. Current VER and Evidence Register coverage includes 147 items and one-to-one dedicated acceptance cases for ADR-002-005..012; registration is not executed evidence.
 - **Authorization:** This plan authorizes nothing. Production, live, and ADR-Accepted status remain NO.
 
 ---
@@ -32,7 +32,7 @@ This document exists so those gates are explicit and ratifiable, not bypassed.
 |---|---|---|
 | Approve/replace bounds in `VERIFICATION-PROFILE-002.yaml` | Safety/Risk authority | Tests need pass/fail thresholds; unapproved bounds are not bounds |
 | Measure broker-specific bounds from an approved Broker Capability Profile | Broker/Exec eng | Final Quantity Proof, late fill, rate/session, query, replacement gap/overlap, and non-trade detection/reconciliation |
-| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (135 items); independence is mandatory |
+| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (147 items); independence is mandatory |
 | Ratify this plan, the §2 greenfield boundary, and the mechanism substrate | Architecture board | Determines what is implemented and where |
 
 I will not fabricate any of these. I can *draft candidates* (done for bounds; role scheme in §3) for you to ratify.
@@ -58,8 +58,10 @@ The greenfield boundary requires:
    credential and route and enforces the fenced claim-to-send boundary;
 5. recovery, reconciliation, operator, evidence, and market-data components cannot
    bypass the Egress Gateway or convert missing/unknown state into permission;
-6. the concrete RCL/currentness consensus substrate and physical deployment topology
-   remain architecture-board decisions and verification targets.
+6. ADR-002-012's quorum-replicated deterministic Safety Commit Log is the required
+   RCL/currentness mechanism class; the conforming product, voter/failure-domain allocation,
+   Commit Proof, hard-fence profile, and physical topology remain architecture-board decisions
+   and verification targets.
 
 ---
 
@@ -68,7 +70,7 @@ The greenfield boundary requires:
 Role placeholders for `EVIDENCE-REGISTER-002`; a single person may hold several,
 subject to the exclusions:
 
-- **RC-Impl / SA-Impl / TT-Impl / LA-Impl / BC-Impl** — implement Risk Capacity, Safety Authority, Trustworthy Time, Live Authorization, and Broker layers.
+- **RC-Impl / RCLP-Impl / SA-Impl / TT-Impl / LA-Impl / BC-Impl** — implement Risk Capacity, quorum persistence/fencing, Safety Authority, Trustworthy Time, Live Authorization, and Broker layers.
 - **State-Impl / Recon-Impl / FD-Impl / PR-Impl / NT-Impl** — implement orthogonal state, evidence confidence, failure-domain fencing, protective replacement, and non-trade transition layers.
 - **Harness-Eng** — deterministic fault injection + evidence capture.
 - **Evidence-Owner** — runs a case, produces the manifest + artifacts.
@@ -88,6 +90,8 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
 - Implement the **capacity state machine** (ADR-002-002 §10: COMMITTED_UNBOUND … RELEASED)
   and **authority epoch/lease**, **Time Health/continuity**, and **Live Authorization/revocation**
   models (ADR-002-003/007/008) as pure, non-transmitting models.
+- Implement the ADR-002-012 deterministic command, committed-prefix, Writer Epoch,
+  membership-change, snapshot/restore, and idempotency models without selecting a live product.
 - Implement pure models for the five orthogonal state dimensions and CPL invariants, per-field
   evidence confidence, Failure-Domain Allocation Matrix, protection gap/overlap, and conservative
   non-trade transition envelope (ADR-002-005/006/009/011/010).
@@ -95,11 +99,13 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   cancel-crossing-fill, replace overlap, TTL, UNKNOWN, protective lease partition), plus
   time continuity, snapshot age, non-revivable authorization, partial scope, restrictive-generation
   precedence, state ownership, evidence conflict, replacement interleavings, and non-trade idempotency.
-- Deliverable: EV-L1 evidence for every RC/SA/TIME/REARM/STATE/RECON/FD/PR/NT item marked EV-L1-reachable.
+- Deliverable: EV-L1 evidence for every RC/SA/TIME/REARM/STATE/RECON/FD/PR/NT/RCLP item marked EV-L1-reachable.
 
 ### Phase 2 — Component fault tests (EV-L2)
-- Durable **single-writer Risk Capacity Ledger** with compare-and-set + monotonic
-  fencing epoch; **Safety Authority epoch registry**; durable evidence identities +
+- Durable quorum-replicated **single-logical-writer Risk Capacity Ledger** with the
+  ADR-002-012 deterministic Safety Commit Log, committed-prefix checks, Writer Epoch,
+  joint membership change, snapshot/restore generation, and hard fencing;
+  **Safety Authority epoch registry**; durable evidence identities +
   write-ahead `SEND_STARTED`; Time Health generation and consumer receipt-anchor model;
   Live Authorization revocation/HALT generation model.
 - Implement the ADR-002-007 §§9.1–9.5 protocol components: linearizably ordered
@@ -119,10 +125,13 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   authority, revocation, HALT, and Time Health generations. Enforce
   `B_capability_claim_to_send` between durable claim/`SEND_STARTED` and the first
   simulated broker byte.
+- Inject quorum loss, minority-with-broker-reachability, stale/removed writer resume,
+  membership transition, snapshot/compaction, conflicting restore, and protective
+  sub-ledger rejoin failures.
 - Prove that strategy, orchestration, recovery, reconciliation, retry, administrative,
   evidence, and market-data identities lack a direct simulated live-order route.
 - Execute the EV-L3 RC-EV / SA-EV / TIME-EV / REARM-EV / STATE-EV / RECON-EV / FD-EV /
-  PR-EV / NT-EV set; measure `B_*` bounds against
+  PR-EV / NT-EV / RCLP-EV set; measure `B_*` bounds against
   `VERIFICATION-PROFILE-002`.
 - Deliverable: EV-L3 evidence; measured detection/containment bounds.
 
@@ -135,7 +144,7 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
 
 ### Phase 5 — Independent review & ADR re-evaluation
 - **Independent** reviewer (not me, not an Impl role) signs each evidence run.
-- Only then may ADR-002-001..011 be re-evaluated toward `Accepted`, and only within the
+- Only then may ADR-002-001..012 be re-evaluated toward `Accepted`, and only within the
   proven scope. Every registered case must be executed at its required evidence level; registration
   alone satisfies no acceptance criterion. Restricted live (EV-L5) is a
   separate, later, human-authorized gate.
@@ -157,7 +166,8 @@ implementation code before this plan, greenfield boundary, and mechanism substra
 ## 6. Immediate decision requested
 
 1. Approve (or amend) `VERIFICATION-PROFILE-002.yaml` proposed bounds, including the currently null egress-currentness, failure-domain, replacement, and non-trade bounds, and provide broker-measured values where required.
-2. Ratify (or amend) the §2 greenfield boundary and ADR-002-007 §§9.1–9.5 protocol;
-   select the linearizable currentness/RCL substrate and credential-isolation topology.
+2. Ratify (or amend) the §2 greenfield boundary, ADR-002-007 §§9.1–9.5 protocol, and
+   ADR-002-012 mechanism; select a conforming replicated-state-machine product,
+   voter/failure-domain topology, Commit Proof, hard fence, and credential-isolation topology.
 3. Approve this plan so Phase 1 (EV-L1 models + property tests, non-transmitting) can begin.
 4. Name the independent reviewer (or confirm it is external to this work).
