@@ -3,7 +3,7 @@
 **Document ID:** RFC-002
 **Title:** Trading Operating System Architecture
 **Version:** 0.2 Review Draft
-**Status:** Review Draft — Architecture (v0.2 review-patch integrated)
+**Status:** Review Draft — Architecture
 **Classification:** Foundational Architecture Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case
@@ -104,6 +104,93 @@ The architecture applies across:
 * execution venues;
 * automated operation;
 * human operational intervention.
+
+---
+
+### 3.1 Terminology
+
+#### 3.1.1 Aggregate Risk Decision
+
+A policy decision that evaluates whether a proposed economic action may be allocated risk capacity under the current evidence, Hard Safety Envelope, Runtime Safety Profile, existing commitments, confirmed positions, potentially-live orders, UNKNOWN exposure, external or unattributed exposure, trapped exposure, and protective reserves.
+
+An Aggregate Risk Decision does not itself mutate the Risk Capacity Ledger.
+
+#### 3.1.2 Capacity Commitment
+
+An atomic, exclusive, durable allocation of aggregate risk headroom to a uniquely identified economic action, reservation pool, or protective lease.
+
+A commitment reduces capacity available to all other competing actions. Only the authoritative Risk Capacity Ledger transition function may create, resize, quarantine, transfer, or release a Capacity Commitment.
+
+#### 3.1.3 Protective Capacity Consumption
+
+The binding of a portion of an already committed Reserved Protective Capacity pool to a specific protective action.
+
+Protective Capacity Consumption:
+
+* is not a new aggregate commitment;
+* SHALL remain within an existing protective lease or pre-committed pool;
+* SHALL be exclusive and durable;
+* SHALL NOT enlarge the aggregate authority granted by the original commitment;
+* SHALL fail closed when exclusivity, scope, epoch, or remaining capacity cannot be proven.
+
+#### 3.1.4 Potentially-Live Quantity
+
+The conservative upper bound of quantity that may still produce broker-side economic effect.
+
+Potentially-Live Quantity includes, as applicable:
+
+* transmitted quantity whose acceptance is not disproven;
+* acknowledged but unfilled quantity;
+* quantity under cancel-pending or replace-pending state;
+* quantity associated with UNKNOWN transmission outcome;
+* duplicate or overlapping attempts that cannot be proven deduplicated;
+* late-fill exposure that remains possible under the Broker Capability Profile.
+
+Potentially-Live Quantity is not reduced merely because an acknowledgement timed out, a cancel request was accepted, an order was absent from one query, a process restarted, or a local authorization expired.
+
+#### 3.1.5 Final Quantity Proof
+
+Evidence sufficient, under the approved Broker Capability Profile and reconciliation model, to establish both:
+
+1. final cumulative filled quantity; and
+2. zero remaining executable quantity.
+
+A cancel acknowledgement alone is not Final Quantity Proof unless the Broker Capability Profile proves that the acknowledgement is ordered after all possible fills and is complete for the relevant order identity.
+
+#### 3.1.6 Authority Epoch
+
+A monotonically increasing fencing value that identifies the current authority generation for a state-changing safety domain.
+
+A stale epoch SHALL NOT be accepted for capacity commitment, capacity release, transmission permission, protective lease consumption, live authorization, or Safety Authority grants.
+
+#### 3.1.7 Transmission Capability
+
+A single-use, scope-limited authorization presented to the final broker-egress enforcement point.
+
+A Transmission Capability SHALL be bound to at least:
+
+* intent identity;
+* reservation identity;
+* account and instrument scope;
+* maximum economic effect;
+* authority epoch;
+* live authorization identity;
+* Hard Safety Envelope version;
+* Runtime Safety Profile version;
+* action class;
+* one-time use identity.
+
+#### 3.1.8 Trapped Exposure
+
+Confirmed or conservatively inferred exposure that cannot currently be reduced within the approved liquidity, venue, price-limit, session, margin, or operational constraints.
+
+Trapped Exposure SHALL be treated as non-reducible when computing available capacity.
+
+#### 3.1.9 Unattributed External Exposure
+
+A broker-side order, fill, position, balance, margin, or instrument-identity change that cannot be attributed to an authorized TOS Intent, an authorized operator action, or a recognized non-trade event.
+
+Unattributed External Exposure SHALL consume conservative capacity and block new risk until disposition is complete.
 
 ---
 
@@ -399,6 +486,36 @@ The separation SHALL be based on authority and failure containment, not merely s
 
 ---
 
+### 9.1 Authority Ownership
+
+The following matrix is the normative authority model.
+
+| Action | Policy authority | State-transition or enforcement authority | Prohibited combination |
+|---|---|---|---|
+| Propose trading action | Decision Service | None | Decision Service SHALL NOT approve, commit, or transmit |
+| Approve proposal | Independent Approval Service | None | Approval Service SHALL NOT commit or transmit |
+| Evaluate aggregate risk | Aggregate Risk Authority | None | Aggregate Risk Authority SHALL NOT mutate capacity or transmit |
+| Commit normal risk capacity | Aggregate Risk Authority supplies a grant decision | Risk Capacity Ledger is the sole serialization and mutation authority | Execution Coordinator SHALL NOT mutate capacity |
+| Pre-commit protective pool | Aggregate Risk Authority supplies a grant decision | Risk Capacity Ledger commits the pool | Protective Action Controller SHALL NOT enlarge the pool |
+| Consume protective reserve | Protective Action Controller classifies and requests consumption within a valid lease | Protective sub-ledger or Risk Capacity Ledger transition function defined by ADR-002-002 | Strategy SHALL NOT self-label an action as protective |
+| Issue Safety Authority | Safety Authority | Final broker egress validates current epoch and scope | Safety Authority SHALL NOT hold broker transmission credentials |
+| Arm live scope | Live Authorization Service | Final broker egress validates scope | Limit administrator SHALL NOT also arm live scope |
+| Change Runtime Safety Profile | Safety Profile governance authority | Safety Profile Validator activates only after validation | Live armer SHALL NOT change limits |
+| Change Hard Safety Envelope | Independent Hard Safety Envelope governance | Hard Safety Envelope Registry publishes an immutable version | Runtime trading identity SHALL NOT administer the envelope |
+| Create transmission attempt | Execution Coordinator | Intent Registry and Risk Capacity Ledger bind the attempt before send | Broker Adapter SHALL NOT invent an unbound attempt |
+| Transmit | Execution Coordinator requests | Broker Adapter / Broker Egress Gateway is the final enforcement point | No valid Transmission Capability means no send |
+| Retry | Execution Coordinator under Broker Capability Profile rules | Broker egress enforces attempt identity and reservation | UNKNOWN outcome SHALL NOT cause blind resubmission |
+| Cancel ordinary order | Execution Coordinator requests | Cancellation Arbiter authorizes; broker egress sends | Ordinary cancellation SHALL NOT remove required protection |
+| Cancel protective order | Protective Action Controller requests | Cancellation Arbiter authorizes; broker egress sends | Strategy SHALL NOT directly cancel safety-owned protection |
+| Classify protective action | Protective Action Controller | Aggregate-risk proof and protective rules enforce classification | Decision Service SHALL NOT classify its own action as protective |
+| Halt | Safety Authority or authenticated emergency operator | Broker-egress deny gate applies monotonically | Halt SHALL NOT depend on proposer availability |
+| Re-arm | Recovery Coordinator verifies prerequisites; Live Authorization Service issues new authority; explicit human control approves | Broker egress accepts only the new epoch and scope | Automatic re-arm is prohibited |
+| Reconcile | Reconciliation Service evaluates evidence | Ledger transitions only through defined proof rules | Reconciliation Service SHALL NOT arbitrarily release capacity |
+
+During a Safety Control Plane partition, no new aggregate capacity may be committed. A Protective Action Controller may consume only capacity pre-committed to a valid, exclusive, scope-limited protective lease before the partition. Consumption SHALL remain within the lease and be serialized by the protective sub-ledger or equivalent mechanism defined by ADR-002-002. If exclusivity or current lease validity cannot be proven, no protective transmission is permitted.
+
+---
+
 ## 10. Core Architectural Components
 
 ### 10.1 Context Integrity Service
@@ -453,16 +570,15 @@ Approval SHALL NOT imply final execution authority.
 Responsibilities:
 
 * calculate projected aggregate post-action risk;
-* include confirmed positions;
-* include potentially live orders;
-* include partial fills;
-* include trapped exposure;
-* include committed capacity;
-* include external activity;
+* use conservative evidence bounds rather than optimistic point estimates;
+* include confirmed positions, Potentially-Live Quantity, partial fills, UNKNOWN orders, trapped exposure, replacement overlap, committed capacity, external or unattributed exposure, margin, liquidity, basis, concentration, and protective reserves;
 * enforce the Hard Safety Envelope and Safety Profile;
-* grant or deny exclusive risk-capacity commitment.
+* grant or deny aggregate risk allocation;
+* produce a signed or otherwise strongly bound decision referencing the evaluated evidence version and requested capacity vector.
 
 The Aggregate Risk Authority is the sole policy authority permitted to grant or deny aggregate risk allocation. The Risk Capacity Ledger is the sole serialization point and state-transition authority permitted to create, change, quarantine, transfer, or release a Capacity Commitment. Neither component may independently perform both policy approval and broker transmission.
+
+The Aggregate Risk Authority SHALL NOT mutate the Risk Capacity Ledger, transmit broker orders, or release capacity.
 
 ---
 
@@ -529,7 +645,7 @@ The Execution Coordinator SHALL NOT infer that a missing acknowledgement means r
 
 ---
 
-### 10.8 Broker Adapter
+### 10.8 Broker Adapter / Broker Egress Gateway
 
 Responsibilities:
 
@@ -555,7 +671,9 @@ Before any risk-relevant transmission, it SHALL verify:
 
 It SHALL reject the request when any required fact is missing, stale, conflicting, or unverifiable.
 
-The Broker Adapter SHALL NOT expose a general-purpose live-order method to strategy, research, simulation, backtest, or operator-interface components.
+The Broker Adapter / Broker Egress Gateway is the final live-transmission enforcement point. It SHALL NOT expose a general-purpose live-order method to strategy, research, simulation, backtest, or operator-interface components.
+
+No broker integration may be approved for live use without a versioned, evidence-backed Broker Capability Profile covering the supported broker, API, account, market, order type, and session scope. Missing, contradictory, or insufficient capability evidence SHALL reduce or prohibit live scope; it SHALL NOT weaken a safety requirement.
 
 ---
 
@@ -686,6 +804,74 @@ Responsibilities:
 
 ---
 
+### 10.18 Safety Profile Validator
+
+Responsibilities:
+
+* validate completeness, authenticity, version, account scope, instrument scope, units, multipliers, currencies, sign conventions, and temporal validity;
+* validate every Runtime Safety Profile value against the independently governed Hard Safety Envelope;
+* reject semantically implausible or internally inconsistent values;
+* prevent partial activation;
+* activate a profile atomically, or leave the previous valid profile in force only when continued use is explicitly authorized and time-valid;
+* fail closed when correctness cannot be proven.
+
+The Safety Profile Validator SHALL be independent from strategy configuration and SHALL NOT expand the Hard Safety Envelope. The identity permitted to approve or publish a Runtime Safety Profile SHALL NOT also arm live trading.
+
+---
+
+### 10.19 Recovery Coordinator
+
+Responsibilities:
+
+* enforce the startup and recovery barrier;
+* coordinate account-wide reconciliation of orders, fills, positions, cash, margin, capacity commitments, external activity, and recognized non-trade events;
+* verify current authority epochs and trustworthy time;
+* require UNKNOWN and unattributed activity to be resolved or conservatively reserved;
+* verify ledger consistency and protective-order coverage;
+* produce a recovery-readiness decision;
+* request, but not issue, new live authorization.
+
+The Recovery Coordinator SHALL NOT automatically re-arm live trading.
+
+---
+
+### 10.20 Deployment and Identity Architecture
+
+Responsibilities:
+
+* live and non-live credential segregation;
+* workload identity and least-privilege broker credential access;
+* deployment provenance and independent safety-component release controls;
+* stale-instance removal and fencing integration;
+* prevention of research, simulation, paper, and backtest paths from reaching live broker egress.
+
+---
+
+### 10.21 Replay and Evidence Service
+
+Responsibilities:
+
+* retain immutable or tamper-evident evidence sufficient to reconstruct authority, reservation, attempt, broker event, reconciliation, and operator-action timelines;
+* support deterministic replay of architecture state transitions;
+* preserve evidence provenance and failure-domain metadata.
+
+Replay and audit SHALL NOT substitute for pre-trade prevention.
+
+---
+
+### 10.22 Cancellation Arbiter
+
+Responsibilities:
+
+* provide one authorization point for cancellation of any order that is or may be part of a protective structure;
+* determine whether cancellation removes required protection or worsens conservative aggregate risk;
+* require equivalent or stronger protection to be authoritatively live where replacement is required;
+* account for late fills, partial fills, scarce broker capacity, and non-atomic replace semantics.
+
+Protective evaluation SHALL precede ordinary cancellation authority. Strategy and ordinary execution cleanup SHALL NOT cancel a safety-owned protective order directly.
+
+---
+
 ## 11. Trading Action Pipeline
 
 The logical action sequence SHALL be:
@@ -724,54 +910,38 @@ Protective actions SHALL follow the separate restrictions defined by ADR-002-001
 
 ---
 
-## 12. Intent Lifecycle
+## 12. Orthogonal Trading State Model
 
-The minimum Intent lifecycle SHALL be:
+The system SHALL NOT represent the entire trading lifecycle as a single order-status enumeration.
+
+At minimum, the following state dimensions SHALL be modeled independently:
+
+1. **Intent State** — proposal and business-authorization lifecycle;
+2. **Transmission Attempt State** — local send preparation and transport uncertainty;
+3. **Broker Order State** — broker-side order lifecycle;
+4. **Knowledge / Evidence State** — confidence, conflict, and reconciliation status;
+5. **Capacity State** — reservation, potentially-live, consumed, quarantined, and released state.
+
+A state such as `RECONCILED` belongs to the Knowledge / Evidence dimension, not the Broker Order lifecycle. The model SHALL support combinations such as:
 
 ```text
-PROPOSED
-    ↓
-APPROVED
-    ↓
-CAPACITY_COMMITTED
-    ↓
-TRANSMISSION_AUTHORIZED
-    ↓
-TRANSMITTED
-    ↓
-ACTIVE
-    ├── PARTIALLY_FILLED
-    ├── FILLED
-    ├── CANCEL_PENDING
-    ├── CANCELLED
-    ├── REJECTED
-    └── UNKNOWN
-            ↓
-        RECONCILING
-            ↓
-        RECONCILED
+Transmission Attempt: SENT_UNCONFIRMED
+Broker Order: UNKNOWN
+Knowledge / Evidence: CONFLICTED
+Capacity: POTENTIALLY_LIVE
 ```
 
-### 12.1 UNKNOWN Is a First-Class State
+### 12.1 UNKNOWN Is a First-Class Condition
 
-`UNKNOWN` SHALL NOT be treated as:
+An UNKNOWN broker order, transmission outcome, exposure, or evidence condition SHALL NOT be treated as rejected, cancelled, unfilled, safe to retry, or safe to release capacity.
 
-* rejected;
-* cancelled;
-* unfilled;
-* safe to retry;
-* safe to release capacity.
-
-Potentially live quantity SHALL remain reserved until reconciled.
+Potentially-Live Quantity SHALL remain covered by committed or quarantined capacity until Final Quantity Proof or confirmed-position transfer is complete.
 
 ### 12.2 State Transition Authority
 
-Each state transition SHALL be attributable to:
+Each transition in each dimension SHALL be attributable to approved internal evidence, broker or venue evidence, a reconciliation result, or an authorized operational action. A transition in one dimension SHALL NOT imply a transition in another without its required evidence and authority.
 
-* approved internal evidence;
-* broker or venue evidence;
-* reconciliation result;
-* authorized operational action.
+ADR-002-005 SHALL define the detailed Intent, Transmission Attempt, Broker Order, and Knowledge / Evidence state machines and their transition owners. ADR-002-002 defines the Capacity State dimension and its coupling rules.
 
 ---
 
@@ -789,7 +959,9 @@ Submission quantity SHALL NOT be treated as filled quantity.
 
 ### 13.3 Cancel and Replace
 
-A cancellation request SHALL NOT release risk capacity until cancellation or replacement state is reconciled.
+A cancellation request or cancel acknowledgement SHALL NOT release risk capacity. Release after cancellation requires Final Quantity Proof or a stronger broker-specific proof approved by ADR-002-004 and recorded in the active Broker Capability Profile.
+
+Unless that profile proves atomic cancel/replace semantics, the system SHALL reserve the worst credible overlap of the original and replacement orders and account for any interval of reduced or absent protection.
 
 ### 13.4 Restart
 
@@ -801,11 +973,53 @@ Protective or exit retries SHALL use confirmed residual exposure and potentially
 
 The system SHALL NOT resubmit the original full exit quantity solely because a final acknowledgement is missing.
 
+### 13.6 Broker Capability Contract
+
+The Broker Capability Profile SHALL assess at least:
+
+* client-generated order identity support and duplicate-key behavior;
+* broker order-number issuance and query attribution;
+* order-query completeness, pagination, and history windows;
+* cumulative fill query, replay, correction, and event ordering;
+* cancel acknowledgement and cancel/replace semantics;
+* reduce-only or equivalent position-side enforcement;
+* account-wide order, fill, position, balance, and margin visibility;
+* push versus poll account events and the external-activity detection bound;
+* rate-limit scope, session concurrency, credential fencing, late fills, reconnect, and recovery.
+
+Capability results SHALL be classified as `SUPPORTED`, `SUPPORTED_WITH_RESTRICTION`, `BEST_EFFORT`, `UNAVAILABLE`, or `LIVE_SCOPE_PROHIBITED`.
+
+Where a transmission outcome is UNKNOWN and deterministic broker-side deduplication is unavailable:
+
+1. a new broker order SHALL NOT be blindly submitted;
+2. all available broker evidence SHALL be queried;
+3. the original reservation SHALL remain fully conservative;
+4. unattributable activity SHALL force containment;
+5. live scope SHALL be reduced when safe attribution cannot be achieved.
+
 ---
 
 ## 14. Aggregate Risk Capacity
 
-### 14.1 Projected State
+### 14.1 Aggregate Envelope Invariant
+
+For every governed risk dimension:
+
+```text
+Confirmed Position Risk
++ Potentially-Live Order Risk
++ UNKNOWN Order Conservative Bound
++ Unattributed External Exposure
++ Trapped / Illiquid Exposure
++ Replacement Overlap Risk
++ Required Protective Reserve
+    <=
+Applicable Hard Safety Envelope
+```
+
+The Runtime Safety Profile may further restrict this bound but SHALL NOT enlarge it.
+
+### 14.2 Projected State
 
 Risk authorization SHALL evaluate the projected state after the proposed action.
 
@@ -820,7 +1034,7 @@ The projected state SHALL include:
 * concurrent actions;
 * margin and collateral effects.
 
-### 14.2 Exclusive Commitment
+### 14.3 Commitment Mapping and Exclusivity
 
 Risk capacity SHALL be committed before transmission.
 
@@ -828,25 +1042,37 @@ Commitment SHALL be exclusive for the relevant capacity.
 
 Two actions SHALL NOT consume the same available capacity.
 
-### 14.3 Release Conditions
+Every potentially executable broker order SHALL map to exactly one active Capacity Commitment or to a specifically identified consumption within a pre-committed protective lease. No active commitment or lease consumption may be reused for another economic action.
+
+### 14.4 Release Conditions and Economic Effect
 
 Capacity MAY be released only when:
 
-* the action is definitively rejected before becoming live;
-* cancellation is authoritatively confirmed;
-* fill state has been incorporated;
-* the Intent expires without transmission;
-* reconciliation establishes that no exposure remains possible.
+* the Intent expires and durable evidence proves that transmission never began;
+* the action is definitively rejected before it may have become live;
+* confirmed fill risk is atomically transferred to confirmed-position consumption;
+* Final Quantity Proof establishes final cumulative filled quantity and zero remaining executable quantity;
+* reconciliation supplies a stronger broker-specific proof approved by ADR-002-004.
 
-### 14.4 Crash Recovery
+Authority may expire. Potential economic effect does not expire until terminal quantity is proven.
+
+Once an attempt may have reached the broker, reservation TTL, acknowledgement timeout, process restart, strategy timeout, cancel request, cancel acknowledgement, or authority expiry SHALL NOT release its capacity. The capacity SHALL remain committed, quarantined, or transferred to confirmed-position consumption until the applicable proof exists.
+
+### 14.5 Crash Recovery
 
 Risk-capacity commitments SHALL survive process restart or be reconstructed conservatively before trading resumes.
 
-### 14.5 Trapped Exposure
+### 14.6 Trapped Exposure
 
 Trapped exposure SHALL be treated as non-reducible.
 
 No future exit assumption SHALL create additional risk authority.
+
+### 14.7 External and Non-Trade Changes
+
+External activity and recognized non-trade changes SHALL enter the reconciliation and capacity models as first-class inputs.
+
+Corporate actions, symbol or instrument-identity changes, expiry, exercise, assignment, rollover, broker administrative adjustments, account transfers, delisting, and suspension changes SHALL NOT be assumed to be fills. Unrecognized changes SHALL be treated as Unattributed External Exposure.
 
 ---
 
@@ -869,6 +1095,21 @@ Possible evidence paths include:
 
 No specific evidence path SHALL be presumed infallible.
 
+Broker and venue evidence is externally authoritative evidence, but no single response SHALL be treated as unconditional truth. State SHALL be established through evidence-consistency evaluation, source provenance, temporal ordering, and conservative bounds. Unresolved conflict produces UNKNOWN state and blocks new risk.
+
+Reconciliation SHALL maintain confidence or conservative bounds separately for at least:
+
+* order existence;
+* broker order identity;
+* cumulative filled quantity;
+* remaining executable quantity;
+* position quantity;
+* cash and margin;
+* protective coverage;
+* instrument identity.
+
+A single blended confidence score is insufficient for risk release.
+
 ### 15.2 Divergence
 
 Material divergence SHALL:
@@ -890,6 +1131,8 @@ External activity SHALL force re-evaluation of:
 * margin;
 * live authorization.
 
+For integrations without real-time account events, the architecture SHALL define a measurable maximum external-activity detection bound. Normal action size and aggregate headroom SHALL be constrained so plausible external activity during that window cannot exceed the Hard Safety Envelope.
+
 ### 15.4 Continuous Reconciliation
 
 Reconciliation SHALL occur:
@@ -902,6 +1145,21 @@ Reconciliation SHALL occur:
 * after external activity;
 * periodically during live operation;
 * before restoring authority after material divergence.
+
+### 15.5 Startup and Recovery Barrier
+
+New risk SHALL remain blocked until the Recovery Coordinator verifies:
+
+* open orders and potentially-live attempts;
+* cumulative fills and positions;
+* cash and margin;
+* Risk Capacity Ledger state;
+* protective-order coverage;
+* external and unattributed activity;
+* recognized non-trade changes;
+* current writer and Safety Authority epochs;
+* trustworthy time;
+* valid safety configuration.
 
 ---
 
@@ -934,6 +1192,12 @@ Clock rollback, jump, drift, freeze, or disagreement SHALL:
 
 Event ordering SHALL NOT rely solely on wall-clock timestamps when monotonic sequence or source sequence is available.
 
+### 16.5 Degraded Protective Lease Time
+
+A degraded protective lease SHALL be issued before partition, bound to an Authority Epoch, limited to a short approved lifetime, and verifiable using local monotonic elapsed time. It SHALL become invalid after process restart unless explicitly re-established and SHALL be invalid whenever remaining validity cannot be positively proven.
+
+Wall-clock deadline comparison alone is insufficient.
+
 ---
 
 ## 17. Safety Control Plane
@@ -956,11 +1220,26 @@ Execution SHALL require current, locally verifiable authority.
 
 Previously valid authority SHALL expire according to approved safety rules.
 
+Normal risk-increasing authority requires online currentness verification. A previously permissive grant SHALL NOT be reused indefinitely.
+
 ### 17.2 Partition Behavior
 
 Loss of verifiable control-plane authority SHALL revoke exposure-increasing execution.
 
 Protective behavior under partition SHALL follow ADR-002-001.
+
+No new aggregate capacity may be committed during a Safety Control Plane partition. Only bounded consumption of a pre-committed protective pool under a valid, exclusive protective lease is permitted. The lease SHALL limit account, instrument, action class, maximum quantity, and maximum risk-vector effect and SHALL have one active owner protected from duplicate consumption.
+
+### 17.3 Stale Instance Fencing
+
+Leadership election alone is insufficient. Every state-changing safety domain SHALL use a monotonic fencing mechanism so a stale process resuming after partition, pause, rollback, or failover cannot:
+
+* commit or release capacity;
+* issue an accepted Safety Authority grant;
+* consume a reassigned protective lease;
+* transmit through broker egress.
+
+The final broker-egress gate and every Risk Capacity Ledger mutation SHALL reject stale Authority Epochs and stale writer epochs.
 
 ---
 
@@ -1065,6 +1344,48 @@ The architecture SHALL preserve the ability to:
 
 Normal strategies SHALL NOT consume reserved protective capacity.
 
+### 21.1 Guarantee Levels
+
+Every claimed protective resource SHALL be classified as:
+
+```text
+PHYSICALLY_RESERVED
+LOGICALLY_RESERVED
+PRIORITIZED_ONLY
+BEST_EFFORT
+UNAVAILABLE
+```
+
+Priority SHALL NOT be described as reservation. `BEST_EFFORT` is a residual-risk disclosure, not guaranteed protective capacity.
+
+### 21.2 Common-Mode Disclosure
+
+Where a broker exposes only one serialized session, one global account rate limit, or one shared credential path, protective API capacity may be only `PRIORITIZED_ONLY` or `BEST_EFFORT`.
+
+The limitation SHALL be recorded as residual risk and SHALL reduce normal traffic admission, trigger earlier degraded-mode thresholds, restrict maximum live scope, constrain protective assumptions, and affect production acceptance.
+
+### 21.3 Intermediate-State Safety
+
+A protective action is permitted in degraded mode only when conservative analysis proves that every credible partial-fill fraction and execution ordering remains inside the Hard Safety Envelope and does not create a worse aggregate-risk state than taking no action.
+
+If this cannot be proven, the action SHALL be treated as risk increasing.
+
+### 21.4 Protection Replacement Gap
+
+When a broker cannot atomically replace a protective order:
+
+* the position SHALL be treated as unprotected during the replacement gap;
+* the gap SHALL be bounded and measured;
+* replacement failure SHALL have a defined safe response;
+* broker-specific residual risk SHALL be approved;
+* capacity calculation SHALL account for the more conservative of order overlap or protection absence.
+
+### 21.5 Protective Ownership and Cancellation
+
+Every protective order SHALL carry one ownership classification: `STRATEGY_OWNED`, `EXECUTION_OWNED`, `SAFETY_OWNED`, or `OPERATOR_OWNED`.
+
+A safety-owned protective order SHALL NOT be cancelled by ordinary strategy logic. The Cancellation Arbiter SHALL determine whether cancellation removes required protection, and protective evaluation SHALL precede ordinary cancellation authority.
+
 ---
 
 ## 22. Evidence and Observability
@@ -1109,20 +1430,27 @@ SHALL produce evidence.
 
 ### 23.1 Recovery Preconditions
 
-Recovery SHALL require:
+Re-arm SHALL require all of the following:
 
-* valid Safety Profile;
-* valid Hard Safety Envelope;
-* trustworthy time;
-* reconciled account state;
-* resolved unknown orders;
-* valid Safety Authority;
-* valid live authorization;
-* no blocking Critical hazard.
+1. trustworthy time restored;
+2. current Safety Authority epoch established;
+3. account-wide reconciliation completed;
+4. no unresolved UNKNOWN order, unless it remains fully conservatively reserved and is explicitly accepted only for restricted recovery in which new risk remains blocked;
+5. no unresolved unattributed external activity;
+6. Risk Capacity Ledger consistency verified;
+7. Hard Safety Envelope and Runtime Safety Profile versions verified;
+8. protective coverage evaluated;
+9. Recovery Coordinator readiness decision;
+10. new Live Authorization issued;
+11. explicit human control according to the approved separation-of-duty policy.
+
+No blocking Critical hazard may remain. The same human or service identity SHALL NOT both enlarge limits and arm live trading.
 
 ### 23.2 No Automatic Re-Arming
 
 The system SHALL NOT automatically restore live autonomous authority merely because a failed dependency becomes available.
+
+Recovery readiness is not live authority.
 
 ### 23.3 Changed Scope
 
@@ -1145,6 +1473,28 @@ The deployment SHALL nevertheless demonstrate:
 * bounded blast radius.
 
 The deployment architecture SHALL document which common-mode failures remain possible.
+
+### 24.1 Failure-Domain Allocation
+
+RFC-002 or a delegated ADR SHALL maintain a Failure-Domain Allocation Matrix covering at least:
+
+* process and runtime;
+* pod and node;
+* cluster and region;
+* datastore;
+* Kafka or equivalent event infrastructure;
+* Redis or equivalent cache or stream infrastructure;
+* network path;
+* broker session;
+* credential and workload identity;
+* deployment pipeline;
+* clock source;
+* risk-calculation library;
+* configuration parser and distribution path.
+
+For each shared dependency, the matrix SHALL identify affected authorities, failure consequence, containment behavior, physical/logical/common-mode classification, residual risk, and verification method.
+
+Logical service separation SHALL NOT be presented as proof of physical failure independence.
 
 ---
 
@@ -1177,15 +1527,15 @@ The following ADRs are initially required.
 | ADR-002-002 | Aggregate Risk-Capacity Commitment Model                              | Proposed |
 | ADR-002-003 | Safety Authority Validity, Epoch Fencing, and Partition Behavior      | Proposed |
 | ADR-002-004 | Broker Capability Requirements and Fallbacks                          | Proposed |
-| ADR-002-005 | Intent, Transmission Attempt, Broker Order, and Knowledge State Model | Required |
-| ADR-002-006 | Evidence and Reconciliation Confidence Model                          | Required |
+| ADR-002-005 | Intent, Transmission Attempt, Broker Order, and Knowledge State Model | Proposed |
+| ADR-002-006 | Evidence and Reconciliation Confidence Model                          | Proposed |
 | ADR-002-007 | Live Authorization, Limit Governance, and Re-arm                      | Required |
 | ADR-002-008 | Trustworthy Time Architecture                                         | Required |
 | ADR-002-009 | Failure-Domain Isolation and Deployment Safety                        | Required |
 | ADR-002-010 | Corporate Actions and Non-Trade State Changes                         | Required |
 | ADR-002-011 | Protective Replacement and Protection-Gap Control                     | Required |
 
-ADR-002-003 (Safety Authority) and ADR-002-004 (Broker Capability) are authored (co-located ADR files); ADR-002-005 through ADR-002-011 remain Required backlog decisions. Verification of ADR-002-001 through ADR-002-004 is specified by VER-002-001, with the Evidence Register and templates under `verification/`.
+ADR-002-002 through ADR-002-006 are authored (co-located ADR files, `Proposed`). ADR-002-007 through ADR-002-011 remain Required backlog, being drafted in the recommended design order (008 → 007 → 009 → 011 → 010; CODEX-START-HERE §11). Verification of ADR-002-001 through ADR-002-004 is specified by VER-002-001, with the Evidence Register and templates under `verification/`.
 
 ---
 
@@ -1194,17 +1544,17 @@ ADR-002-003 (Safety Authority) and ADR-002-004 (Broker Capability) are authored 
 | RFC-001 requirement | Architectural responsibility                            |
 | ------------------- | ------------------------------------------------------- |
 | SAFE-001            | Safety Authority, Protective Action Controller          |
-| SAFE-002            | Protective Action Controller, Position Projection       |
+| SAFE-002            | Protective Action Controller, Position Projection, Cancellation Arbiter |
 | SAFE-003            | Safety Profile Validator                                |
 | SAFE-004            | Hard Safety Envelope Registry                           |
-| SAFE-010            | Aggregate Risk Authority, Execution Coordinator         |
+| SAFE-010            | Aggregate Risk Authority, Risk Capacity Ledger, Broker Egress Gateway |
 | SAFE-011            | Safety Control Plane                                    |
 | SAFE-012            | Aggregate Risk Authority                                |
 | SAFE-013            | Aggregate Risk Authority, Risk Capacity Ledger          |
 | SAFE-014            | Execution Coordinator                                   |
 | SAFE-015            | Risk Capacity Ledger                                    |
 | SAFE-020            | Intent Registry                                         |
-| SAFE-021            | Execution Coordinator, Intent Registry                  |
+| SAFE-021            | Execution Coordinator, Intent Registry, Risk Capacity Ledger, Broker Egress Gateway |
 | SAFE-022            | Reconciliation Service                                  |
 | SAFE-023            | Reconciliation Service                                  |
 | SAFE-024            | Reconciliation Service                                  |
@@ -1212,21 +1562,21 @@ ADR-002-003 (Safety Authority) and ADR-002-004 (Broker Capability) are authored 
 | SAFE-030            | Context Integrity Service                               |
 | SAFE-031            | Context Integrity Service                               |
 | SAFE-032            | Context Integrity Service, Broker Adapter               |
-| SAFE-033            | Independent Approval Service, Execution Coordinator     |
+| SAFE-033            | Independent Approval Service, Execution Coordinator, Broker Egress Gateway |
 | SAFE-034            | Independent Approval Service                            |
 | SAFE-035            | Trustworthy Time Service                                |
-| SAFE-040            | Protective Action Controller                            |
+| SAFE-040            | Protective Action Controller, Cancellation Arbiter, Broker Egress Gateway |
 | SAFE-041            | Safety Authority                                        |
-| SAFE-042            | Operator Control Interface                              |
+| SAFE-042            | Operator Control Interface, Broker Egress Gateway       |
 | SAFE-043            | Protective Action Controller                            |
 | SAFE-044            | Recovery Coordinator                                    |
 | SAFE-045            | Deployment and Identity Architecture                    |
 | SAFE-046            | Live Authorization Service                              |
 | SAFE-047            | Live Authorization Service                              |
-| SAFE-048            | Safety Authority, Execution Coordinator                 |
+| SAFE-048            | Safety Authority, Risk Capacity Ledger, Broker Egress Gateway |
 | SAFE-050            | Hard Safety Envelope Registry, Safety Profile Validator |
 | SAFE-051            | Evidence Store                                          |
-| SAFE-052            | Replay and Evidence Services                            |
+| SAFE-052            | Replay and Evidence Service                             |
 
 This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
@@ -1234,18 +1584,20 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
 ## 28. Open Architectural Decisions
 
-The following questions remain open in v0.1.
+The following questions remain open in v0.2 and SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
 
-1. What persistence model guarantees exclusive risk-capacity commitment?
-2. How is Safety Authority validity represented and verified locally?
-3. Which evidence paths are required for each broker?
-4. How is partial-fill state persisted across restart?
-5. How is time confidence established?
-6. How are external manual trades detected within an approved bound?
-7. How is the Hard Safety Envelope distributed and activated?
-8. Which protective actions remain available during partition?
-9. How are trapped positions represented in aggregate risk?
-10. Which common-mode failures require physical component isolation?
+1. Which persistence and consensus mechanism implements the Risk Capacity Ledger's required semantics?
+2. How are writer and Authority Epoch fencing tokens propagated and validated at broker egress?
+3. What are the detailed orthogonal state transitions and transition owners?
+4. How are evidence confidence and conservative bounds represented per field?
+5. How is trustworthy time established, degraded, and re-established after restart?
+6. What deployment topology provides the required failure-domain isolation?
+7. What numeric detection, containment, protective-gap, lease, and retry bounds are approved?
+8. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
+9. Which broker resources can be physically or logically reserved for protection?
+10. How are corporate actions and other non-trade changes attributed and remapped?
+11. What operator dual-control and credential workflow governs recovery and re-arm?
+12. What restricted-production evidence is required beyond non-live verification?
 
 Open decisions SHALL NOT be resolved by informal implementation convention.
 
@@ -1253,20 +1605,34 @@ Open decisions SHALL NOT be resolved by informal implementation convention.
 
 ## 29. Verification Obligations
 
-RFC-002 SHALL eventually provide objective evidence that:
+Each Critical architecture property SHALL identify:
 
-* concurrent authorizations cannot double-commit capacity;
-* duplicate messages cannot multiply exposure;
-* lost acknowledgements preserve potentially live state;
-* partial fills preserve residual position;
-* external activity revokes reconciled state;
-* clock faults fail closed;
-* control-plane partitions revoke new-risk authority;
-* invalid Safety Profiles cannot expand authority;
-* non-live environments cannot reach live endpoints;
-* degraded protective capacity remains available;
-* normal strategy traffic cannot consume reserved protection;
-* recovery does not silently re-arm live operation.
+* triggering condition;
+* detection bound;
+* containment bound;
+* responsible component;
+* observable evidence;
+* forbidden outcome;
+* pass/fail criterion;
+* fault-injection or replay scenario.
+
+At minimum, the verification set SHALL include:
+
+* concurrent authorization and duplicate active committer;
+* stale capacity writer and stale Safety Authority;
+* crash before send and crash after send;
+* acknowledgement loss and duplicate message;
+* partial fill, cancel crossing fill, replace crossing fill, and late fill;
+* process restart with a live or UNKNOWN broker order;
+* external HTS order and broker-query omission;
+* clock fault and time-source loss during partition;
+* invalid Safety Profile and Hard Safety Envelope expansion attempt;
+* non-live environment attempting to reach live egress;
+* protective reserve exhaustion and ordinary traffic blocking the protective path;
+* corporate action or instrument-identity change;
+* recovery attempting to re-arm automatically.
+
+Numeric values belong in an approved Verification Profile, Safety Profile, or Broker Capability Profile. Written cases do not constitute completed evidence; completion requires actual execution, retained raw artifacts, invariant evaluation, hashes, measured bounds, and independent review as specified by VER-002-001.
 
 ---
 
@@ -1294,584 +1660,25 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 
 ---
 
-## 31. Version 0.2 Review-Patch Amendments
+## 31. Review Finding Disposition
 
-The following subsections integrate the additive normative content of PATCH-RFC-002-v0.2 (Architecture Review Corrections).
-
-### 31.1 New and Corrected Definitions
-
-Add the following definitions to the RFC-002 terminology section.
-
-#### 3.1 Aggregate Risk Decision
-
-A policy decision that evaluates whether a proposed economic action may be allocated risk capacity under the current evidence, Hard Safety Envelope, Runtime Safety Profile, existing commitments, confirmed positions, potentially-live orders, UNKNOWN exposure, external/unattributed exposure, trapped exposure, and protective reserves.
-
-An Aggregate Risk Decision does not itself mutate the Risk Capacity Ledger.
-
-#### 3.2 Capacity Commitment
-
-An atomic, exclusive, durable allocation of aggregate risk headroom to a uniquely identified economic action, reservation pool, or protective lease.
-
-A commitment reduces capacity available to all other competing actions.
-
-Only the authoritative Risk Capacity Ledger transition function may create, resize, quarantine, transfer, or release a Capacity Commitment.
-
-#### 3.3 Protective Capacity Consumption
-
-The binding of a portion of an already committed Reserved Protective Capacity pool to a specific protective action.
-
-Protective Capacity Consumption:
-
-- is not a new aggregate commitment;
-- MUST remain within an existing protective lease or pre-committed pool;
-- MUST be exclusive and durable;
-- MUST NOT enlarge the aggregate authority granted by the original commitment;
-- MUST fail closed when exclusivity, scope, epoch, or remaining capacity cannot be proven.
-
-#### 3.4 Potentially-Live Quantity
-
-The conservative upper bound of quantity that may still produce broker-side economic effect.
-
-Potentially-Live Quantity includes, as applicable:
-
-- transmitted quantity whose acceptance is not disproven;
-- acknowledged but unfilled quantity;
-- quantity under cancel-pending or replace-pending state;
-- quantity associated with UNKNOWN transmission outcome;
-- duplicate or overlapping attempts that cannot be proven deduplicated;
-- late-fill exposure that remains possible under the broker capability profile.
-
-Potentially-Live Quantity is not reduced merely because an acknowledgement timed out, a cancel request was accepted, an order was absent from one query, a process restarted, or a local authorization expired.
-
-#### 3.5 Final Quantity Proof
-
-Evidence sufficient, under the approved broker capability profile and reconciliation model, to establish both:
-
-1. final cumulative filled quantity; and
-2. zero remaining executable quantity.
-
-A cancel acknowledgement alone is not Final Quantity Proof unless the broker capability profile proves that the acknowledgement is ordered after all possible fills and is complete for the relevant order identity.
-
-#### 3.6 Authority Epoch
-
-A monotonically increasing fencing value that identifies the current authority generation for a state-changing safety domain.
-
-A stale epoch MUST NOT be accepted for:
-
-- capacity commitment;
-- capacity release;
-- transmission permission;
-- protective lease consumption;
-- live authorization;
-- safety authority grants.
-
-#### 3.7 Transmission Capability
-
-A single-use, scope-limited authorization presented to the final broker-egress enforcement point.
-
-A Transmission Capability MUST be bound to at least:
-
-- intent identity;
-- reservation identity;
-- account and instrument scope;
-- maximum economic effect;
-- authority epoch;
-- live authorization identity;
-- Hard Safety Envelope version;
-- Runtime Safety Profile version;
-- action class;
-- one-time use identity.
-
-#### 3.8 Trapped Exposure
-
-Confirmed or conservatively inferred exposure that cannot currently be reduced within the approved liquidity, venue, price-limit, session, margin, or operational constraints.
-
-Trapped Exposure MUST be treated as non-reducible when computing available capacity.
-
-#### 3.9 Unattributed External Exposure
-
-A broker-side order, fill, position, balance, margin, or instrument-identity change that cannot be attributed to an authorized TOS Intent, an authorized operator action, or a recognized non-trade event.
-
-Unattributed External Exposure MUST consume conservative capacity and block new risk until disposition is complete.
-
-### 31.2 Authority Ownership Matrix
-
-Add the following matrix as the normative authority model.
-
-| Action | Policy authority | State-transition / enforcement authority | Prohibited combinations |
-|---|---|---|---|
-| Propose trading action | Decision Service | None | Decision Service MUST NOT approve, commit, or transmit |
-| Approve proposal | Independent Approval Service | None | Approval Service MUST NOT commit or transmit |
-| Evaluate aggregate risk | Aggregate Risk Authority | None | Aggregate Risk Authority MUST NOT directly transmit |
-| Commit normal risk capacity | Aggregate Risk Authority supplies a grant decision | Risk Capacity Ledger is the sole serialization and mutation authority | Execution Coordinator MUST NOT mutate capacity |
-| Pre-commit protective pool | Aggregate Risk Authority supplies a grant decision | Risk Capacity Ledger commits the pool | Protective Action Controller MUST NOT enlarge the pool |
-| Consume protective reserve | Protective Action Controller classifies and requests consumption within a valid lease | Protective sub-ledger or Risk Capacity Ledger transition function, as defined by ADR-002-002 | Strategy MUST NOT self-label an action as protective |
-| Issue safety authority | Safety Authority | Final egress validates current epoch and scope | Safety Authority MUST NOT hold broker transmission credentials |
-| Arm live scope | Live Authorization Service | Broker egress validates scope | Limit administrator MUST NOT also arm live scope |
-| Change Runtime Safety Profile | Safety Profile governance authority | Safety Profile Validator activates only after validation | Live armer MUST NOT change limits |
-| Change Hard Safety Envelope | Independent Hard Safety Envelope governance | Hard Safety Envelope Registry publishes immutable version | Runtime trading identity MUST NOT administer the envelope |
-| Create transmission attempt | Execution Coordinator | Intent Registry and Risk Capacity Ledger bind attempt before send | Broker Adapter MUST NOT invent an unbound attempt |
-| Transmit | Execution Coordinator requests | Broker Adapter / egress gateway is final enforcement point | No valid capability means no send |
-| Retry | Execution Coordinator under broker capability rules | Broker Adapter enforces attempt identity and reservation | UNKNOWN outcome MUST NOT cause blind resubmission |
-| Cancel ordinary order | Execution Coordinator requests | Cancellation Arbiter authorizes; Broker Adapter sends | Ordinary cancellation MUST NOT remove required protection |
-| Cancel protective order | Protective Action Controller requests | Cancellation Arbiter authorizes; Broker Adapter sends | Strategy MUST NOT directly cancel safety-owned protection |
-| Classify protective action | Protective Action Controller | Aggregate risk proof and protective rules enforce classification | Decision Service MUST NOT classify its own action as protective |
-| Halt | Safety Authority or authenticated emergency operator | Egress deny gate applies monotonically | Halt MUST NOT depend on proposer availability |
-| Re-arm | Recovery Coordinator verifies prerequisites; Live Authorization Service issues new authority; explicit human control approves | Broker egress accepts only new epoch/scope | Automatic re-arm is prohibited |
-| Reconcile | Reconciliation Service evaluates evidence | Ledger transitions only through defined proof rules | Reconciliation Service MUST NOT arbitrarily release capacity |
-
-#### 4.1 Capacity Authority Clarification
-
-Replace any statement equivalent to:
-
-> The Aggregate Risk Authority is the only component permitted to commit aggregate risk capacity.
-
-with:
-
-> The Aggregate Risk Authority is the sole policy authority permitted to grant or deny aggregate risk allocation. The Risk Capacity Ledger is the sole serialization point and state-transition authority permitted to create, change, quarantine, transfer, or release a Capacity Commitment. Neither component may independently perform both policy approval and broker transmission.
-
-#### 4.2 Protective Partition Clarification
-
-Add:
-
-> During a Safety Control Plane partition, no new aggregate capacity may be committed. A Protective Action Controller may consume only capacity that was pre-committed to a valid, exclusive, scope-limited protective lease before the partition. Consumption must remain within the lease and must be serialized by the protective sub-ledger or equivalent mechanism defined by ADR-002-002. If exclusivity or current lease validity cannot be proven, no protective transmission is permitted.
-
-### 31.3 Component Model Additions and Corrections
-
-#### 5.5 Safety Profile Validator — New Component
-
-Add a component named **Safety Profile Validator**.
-
-Responsibilities:
-
-- validate completeness, authenticity, version, account scope, instrument scope, units, multipliers, currencies, sign conventions, and temporal validity;
-- validate all Runtime Safety Profile values against the independently governed Hard Safety Envelope;
-- reject semantically implausible or internally inconsistent values;
-- prevent partial activation;
-- activate a profile atomically or leave the previous valid profile in force only where such continued use is explicitly authorized and time-valid;
-- fail closed when correctness cannot be proven.
-
-Trust boundary:
-
-- it MUST be independent from strategy configuration;
-- it MUST NOT expand the Hard Safety Envelope;
-- the identity permitted to approve or publish a Runtime Safety Profile MUST NOT also arm live trading.
-
-#### 5.6 Recovery Coordinator — New Component
-
-Add a component named **Recovery Coordinator**.
-
-Responsibilities:
-
-- enforce the startup and recovery barrier;
-- coordinate account-wide reconciliation of orders, fills, positions, cash, margin, capacity commitments, external activity, and recognized non-trade events;
-- verify current authority epochs and trustworthy time;
-- require UNKNOWN and unattributed activity to be resolved or conservatively reserved;
-- verify ledger consistency and protective-order coverage;
-- produce a recovery-readiness decision;
-- request, but not issue, new live authorization.
-
-The Recovery Coordinator SHALL NOT automatically re-arm live trading.
-
-#### 5.7 Deployment and Identity Architecture — Explicit Responsibility Set
-
-If retained as a traceability owner, define it as an explicit architecture responsibility set or component group.
-
-It SHALL own:
-
-- live/non-live credential segregation;
-- workload identity;
-- least-privilege broker credential access;
-- deployment provenance;
-- independent safety-component release controls;
-- stale instance removal and fencing integration;
-- prevention of research, simulation, paper, and backtest paths from reaching live broker egress.
-
-#### 5.8 Replay and Evidence Service — Explicit Component
-
-If referenced in traceability, define it explicitly.
-
-It SHALL:
-
-- retain immutable or tamper-evident evidence sufficient to reconstruct authority, reservation, attempt, broker event, reconciliation, and operator action timelines;
-- support deterministic replay of architecture state transitions;
-- preserve evidence provenance and failure-domain metadata;
-- never substitute replay or audit for pre-trade prevention.
-
-### 31.4 Orthogonal State Model Requirement
-
-Add the following architectural rule.
-
-The system SHALL NOT represent the entire trading lifecycle as a single order-status enumeration.
-
-At minimum, the following state dimensions SHALL be modeled independently:
-
-1. **Intent State** — proposal and business authorization lifecycle;
-2. **Transmission Attempt State** — local send preparation and transport uncertainty;
-3. **Broker Order State** — broker-side order lifecycle;
-4. **Knowledge / Evidence State** — confidence, conflict, and reconciliation status;
-5. **Capacity State** — reservation, potentially-live, consumed, quarantined, and released state.
-
-A state such as `RECONCILED` belongs to the knowledge/evidence dimension, not the broker-order lifecycle.
-
-The architecture SHALL support combinations such as:
-
-```text
-Transmission Attempt: SENT_UNCONFIRMED
-Broker Order: UNKNOWN
-Knowledge: CONFLICTED
-Capacity: POTENTIALLY_LIVE
-```
-
-The detailed state machines are delegated to the Intent, Attempt, Order, and Knowledge State ADR. ADR-002-002 defines the capacity dimension and its coupling rules.
-
-### 31.5 Capacity and Release Invariants
-
-Add the following invariants.
-
-#### 7.1 Aggregate Envelope Invariant
-
-For every governed risk dimension:
-
-```text
-Confirmed Position Risk
-+ Potentially-Live Order Risk
-+ UNKNOWN Order Conservative Bound
-+ Unattributed External Exposure
-+ Trapped / Illiquid Exposure
-+ Replacement Overlap Risk
-+ Required Protective Reserve
-    <=
-Applicable Hard Safety Envelope
-```
-
-The Runtime Safety Profile may further restrict this bound but may never enlarge it.
-
-#### 7.2 Commitment Mapping Invariant
-
-Every potentially executable broker order SHALL map to exactly one active capacity commitment or to a specifically identified pre-committed protective lease consumption.
-
-No active capacity commitment may be reused for another economic action.
-
-#### 7.3 No Expiry of Economic Effect
-
-Authority may expire. Potential economic effect does not expire until terminal quantity is proven.
-
-A reservation may expire before transmission begins. Once an attempt may have reached the broker, the associated capacity SHALL remain committed, quarantined, or transferred to confirmed-position consumption until Final Quantity Proof exists.
-
-#### 7.4 Cancellation Release Rule
-
-Cancel acknowledgement alone SHALL NOT release capacity.
-
-Release after cancellation requires Final Quantity Proof or a stronger broker-specific proof approved by the Broker Capability ADR.
-
-#### 7.5 Replace Rule
-
-Unless the broker capability profile proves atomic cancel/replace semantics, the capacity model SHALL reserve the worst credible overlap of the original and replacement orders.
-
-#### 7.6 External and Non-Trade Changes
-
-External activity and recognized non-trade changes SHALL enter the reconciliation model as first-class inputs.
-
-The following SHALL NOT be assumed to be fills:
-
-- corporate actions;
-- symbol or instrument-identity changes;
-- expiry, exercise, assignment, or rollover;
-- broker administrative adjustments;
-- account transfers;
-- venue delisting or suspension changes.
-
-Unrecognized changes are treated as unattributed external exposure.
-
-### 31.6 Broker Capability Contract
-
-Add an architectural dependency on a Broker Capability Profile.
-
-No broker integration may be approved for live use without an explicit capability assessment covering at least:
-
-- client-generated order identity support;
-- duplicate-key and idempotency behavior;
-- broker order-number issuance semantics;
-- order-query completeness and pagination;
-- cumulative fill query and replay;
-- event ordering guarantees;
-- cancel acknowledgement semantics;
-- cancel/replace atomicity;
-- reduce-only or equivalent position-side enforcement;
-- account-wide order/fill/position visibility;
-- push versus poll account events;
-- rate-limit scope;
-- session and credential concurrency;
-- late-fill behavior;
-- reconnect and recovery behavior.
-
-Capability results SHALL be classified as:
-
-```text
-SUPPORTED
-SUPPORTED_WITH_RESTRICTION
-BEST_EFFORT
-UNAVAILABLE
-LIVE_SCOPE_PROHIBITED
-```
-
-Where a transmission outcome is UNKNOWN and broker-side deterministic deduplication is unavailable:
-
-1. a new broker order SHALL NOT be blindly submitted;
-2. all available broker evidence SHALL be queried;
-3. the original reservation SHALL remain fully conservative;
-4. unattributable activity SHALL force containment;
-5. live scope SHALL be reduced if safe attribution cannot be achieved.
-
-### 31.7 Partition and Trustworthy-Time Clarifications
-
-#### 9.1 Normal Risk-Increasing Authority
-
-Loss of verifiable current Safety Authority contact SHALL prevent new risk-increasing transmission.
-
-A previously permissive authority grant SHALL NOT be reused indefinitely.
-
-#### 9.2 Degraded Protective Authority
-
-A degraded protective lease SHALL:
-
-- be issued before the partition;
-- be bound to an authority epoch;
-- use a short bounded lifetime;
-- be verifiable against local monotonic elapsed time;
-- become invalid after process restart unless explicitly re-established;
-- be invalid whenever remaining validity cannot be positively proven;
-- limit account, instrument, action class, maximum quantity, and maximum risk-vector effect;
-- be single-owner and protected from duplicate consumption.
-
-Wall-clock deadline comparison alone is insufficient.
-
-#### 9.3 Stale Instance Fencing
-
-Leadership election alone is insufficient.
-
-Every state-changing safety domain SHALL provide a fencing mechanism such that an old process that resumes after partition, pause, or failover cannot:
-
-- commit or release capacity;
-- issue accepted Safety Authority grants;
-- consume an already reassigned protective lease;
-- transmit through broker egress.
-
-Detailed Safety Authority fencing is delegated to the Safety Authority Validity and Partition ADR. Capacity fencing is decided by ADR-002-002.
-
-### 31.8 Protective Capacity Clarifications
-
-Add or replace protective-capacity wording with the following.
-
-#### 10.1 Guarantee Levels
-
-Protective resources SHALL be classified by actual guarantee level:
-
-```text
-PHYSICALLY_RESERVED
-LOGICALLY_RESERVED
-PRIORITIZED_ONLY
-BEST_EFFORT
-UNAVAILABLE
-```
-
-Priority SHALL NOT be described as reservation.
-
-#### 10.2 Common-Mode Disclosure
-
-Where a broker exposes only one serialized session, one global account rate limit, or one shared credential path, protective API capacity may be only `PRIORITIZED_ONLY` or `BEST_EFFORT`.
-
-Such limitations SHALL be recorded as residual risk and SHALL influence:
-
-- normal traffic admission;
-- earlier degraded-mode thresholds;
-- maximum live scope;
-- protective action assumptions;
-- production acceptance.
-
-#### 10.3 Intermediate-State Safety
-
-A protective action is permitted in degraded mode only when conservative analysis proves that every credible partial-fill fraction and execution ordering remains within the Hard Safety Envelope and does not create a worse aggregate-risk state than taking no action.
-
-If this cannot be proven, the action is treated as risk increasing.
-
-#### 10.4 Protection Replacement Gap
-
-When a broker cannot atomically replace a protective order:
-
-- the position SHALL be treated as unprotected during the replacement gap;
-- the gap SHALL be bounded and measured;
-- replacement failure SHALL have a defined safe response;
-- the broker-specific residual risk SHALL be approved;
-- capacity calculation SHALL account for either overlap or protection absence.
-
-#### 10.5 Protective Ownership and Cancellation
-
-Every protective order SHALL carry an ownership classification:
-
-```text
-STRATEGY_OWNED
-EXECUTION_OWNED
-SAFETY_OWNED
-OPERATOR_OWNED
-```
-
-A safety-owned protective order SHALL NOT be cancelled by ordinary strategy logic.
-
-A single Cancellation Arbiter SHALL evaluate whether cancellation removes required protection. Protective evaluation precedes ordinary cancellation authority.
-
-### 31.9 Reconciliation and Evidence Amendments
-
-#### 11.1 No Single Unconditional Truth
-
-Replace any unconditional statement that broker or venue records are absolute truth with:
-
-> Broker and venue evidence is externally authoritative evidence but no single response is treated as unconditional truth. State is established through evidence consistency evaluation, source provenance, temporal ordering, and conservative bounds. Unresolved conflict produces UNKNOWN state and blocks new risk.
-
-#### 11.2 Per-Field Confidence and Bounds
-
-Reconciliation SHALL maintain confidence or conservative bounds separately for at least:
-
-- order existence;
-- broker order identity;
-- cumulative filled quantity;
-- remaining executable quantity;
-- position quantity;
-- cash and margin;
-- protective coverage;
-- instrument identity.
-
-A single blended confidence score is insufficient for risk release.
-
-#### 11.3 External-Activity Detection Bound
-
-For broker integrations without real-time account events, the architecture SHALL define a measurable maximum external-activity detection bound.
-
-Normal action size and aggregate headroom SHALL be constrained so that plausible external activity during the detection window cannot exceed the Hard Safety Envelope.
-
-#### 11.4 Startup and Recovery Barrier
-
-New risk SHALL remain blocked until the Recovery Coordinator verifies:
-
-- open orders and potentially-live attempts;
-- cumulative fills;
-- positions;
-- cash and margin;
-- Risk Capacity Ledger state;
-- protective-order coverage;
-- external and unattributed activity;
-- recognized non-trade changes;
-- current authority epochs;
-- trustworthy time;
-- valid safety configuration.
-
-### 31.10 Re-arm Governance
-
-Add the following rule.
-
-Automatic re-arm is prohibited.
-
-Re-arm requires all of the following:
-
-1. trustworthy time restored;
-2. current Safety Authority epoch established;
-3. account-wide reconciliation completed;
-4. no unresolved UNKNOWN order unless fully conservatively reserved and explicitly accepted for restricted recovery;
-5. no unresolved unattributed external activity;
-6. Risk Capacity Ledger consistency verified;
-7. Hard Safety Envelope and Runtime Safety Profile versions verified;
-8. protective coverage evaluated;
-9. Recovery Coordinator readiness decision;
-10. new Live Authorization issued;
-11. explicit human control according to the approved separation-of-duty policy.
-
-The same human or service identity SHALL NOT both enlarge limits and arm live trading.
-
-### 31.11 Failure-Domain Allocation Requirement
-
-Add a mandatory Failure-Domain Allocation Matrix covering at least:
-
-- process and runtime;
-- pod and node;
-- cluster and region;
-- datastore;
-- Kafka or equivalent event infrastructure;
-- Redis or equivalent cache/stream infrastructure;
-- network path;
-- broker session;
-- credential and workload identity;
-- deployment pipeline;
-- clock source;
-- risk-calculation library;
-- configuration parser and distribution path.
-
-For each shared dependency, RFC-002 or a delegated ADR SHALL identify:
-
-- affected authorities;
-- failure consequence;
-- containment behavior;
-- whether the dependency is physically independent, logically independent, or common-mode;
-- residual risk;
-- verification method.
-
-Logical service separation SHALL NOT be presented as proof of physical failure independence.
-
-### 31.12 Verification and Acceptance Bound Requirements
-
-Each Critical architecture property SHALL identify:
-
-- triggering condition;
-- detection bound;
-- containment bound;
-- responsible component;
-- observable evidence;
-- forbidden outcome;
-- pass/fail criterion;
-- fault-injection or replay scenario.
-
-At minimum, the verification set SHALL include:
-
-- duplicate active committer;
-- stale capacity writer;
-- stale Safety Authority;
-- crash before send;
-- crash after send;
-- acknowledgement loss;
-- partial fill;
-- cancel crossing fill;
-- replace crossing fill;
-- late fill;
-- process restart with live broker order;
-- external HTS order;
-- broker query omission;
-- time-source loss during partition;
-- protective reserve exhaustion;
-- ordinary traffic blocking the protective path;
-- corporate action or instrument-identity change.
-
-Numeric values belong in an approved Safety Profile or Verification Specification, not necessarily in the architecture RFC, but the requirement to define and verify them is architectural.
-
-### 31.13 Review Finding Disposition
-
-| Finding | Disposition |
+| Finding | Consolidated disposition |
 |---|---|
-| A-01 split-brain double commitment | RFC patch + ADR-002-002 |
-| A-02 stale Safety Authority | RFC patch + ADR-002-003 |
-| A-03 broker idempotency assumption | RFC patch + ADR-002-004 |
-| A-04 protective commit contradiction | RFC patch + ADR-002-001 patch + ADR-002-002 |
-| A-05 cancel/fill release race | RFC invariant + ADR-002-002 |
-| A-06 undefined components | Resolved in component additions |
-| A-07 execution-side partition time | RFC rule + Trustworthy Time ADR |
-| A-08 soft protective reserve | RFC classification + ADR-002-001 patch |
-| A-09 protection replacement gap | RFC rule + ADR-002-001 patch |
-| A-10 corporate actions | RFC input model + new ADR |
-| A-11 external detection latency | RFC measurable bound + Broker/Reconciliation ADRs |
-| A-12 unquantified containment | RFC verification obligation |
-| A-13 split cancellation authority | Cancellation Arbiter rule |
-| A-14 minor over-specification | Mode table retained; change governance delegated to ADR |
+| A-01 split-brain double commitment | §9.1, §10.5, §14, and ADR-002-002 |
+| A-02 stale Safety Authority | §16.5, §17.3, and ADR-002-003 |
+| A-03 broker idempotency assumption | §13.6 and ADR-002-004 |
+| A-04 protective commit contradiction | §9.1, §21, ADR-002-001, and ADR-002-002 |
+| A-05 cancel/fill release race | §13.3, §14.4, and ADR-002-002 |
+| A-06 undefined components | §10.18 through §10.22 |
+| A-07 execution-side partition time | §16.5 and ADR-002-008 |
+| A-08 soft protective reserve | §21.1–§21.2 and ADR-002-001 |
+| A-09 protection replacement gap | §21.4 and ADR-002-011 |
+| A-10 corporate actions | §14.7 and ADR-002-010 |
+| A-11 external detection latency | §15.3 and ADR-002-004/006 |
+| A-12 unquantified containment | §29 and VER-002-001 |
+| A-13 split cancellation authority | §9.1, §10.22, and §21.5 |
+| A-14 minor over-specification | §20 mode table retained; detailed governance remains delegated |
 
----
 
 ## 32. Review History
 
@@ -1904,5 +1711,5 @@ Numeric values belong in an approved Safety Profile or Verification Specificatio
 * Added re-arm governance prohibiting automatic re-arm.
 * Added the Failure-Domain Allocation requirement.
 * Added verification and acceptance-bound requirements.
-* Expanded the ADR backlog (ADR-002-009 through ADR-002-017) and set ADR-002-002 to Proposed.
+* Expanded the ADR backlog through ADR-002-011 and registered ADR-002-002 through ADR-002-004 as Proposed.
 * Resolves review findings A-01 through A-14.
