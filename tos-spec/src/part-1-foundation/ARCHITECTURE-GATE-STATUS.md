@@ -1,9 +1,9 @@
 # TOS Safety Architecture Gate Status
 
 - **Date:** 2026-07-13
-- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-012
-- **Architecture Documentation:** Phase B decision set and the follow-on RCL consensus decision are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-012 PASS at document-review level; no status or live-readiness promotion
+- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-013
+- **Architecture Documentation:** Phase B and the follow-on RCL consensus and final-egress security decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-012 PASS at document-review level; ADR-002-013 awaits independent document review; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -26,8 +26,9 @@ The following design decisions now have normative documents:
 11. ADR-002-011 Protective Replacement and Protection-Gap Control
 12. ADR-002-010 Corporate Actions and Non-Trade State Changes
 13. ADR-002-012 Risk Capacity Ledger Persistence, Consensus, and Writer Fencing
-14. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
-15. Evidence Register and configuration/evidence templates
+14. ADR-002-013 Egress Gateway Credential, Route, and Commit-Proof Security
+15. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
+16. Evidence Register and configuration/evidence templates
 
 ---
 
@@ -39,6 +40,9 @@ The current bundle decides:
 - each Capacity Domain uses one quorum-replicated deterministic Safety Commit Log; only quorum-durable committed state may create capacity or transmission authority.
 - minority, stale, removed, restored, and conflicting RCL writers are fenced at consensus admission, state-machine mutation, and final egress.
 - capability authorization and the final `ClaimCapabilityAndMarkSendStarted` transition are ordered against the exact committed capacity revision; a stale read or local cache cannot create permission.
+- the Final Egress Trust Boundary is defined by actual possession of usable live-order authority plus a broker-order route; any downstream signer, proxy, queue, or session layer with independent broker effect inherits the full final-gate obligations.
+- Commit Proof at egress is a quorum-sufficient certificate for the exact claim, request, principal, credential, route, and generation set; leader receipt, local journal, audit, or projection is insufficient.
+- stale egress replacement, credential rotation, and recovery are deny-first and cannot activate a new generation until every predecessor path is hard-fenced or an approved expiry fence is positively proven.
 - Aggregate Risk Authority owns policy evaluation but does not independently mutate capacity.
 - stale capacity writers are fenced by monotonic epochs.
 - Broker Adapter or broker-egress gateway is the final transmission enforcement point.
@@ -88,7 +92,7 @@ The review files were section-level amendments, not canonical-document diffs. Th
 | Protective capacity | §21 | Distinguished reservation from priority; added intermediate-state proof, replacement gaps, ownership, and cancellation arbitration | SAFE-001, 002, 040, 043, 048 |
 | Reconciliation and recovery | §15 and §23 | Added per-field bounds, external-detection bound, startup barrier, and explicit non-automatic re-arm gate | SAFE-022, 023, 024, 041, 044, 046, 048 |
 | Failure domains and verification | §24 and §29 | Added common-mode allocation and measurable trigger/detection/containment/pass-fail obligations | SAFE-011, 041, 045, 048, 051, 052 |
-| ADR backlog and findings | §26 and §31 | Preserved IDs ADR-002-002 through 012 and mapped A-01 through A-14 to canonical sections | Corrected the erroneous “009 through 017” history note |
+| ADR backlog and findings | §26 and §31 | Preserved IDs ADR-002-002 through 013 and mapped A-01 through A-14 to canonical sections | Corrected the erroneous “009 through 017” history note |
 
 ### 3.2 ADR-002-001 v0.2
 
@@ -107,26 +111,27 @@ The review files were section-level amendments, not canonical-document diffs. Th
 
 - RFC-000 was not changed because no contradiction was found.
 - Patch-local section numbers are provenance only; canonical section numbers now govern.
-- ADR IDs remain ADR-002-001 through ADR-002-012; ADR-002-002 through ADR-002-012 remain Proposed.
+- ADR IDs remain ADR-002-001 through ADR-002-013; ADR-002-002 through ADR-002-013 remain Proposed.
 - Every `SAFE-xxx` identifier in the RFC-002 and ADR-002-001 traceability tables exists in RFC-001.
-- The Evidence Register contains 147 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, and RCLP coverage for ADR-002-005 through ADR-002-012. Registration created no verification evidence or live authority.
+- The Evidence Register contains 159 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, and EGRESS coverage for ADR-002-005 through ADR-002-013. Registration created no verification evidence or live authority.
 
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
 
-ADR-002-005 through ADR-002-012 are authored as `Proposed`. Phase B and follow-on RCL-consensus authorship are complete, but none of those decisions is accepted.
+ADR-002-005 through ADR-002-013 are authored as `Proposed`. Phase B and follow-on RCL-consensus and final-egress-security authorship are complete, but none of those decisions is accepted.
 
-The egress-currentness protocol is selected in ADR-002-007 §§9.1–9.5, and ADR-002-012 selects its quorum ordering and RCL writer-fencing mechanism class. The conforming replicated-state-machine product, voter and failure-domain topology, authenticated session transport, Commit Proof format, durable journal, numeric bounds, and credential/route isolation remain acceptance blockers. Other acceptance blockers remain for the concrete Failure-Domain Allocation Matrix and deployment profile, safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, Time Health Snapshot distribution, and authenticated human dual-control roles.
+ADR-002-007 selects the egress-currentness protocol, ADR-002-012 selects quorum ordering and RCL writer fencing, and ADR-002-013 selects the effective final-egress trust boundary, credential/route confinement, quorum-sufficient proof, and hard-fence semantics. The conforming replicated-state-machine product, non-exportable signer or credential service, voter and Active Egress Principal topology, identity-aware route, proof encoding/cryptography, authenticated session transport, broker hard-fence mechanism, numeric bounds, and concrete Failure-Domain Allocation Matrix remain acceptance blockers. Other blockers remain for safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, Time Health Snapshot distribution, and authenticated human dual-control roles.
 
-Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-012, but all remain `NOT_IMPLEMENTED`. All numeric Verification Profile values remain unapproved. These unresolved items reduce authority and keep live operation prohibited.
+Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-013, but all remain `NOT_IMPLEMENTED`. Verification Profile `0.4-PROPOSED` and all numeric values remain unapproved. These unresolved items reduce authority and keep live operation prohibited.
 
 ### 4.1 Latest Review Disposition
 
-The latest architecture review passed ADR-002-012 with no Critical or Major finding after adversarially tracing all 27 specified unsafe sequences. Its sole Minor finding was the risk that ADR-002-007 §9.4 could be read as permitting a host-local capability claim; §9.4 now explicitly requires ADR-002-012's quorum-committed `ClaimCapabilityAndMarkSendStarted` transition and Commit Proof. The durable review record is attached as a git note to commit `f6a5200f`. This disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
+The latest completed architecture review passed ADR-002-012 with no Critical or Major finding after adversarially tracing all 27 specified unsafe sequences. Its sole Minor finding was corrected in ADR-002-007 §9.4, and the durable review record remains attached as a git note to commit `f6a5200f`. ADR-002-013 was authored after that review and is outside its reviewed set. This disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
 
 ```text
 ADR-002-002 through ADR-002-012 status: Proposed
+ADR-002-013 status: Proposed; independent document review pending
 ADR acceptance: NO
 Restricted-live readiness: NO
 Production readiness: NO
@@ -153,9 +158,10 @@ The Proposed status is preserved because the applicable approval gates, includin
 | ADR-002-010 | Proposed | YES | NO |
 | ADR-002-011 | Proposed | YES | NO |
 | ADR-002-012 | Proposed | YES | NO |
+| ADR-002-013 | Proposed | YES | NO |
 | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
 | Broker-specific Capability Profile | Template only | YES | NO |
-| Verification evidence | 147 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Verification evidence | 159 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
 
 ---
 
@@ -179,8 +185,8 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Select and security-review a conforming RCL replicated-state-machine product, voter/failure-domain topology, hard-fence profile, Commit Proof, and egress-currentness implementation substrate.
-2. Assign implementation owners, evidence owners, and independent reviewers for all 147 items in EVIDENCE-REGISTER-002.csv.
+1. Independently review ADR-002-013; select and security-review a conforming RCL product, non-exportable signer or credential service, voter/Active Egress Principal/failure-domain topology, identity-aware route, Quorum Commit Certificate, and Hard Egress Fence.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 159 items in EVIDENCE-REGISTER-002.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, and live-authorization state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.

@@ -479,7 +479,7 @@ These costs are accepted because safety claims without failure-domain proof are 
 ## 21. Open Questions
 
 1. Which conforming product, voter topology, Capacity Domain allocation, and hard-fence profile implement ADR-002-012 for each deployment profile?
-2. Which consensus substrate, authenticated currentness-session transport, durable egress journal, and credential/route isolation will implement the selected ADR-002-007 §§9.1–9.5 protocol?
+2. Which conforming ADR-002-013 signer/credential, Active Egress Principal, order-route, Quorum Commit Certificate, and Hard Egress Fence topology will implement the selected ADR-002-007 §§9.1–9.5 protocol?
 3. Which Safety Cell boundaries and deployment topology will be approved for the first restricted-live profile?
 4. Which dependencies require physical separation, and which common modes will be explicitly accepted as residual risk?
 5. How will region loss and broker-session continuity be tested without creating live economic effect?
@@ -495,7 +495,7 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 
 1. a concrete deployment profile and Failure-Domain Allocation Matrix are approved;
 2. the applicable ADR-002-012 quorum, writer-fencing, membership, and recovery mechanisms are implemented and their required RCLP evidence passes;
-3. the ADR-002-007 §§9.1–9.5 egress-currentness protocol has an approved implementation substrate, isolated credential/route topology, and numeric bounds;
+3. the ADR-002-007 §§9.1–9.5 protocol and ADR-002-013 final-egress security boundary have an approved implementation substrate, isolated credential/route topology, Hard Egress Fence, executed EGRESS evidence, and numeric bounds;
 4. dedicated evidence items are registered for every `FD-AC-*` case;
 5. required EV-L1, EV-L2, and EV-L3 fault evidence is executed and retained;
 6. all isolation claims and residual common modes receive independent review;

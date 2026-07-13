@@ -120,6 +120,48 @@ capabilities:
     timezone: TBD
     precision: TBD
 
+egress_security:
+  final_egress_boundary_id: TBD
+  egress_generation: TBD
+  active_principal_model: TBD
+  active_principals: []
+  usable_live_order_authority_inventory: []
+  non_exportable_signer:
+    status: UNKNOWN
+    principal_binding: TBD
+    arbitrary_payload_signing_prohibited: true
+    evidence_refs: []
+  broker_order_route:
+    status: UNKNOWN
+    identity_aware: false
+    live_order_destinations: []
+    mutation_endpoint_allowlist: []
+    approved_intermediaries: []
+    direct_and_legacy_paths_prohibited: true
+    evidence_refs: []
+  quorum_commit_certificate:
+    status: UNKNOWN
+    schema_version: TBD
+    membership_and_quorum_rule: TBD
+    trust_bundle_generation: TBD
+    leader_only_receipt_prohibited: true
+    evidence_refs: []
+  hard_egress_fence:
+    status: UNKNOWN
+    mechanisms: []
+    bound_ms: null
+    old_session_acceptance_proof: TBD
+    evidence_refs: []
+  broker_sessions:
+    principal_bound: false
+    generation_bound: false
+    reconnect_flush_prohibited: true
+    simultaneous_live_sessions: UNKNOWN
+  external_manual_authority:
+    portals_and_support_paths: []
+    disablement_or_detection_policy: TBD
+    evidence_refs: []
+
 uncertain_send_policy:
   containment_scope: ACCOUNT
   network_retry: PROHIBITED_UNLESS_PROVEN_IDEMPOTENT

@@ -936,7 +936,8 @@ This ADR interfaces with:
 6. ADR-002-005 — Intent, Transmission Attempt, Broker Order, and Knowledge State Model;
 7. ADR-002-009 — Failure-Domain Isolation and Deployment Safety;
 8. ADR-002-012 — Risk Capacity Ledger Persistence, Consensus, and Writer Fencing;
-9. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
+9. ADR-002-013 — Egress Gateway Credential, Route, and Commit-Proof Security;
+10. VER-002-001 — Safety Authority and Broker Capability Verification Evidence Specification.
 
 ---
 
@@ -946,8 +947,8 @@ The following may remain open while Proposed but must be resolved before Accepte
 
 1. What exact Authority Domain granularity is used?
 2. Which conforming product and namespace allocation implement epoch ordering on ADR-002-012's Safety Commit Log without collapsing authority separation?
-3. How does Broker Adapter obtain currentness proof without a bypass or unsafe cache?
-4. What hard-fence mechanisms are available per broker and credential model?
+3. Which conforming ADR-002-013 credential, route, principal, and Commit-Proof mechanisms enforce currentness without a bypass or unsafe cache?
+4. Which ADR-002-013 Hard Egress Fence is available per broker and credential model?
 5. What is the maximum degraded lease duration per host time source?
 6. What drift, suspension, and transport-delay assumptions are approved?
 7. How is lease-exclusive scope represented and serialized?
@@ -966,6 +967,7 @@ ADR-002-003 may move from **Proposed** to **Accepted** only when:
 - the Authority Domain is defined;
 - epoch allocation and advancement are implemented and demonstrated;
 - the applicable ADR-002-012 epoch-ordering and writer-fencing mechanism is implemented and its required RCLP evidence passes;
+- the applicable ADR-002-013 final-egress confinement and Hard Egress Fence are implemented and their required EGRESS evidence passes;
 - stale-epoch rejection is enforced by Risk Capacity Ledger and broker egress;
 - no direct live broker bypass exists;
 - normal authority fails closed under partition;

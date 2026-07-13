@@ -53,6 +53,13 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: QUARANTINE_UNKNOWN
+  B_egress_hard_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
   B_stale_epoch_reject:
     value_ms: null
     semantics: hard_maximum

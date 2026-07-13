@@ -603,7 +603,7 @@ The following may remain open while Proposed but SHALL be resolved before accept
 
 1. What human roles, quorum, authentication, and approval expiry implement dual control?
 2. What service stores and signs Recovery Evidence Packages and authorization records?
-3. Which conforming ADR-002-012 product, authenticated session transport, Commit Proof format, and durable egress journal implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, and `B_capability_claim_to_send`?
+3. Which conforming ADR-002-012 consensus product and ADR-002-013 credential, route, principal, Quorum Commit Certificate, authenticated session, and hard-fence mechanisms implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, and `B_egress_hard_fence`?
 4. What exact scope dimensions and risk vectors are supported by the first restricted-live profile?
 5. How are atomic profile activation and rollback implemented across failure domains?
 6. Which changes require full re-arm versus immediate scoped suspension and later re-evaluation?
@@ -624,8 +624,9 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 - the Recovery Evidence Package and Live Authorization contracts are implemented;
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;
 - the selected currentness distribution and fenced irreversible-send protocol in §§9.1–9.5 is implemented and independently security-reviewed;
+- the applicable ADR-002-013 final-egress trust boundary, proof validation, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;
 - every invalidation trigger fails closed within its approved bound;
-- `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, and `B_capability_claim_to_send` are approved, measured, and enforced at every final egress;
+- `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, and `B_egress_hard_fence` are approved, measured, and enforced at every final egress;
 - automatic re-arm and stale authorization replay are demonstrably impossible;
 - partial re-arm cannot expand beyond its exact scope;
 - VER-002-001 and the Evidence Register cover every Critical acceptance case;

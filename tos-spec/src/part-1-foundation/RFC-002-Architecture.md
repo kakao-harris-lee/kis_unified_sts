@@ -1523,6 +1523,8 @@ The architecture SHALL provide:
 
 Detailed security controls MAY be specified in a subordinate RFC.
 
+ADR-002-013 defines the normative Final Egress Trust Boundary, usable live-order authority, credential and broker-order route confinement, quorum-sufficient Commit Proof validation, stale-egress hard fencing, and fail-closed credential rotation and recovery rules.
+
 ---
 
 ## 26. Architectural Decision Records
@@ -1543,8 +1545,9 @@ The following ADRs are initially required.
 | ADR-002-010 | Corporate Actions and Non-Trade State Changes                         | Proposed |
 | ADR-002-011 | Protective Replacement and Protection-Gap Control                     | Proposed |
 | ADR-002-012 | Risk Capacity Ledger Persistence, Consensus, and Writer Fencing        | Proposed |
+| ADR-002-013 | Egress Gateway Credential, Route, and Commit-Proof Security             | Proposed |
 
-ADR-002-002 through ADR-002-012 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus decision ADR-002-012 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-012, including one-to-one dedicated cases for ADR-002-005 through ADR-002-012. All 147 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
+ADR-002-002 through ADR-002-013 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus and final-egress security decisions ADR-002-012 → ADR-002-013 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-013, including one-to-one dedicated cases for ADR-002-005 through ADR-002-013. All 159 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
 
 ---
 
@@ -1593,10 +1596,10 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
 ## 28. Open Architectural Decisions
 
-ADR-002-005 through ADR-002-012 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, and RCL consensus models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
+ADR-002-005 through ADR-002-013 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, and final-egress security models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
 
 1. Which conforming replicated-state-machine product, storage engine, voter topology, and durability configuration implement ADR-002-012's selected quorum Safety Commit Log mechanism?
-2. Which linearizable substrate, authenticated currentness-session transport, durable egress journal, and credential/route isolation implement ADR-002-007's selected fenced single-use capability protocol and propagate writer and Authority Epoch fences to broker egress?
+2. Which conforming non-exportable signer or credential service, identity-aware order route, Quorum Commit Certificate format, Active Egress Principal topology, and Hard Egress Fence implement ADR-002-013 while carrying ADR-002-007 and ADR-002-012 generations to the broker-send boundary?
 3. What deployment topology provides the required failure-domain isolation?
 4. What numeric detection, containment, protective-gap, lease, and retry bounds are approved?
 5. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
@@ -1625,6 +1628,7 @@ At minimum, the verification set SHALL include:
 
 * concurrent authorization and duplicate active committer;
 * quorum loss, minority leader survival, membership change, committed-prefix rollback, and conflicting restore history;
+* direct credential/route bypass, stale egress resume, proof substitution, downstream replay, credential rotation overlap, and hard-fence failure;
 * stale capacity writer and stale Safety Authority;
 * crash before send and crash after send;
 * acknowledgement loss and duplicate message;
@@ -1717,8 +1721,9 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Added re-arm governance prohibiting automatic re-arm.
 * Added the Failure-Domain Allocation requirement.
 * Added verification and acceptance-bound requirements.
-* Expanded the ADR register through ADR-002-012 and registered ADR-002-002 through ADR-002-012 as Proposed.
+* Expanded the ADR register through ADR-002-013 and registered ADR-002-002 through ADR-002-013 as Proposed.
 * Added the Phase B failure-domain isolation, protective-replacement, and corporate-action/non-trade decisions without changing verification or live-readiness status.
 * Selected the quorum-replicated deterministic Safety Commit Log mechanism class for RCL persistence, consensus, writer fencing, currentness ordering, and recovery in ADR-002-012; concrete products and deployment values remain open.
-* Expanded VER-002-001 and the Evidence Register to 147 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-012.
+* Defined the effective Final Egress Trust Boundary, credential and route confinement, quorum-sufficient Commit Proof validation, and stale-egress hard fencing in ADR-002-013.
+* Expanded VER-002-001 and the Evidence Register to 159 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-013.
 * Resolves review findings A-01 through A-14.

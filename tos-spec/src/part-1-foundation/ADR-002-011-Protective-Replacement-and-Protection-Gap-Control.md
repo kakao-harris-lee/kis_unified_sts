@@ -518,7 +518,7 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 2. numeric gap, overlap, proof, and containment bounds receive human approval;
 3. dedicated evidence items are registered for every `PR-AC-*` case;
 4. required EV-L1, EV-L2, and EV-L3 evidence covers partial-fill and failure interleavings;
-5. Risk Capacity Ledger, Cancellation Arbiter, final egress, and recovery behavior receive independent review;
+5. Risk Capacity Ledger, Cancellation Arbiter, ADR-002-013 final egress and credential/route boundary, and recovery behavior receive independent review with applicable EGRESS evidence;
 6. residual broker-resource and market-liquidity risks are explicitly accepted;
 7. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 

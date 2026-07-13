@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **147**
-- NOT_IMPLEMENTED: **147**
+- Total evidence items: **159**
+- NOT_IMPLEMENTED: **159**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -170,6 +170,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | RCLP-EV-010 | RCL Persistence and Consensus | Snapshot, Compaction, and Restore Integrity | ADR-002-012 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
 | RCLP-EV-011 | RCL Persistence and Consensus | Protective Sub-Ledger Rejoin | ADR-002-012 | EV-L3 | NOT_IMPLEMENTED | TBD | TBD |
 | RCLP-EV-012 | RCL Persistence and Consensus | Disaster Recovery and Conflicting History | ADR-002-012 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-001 | Egress Security | Credential and Route Authority Inventory | ADR-002-013 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-002 | Egress Security | Direct and Stale-Principal Bypass | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-003 | Egress Security | Environment, Scope, Endpoint, and Route Substitution | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-004 | Egress Security | Quorum Commit Certificate Validation | ADR-002-013 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-005 | Egress Security | Proof, Capability, and Request Replay or Substitution | ADR-002-013 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-006 | Egress Security | Downstream Intermediary and Reconnect Boundary | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-007 | Egress Security | Restrictive Race at Actual Send Boundary | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-008 | Egress Security | Deny-First Credential and Trust Rotation | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-009 | Egress Security | Failover, Rollback, and Removed-Principal Resume | ADR-002-013 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-010 | Egress Security | Credential Compromise and Unknown Revocation | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-011 | Egress Security | Degraded Protective Egress Exclusivity | ADR-002-013 | EV-L3/5+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-012 | Egress Security | Manual Authority and Recovery Cannot Re-arm | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

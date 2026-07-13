@@ -659,12 +659,12 @@ The mechanism class is selected. The following product and deployment choices re
 
 1. Which replicated-state-machine product and storage engine meet the deterministic quorum and durability contract?
 2. What `f`, voter count, zone/region allocation, and Capacity Domain boundaries are approved for the first deployment profile?
-3. What Commit Proof format and authenticated currentness transport are used by the Egress Gateway?
+3. Which ADR-002-013 Quorum Commit Certificate format, trust bundle, exact egress principal, and authenticated currentness transport are used by the Egress Gateway?
 4. How are RCL and Currentness Sequencer namespaces transactionally composed without collapsing separation of duties?
 5. What deterministic schema-evolution rules apply during mixed-version deployment?
 6. What snapshot interval, compaction horizon, idempotency retention, and evidence-retention period are approved?
 7. What joint-consensus or equivalent membership-change protocol is provided by the selected product?
-8. What hard fence proves an unavailable former cluster or removed voter cannot reach accepted egress?
+8. Which ADR-002-013 Hard Egress Fence proves an unavailable former cluster or removed voter cannot reach accepted egress?
 9. What recovery media and procedure prove the highest committed prefix after a multi-site failure?
 10. What local durable state machine implements degraded protective sub-ledger consumption?
 11. Which numeric commit, currentness, claim-to-send, failure-detection, and recovery bounds are approved?
@@ -683,10 +683,11 @@ ADR-002-012 SHALL remain **Proposed** until all of the following are complete:
 3. Writer Epoch, membership generation, Restore Generation, Commit Proof, and stale-read rejection are implemented at every required boundary;
 4. capability authorization and `ClaimCapabilityAndMarkSendStarted` share the committed ordering required by §§11–12;
 5. no alternate capacity mutation or live broker path bypasses the RCL and Egress Gateway;
-6. membership change, quorum loss, snapshot, restore, and disaster-recovery procedures are implemented and security-reviewed;
-7. `RCLP-EV-001` through `RCLP-EV-012` are registered, executed at their required levels, retained, and independently reviewed;
-8. applicable RC, SA, REARM, FD, and cross-system evidence passes;
-9. numeric bounds and the Failure-Domain Allocation Matrix are approved;
-10. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+6. the applicable ADR-002-013 Quorum Commit Certificate validation, exact egress-principal binding, credential/route confinement, and Hard Egress Fence are implemented and their required EGRESS evidence passes;
+7. membership change, quorum loss, snapshot, restore, and disaster-recovery procedures are implemented and security-reviewed;
+8. `RCLP-EV-001` through `RCLP-EV-012` are registered, executed at their required levels, retained, and independently reviewed;
+9. applicable RC, SA, REARM, FD, and cross-system evidence passes;
+10. numeric bounds and the Failure-Domain Allocation Matrix are approved;
+11. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship and document review do not satisfy these conditions. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.

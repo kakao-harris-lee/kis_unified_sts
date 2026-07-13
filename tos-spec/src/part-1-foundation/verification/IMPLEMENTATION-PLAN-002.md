@@ -2,8 +2,8 @@
 
 - **Status:** PROPOSED PLAN — not approved; no implementation code has been written.
 - **Date:** 2026-07-13
-- **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..012 evidence cases.
-- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..012, VER-002-001. Current VER and Evidence Register coverage includes 147 items and one-to-one dedicated acceptance cases for ADR-002-005..012; registration is not executed evidence.
+- **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..013 evidence cases.
+- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..013, VER-002-001. Current VER and Evidence Register coverage includes 159 items and one-to-one dedicated acceptance cases for ADR-002-005..013; registration is not executed evidence.
 - **Authorization:** This plan authorizes nothing. Production, live, and ADR-Accepted status remain NO.
 
 ---
@@ -32,7 +32,7 @@ This document exists so those gates are explicit and ratifiable, not bypassed.
 |---|---|---|
 | Approve/replace bounds in `VERIFICATION-PROFILE-002.yaml` | Safety/Risk authority | Tests need pass/fail thresholds; unapproved bounds are not bounds |
 | Measure broker-specific bounds from an approved Broker Capability Profile | Broker/Exec eng | Final Quantity Proof, late fill, rate/session, query, replacement gap/overlap, and non-trade detection/reconciliation |
-| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (147 items); independence is mandatory |
+| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (159 items); independence is mandatory |
 | Ratify this plan, the §2 greenfield boundary, and the mechanism substrate | Architecture board | Determines what is implemented and where |
 
 I will not fabricate any of these. I can *draft candidates* (done for bounds; role scheme in §3) for you to ratify.
@@ -54,14 +54,15 @@ The greenfield boundary requires:
 2. the Risk Capacity Ledger is the sole capacity mutation and serialization authority;
 3. the Safety Authority issues scoped capabilities through the Currentness Sequencer
    without holding broker credentials;
-4. one approved Egress Gateway identity per Safety Cell holds the usable live order
-   credential and route and enforces the fenced claim-to-send boundary;
+4. one ADR-002-013 logical Broker Egress Authority per Safety Cell and scope confines
+   every usable live-order credential, route, active principal, session, signer, and downstream
+   intermediary inside the effective Final Egress Trust Boundary;
 5. recovery, reconciliation, operator, evidence, and market-data components cannot
    bypass the Egress Gateway or convert missing/unknown state into permission;
-6. ADR-002-012's quorum-replicated deterministic Safety Commit Log is the required
-   RCL/currentness mechanism class; the conforming product, voter/failure-domain allocation,
-   Commit Proof, hard-fence profile, and physical topology remain architecture-board decisions
-   and verification targets.
+6. ADR-002-012's quorum-replicated deterministic Safety Commit Log and ADR-002-013's
+   quorum-sufficient proof, credential/route confinement, exact-principal binding, and deny-first
+   hard-fence semantics are required; conforming products, cryptography, voter/principal/failure-domain
+   allocation, broker fence, and physical topology remain architecture-board decisions and verification targets.
 
 ---
 
@@ -70,7 +71,7 @@ The greenfield boundary requires:
 Role placeholders for `EVIDENCE-REGISTER-002`; a single person may hold several,
 subject to the exclusions:
 
-- **RC-Impl / RCLP-Impl / SA-Impl / TT-Impl / LA-Impl / BC-Impl** — implement Risk Capacity, quorum persistence/fencing, Safety Authority, Trustworthy Time, Live Authorization, and Broker layers.
+- **RC-Impl / RCLP-Impl / EgressSec-Impl / SA-Impl / TT-Impl / LA-Impl / BC-Impl** — implement Risk Capacity, quorum persistence/fencing, final-egress security, Safety Authority, Trustworthy Time, Live Authorization, and Broker layers.
 - **State-Impl / Recon-Impl / FD-Impl / PR-Impl / NT-Impl** — implement orthogonal state, evidence confidence, failure-domain fencing, protective replacement, and non-trade transition layers.
 - **Harness-Eng** — deterministic fault injection + evidence capture.
 - **Evidence-Owner** — runs a case, produces the manifest + artifacts.
@@ -92,6 +93,8 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   models (ADR-002-003/007/008) as pure, non-transmitting models.
 - Implement the ADR-002-012 deterministic command, committed-prefix, Writer Epoch,
   membership-change, snapshot/restore, and idempotency models without selecting a live product.
+- Implement ADR-002-013 Egress Generation, Active Egress Principal, credential/session,
+  route/endpoint, Quorum Commit Certificate, downstream intermediary, hard-fence, and recovery models.
 - Implement pure models for the five orthogonal state dimensions and CPL invariants, per-field
   evidence confidence, Failure-Domain Allocation Matrix, protection gap/overlap, and conservative
   non-trade transition envelope (ADR-002-005/006/009/011/010).
@@ -99,7 +102,7 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   cancel-crossing-fill, replace overlap, TTL, UNKNOWN, protective lease partition), plus
   time continuity, snapshot age, non-revivable authorization, partial scope, restrictive-generation
   precedence, state ownership, evidence conflict, replacement interleavings, and non-trade idempotency.
-- Deliverable: EV-L1 evidence for every RC/SA/TIME/REARM/STATE/RECON/FD/PR/NT/RCLP item marked EV-L1-reachable.
+- Deliverable: EV-L1 evidence for every RC/SA/TIME/REARM/STATE/RECON/FD/PR/NT/RCLP/EGRESS item marked EV-L1-reachable.
 
 ### Phase 2 — Component fault tests (EV-L2)
 - Durable quorum-replicated **single-logical-writer Risk Capacity Ledger** with the
@@ -110,8 +113,9 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   Live Authorization revocation/HALT generation model.
 - Implement the ADR-002-007 §§9.1–9.5 protocol components: linearizably ordered
   single-use capability issuance, authenticated currentness session, consumer-local
-  monotonic deny latch, and a durable nonce-claim journal. The selected substrate is
-  still subject to Phase 0 approval.
+  monotonic deny latch, quorum-committed claim, and ADR-002-013 quorum-sufficient proof
+  validation, exact request construction, credential custody, route policy, and hard fencing.
+  The selected products and topology remain subject to Phase 0 approval.
 - Durable orthogonal-state ownership, reconciliation-confidence bounds, deployment and credential
   identities, replacement workflow lineage, and non-trade event/version lineage.
 - Component-level fault injection (missing input, stale epoch, crash-at-boundary).
@@ -128,23 +132,27 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
 - Inject quorum loss, minority-with-broker-reachability, stale/removed writer resume,
   membership transition, snapshot/compaction, conflicting restore, and protective
   sub-ledger rejoin failures.
+- Inject credential/session compromise, stale egress resume, trust-bundle rollback,
+  proof and request substitution, route/endpoint crossover, proxy/queue replay,
+  credential-rotation overlap, and hard-fence delay.
 - Prove that strategy, orchestration, recovery, reconciliation, retry, administrative,
   evidence, and market-data identities lack a direct simulated live-order route.
 - Execute the EV-L3 RC-EV / SA-EV / TIME-EV / REARM-EV / STATE-EV / RECON-EV / FD-EV /
-  PR-EV / NT-EV / RCLP-EV set; measure `B_*` bounds against
+  PR-EV / NT-EV / RCLP-EV / EGRESS-EV set; measure `B_*` bounds against
   `VERIFICATION-PROFILE-002`.
 - Deliverable: EV-L3 evidence; measured detection/containment bounds.
 
 ### Phase 4 — Broker Capability Profile & sandbox (EV-L4)
 - Complete the first **Broker Capability Profile** (`BROKER-CAPABILITY-PROFILE-template.yaml`):
   order identity/idempotency, cancel and atomic-replace semantics, query completeness, rate/session,
-  late-fill, corporate-action/open-order adjustment, derivative lifecycle, and settlement behavior.
+  late-fill, corporate-action/open-order adjustment, derivative lifecycle, settlement behavior,
+  credential/session scope, order-route topology, Commit-Proof integration, hard fencing, and manual authority.
 - Broker sandbox or certified-environment probes; derive broker-specific bounds; run BC-EV items.
 - Deliverable: EV-L4 evidence + a versioned Capability Profile.
 
 ### Phase 5 — Independent review & ADR re-evaluation
 - **Independent** reviewer (not me, not an Impl role) signs each evidence run.
-- Only then may ADR-002-001..012 be re-evaluated toward `Accepted`, and only within the
+- Only then may ADR-002-001..013 be re-evaluated toward `Accepted`, and only within the
   proven scope. Every registered case must be executed at its required evidence level; registration
   alone satisfies no acceptance criterion. Restricted live (EV-L5) is a
   separate, later, human-authorized gate.
@@ -165,9 +173,10 @@ implementation code before this plan, greenfield boundary, and mechanism substra
 
 ## 6. Immediate decision requested
 
-1. Approve (or amend) `VERIFICATION-PROFILE-002.yaml` proposed bounds, including the currently null egress-currentness, failure-domain, replacement, and non-trade bounds, and provide broker-measured values where required.
-2. Ratify (or amend) the §2 greenfield boundary, ADR-002-007 §§9.1–9.5 protocol, and
-   ADR-002-012 mechanism; select a conforming replicated-state-machine product,
-   voter/failure-domain topology, Commit Proof, hard fence, and credential-isolation topology.
+1. Approve (or amend) `VERIFICATION-PROFILE-002.yaml` proposed bounds, including the currently null egress-currentness, hard-fence, failure-domain, replacement, and non-trade bounds, and provide broker-measured values where required.
+2. Ratify (or amend) the §2 greenfield boundary, ADR-002-007 §§9.1–9.5 protocol,
+   ADR-002-012 mechanism, and ADR-002-013 final-egress security boundary; select conforming
+   consensus, signer/credential, identity-aware route, Quorum Commit Certificate,
+   voter/principal/failure-domain topology, hard fence, and session mechanisms.
 3. Approve this plan so Phase 1 (EV-L1 models + property tests, non-transmitting) can begin.
 4. Name the independent reviewer (or confirm it is external to this work).

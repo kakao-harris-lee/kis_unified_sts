@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "0.3-PROPOSED"
+version: "0.4-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -74,6 +74,13 @@ bounds:
     rationale: "MEASURE. Maximum interval from durable single-use capability claim and SEND_STARTED persistence to transmission of the first broker-directed byte. Expiry or inability to prove this interval denies the send; post-claim ambiguity remains potentially live and capacity-covered (ADR-002-007 §§9.4-9.5)."
     measurement_source: egress_journal_and_broker_transport_trace
     failure_response: QUARANTINE_UNKNOWN
+  B_egress_hard_fence:
+    value_ms: null   # APPROVE after credential, session, signer, route, and broker fence mechanisms are selected and measured
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from an authoritative egress-generation invalidation or credential-compromise containment trigger to proof that the superseded principal cannot create a broker-accepted order mutation (ADR-002-013 §§13-16). Unknown completion keeps replacement authority non-live."
+    measurement_source: egress_identity_route_session_and_broker_denial_log
+    failure_response: HALT
   B_stale_epoch_reject:
     value_ms: 0
     semantics: hard_maximum

@@ -1542,7 +1542,8 @@ This ADR depends on or creates mandatory interfaces with:
 9. **ADR-002-010 — Corporate Actions and Non-Trade State Changes**;
 10. **ADR-002-011 — Protective Replacement and Protection-Gap Control**;
 11. **ADR-002-012 — Risk Capacity Ledger Persistence, Consensus, and Writer Fencing**;
-12. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
+12. **ADR-002-013 — Egress Gateway Credential, Route, and Commit-Proof Security**;
+13. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
 
 This ADR owns capacity semantics. It does not duplicate the full authority election, broker protocol, or evidence-confidence decisions of those ADRs.
 
@@ -1554,7 +1555,7 @@ The following questions may remain open during Proposed status but must be resol
 
 1. Which conforming product and deployment profile implement ADR-002-012's quorum-replicated deterministic Safety Commit Log?
 2. What exact scope is assigned to one writer epoch: account, portfolio, or global TOS?
-3. How is current epoch exposed to Broker Adapter without creating a new common-mode bypass?
+3. Which ADR-002-013 Quorum Commit Certificate and final-egress confinement expose current epoch without creating a new common-mode bypass?
 4. How are position-usage updates and reservation transfers represented transactionally?
 5. What conservative valuation function is used for each risk dimension?
 6. How are multiple currencies and delayed FX evidence handled?
@@ -1613,7 +1614,7 @@ ADR-002-002 may move from **Proposed** to **Accepted** only when:
 - Safety Profile Validator and Recovery Coordinator are defined;
 - the Ledger technology and fencing mechanism are selected and demonstrated;
 - the ADR-002-012 persistence, consensus, and writer-fencing mechanism is implemented for the applicable Capacity Domain and its required RCLP evidence passes;
-- Broker Adapter is the enforced final egress gate;
+- the ADR-002-013 final-egress boundary, exact claim binding, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;
 - protective pool and sub-ledger semantics are demonstrated;
 - broker-specific Final Quantity Proof rules exist;
 - all Critical acceptance criteria pass;
