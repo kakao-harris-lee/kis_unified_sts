@@ -1,0 +1,144 @@
+# VERIFICATION-PROFILE-002 — PROPOSED (NOT APPROVED)
+#
+# STATUS: PROPOSED engineering draft. These are strawman candidate bounds for
+# review and ratification. They are NOT approved and MUST NOT be relied upon.
+# Per VER-002-001 §6, an unapproved or placeholder bound is not an approved bound.
+#
+# Rules for ratification (all required before status -> APPROVED):
+#   - each `value_ms` is confirmed or replaced by the accountable owner;
+#   - broker_specific bounds are MEASURED from an approved Broker Capability
+#     Profile (ADR-002-004), not guessed;
+#   - `approved_by` lists the accountable authority (separation of duties:
+#     the identity approving bounds SHALL NOT also arm live trading);
+#   - `effective_from` / `review_due` are set.
+# Values below marked MEASURE are deliberately left null pending KIS measurement.
+
+profile_id: VERIFICATION-PROFILE-002
+version: "0.1-PROPOSED"
+status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
+approved_by: []                # MUST be non-empty before APPROVED
+effective_from: null
+review_due: null
+
+scope:
+  environment: non-live-test   # applies to EV-L1..L3 test harness only
+  accounts: []                 # assign approved test account scope
+  broker_capability_profiles: []   # link approved KIS Capability Profile(s)
+  hard_safety_envelope_version: TBD
+  runtime_safety_profile_version: TBD
+
+# ---------------------------------------------------------------------------
+# Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
+# All values PROPOSED; rationale states the engineering basis for review.
+# ---------------------------------------------------------------------------
+bounds:
+  B_authority_partition_detect:
+    value_ms: 2000
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "PROPOSED. Loss of verifiable Safety-Authority contact detected within a small multiple of the heartbeat interval; assumes ~500ms heartbeat x 3 missed. Confirm against chosen heartbeat design (ADR-002-003)."
+    measurement_source: harness_clock_on_execution_path
+    failure_response: CONTAIN
+  B_risk_increase_revoke:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "PROPOSED. After partition/stale-authority detection, new risk-increasing transmission authority revoked within this bound. SHALL be <= B_authority_partition_detect budget for total time-to-safe."
+    measurement_source: egress_decision_log
+    failure_response: HALT_OR_CONTAIN
+  B_stale_epoch_reject:
+    value_ms: 0
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "PROPOSED. Rejection of a stale ledger/authority epoch is synchronous at the ledger transition and final egress (compare-and-set); 0 = no time window in which a stale epoch may mutate or transmit (ADR-002-002 INV-008, ADR-002-003)."
+    measurement_source: ledger_and_egress_decision_log
+    failure_response: HALT
+  B_external_activity_detect:
+    value_ms: null   # MEASURE: bounded by KIS account-event/poll cadence
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE from Broker Capability Profile. For a poll-only broker this is bounded by the poll interval; new-action size must be constrained so plausible external activity in this window cannot breach the Hard Safety Envelope (ADR-002-002 §23.4)."
+    measurement_source: broker_capability_profile
+    failure_response: CONTAIN
+  B_external_activity_contain:
+    value_ms: 1000
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "PROPOSED. Once unattributed external activity is detected, new-risk authority suspended and reconciliation begun within this bound."
+    measurement_source: reconciliation_log
+    failure_response: CONTAIN
+  B_startup_reconciliation:
+    value_ms: 60000
+    semantics: operational_target_and_hard_gate
+    owner: TBD
+    rationale: "PROPOSED target. No new risk before reconciliation completes (hard gate). 60s is an operational target; exceeding it triggers escalation, not relaxation of the gate."
+    measurement_source: recovery_coordinator_log
+    failure_response: REMAIN_HALTED
+  B_final_quantity_proof:
+    value_ms: null   # MEASURE per broker/order type
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Time within which Final Quantity Proof (final filled qty + zero remaining) can be established for a given KIS order type; drives how long capacity stays RELEASE_PENDING_PROOF (ADR-002-002 §16)."
+    measurement_source: broker_capability_profile
+    failure_response: QUARANTINE_UNKNOWN
+  B_late_fill_observation:
+    value_ms: null   # MEASURE
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Maximum credible interval in which a late fill may still arrive after a claimed terminal state; a late fill inside this window must not have caused early capacity release (ADR-002-002 §16.4)."
+    measurement_source: broker_capability_profile
+    failure_response: PROFILE_CONTRADICTORY
+  B_protective_request_start:
+    value_ms: 1000
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "PROPOSED. Time from degraded-mode entry to first bounded protective request being started, using reserved protective capacity (ADR-002-001)."
+    measurement_source: protective_controller_log
+    failure_response: CONTAIN
+  B_protective_request_complete:
+    value_ms: null   # MEASURE
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Broker-dependent completion time for a protective action; informs protection-gap bounding (ADR-002-001 §12)."
+    measurement_source: broker_capability_profile
+    failure_response: CONTAIN
+  B_broker_query_consistency:
+    value_ms: null   # MEASURE
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Interval over which broker query sources are expected to converge; absence within it is not proof of non-existence (ADR-002-004)."
+    measurement_source: broker_capability_profile
+    failure_response: CONSERVATIVE_UNKNOWN
+  B_rate_limit_recovery:
+    value_ms: null   # MEASURE (KIS ~ per-second REST limit)
+    semantics: broker_specific
+    owner: TBD
+    rationale: "MEASURE. Recovery time after hitting the KIS account rate limit; protective/reconciliation traffic budget must survive this (ADR-002-001 §7.5)."
+    measurement_source: broker_capability_profile
+    failure_response: RESTRICT_OR_CONTAIN
+  B_operator_escalation:
+    value_ms: 30000
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "PROPOSED. Maximum time to raise an operator escalation on a Critical operational event (capacity exhaustion, trapped exposure, unresolved UNKNOWN)."
+    measurement_source: alerting_pipeline_log
+    failure_response: HALT
+  B_evidence_persist:
+    value_ms: 500
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "PROPOSED. Safety-relevant evidence (incl. SEND_STARTED write-ahead) durably persisted within this bound; the send boundary must not outrun evidence (ADR-002-002 §11.4)."
+    measurement_source: evidence_store_log
+    failure_response: STOP_NEW_RISK
+
+limits:
+  MAX_normal_capability_age_ms: 1000          # PROPOSED: max age of a normal transmission capability before re-verification
+  MAX_degraded_lease_holdover_ms: 5000        # PROPOSED: max monotonic lifetime of a pre-issued degraded protective lease
+  MAX_clock_drift_ppm: 200                    # PROPOSED: beyond this, time confidence is lost -> fail closed (ADR-002-003)
+  MAX_process_suspension_ms: 2000             # PROPOSED: a process suspended longer than this is fenced on resume
+  MAX_unresolved_send_per_scope: 1            # from template: at most one unresolved send per scope
+
+review:
+  independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture
+  evidence_location: TBD
+  approval_record: TBD
