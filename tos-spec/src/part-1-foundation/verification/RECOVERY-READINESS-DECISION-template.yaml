@@ -1,0 +1,66 @@
+decision_id: TBD
+status: DRAFT
+outcome: NOT_READY
+canonical_digest: TBD
+recovery_session_id: TBD
+recovery_generation: null
+recovery_domain_id: TBD
+recovery_evidence_package_id: TBD
+recovery_evidence_package_digest: TBD
+recovery_barrier_policy_id: TBD
+recovery_barrier_policy_generation: null
+recovery_barrier_policy_digest: TBD
+
+scope:
+  requested_rearm_scope_digest: TBD
+  evaluated_scope_digest: TBD
+  maximum_safe_scope_digest: TBD
+  excluded_scopes: []
+  partial_recovery: false
+  isolation_proof_ids: []
+
+obligations:
+  obligation_graph_digest: TBD
+  all_required_satisfied: false
+  blocking_obligation_ids: []
+  unknown_obligation_ids: []
+
+generation_vector:
+  rcl_revision: null
+  rcl_writer_epoch: null
+  rcl_restore_generation: null
+  safety_authority_epoch: null
+  halt_generation: null
+  revocation_generation: null
+  trustworthy_time_generation: null
+  profile_generation: null
+  egress_generation: null
+  evidence_store_generation: null
+  human_authority_policy_generation: null
+
+validity:
+  issued_at_time_snapshot_id: TBD
+  not_before: null
+  expires_at: null
+  maximum_age_ms: null
+  invalidation_conditions: []
+  invalidated_by: null
+
+integrity:
+  issuer_identity: TBD
+  owner_epoch: null
+  signatures: []
+  evidence_commit_receipt_id: TBD
+
+authority_effect:
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  may_rearm: false
+
+authorization_notice: >-
+  This DRAFT NOT_READY decision grants no readiness, capacity, Live Authorization,
+  transmission, HALT clearing, or re-arm authority. READY would remain non-authorizing.

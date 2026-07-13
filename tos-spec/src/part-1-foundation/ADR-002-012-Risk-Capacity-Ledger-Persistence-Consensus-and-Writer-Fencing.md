@@ -317,7 +317,7 @@ The Currentness Sequencer SHALL submit `AuthorizeTransmissionCapability` through
 - the reservation exists and is active;
 - the attempt identity is bound and unused;
 - the capacity vector covers the exact worst-case effect;
-- Writer Epoch, Safety Authority epoch, Live Authorization, profiles, Restore Generation, and membership generation are current;
+- Writer Epoch, Safety Authority epoch, Live Authorization, profiles, Restore Generation, Recovery Generation, and membership generation are current;
 - no dominating restriction or UNKNOWN condition blocks the action.
 
 The committed authorization record SHALL bind the capability identity, nonce, reservation revision, commit revision, state digest, generation vector, issuer identity, and Egress Gateway identity.
@@ -670,7 +670,8 @@ The mechanism class is selected. The following product and deployment choices re
 11. Which numeric commit, currentness, claim-to-send, failure-detection, and recovery bounds are approved?
 12. How are consensus, membership, snapshot, and restore administration protected by multi-party control?
 13. Which ADR-002-015 Approval Set identity, request digest, policy/graph generation, and single-use consumption command are ordered without giving approval services RCL, Live Authorization, or egress authority?
-14. Which ADR-002-016 pre-effect receipt, source sequence, integrity anchor, gap detector, retention, and Replay Capsule mechanisms preserve the committed log history without becoming capacity authority?
+14. Which ordered namespace and Commit Proof bind ADR-002-017 Recovery Generations, barrier commits, owner epochs, stale-owner rejection, and readiness invalidation without giving the Recovery Coordinator capacity authority?
+15. Which ADR-002-016 pre-effect receipt, source sequence, integrity anchor, gap detector, retention, and Replay Capsule mechanisms preserve the committed log history without becoming capacity authority?
 
 Unresolved questions reduce availability or keep the scope non-live. They SHALL NOT weaken any invariant.
 
@@ -690,9 +691,10 @@ ADR-002-012 SHALL remain **Proposed** until all of the following are complete:
 8. the applicable ADR-002-015 Approval Set consumption, stale/replayed approval rejection, Human HALT ordering, and authority separation are implemented and their required HAG evidence passes;
 9. ADR-002-016 immutable committed-transition evidence, causal completeness, fork/gap detection, retention, and isolated replay are implemented and their required ERI evidence passes;
 10. membership change, quorum loss, snapshot, restore, and disaster-recovery procedures are implemented and security-reviewed;
-11. `RCLP-EV-001` through `RCLP-EV-012` are registered, executed at their required levels, retained, and independently reviewed;
-12. applicable RC, SA, REARM, FD, and cross-system evidence passes;
-13. numeric bounds and the Failure-Domain Allocation Matrix are approved;
-14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+11. ADR-002-017 Recovery Generation, barrier commit, competing-owner fence, worst-credible restore union, and non-authorizing readiness handoff are implemented on the reviewed ordered substrate and applicable SBR evidence passes;
+12. `RCLP-EV-001` through `RCLP-EV-012` are registered, executed at their required levels, retained, and independently reviewed;
+13. applicable RC, SA, REARM, FD, and cross-system evidence passes;
+14. numeric bounds and the Failure-Domain Allocation Matrix are approved;
+15. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship and document review do not satisfy these conditions. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.

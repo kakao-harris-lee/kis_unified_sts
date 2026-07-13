@@ -26,6 +26,9 @@ bundle:
   evidence_integrity_policy_id: TBD
   evidence_integrity_policy_generation: null
   evidence_integrity_policy_digest: TBD
+  recovery_barrier_policy_id: TBD
+  recovery_barrier_policy_generation: null
+  recovery_barrier_policy_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 

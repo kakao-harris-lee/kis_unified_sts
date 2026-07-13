@@ -93,6 +93,9 @@ references:
   evidence_integrity_policy_id: TBD
   evidence_integrity_policy_generation: null
   evidence_integrity_policy_digest: TBD
+  recovery_barrier_policy_id: TBD
+  recovery_barrier_policy_generation: null
+  recovery_barrier_policy_digest: TBD
   broker_capability_profiles: []
   verification_profile_id: TBD
   verification_profile_version: TBD

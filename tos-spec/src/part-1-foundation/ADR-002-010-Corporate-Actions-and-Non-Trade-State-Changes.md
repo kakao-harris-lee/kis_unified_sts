@@ -352,6 +352,8 @@ An operator explanation, document, replay, or manual label is not sufficient to 
 
 Startup and recovery SHALL load all pending, effective, applied, conflicted, corrected, and unreconciled non-trade events before granting normal live authority.
 
+These records are mandatory ADR-002-017 Recovery Obligations. An unknown event feed, effective-time interval, instrument mapping, correction lineage, or open-order adjustment keeps the affected Recovery Scope conservative and non-live.
+
 Recovery SHALL:
 
 - preserve event idempotency and source lineage;

@@ -86,6 +86,7 @@ mandatory_constraints:
   egress_security_model: ADR-002-013
   human_authority_model: ADR-002-015
   evidence_integrity_model: ADR-002-016
+  safe_recovery_model: ADR-002-017
   prohibited_fallbacks: []
   required_fail_closed_conditions: []
 
@@ -105,6 +106,9 @@ references:
   evidence_integrity_policy_id: TBD
   evidence_integrity_policy_generation: null
   evidence_integrity_policy_digest: TBD
+  recovery_barrier_policy_id: TBD
+  recovery_barrier_policy_generation: null
+  recovery_barrier_policy_digest: TBD
   calendars: []
   policy_artifacts: []
 

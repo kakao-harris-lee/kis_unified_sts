@@ -1,0 +1,91 @@
+package_id: TBD
+version: "TBD"
+status: DRAFT
+canonical_digest: TBD
+canonicalization_version: TBD
+recovery_session_id: TBD
+recovery_generation: null
+recovery_domain_id: TBD
+recovery_barrier_policy_id: TBD
+recovery_barrier_policy_generation: null
+recovery_barrier_policy_digest: TBD
+
+scope:
+  requested_rearm_scope_digest: TBD
+  evaluated_scope_digest: TBD
+  maximum_safe_scope_digest: TBD
+  excluded_scopes: []
+  shared_dependencies: []
+  isolation_proofs: []
+
+inventory_cut:
+  cut_id: TBD
+  start_time_snapshot_id: TBD
+  end_time_snapshot_id: TBD
+  trustworthy_time_generation: null
+  source_continuity_ids: []
+  authoritative_revisions: []
+  source_pages_and_cursors: []
+  intervening_event_ids: []
+  raw_evidence_record_ids: []
+  evidence_gap_ids: []
+  unresolved_windows: []
+
+generation_vector:
+  rcl_cluster_id: TBD
+  rcl_revision: null
+  rcl_writer_epoch: null
+  rcl_membership_generation: null
+  rcl_restore_generation: null
+  safety_authority_epoch: null
+  halt_generation: null
+  revocation_generation: null
+  profile_generation: null
+  egress_generation: null
+  evidence_store_generation: null
+  human_authority_policy_generation: null
+
+economic_state:
+  intents: []
+  transmission_attempts: []
+  broker_orders: []
+  fills_and_corrections: []
+  positions: []
+  balances_margin_and_collateral: []
+  capacity_allocations: []
+  unknown_and_quarantine: []
+  external_activity: []
+  non_trade_events: []
+  protective_obligations: []
+
+obligations:
+  obligation_graph_digest: TBD
+  results: []
+  blocking_obligations: []
+  residual_risks: []
+
+assessment:
+  candidate_outcome: NOT_READY
+  unresolved_state_present: true
+  all_required_sources_complete: false
+  all_required_obligations_satisfied: false
+  all_shared_dependencies_isolated: false
+
+integrity:
+  issuer_identity: TBD
+  owner_epoch: null
+  signatures: []
+  evidence_commit_receipt_id: TBD
+
+authority_effect:
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  may_rearm: false
+
+authorization_notice: >-
+  This DRAFT package is incomplete and non-authorizing. It cannot prove readiness,
+  release capacity, clear UNKNOWN or HALT, transmit, or re-arm.

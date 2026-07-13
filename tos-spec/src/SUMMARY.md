@@ -25,6 +25,7 @@
 - [ADR-002-014 — Hard Safety Envelope and Runtime Safety Profile Governance](part-1-foundation/ADR-002-014-Hard-Safety-Envelope-and-Runtime-Safety-Profile-Governance.md)
 - [ADR-002-015 — Human Safety Authority, Dual Control, and Break-Glass Governance](part-1-foundation/ADR-002-015-Human-Safety-Authority-Dual-Control-and-Break-Glass-Governance.md)
 - [ADR-002-016 — Safety Evidence, Audit, and Deterministic Replay Integrity](part-1-foundation/ADR-002-016-Safety-Evidence-Audit-and-Deterministic-Replay-Integrity.md)
+- [ADR-002-017 — Safe Startup, Recovery Barrier, and Conservative Resume Coordination](part-1-foundation/ADR-002-017-Safe-Startup-Recovery-Barrier-and-Conservative-Resume-Coordination.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)

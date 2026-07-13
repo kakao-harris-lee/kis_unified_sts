@@ -16,6 +16,8 @@ affected_scope:
   authority_generations: []
   profile_generations: []
   egress_generations: []
+  recovery_generations: []
+  recovery_session_ids: []
 
 gap:
   gap_type: UNKNOWN

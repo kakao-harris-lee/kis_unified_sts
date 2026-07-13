@@ -306,7 +306,7 @@ The Quorum Commit Certificate SHALL bind at least:
 - exact `ClaimCapabilityAndMarkSendStarted` result;
 - intent, reservation, attempt, capability, nonce, and broker-request identities;
 - exact worst-case economic effect;
-- Safety Authority, Live Authorization, revocation, HALT, Time Health, profile, and configuration generations;
+- Safety Authority, Live Authorization, revocation, HALT, Time Health, Recovery Generation, profile, and configuration generations;
 - Egress Generation and exact Active Egress Principal;
 - credential, broker-session, route-policy, endpoint-policy, and trust-bundle generations;
 - quorum signer identities or equivalent threshold-verification material.
@@ -321,7 +321,7 @@ Before send, the Final Egress Trust Boundary SHALL:
 4. verify every signer was eligible in the claimed membership generation and trust bundle;
 5. reject revoked, removed, duplicated, wrong-environment, or stale signers;
 6. verify the exact command and resulting state digests;
-7. verify current cluster, Restore Generation, Writer Epoch, Egress Generation, and currentness-session generations;
+7. verify current cluster, Restore Generation, Recovery Generation, Writer Epoch, Egress Generation, and currentness-session generations;
 8. verify the capability nonce was claimed exactly once for this principal and request;
 9. reconstruct the exact broker request and compare its canonical digest, endpoint, action, account, and economic effect;
 10. verify the claim-to-first-byte bound can still be met.
@@ -358,7 +358,7 @@ A durable queue after claim is prohibited unless every queued item becomes non-s
 The following events SHALL set or advance a restrictive state for the affected scope:
 
 - HALT or Live Authorization suspension/revocation;
-- Safety Authority, Writer, membership, Restore, Time Health, or profile generation change;
+- Safety Authority, Writer, membership, Restore, Recovery Generation, Time Health, or profile generation change;
 - Egress Generation, principal, credential, route, endpoint, session, or trust-bundle mismatch;
 - credential exposure or suspected compromise;
 - inability to verify hard fencing of a predecessor;
@@ -402,6 +402,7 @@ Before activation, failover SHALL establish:
 - committed new Egress Generation and exact principal identity;
 - hard fencing or proven expiry fencing of every predecessor path;
 - current RCL, authority, time, profile, credential, route, session, and trust-bundle generations;
+- current ADR-002-017 Recovery Generation and an unexpired, non-invalidated readiness decision for the exact dependency-complete scope;
 - reconciliation of claims, `SEND_STARTED`, broker orders, fills, positions, and UNKNOWN effects;
 - no alternate direct credential or route;
 - fresh Live Authorization and Transmission Capabilities where required.
@@ -641,6 +642,7 @@ The security architecture is selected. The following product, broker, topology, 
 13. How does egress verify ADR-002-014 Canonical Semantic Digests, Profile Generations, and Consumer Compatibility without a permissive cache or floating reference?
 14. Which ADR-002-015 Human HALT authenticator, policy/graph generation, replay fence, local deny latch, and later reconciliation mechanism is accepted directly at final egress?
 15. Which ADR-002-016 Evidence Commit Receipt, emergency durable journal, source sequence, integrity anchor, and gap-containment mechanism binds exact pre-effect and `SEND_STARTED` evidence without becoming transmission authority?
+16. How does final egress verify the current ADR-002-017 Recovery Generation, closed-barrier state, and exact readiness-decision invalidation without a permissive cache or treating readiness as authority?
 
 Unresolved questions reduce availability or keep the affected scope non-live. They SHALL NOT create a permissive default.
 
@@ -661,8 +663,9 @@ ADR-002-013 SHALL remain **Proposed** until all of the following are complete:
 9. ADR-002-014 exact committed envelope/profile digests, Profile Generation, compatibility, restrictive precedence, and mixed-version denial are enforced at egress and their applicable SPG evidence passes;
 10. ADR-002-015 Human HALT and approval references are authenticated, replay-fenced, directionally restricted, and unable to create direct broker or permissive authority, and their applicable HAG evidence passes;
 11. ADR-002-016 exact pre-effect and `SEND_STARTED` durability, evidence receipt validation, emergency journal, causal completeness, and replay isolation are implemented and their applicable ERI evidence passes;
-12. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
-13. no unresolved bypass or overlapping old/new egress authority remains;
-14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+12. ADR-002-017 Recovery Generation, barrier state, exact readiness currentness and invalidation, and stale-recovery rejection are enforced at the final boundary and applicable SBR evidence passes;
+13. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, recovery-barrier, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
+14. no unresolved bypass or overlapping old/new egress authority remains;
+15. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, architecture review, credential inventory, route diagram, secret scan, or written acceptance case does not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.

@@ -355,6 +355,8 @@ An unavailable old instance SHALL be treated as potentially active until a hard 
 
 Recovery from datastore rollback, region loss, or credential compromise SHALL advance generations and invalidate prior live authorization.
 
+ADR-002-017 governs the closed Recovery Barrier, Recovery Generation, competing-owner fence, complete dependency inventory, conservative readiness decision, partial-scope proof, and fresh re-arm handoff. Deployment health, restored connectivity, broker reachability, or a recovered datastore cannot substitute for that protocol.
+
 ---
 
 ## 16. Observability and Evidence

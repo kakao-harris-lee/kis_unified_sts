@@ -407,7 +407,7 @@ Every risk-increasing re-arm SHALL use at least two distinct effective Human Saf
 
 The sequence is:
 
-1. create one exact Approval Request from a current Recovery Evidence Package and requested narrow scope;
+1. create one exact Approval Request from a current, non-invalidated ADR-002-017 Recovery Evidence Package and Recovery Readiness Decision for the exact Recovery Generation and requested narrow scope;
 2. independently authenticate and validate each approver and required input;
 3. construct and verify the Approval Set under the current Human Authority Policy;
 4. atomically consume the set for one exact Live Authorization issuance request;
@@ -656,6 +656,7 @@ The architecture is selected. The following product, organization, policy, and p
 11. What compromise scope and previously consumed approvals require immediate suspension versus narrower containment?
 12. What `B_human_halt_to_commit`, session-age, approval-age, delegation-age, notification, and review bounds are approved?
 13. Which ADR-002-016 durable ordinary and emergency evidence paths, source identities, integrity anchors, gap detectors, protected raw tier, and replay isolation preserve human and break-glass history without delaying restrictive HALT behind the ordinary pipeline?
+14. How does the approval verifier bind the ADR-002-017 Recovery Generation, package, readiness decision, dependency-complete scope, and invalidation set without letting a human force `READY`?
 
 Unresolved questions reduce authority or keep the affected scope non-live. They SHALL NOT lower quorum, expand break-glass, or create a permissive default.
 
@@ -674,8 +675,9 @@ ADR-002-015 SHALL remain **Proposed** until all of the following are complete:
 7. compromise, delegation, roster, workflow, identity-provider, authenticator, rollback, partition, and recovery behavior is security-reviewed;
 8. `HAG-EV-001` through `HAG-EV-012` and applicable SA, REARM, TIME, FD, RCLP, EGRESS, SPG, BC, and cross-system evidence pass at required levels and receive independent review;
 9. ADR-002-016 ordinary and emergency evidence durability, human-record causal completeness, gap handling, retention, redaction, and replay isolation are implemented and their applicable ERI evidence passes;
-10. `B_human_halt_to_commit`, `B_halt_to_egress`, and applicable session, approval, delegation, revocation, evidence, identity-fence, and recovery bounds are approved and measured;
-11. no unresolved shared-account, self-approval, effective-principal, direct broker, or automatic re-arm bypass remains;
-12. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+10. ADR-002-017 exact current Recovery Generation, package, readiness decision, dependency scope, and invalidation set are verified before approval consumption, and applicable SBR evidence passes;
+11. `B_human_halt_to_commit`, `B_halt_to_egress`, and applicable session, approval, delegation, revocation, evidence, identity-fence, recovery-barrier, and readiness-age bounds are approved and measured;
+12. no unresolved shared-account, self-approval, forced-readiness, effective-principal, direct broker, or automatic re-arm bypass remains;
+13. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, policy drafting, two account names, ticket approval, successful authentication, audit logs, written cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, direct human capacity mutation, direct broker transmission, or automatic re-arm.

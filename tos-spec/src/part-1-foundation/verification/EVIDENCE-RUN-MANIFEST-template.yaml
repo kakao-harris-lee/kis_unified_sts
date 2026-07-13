@@ -26,6 +26,9 @@ baseline:
   evidence_integrity_policy_id: TBD
   evidence_integrity_policy_generation: null
   evidence_integrity_policy_digest: TBD
+  recovery_barrier_policy_id: TBD
+  recovery_barrier_policy_generation: null
+  recovery_barrier_policy_digest: TBD
   consumer_compatibility_manifest_ids: []
   broker_capability_profile_version: TBD
   verification_profile_version: TBD
@@ -79,6 +82,12 @@ artifacts:
   evidence_access_redaction_and_exports: []
   replay_capsules_and_results: []
   chain_of_custody: []
+  recovery_barrier_policies: []
+  recovery_sessions: []
+  recovery_inventory_cuts: []
+  recovery_obligations: []
+  recovery_evidence_packages: []
+  recovery_readiness_decisions: []
   restrictive_overrides: []
   configuration_rollback_restore: []
   state_dimensions: []

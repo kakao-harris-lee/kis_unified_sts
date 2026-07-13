@@ -116,7 +116,7 @@ An immutable artifact that selects a strictly equal-or-narrower operating scope 
 
 ### 5.3 Safety Configuration Bundle
 
-The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
+The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
 
 ### 5.4 Profile Generation
 
@@ -307,7 +307,7 @@ The Safety Profile Validator SHALL validate the complete Safety Configuration Bu
 6. conservative comparison of every Runtime Safety Profile dimension with the Hard Safety Envelope;
 7. maximum credible aggregate effect, concurrent-action union, partial-fill states, replacement overlap, UNKNOWN, external activity, and trapped exposure assumptions;
 8. software, parser, schema, Consumer Compatibility Manifest, deployment, and egress compatibility;
-9. Broker Capability Profile and Failure-Domain Allocation consistency;
+9. Broker Capability Profile, Recovery Barrier Policy, and Failure-Domain Allocation consistency;
 10. trustworthy-time validity and expiry behavior;
 11. authority-direction classification for every change;
 12. absence of a bypass through omitted, unknown, deprecated, duplicated, or extension fields.
@@ -652,6 +652,7 @@ The architecture is selected. The following product, schema, governance, topolog
 11. What retention and proof establish the highest committed configuration history after disaster recovery?
 12. Which numeric validity, approval, restriction-propagation, and review bounds are approved?
 13. Which ADR-002-016 Evidence Integrity Policy, canonical evidence envelope, integrity anchor, gap detector, retention rule, and Replay Capsule preserve every configuration decision without becoming activation authority?
+14. How are the ADR-002-017 Recovery Barrier Policy generation and digest governed, activated, and bound into the closed bundle without allowing configuration activation to open the barrier or re-arm?
 
 Unresolved questions reduce authority or keep the affected scope non-live. They SHALL NOT create a permissive default.
 
@@ -671,7 +672,8 @@ ADR-002-014 SHALL remain **Proposed** until all of the following are complete:
 8. no configuration transition releases capacity, expires economic effect, treats missing ACK as non-acceptance, or treats cancel ACK as Final Quantity Proof;
 9. `SPG-EV-001` through `SPG-EV-012` and applicable REARM, FD, RCLP, EGRESS, SA, and cross-system evidence pass at required levels and receive independent review;
 10. ADR-002-016 artifact, decision, denial, activation, restriction, rollback, restore, and consumer evidence is immutable, causally complete, gap-checked, and replayable, and applicable ERI evidence passes;
-11. applicable activation, revocation, restriction-propagation, time, evidence, and egress bounds are approved and measured;
-12. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+11. ADR-002-017 Recovery Barrier Policy identity, generation, digest, compatibility, and restrictive activation behavior are bound into the complete configuration bundle without becoming recovery readiness or re-arm authority, and applicable SBR evidence passes;
+12. applicable activation, revocation, restriction-propagation, recovery-barrier, readiness-age, time, evidence, and egress bounds are approved and measured;
+13. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, signatures, successful parsing, repository merge, staged distribution, written acceptance cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, configuration-driven capacity mutation, or automatic re-arm.

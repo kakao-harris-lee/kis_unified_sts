@@ -197,7 +197,7 @@ No component SHALL write a dimension it does not own. Cross-dimension effects oc
 - All five dimensions SHALL be durable and reconstructable after crash, restart, or failover.
 - On restart, any Attempt that reached `SEND_STARTED` and any Broker Order that is not provably terminal SHALL be treated as `POTENTIALLY_LIVE`/`UNKNOWN` until reconciled (ADR-002-002 §21; handoff §8.2).
 - Knowledge SHALL be re-derived from evidence, defaulting to `UNOBSERVED`/`CONFLICTED`, never to `RECONCILED`.
-- No new risk SHALL be authorized until the Recovery Coordinator clears the startup barrier (RFC-002 §15.5 and §23; ADR-002-002 §21.6).
+- No new risk SHALL be authorized until the ADR-002-017 Recovery Barrier, conservative inventory, and readiness obligations are satisfied and the separate fresh re-arm chain completes (RFC-002 §15.5 and §23; ADR-002-002 §21.6).
 
 ---
 
@@ -246,7 +246,7 @@ Registration is not execution. A written test is not evidence (VER-002-001 §5);
 
 ## 18. Dependencies and Follow-Up
 
-Consumed by: ADR-002-006 (evidence/confidence attaches to the Knowledge dimension), ADR-002-007 (re-arm reads all dimensions), ADR-002-002 (Capacity coupling), ADR-002-004 (Broker Order evidence rules), ADR-002-011 (protection-gap uses Attempt/Broker/Knowledge). Numeric freshness bounds (`STALE` thresholds) belong in the Verification Profile / Safety Profile.
+Consumed by: ADR-002-006 (evidence/confidence attaches to the Knowledge dimension), ADR-002-007 (re-arm reads all dimensions), ADR-002-002 (Capacity coupling), ADR-002-004 (Broker Order evidence rules), ADR-002-011 (protection-gap uses Attempt/Broker/Knowledge), and ADR-002-017 (recovery inventory and obligations cover every dimension). Numeric freshness bounds (`STALE` thresholds) belong in the Verification Profile / Safety Profile.
 
 ---
 

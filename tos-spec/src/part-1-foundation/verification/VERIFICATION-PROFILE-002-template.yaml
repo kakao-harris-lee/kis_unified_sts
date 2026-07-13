@@ -27,6 +27,9 @@ scope:
   evidence_integrity_policy_id: TBD
   evidence_integrity_policy_generation: null
   evidence_integrity_policy_digest: TBD
+  recovery_barrier_policy_id: TBD
+  recovery_barrier_policy_generation: null
+  recovery_barrier_policy_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -112,6 +115,20 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: REMAIN_HALTED
+  B_recovery_trigger_to_barrier:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HARD_FENCE_AND_HALT
+  B_recovery_barrier_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
   B_final_quantity_proof:
     value_ms: null
     semantics: broker_specific
@@ -250,6 +267,7 @@ limits:
   MAX_human_delegation_age_ms: null
   MIN_evidence_retention_ms: null
   MAX_replay_start_delay_ms: null
+  MAX_recovery_readiness_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

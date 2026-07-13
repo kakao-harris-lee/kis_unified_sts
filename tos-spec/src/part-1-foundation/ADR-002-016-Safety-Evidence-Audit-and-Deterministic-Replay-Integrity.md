@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety-evidence identity, capture boundaries, durability, ordering, provenance, integrity, completeness, gap detection, retention, redaction, access, deterministic replay, incident reconstruction, failure behavior, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 SAFE-031, SAFE-051, SAFE-052, and §11; RFC-002 §§4.2, 10.16, 15, 23, 25, and 29; VER-002-001 §§2–9 and 209–211
+- **Refines:** RFC-001 SAFE-031, SAFE-051, SAFE-052, and §11; RFC-002 §§4.2, 10.16, 15, 23, 25, and 29; VER-002-001 §§2–9 and 221–223
 - **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-010, SAFE-011, SAFE-020 through SAFE-025, SAFE-030, SAFE-031, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-048, SAFE-050, SAFE-051, SAFE-052; ADR-002-001 through ADR-002-015
 
 ---
@@ -450,7 +450,7 @@ Compaction may replace storage representation only when an independently verifie
 | Replay infrastructure compromised | isolate and invalidate replay evidence; no effect on authoritative economic state and no automatic re-arm |
 | Retention/archival service unavailable | prohibit destructive lifecycle actions; continue append path if proven safe; otherwise restrict new risk |
 
-Recovery SHALL inventory sources, receipts, anchors, authoritative logs, broker history, external activity, and gaps. Recovered evidence is appended with provenance. Authority remains restricted until the normal ADR-002-007 and ADR-002-015 governed re-arm process completes with fresh evidence; recovery success itself grants nothing.
+Under ADR-002-017, recovery SHALL inventory sources, receipts, anchors, authoritative logs, broker history, external activity, and gaps as explicit Recovery Obligations in the current Recovery Evidence Package. Recovered evidence is appended with provenance. Authority remains restricted until the normal ADR-002-007 and ADR-002-015 governed re-arm process completes with fresh evidence; recovery success itself grants nothing.
 
 ---
 

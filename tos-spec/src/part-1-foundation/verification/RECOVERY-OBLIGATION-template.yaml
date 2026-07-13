@@ -1,0 +1,60 @@
+obligation_id: TBD
+status: PENDING
+obligation_type: TBD
+recovery_session_id: TBD
+recovery_generation: null
+recovery_domain_id: TBD
+scope_digest: TBD
+owner_identity: TBD
+canonical_digest: TBD
+canonicalization_version: TBD
+
+dependencies:
+  prerequisite_obligation_ids: []
+  required_source_ids: []
+  required_generation_claims: []
+  required_policy_digests: []
+
+predicate:
+  version: TBD
+  expression_digest: TBD
+  required_fields: []
+  minimum_evidence_rules: []
+  convergence_rule_id: TBD
+  maximum_input_age_ms: null
+
+result:
+  state: UNKNOWN
+  evaluated_at_time_snapshot_id: TBD
+  evidence_record_ids: []
+  conservative_bounds: []
+  conflicts: []
+  unresolved_state: true
+  reason_codes: []
+
+failure_and_invalidation:
+  missing_input_response: NOT_READY
+  timeout_response: NOT_READY
+  owner_loss_response: INVALIDATE
+  policy_change_response: INVALIDATE
+  generation_change_response: INVALIDATE
+  material_change_conditions: []
+
+integrity:
+  evaluator_identity: TBD
+  owner_epoch: null
+  signatures: []
+  evidence_commit_receipt_id: TBD
+
+authority_effect:
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  may_rearm: false
+
+authorization_notice: >-
+  This PENDING obligation has UNKNOWN result and grants no readiness, capacity,
+  Live Authorization, broker transmission, HALT clearing, or re-arm authority.

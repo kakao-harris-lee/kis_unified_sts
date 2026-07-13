@@ -177,7 +177,7 @@ Registration is not execution. A written test is not evidence; execution, artifa
 
 ## 14. Dependencies and Follow-Up
 
-Depends on ADR-002-005 (Knowledge dimension) and ADR-002-004 (Final Quantity Proof); consumed by ADR-002-002 (capacity release), ADR-002-007 (re-arm reads reconciled state), ADR-002-011 (protection-gap coverage confidence), and ADR-002-016 (raw evidence custody and deterministic replay). Numeric tolerances, freshness horizons, and detection bounds belong in the Verification/Safety Profiles, not this ADR.
+Depends on ADR-002-005 (Knowledge dimension) and ADR-002-004 (Final Quantity Proof); consumed by ADR-002-002 (capacity release), ADR-002-007 (re-arm reads reconciled state), ADR-002-011 (protection-gap coverage confidence), ADR-002-016 (raw evidence custody and deterministic replay), and ADR-002-017 (field-complete recovery obligations and Inventory Cut convergence). Numeric tolerances, freshness horizons, and detection bounds belong in the Verification/Safety Profiles, not this ADR.
 
 ---
 

@@ -1,7 +1,7 @@
 # EVIDENCE-REGISTER-002 — Safety Architecture Evidence Register
 
 - **Status:** Active Register — No Tests Executed
-- **Date:** 2026-07-13
+- **Date:** 2026-07-14
 - **Specification:** VER-002-001
 - **Production Authorization:** NO
 
@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **195**
-- NOT_IMPLEMENTED: **195**
+- Total evidence items: **207**
+- NOT_IMPLEMENTED: **207**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -218,6 +218,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | ERI-EV-010 | Evidence and Replay Integrity | Retention Compaction Supersession and Deletion Safety | ADR-002-016 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | ERI-EV-011 | Evidence and Replay Integrity | Broker External and Non-Trade Evidence Conservatism | ADR-002-016 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | ERI-EV-012 | Evidence and Replay Integrity | Recovery Non-Revival and Incident Reconstruction | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-001 | Safe Startup and Recovery Barrier | Closed Startup and Fresh Live-Arming Chain | ADR-002-017 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-002 | Safe Startup and Recovery Barrier | Recovery Generation Propagation and Stale Egress Rejection | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-003 | Safe Startup and Recovery Barrier | Competing Recovery Owner Fencing | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-004 | Safe Startup and Recovery Barrier | Complete Recovery Inventory and Obligation Closure | ADR-002-017 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-005 | Safe Startup and Recovery Barrier | Non-Atomic Broker Inventory Conservatism | ADR-002-017 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-006 | Safe Startup and Recovery Barrier | UNKNOWN Conflict Gap Timeout and Retry Containment | ADR-002-017 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-007 | Safe Startup and Recovery Barrier | Restricted Readiness Dependency Isolation | ADR-002-017 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-008 | Safe Startup and Recovery Barrier | HALT Evidence Failure and Protective Continuity | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-009 | Safe Startup and Recovery Barrier | Readiness Invalidation Before Authority and Egress | ADR-002-017 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-010 | Safe Startup and Recovery Barrier | Restore Conflict and Worst-Credible Economic Union | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-011 | Safe Startup and Recovery Barrier | Recovery Authority Separation and Forced-Ready Denial | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SBR-EV-012 | Safe Startup and Recovery Barrier | Recovery Completion Non-Revival and Replay | ADR-002-017 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

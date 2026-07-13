@@ -1,0 +1,68 @@
+cut_id: TBD
+status: DRAFT
+recovery_session_id: TBD
+recovery_generation: null
+recovery_domain_id: TBD
+scope_digest: TBD
+canonical_digest: TBD
+canonicalization_version: TBD
+
+time_boundary:
+  start_time_snapshot_id: TBD
+  end_time_snapshot_id: TBD
+  trustworthy_time_generation: null
+  uncertainty_intervals: []
+
+authoritative_state:
+  rcl_cluster_id: TBD
+  start_revision: null
+  end_revision: null
+  writer_epoch: null
+  membership_generation: null
+  restore_generation: null
+
+source_observations:
+  required_source_ids: []
+  observed_source_ids: []
+  source_continuity_ids: []
+  source_revisions: []
+  query_pages_and_cursors: []
+  broker_session_ids: []
+  intervening_event_ids: []
+  raw_evidence_record_ids: []
+  evidence_gap_ids: []
+
+completeness:
+  required_sources_complete: false
+  pagination_complete: false
+  intervening_events_complete: false
+  convergence_proven: false
+  unresolved_windows: []
+  conflicts: []
+  unknown_state_present: true
+
+conservative_rules:
+  missing_ack_is_non_acceptance: false
+  cancel_ack_is_final_quantity_proof: false
+  flat_snapshot_proves_completeness: false
+  absent_page_result_proves_nonexistence: false
+  incomplete_response: NOT_READY
+
+integrity:
+  issuer_identity: TBD
+  owner_epoch: null
+  signatures: []
+  evidence_commit_receipt_id: TBD
+
+authority_effect:
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  may_rearm: false
+
+authorization_notice: >-
+  This DRAFT Inventory Cut is incomplete and non-authorizing. It cannot prove
+  broker non-acceptance, Final Quantity, recovery readiness, or permission.

@@ -89,7 +89,7 @@ It SHALL be semantically validated and atomically activated by the Safety Profil
 
 ### 4.3 Recovery Evidence Package
 
-An immutable snapshot of the evidence evaluated by the Recovery Coordinator. It records readiness or denial but grants no authority.
+The immutable, generation-bound manifest defined by ADR-002-017. It records the exact Recovery Session, Recovery Scope, Inventory Cut, obligations, uncertainty, and readiness or denial evaluated by the Recovery Coordinator, but grants no authority.
 
 ### 4.4 Re-arm Approval Record
 
@@ -251,6 +251,7 @@ Live Authorization is valid for new risk only while all of the following remain 
 - Trustworthy Time is `TRUSTED` under ADR-002-008;
 - authorization validity and snapshot age remain positively established;
 - account-wide state required for the scope remains reconciled;
+- the ADR-002-017 Recovery Generation, barrier state, Recovery Evidence Package, and Recovery Readiness Decision remain current and valid for the exact scope;
 - no unresolved UNKNOWN or unattributed activity affects the scope;
 - Risk Capacity Ledger and protective capacity remain consistent;
 - Hard Safety Envelope and Runtime Safety Profile versions match and remain valid;
@@ -285,6 +286,7 @@ Every normal Transmission Capability SHALL be single-use and bind at least:
 - exact environment, Safety Cell, account, portfolio, broker, venue, session, instrument, side, order type, quantity, price constraints, and worst-case economic effect;
 - exact Broker Adapter / Egress Gateway, deployment, workload, credential, software, and configuration identities;
 - current writer epoch, Safety Authority epoch, Live Authorization identity, revocation generation, HALT generation, Time Health generation, and profile generations;
+- current Recovery Generation and exact Recovery Evidence Package and Recovery Readiness Decision identities;
 - the exact active Capacity Commitment or valid protective-capacity consumption proof;
 - consumer-verifiable issue and expiry evidence whose age is bounded by `MAX_normal_capability_age`;
 - cryptographic integrity and issuer identity.
@@ -389,7 +391,7 @@ Re-arm SHALL execute in this order:
 9. validate the Broker Capability Profile and supported live conformance class;
 10. verify software, configuration, deployment, identity, credential, network, and final-egress confinement;
 11. verify no blocking Critical alert or unapproved residual risk remains;
-12. have the Recovery Coordinator issue a current readiness decision for the requested scope;
+12. under ADR-002-017, have the current fenced Recovery Coordinator issue a current readiness decision bound to the exact Recovery Generation, dependency-complete scope, Inventory Cut, obligations, and immutable Recovery Evidence Package;
 13. obtain explicit separated human approvals bound to that package and scope;
 14. have the Live Authorization Service issue a new Live Authorization under the current epoch;
 15. distribute and confirm the authorization at final egress without bypass;
@@ -602,7 +604,7 @@ These costs are accepted because live availability and opportunity are subordina
 The following may remain open while Proposed but SHALL be resolved before acceptance:
 
 1. Which conforming ADR-002-015 effective-principal, role, quorum, authentication, approval-expiry, consumption, delegation, and Human HALT mechanisms implement dual control?
-2. What service stores and signs Recovery Evidence Packages and authorization records?
+2. Which ADR-002-017 Recovery Barrier Policy, ordered Recovery Generation and owner fence, dependency graph, obligation workflow, package signer, and readiness-verification mechanism provide current Recovery Evidence Packages without granting trading authority?
 3. Which conforming ADR-002-012 consensus product and ADR-002-013 credential, route, principal, Quorum Commit Certificate, authenticated session, and hard-fence mechanisms implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, and `B_egress_hard_fence`?
 4. What exact scope dimensions and risk vectors are supported by the first restricted-live profile?
 5. Which canonical artifact, semantic validation, compatibility-manifest, approval, and ADR-002-012 ordering mechanisms implement ADR-002-014 atomic activation and rollback fencing across failure domains?
@@ -623,13 +625,14 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 - ADR-002-014 canonical artifacts, separated governance, committed Profile Generation, mixed-version denial, restrictive precedence, and rollback/restore fencing are implemented and their required SPG evidence passes;
 - ADR-002-015 effective Human Safety Principal, exact Approval Set, one-human restrictive HALT, break-glass confinement, compromise, and approval non-revival are implemented and their required HAG evidence passes;
 - all roles and separation-of-duty controls are defined and enforced;
-- the Recovery Evidence Package and Live Authorization contracts are implemented;
+- the ADR-002-017 Recovery Barrier Policy, Recovery Generation, owner fencing, dependency-complete inventory, obligation graph, Recovery Evidence Package, Recovery Readiness Decision, invalidation, and Live Authorization handoff contracts are implemented;
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;
 - the selected currentness distribution and fenced irreversible-send protocol in §§9.1–9.5 is implemented and independently security-reviewed;
 - the applicable ADR-002-013 final-egress trust boundary, proof validation, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;
 - ADR-002-016 exact approval, authority, invalidation, HALT, recovery, re-arm, pre-effect, and send evidence is durably captured, gap-contained, and replayable without creating or reviving permission, and applicable ERI evidence passes;
+- `SBR-EV-001` through `SBR-EV-012` and applicable cross-ADR recovery evidence pass at required levels and receive independent review;
 - every invalidation trigger fails closed within its approved bound;
-- `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, `B_egress_hard_fence`, `B_evidence_persist`, `B_evidence_gap_detect`, and `B_evidence_gap_contain` are approved, measured, and enforced at every applicable boundary;
+- `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, `B_recovery_trigger_to_barrier`, `B_recovery_barrier_to_egress`, `MAX_recovery_readiness_age`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, `B_egress_hard_fence`, `B_evidence_persist`, `B_evidence_gap_detect`, and `B_evidence_gap_contain` are approved, measured, and enforced at every applicable boundary;
 - automatic re-arm and stale authorization replay are demonstrably impossible;
 - partial re-arm cannot expand beyond its exact scope;
 - VER-002-001 and the Evidence Register cover every Critical acceptance case;

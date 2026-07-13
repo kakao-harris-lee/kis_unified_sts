@@ -15,6 +15,7 @@ baseline:
   effective_principal_graph_digest: TBD
   broker_capability_profile_digest: TBD
   evidence_integrity_policy_digest: TBD
+  recovery_barrier_policy_digest: TBD
   verification_profile_version: TBD
   schema_and_migration_digests: []
   deployment_manifest_digest: TBD

@@ -369,7 +369,7 @@ Final enforcement point for current snapshot, accepted Time Health generation, c
 
 ### 14.7 Recovery Coordinator
 
-Requires a newly established `TRUSTED` generation for re-arm readiness. It SHALL NOT treat source recovery alone as sufficient.
+Requires a newly established `TRUSTED` generation as one ADR-002-017 Recovery Obligation for re-arm readiness. It SHALL NOT treat source recovery alone as sufficient, publish readiness for a stale Recovery Generation, or bypass the closed Recovery Barrier.
 
 ---
 
@@ -406,7 +406,7 @@ Recovery from `UNTRUSTED` or `DEGRADED_HOLDOVER` SHALL require:
 6. authority and protective leases revalidated or replaced rather than revived;
 7. Recovery Coordinator evidence recorded.
 
-This establishes time readiness only. It does not issue Live Authorization and does not re-arm.
+This establishes time readiness only within the current ADR-002-017 Recovery Evidence Package. It does not open the Recovery Barrier, issue Live Authorization, or re-arm.
 
 ---
 
