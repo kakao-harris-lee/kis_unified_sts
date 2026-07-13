@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending KIS measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "0.2-PROPOSED"
+version: "0.3-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -47,7 +47,7 @@ bounds:
     measurement_source: egress_decision_log
     failure_response: HALT_OR_CONTAIN
   B_revocation_to_egress:
-    value_ms: null   # APPROVE after currentness mechanism and failure-domain design are selected
+    value_ms: null   # APPROVE after the selected currentness protocol is implemented and measured
     semantics: hard_maximum
     owner: TBD
     rationale: "MEASURE. Maximum interval from committed authoritative revocation/restriction generation to denial at every final egress (ADR-002-007 §§9, 16)."
@@ -67,6 +67,13 @@ bounds:
     rationale: "MEASURE. Maximum interval from a less-trusted Time Health generation to rejection of dependent transmission at every final egress (ADR-002-008 §§8, 14.6)."
     measurement_source: time_health_and_egress_generation_log
     failure_response: STOP_NEW_RISK
+  B_capability_claim_to_send:
+    value_ms: null   # APPROVE after the fenced egress journal and broker transport are implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from durable single-use capability claim and SEND_STARTED persistence to transmission of the first broker-directed byte. Expiry or inability to prove this interval denies the send; post-claim ambiguity remains potentially live and capacity-covered (ADR-002-007 §§9.4-9.5)."
+    measurement_source: egress_journal_and_broker_transport_trace
+    failure_response: QUARANTINE_UNKNOWN
   B_stale_epoch_reject:
     value_ms: 0
     semantics: hard_maximum
@@ -209,7 +216,7 @@ bounds:
     failure_response: STOP_NEW_RISK
 
 limits:
-  MAX_normal_capability_age_ms: 1000          # PROPOSED: max age of a normal transmission capability before re-verification
+  MAX_normal_capability_age_ms: 1000          # PROPOSED: max consumer-local age of the normal capability/currentness proof before denial
   MAX_time_health_snapshot_age_ms: null       # APPROVE: max consumer-held Time Health proof age, including transport uncertainty
   MAX_degraded_lease_holdover_ms: 5000        # PROPOSED: max monotonic lifetime of a pre-issued degraded protective lease
   MAX_clock_drift_ppm: 200                    # PROPOSED: beyond this, time confidence is lost -> fail closed (ADR-002-003)

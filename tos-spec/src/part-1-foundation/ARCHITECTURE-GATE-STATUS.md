@@ -56,6 +56,8 @@ The current bundle decides:
 - health restoration, restart, failover, reconciliation, configuration change, or deployment cannot automatically re-arm risk-increasing live operation.
 - re-arm requires explicit scoped human governance, fresh authority, current reconciled state, and final enforcement at broker egress.
 - restrictive time, revocation, and HALT generations have explicit egress-containment bounds; an unfenced check-then-send path is prohibited.
+- normal risk-relevant egress currentness uses a selected fenced single-use capability protocol: Safety Authority issuance through a linearizable Currentness Sequencer, a bounded authenticated currentness session, a monotonic deny latch, durable nonce claim plus `SEND_STARTED`, and a bounded claim-to-first-byte boundary.
+- only the approved Egress Gateway may hold a usable live order credential and broker-order route; reconnect, cache recovery, or deletion of a restrictive flag cannot clear the deny latch or re-arm authority.
 - failure-domain independence is an evidence-backed property; logical service separation, cache health, and redundancy count do not prove isolation.
 - deployment, rollback, split-brain, credential, broker-session, and shared infrastructure common modes are explicitly allocated, fenced, and bounded by Safety Cell.
 - protective replacement is one safety workflow that accounts for both protection gaps and simultaneous old/new execution before cancellation or submission.
@@ -110,7 +112,7 @@ The review files were section-level amendments, not repository-aware diffs. Thei
 
 ADR-002-005 through ADR-002-011 are authored as `Proposed`. Phase B authorship is complete, but none of those decisions is accepted.
 
-Acceptance-blocking mechanism decisions remain for Risk Capacity Ledger consensus and fencing, egress currentness and fenced send, the concrete Failure-Domain Allocation Matrix and deployment profile, safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, Time Health Snapshot distribution, and authenticated human dual-control roles.
+The egress-currentness protocol is selected in ADR-002-007 §§9.1–9.5, but its linearizable substrate, authenticated session transport, cryptographic format, durable journal, numeric bounds, and credential/route migration remain acceptance blockers. The current repository still has multiple direct `OrderExecutor` paths and broadly distributed KIS access, so it is explicitly nonconforming for restricted live. Other acceptance-blocking mechanism decisions remain for Risk Capacity Ledger consensus and fencing, the concrete Failure-Domain Allocation Matrix and deployment profile, safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, Time Health Snapshot distribution, and authenticated human dual-control roles.
 
 Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-011, but all remain `NOT_IMPLEMENTED`. All numeric Verification Profile values remain unapproved. These unresolved items reduce authority and keep live operation prohibited.
 
@@ -158,13 +160,13 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Select and review the RCL fencing, egress-currentness, deployment-isolation, protective-replacement, and non-trade transition mechanisms.
+1. Select and review the RCL fencing, deployment-isolation, protective-replacement, and non-trade transition mechanisms; ratify the selected egress-currentness protocol and choose its implementation substrate.
 2. Assign implementation owners, evidence owners, and independent reviewers for all 135 items in EVIDENCE-REGISTER-002.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, and live-authorization state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.
 6. Implement durable evidence identities and event capture.
-7. Implement epoch/fencing and final egress checks.
+7. Implement the credential-confined Egress Gateway, authenticated currentness session, monotonic deny latch, single-use capability journal, epoch fencing, and bounded claim-to-send checks; remove every direct live broker-order path.
 8. Complete the first broker-specific Capability Profile.
 9. Build deterministic fault injection.
 10. Execute EV-L1 through EV-L3 tests.

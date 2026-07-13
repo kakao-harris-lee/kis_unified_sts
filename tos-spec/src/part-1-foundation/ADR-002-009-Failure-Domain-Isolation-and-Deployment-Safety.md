@@ -157,7 +157,7 @@ No strategy, recovery tool, administrative shell, alternate adapter, or test env
 
 HALT, revocation, epoch advancement, time degradation, capacity exhaustion, broker-capability withdrawal, and reconciliation degradation SHALL become authoritative at egress within approved containment bounds.
 
-Until the ADR-002-007 egress-currentness mechanism is selected and evidenced, this invariant remains an acceptance blocker. A cache lifetime, message retry, or eventual-consistency assumption is not a mechanism.
+ADR-002-007 §§9.1–9.5 selects the fenced single-use capability protocol. This invariant remains an acceptance blocker until the protocol has an approved implementation substrate and numeric bounds, is the only usable live route, and has executed evidence. A cache lifetime, message retry, or eventual-consistency assumption is not an implementation of that protocol.
 
 ### 6.5 Environment Isolation
 
@@ -268,6 +268,26 @@ Mixed-version operation is permitted only where compatibility and safety dominan
 Rollback is a new deployment generation. It SHALL NOT reuse stale authority merely because the binary version was previously accepted.
 
 An incomplete deployment, failed migration, partial configuration distribution, or unknown active instance SHALL invalidate normal live authority for the affected scope until fencing and reconciliation establish exclusivity.
+
+### 10.1 Current Repository Topology and Required Migration
+
+The current `kis_unified_sts` runtime is not a conforming restricted-live TOS deployment:
+
+- `services/trading/orchestrator.py` and `services/order_router/main.py` can each construct `OrderExecutor` and reach broker-order transmission;
+- `shared/execution/kis_futures_adapter.py` invokes private `OrderExecutor` send and cancel methods, so upstream guard success is separated from the actual irreversible send boundary;
+- `docker-compose.yml` distributes KIS application, account, and token-cache access to multiple trading and market-data runtimes rather than confining usable live order credentials to one approved egress identity;
+- `shared/execution/live_mode_guard.py`, the `futures:live:suspended` Redis flag, local sentinel files, and kill-switch streams are restrictive operational inputs but do not carry the ordered generations, single-use claims, durable send boundary, or non-bypassable identity isolation required by ADR-002-007.
+
+These paths SHALL NOT be described as accepted TOS enforcement. The required migration target is:
+
+1. one approved Egress Gateway identity per declared Safety Cell holds the usable live order credential and broker-order network route;
+2. orchestrators, order routers, recovery tools, adapters, and administrative processes submit non-transmitting intents or capability requests as applicable; market-data services remain read-only; none can directly reach a live broker-order endpoint;
+3. `OrderExecutor` broker POST and cancel behavior moves behind the Egress Gateway's fenced capability-claim and `SEND_STARTED` boundary;
+4. market-data access uses separate non-ordering credentials and routes where the broker supports them; any broker-enforced inability to separate credentials is recorded as a common mode and mitigated by a non-bypassable order-route boundary;
+5. existing Redis flags, streams, and sentinels may trip a monotonic restrictive input but their absence, deletion, expiry, or recovery never establishes current permission or clears the deny latch;
+6. the current SQLite runtime ledger and Redis deployment are not treated as the sole Risk Capacity Ledger, currentness sequencer, or authoritative fencing substrate without a separately approved mechanism and executed partition/failover evidence.
+
+Until credential inventory, route confinement, direct-path removal, and bypass testing prove this topology, restricted-live and production gates remain `NO`.
 
 ---
 
@@ -466,7 +486,7 @@ These costs are accepted because safety claims without failure-domain proof are 
 ## 21. Open Questions
 
 1. Which consensus and fencing mechanism will provide Risk Capacity Ledger writer exclusivity for each deployment profile?
-2. Which concrete egress-currentness mechanism will satisfy the ADR-002-007 revocation and capability containment bounds without unsafe cache dependence?
+2. Which consensus substrate, authenticated currentness-session transport, durable egress journal, and credential/route isolation will implement the selected ADR-002-007 §§9.1–9.5 protocol?
 3. Which Safety Cell boundaries and deployment topology will be approved for the first restricted-live profile?
 4. Which dependencies require physical separation, and which common modes will be explicitly accepted as residual risk?
 5. How will region loss and broker-session continuity be tested without creating live economic effect?
@@ -482,7 +502,7 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 
 1. a concrete deployment profile and Failure-Domain Allocation Matrix are approved;
 2. the Risk Capacity Ledger fencing and consensus mechanism is selected;
-3. the ADR-002-007 egress-currentness mechanism and numeric bounds are approved;
+3. the ADR-002-007 §§9.1–9.5 egress-currentness protocol has an approved implementation substrate, isolated credential/route topology, and numeric bounds;
 4. dedicated evidence items are registered for every `FD-AC-*` case;
 5. required EV-L1, EV-L2, and EV-L3 fault evidence is executed and retained;
 6. all isolation claims and residual common modes receive independent review;

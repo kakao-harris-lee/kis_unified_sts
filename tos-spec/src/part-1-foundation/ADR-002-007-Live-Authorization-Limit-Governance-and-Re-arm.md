@@ -103,6 +103,10 @@ An authenticated, revocable, time-bounded authorization for one exact live scope
 
 The per-action authorization enforced by the Broker Adapter / Egress Gateway under RFC-002, ADR-002-002, and ADR-002-003.
 
+### 4.7 Currentness Sequencer
+
+The linearizable ordering interface through which the Safety Authority records normal Transmission Capability issuance and restrictive generation transitions for a Safety Cell. It is an implementation function of the existing Safety Authority boundary, not a separate policy authority. It SHALL NOT grant Live Authorization, invent scope, mutate capacity, or hold broker transmission credentials.
+
 Possession of one artifact SHALL NOT imply possession of another.
 
 ---
@@ -119,6 +123,7 @@ Possession of one artifact SHALL NOT imply possession of another.
 | Approve re-arm request | Authenticated separated human control | One principal unilaterally enlarging and arming scope |
 | Issue Live Authorization | Live Authorization Service | Changing limits or bypassing readiness evidence |
 | Issue current Safety Authority capability | Safety Authority | Holding broker transmission credentials |
+| Order capability issuance and restrictive generations | Currentness Sequencer within the Safety Authority boundary | Independent policy grant, capacity mutation, or broker transmission |
 | Enforce transmission | Broker Adapter / Egress Gateway | Inventing missing scope or accepting stale versions |
 | Halt or reduce scope | Safety Authority or authenticated emergency path | Automatically restoring authority later |
 
@@ -262,6 +267,54 @@ Continuous validity is checked by the Live Authorization Service and independent
 Every restrictive authorization transition SHALL advance an authenticated, monotonically ordered revocation or restriction generation. The authoritative transition SHALL reach every final egress within `B_revocation_to_egress`. At egress, the age of any cached normal capability or currentness proof SHALL be no greater than `MAX_normal_capability_age` and SHALL also remain within the artifact's own validity interval. If the current accepted generation cannot be positively established, the action is denied.
 
 `B_risk_increase_revoke` governs detection-to-authoritative-revocation behavior; `B_revocation_to_egress` governs authoritative-revocation-to-egress-denial behavior. Neither bound may be hidden inside an unmeasured cache TTL or retry interval.
+
+### 9.1 Selected Fenced Egress Currentness Protocol
+
+This ADR selects a **fenced single-use capability protocol** for normal risk-relevant transmission. The protocol is an architectural requirement; its storage, consensus, transport, and cryptographic implementation remain subject to approval and evidence.
+
+For a normal risk-relevant action, the Safety Authority SHALL issue one authenticated Transmission Capability through the Currentness Sequencer only after the sequencer has ordered the issuance against the current restrictive generation vector and positively verified the referenced Risk Capacity Ledger commitment. The Currentness Sequencer does not create, mutate, transfer, or release capacity. The Risk Capacity Ledger remains the sole capacity mutation and serialization authority.
+
+The issuance decision and every restrictive transition SHALL be serialized in one linearizable ordering domain for the affected Safety Cell. The concrete consensus substrate may differ from the Risk Capacity Ledger substrate only if their coupling prevents capability issuance against stale or uncommitted capacity and is proven under partition and failover. Redis cache state, eventual event delivery, process-local leader belief, or a broker-reachable heartbeat alone cannot provide this ordering.
+
+### 9.2 Single-Use Transmission Capability
+
+Every normal Transmission Capability SHALL be single-use and bind at least:
+
+- capability identity, nonce, issue sequence, and action class;
+- exact intent lineage and transmission-attempt identity;
+- exact environment, Safety Cell, account, portfolio, broker, venue, session, instrument, side, order type, quantity, price constraints, and worst-case economic effect;
+- exact Broker Adapter / Egress Gateway, deployment, workload, credential, software, and configuration identities;
+- current writer epoch, Safety Authority epoch, Live Authorization identity, revocation generation, HALT generation, Time Health generation, and profile generations;
+- the exact active Capacity Commitment or valid protective-capacity consumption proof;
+- consumer-verifiable issue and expiry evidence whose age is bounded by `MAX_normal_capability_age`;
+- cryptographic integrity and issuer identity.
+
+A retry, replacement, scope change, credential change, route change, or economic-effect change requires a new transmission-attempt identity and a new capability. Missing broker ACK does not permit reuse or blind retry. It creates or preserves potentially-live `UNKNOWN` state and conservative capacity under ADR-002-002, ADR-002-004, and ADR-002-005.
+
+### 9.3 Egress Currentness Session and Monotonic Deny Latch
+
+Each approved final egress SHALL maintain a mutually authenticated currentness session with the Currentness Sequencer. The session carries the highest accepted restrictive generation vector and a short maximum age measured from a consumer-local monotonic receipt anchor. Issuer and consumer monotonic values SHALL NOT be directly compared.
+
+The session is a bounded proof, not an allow cache. Loss, expiry, generation conflict, failed authentication, local suspension beyond the approved bound, or inability to renew before maximum age SHALL set a monotonic deny latch for the affected scope before any later normal broker send. Authenticated restrictive pushes MAY set the latch earlier, but absence of a push is never proof of permission. Separately pre-authorized degraded protective behavior follows §9.5 and cannot inherit normal authority from this exception.
+
+The deny latch SHALL NOT clear because connectivity, time, Redis, process health, or the sequencer recovers. Clearing it requires a newer authenticated currentness generation, reconstruction of every prerequisite, and fresh capability issuance; if the Live Authorization became `SUSPENDED`, `REVOKED`, `EXPIRED`, or `SUPERSEDED`, ADR-002-007 re-arm governance requires a new Live Authorization. Recovery alone never re-arms.
+
+### 9.4 Fenced Claim-to-Send Boundary
+
+The Egress Gateway SHALL be the only holder of a usable live order credential and broker-order route. Immediately before transmitting the first broker-directed byte it SHALL, within one egress serialization boundary:
+
+1. validate the complete capability and currentness-session generation vector;
+2. check the local monotonic deny latch and the latest locally accepted restrictive generation;
+3. durably claim the capability nonce exactly once and append `SEND_STARTED` with the same generation vector, capacity identity, attempt identity, and broker-request identity;
+4. begin the broker socket write within `B_capability_claim_to_send` without an intervening unfenced queue, proxy, credential holder, or retry layer.
+
+If durable claim, evidence persistence, currentness, or local ordering is unavailable or ambiguous, no send is permitted. A crash or ambiguity after durable `SEND_STARTED` and before Final Quantity Proof is treated as potentially transmitted: the attempt remains `UNKNOWN`, its worst-case economic effect remains capacity-covered, and the capability is never reusable. Capability expiry or authority expiry after `SEND_STARTED` does not expire economic effect.
+
+### 9.5 Restrictive Races and Protective Exception
+
+Revocation or HALT commit SHALL stop issuance of later normal capabilities. An already issued capability can race a restrictive transition only inside the approved `B_revocation_to_egress` or `B_halt_to_egress`, `MAX_normal_capability_age`, and `B_capability_claim_to_send` bounds. Once the egress accepts the restrictive generation or its bounded proof expires, the deny latch dominates. Any send whose ordering cannot be proven remains potentially live and capacity-covered; audit classification does not convert it into a denied economic effect.
+
+Degraded protective operation does not use normal-risk issuance during partition. It follows ADR-002-001 and ADR-002-003: an exclusive pre-issued protective lease may authorize only bounded, non-expanding, single-use protective capabilities from its monotonic local budget. The same nonce claim, `SEND_STARTED`, identity binding, egress confinement, and conservative ambiguity rules still apply. Priority is not reserved protective capacity.
 
 ---
 
@@ -419,6 +472,8 @@ Any missing, stale, conflicting, unverifiable, or out-of-scope fact is denial be
 
 The complete validation decision and the irreversible broker-send boundary SHALL be fenced against the same authority, revocation, and HALT generations accepted by that egress. If that egress accepted a restrictive generation before the send boundary, the transmission SHALL be denied. If their local race ordering cannot be positively established, the safer restrictive state wins and the transmission SHALL be denied. Every final egress SHALL accept the restrictive generation within the applicable propagation bound; a transmission occurring before local acceptance remains potentially live, capacity-covered, measured against that bound, and retained as evidence. A successful check followed by an unfenced queue, proxy, or credential holder is not final egress enforcement.
 
+The fenced single-use capability protocol in §§9.1–9.5 is the required mechanism for this decision. A direct call to a broker client, adapter-private send method, retry queue, or alternate credential path outside that boundary is a bypass even if an upstream live-mode guard passed.
+
 No internal control is sufficient if an identity can bypass this final gate and reach the broker directly.
 
 ADR-002-009 governs the physical and logical isolation of this path. ADR-002-011 governs protective replacement at this gate, and ADR-002-010 governs any transmitted action required by a non-trade event.
@@ -503,7 +558,7 @@ ADR-002-007 SHALL remain Proposed until executed evidence demonstrates at least:
 - **REARM-AC-007 — UNKNOWN:** unresolved order, exposure, or external activity blocks risk-increasing re-arm while remaining conservatively capacity-covered.
 - **REARM-AC-008 — Continuous invalidation:** loss of time, reconciliation, authority, broker capability, identity, or profile validity creates an authoritative restrictive generation and suspends new risk within `B_risk_increase_revoke` plus `B_revocation_to_egress`.
 - **REARM-AC-009 — Partial re-arm:** only the explicitly narrower scope becomes active; broader prior scope remains denied.
-- **REARM-AC-010 — Final egress:** stale, wrong-scope, wrong-version, over-age, wrong-generation, or bypassed authorization is rejected at the fenced irreversible send boundary.
+- **REARM-AC-010 — Final egress:** stale, wrong-scope, wrong-version, over-age, wrong-generation, reused, post-latch, or bypassed authorization is rejected at the fenced capability-claim and irreversible-send boundary; any ambiguous post-claim attempt remains potentially live and capacity-covered.
 - **REARM-AC-011 — Restrictive precedence:** HALT advances a restrictive generation, reaches all final egress within `B_halt_to_egress`, and dominates a racing permissive authorization without blindly cancelling required protection.
 - **REARM-AC-012 — Evidence replay:** an independent reviewer can reconstruct every readiness, approval, authorization, invalidation, and egress decision.
 
@@ -546,7 +601,7 @@ The following may remain open while Proposed but SHALL be resolved before accept
 
 1. What human roles, quorum, authentication, and approval expiry implement dual control?
 2. What service stores and signs Recovery Evidence Packages and authorization records?
-3. Which currentness mechanism—such as continuously proven fenced generation or bounded short-lived proof—delivers authorization, revocation, and HALT state to final egress without unsafe caching while meeting `B_revocation_to_egress`, `B_halt_to_egress`, and `MAX_normal_capability_age`?
+3. Which linearizable consensus, authenticated session transport, cryptographic format, and durable egress journal implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, and `B_capability_claim_to_send`?
 4. What exact scope dimensions and risk vectors are supported by the first restricted-live profile?
 5. How are atomic profile activation and rollback implemented across failure domains?
 6. Which changes require full re-arm versus immediate scoped suspension and later re-evaluation?
@@ -566,9 +621,9 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 - all roles and separation-of-duty controls are defined and enforced;
 - the Recovery Evidence Package and Live Authorization contracts are implemented;
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;
-- the currentness distribution and fenced irreversible-send mechanism in §24.3 is selected, implemented, and independently security-reviewed;
+- the selected currentness distribution and fenced irreversible-send protocol in §§9.1–9.5 is implemented and independently security-reviewed;
 - every invalidation trigger fails closed within its approved bound;
-- `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, and `MAX_normal_capability_age` are approved, measured, and enforced at every final egress;
+- `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, and `B_capability_claim_to_send` are approved, measured, and enforced at every final egress;
 - automatic re-arm and stale authorization replay are demonstrably impossible;
 - partial re-arm cannot expand beyond its exact scope;
 - VER-002-001 and the Evidence Register cover every Critical acceptance case;

@@ -172,6 +172,7 @@ B_risk_increase_revoke
 B_revocation_to_egress
 B_halt_to_egress
 B_time_health_to_egress
+B_capability_claim_to_send
 B_stale_epoch_reject
 B_external_activity_detect
 B_external_activity_contain
@@ -904,7 +905,7 @@ An untested Critical requirement blocks production approval.
 - **Minimum Level:** EV-L3
 - **Supports:** ADR-002-007 REARM-AC-008
 - **Injection:** Invalidate time, reconciliation, authority, broker capability, profile, deployment identity, credential, or fencing while delaying revocation propagation and currentness refresh.
-- **Expected:** An authoritative restrictive generation is created within `B_risk_increase_revoke`; every final egress denies new risk within the additional `B_revocation_to_egress`; cache age never exceeds `MAX_normal_capability_age`.
+- **Expected:** An authoritative restrictive generation is created within `B_risk_increase_revoke`; every final egress denies new risk within the additional `B_revocation_to_egress`; the consumer-local capability/currentness proof age never exceeds `MAX_normal_capability_age`; session loss sets a deny latch that recovery alone cannot clear.
 
 ## 96. REARM-EV-009 — Partial Re-arm Scope
 
@@ -917,8 +918,8 @@ An untested Critical requirement blocks production approval.
 
 - **Minimum Level:** EV-L3 plus security assessment
 - **Supports:** ADR-002-007 REARM-AC-010
-- **Injection:** Present stale, wrong-scope, wrong-version, over-age, wrong-generation, wrong-deployment, and bypassed authorization; delay revocation between validation and broker send.
-- **Expected:** The irreversible send boundary is fenced to the same current generations and identity checked by egress; no upstream success or unsafe queue/cache permits transmission.
+- **Injection:** Present stale, wrong-scope, wrong-version, over-age, wrong-generation, wrong-deployment, reused-nonce, post-deny-latch, and bypassed authorization; pause currentness renewal; delay a restrictive push; crash or restart egress before claim, after durable claim/`SEND_STARTED`, and before the first broker byte; insert an unfenced queue or proxy; and invoke every repository path that previously called `OrderExecutor` directly.
+- **Expected:** Only the credential-confined Egress Gateway can claim and transmit; the nonce is durable and single-use; the irreversible send begins within `B_capability_claim_to_send` against the same current generation vector; no upstream success, direct adapter call, Redis flag state, queue, cache, or alternate credential path permits transmission. Every post-claim ambiguity is `UNKNOWN`, remains potentially live and capacity-covered, and cannot reuse the capability.
 
 ## 98. REARM-EV-011 — HALT Restrictive Precedence
 
@@ -1034,7 +1035,7 @@ An untested Critical requirement blocks production approval.
 - **Minimum Level:** EV-L3 plus security assessment
 - **Supports:** ADR-002-009 FD-AC-003
 - **Injection:** Partition Safety Control Plane, Risk Capacity Ledger, revocation, and time-currentness paths from egress while leaving broker connectivity available.
-- **Expected:** Final egress blocks new risk within approved containment bounds; potentially transmitted effects remain tracked and capacity-covered.
+- **Expected:** The egress currentness session expires or becomes unverifiable, sets the monotonic deny latch, and blocks new risk within approved containment bounds while broker reachability remains available; reconnect alone does not re-arm. Potentially transmitted effects remain tracked and capacity-covered.
 
 ## 113. FD-EV-004 — Cache Failure Cannot Create Permission
 
@@ -1048,7 +1049,7 @@ An untested Critical requirement blocks production approval.
 - **Minimum Level:** EV-L3
 - **Supports:** ADR-002-009 FD-AC-005
 - **Injection:** Delay, lose, duplicate, reorder, and replay HALT, revocation, time-degradation, capability-withdrawal, and epoch events across every egress consumer.
-- **Expected:** No egress accepts an older permissive generation after the applicable bound; unverifiable currentness is denial and unsafe event delivery is not treated as authority.
+- **Expected:** No egress accepts an older permissive generation after the applicable bound; the authenticated currentness-session expiry independently denies when restrictive delivery fails; unverifiable currentness is denial, recovery alone does not clear the latch, and unsafe event delivery is not treated as authority.
 
 ## 115. FD-EV-006 — Live and Non-Live Environment Isolation
 
@@ -1335,6 +1336,7 @@ The test harness SHALL support controlled injection at least for:
 - clock step, freeze, source disagreement, monotonic discontinuity, and cross-host receipt-age simulation;
 - Time Health generation delay beyond `B_time_health_to_egress`;
 - authorization revocation delay beyond `B_revocation_to_egress`;
+- currentness-session loss and capability claim-to-first-byte delay beyond `B_capability_claim_to_send`;
 - HALT races before and after the fenced send boundary;
 - rate-limit saturation;
 - credential revocation;
@@ -1495,7 +1497,7 @@ Requires:
 
 - REARM-EV-001 through REARM-EV-012;
 - SA-EV-009, SA-EV-010, SA-EV-013, BC-EV-015, BC-EV-020, BC-EV-021, X-EV-007, X-EV-009, and X-EV-012;
-- approved and measured `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, and `MAX_normal_capability_age`;
+- approved and measured `B_risk_increase_revoke`, `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, and `B_capability_claim_to_send`;
 - authorization/final-egress security assessment and independent review.
 
 ### ADR-002-008
@@ -1513,7 +1515,7 @@ Requires:
 
 - FD-EV-001 through FD-EV-012;
 - SA-EV-001, SA-EV-002, SA-EV-008, SA-EV-013 through SA-EV-015, BC-EV-015, BC-EV-020, X-EV-002, X-EV-003, and X-EV-009;
-- an approved Failure-Domain Allocation Matrix, deployment profile, RCL fencing mechanism, and egress-currentness mechanism;
+- an approved Failure-Domain Allocation Matrix, deployment profile, RCL fencing mechanism, and implementation of the selected ADR-002-007 §§9.1–9.5 egress-currentness protocol;
 - failure-domain security assessment and independent review.
 
 ### ADR-002-010

@@ -1595,7 +1595,7 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 ADR-002-005 through ADR-002-011 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, and non-trade-event models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, or Broker Capability Profile.
 
 1. Which persistence and consensus mechanism implements the Risk Capacity Ledger's required semantics?
-2. How are writer and Authority Epoch fencing tokens propagated and validated at broker egress?
+2. Which linearizable substrate, authenticated currentness-session transport, durable egress journal, and credential/route isolation implement ADR-002-007's selected fenced single-use capability protocol and propagate writer and Authority Epoch fences to broker egress?
 3. What deployment topology provides the required failure-domain isolation?
 4. What numeric detection, containment, protective-gap, lease, and retry bounds are approved?
 5. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?

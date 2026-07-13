@@ -16,7 +16,8 @@ safety model they implement:
 - numeric bounds require **human approval** (VER-002-001 §6; separation of duties);
 - owners and the **independent reviewer** must be assigned — the reviewer SHALL NOT
   be the author/integrator of this architecture (RFC-001 §11.4);
-- implementation must follow **plan-first** approval (project workflow);
+- implementation must follow **plan-first** approval, including ratification of the
+  proposed repository integration direction and mechanism substrate (project workflow);
 - EV-L1..L3 evidence cannot be "declared" — it must be produced by real tests,
   fault injection, and captured artifacts (VER-002-001 §5, ARCHITECTURE-GATE-STATUS §6);
 - EV-L4 needs a **KIS sandbox**; EV-L5/L6 need production authority that does not exist.
@@ -32,13 +33,13 @@ This document exists so those gates are explicit and ratifiable, not bypassed.
 | Approve/replace bounds in `VERIFICATION-PROFILE-002.yaml` | Safety/Risk authority | Tests need pass/fail thresholds; unapproved bounds are not bounds |
 | Measure broker-specific bounds from a KIS Capability Profile | Broker/Exec eng | Final Quantity Proof, late fill, rate/session, query, replacement gap/overlap, and non-trade detection/reconciliation |
 | Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (135 items); independence is mandatory |
-| Approve this plan and the scoping decision (§2) | Architecture board | Determines what code is written and where |
+| Ratify this plan, the §2 integration direction, and the mechanism substrate | Architecture board | Determines what code is written and where |
 
 I will not fabricate any of these. I can *draft candidates* (done for bounds; role scheme in §3) for you to ratify.
 
 ---
 
-## 2. Scoping decision required first
+## 2. Proposed repository integration direction
 
 RFC-002's components (Risk Capacity Ledger, Safety Authority, Trustworthy Time Service,
 Live Authorization Service, Broker Adapter/egress, Reconciliation, Recovery Coordinator,
@@ -48,13 +49,28 @@ Protective Action Controller, Safety Profile Validator) must be reconciled with 
 rate_limiter, pseudo_oco, live_mode_guard), `services/order_router`, `services/risk_filter`,
 `services/kill_switch`, `shared/kis/` (auth/client/token).
 
-**Decision needed:** (A) build the TOS safety core as a **new subsystem** that the
-existing pipeline is migrated onto, or (B) **refactor** the existing execution/risk/
-kill-switch modules to satisfy the ADRs in place. This is an architecture-board call
-and changes the plan materially. Recommendation: a thin **new** Risk Capacity Ledger +
-Safety Authority + Trustworthy Time + Live Authorization + egress gate (they have no
-adequate equivalent today), while *mapping* existing executor/venue_router/rate_limiter
-behind the new egress boundary.
+The proposed direction is a thin **new** Risk Capacity Ledger + Safety Authority +
+Trustworthy Time + Live Authorization + Egress Gateway safety core, with existing
+strategy, executor, venue-router, and rate-limiter behavior migrated behind its
+non-bypassable interfaces. This resolves the architecture shape for planning but is not
+an approval to deploy or trade.
+
+The repository-aware migration constraints are:
+
+1. `services/trading/orchestrator.py` and `services/order_router/main.py` stop
+   constructing a live-transmitting `OrderExecutor`; they submit non-transmitting
+   intents or capability requests.
+2. `shared/execution/executor.py` broker POST/cancel operations and
+   `shared/execution/kis_futures_adapter.py` are reachable only inside the Egress
+   Gateway's fenced boundary.
+3. A single approved egress identity per Safety Cell holds the live order credential
+   and broker-order route. Other services lose usable live order credentials and routes.
+4. `futures:live:suspended`, sentinel files, and kill-switch streams remain
+   authority-reducing inputs only. Missing/deleted keys and recovered dependencies do
+   not establish permission or re-arm.
+5. The current Redis and SQLite deployment is not presumed to satisfy linearizable
+   currentness or Risk Capacity Ledger consensus. The concrete substrate remains an
+   architecture-board decision and test target.
 
 ---
 
@@ -97,6 +113,10 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   fencing epoch; **Safety Authority epoch registry**; durable evidence identities +
   write-ahead `SEND_STARTED`; Time Health generation and consumer receipt-anchor model;
   Live Authorization revocation/HALT generation model.
+- Implement the ADR-002-007 §§9.1–9.5 protocol components: linearizably ordered
+  single-use capability issuance, authenticated currentness session, consumer-local
+  monotonic deny latch, and a durable nonce-claim journal. The selected substrate is
+  still subject to Phase 0 approval.
 - Durable orthogonal-state ownership, reconciliation-confidence bounds, deployment and credential
   identities, replacement workflow lineage, and non-trade event/version lineage.
 - Component-level fault injection (missing input, stale epoch, crash-at-boundary).
@@ -107,7 +127,11 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   of a *simulated* broker; real persistence + network boundaries; duplicate-instance /
   split-brain / partition / restart harness.
 - Fence the validation decision and irreversible simulated send boundary against current
-  authority, revocation, HALT, and Time Health generations.
+  authority, revocation, HALT, and Time Health generations. Enforce
+  `B_capability_claim_to_send` between durable claim/`SEND_STARTED` and the first
+  simulated broker byte.
+- Prove that all existing orchestrator, order-router, adapter, retry, administrative,
+  and market-data identities lack a direct simulated live-order route.
 - Execute the EV-L3 RC-EV / SA-EV / TIME-EV / REARM-EV / STATE-EV / RECON-EV / FD-EV /
   PR-EV / NT-EV set; measure `B_*` bounds against
   `VERIFICATION-PROFILE-002`.
@@ -131,19 +155,20 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
 
 ## 5. What I will do vs. will not do
 
-**Will do (on your go):** write Phase 1–3 code and harness in this repo per the approved
-scoping decision; keep everything non-transmitting/simulated; produce EV-L1..L3 evidence
+**Will do (on your go):** write Phase 1–3 code and harness in this repo per the ratified
+integration direction; keep everything non-transmitting/simulated; produce EV-L1..L3 evidence
 artifacts; keep status Proposed.
 
 **Will not do (safety model forbids):** approve bounds; assign real owners or sign as the
 independent reviewer; execute against a live KIS account; declare any ADR Accepted; write
-implementation code before this plan and the scoping decision are approved.
+implementation code before this plan, integration direction, and mechanism substrate are approved.
 
 ---
 
 ## 6. Immediate decision requested
 
 1. Approve (or amend) `VERIFICATION-PROFILE-002.yaml` proposed bounds, including the currently null egress-currentness, failure-domain, replacement, and non-trade bounds, and provide the KIS-measured ones.
-2. Choose the scoping option in §2 (new subsystem vs. refactor).
+2. Ratify (or amend) the §2 integration direction and ADR-002-007 §§9.1–9.5 protocol;
+   select the linearizable currentness/RCL substrate and credential-isolation topology.
 3. Approve this plan so Phase 1 (EV-L1 models + property tests, non-transmitting) can begin.
 4. Name the independent reviewer (or confirm it is external to this work).

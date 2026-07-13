@@ -46,6 +46,13 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+  B_capability_claim_to_send:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: QUARANTINE_UNKNOWN
   B_stale_epoch_reject:
     value_ms: null
     semantics: hard_maximum
