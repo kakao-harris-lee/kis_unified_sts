@@ -44,6 +44,8 @@ generation_vector:
   egress_generation: null
   evidence_store_generation: null
   human_authority_policy_generation: null
+  critical_input_policy_generation: null
+  context_generation: null
 
 economic_state:
   intents: []
@@ -57,6 +59,17 @@ economic_state:
   external_activity: []
   non_trade_events: []
   protective_obligations: []
+
+critical_input_state:
+  critical_input_policy_id: TBD
+  critical_input_policy_digest: TBD
+  source_continuity_vector: []
+  observation_and_correction_ids: []
+  transformation_lineage_digests: []
+  critical_input_snapshot_ids: []
+  decision_context_capsule_ids: []
+  context_invalidation_ids: []
+  common_mode_dependencies: []
 
 obligations:
   obligation_graph_digest: TBD

@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **207**
-- NOT_IMPLEMENTED: **207**
+- Total evidence items: **219**
+- NOT_IMPLEMENTED: **219**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -230,6 +230,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | SBR-EV-010 | Safe Startup and Recovery Barrier | Restore Conflict and Worst-Credible Economic Union | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | SBR-EV-011 | Safe Startup and Recovery Barrier | Recovery Authority Separation and Forced-Ready Denial | ADR-002-017 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | SBR-EV-012 | Safe Startup and Recovery Barrier | Recovery Completion Non-Revival and Replay | ADR-002-017 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-001 | Critical Input Integrity | Critical Input Classification Completeness | ADR-002-018 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-002 | Critical Input Integrity | Source Identity Continuity and Replay Fencing | ADR-002-018 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-003 | Critical Input Integrity | Identity Unit Scale and Mapping Integrity | ADR-002-018 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-004 | Critical Input Integrity | Transformation Lineage and Hidden-Default Safety | ADR-002-018 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-005 | Critical Input Integrity | Freshness Consistency and Source-Conflict Conservatism | ADR-002-018 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-006 | Critical Input Integrity | Independent Approval and Common-Mode Detection | ADR-002-018 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-007 | Critical Input Integrity | Exact Capsule Binding and Substitution Resistance | ADR-002-018 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-008 | Critical Input Integrity | Correction Retraction and Invalidation Fan-Out | ADR-002-018 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-009 | Critical Input Integrity | Active Final-Egress Context Currentness | ADR-002-018 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-010 | Critical Input Integrity | Input Degradation and Protective Confinement | ADR-002-018 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-011 | Critical Input Integrity | Context Authority Separation and Human-Override Denial | ADR-002-018 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CII-EV-012 | Critical Input Integrity | Restart Restore Recovery and Non-Revival | ADR-002-018 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

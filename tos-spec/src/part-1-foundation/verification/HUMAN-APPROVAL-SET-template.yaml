@@ -4,6 +4,10 @@ approval_set_id: TBD
 status: DRAFT
 request_id: TBD
 request_digest: TBD
+decision_context_capsule_id: TBD
+decision_context_capsule_digest: TBD
+context_generation: null
+context_invalidation_generation: null
 
 policy:
   human_authority_policy_id: TBD
@@ -28,6 +32,8 @@ approval_attestation_digests: []
 validation:
   request_current: false
   exact_context_current: false
+  source_continuity_current: false
+  common_mode_analysis_current: false
   all_attestations_current: false
   all_artifacts_current: false
   replay_checked: false

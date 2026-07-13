@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "0.8-PROPOSED"
+version: "0.9-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -46,6 +46,9 @@ scope:
   recovery_barrier_policy_id: TBD
   recovery_barrier_policy_generation: null
   recovery_barrier_policy_digest: TBD
+  critical_input_policy_id: TBD
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -149,6 +152,27 @@ bounds:
     owner: TBD
     rationale: "MEASURE. Maximum interval from committed Recovery Generation/barrier closure to denial of stale readiness, authorization, capability, and new-risk transmission at every affected final egress (ADR-002-017 §§9, 18)."
     measurement_source: recovery_generation_and_egress_boundary_trace
+    failure_response: HALT
+  B_critical_input_loss_detect:
+    value_ms: null   # APPROVE per source class and continuity protocol
+    semantics: source_specific_hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from source loss, continuity break, sequence gap, or material trust degradation to authoritative Critical Input invalidation for the complete affected dependency scope (ADR-002-018 §§9, 14, 17)."
+    measurement_source: source_continuity_admission_and_context_invalidation_trace
+    failure_response: STOP_NEW_RISK
+  B_critical_input_invalid_to_authority:
+    value_ms: null   # APPROVE after Context Generation distribution to issuers is implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed material Critical Input invalidation to denial at every affected approval and new-risk authority issuer (ADR-002-018 §§15-17)."
+    measurement_source: context_generation_approval_and_authority_trace
+    failure_response: HALT_OR_CONTAIN
+  B_critical_input_invalid_to_egress:
+    value_ms: null   # APPROVE after active final-egress context currentness is implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed material Critical Input invalidation to denial of the stale Capsule and dependent request at every affected final egress (ADR-002-018 §16)."
+    measurement_source: context_generation_invalidation_and_egress_boundary_trace
     failure_response: HALT
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
@@ -290,6 +314,8 @@ limits:
   MIN_evidence_retention_ms: null              # APPROVE per record class; economic-effect and verification horizons dominate
   MAX_replay_start_delay_ms: null              # APPROVE incident/review target; exceeding it never relaxes isolation or completeness
   MAX_recovery_readiness_age_ms: null           # APPROVE per recovery scope; expiry or unknown age denies later authority issuance
+  MAX_critical_input_snapshot_age_ms: null       # APPROVE per source/input/decision scope; unknown age denies dependent new risk
+  MAX_decision_context_age_ms: null              # APPROVE per action class; Capsule expiry never expires economic effect
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

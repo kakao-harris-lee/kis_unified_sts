@@ -30,6 +30,9 @@ scope:
   recovery_barrier_policy_id: TBD
   recovery_barrier_policy_generation: null
   recovery_barrier_policy_digest: TBD
+  critical_input_policy_id: TBD
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -123,6 +126,27 @@ bounds:
     measurement_source: TBD
     failure_response: HARD_FENCE_AND_HALT
   B_recovery_barrier_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_critical_input_loss_detect:
+    value_ms: null
+    semantics: source_specific_hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
+  B_critical_input_invalid_to_authority:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_critical_input_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
     owner: TBD
@@ -268,6 +292,8 @@ limits:
   MIN_evidence_retention_ms: null
   MAX_replay_start_delay_ms: null
   MAX_recovery_readiness_age_ms: null
+  MAX_critical_input_snapshot_age_ms: null
+  MAX_decision_context_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

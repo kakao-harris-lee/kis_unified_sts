@@ -31,6 +31,14 @@ scope:
 evidence_and_artifacts:
   recovery_evidence_package_id: TBD
   readiness_decision_id: TBD
+  critical_input_policy_id: TBD
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
+  context_generation: null
+  critical_input_snapshot_id: TBD
+  critical_input_snapshot_digest: TBD
+  decision_context_capsule_id: TBD
+  decision_context_capsule_digest: TBD
   hard_safety_envelope_id: TBD
   hard_safety_envelope_generation: null
   hard_safety_envelope_digest: TBD
@@ -57,6 +65,7 @@ currentness_generations:
   revocation_generation: null
   halt_generation: null
   egress_generation: null
+  context_invalidation_generation: null
 
 unresolved_state: []
 residual_risks: []

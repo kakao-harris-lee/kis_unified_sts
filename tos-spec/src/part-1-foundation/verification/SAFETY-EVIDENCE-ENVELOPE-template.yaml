@@ -47,6 +47,10 @@ subjects:
   recovery_obligation_id: null
   recovery_evidence_package_id: null
   recovery_readiness_decision_id: null
+  critical_input_observation_id: null
+  critical_input_snapshot_id: null
+  decision_context_capsule_id: null
+  context_generation: null
   non_trade_event_id: null
 
 causality:

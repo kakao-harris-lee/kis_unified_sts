@@ -197,6 +197,7 @@ Every Live Authorization SHALL bind at least:
 - software artifact digest, configuration digest, and deployment provenance;
 - credential and broker-egress identity;
 - Recovery Evidence Package identity and evidence generation;
+- Critical Input Policy, Context Generation, Critical Input Snapshot, and exact Decision Context Capsule identities and digests under ADR-002-018;
 - Trustworthy Time generation and validity rule;
 - issue identity, issue sequence, activation condition, and maximum validity;
 - revocation generation;
@@ -252,6 +253,7 @@ Live Authorization is valid for new risk only while all of the following remain 
 - authorization validity and snapshot age remain positively established;
 - account-wide state required for the scope remains reconciled;
 - the ADR-002-017 Recovery Generation, barrier state, Recovery Evidence Package, and Recovery Readiness Decision remain current and valid for the exact scope;
+- the ADR-002-018 Critical Input Policy, Context Generation, source continuity, exact Decision Context Capsule, age, and invalidation state remain current and valid for the exact scope;
 - no unresolved UNKNOWN or unattributed activity affects the scope;
 - Risk Capacity Ledger and protective capacity remain consistent;
 - Hard Safety Envelope and Runtime Safety Profile versions match and remain valid;
@@ -392,11 +394,12 @@ Re-arm SHALL execute in this order:
 10. verify software, configuration, deployment, identity, credential, network, and final-egress confinement;
 11. verify no blocking Critical alert or unapproved residual risk remains;
 12. under ADR-002-017, have the current fenced Recovery Coordinator issue a current readiness decision bound to the exact Recovery Generation, dependency-complete scope, Inventory Cut, obligations, and immutable Recovery Evidence Package;
-13. obtain explicit separated human approvals bound to that package and scope;
-14. have the Live Authorization Service issue a new Live Authorization under the current epoch;
-15. distribute and confirm the authorization at final egress without bypass;
-16. transition only the authorized scope to its approved live mode;
-17. continue continuous validity monitoring.
+13. construct and independently validate a fresh ADR-002-018 Decision Context Capsule under current source continuity and bind it to the requested scope;
+14. obtain explicit separated human approvals bound to that package, Capsule, and scope;
+15. have the Live Authorization Service issue a new Live Authorization under the current epoch;
+16. distribute and confirm the authorization and context currentness at final egress without bypass;
+17. transition only the authorized scope to its approved live mode;
+18. continue continuous validity monitoring.
 
 Failure or uncertainty at any step leaves the scope non-live or more restricted. A later step SHALL NOT compensate for a failed earlier step.
 
@@ -606,12 +609,13 @@ The following may remain open while Proposed but SHALL be resolved before accept
 1. Which conforming ADR-002-015 effective-principal, role, quorum, authentication, approval-expiry, consumption, delegation, and Human HALT mechanisms implement dual control?
 2. Which ADR-002-017 Recovery Barrier Policy, ordered Recovery Generation and owner fence, dependency graph, obligation workflow, package signer, and readiness-verification mechanism provide current Recovery Evidence Packages without granting trading authority?
 3. Which conforming ADR-002-012 consensus product and ADR-002-013 credential, route, principal, Quorum Commit Certificate, authenticated session, and hard-fence mechanisms implement the selected §§9.1–9.5 protocol while meeting `B_revocation_to_egress`, `B_halt_to_egress`, `MAX_normal_capability_age`, `B_capability_claim_to_send`, and `B_egress_hard_fence`?
-4. What exact scope dimensions and risk vectors are supported by the first restricted-live profile?
-5. Which canonical artifact, semantic validation, compatibility-manifest, approval, and ADR-002-012 ordering mechanisms implement ADR-002-014 atomic activation and rollback fencing across failure domains?
-6. Which changes require full re-arm versus immediate scoped suspension and later re-evaluation?
-7. What maximum readiness age, authorization duration, and invalidation bounds are approved?
-8. How are emergency operator credentials isolated from limit and live-arming credentials?
-9. What evidence is required before partial scope may expand?
+4. Which ADR-002-018 Critical Input Policy, Context Generation, source-continuity, Capsule, invalidation, and active currentness mechanisms bind re-arm and final egress without a permissive cache?
+5. What exact scope dimensions and risk vectors are supported by the first restricted-live profile?
+6. Which canonical artifact, semantic validation, compatibility-manifest, approval, and ADR-002-012 ordering mechanisms implement ADR-002-014 atomic activation and rollback fencing across failure domains?
+7. Which changes require full re-arm versus immediate scoped suspension and later re-evaluation?
+8. What maximum readiness age, authorization duration, context age, and invalidation bounds are approved?
+9. How are emergency operator credentials isolated from limit and live-arming credentials?
+10. What evidence is required before partial scope may expand?
 
 Unresolved answers reduce authority or keep the system non-live.
 
@@ -626,6 +630,7 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 - ADR-002-015 effective Human Safety Principal, exact Approval Set, one-human restrictive HALT, break-glass confinement, compromise, and approval non-revival are implemented and their required HAG evidence passes;
 - all roles and separation-of-duty controls are defined and enforced;
 - the ADR-002-017 Recovery Barrier Policy, Recovery Generation, owner fencing, dependency-complete inventory, obligation graph, Recovery Evidence Package, Recovery Readiness Decision, invalidation, and Live Authorization handoff contracts are implemented;
+- ADR-002-018 Critical Input Policy, source continuity, Decision Context Capsule, exact binding, correction/invalidation fan-out, and active authority/egress currentness are implemented and their required CII evidence passes;
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;
 - the selected currentness distribution and fenced irreversible-send protocol in §§9.1–9.5 is implemented and independently security-reviewed;
 - the applicable ADR-002-013 final-egress trust boundary, proof validation, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;

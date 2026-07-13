@@ -29,6 +29,9 @@ bundle:
   recovery_barrier_policy_id: TBD
   recovery_barrier_policy_generation: null
   recovery_barrier_policy_digest: TBD
+  critical_input_policy_id: TBD
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 

@@ -29,6 +29,9 @@ baseline:
   recovery_barrier_policy_id: TBD
   recovery_barrier_policy_generation: null
   recovery_barrier_policy_digest: TBD
+  critical_input_policy_id: TBD
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
   consumer_compatibility_manifest_ids: []
   broker_capability_profile_version: TBD
   verification_profile_version: TBD
@@ -88,6 +91,14 @@ artifacts:
   recovery_obligations: []
   recovery_evidence_packages: []
   recovery_readiness_decisions: []
+  critical_input_policies: []
+  source_identity_and_continuity: []
+  critical_input_observations: []
+  transformation_lineage: []
+  critical_input_snapshots: []
+  decision_context_capsules: []
+  context_corrections_and_invalidations: []
+  context_bindings_and_egress_currentness: []
   restrictive_overrides: []
   configuration_rollback_restore: []
   state_dimensions: []

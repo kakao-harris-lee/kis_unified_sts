@@ -1,0 +1,71 @@
+artifact_type: DECISION_CONTEXT_CAPSULE
+schema_version: "1.0-DRAFT"
+capsule_id: TBD
+canonical_digest: TBD
+status: DRAFT
+issuer_principal_id: TBD
+critical_input_policy:
+  policy_id: TBD
+  policy_generation: null
+  canonical_digest: TBD
+context_generation: null
+critical_input_snapshot:
+  snapshot_id: TBD
+  canonical_digest: TBD
+scope:
+  environment: TBD
+  safety_cell: TBD
+  account: TBD
+  venue: TBD
+  instrument: TBD
+  decision_class: TBD
+  requested_action_scope: TBD
+safety_critical_facts:
+  account: TBD
+  instrument: TBD
+  direction: TBD
+  quantity_basis: TBD
+  unit: TBD
+  price_and_order_constraints: []
+  exposure_effect: TBD
+  session_and_tradability: TBD
+  expiration: null
+generation_vector:
+  safety_configuration_generation: null
+  broker_capability_profile_version: TBD
+  time_health_generation: null
+  recovery_generation: null
+  authority_epoch: null
+  deployment_generation: null
+  identity_generation: null
+  evidence_policy_generation: null
+independent_validation:
+  required: true
+  required_facts: []
+  approved_paths: []
+  common_mode_dependencies: []
+  residual_risk_ids: []
+validity:
+  issued_at: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+  expires_at: null
+  invalidation_generation: null
+  invalidation_conditions: []
+bindings:
+  proposal_id: TBD
+  approval_request_id: TBD
+  intent_id: TBD
+  capacity_request_id: TBD
+  live_authorization_id: TBD
+  transmission_capability_id: TBD
+  commit_proof_id: TBD
+  egress_request_digest: TBD
+authority:
+  grants_approval: false
+  creates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  permits_broker_transmission: false
+  permits_rearm: false
+  permits_automatic_rearm: false

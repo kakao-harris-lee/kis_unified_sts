@@ -177,7 +177,7 @@ Registration is not execution. A written test is not evidence; execution, artifa
 
 ## 14. Dependencies and Follow-Up
 
-Depends on ADR-002-005 (Knowledge dimension) and ADR-002-004 (Final Quantity Proof); consumed by ADR-002-002 (capacity release), ADR-002-007 (re-arm reads reconciled state), ADR-002-011 (protection-gap coverage confidence), ADR-002-016 (raw evidence custody and deterministic replay), and ADR-002-017 (field-complete recovery obligations and Inventory Cut convergence). Numeric tolerances, freshness horizons, and detection bounds belong in the Verification/Safety Profiles, not this ADR.
+Depends on ADR-002-005 (Knowledge dimension) and ADR-002-004 (Final Quantity Proof); consumed by ADR-002-002 (capacity release), ADR-002-007 (re-arm reads reconciled state), ADR-002-011 (protection-gap coverage confidence), ADR-002-016 (raw evidence custody and deterministic replay), ADR-002-017 (field-complete recovery obligations and Inventory Cut convergence), and ADR-002-018 (Critical Input Snapshots and Decision Context Capsules use field-explicit confidence without redefining reconciliation authority). Numeric tolerances, freshness horizons, and detection bounds belong in the Verification/Safety Profiles, not this ADR.
 
 ---
 
@@ -190,6 +190,7 @@ ADR-002-006 may move from **Proposed** to **Accepted** only when:
 - no implementation uses a blended score or optimistic estimate to release capacity or authorize risk;
 - the `RECONCILED` proof rule (including broker Final Quantity Proof) is demonstrated;
 - raw and normalized reconciliation evidence is retained, gap-checked, and replayable under ADR-002-016 without making the Evidence Store a reconciliation authority;
+- ADR-002-018 context consumers preserve per-field confidence, source conflict, freshness, and conservative bounds without turning a Capsule or blended status into reconciliation proof, and applicable CII evidence passes;
 - independent review confirms conformance to RFC-001 SAFE-022/023/024/025 and ADR-002-002.
 
 Until then, this ADR authorizes design and implementation-planning work only; it does not authorize live trading.

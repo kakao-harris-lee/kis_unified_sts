@@ -96,6 +96,9 @@ references:
   recovery_barrier_policy_id: TBD
   recovery_barrier_policy_generation: null
   recovery_barrier_policy_digest: TBD
+  critical_input_policy_id: TBD
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
   broker_capability_profiles: []
   verification_profile_id: TBD
   verification_profile_version: TBD

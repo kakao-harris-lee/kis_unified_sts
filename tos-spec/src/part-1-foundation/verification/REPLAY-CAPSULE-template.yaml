@@ -16,6 +16,7 @@ baseline:
   broker_capability_profile_digest: TBD
   evidence_integrity_policy_digest: TBD
   recovery_barrier_policy_digest: TBD
+  critical_input_policy_digest: TBD
   verification_profile_version: TBD
   schema_and_migration_digests: []
   deployment_manifest_digest: TBD
@@ -34,6 +35,12 @@ inputs:
   fault_schedule_digest: TBD
   broker_stub_or_archive_digest: TBD
   external_input_digests: []
+  source_continuity_vectors: []
+  critical_input_observation_digests: []
+  transformation_lineage_digests: []
+  critical_input_snapshot_digests: []
+  decision_context_capsule_digests: []
+  context_invalidation_digests: []
 
 determinism:
   scheduler_identity: TBD

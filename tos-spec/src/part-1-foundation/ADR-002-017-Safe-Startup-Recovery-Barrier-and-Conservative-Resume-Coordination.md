@@ -324,6 +324,7 @@ The inventory SHALL bind:
 - protective orders, obligations, ownership, leases, gaps, overlaps, and resource guarantees;
 - envelope/profile activation, broker capability, software, schema, deployment, identity, credential, route, endpoint, and compatibility generations;
 - source continuity, page/cursor/completeness, evidence confidence, gaps, anchors, and raw-record digests;
+- ADR-002-018 Critical Input Policy, Context Generation, source registry/continuity, transformation lineage, Critical Input Snapshot, Decision Context Capsule, correction, common-mode, and invalidation state;
 - every event observed between inventory start and end and its conservative application;
 - unobserved-window assumptions, maximum adverse bounds, and required repeat observations.
 
@@ -354,7 +355,7 @@ The minimum obligation set includes:
 4. UNKNOWN, missing ACK, late-fill, cancellation, and Final Quantity Proof rules satisfied conservatively;
 5. external/manual and non-trade activity attributed and applied through governed transitions;
 6. protective coverage, ownership, replacement state, and reserved resource guarantees evaluated;
-7. trustworthy time, source continuity, Critical Inputs, venue, session, tradability, and account usability proven;
+7. trustworthy time, ADR-002-018 Critical Input Policy, source continuity, Critical Input Snapshots, Decision Context Capsules, correction/invalidation, venue, session, tradability, and account usability proven;
 8. current Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, and compatibility state validated;
 9. deployment, software, schema, identity, credential, route, endpoint, and failure-domain state current and non-bypassable;
 10. evidence policy, source records, gaps, integrity anchors, retention, and replay divergence state acceptable;
@@ -671,6 +672,7 @@ Open questions reduce authority or keep scope non-live. They do not weaken the r
 10. How are barrier close, local deny latch, HALT, evidence emergency journal, and hard egress fence composed under control-plane loss?
 11. What disaster-recovery procedure proves predecessor writer, egress, broker-session, credential, and recovery-owner fencing?
 12. What values for `B_recovery_trigger_to_barrier`, `B_recovery_barrier_to_egress`, `B_startup_reconciliation`, `MAX_recovery_readiness_age`, source freshness, convergence, and invalidation bounds are approved?
+13. Which ADR-002-018 Critical Input Policy, source-continuity, Snapshot/Capsule, correction, common-mode, and invalidation obligations must be current before recovery readiness for each scope?
 
 ---
 
@@ -688,8 +690,9 @@ ADR-002-017 SHALL remain **Proposed** until all of the following are complete:
 8. ADR-002-007/015 fresh re-arm and ADR-002-013 final egress enforce exact current readiness without treating it as permission;
 9. ADR-002-016 evidence custody, gap detection, integrity, retention, and replay isolation are implemented for recovery artifacts;
 10. `SBR-EV-001` through `SBR-EV-012` and applicable cross-ADR evidence pass at required levels and receive independent review;
-11. recovery trigger, barrier, egress, inventory, convergence, readiness-age, time, evidence, and broker bounds are approved and measured;
-12. no unresolved stale-owner, partial-scope, forced-ready, optimistic-snapshot, restore, capacity-release, HALT, egress, or automatic re-arm path remains;
-13. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+11. ADR-002-018 Critical Input Policy, source continuity, Snapshot/Capsule, common-mode, correction/invalidation, and non-revival are complete recovery obligations and applicable CII evidence passes;
+12. recovery trigger, barrier, egress, inventory, convergence, Critical Input invalidation, context-age, readiness-age, time, evidence, and broker bounds are approved and measured;
+13. no unresolved stale-owner, partial-scope, forced-ready, optimistic-snapshot, restore, stale-context, capacity-release, HALT, egress, or automatic re-arm path remains;
+14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Until those gates pass, this ADR authorizes architecture and implementation-planning work only. It does not claim verification completion, ADR acceptance, restricted-live readiness, production readiness, or live trading authority.

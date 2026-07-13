@@ -26,6 +26,12 @@ supported_contracts:
   failure_semantics: []
   evidence_envelope_schema_versions: []
   evidence_integrity_policy_versions: []
+  critical_input_policy_schema_versions: []
+  critical_input_observation_schema_versions: []
+  critical_input_snapshot_schema_versions: []
+  decision_context_capsule_schema_versions: []
+  source_continuity_protocol_versions: []
+  transformation_manifest_versions: []
 
 attestation:
   profile_generation: null
@@ -34,6 +40,9 @@ attestation:
   profile_artifact_id: TBD
   profile_canonical_semantic_digest: TBD
   referenced_artifact_digests: []
+  critical_input_policy_generation: null
+  critical_input_policy_digest: TBD
+  context_generation: null
   reproduced_semantic_digest: TBD
   compatible: false
   attested_at: null
@@ -48,6 +57,9 @@ fail_closed_contract:
   mixed_generation: DENY
   stale_attestation: DENY
   missing_activation_record: DENY
+  stale_context_generation: DENY
+  unknown_source_continuity: DENY
+  invalidated_decision_context_capsule: DENY
 
 authorization_notice: >-
   This DRAFT manifest is not a compatibility attestation and grants no live

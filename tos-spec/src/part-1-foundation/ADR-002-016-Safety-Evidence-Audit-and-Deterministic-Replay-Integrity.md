@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety-evidence identity, capture boundaries, durability, ordering, provenance, integrity, completeness, gap detection, retention, redaction, access, deterministic replay, incident reconstruction, failure behavior, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 SAFE-031, SAFE-051, SAFE-052, and §11; RFC-002 §§4.2, 10.16, 15, 23, 25, and 29; VER-002-001 §§2–9 and 221–223
+- **Refines:** RFC-001 SAFE-031, SAFE-051, SAFE-052, and §11; RFC-002 §§4.2, 10.16, 15, 23, 25, and 29; VER-002-001 §§2–9 and 233–235
 - **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-010, SAFE-011, SAFE-020 through SAFE-025, SAFE-030, SAFE-031, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-048, SAFE-050, SAFE-051, SAFE-052; ADR-002-001 through ADR-002-015
 
 ---
@@ -240,7 +240,7 @@ Unknown optional data SHALL be explicit. Missing mandatory data invalidates the 
 Evidence SHALL be captured at the component that owns the decision or irreversible boundary, not inferred solely from downstream analytics. At minimum:
 
 1. **proposal boundary** — originating intent, context, requested scope, and source;
-2. **input boundary** — critical input identities, units, source, time, and validation outcome;
+2. **input boundary** — ADR-002-018 Critical Input Policy, source identity/continuity, raw observation, sequence/revision, units/mappings, transformation lineage, consistency cut, Snapshot, Decision Context Capsule, common-mode analysis, correction, and validation/invalidation outcome;
 3. **approval boundary** — request, attestation, quorum, denial, abstention, invalidation, and consumption;
 4. **authority boundary** — grant, denial, restriction, epoch/generation, expiry, revocation, and HALT;
 5. **capacity boundary** — every accepted and rejected RCL command, committed revision, state digest, and Commit Proof;
@@ -657,8 +657,9 @@ ADR-002-016 SHALL remain **Proposed** until all of the following are complete:
 6. replay is isolated from all live credential, route, approval, authority, capacity, and mutation paths;
 7. redaction, access, export, retention, compaction, legal hold, and deletion governance are approved;
 8. `ERI-EV-001` through `ERI-EV-012` and applicable cross-ADR evidence pass at required levels and receive independent review;
-9. applicable evidence persistence, gap, retention, replay, time, egress, broker, and recovery bounds are approved and measured;
-10. residual risks are recorded and accepted only for a scope that remains within RFC-000 and RFC-001;
-11. RFC-002 architecture, security-boundary, recovery, and verification reviews confirm no evidence or replay path became preventive or trading authority.
+9. ADR-002-018 source-to-Capsule-to-egress lineage, corrections, common-mode analysis, invalidations, and context non-authority are causally complete and replayable, and applicable CII evidence passes;
+10. applicable evidence persistence, gap, retention, replay, Critical Input invalidation, context-age, time, egress, broker, and recovery bounds are approved and measured;
+11. residual risks are recorded and accepted only for a scope that remains within RFC-000 and RFC-001;
+12. RFC-002 architecture, security-boundary, recovery, and verification reviews confirm no evidence or replay path became preventive or trading authority.
 
 Until those gates pass, this ADR authorizes architecture and implementation-planning work only. It does not claim verification completion, ADR acceptance, restricted-live readiness, production readiness, or live trading authority.

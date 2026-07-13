@@ -16,11 +16,19 @@ principal:
   session_id: TBD
 
 review:
+  decision_context_capsule_id: TBD
+  decision_context_capsule_digest: TBD
+  context_generation: null
+  context_invalidation_generation: null
   reviewed_input_digests: []
+  independently_validated_input_digests: []
+  common_mode_dependencies: []
   independent_recomputation_result: null
   conflicts_checked: false
   scope_checked: false
   current_context_checked: false
+  source_continuity_checked: false
+  common_mode_checked: false
   notes: []
 
 validity:
