@@ -1,0 +1,146 @@
+profile_identity:
+  broker_id: TBD
+  api_product: TBD
+  api_version: TBD
+  environment: TBD
+  account_type: TBD
+  market: TBD
+  instrument_class: TBD
+  order_types: []
+  session_type: TBD
+  credential_scope: TBD
+  profile_version: TBD
+  status: DRAFT
+  effective_from: null
+  expires_at: null
+  approvers: []
+
+live_scope:
+  conformance_class: CLASS-D
+  accounts: []
+  instruments: []
+  action_classes: []
+  maximum_concurrency: 0
+  maximum_quantity: null
+  maximum_risk_vector: {}
+  manual_activity_policy: TBD
+
+capabilities:
+  client_generated_order_id:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    restrictions: []
+    fallback: NO_BLIND_RETRY_AND_CONTAIN
+  submission_idempotency:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    deduplication_window_ms: null
+    restrictions: []
+    fallback: NO_BLIND_RETRY_AND_CONTAIN
+  acknowledgement_semantics:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    proven_state: TRANSPORT_RECEIVED_ONLY
+  fill_event_ordering:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    duplicates_possible: true
+    out_of_order_possible: true
+    replay_supported: false
+  open_order_query:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    completeness: UNKNOWN
+    eventual_consistency_bound_ms: null
+    pagination: TBD
+  order_history_query:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    retention: TBD
+    pagination: TBD
+  cancellation_finality:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    crossing_fill_possible: true
+    final_quantity_proof_recipe: TBD
+  replace_semantics:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    mode: BROKER_UNSPECIFIED
+  reduce_only:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    exact_semantics: TBD
+  account_event_push:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    reconnect_replay: UNKNOWN
+  position_balance_margin:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    consistency_model: UNKNOWN
+  corporate_actions:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+  rate_limits:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    scope: UNKNOWN
+    hard_limits: {}
+    protective_guarantee: UNAVAILABLE
+  sessions:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    concurrent_sessions: UNKNOWN
+    head_of_line_blocking: UNKNOWN
+  credentials_and_revocation:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    revocation_bound_ms: null
+    direct_worker_access_prohibited: true
+  broker_time:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    timezone: TBD
+    precision: TBD
+
+uncertain_send_policy:
+  containment_scope: ACCOUNT
+  network_retry: PROHIBITED_UNLESS_PROVEN_IDEMPOTENT
+  query_sequence: []
+  final_unresolved_state: QUARANTINED_UNKNOWN
+
+external_activity:
+  allowed: true
+  detection_sources: []
+  detection_bound_ms: null
+  containment_bound_ms: null
+  bound_miss_response: CONTAIN
+
+final_quantity_proof:
+  recipes: []
+  late_event_window_ms: null
+  correction_policy: TBD
+
+residual_risks: []
+verification:
+  required_evidence_ids: []
+  last_passed_run_ids: []
+  evidence_digest: null
+  independent_reviewer: TBD

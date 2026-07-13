@@ -1396,10 +1396,11 @@ This amended ADR depends on:
 - RFC-001 Hard Safety Envelope, partition containment, trustworthy time, aggregate capacity, external reconciliation, and partial-fill requirements;
 - RFC-002 Authority Matrix and Broker Egress enforcement;
 - ADR-002-002 for aggregate commitment, protective pool, sub-reservation, release, crash recovery, and split-brain capacity semantics;
-- Safety Authority Validity and Partition ADR;
-- Broker Capability Requirements and Fallbacks ADR;
+- ADR-002-003 — Safety Authority Validity, Epoch Fencing, and Partition Behavior;
+- ADR-002-004 — Broker Capability Requirements and Fallbacks;
 - Intent, Attempt, Order, and Knowledge State ADR;
-- Trustworthy Time ADR.
+- Trustworthy Time ADR;
+- VER-002-001 — Safety-Critical Architecture Verification Evidence Specification.
 
 ---
 

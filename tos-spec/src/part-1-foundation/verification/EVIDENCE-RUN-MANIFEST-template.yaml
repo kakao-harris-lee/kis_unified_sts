@@ -1,0 +1,50 @@
+evidence_id: TBD
+run_id: TBD
+status: READY
+started_at: null
+completed_at: null
+baseline:
+  repository_commit: TBD
+  build_digest: TBD
+  deployment_digest: TBD
+  rfc_versions: []
+  adr_versions: []
+  hard_safety_envelope_version: TBD
+  runtime_safety_profile_version: TBD
+  broker_capability_profile_version: TBD
+  verification_profile_version: TBD
+  schema_version: TBD
+  test_harness_version: TBD
+  environment: TBD
+  workload_identities: []
+test:
+  title: TBD
+  minimum_evidence_level: TBD
+  seed: null
+  preconditions: []
+  fault_schedule: []
+  expected_invariants: []
+  pass_criteria: []
+  fail_criteria: []
+artifacts:
+  raw_inputs: []
+  authority_events: []
+  ledger_transitions: []
+  egress_decisions: []
+  broker_raw: []
+  reconciliation: []
+  metrics: []
+  final_state: null
+  invariant_report: null
+  sha256_manifest: null
+result:
+  outcome: null
+  measured_bounds: {}
+  invariant_violations: []
+  notes: []
+review:
+  evidence_owner: TBD
+  independent_reviewer: TBD
+  review_outcome: null
+  review_notes: []
+  signoff_artifact: null

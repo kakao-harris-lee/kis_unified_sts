@@ -1171,23 +1171,21 @@ Detailed security controls MAY be specified in a subordinate RFC.
 
 The following ADRs are initially required.
 
-| ADR         | Subject                                                              | Status   |
-| ----------- | -------------------------------------------------------------------- | -------- |
-| ADR-002-001 | Degraded-Mode Protective Capacity                                    | Proposed |
-| ADR-002-002 | Aggregate Risk-Capacity Commitment Model                             | Proposed |
-| ADR-002-003 | Evidence-Based State Reconciliation and Confidence Model             | Required |
-| ADR-002-004 | Safety Authority Validity, Epoch, and Partition Behavior             | Required |
-| ADR-002-005 | Trustworthy Time Architecture                                        | Required |
-| ADR-002-006 | Live and Non-Live Isolation                                          | Required |
-| ADR-002-007 | Safety Configuration Activation                                      | Required |
-| ADR-002-008 | Intent, Transmission Attempt, Broker Order, and Knowledge State Model | Required |
-| ADR-002-009 | Broker Capability Requirements and Fallbacks                         | Required |
-| ADR-002-010 | Live Authorization, Limit Governance, and Re-arm                     | Required |
-| ADR-002-011 | Failure-Domain Isolation and Deployment Safety                       | Required |
-| ADR-002-012 | Corporate Actions and Non-Trade State Changes                        | Required |
-| ADR-002-013 | Protective Replacement and Protection-Gap Control                    | Required |
+| ADR         | Subject                                                               | Status   |
+| ----------- | --------------------------------------------------------------------- | -------- |
+| ADR-002-001 | Degraded-Mode Protective Capacity                                     | Proposed |
+| ADR-002-002 | Aggregate Risk-Capacity Commitment Model                              | Proposed |
+| ADR-002-003 | Safety Authority Validity, Epoch Fencing, and Partition Behavior      | Proposed |
+| ADR-002-004 | Broker Capability Requirements and Fallbacks                          | Proposed |
+| ADR-002-005 | Intent, Transmission Attempt, Broker Order, and Knowledge State Model | Required |
+| ADR-002-006 | Evidence and Reconciliation Confidence Model                          | Required |
+| ADR-002-007 | Live Authorization, Limit Governance, and Re-arm                      | Required |
+| ADR-002-008 | Trustworthy Time Architecture                                         | Required |
+| ADR-002-009 | Failure-Domain Isolation and Deployment Safety                        | Required |
+| ADR-002-010 | Corporate Actions and Non-Trade State Changes                         | Required |
+| ADR-002-011 | Protective Replacement and Protection-Gap Control                     | Required |
 
-The subjects added by the v0.2 review patch that overlapped existing entries were merged into ADR-002-003/004/008 (title-refined) rather than duplicated; ADR-002-009 through ADR-002-013 are the genuinely new decisions.
+ADR-002-003 (Safety Authority) and ADR-002-004 (Broker Capability) are authored (co-located ADR files); ADR-002-005 through ADR-002-011 remain Required backlog decisions. Verification of ADR-002-001 through ADR-002-004 is specified by VER-002-001, with the Evidence Register and templates under `verification/`.
 
 ---
 
@@ -1859,8 +1857,8 @@ Numeric values belong in an approved Safety Profile or Verification Specificatio
 | Finding | Disposition |
 |---|---|
 | A-01 split-brain double commitment | RFC patch + ADR-002-002 |
-| A-02 stale Safety Authority | RFC patch + Safety Authority ADR |
-| A-03 broker idempotency assumption | RFC patch + Broker Capability ADR |
+| A-02 stale Safety Authority | RFC patch + ADR-002-003 |
+| A-03 broker idempotency assumption | RFC patch + ADR-002-004 |
 | A-04 protective commit contradiction | RFC patch + ADR-002-001 patch + ADR-002-002 |
 | A-05 cancel/fill release race | RFC invariant + ADR-002-002 |
 | A-06 undefined components | Resolved in component additions |

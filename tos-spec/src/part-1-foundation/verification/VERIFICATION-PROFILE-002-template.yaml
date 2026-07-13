@@ -1,0 +1,121 @@
+profile_id: VERIFICATION-PROFILE-002
+version: "TBD"
+status: DRAFT
+approved_by: []
+effective_from: null
+review_due: null
+scope:
+  environment: TBD
+  accounts: []
+  broker_capability_profiles: []
+  hard_safety_envelope_version: TBD
+  runtime_safety_profile_version: TBD
+bounds:
+  B_authority_partition_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONTAIN
+  B_risk_increase_revoke:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_stale_epoch_reject:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_external_activity_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONTAIN
+  B_external_activity_contain:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONTAIN
+  B_startup_reconciliation:
+    value_ms: null
+    semantics: operational_target_and_hard_gate
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: REMAIN_HALTED
+  B_final_quantity_proof:
+    value_ms: null
+    semantics: broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: QUARANTINE_UNKNOWN
+  B_late_fill_observation:
+    value_ms: null
+    semantics: broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: PROFILE_CONTRADICTORY
+  B_protective_request_start:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONTAIN
+  B_protective_request_complete:
+    value_ms: null
+    semantics: broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONTAIN
+  B_broker_query_consistency:
+    value_ms: null
+    semantics: broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CONSERVATIVE_UNKNOWN
+  B_rate_limit_recovery:
+    value_ms: null
+    semantics: broker_specific
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: RESTRICT_OR_CONTAIN
+  B_operator_escalation:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_evidence_persist:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
+limits:
+  MAX_normal_capability_age_ms: null
+  MAX_degraded_lease_holdover_ms: null
+  MAX_clock_drift_ppm: null
+  MAX_process_suspension_ms: null
+  MAX_unresolved_send_per_scope: 1
+review:
+  independent_reviewer: TBD
+  evidence_location: TBD
+  approval_record: TBD

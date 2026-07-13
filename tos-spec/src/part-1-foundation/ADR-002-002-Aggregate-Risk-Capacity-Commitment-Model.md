@@ -1532,13 +1532,14 @@ This ADR does not prohibit any specific technology. The chosen technology must d
 This ADR depends on or creates mandatory interfaces with:
 
 1. **ADR-002-001 — Degraded-Mode Protective Capacity**, amended by its v0.2 patch;
-2. **Safety Authority Validity, Epoch, and Partition Behavior ADR**;
-3. **Broker Capability Requirements and Fallbacks ADR**;
+2. **ADR-002-003 — Safety Authority Validity, Epoch Fencing, and Partition Behavior**;
+3. **ADR-002-004 — Broker Capability Requirements and Fallbacks**;
 4. **Intent, Transmission Attempt, Broker Order, and Knowledge State ADR**;
 5. **Evidence and Reconciliation Confidence ADR**;
 6. **Trustworthy Time Architecture ADR**;
 7. **Live Authorization, Limit Governance, and Re-arm ADR**;
-8. **Corporate Actions and Non-Trade State Changes ADR**.
+8. **Corporate Actions and Non-Trade State Changes ADR**;
+9. **VER-002-001 — Safety-Critical Architecture Verification Evidence Specification**.
 
 This ADR owns capacity semantics. It does not duplicate the full authority election, broker protocol, or evidence-confidence decisions of those ADRs.
 
@@ -1604,12 +1605,15 @@ Expansion is permitted only after:
 ADR-002-002 may move from **Proposed** to **Accepted** only when:
 
 - RFC-002 Authority Matrix is merged;
+- ADR-002-003 is Accepted for the applicable authority domain;
+- ADR-002-004 is Accepted and an approved broker-specific Capability Profile exists;
 - Safety Profile Validator and Recovery Coordinator are defined;
 - the Ledger technology and fencing mechanism are selected and demonstrated;
 - Broker Adapter is the enforced final egress gate;
 - protective pool and sub-ledger semantics are demonstrated;
 - broker-specific Final Quantity Proof rules exist;
 - all Critical acceptance criteria pass;
+- required RC, SA, BC, and cross-system evidence in VER-002-001 is `PASS` and independently reviewed;
 - recovery and split-brain tests produce evidence;
 - residual risks are documented and approved;
 - independent review confirms that no implementation shortcut permits uncommitted or duplicate economic effect.
