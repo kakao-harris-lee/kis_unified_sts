@@ -3,7 +3,7 @@
 - **Date:** 2026-07-14
 - **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-017
 - **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, and safe-start/recovery-barrier decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-016 PASS at document-review level; ADR-002-017 independent document review pending; no status or live-readiness promotion
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-017 PASS at document-review level; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -148,12 +148,12 @@ The ADR-002-015 architecture review passed its document and integration scope wi
 
 The latest independent document review reported ADR-002-016 and its integration as PASS. No finding requiring disposition was supplied with that verdict. The review result changes no ADR status: evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, retention, redaction, replay-isolation, security-review, numeric-bound, and executed-evidence gates remain open. A document-review PASS is EV-L0 evidence only and creates no capacity, authority, broker permission, verification completion, or live readiness.
 
-ADR-002-017 is newly authored and integrated. Its independent document and adversarial-sequence review is pending. Its proposed mechanisms, templates, and registered cases are not executed evidence and do not alter any acceptance or live-readiness gate.
+The independent ADR-002-017 document and adversarial-sequence review found no Critical or Major issue. Four Minor findings were resolved conservatively: the nonexistent SAFE-049 range implication was replaced with explicit real SAFE IDs; Recovery Generation and readiness currentness now explicitly reject TTL, heartbeat, health, eventual-consistency, and absence-of-invalidation substitutes; ADR-002-013 now binds and verifies the exact current recovery package, decision, scope, validity, and invalidation status at every send; and `OPEN_FOR_NON_LIVE` was renamed `CLOSED_NON_LIVE`. These citation and clarity corrections do not change authority, evidence, or live-readiness status.
 
 ```text
-ADR-002-002 through ADR-002-016 status: Proposed; document review PASS
+ADR-002-002 through ADR-002-017 status: Proposed; document review PASS
 ADR-002-016 independent document review: PASS; no finding supplied for disposition
-ADR-002-017 status: Proposed; independent document review PENDING
+ADR-002-017 independent document review: PASS; four Minor findings resolved
 ADR acceptance: NO
 Restricted-live readiness: NO
 Production readiness: NO
@@ -215,20 +215,19 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Complete independent document and adversarial-sequence review for ADR-002-017 without changing its Proposed status.
-2. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, protected-retention, isolated-replay, Recovery Barrier Policy, Recovery Generation/owner fence, dependency graph, Inventory Cut, obligation workflow, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
-3. Assign implementation owners, evidence owners, and independent reviewers for all 207 items in EVIDENCE-REGISTER-002.csv.
-4. Approve numeric bounds in VERIFICATION-PROFILE-002.
-5. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, exact-approval, Human HALT, Recovery Barrier, Recovery Session, Inventory Cut, obligation, readiness, and invalidation state-machine models.
-6. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.
-7. Implement durable evidence identities and event capture.
-8. Implement the credential-confined Egress Gateway, authenticated currentness session, monotonic deny latch, Recovery Generation fence, single-use capability journal, epoch fencing, and bounded claim-to-send checks; remove every direct live broker-order path.
-9. Complete the first broker-specific Capability Profile.
-10. Build deterministic fault injection.
-11. Execute EV-L1 through EV-L3 tests.
-12. Execute approved broker capability probes.
-13. Perform independent evidence review.
-14. Re-evaluate ADR Accepted status only within the proven scope.
+1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, protected-retention, isolated-replay, Recovery Barrier Policy, Recovery Generation/owner fence, dependency graph, Inventory Cut, obligation workflow, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 207 items in EVIDENCE-REGISTER-002.csv.
+3. Approve numeric bounds in VERIFICATION-PROFILE-002.
+4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, exact-approval, Human HALT, Recovery Barrier, Recovery Session, Inventory Cut, obligation, readiness, and invalidation state-machine models.
+5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.
+6. Implement durable evidence identities and event capture.
+7. Implement the credential-confined Egress Gateway, authenticated currentness session, monotonic deny latch, Recovery Generation fence, single-use capability journal, epoch fencing, and bounded claim-to-send checks; remove every direct live broker-order path.
+8. Complete the first broker-specific Capability Profile.
+9. Build deterministic fault injection.
+10. Execute EV-L1 through EV-L3 tests.
+11. Execute approved broker capability probes.
+12. Perform independent evidence review.
+13. Re-evaluate ADR Accepted status only within the proven scope.
 ```
 
 ---

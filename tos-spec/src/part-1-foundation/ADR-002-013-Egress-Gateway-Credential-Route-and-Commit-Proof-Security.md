@@ -307,6 +307,7 @@ The Quorum Commit Certificate SHALL bind at least:
 - intent, reservation, attempt, capability, nonce, and broker-request identities;
 - exact worst-case economic effect;
 - Safety Authority, Live Authorization, revocation, HALT, Time Health, Recovery Generation, profile, and configuration generations;
+- exact current Recovery Evidence Package and Recovery Readiness Decision identities, canonical digests, dependency-complete scope, validity interval, and invalidation set/status;
 - Egress Generation and exact Active Egress Principal;
 - credential, broker-session, route-policy, endpoint-policy, and trust-bundle generations;
 - quorum signer identities or equivalent threshold-verification material.
@@ -321,7 +322,7 @@ Before send, the Final Egress Trust Boundary SHALL:
 4. verify every signer was eligible in the claimed membership generation and trust bundle;
 5. reject revoked, removed, duplicated, wrong-environment, or stale signers;
 6. verify the exact command and resulting state digests;
-7. verify current cluster, Restore Generation, Recovery Generation, Writer Epoch, Egress Generation, and currentness-session generations;
+7. verify current cluster, Restore Generation, Recovery Generation, Writer Epoch, Egress Generation, and currentness-session generations, and verify that the exact Recovery Evidence Package and Recovery Readiness Decision remain current, unexpired, non-invalidated, and valid for the complete requested dependency scope;
 8. verify the capability nonce was claimed exactly once for this principal and request;
 9. reconstruct the exact broker request and compare its canonical digest, endpoint, action, account, and economic effect;
 10. verify the claim-to-first-byte bound can still be met.

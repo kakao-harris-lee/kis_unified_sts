@@ -6,7 +6,7 @@
 - **Scope:** Cold start, warm restart, reconnect, failover, disaster restore, incident recovery, recovery-trigger scope, barrier activation, stale-worker fencing, authoritative inventory, reconciliation convergence, recovery obligations, readiness decisions, partial recovery, invalidation, evidence, and handoff to governed re-arm
 - **Supersedes:** None
 - **Refines:** RFC-001 SAFE-022 through SAFE-025, SAFE-044, SAFE-046, SAFE-048, SAFE-051, and SAFE-052; RFC-002 §§10.19, 15, 20, 23, and 29; ADR-002-007 §§4.3, 11–15, and 23–25
-- **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-013, SAFE-015, SAFE-020 through SAFE-025, SAFE-030 through SAFE-035, SAFE-040 through SAFE-052; ADR-002-001 through ADR-002-016
+- **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-013, SAFE-015, SAFE-020, SAFE-021, SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-031, SAFE-032, SAFE-033, SAFE-034, SAFE-035, SAFE-040, SAFE-041, SAFE-042, SAFE-043, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, SAFE-052; ADR-002-001 through ADR-002-016
 
 ---
 
@@ -157,7 +157,7 @@ No Recovery Session, package, obligation result, readiness decision, operator ac
 
 ### SBR-INV-004 — One Current Recovery Generation
 
-Only the current fenced Recovery Coordinator generation may publish a candidate decision; stale, minority, restored, duplicated, or resumed workers grant nothing.
+Only the current fenced Recovery Coordinator generation may publish a candidate decision; stale, minority, restored, duplicated, or resumed workers grant nothing. Current Recovery Generation and barrier state SHALL be established through an authenticated, fenced currentness mechanism within its approved maximum age. Cache TTL, process health, heartbeat, eventual delivery, or last-observed state cannot prove currentness; inability to actively establish current state at authority issuance or final egress is denial.
 
 ### SBR-INV-005 — Complete Economic Inventory
 
@@ -248,7 +248,7 @@ A trigger may narrow only after evidence proves the unaffected dependency closur
 The Recovery Barrier state is:
 
 ```text
-OPEN_FOR_NON_LIVE
+CLOSED_NON_LIVE
 CLOSED_RECOVERY
 CLOSED_CONTAINED
 CLOSED_HALTED
@@ -266,6 +266,8 @@ On trigger:
 6. start recovery only after the barrier is effective or the entire scope is hard-fenced.
 
 Final egress SHALL reject any new-risk request when the current Recovery Generation cannot be positively verified, the request references an older generation, the barrier is closed, or readiness is absent/invalid. A readiness decision is never sufficient; egress still validates current authority, capacity, time, profile, broker, identity, route, evidence, and capability.
+
+Final egress SHALL obtain current Recovery Generation, barrier state, and readiness invalidation status through the authenticated fenced currentness mechanism. A cache, TTL, heartbeat, service-health result, eventual-consistency assumption, or absence of an invalidation event is not currentness proof. If the complete current state cannot be positively established within the approved bound at the irreversible send boundary, the request is denied.
 
 Restrictive Human HALT does not wait for recovery persistence. ADR-002-015 and ADR-002-016 emergency latch rules dominate.
 
