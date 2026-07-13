@@ -2,7 +2,7 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.10 Draft
+**Version**: 0.11 Review Draft
 **Status**: Working Draft
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
@@ -161,6 +161,28 @@ No optimization, performance improvement or feature addition SHALL weaken a high
 
 Safety-favoring resolution preserves survivability under uncertainty, which is the constitution's highest objective.
 
+### Risk-Effect Interpretation
+
+For constitutional interpretation, an action SHALL be classified by its projected aggregate effect on the safety of the account or portfolio.
+
+Classification SHALL NOT be based solely on:
+
+* order direction;
+* gross quantity;
+* strategy intent;
+* component-provided labels;
+* whether the action opens or closes an individual position.
+
+An action may be classified as risk-reducing only when:
+
+1. its projected aggregate post-action state is safer than the current state;
+2. the conclusion is based on sufficiently trustworthy operational context;
+3. the action remains within all applicable safety limits;
+4. the action does not create a greater credible risk through margin, leverage, liquidity, basis, concentration, venue, settlement, or execution effects;
+5. the conclusion can be demonstrated before execution.
+
+An action whose aggregate risk effect cannot be determined SHALL be classified as risk-increasing.
+
 ---
 
 # 6. Definitions
@@ -209,7 +231,22 @@ Constitutionally mandated, externally configured bounds on exposure, loss and ac
 
 **Constitutional Safe State**
 
-An operational state in which no new exposure is created and every existing position remains within constitutional risk bounds under active protective control; defined relative to current exposure and never mere inactivity.
+The Constitutional Safe State is an exposure-aware operational state in which:
+
+* no new risk-increasing exposure SHALL be authorized;
+* existing exposure SHALL remain subject to approved protective control;
+* unknown or unverified exposure SHALL be treated conservatively;
+* autonomous risk-increasing activity SHALL remain suspended;
+* bounded protective actions MAY remain authorized only when their projected aggregate effect reduces constitutional risk and remains within every applicable constitutional safety boundary.
+
+The Constitutional Safe State SHALL NOT be interpreted as:
+
+* mere inactivity;
+* unconditional abandonment of existing exposure;
+* automatic liquidation regardless of market or venue conditions;
+* authorization to create unlimited hedge, margin, liquidity, basis, or execution risk.
+
+Where the risk effect of an action cannot be determined with sufficient confidence, the action SHALL be treated as risk-increasing.
 
 **Autonomous Trading**
 
@@ -443,13 +480,30 @@ Critical
 
 ### Requirement
 
-The Trading Operating System SHALL always transition to the safest operational state, as defined by CONST-012, whenever critical uncertainty exceeds predefined constitutional limits.
+When critical operational uncertainty exceeds approved bounds, or when the operational state cannot be constitutionally verified, the Trading Operating System SHALL transition to the Constitutional Safe State defined by CONST-012.
 
-The preferred failure mode SHALL always be to refuse new trading while ensuring existing exposure remains managed in accordance with CONST-012.
+The preferred failure mode SHALL be withdrawal of authority to create new risk.
+
+Fail-safe operation SHALL NOT abandon existing exposure or terminate required protective obligations solely because ordinary autonomous trading has been suspended.
 
 ### Constraint
 
-No subsystem SHALL continue autonomous trading after entering an unknown operational state.
+No autonomous risk-increasing action SHALL be authorized while the system is in the Constitutional Safe State.
+
+Any protective action authorized in the Constitutional Safe State SHALL:
+
+* comply with CONST-006;
+* satisfy the pre-execution assurance required by CONST-009;
+* satisfy the exposure-aware interpretation required by CONST-012;
+* remain within every applicable constitutional safety boundary.
+
+### Depends On
+
+CONST-006 — Operational Safety Limits
+
+CONST-009 — Pre-Trade Constitutional Assurance
+
+CONST-012 — Safe Operational State
 
 ### Rationale
 
@@ -950,11 +1004,48 @@ Critical
 
 The Trading Operating System SHALL always possess a constitutionally defined safe operational state.
 
-The definition of that state SHALL account for current exposure.
+The safe operational state SHALL account for:
+
+* current positions;
+* open and potentially live orders;
+* margin and collateral obligations;
+* venue availability;
+* execution uncertainty;
+* the ability or inability to reduce exposure;
+* the aggregate risk effect of any proposed protective action.
+
+The safe operational state SHALL prohibit new risk-increasing exposure.
+
+A bounded protective action MAY be authorized only when its projected aggregate effect reduces constitutional risk and does not violate any applicable safety limit or constitutional requirement.
 
 ### Constraint
 
 Safe state SHALL NOT be interpreted as simple inactivity.
+
+An action SHALL NOT be considered protective solely because it is labelled as:
+
+* an exit;
+* a hedge;
+* a stop;
+* a reduction;
+* a recovery action;
+* an emergency action.
+
+Its classification SHALL be determined from the projected aggregate post-action risk state.
+
+Where the classification remains uncertain, the action SHALL be treated as risk-increasing.
+
+### Depends On
+
+CONST-001 — Long-Term Survivability
+
+CONST-002 — Capital Preservation
+
+CONST-006 — Operational Safety Limits
+
+CONST-007 — Venue Constraints
+
+CONST-009 — Pre-Trade Constitutional Assurance
 
 ### Rationale
 
@@ -1293,6 +1384,32 @@ Operational Evidence
 
 No implementation SHALL exist without traceability to an approved constitutional requirement.
 
+The following requirements SHALL be interpreted as a single constitutional safety chain:
+
+```text
+CONST-004 — Fail-Safe Operating Principle
+        ↓
+CONST-012 — Safe Operational State
+        ↓
+CONST-006 — Operational Safety Limits
+        ↓
+CONST-009 — Pre-Trade Constitutional Assurance
+        ↓
+CONST-014 — Irreversibility Principle
+```
+
+CONST-004 defines when safe-state authority applies.
+
+CONST-012 defines the constitutional properties of that state.
+
+CONST-006 defines the safety boundaries that remain applicable.
+
+CONST-009 requires assurance before any permitted action is executed.
+
+CONST-014 establishes why preventive assurance cannot be replaced by post-execution recovery or audit.
+
+No requirement in this chain SHALL be interpreted independently in a way that weakens another requirement in the chain.
+
 ---
 
 # 15. Constitutional Evidence
@@ -1412,3 +1529,15 @@ Applied PATCH-0004
 v0.10
 
 Applied PATCH-0005
+
+v0.11
+
+Applied PATCH-0006
+
+Reconciled the constitutional safe-state definition.
+
+Replaced unconditional "no new exposure" wording with "no new risk-increasing exposure."
+
+Clarified that bounded protective actions may be authorized only when their projected aggregate effect reduces constitutional risk and remains within all applicable safety boundaries.
+
+Aligned CONST-004 with CONST-012.
