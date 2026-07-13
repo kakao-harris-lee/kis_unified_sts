@@ -25,10 +25,10 @@ Transmission Capability
     <= active Hard Safety Envelope
 ```
 
-Every activation SHALL use a break-before-make protocol:
+Every activation SHALL satisfy the following break-before-make safety order. Section 13 is the authoritative operational sequence: candidate classification, construction, approval, and validation may occur while the predecessor remains active because those steps grant the candidate no authority, but the predecessor SHALL be revoked or suspended before the candidate becomes eligible for activation or fresh arming.
 
-1. revoke or suspend prior permission-creating authority for the affected scope;
-2. validate the complete immutable artifact set against the current envelope, software, broker, time, deployment, and evidence contracts;
+1. validate the complete immutable artifact set against the current envelope, software, broker, time, deployment, and evidence contracts;
+2. revoke or suspend prior permission-creating authority for the affected scope before candidate activation eligibility;
 3. commit one exact Profile Generation and activation record through the ADR-002-012 Safety Commit Log ordering;
 4. require every permission-creating consumer and final egress to prove the same committed generation and artifact digests;
 5. issue fresh Live Authorization through ADR-002-007 only after the new generation is active and all readiness gates pass.
