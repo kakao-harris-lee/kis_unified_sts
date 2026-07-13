@@ -1,9 +1,9 @@
 # TOS Safety Architecture Gate Status
 
-- **Date:** 2026-07-13
+- **Date:** 2026-07-14
 - **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-016
 - **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, and evidence-integrity/replay decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-015 PASS at document-review level; ADR-002-016 awaits independent document review; no status or live-readiness promotion
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-016 PASS at document-review level; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -140,11 +140,13 @@ Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 th
 
 ### 4.1 Latest Review Disposition
 
-The latest completed architecture review passed ADR-002-015 and its integration with no Critical or Major finding. Its sole Minor finding identified a dangling `ADR-002-003 §9.5` citation in the ADR-002-015 `Refines` header; the reference now identifies existing ADR-002-003 §9 without changing any safety rule. The review confirmed that all 22 adversarial sequences were blocked by explicit rules, all 12 HAG acceptance cases had one-to-one evidence registration, and the human-authority templates remained non-authorizing and fail-closed. Commit `fdce384e` records the correction and review disposition. ADR-002-016 was authored after that review and is outside its reviewed set. This document-review disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
+The ADR-002-015 architecture review passed its document and integration scope with no Critical or Major finding. Its sole Minor finding identified a dangling `ADR-002-003 §9.5` citation; commit `fdce384e` records the correction and review disposition.
+
+The latest independent document review reported ADR-002-016 and its integration as PASS. No finding requiring disposition was supplied with that verdict. The review result changes no ADR status: evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, retention, redaction, replay-isolation, security-review, numeric-bound, and executed-evidence gates remain open. A document-review PASS is EV-L0 evidence only and creates no capacity, authority, broker permission, verification completion, or live readiness.
 
 ```text
-ADR-002-002 through ADR-002-015 status: Proposed; document review PASS
-ADR-002-016 status: Proposed; independent document review pending
+ADR-002-002 through ADR-002-016 status: Proposed; document review PASS
+ADR-002-016 independent document review: PASS; no finding supplied for disposition
 ADR acceptance: NO
 Restricted-live readiness: NO
 Production readiness: NO
@@ -204,7 +206,7 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Independently review ADR-002-016; select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, protected-retention, isolated-replay, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
+1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, protected-retention, isolated-replay, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
 2. Assign implementation owners, evidence owners, and independent reviewers for all 195 items in EVIDENCE-REGISTER-002.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, exact-approval, and Human HALT state-machine models.
