@@ -264,6 +264,8 @@ A reconnect SHALL NOT flush a pre-HALT queue, reuse an old capability, clear the
 
 Where the broker supports it, reconciliation and market-data reads SHALL use non-ordering credentials and routes. If one broker credential or session necessarily combines read and trade authority, read consumers SHALL access it only through a constrained service inside the declared common-mode boundary and SHALL NOT receive the credential or a general broker client.
 
+That constrained service is part of the §15 common-mode scope and SHALL be included in the Final Egress Trust Boundary analysis because it handles usable live-order authority. It SHALL have no broker-order route or mutation-endpoint access under §10; if either exists, §1 makes the service part of the Final Egress Trust Boundary and the complete final gate applies. Any combined credential or session exposed outside the approved service and principal scope is suspected compromise under §16.
+
 The Broker Capability Profile SHALL state the actual broker-enforced scope. Application convention is not broker-enforced least privilege.
 
 ---
