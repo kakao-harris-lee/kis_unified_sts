@@ -3,7 +3,7 @@
 - **Date:** 2026-07-13
 - **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-015
 - **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, and human-authority governance decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-014 PASS at document-review level; ADR-002-015 awaits independent document review; no status or live-readiness promotion
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-015 PASS at document-review level; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -136,11 +136,11 @@ Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 th
 
 ### 4.1 Latest Review Disposition
 
-The latest completed architecture review passed ADR-002-014 and its integration with no Critical or Major finding. Its sole Minor finding identified an ordering-description ambiguity between ADR-002-014 §§1 and 13; §1 now states that §13 is the authoritative operational order and that predecessor revocation or suspension must occur before candidate activation or fresh arming eligibility. Commit `000c1014` records the correction; the review is retained as a git note on `d317c4e2`. ADR-002-015 was authored after that review and is outside its reviewed set. This disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
+The latest completed architecture review passed ADR-002-015 and its integration with no Critical or Major finding. Its sole Minor finding identified a dangling `ADR-002-003 §9.5` citation in the ADR-002-015 `Refines` header; the reference now identifies existing ADR-002-003 §9 without changing any safety rule. The review confirmed that all 22 adversarial sequences were blocked by explicit rules, all 12 HAG acceptance cases had one-to-one evidence registration, and the human-authority templates remained non-authorizing and fail-closed. This document-review disposition does not satisfy implementation, security-review, numeric-bound, or executed-evidence gates.
 
 ```text
-ADR-002-002 through ADR-002-014 status: Proposed
-ADR-002-015 status: Proposed; independent document review pending
+ADR-002-002 through ADR-002-015 status: Proposed
+ADR-002-015 independent document review: PASS; Critical 0, Major 0, Minor 1 corrected
 ADR acceptance: NO
 Restricted-live readiness: NO
 Production readiness: NO
@@ -198,7 +198,7 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Independently review ADR-002-015; select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
+1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
 2. Assign implementation owners, evidence owners, and independent reviewers for all 183 items in EVIDENCE-REGISTER-002.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, exact-approval, and Human HALT state-machine models.

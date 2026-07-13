@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Effective human principal identity, approval policy, quorum independence, approval attestations and sets, separation of duties, delegation, authentication, emergency HALT, break-glass containment, re-arm, approval revocation, compromise response, availability, evidence, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 §§7.5–7.6, SAFE-041, SAFE-042, SAFE-046, and SAFE-050; RFC-002 §§9.1, 10.17, 23, and 28; ADR-002-003 §§9.5, 16, and 18; ADR-002-007 §§5, 12–13, and 25; ADR-002-013 §§7, 16, and 25; ADR-002-014 §§8, 13–14, and 26
+- **Refines:** RFC-001 §§7.5–7.6, SAFE-041, SAFE-042, SAFE-046, and SAFE-050; RFC-002 §§9.1, 10.17, 23, and 28; ADR-002-003 §§9, 16, and 18; ADR-002-007 §§5, 12–13, and 25; ADR-002-013 §§7, 16, and 25; ADR-002-014 §§8, 13–14, and 26
 - **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, SAFE-052; ADR-002-001 through ADR-002-014
 
 ---
