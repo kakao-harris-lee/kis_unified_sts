@@ -14,6 +14,15 @@ order_admissibility_decision_id: TBD
 order_admissibility_decision_digest: TBD
 constraint_generation: null
 constraint_invalidation_generation: null
+order_construction_policy_id: TBD
+order_construction_policy_generation: null
+order_construction_policy_digest: TBD
+authorized_construction_envelope_id: TBD
+authorized_construction_envelope_digest: TBD
+canonical_broker_command_id: TBD
+canonical_broker_command_digest: TBD
+construction_generation: null
+construction_invalidation_generation: null
 
 policy:
   human_authority_policy_id: TBD
@@ -42,6 +51,7 @@ validation:
   common_mode_analysis_current: false
   all_attestations_current: false
   all_artifacts_current: false
+  exact_candidate_command_current: false
   replay_checked: false
   validation_record_id: null
 

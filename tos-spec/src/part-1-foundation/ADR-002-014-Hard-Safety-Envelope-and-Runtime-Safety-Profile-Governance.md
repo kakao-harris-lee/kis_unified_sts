@@ -116,7 +116,7 @@ An immutable artifact that selects a strictly equal-or-narrower operating scope 
 
 ### 5.3 Safety Configuration Bundle
 
-The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
+The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
 
 ### 5.4 Profile Generation
 
@@ -354,6 +354,8 @@ No transition from `SUSPENDED`, `SUPERSEDED`, `REVOKED`, or `EXPIRED` returns th
 Activation does not establish Critical Input validity, freshness, source continuity, Context Generation currentness, Decision Context Capsule validity, or absence of correction/invalidation. Those predicates remain independently governed and enforced under ADR-002-018; missing or unverifiable context remains denial even when the configuration bundle is `ACTIVE`.
 
 Activation also does not establish venue/session/tradability, account/margin/borrow/settlement, Broker Capability Profile currentness, Constraint Generation, Venue Constraint Snapshot, or Order Admissibility Decision validity. Those predicates remain independently governed and enforced under ADR-002-019; configuration activation cannot make an exact order admissible.
+
+Activation does not establish that a candidate command conforms to an approved Intent, that an Economic Effect Envelope is capacity-covered, that an Order Conformance Proof is current, or that the actual outbound representation is equivalent. Those predicates remain independently governed and enforced under ADR-002-020; configuration activation cannot create conformance or transmission permission.
 
 ---
 

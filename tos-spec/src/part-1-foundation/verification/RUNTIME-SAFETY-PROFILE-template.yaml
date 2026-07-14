@@ -102,6 +102,9 @@ references:
   venue_constraint_policy_id: TBD
   venue_constraint_policy_generation: null
   venue_constraint_policy_digest: TBD
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
   broker_capability_profiles: []
   verification_profile_id: TBD
   verification_profile_version: TBD

@@ -322,12 +322,13 @@ Rate, session, credential, and connection budgets are constraints, not reserved 
 
 ## 14. Snapshot and Exact Order Admissibility Decision
 
-Before approval and again for any changed broker-request shape, the Gate SHALL construct or select an immutable Snapshot and issue a canonical decision containing at least:
+Before approval and again for any changed broker-request shape, the Gate SHALL evaluate the exact ADR-002-020 candidate Canonical Broker Command and construct or select an immutable Snapshot and issue a canonical decision containing at least:
 
 - policy identity, version, generation, digest, approval state, and scope;
 - Constraint Generation and Decision Context Capsule identity/digest;
 - exact source continuity, observation, mapping, schema, time-health, and consistency-cut identities;
 - exact broker, environment, account, venue, market segment, instrument, contract, side, position effect, action class, quantity, price instruction, order type, time in force, session phase, and routing fields;
+- exact candidate Canonical Broker Command identity/digest and Order Construction Policy/Construction Generation;
 - relevant price, tick, lot, margin, borrow, settlement, account, and broker-capability facts;
 - result, failed or unknown predicates, uncertainty, maximum age, issue and expiry evidence, invalidation predicates, and dependency closure;
 - evaluator identity, software/build, configuration, deployment, and evidence generations;
@@ -358,11 +359,12 @@ The exact Snapshot and Order Admissibility Decision identity/digest SHALL be bou
 1. proposal and Decision Context Capsule;
 2. independent approval and Human Approval Set where required;
 3. Intent and broker-request shape;
-4. capacity request, commitment, and conservative intermediate-state analysis;
-5. Live Authorization and per-action Transmission Capability claims;
-6. Commit Proof and durable egress journal record;
-7. broker request and response evidence;
-8. reconciliation, correction, invalidation, incident, and replay evidence.
+4. candidate Canonical Broker Command and later Order Conformance Proof;
+5. capacity request, commitment, and conservative intermediate-state analysis;
+6. Live Authorization and per-action Transmission Capability claims;
+7. Commit Proof and durable egress journal record;
+8. broker request and response evidence;
+9. reconciliation, correction, invalidation, incident, and replay evidence.
 
 The RCL remains the sole capacity mutation and serialization authority. Decision expiry, rejection, or invalidation cannot release capacity for an order or attempt that may already have economic effect.
 
@@ -374,7 +376,7 @@ Every consumer SHALL reject missing, mismatched, stale, wrong-scope, wrong-envir
 
 For every risk-relevant send, final egress SHALL, at the last reversible point before the first broker-directed byte:
 
-1. verify the exact canonical broker request against Intent, approval, capacity, authority, capability, Commit Proof, Decision Context Capsule, Snapshot, and Order Admissibility Decision;
+1. verify the exact ADR-002-020 Canonical Broker Command, Order Conformance Proof, Economic Effect Envelope, and actual outbound representation against Intent, approval, capacity, authority, capability, Commit Proof, Decision Context Capsule, Snapshot, and Order Admissibility Decision;
 2. actively establish the current Venue Constraint Policy and Constraint Generation;
 3. actively establish current session phase, halt/suspension/tradability state, account eligibility, and relevant broker-capability generation;
 4. verify approved age and uncertainty bounds using ADR-002-008 time evidence;
@@ -693,7 +695,8 @@ ADR-002-019 remains `Proposed` until all applicable conditions pass:
 8. Common-mode and failure-domain analysis is independently reviewed and residual risk reduces live scope.
 9. Numeric bounds and limits are approved in the Verification Profile and measured under fault injection.
 10. `VTG-EV-001` through `VTG-EV-012` are executed at required EV-L1/EV-L2/EV-L3, Broker, and Security levels with independent review.
-11. All Critical or Major findings from architecture and security review are resolved.
-12. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
+11. ADR-002-020 exact candidate command and later conformance-proof binding preserve the decision's complete order shape without circular dependency or downstream mutation, and applicable IOC evidence passes.
+12. All Critical or Major findings from architecture and security review are resolved.
+13. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
 
 This ADR authorizes architecture and implementation-planning work only. It creates no live trading authority and makes no verification-completion or live-readiness claim.

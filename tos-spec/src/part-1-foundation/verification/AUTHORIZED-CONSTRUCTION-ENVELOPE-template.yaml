@@ -1,0 +1,49 @@
+artifact_type: AUTHORIZED_CONSTRUCTION_ENVELOPE
+schema_version: "1.0-DRAFT"
+envelope_id: TBD
+canonical_digest: TBD
+status: DRAFT
+issuer_principal_id: TBD
+intent_proposal:
+  proposal_id: TBD
+  proposal_version: TBD
+  canonical_digest: TBD
+  approval_state: PENDING
+scope:
+  environments: []
+  safety_cells: []
+  brokers: []
+  accounts: []
+  venues: []
+  market_segments: []
+  instruments: []
+  contracts: []
+  action_classes: []
+permitted_exact_transformations:
+  account_instrument_contract_and_route: []
+  direction_side_and_position_effect: []
+  unit_multiplier_currency_and_numeric: []
+  quantity_tick_lot_and_rounding: []
+  price_order_type_tif_expiration_flags_and_mode: []
+  split_aggregation_retry_cancel_amend_and_replace: []
+forbidden_transformations: []
+maximum_quantity_and_effect_rules: []
+required_venue_capacity_authority_and_evidence_predicates: []
+transport_only_field_rules: []
+invalidation_conditions: []
+residual_risks: []
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+evidence:
+  approval_request_id: TBD
+  independent_review_id: TBD
+  evidence_location: TBD

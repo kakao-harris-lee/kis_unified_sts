@@ -48,6 +48,8 @@ generation_vector:
   context_generation: null
   venue_constraint_policy_generation: null
   constraint_generation: null
+  order_construction_policy_generation: null
+  construction_generation: null
 
 economic_state:
   intents: []
@@ -80,6 +82,17 @@ venue_constraint_state:
   venue_constraint_snapshot_ids: []
   order_admissibility_decision_ids: []
   constraint_invalidation_ids: []
+  common_mode_dependencies: []
+
+order_construction_state:
+  order_construction_policy_id: TBD
+  order_construction_policy_digest: TBD
+  construction_generation: null
+  canonical_broker_command_ids: []
+  economic_effect_envelope_ids: []
+  order_conformance_proof_ids: []
+  construction_invalidation_ids: []
+  compiler_serializer_sdk_compatibility_ids: []
   common_mode_dependencies: []
 
 obligations:

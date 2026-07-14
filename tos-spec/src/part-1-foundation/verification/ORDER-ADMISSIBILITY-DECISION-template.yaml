@@ -16,6 +16,11 @@ venue_constraint_snapshot:
 decision_context_capsule:
   capsule_id: TBD
   canonical_digest: TBD
+canonical_broker_command:
+  command_id: TBD
+  canonical_digest: TBD
+  order_construction_policy_id: TBD
+  construction_generation: null
 exact_order_shape:
   environment: TBD
   broker: TBD
@@ -56,16 +61,19 @@ validity:
   invalidation_generation: null
   invalidation_conditions: []
 dependency_closure: []
-bindings:
+upstream_bindings:
   proposal_id: TBD
-  approval_request_id: TBD
-  intent_id: TBD
-  capacity_request_id: TBD
-  capacity_commitment_id: TBD
-  live_authorization_id: TBD
-  transmission_capability_id: TBD
-  commit_proof_id: TBD
-  egress_request_digest: TBD
+downstream_consumption:
+  approval_request_id: null
+  intent_id: null
+  capacity_request_id: null
+  capacity_commitment_id: null
+  order_conformance_proof_id: null
+  live_authorization_id: null
+  transmission_capability_id: null
+  commit_proof_id: null
+  egress_request_digest: null
+  note: Later artifacts bind this decision; these fields are not decision-issuance prerequisites.
 authority:
   grants_approval: false
   creates_capacity: false

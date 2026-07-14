@@ -41,6 +41,8 @@ generation_vector:
   context_generation: null
   venue_constraint_policy_generation: null
   constraint_generation: null
+  order_construction_policy_generation: null
+  construction_generation: null
 
 validity:
   issued_at_time_snapshot_id: TBD

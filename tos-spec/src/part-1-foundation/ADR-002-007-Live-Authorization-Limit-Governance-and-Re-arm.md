@@ -199,6 +199,7 @@ Every Live Authorization SHALL bind at least:
 - Recovery Evidence Package identity and evidence generation;
 - Critical Input Policy, Context Generation, Critical Input Snapshot, and exact Decision Context Capsule identities and digests under ADR-002-018;
 - Venue Constraint Policy, Constraint Generation, Venue Constraint Snapshot, and exact Order Admissibility Decision identities and digests under ADR-002-019;
+- Order Construction Policy, Construction Generation, Authorized Construction Envelope, Canonical Broker Command, Economic Effect Envelope, and Order Conformance Proof identities and digests under ADR-002-020;
 - Trustworthy Time generation and validity rule;
 - issue identity, issue sequence, activation condition, and maximum validity;
 - revocation generation;
@@ -256,6 +257,7 @@ Live Authorization is valid for new risk only while all of the following remain 
 - the ADR-002-017 Recovery Generation, barrier state, Recovery Evidence Package, and Recovery Readiness Decision remain current and valid for the exact scope;
 - the ADR-002-018 Critical Input Policy, Context Generation, source continuity, exact Decision Context Capsule, age, and invalidation state remain current and valid for the exact scope;
 - the ADR-002-019 Venue Constraint Policy, Constraint Generation, exact Snapshot and Order Admissibility Decision, session/tradability/account/broker scope, age, and invalidation state remain current and valid for the exact order;
+- the ADR-002-020 Order Construction Policy, Construction Generation, exact approved Intent/envelope/candidate command, conservative Economic Effect Envelope, Order Conformance Proof, compiler/serializer compatibility, ages, and invalidation state remain current and valid for the exact order;
 - no unresolved UNKNOWN or unattributed activity affects the scope;
 - Risk Capacity Ledger and protective capacity remain consistent;
 - Hard Safety Envelope and Runtime Safety Profile versions match and remain valid;
@@ -473,6 +475,7 @@ Before every risk-relevant live transmission, the Broker Adapter / Egress Gatewa
 - current `TRUSTED` Time Health Snapshot;
 - matching Hard Safety Envelope, Runtime Safety Profile, and Broker Capability Profile versions;
 - matching account, strategy, instrument, venue, session, order type, action class, quantity, and economic effect;
+- matching ADR-002-020 Canonical Broker Command, Economic Effect Envelope, Order Conformance Proof, Construction Generation, and actual outbound representation;
 - matching software, deployment, workload, credential, and environment identity;
 - active Capacity Commitment or valid protective consumption;
 - absence of a blocking reconciliation, UNKNOWN, external-activity, or Critical-alert condition.

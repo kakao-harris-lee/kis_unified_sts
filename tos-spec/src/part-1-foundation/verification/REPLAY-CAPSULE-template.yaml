@@ -18,6 +18,7 @@ baseline:
   recovery_barrier_policy_digest: TBD
   critical_input_policy_digest: TBD
   venue_constraint_policy_digest: TBD
+  order_construction_policy_digest: TBD
   verification_profile_version: TBD
   schema_and_migration_digests: []
   deployment_manifest_digest: TBD
@@ -44,6 +45,9 @@ inputs:
   context_invalidation_digests: []
   venue_constraint_snapshot_digests: []
   order_admissibility_decision_digests: []
+  canonical_broker_command_digests: []
+  economic_effect_envelope_digests: []
+  order_conformance_proof_digests: []
   constraint_invalidation_digests: []
 
 determinism:

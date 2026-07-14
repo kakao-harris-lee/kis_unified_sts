@@ -36,6 +36,9 @@ scope:
   venue_constraint_policy_id: TBD
   venue_constraint_policy_generation: null
   venue_constraint_policy_digest: TBD
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -171,6 +174,13 @@ bounds:
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
   B_venue_constraint_invalid_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_order_conformance_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
     owner: TBD
@@ -320,6 +330,8 @@ limits:
   MAX_decision_context_age_ms: null
   MAX_venue_constraint_snapshot_age_ms: null
   MAX_order_admissibility_decision_age_ms: null
+  MAX_canonical_broker_command_age_ms: null
+  MAX_order_conformance_proof_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

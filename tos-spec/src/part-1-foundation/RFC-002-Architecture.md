@@ -494,6 +494,7 @@ The following matrix is the normative authority model.
 |---|---|---|---|
 | Propose trading action | Decision Service | None | Decision Service SHALL NOT approve, commit, or transmit |
 | Approve proposal | Independent Approval Service | None | Approval Service SHALL NOT commit or transmit |
+| Construct canonical broker command | Order Construction Policy governance supplies rules | Order Construction Service produces a non-authorizing candidate and later conformance proof; Broker Egress Gateway verifies the actual outbound representation | Order Construction Service SHALL NOT approve, mutate capacity, classify protection, issue authority, transmit, or arm live scope |
 | Evaluate venue and order admissibility | Venue Constraint Policy governance supplies rules | Venue Constraint Gate produces a non-authorizing decision; Broker Egress Gateway enforces the exact current result | Venue Constraint Gate SHALL NOT approve, commit capacity, classify protection, transmit, or arm live scope |
 | Evaluate aggregate risk | Aggregate Risk Authority | None | Aggregate Risk Authority SHALL NOT mutate capacity or transmit |
 | Commit normal risk capacity | Aggregate Risk Authority supplies a grant decision | Risk Capacity Ledger is the sole serialization and mutation authority | Execution Coordinator SHALL NOT mutate capacity |
@@ -639,10 +640,11 @@ Responsibilities:
 
 Responsibilities:
 
-* accept only approved and capacity-committed intents;
+* accept only immutable Intent proposals with a closed proposed Authorized Construction Envelope for non-authorizing candidate construction, and only identically approved/registered Intents for later proof and transmission;
 * verify current Safety Authority;
 * verify live authorization;
-* construct broker-specific order commands;
+* invoke the non-authorizing Order Construction Service and preserve the exact candidate command digest;
+* require current venue admissibility, conservative economic-effect coverage, and capacity commitment before requesting authority or transmission;
 * enforce action-rate limits;
 * preserve at-most-authorized exposure effect;
 * maintain potentially live order state;
@@ -650,13 +652,15 @@ Responsibilities:
 
 The Execution Coordinator SHALL NOT infer that a missing acknowledgement means rejection.
 
+The Execution Coordinator SHALL NOT invent, default, normalize, round, or repair broker-command fields. ADR-002-020 defines the deterministic construction protocol and exact ordering of candidate command, venue decision, capacity commitment, conformance proof, authority, and final-egress verification.
+
 ---
 
 ### 10.8 Broker Adapter / Broker Egress Gateway
 
 Responsibilities:
 
-* translate approved execution commands;
+* serialize and sign only approved canonical execution commands under the declared outbound-comparison rule;
 * transmit orders;
 * receive acknowledgements and fills;
 * query order, position, balance, and margin state;
@@ -676,7 +680,8 @@ Before any risk-relevant transmission, it SHALL verify:
 - applicable Hard Safety Envelope and Runtime Safety Profile versions;
 - exact current Venue Constraint Snapshot and Order Admissibility Decision binding;
 - current venue, session, halt, tradability, account, margin, settlement, and broker-constraint generation;
-- conformance of broker request to the authorized economic effect.
+- current Order Construction Policy, Construction Generation, Authorized Construction Envelope, Canonical Broker Command, Order Conformance Proof, and Economic Effect Envelope;
+- conformance of the actual outbound representation to the exact command and authorized economic effect.
 
 It SHALL reject the request when any required fact is missing, stale, conflicting, or unverifiable.
 
@@ -905,6 +910,21 @@ The Venue Constraint Gate SHALL NOT approve an Intent, mutate capacity, issue Li
 
 ---
 
+### 10.24 Order Construction Service
+
+Responsibilities:
+
+* compile one immutable approval-pending Intent proposal and closed proposed Authorized Construction Envelope into one deterministic non-authorizing candidate Canonical Broker Command;
+* make account, instrument, contract, route, direction, position effect, quantity, unit, multiplier, currency, price, order, expiration, and operating-mode semantics explicit;
+* reject hidden defaults, unsupported fields, ambiguous canonicalization, lossy numeric conversion, permissive rounding, and non-deterministic mappings;
+* derive a conservative Economic Effect Envelope from the unchanged candidate command;
+* produce a non-authorizing Order Conformance Proof after exact venue admissibility and RCL capacity dominance are established;
+* expose complete construction, mapping, compiler, serializer, SDK, and invalidation evidence to final egress and the Evidence Store.
+
+The Order Construction Service SHALL NOT approve or widen an Intent, mutate or release RCL capacity, classify protection, issue Safety Authority or Live Authorization, create or consume a Transmission Capability, select a permissive venue decision, transmit, clear HALT, or re-arm. Candidate construction precedes venue, independent approval, and capacity decisions; the later proof binds those independently owned results to the unchanged command digest. Any approval-time mutation restarts construction. ADR-002-020 defines the exact protocol and acceptance gates.
+
+---
+
 ## 11. Trading Action Pipeline
 
 The logical action sequence SHALL be:
@@ -914,6 +934,10 @@ Critical Input Snapshot and immutable Decision Context Capsule
         ↓
 Decision Proposal
         ↓
+Deterministic Candidate Canonical Broker Command
+        ↓
+Exact Venue and Order Admissibility Decision
+        ↓
 Independent Approval
         ↓
 Intent Registration
@@ -922,13 +946,13 @@ Projected Aggregate Risk Evaluation
         ↓
 Exclusive Risk-Capacity Commitment
         ↓
+Order Conformance Proof
+        ↓
 Current Safety Authority Verification
         ↓
 Live Scope Verification
         ↓
-Intent-to-Order Conformance
-        ↓
-Exact Venue and Order Admissibility Decision
+Final Outbound Conformance Verification
         ↓
 Transmission
         ↓
@@ -944,6 +968,8 @@ No stage SHALL be bypassed for an exposure-increasing action.
 ADR-002-018 requires the exact Decision Context Capsule identity and digest to remain bound through proposal, independent approval, Intent, capacity, authority, capability, Commit Proof, and final egress. Material context change invalidates affected future permission; it does not erase possible economic effect.
 
 ADR-002-019 additionally requires one exact current Venue Constraint Snapshot and Order Admissibility Decision for the complete broker-request shape. A calendar, quote, connection, or “exit” label does not prove executability; constraint invalidation blocks future new-risk send without erasing prior economic effect.
+
+ADR-002-020 requires the candidate Canonical Broker Command to be constructed deterministically from one immutable proposal before venue evaluation and independent approval. Approval and Intent registration bind the unchanged proposal, envelope, candidate digest, and exact admissibility decision. Its later non-authorizing Order Conformance Proof binds those results to the RCL commitment before authority issuance. Final egress compares the actual outbound representation and does not repair or recompile a mismatch.
 
 Protective actions SHALL follow the separate restrictions defined by ADR-002-001.
 
@@ -1028,6 +1054,7 @@ The Broker Capability Profile SHALL assess at least:
 * push versus poll account events and the external-activity detection bound;
 * rate-limit scope, session concurrency, credential fencing, late fills, reconnect, and recovery;
 * current venue/session/halt/tradability, price/tick/lot/quantity, order-type/time-in-force, account/margin/borrow/settlement, and rule-change semantics needed by ADR-002-019.
+* API/SDK defaults, duplicate-field behavior, canonicalization, numeric encoding, signing, redirects, transport rewrites, and actual-outbound observability needed by ADR-002-020.
 
 Capability results SHALL be classified as `SUPPORTED`, `SUPPORTED_WITH_RESTRICTION`, `BEST_EFFORT`, `UNAVAILABLE`, or `LIVE_SCOPE_PROHIBITED`.
 
@@ -1574,6 +1601,8 @@ ADR-002-018 defines source identity and continuity, transformation-lineage, inde
 
 ADR-002-019 defines Venue Constraint Policy integrity, exact order-admissibility binding, Constraint Generation fencing, session/halt/account/margin/broker-rule invalidation, and active final-egress constraint-currentness threats. The Venue Constraint Gate and its read identities SHALL NOT obtain capacity, approval, protective-classification, Live Authorization, broker-transmission, HALT-clear, or re-arm authority.
 
+ADR-002-020 defines deterministic Intent-to-order construction, closed transformation envelopes, exact identity/unit/direction/numeric semantics, conservative economic-effect proof, downstream mutation fencing, parser-differential defense, and actual-outbound verification. Compiler, mapping, schema, SDK, evidence, and replay identities SHALL NOT obtain approval, capacity, protective-classification, Live Authorization, broker-transmission, HALT-clear, or re-arm authority.
+
 ---
 
 ## 26. Architectural Decision Records
@@ -1601,8 +1630,9 @@ The following ADRs are initially required.
 | ADR-002-017 | Safe Startup, Recovery Barrier, and Conservative Resume Coordination       | Proposed |
 | ADR-002-018 | Critical Input Integrity, Provenance, and Decision-Context Fencing          | Proposed |
 | ADR-002-019 | Venue, Session, Tradability, and Broker Constraint Gate                     | Proposed |
+| ADR-002-020 | Intent-to-Order Conformance, Canonical Command Construction, and Economic-Effect Fencing | Proposed |
 
-ADR-002-002 through ADR-002-019 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity, safe-start/recovery-barrier, Critical Input/decision-context, and venue/session/tradability decisions ADR-002-012 → ADR-002-013 → ADR-002-014 → ADR-002-015 → ADR-002-016 → ADR-002-017 → ADR-002-018 → ADR-002-019 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-019, including one-to-one dedicated cases for ADR-002-005 through ADR-002-019. All 231 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
+ADR-002-002 through ADR-002-020 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability, and Intent-to-order conformance decisions ADR-002-012 → ADR-002-013 → ADR-002-014 → ADR-002-015 → ADR-002-016 → ADR-002-017 → ADR-002-018 → ADR-002-019 → ADR-002-020 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-020, including one-to-one dedicated cases for ADR-002-005 through ADR-002-020. All 243 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
 
 ---
 
@@ -1629,7 +1659,7 @@ ADR-002-002 through ADR-002-019 are authored as co-located `Proposed` decisions.
 | SAFE-030            | Context Integrity Service, Decision Context Capsule     |
 | SAFE-031            | Context Integrity Service, Critical Input Policy, Evidence Store |
 | SAFE-032            | Venue Constraint Gate, Context Integrity Service, Broker Egress Gateway |
-| SAFE-033            | Decision Context Capsule, Order Admissibility Decision, Independent Approval Service, Execution Coordinator, Broker Egress Gateway |
+| SAFE-033            | Decision Context Capsule, Order Construction Service, Canonical Broker Command, Order Conformance Proof, Order Admissibility Decision, Independent Approval Service, Execution Coordinator, Broker Egress Gateway |
 | SAFE-034            | Independent Approval Service, Critical Input common-mode analysis, Human Authority Governance |
 | SAFE-035            | Trustworthy Time Service                                |
 | SAFE-040            | Protective Action Controller, Cancellation Arbiter, Broker Egress Gateway |
@@ -1651,7 +1681,7 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
 ## 28. Open Architectural Decisions
 
-ADR-002-005 through ADR-002-019 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, and venue/session/tradability-constraint models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, Critical Input Policy, Venue Constraint Policy, Recovery Barrier Policy, Evidence Integrity Policy, or Broker Capability Profile.
+ADR-002-005 through ADR-002-020 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, and Intent-to-order conformance models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, Critical Input Policy, Venue Constraint Policy, Order Construction Policy, Recovery Barrier Policy, Evidence Integrity Policy, or Broker Capability Profile.
 
 1. Which conforming replicated-state-machine product, storage engine, voter topology, and durability configuration implement ADR-002-012's selected quorum Safety Commit Log mechanism?
 2. Which conforming non-exportable signer or credential service, identity-aware order route, Quorum Commit Certificate format, Active Egress Principal topology, and Hard Egress Fence implement ADR-002-013 while carrying ADR-002-007 and ADR-002-012 generations to the broker-send boundary?
@@ -1661,12 +1691,13 @@ ADR-002-005 through ADR-002-019 now define the normative orthogonal-state, evide
 6. Which Recovery Barrier Policy, ordered Recovery Generation and owner fence, dependency graph, broker/source Inventory Cut protocol, obligation workflow, package signer, and final-egress currentness mechanism implement ADR-002-017?
 7. Which Critical Input Policy, source registry/continuity protocol, schema and unit/mapping registry, transformation manifest, consistency-cut rule, independent approval path, Context Generation, invalidation graph, and active final-egress currentness mechanism implement ADR-002-018?
 8. Which Venue Constraint Policy, source/continuity registry, Session Phase and tradability state machines, order/account/margin/borrow/settlement rules, exact Snapshot/Decision schemas, Constraint Generation, invalidation graph, and active final-egress currentness mechanism implement ADR-002-019?
-9. What deployment topology provides the required failure-domain isolation?
-10. What numeric detection, containment, protective-gap, lease, retry, evidence-persistence, evidence-gap, recovery-barrier, Critical Input invalidation, venue-constraint invalidation, context/decision-age, readiness-age, retention, and replay bounds are approved?
-11. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
-12. Which broker resources can be physically or logically reserved for protection?
-13. How are corporate actions and other non-trade changes attributed and remapped?
-14. What restricted-production evidence is required beyond non-live verification?
+9. Which canonical schemas, deterministic numeric/unit system, mapping registry, compiler, independent verifier, serializer/SDK constraints, actual-outbound comparison, Construction Generation, and invalidation mechanism implement ADR-002-020?
+10. What deployment topology provides the required failure-domain isolation?
+11. What numeric detection, containment, protective-gap, lease, retry, evidence-persistence, evidence-gap, recovery-barrier, Critical Input invalidation, venue-constraint invalidation, conformance invalidation, context/decision/command/proof-age, readiness-age, retention, and replay bounds are approved?
+12. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
+13. Which broker resources can be physically or logically reserved for protection?
+14. How are corporate actions and other non-trade changes attributed and remapped?
+15. What restricted-production evidence is required beyond non-live verification?
 
 Open decisions SHALL NOT be resolved by informal implementation convention.
 
@@ -1703,6 +1734,7 @@ At minimum, the verification set SHALL include:
 * startup, reconnect, failover, restore, or recovery trigger failing to close the barrier before observation; concurrent or stale recovery owners; incomplete dependency scope; non-atomic broker inventory; post-cut invalidation; forced readiness; and partial recovery using unresolved shared resources;
 * unclassified safety input, unknown source or continuity, sequence rollback/gap, schema/parser/mapping/unit drift, hidden transformation, incompatible consistency cut, false approval independence, Capsule substitution, correction/retraction propagation failure, permissive context cache, and stale-context final-egress acceptance;
 * exceptional session transition, halt/suspension conflict, quote-without-tradability, price/tick/lot/order-shape change, account/margin/borrow/settlement conflict, exact decision substitution, permissive constraint cache, stale Constraint Generation, exit/protective executability assumption, and venue/broker recovery attempting old-decision reuse;
+* direction/position-effect inversion, account/instrument/contract/route substitution, unit/multiplier/currency/numeric drift, permissive rounding, hidden defaults, parser differential, downstream serializer/signer/SDK mutation, command/proof substitution, split/aggregate/retry lineage failure, stale Construction Generation, and compiler recovery attempting old-proof reuse;
 * non-live environment attempting to reach live egress;
 * protective reserve exhaustion and ordinary traffic blocking the protective path;
 * corporate action or instrument-identity change;
@@ -1787,7 +1819,7 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Added re-arm governance prohibiting automatic re-arm.
 * Added the Failure-Domain Allocation requirement.
 * Added verification and acceptance-bound requirements.
-* Expanded the ADR register through ADR-002-019 and registered ADR-002-002 through ADR-002-019 as Proposed.
+* Expanded the ADR register through ADR-002-020 and registered ADR-002-002 through ADR-002-020 as Proposed.
 * Added the Phase B failure-domain isolation, protective-replacement, and corporate-action/non-trade decisions without changing verification or live-readiness status.
 * Selected the quorum-replicated deterministic Safety Commit Log mechanism class for RCL persistence, consensus, writer fencing, currentness ordering, and recovery in ADR-002-012; concrete products and deployment values remain open.
 * Defined the effective Final Egress Trust Boundary, credential and route confinement, quorum-sufficient Commit Proof validation, and stale-egress hard fencing in ADR-002-013.
@@ -1797,5 +1829,6 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Defined closed safe startup, monotonic Recovery Generations, fenced recovery ownership, conservative account-wide inventory, dependency-complete obligations, non-authorizing readiness, partial-scope isolation, and fresh governed re-arm handoff in ADR-002-017.
 * Defined Critical Input classification, source identity and continuity, exact provenance and transformation lineage, immutable Snapshots and Decision Context Capsules, independent approval common-mode analysis, correction/invalidation fan-out, active final-egress currentness, and data-recovery non-revival in ADR-002-018.
 * Defined exact venue/session/tradability, instrument/order/account/margin/borrow/settlement, Broker Capability Profile, Order Admissibility Decision, Constraint Generation, protective-path, final-egress currentness, and non-revival rules in ADR-002-019.
-* Expanded VER-002-001 and the Evidence Register to 231 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-019.
+* Defined deterministic Intent-to-order construction, closed Authorized Construction Envelopes, Canonical Broker Commands, conservative Economic Effect Envelopes, Order Conformance Proofs, downstream mutation fencing, and actual-outbound verification in ADR-002-020.
+* Expanded VER-002-001 and the Evidence Register to 243 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-020.
 * Resolves review findings A-01 through A-14.

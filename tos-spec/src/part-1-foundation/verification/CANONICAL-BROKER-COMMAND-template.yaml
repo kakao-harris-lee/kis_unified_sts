@@ -1,0 +1,77 @@
+artifact_type: CANONICAL_BROKER_COMMAND
+schema_version: "1.0-DRAFT"
+command_id: TBD
+canonical_digest: TBD
+status: DRAFT
+issuer_principal_id: TBD
+order_construction_policy:
+  policy_id: TBD
+  policy_generation: null
+  construction_generation: null
+  canonical_digest: TBD
+intent_proposal:
+  proposal_id: TBD
+  proposal_version: TBD
+  canonical_digest: TBD
+  approval_state: PENDING
+authorized_construction_envelope:
+  envelope_id: TBD
+  canonical_digest: TBD
+decision_context_capsule:
+  capsule_id: TBD
+  canonical_digest: TBD
+broker_profile:
+  profile_id: TBD
+  profile_version: TBD
+  canonical_digest: TBD
+exact_command:
+  environment: TBD
+  broker: TBD
+  api_product: TBD
+  api_version: TBD
+  account: TBD
+  subaccount: TBD
+  venue: TBD
+  market_segment: TBD
+  instrument: TBD
+  contract: TBD
+  broker_symbol: TBD
+  action_class: TBD
+  side: TBD
+  position_effect: TBD
+  quantity: null
+  quantity_unit: TBD
+  multiplier: null
+  currency: TBD
+  price_instruction: TBD
+  order_type: TBD
+  time_in_force: TBD
+  expiration: null
+  operating_mode: TBD
+  endpoint: TBD
+  method_or_message_type: TBD
+  route: TBD
+  idempotency_identity: TBD
+  client_order_identity: TBD
+  broker_fields: []
+actual_outbound_contract:
+  canonicalization_version: TBD
+  bound_transport_fields: []
+  prohibited_unbound_fields: []
+validity:
+  issued_at: null
+  maximum_age_ms: null
+  expires_at: null
+  invalidation_generation: null
+  invalidation_conditions: []
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

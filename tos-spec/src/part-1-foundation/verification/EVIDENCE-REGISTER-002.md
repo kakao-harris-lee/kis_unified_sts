@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **231**
-- NOT_IMPLEMENTED: **231**
+- Total evidence items: **243**
+- NOT_IMPLEMENTED: **243**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -254,6 +254,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | VTG-EV-010 | Venue and Tradability Gate | Source Policy Capability and Common-Mode Drift | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | VTG-EV-011 | Venue and Tradability Gate | Authority Separation and Bypass Resistance | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | VTG-EV-012 | Venue and Tradability Gate | Recovery Reopen and Non-Revival | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-001 | Intent-to-Order Conformance | Direction and Position-Effect Inversion | ADR-002-020 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-002 | Intent-to-Order Conformance | Account Instrument Contract Environment and Route Substitution | ADR-002-020 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-003 | Intent-to-Order Conformance | Unit Multiplier Currency Scale and Numeric Safety | ADR-002-020 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-004 | Intent-to-Order Conformance | Quantity Tick Lot and Rounding | ADR-002-020 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-005 | Intent-to-Order Conformance | Price Order Type TIF Expiration Flags and Mode | ADR-002-020 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-006 | Intent-to-Order Conformance | Economic Effect and Capacity Dominance | ADR-002-020 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-007 | Intent-to-Order Conformance | Canonicalization and Parser Differential | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-008 | Intent-to-Order Conformance | Post-Proof Mutation and Actual-Outbound Equivalence | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-009 | Intent-to-Order Conformance | Retry Cancel Amend Replace Split and Aggregate | ADR-002-020 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-010 | Intent-to-Order Conformance | Protective and Exit Construction | ADR-002-020 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-011 | Intent-to-Order Conformance | Authority Separation Compiler Drift and Bypass | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IOC-EV-012 | Intent-to-Order Conformance | Restart Restore Recovery Replay and Non-Revival | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

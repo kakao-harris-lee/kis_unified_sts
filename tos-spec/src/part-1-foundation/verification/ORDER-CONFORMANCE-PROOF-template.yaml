@@ -1,0 +1,85 @@
+artifact_type: ORDER_CONFORMANCE_PROOF
+schema_version: "1.0-DRAFT"
+proof_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+issuer_principal_id: TBD
+order_construction_policy:
+  policy_id: TBD
+  policy_generation: null
+  construction_generation: null
+  canonical_digest: TBD
+intent:
+  intent_id: TBD
+  canonical_digest: TBD
+authorized_construction_envelope:
+  envelope_id: TBD
+  canonical_digest: TBD
+canonical_broker_command:
+  command_id: TBD
+  canonical_digest: TBD
+decision_context_capsule:
+  capsule_id: TBD
+  canonical_digest: TBD
+venue_constraint_snapshot:
+  snapshot_id: TBD
+  constraint_generation: null
+  canonical_digest: TBD
+order_admissibility_decision:
+  decision_id: TBD
+  canonical_digest: TBD
+economic_effect_envelope:
+  envelope_id: TBD
+  canonical_digest: TBD
+capacity_binding:
+  capacity_domain_id: TBD
+  capacity_commitment_id: TBD
+  committed_effect_vector: {}
+  rcl_revision: null
+  writer_epoch: null
+  dominates_envelope: false
+required_authority_scope: {}
+construction_identity:
+  compiler_build_digest: TBD
+  dependency_digests: []
+  schema_versions: []
+  mapping_generations: []
+  serializer_version: TBD
+  sdk_version: TBD
+  canonicalization_version: TBD
+  configuration_digest: TBD
+  deployment_generation: null
+field_conformance_results: []
+numeric_conversion_and_rounding_derivations: []
+actual_outbound_comparison_rule_id: TBD
+common_mode_dependencies: []
+residual_risks: []
+validity:
+  issued_at: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+  expires_at: null
+  invalidation_generation: null
+  invalidation_conditions: []
+upstream_bindings:
+  approval_request_id: TBD
+  approval_set_id: TBD
+downstream_consumption:
+  transmission_attempt_id: null
+  live_authorization_id: null
+  transmission_capability_id: null
+  commit_proof_id: null
+  egress_request_digest: null
+  note: Later authority and egress artifacts bind this proof; these fields are not proof-issuance prerequisites.
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

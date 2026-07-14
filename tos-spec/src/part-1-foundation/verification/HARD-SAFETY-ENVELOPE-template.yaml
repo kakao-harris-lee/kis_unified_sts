@@ -88,6 +88,7 @@ mandatory_constraints:
   evidence_integrity_model: ADR-002-016
   critical_input_integrity_model: ADR-002-018
   venue_constraint_gate_model: ADR-002-019
+  intent_to_order_conformance_model: ADR-002-020
   safe_recovery_model: ADR-002-017
   prohibited_fallbacks: []
   required_fail_closed_conditions: []
@@ -117,6 +118,9 @@ references:
   venue_constraint_policy_id: TBD
   venue_constraint_policy_generation: null
   venue_constraint_policy_digest: TBD
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
   calendars: []
   policy_artifacts: []
 

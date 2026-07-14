@@ -507,6 +507,8 @@ The profile SHALL state:
 
 ADR-002-019 consumes these evidenced capabilities as a ceiling on exact order admissibility. A Capability Profile does not prove current venue/session/tradability or create permission; missing or degraded dimensions make the affected Order Admissibility Decision restrictive.
 
+ADR-002-020 also consumes evidenced API/SDK defaults, field-presence rules, canonicalization, duplicate/unknown-field behavior, numeric encoding, account/symbol/side/position-effect mapping, signing, redirect, idempotency, serializer, and actual-outbound observability as a ceiling on conforming construction. A Capability Profile does not construct or authorize a command; missing, contradictory, or unverifiable semantics deny the affected command scope.
+
 ---
 
 ## 9. Capability Assurance Levels
@@ -615,7 +617,8 @@ Before transmission, Broker Adapter SHALL verify:
 - required identity/idempotency semantics;
 - current authority and capacity capability;
 - exact current Venue Constraint Snapshot and Order Admissibility Decision under ADR-002-019;
-- request conforms to broker units, multiplier, price, quantity, and session rules;
+- exact current ADR-002-020 Canonical Broker Command, Economic Effect Envelope, Order Conformance Proof, Construction Generation, and actual-outbound comparison rule;
+- request conforms to broker units, multiplier, price, quantity, session, canonicalization, serializer/SDK, signing, and actual-outbound rules;
 - rate/session budget permits the request;
 - no unresolved transmission exists in a mutually exclusive containment scope.
 
@@ -1383,6 +1386,7 @@ ADR-002-004 may move from **Proposed** to **Accepted** only when:
 - ADR-002-015 human approval and break-glass controls cannot use portal, dealer, support, or emergency broker authority as compliant TOS egress, and their required HAG evidence passes;
 - ADR-002-016 raw broker, portal, dealer, support, session, query-page, correction, and external-activity evidence is durably retained and replayable without turning omission into proof, and applicable ERI evidence passes;
 - ADR-002-019 binds each supported capability to exact current venue/session/tradability, order/account/margin/borrow/settlement constraints and final-egress enforcement, and applicable VTG evidence passes;
+- ADR-002-020 binds each supported command semantic, default, canonicalization, serializer/SDK, signer, redirect, idempotency, and actual-outbound behavior to an exact non-authorizing proof and final-egress comparison, and applicable IOC evidence passes;
 - all Critical acceptance criteria pass;
 - capability drift causes fail-closed behavior;
 - VER-002-001 evidence entries are complete and independently reviewed;

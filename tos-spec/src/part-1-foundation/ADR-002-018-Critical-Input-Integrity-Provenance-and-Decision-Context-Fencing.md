@@ -379,6 +379,8 @@ The exact Capsule identity/digest SHALL be included or cryptographically bound i
 7. evidence pre-effect receipt and `SEND_STARTED` record;
 8. final broker request construction and egress decision.
 
+ADR-002-020 consumes the exact Capsule as a fixed construction input. The compiler cannot refresh, substitute, or recompute context; any material Capsule change requires a new candidate command, venue decision, approval, capacity evaluation, proof, and authority chain.
+
 Every consumer SHALL reject a missing, mismatched, stale, invalidated, wrong-scope, wrong-environment, or unsupported Capsule. A consumer may derive a narrower restriction, but it cannot silently substitute a more permissive value or newer input into an existing chain.
 
 The applicability of a binding cannot be decided ad hoc by a consumer. It SHALL follow the Critical Input Policy and §5.8 materiality rules; unknown dependency or materiality requires the binding and the more restrictive result.
@@ -664,8 +666,9 @@ ADR-002-018 SHALL remain **Proposed** until all of the following are complete:
 9. ADR-002-016 evidence, source continuity, gap detection, retention, correction lineage, and isolated replay are implemented for all Critical Input artifacts;
 10. `CII-EV-001` through `CII-EV-012` and applicable cross-ADR evidence pass at required levels and receive independent review;
 11. ADR-002-019 consumes venue/session/tradability/account/broker Critical Inputs through an exact policy-owned Snapshot/Decision contract without converting context validation into admissibility or authority, and applicable VTG evidence passes;
-12. source-loss, freshness, invalidation-to-authority, invalidation-to-egress, Snapshot/Capsule and venue-decision age, correction, time, evidence, broker, and recovery bounds are approved and measured;
-13. no unresolved unclassified-input, common-mode, mapping/unit, source-continuity, correction, context/constraint-substitution, permissive-cache, egress-bypass, capacity-release, or automatic re-arm path remains;
-14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+12. ADR-002-020 consumes the exact Capsule in candidate command and conformance proof without hidden refresh or recomputation, and applicable IOC evidence passes;
+13. source-loss, freshness, invalidation-to-authority, invalidation-to-egress, Snapshot/Capsule, venue-decision, command/proof age, correction, time, evidence, broker, and recovery bounds are approved and measured;
+14. no unresolved unclassified-input, common-mode, mapping/unit, source-continuity, correction, context/constraint/conformance-substitution, permissive-cache, egress-bypass, capacity-release, or automatic re-arm path remains;
+15. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Until those gates pass, this ADR authorizes architecture and implementation-planning work only. It does not claim verification completion, ADR acceptance, restricted-live readiness, production readiness, or live trading authority.

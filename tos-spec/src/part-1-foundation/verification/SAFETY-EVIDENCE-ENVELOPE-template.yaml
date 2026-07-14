@@ -54,6 +54,10 @@ subjects:
   venue_constraint_snapshot_id: null
   order_admissibility_decision_id: null
   constraint_generation: null
+  canonical_broker_command_id: null
+  economic_effect_envelope_id: null
+  order_conformance_proof_id: null
+  construction_generation: null
   non_trade_event_id: null
 
 causality:

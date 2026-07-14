@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "1.0-PROPOSED"
+version: "1.1-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -52,6 +52,9 @@ scope:
   venue_constraint_policy_id: TBD
   venue_constraint_policy_generation: null
   venue_constraint_policy_digest: TBD
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -198,6 +201,13 @@ bounds:
     rationale: "MEASURE. Maximum interval from committed material venue-constraint invalidation to denial of the stale decision and dependent broker request at every affected final egress (ADR-002-019 §17)."
     measurement_source: constraint_generation_invalidation_and_egress_boundary_trace
     failure_response: HALT
+  B_order_conformance_invalid_to_egress:
+    value_ms: null   # APPROVE after Construction Generation and proof invalidation reach every final egress
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed material construction-policy, mapping, compiler, serializer, SDK, command, or proof invalidation to denial of the stale command at every affected final egress (ADR-002-020 §§17-18)."
+    measurement_source: construction_generation_proof_invalidation_and_egress_boundary_trace
+    failure_response: HALT
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
@@ -342,6 +352,8 @@ limits:
   MAX_decision_context_age_ms: null              # APPROVE per action class; Capsule expiry never expires economic effect
   MAX_venue_constraint_snapshot_age_ms: null     # APPROVE per venue/session/account/action scope; unknown age denies dependent new risk
   MAX_order_admissibility_decision_age_ms: null  # APPROVE per exact order/action class; expiry never expires economic effect
+  MAX_canonical_broker_command_age_ms: null       # APPROVE per broker/action scope; unknown age denies send and expiry never expires economic effect
+  MAX_order_conformance_proof_age_ms: null         # APPROVE per exact command; stale proof denies send and cannot release capacity
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

@@ -28,6 +28,11 @@ source_observations:
   source_revisions: []
   query_pages_and_cursors: []
   broker_session_ids: []
+  canonical_broker_command_ids: []
+  economic_effect_envelope_ids: []
+  order_conformance_proof_ids: []
+  construction_generation: null
+  construction_invalidation_ids: []
   intervening_event_ids: []
   raw_evidence_record_ids: []
   evidence_gap_ids: []

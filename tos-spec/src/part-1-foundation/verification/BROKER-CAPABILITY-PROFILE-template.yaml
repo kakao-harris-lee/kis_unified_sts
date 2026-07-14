@@ -146,6 +146,18 @@ capabilities:
     margin_and_collateral_semantics: UNKNOWN
     borrow_locate_and_short_sale_semantics: UNKNOWN
     settlement_currency_and_expiration_semantics: UNKNOWN
+  command_construction_and_wire_semantics:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    required_and_default_field_semantics: UNKNOWN
+    account_symbol_side_and_position_effect_mapping: UNKNOWN
+    unit_multiplier_currency_and_numeric_encoding: UNKNOWN
+    duplicate_unknown_and_omitted_field_behavior: UNKNOWN
+    canonicalization_and_parser_behavior: UNKNOWN
+    serializer_sdk_signer_and_redirect_behavior: UNKNOWN
+    actual_outbound_observability: UNKNOWN
+    fallback: PROHIBIT_AFFECTED_COMMAND_SCOPE
 
 venue_constraint_binding:
   venue_constraint_policy_id: TBD
@@ -154,6 +166,14 @@ venue_constraint_binding:
   constraint_generation: null
   active_currentness_mechanism: TBD
   permissive_cache_prohibited: true
+
+order_construction_binding:
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
+  construction_generation: null
+  actual_outbound_comparison_mechanism: TBD
+  permissive_default_or_repair_prohibited: true
 
 egress_security:
   final_egress_boundary_id: TBD

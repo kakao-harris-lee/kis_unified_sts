@@ -35,6 +35,9 @@ baseline:
   venue_constraint_policy_id: TBD
   venue_constraint_policy_generation: null
   venue_constraint_policy_digest: TBD
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
   consumer_compatibility_manifest_ids: []
   broker_capability_profile_version: TBD
   verification_profile_version: TBD
@@ -106,6 +109,12 @@ artifacts:
   venue_constraint_snapshots: []
   order_admissibility_decisions: []
   constraint_invalidations_and_egress_currentness: []
+  order_construction_policies: []
+  authorized_construction_envelopes: []
+  canonical_broker_commands: []
+  economic_effect_envelopes: []
+  order_conformance_proofs: []
+  construction_invalidations_and_actual_outbound_comparisons: []
   restrictive_overrides: []
   configuration_rollback_restore: []
   state_dimensions: []
