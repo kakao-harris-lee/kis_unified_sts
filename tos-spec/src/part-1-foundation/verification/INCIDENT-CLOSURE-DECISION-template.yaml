@@ -1,0 +1,60 @@
+artifact_type: INCIDENT_CLOSURE_DECISION
+schema_version: "1.0-DRAFT"
+decision_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: HOLD
+incident_binding:
+  incident_id: TBD
+  incident_generation: null
+  incident_record_digest: TBD
+  active_incident_set_id: TBD
+  active_incident_set_digest: TBD
+  binding_current: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+closure_contract:
+  signals_and_chronology_complete_or_bounded: false
+  restrictions_and_hard_fences_current: false
+  broker_effects_final_or_explicitly_capacity_covered: false
+  economic_and_protection_obligations_resolved_or_transferred: false
+  containment_and_shutdown_actions_disposed: false
+  evidence_gaps_resolved: false
+  root_and_contributing_causes_recorded: false
+  remediation_governed_by_fresh_configuration: false
+  exact_recovery_handoff_accepted: false
+  no_open_parent_child_overlap_or_common_mode: false
+independent_review:
+  effective_principal_graph_id: TBD
+  required_quorum_satisfied: false
+  conflicts_resolved: false
+  approvers: []
+currentness:
+  decision_current: false
+  invalidations: []
+consumption:
+  single_use_record_transition: true
+  consumed: false
+  consumed_at: null
+authority:
+  closes_administratively: false
+  marks_evidence_pass: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  activates_configuration: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_or_local_latch: false
+  clears_recovery_barrier: false
+  establishes_recovery_readiness: false
+  restores_production_scope: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT HOLD decision grants no authority. Administrative closure cannot
+  release capacity, erase economic effect, clear UNKNOWN, HALT, a local latch, or
+  the Recovery Barrier, mark evidence PASS, restore scope, transmit, or re-arm.

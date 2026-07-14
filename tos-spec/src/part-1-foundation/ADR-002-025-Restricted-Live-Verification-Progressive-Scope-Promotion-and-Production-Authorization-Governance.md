@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** EV-L5 restricted-live trial governance, exact trial scope, pre-registration, bounded economic effect, trial authorization prerequisites, abort and demotion, evidence validity, independent review, progressive promotion, production authorization, continuous conformance, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-024, SAFE-025, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§9.1, 11, 20, 23, and 28–29; VER-002-001 §§5, 329, and 332–333
+- **Refines:** RFC-001 SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-024, SAFE-025, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§9.1, 11, 20, 23, and 28–29; VER-002-001 §§5, 341, and 344–345
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-024
 
 ---
@@ -394,6 +394,8 @@ On trigger:
 5. only newly authorized HALT-compatible containment may proceed;
 6. evidence gaps and ambiguity are preserved;
 7. the run becomes `ABORTING` or `INVALIDATED` and cannot resume.
+
+A policy-classified safety signal additionally enters ADR-002-027's incident protocol. Trial abort and incident declaration are compatible restrictive facts, but neither one closes the other. Incident stabilization, administrative closure, quiet time, remediation, or successful replay cannot resume the Trial Run, select an earlier promoted scope, or create production authority.
 
 Abort does not blindly cancel necessary protection. Abort acknowledgement is not Final Quantity Proof. A lost abort response is treated as possibly applied and does not authorize further actions.
 

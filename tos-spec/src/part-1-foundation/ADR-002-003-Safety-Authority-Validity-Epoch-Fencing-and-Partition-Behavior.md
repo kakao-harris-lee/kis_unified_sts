@@ -428,6 +428,8 @@ Stale epochs SHALL be rejected by every component capable of creating or enlargi
 
 A stale process logging an error, losing a leadership lock, or receiving a shutdown signal is not sufficient evidence that it cannot act.
 
+ADR-002-027 controlled shutdown therefore orders restrictive authority and egress fencing before ordinary process termination and preserves UNKNOWN and economic-effect obligations afterward. Incident declaration, shutdown completion, or administrative closure cannot clear a HALT generation or stand in for a hard fence.
+
 ### 11.3 Egress Reachability
 
 If the stale instance can still reach the broker directly with a valid credential, safety fencing is incomplete even if internal services reject it.

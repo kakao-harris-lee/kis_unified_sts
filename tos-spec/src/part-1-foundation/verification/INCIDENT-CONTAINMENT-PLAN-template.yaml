@@ -1,0 +1,68 @@
+artifact_type: INCIDENT_CONTAINMENT_PLAN
+schema_version: "1.0-DRAFT"
+plan_id: TBD
+plan_version: null
+canonical_digest: TBD
+status: DRAFT
+incident_binding:
+  incident_id: TBD
+  incident_generation: null
+  incident_record_digest: TBD
+  active_incident_set_id: TBD
+  active_incident_set_digest: TBD
+  binding_current: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+signals_hazards_and_invariants: []
+committed_restrictions_and_fences: []
+economic_state_snapshot:
+  positions: []
+  orders_and_attempts: []
+  potentially_live_effects: []
+  external_activity: []
+  rcl_commitments: []
+  unknown_state_present: true
+protection_and_ongoing_obligations: []
+proposed_containment_actions: []
+action_authority_bindings: []
+action_failure_responses: []
+controlled_shutdown:
+  required: false
+  state: PLANNED
+  new_risk_denial_proven: false
+  new_work_quiesced: false
+  broker_bound_queues_rejected_not_drained: false
+  former_principals_credentials_sessions_routes_hard_fenced: false
+  economic_state_preserved: false
+  rcl_commitments_preserved: false
+  required_protection_preserved_or_proven_replaced: false
+  evidence_and_reconciliation_paths_preserved: false
+  recovery_barrier_closed: false
+  services_stopped: false
+  cooperative_stop_is_hard_fence: false
+  shutdown_proves_broker_finality: false
+  shutdown_releases_capacity: false
+evidence_and_notifications: []
+recovery_handoff_trigger: null
+currentness:
+  plan_current: false
+  invalidations: []
+authority:
+  plan_active: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_or_local_latch: false
+  establishes_recovery_readiness: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT plan proposes coordination only. Every broker-directed action needs
+  the complete separately owned safety chain. Shutdown cannot drain work by
+  sending, blindly cancel required protection, prove broker finality, release
+  capacity, clear HALT, or re-arm.

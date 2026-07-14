@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety waivers, deviations, exceptions, residual-risk acceptance, non-waivable boundaries, compensating controls, exact scope, independent approval, configuration activation, currentness, expiry, revocation, recovery, evidence, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 §14 and SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-023, SAFE-024, SAFE-025, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§2, 9.1, 10, 20, 23, and 28–29; VER-002-001 §§5, 314–325, and 330–333
+- **Refines:** RFC-001 §14 and SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-023, SAFE-024, SAFE-025, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§2, 9.1, 10, 20, 23, and 28–29; VER-002-001 §§5, 314–325, and 342–345
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-025
 
 ---
@@ -447,6 +447,8 @@ Break-glass may invoke HALT, deny, narrow, or request separately authorized cont
 - re-arm.
 
 An emergency external broker-portal action is external activity. It is not retroactively made compliant by a later deviation record. The system preserves conservative capacity, reconciliation, evidence, and incident treatment.
+
+ADR-002-027 governs incident declaration, containment, controlled shutdown, recovery handoff, and closure for that activity. Incident state, response success, closure, or absence of later loss does not make a post-hoc deviation eligible and cannot relabel failed or missing evidence as `PASS`.
 
 If an approved protective path is unavailable, the result is trapped exposure, containment, or HALT. Priority or residual-risk acceptance does not manufacture protective capacity or executability.
 

@@ -1,0 +1,64 @@
+artifact_type: SAFETY_INCIDENT_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+incident_generation: null
+canonical_digest: TBD
+status: DRAFT
+scope:
+  environments: []
+  safety_cells: []
+  capacity_domains: []
+  legal_portfolios: []
+  accounts: []
+  brokers: []
+  venues: []
+signal_registry: []
+severity_rules: []
+materiality_rules: []
+scope_and_dependency_closure_rules: []
+multiple_incident_and_common_mode_rules: []
+mandatory_restrictive_dispositions: []
+incident_generation_and_writer_fence_rules: []
+containment_action_rules: []
+controlled_shutdown_rules: []
+external_emergency_activity_rules: []
+evidence_and_notification_rules: []
+effective_principal_and_closure_rules: []
+recovery_handoff_and_non_revival_rules: []
+approved_bounds: []
+materiality_default: MATERIAL
+unknown_signal_disposition: SUSPECTED_AND_RESTRICT
+unknown_scope_disposition: EXPAND_TO_GREATEST_CREDIBLE_SCOPE
+failure_responses:
+  signal_unclassified_or_conflicting: RESTRICT_AND_DECLARE_SUSPECTED
+  scope_incomplete_or_stale: EXPAND_CONTAINMENT
+  incident_registry_unavailable: DENY_NEW_RISK_AND_LATCH
+  restriction_delivery_unknown: LATCH_LOCAL_DENY_AND_HARD_FENCE
+  containment_action_unknown: PRESERVE_CAPACITY_AND_NO_BLIND_RETRY
+  controlled_shutdown_unknown: REMAIN_HALTED_AND_PRESERVE_OBLIGATIONS
+  evidence_gap: KEEP_OPEN_AND_CONTAIN
+  closure_currentness_unknown: DENY_CLOSURE
+  recovery_handoff_unknown: KEEP_BARRIER_CLOSED
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  declares_incident: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  activates_configuration: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_or_local_latch: false
+  establishes_recovery_readiness: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT policy is inactive and grants no capacity, configuration, protective
+  classification, live authority, broker transmission, incident closure, recovery
+  readiness, or re-arm. Missing, null, TBD, stale, conflicting, or unapproved
+  values restrict the greatest credible affected scope.

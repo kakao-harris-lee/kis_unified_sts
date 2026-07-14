@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **315**
-- NOT_IMPLEMENTED: **315**
+- Total evidence items: **327**
+- NOT_IMPLEMENTED: **327**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -338,6 +338,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | WDR-EV-010 | Safety Deviation and Residual Risk | Evidence and Status Honesty | ADR-002-026 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 | WDR-EV-011 | Safety Deviation and Residual Risk | Security, Alternate Route, and Emergency Behavior | ADR-002-026 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 | WDR-EV-012 | Safety Deviation and Residual Risk | Combined Deviations and Gate Separation | ADR-002-026 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-001 | Safety Incident and Controlled Shutdown | Restrictive Detection and Declaration | ADR-002-027 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-002 | Safety Incident and Controlled Shutdown | Exact Scope and Combined Incidents | ADR-002-027 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-003 | Safety Incident and Controlled Shutdown | Containment Authority Separation | ADR-002-027 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-004 | Safety Incident and Controlled Shutdown | Controlled Shutdown and Hard Fencing | ADR-002-027 | EV-L3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-005 | Safety Incident and Controlled Shutdown | Protection and Ongoing Obligations | ADR-002-027 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-006 | Safety Incident and Controlled Shutdown | UNKNOWN, Broker Finality, and Capacity | ADR-002-027 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-007 | Safety Incident and Controlled Shutdown | Incident Currentness and Send Race | ADR-002-027 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-008 | Safety Incident and Controlled Shutdown | Partition, Common Mode, and Compromise | ADR-002-027 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-009 | Safety Incident and Controlled Shutdown | Evidence, Communication, and Status Honesty | ADR-002-027 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-010 | Safety Incident and Controlled Shutdown | Independent Non-Permissive Closure | ADR-002-027 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-011 | Safety Incident and Controlled Shutdown | External Activity and Demotion | ADR-002-027 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SIR-EV-012 | Safety Incident and Controlled Shutdown | Recovery and Non-Revival | ADR-002-027 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

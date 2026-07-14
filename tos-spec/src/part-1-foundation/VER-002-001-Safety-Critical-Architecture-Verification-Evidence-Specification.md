@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-026
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-026; implementation evidence has not been executed
-- **Extension State:** ADR-002-005 through ADR-002-026 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, and WDR evidence families. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-027
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-027; implementation evidence has not been executed
+- **Extension State:** ADR-002-005 through ADR-002-027 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, and SIR evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -2643,7 +2643,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 326. Model-Based and Property Verification
+# Part XXVII — Safety Incident and Controlled-Shutdown Evidence
+
+## 326. SIR-EV-001 — Restrictive Detection and Declaration
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-027 SIR-AC-001
+- **Injection:** Delay confirmation, ticket creation, severity review, responder assignment, or ordinary control-plane workflow after a credible, conflicting, ambiguous, suppressed, or unclassified material signal.
+- **Expected:** The greatest credible affected scope becomes restrictive before administrative coordination; declaration creates no capacity, authority, protection, transmission, readiness, closure, or re-arm permission.
+
+## 327. SIR-EV-002 — Exact Scope and Combined Incidents
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-027 SIR-AC-002
+- **Injection:** Omit a shared account, Capacity Domain, broker session, credential, route, failure domain, protection, evidence path, parent, child, overlap, or common cause; present separate narrow incidents or a favorable subset.
+- **Expected:** Scope expands to the greatest credible dependency closure and one canonical Active Safety Incident Set; no local exemption, subset, child closure, or union creates permission.
+
+## 328. SIR-EV-003 — Containment Authority Separation
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-027 SIR-AC-003
+- **Injection:** Present severity, incident priority, commander approval, a Containment Plan, or an emergency label directly to the RCL, Protective Action Controller, authority issuer, alternate broker route, or final egress.
+- **Expected:** Incident artifacts coordinate only; every action retains its normal classifier, RCL, authority, currentness, venue, and final-egress gates, and no incident identity gains economic authority.
+
+## 329. SIR-EV-004 — Controlled Shutdown and Hard Fencing
+
+- **Minimum Level:** EV-L3 plus broker and security assessment
+- **Supports:** ADR-002-027 SIR-AC-004
+- **Injection:** Stop strategy/processes, scale workloads to zero, close sockets, revoke a credential, delete a queue, or mark deployment shutdown while a stale principal, signer, proxy, session, route, or broker effect may remain.
+- **Expected:** Denial precedes stop, former paths remain potentially active until independently hard fenced, queued work is rejected rather than drained by sending, and shutdown state is never broker-finality proof.
+
+## 330. SIR-EV-005 — Protection and Ongoing Obligations
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-027 SIR-AC-005
+- **Injection:** Request cancel-all, blanket liquidation, component stop, retention cleanup, or ownership transfer while required protection, trapped exposure, settlement, reconciliation, evidence, notification, or recovery obligations remain.
+- **Expected:** Required safety functions and obligations are preserved or transferred through a proven break-before-make handoff; no blind cancellation, liquidation, abandonment, or false closed state occurs.
+
+## 331. SIR-EV-006 — UNKNOWN, Broker Finality, and Capacity
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-027 SIR-AC-006
+- **Injection:** Lose submission ACK, receive Cancel ACK without Final Quantity Proof, omit an order from a query, observe partial or late fill, or expire incident, plan, task, authority, credential, session, or evidence state during shutdown and closure.
+- **Expected:** Unknown effects remain potentially live and capacity-covered; no expiry, acknowledgement, process state, or administrative state proves non-acceptance, Final Quantity, or capacity release.
+
+## 332. SIR-EV-007 — Incident Currentness and Send Race
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-027 SIR-AC-007
+- **Injection:** Cache or replay old policy, Incident Generation, Active Safety Incident Set, scope, plan, closure, or handoff; race declaration or scope expansion against capability claim, `SEND_STARTED`, and first byte.
+- **Expected:** Stale or unproven incident currentness denies later send; ambiguous attempts remain potentially live, capacity-covered, and ineligible for blind retry.
+
+## 333. SIR-EV-008 — Partition, Common Mode, and Compromise
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-027 SIR-AC-008
+- **Injection:** Partition or compromise signal, registry, coordinator, notification, evidence, signer, closure, or active-set services while broker egress remains reachable; restore a stale database or coordinator.
+- **Expected:** The union of possibly affected scope remains restricted, local latches and hard fences dominate, stale owners are rejected, and no alternate credential or route becomes available.
+
+## 334. SIR-EV-009 — Evidence, Communication, and Status Honesty
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-027 SIR-AC-009
+- **Injection:** Treat a ticket, page, chat acknowledgement, dashboard, timeline, root-cause report, postmortem, replay match, quiet interval, or incident-free period as restriction delivery, broker finality, prevention evidence, closure, or readiness.
+- **Expected:** Observations and administrative artifacts retain their exact non-authorizing meaning; enforcement, finality, currentness, verification completion, and readiness require their separate proofs.
+
+## 335. SIR-EV-010 — Independent Non-Permissive Closure
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-027 SIR-AC-010
+- **Injection:** Use one Effective Principal across detector, service owner, remediator, evidence producer, closer, and live armer; close with stale generation, unresolved gap, open shared incident, or ongoing effect; present closure to HALT, RCL, Recovery Barrier, configuration, or egress.
+- **Expected:** Closure is denied unless exact current independent conditions hold and, even when recorded administratively, clears nothing, releases nothing, marks no evidence `PASS`, and grants no permission.
+
+## 336. SIR-EV-011 — External Activity and Demotion
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker and security assessment
+- **Supports:** ADR-002-027 SIR-AC-011
+- **Injection:** Use a broker portal or alternate manual route for emergency action, rewrite it as compliant, create a post-hoc deviation, or demote to a historically proven narrower production scope without fresh configuration, isolation, reconciliation, and authority.
+- **Expected:** Manual effects remain external and conservatively reconciled; no post-hoc authorization occurs and demotion remains restrictive, non-authorizing, and break-before-make.
+
+## 337. SIR-EV-012 — Recovery and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-027 SIR-AC-012
+- **Injection:** Restart, reconnect, restore, roll back, deploy remediation, repair evidence, replay, reconcile, recover time/quorum/monitoring/workflow, accept handoff, close the incident, or return an operator while old work, trial, production scope, authority, or latch exists.
+- **Expected:** The Recovery Barrier remains closed until its own gate passes; no prior work, scope, authority, proof, capability, or permission revives and no automatic re-arm occurs.
+
+---
+
+## 338. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -2672,6 +2760,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Currentness Policy, owner/dependency closure, Safety Currentness Vector, restrictive floors, Restrictive Fence Record, Local Restrictive Latch, Egress Currentness Proof, capability/permit claim, `SEND_STARTED`, first-byte ordering, cross-domain barrier, and recovery state;
 - Restricted-Live Trial Policy, exact Trial Plan and Run, effect/count/duration envelope, abort generation, evidence completeness, coverage, Promotion Generation, single-use Production Scope Promotion Decision, configuration handoff, demotion, and continuous-conformance state;
 - Safety Deviation Policy, Non-Waivable Boundary, exact Request, dependency closure, compensating controls, effective-person quorum, Decision consumption, Residual-Risk Acceptance Record, Active Deviation Set, Deviation Generation, configuration binding, expiry, revocation, and recovery state;
+- Safety Incident Policy, authenticated signals, severity/materiality, greatest-credible scope, dependency closure, Incident Generation, Active Safety Incident Set, lifecycle, containment, controlled shutdown, economic/protection obligations, recovery handoff, independent closure, currentness, and non-revival state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2760,13 +2849,16 @@ No trial policy, plan, review, run, dashboard, evidence package, coverage claim,
 No omitted, wildcard, patched, unioned, stale, conflicting, wrong-scope, post-hoc, selected, or extrapolated trial evidence produces eligibility or promotion
 No trial abort, evidence gap, UNKNOWN, drift, bound breach, expiry, recovery, or monitoring restoration permits later trial action or releases possible economic effect
 No success count, elapsed time, P&L, incident absence, narrow package set, or promotion-decision replay automatically widens production scope
+No signal delay, severity downgrade, incident subset, process shutdown, quiet time, closure, handoff, or remediation creates permission, broker finality, capacity release, scope restoration, or re-arm
+No incident coordinator, plan, evidence, message, postmortem, or closure decision mutates RCL capacity, classifies protection, issues authority, transmits, clears HALT, or establishes recovery readiness
+No controlled shutdown drains broker-bound work by sending, blindly cancels required protection, or treats process death as a hard fence
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 327. Fault-Injection Requirements
+## 339. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2789,6 +2881,7 @@ The test harness SHALL support controlled injection at least for:
 - incomplete/wildcard/patched approval request, proposer-only or common-mode validation, deterministic-evaluator differential, artifact/scope substitution, duplicate and cross-scope consumption, stale Intent Registry writer, approval authority escalation, Trading Approval Generation cache, invalidation suppression/delay beyond `B_approval_invalid_to_intent`, `B_approval_invalid_to_egress`, or `B_approval_generation_fence`, control-plane partition with broker-reachable egress, and recovery attempting old-decision or consumption reuse;
 - incomplete/wildcard/patched/unioned Trial Plan, underestimated credible effect, Trial Budget used as capacity, trial-label bypass, action/effect/count/duration overrun, abort delay beyond `B_trial_abort_to_authority_revoke` or `B_trial_abort_to_egress_deny`, evidence gap delay beyond `B_trial_evidence_gap_to_containment`, selected or hidden negative runs, post-hoc metric/stopping change, coverage extrapolation, promotion skip/union/replay, Promotion Generation fence delay, monitor drift, demotion, and recovery attempting run or promotion reuse;
 - non-waivable or unclassified request, incomplete/wildcard/patched/unioned scope, combined residual-risk underestimation, observational or common-mode compensation, same-effective-person approval, decision double spend, evidence relabeling, stale Active Deviation Set, invalidation suppression/delay beyond `B_deviation_revoke_to_authority` or `B_deviation_revoke_to_egress`, Deviation Generation fence delay, expiry/claim/first-byte race, silent renewal, predecessor rollback, emergency-route bypass, and recovery attempting deviation or authority revival;
+- missed, suppressed, downgraded, delayed, or under-scoped incident signal; favorable or stale Active Safety Incident Set; concurrent incident/common-mode omission; Incident Generation cache; declaration or scope-expansion delay beyond approved incident bounds; restriction/claim/first-byte race; incident-plane partition with broker reachability; shutdown-before-fence; queue draining by send; stale principal/session/route survival; blind protection cancellation or blanket liquidation; process stop treated as broker finality; external-route rewrite; same-effective-person closure; incomplete recovery handoff; and closure, remediation, or recovery attempting old-scope or authority revival;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -2812,7 +2905,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 328. Broker Verification Safety Rules
+## 340. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -2832,7 +2925,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 329. Continuous Conformance Evidence
+## 341. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -2857,6 +2950,7 @@ After approval, continuous monitors SHALL detect at least:
 - Action Flow Policy, Action Flow Generation, State Snapshot cut/age, cause lineage/amplification, shared-scope resource vector, Decision/Permit age and digest, RCL allocation/claim/consumption, protective reserve/lease, counter/refill, queue/in-flight, invalidation, or final-egress currentness contradiction;
 - Restricted-Live Trial Policy, Plan, Run, scope, Promotion Generation, remaining action/effect/count/duration envelope, abort, evidence completeness, coverage, promotion consumption, production scope, demotion, or monitoring contradiction;
 - Safety Deviation Policy, requirement/hazard classification, Non-Waivable Boundary, exact scope/dependency closure, combined residual risk, compensating-control state, Effective Principal quorum, decision consumption, Residual-Risk Acceptance Record, Active Deviation Set, Deviation Generation, expiry, revocation, or final-egress currentness contradiction;
+- Safety Incident Policy, signal classification, severity/materiality, dependency closure, Incident Generation, Active Safety Incident Set, lifecycle, containment plan, controlled-shutdown ordering, hard fence, economic/protection obligation, recovery handoff, closure independence, or final-egress currentness contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -2873,7 +2967,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 330. Residual Risk Register
+## 342. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -2896,7 +2990,7 @@ Where RFC-001 permits a deviation, the register SHALL additionally bind the exac
 
 ---
 
-## 331. Independent Review Checklist
+## 343. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -2924,6 +3018,7 @@ The reviewer SHALL confirm:
 - every broker-directed action binds one complete current shared-scope action-flow cut, immutable cause lineage, finite amplification envelope, exact resource vector, current Action Flow Decision, RCL commitment, and single-use permit under ADR-002-022; priority is not reserve and governor/scheduler authority does not mutate capacity or transmit;
 - every ADR-002-025 Trial Plan is exact and pre-registered, the worst credible effect is RCL-covered, abort dominates evidence collection, negative evidence is retained, coverage does not extrapolate, promotion is progressive and single-use, and no trial or promotion artifact creates live authority;
 - every ADR-002-026 request is outside the Non-Waivable Boundary and exact in scope/dependency closure, compensation is enforceable and independently evidenced, Effective Principal approval is independent, combined risk is bounded, decision consumption is single-use, evidence remains non-PASS, and expiry/revocation/currentness cannot be cached or revived;
+- every ADR-002-027 material signal restricts before investigation completes, scope is the greatest credible dependency closure, Incident Generation and the Active Safety Incident Set are current and complete, containment/shutdown preserve economic and protection obligations, handoff is explicitly accepted by one Recovery Session, closure is independent and non-permissive, and no incident artifact bypasses existing authority;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -2933,7 +3028,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 332. Approval Gates by ADR
+## 344. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -3284,6 +3379,17 @@ Requires:
 - security assessment of requirement/policy/registry manipulation, effective-person collapse, reviewer/configuration/armer common mode, compensation common mode, decision replay, active-set omission or union, stale cache, expiry suppression, predecessor restore, break-glass or alternate-route bypass, evidence relabeling, and automatic re-arm;
 - proof that accepting this governance mechanism accepts no specific deviation, marks no evidence `PASS`, and remains non-live and non-authorizing.
 
+### ADR-002-027
+
+Requires:
+
+- SIR-EV-001 through SIR-EV-012 at the specified non-live levels, plus applicable HAG, ERI, SBR, CUR, RCLP, EGRESS, SPG, RLP, WDR, CII, VTG, IOC, ARE, AFG, IAP, RC, SA, BC, FD, TIME, REARM, PR, NT, and cross-system evidence;
+- approved canonical Safety Incident Policy, Safety Incident Record, Active Safety Incident Set, Incident Containment Plan with Controlled Shutdown Procedure, Incident Recovery Handoff Package, and Incident Closure Decision schemas;
+- approved signal/source classifier, severity/materiality rules, greatest-credible dependency closure, multi-incident/common-mode composition, Incident Generation registry and writer fence, independent restrictive ingress, local latch, active final-egress currentness, controlled-shutdown ordering, external/manual activity treatment, explicit Recovery Session handoff, and independent closure mechanisms;
+- approved and measured `B_incident_signal_to_authority_restrict`, `B_incident_signal_to_egress_deny`, `B_incident_scope_expansion_to_egress_deny`, `B_incident_generation_fence`, `B_controlled_shutdown_hard_fence`, `B_incident_handoff_to_recovery_barrier`, `MAX_incident_scope_snapshot_age_ms`, `MAX_incident_containment_plan_age_ms`, `MAX_incident_recovery_handoff_age_ms`, `MAX_incident_closure_decision_age_ms`, and every applicable upstream bound;
+- security assessment of signal suppression/spoofing/downgrade, scope self-exemption, active-set omission/substitution, stale coordinator/restore, incident-plane partition, direct route, shutdown queue drain, process-stop-as-fence, closure replay, evidence deletion, same-effective-person closure, incomplete handoff, and automatic re-arm;
+- proof that incident declaration and scope expansion restrict before investigation, controlled shutdown preserves economic/protection/evidence obligations, closure is administrative and non-permissive, RCL and final egress remain exclusive, and no incident artifact restores authority or scope.
+
 ### Restricted-Live Trial Gate
 
 Requires:
@@ -3309,7 +3415,7 @@ Requires:
 
 ---
 
-## 333. Current Evidence Readiness Assessment
+## 345. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -3344,6 +3450,7 @@ Independent proposal approval, single-use Intent consumption, invalidation, and 
 Active currentness, restrictive-fence, local-latch, per-send proof, and claim/send-ordering evidence: NOT EXECUTED
 Restricted-live trial, evidence coverage, abort, promotion, demotion, and production-authorization governance evidence: NOT EXECUTED
 Safety waiver, deviation, compensating-control, residual-risk, expiry, and currentness governance evidence: NOT EXECUTED
+Safety incident declaration, scope, containment, controlled-shutdown, recovery-handoff, closure, and currentness governance evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -3352,13 +3459,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 334. Required Next Execution Sequence
+## 346. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, and safety-deviation/residual-risk-governance models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, and safety-incident/controlled-shutdown-governance models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -3371,7 +3478,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 335. Verification Specification Approval Gate
+## 347. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

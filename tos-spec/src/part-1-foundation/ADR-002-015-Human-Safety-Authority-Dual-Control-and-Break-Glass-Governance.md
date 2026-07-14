@@ -489,6 +489,8 @@ If such authority exists:
 
 An operator may request broker-side emergency containment outside the TOS only under an approved external incident procedure. The resulting economic effects remain external activity and do not become retroactively compliant TOS actions.
 
+ADR-002-027 defines that incident procedure's architectural boundary. One authorized human may invoke restrictive HALT or incident scope expansion, but incident closure, recovery handoff, production-scope restoration, and any later re-arm remain separately governed. The detector, responder, evidence producer, remediator, closer, and live armer are evaluated through this ADR's Effective Principal and conflict rules.
+
 ---
 
 ## 22. Evidence, Metrics, and Alerts

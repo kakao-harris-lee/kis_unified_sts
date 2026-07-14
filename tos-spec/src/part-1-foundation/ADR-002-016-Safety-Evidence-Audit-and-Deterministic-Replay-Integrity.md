@@ -466,6 +466,7 @@ Under ADR-002-017, recovery SHALL inventory sources, receipts, anchors, authorit
 An incident package SHALL identify:
 
 - incident and scope identities;
+- Safety Incident Policy, Incident Generation, Active Safety Incident Set, lifecycle, containment-plan, controlled-shutdown, recovery-handoff, and closure-decision identities;
 - immutable Evidence Gap and containment timeline;
 - all raw record, anchor, export, and Replay Capsule digests;
 - acquisition source, custodian, method, time evidence, and transfer history;
@@ -476,6 +477,8 @@ An incident package SHALL identify:
 - replay result and deterministic boundaries;
 - economic exposure and conservative maximum effect;
 - corrective controls, owner, reviewer, and gate impact.
+
+ADR-002-027 owns incident declaration, response lifecycle, controlled shutdown, handoff, and administrative closure. This ADR retains evidence custody and reconstruction truth. An Incident Package, postmortem, replay match, root-cause result, or closure evidence cannot release capacity, clear restrictive state, establish recovery readiness, or re-arm.
 
 The reconstruction SHALL distinguish observed fact, authenticated source claim, derived inference, conservative assumption, and unresolved unknown. Human narrative may explain evidence but cannot replace missing machine evidence or close a gap by assertion.
 

@@ -35,6 +35,7 @@
 - [ADR-002-024 — Active Currentness, Revocation, and Final-Egress Admission Fencing](part-1-foundation/ADR-002-024-Active-Currentness-Revocation-and-Final-Egress-Admission-Fencing.md)
 - [ADR-002-025 — Restricted-Live Verification, Progressive Scope Promotion, and Production Authorization Governance](part-1-foundation/ADR-002-025-Restricted-Live-Verification-Progressive-Scope-Promotion-and-Production-Authorization-Governance.md)
 - [ADR-002-026 — Safety Waiver, Deviation, and Residual-Risk Governance](part-1-foundation/ADR-002-026-Safety-Waiver-Deviation-and-Residual-Risk-Governance.md)
+- [ADR-002-027 — Safety Incident Declaration, Containment, Controlled Shutdown, and Closure Governance](part-1-foundation/ADR-002-027-Safety-Incident-Declaration-Containment-Controlled-Shutdown-and-Closure-Governance.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)

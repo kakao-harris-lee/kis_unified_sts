@@ -405,6 +405,8 @@ Credential rotation and egress replacement SHALL follow a deny-first sequence:
 
 Hard Egress Fence Proof may rely on broker credential/session revocation, a non-exportable signer refusing the old principal, identity-aware route denial, broker-side source restriction, cryptographic key destruction, or another independently enforced mechanism. It SHALL demonstrate inability to create a broker-accepted mutation, not merely process shutdown or configuration intent.
 
+ADR-002-027 incident coordination, notification, evidence, investigation, shutdown, handoff, and closure components SHALL NOT hold a usable live-order credential and route. Incident Generation and the exact Active Safety Incident Set are restrictive currentness inputs; a plan, component stop, or closure record is not Hard Egress Fence Proof.
+
 An expiry fence is acceptable only when the credential/session is non-renewable by the old principal, broker acceptance after expiry is disproven within an approved bound, time assumptions are trustworthy, queued or pre-signed requests cannot survive, and the order route cannot establish a replacement session. Until expiry is positively proven, the old path is potentially active.
 
 If the former path cannot be hard-fenced, the replacement remains non-live. New and old credentials SHALL NOT overlap as independently usable paths merely to avoid downtime.

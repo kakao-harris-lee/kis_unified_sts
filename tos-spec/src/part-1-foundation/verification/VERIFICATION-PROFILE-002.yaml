@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "1.7-PROPOSED"
+version: "1.8-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -79,6 +79,12 @@ scope:
   active_deviation_set_id: TBD
   active_deviation_set_generation: null
   active_deviation_set_digest: TBD
+  safety_incident_policy_id: TBD
+  safety_incident_policy_generation: null
+  safety_incident_policy_digest: TBD
+  active_incident_set_id: TBD
+  active_incident_set_generation: null
+  active_incident_set_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -372,6 +378,48 @@ bounds:
     rationale: "MEASURE. Maximum interval from commitment of a newer Deviation Generation to proven inability of predecessor policy, evaluator, decision, Active Deviation Set, configuration, authority, and egress consumers to create or use dependent permission."
     measurement_source: deviation_generation_registry_configuration_authority_and_egress_trace
     failure_response: HALT_OR_CONTAIN
+  B_incident_signal_to_authority_restrict:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from an authoritative material safety signal to committed denial, HALT, demotion, or restrictive fencing at every affected new-risk authority owner under ADR-002-027. Administrative confirmation cannot hide inside this bound."
+    measurement_source: incident_signal_classifier_authority_and_fence_trace
+    failure_response: HALT_OR_CONTAIN
+  B_incident_signal_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from an authoritative material safety signal to denial of later dependent new-risk transmission at every affected final egress."
+    measurement_source: incident_signal_generation_and_egress_boundary_trace
+    failure_response: HALT
+  B_incident_scope_expansion_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from authoritative incident dependency-scope expansion to denial at every newly affected final egress; unknown closure expands rather than narrows scope."
+    measurement_source: incident_scope_active_set_and_egress_trace
+    failure_response: EXPAND_CONTAINMENT_AND_HALT
+  B_incident_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from commitment of a newer Incident Generation to proven inability of stale coordinators, records, active sets, plans, closure decisions, authority requests, and egress consumers to create or use permission."
+    measurement_source: incident_generation_registry_owner_authority_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+  B_controlled_shutdown_hard_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from controlled-shutdown restriction commit to proof that every former principal, credential, signer, session, proxy, queue, and route cannot create a broker-accepted mutation. Cooperative process stop is not proof."
+    measurement_source: incident_shutdown_egress_identity_route_session_and_broker_trace
+    failure_response: REMAIN_HALTED_UNTIL_PROVEN_FENCED
+  B_incident_handoff_to_recovery_barrier:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed incident recovery-handoff intent to exact package acceptance by a current Recovery Session behind a closed Recovery Barrier; incomplete handoff transfers no obligation."
+    measurement_source: incident_handoff_and_recovery_session_acceptance_trace
+    failure_response: CLOSE_BARRIER_AND_HALT
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
@@ -536,6 +584,10 @@ limits:
   MAX_deviation_duration_ms: null                    # APPROVE per exact reduced scope; expiry restricts future authority and never expires economic effect
   MAX_deviation_decision_age_ms: null                # APPROVE per exact request/configuration consumption; stale or unknown age denies activation and send
   MAX_residual_risk_review_interval_ms: null          # APPROVE per risk class; missed or unproven review restricts scope and never auto-renews
+  MAX_incident_scope_snapshot_age_ms: null             # APPROVE per dependency scope; stale or unknown scope expands containment and denies new risk
+  MAX_incident_containment_plan_age_ms: null            # APPROVE per incident/action scope; stale plan cannot request action or justify shutdown progress
+  MAX_incident_recovery_handoff_age_ms: null            # APPROVE per Recovery Session; stale handoff transfers no obligation and keeps the barrier closed
+  MAX_incident_closure_decision_age_ms: null             # APPROVE per exact incident generation; expiry denies closure and never clears HALT or economic effect
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

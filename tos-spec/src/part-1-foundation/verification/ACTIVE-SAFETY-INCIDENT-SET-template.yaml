@@ -1,0 +1,47 @@
+artifact_type: ACTIVE_SAFETY_INCIDENT_SET
+schema_version: "1.0-DRAFT"
+set_id: TBD
+incident_generation: null
+canonical_digest: TBD
+status: DRAFT
+policy_binding:
+  policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+  current: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+  greatest_credible_scope_used: true
+active_and_suspected_incidents: []
+parent_child_and_overlap_edges: []
+shared_causes_and_common_modes: []
+aggregate_restrictive_disposition: DENY_NEW_RISK
+required_restrictive_fences: []
+ongoing_economic_and_safety_obligations: []
+evidence_gaps: []
+currentness:
+  owner_epoch: null
+  generation_current: false
+  invalidations: []
+validity:
+  assembled_at: null
+  review_due: null
+signatures: []
+authority:
+  active: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_or_local_latch: false
+  establishes_recovery_readiness: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT set grants no authority. Omission, favorable subset selection,
+  consumer-local union, incomplete dependency closure, stale generation, or
+  currentness failure denies dependent new risk and expands containment.

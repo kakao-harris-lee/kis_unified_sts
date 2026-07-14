@@ -63,6 +63,12 @@ scope:
   active_deviation_set_id: TBD
   active_deviation_set_generation: null
   active_deviation_set_digest: TBD
+  safety_incident_policy_id: TBD
+  safety_incident_policy_generation: null
+  safety_incident_policy_digest: TBD
+  active_incident_set_id: TBD
+  active_incident_set_generation: null
+  active_incident_set_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -351,6 +357,48 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+  B_incident_signal_to_authority_restrict:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_incident_signal_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_incident_scope_expansion_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: EXPAND_CONTAINMENT_AND_HALT
+  B_incident_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_controlled_shutdown_hard_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: REMAIN_HALTED_UNTIL_PROVEN_FENCED
+  B_incident_handoff_to_recovery_barrier:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: CLOSE_BARRIER_AND_HALT
   B_final_quantity_proof:
     value_ms: null
     semantics: broker_specific
@@ -514,6 +562,10 @@ limits:
   MAX_deviation_duration_ms: null
   MAX_deviation_decision_age_ms: null
   MAX_residual_risk_review_interval_ms: null
+  MAX_incident_scope_snapshot_age_ms: null
+  MAX_incident_containment_plan_age_ms: null
+  MAX_incident_recovery_handoff_age_ms: null
+  MAX_incident_closure_decision_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD
