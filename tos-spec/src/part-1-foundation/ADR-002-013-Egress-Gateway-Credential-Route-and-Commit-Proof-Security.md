@@ -311,6 +311,7 @@ The Quorum Commit Certificate SHALL bind at least:
 - exact ADR-002-018 Critical Input Policy, Context Generation, Critical Input Snapshot, and Decision Context Capsule identities/digests, source-continuity vector, maximum age, and invalidation set/status;
 - exact ADR-002-019 Venue Constraint Policy, Constraint Generation, Venue Constraint Snapshot, and Order Admissibility Decision identities/digests, complete order shape, maximum age, and invalidation set/status;
 - exact ADR-002-020 Order Construction Policy, Construction Generation, Authorized Construction Envelope, Canonical Broker Command, Economic Effect Envelope, and Order Conformance Proof identities/digests, maximum ages, and invalidation set/status;
+- exact ADR-002-021 Aggregate Risk Policy, Aggregate Risk Generation, Aggregate Risk State Snapshot, Adverse Scenario Set, Aggregate Risk Decision, evaluated scope, requested vector, maximum ages, and invalidation set/status;
 - Egress Generation and exact Active Egress Principal;
 - credential, broker-session, route-policy, endpoint-policy, and trust-bundle generations;
 - quorum signer identities or equivalent threshold-verification material.
@@ -329,9 +330,10 @@ Before send, the Final Egress Trust Boundary SHALL:
 8. actively verify the current Critical Input Policy, Context Generation, permission-critical source continuity, exact Decision Context Capsule binding, age, scope, and invalidation status under ADR-002-018 without treating a cache, TTL, heartbeat, health result, eventual consistency, or absence of invalidation as currentness proof;
 9. actively verify the current Venue Constraint Policy, Constraint Generation, session/tradability/account/broker state, exact Order Admissibility Decision binding, age, scope, and invalidation status under ADR-002-019 without treating a schedule, quote, cache, TTL, heartbeat, health result, connectivity, or absence of restriction as currentness proof;
 10. actively verify the current Order Construction Policy, Construction Generation, exact command/proof/effect binding, compiler/serializer/SDK compatibility, ages, scope, and invalidation status under ADR-002-020 without treating cached `CONFORMANT`, type safety, SDK validation, signature validity, broker acceptance, or absence of invalidation as proof;
-11. verify the capability nonce was claimed exactly once for this principal and request;
-12. reconstruct the exact actual outbound representation after every mutable internal stage and compare its canonical semantics, digest, endpoint, action, account, route, and economic effect to the ADR-002-020 command and proof;
-13. verify the claim-to-first-byte bound can still be met.
+11. actively verify the current Aggregate Risk Policy, Aggregate Risk Generation, exact Aggregate Risk Decision and RCL commitment binding, evaluated scope/vector, ages, and invalidation status under ADR-002-021 without treating cached `GRANT`, RCL commit existence, evaluator health, TTL, heartbeat, or absence of invalidation as proof;
+12. verify the capability nonce was claimed exactly once for this principal and request;
+13. reconstruct the exact actual outbound representation after every mutable internal stage and compare its canonical semantics, digest, endpoint, action, account, route, and economic effect to the ADR-002-020 command and proof;
+14. verify the claim-to-first-byte bound can still be met.
 
 One leader signature, successful RPC, database primary response, local journal entry, cached proof, event, projection, or audit record is insufficient.
 
@@ -677,8 +679,9 @@ ADR-002-013 SHALL remain **Proposed** until all of the following are complete:
 13. ADR-002-018 exact Decision Context Capsule binding, active Critical Input currentness, correction/invalidation, stale-context rejection, and context non-authority are enforced at the final boundary and applicable CII evidence passes;
 14. ADR-002-019 exact Venue Constraint Snapshot and Order Admissibility Decision binding, active constraint currentness, restrictive invalidation, exit/protective non-assumption, and constraint non-authority are enforced at the final boundary and applicable VTG evidence passes;
 15. ADR-002-020 exact candidate command, conservative effect envelope, RCL dominance, conformance proof, Construction Generation, downstream-mutation fence, and actual-outbound equivalence are enforced at the final boundary and applicable IOC evidence passes;
-16. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, recovery-barrier, Critical Input, venue-constraint, and conformance invalidation, context/decision/command/proof-age, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
-17. no unresolved bypass or overlapping old/new egress authority remains;
-18. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+16. ADR-002-021 exact Aggregate Risk Decision, policy/generation, state/scenario/effect bindings, RCL allocation/commitment, and active currentness are enforced at the final boundary and applicable ARE evidence passes;
+17. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, recovery-barrier, Critical Input, venue-constraint, conformance, and aggregate-risk invalidation, context/decision/command/proof/snapshot-age, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
+18. no unresolved bypass or overlapping old/new egress authority remains;
+19. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, architecture review, credential inventory, route diagram, secret scan, or written acceptance case does not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.

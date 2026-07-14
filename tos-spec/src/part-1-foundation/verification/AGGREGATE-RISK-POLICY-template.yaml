@@ -1,0 +1,51 @@
+artifact_type: AGGREGATE_RISK_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+aggregate_risk_generation: null
+canonical_digest: TBD
+status: DRAFT
+environment_scope: []
+safety_cell_scope: []
+legal_portfolio_scope: []
+account_scope: []
+strategy_scope: []
+venue_scope: []
+instrument_scope: []
+currency_scope: []
+global_scope_included: false
+hard_safety_envelope:
+  envelope_id: TBD
+  generation: null
+  canonical_digest: TBD
+runtime_safety_profile:
+  profile_id: TBD
+  generation: null
+  canonical_digest: TBD
+risk_dimensions: []
+scope_aggregation_rules: []
+valuation_and_uncertainty_rules: []
+scenario_set_requirements: []
+netting_hedge_and_correlation_rules: []
+margin_collateral_and_liquidity_rules: []
+numerical_safety_rules: []
+dependency_closure_rules: []
+materiality_default: MATERIAL
+unknown_disposition: DENY_NEW_RISK
+compatibility_requirements: []
+invalidation_conditions: []
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  grants_risk_allocation: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

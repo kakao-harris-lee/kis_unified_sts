@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety-evidence identity, capture boundaries, durability, ordering, provenance, integrity, completeness, gap detection, retention, redaction, access, deterministic replay, incident reconstruction, failure behavior, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 SAFE-031, SAFE-051, SAFE-052, and §11; RFC-002 §§4.2, 10.16, 15, 23, 25, and 29; VER-002-001 §§2–9 and 257–259
+- **Refines:** RFC-001 SAFE-031, SAFE-051, SAFE-052, and §11; RFC-002 §§4.2, 10.16, 15, 23, 25, and 29; VER-002-001 §§2–9 and 269–271
 - **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-010, SAFE-011, SAFE-020 through SAFE-025, SAFE-030, SAFE-031, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-048, SAFE-050, SAFE-051, SAFE-052; ADR-002-001 through ADR-002-015
 
 ---
@@ -242,14 +242,15 @@ Evidence SHALL be captured at the component that owns the decision or irreversib
 1. **proposal boundary** — originating intent, context, requested scope, and source;
 2. **input boundary** — ADR-002-018 Critical Input Policy, source identity/continuity, raw observation, sequence/revision, units/mappings, transformation lineage, consistency cut, Snapshot, Decision Context Capsule, common-mode analysis, correction, and validation/invalidation outcome;
 3. **construction boundary** — ADR-002-020 Intent proposal, Authorized Construction Envelope, construction policy/generation, candidate Canonical Broker Command, Economic Effect Envelope, Order Conformance Proof, numeric derivation, compiler/serializer/SDK identity, invalidation, and actual-outbound comparison;
-4. **approval boundary** — request, attestation, quorum, denial, abstention, invalidation, and consumption;
-5. **authority boundary** — grant, denial, restriction, epoch/generation, expiry, revocation, and HALT;
-6. **capacity boundary** — every accepted and rejected RCL command, committed revision, state digest, and Commit Proof;
-7. **protective boundary** — classification proof, lease, ownership, replacement gap/overlap, and denial;
-8. **egress pre-effect boundary** — exact request bytes or protected canonical digest, capability, proof, principal, credential reference, route, and validation result;
-9. **irreversible send boundary** — durable claim, `SEND_STARTED`, first-byte transition, ambiguity, and retry decision;
-10. **broker observation boundary** — raw response/event/query page identity, session, completeness metadata, correction, and provenance;
-11. **reconciliation boundary** — per-field evidence, conservative bound, conflict, confidence, proof rule, and owner transition request;
+4. **aggregate-risk boundary** — ADR-002-021 Aggregate Risk Policy/Generation, state consistency cut, Adverse Scenario Set, current/projected vectors, benefit evidence, numerical derivation, decision, allocation request, invalidation, and independent reproduction;
+5. **approval boundary** — request, attestation, quorum, denial, abstention, invalidation, and consumption;
+6. **authority boundary** — grant, denial, restriction, epoch/generation, expiry, revocation, and HALT;
+7. **capacity boundary** — every accepted and rejected RCL command, committed revision, state digest, and Commit Proof;
+8. **protective boundary** — classification proof, lease, ownership, replacement gap/overlap, and denial;
+9. **egress pre-effect boundary** — exact request bytes or protected canonical digest, capability, proof, principal, credential reference, route, and validation result;
+10. **irreversible send boundary** — durable claim, `SEND_STARTED`, first-byte transition, ambiguity, and retry decision;
+11. **broker observation boundary** — raw response/event/query page identity, session, completeness metadata, correction, and provenance;
+12. **reconciliation boundary** — per-field evidence, conservative bound, conflict, confidence, proof rule, and owner transition request;
 12. **configuration boundary** — artifact, canonical digest, approval, compatibility, activation, restriction, expiry, rollback, restore, and consumer result;
 13. **recovery boundary** — startup barrier, inventory, UNKNOWN, external activity, gap, decision, and governed re-arm request;
 14. **verification boundary** — baseline, fault injection, raw artifacts, invariant result, review, and supersession.
@@ -661,8 +662,9 @@ ADR-002-016 SHALL remain **Proposed** until all of the following are complete:
 9. ADR-002-018 source-to-Capsule-to-egress lineage, corrections, common-mode analysis, invalidations, and context non-authority are causally complete and replayable, and applicable CII evidence passes;
 10. ADR-002-019 venue/session/tradability, exact order constraint, Snapshot/Decision, invalidation, broker response, and recovery lineage is causally complete and replayable without creating admissibility or authority, and applicable VTG evidence passes;
 11. ADR-002-020 proposal-to-candidate-to-effect-to-capacity-to-proof-to-actual-outbound lineage, numeric derivations, invalidation, post-proof mutation, broker response, and recovery evidence are causally complete and replayable without creating conformance or authority, and applicable IOC evidence passes;
-12. applicable evidence persistence, gap, retention, replay, Critical Input, venue-constraint, and conformance invalidation, context/decision/command/proof-age, time, egress, broker, and recovery bounds are approved and measured;
-13. residual risks are recorded and accepted only for a scope that remains within RFC-000 and RFC-001;
-14. RFC-002 architecture, security-boundary, recovery, and verification reviews confirm no evidence or replay path became preventive or trading authority.
+12. ADR-002-021 state-to-scenario-to-projection-to-decision-to-RCL lineage, vector/limit/benefit/numeric derivations, invalidation, and recovery evidence are causally complete and replayable without creating allocation or capacity, and applicable ARE evidence passes;
+13. applicable evidence persistence, gap, retention, replay, Critical Input, venue-constraint, conformance, and aggregate-risk invalidation, context/decision/command/proof/snapshot-age, time, egress, broker, and recovery bounds are approved and measured;
+14. residual risks are recorded and accepted only for a scope that remains within RFC-000 and RFC-001;
+15. RFC-002 architecture, security-boundary, recovery, and verification reviews confirm no evidence or replay path became preventive or trading authority.
 
 Until those gates pass, this ADR authorizes architecture and implementation-planning work only. It does not claim verification completion, ADR acceptance, restricted-live readiness, production readiness, or live trading authority.

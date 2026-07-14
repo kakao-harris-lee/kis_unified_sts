@@ -29,6 +29,7 @@
 - [ADR-002-018 — Critical Input Integrity, Provenance, and Decision-Context Fencing](part-1-foundation/ADR-002-018-Critical-Input-Integrity-Provenance-and-Decision-Context-Fencing.md)
 - [ADR-002-019 — Venue, Session, Tradability, and Broker Constraint Gate](part-1-foundation/ADR-002-019-Venue-Session-Tradability-and-Broker-Constraint-Gate.md)
 - [ADR-002-020 — Intent-to-Order Conformance, Canonical Command Construction, and Economic-Effect Fencing](part-1-foundation/ADR-002-020-Intent-to-Order-Conformance-Canonical-Command-Construction-and-Economic-Effect-Fencing.md)
+- [ADR-002-021 — Aggregate Risk Projection, Adverse-Scenario Evaluation, and Risk-Decision Integrity](part-1-foundation/ADR-002-021-Aggregate-Risk-Projection-Adverse-Scenario-Evaluation-and-Risk-Decision-Integrity.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)

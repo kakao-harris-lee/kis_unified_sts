@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "1.1-PROPOSED"
+version: "1.2-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -55,6 +55,12 @@ scope:
   order_construction_policy_id: TBD
   order_construction_policy_generation: null
   order_construction_policy_digest: TBD
+  aggregate_risk_policy_id: TBD
+  aggregate_risk_policy_generation: null
+  aggregate_risk_policy_digest: TBD
+  adverse_scenario_set_id: TBD
+  adverse_scenario_set_generation: null
+  adverse_scenario_set_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -208,6 +214,20 @@ bounds:
     rationale: "MEASURE. Maximum interval from committed material construction-policy, mapping, compiler, serializer, SDK, command, or proof invalidation to denial of the stale command at every affected final egress (ADR-002-020 §§17-18)."
     measurement_source: construction_generation_proof_invalidation_and_egress_boundary_trace
     failure_response: HALT
+  B_aggregate_risk_invalid_to_rcl:
+    value_ms: null   # APPROVE after Aggregate Risk Generation and RCL admission fencing are implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed material aggregate-state, policy, scenario, valuation, model, mapping, or decision invalidation to rejection of the stale allocation request at the RCL (ADR-002-021 §§16-18)."
+    measurement_source: aggregate_risk_generation_decision_and_rcl_admission_trace
+    failure_response: STOP_NEW_RISK
+  B_aggregate_risk_invalid_to_egress:
+    value_ms: null   # APPROVE after active final-egress risk-decision currentness is implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed material aggregate-risk invalidation to denial of the stale decision, commitment chain, and dependent request at every affected final egress (ADR-002-021 §17)."
+    measurement_source: aggregate_risk_generation_invalidation_and_egress_boundary_trace
+    failure_response: HALT
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
@@ -354,6 +374,8 @@ limits:
   MAX_order_admissibility_decision_age_ms: null  # APPROVE per exact order/action class; expiry never expires economic effect
   MAX_canonical_broker_command_age_ms: null       # APPROVE per broker/action scope; unknown age denies send and expiry never expires economic effect
   MAX_order_conformance_proof_age_ms: null         # APPROVE per exact command; stale proof denies send and cannot release capacity
+  MAX_aggregate_risk_state_snapshot_age_ms: null   # APPROVE per aggregate scope; unknown age denies allocation and dependent new risk
+  MAX_aggregate_risk_decision_age_ms: null         # APPROVE per exact effect/allocation scope; expiry never expires economic effect
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

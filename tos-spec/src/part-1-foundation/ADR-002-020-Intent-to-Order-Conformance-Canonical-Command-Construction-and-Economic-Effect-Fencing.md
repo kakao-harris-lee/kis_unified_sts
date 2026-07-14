@@ -362,6 +362,7 @@ The Order Conformance Proof SHALL bind:
 - field-by-field and semantic conformance results;
 - numeric conversion and rounding derivations;
 - economic-effect and capacity-dominance result;
+- ADR-002-021 Aggregate Risk Policy/Generation, Aggregate Risk State Snapshot, Adverse Scenario Set, Aggregate Risk Decision, and exact allocation-vector result;
 - venue admissibility and broker-capability references;
 - unknown, residual-risk, expiry, invalidation, and reviewer data;
 - final result `CONFORMANT` or `NON_CONFORMANT`/`UNKNOWN`.
@@ -383,7 +384,9 @@ Independent Approval + immutable Intent Registration
         ↓
 Economic Effect Envelope derived from unchanged candidate
         ↓
-RCL capacity commitment that dominates the envelope
+ADR-002-021 Aggregate Risk Decision over the exact envelope and current aggregate state
+        ↓
+RCL capacity commitment that dominates the envelope and does not exceed the exact granted allocation
         ↓
 Order Conformance Proof
         ↓
@@ -394,7 +397,7 @@ Final-egress actual-outbound verification
 
 The candidate command does not require approval, a future venue decision, capacity commitment, or authority reference in order to exist and grants none of them. Independent approval binds the exact proposal, envelope, candidate digest, and venue decision; any approval-time change restarts construction. The later proof binds approval, registration, venue, and capacity results to the unchanged candidate digest. No downstream artifact is permitted to rewrite the candidate to satisfy its own gate.
 
-For the same reason, the candidate command does not bind an Economic Effect Envelope identity or digest, and the Economic Effect Envelope does not bind a future Capacity Commitment. The envelope is derived from the immutable candidate, the RCL independently commits a vector that dominates it, and the later proof binds the command, envelope, and commitment together. This ordering prevents cyclic artifact dependencies while preserving exact economic-effect coverage.
+For the same reason, the candidate command does not bind an Economic Effect Envelope identity or digest, the Economic Effect Envelope does not bind a future Aggregate Risk Decision or Capacity Commitment, and the Aggregate Risk Decision does not bind a future commitment identity. The envelope is derived from the immutable candidate, ADR-002-021 evaluates it against exact current aggregate state and grants an exact allocation request, the RCL independently commits a vector that covers the envelope without exceeding the grant, and the later proof binds the command, envelope, risk decision, and commitment together. This ordering prevents cyclic artifact dependencies while preserving exact economic-effect coverage.
 
 Unknown fields, duplicate semantic fields, alternate encodings, unbound headers, or ambiguous canonicalization are rejection. A byte digest alone is insufficient if two byte sequences or parser behaviors can produce different broker meaning.
 
@@ -441,10 +444,11 @@ Before every broker mutation, final egress SHALL:
 4. reproduce or independently verify deterministic membership of the command in the authorized envelope;
 5. verify every identity, numeric, direction, unit, multiplier, currency, order, expiration, mode, endpoint, and route field;
 6. verify Economic Effect Envelope coverage by the exact committed capacity;
-7. verify the actual outbound representation and signer input are semantically identical to the command;
-8. reject unknown, duplicate, extra, missing, ambiguous, stale, unsupported, or post-proof-mutated fields;
-9. durably claim the exact single-use capability and record `SEND_STARTED` before the first broker-directed byte;
-10. preserve potentially-live and conservative-capacity behavior for any ambiguous post-claim outcome.
+7. actively verify the exact current ADR-002-021 Aggregate Risk Decision, policy/generation, state/scenario/effect scope, allocation vector, RCL commitment binding, age, and invalidation status;
+8. verify the actual outbound representation and signer input are semantically identical to the command;
+9. reject unknown, duplicate, extra, missing, ambiguous, stale, unsupported, or post-proof-mutated fields;
+10. durably claim the exact single-use capability and record `SEND_STARTED` before the first broker-directed byte;
+11. preserve potentially-live and conservative-capacity behavior for any ambiguous post-claim outcome.
 
 Final egress SHALL NOT repair, normalize, clamp, round, remap, default, or recompile a non-conforming command. It rejects and requires a fresh upstream chain.
 
@@ -736,7 +740,8 @@ ADR-002-020 remains `Proposed` until all applicable conditions pass:
 8. Construction Generation, dependency closure, invalidation propagation, stale publisher fencing, recovery, and non-revival are implemented.
 9. Numeric bounds and limits are approved in the Verification Profile and measured under fault injection.
 10. `IOC-EV-001` through `IOC-EV-012` are executed at required EV-L1/EV-L2/EV-L3, Broker, and Security levels with independent review.
-11. All Critical or Major findings from architecture, numeric, canonicalization, parser-differential, and security review are resolved.
-12. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
+11. ADR-002-021 exact aggregate-risk decision/allocation and currentness are bound between the Economic Effect Envelope and RCL commitment, with applicable ARE evidence passing.
+12. All Critical or Major findings from architecture, numeric, canonicalization, parser-differential, and security review are resolved.
+13. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
 
 This ADR authorizes architecture and implementation-planning work only. It creates no live trading authority and makes no verification-completion or live-readiness claim.

@@ -38,6 +38,12 @@ bundle:
   order_construction_policy_id: TBD
   order_construction_policy_generation: null
   order_construction_policy_digest: TBD
+  aggregate_risk_policy_id: TBD
+  aggregate_risk_policy_generation: null
+  aggregate_risk_policy_digest: TBD
+  adverse_scenario_set_id: TBD
+  adverse_scenario_set_generation: null
+  adverse_scenario_set_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 

@@ -39,6 +39,12 @@ scope:
   order_construction_policy_id: TBD
   order_construction_policy_generation: null
   order_construction_policy_digest: TBD
+  aggregate_risk_policy_id: TBD
+  aggregate_risk_policy_generation: null
+  aggregate_risk_policy_digest: TBD
+  adverse_scenario_set_id: TBD
+  adverse_scenario_set_generation: null
+  adverse_scenario_set_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -181,6 +187,20 @@ bounds:
     measurement_source: TBD
     failure_response: HALT
   B_order_conformance_invalid_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_aggregate_risk_invalid_to_rcl:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
+  B_aggregate_risk_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
     owner: TBD
@@ -332,6 +352,8 @@ limits:
   MAX_order_admissibility_decision_age_ms: null
   MAX_canonical_broker_command_age_ms: null
   MAX_order_conformance_proof_age_ms: null
+  MAX_aggregate_risk_state_snapshot_age_ms: null
+  MAX_aggregate_risk_decision_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

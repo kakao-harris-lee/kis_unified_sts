@@ -33,6 +33,10 @@ source_observations:
   order_conformance_proof_ids: []
   construction_generation: null
   construction_invalidation_ids: []
+  aggregate_risk_state_snapshot_ids: []
+  aggregate_risk_decision_ids: []
+  aggregate_risk_generation: null
+  aggregate_risk_invalidation_ids: []
   intervening_event_ids: []
   raw_evidence_record_ids: []
   evidence_gap_ids: []

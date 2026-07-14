@@ -583,12 +583,12 @@ No transition to a less conservative state may be made solely from timeout, abse
 2. ADR-002-020 Order Construction Service deterministically creates a non-authorizing candidate Canonical Broker Command from the exact proposal and proposed Authorized Construction Envelope.
 3. ADR-002-019 Venue Constraint Gate evaluates the exact candidate command and issues a non-authorizing Order Admissibility Decision.
 4. Independent Approval Service approves or denies the exact unchanged proposal, envelope, candidate command, and venue decision; approval registers the immutable Intent without granting capacity or transmission authority.
-5. ADR-002-020 derives the conservative Economic Effect Envelope from the unchanged approved candidate, and the Aggregate Risk Authority evaluates that envelope and all existing/potentially-live effects against conservative current state.
-6. Aggregate Risk Authority issues a grant request containing the Adverse Increment Vector, exact candidate command/effect identities, and evidence version.
+5. ADR-002-020 derives the conservative Economic Effect Envelope from the unchanged approved candidate.
+6. Under ADR-002-021, the Aggregate Risk Authority binds that envelope to one exact current Aggregate Risk State Snapshot and Adverse Scenario Set, evaluates all existing/potentially-live effects across every applicable scope/dimension, and issues an Aggregate Risk Decision containing the exact Adverse Increment Vector and allocation request.
 
 ### 11.2 Atomic Commitment
 
-7. Risk Capacity Ledger verifies current epoch, limits, revisions, exact command/effect binding, and scope.
+7. Risk Capacity Ledger verifies current epoch, limits, revisions, exact command/effect/risk-decision binding, Aggregate Risk Generation/currentness, and scope.
 8. Ledger atomically commits a unique reservation in `COMMITTED_UNBOUND` or rejects the request.
 9. The reservation is immediately unavailable to all competing actions.
 10. ADR-002-020 produces a non-authorizing Order Conformance Proof binding the unchanged approved Intent, candidate command, venue decision, Economic Effect Envelope, and exact RCL commitment dominance.
@@ -1624,6 +1624,7 @@ ADR-002-002 may move from **Proposed** to **Accepted** only when:
 - ADR-002-015 human approval and break-glass paths cannot mutate or release capacity and their required HAG evidence passes;
 - ADR-002-016 capacity, claim, send, release, UNKNOWN, recovery, and rejection evidence is durably ordered, gap-detected, retained, and replayable without becoming capacity authority, and applicable ERI evidence passes;
 - ADR-002-020 Economic Effect Envelope, exact command, capacity-dominance result, conformance proof, invalidation, and actual-outbound binding are implemented without giving the compiler or proof capacity authority, and applicable IOC evidence passes;
+- ADR-002-021 Aggregate Risk Policy, complete state snapshot, adverse scenarios, exact decision/vector, currentness, invalidation, and RCL binding are implemented without giving the evaluator capacity mutation or broker authority, and applicable ARE evidence passes;
 - protective pool and sub-ledger semantics are demonstrated;
 - broker-specific Final Quantity Proof rules exist;
 - all Critical acceptance criteria pass;

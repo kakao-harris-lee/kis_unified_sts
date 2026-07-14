@@ -116,7 +116,7 @@ An immutable artifact that selects a strictly equal-or-narrower operating scope 
 
 ### 5.3 Safety Configuration Bundle
 
-The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
+The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
 
 ### 5.4 Profile Generation
 
@@ -356,6 +356,8 @@ Activation does not establish Critical Input validity, freshness, source continu
 Activation also does not establish venue/session/tradability, account/margin/borrow/settlement, Broker Capability Profile currentness, Constraint Generation, Venue Constraint Snapshot, or Order Admissibility Decision validity. Those predicates remain independently governed and enforced under ADR-002-019; configuration activation cannot make an exact order admissible.
 
 Activation does not establish that a candidate command conforms to an approved Intent, that an Economic Effect Envelope is capacity-covered, that an Order Conformance Proof is current, or that the actual outbound representation is equivalent. Those predicates remain independently governed and enforced under ADR-002-020; configuration activation cannot create conformance or transmission permission.
+
+Activation does not establish aggregate-state completeness, scenario sufficiency, valuation or hedge validity, an Aggregate Risk Decision, RCL headroom, or risk-decision currentness. Those predicates remain independently governed and enforced under ADR-002-021; configuration activation cannot grant an allocation or create capacity.
 
 ---
 
@@ -660,6 +662,7 @@ The architecture is selected. The following product, schema, governance, topolog
 13. Which ADR-002-016 Evidence Integrity Policy, canonical evidence envelope, integrity anchor, gap detector, retention rule, and Replay Capsule preserve every configuration decision without becoming activation authority?
 14. How are the ADR-002-017 Recovery Barrier Policy generation and digest governed, activated, and bound into the closed bundle without allowing configuration activation to open the barrier or re-arm?
 15. How are ADR-002-018 Critical Input Policy identity, generation, digest, source/mapping/lineage compatibility, and restrictive invalidation bound into the bundle without letting configuration activation declare context valid or current?
+16. How are ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set identities, generations, digests, evaluator/verifier compatibility, and restrictive invalidation bound into the bundle without letting activation grant allocation or create capacity?
 
 Unresolved questions reduce authority or keep the affected scope non-live. They SHALL NOT create a permissive default.
 
@@ -682,7 +685,8 @@ ADR-002-014 SHALL remain **Proposed** until all of the following are complete:
 11. ADR-002-017 Recovery Barrier Policy identity, generation, digest, compatibility, and restrictive activation behavior are bound into the complete configuration bundle without becoming recovery readiness or re-arm authority, and applicable SBR evidence passes;
 12. ADR-002-018 Critical Input Policy identity, generation, digest, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming context validity, approval, capacity, or egress authority, and applicable CII evidence passes;
 13. ADR-002-019 Venue Constraint Policy identity, generation, digest, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming order admissibility, approval, capacity, or egress authority, and applicable VTG evidence passes;
-14. applicable activation, revocation, restriction-propagation, recovery-barrier, Critical Input and venue-constraint invalidation, context/decision-age, readiness-age, time, evidence, and egress bounds are approved and measured;
-15. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+14. ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set identities, generations, digests, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming allocation, capacity, Live Authorization, or egress authority, and applicable ARE evidence passes;
+15. applicable activation, revocation, restriction-propagation, recovery-barrier, Critical Input, venue-constraint, and aggregate-risk invalidation, context/decision/snapshot-age, readiness-age, time, evidence, and egress bounds are approved and measured;
+16. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, signatures, successful parsing, repository merge, staged distribution, written acceptance cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, configuration-driven capacity mutation, or automatic re-arm.

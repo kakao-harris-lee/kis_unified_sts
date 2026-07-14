@@ -58,6 +58,10 @@ subjects:
   economic_effect_envelope_id: null
   order_conformance_proof_id: null
   construction_generation: null
+  aggregate_risk_state_snapshot_id: null
+  adverse_scenario_set_id: null
+  aggregate_risk_decision_id: null
+  aggregate_risk_generation: null
   non_trade_event_id: null
 
 causality:

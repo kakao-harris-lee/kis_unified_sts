@@ -43,6 +43,9 @@ generation_vector:
   constraint_generation: null
   order_construction_policy_generation: null
   construction_generation: null
+  aggregate_risk_policy_generation: null
+  adverse_scenario_set_generation: null
+  aggregate_risk_generation: null
 
 validity:
   issued_at_time_snapshot_id: TBD

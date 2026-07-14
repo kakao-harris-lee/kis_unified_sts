@@ -50,6 +50,9 @@ generation_vector:
   constraint_generation: null
   order_construction_policy_generation: null
   construction_generation: null
+  aggregate_risk_policy_generation: null
+  adverse_scenario_set_generation: null
+  aggregate_risk_generation: null
 
 economic_state:
   intents: []
@@ -93,6 +96,18 @@ order_construction_state:
   order_conformance_proof_ids: []
   construction_invalidation_ids: []
   compiler_serializer_sdk_compatibility_ids: []
+  common_mode_dependencies: []
+
+aggregate_risk_state:
+  aggregate_risk_policy_id: TBD
+  aggregate_risk_policy_digest: TBD
+  adverse_scenario_set_id: TBD
+  adverse_scenario_set_digest: TBD
+  aggregate_risk_generation: null
+  aggregate_risk_state_snapshot_ids: []
+  aggregate_risk_decision_ids: []
+  aggregate_risk_invalidation_ids: []
+  evaluator_verifier_compatibility_ids: []
   common_mode_dependencies: []
 
 obligations:

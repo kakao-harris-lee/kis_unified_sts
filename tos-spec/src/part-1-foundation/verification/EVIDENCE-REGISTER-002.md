@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **243**
-- NOT_IMPLEMENTED: **243**
+- Total evidence items: **255**
+- NOT_IMPLEMENTED: **255**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -266,6 +266,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | IOC-EV-010 | Intent-to-Order Conformance | Protective and Exit Construction | ADR-002-020 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | IOC-EV-011 | Intent-to-Order Conformance | Authority Separation Compiler Drift and Bypass | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | IOC-EV-012 | Intent-to-Order Conformance | Restart Restore Recovery Replay and Non-Revival | ADR-002-020 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-001 | Aggregate Risk Evaluation | Aggregate Scope Completeness | ADR-002-021 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-002 | Aggregate Risk Evaluation | Exact Effect and Snapshot Binding | ADR-002-021 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-003 | Aggregate Risk Evaluation | Partial Fill Overlap Reversal and Missing ACK | ADR-002-021 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-004 | Aggregate Risk Evaluation | Dimension Unit Scope and Limit Integrity | ADR-002-021 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-005 | Aggregate Risk Evaluation | Netting Hedge Correlation and Common Mode | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-006 | Aggregate Risk Evaluation | Valuation Margin Liquidity and Tail Scenarios | ADR-002-021 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-007 | Aggregate Risk Evaluation | Numerical Determinism and Failure | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-008 | Aggregate Risk Evaluation | Concurrent Grant and RCL Serialization | ADR-002-021 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-009 | Aggregate Risk Evaluation | Invalidation and Final-Egress Currentness | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-010 | Aggregate Risk Evaluation | Protective Exit and Partition Behavior | ADR-002-021 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-011 | Aggregate Risk Evaluation | Authority Separation and Security Bypass | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| ARE-EV-012 | Aggregate Risk Evaluation | Recovery Economic Continuity and Non-Revival | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

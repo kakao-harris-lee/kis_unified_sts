@@ -32,6 +32,11 @@ order_admissibility_decision:
 economic_effect_envelope:
   envelope_id: TBD
   canonical_digest: TBD
+aggregate_risk_decision:
+  decision_id: TBD
+  aggregate_risk_generation: null
+  canonical_digest: TBD
+  granted_allocation_vector: {}
 capacity_binding:
   capacity_domain_id: TBD
   capacity_commitment_id: TBD
