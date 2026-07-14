@@ -116,7 +116,7 @@ An immutable artifact that selects a strictly equal-or-narrower operating scope 
 
 ### 5.3 Safety Configuration Bundle
 
-The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
+The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
 
 ### 5.4 Profile Generation
 
@@ -352,6 +352,8 @@ No transition from `SUSPENDED`, `SUPERSEDED`, `REVOKED`, or `EXPIRED` returns th
 `ACTIVE` means the bundle is the current validated configuration basis for the declared scope. It does not mean trading is live. ADR-002-007 Live Authorization remains a separate, fresh, revocable authority.
 
 Activation does not establish Critical Input validity, freshness, source continuity, Context Generation currentness, Decision Context Capsule validity, or absence of correction/invalidation. Those predicates remain independently governed and enforced under ADR-002-018; missing or unverifiable context remains denial even when the configuration bundle is `ACTIVE`.
+
+Activation also does not establish venue/session/tradability, account/margin/borrow/settlement, Broker Capability Profile currentness, Constraint Generation, Venue Constraint Snapshot, or Order Admissibility Decision validity. Those predicates remain independently governed and enforced under ADR-002-019; configuration activation cannot make an exact order admissible.
 
 ---
 
@@ -677,7 +679,8 @@ ADR-002-014 SHALL remain **Proposed** until all of the following are complete:
 10. ADR-002-016 artifact, decision, denial, activation, restriction, rollback, restore, and consumer evidence is immutable, causally complete, gap-checked, and replayable, and applicable ERI evidence passes;
 11. ADR-002-017 Recovery Barrier Policy identity, generation, digest, compatibility, and restrictive activation behavior are bound into the complete configuration bundle without becoming recovery readiness or re-arm authority, and applicable SBR evidence passes;
 12. ADR-002-018 Critical Input Policy identity, generation, digest, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming context validity, approval, capacity, or egress authority, and applicable CII evidence passes;
-13. applicable activation, revocation, restriction-propagation, recovery-barrier, Critical Input invalidation, context-age, readiness-age, time, evidence, and egress bounds are approved and measured;
-14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+13. ADR-002-019 Venue Constraint Policy identity, generation, digest, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming order admissibility, approval, capacity, or egress authority, and applicable VTG evidence passes;
+14. applicable activation, revocation, restriction-propagation, recovery-barrier, Critical Input and venue-constraint invalidation, context/decision-age, readiness-age, time, evidence, and egress bounds are approved and measured;
+15. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, signatures, successful parsing, repository merge, staged distribution, written acceptance cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, configuration-driven capacity mutation, or automatic re-arm.

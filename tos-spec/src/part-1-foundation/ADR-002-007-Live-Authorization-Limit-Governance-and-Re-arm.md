@@ -198,6 +198,7 @@ Every Live Authorization SHALL bind at least:
 - credential and broker-egress identity;
 - Recovery Evidence Package identity and evidence generation;
 - Critical Input Policy, Context Generation, Critical Input Snapshot, and exact Decision Context Capsule identities and digests under ADR-002-018;
+- Venue Constraint Policy, Constraint Generation, Venue Constraint Snapshot, and exact Order Admissibility Decision identities and digests under ADR-002-019;
 - Trustworthy Time generation and validity rule;
 - issue identity, issue sequence, activation condition, and maximum validity;
 - revocation generation;
@@ -254,6 +255,7 @@ Live Authorization is valid for new risk only while all of the following remain 
 - account-wide state required for the scope remains reconciled;
 - the ADR-002-017 Recovery Generation, barrier state, Recovery Evidence Package, and Recovery Readiness Decision remain current and valid for the exact scope;
 - the ADR-002-018 Critical Input Policy, Context Generation, source continuity, exact Decision Context Capsule, age, and invalidation state remain current and valid for the exact scope;
+- the ADR-002-019 Venue Constraint Policy, Constraint Generation, exact Snapshot and Order Admissibility Decision, session/tradability/account/broker scope, age, and invalidation state remain current and valid for the exact order;
 - no unresolved UNKNOWN or unattributed activity affects the scope;
 - Risk Capacity Ledger and protective capacity remain consistent;
 - Hard Safety Envelope and Runtime Safety Profile versions match and remain valid;
@@ -631,6 +633,7 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 - all roles and separation-of-duty controls are defined and enforced;
 - the ADR-002-017 Recovery Barrier Policy, Recovery Generation, owner fencing, dependency-complete inventory, obligation graph, Recovery Evidence Package, Recovery Readiness Decision, invalidation, and Live Authorization handoff contracts are implemented;
 - ADR-002-018 Critical Input Policy, source continuity, Decision Context Capsule, exact binding, correction/invalidation fan-out, and active authority/egress currentness are implemented and their required CII evidence passes;
+- ADR-002-019 exact venue/session/tradability and order/account/margin/settlement decision binding, restrictive invalidation, and active authority/egress currentness are implemented and their required VTG evidence passes;
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;
 - the selected currentness distribution and fenced irreversible-send protocol in §§9.1–9.5 is implemented and independently security-reviewed;
 - the applicable ADR-002-013 final-egress trust boundary, proof validation, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;

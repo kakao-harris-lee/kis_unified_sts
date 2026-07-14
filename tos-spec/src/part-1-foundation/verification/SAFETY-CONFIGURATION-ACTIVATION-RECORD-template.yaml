@@ -32,6 +32,9 @@ bundle:
   critical_input_policy_id: TBD
   critical_input_policy_generation: null
   critical_input_policy_digest: TBD
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 

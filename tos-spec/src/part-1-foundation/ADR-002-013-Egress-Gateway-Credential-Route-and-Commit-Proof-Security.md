@@ -309,6 +309,7 @@ The Quorum Commit Certificate SHALL bind at least:
 - Safety Authority, Live Authorization, revocation, HALT, Time Health, Recovery Generation, profile, and configuration generations;
 - exact current Recovery Evidence Package and Recovery Readiness Decision identities, canonical digests, dependency-complete scope, validity interval, and invalidation set/status;
 - exact ADR-002-018 Critical Input Policy, Context Generation, Critical Input Snapshot, and Decision Context Capsule identities/digests, source-continuity vector, maximum age, and invalidation set/status;
+- exact ADR-002-019 Venue Constraint Policy, Constraint Generation, Venue Constraint Snapshot, and Order Admissibility Decision identities/digests, complete order shape, maximum age, and invalidation set/status;
 - Egress Generation and exact Active Egress Principal;
 - credential, broker-session, route-policy, endpoint-policy, and trust-bundle generations;
 - quorum signer identities or equivalent threshold-verification material.
@@ -325,9 +326,10 @@ Before send, the Final Egress Trust Boundary SHALL:
 6. verify the exact command and resulting state digests;
 7. verify current cluster, Restore Generation, Recovery Generation, Writer Epoch, Egress Generation, and currentness-session generations, and verify that the exact Recovery Evidence Package and Recovery Readiness Decision remain current, unexpired, non-invalidated, and valid for the complete requested dependency scope;
 8. actively verify the current Critical Input Policy, Context Generation, permission-critical source continuity, exact Decision Context Capsule binding, age, scope, and invalidation status under ADR-002-018 without treating a cache, TTL, heartbeat, health result, eventual consistency, or absence of invalidation as currentness proof;
-9. verify the capability nonce was claimed exactly once for this principal and request;
-10. reconstruct the exact broker request and compare its canonical digest, endpoint, action, account, and economic effect;
-11. verify the claim-to-first-byte bound can still be met.
+9. actively verify the current Venue Constraint Policy, Constraint Generation, session/tradability/account/broker state, exact Order Admissibility Decision binding, age, scope, and invalidation status under ADR-002-019 without treating a schedule, quote, cache, TTL, heartbeat, health result, connectivity, or absence of restriction as currentness proof;
+10. verify the capability nonce was claimed exactly once for this principal and request;
+11. reconstruct the exact broker request and compare its canonical digest, endpoint, action, account, and economic effect;
+12. verify the claim-to-first-byte bound can still be met.
 
 One leader signature, successful RPC, database primary response, local journal entry, cached proof, event, projection, or audit record is insufficient.
 
@@ -648,6 +650,7 @@ The security architecture is selected. The following product, broker, topology, 
 15. Which ADR-002-016 Evidence Commit Receipt, emergency durable journal, source sequence, integrity anchor, and gap-containment mechanism binds exact pre-effect and `SEND_STARTED` evidence without becoming transmission authority?
 16. How does final egress verify the current ADR-002-017 Recovery Generation, closed-barrier state, and exact readiness-decision invalidation without a permissive cache or treating readiness as authority?
 17. How does final egress verify ADR-002-018 Critical Input Policy, Context Generation, source continuity, exact Capsule binding, age, and invalidation without a permissive cache or recomputing strategy logic?
+18. How does final egress verify ADR-002-019 Constraint Generation, exact order admissibility, session/tradability/account/broker state, age, and invalidation without a permissive cache or unfenced check-then-send window?
 
 Unresolved questions reduce availability or keep the affected scope non-live. They SHALL NOT create a permissive default.
 
@@ -670,8 +673,9 @@ ADR-002-013 SHALL remain **Proposed** until all of the following are complete:
 11. ADR-002-016 exact pre-effect and `SEND_STARTED` durability, evidence receipt validation, emergency journal, causal completeness, and replay isolation are implemented and their applicable ERI evidence passes;
 12. ADR-002-017 Recovery Generation, barrier state, exact readiness currentness and invalidation, and stale-recovery rejection are enforced at the final boundary and applicable SBR evidence passes;
 13. ADR-002-018 exact Decision Context Capsule binding, active Critical Input currentness, correction/invalidation, stale-context rejection, and context non-authority are enforced at the final boundary and applicable CII evidence passes;
-14. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, recovery-barrier, Critical Input invalidation, context-age, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
-15. no unresolved bypass or overlapping old/new egress authority remains;
-16. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+14. ADR-002-019 exact Venue Constraint Snapshot and Order Admissibility Decision binding, active constraint currentness, restrictive invalidation, exit/protective non-assumption, and constraint non-authority are enforced at the final boundary and applicable VTG evidence passes;
+15. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, recovery-barrier, Critical Input and venue-constraint invalidation, context/decision-age, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
+16. no unresolved bypass or overlapping old/new egress authority remains;
+17. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, architecture review, credential inventory, route diagram, secret scan, or written acceptance case does not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.

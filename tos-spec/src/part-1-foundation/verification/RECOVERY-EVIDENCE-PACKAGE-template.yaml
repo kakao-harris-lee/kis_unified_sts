@@ -46,6 +46,8 @@ generation_vector:
   human_authority_policy_generation: null
   critical_input_policy_generation: null
   context_generation: null
+  venue_constraint_policy_generation: null
+  constraint_generation: null
 
 economic_state:
   intents: []
@@ -69,6 +71,15 @@ critical_input_state:
   critical_input_snapshot_ids: []
   decision_context_capsule_ids: []
   context_invalidation_ids: []
+  common_mode_dependencies: []
+
+venue_constraint_state:
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_digest: TBD
+  constraint_generation: null
+  venue_constraint_snapshot_ids: []
+  order_admissibility_decision_ids: []
+  constraint_invalidation_ids: []
   common_mode_dependencies: []
 
 obligations:

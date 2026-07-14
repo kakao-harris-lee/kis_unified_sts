@@ -25,7 +25,7 @@ Emergency authority is asymmetric: it SHALL be easier to reduce authority than t
 
 Every risk-increasing re-arm approval SHALL use at least two distinct authenticated natural persons whose effective control paths satisfy the active separation policy. Multiple accounts, credentials, devices, service identities, delegated bots, or sessions controlled by the same natural person count as one principal.
 
-Approval attests to one exact decision context, including the ADR-002-018 Decision Context Capsule identity and digest where Critical Inputs affect the decision. Any material change to input, source continuity, Capsule, evidence, scope, artifact digest, generation, software, deployment, broker, credential, route, time, residual risk, or approval policy invalidates the affected approval before authority issuance. Approval expiry, revocation, service recovery, or credential recovery never expires economic effect and never re-arms authority.
+Approval attests to one exact decision context, including the ADR-002-018 Decision Context Capsule identity and digest and the ADR-002-019 Venue Constraint Snapshot and Order Admissibility Decision identities and digests where the action is broker-directed. Any material change to input, source continuity, Capsule, venue/session/tradability/account/order constraint, evidence, scope, artifact digest, generation, software, deployment, broker, credential, route, time, residual risk, or approval policy invalidates the affected approval before authority issuance. Approval expiry, revocation, service recovery, venue reopen, or credential recovery never expires economic effect and never re-arms authority.
 
 ---
 
@@ -678,8 +678,9 @@ ADR-002-015 SHALL remain **Proposed** until all of the following are complete:
 9. ADR-002-016 ordinary and emergency evidence durability, human-record causal completeness, gap handling, retention, redaction, and replay isolation are implemented and their applicable ERI evidence passes;
 10. ADR-002-017 exact current Recovery Generation, package, readiness decision, dependency scope, and invalidation set are verified before approval consumption, and applicable SBR evidence passes;
 11. ADR-002-018 exact Decision Context Capsule, independent Critical Input validation, common-mode analysis, and current invalidation state are verified before approval consumption, and applicable CII evidence passes;
-12. `B_human_halt_to_commit`, `B_halt_to_egress`, and applicable session, approval, delegation, revocation, evidence, identity-fence, recovery-barrier, Critical Input invalidation, context-age, and readiness-age bounds are approved and measured;
-13. no unresolved shared-account, self-approval, false-input-independence, forced-readiness, effective-principal, direct broker, or automatic re-arm bypass remains;
-14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+12. ADR-002-019 exact Venue Constraint Snapshot and Order Admissibility Decision, independent constraint validation, current generation, and invalidation state are verified before approval consumption, and applicable VTG evidence passes;
+13. `B_human_halt_to_commit`, `B_halt_to_egress`, and applicable session, approval, delegation, revocation, evidence, identity-fence, recovery-barrier, Critical Input and venue-constraint invalidation, context/decision-age, and readiness-age bounds are approved and measured;
+14. no unresolved shared-account, self-approval, false-input-independence, forced-readiness, effective-principal, direct broker, or automatic re-arm bypass remains;
+15. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, policy drafting, two account names, ticket approval, successful authentication, audit logs, written cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, direct human capacity mutation, direct broker transmission, or automatic re-arm.

@@ -505,6 +505,8 @@ The profile SHALL state:
 - short-sale or derivative restrictions;
 - settlement and expiration rules relevant to safety.
 
+ADR-002-019 consumes these evidenced capabilities as a ceiling on exact order admissibility. A Capability Profile does not prove current venue/session/tradability or create permission; missing or degraded dimensions make the affected Order Admissibility Decision restrictive.
+
 ---
 
 ## 9. Capability Assurance Levels
@@ -612,6 +614,7 @@ Before transmission, Broker Adapter SHALL verify:
 - order type and instrument are within Live Scope;
 - required identity/idempotency semantics;
 - current authority and capacity capability;
+- exact current Venue Constraint Snapshot and Order Admissibility Decision under ADR-002-019;
 - request conforms to broker units, multiplier, price, quantity, and session rules;
 - rate/session budget permits the request;
 - no unresolved transmission exists in a mutually exclusive containment scope.
@@ -1379,6 +1382,7 @@ ADR-002-004 may move from **Proposed** to **Accepted** only when:
 - ADR-002-014 binds each claimed Broker Capability Profile to one canonical Safety Configuration Bundle, and the required SPG evidence passes;
 - ADR-002-015 human approval and break-glass controls cannot use portal, dealer, support, or emergency broker authority as compliant TOS egress, and their required HAG evidence passes;
 - ADR-002-016 raw broker, portal, dealer, support, session, query-page, correction, and external-activity evidence is durably retained and replayable without turning omission into proof, and applicable ERI evidence passes;
+- ADR-002-019 binds each supported capability to exact current venue/session/tradability, order/account/margin/borrow/settlement constraints and final-egress enforcement, and applicable VTG evidence passes;
 - all Critical acceptance criteria pass;
 - capability drift causes fail-closed behavior;
 - VER-002-001 evidence entries are complete and independently reviewed;

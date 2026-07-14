@@ -17,6 +17,7 @@ baseline:
   evidence_integrity_policy_digest: TBD
   recovery_barrier_policy_digest: TBD
   critical_input_policy_digest: TBD
+  venue_constraint_policy_digest: TBD
   verification_profile_version: TBD
   schema_and_migration_digests: []
   deployment_manifest_digest: TBD
@@ -41,6 +42,9 @@ inputs:
   critical_input_snapshot_digests: []
   decision_context_capsule_digests: []
   context_invalidation_digests: []
+  venue_constraint_snapshot_digests: []
+  order_admissibility_decision_digests: []
+  constraint_invalidation_digests: []
 
 determinism:
   scheduler_identity: TBD

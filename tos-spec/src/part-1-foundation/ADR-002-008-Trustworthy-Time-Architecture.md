@@ -520,6 +520,7 @@ ADR-002-008 may move from **Proposed** to **Accepted** only when:
 - final egress rejects stale or untrusted time;
 - ADR-002-014 profile and approval expiry, time-invalid activation, and time-recovery non-revival rules are implemented and their applicable SPG evidence passes;
 - ADR-002-016 source continuity, trustworthy-time evidence, causal ordering, gap handling, and replay prohibit cross-host monotonic comparison and preserve uncertainty, and applicable ERI evidence passes;
+- ADR-002-019 Session Phase, constraint age, effective-time transitions, and final-egress decision currentness use consumer-local trustworthy-time evidence and their applicable VTG evidence passes;
 - no recovery path revives old authority or automatically re-arms;
 - VER-002-001 and the Evidence Register cover every Critical acceptance case;
 - retained evidence is immutable and independently reviewed.

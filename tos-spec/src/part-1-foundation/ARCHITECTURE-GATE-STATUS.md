@@ -1,9 +1,9 @@
 # TOS Safety Architecture Gate Status
 
 - **Date:** 2026-07-14
-- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-018
-- **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, and Critical Input/decision-context decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-018 PASS at document-review level; no status or live-readiness promotion
+- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-019
+- **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, and venue/session/tradability-constraint decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-018 PASS at document-review level; ADR-002-019 independent review pending; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -32,6 +32,7 @@ The following design decisions now have normative documents:
 17. ADR-002-016 Safety Evidence, Audit, and Deterministic Replay Integrity
 18. ADR-002-017 Safe Startup, Recovery Barrier, and Conservative Resume Coordination
 19. ADR-002-018 Critical Input Integrity, Provenance, and Decision-Context Fencing
+20. ADR-002-019 Venue, Session, Tradability, and Broker Constraint Gate
 20. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
 21. Evidence Register and configuration/evidence templates
 
@@ -66,6 +67,9 @@ The current bundle decides:
 - shared source, parser, mapping, cache, administrator, identity, deployment, or failure domain is common mode rather than independent approval evidence; missing independence reduces live scope and cannot be waived by the proposer.
 - final egress actively establishes current Critical Input Policy, Context Generation, permission-critical source continuity, Capsule age/scope, and invalidation status; TTL, heartbeat, service health, eventual consistency, or absence of correction is not currentness proof.
 - correction, retraction, source/policy/mapping change, context expiry, restart, restore, or data recovery invalidates future permission but never releases capacity, expires economic effect, or automatically re-arms.
+- every broker-directed action binds one exact current Venue Constraint Snapshot and Order Admissibility Decision covering venue/session/tradability, halt, price/tick/lot/quantity/order shape, account/margin/borrow/settlement, and Broker Capability Profile constraints.
+- calendar time, quote flow, recent trades, connectivity, broker login, cached health, priority, or an exit/protective label never proves exact order executability or reserved protective capacity.
+- material constraint change invalidates future permission through authority and final egress; decision or constraint expiry never erases economic effect, releases capacity, or revives live scope.
 - Aggregate Risk Authority owns policy evaluation but does not independently mutate capacity.
 - stale capacity writers are fenced by monotonic epochs.
 - Broker Adapter or broker-egress gateway is the final transmission enforcement point.
@@ -115,7 +119,7 @@ The review files were section-level amendments, not canonical-document diffs. Th
 | Protective capacity | §21 | Distinguished reservation from priority; added intermediate-state proof, replacement gaps, ownership, and cancellation arbitration | SAFE-001, 002, 040, 043, 048 |
 | Reconciliation and recovery | §15 and §23 | Added per-field bounds, external-detection bound, startup barrier, and explicit non-automatic re-arm gate | SAFE-022, 023, 024, 041, 044, 046, 048 |
 | Failure domains and verification | §24 and §29 | Added common-mode allocation and measurable trigger/detection/containment/pass-fail obligations | SAFE-011, 041, 045, 048, 051, 052 |
-| ADR backlog and findings | §26 and §31 | Preserved IDs ADR-002-002 through 018 and mapped A-01 through A-14 to canonical sections | Corrected the earlier erroneous “009 through 017” history note while later allocating canonical ADR-002-017 to safe startup/recovery and ADR-002-018 to Critical Input integrity |
+| ADR backlog and findings | §26 and §31 | Preserved IDs ADR-002-002 through 019 and mapped A-01 through A-14 to canonical sections | Corrected the earlier erroneous “009 through 017” history note while later allocating canonical ADR-002-017 to safe startup/recovery, ADR-002-018 to Critical Input integrity, and ADR-002-019 to venue/session/tradability constraints |
 
 ### 3.2 ADR-002-001 v0.2
 
@@ -134,19 +138,19 @@ The review files were section-level amendments, not canonical-document diffs. Th
 
 - RFC-000 was not changed because no contradiction was found.
 - Patch-local section numbers are provenance only; canonical section numbers now govern.
-- ADR IDs remain ADR-002-001 through ADR-002-018; ADR-002-002 through ADR-002-018 remain Proposed.
+- ADR IDs remain ADR-002-001 through ADR-002-019; ADR-002-002 through ADR-002-019 remain Proposed.
 - Every `SAFE-xxx` identifier in the RFC-002 and ADR-002-001 traceability tables exists in RFC-001.
-- The Evidence Register contains 219 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, HAG, ERI, SBR, and CII coverage for ADR-002-005 through ADR-002-018. Registration created no verification evidence or live authority.
+- The Evidence Register contains 231 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, and VTG coverage for ADR-002-005 through ADR-002-019. Registration created no verification evidence or live authority.
 
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
 
-ADR-002-005 through ADR-002-018 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, and Critical Input/decision-context authorship are complete, but none of those decisions is accepted.
+ADR-002-005 through ADR-002-019 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, and venue/session/tradability-constraint authorship are complete, but none of those decisions is accepted.
 
-ADR-002-007 selects the egress-currentness protocol, ADR-002-012 selects quorum ordering and RCL writer fencing, ADR-002-013 selects the effective final-egress security boundary, ADR-002-014 selects immutable safety-configuration artifacts and activation, ADR-002-015 selects effective-human identity, exact approvals, dual control, independent Human HALT, and break-glass confinement, ADR-002-016 selects immutable causal evidence, pre-effect durability, integrity anchoring, gap containment, protected retention, and isolated deterministic replay, ADR-002-017 selects closed startup, monotonic Recovery Generations, fenced recovery ownership, conservative Inventory Cuts, dependency-complete obligations, non-authorizing readiness, partial-scope isolation, and fresh re-arm handoff, and ADR-002-018 selects Critical Input classification, source continuity/provenance, exact transformation lineage, immutable Snapshots/Capsules, independent approval common-mode analysis, correction/invalidation fan-out, and active final-egress context currentness. The conforming replicated-state-machine product, non-exportable signer or credential service, configuration registry/signing substrate, semantic-normalization and compatibility-manifest implementation, human identity provider, phishing-resistant authenticator, Effective Principal Graph, approval workflow, quorum and delegation policy, Approval Set consumption mechanism, restrictive HALT ingress/latch, evidence store and acknowledgement mechanism, independent emergency journal, source identity and sequence scheme, external integrity anchor, gap detector, protected raw tier, redaction/export control, retention/deletion policy, isolated replay substrate, Recovery Barrier Policy, trigger classifier, dependency graph, Recovery Generation/owner fence, broker/source Inventory Cut protocol, obligation workflow, package signer, Critical Input Policy, source registry and continuity protocol, schema/unit/mapping registry, transformation manifests, consistency-cut rules, independent approval input paths, Context Generation, invalidation graph, voter and Active Egress Principal topology, identity-aware route, proof encoding/cryptography, authenticated session transport, broker hard-fence mechanism, numeric bounds, and concrete Failure-Domain Allocation Matrix remain acceptance blockers. Other blockers remain for safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, and Time Health Snapshot distribution.
+ADR-002-007 selects the egress-currentness protocol, ADR-002-012 selects quorum ordering and RCL writer fencing, ADR-002-013 selects the effective final-egress security boundary, ADR-002-014 selects immutable safety-configuration artifacts and activation, ADR-002-015 selects effective-human identity, exact approvals, dual control, independent Human HALT, and break-glass confinement, ADR-002-016 selects immutable causal evidence, pre-effect durability, integrity anchoring, gap containment, protected retention, and isolated deterministic replay, ADR-002-017 selects closed startup, monotonic Recovery Generations, fenced recovery ownership, conservative Inventory Cuts, dependency-complete obligations, non-authorizing readiness, partial-scope isolation, and fresh re-arm handoff, ADR-002-018 selects Critical Input classification, source continuity/provenance, exact transformation lineage, immutable Snapshots/Capsules, independent approval common-mode analysis, correction/invalidation fan-out, and active final-egress context currentness, and ADR-002-019 selects exact venue/session/tradability, instrument/order/account/margin/borrow/settlement, Broker Capability Profile, Order Admissibility Decision, Constraint Generation, protective-path, final-egress currentness, and non-revival rules. The conforming replicated-state-machine product, non-exportable signer or credential service, configuration registry/signing substrate, semantic-normalization and compatibility-manifest implementation, human identity provider, phishing-resistant authenticator, Effective Principal Graph, approval workflow, quorum and delegation policy, Approval Set consumption mechanism, restrictive HALT ingress/latch, evidence store and acknowledgement mechanism, independent emergency journal, source identity and sequence scheme, external integrity anchor, gap detector, protected raw tier, redaction/export control, retention/deletion policy, isolated replay substrate, Recovery Barrier Policy, trigger classifier, dependency graph, Recovery Generation/owner fence, broker/source Inventory Cut protocol, obligation workflow, package signer, Critical Input Policy, source registry and continuity protocol, schema/unit/mapping registry, transformation manifests, consistency-cut rules, independent approval input paths, Context Generation, invalidation graph, Venue Constraint Policy, venue/calendar/account/margin/borrow/settlement sources, Session Phase and tradability state machines, exact Snapshot/Decision schemas, Constraint Generation and invalidation graph, voter and Active Egress Principal topology, identity-aware route, proof encoding/cryptography, authenticated session transport, broker hard-fence mechanism, numeric bounds, and concrete Failure-Domain Allocation Matrix remain acceptance blockers. Other blockers remain for safe protective-replacement modes and broker semantics, non-trade transition and source-authority rules, and Time Health Snapshot distribution.
 
-Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-018, but all remain `NOT_IMPLEMENTED`. Verification Profile `0.9-PROPOSED` additionally binds the proposed Critical Input Policy and adds unapproved `B_critical_input_loss_detect`, `B_critical_input_invalid_to_authority`, `B_critical_input_invalid_to_egress`, `MAX_critical_input_snapshot_age_ms`, and `MAX_decision_context_age_ms` values while retaining all earlier unapproved bounds. The profile remains unapproved with `approved_by: []`; unresolved values reduce authority and keep live operation prohibited.
+Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-019, but all remain `NOT_IMPLEMENTED`. Verification Profile `1.0-PROPOSED` additionally binds the proposed Venue Constraint Policy and adds unapproved `B_venue_constraint_loss_detect`, `B_venue_constraint_invalid_to_authority`, `B_venue_constraint_invalid_to_egress`, `MAX_venue_constraint_snapshot_age_ms`, and `MAX_order_admissibility_decision_age_ms` values while retaining all earlier unapproved bounds, including the Critical Input values. The profile remains unapproved with `approved_by: []`; unresolved values reduce authority and keep live operation prohibited.
 
 ### 4.1 Latest Review Disposition
 
@@ -158,8 +162,11 @@ The independent ADR-002-017 document and adversarial-sequence review found no Cr
 
 The independent ADR-002-018 document, adversarial-sequence, integration, and traceability review found no Critical or Major issue and no unsafe sequence. Twenty-two sequences were blocked outright and two final-egress invalidation/send races were correctly classified as open-but-gated by fail-closed currentness and unapproved bounds. Two Minor clarity findings were resolved conservatively: §1/§15/§17 now make materiality and binding applicability policy-owned with unknown materiality treated as Critical/material, and ADR-002-014 §12.3 now states in its normative body that configuration activation does not establish Critical Input or Decision Context validity/currentness. The review PASS is EV-L0 only; currentness implementation, approved bounds, security review, and executed evidence remain open.
 
+ADR-002-019 is newly authored and integrated. Its independent architecture, adversarial-sequence, security-boundary, and traceability review is pending. Registration of VTG acceptance cases and evidence does not constitute review completion, executed evidence, acceptance, or live readiness.
+
 ```text
 ADR-002-002 through ADR-002-018 status: Proposed; document review PASS
+ADR-002-019 status: Proposed; independent document review pending
 ADR-002-018 independent document review: PASS; two Minor findings resolved
 ADR-002-016 independent document review: PASS; no finding supplied for disposition
 ADR-002-017 independent document review: PASS; four Minor findings resolved
@@ -195,14 +202,16 @@ The Proposed status is preserved because the applicable approval gates, includin
 | ADR-002-016 | Proposed | YES | NO |
 | ADR-002-017 | Proposed | YES | NO |
 | ADR-002-018 | Proposed | YES | NO |
+| ADR-002-019 | Proposed | YES | NO |
 | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
-| Verification Profile 0.9 | `PROPOSED`, `approved_by: []` | YES, as draft | NO |
+| Verification Profile 1.0 | `PROPOSED`, `approved_by: []` | YES, as draft | NO |
 | Broker-specific Capability Profile | Template only | YES | NO |
 | Human authority artifacts | Templates only, all non-authorizing | YES | NO |
 | Evidence integrity and replay artifacts | Templates only, all DRAFT/unverified/non-authorizing | YES | NO |
 | Recovery barrier, session, inventory-cut, obligation, evidence-package, and readiness artifacts | Templates only; default states are DRAFT/TRIGGERED/PENDING/NOT_READY and non-authorizing/fail-closed | YES | NO |
 | Critical Input Policy, Snapshot, and Decision Context Capsule artifacts | Templates only; DRAFT/INVALID/non-authorizing/fail-closed | YES | NO |
-| Verification evidence | 219 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Venue Constraint Policy, Snapshot, and Order Admissibility Decision artifacts | Templates only; DRAFT/INVALID/UNKNOWN/non-authorizing/fail-closed | YES | NO |
+| Verification evidence | 231 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
 
 ---
 
@@ -226,10 +235,10 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, protected-retention, isolated-replay, Recovery Barrier Policy, Recovery Generation/owner fence, dependency graph, Inventory Cut, obligation workflow, Critical Input Policy, source continuity, schema/unit/mapping registry, transformation lineage, Context Generation, context invalidation, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
-2. Assign implementation owners, evidence owners, and independent reviewers for all 219 items in EVIDENCE-REGISTER-002.csv.
+1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, protected-retention, isolated-replay, Recovery Barrier Policy, Recovery Generation/owner fence, dependency graph, Inventory Cut, obligation workflow, Critical Input Policy, source continuity, schema/unit/mapping registry, transformation lineage, Context Generation, context invalidation, Venue Constraint Policy, venue/session/tradability and account/margin/borrow/settlement sources, exact order-decision schemas, Constraint Generation, registry, signing, semantic-validation, compatibility-manifest, and independent Human HALT substrates.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 231 items in EVIDENCE-REGISTER-002.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
-4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, exact-approval, Human HALT, Recovery Barrier, Recovery Session, Inventory Cut, obligation, readiness, Critical Input, Snapshot, Capsule, common-mode, and invalidation state-machine models.
+4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, exact-approval, Human HALT, Recovery Barrier, Recovery Session, Inventory Cut, obligation, readiness, Critical Input, Snapshot, Capsule, common-mode, venue/session/tradability constraint, exact Order Admissibility Decision, and invalidation state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.
 6. Implement durable evidence identities and event capture.
 7. Implement the credential-confined Egress Gateway, authenticated currentness session, monotonic deny latch, Recovery Generation fence, single-use capability journal, epoch fencing, and bounded claim-to-send checks; remove every direct live broker-order path.

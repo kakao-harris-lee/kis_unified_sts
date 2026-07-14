@@ -20,6 +20,12 @@ review:
   decision_context_capsule_digest: TBD
   context_generation: null
   context_invalidation_generation: null
+  venue_constraint_snapshot_id: TBD
+  venue_constraint_snapshot_digest: TBD
+  order_admissibility_decision_id: TBD
+  order_admissibility_decision_digest: TBD
+  constraint_generation: null
+  constraint_invalidation_generation: null
   reviewed_input_digests: []
   independently_validated_input_digests: []
   common_mode_dependencies: []

@@ -218,6 +218,8 @@ Only the Risk Capacity Ledger may mutate capacity. The event processor, instrume
 
 History SHALL be corrected by new versioned facts, not destructive overwrite. A correction or reversal is a new event linked to the event it supersedes.
 
+Every material event, correction, or reversal SHALL invalidate affected ADR-002-019 Venue Constraint Snapshots and Order Admissibility Decisions. A symbol, quantity, multiplier, margin, settlement, or account remap requires a fresh exact order decision before future transmission; neither the event nor a favorable projection releases capacity.
+
 ---
 
 ## 11. Quantity, Price, Multiplier, and Currency Transformation
@@ -503,7 +505,8 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 4. dedicated evidence items are registered for every `NT-AC-*` case;
 5. required EV-L1, EV-L2, and EV-L3 evidence is executed across correction and failure paths;
 6. ADR-002-016 preserves raw source events, corrections, transition lineage, gaps, conservative ambiguity, and deterministic replay without rewriting external facts, and applicable ERI evidence passes;
-7. source common modes, broker residuals, and delivery obligations receive independent review;
-8. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+7. ADR-002-019 invalidates and rebuilds exact venue/instrument/account/margin/settlement/order decisions across initial events, corrections, reversals, and recovery, and applicable VTG evidence passes;
+8. source common modes, broker residuals, and delivery obligations receive independent review;
+9. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship of this ADR does not prove non-trade-event safety and does not authorize restricted-live or production operation.

@@ -30,6 +30,9 @@ supported_contracts:
   critical_input_observation_schema_versions: []
   critical_input_snapshot_schema_versions: []
   decision_context_capsule_schema_versions: []
+  venue_constraint_policy_schema_versions: []
+  venue_constraint_snapshot_schema_versions: []
+  order_admissibility_decision_schema_versions: []
   source_continuity_protocol_versions: []
   transformation_manifest_versions: []
 
@@ -42,6 +45,9 @@ attestation:
   referenced_artifact_digests: []
   critical_input_policy_generation: null
   critical_input_policy_digest: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
+  constraint_generation: null
   context_generation: null
   reproduced_semantic_digest: TBD
   compatible: false
@@ -60,6 +66,8 @@ fail_closed_contract:
   stale_context_generation: DENY
   unknown_source_continuity: DENY
   invalidated_decision_context_capsule: DENY
+  stale_constraint_generation: DENY
+  invalidated_order_admissibility_decision: DENY
 
 authorization_notice: >-
   This DRAFT manifest is not a compatibility attestation and grants no live

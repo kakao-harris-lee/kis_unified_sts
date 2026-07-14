@@ -32,6 +32,9 @@ baseline:
   critical_input_policy_id: TBD
   critical_input_policy_generation: null
   critical_input_policy_digest: TBD
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
   consumer_compatibility_manifest_ids: []
   broker_capability_profile_version: TBD
   verification_profile_version: TBD
@@ -99,6 +102,10 @@ artifacts:
   decision_context_capsules: []
   context_corrections_and_invalidations: []
   context_bindings_and_egress_currentness: []
+  venue_constraint_policies: []
+  venue_constraint_snapshots: []
+  order_admissibility_decisions: []
+  constraint_invalidations_and_egress_currentness: []
   restrictive_overrides: []
   configuration_rollback_restore: []
   state_dimensions: []

@@ -51,6 +51,9 @@ subjects:
   critical_input_snapshot_id: null
   decision_context_capsule_id: null
   context_generation: null
+  venue_constraint_snapshot_id: null
+  order_admissibility_decision_id: null
+  constraint_generation: null
   non_trade_event_id: null
 
 causality:

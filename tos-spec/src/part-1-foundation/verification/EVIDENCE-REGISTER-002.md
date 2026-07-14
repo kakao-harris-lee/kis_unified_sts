@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **219**
-- NOT_IMPLEMENTED: **219**
+- Total evidence items: **231**
+- NOT_IMPLEMENTED: **231**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -242,6 +242,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | CII-EV-010 | Critical Input Integrity | Input Degradation and Protective Confinement | ADR-002-018 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | CII-EV-011 | Critical Input Integrity | Context Authority Separation and Human-Override Denial | ADR-002-018 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | CII-EV-012 | Critical Input Integrity | Restart Restore Recovery and Non-Revival | ADR-002-018 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-001 | Venue and Tradability Gate | Closed Exceptional and Phase-Transition Sessions | ADR-002-019 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-002 | Venue and Tradability Gate | Halt Suspension and Tradability Conflict | ADR-002-019 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-003 | Venue and Tradability Gate | Exact Instrument Contract Account and Route | ADR-002-019 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-004 | Venue and Tradability Gate | Price Tick Lot Quantity and Order Shape | ADR-002-019 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-005 | Venue and Tradability Gate | Margin Borrow Settlement and Account Eligibility | ADR-002-019 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-006 | Venue and Tradability Gate | Exact Decision Binding and Substitution Resistance | ADR-002-019 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-007 | Venue and Tradability Gate | Active Final-Egress Currentness and Invalidation Race | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-008 | Venue and Tradability Gate | Exit Reduce-Only Cancel and Reversal | ADR-002-019 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-009 | Venue and Tradability Gate | Protective and Replacement Constraints | ADR-002-019 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-010 | Venue and Tradability Gate | Source Policy Capability and Common-Mode Drift | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-011 | Venue and Tradability Gate | Authority Separation and Bypass Resistance | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| VTG-EV-012 | Venue and Tradability Gate | Recovery Reopen and Non-Revival | ADR-002-019 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

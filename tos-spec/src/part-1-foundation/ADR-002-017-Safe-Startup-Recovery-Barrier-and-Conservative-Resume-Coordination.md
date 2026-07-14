@@ -355,12 +355,13 @@ The minimum obligation set includes:
 4. UNKNOWN, missing ACK, late-fill, cancellation, and Final Quantity Proof rules satisfied conservatively;
 5. external/manual and non-trade activity attributed and applied through governed transitions;
 6. protective coverage, ownership, replacement state, and reserved resource guarantees evaluated;
-7. trustworthy time, ADR-002-018 Critical Input Policy, source continuity, Critical Input Snapshots, Decision Context Capsules, correction/invalidation, venue, session, tradability, and account usability proven;
-8. current Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, and compatibility state validated;
-9. deployment, software, schema, identity, credential, route, endpoint, and failure-domain state current and non-bypassable;
-10. evidence policy, source records, gaps, integrity anchors, retention, and replay divergence state acceptable;
-11. Human HALT, break-glass, approval, compromise, incidents, alerts, and residual-risk obligations resolved or explicitly restrictive;
-12. requested and maximum safe recovery scopes recomputed against all shared aggregate dependencies.
+7. trustworthy time and ADR-002-018 Critical Input Policy, source continuity, Critical Input Snapshots, Decision Context Capsules, and correction/invalidation proven;
+8. ADR-002-019 Venue Constraint Policy, Constraint Generation, Venue Constraint Snapshots, exact Order Admissibility Decisions, and current venue/session/tradability/account/margin/borrow/settlement/broker-capability state proven;
+9. current Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, and compatibility state validated;
+10. deployment, software, schema, identity, credential, route, endpoint, and failure-domain state current and non-bypassable;
+11. evidence policy, source records, gaps, integrity anchors, retention, and replay divergence state acceptable;
+12. Human HALT, break-glass, approval, compromise, incidents, alerts, and residual-risk obligations resolved or explicitly restrictive;
+13. requested and maximum safe recovery scopes recomputed against all shared aggregate dependencies.
 
 An obligation cannot be marked satisfied by its own proposing component where independent evidence is required. Missing or cyclic obligation dependencies make the session NOT_READY.
 
@@ -691,8 +692,9 @@ ADR-002-017 SHALL remain **Proposed** until all of the following are complete:
 9. ADR-002-016 evidence custody, gap detection, integrity, retention, and replay isolation are implemented for recovery artifacts;
 10. `SBR-EV-001` through `SBR-EV-012` and applicable cross-ADR evidence pass at required levels and receive independent review;
 11. ADR-002-018 Critical Input Policy, source continuity, Snapshot/Capsule, common-mode, correction/invalidation, and non-revival are complete recovery obligations and applicable CII evidence passes;
-12. recovery trigger, barrier, egress, inventory, convergence, Critical Input invalidation, context-age, readiness-age, time, evidence, and broker bounds are approved and measured;
-13. no unresolved stale-owner, partial-scope, forced-ready, optimistic-snapshot, restore, stale-context, capacity-release, HALT, egress, or automatic re-arm path remains;
-14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+12. ADR-002-019 Venue Constraint Policy, Constraint Generation, exact Snapshot/Decision, current venue/session/tradability/account/broker state, restrictive invalidation, and non-revival are complete recovery obligations and applicable VTG evidence passes;
+13. recovery trigger, barrier, egress, inventory, convergence, Critical Input and venue-constraint invalidation, context/decision-age, readiness-age, time, evidence, and broker bounds are approved and measured;
+14. no unresolved stale-owner, partial-scope, forced-ready, optimistic-snapshot, restore, stale-context/constraint, capacity-release, HALT, egress, or automatic re-arm path remains;
+15. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Until those gates pass, this ADR authorizes architecture and implementation-planning work only. It does not claim verification completion, ADR acceptance, restricted-live readiness, production readiness, or live trading authority.

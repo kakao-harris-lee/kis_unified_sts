@@ -27,6 +27,7 @@
 - [ADR-002-016 — Safety Evidence, Audit, and Deterministic Replay Integrity](part-1-foundation/ADR-002-016-Safety-Evidence-Audit-and-Deterministic-Replay-Integrity.md)
 - [ADR-002-017 — Safe Startup, Recovery Barrier, and Conservative Resume Coordination](part-1-foundation/ADR-002-017-Safe-Startup-Recovery-Barrier-and-Conservative-Resume-Coordination.md)
 - [ADR-002-018 — Critical Input Integrity, Provenance, and Decision-Context Fencing](part-1-foundation/ADR-002-018-Critical-Input-Integrity-Provenance-and-Decision-Context-Fencing.md)
+- [ADR-002-019 — Venue, Session, Tradability, and Broker Constraint Gate](part-1-foundation/ADR-002-019-Venue-Session-Tradability-and-Broker-Constraint-Gate.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)

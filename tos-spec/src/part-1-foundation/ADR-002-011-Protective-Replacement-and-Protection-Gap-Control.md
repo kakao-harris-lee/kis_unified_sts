@@ -134,6 +134,8 @@ Any uncertain state -> RECOVERY_REQUIRED
 
 No lifecycle label by itself authorizes capacity release or removal of protection.
 
+No lifecycle label or “protective” classification proves that cancel, amend, replace, reduce-only, or new protection is executable. Each leg SHALL bind a current exact ADR-002-019 Order Admissibility Decision for its venue/session/account/order shape; missing or unknown admissibility preserves conservative gap, overlap, and trapped-exposure treatment.
+
 ---
 
 ## 6. Replacement Modes
@@ -520,7 +522,8 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 4. required EV-L1, EV-L2, and EV-L3 evidence covers partial-fill and failure interleavings;
 5. Risk Capacity Ledger, Cancellation Arbiter, ADR-002-013 final egress and credential/route boundary, and recovery behavior receive independent review with applicable EGRESS evidence;
 6. ADR-002-016 preserves request, old/new order, claim, first-byte, ACK, fill, cancel, gap, overlap, Final Quantity Proof, and recovery lineage without using missing evidence as release proof, and applicable ERI evidence passes;
-7. residual broker-resource and market-liquidity risks are explicitly accepted;
-8. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+7. ADR-002-019 exact current admissibility is enforced independently for every cancellation and replacement leg, including halt, auction, price-limit, rate/session, reduce-only, and trapped-exposure paths, and applicable VTG evidence passes;
+8. residual broker-resource and market-liquidity risks are explicitly accepted;
+9. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship of this ADR does not prove safe replacement and does not authorize restricted-live or production operation.

@@ -37,6 +37,10 @@ generation_vector:
   egress_generation: null
   evidence_store_generation: null
   human_authority_policy_generation: null
+  critical_input_policy_generation: null
+  context_generation: null
+  venue_constraint_policy_generation: null
+  constraint_generation: null
 
 validity:
   issued_at_time_snapshot_id: TBD

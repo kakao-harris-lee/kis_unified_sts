@@ -33,6 +33,9 @@ scope:
   critical_input_policy_id: TBD
   critical_input_policy_generation: null
   critical_input_policy_digest: TBD
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -147,6 +150,27 @@ bounds:
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
   B_critical_input_invalid_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_venue_constraint_loss_detect:
+    value_ms: null
+    semantics: source_specific_hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
+  B_venue_constraint_invalid_to_authority:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_venue_constraint_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
     owner: TBD
@@ -294,6 +318,8 @@ limits:
   MAX_recovery_readiness_age_ms: null
   MAX_critical_input_snapshot_age_ms: null
   MAX_decision_context_age_ms: null
+  MAX_venue_constraint_snapshot_age_ms: null
+  MAX_order_admissibility_decision_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

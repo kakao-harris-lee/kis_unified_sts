@@ -1,17 +1,10 @@
-artifact_type: DECISION_CONTEXT_CAPSULE
+artifact_type: ORDER_ADMISSIBILITY_DECISION
 schema_version: "1.0-DRAFT"
-capsule_id: TBD
+decision_id: TBD
 canonical_digest: TBD
 status: DRAFT
+result: UNKNOWN
 issuer_principal_id: TBD
-critical_input_policy:
-  policy_id: TBD
-  policy_generation: null
-  canonical_digest: TBD
-context_generation: null
-critical_input_snapshot:
-  snapshot_id: TBD
-  canonical_digest: TBD
 venue_constraint_policy:
   policy_id: TBD
   policy_generation: null
@@ -20,42 +13,41 @@ venue_constraint_snapshot:
   snapshot_id: TBD
   constraint_generation: null
   canonical_digest: TBD
-order_admissibility_decision:
-  decision_id: TBD
+decision_context_capsule:
+  capsule_id: TBD
   canonical_digest: TBD
-scope:
+exact_order_shape:
   environment: TBD
-  safety_cell: TBD
+  broker: TBD
   account: TBD
   venue: TBD
+  market_segment: TBD
   instrument: TBD
-  decision_class: TBD
-  requested_action_scope: TBD
-safety_critical_facts:
-  account: TBD
-  instrument: TBD
-  direction: TBD
-  quantity_basis: TBD
-  unit: TBD
-  price_and_order_constraints: []
-  exposure_effect: TBD
-  session_and_tradability: TBD
+  contract: TBD
+  side: TBD
+  position_effect: TBD
+  action_class: TBD
+  quantity: null
+  quantity_unit: TBD
+  price_instruction: TBD
+  order_type: TBD
+  time_in_force: TBD
+  routing_instructions: []
   expiration: null
-generation_vector:
-  safety_configuration_generation: null
-  broker_capability_profile_version: TBD
-  time_health_generation: null
-  recovery_generation: null
-  authority_epoch: null
-  deployment_generation: null
-  identity_generation: null
-  evidence_policy_generation: null
-independent_validation:
-  required: true
-  required_facts: []
-  approved_paths: []
-  common_mode_dependencies: []
-  residual_risk_ids: []
+evaluated_constraints:
+  session_phase: UNKNOWN
+  halt_and_suspension: UNKNOWN
+  tradability: UNKNOWN
+  price_band_and_tick: UNKNOWN
+  lot_quantity_and_notional: UNKNOWN
+  account_permission: UNKNOWN
+  margin_and_collateral: UNKNOWN
+  borrow_locate_and_short_sale: UNKNOWN
+  settlement_currency_and_expiration: UNKNOWN
+  broker_capability: UNKNOWN
+failed_or_unknown_predicates: []
+common_mode_dependencies: []
+residual_risks: []
 validity:
   issued_at: null
   consumer_receipt_anchor: TBD
@@ -63,11 +55,13 @@ validity:
   expires_at: null
   invalidation_generation: null
   invalidation_conditions: []
+dependency_closure: []
 bindings:
   proposal_id: TBD
   approval_request_id: TBD
   intent_id: TBD
   capacity_request_id: TBD
+  capacity_commitment_id: TBD
   live_authorization_id: TBD
   transmission_capability_id: TBD
   commit_proof_id: TBD
@@ -75,8 +69,11 @@ bindings:
 authority:
   grants_approval: false
   creates_capacity: false
+  releases_capacity: false
   creates_live_authorization: false
   creates_protective_classification: false
+  creates_transmission_capability: false
   permits_broker_transmission: false
+  clears_halt: false
   permits_rearm: false
   permits_automatic_rearm: false

@@ -1,0 +1,52 @@
+artifact_type: VENUE_CONSTRAINT_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_generation: null
+canonical_digest: TBD
+status: DRAFT
+approved_by: []
+effective_from: null
+review_due: null
+scope:
+  environments: []
+  safety_cells: []
+  brokers: []
+  accounts: []
+  venues: []
+  market_segments: []
+  instruments: []
+  contracts: []
+  action_classes: []
+approved_sources: []
+source_continuity_rules: []
+session_phase_state_machines: []
+halt_suspension_and_tradability_rules: []
+instrument_and_contract_rules: []
+price_band_tick_and_lot_rules: []
+quantity_notional_and_rounding_rules: []
+order_type_time_in_force_and_routing_rules: []
+account_permission_rules: []
+margin_collateral_and_buying_power_rules: []
+borrow_locate_and_short_sale_rules: []
+settlement_currency_and_expiration_rules: []
+broker_capability_requirements: []
+corroboration_and_independence_rules: []
+dependency_and_invalidation_rules: []
+conservative_failure_responses: []
+protective_only_restrictions: []
+residual_risks: []
+authority:
+  grants_approval: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+evidence:
+  activation_record_id: TBD
+  independent_review_id: TBD
+  evidence_location: TBD

@@ -39,6 +39,14 @@ evidence_and_artifacts:
   critical_input_snapshot_digest: TBD
   decision_context_capsule_id: TBD
   decision_context_capsule_digest: TBD
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
+  venue_constraint_snapshot_id: TBD
+  venue_constraint_snapshot_digest: TBD
+  order_admissibility_decision_id: TBD
+  order_admissibility_decision_digest: TBD
+  constraint_generation: null
   hard_safety_envelope_id: TBD
   hard_safety_envelope_generation: null
   hard_safety_envelope_digest: TBD

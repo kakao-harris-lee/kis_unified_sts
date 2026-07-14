@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-018
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-018; implementation evidence has not been executed
-- **Extension State:** ADR-002-005/006/007/008/009/010/011/012/013/014/015/016/017/018 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, PR-EV-001..012, RCLP-EV-001..012, EGRESS-EV-001..012, SPG-EV-001..012, HAG-EV-001..012, ERI-EV-001..012, SBR-EV-001..012, and CII-EV-001..012. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-019
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-019; implementation evidence has not been executed
+- **Extension State:** ADR-002-005/006/007/008/009/010/011/012/013/014/015/016/017/018/019 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, PR-EV-001..012, RCLP-EV-001..012, EGRESS-EV-001..012, SPG-EV-001..012, HAG-EV-001..012, ERI-EV-001..012, SBR-EV-001..012, CII-EV-001..012, and VTG-EV-001..012. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -88,6 +88,7 @@ Every evidence run SHALL bind to an immutable baseline containing:
 - Evidence Integrity Policy generation and digest;
 - Recovery Barrier Policy generation and digest;
 - Critical Input Policy generation and digest;
+- Venue Constraint Policy generation and digest;
 - Broker Capability Profile version;
 - Verification Profile version;
 - database/schema migration version;
@@ -207,6 +208,9 @@ B_recovery_barrier_to_egress
 B_critical_input_loss_detect
 B_critical_input_invalid_to_authority
 B_critical_input_invalid_to_egress
+B_venue_constraint_loss_detect
+B_venue_constraint_invalid_to_authority
+B_venue_constraint_invalid_to_egress
 MAX_normal_capability_age
 MAX_time_health_snapshot_age
 MAX_degraded_lease_holdover
@@ -221,6 +225,8 @@ MAX_replay_start_delay
 MAX_recovery_readiness_age
 MAX_critical_input_snapshot_age
 MAX_decision_context_age
+MAX_venue_constraint_snapshot_age
+MAX_order_admissibility_decision_age
 ```
 
 For every bound, the profile SHALL include:
@@ -1934,7 +1940,93 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 230. Model-Based and Property Verification
+## 230. VTG-EV-001 — Closed Exceptional and Phase-Transition Sessions
+
+- **Minimum Level:** EV-L1/EV-L3 plus applicable broker evidence
+- **Supports:** ADR-002-019 VTG-AC-001
+- **Injection:** Exercise scheduled and unscheduled close, delayed open, opening and closing auctions, volatility interruption, reopen, after-hours, and next-session transitions while stale phase decisions remain cached.
+- **Expected:** Exact phase-specific decisions are required; schedule, quote flow, connectivity, and old `ADMISSIBLE` state never authorize a send.
+
+## 231. VTG-EV-002 — Halt Suspension and Tradability Conflict
+
+- **Minimum Level:** EV-L2/EV-L3 plus applicable broker evidence
+- **Supports:** ADR-002-019 VTG-AC-002
+- **Injection:** Conflict venue status, broker state, quote/trade flow, calendar, halt, suspension, auction, and instrument-eligibility sources; delay and suppress restrictive changes.
+- **Expected:** Ordinary new risk stops, conflict remains `UNKNOWN`, and no majority, newest event, recent trade, or absence of restriction resolves the state permissively.
+
+## 232. VTG-EV-003 — Exact Instrument Contract Account and Route
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-019 VTG-AC-003
+- **Injection:** Substitute environment, broker, account/subaccount, venue, market segment, symbol alias, contract month, product, currency, and broker route at each proposal-to-egress binding.
+- **Expected:** Every mismatch is rejected; no alias, fallback account, or alternate route widens the exact approved scope.
+
+## 233. VTG-EV-004 — Price Tick Lot Quantity and Order Shape
+
+- **Minimum Level:** EV-L1/EV-L3 plus applicable broker evidence
+- **Supports:** ADR-002-019 VTG-AC-004
+- **Injection:** Cross static/dynamic price bands and tick-table boundaries; vary lot, odd-lot, min/max quantity, rounding, order type, time in force, position effect, triggers, and routing flags.
+- **Expected:** Unsupported or mutated shapes fail; no silent rounding, normalization, partial refresh, or broker-rejection assumption creates permission.
+
+## 234. VTG-EV-005 — Margin Borrow Settlement and Account Eligibility
+
+- **Minimum Level:** EV-L2/EV-L3 plus applicable broker evidence
+- **Supports:** ADR-002-019 VTG-AC-005
+- **Injection:** Return stale, contradictory, revoked, scope-mismatched, or discontinuous product permission, margin, collateral, buying power, borrow, locate, settlement, currency, and account-restriction evidence.
+- **Expected:** New risk stops; uncertainty cannot create headroom or permission, and existing or potentially-live effects remain conservatively capacity-covered.
+
+## 235. VTG-EV-006 — Exact Decision Binding and Substitution Resistance
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-019 VTG-AC-006
+- **Injection:** Mutate, union, widen, partially refresh, replay, or substitute one Venue Constraint Snapshot, Order Admissibility Decision, Capsule, approval, Intent, capacity, authorization, capability, Commit Proof, or broker-request field.
+- **Expected:** The complete chain is rejected and a fresh exact decision plus every affected downstream artifact is required.
+
+## 236. VTG-EV-007 — Active Final-Egress Currentness and Invalidation Race
+
+- **Minimum Level:** EV-L2/EV-L3 plus security and applicable broker evidence
+- **Supports:** ADR-002-019 VTG-AC-007
+- **Injection:** Invalidate session, halt, tradability, price band, account permission, margin, borrow, settlement, or broker capability before claim and between capability claim and first byte; partition egress from the constraint authority and offer cached permissive substitutes.
+- **Expected:** Final egress actively proves current exact state and denies stale or unverifiable requests; unprovable send ordering remains potentially live and capacity-covered with no blind retry.
+
+## 237. VTG-EV-008 — Exit Reduce-Only Cancel and Reversal
+
+- **Minimum Level:** EV-L2/EV-L3 plus applicable broker evidence
+- **Supports:** ADR-002-019 VTG-AC-008
+- **Injection:** Exercise unsupported exits, wrong close-side/position-effect, zero crossing, reversal, reduce-only drift, cancel crossing fill, missing acknowledgement, cancel acknowledgement, and late fill.
+- **Expected:** No exit is assumed executable; missing ACK is not non-acceptance, cancel ACK is not Final Quantity Proof, and no early capacity release or blind retry occurs.
+
+## 238. VTG-EV-009 — Protective and Replacement Constraints
+
+- **Minimum Level:** EV-L2/EV-L3 plus applicable broker evidence
+- **Supports:** ADR-002-019 VTG-AC-009
+- **Injection:** Request protective maintenance and replacement during halt, auction, price limit, shared rate/session pressure, unsupported reduce-only, non-atomic replace, partial fill, gap, and overlap.
+- **Expected:** Protective label and priority create no permission or reserve; only exact separately authorized and capacity-covered paths proceed, otherwise containment and trapped-exposure handling apply.
+
+## 239. VTG-EV-010 — Source Policy Capability and Common-Mode Drift
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-019 VTG-AC-010
+- **Injection:** Restart, roll back, substitute, corrupt, partition, or jointly administer calendars, status feeds, mappings, rule engines, margin/borrow services, broker profiles, caches, credentials, routes, and deployments.
+- **Expected:** Unknown continuity and shared control are not counted as current or independent; stale generations are fenced and live scope reduces or closes.
+
+## 240. VTG-EV-011 — Authority Separation and Bypass Resistance
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-019 VTG-AC-011
+- **Injection:** Give Gate, data, operator, workflow, broker-query, evidence, and replay principals paths to approval, RCL mutation/release, protective classification, HALT clear, authority issuance, capability creation, live credential, order route, portal fallback, or re-arm.
+- **Expected:** Every path is absent or denied; RCL remains sole capacity authority and final egress remains sole transmission enforcement.
+
+## 241. VTG-EV-012 — Recovery Reopen and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security and applicable broker evidence
+- **Supports:** ADR-002-019 VTG-AC-012
+- **Injection:** Reopen venue, release halt, reconnect broker, restore account/margin/borrow/clock/Gate/evidence services, warm old decisions, match replay, and complete reconciliation while old economic effects remain.
+- **Expected:** Fresh continuity, Constraint Generation, Snapshot, decision, recovery obligations, approval, authority, and governed re-arm are required; no old decision or authority revives and economic state remains conservative.
+
+---
+
+## 242. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -1955,6 +2047,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Safety Evidence Envelope, Evidence Commit Receipt, source/store/key continuity, causal graph, integrity segment/anchor, Evidence Gap, retention, redaction, Replay Capsule, divergence, and recovery state;
 - Recovery Barrier Policy, trigger, scope, Recovery Generation, owner epoch, session, Inventory Cut, obligation graph, package, readiness, invalidation, partial-scope, and handoff state;
 - Critical Input Policy, source identity and continuity, observation, transformation lineage, consistency cut, Snapshot, Decision Context Capsule, common-mode analysis, correction, Context Generation, invalidation, and final-egress binding state;
+- Venue Constraint Policy, Constraint Generation, Session Phase, tradability, exact order shape, Snapshot, Order Admissibility Decision, invalidation, final-egress currentness, and recovery state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2006,13 +2099,18 @@ No shared source, parser, mapping, cache, administrator, deployment, or failure 
 No Capsule mutation, union, partial refresh, downgrade, substitution, or hidden recomputation survives proposal-to-egress exact binding
 No correction, retraction, source/policy/mapping change, or input invalidation misses affected authority issuance or final egress beyond its approved bound
 No context expiry, invalidation, restart, restore, recovery, or replay releases capacity, expires economic effect, revives authority, or automatically re-arms
+No calendar, quote, recent trade, connection, login, broker health, cached state, TTL, or absence of restriction proves exact order tradability
+No exit, reduce-only, cancellation, replacement, or protective label bypasses current exact venue, session, account, margin, settlement, and broker constraints
+No Venue Constraint Snapshot or Order Admissibility Decision mutation, union, partial refresh, widening, substitution, or replay survives exact binding
+No venue/session/halt/price/account/margin/borrow/settlement/capability invalidation misses affected authority or final egress beyond its approved bound
+No venue reopen, halt release, broker reconnect, account restoration, constraint recovery, or replay revives a prior decision, authority, or live scope
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 231. Fault-Injection Requirements
+## 243. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2028,6 +2126,7 @@ The test harness SHALL support controlled injection at least for:
 - evidence pre-effect receipt delay/substitution, store and ingress outage, source-sequence reset, duplicate conflict, missing causal parent, record mutation/deletion/truncation/fork, key and anchor rollback, conflicting restore, schema/canonicalization drift, unsafe redaction/export, premature compaction/deletion, replay divergence, and replay-to-live boundary exposure;
 - startup/recovery trigger omission, barrier-close delay, stale Recovery Generation at authority and egress, concurrent owner epochs, incomplete dependency graph, obligation omission, non-atomic broker Inventory Cut, convergence failure, post-cut invalidation, partial-scope shared-resource leakage, forced readiness, and recovery completion attempting old-artifact reuse;
 - unknown source, endpoint/credential substitution, continuity reset, sequence gap/rollback/replay, schema/parser/mapping/unit/multiplier/sign drift, hidden default, transformation-lineage break, non-atomic consistency cut, stale/future/crossed input, source disagreement, false approval independence, Capsule substitution/partial refresh, correction/retraction fan-out, Context Generation cache, invalidation suppression, and context recovery attempting old-artifact reuse;
+- scheduled and unscheduled session transition, delayed open, auction and volatility phase, halt/suspension conflict, stale tradability, price-band/tick/lot/order-shape drift, account/margin/borrow/settlement conflict, broker-capability degradation, Constraint Generation cache, exact-decision substitution, invalidation race, and venue/broker recovery attempting old-decision reuse;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -2051,7 +2150,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 232. Broker Verification Safety Rules
+## 244. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -2069,7 +2168,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 233. Continuous Conformance Evidence
+## 245. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -2088,6 +2187,7 @@ After approval, continuous monitors SHALL detect at least:
 - Safety Evidence Envelope, commit receipt, source/store/key continuity, required record class, causal closure, integrity anchor, gap bound, retention, redaction/export, Replay Capsule, replay isolation, or chain-of-custody contradiction;
 - Recovery Barrier Policy, Recovery Generation, owner epoch, trigger, scope closure, Inventory Cut, obligation, package, readiness age, invalidation, partial-scope isolation, or re-arm handoff contradiction;
 - Critical Input Policy, source identity/continuity, sequence/revision, schema, unit/mapping, transformation lineage, Snapshot/Capsule age and digest, common-mode analysis, correction, Context Generation, invalidation, or egress-binding contradiction;
+- Venue Constraint Policy, Constraint Generation, session phase, halt/suspension, tradability, price/tick/lot/quantity/order-shape, account/margin/borrow/settlement, Broker Capability Profile, Snapshot/decision age and digest, or final-egress currentness contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -2104,7 +2204,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 234. Residual Risk Register
+## 246. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -2125,7 +2225,7 @@ Every unresolved limitation SHALL record:
 
 ---
 
-## 235. Independent Review Checklist
+## 247. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -2147,6 +2247,7 @@ The reviewer SHALL confirm:
 - every required record is source-attributed, causally complete, durably ordered at the correct effect boundary, integrity-anchored, retained, redacted without semantic loss, and replayed only in an isolated non-authorizing environment under ADR-002-016;
 - every recovery trigger closes the barrier before current observation, only the current fenced owner evaluates a dependency-complete Inventory Cut and obligation graph, and readiness remains non-authorizing, invalidatable, and bound to the exact Recovery Generation under ADR-002-017;
 - every Critical Input is classified and source-attributed with exact semantics and lineage, approval independence reflects actual common modes, every consumer binds the same immutable Capsule, and correction/invalidation/currentness reach authority and final egress under ADR-002-018;
+- every broker-directed action binds one exact current Venue Constraint Snapshot and Order Admissibility Decision, exits and protective actions are not assumed executable, and material constraint invalidation reaches authority and final egress under ADR-002-019;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -2156,7 +2257,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 236. Approval Gates by ADR
+## 248. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -2187,6 +2288,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-001 through VTG-EV-005, VTG-EV-007 through VTG-EV-010, and VTG-EV-012;
 - BC-EV-001 through BC-EV-022 for each approved broker profile, with `NOT_APPLICABLE` justified by profile scope where valid;
 - ERI-EV-001, ERI-EV-004, ERI-EV-005, and ERI-EV-007 through ERI-EV-012;
 - SPG-EV-004, SPG-EV-010, and SPG-EV-011;
@@ -2221,6 +2323,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-006, VTG-EV-007, and VTG-EV-010 through VTG-EV-012;
 - REARM-EV-001 through REARM-EV-012;
 - CII-EV-007 through CII-EV-009 and CII-EV-012;
 - SBR-EV-001 through SBR-EV-004 and SBR-EV-006 through SBR-EV-012;
@@ -2236,6 +2339,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-001, VTG-EV-002, VTG-EV-007, VTG-EV-010, and VTG-EV-012;
 - TIME-EV-001 through TIME-EV-010;
 - CII-EV-002, CII-EV-005, CII-EV-008, CII-EV-009, and CII-EV-012;
 - ERI-EV-001, ERI-EV-004 through ERI-EV-008, ERI-EV-010, and ERI-EV-012;
@@ -2263,6 +2367,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-003 through VTG-EV-005, VTG-EV-010, and VTG-EV-012;
 - NT-EV-001 through NT-EV-012;
 - CII-EV-002, CII-EV-003, CII-EV-005, CII-EV-008, and CII-EV-012;
 - ERI-EV-001, ERI-EV-004 through ERI-EV-008, and ERI-EV-010 through ERI-EV-012;
@@ -2275,6 +2380,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-004, VTG-EV-007 through VTG-EV-010, and VTG-EV-012;
 - PR-EV-001 through PR-EV-012;
 - ERI-EV-001 through ERI-EV-007 and ERI-EV-010 through ERI-EV-012;
 - EGRESS-EV-006, EGRESS-EV-007, EGRESS-EV-011, and EGRESS-EV-012;
@@ -2301,6 +2407,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-003, VTG-EV-004, VTG-EV-006, VTG-EV-007, VTG-EV-011, and VTG-EV-012;
 - EGRESS-EV-001 through EGRESS-EV-012;
 - CII-EV-007 through CII-EV-009, CII-EV-011, and CII-EV-012;
 - SBR-EV-001 through SBR-EV-003 and SBR-EV-008 through SBR-EV-012;
@@ -2316,6 +2423,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-006, VTG-EV-007, VTG-EV-010, and VTG-EV-012;
 - SPG-EV-001 through SPG-EV-012;
 - CII-EV-001, CII-EV-003, CII-EV-004, CII-EV-007, CII-EV-008, and CII-EV-012;
 - SBR-EV-001, SBR-EV-004, SBR-EV-007, SBR-EV-009, SBR-EV-010, and SBR-EV-012;
@@ -2330,6 +2438,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-006, VTG-EV-007, VTG-EV-011, and VTG-EV-012;
 - HAG-EV-001 through HAG-EV-012;
 - CII-EV-006, CII-EV-007, CII-EV-011, and CII-EV-012;
 - SBR-EV-001, SBR-EV-004, SBR-EV-006 through SBR-EV-009, SBR-EV-011, and SBR-EV-012;
@@ -2343,6 +2452,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-001 through VTG-EV-012;
 - ERI-EV-001 through ERI-EV-012;
 - CII-EV-002, CII-EV-004, CII-EV-005, CII-EV-007, CII-EV-008, and CII-EV-012;
 - SBR-EV-004 through SBR-EV-006 and SBR-EV-008 through SBR-EV-012;
@@ -2355,6 +2465,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-001, VTG-EV-002, VTG-EV-005, VTG-EV-007, VTG-EV-010, and VTG-EV-012;
 - SBR-EV-001 through SBR-EV-012;
 - CII-EV-002, CII-EV-005, and CII-EV-008 through CII-EV-012;
 - RC-EV-005 through RC-EV-008, RC-EV-010 through RC-EV-013, RC-EV-017, RC-EV-018, SA-EV-001 through SA-EV-003, SA-EV-008 through SA-EV-011, SA-EV-013 through SA-EV-015, BC-EV-002, BC-EV-004 through BC-EV-008, BC-EV-011, BC-EV-014, BC-EV-017 through BC-EV-019, and X-EV-003, X-EV-004, X-EV-007, X-EV-009, X-EV-010, and X-EV-012;
@@ -2368,6 +2479,7 @@ Requires:
 
 Requires:
 
+- VTG-EV-002, VTG-EV-003, VTG-EV-005 through VTG-EV-007, VTG-EV-010, and VTG-EV-012;
 - CII-EV-001 through CII-EV-012;
 - RECON-EV-001 through RECON-EV-005, TIME-EV-001 through TIME-EV-010, STATE-EV-001, STATE-EV-003 through STATE-EV-005, and SBR-EV-001, SBR-EV-004 through SBR-EV-007, SBR-EV-009, SBR-EV-010, and SBR-EV-012;
 - ERI-EV-001, ERI-EV-004 through ERI-EV-012, SPG-EV-001 through SPG-EV-004, SPG-EV-007, SPG-EV-010 through SPG-EV-012, HAG-EV-002, HAG-EV-003, HAG-EV-007, HAG-EV-009, and HAG-EV-011;
@@ -2375,6 +2487,20 @@ Requires:
 - approved Critical Input Policy, source registry and continuity protocols, schema/unit/mapping registry, transformation manifests, consistency-cut/source-authority rules, independent-approval paths, common-mode analyses, Capsule binding, Context Generation, invalidation graph, and active final-egress currentness mechanism;
 - approved and measured `B_critical_input_loss_detect`, `B_critical_input_invalid_to_authority`, `B_critical_input_invalid_to_egress`, `MAX_critical_input_snapshot_age`, `MAX_decision_context_age`, and applicable source freshness, correction, time, evidence, recovery, broker, authority, and egress bounds;
 - independent source-identity, parser/schema, mapping/unit, transformation, common-mode, approval-independence, context-substitution, invalidation, stale-publisher, final-egress, restore, and automatic-re-arm security and safety assessment.
+
+### ADR-002-019
+
+Requires:
+
+- VTG-EV-001 through VTG-EV-012;
+- CII-EV-001 through CII-EV-012, TIME-EV-002 through TIME-EV-010, SBR-EV-001, SBR-EV-004 through SBR-EV-010, and SBR-EV-012;
+- BC-EV-001, BC-EV-003, BC-EV-009, BC-EV-010, BC-EV-012 through BC-EV-019, and BC-EV-021, PR-EV-001 through PR-EV-005 and PR-EV-008 through PR-EV-012, NT-EV-001 through NT-EV-012;
+- EGRESS-EV-002 through EGRESS-EV-010 and EGRESS-EV-012, SPG-EV-001 through SPG-EV-004, SPG-EV-007, SPG-EV-010 through SPG-EV-012, HAG-EV-006, HAG-EV-007, HAG-EV-009, and HAG-EV-011;
+- ERI-EV-001, ERI-EV-004 through ERI-EV-012, RECON-EV-001 through RECON-EV-005, STATE-EV-003 through STATE-EV-005, and X-EV-004 through X-EV-012;
+- approved Venue Constraint Policy, source and continuity registry, Session Phase and tradability state machines, instrument/order/account/margin/borrow/settlement rules, exact Snapshot and Order Admissibility Decision schemas, Constraint Generation, dependency closure, invalidation graph, and active final-egress currentness mechanism;
+- approved and measured `B_venue_constraint_loss_detect`, `B_venue_constraint_invalid_to_authority`, `B_venue_constraint_invalid_to_egress`, `MAX_venue_constraint_snapshot_age`, `MAX_order_admissibility_decision_age`, and applicable Critical Input, trustworthy-time, broker, capability-claim, HALT, recovery, protection, and evidence bounds;
+- broker-scoped assurance for every claimed venue, session, account, instrument, order type, time in force, margin, borrow, settlement, exit, reduce-only, cancellation, protective, and replacement behavior;
+- independent source, calendar, venue-state, mapping, rule-engine, account, margin, borrow, settlement, broker-capability, common-mode, exact-binding, authority-separation, stale-publisher, final-egress, restore, and automatic-re-arm security and safety assessment.
 
 ### Production Restricted Live Gate
 
@@ -2390,7 +2516,7 @@ Requires:
 
 ---
 
-## 237. Current Evidence Readiness Assessment
+## 249. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -2417,6 +2543,7 @@ Human authority, dual-control, HALT, and break-glass governance evidence: NOT EX
 Evidence integrity, audit, gap, retention, and deterministic replay evidence: NOT EXECUTED
 Safe startup, Recovery Barrier, conservative inventory, and readiness evidence: NOT EXECUTED
 Critical Input integrity, provenance, independent approval, context binding, and invalidation evidence: NOT EXECUTED
+Venue, session, tradability, exact order constraint, and final-egress currentness evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -2425,13 +2552,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 238. Required Next Execution Sequence
+## 250. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, and Critical Input/context-integrity models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, and venue/session/tradability-constraint models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -2444,7 +2571,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 239. Verification Specification Approval Gate
+## 251. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

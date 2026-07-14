@@ -24,7 +24,12 @@ profile_identity:
 live_scope:
   conformance_class: CLASS-D
   accounts: []
+  venues: []
+  market_segments: []
   instruments: []
+  session_phases: []
+  order_types: []
+  time_in_force_values: []
   action_classes: []
   maximum_concurrency: 0
   maximum_quantity: null
@@ -125,6 +130,30 @@ capabilities:
     evidence_refs: []
     timezone: TBD
     precision: TBD
+  market_and_instrument_constraints:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    session_phase_semantics: UNKNOWN
+    halt_and_suspension_semantics: UNKNOWN
+    price_band_tick_lot_and_quantity_semantics: UNKNOWN
+    order_type_time_in_force_and_route_semantics: UNKNOWN
+  account_margin_borrow_and_settlement_constraints:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    account_permission_semantics: UNKNOWN
+    margin_and_collateral_semantics: UNKNOWN
+    borrow_locate_and_short_sale_semantics: UNKNOWN
+    settlement_currency_and_expiration_semantics: UNKNOWN
+
+venue_constraint_binding:
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
+  constraint_generation: null
+  active_currentness_mechanism: TBD
+  permissive_cache_prohibited: true
 
 egress_security:
   final_egress_boundary_id: TBD
