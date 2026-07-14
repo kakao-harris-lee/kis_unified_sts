@@ -385,6 +385,7 @@ The Replay Capsule SHALL bind:
 - ordered raw record identities and digests;
 - normalized view and transformation versions;
 - code, build, dependency, schema, canonicalization, and migration digests;
+- ADR-002-029 Source Revision, Dependency and Toolchain Closure, Build Provenance, Release Artifact, Artifact Admission, Admitted Release Set, Release Generation, Runtime Artifact Attestation, signer/key, registry, restriction, and restore evidence;
 - Hard Safety Envelope, Runtime Safety Profile, Human Authority Policy, Effective Principal Graph, Broker Capability Profile, and Evidence Integrity Policy;
 - authoritative snapshots and committed prefixes used as initial state;
 - time snapshots, continuity identities, uncertainty, and clock behavior;

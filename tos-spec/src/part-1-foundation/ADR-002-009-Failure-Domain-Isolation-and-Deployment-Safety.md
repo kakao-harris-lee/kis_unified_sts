@@ -267,6 +267,8 @@ Mixed-version operation is permitted only where compatibility and safety dominan
 
 Rollback is a new deployment generation. It SHALL NOT reuse stale authority merely because the binary version was previously accepted.
 
+ADR-002-029 governs the end-to-end source, build, dependency/toolchain, signing, registry, admission, Release Generation, deployment, and actual-runtime-attestation contract. The fields above are necessary deployment evidence, not self-admission: signatures, scans, tests, registry presence, canary success, or health cannot create software eligibility or live authority.
+
 An incomplete deployment, failed migration, partial configuration distribution, or unknown active instance SHALL invalidate normal live authority for the affected scope until fencing and reconciliation establish exclusivity.
 
 ### 10.1 Greenfield Egress and Credential Boundary

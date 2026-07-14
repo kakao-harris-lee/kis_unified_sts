@@ -197,6 +197,7 @@ Every Live Authorization SHALL bind at least:
 - Runtime Safety Profile version;
 - Broker Capability Profile version and conformance class;
 - software artifact digest, configuration digest, and deployment provenance;
+- ADR-002-029 Software Release Policy, Release Generation, complete Admitted Release Set digest, exact Release Artifact Manifest, Runtime Artifact Attestation, compatibility result, signer/key status, and release restriction floor;
 - credential and broker-egress identity;
 - Recovery Evidence Package identity and evidence generation;
 - Critical Input Policy, Context Generation, Critical Input Snapshot, and exact Decision Context Capsule identities and digests under ADR-002-018;
@@ -467,7 +468,7 @@ After restart or failover:
 
 Rolling deployment SHALL NOT temporarily create multiple egress paths or mixed safety versions.
 
-ADR-002-009 governs the required deployment identity, hard fencing, Failure-Domain Allocation Matrix, and common-mode evidence for these claims.
+ADR-002-009 governs the required deployment identity, hard fencing, Failure-Domain Allocation Matrix, and common-mode evidence for these claims. ADR-002-029 governs exact source-to-runtime admission, Release Generation, actual artifact attestation, compatibility, restriction, rollback/restore, and non-revival; no deployment or software recovery inherits an earlier admission or authorization.
 
 ---
 

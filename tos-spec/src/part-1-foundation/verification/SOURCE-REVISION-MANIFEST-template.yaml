@@ -1,0 +1,61 @@
+artifact_type: SOURCE_REVISION_MANIFEST
+schema_version: 1.0-DRAFT
+manifest_id: TBD
+manifest_version: TBD
+source_continuity_generation: null
+canonical_digest: TBD
+status: DRAFT
+policy_binding:
+  software_release_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+repository_identity: TBD
+repository_environment: TBD
+source_revision_digest: TBD
+source_tree_digest: TBD
+source_history_head_digest: TBD
+source_history_continuity_proof_digest: TBD
+source_review_request_digest: TBD
+source_review_policy_digest: TBD
+source_review_decision_digest: TBD
+source_author_effective_principal_id: TBD
+reviewer_effective_principal_set_digest: TBD
+effective_principal_independence_result: UNKNOWN
+generated_source_closure_digest: TBD
+submodule_closure_digest: TBD
+large_file_object_closure_digest: TBD
+vendored_source_closure_digest: TBD
+external_source_closure_digest: TBD
+schema_and_migration_source_digest: TBD
+build_script_source_digest: TBD
+code_generator_source_digest: TBD
+source_license_and_policy_result: UNKNOWN
+history_rewrite_detected: true
+closure_complete: false
+review_current: false
+semantic_result: UNKNOWN
+failure_response: QUARANTINE_AND_DENY
+partial_manifest_permitted: false
+wildcard_source_permitted: false
+manifest_union_permitted: false
+consumer_patch_permitted: false
+approved_by_effective_principal_set_digest: TBD
+effective_from: null
+review_due: null
+authority:
+  active: false
+  creates_source_approval: false
+  creates_artifact_admission: false
+  deploys_software: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_safety_state: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: This DRAFT and incomplete source manifest is UNKNOWN and grants no authority. History uncertainty, review common mode, generated-source drift, submodule substitution, external-source omission, restore, patching, or union quarantines the candidate and denies dependent new risk.

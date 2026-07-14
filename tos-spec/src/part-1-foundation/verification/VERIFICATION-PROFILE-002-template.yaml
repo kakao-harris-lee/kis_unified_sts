@@ -78,6 +78,16 @@ scope:
   monitor_coverage_manifest_id: TBD
   monitor_coverage_manifest_generation: null
   monitor_coverage_manifest_digest: TBD
+  software_release_policy_id: TBD
+  software_release_policy_generation: null
+  software_release_policy_digest: TBD
+  admitted_release_set_id: TBD
+  release_generation: null
+  admitted_release_set_digest: TBD
+  release_artifact_manifest_id: TBD
+  release_artifact_manifest_digest: TBD
+  runtime_artifact_attestation_id: TBD
+  runtime_artifact_attestation_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -450,6 +460,41 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+  B_supply_chain_compromise_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK_AND_RESTRICT_RELEASE_SCOPE
+  B_release_restriction_to_authority_restrict:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_release_restriction_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_release_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_runtime_artifact_drift_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_AND_FENCE_RUNTIME
   B_final_quantity_proof:
     value_ms: null
     semantics: broker_specific
@@ -622,6 +667,11 @@ limits:
   MAX_safety_alert_age_ms: null
   MAX_monitoring_suppression_duration_ms: null
   MAX_alert_acknowledgement_age_ms: null
+  MAX_build_provenance_age_ms: null
+  MAX_artifact_admission_decision_age_ms: null
+  MAX_admitted_release_set_age_ms: null
+  MAX_runtime_artifact_attestation_age_ms: null
+  MAX_release_key_status_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

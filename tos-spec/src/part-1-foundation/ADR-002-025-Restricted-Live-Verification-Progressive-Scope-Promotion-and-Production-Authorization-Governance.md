@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** EV-L5 restricted-live trial governance, exact trial scope, pre-registration, bounded economic effect, trial authorization prerequisites, abort and demotion, evidence validity, independent review, progressive promotion, production authorization, continuous conformance, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-024, SAFE-025, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§9.1, 11, 20, 23, and 28–29; VER-002-001 §§5, 353, and 356–357
+- **Refines:** RFC-001 SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-024, SAFE-025, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§9.1, 11, 20, 23, and 28–29; VER-002-001 §§5, 365, and 368–369
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-024
 
 ---
@@ -331,6 +331,8 @@ An eligible plan proceeds through the complete ADR-002-015 human approval and AD
 The authorization binds one Trial Run identity, plan digest, baseline, Promotion Generation, maximum action/effect/count/duration envelope, start/expiry window, and abort generation. It cannot be reused for another run or resumed after invalidation.
 
 Before the first trial byte, a fresh Recovery Generation, complete currentness vector, exact authorization, capacity and flow commitments, evidence durability, and final-egress path SHALL be positively established. Trial start is a governed state transition, not a deployment-health event.
+
+The Trial Plan and every evidence package SHALL bind the exact ADR-002-029 Software Release Policy, Release Generation, Admitted Release Set, Release Artifact Manifest, Runtime Artifact Attestation, compatibility graph, and restriction state exercised. Evidence does not extrapolate across artifact, dependency, toolchain, platform, deployment, or mixed-version scope; trial completion or production-scope promotion cannot substitute for software admission.
 
 ---
 

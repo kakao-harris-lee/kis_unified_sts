@@ -1,0 +1,71 @@
+artifact_type: BUILD_PROVENANCE_ATTESTATION
+schema_version: 1.0-DRAFT
+attestation_id: TBD
+attestation_version: TBD
+builder_continuity_generation: null
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+policy_binding:
+  software_release_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+source_revision_manifest_binding:
+  source_revision_manifest_id: TBD
+  source_revision_manifest_digest: TBD
+dependency_and_toolchain_binding:
+  closure_manifest_id: TBD
+  closure_manifest_digest: TBD
+build_recipe_id: TBD
+build_recipe_digest: TBD
+builder_principal_id: TBD
+builder_owner_epoch: null
+builder_environment_digest: TBD
+builder_platform_digest: TBD
+builder_network_policy_digest: TBD
+builder_cache_state_digest: TBD
+declared_input_set_digest: TBD
+observed_input_set_digest: TBD
+declared_environment_digest: TBD
+observed_environment_digest: TBD
+output_artifact_digest: TBD
+output_platform_and_architecture_digest: TBD
+independent_build_attestation_digest: TBD
+reproducibility_comparison_digest: TBD
+allowed_nondeterminism_policy_digest: TBD
+observed_nondeterminism_digest: TBD
+common_mode_analysis_digest: TBD
+trustworthy_time_binding:
+  time_health_generation: null
+  receipt_anchor: null
+  attested_at: null
+  maximum_age_key: MAX_build_provenance_age_ms
+  age_within_approved_limit: false
+all_inputs_declared: false
+builder_identity_current: false
+reproducibility_requirement_satisfied: false
+provenance_complete: false
+failure_response: QUARANTINE_AND_DENY
+attestation_replay_permitted: false
+favorable_output_selection_permitted: false
+attestation_union_permitted: false
+signer_identity: TBD
+signing_key_generation: null
+signature_digest: TBD
+authority:
+  active: false
+  proves_semantic_correctness: false
+  creates_artifact_admission: false
+  deploys_software: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_safety_state: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: This DRAFT attestation is UNKNOWN and authenticates no safe meaning or authority. A signature or reproducible output does not prove source correctness, complete lineage, compatibility, current admission, broker permission, or live readiness.

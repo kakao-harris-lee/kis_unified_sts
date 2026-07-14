@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety-incident detection and declaration, exact affected scope, restrictive escalation, containment coordination, controlled shutdown, demotion, external emergency activity, investigation, closure, recovery handoff, evidence, currentness, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 §§3, 7.1–7.5, 8, and SAFE-001, SAFE-002, SAFE-010, SAFE-011, SAFE-013, SAFE-014, SAFE-021 through SAFE-025, SAFE-040 through SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§4.5, 7.5, 9.1, 10.11, 10.16–10.19, 10.26–10.28, 14.4–14.6, 15, 17, 20, and 22–24; VER-002-001 §§5, 326–337, 350, and 353–357
+- **Refines:** RFC-001 §§3, 7.1–7.5, 8, and SAFE-001, SAFE-002, SAFE-010, SAFE-011, SAFE-013, SAFE-014, SAFE-021 through SAFE-025, SAFE-040 through SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§4.5, 7.5, 9.1, 10.11, 10.16–10.19, 10.26–10.28, 14.4–14.6, 15, 17, 20, and 22–24; VER-002-001 §§5, 326–337, 362, and 365–369
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-026
 
 ---
@@ -116,6 +116,8 @@ An immutable versioned record of one incident identity, current Incident Generat
 ### 5.4 Incident Generation
 
 A monotonic generation fencing earlier incident scope, state, plans, closure eligibility, recovery handoff, configuration requests, authority requests, and consumers after any material signal, scope, severity, restriction, obligation, evidence, cause, plan, owner, policy, or recovery change.
+
+ADR-002-029 source, builder, dependency/toolchain, signer/key, registry, admission, deployment, runtime-artifact, compatibility, or Release Generation compromise, contradiction, substitution, drift, or stale restore is a Safety Signal for the greatest credible dependent scope. Incident closure never readmits an artifact, clears a release restriction, restores a deployment, or reuses a prior generation.
 
 ### 5.5 Active Safety Incident Set
 

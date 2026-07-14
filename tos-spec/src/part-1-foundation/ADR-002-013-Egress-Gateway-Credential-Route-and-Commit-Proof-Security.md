@@ -316,6 +316,7 @@ The Quorum Commit Certificate SHALL bind at least:
 - exact ADR-002-022 Action Flow Policy, Action Flow Generation, Action Flow State Snapshot, Action Flow Decision, RCL action-flow commitment, single-use Action Flow Permit, cause lineage, resource vector, Protective Flow Reserve evidence, maximum ages, and invalidation set/status;
 - exact ADR-002-023 Trading Approval Policy, Trading Approval Generation, Proposal Approval Request, Independent Approval Decision, Approval Consumption Record, immutable Intent binding, maximum ages, and invalidation set/status;
 - exact ADR-002-024 Currentness Policy, complete Safety Currentness Vector, applicable restrictive generation floors, Local Restrictive Latch generation/state, and single-use Egress Currentness Proof identity/digest;
+- exact ADR-002-029 Software Release Policy, Release Generation, Admitted Release Set, Release Artifact Manifest, actual Runtime Artifact Attestation, compatibility result, signer/key status, and release-restriction floor;
 - Egress Generation and exact Active Egress Principal;
 - credential, broker-session, route-policy, endpoint-policy, and trust-bundle generations;
 - quorum signer identities or equivalent threshold-verification material.
@@ -338,9 +339,10 @@ Before send, the Final Egress Trust Boundary SHALL:
 12. actively verify the current Action Flow Policy, Action Flow Generation, exact Action Flow Decision and RCL action-flow commitment, cause lineage, complete shared scope/vector, unused single-use Action Flow Permit, Protective Flow Reserve evidence where applicable, ages, and invalidation status under ADR-002-022 without treating cached `GRANT`, a local token, queue priority, RCL commit existence, governor health, TTL, heartbeat, broker connection, or absence of invalidation as proof;
 13. actively verify the current Trading Approval Policy and Generation, exact Proposal Approval Request, `APPROVE` decision, single-use Approval Consumption Record, immutable Intent binding, ages, and invalidation state under ADR-002-023 without treating cached `APPROVED`, Intent state, TTL, heartbeat, service health, prior success, or absence of invalidation as proof;
 14. verify under ADR-002-024 that one complete Safety Currentness Vector satisfies every restrictive floor, that a new single-use Egress Currentness Proof is ordered with this exact claim and `SEND_STARTED`, and that the local restrictive latch is positively established as `CLEAR`, without treating a cache, session, TTL, heartbeat, health, or absence of invalidation as proof;
-15. verify the capability nonce and Action Flow Permit claim nonce are each bound and claimed exactly once for this principal and request;
-16. reconstruct the exact actual outbound representation after every mutable internal stage and compare its canonical semantics, digest, endpoint, action, account, route, and economic effect to the ADR-002-020 command and proof;
-17. verify the claim-to-first-byte bound can still be met.
+15. actively verify the current Software Release Policy, Release Generation, complete Admitted Release Set, exact Release Artifact Manifest, actual Runtime Artifact Attestation, compatibility result, signer/key status, scope, age, and restriction state under ADR-002-029 without treating a tag, signature, scan, SBOM, test, CI result, registry presence, deployment health, canary, cache, heartbeat, or absence of revocation as currentness proof;
+16. verify the capability nonce and Action Flow Permit claim nonce are each bound and claimed exactly once for this principal and request;
+17. reconstruct the exact actual outbound representation after every mutable internal stage and compare its canonical semantics, digest, endpoint, action, account, route, and economic effect to the ADR-002-020 command and proof;
+18. verify the claim-to-first-byte bound can still be met.
 
 One leader signature, successful RPC, database primary response, local journal entry, cached proof, event, projection, or audit record is insufficient.
 

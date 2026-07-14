@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-028
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-028; implementation evidence has not been executed
-- **Extension State:** ADR-002-005 through ADR-002-028 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, and STM evidence families. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-029
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-029; implementation evidence has not been executed
+- **Extension State:** ADR-002-005 through ADR-002-029 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, and SCI evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -2819,7 +2819,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 350. Model-Based and Property Verification
+# Part XXIX — Software Supply-Chain and Runtime Artifact Admission Evidence
+
+## 350. SCI-EV-001 — Source Identity and Review Integrity
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-001
+- **Injection:** Move a branch or tag after review; rewrite repository history; omit or substitute a submodule, generated source, large-file object, patch, build script, or policy identity; or present a favorable partial source tree as the reviewed revision.
+- **Expected:** Only the exact immutable tree and complete source closure remain eligible; mutable names and incomplete lineage are `UNKNOWN` or denied, the greatest credible dependent scope is restricted, and no historical review creates admission or authority.
+
+## 351. SCI-EV-002 — Build Isolation, Provenance, and Reproducibility
+
+- **Minimum Level:** EV-L1/EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-002
+- **Injection:** Change builder epoch, commands, environment, locale, time, randomness, secret input, network policy, or unpinned fetch; replay provenance for different bytes or scope; or create an independent/reproducible-build mismatch and select the favorable output.
+- **Expected:** Provenance binds the exact recipe, builder, inputs, environment, and output digests but never self-admits them; unexplained nondeterminism or differential mismatch is restrictive and cannot be hidden by a valid attestation.
+
+## 352. SCI-EV-003 — Dependency and Toolchain Closure
+
+- **Minimum Level:** EV-L1/EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-003
+- **Injection:** Omit, float, replace, or dynamically load a transitive library, plugin, build script, compiler, linker, SDK, code generator, base image, OS package, sidecar, proxy, signer component, or runtime module; compromise a dependency registry or lockfile.
+- **Expected:** The exact transitive closure and resolver evidence are mandatory; undeclared, mutable, conflicting, unavailable, or unbounded resolution denies admission and runtime use, and shared corrupted dependencies cannot count as independent verification.
+
+## 353. SCI-EV-004 — Signer, Key, and Attestation Compromise
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-004
+- **Injection:** Collapse author, reviewer, builder, signer, registry, admission, deployment, configuration, and arming identities under one effective controller; compromise, revoke, roll back, or replay a signing key or attestation chain.
+- **Expected:** Effective control and common modes are collapsed before independence is credited; signature authenticates exact bytes and origin only, stale or compromised key state restricts, and no signer or workflow gains admission, capacity, live, or broker authority.
+
+## 354. SCI-EV-005 — Registry Custody and Artifact Substitution
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-005
+- **Injection:** Move a mutable tag, select another platform manifest, replace a layer or blob, race scan/sign/download/deploy, restore a registry without later revocations, or serve bytes differing from those reviewed, signed, scanned, admitted, or attested.
+- **Expected:** Retrieval and every transition use content identity and exact manifest closure; substitution and TOCTOU become restrictive, registry custody is not admission, restored stale state is fenced, and favorable tags or health cannot preserve eligibility.
+
+## 355. SCI-EV-006 — Independent Admission and Compatibility
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-006
+- **Injection:** Treat CI, tests, SBOM, scan, signature, registry presence, deployment, canary, or health success as admission; patch, union, widen, or replay narrow decisions across account, environment, Safety Cell, platform, consumer, configuration, or broker scope.
+- **Expected:** One exact current policy deterministically returns `ADMIT`, `DENY`, or `UNKNOWN` for the complete artifact and compatibility graph; only exact `ADMIT` is eligible for release-set commit, remains non-authorizing, and cannot be widened or composed permissively.
+
+## 356. SCI-EV-007 — Release Generation and Stale Fencing
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-007
+- **Injection:** Publish a stale, partial, mixed, patched, unioned, or favorably subsetted Admitted Release Set; resume a removed writer; roll back or restore registry state; or reuse a superseded Release Generation.
+- **Expected:** One monotonic generation and one complete exact set govern overlapping scope; stale writers and consumers are hard fenced, uncertainty denies dependent new risk, and restore or rollback creates a new non-live generation rather than reviving admission.
+
+## 357. SCI-EV-008 — Deployment Attestation and Environment Confinement
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-008
+- **Injection:** Cross a non-live artifact into live scope; run bytes, plugins, sidecars, proxies, SDKs, signer components, platform variants, or dynamic modules different from desired or admitted state; preserve a stale broker-capable instance after replacement.
+- **Expected:** Actual runtime bytes and workload/environment/Safety-Cell identity match one current attestation and admitted set; deployment labels and readiness are insufficient, drift restricts and fences, and deployment never self-arms or reaches the broker outside final egress.
+
+## 358. SCI-EV-009 — Mixed Version, Promotion, Rollback, and Restore
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-009
+- **Injection:** Mix old and new schema, protocol, migration, serializer, SDK, risk logic, verifier, configuration, or egress versions; apply emergency hotfix or historical rollback; restore a previously admitted artifact while retaining old activation or authority.
+- **Expected:** Every compatibility edge and safety-dominance claim is exact and positive; unknown combinations are incompatible, change creates a new generation and non-live admission path, and no prior approval, activation, promotion, or authorization revives.
+
+## 359. SCI-EV-010 — Active Currentness, Revocation, Partition, and Send Race
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-010
+- **Injection:** Delay or lose vulnerability, compromise, correction, revocation, drift, or generation restriction; partition the supply-chain plane while egress remains broker-reachable; race restriction against capability claim, `SEND_STARTED`, and first byte; or rely on cached admission, TTL, heartbeat, health, or absence of revocation.
+- **Expected:** Authority and final egress actively prove exact current release facts and deny missing or stale state; ambiguous attempts remain potentially live, capacity-covered, and ineligible for blind retry, and a broker-reachable partition creates no bypass.
+
+## 360. SCI-EV-011 — Authority Separation, Broker Finality, and Economic Continuity
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker and security assessment
+- **Supports:** ADR-002-029 SCI-AC-011
+- **Injection:** Give repository, builder, signer, registry, scanner, admission, deployment, or attestation identities RCL, Safety Authority, protective classification, live authorization, or broker route; expire or revoke software state while prior broker effect or UNKNOWN remains.
+- **Expected:** Release artifacts are negative gates only; RCL and final egress remain exclusive, missing ACK is not non-acceptance, Cancel ACK is not Final Quantity Proof, software expiry or revocation never erases economic effect or releases capacity, and priority is not protective reserve.
+
+## 361. SCI-EV-012 — Evidence, Recovery, Hotfix, and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-029 SCI-AC-012
+- **Injection:** Present source review, signature, SBOM, scan, tests, reproducible build, provenance, registry log, deployment health, canary, replay, quiet monitoring, incident closure, evidence repair, restore, reconnect, or operator approval as completed evidence, release currentness, readiness, or authority restoration.
+- **Expected:** Evidence remains evidence; recovery occurs behind the closed barrier, exact release state is reconstructed under a new generation, restrictions survive, written cases remain unexecuted, and no scope, admission, authority, capacity, or automatic re-arm is restored.
+
+---
+
+## 362. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -2850,6 +2938,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Safety Deviation Policy, Non-Waivable Boundary, exact Request, dependency closure, compensating controls, effective-person quorum, Decision consumption, Residual-Risk Acceptance Record, Active Deviation Set, Deviation Generation, configuration binding, expiry, revocation, and recovery state;
 - Safety Incident Policy, authenticated signals, severity/materiality, greatest-credible scope, dependency closure, Incident Generation, Active Safety Incident Set, lifecycle, containment, controlled shutdown, economic/protection obligations, recovery handoff, independent closure, currentness, and non-revival state;
 - Safety Monitoring Policy, Critical Telemetry and Monitor Coverage Manifests, deterministic evaluators, Monitor Generation, Continuous Conformance Snapshot, Monitoring Gaps, suppressions, alerts, delivery, escalation, restrictive and incident handoff, currentness, and non-revival state;
+- Software Release Policy, exact source revision, build recipe and provenance, dependency/toolchain closure, Release Artifact Manifest, independent admission, Release Generation, Admitted Release Set, deployment/runtime attestation, restriction, currentness, rollback, restore, and non-revival state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2947,13 +3036,17 @@ No schema, unit, sign, scale, time, sequence, derivation, threshold, window, par
 No suppression, maintenance, deduplication, queue overflow, delivery failure, acknowledgement, ticket closure, or alert retirement disables a required restrictive path or proves containment
 No monitoring policy, manifest, snapshot, gap, alert, page, dashboard, or escalation artifact mutates RCL, classifies protection, issues authority, reaches the broker, clears safety state, closes an incident, restores scope, or re-arms
 No stale Monitor Generation, monitoring-plane partition, cached conformance, restore, recovery, replay, backlog drain, or operator return revives prior permission or automatically re-arms
+No mutable source name, incomplete source closure, floating dependency, unpinned toolchain, undeclared runtime load, signature, scan, test, CI result, registry tag, deployment health, or canary creates artifact admission or live permission
+No compromised, stale, revoked, substituted, mixed, incompatible, restored, or unattested software artifact survives Release Generation, authority, or final-egress currentness checks
+No repository, builder, signer, registry, scanner, admission, deployment, or attestation identity mutates RCL, activates configuration, issues authority, transmits, clears safety state, restores scope, or re-arms
+No software rollback, hotfix, restore, rebuild, evidence repair, monitoring recovery, or incident closure revives a prior admission, activation, capability, economic-state interpretation, or live scope
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 351. Fault-Injection Requirements
+## 363. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2978,6 +3071,7 @@ The test harness SHALL support controlled injection at least for:
 - non-waivable or unclassified request, incomplete/wildcard/patched/unioned scope, combined residual-risk underestimation, observational or common-mode compensation, same-effective-person approval, decision double spend, evidence relabeling, stale Active Deviation Set, invalidation suppression/delay beyond `B_deviation_revoke_to_authority` or `B_deviation_revoke_to_egress`, Deviation Generation fence delay, expiry/claim/first-byte race, silent renewal, predecessor rollback, emergency-route bypass, and recovery attempting deviation or authority revival;
 - missed, suppressed, downgraded, delayed, or under-scoped incident signal; favorable or stale Active Safety Incident Set; concurrent incident/common-mode omission; Incident Generation cache; declaration or scope-expansion delay beyond approved incident bounds; restriction/claim/first-byte race; incident-plane partition with broker reachability; shutdown-before-fence; queue draining by send; stale principal/session/route survival; blind protection cancellation or blanket liquidation; process stop treated as broker finality; external-route rewrite; same-effective-person closure; incomplete recovery handoff; and closure, remediation, or recovery attempting old-scope or authority revival;
 - omitted, wildcarded, patched, optionalized, partially refreshed, or unioned monitoring scope; source restart, continuity reset, endpoint/credential/provider change, schema/unit/mapping/lineage/time drift, frozen payload, stale green cache, health-as-currentness, common-mode monitor paths, local permissive threshold, NaN/overflow/empty-window coercion, conflicting-source favorable selection, broad or expired suppression, deduplication collision, alert/retry storm, queue overflow, delivery/provider/roster failure, acknowledgement-as-containment, stale Monitor Generation, monitoring-plane partition with broker reachability, gap/claim/first-byte race, direct monitoring route bypass, and monitoring recovery attempting capacity release, incident clear, scope restoration, or automatic re-arm;
+- source-history/tag movement, incomplete submodule/generated-source/build-script closure, mutable or network-fetched build input, builder/provenance substitution, dependency/toolchain/plugin/base-image/runtime-load omission, lockfile or registry compromise, signer/key rollback or revocation, artifact/tag/layer/platform substitution, scan/sign/deploy TOCTOU, effective-control collapse, admission scope widening or union, stale Release Generation, mixed-version incompatibility, non-live-to-live artifact crossover, runtime drift, stale deployment survival, release-plane partition with broker reachability, restriction/claim/first-byte race, and rollback/restore/hotfix/recovery attempting prior admission or authority revival;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -3001,7 +3095,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 352. Broker Verification Safety Rules
+## 364. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -3021,7 +3115,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 353. Continuous Conformance Evidence
+## 365. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -3048,6 +3142,7 @@ After approval, continuous monitors SHALL detect at least:
 - Safety Deviation Policy, requirement/hazard classification, Non-Waivable Boundary, exact scope/dependency closure, combined residual risk, compensating-control state, Effective Principal quorum, decision consumption, Residual-Risk Acceptance Record, Active Deviation Set, Deviation Generation, expiry, revocation, or final-egress currentness contradiction;
 - Safety Incident Policy, signal classification, severity/materiality, dependency closure, Incident Generation, Active Safety Incident Set, lifecycle, containment plan, controlled-shutdown ordering, hard fence, economic/protection obligation, recovery handoff, closure independence, or final-egress currentness contradiction;
 - Safety Monitoring Policy, Critical Telemetry Manifest, Monitor Coverage Manifest, source continuity, telemetry semantics, deterministic evaluator, hard-bound semantics, Monitor Generation, Continuous Conformance Snapshot, Monitoring Gap, common-mode analysis, suppression, alert correlation, delivery, acknowledgement, escalation, restrictive/incident handoff, or final-egress currentness contradiction;
+- Software Release Policy, source/tree identity, build recipe/provenance, dependency/toolchain/runtime closure, signer/key state, Release Artifact Manifest, admission decision, Release Generation, Admitted Release Set, compatibility graph, actual runtime attestation, restriction, deployment, or final-egress currentness contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -3064,7 +3159,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 354. Residual Risk Register
+## 366. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -3087,7 +3182,7 @@ Where RFC-001 permits a deviation, the register SHALL additionally bind the exac
 
 ---
 
-## 355. Independent Review Checklist
+## 367. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -3117,6 +3212,7 @@ The reviewer SHALL confirm:
 - every ADR-002-026 request is outside the Non-Waivable Boundary and exact in scope/dependency closure, compensation is enforceable and independently evidenced, Effective Principal approval is independent, combined risk is bounded, decision consumption is single-use, evidence remains non-PASS, and expiry/revocation/currentness cannot be cached or revived;
 - every ADR-002-027 material signal restricts before investigation completes, scope is the greatest credible dependency closure, Incident Generation and the Active Safety Incident Set are current and complete, containment/shutdown preserve economic and protection obligations, handoff is explicitly accepted by one Recovery Session, closure is independent and non-permissive, and no incident artifact bypasses existing authority;
 - every ADR-002-028 Critical obligation maps to exact current telemetry and deterministic monitor coverage, source continuity and semantics are proven, hard-bound meaning is preserved, gaps and common modes are restrictive, suppression cannot silence safety, alert acknowledgement is not containment, Monitor Generation is active through final egress, and no monitoring artifact becomes authority;
+- every ADR-002-029 safety-critical runtime artifact is content-addressed to complete reviewed source, build, dependency/toolchain and runtime lineage, independently admitted for exact scope, fenced by one current Release Generation, positively attested at runtime and final egress, and no supply-chain artifact or workflow becomes authority;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -3126,7 +3222,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 356. Approval Gates by ADR
+## 368. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -3499,6 +3595,17 @@ Requires:
 - security assessment of source/evaluator/registry compromise, semantic and parser drift, common-mode independence, threshold weakening, suppression abuse, deduplication scope loss, alert storm and provider failure, stale writer/restore, monitoring-plane partition, alternate broker route, final-egress cache, recovery, and automatic re-arm;
 - proof that monitoring is a non-authorizing negative gate, absence of alert is not health, gaps restrict without releasing capacity, alert acknowledgement is not containment, evidence is not prevention, and recovery never revives prior authority.
 
+### ADR-002-029
+
+Requires:
+
+- SCI-EV-001 through SCI-EV-012 at the specified non-live levels, plus applicable SPG, HAG, ERI, SBR, CII, IOC, CUR, RLP, WDR, SIR, STM, FD, RCLP, EGRESS, AFG, RC, SA, BC, TIME, REARM, and cross-system evidence;
+- approved canonical Software Release Policy, Source Revision Manifest, Dependency and Toolchain Closure Manifest, Build Provenance Attestation, Release Artifact Manifest, Artifact Admission Decision, Admitted Release Set, and Runtime Artifact Attestation schemas;
+- approved source/review, isolated build, dependency/toolchain resolver, signer/key, immutable registry, deterministic independent admission, Release Generation registry and writer fence, deployment/runtime attestation, compatibility, restriction, recovery, and final-egress currentness mechanisms;
+- approved and measured `B_supply_chain_compromise_detect`, `B_release_restriction_to_authority_restrict`, `B_release_restriction_to_egress_deny`, `B_release_generation_fence`, `B_runtime_artifact_drift_detect`, `MAX_build_provenance_age_ms`, `MAX_artifact_admission_decision_age_ms`, `MAX_admitted_release_set_age_ms`, `MAX_runtime_artifact_attestation_age_ms`, `MAX_release_key_status_age_ms`, and every applicable upstream bound;
+- security assessment of repository history rewrite, omitted source/build/dependency closure, builder and registry compromise, signer/key rollback, effective-control collapse, substitution and TOCTOU, mixed versions, runtime drift, stale writer/deployment, supply-chain partition, direct broker route, restore, hotfix, recovery, and automatic re-arm;
+- proof that admission is a non-authorizing negative gate, signatures/scans/tests/SBOM/deployment health do not create permission, exact actual runtime bytes are current at final egress, economic effect and broker finality survive software expiry/revocation, and recovery never revives prior admission or authority.
+
 ### Restricted-Live Trial Gate
 
 Requires:
@@ -3524,7 +3631,7 @@ Requires:
 
 ---
 
-## 357. Current Evidence Readiness Assessment
+## 369. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -3561,6 +3668,7 @@ Restricted-live trial, evidence coverage, abort, promotion, demotion, and produc
 Safety waiver, deviation, compensating-control, residual-risk, expiry, and currentness governance evidence: NOT EXECUTED
 Safety incident declaration, scope, containment, controlled-shutdown, recovery-handoff, closure, and currentness governance evidence: NOT EXECUTED
 Safety telemetry, monitor coverage, continuous-conformance, gap, suppression, alert-delivery, escalation, and currentness governance evidence: NOT EXECUTED
+Software supply-chain, build provenance, dependency/toolchain closure, release admission, deployment, runtime-attestation, and currentness evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -3569,13 +3677,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 358. Required Next Execution Sequence
+## 370. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, and safety-telemetry/continuous-monitoring-governance models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, safety-telemetry/continuous-monitoring-governance, and software-supply-chain/runtime-artifact-admission models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -3588,7 +3696,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 359. Verification Specification Approval Gate
+## 371. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

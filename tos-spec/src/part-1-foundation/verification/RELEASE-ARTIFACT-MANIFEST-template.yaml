@@ -1,0 +1,71 @@
+artifact_type: RELEASE_ARTIFACT_MANIFEST
+schema_version: 1.0-DRAFT
+manifest_id: TBD
+manifest_version: TBD
+artifact_generation: null
+canonical_digest: TBD
+status: DRAFT
+semantic_result: UNKNOWN
+policy_binding:
+  software_release_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+source_revision_manifest_binding:
+  source_revision_manifest_id: TBD
+  source_revision_manifest_digest: TBD
+dependency_and_toolchain_binding:
+  closure_manifest_id: TBD
+  closure_manifest_digest: TBD
+build_provenance_binding:
+  build_provenance_attestation_id: TBD
+  build_provenance_attestation_digest: TBD
+artifact_identity: TBD
+artifact_content_digest: TBD
+artifact_type_and_format_digest: TBD
+platform_and_architecture_digest: TBD
+image_manifest_and_layer_closure_digest: TBD
+executable_and_library_set_digest: TBD
+plugin_and_runtime_module_set_digest: TBD
+sidecar_proxy_sdk_and_signer_component_set_digest: TBD
+software_bill_of_materials_digest: TBD
+schema_set_digest: TBD
+protocol_set_digest: TBD
+migration_set_digest: TBD
+consumer_compatibility_graph_digest: TBD
+required_configuration_bundle_digest: TBD
+required_hard_safety_envelope_digest: TBD
+required_broker_capability_profile_digest: TBD
+target_scope_digest: TBD
+registry_identity: TBD
+registry_custody_proof_digest: TBD
+artifact_signer_identity: TBD
+artifact_signing_key_generation: null
+artifact_signature_digest: TBD
+signing_key_status: UNKNOWN
+scan_and_test_evidence_set_digest: TBD
+unresolved_finding_set_digest: TBD
+lineage_complete: false
+registry_custody_current: false
+compatibility_complete: false
+failure_response: QUARANTINE_AND_DENY
+mutable_tag_is_identity: false
+partial_manifest_permitted: false
+manifest_patch_permitted: false
+manifest_union_permitted: false
+authority:
+  active: false
+  creates_source_approval: false
+  creates_artifact_admission: false
+  deploys_software: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_safety_state: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: This DRAFT artifact manifest is incomplete and UNKNOWN. Registry presence, tag resolution, signature, SBOM, scan, test, build success, or historical acceptance grants no admission, deployment permission, live authority, or broker transmission.

@@ -1,0 +1,65 @@
+artifact_type: ADMITTED_RELEASE_SET
+schema_version: 1.0-DRAFT
+release_set_id: TBD
+release_generation: null
+canonical_digest: TBD
+predecessor_release_generation: null
+predecessor_release_set_digest: TBD
+status: DRAFT
+result: UNKNOWN
+policy_binding:
+  software_release_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+scope:
+  environment: TBD
+  safety_cell: TBD
+  capacity_domain: TBD
+  legal_portfolio: TBD
+  account_scope_digest: TBD
+  broker_scope_digest: TBD
+  component_scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+release_artifact_manifest_set_digest: TBD
+artifact_admission_decision_set_digest: TBD
+artifact_lineage_graph_digest: TBD
+consumer_compatibility_graph_digest: TBD
+deployment_plan_digest: TBD
+required_configuration_bundle_digest: TBD
+required_runtime_attestation_policy_digest: TBD
+artifact_signing_trust_bundle_generation: null
+artifact_signing_trust_bundle_digest: TBD
+release_restriction_floor: null
+release_restriction_set_digest: TBD
+incident_scope_binding_digest: TBD
+owner_epoch: null
+commit_record_digest: TBD
+committed: false
+complete: false
+current: false
+compatibility_complete: false
+restriction_state: UNKNOWN
+failure_response: DENY_DEPENDENT_NEW_RISK
+partial_set_permitted: false
+set_patch_permitted: false
+set_union_permitted: false
+favorable_subset_permitted: false
+historical_generation_reuse_permitted: false
+authority:
+  active: false
+  creates_source_approval: false
+  creates_artifact_admission: false
+  deploys_software: false
+  activates_configuration: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_restriction_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: This DRAFT release set is UNKNOWN, incomplete, uncommitted, and non-authorizing. A future current complete set is only a negative eligibility gate; it cannot deploy, activate configuration, mutate capacity, issue authority, transmit, clear safety state, restore scope, or re-arm.

@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **339**
-- NOT_IMPLEMENTED: **339**
+- Total evidence items: **351**
+- NOT_IMPLEMENTED: **351**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -362,6 +362,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | STM-EV-010 | Safety Telemetry and Continuous Monitoring | UNKNOWN, Broker Finality, and Economic Continuity | ADR-002-028 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | STM-EV-011 | Safety Telemetry and Continuous Monitoring | Compromise, Fencing, and Failure Domains | ADR-002-028 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | STM-EV-012 | Safety Telemetry and Continuous Monitoring | Evidence, Recovery, and Non-Revival | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-001 | Software Supply-Chain and Runtime Artifact Admission | Source Identity and Review Integrity | ADR-002-029 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-002 | Software Supply-Chain and Runtime Artifact Admission | Build Isolation, Provenance, and Reproducibility | ADR-002-029 | EV-L1/2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-003 | Software Supply-Chain and Runtime Artifact Admission | Dependency and Toolchain Closure | ADR-002-029 | EV-L1/2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-004 | Software Supply-Chain and Runtime Artifact Admission | Signer, Key, and Attestation Compromise | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-005 | Software Supply-Chain and Runtime Artifact Admission | Registry Custody and Artifact Substitution | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-006 | Software Supply-Chain and Runtime Artifact Admission | Independent Admission and Compatibility | ADR-002-029 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-007 | Software Supply-Chain and Runtime Artifact Admission | Release Generation and Stale Fencing | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-008 | Software Supply-Chain and Runtime Artifact Admission | Deployment Attestation and Environment Confinement | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-009 | Software Supply-Chain and Runtime Artifact Admission | Mixed Version, Promotion, Rollback, and Restore | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-010 | Software Supply-Chain and Runtime Artifact Admission | Active Currentness, Revocation, Partition, and Send Race | ADR-002-029 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-011 | Software Supply-Chain and Runtime Artifact Admission | Authority Separation, Broker Finality, and Economic Continuity | ADR-002-029 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| SCI-EV-012 | Software Supply-Chain and Runtime Artifact Admission | Evidence, Recovery, Hotfix, and Non-Revival | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 
