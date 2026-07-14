@@ -366,6 +366,8 @@ The Order Conformance Proof SHALL bind:
 - unknown, residual-risk, expiry, invalidation, and reviewer data;
 - final result `CONFORMANT` or `NON_CONFORMANT`/`UNKNOWN`.
 
+The required authority scope is mandatory and restrictive: missing, empty, unknown, stale, conflicting, or unverifiable scope makes the proof `UNKNOWN` or `NON_CONFORMANT` and blocks authority issuance and transmission. It SHALL NOT mean zero required authority, wildcard authority, or an unconstrained command.
+
 `CONFORMANT` grants no approval or authority. It is usable only as one current input to separately owned capacity, authorization, capability, and final-egress enforcement.
 
 The non-cyclic protocol order is:

@@ -40,6 +40,7 @@ capacity_binding:
   writer_epoch: null
   dominates_envelope: false
 required_authority_scope: {}
+required_authority_scope_complete: false
 construction_identity:
   compiler_build_digest: TBD
   dependency_digests: []
