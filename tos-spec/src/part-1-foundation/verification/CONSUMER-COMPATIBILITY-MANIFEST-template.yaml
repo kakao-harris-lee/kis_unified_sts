@@ -51,6 +51,10 @@ supported_contracts:
   safety_currentness_vector_schema_versions: []
   restrictive_fence_record_schema_versions: []
   egress_currentness_proof_schema_versions: []
+  restricted_live_trial_policy_schema_versions: []
+  restricted_live_trial_plan_schema_versions: []
+  restricted_live_trial_evidence_package_schema_versions: []
+  production_scope_promotion_decision_schema_versions: []
   proposal_approval_request_schema_versions: []
   independent_approval_decision_schema_versions: []
   approval_consumption_record_schema_versions: []
@@ -82,6 +86,8 @@ attestation:
   trading_approval_policy_digest: TBD
   currentness_policy_generation: null
   currentness_policy_digest: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
   context_generation: null
   reproduced_semantic_digest: TBD
   compatible: false
@@ -114,6 +120,12 @@ fail_closed_contract:
   incomplete_or_mixed_currentness_vector: DENY
   stale_or_replayed_egress_currentness_proof: DENY
   restrictive_fence_or_local_latch_conflict: RESTRICTIVE_STATE_WINS
+  stale_or_invalid_trial_policy: DENY
+  ineligible_or_changed_trial_plan: DENY
+  invalid_or_aborted_trial_run: DENY
+  trial_envelope_unavailable_or_exceeded: DENY
+  invalid_or_incomplete_trial_evidence_package: DENY_PROMOTION
+  stale_replayed_or_widened_promotion_decision: DENY
   invalidated_independent_approval_decision: DENY
   invalid_or_conflicting_approval_consumption: DENY
   approval_intent_binding_mismatch: DENY

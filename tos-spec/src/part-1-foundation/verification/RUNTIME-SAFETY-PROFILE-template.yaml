@@ -120,6 +120,9 @@ references:
   currentness_policy_id: TBD
   currentness_policy_generation: null
   currentness_policy_digest: TBD
+  restricted_live_trial_policy_id: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
   broker_capability_profiles: []
   verification_profile_id: TBD
   verification_profile_version: TBD

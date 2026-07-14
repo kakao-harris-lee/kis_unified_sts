@@ -254,7 +254,10 @@ Evidence SHALL be captured at the component that owns the decision or irreversib
 13. **reconciliation boundary** — per-field evidence, conservative bound, conflict, confidence, proof rule, and owner transition request;
 14. **configuration boundary** — artifact, canonical digest, approval, compatibility, activation, restriction, expiry, rollback, restore, and consumer result;
 15. **recovery boundary** — startup barrier, inventory, UNKNOWN, external activity, gap, decision, and governed re-arm request;
-16. **verification boundary** — baseline, fault injection, raw artifacts, invariant result, review, and supersession.
+16. **verification boundary** — baseline, fault injection, raw artifacts, invariant result, review, and supersession;
+17. **restricted-live and promotion boundary** — exact Trial Policy, Plan, Run, authorization, action/effect/count/duration envelope, abort, negative and inconclusive evidence, Trial Evidence Package, coverage claim, independent promotion decision, single-use consumption, configuration activation, demotion, and continuous-conformance history.
+
+ADR-002-025 Trial Evidence Packages and Production Scope Promotion Decisions are derived evidence and governance artifacts. Their custody, integrity, completeness, or review status cannot create capacity, validate currentness, activate configuration, issue Live Authorization, transmit, clear HALT, resume a run, promote automatically, or re-arm.
 
 Rejection evidence SHALL be produced before returning or dropping the rejected request whenever the component remains available. A crash that prevents emission is detected as a gap by sequence, causal, or counterpart reconciliation.
 

@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-024
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-024; implementation evidence has not been executed
-- **Extension State:** ADR-002-005 through ADR-002-024 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, and CUR evidence families. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-025
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-025; implementation evidence has not been executed
+- **Extension State:** ADR-002-005 through ADR-002-025 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, and RLP evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -91,6 +91,7 @@ Every evidence run SHALL bind to an immutable baseline containing:
 - Venue Constraint Policy generation and digest;
 - Trading Approval Policy generation and digest;
 - Currentness Policy generation and digest;
+- Restricted-Live Trial Policy generation and digest;
 - Broker Capability Profile version;
 - Verification Profile version;
 - database/schema migration version;
@@ -2466,7 +2467,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 302. Model-Based and Property Verification
+# Part XXV — Restricted-Live Trial and Production-Promotion Evidence
+
+## 302. RLP-EV-001 — Exact Pre-Registered Scope
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-025 RLP-AC-001
+- **Injection:** Omit, wildcard, default, patch, union, stale, conflict, substitute, or change after review every environment, Safety Cell, account, broker, venue, instrument, strategy, action, order, software, configuration, identity, route, session, time, evidence, and failure-domain scope dimension.
+- **Expected:** The plan remains `INELIGIBLE`; no trial authorization, action, evidence validity, promotion eligibility, or production scope is created.
+
+## 303. RLP-EV-002 — Worst-Credible Effect and RCL Separation
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-025 RLP-AC-002
+- **Injection:** Exercise full, partial, duplicate, reordered, delayed, missing-ACK, cancel/replace, reversal, external, protective, abort-latency, recovery, and concurrent shared-scope effects while attempting to use Trial Budget as capacity or headroom.
+- **Expected:** The worst credible union remains inside RCL-committed capacity; Trial Budget never mutates or releases capacity and UNKNOWN never creates permission.
+
+## 304. RLP-EV-003 — No Trial Safety Bypass
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-025 RLP-AC-003
+- **Injection:** Label actions canary, low-notional, supervised, expected-rejection, priority, evidence-only, or restricted-live and omit each ordinary approval, conformance, risk, flow, capacity, authority, currentness, and final-egress prerequisite.
+- **Expected:** Every omission denies the action; no trial flag or evidence goal bypasses a normal control or creates protective capacity or authority.
+
+## 305. RLP-EV-004 — Abort Dominance and Race
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-025 RLP-AC-004
+- **Injection:** Race invariant failure, scope drift, bound breach, evidence loss, external activity, currentness loss, HALT, abort, capability claim, `SEND_STARTED`, first byte, ACK loss, crash, restart, and delayed queue/session delivery.
+- **Expected:** Restriction dominates every later action; ambiguous attempts remain potentially live and capacity-covered; no continuation, blind retry, timeout, or recovery restores the run.
+
+## 306. RLP-EV-005 — Evidence Completeness and Negative-Result Retention
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-025 RLP-AC-005
+- **Injection:** Remove, alter, delay, select, redact, supersede, or hide failed, aborted, inconclusive, contradictory, fault, broker, capacity, and operator records; change metrics or stopping rules after start.
+- **Expected:** The package remains `INVALID`; missing or selected evidence and post-hoc rules cannot produce PASS or promotion eligibility.
+
+## 307. RLP-EV-006 — Coverage and Non-Extrapolation
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-025 RLP-AC-006
+- **Injection:** Reuse evidence across broker, account, venue, instrument, strategy, action, order type, credential, route, session, version, failure domain, concurrency, or market regime; union several narrow packages.
+- **Expected:** Unknown equivalence is non-equivalence; evidence covers only the exact exercised scope and a combined scope requires its own evidence.
+
+## 308. RLP-EV-007 — Progressive Single-Use Promotion
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-025 RLP-AC-007
+- **Injection:** Skip a promotion step, widen a delta, union decisions, replay or partially consume a decision, auto-chain on counters/P&L/time/incident absence, or treat eligibility as activation or live authority.
+- **Expected:** Every path is rejected; one exact decision is consumed once only to request a new non-live configuration and fresh governed authorization chain.
+
+## 309. RLP-EV-008 — Independent Governance and Authority Separation
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-025 RLP-AC-008
+- **Injection:** Collapse proposer, implementer, operator, evidence producer, reviewer, promoter, configuration approver, armer, and egress administrator into one effective principal; give trial or promotion services capacity or broker-route authority.
+- **Expected:** Effective-principal and role conflicts deny promotion; trial components cannot mutate RCL, activate configuration, issue authority, transmit, clear HALT, or re-arm.
+
+## 310. RLP-EV-009 — Expiry and Economic Continuity
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-025 RLP-AC-009
+- **Injection:** Expire, abort, invalidate, consume, revoke, or supersede plans, runs, evidence, promotion decisions, profiles, and authorizations after possible broker effect; lose ACK and receive cancel ACK without Final Quantity Proof.
+- **Expected:** Future use is denied while orders, fills, positions, UNKNOWN state, obligations, and conservative RCL coverage remain; no expiry authorizes retry or release.
+
+## 311. RLP-EV-010 — Restart, Recovery, and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-025 RLP-AC-010
+- **Injection:** Restart, fail over, reconnect, restore, roll back, replay, reconcile, recover time/broker/monitoring/operator paths, resume old queues, and reproduce identical prior artifacts.
+- **Expected:** The prior run and consumable artifacts remain invalid and fenced; no resume, promotion reuse, queued action, scope revival, or automatic re-arm occurs.
+
+## 312. RLP-EV-011 — Continuous Conformance and Demotion
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-025 RLP-AC-011
+- **Injection:** Drift software, configuration, profile, broker semantics, route, identity, session, generation, capacity, action-flow, protection, evidence, currentness, and monitoring while attempting to preserve or automatically restore production scope.
+- **Expected:** Affected evidence and future authority are restricted or demoted; recovery cannot restore scope without fresh evidence, configuration, reconciliation, and authorization.
+
+## 313. RLP-EV-012 — Gate Honesty and Status Separation
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-025 RLP-AC-012
+- **Injection:** Treat EV-L0 review, ADR acceptance, plan eligibility, deployed code, trial start, trial completion, package creation, EV-L5 review, promotion eligibility, configuration activation, dashboard state, or incident-free time as another gate or as live readiness.
+- **Expected:** Every state remains distinct and explicit; no documentary, evidentiary, deployment, or governance state creates capacity, authority, transmission, restricted-live readiness, or production readiness.
+
+---
+
+## 314. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -2493,6 +2582,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Action Flow Policy, Action Flow Generation, Action Flow State Snapshot, cause lineage, amplification envelope, shared-scope resource vector, Action Flow Decision, RCL Permit allocation/claim/consumption/quarantine, protective reserve/lease, invalidation, final-egress currentness, and recovery state;
 - Trading Approval Policy, Trading Approval Generation, Proposal Approval Request, independent/common-mode fact evaluation, Independent Approval Decision, Intent Registry writer and single-use consumption, immutable Intent binding, invalidation closure, final-egress currentness, and recovery state;
 - Currentness Policy, owner/dependency closure, Safety Currentness Vector, restrictive floors, Restrictive Fence Record, Local Restrictive Latch, Egress Currentness Proof, capability/permit claim, `SEND_STARTED`, first-byte ordering, cross-domain barrier, and recovery state;
+- Restricted-Live Trial Policy, exact Trial Plan and Run, effect/count/duration envelope, abort generation, evidence completeness, coverage, Promotion Generation, single-use Production Scope Promotion Decision, configuration handoff, demotion, and continuous-conformance state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2577,13 +2667,17 @@ No TTL, heartbeat, health, currentness session, prior proof, or absence of inval
 No currentness quorum or owner-proof loss with broker reachability permits a normal send
 No currentness policy, sequencer, vector, fence, proof, latch, evidence, replay, or administrator mutates capacity or creates approval, authority, protection, transmission, HALT clear, or re-arm
 No currentness expiry, claim ambiguity, missing ACK, cancel ACK, partition, restore, recovery, or replay releases economic capacity or revives permission
+No trial policy, plan, review, run, dashboard, evidence package, coverage claim, or promotion decision creates capacity, authority, protection, transmission, HALT clear, resume, or re-arm
+No omitted, wildcard, patched, unioned, stale, conflicting, wrong-scope, post-hoc, selected, or extrapolated trial evidence produces eligibility or promotion
+No trial abort, evidence gap, UNKNOWN, drift, bound breach, expiry, recovery, or monitoring restoration permits later trial action or releases possible economic effect
+No success count, elapsed time, P&L, incident absence, narrow package set, or promotion-decision replay automatically widens production scope
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 303. Fault-Injection Requirements
+## 315. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2604,6 +2698,7 @@ The test harness SHALL support controlled injection at least for:
 - omitted aggregate scope, stale/mixed state cut, snapshot/effect substitution, missing dimension, unit/sign/scale/limit drift, adverse-scenario truncation, hedge-leg/basis/correlation/liquidity/margin failure, valuation/tail error, overflow/NaN/non-convergence/differential, concurrent stale grant, RCL state advance, Aggregate Risk Generation cache, invalidation suppression/delay beyond `B_aggregate_risk_invalid_to_rcl` or `B_aggregate_risk_invalid_to_egress`, and evaluator recovery attempting old-decision reuse;
 - concurrent producer and shared-limit over-allocation, unknown broker-limit scope, duplicate-event/fan-out/redelivery/replay amplification, missing-ACK retry, SDK/proxy/redirect/reconnect flood, cancel/amend/replace storm, queue/in-flight exhaustion, ordinary-to-protective reserve intrusion, priority-only reserve claim, RCL permit double spend, stale/cross-host refill, Action Flow Generation cache, invalidation suppression/delay beyond `B_action_flow_invalid_to_rcl`, `B_action_flow_invalid_to_egress`, or `B_action_flow_violation_to_containment`, control-plane partition with broker-reachable egress, and recovery attempting old-permit reuse;
 - incomplete/wildcard/patched approval request, proposer-only or common-mode validation, deterministic-evaluator differential, artifact/scope substitution, duplicate and cross-scope consumption, stale Intent Registry writer, approval authority escalation, Trading Approval Generation cache, invalidation suppression/delay beyond `B_approval_invalid_to_intent`, `B_approval_invalid_to_egress`, or `B_approval_generation_fence`, control-plane partition with broker-reachable egress, and recovery attempting old-decision or consumption reuse;
+- incomplete/wildcard/patched/unioned Trial Plan, underestimated credible effect, Trial Budget used as capacity, trial-label bypass, action/effect/count/duration overrun, abort delay beyond `B_trial_abort_to_authority_revoke` or `B_trial_abort_to_egress_deny`, evidence gap delay beyond `B_trial_evidence_gap_to_containment`, selected or hidden negative runs, post-hoc metric/stopping change, coverage extrapolation, promotion skip/union/replay, Promotion Generation fence delay, monitor drift, demotion, and recovery attempting run or promotion reuse;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -2627,25 +2722,27 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 304. Broker Verification Safety Rules
+## 316. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
-- use the smallest approved live scope;
+- use one exact ADR-002-025 pre-registered and independently approved scope;
 - avoid risk-increasing tests where the property can be demonstrated without them;
-- use bounded quantity and pre-approved loss limits;
-- have an operator halt path;
+- pre-cover the worst credible economic effect through RCL rather than relying on quantity or a planned loss limit;
+- have approved independent abort, HALT, final-egress denial, evidence, and recovery paths;
 - preserve all raw broker evidence;
 - isolate manual activity unless the test explicitly targets it;
 - predefine abort conditions;
 - not rely on test cleanup to preserve safety;
 - be approved under the relevant Safety Profile.
 
+Trial completion, success counters, elapsed time, incident absence, monitoring, or evidence-package creation SHALL NOT widen scope. Every promotion remains an exact, independently reviewed, single-use, non-authorizing decision under ADR-002-025.
+
 A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 305. Continuous Conformance Evidence
+## 317. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -2668,6 +2765,7 @@ After approval, continuous monitors SHALL detect at least:
 - Order Construction Policy, Construction Generation, Authorized Construction Envelope, Canonical Broker Command, Economic Effect Envelope, capacity dominance, Order Conformance Proof, compiler/serializer/SDK compatibility, command/proof age, downstream mutation, or actual-outbound equivalence contradiction;
 - Aggregate Risk Policy, Aggregate Risk Generation, Aggregate Risk State Snapshot cut/age, Adverse Scenario Set, dimension/scope completeness, valuation/benefit/numerical derivation, Aggregate Risk Decision age/digest, allocation vector, RCL binding, or final-egress currentness contradiction;
 - Action Flow Policy, Action Flow Generation, State Snapshot cut/age, cause lineage/amplification, shared-scope resource vector, Decision/Permit age and digest, RCL allocation/claim/consumption, protective reserve/lease, counter/refill, queue/in-flight, invalidation, or final-egress currentness contradiction;
+- Restricted-Live Trial Policy, Plan, Run, scope, Promotion Generation, remaining action/effect/count/duration envelope, abort, evidence completeness, coverage, promotion consumption, production scope, demotion, or monitoring contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -2684,7 +2782,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 306. Residual Risk Register
+## 318. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -2705,7 +2803,7 @@ Every unresolved limitation SHALL record:
 
 ---
 
-## 307. Independent Review Checklist
+## 319. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -2731,6 +2829,7 @@ The reviewer SHALL confirm:
 - every broker-directed action is deterministically constructed from one exact Intent and closed Authorized Construction Envelope, its conservative Economic Effect Envelope is dominated by the exact RCL commitment, and final egress verifies the actual outbound representation under ADR-002-020;
 - every capacity request binds one complete current aggregate-state cut, approved scenario set, exact command effect, deterministic conservative projected vector, current Aggregate Risk Decision, and RCL commitment under ADR-002-021; unproven benefit is zero and evaluator authority does not mutate capacity or transmit;
 - every broker-directed action binds one complete current shared-scope action-flow cut, immutable cause lineage, finite amplification envelope, exact resource vector, current Action Flow Decision, RCL commitment, and single-use permit under ADR-002-022; priority is not reserve and governor/scheduler authority does not mutate capacity or transmit;
+- every ADR-002-025 Trial Plan is exact and pre-registered, the worst credible effect is RCL-covered, abort dominates evidence collection, negative evidence is retained, coverage does not extrapolate, promotion is progressive and single-use, and no trial or promotion artifact creates live authority;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -2740,7 +2839,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 308. Approval Gates by ADR
+## 320. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -3069,21 +3168,43 @@ Requires:
 - security assessment of owner/sequencer compromise, parser differential, restrictive suppression/spoofing, proof replay/substitution, local-latch bypass, broker-reachable partition, alternate route, stale restore, cross-domain proof union, and administrative common mode;
 - proof that currentness artifacts establish only exact non-authorizing facts, RCL remains the sole capacity authority, final egress remains the sole transmission enforcement point, UNKNOWN stays conservative, and recovery never auto-rearms.
 
-### Production Restricted Live Gate
+### ADR-002-025
 
 Requires:
 
-- applicable ADRs Accepted;
-- no failed or inconclusive Critical evidence;
-- approved Verification Profile;
-- active broker profile;
-- all residual risks approved;
-- operational runbooks and halt/recovery exercises complete;
-- explicit production authorization.
+- RLP-EV-001 through RLP-EV-012 at the specified non-live levels, plus applicable RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RC, SA, BC, FD, TIME, REARM, PR, NT, and cross-system evidence;
+- approved canonical Trial Policy, Trial Plan, Trial Evidence Package, Coverage Claim, and Production Scope Promotion Decision schemas and deterministic validation;
+- approved plan/run/action/abort/evidence/promotion ordering, exact scope registry, worst-credible-effect calculation, RCL binding, final-egress currentness, stale-generation fencing, independent abort/HALT path, evidence completeness, non-extrapolation, single-use promotion, demotion, recovery, and continuous-conformance mechanisms;
+- approved and measured `B_trial_abort_to_authority_revoke`, `B_trial_abort_to_egress_deny`, `B_trial_evidence_gap_to_containment`, `B_scope_promotion_generation_fence`, `MAX_trial_authorized_economic_effect`, `MAX_trial_concurrent_potential_effect`, `MAX_trial_action_count`, `MAX_trial_duration_ms`, `MAX_trial_evidence_age_ms`, and every applicable upstream bound;
+- security assessment of effective-principal collapse, plan/evidence/promotion substitution, alternate broker routes, abort suppression, negative-evidence deletion, optional stopping, scope union, promotion replay, stale restore, monitor compromise, and automatic re-arm;
+- proof that accepting this governance mechanism remains non-live and non-authorizing. A specific EV-L5 trial is a later separately authorized execution gate.
+
+### Restricted-Live Trial Gate
+
+Requires:
+
+- ADR-002-025 and every applicable upstream ADR Accepted for the exact scope;
+- one current approved Trial Policy and immutable eligible Trial Plan with exact scope, baseline, maximum credible effect, count/duration/action envelope, evidence plan, abort triggers, recovery disposition, and independent reviewers;
+- approved Verification Profile numeric bounds, current Broker Capability Profile, Hard Safety Envelope, Runtime Safety Profile, Human Authority Policy, Failure-Domain Allocation Matrix, and Currentness Policy;
+- no failed, inconclusive, stale, missing, contradicted, or unreviewed prerequisite Critical evidence;
+- worst credible trial effect committed by RCL and complete normal approval, configuration, Live Authorization, Transmission Capability, action-flow, currentness, and final-egress prerequisites;
+- tested independent abort, HALT, egress denial, evidence, reconciliation, and recovery paths;
+- explicit single-run human authorization. This gate authorizes only that exact run and never automatic resume or promotion.
+
+### Production Scope Promotion Gate
+
+Requires:
+
+- one complete immutable EV-L5 Trial Evidence Package for the exact Trial Run, including all negative, failed, aborted, conflicting, and inconclusive evidence;
+- independent evidence-integrity, coverage, broker-semantic, security, capacity, currentness, abort, recovery, and residual-risk review;
+- no extrapolation, scope union, post-hoc metric or stop-rule change, hidden run, unresolved Critical result, or stale generation;
+- one current exact `ELIGIBLE_TO_REQUEST_NEW_SCOPE` decision consumed once for a policy-approved promotion delta;
+- break-before-make configuration activation, predecessor fencing, reconciliation, fresh governed re-arm, Live Authorization, and per-send final-egress enforcement;
+- explicit production authorization and EV-L6 continuous conformance. Promotion eligibility, activation, monitoring recovery, or incident-free time is not production authority.
 
 ---
 
-## 309. Current Evidence Readiness Assessment
+## 321. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -3116,6 +3237,7 @@ Aggregate risk projection, adverse-scenario, exact allocation-decision, and curr
 Action-flow budgeting, retry-storm containment, protective-reserve, and permit-currentness evidence: NOT EXECUTED
 Independent proposal approval, single-use Intent consumption, invalidation, and currentness evidence: NOT EXECUTED
 Active currentness, restrictive-fence, local-latch, per-send proof, and claim/send-ordering evidence: NOT EXECUTED
+Restricted-live trial, evidence coverage, abort, promotion, demotion, and production-authorization governance evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -3124,26 +3246,26 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 310. Required Next Execution Sequence
+## 322. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, and active-currentness models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, and restricted-live/promotion-governance models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
 8. Execute integrated fault tests.
 9. Execute broker sandbox tests where meaningful.
-10. Execute approved restricted production capability probes only after their separate human gate.
+10. Execute an approved ADR-002-025 restricted-live trial only after its exact separate human gate; do not infer production promotion.
 11. Run independent evidence review.
 12. Update ADR status only after gates pass.
 ```
 
 ---
 
-## 311. Verification Specification Approval Gate
+## 323. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

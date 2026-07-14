@@ -301,6 +301,7 @@ One proof SHALL bind:
 - every required owner generation and restrictive floor;
 - exact Intent, attempt, command, effect envelope, capacity commitment, action-flow permit, Live Authorization, and Transmission Capability;
 - exact egress principal, deployment, credential, signer, route, endpoint, broker session, and local-latch generation;
+- where applicable, the exact ADR-002-025 Trial Policy, Trial Plan, Trial Run, Promotion Generation, remaining action/effect/count/duration envelope, and abort generation;
 - the capability-claim command and committed result;
 - `SEND_STARTED` revision and maximum claim-to-send bound;
 - proof identity, nonce, single-use state, issue revision, expiry evidence, and integrity evidence.

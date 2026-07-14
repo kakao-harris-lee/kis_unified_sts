@@ -116,7 +116,7 @@ An immutable artifact that selects a strictly equal-or-narrower operating scope 
 
 ### 5.3 Safety Configuration Bundle
 
-The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, ADR-002-022 Action Flow Policy, ADR-002-023 Trading Approval Policy, ADR-002-024 Currentness Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
+The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, ADR-002-022 Action Flow Policy, ADR-002-023 Trading Approval Policy, ADR-002-024 Currentness Policy, ADR-002-025 Restricted-Live Trial Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
 
 ### 5.4 Profile Generation
 
@@ -360,6 +360,8 @@ Activation does not establish that a candidate command conforms to an approved I
 Activation does not establish aggregate-state completeness, scenario sufficiency, valuation or hedge validity, an Aggregate Risk Decision, RCL headroom, or risk-decision currentness. Those predicates remain independently governed and enforced under ADR-002-021; configuration activation cannot grant an allocation or create capacity.
 
 Activation does not establish the ADR-002-024 complete Safety Currentness Vector, satisfy a restrictive generation floor, open a Local Restrictive Latch, create an Egress Currentness Proof, or order a capability claim. Currentness Policy is part of the governed bundle, but active configuration is not per-send currentness or transmission authority.
+
+Activation does not make a Restricted-Live Trial Plan eligible, authorize or resume a Trial Run, validate a Trial Evidence Package, consume a Production Scope Promotion Decision, or authorize production scope. The Trial Policy is governed configuration under ADR-002-025, while trial eligibility, EV-L5 evidence, promotion, fresh re-arm, and Live Authorization remain separate.
 
 ---
 

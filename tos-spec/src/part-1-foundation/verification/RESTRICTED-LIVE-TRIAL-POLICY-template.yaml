@@ -1,0 +1,68 @@
+artifact_type: RESTRICTED_LIVE_TRIAL_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+trial_policy_generation: null
+canonical_digest: TBD
+status: DRAFT
+scope:
+  environments: []
+  safety_cells: []
+  capacity_domains: []
+  legal_portfolios: []
+  accounts: []
+  brokers: []
+  venues: []
+  instruments: []
+  strategies: []
+  action_classes: []
+eligible_trial_classes: []
+prohibited_trial_classes: []
+required_scope_dimensions: []
+required_baseline_artifacts: []
+required_accepted_adrs: []
+required_evidence_and_assurance: []
+maximum_credible_effect_rules: []
+broker_resource_and_action_count_rules: []
+pre_registration_rules: []
+mandatory_fault_and_coverage_classes: []
+abort_and_demotion_triggers: []
+evidence_package_and_retention_rules: []
+independent_review_and_conflict_rules: []
+promotion_ladder_and_maximum_delta_rules: []
+continuous_conformance_rules: []
+recovery_and_non_revival_rules: []
+materiality_default: MATERIAL
+unknown_applicability_disposition: DENY_TRIAL
+failure_responses:
+  missing_or_stale_plan: DENY_TRIAL
+  scope_or_baseline_conflict: DENY_TRIAL
+  capacity_or_effect_unknown: DENY_TRIAL
+  evidence_gap: ABORT_AND_CONTAIN
+  bound_breach: ABORT_AND_HALT_AFFECTED_SCOPE
+  external_activity: ABORT_AND_EXPAND_CONTAINMENT
+  currentness_loss: DENY_AND_LATCH
+  promotion_ambiguity: HOLD_CURRENT_SCOPE
+approved_bounds: []
+approved_residual_risks: []
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  creates_trial_eligibility: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_approval: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  promotes_production_scope: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT policy is inactive and grants no trial eligibility, capacity, live
+  authority, transmission, scope promotion, or re-arm. Missing, null, TBD,
+  stale, conflicting, or unapproved values prohibit the affected trial.

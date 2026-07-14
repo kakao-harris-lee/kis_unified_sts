@@ -35,6 +35,8 @@ The system SHALL distinguish:
 
 No health signal, timeout, restart, failover, reconciliation-complete event, configuration reload, deployment success, or restored dependency may automatically create any of these permissive artifacts.
 
+For an ADR-002-025 restricted-live trial, the fresh Live Authorization SHALL additionally bind one exact active Trial Policy, Trial Plan, Trial Run, Promotion Generation, approved action/effect/count/duration envelope, and abort generation. Trial eligibility, evidence, successful completion, promotion review, configuration activation, or recovery cannot issue, widen, resume, or revive that authorization.
+
 Re-arm always issues a new Live Authorization and new capabilities. A revoked, expired, suspended, superseded, or stale authorization SHALL NOT be revived.
 
 UNKNOWN broker, order, exposure, reconciliation, time, configuration, or fencing state consumes conservative capacity and blocks re-arm to any scope that permits new risk.

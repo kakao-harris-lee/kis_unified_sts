@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **291**
-- NOT_IMPLEMENTED: **291**
+- Total evidence items: **303**
+- NOT_IMPLEMENTED: **303**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -314,6 +314,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | CUR-EV-010 | Active Currentness | UNKNOWN and Economic Continuity | ADR-002-024 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | CUR-EV-011 | Active Currentness | Protective Confinement | ADR-002-024 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | CUR-EV-012 | Active Currentness | Recovery Evidence and Non-Revival | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-001 | Restricted-Live and Promotion Governance | Exact Pre-Registered Scope | ADR-002-025 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-002 | Restricted-Live and Promotion Governance | Worst-Credible Effect and RCL Separation | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-003 | Restricted-Live and Promotion Governance | No Trial Safety Bypass | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-004 | Restricted-Live and Promotion Governance | Abort Dominance and Race | ADR-002-025 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-005 | Restricted-Live and Promotion Governance | Evidence Completeness and Negative-Result Retention | ADR-002-025 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-006 | Restricted-Live and Promotion Governance | Coverage and Non-Extrapolation | ADR-002-025 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-007 | Restricted-Live and Promotion Governance | Progressive Single-Use Promotion | ADR-002-025 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-008 | Restricted-Live and Promotion Governance | Independent Governance and Authority Separation | ADR-002-025 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-009 | Restricted-Live and Promotion Governance | Expiry and Economic Continuity | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-010 | Restricted-Live and Promotion Governance | Restart, Recovery, and Non-Revival | ADR-002-025 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-011 | Restricted-Live and Promotion Governance | Continuous Conformance and Demotion | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| RLP-EV-012 | Restricted-Live and Promotion Governance | Gate Honesty and Status Separation | ADR-002-025 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

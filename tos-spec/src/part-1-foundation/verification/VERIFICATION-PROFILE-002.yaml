@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "1.5-PROPOSED"
+version: "1.6-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -70,6 +70,9 @@ scope:
   currentness_policy_id: TBD
   currentness_policy_generation: null
   currentness_policy_digest: TBD
+  restricted_live_trial_policy_id: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -314,6 +317,34 @@ bounds:
     rationale: "MEASURE. Maximum interval from commitment of a newer currentness, restore, writer, or egress generation to proven inability of every predecessor to create or consume a current vector or proof (ADR-002-024 §§15, 19)."
     measurement_source: currentness_generation_and_hard_fence_trace
     failure_response: HALT_OR_CONTAIN
+  B_trial_abort_to_authority_revoke:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from authoritative ADR-002-025 Trial Abort Trigger detection to revocation or restrictive fencing of every affected unconsumed trial authorization and capability."
+    measurement_source: trial_abort_authority_and_capability_trace
+    failure_response: HALT_OR_CONTAIN
+  B_trial_abort_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from authoritative Trial Abort Trigger detection or committed abort generation to denial of every later affected trial transmission at final egress."
+    measurement_source: trial_abort_generation_and_egress_boundary_trace
+    failure_response: HALT
+  B_trial_evidence_gap_to_containment:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from authoritative material trial-evidence gap detection to completed new-risk denial and required containment over the complete possibly affected scope."
+    measurement_source: trial_evidence_gap_authority_rcl_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
+  B_scope_promotion_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from commitment of a newer Promotion Generation to proven inability of predecessor plans, runs, evidence packages, promotion decisions, authorization requests, and egress consumers to create or widen permission."
+    measurement_source: promotion_generation_registry_authority_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
@@ -470,6 +501,11 @@ limits:
   MAX_independent_approval_decision_age_ms: null    # APPROVE per exact request/Intent scope; expiry never expires economic effect
   MAX_egress_currentness_proof_age_ms: null         # APPROVE per send boundary; every normal send still requires a new single-use proof
   MAX_currentness_vector_age_ms: null               # APPROVE per complete dependency scope; unknown or stale vector age denies admission
+  MAX_trial_authorized_economic_effect: null         # APPROVE per exact trial scope; unknown or unbounded credible effect prohibits the trial
+  MAX_trial_concurrent_potential_effect: null        # APPROVE per shared capacity scope; includes potentially-live and abort/recovery overlap
+  MAX_trial_action_count: null                       # APPROVE per exact plan; unavailable or ambiguous counter denies later trial action
+  MAX_trial_duration_ms: null                        # APPROVE per exact run; expiry ends future action but never economic effect
+  MAX_trial_evidence_age_ms: null                    # APPROVE per promotion scope; stale evidence denies promotion and never releases capacity
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

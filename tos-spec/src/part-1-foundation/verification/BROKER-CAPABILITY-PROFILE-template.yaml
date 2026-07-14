@@ -212,6 +212,21 @@ currentness_binding:
   cache_ttl_heartbeat_health_or_absence_of_invalidation_sufficient: false
   broker_reachable_control_plane_partition_allows_normal_send: false
 
+restricted_live_and_promotion_binding:
+  restricted_live_trial_policy_id: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
+  exact_pre_registered_trial_scope_required: true
+  worst_credible_effect_rcl_commitment_required: true
+  normal_safety_controls_and_final_egress_required: true
+  trial_label_or_low_notional_is_authority: false
+  negative_and_inconclusive_evidence_retained: true
+  cross_scope_evidence_extrapolation_allowed: false
+  automatic_scope_promotion_allowed: false
+  promotion_eligibility_is_live_authority: false
+  actual_ev_l5_evidence_package_required_for_promotion: true
+  recovery_may_resume_trial_or_rearm: false
+
 egress_security:
   final_egress_boundary_id: TBD
   egress_generation: TBD

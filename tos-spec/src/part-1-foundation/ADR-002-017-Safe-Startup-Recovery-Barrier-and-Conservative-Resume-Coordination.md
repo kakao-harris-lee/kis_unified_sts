@@ -366,9 +366,12 @@ The minimum obligation set includes:
 13. deployment, software, schema, identity, credential, route, endpoint, and failure-domain state current and non-bypassable;
 14. evidence policy, source records, gaps, integrity anchors, retention, and replay divergence state acceptable;
 15. Human HALT, break-glass, approval, compromise, incidents, alerts, and residual-risk obligations resolved or explicitly restrictive;
-16. requested and maximum safe recovery scopes recomputed against all shared aggregate dependencies.
+16. requested and maximum safe recovery scopes recomputed against all shared aggregate dependencies;
+17. any interrupted ADR-002-025 Trial Run, action/effect/count/duration envelope, abort state, Trial Evidence Package gap, Promotion Generation, and promotion-decision consumption state inventoried and conservatively invalidated.
 
 An obligation cannot be marked satisfied by its own proposing component where independent evidence is required. Missing or cyclic obligation dependencies make the session NOT_READY.
+
+Recovery readiness SHALL NOT resume an interrupted Trial Run, reuse a Trial Plan or Production Scope Promotion Decision, repair an incomplete package into promotion eligibility, or re-arm trial or production scope. Any later trial requires a new run identity and the complete fresh ADR-002-025 governance chain.
 
 ---
 

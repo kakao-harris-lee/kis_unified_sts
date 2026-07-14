@@ -300,6 +300,8 @@ Approval Set verification and consumption SHALL be ordered through ADR-002-012 o
 
 An approval for one narrower scope cannot be unioned with another approval set to construct a broader scope unless the active policy explicitly requires and validates that exact combined request.
 
+ADR-002-025 trial eligibility and production-scope promotion SHALL collapse identities through the same current Effective Principal Graph before quorum counting. A Trial Plan, Trial Evidence Package, or Production Scope Promotion Decision cannot count as a principal, multiply quorum, approve itself, activate configuration, issue Live Authorization, or substitute for the complete ADR-002-007 re-arm workflow.
+
 ---
 
 ## 12. Separation of Duties

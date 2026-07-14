@@ -303,6 +303,7 @@ The Quorum Commit Certificate SHALL bind at least:
 - committed log revision and parent/preceding commitment where required;
 - command identity and canonical command digest;
 - resulting state digest;
+- where the request is part of an ADR-002-025 restricted-live trial, the exact Trial Policy, Trial Plan, Trial Run, Promotion Generation, remaining action/effect/count/duration envelope, and abort generation;
 - exact `ClaimCapabilityAndMarkSendStarted` result;
 - intent, reservation, attempt, capability, nonce, and broker-request identities;
 - exact worst-case economic effect;
@@ -354,6 +355,8 @@ Compromise of a quorum-verification key or trust-bundle distribution path requir
 ## 12. Fenced Claim-to-Send and Request Construction
 
 After validating the currentness session and before any broker-directed byte, the Egress Gateway SHALL obtain the Quorum Commit Certificate for the exact claim. Request construction SHALL be deterministic from the committed authorized fields and approved Broker Capability Profile.
+
+For a restricted-live action, final egress SHALL also positively verify the exact current Trial Policy, Plan, Run, Promotion Generation, unconsumed remaining envelope, and non-aborted state at this same boundary. Trial labels, cached run state, evidence collection, promotion eligibility, or operator presence cannot replace any ordinary pre-send check or create authority.
 
 No security-relevant field may be supplied or changed downstream after the proof comparison. This includes account, instrument, side, quantity, price, unit, multiplier, order type, time-in-force, reduce-only flag, client identity, endpoint, action, credential, and session.
 
