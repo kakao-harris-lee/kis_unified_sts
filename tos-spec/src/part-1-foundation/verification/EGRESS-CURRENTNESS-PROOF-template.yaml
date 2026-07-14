@@ -1,0 +1,65 @@
+artifact_type: EGRESS_CURRENTNESS_PROOF
+schema_version: "1.0-DRAFT"
+proof_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+single_use:
+  nonce: TBD
+  claimed: false
+  consumed: false
+  quarantined: false
+safety_currentness_vector:
+  vector_id: TBD
+  canonical_digest: TBD
+  committed_revision: null
+restrictive_floors: []
+action_binding:
+  intent_id: TBD
+  transmission_attempt_id: TBD
+  canonical_broker_command_id: TBD
+  canonical_broker_command_digest: TBD
+  economic_effect_envelope_id: TBD
+  capacity_commitment_id: TBD
+  action_flow_permit_id: TBD
+  live_authorization_id: TBD
+  transmission_capability_id: TBD
+claim_and_send:
+  claim_command_id: TBD
+  claim_committed_revision: null
+  send_started_revision: null
+  first_byte_observed_at: null
+  claim_to_first_byte_within_bound: false
+egress_binding:
+  egress_generation: null
+  active_egress_principal_id: TBD
+  deployment_id: TBD
+  credential_generation: null
+  signer_generation: null
+  route_generation: null
+  endpoint_generation: null
+  broker_session_generation: null
+  local_restrictive_latch_generation: null
+  local_restrictive_latch_state: UNKNOWN
+actual_outbound_digest: TBD
+conflicts: []
+currentness_gaps: []
+validity:
+  issued_at: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+  expires_at: null
+evidence_commit_receipt_id: TBD
+signatures: []
+authority:
+  establishes_one_conformance_fact: false
+  creates_approval: false
+  creates_intent: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission_by_itself: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

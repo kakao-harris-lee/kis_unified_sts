@@ -30,6 +30,8 @@ Material correction, retraction, source-continuity change, policy change, mappin
 
 Final egress remains the last enforcement point. For every new-risk send it SHALL verify the exact Capsule binding and actively establish current policy, source-continuity, context-generation, validity, and invalidation status within approved bounds. A permissive cache or absence-of-invalidation event is not proof. If currentness cannot be positively established at the irreversible send boundary, transmission is denied. Final egress does not recompute strategy logic; it verifies that the exact already-approved context and its safety-critical currentness predicates remain valid.
 
+ADR-002-024 defines the per-send ordering mechanism for those predicates. Context Generation and correction/invalidation floors are exact Safety Currentness Vector dimensions; a material correction creates a Restrictive Fence Record and local deny, and no cached Capsule or prior proof can satisfy a later send.
+
 Recovery of a source, cache, Context Integrity Service, clock, mapping registry, approval service, or evidence store cannot revive an older Capsule or authority. Recovery SHALL establish new continuity where required, satisfy ADR-002-017 obligations, and use a fresh governed re-arm chain. No automatic re-arm is permitted.
 
 ---

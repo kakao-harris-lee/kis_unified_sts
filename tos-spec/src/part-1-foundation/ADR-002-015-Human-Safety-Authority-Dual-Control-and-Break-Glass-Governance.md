@@ -667,7 +667,7 @@ Unresolved questions reduce authority or keep the affected scope non-live. They 
 
 ## 29. Approval Gate
 
-ADR-002-015 SHALL remain **Proposed** until all of the following are complete:
+ADR-002-015 SHALL remain **Proposed** until all of the following are complete. Human HALT restrictive ingress and every final-egress latch SHALL conform to ADR-002-024 deny-first, monotonic, non-revival, and claim/fence ordering without granting the human workflow capacity or transmission authority:
 
 1. Human Authority Policy, Effective Principal Graph, Approval Request, Approval Attestation, Approval Set, delegation, and Human HALT schemas are approved;
 2. natural-person identity, phishing-resistant authentication, device/session, recovery, roster, and effective-control mechanisms are implemented and security-reviewed;

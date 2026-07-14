@@ -1,0 +1,66 @@
+artifact_type: SAFETY_CURRENTNESS_VECTOR
+schema_version: "1.0-DRAFT"
+vector_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+currentness_policy:
+  policy_id: TBD
+  currentness_policy_generation: null
+  canonical_digest: TBD
+ordering_domain:
+  domain_id: TBD
+  cluster_id: TBD
+  membership_generation: null
+  restore_generation: null
+  writer_epoch: null
+  committed_revision: null
+scope:
+  environment: TBD
+  safety_cell_id: TBD
+  capacity_domain_id: TBD
+  legal_portfolio_id: TBD
+  account_id: TBD
+  strategy_id: TBD
+  broker_id: TBD
+  venue_id: TBD
+  session_id: TBD
+  instrument_id: TBD
+  action_class: UNKNOWN
+  route_id: TBD
+action_binding:
+  intent_id: TBD
+  transmission_attempt_id: TBD
+  canonical_broker_command_id: TBD
+  canonical_broker_command_digest: TBD
+required_generation_facts: []
+minimum_restrictive_floors: []
+bound_decisions_and_proofs: []
+dependency_closure:
+  closure_complete: false
+  scope_digest: TBD
+  unknown_dependencies: []
+source_proofs: []
+conflicts: []
+currentness_gaps: []
+validity:
+  issued_at: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+  expires_at: null
+integrity:
+  issuer_principal_id: TBD
+  compatibility_manifest_id: TBD
+  signatures: []
+authority:
+  establishes_currentness: false
+  creates_approval: false
+  creates_intent: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

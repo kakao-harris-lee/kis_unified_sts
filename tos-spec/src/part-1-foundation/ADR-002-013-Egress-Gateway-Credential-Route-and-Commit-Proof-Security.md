@@ -314,6 +314,7 @@ The Quorum Commit Certificate SHALL bind at least:
 - exact ADR-002-021 Aggregate Risk Policy, Aggregate Risk Generation, Aggregate Risk State Snapshot, Adverse Scenario Set, Aggregate Risk Decision, evaluated scope, requested vector, maximum ages, and invalidation set/status;
 - exact ADR-002-022 Action Flow Policy, Action Flow Generation, Action Flow State Snapshot, Action Flow Decision, RCL action-flow commitment, single-use Action Flow Permit, cause lineage, resource vector, Protective Flow Reserve evidence, maximum ages, and invalidation set/status;
 - exact ADR-002-023 Trading Approval Policy, Trading Approval Generation, Proposal Approval Request, Independent Approval Decision, Approval Consumption Record, immutable Intent binding, maximum ages, and invalidation set/status;
+- exact ADR-002-024 Currentness Policy, complete Safety Currentness Vector, applicable restrictive generation floors, Local Restrictive Latch generation/state, and single-use Egress Currentness Proof identity/digest;
 - Egress Generation and exact Active Egress Principal;
 - credential, broker-session, route-policy, endpoint-policy, and trust-bundle generations;
 - quorum signer identities or equivalent threshold-verification material.
@@ -335,9 +336,10 @@ Before send, the Final Egress Trust Boundary SHALL:
 11. actively verify the current Aggregate Risk Policy, Aggregate Risk Generation, exact Aggregate Risk Decision and RCL commitment binding, evaluated scope/vector, ages, and invalidation status under ADR-002-021 without treating cached `GRANT`, RCL commit existence, evaluator health, TTL, heartbeat, or absence of invalidation as proof;
 12. actively verify the current Action Flow Policy, Action Flow Generation, exact Action Flow Decision and RCL action-flow commitment, cause lineage, complete shared scope/vector, unused single-use Action Flow Permit, Protective Flow Reserve evidence where applicable, ages, and invalidation status under ADR-002-022 without treating cached `GRANT`, a local token, queue priority, RCL commit existence, governor health, TTL, heartbeat, broker connection, or absence of invalidation as proof;
 13. actively verify the current Trading Approval Policy and Generation, exact Proposal Approval Request, `APPROVE` decision, single-use Approval Consumption Record, immutable Intent binding, ages, and invalidation state under ADR-002-023 without treating cached `APPROVED`, Intent state, TTL, heartbeat, service health, prior success, or absence of invalidation as proof;
-14. verify the capability nonce and Action Flow Permit claim nonce are each bound and claimed exactly once for this principal and request;
-15. reconstruct the exact actual outbound representation after every mutable internal stage and compare its canonical semantics, digest, endpoint, action, account, route, and economic effect to the ADR-002-020 command and proof;
-16. verify the claim-to-first-byte bound can still be met.
+14. verify under ADR-002-024 that one complete Safety Currentness Vector satisfies every restrictive floor, that a new single-use Egress Currentness Proof is ordered with this exact claim and `SEND_STARTED`, and that the local restrictive latch is positively established as `CLEAR`, without treating a cache, session, TTL, heartbeat, health, or absence of invalidation as proof;
+15. verify the capability nonce and Action Flow Permit claim nonce are each bound and claimed exactly once for this principal and request;
+16. reconstruct the exact actual outbound representation after every mutable internal stage and compare its canonical semantics, digest, endpoint, action, account, route, and economic effect to the ADR-002-020 command and proof;
+17. verify the claim-to-first-byte bound can still be met.
 
 One leader signature, successful RPC, database primary response, local journal entry, cached proof, event, projection, or audit record is insufficient.
 
@@ -687,8 +689,9 @@ ADR-002-013 SHALL remain **Proposed** until all of the following are complete:
 16. ADR-002-021 exact Aggregate Risk Decision, policy/generation, state/scenario/effect bindings, RCL allocation/commitment, and active currentness are enforced at the final boundary and applicable ARE evidence passes;
 17. ADR-002-022 exact Action Flow Decision, policy/generation, state/cause/vector/permit bindings, RCL allocation, protective reserve, single-use claim, and active currentness are enforced at the final boundary and applicable AFG evidence passes;
 18. ADR-002-023 exact approval request/decision/consumption/Intent binding, Trading Approval Generation, single-use semantics, restrictive invalidation, and active currentness are enforced at the final boundary and applicable IAP evidence passes;
-19. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, recovery-barrier, Critical Input, venue-constraint, conformance, aggregate-risk, action-flow, and approval invalidation, context/request/decision/command/proof/permit/snapshot-age, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
-20. no unresolved bypass or overlapping old/new egress authority remains;
-21. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+19. ADR-002-024 complete-vector, restrictive-fence/local-latch, per-send proof, claim/fence/first-byte ordering, partition, and stale-generation enforcement is implemented and applicable CUR evidence passes;
+20. `B_egress_hard_fence` and all applicable currentness, revocation, HALT, recovery-barrier, Critical Input, venue-constraint, conformance, aggregate-risk, action-flow, approval, and cross-artifact currentness invalidation, context/request/decision/command/proof/permit/snapshot-age, failure-domain, session, claim-to-send, evidence-persistence, and evidence-gap bounds are approved and measured;
+21. no unresolved bypass or overlapping old/new egress authority remains;
+22. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, architecture review, credential inventory, route diagram, secret scan, or written acceptance case does not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.

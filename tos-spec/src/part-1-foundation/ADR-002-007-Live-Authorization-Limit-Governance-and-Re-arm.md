@@ -281,6 +281,8 @@ Every restrictive authorization transition SHALL advance an authenticated, monot
 
 This ADR selects a **fenced single-use capability protocol** for normal risk-relevant transmission. The protocol is an architectural requirement; its storage, consensus, transport, and cryptographic implementation remain subject to approval and evidence.
 
+ADR-002-024 refines this selection into the normative cross-artifact Currentness Policy, complete Safety Currentness Vector, monotonic Restrictive Fence Record, independently available Local Restrictive Latch, and single-use Egress Currentness Proof ordered with capability claim and `SEND_STARTED`. The currentness session described below is transport state only and cannot substitute for that per-send ordered proof.
+
 For a normal risk-relevant action, the Safety Authority SHALL issue one authenticated Transmission Capability through the Currentness Sequencer only after the sequencer has ordered the issuance against the current restrictive generation vector and positively verified the referenced Risk Capacity Ledger commitment. The Currentness Sequencer does not create, mutate, transfer, or release capacity. The Risk Capacity Ledger remains the sole capacity mutation and serialization authority.
 
 The issuance decision and every restrictive transition SHALL be serialized in one linearizable ordering domain for the affected Safety Cell. The concrete consensus substrate may differ from the Risk Capacity Ledger substrate only if their coupling prevents capability issuance against stale or uncommitted capacity and is proven under partition and failover. Redis cache state, eventual event delivery, process-local leader belief, or a broker-reachable heartbeat alone cannot provide this ordering.
@@ -641,6 +643,7 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 - ADR-002-019 exact venue/session/tradability and order/account/margin/settlement decision binding, restrictive invalidation, and active authority/egress currentness are implemented and their required VTG evidence passes;
 - current time, epoch, reconciliation, capacity, broker capability, configuration, and deployment checks are enforced at final egress;
 - the selected currentness distribution and fenced irreversible-send protocol in §§9.1–9.5 is implemented and independently security-reviewed;
+- ADR-002-024 complete vector, restrictive-fence/local-latch, per-send proof, claim/fence/first-byte ordering, partition, and stale-generation rules are implemented and applicable CUR evidence passes;
 - the applicable ADR-002-013 final-egress trust boundary, proof validation, credential/route confinement, and hard fencing are implemented and their required EGRESS evidence passes;
 - ADR-002-016 exact approval, authority, invalidation, HALT, recovery, re-arm, pre-effect, and send evidence is durably captured, gap-contained, and replayable without creating or reviving permission, and applicable ERI evidence passes;
 - `SBR-EV-001` through `SBR-EV-012` and applicable cross-ADR recovery evidence pass at required levels and receive independent review;

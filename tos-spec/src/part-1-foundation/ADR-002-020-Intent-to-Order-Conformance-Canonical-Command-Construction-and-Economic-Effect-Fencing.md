@@ -32,6 +32,8 @@ No security- or economic-effect-relevant field may be created, defaulted, normal
 
 Final egress remains the last enforcement point. Before the first broker-directed byte, it SHALL verify the exact Intent, construction policy and generation, Authorized Construction Envelope, Canonical Broker Command digest, Order Conformance Proof, Economic Effect Envelope, capacity commitment, authority, Order Admissibility Decision, Commit Proof, endpoint, route, credential, session, and actual outbound representation. Any mismatch, unknown field, duplicate semantic field, unsupported encoding, stale generation, or unverifiable equivalence denies transmission.
 
+ADR-002-024 orders those currentness dimensions, restrictive construction floors, and the actual command/attempt binding in one per-send Egress Currentness Proof with capability claim and `SEND_STARTED`. The proof does not replace outbound equivalence and cannot authorize a command mutation.
+
 Intent withdrawal, policy change, mapping change, compiler or serializer change, schema change, broker SDK change, broker capability change, context or venue-constraint invalidation, security compromise, or recovery SHALL invalidate every affected unconsumed conformance proof before future new-risk send. Invalidation or expiry never expires a command that may already have economic effect, releases capacity, proves rejection, or re-arms live operation.
 
 Restart, rollback, restore, failover, cache warm-up, serializer recovery, SDK recovery, broker reconnect, successful replay, or identical recompilation cannot revive a prior proof, capability, or authority. Fresh current artifacts and the complete governed authorization chain are required. No automatic re-arm is permitted.

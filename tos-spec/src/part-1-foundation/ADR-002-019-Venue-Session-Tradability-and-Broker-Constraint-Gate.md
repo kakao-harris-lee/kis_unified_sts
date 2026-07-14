@@ -30,6 +30,8 @@ Material changes to venue state, session phase, halt or suspension state, price 
 
 The Broker Adapter / Broker Egress Gateway remains the final enforcement point. At the irreversible send boundary it SHALL validate the exact Order Admissibility Decision and actively establish current Venue Constraint Policy, Constraint Generation, session and tradability state, broker-capability profile, scope, age, and invalidation status. TTL, schedule, heartbeat, cached health, last-known state, eventual consistency, or absence of a halt/correction event is not currentness proof. Failure to establish currentness denies transmission.
 
+ADR-002-024 defines the per-send ordering mechanism. Constraint Generation, exact decision, session/tradability/account/broker floors, and invalidation are dimensions in the Safety Currentness Vector; a restrictive transition sets the local latch to `DENY_LATCHED` and is ordered against capability claim and `SEND_STARTED`.
+
 Venue reopen, session transition, halt release, broker recovery, margin restoration, borrow restoration, reconnect, restart, failover, deployment, clock recovery, or constraint-service recovery cannot revive an older decision or authority. A fresh decision and the complete governed authorization chain are required. No automatic re-arm is permitted.
 
 ---

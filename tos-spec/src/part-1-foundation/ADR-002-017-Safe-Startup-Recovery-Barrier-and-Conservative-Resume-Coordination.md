@@ -269,6 +269,8 @@ Final egress SHALL reject any new-risk request when the current Recovery Generat
 
 Final egress SHALL obtain current Recovery Generation, barrier state, and readiness invalidation status through the authenticated fenced currentness mechanism. A cache, TTL, heartbeat, service-health result, eventual-consistency assumption, or absence of an invalidation event is not currentness proof. If the complete current state cannot be positively established within the approved bound at the irreversible send boundary, the request is denied.
 
+ADR-002-024 supplies that mechanism: Recovery Generation and barrier/readiness floors are dimensions in the exact Safety Currentness Vector, barrier closure is a Restrictive Fence Record and local-latch trigger, and each normal send requires a new ordered Egress Currentness Proof. Recovery readiness cannot create or reuse that proof.
+
 Restrictive Human HALT does not wait for recovery persistence. ADR-002-015 and ADR-002-016 emergency latch rules dominate.
 
 ---

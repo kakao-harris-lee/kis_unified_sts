@@ -116,7 +116,7 @@ An immutable artifact that selects a strictly equal-or-narrower operating scope 
 
 ### 5.3 Safety Configuration Bundle
 
-The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, ADR-002-022 Action Flow Policy, ADR-002-023 Trading Approval Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
+The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, ADR-002-022 Action Flow Policy, ADR-002-023 Trading Approval Policy, ADR-002-024 Currentness Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
 
 ### 5.4 Profile Generation
 
@@ -358,6 +358,8 @@ Activation also does not establish venue/session/tradability, account/margin/bor
 Activation does not establish that a candidate command conforms to an approved Intent, that an Economic Effect Envelope is capacity-covered, that an Order Conformance Proof is current, or that the actual outbound representation is equivalent. Those predicates remain independently governed and enforced under ADR-002-020; configuration activation cannot create conformance or transmission permission.
 
 Activation does not establish aggregate-state completeness, scenario sufficiency, valuation or hedge validity, an Aggregate Risk Decision, RCL headroom, or risk-decision currentness. Those predicates remain independently governed and enforced under ADR-002-021; configuration activation cannot grant an allocation or create capacity.
+
+Activation does not establish the ADR-002-024 complete Safety Currentness Vector, satisfy a restrictive generation floor, open a Local Restrictive Latch, create an Egress Currentness Proof, or order a capability claim. Currentness Policy is part of the governed bundle, but active configuration is not per-send currentness or transmission authority.
 
 ---
 
@@ -665,6 +667,7 @@ The architecture is selected. The following product, schema, governance, topolog
 16. How are ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set identities, generations, digests, evaluator/verifier compatibility, and restrictive invalidation bound into the bundle without letting activation grant allocation or create capacity?
 17. How are ADR-002-022 Action Flow Policy identity, generation, digest, resource/scope semantics, governor/RCL/egress compatibility, and restrictive invalidation bound into the bundle without letting activation create capacity, reserve, permit, or transmission authority?
 18. How are ADR-002-023 Trading Approval Policy identity, generation, digest, evaluator/verifier compatibility, independent-path allocation, and restrictive invalidation bound into the bundle without letting activation approve a proposal or create an Intent?
+19. How are ADR-002-024 Currentness Policy identity, generation, digest, owner/dependency registry, vector/fence/proof schemas, local-latch rules, and compatibility bound into the bundle without letting activation establish per-send currentness or transmission permission?
 
 Unresolved questions reduce authority or keep the affected scope non-live. They SHALL NOT create a permissive default.
 
@@ -690,7 +693,8 @@ ADR-002-014 SHALL remain **Proposed** until all of the following are complete:
 14. ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set identities, generations, digests, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming allocation, capacity, Live Authorization, or egress authority, and applicable ARE evidence passes;
 15. ADR-002-022 Action Flow Policy identity, generation, digest, resource/scope semantics, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming capacity, protective reserve, Action Flow Permit, Live Authorization, or egress authority, and applicable AFG evidence passes;
 16. ADR-002-023 Trading Approval Policy identity, generation, digest, independent-validation requirements, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming proposal approval, Intent transition, capacity, authority, or egress permission, and applicable IAP evidence passes;
-17. applicable activation, revocation, restriction-propagation, recovery-barrier, Critical Input, venue-constraint, aggregate-risk, action-flow, and approval invalidation, context/request/decision/permit/snapshot-age, readiness-age, time, evidence, and egress bounds are approved and measured;
-18. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+17. ADR-002-024 Currentness Policy identity, generation, digest, owner/dependency registry, vector/fence/proof schemas, local-latch rules, and compatibility are bound into the complete configuration bundle without becoming currentness fact, capacity mutation, live authority, or egress permission, and applicable CUR evidence passes;
+18. applicable activation, revocation, restriction-propagation, recovery-barrier, Critical Input, venue-constraint, aggregate-risk, action-flow, approval, and currentness invalidation, context/request/decision/permit/proof/vector/snapshot-age, readiness-age, time, evidence, and egress bounds are approved and measured;
+19. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, signatures, successful parsing, repository merge, staged distribution, written acceptance cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, configuration-driven capacity mutation, or automatic re-arm.

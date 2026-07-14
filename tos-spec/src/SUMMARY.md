@@ -32,6 +32,7 @@
 - [ADR-002-021 — Aggregate Risk Projection, Adverse-Scenario Evaluation, and Risk-Decision Integrity](part-1-foundation/ADR-002-021-Aggregate-Risk-Projection-Adverse-Scenario-Evaluation-and-Risk-Decision-Integrity.md)
 - [ADR-002-022 — Action-Flow Budgeting, Retry-Storm Containment, and Protective-Traffic Preservation](part-1-foundation/ADR-002-022-Action-Flow-Budgeting-Retry-Storm-Containment-and-Protective-Traffic-Preservation.md)
 - [ADR-002-023 — Independent Proposal Approval, Exact-Decision Binding, and Consumption Fencing](part-1-foundation/ADR-002-023-Independent-Proposal-Approval-Exact-Decision-Binding-and-Consumption-Fencing.md)
+- [ADR-002-024 — Active Currentness, Revocation, and Final-Egress Admission Fencing](part-1-foundation/ADR-002-024-Active-Currentness-Revocation-and-Final-Egress-Admission-Fencing.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)

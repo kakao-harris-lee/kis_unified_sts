@@ -201,6 +201,17 @@ independent_approval_binding:
   active_currentness_mechanism: TBD
   permissive_intent_state_or_cache_prohibited: true
 
+currentness_binding:
+  currentness_policy_id: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
+  complete_safety_currentness_vector_required: true
+  restrictive_fence_and_local_latch_required: true
+  per_send_single_use_egress_currentness_proof_required: true
+  proof_claim_and_send_started_same_ordering_domain_required: true
+  cache_ttl_heartbeat_health_or_absence_of_invalidation_sufficient: false
+  broker_reachable_control_plane_partition_allows_normal_send: false
+
 egress_security:
   final_egress_boundary_id: TBD
   egress_generation: TBD

@@ -30,6 +30,8 @@ The risk calculation SHALL use deterministic, bounded, overflow-safe, unit-safe,
 
 All risk inputs are Critical Inputs under ADR-002-018. Price, volatility, correlation, liquidity, FX, margin, collateral, borrow, position, order, fill, broker, corporate-action, settlement, model, mapping, and policy changes SHALL invalidate every affected unconsumed decision through the RCL and final egress. TTL, cache age alone, heartbeat, service health, last-known generation, eventual consistency, or absence of invalidation is not currentness proof.
 
+ADR-002-024 orders Aggregate Risk Generation, exact state/scenario/effect/decision identities, RCL allocation binding, and restrictive risk floors in the complete per-send vector. A prior `GRANT`, existing commitment, cached evaluator state, or previous proof cannot cross a newer risk fence or a local latch in `DENY_LATCHED` or `UNKNOWN` state.
+
 If a decision or its inputs become stale or invalid after capacity was committed but before send, future transmission SHALL be denied and the commitment retained or quarantined. If the command may already have crossed the irreversible send boundary, every credible economic effect remains potentially live and capacity-consuming until authoritative evidence resolves it. Decision, policy, authority, or artifact expiry never expires economic effect.
 
 UNKNOWN broker, order, exposure, capacity, valuation, scenario, correlation, mapping, or aggregate state consumes conservative capacity and blocks new risk. Missing ACK is not proof of non-acceptance. Cancel ACK is not Final Quantity Proof. Reconciliation, audit, documentation, replay, human judgment, or a later favorable observation cannot substitute for preventive projection and exclusive commitment.

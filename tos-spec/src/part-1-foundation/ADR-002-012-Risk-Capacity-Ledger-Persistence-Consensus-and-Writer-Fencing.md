@@ -28,6 +28,8 @@ The Safety Commit Log SHALL provide one committed order for:
 
 The Risk Capacity Ledger state machine remains the sole capacity mutation and serialization authority. Sharing the consensus substrate with authority-currentness ordering does not grant the Safety Authority, Currentness Sequencer, consensus leader, or infrastructure administrator the right to mutate capacity.
 
+ADR-002-024 defines the complete currentness namespace carried by or transactionally coupled to this log. Ordering a Safety Currentness Vector, Restrictive Fence Record, or Egress Currentness Proof does not add an RCL mutation path or business authority.
+
 When quorum or current committed-prefix proof is unavailable, no new normal capacity mutation, normal capability authorization, capability claim, or normal broker transmission is permitted. Existing reservations, potentially-live attempts, UNKNOWN exposure, trapped exposure, and economic effect remain capacity-consuming. Only an already issued, exclusive degraded protective lease may operate under ADR-002-001, ADR-002-002, and ADR-002-003.
 
 Quorum restoration, leader election, node restart, snapshot restore, or membership recovery SHALL NOT automatically re-arm live operation or revive a prior capability.
@@ -328,7 +330,7 @@ An uncommitted, minority-issued, stale-generation, or capacity-unbound capabilit
 
 ## 12. Fenced Egress Claim and Send Boundary
 
-Before the first broker-directed byte of a normal risk-relevant action, the Egress Gateway SHALL submit `ClaimCapabilityAndMarkSendStarted` and obtain Commit Proof.
+Before the first broker-directed byte of a normal risk-relevant action, the Egress Gateway SHALL submit `ClaimCapabilityAndMarkSendStarted` and obtain Commit Proof together with the ADR-002-024 single-use Egress Currentness Proof over the complete action-scoped vector and restrictive floors.
 
 The committed transition SHALL atomically:
 
@@ -338,7 +340,7 @@ The committed transition SHALL atomically:
 4. record `SEND_STARTED`, broker-request identity, exact economic effect, generation vector, and Egress Gateway identity;
 5. make every later duplicate claim return the original committed result without creating another send authority.
 
-The Egress Gateway SHALL revalidate the Commit Proof against its current ADR-002-007 currentness session and begin broker transmission within `B_capability_claim_to_send`.
+The Egress Gateway SHALL revalidate the Commit Proof against its current ADR-002-007 session and ADR-002-024 local restrictive latch, then begin broker transmission within `B_capability_claim_to_send`. The session, cache, or a prior proof cannot replace the new per-send ordered proof.
 
 If quorum commit, Commit Proof, currentness, evidence durability, or claim-to-send ordering is unavailable or ambiguous, no new send is permitted. A crash or ambiguity after the committed claim remains potentially live and capacity-covered. Missing broker ACK is not proof of non-acceptance, and authority expiry does not expire economic effect.
 

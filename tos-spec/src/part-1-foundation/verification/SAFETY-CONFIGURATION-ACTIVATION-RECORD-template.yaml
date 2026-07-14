@@ -50,6 +50,9 @@ bundle:
   trading_approval_policy_id: TBD
   trading_approval_policy_generation: null
   trading_approval_policy_digest: TBD
+  currentness_policy_id: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 

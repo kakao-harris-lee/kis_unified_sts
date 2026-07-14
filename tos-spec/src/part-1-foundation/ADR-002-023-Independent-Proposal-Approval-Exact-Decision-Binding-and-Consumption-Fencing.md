@@ -24,6 +24,8 @@ Approval policy, evaluator, dependency, source, context, constraint, constructio
 
 Final egress SHALL actively verify the exact approval decision, consumption record, Trading Approval Generation, invalidation state, Intent binding, and all later gates immediately before the irreversible broker boundary. Cache age, TTL, heartbeat, service health, last-known generation, prior success, an Intent `APPROVED` flag, or absence of an invalidation event is not currentness proof. If currentness or ordering cannot be proved, the action is denied; any ambiguous send remains potentially live and capacity-covered.
 
+ADR-002-024 defines the common per-send ordering mechanism. Trading Approval Generation, exact request/decision/consumption/Intent identities, and invalidation floors are dimensions in the Safety Currentness Vector; each later normal send requires a new Egress Currentness Proof ordered with the capability claim and `SEND_STARTED`.
+
 Loss, partition, restart, rollback, failover, or recovery of the proposer, approval service, Intent Registry, policy registry, independent input path, or evidence system cannot revive an old decision or Intent authority. No automatic re-arm is permitted.
 
 ---

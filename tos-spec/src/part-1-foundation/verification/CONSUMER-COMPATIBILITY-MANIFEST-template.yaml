@@ -47,6 +47,10 @@ supported_contracts:
   action_flow_decision_schema_versions: []
   action_flow_permit_schema_versions: []
   trading_approval_policy_schema_versions: []
+  currentness_policy_schema_versions: []
+  safety_currentness_vector_schema_versions: []
+  restrictive_fence_record_schema_versions: []
+  egress_currentness_proof_schema_versions: []
   proposal_approval_request_schema_versions: []
   independent_approval_decision_schema_versions: []
   approval_consumption_record_schema_versions: []
@@ -76,6 +80,8 @@ attestation:
   action_flow_policy_digest: TBD
   trading_approval_policy_generation: null
   trading_approval_policy_digest: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
   context_generation: null
   reproduced_semantic_digest: TBD
   compatible: false
@@ -104,6 +110,10 @@ fail_closed_contract:
   invalidated_action_flow_decision: DENY
   invalid_or_consumed_action_flow_permit: DENY
   stale_trading_approval_generation: DENY
+  stale_currentness_policy_generation: DENY
+  incomplete_or_mixed_currentness_vector: DENY
+  stale_or_replayed_egress_currentness_proof: DENY
+  restrictive_fence_or_local_latch_conflict: RESTRICTIVE_STATE_WINS
   invalidated_independent_approval_decision: DENY
   invalid_or_conflicting_approval_consumption: DENY
   approval_intent_binding_mismatch: DENY

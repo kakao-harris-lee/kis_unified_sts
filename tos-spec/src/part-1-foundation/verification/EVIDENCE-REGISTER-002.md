@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **279**
-- NOT_IMPLEMENTED: **279**
+- Total evidence items: **291**
+- NOT_IMPLEMENTED: **291**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -302,6 +302,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | IAP-EV-010 | Independent Proposal Approval | Partition and Stale-Generation Fencing | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | IAP-EV-011 | Independent Proposal Approval | Economic Continuity and Broker Ambiguity | ADR-002-023 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | IAP-EV-012 | Independent Proposal Approval | Recovery Evidence and Non-Revival | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-001 | Active Currentness | Complete Exact Vector | ADR-002-024 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-002 | Active Currentness | Restrictive Fence Dominance | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-003 | Active Currentness | Independent Local Deny | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-004 | Active Currentness | Per-Send Proof and No Cache | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-005 | Active Currentness | Claim Fence and First-Byte Race | ADR-002-024 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-006 | Active Currentness | Partition with Broker Reachability | ADR-002-024 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-007 | Active Currentness | Stale Generation and Restore Fence | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-008 | Active Currentness | Multi-Domain and Shared Scope | ADR-002-024 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-009 | Active Currentness | Authority and Capacity Separation | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-010 | Active Currentness | UNKNOWN and Economic Continuity | ADR-002-024 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-011 | Active Currentness | Protective Confinement | ADR-002-024 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| CUR-EV-012 | Active Currentness | Recovery Evidence and Non-Revival | ADR-002-024 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

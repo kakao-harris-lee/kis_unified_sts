@@ -652,6 +652,8 @@ Open questions reduce authority and keep affected scope non-live; they do not we
 
 ADR-002-016 SHALL remain **Proposed** until all of the following are complete:
 
+ADR-002-024 Currentness Policy, Safety Currentness Vector, Restrictive Fence Record, Local Restrictive Latch, Egress Currentness Proof, capability claim, `SEND_STARTED`, first-byte, and ambiguity evidence SHALL be durably ordered and replayable without allowing evidence or replay to create or revive currentness, authority, capacity, or broker permission.
+
 1. Safety Evidence Envelope, Evidence Integrity Policy, Evidence Commit Receipt, Integrity Anchor, Evidence Gap, and Replay Capsule schemas and canonicalization are approved;
 2. required record classes and causal-parent rules are complete for every safety-critical boundary;
 3. pre-effect durability is enforced at final egress without treating evidence as authority;

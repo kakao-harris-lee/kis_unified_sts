@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-023
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-023; implementation evidence has not been executed
-- **Extension State:** ADR-002-005 through ADR-002-023 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, and IAP evidence families. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-024
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-024; implementation evidence has not been executed
+- **Extension State:** ADR-002-005 through ADR-002-024 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, and CUR evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -90,6 +90,7 @@ Every evidence run SHALL bind to an immutable baseline containing:
 - Critical Input Policy generation and digest;
 - Venue Constraint Policy generation and digest;
 - Trading Approval Policy generation and digest;
+- Currentness Policy generation and digest;
 - Broker Capability Profile version;
 - Verification Profile version;
 - database/schema migration version;
@@ -2377,7 +2378,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 290. Model-Based and Property Verification
+# Part XXIV — Active Currentness and Final-Egress Admission Evidence
+
+## 290. CUR-EV-001 — Complete Exact Vector
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-024 CUR-AC-001
+- **Injection:** Omit, wildcard, default, mix, stale, conflict, or substitute each owner generation, artifact, restrictive floor, scope, dependency, command, attempt, principal, route, and session dimension.
+- **Expected:** No partial or mixed vector produces `CURRENT`; unknown materiality or closure expands scope and denies admission.
+
+## 291. CUR-EV-002 — Restrictive Fence Dominance
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-024 CUR-AC-002
+- **Injection:** Order HALT, revocation, input/constraint/conformance/risk/flow/approval invalidation, policy reduction, owner compromise, and newer generation before and during competing claims.
+- **Expected:** Every fence ordered before claim denies; older permissive artifacts, vectors, proofs, priority, and cached state cannot cross the new floor.
+
+## 292. CUR-EV-003 — Independent Local Deny
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-024 CUR-AC-003
+- **Injection:** Deliver credible authenticated restriction or currentness loss to final egress while quorum, proposer, approval, normal authority, publisher acknowledgement, and evidence store are unavailable; restart or fail over the egress.
+- **Expected:** The Local Restrictive Latch transitions to `DENY_LATCHED` before later claims, survives restart/failover under its generation, remains `DENY_LATCHED` without global confirmation, and creates no permission.
+
+## 293. CUR-EV-004 — Per-Send Proof and No Cache
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-024 CUR-AC-004
+- **Injection:** Attempt multiple sends using one proof, cached vector, currentness session, TTL, heartbeat, health, last-known generation, prior success, or absence of invalidation.
+- **Expected:** Each send requires one new exact proof ordered with its claim; replay, cache, and inference paths are rejected.
+
+## 294. CUR-EV-005 — Claim, Fence, and First-Byte Race
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-024 CUR-AC-005
+- **Injection:** Exercise every fence/claim/`SEND_STARTED`/local-latch/first-byte order, lose each response, crash each participant, delay proxies and sessions, and suppress broker ACK.
+- **Expected:** Pre-claim fences deny; earlier or ambiguous claims remain potentially live and capacity-covered; no timeout, retry, or missing evidence creates permission or release.
+
+## 295. CUR-EV-006 — Partition with Broker Reachability
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-024 CUR-AC-006
+- **Injection:** Keep broker credential, route, and session usable while partitioning currentness quorum, owner proof, restrictive ingress, RCL, capability issuer, or final egress from one another.
+- **Expected:** No normal send occurs without complete positive proof and ordered claim; broker reachability, local cache, and session health do not preserve authority.
+
+## 296. CUR-EV-007 — Stale Generation and Restore Fence
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-024 CUR-AC-007
+- **Injection:** Resume old owner, sequencer, writer, cluster, restored database, deployment, credential, signer, route, session, and egress principal after each newer generation.
+- **Expected:** Every predecessor is rejected and remains potentially active until hard fenced; no old identity creates or consumes a current vector/proof.
+
+## 297. CUR-EV-008 — Multi-Domain and Shared Scope
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-024 CUR-AC-008
+- **Injection:** Race parent/child and cross-domain actions, omit shared limits, union narrow proofs, split scope during claim, fail one participant, and attempt best-effort compensation.
+- **Expected:** One complete domain or proven serializable barrier orders the action; otherwise admission is denied without proof union or double use.
+
+## 298. CUR-EV-009 — Authority and Capacity Separation
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-024 CUR-AC-009
+- **Injection:** Use Currentness Policy, sequencer, vector, fence, proof, latch, evidence, replay, or administrator identities to approve, create Intent, mutate/release RCL capacity, classify protection, issue authority/capability, transmit, clear HALT, or re-arm.
+- **Expected:** Every escalation and direct route fails; RCL and final egress retain their sole authorities and currentness remains non-authorizing.
+
+## 299. CUR-EV-010 — UNKNOWN and Economic Continuity
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-024 CUR-AC-010
+- **Injection:** Lose claim, proof, send, ACK, broker query, order, fill, exposure, currentness, and cancellation evidence; expire or invalidate every currentness artifact after possible effect.
+- **Expected:** New risk stops, worst credible effect remains capacity-covered, missing ACK is not non-acceptance, cancel ACK is not Final Quantity Proof, and expiry releases nothing.
+
+## 300. CUR-EV-011 — Protective Confinement
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-024 CUR-AC-011
+- **Injection:** Combine priority and protective/exit/hedge/reduce-only labels with missing normal currentness, absent protective lease, exhausted capacity/flow reserve, stale admissibility, or unavailable conformance.
+- **Expected:** Labels and priority create no reserve or authority; only the exact pre-issued complete protective path may proceed, otherwise exposure is trapped and contained.
+
+## 301. CUR-EV-012 — Recovery, Evidence, and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-024 CUR-AC-012
+- **Injection:** Restart, reconnect, fail over, restore, replay, recover quorum/time/health/owners/evidence, reconstruct an identical vector, and drain old queues or sessions.
+- **Expected:** Old vectors, proofs, capabilities, claims, latches, permissions, and live state do not revive; recovery remains non-live until fresh governed re-arm.
+
+---
+
+## 302. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -2403,6 +2492,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Aggregate Risk Policy, Aggregate Risk Generation, Aggregate Risk State Snapshot, Adverse Scenario Set, dimension/scope vectors, projected state, benefit evidence, Aggregate Risk Decision, RCL admission, invalidation, final-egress currentness, and recovery state;
 - Action Flow Policy, Action Flow Generation, Action Flow State Snapshot, cause lineage, amplification envelope, shared-scope resource vector, Action Flow Decision, RCL Permit allocation/claim/consumption/quarantine, protective reserve/lease, invalidation, final-egress currentness, and recovery state;
 - Trading Approval Policy, Trading Approval Generation, Proposal Approval Request, independent/common-mode fact evaluation, Independent Approval Decision, Intent Registry writer and single-use consumption, immutable Intent binding, invalidation closure, final-egress currentness, and recovery state;
+- Currentness Policy, owner/dependency closure, Safety Currentness Vector, restrictive floors, Restrictive Fence Record, Local Restrictive Latch, Egress Currentness Proof, capability/permit claim, `SEND_STARTED`, first-byte ordering, cross-domain barrier, and recovery state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2481,13 +2571,19 @@ No Independent Approval Decision mutation, widening, replay, duplicate consumpti
 No approval or Intent Registry identity mutates capacity, classifies protection, issues authority/capability, reaches the broker, clears HALT, or re-arms
 No approval invalidation misses affected Intent registration or final egress beyond its approved bound
 No approval expiry, denial, invalidation, recovery, restore, or replay erases possible economic effect, releases capacity, or revives authority
+No incomplete, mixed, stale, conflicting, wrong-scope, or cached Safety Currentness Vector creates a per-send proof
+No restrictive fence ordered before claim, or credible local restriction observed before first byte, permits the affected new-risk send
+No TTL, heartbeat, health, currentness session, prior proof, or absence of invalidation substitutes for one new single-use Egress Currentness Proof
+No currentness quorum or owner-proof loss with broker reachability permits a normal send
+No currentness policy, sequencer, vector, fence, proof, latch, evidence, replay, or administrator mutates capacity or creates approval, authority, protection, transmission, HALT clear, or re-arm
+No currentness expiry, claim ambiguity, missing ACK, cancel ACK, partition, restore, recovery, or replay releases economic capacity or revives permission
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 291. Fault-Injection Requirements
+## 303. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2531,7 +2627,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 292. Broker Verification Safety Rules
+## 304. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -2549,7 +2645,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 293. Continuous Conformance Evidence
+## 305. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -2588,7 +2684,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 294. Residual Risk Register
+## 306. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -2609,7 +2705,7 @@ Every unresolved limitation SHALL record:
 
 ---
 
-## 295. Independent Review Checklist
+## 307. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -2644,7 +2740,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 296. Approval Gates by ADR
+## 308. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -2962,6 +3058,17 @@ Requires:
 - security assessment of proposer/approver common mode, canonicalization/parser differential, policy/evaluator/dependency-registry compromise, duplicate consumption, stale writer, direct route, cache currentness, restore, replay, and automatic re-arm;
 - proof that `APPROVE` creates only one exact Intent registration eligibility and never capacity, protective classification, Live Authorization, Transmission Capability, broker transmission, HALT clear, or re-arm.
 
+### ADR-002-024
+
+Requires:
+
+- CUR-EV-001 through CUR-EV-012;
+- RCLP-EV-001 through RCLP-EV-012, EGRESS-EV-001 through EGRESS-EV-012, and applicable SA, TIME, REARM, SBR, CII, VTG, IOC, ARE, AFG, IAP, ERI, FD, BC, RC, HAG, and cross-system evidence;
+- approved Currentness Policy, complete owner/dependency registry, Currentness Ordering Domain, Safety Currentness Vector, Restrictive Fence Record, independent restrictive ingress, monotonic Local Restrictive Latch, Egress Currentness Proof, per-send proof/claim transaction, cross-domain barrier, first-byte ordering, stale-generation hard fence, and recovery protocol;
+- approved and measured `B_currentness_gap_to_local_deny`, `B_restrictive_fence_commit`, `B_currentness_fence_to_egress`, `B_currentness_proof_issue`, `B_currentness_generation_fence`, `MAX_egress_currentness_proof_age_ms`, `MAX_currentness_vector_age_ms`, and every applicable owner-invalidation, revocation, HALT, claim-to-send, hard-fence, partition, evidence, and recovery bound;
+- security assessment of owner/sequencer compromise, parser differential, restrictive suppression/spoofing, proof replay/substitution, local-latch bypass, broker-reachable partition, alternate route, stale restore, cross-domain proof union, and administrative common mode;
+- proof that currentness artifacts establish only exact non-authorizing facts, RCL remains the sole capacity authority, final egress remains the sole transmission enforcement point, UNKNOWN stays conservative, and recovery never auto-rearms.
+
 ### Production Restricted Live Gate
 
 Requires:
@@ -2976,7 +3083,7 @@ Requires:
 
 ---
 
-## 297. Current Evidence Readiness Assessment
+## 309. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -3008,6 +3115,7 @@ Intent-to-order conformance, canonical command, economic-effect, and actual-outb
 Aggregate risk projection, adverse-scenario, exact allocation-decision, and currentness evidence: NOT EXECUTED
 Action-flow budgeting, retry-storm containment, protective-reserve, and permit-currentness evidence: NOT EXECUTED
 Independent proposal approval, single-use Intent consumption, invalidation, and currentness evidence: NOT EXECUTED
+Active currentness, restrictive-fence, local-latch, per-send proof, and claim/send-ordering evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -3016,13 +3124,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 298. Required Next Execution Sequence
+## 310. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, and independent proposal-approval models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, and active-currentness models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -3035,7 +3143,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 299. Verification Specification Approval Gate
+## 311. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

@@ -1,0 +1,62 @@
+artifact_type: RESTRICTIVE_FENCE_RECORD
+schema_version: "1.0-DRAFT"
+fence_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: RESTRICTIVE
+source_owner:
+  principal_id: TBD
+  authority_class: TBD
+  source_generation: null
+  source_record_id: TBD
+  source_record_digest: TBD
+ordering_domain:
+  domain_id: TBD
+  cluster_id: TBD
+  membership_generation: null
+  restore_generation: null
+  writer_epoch: null
+  committed_revision: null
+scope:
+  environment: TBD
+  safety_cell_id: TBD
+  capacity_domain_id: TBD
+  accounts: []
+  brokers: []
+  venues: []
+  instruments: []
+  action_classes: []
+  scope_digest: TBD
+  dependency_closure_complete: false
+restriction:
+  reason_codes: []
+  affected_dimensions: []
+  minimum_generation_floors: []
+  effect_if_committed: REDUCE_FUTURE_AUTHORITY_ONLY
+  deny_new_risk: true
+  halt_or_contain: true
+  invalidates_future_use_only: true
+local_latch_observations: []
+predecessor_fence_id: TBD
+predecessor_fence_digest: TBD
+conflicts: []
+evidence_commit_receipt_id: TBD
+signatures: []
+authority:
+  reduces_future_authority_only: false
+  creates_permission: false
+  creates_approval: false
+  creates_intent: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT record is uncommitted and grants no authority. If an authenticated
+  owner record is committed through the governed ordering domain, its only
+  authority effect is restrictive: reducing future use without erasing any
+  existing economic effect or releasing capacity.

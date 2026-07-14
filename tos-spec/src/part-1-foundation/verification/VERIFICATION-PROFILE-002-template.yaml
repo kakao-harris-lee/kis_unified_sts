@@ -51,6 +51,9 @@ scope:
   trading_approval_policy_id: TBD
   trading_approval_policy_generation: null
   trading_approval_policy_digest: TBD
+  currentness_policy_id: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -255,6 +258,41 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+  B_currentness_gap_to_local_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from a final egress detecting credible currentness loss or authenticated restriction to its Local Restrictive Latch reaching DENY_LATCHED (ADR-002-024 §§11, 14)."
+    measurement_source: restrictive_ingress_and_local_egress_latch_trace
+    failure_response: LATCH_LOCAL_HALT_AND_ESCALATE
+  B_restrictive_fence_commit:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from authoritative owner restriction to committed Restrictive Fence Record over the complete dependency scope (ADR-002-024 §§10-11)."
+    measurement_source: owner_restriction_and_currentness_ordering_trace
+    failure_response: KEEP_LOCAL_DENY_AND_HALT
+  B_currentness_fence_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed Restrictive Fence Record to denial of later affected claims and sends at every final egress (ADR-002-024 §§11-15)."
+    measurement_source: restrictive_fence_and_egress_admission_trace
+    failure_response: HALT
+  B_currentness_proof_issue:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval to validate one complete vector and atomically create its single-use Egress Currentness Proof with capability claim and SEND_STARTED (ADR-002-024 §§12-13)."
+    measurement_source: currentness_vector_claim_and_proof_trace
+    failure_response: DENY_NEW_RISK
+  B_currentness_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from commitment of a newer currentness, restore, writer, or egress generation to proven inability of every predecessor to create or consume a current vector or proof (ADR-002-024 §§15, 19)."
+    measurement_source: currentness_generation_and_hard_fence_trace
+    failure_response: HALT_OR_CONTAIN
   B_final_quantity_proof:
     value_ms: null
     semantics: broker_specific
@@ -408,6 +446,8 @@ limits:
   MAX_action_amplification_per_cause: null
   MAX_proposal_approval_request_age_ms: null
   MAX_independent_approval_decision_age_ms: null
+  MAX_egress_currentness_proof_age_ms: null
+  MAX_currentness_vector_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD
