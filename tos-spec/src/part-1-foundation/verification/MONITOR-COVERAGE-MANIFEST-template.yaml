@@ -1,0 +1,53 @@
+artifact_type: MONITOR_COVERAGE_MANIFEST
+schema_version: "1.0-DRAFT"
+manifest_id: TBD
+manifest_version: TBD
+monitor_generation: null
+canonical_digest: TBD
+status: DRAFT
+policy_binding:
+  safety_monitoring_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+critical_telemetry_manifest_bindings: []
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+requirement_hazard_control_registry_digest: TBD
+coverage_entries: []
+approved_exclusions: []
+unresolved_exclusions: []
+underlying_preventive_and_restrictive_owners: []
+detection_and_containment_bound_bindings: []
+restrictive_handoff_rules: []
+alert_delivery_and_escalation_bindings: []
+evidence_and_independent_review_bindings: []
+final_egress_currentness_dependencies: []
+recovery_obligations: []
+failure_domain_and_common_mode_analysis: []
+coverage_result: UNKNOWN
+coverage_complete: false
+missing_item_disposition: GAP_AND_RESTRICT
+consumer_union_permitted: false
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  active: false
+  marks_requirement_pass: false
+  creates_conformance: false
+  creates_permission: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_or_incident: false
+  establishes_recovery_readiness: false
+  permits_rearm: false
+authorization_notice: >-
+  This DRAFT incomplete coverage manifest grants no authority. Missing coverage,
+  unresolved exclusions, partial refresh, consumer-local patching, or union of
+  narrow manifests creates a Monitoring Gap and blocks dependent new risk.

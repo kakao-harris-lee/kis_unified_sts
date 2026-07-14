@@ -9,7 +9,7 @@
 **Safety Authority:** Constrained by RFC-001 — Safety Case
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-13
-**Last Updated:** 2026-07-13
+**Last Updated:** 2026-07-14
 
 ---
 
@@ -92,6 +92,7 @@ The scope includes:
 * protective operation;
 * evidence capture;
 * replay;
+* safety telemetry, continuous conformance monitoring, and alert escalation;
 * production recovery and re-arming;
 * safety deviations, exceptions, and residual-risk governance.
 
@@ -212,6 +213,12 @@ A Safety Deviation Decision does not satisfy the affected requirement, mark evid
 A monotonic restrictive declaration that a policy-classified safety signal may affect one exact dependency-complete scope under one current Incident Generation.
 
 The declaration and its Incident Record, Active Safety Incident Set, containment plan, recovery handoff, evidence, and closure artifacts are non-authorizing. They do not mutate or release capacity, classify protection, issue authority, transmit, clear HALT, establish recovery readiness, restore scope, or re-arm. ADR-002-027 defines incident scope, controlled shutdown, closure, currentness, and non-revival semantics.
+
+#### 3.1.13 Monitoring Gap
+
+An immutable non-authorizing record that required safety telemetry or monitor coverage is missing, stale, conflicting, ambiguous, discontinuous, incomplete, unverified, common-mode-invalid, suppressed, overflowed, or otherwise unable to demonstrate its declared contract.
+
+A Monitoring Gap restricts the greatest credible dependent scope and creates no permission, capacity transition, broker finality, incident closure, recovery readiness, scope restoration, or re-arm. ADR-002-028 defines telemetry, coverage, continuous-conformance, suppression, alert, escalation, currentness, and non-revival semantics.
 
 ---
 
@@ -537,6 +544,7 @@ The following matrix is the normative authority model.
 | Govern restricted-live trial and production-scope promotion | Independent safety and broker reviewers evaluate exact pre-registered evidence; Human Authority approves eligibility | Configuration governance activates a new scope and Live Authorization Service issues fresh authority only through existing gates | Trial plans, evidence packages, promotion decisions, dashboards, and monitors SHALL NOT create capacity, activate production, transmit, or re-arm |
 | Evaluate safety deviation and residual risk | Safety Deviation Policy governance supplies the Non-Waivable Boundary; independent effective-person quorum evaluates exact reduced scope | Configuration governance may consume one eligible decision into one new restricted Safety Configuration Bundle; all ordinary gates remain | Request, decision, residual-risk record, ticket, evidence, and monitor SHALL NOT mark a requirement PASS, mutate capacity, activate configuration, issue live authority, transmit, or re-arm |
 | Declare and coordinate safety incident | Safety Incident Policy governance supplies signal, severity, scope, containment, shutdown, handoff, and closure rules; the incident coordinator produces non-authorizing artifacts | Safety Authority, Human HALT, Currentness Fence, RCL, Protective Action Controller, Cancellation Arbiter, Recovery Coordinator, and final egress retain their existing enforcement ownership | Incident records, plans, messages, evidence, handoffs, and closure decisions SHALL NOT mutate or release capacity, classify protection, issue live authority, transmit, clear HALT, establish readiness, restore scope, or re-arm |
+| Evaluate safety telemetry and continuous conformance | Safety Monitoring Policy governance supplies exact telemetry, coverage, evaluator, suppression, and alert rules; source owners publish facts | Safety Monitoring Service produces non-authorizing snapshots, gaps, alerts, and restrictive requests; ADR-002-024/027 and existing owners enforce restriction and incident lifecycle | Monitoring, alert, paging, dashboard, and escalation artifacts SHALL NOT mark a requirement PASS, mutate or release capacity, classify protection, issue live authority, transmit, clear safety state, close an incident, restore scope, or re-arm |
 | Retry | Execution Coordinator under Broker Capability Profile rules | Broker egress enforces attempt identity and reservation | UNKNOWN outcome SHALL NOT cause blind resubmission |
 | Cancel ordinary order | Execution Coordinator requests | Cancellation Arbiter authorizes; broker egress sends | Ordinary cancellation SHALL NOT remove required protection |
 | Cancel protective order | Protective Action Controller requests | Cancellation Arbiter authorizes; broker egress sends | Strategy SHALL NOT directly cancel safety-owned protection |
@@ -715,6 +723,7 @@ Before any risk-relevant or broker-resource-consuming transmission, it SHALL ver
 - applicable Hard Safety Envelope and Runtime Safety Profile versions;
 - exact current Safety Deviation Policy, Deviation Generation, canonical Active Deviation Set, reduced configuration scope, and absence of applicable invalidation;
 - exact current Safety Incident Policy, Incident Generation, canonical Active Safety Incident Set, affected-scope result, and absence of an applicable suspected or open restriction;
+- exact current Safety Monitoring Policy, Monitor Generation, Critical Telemetry and Monitor Coverage Manifest digests, action-scope coverage completeness, absence of applicable unresolved Monitoring Gaps, and required restrictive disposition;
 - exact current Venue Constraint Snapshot and Order Admissibility Decision binding;
 - current venue, session, halt, tradability, account, margin, settlement, and broker-constraint generation;
 - current Order Construction Policy, Construction Generation, Authorized Construction Envelope, Canonical Broker Command, Order Conformance Proof, and Economic Effect Envelope;
@@ -1040,6 +1049,23 @@ Incident detection, registry, coordination, notification, evidence, investigatio
 
 ---
 
+### 10.30 Safety Telemetry and Continuous Conformance Monitoring
+
+Responsibilities:
+
+* govern one immutable Safety Monitoring Policy, Critical Telemetry Manifest, and Monitor Coverage Manifest;
+* preserve exact telemetry identity, scope, source continuity, semantics, units, derivation lineage, trustworthy-time basis, completeness, and failure domains;
+* map every applicable Critical requirement, hazard, accepted control, bound, live prerequisite, and failure mode to deterministic monitors, restrictive paths, alerts, evidence, and currentness;
+* publish fenced Monitor Generations, non-authorizing Continuous Conformance Snapshots, Safety Monitoring Gaps, Safety Alert Records, and Alert Escalation Records;
+* preserve effective independence and disclose source, collector, evaluator, datastore, administrator, deployment, and notification common modes;
+* keep suppression, maintenance, correlation, deduplication, backpressure, delivery, acknowledgement, and escalation fail-closed;
+* request independently owned restrictive fencing and supply exact authenticated signals to incident governance;
+* preserve economic continuity, evidence honesty, and non-revival across failure and recovery.
+
+Monitoring, alert, paging, dashboard, workflow, and escalation components SHALL NOT own the underlying safety fact, mark a requirement or evidence item `PASS`, mutate or release RCL capacity, classify an action as protective, activate configuration, issue Safety Authority, Live Authorization, or Transmission Capability, hold a usable live-order credential and route, transmit, clear UNKNOWN, HALT, a Local Restrictive Latch, a Monitoring Gap, or an incident, establish recovery readiness, restore production scope, or re-arm. A `CONFORMING` Snapshot is only a non-authorizing negative gate. ADR-002-028 defines the exact protocol and acceptance gates.
+
+---
+
 ## 11. Trading Action Pipeline
 
 The logical action sequence SHALL be:
@@ -1105,6 +1131,8 @@ ADR-002-025 additionally requires any restricted-live action to bind one exact c
 ADR-002-026 requires every configuration to bind an explicit empty or complete canonical Active Deviation Set. Where a permitted residual risk applies, final egress actively verifies the exact current Safety Deviation Policy, Deviation Generation, active-set digest, reduced profile scope, and absence of invalidation. A deviation decision never skips a pipeline stage, changes broker-finality semantics, marks evidence `PASS`, or creates authority.
 
 ADR-002-027 requires every affected authority issuer and final egress to establish the exact current Safety Incident Policy, Incident Generation, and Active Safety Incident Set. Incident state may only deny or narrow later permission. A declaration or scope expansion ordered before the capability claim denies; ambiguous declaration-versus-first-byte ordering remains potentially live, capacity-covered, and ineligible for blind retry. Incident closure, quiet time, process shutdown, or recovery status never bypasses a pipeline stage or creates permission.
+
+ADR-002-028 requires every scope whose continued operation depends on continuous monitoring to bind the exact current Safety Monitoring Policy, Monitor Generation, Critical Telemetry and Monitor Coverage Manifest digests, coverage completeness, unresolved Monitoring Gaps, and restrictive disposition through authority issuance and final egress. `CONFORMING` is only a non-authorizing negative gate. Cached green state, quiet time, heartbeat, page acknowledgement, or absence of an alert cannot prove currentness, override another denial, or create permission.
 
 Protective actions SHALL follow the separate restrictions defined by ADR-002-001.
 
@@ -1625,6 +1653,8 @@ Every live action SHALL produce evidence for:
 * Hard Safety Envelope version;
 * Safety Deviation Policy, Deviation Generation, and Active Deviation Set;
 * Safety Incident Policy, Incident Generation, Active Safety Incident Set, and incident-scope result;
+* Safety Monitoring Policy, Monitor Generation, Critical Telemetry and Monitor Coverage Manifest digests, Continuous Conformance Snapshot, unresolved Safety Monitoring Gaps, suppression state, and monitoring-currentness result;
+* applicable Safety Alert and Alert Escalation Record identities and delivery state;
 * risk calculation;
 * capacity commitment;
 * live authorization;
@@ -1671,9 +1701,10 @@ Re-arm SHALL require all of the following:
 8. protective coverage evaluated;
 9. every applicable Safety Deviation Policy, Active Deviation Set, compensating control, review, expiry, and Deviation Generation is positively current, and no request inside the Non-Waivable Boundary exists;
 10. every applicable Safety Incident Policy, Incident Generation, Active Safety Incident Set, ongoing obligation, Incident Recovery Handoff Package, and closure invalidation is positively current, and no suspected or open incident blocks the scope;
-11. Recovery Coordinator readiness decision;
-12. new Live Authorization issued;
-13. explicit human control according to the approved separation-of-duty policy.
+11. every applicable Safety Monitoring Policy, Monitor Generation, Critical Telemetry Manifest, Monitor Coverage Manifest, Continuous Conformance Snapshot, Safety Monitoring Gap, suppression, and alert/escalation obligation is positively current, and no unresolved monitoring condition blocks the scope;
+12. Recovery Coordinator readiness decision;
+13. new Live Authorization issued;
+14. explicit human control according to the approved separation-of-duty policy.
 
 No blocking Critical hazard may remain. The same human or service identity SHALL NOT both enlarge limits and arm live trading.
 
@@ -1779,6 +1810,8 @@ ADR-002-026 defines the normative Safety Deviation Policy, Non-Waivable Boundary
 
 ADR-002-027 defines the normative Safety Incident Policy, authenticated signal classification, greatest-credible dependency scope, monotonic Incident Generation, canonical Active Safety Incident Set, containment and controlled-shutdown coordination, external emergency activity, lossless recovery handoff, independent administrative closure, currentness, and non-revival rules. Incident, workflow, coordination, notification, evidence, investigation, plan, handoff, and closure identities SHALL NOT mutate or release capacity, classify protection, create live authority, transmit, clear HALT, establish readiness, restore scope, or re-arm.
 
+ADR-002-028 defines the normative Safety Monitoring Policy, exact Critical Telemetry and Monitor Coverage Manifests, deterministic continuous-conformance evaluation, monotonic Monitor Generation, Monitoring Gaps, effective independence, suppression and maintenance safety, bounded alert delivery and escalation, restrictive and incident handoff, active final-egress currentness, and non-revival rules. Monitoring, alert, paging, dashboard, and escalation identities SHALL NOT mark a requirement `PASS`, mutate or release capacity, classify protection, create live authority, transmit, clear safety state, close an incident, establish readiness, restore scope, or re-arm.
+
 ---
 
 ## 26. Architectural Decision Records
@@ -1814,8 +1847,9 @@ The following ADRs are initially required.
 | ADR-002-025 | Restricted-Live Verification, Progressive Scope Promotion, and Production Authorization Governance | Proposed |
 | ADR-002-026 | Safety Waiver, Deviation, and Residual-Risk Governance | Proposed |
 | ADR-002-027 | Safety Incident Declaration, Containment, Controlled Shutdown, and Closure Governance | Proposed |
+| ADR-002-028 | Safety Telemetry Integrity, Continuous Conformance Monitoring, and Alert Escalation Governance | Proposed |
 
-ADR-002-002 through ADR-002-027 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live-promotion, safety-deviation, and safety-incident decisions ADR-002-012 → ADR-002-013 → ADR-002-014 → ADR-002-015 → ADR-002-016 → ADR-002-017 → ADR-002-018 → ADR-002-019 → ADR-002-020 → ADR-002-021 → ADR-002-022 → ADR-002-023 → ADR-002-024 → ADR-002-025 → ADR-002-026 → ADR-002-027 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-027, including one-to-one dedicated cases for ADR-002-005 through ADR-002-027. All 327 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
+ADR-002-002 through ADR-002-028 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live-promotion, safety-deviation, safety-incident, and safety-monitoring decisions ADR-002-012 → ADR-002-013 → ADR-002-014 → ADR-002-015 → ADR-002-016 → ADR-002-017 → ADR-002-018 → ADR-002-019 → ADR-002-020 → ADR-002-021 → ADR-002-022 → ADR-002-023 → ADR-002-024 → ADR-002-025 → ADR-002-026 → ADR-002-027 → ADR-002-028 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-028, including one-to-one dedicated cases for ADR-002-005 through ADR-002-028. All 339 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
 
 ---
 
@@ -1825,38 +1859,38 @@ ADR-002-002 through ADR-002-027 are authored as co-located `Proposed` decisions.
 | ------------------- | ------------------------------------------------------- |
 | SAFE-001            | Safety Authority, Protective Action Controller          |
 | SAFE-002            | Protective Action Controller, Position Projection, Cancellation Arbiter |
-| SAFE-003            | Safety Profile Validator                                |
-| SAFE-004            | Hard Safety Envelope Registry                           |
+| SAFE-003            | Safety Profile Validator, Safety Monitoring Policy      |
+| SAFE-004            | Hard Safety Envelope Registry, Monitor Coverage Manifest |
 | SAFE-010            | Independent Approval Service, Intent Registry, Aggregate Risk Authority, Risk Capacity Ledger, Currentness Ordering Domain, Broker Egress Gateway |
-| SAFE-011            | Safety Control Plane, Currentness Sequencer, Broker Egress Gateway |
+| SAFE-011            | Safety Control Plane, Currentness Sequencer, Safety Monitoring Service, Broker Egress Gateway |
 | SAFE-012            | Aggregate Risk Policy, Adverse Scenario Set, Aggregate Risk Authority |
 | SAFE-013            | Aggregate Risk State Snapshot, Aggregate Risk Authority, Risk Capacity Ledger |
-| SAFE-014            | Action Flow Governor, Risk Capacity Ledger, Execution Coordinator, Currentness Ordering Domain, Broker Egress Gateway |
+| SAFE-014            | Action Flow Governor, Risk Capacity Ledger, Execution Coordinator, Safety Monitoring Service, Currentness Ordering Domain, Broker Egress Gateway |
 | SAFE-015            | Risk Capacity Ledger, Action Flow Permit, ordered Egress Currentness Proof |
 | SAFE-020            | Independent Approval Decision, Approval Consumption Record, Intent Registry |
 | SAFE-021            | Execution Coordinator, Intent Registry, Risk Capacity Ledger, Broker Egress Gateway |
 | SAFE-022            | Reconciliation Service                                  |
 | SAFE-023            | Reconciliation Service                                  |
-| SAFE-024            | Reconciliation Service                                  |
+| SAFE-024            | Reconciliation Service, Safety Monitoring Service       |
 | SAFE-025            | Position and Order Projection                           |
-| SAFE-030            | Context Integrity Service, Decision Context Capsule     |
-| SAFE-031            | Context Integrity Service, Critical Input Policy, Evidence Store |
+| SAFE-030            | Context Integrity Service, Decision Context Capsule, Critical Telemetry Manifest |
+| SAFE-031            | Context Integrity Service, Critical Input Policy, Critical Telemetry Manifest, Evidence Store |
 | SAFE-032            | Venue Constraint Gate, Context Integrity Service, Broker Egress Gateway |
 | SAFE-033            | Decision Context Capsule, Order Construction Service, Canonical Broker Command, Order Conformance Proof, Order Admissibility Decision, Independent Approval Service, Execution Coordinator, Broker Egress Gateway |
 | SAFE-034            | Trading Approval Policy, Independent Approval Service, Critical Input common-mode analysis, Human Authority Governance, Safety Deviation Governance |
-| SAFE-035            | Trustworthy Time Service                                |
+| SAFE-035            | Trustworthy Time Service, Safety Monitoring Service     |
 | SAFE-040            | Protective Action Controller, Cancellation Arbiter, Broker Egress Gateway, Safety Incident Governance |
-| SAFE-041            | Safety Authority, Human Authority Governance, Safety Incident Governance |
-| SAFE-042            | Operator Control Interface, Human Safety Principals, Broker Egress Gateway, Safety Incident Governance |
+| SAFE-041            | Safety Authority, Human Authority Governance, Safety Monitoring Service, Safety Incident Governance |
+| SAFE-042            | Operator Control Interface, Human Safety Principals, Safety Alert Escalation, Broker Egress Gateway, Safety Incident Governance |
 | SAFE-043            | Protective Action Controller, Incident Containment Plan |
-| SAFE-044            | Recovery Coordinator, Safety Control Plane, Broker Egress Gateway, Incident Recovery Handoff Package |
-| SAFE-045            | Deployment and Identity Architecture, Restricted-Live Trial Governance |
+| SAFE-044            | Recovery Coordinator, Safety Control Plane, Safety Monitoring Service, Broker Egress Gateway, Incident Recovery Handoff Package |
+| SAFE-045            | Deployment and Identity Architecture, Restricted-Live Trial Governance, Safety Monitoring Service |
 | SAFE-046            | Live Authorization Service, Human Authority Governance, Restricted-Live Trial Governance |
 | SAFE-047            | Live Authorization Service, Production Scope Promotion Governance, Safety Deviation Governance |
-| SAFE-048            | Safety Authority, Risk Capacity Ledger, Currentness Ordering Domain, Broker Egress Gateway, Incident Generation |
-| SAFE-050            | Hard Safety Envelope Registry, Safety Profile Validator, Human Authority Policy, Restricted-Live Trial Policy, Safety Deviation Policy, Safety Incident Policy |
-| SAFE-051            | Evidence Store, source decision owners, Broker Egress Gateway, Trial Evidence Package, Residual-Risk Acceptance Record, Safety Incident Record |
-| SAFE-052            | Replay and Evidence Service, Evidence Store, Production Promotion Review, Safety Deviation Review, Incident Reconstruction and Closure Review |
+| SAFE-048            | Safety Authority, Risk Capacity Ledger, Currentness Ordering Domain, Safety Monitoring Service, Broker Egress Gateway, Incident Generation |
+| SAFE-050            | Hard Safety Envelope Registry, Safety Profile Validator, Human Authority Policy, Restricted-Live Trial Policy, Safety Deviation Policy, Safety Incident Policy, Safety Monitoring Policy |
+| SAFE-051            | Evidence Store, source decision owners, Safety Monitoring Service, Broker Egress Gateway, Trial Evidence Package, Residual-Risk Acceptance Record, Safety Incident Record |
+| SAFE-052            | Replay and Evidence Service, Evidence Store, Safety Monitoring Review, Production Promotion Review, Safety Deviation Review, Incident Reconstruction and Closure Review |
 
 This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
@@ -1864,7 +1898,7 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
 ## 28. Open Architectural Decisions
 
-ADR-002-005 through ADR-002-027 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live-promotion, safety-deviation, and safety-incident models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, Currentness Policy, Restricted-Live Trial Policy, Safety Deviation Policy, Safety Incident Policy, Critical Input Policy, Venue Constraint Policy, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Trading Approval Policy, Recovery Barrier Policy, Evidence Integrity Policy, or Broker Capability Profile.
+ADR-002-005 through ADR-002-028 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live-promotion, safety-deviation, safety-incident, and safety-telemetry/continuous-monitoring models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, Currentness Policy, Restricted-Live Trial Policy, Safety Deviation Policy, Safety Incident Policy, Safety Monitoring Policy, Critical Input Policy, Venue Constraint Policy, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Trading Approval Policy, Recovery Barrier Policy, Evidence Integrity Policy, or Broker Capability Profile.
 
 1. Which conforming replicated-state-machine product, storage engine, voter topology, and durability configuration implement ADR-002-012's selected quorum Safety Commit Log mechanism?
 2. Which conforming non-exportable signer or credential service, identity-aware order route, Quorum Commit Certificate format, Active Egress Principal topology, and Hard Egress Fence implement ADR-002-013 while carrying ADR-002-007 and ADR-002-012 generations to the broker-send boundary?
@@ -1879,7 +1913,7 @@ ADR-002-005 through ADR-002-027 now define the normative orthogonal-state, evide
 11. Which Action Flow Policy, scope graph, RCL vector/permit, atomic risk/action commitment, cause-lineage/amplification, distributed refill, protective lease/reserve, and active RCL/final-egress currentness mechanisms implement ADR-002-022?
 12. Which Trading Approval Policy, canonical request/decision/consumption schemas, independent validation and common-mode paths, Trading Approval Generation, Intent Registry single-use transaction, invalidation graph, and active final-egress currentness mechanisms implement ADR-002-023?
 13. What deployment topology provides the required failure-domain isolation?
-14. What numeric detection, containment, protective-gap, lease, retry, action-flow, amplification, queue, approval-invalidation, evidence-persistence, evidence-gap, recovery-barrier, Critical Input invalidation, venue-constraint invalidation, conformance invalidation, aggregate-risk invalidation, currentness-gap/local-deny/restrictive-fence/per-send-proof/generation-fence, trial-abort/evidence-gap/promotion-generation, deviation-revocation/generation-fence, incident-signal/restriction/scope-expansion/generation/shutdown/handoff, context/request/decision/command/proof/vector/snapshot/trial/deviation/incident-age, effect/count/duration/review-interval, readiness-age, retention, and replay bounds are approved?
+14. What numeric detection, containment, protective-gap, lease, retry, action-flow, amplification, queue, approval-invalidation, evidence-persistence, evidence-gap, recovery-barrier, Critical Input invalidation, venue-constraint invalidation, conformance invalidation, aggregate-risk invalidation, currentness-gap/local-deny/restrictive-fence/per-send-proof/generation-fence, trial-abort/evidence-gap/promotion-generation, deviation-revocation/generation-fence, incident-signal/restriction/scope-expansion/generation/shutdown/handoff, safety-telemetry-loss/monitoring-gap/alert-delivery/escalation/generation-fence, context/request/decision/command/proof/vector/snapshot/trial/deviation/incident/telemetry/alert-age, suppression, effect/count/duration/review-interval, readiness-age, retention, and replay bounds are approved?
 15. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
 16. Which broker resources can be physically or logically reserved for protection?
 17. How are corporate actions and other non-trade changes attributed and remapped?
@@ -1887,6 +1921,7 @@ ADR-002-005 through ADR-002-027 now define the normative orthogonal-state, evide
 19. Which Restricted-Live Trial Policy, exact plan/run registry, worst-credible-effect calculator, action/effect serializer, abort and demotion path, evidence coverage model, independent promotion workflow, production-authorization handoff, and continuous-conformance mechanism implement ADR-002-025?
 20. Which Safety Deviation Policy, requirement/hazard registry, Non-Waivable Boundary classifier, dependency-closure and combined-risk evaluator, compensating-control evidence model, independent Effective Principal workflow, Deviation Generation registry, Active Deviation Set, restrictive revocation path, and final-egress currentness mechanism implement ADR-002-026?
 21. Which Safety Incident Policy, signal registry and classifier, dependency-closure/common-mode engine, Incident Generation and Active Safety Incident Set registry, independent restrictive ingress, containment and controlled-shutdown orchestrator, external-activity procedure, recovery-handoff transaction, closure quorum, and final-egress currentness mechanism implement ADR-002-027?
+22. Which Safety Monitoring Policy, Critical Telemetry and Monitor Coverage Manifest registries, source-continuity and deterministic-evaluator mechanisms, Monitor Generation and writer fence, independent restrictive ingress, suppression governance, correlation/deduplication, delivery/escalation, incident handoff, recovery protocol, and final-egress currentness mechanism implement ADR-002-028?
 
 Open decisions SHALL NOT be resolved by informal implementation convention.
 
@@ -1930,6 +1965,7 @@ At minimum, the verification set SHALL include:
 * incomplete, wildcard, patched, or unioned restricted-live scope; underestimated trial effect; local counter overspend; trial-label bypass; abort/send race; evidence-gap continuation; selected or hidden negative runs; post-hoc metric or stop-rule change; scope extrapolation; promotion replay/widening/auto-chain; monitor-loss continuation; and recovery attempting trial resume or automatic re-arm;
 * non-waivable requirement exception, under-scoped or unioned deviation, self-approval through shared effective control, observational-only or common-mode compensation, unbounded combined residual risk, evidence relabeled `PASS`, decision replay or duplicate consumption, stale Active Deviation Set, expiry/revocation send race, automatic renewal or predecessor rollback, emergency-route bypass, and recovery attempting deviation or authority revival;
 * missed, suppressed, downgraded, delayed, under-scoped, split, or conflicting incident declaration; stale or favorably subsetted Active Safety Incident Set; declaration/scope-expansion versus capability-claim/first-byte race; incident-plane partition with broker reachability; shutdown-before-fence, queue draining by send, process death treated as hard fencing, blind cancellation of required protection, unproven blanket liquidation, priority treated as protective reserve, external broker-portal action, closure releasing capacity or clearing HALT, incomplete recovery handoff, and recovery attempting incident or authority revival;
+* omitted, wildcarded, patched, or unioned monitoring coverage; stale green state; source restart or continuity reuse; schema, unit, mapping, derivation, time, NaN, overflow, threshold, hard-maximum, parser, or evaluator drift; nominally independent common-mode monitors; missing or conflicting telemetry selected permissively; broad or expired suppression; deduplication scope loss; alert storm, queue overflow, delivery or escalation failure; acknowledgement treated as containment; stale Monitor Generation; monitoring-plane partition with broker-reachable egress; monitoring invalidation versus first-byte race; direct monitoring broker-route bypass; and recovery attempting authority revival or automatic re-arm;
 * non-live environment attempting to reach live egress;
 * protective reserve exhaustion and ordinary traffic blocking the protective path;
 * corporate action or instrument-identity change;
@@ -2014,7 +2050,7 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Added re-arm governance prohibiting automatic re-arm.
 * Added the Failure-Domain Allocation requirement.
 * Added verification and acceptance-bound requirements.
-* Expanded the ADR register through ADR-002-027 and registered ADR-002-002 through ADR-002-027 as Proposed.
+* Expanded the ADR register through ADR-002-028 and registered ADR-002-002 through ADR-002-028 as Proposed.
 * Added the Phase B failure-domain isolation, protective-replacement, and corporate-action/non-trade decisions without changing verification or live-readiness status.
 * Selected the quorum-replicated deterministic Safety Commit Log mechanism class for RCL persistence, consensus, writer fencing, currentness ordering, and recovery in ADR-002-012; concrete products and deployment values remain open.
 * Defined the effective Final Egress Trust Boundary, credential and route confinement, quorum-sufficient Commit Proof validation, and stale-egress hard fencing in ADR-002-013.
@@ -2032,5 +2068,6 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Defined restricted-live pre-registration, worst-credible trial effect, abort dominance, evidence coverage, progressive single-use scope promotion, production-authorization handoff, and continuous conformance in ADR-002-025.
 * Defined the Non-Waivable Boundary, exact safety-deviation scope, compensating-control and combined residual-risk rules, independent Effective Principal approval, single-use restricted-configuration eligibility, Deviation Generation currentness, evidence honesty, expiry/revocation, and non-revival in ADR-002-026.
 * Defined restrictive safety-incident declaration, greatest-credible dependency scope, monotonic Incident Generation, canonical Active Safety Incident Set, non-authorizing containment and controlled shutdown, lossless recovery handoff, administrative closure, currentness, and non-revival in ADR-002-027.
-* Expanded VER-002-001 and the Evidence Register to 327 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-027.
+* Defined exact safety-telemetry and monitor coverage, deterministic continuous conformance, Monitoring Gaps, effective independence, suppression safety, bounded alert delivery/escalation, restrictive and incident handoff, active final-egress currentness, and monitoring-recovery non-revival in ADR-002-028.
+* Expanded VER-002-001 and the Evidence Register to 339 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-028.
 * Resolves review findings A-01 through A-14.

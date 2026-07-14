@@ -1,0 +1,52 @@
+artifact_type: SAFETY_MONITORING_GAP
+schema_version: "1.0-DRAFT"
+gap_id: TBD
+monitor_generation: null
+canonical_digest: TBD
+status: DRAFT
+gap_state: SUSPECTED
+gap_class: UNKNOWN
+policy_and_manifest_bindings: []
+telemetry_source_and_evaluator_bindings: []
+scope:
+  observed_scope_digest: TBD
+  greatest_credible_dependency_scope_digest: TBD
+  scope_complete: false
+first_observed_at: null
+last_observed_at: null
+credible_unobserved_interval:
+  earliest_start: null
+  latest_end: null
+  bounded: false
+gap_facts_and_uncertainty: []
+affected_snapshots_decisions_and_authorities: []
+required_restrictive_fences: []
+required_incident_signal: true
+alerts_and_escalations: []
+evidence_receipts_and_gaps: []
+repair_method_and_remaining_uncertainty: []
+independent_review:
+  required: true
+  completed: false
+  reviewers: []
+invalidation_conditions: []
+restrictive: true
+may_timeout_to_safe: false
+may_acknowledge_to_safe: false
+may_auto_close: false
+authority:
+  active: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: >-
+  This DRAFT suspected gap is restrictive. Repair, acknowledgement, timeout,
+  alert delivery, source recovery, or independent review does not itself clear
+  a fence, close an incident, release capacity, restore scope, or re-arm.

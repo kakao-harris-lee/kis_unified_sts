@@ -1,0 +1,49 @@
+artifact_type: SAFETY_ALERT_RECORD
+schema_version: "1.0-DRAFT"
+alert_id: TBD
+monitor_generation: null
+canonical_digest: TBD
+status: DRAFT
+alert_state: RAISED
+policy_rule_snapshot_gap_and_source_bindings: []
+monitoring_severity: UNKNOWN
+incident_severity_authoritative: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+observed_fact: UNKNOWN
+inferences_and_uncertainty: []
+raised_at: null
+freshness_bound_key: MAX_safety_alert_age_ms
+deduplication_and_correlation:
+  key: TBD
+  non_collapsible_dimensions: []
+  parent_alert_ids: []
+  child_alert_ids: []
+required_restrictive_signal: true
+required_incident_handoff: true
+delivery_targets_and_stages: []
+delivery_attempts: []
+acknowledgements: []
+evidence_receipts: []
+acknowledged_is_containment: false
+acknowledged_is_resolution: false
+acknowledged_is_final_quantity_proof: false
+acknowledged_marks_evidence_pass: false
+authority:
+  active: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: >-
+  This DRAFT alert is a non-authorizing observation and escalation artifact.
+  Delivery, acknowledgement, correlation, ticket state, or retirement cannot
+  prove containment, resolution, broker finality, capacity release, or re-arm.

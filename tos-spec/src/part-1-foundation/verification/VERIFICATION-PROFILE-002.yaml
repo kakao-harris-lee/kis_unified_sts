@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "1.8-PROPOSED"
+version: "1.9-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -85,6 +85,15 @@ scope:
   active_incident_set_id: TBD
   active_incident_set_generation: null
   active_incident_set_digest: TBD
+  safety_monitoring_policy_id: TBD
+  safety_monitoring_policy_generation: null
+  safety_monitoring_policy_digest: TBD
+  critical_telemetry_manifest_id: TBD
+  critical_telemetry_manifest_generation: null
+  critical_telemetry_manifest_digest: TBD
+  monitor_coverage_manifest_id: TBD
+  monitor_coverage_manifest_generation: null
+  monitor_coverage_manifest_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -420,6 +429,48 @@ bounds:
     rationale: "MEASURE. Maximum interval from committed incident recovery-handoff intent to exact package acceptance by a current Recovery Session behind a closed Recovery Barrier; incomplete handoff transfers no obligation."
     measurement_source: incident_handoff_and_recovery_session_acceptance_trace
     failure_response: CLOSE_BARRIER_AND_HALT
+  B_safety_telemetry_loss_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from required Critical Telemetry loss, continuity break, semantic invalidation, or coverage failure to a committed Monitoring Gap for the greatest credible dependent scope (ADR-002-028 §§8-13)."
+    measurement_source: telemetry_source_continuity_manifest_and_gap_trace
+    failure_response: STOP_NEW_RISK_AND_DECLARE_GAP
+  B_monitoring_gap_to_authority_restrict:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed Monitoring Gap to denial at every dependent new-risk authority issuer; alert delivery and acknowledgement cannot extend this bound (ADR-002-028 §§13, 17)."
+    measurement_source: monitoring_gap_authority_and_restrictive_ingress_trace
+    failure_response: HALT_OR_CONTAIN
+  B_monitoring_gap_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed Monitoring Gap to denial at every dependent final egress under active currentness; cache, heartbeat, dashboard state, and absence of alert are not proof (ADR-002-028 §18)."
+    measurement_source: monitoring_gap_currentness_and_egress_boundary_trace
+    failure_response: HALT
+  B_critical_alert_delivery:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from Critical alert commit to independently verifiable delivery or explicit delivery-gap escalation. This detective path runs in parallel and cannot delay restriction or egress denial (ADR-002-028 §16)."
+    measurement_source: safety_alert_delivery_and_gap_trace
+    failure_response: KEEP_RESTRICTED_AND_ALTERNATE_ESCALATE
+  B_alert_escalation:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from missed delivery or acknowledgement deadline to the next required independent escalation stage without resetting the original safety deadline (ADR-002-028 §16)."
+    measurement_source: alert_escalation_ordering_and_effective_principal_trace
+    failure_response: INCIDENT_REMAINS_OPEN_AND_ESCALATE
+  B_monitoring_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from a new policy, manifest, gap, owner, restore, or Monitor Generation to rejection of superseded publishers and snapshots at every dependent consumer, authority issuer, and final egress (ADR-002-028 §§12, 18, 24)."
+    measurement_source: monitor_generation_writer_consumer_and_egress_fence_trace
+    failure_response: HALT
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
@@ -588,6 +639,11 @@ limits:
   MAX_incident_containment_plan_age_ms: null            # APPROVE per incident/action scope; stale plan cannot request action or justify shutdown progress
   MAX_incident_recovery_handoff_age_ms: null            # APPROVE per Recovery Session; stale handoff transfers no obligation and keeps the barrier closed
   MAX_incident_closure_decision_age_ms: null             # APPROVE per exact incident generation; expiry denies closure and never clears HALT or economic effect
+  MAX_critical_telemetry_age_ms: null                     # APPROVE per telemetry class/scope; unknown or stale age creates a Monitoring Gap
+  MAX_continuous_conformance_snapshot_age_ms: null        # APPROVE per exact scope; stale Snapshot denies dependent new risk and creates no permission
+  MAX_safety_alert_age_ms: null                           # APPROVE per alert class; stale alert cannot prove delivery, containment, or resolution
+  MAX_monitoring_suppression_duration_ms: null            # APPROVE per exact suppressible scope; expiry or ambiguity keeps restriction and never auto-resumes
+  MAX_alert_acknowledgement_age_ms: null                  # APPROVE per escalation stage; acknowledgement age cannot extend restriction or egress-denial bounds
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

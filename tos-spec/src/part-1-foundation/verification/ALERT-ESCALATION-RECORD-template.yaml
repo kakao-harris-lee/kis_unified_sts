@@ -1,0 +1,51 @@
+artifact_type: ALERT_ESCALATION_RECORD
+schema_version: "1.0-DRAFT"
+escalation_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+exact_binding:
+  safety_alert_record_id: TBD
+  safety_alert_record_digest: TBD
+  safety_monitoring_policy_id: TBD
+  safety_monitoring_policy_generation: null
+  safety_monitoring_policy_digest: TBD
+  monitor_generation: null
+  binding_complete: false
+  consumer_union_permitted: false
+roster_and_effective_principal_graph_bindings: []
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+required_roles_and_channels: []
+independent_delivery_paths: []
+declared_common_modes: []
+ordered_delivery_attempts_and_results: []
+deadline_and_bound_keys: []
+acknowledgement_identities_and_evidence: []
+queue_overflow_or_provider_outage: UNKNOWN
+alternate_paths: []
+restrictive_fence_and_incident_bindings: []
+unresolved_conditions: []
+handoff_and_retirement_criteria: []
+failure_response: KEEP_RESTRICTED_AND_ESCALATE
+acknowledgement_clears_restriction: false
+acknowledgement_closes_incident: false
+may_auto_retire_to_safe: false
+authority:
+  active: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: >-
+  This DRAFT escalation is UNKNOWN and grants no authority. Delivery failure,
+  stale roster, common mode, acknowledgement ambiguity, or provider outage
+  keeps the scope restricted and escalates; it never clears safety state.

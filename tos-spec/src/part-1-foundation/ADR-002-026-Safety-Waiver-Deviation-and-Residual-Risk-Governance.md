@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety waivers, deviations, exceptions, residual-risk acceptance, non-waivable boundaries, compensating controls, exact scope, independent approval, configuration activation, currentness, expiry, revocation, recovery, evidence, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 §14 and SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-023, SAFE-024, SAFE-025, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§2, 9.1, 10, 20, 23, and 28–29; VER-002-001 §§5, 314–325, and 342–345
+- **Refines:** RFC-001 §14 and SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-023, SAFE-024, SAFE-025, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§2, 9.1, 10, 20, 23, and 28–29; VER-002-001 §§5, 314–325, and 354–357
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-025
 
 ---

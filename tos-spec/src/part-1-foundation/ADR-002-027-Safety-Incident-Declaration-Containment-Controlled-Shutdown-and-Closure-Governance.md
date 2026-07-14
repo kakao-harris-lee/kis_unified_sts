@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety-incident detection and declaration, exact affected scope, restrictive escalation, containment coordination, controlled shutdown, demotion, external emergency activity, investigation, closure, recovery handoff, evidence, currentness, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 §§3, 7.1–7.5, 8, and SAFE-001, SAFE-002, SAFE-010, SAFE-011, SAFE-013, SAFE-014, SAFE-021 through SAFE-025, SAFE-040 through SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§4.5, 7.5, 9.1, 10.11, 10.16–10.19, 10.26–10.28, 14.4–14.6, 15, 17, 20, and 22–24; VER-002-001 §§5, 326–337, 338, and 341–345
+- **Refines:** RFC-001 §§3, 7.1–7.5, 8, and SAFE-001, SAFE-002, SAFE-010, SAFE-011, SAFE-013, SAFE-014, SAFE-021 through SAFE-025, SAFE-040 through SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§4.5, 7.5, 9.1, 10.11, 10.16–10.19, 10.26–10.28, 14.4–14.6, 15, 17, 20, and 22–24; VER-002-001 §§5, 326–337, 350, and 353–357
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-026
 
 ---
@@ -106,6 +106,8 @@ An immutable ADR-002-014 governed policy defining authoritative signals, classif
 ### 5.2 Safety Signal
 
 An authenticated observation or conservative inference that a safety invariant, authority boundary, economic-state assumption, broker contract, protective obligation, currentness fact, evidence path, or operational gate may be violated, unavailable, stale, bypassed, or unverifiable.
+
+ADR-002-028 governs the integrity, coverage, continuity, deterministic evaluation, suppression, delivery, and escalation of operational telemetry that produces such signals. Monitoring severity remains a proposal; this ADR retains incident classification, greatest-credible scope, Incident Generation, containment, closure, and recovery ownership.
 
 ### 5.3 Safety Incident Record
 

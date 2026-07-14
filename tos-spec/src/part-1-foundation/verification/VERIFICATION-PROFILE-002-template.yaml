@@ -69,6 +69,15 @@ scope:
   active_incident_set_id: TBD
   active_incident_set_generation: null
   active_incident_set_digest: TBD
+  safety_monitoring_policy_id: TBD
+  safety_monitoring_policy_generation: null
+  safety_monitoring_policy_digest: TBD
+  critical_telemetry_manifest_id: TBD
+  critical_telemetry_manifest_generation: null
+  critical_telemetry_manifest_digest: TBD
+  monitor_coverage_manifest_id: TBD
+  monitor_coverage_manifest_generation: null
+  monitor_coverage_manifest_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -399,6 +408,48 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CLOSE_BARRIER_AND_HALT
+  B_safety_telemetry_loss_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK_AND_DECLARE_GAP
+  B_monitoring_gap_to_authority_restrict:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_monitoring_gap_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_critical_alert_delivery:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: KEEP_RESTRICTED_AND_ALTERNATE_ESCALATE
+  B_alert_escalation:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: INCIDENT_REMAINS_OPEN_AND_ESCALATE
+  B_monitoring_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
   B_final_quantity_proof:
     value_ms: null
     semantics: broker_specific
@@ -566,6 +617,11 @@ limits:
   MAX_incident_containment_plan_age_ms: null
   MAX_incident_recovery_handoff_age_ms: null
   MAX_incident_closure_decision_age_ms: null
+  MAX_critical_telemetry_age_ms: null
+  MAX_continuous_conformance_snapshot_age_ms: null
+  MAX_safety_alert_age_ms: null
+  MAX_monitoring_suppression_duration_ms: null
+  MAX_alert_acknowledgement_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

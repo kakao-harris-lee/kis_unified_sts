@@ -250,6 +250,7 @@ For the exact action, the vector SHALL bind at least:
 - Safety Authority epoch, revocation generation, HALT generation, and Live Authorization;
 - Hard Safety Envelope, Runtime Safety Profile, activation, ADR-002-026 Safety Deviation Policy, Active Deviation Set, and Deviation generations;
 - ADR-002-027 Safety Incident Policy, Incident Generation, Active Safety Incident Set, exact affected-scope disposition, and incident restriction floor;
+- ADR-002-028 Safety Monitoring Policy, Monitor Generation, Critical Telemetry and Monitor Coverage Manifest digests, exact coverage result, unresolved Monitoring Gaps, suppression state, and monitoring restriction floor;
 - Trustworthy Time, Recovery, Critical Input, Context, Constraint, Construction, Trading Approval, Aggregate Risk, and Action Flow generations;
 - exact decision, proof, Intent, commitment, permit, and invalidation identities required by the action;
 - Egress Generation, active principal, credential, route, endpoint, signer, session, and trust-bundle generations;

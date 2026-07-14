@@ -1,0 +1,64 @@
+artifact_type: CONTINUOUS_CONFORMANCE_SNAPSHOT
+schema_version: "1.0-DRAFT"
+snapshot_id: TBD
+monitor_generation: null
+canonical_digest: TBD
+status: DRAFT
+policy_binding:
+  safety_monitoring_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+manifest_bindings:
+  critical_telemetry_manifest_id: TBD
+  critical_telemetry_manifest_generation: null
+  critical_telemetry_manifest_digest: TBD
+  monitor_coverage_manifest_id: TBD
+  monitor_coverage_manifest_generation: null
+  monitor_coverage_manifest_digest: TBD
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+consistency_cut:
+  cut_id: TBD
+  source_revisions: []
+  source_continuities: []
+  cut_complete: false
+trustworthy_time:
+  time_health_generation: null
+  receipt_anchor: null
+  maximum_age_key: MAX_continuous_conformance_snapshot_age_ms
+  age_within_approved_limit: false
+monitor_results: []
+active_violations: []
+unknown_results: []
+monitoring_gaps: []
+active_suppressions: []
+alerts_and_escalations: []
+restrictive_fences_and_incidents: []
+evidence_receipts: []
+invalidation_conditions: []
+result: UNKNOWN
+currentness:
+  owner_epoch: null
+  monitor_generation_current: false
+  policy_and_manifests_current: false
+  invalidations: []
+authority:
+  active: false
+  marks_requirement_pass: false
+  creates_conformance_permission: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+authorization_notice: >-
+  This DRAFT snapshot is UNKNOWN and grants no permission. CONFORMING, if later
+  proven under an approved policy, remains only a non-authorizing negative gate
+  and cannot override any other denial or satisfy a preventive control.

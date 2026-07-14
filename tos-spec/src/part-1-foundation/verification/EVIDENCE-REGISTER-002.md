@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **327**
-- NOT_IMPLEMENTED: **327**
+- Total evidence items: **339**
+- NOT_IMPLEMENTED: **339**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -350,6 +350,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | SIR-EV-010 | Safety Incident and Controlled Shutdown | Independent Non-Permissive Closure | ADR-002-027 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | SIR-EV-011 | Safety Incident and Controlled Shutdown | External Activity and Demotion | ADR-002-027 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 | SIR-EV-012 | Safety Incident and Controlled Shutdown | Recovery and Non-Revival | ADR-002-027 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-001 | Safety Telemetry and Continuous Monitoring | Complete Critical Coverage | ADR-002-028 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-002 | Safety Telemetry and Continuous Monitoring | Provenance, Continuity, Semantics, and Time | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-003 | Safety Telemetry and Continuous Monitoring | UNKNOWN, Silence, and Stale Green State | ADR-002-028 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-004 | Safety Telemetry and Continuous Monitoring | Effective Independence and Common Mode | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-005 | Safety Telemetry and Continuous Monitoring | Deterministic Evaluation and Bound Integrity | ADR-002-028 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-006 | Safety Telemetry and Continuous Monitoring | Suppression and Maintenance Safety | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-007 | Safety Telemetry and Continuous Monitoring | Alert Correlation, Delivery, and Escalation | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-008 | Safety Telemetry and Continuous Monitoring | Restrictive and Incident Handoff | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-009 | Safety Telemetry and Continuous Monitoring | Active Currentness and Send Race | ADR-002-028 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-010 | Safety Telemetry and Continuous Monitoring | UNKNOWN, Broker Finality, and Economic Continuity | ADR-002-028 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-011 | Safety Telemetry and Continuous Monitoring | Compromise, Fencing, and Failure Domains | ADR-002-028 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| STM-EV-012 | Safety Telemetry and Continuous Monitoring | Evidence, Recovery, and Non-Revival | ADR-002-028 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

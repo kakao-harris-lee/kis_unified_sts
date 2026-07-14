@@ -1,0 +1,59 @@
+artifact_type: CRITICAL_TELEMETRY_MANIFEST
+schema_version: "1.0-DRAFT"
+manifest_id: TBD
+manifest_version: TBD
+manifest_generation: null
+canonical_digest: TBD
+status: DRAFT
+policy_binding:
+  safety_monitoring_policy_id: TBD
+  policy_generation: null
+  policy_digest: TBD
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+  environments: []
+  safety_cells: []
+  capacity_domains: []
+  accounts: []
+  brokers: []
+telemetry_entries: []
+source_identities_and_owner_epochs: []
+source_continuity_generations: []
+schemas_units_signs_scales_and_ranges: []
+transformation_and_derivation_lineage: []
+trustworthy_time_and_receipt_anchor_rules: []
+cadence_freshness_sampling_and_loss_rules: []
+collector_and_evaluator_identities: []
+consumers_and_detection_rule_ids: []
+independent_paths: []
+declared_common_modes: []
+evidence_receipt_classes: []
+correction_and_invalidation_rules: []
+compatibility_requirements: []
+completeness: INCOMPLETE
+semantic_result: UNKNOWN
+unknown_materiality: CRITICAL
+failure_response: CREATE_GAP_AND_RESTRICT
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  active: false
+  creates_conformance: false
+  creates_permission: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt_latch_gap_or_incident: false
+  establishes_recovery_readiness: false
+  permits_rearm: false
+authorization_notice: >-
+  This DRAFT and INCOMPLETE manifest grants no authority. Omitted, wildcarded,
+  consumer-selected, stale, mixed-generation, semantically ambiguous, or
+  common-mode-invalid telemetry is UNKNOWN and restricts the greatest credible
+  dependent scope.

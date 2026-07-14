@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-027
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-027; implementation evidence has not been executed
-- **Extension State:** ADR-002-005 through ADR-002-027 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, and SIR evidence families. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-028
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-028; implementation evidence has not been executed
+- **Extension State:** ADR-002-005 through ADR-002-028 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, and STM evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -2731,7 +2731,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 338. Model-Based and Property Verification
+# Part XXVIII — Safety Telemetry, Continuous-Conformance, and Alert-Escalation Evidence
+
+## 338. STM-EV-001 — Complete Critical Coverage
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-001
+- **Injection:** Omit, wildcard, optionalize, patch, partially refresh, or consumer-union one requirement, hazard, control, bound, environment, account, broker, source, dependency, restrictive path, alert path, or currentness dimension while claiming broad coverage.
+- **Expected:** Coverage remains incomplete and UNKNOWN, one Monitoring Gap covers the greatest credible scope, dependent new risk is denied, and no count, percentage, dashboard, or favorable manifest union creates conformance or permission.
+
+## 339. STM-EV-002 — Provenance, Continuity, Semantics, and Time
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-002
+- **Injection:** Restart or replace a publisher, reset sequence, swap endpoint or credential, restore history, change schema, unit, sign, scale, mapping, derivation, aggregator, clock, or receipt anchor while retaining the old source identity and freshness history.
+- **Expected:** A new continuity fact or explicit gap is mandatory; identical or cached payloads cannot bridge the discontinuity, ambiguity is restrictive, and stale semantics cannot remain current.
+
+## 340. STM-EV-003 — UNKNOWN, Silence, and Stale Green State
+
+- **Minimum Level:** EV-L2/EV-L3
+- **Supports:** ADR-002-028 STM-AC-003
+- **Injection:** Freeze or remove telemetry while preserving heartbeat, collector health, empty queries, last-known values, a green dashboard, quiet time, TTL, or absence of an invalidation or alert.
+- **Expected:** Silence and health metadata prove neither completeness nor safety; the state becomes UNKNOWN or a Monitoring Gap, dependent new risk is denied, and no cached green result survives.
+
+## 341. STM-EV-004 — Effective Independence and Common Mode
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-004
+- **Injection:** Corrupt one shared source, collector, parser, schema registry, clock, datastore, message bus, network, administrator, identity, deployment, notification provider, or upstream fact behind nominally separate monitors.
+- **Expected:** Shared paths count as one common mode, independent coverage is not claimed, the residual becomes a restrictive gap or scope reduction, and no majority of correlated outputs creates a favorable result.
+
+## 342. STM-EV-005 — Deterministic Evaluation and Bound Integrity
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-005
+- **Injection:** Exercise threshold boundaries, hysteresis, debounce, grace, units, signs, precision, NaN, infinity, overflow, underflow, empty windows, missing history, parser differential, policy-generation change, percentile substitution, and local permissive defaults.
+- **Expected:** Identical exact inputs produce one policy-bound result; numeric or semantic ambiguity is UNKNOWN or restrictive, hard maxima retain their exact semantics, and no local optimization weakens the approved failure response.
+
+## 343. STM-EV-006 — Suppression and Maintenance Safety
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-006
+- **Injection:** Apply broad, wildcard, stale, expired, unapproved, self-approved, replayed, conflicting, or unavailable suppression and maintenance state during a Critical violation.
+- **Expected:** Underlying collection, evaluation, gap creation, restriction, incident signaling, evidence, escalation, and final-egress denial remain active; uncertainty is restrictive and suppression recovery or expiry never auto-resumes scope.
+
+## 344. STM-EV-007 — Alert Correlation, Delivery, and Escalation
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-007
+- **Injection:** Cause duplicate, fan-out, retry, out-of-order, wrong-recipient, stale-roster, dedup-collision, queue-overflow, backpressure, provider-outage, delivery-loss, acknowledgement-loss, and responder-timeout behavior across distinct scopes and causes.
+- **Expected:** Distinct scope, lineage, first occurrence, deadlines, and restrictive state are preserved; adverse facts are not sampled away, delivery ambiguity keeps restriction and escalates, and acknowledgement or ticket closure proves no containment or resolution.
+
+## 345. STM-EV-008 — Restrictive and Incident Handoff
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-008
+- **Injection:** Fail or compromise the ordinary monitor, dashboard, alert, notification, or control-plane path during a material violation and attempt to make monitor severity directly mutate RCL, classify protection, clear a latch, declare a favorable incident scope, or call a broker route.
+- **Expected:** An independently available restrictive request and exact authenticated signal reach ADR-002-024/027 owners; monitoring gains no economic, incident, closure, or broker authority and cannot downgrade an existing restriction.
+
+## 346. STM-EV-009 — Active Currentness and Send Race
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-009
+- **Injection:** Cache or replay old policy, manifests, conformance snapshot, gap state, suppression, or Monitor Generation; partition monitoring while egress remains broker-reachable; race a material gap or invalidation against capability claim, `SEND_STARTED`, and first byte.
+- **Expected:** Final egress actively rejects stale, missing, conflicting, or unproven monitoring currentness; a prior green result is insufficient and ambiguous attempts remain potentially live, capacity-covered, and ineligible for blind retry.
+
+## 347. STM-EV-010 — UNKNOWN, Broker Finality, and Economic Continuity
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-028 STM-AC-010
+- **Injection:** Lose submission ACK, receive Cancel ACK without Final Quantity Proof, lose broker-state monitoring, expire telemetry/alerts/suppressions, observe available capacity, or mark a dashboard flat while broker effect remains possible.
+- **Expected:** Monitoring changes no broker-finality rule or economic lifetime; UNKNOWN remains capacity-consuming, RCL alone mutates capacity, priority is not reserve, and no monitor or alert state creates new-risk permission.
+
+## 348. STM-EV-011 — Compromise, Fencing, and Failure Domains
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-011
+- **Injection:** Compromise or restore stale telemetry publishers, evaluators, policy/manifest registries, suppression service, dashboard, paging system, acknowledgement workflow, Monitor Generation owner, credential, or alternate route.
+- **Expected:** The greatest credible shared scope is restricted, stale writers and consumers are fenced, histories remain visible, combined read/trade authority does not create bypass, and compromised components cannot attest their own recovery or clear state.
+
+## 349. STM-EV-012 — Evidence, Recovery, and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-028 STM-AC-012
+- **Injection:** Present a written case, registered item, dashboard, page, alert acknowledgement, quiet interval, replay match, source recovery, monitor failover, backlog drain, gap repair, operator return, or Recovery Readiness Decision as evidence completion or authority restoration.
+- **Expected:** Documentation and observations do not replace prevention or executed evidence; the Recovery Barrier and prior restrictions remain until their own gates pass, old generations and snapshots remain invalid, and no automatic re-arm occurs.
+
+---
+
+## 350. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -2761,6 +2849,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Restricted-Live Trial Policy, exact Trial Plan and Run, effect/count/duration envelope, abort generation, evidence completeness, coverage, Promotion Generation, single-use Production Scope Promotion Decision, configuration handoff, demotion, and continuous-conformance state;
 - Safety Deviation Policy, Non-Waivable Boundary, exact Request, dependency closure, compensating controls, effective-person quorum, Decision consumption, Residual-Risk Acceptance Record, Active Deviation Set, Deviation Generation, configuration binding, expiry, revocation, and recovery state;
 - Safety Incident Policy, authenticated signals, severity/materiality, greatest-credible scope, dependency closure, Incident Generation, Active Safety Incident Set, lifecycle, containment, controlled shutdown, economic/protection obligations, recovery handoff, independent closure, currentness, and non-revival state;
+- Safety Monitoring Policy, Critical Telemetry and Monitor Coverage Manifests, deterministic evaluators, Monitor Generation, Continuous Conformance Snapshot, Monitoring Gaps, suppressions, alerts, delivery, escalation, restrictive and incident handoff, currentness, and non-revival state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2852,13 +2941,19 @@ No success count, elapsed time, P&L, incident absence, narrow package set, or pr
 No signal delay, severity downgrade, incident subset, process shutdown, quiet time, closure, handoff, or remediation creates permission, broker finality, capacity release, scope restoration, or re-arm
 No incident coordinator, plan, evidence, message, postmortem, or closure decision mutates RCL capacity, classifies protection, issues authority, transmits, clears HALT, or establishes recovery readiness
 No controlled shutdown drains broker-bound work by sending, blindly cancels required protection, or treats process death as a hard fence
+No omitted, wildcarded, patched, unioned, stale, conflicting, wrong-scope, semantically ambiguous, or common-mode-invalid monitor coverage produces `CONFORMING` or permission
+No absent alert, green dashboard, heartbeat, successful scrape, quiet time, TTL, last-known value, or missing invalidation proves telemetry completeness or currentness
+No schema, unit, sign, scale, time, sequence, derivation, threshold, window, parser, NaN, overflow, percentile, or local-default drift produces a favorable monitor result
+No suppression, maintenance, deduplication, queue overflow, delivery failure, acknowledgement, ticket closure, or alert retirement disables a required restrictive path or proves containment
+No monitoring policy, manifest, snapshot, gap, alert, page, dashboard, or escalation artifact mutates RCL, classifies protection, issues authority, reaches the broker, clears safety state, closes an incident, restores scope, or re-arms
+No stale Monitor Generation, monitoring-plane partition, cached conformance, restore, recovery, replay, backlog drain, or operator return revives prior permission or automatically re-arms
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 339. Fault-Injection Requirements
+## 351. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2882,6 +2977,7 @@ The test harness SHALL support controlled injection at least for:
 - incomplete/wildcard/patched/unioned Trial Plan, underestimated credible effect, Trial Budget used as capacity, trial-label bypass, action/effect/count/duration overrun, abort delay beyond `B_trial_abort_to_authority_revoke` or `B_trial_abort_to_egress_deny`, evidence gap delay beyond `B_trial_evidence_gap_to_containment`, selected or hidden negative runs, post-hoc metric/stopping change, coverage extrapolation, promotion skip/union/replay, Promotion Generation fence delay, monitor drift, demotion, and recovery attempting run or promotion reuse;
 - non-waivable or unclassified request, incomplete/wildcard/patched/unioned scope, combined residual-risk underestimation, observational or common-mode compensation, same-effective-person approval, decision double spend, evidence relabeling, stale Active Deviation Set, invalidation suppression/delay beyond `B_deviation_revoke_to_authority` or `B_deviation_revoke_to_egress`, Deviation Generation fence delay, expiry/claim/first-byte race, silent renewal, predecessor rollback, emergency-route bypass, and recovery attempting deviation or authority revival;
 - missed, suppressed, downgraded, delayed, or under-scoped incident signal; favorable or stale Active Safety Incident Set; concurrent incident/common-mode omission; Incident Generation cache; declaration or scope-expansion delay beyond approved incident bounds; restriction/claim/first-byte race; incident-plane partition with broker reachability; shutdown-before-fence; queue draining by send; stale principal/session/route survival; blind protection cancellation or blanket liquidation; process stop treated as broker finality; external-route rewrite; same-effective-person closure; incomplete recovery handoff; and closure, remediation, or recovery attempting old-scope or authority revival;
+- omitted, wildcarded, patched, optionalized, partially refreshed, or unioned monitoring scope; source restart, continuity reset, endpoint/credential/provider change, schema/unit/mapping/lineage/time drift, frozen payload, stale green cache, health-as-currentness, common-mode monitor paths, local permissive threshold, NaN/overflow/empty-window coercion, conflicting-source favorable selection, broad or expired suppression, deduplication collision, alert/retry storm, queue overflow, delivery/provider/roster failure, acknowledgement-as-containment, stale Monitor Generation, monitoring-plane partition with broker reachability, gap/claim/first-byte race, direct monitoring route bypass, and monitoring recovery attempting capacity release, incident clear, scope restoration, or automatic re-arm;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -2905,7 +3001,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 340. Broker Verification Safety Rules
+## 352. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -2925,7 +3021,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 341. Continuous Conformance Evidence
+## 353. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -2951,6 +3047,7 @@ After approval, continuous monitors SHALL detect at least:
 - Restricted-Live Trial Policy, Plan, Run, scope, Promotion Generation, remaining action/effect/count/duration envelope, abort, evidence completeness, coverage, promotion consumption, production scope, demotion, or monitoring contradiction;
 - Safety Deviation Policy, requirement/hazard classification, Non-Waivable Boundary, exact scope/dependency closure, combined residual risk, compensating-control state, Effective Principal quorum, decision consumption, Residual-Risk Acceptance Record, Active Deviation Set, Deviation Generation, expiry, revocation, or final-egress currentness contradiction;
 - Safety Incident Policy, signal classification, severity/materiality, dependency closure, Incident Generation, Active Safety Incident Set, lifecycle, containment plan, controlled-shutdown ordering, hard fence, economic/protection obligation, recovery handoff, closure independence, or final-egress currentness contradiction;
+- Safety Monitoring Policy, Critical Telemetry Manifest, Monitor Coverage Manifest, source continuity, telemetry semantics, deterministic evaluator, hard-bound semantics, Monitor Generation, Continuous Conformance Snapshot, Monitoring Gap, common-mode analysis, suppression, alert correlation, delivery, acknowledgement, escalation, restrictive/incident handoff, or final-egress currentness contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -2967,7 +3064,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 342. Residual Risk Register
+## 354. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -2990,7 +3087,7 @@ Where RFC-001 permits a deviation, the register SHALL additionally bind the exac
 
 ---
 
-## 343. Independent Review Checklist
+## 355. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -3019,6 +3116,7 @@ The reviewer SHALL confirm:
 - every ADR-002-025 Trial Plan is exact and pre-registered, the worst credible effect is RCL-covered, abort dominates evidence collection, negative evidence is retained, coverage does not extrapolate, promotion is progressive and single-use, and no trial or promotion artifact creates live authority;
 - every ADR-002-026 request is outside the Non-Waivable Boundary and exact in scope/dependency closure, compensation is enforceable and independently evidenced, Effective Principal approval is independent, combined risk is bounded, decision consumption is single-use, evidence remains non-PASS, and expiry/revocation/currentness cannot be cached or revived;
 - every ADR-002-027 material signal restricts before investigation completes, scope is the greatest credible dependency closure, Incident Generation and the Active Safety Incident Set are current and complete, containment/shutdown preserve economic and protection obligations, handoff is explicitly accepted by one Recovery Session, closure is independent and non-permissive, and no incident artifact bypasses existing authority;
+- every ADR-002-028 Critical obligation maps to exact current telemetry and deterministic monitor coverage, source continuity and semantics are proven, hard-bound meaning is preserved, gaps and common modes are restrictive, suppression cannot silence safety, alert acknowledgement is not containment, Monitor Generation is active through final egress, and no monitoring artifact becomes authority;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -3028,7 +3126,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 344. Approval Gates by ADR
+## 356. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -3390,6 +3488,17 @@ Requires:
 - security assessment of signal suppression/spoofing/downgrade, scope self-exemption, active-set omission/substitution, stale coordinator/restore, incident-plane partition, direct route, shutdown queue drain, process-stop-as-fence, closure replay, evidence deletion, same-effective-person closure, incomplete handoff, and automatic re-arm;
 - proof that incident declaration and scope expansion restrict before investigation, controlled shutdown preserves economic/protection/evidence obligations, closure is administrative and non-permissive, RCL and final egress remain exclusive, and no incident artifact restores authority or scope.
 
+### ADR-002-028
+
+Requires:
+
+- STM-EV-001 through STM-EV-012 at the specified non-live levels, plus applicable CII, TIME, ERI, CUR, RLP, SIR, WDR, SBR, HAG, FD, RCLP, EGRESS, AFG, RC, SA, BC, REARM, and cross-system evidence;
+- approved canonical Safety Monitoring Policy, Critical Telemetry Manifest, Monitor Coverage Manifest, Continuous Conformance Snapshot, Safety Monitoring Gap, Safety Alert Record, and Alert Escalation Record schemas;
+- approved requirement/hazard/control registry, source continuity and semantic contracts, deterministic evaluator and independent verifier, effective-independence taxonomy, Monitor Generation registry and writer fence, restrictive ingress, suppression governance, alert correlation/deduplication, bounded delivery/escalation, incident handoff, recovery, and final-egress currentness mechanisms;
+- approved and measured `B_safety_telemetry_loss_detect`, `B_monitoring_gap_to_authority_restrict`, `B_monitoring_gap_to_egress_deny`, `B_critical_alert_delivery`, `B_alert_escalation`, `B_monitoring_generation_fence`, `MAX_critical_telemetry_age_ms`, `MAX_continuous_conformance_snapshot_age_ms`, `MAX_safety_alert_age_ms`, `MAX_monitoring_suppression_duration_ms`, `MAX_alert_acknowledgement_age_ms`, and every applicable upstream bound;
+- security assessment of source/evaluator/registry compromise, semantic and parser drift, common-mode independence, threshold weakening, suppression abuse, deduplication scope loss, alert storm and provider failure, stale writer/restore, monitoring-plane partition, alternate broker route, final-egress cache, recovery, and automatic re-arm;
+- proof that monitoring is a non-authorizing negative gate, absence of alert is not health, gaps restrict without releasing capacity, alert acknowledgement is not containment, evidence is not prevention, and recovery never revives prior authority.
+
 ### Restricted-Live Trial Gate
 
 Requires:
@@ -3415,7 +3524,7 @@ Requires:
 
 ---
 
-## 345. Current Evidence Readiness Assessment
+## 357. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -3451,6 +3560,7 @@ Active currentness, restrictive-fence, local-latch, per-send proof, and claim/se
 Restricted-live trial, evidence coverage, abort, promotion, demotion, and production-authorization governance evidence: NOT EXECUTED
 Safety waiver, deviation, compensating-control, residual-risk, expiry, and currentness governance evidence: NOT EXECUTED
 Safety incident declaration, scope, containment, controlled-shutdown, recovery-handoff, closure, and currentness governance evidence: NOT EXECUTED
+Safety telemetry, monitor coverage, continuous-conformance, gap, suppression, alert-delivery, escalation, and currentness governance evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -3459,13 +3569,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 346. Required Next Execution Sequence
+## 358. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, and safety-incident/controlled-shutdown-governance models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, and safety-telemetry/continuous-monitoring-governance models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -3478,7 +3588,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 347. Verification Specification Approval Gate
+## 359. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 
