@@ -111,7 +111,14 @@ capabilities:
     evidence_refs: []
     scope: UNKNOWN
     hard_limits: {}
+    sustained_and_burst_semantics: UNKNOWN
+    rolling_or_fixed_window_semantics: UNKNOWN
+    submit_cancel_amend_replace_query_and_session_sharing: UNKNOWN
+    credential_ip_route_endpoint_and_account_sharing: UNKNOWN
+    queue_throttle_partial_processing_and_reset_behavior: UNKNOWN
+    sdk_proxy_redirect_and_reconnect_retry_behavior: UNKNOWN
     protective_guarantee: UNAVAILABLE
+    protective_reserved_dimensions: []
   sessions:
     status: UNKNOWN
     assurance_level: EV-L0
@@ -174,6 +181,16 @@ order_construction_binding:
   construction_generation: null
   actual_outbound_comparison_mechanism: TBD
   permissive_default_or_repair_prohibited: true
+
+action_flow_binding:
+  action_flow_policy_id: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
+  shared_scope_model: UNKNOWN
+  active_currentness_mechanism: TBD
+  rcl_action_flow_permit_required: true
+  priority_alone_is_reservation: false
+  permissive_local_token_or_cache_prohibited: true
 
 egress_security:
   final_egress_boundary_id: TBD

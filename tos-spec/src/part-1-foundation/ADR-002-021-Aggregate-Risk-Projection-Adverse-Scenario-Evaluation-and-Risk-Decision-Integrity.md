@@ -680,7 +680,7 @@ Written cases are not completed evidence. Each case maps one-to-one to `ARE-EV-0
 | SAFE-003, SAFE-004, SAFE-050 | policy, scenarios, dimensions, limits, models, and compatibility are governed; the Hard Safety Envelope dominates |
 | SAFE-010 through SAFE-012 | every action receives conservative single-action/projected evaluation before authority or send |
 | SAFE-013 | evaluation is complete across aggregate scopes, existing/potentially-live/external/trapped effects, margin, collateral, and concurrent actions |
-| SAFE-014, SAFE-015 | action-rate effects are governed and only RCL serialization creates exclusive commitment |
+| SAFE-014, SAFE-015 | ADR-002-022 governs exact action-flow vectors and permits; only RCL serialization creates exclusive economic and action-flow commitment |
 | SAFE-020, SAFE-021, SAFE-024, SAFE-025 | exact immutable lineage, asynchronous broker ambiguity, reconciliation bounds, and partial-fill effects remain conservative |
 | SAFE-030, SAFE-031, SAFE-034, SAFE-035 | all inputs are provenance/freshness/time governed and independent verification accounts for common modes |
 | SAFE-040, SAFE-043 | protective/exit actions retain exact adverse effects, feasibility, trapped-exposure, and pre-committed-capacity requirements |
@@ -726,5 +726,6 @@ ADR-002-021 SHALL remain `Proposed` until all of the following are complete:
 10. Broker/account/product-specific scenario, margin, liquidity, hedge, settlement, and Final Quantity Proof assumptions are evidenced.
 11. No open Critical or Major finding remains; numerical, scenario-completeness, common-mode, currentness, and security findings are included.
 12. Architecture, risk, security, broker/venue, operations, and independent safety reviewers approve the residual-risk and live-scope disposition.
+13. ADR-002-022 binds the exact action-flow vector and single-use permit to the same command/effect/risk-decision chain without creating a second capacity authority, and applicable AFG evidence passes.
 
 This ADR authorizes architecture and implementation-planning work only. It grants no capacity, Accepted status, restricted-live readiness, production readiness, or live trading authority.

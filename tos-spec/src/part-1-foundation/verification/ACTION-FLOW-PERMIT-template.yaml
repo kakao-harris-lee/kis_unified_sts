@@ -1,0 +1,71 @@
+artifact_type: ACTION_FLOW_PERMIT
+schema_version: "1.0-DRAFT"
+permit_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: INVALID
+issuer_expected: RISK_CAPACITY_LEDGER
+rcl_commitment:
+  commitment_id: TBD
+  capacity_domain_id: TBD
+  writer_epoch: null
+  rcl_revision: null
+action_flow_policy:
+  policy_id: TBD
+  action_flow_generation: null
+  canonical_digest: TBD
+action_flow_state_snapshot:
+  snapshot_id: TBD
+  canonical_digest: TBD
+action_flow_decision:
+  decision_id: TBD
+  canonical_digest: TBD
+action:
+  action_id: TBD
+  action_class: UNKNOWN
+  root_cause_id: TBD
+  action_lineage_digest: TBD
+  canonical_broker_command_id: null
+  canonical_broker_command_digest: null
+  non_order_operation_digest: null
+scope:
+  environment: TBD
+  safety_cell_id: TBD
+  broker_id: TBD
+  legal_portfolio_id: TBD
+  account_id: TBD
+  credential_id: TBD
+  session_id: TBD
+  route_id: TBD
+  endpoint_id: TBD
+  venue_id: TBD
+  instrument_id: TBD
+resource_consumption_vector: {}
+ordinary_or_protective: UNKNOWN
+protective_lease_id: null
+protective_flow_reserve_proof_id: null
+economic_capacity_commitment_id: null
+order_conformance_proof_id: null
+single_use:
+  claim_nonce: TBD
+  claimed: false
+  consumed: false
+  quarantined: false
+  claim_commit_id: null
+validity:
+  issued_at: null
+  consumer_receipt_anchor: TBD
+  maximum_age_ms: null
+  invalidation_generation: null
+  invalidation_conditions: []
+authority:
+  grants_action_flow_allocation: false
+  creates_or_refills_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

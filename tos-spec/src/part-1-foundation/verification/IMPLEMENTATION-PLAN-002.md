@@ -2,8 +2,8 @@
 
 - **Status:** PROPOSED PLAN — not approved; no implementation code has been written.
 - **Date:** 2026-07-14
-- **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..021 evidence cases.
-- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..021, VER-002-001. Current VER and Evidence Register coverage includes 255 items and one-to-one dedicated acceptance cases for ADR-002-005..021; registration is not executed evidence.
+- **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..022 evidence cases.
+- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..022, VER-002-001. Current VER and Evidence Register coverage includes 267 items and one-to-one dedicated acceptance cases for ADR-002-005..022; registration is not executed evidence.
 - **Authorization:** This plan authorizes nothing. Production, live, and ADR-Accepted status remain NO.
 
 ---
@@ -32,7 +32,7 @@ This document exists so those gates are explicit and ratifiable, not bypassed.
 |---|---|---|
 | Approve/replace bounds in `VERIFICATION-PROFILE-002.yaml` | Safety/Risk authority | Tests need pass/fail thresholds, including Human HALT ingress-to-commit, recovery-trigger-to-barrier, Critical Input and venue-constraint loss/invalidation, context/decision age, barrier-to-egress, and readiness age; unapproved bounds are not bounds |
 | Measure broker-specific bounds from an approved Broker Capability Profile | Broker/Exec eng | Final Quantity Proof, late fill, rate/session, query, replacement gap/overlap, and non-trade detection/reconciliation |
-| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (255 items); independence is mandatory |
+| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (267 items); independence is mandatory |
 | Ratify this plan, the §2 greenfield boundary, and the mechanism substrate | Architecture board | Determines what is implemented and where |
 
 I will not fabricate any of these. I can *draft candidates* (done for bounds; role scheme in §3) for you to ratify.
@@ -96,6 +96,10 @@ The greenfield boundary requires:
     exact Aggregate Risk Decision, Aggregate Risk Generation, RCL binding, invalidation, and active final-egress
     currentness are required; a risk grant is not capacity, RCL remains the sole mutation authority, and the evaluator
     cannot issue Live Authorization, transmit, release economic effect, or re-arm.
+15. ADR-002-022's Action Flow Policy/Generation, complete shared-scope state cut, immutable cause lineage,
+    bounded amplification, exact resource vector and decision, RCL-serialized single-use Action Flow Permit,
+    protective reserve/lease, invalidation, and active final-egress currentness are required; local counters and
+    priority create no capacity, the RCL remains the sole mutation authority, and no recovery path auto re-arms.
 
 ---
 
@@ -104,7 +108,7 @@ The greenfield boundary requires:
 Role placeholders for `EVIDENCE-REGISTER-002`; a single person may hold several,
 subject to the exclusions:
 
-- **RC-Impl / RCLP-Impl / EgressSec-Impl / SPG-Impl / HAG-Impl / ERI-Impl / SBR-Impl / CII-Impl / VTG-Impl / IOC-Impl / ARE-Impl / SA-Impl / TT-Impl / LA-Impl / BC-Impl** — implement Risk Capacity, quorum persistence/fencing, final-egress security, safety-profile governance, human-authority governance, evidence/replay integrity, safe-start/recovery-barrier, Critical Input/context integrity, venue/session/tradability constraints, Intent-to-order conformance, aggregate-risk evaluation, Safety Authority, Trustworthy Time, Live Authorization, and Broker layers.
+- **RC-Impl / RCLP-Impl / EgressSec-Impl / SPG-Impl / HAG-Impl / ERI-Impl / SBR-Impl / CII-Impl / VTG-Impl / IOC-Impl / ARE-Impl / AFG-Impl / SA-Impl / TT-Impl / LA-Impl / BC-Impl** — implement Risk Capacity, quorum persistence/fencing, final-egress security, safety-profile governance, human-authority governance, evidence/replay integrity, safe-start/recovery-barrier, Critical Input/context integrity, venue/session/tradability constraints, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, Safety Authority, Trustworthy Time, Live Authorization, and Broker layers.
 - **State-Impl / Recon-Impl / FD-Impl / PR-Impl / NT-Impl** — implement orthogonal state, evidence confidence, failure-domain fencing, protective replacement, and non-trade transition layers.
 - **Harness-Eng** — deterministic fault injection + evidence capture.
 - **Evidence-Owner** — runs a case, produces the manifest + artifacts.
@@ -148,6 +152,9 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
 - Implement ADR-002-021 Aggregate Risk Policy/Generation, complete state-snapshot consistency cut, Adverse Scenario Set,
   dimension/scope vectors, projected usage, benefit proof, numerical failure, Aggregate Risk Decision, exact RCL admission,
   invalidation/currentness, partition, protective, economic-continuity, and non-revival models.
+- Implement ADR-002-022 Action Flow Policy/Generation, complete shared-scope state cut, cause lineage and amplification,
+  resource vector, rate/burst/queue/in-flight semantics, Action Flow Decision, atomic RCL allocation and single-use Permit,
+  protective reserve/lease, trustworthy-time refill, invalidation/currentness, partition, and non-revival models.
 - Implement pure models for the five orthogonal state dimensions and CPL invariants, per-field
   evidence confidence, Failure-Domain Allocation Matrix, protection gap/overlap, and conservative
   non-trade transition envelope (ADR-002-005/006/009/011/010).
@@ -193,6 +200,9 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
 - Implement ADR-002-021 policy/scenario admission, complete aggregate-state cut, vector/scope/unit/limit validation,
   valuation/uncertainty and conservative benefit rules, deterministic evaluation and independent reproduction,
   numerical failure handling, exact RCL allocation admission, invalidation fan-out, and active final-egress currentness.
+- Implement ADR-002-022 policy admission, distributed scope/resource aggregation, cause/amplification tracking,
+  deterministic action-flow evaluation, RCL atomic economic/flow commitment, single-use Permit claim/consumption/quarantine,
+  protective reserve/lease, bounded scheduler/queue/retry/reconnect behavior, invalidation fan-out, and active final-egress currentness.
 - Durable orthogonal-state ownership, reconciliation-confidence bounds, deployment and credential
   identities, replacement workflow lineage, and non-trade event/version lineage.
 - Component-level fault injection (missing input, stale epoch, crash-at-boundary).
@@ -238,10 +248,14 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   drift, adverse-scenario truncation, hedge/basis/correlation/liquidity/margin failure, valuation tails, numerical
   overflow/NaN/non-convergence/differential, concurrent stale grants, RCL state advance, Aggregate Risk Generation cache,
   invalidation races at RCL/egress, control-plane partition, and evaluator recovery revival.
+- Inject concurrent shared-limit producers, unknown scope, duplicate-event/fan-out/redelivery amplification, missing-ACK retry,
+  reconnect/SDK/proxy/redirect flood, cancel/amend/replace storm, queue/in-flight exhaustion, normal-to-protective reserve
+  intrusion, priority-only reserve claims, RCL Permit double spend, stale/cross-host refill, Action Flow Generation cache,
+  RCL/egress invalidation races, broker-reachable partition, and governor/scheduler recovery revival.
 - Prove that strategy, orchestration, recovery, reconciliation, retry, administrative,
   evidence, and market-data identities lack a direct simulated live-order route.
 - Execute the EV-L3 RC-EV / SA-EV / TIME-EV / REARM-EV / STATE-EV / RECON-EV / FD-EV /
-  PR-EV / NT-EV / RCLP-EV / EGRESS-EV / SPG-EV / HAG-EV / ERI-EV / SBR-EV / CII-EV / VTG-EV / IOC-EV / ARE-EV set; measure `B_*` bounds against
+  PR-EV / NT-EV / RCLP-EV / EGRESS-EV / SPG-EV / HAG-EV / ERI-EV / SBR-EV / CII-EV / VTG-EV / IOC-EV / ARE-EV / AFG-EV set; measure `B_*` bounds against
   `VERIFICATION-PROFILE-002`.
 - Deliverable: EV-L3 evidence; measured detection/containment bounds.
 
@@ -255,14 +269,14 @@ Each phase gates the next. No phase claims completion without the VER-002-001 ev
   Approval Request, Approval Attestation, Approval Set, Human HALT, Evidence Integrity Policy,
   Safety Evidence Envelope, Evidence Commit Receipt, Evidence Gap Record, Replay Capsule, Recovery Barrier Policy,
   Recovery Session, Recovery Inventory Cut, Recovery Obligation, Recovery Evidence Package, Recovery Readiness Decision,
-  Critical Input Policy, Critical Input Snapshot, Decision Context Capsule, Venue Constraint Policy, Venue Constraint Snapshot, Order Admissibility Decision, Order Construction Policy, Canonical Broker Command, Economic Effect Envelope, and Order Conformance Proof contracts from the non-authorizing templates; validate the exact
+  Critical Input Policy, Critical Input Snapshot, Decision Context Capsule, Venue Constraint Policy, Venue Constraint Snapshot, Order Admissibility Decision, Order Construction Policy, Canonical Broker Command, Economic Effect Envelope, Order Conformance Proof, Action Flow Policy, Action Flow State Snapshot, Action Flow Decision, and Action Flow Permit contracts from the non-authorizing templates; validate the exact
   Broker Capability Profile and Verification Profile digests in the closed bundle.
 - Broker sandbox or certified-environment probes; derive broker-specific bounds; run BC-EV items.
 - Deliverable: EV-L4 evidence + a versioned Capability Profile.
 
 ### Phase 5 — Independent review & ADR re-evaluation
 - **Independent** reviewer (not me, not an Impl role) signs each evidence run.
-- Only then may ADR-002-001..021 be re-evaluated toward `Accepted`, and only within the
+- Only then may ADR-002-001..022 be re-evaluated toward `Accepted`, and only within the
   proven scope. Every registered case must be executed at its required evidence level; registration
   alone satisfies no acceptance criterion. Restricted live (EV-L5) is a
   separate, later, human-authorized gate.
@@ -283,11 +297,11 @@ implementation code before this plan, greenfield boundary, and mechanism substra
 
 ## 6. Immediate decision requested
 
-1. Approve (or amend) `VERIFICATION-PROFILE-002.yaml` proposed bounds, including the currently null egress-currentness, hard-fence, Human HALT, recovery-barrier, Critical Input, venue-constraint, conformance, and aggregate-risk loss/invalidation, context/decision/command/proof/snapshot-age, readiness-age, failure-domain, replacement, and non-trade bounds, and provide broker-measured values where required.
+1. Approve (or amend) `VERIFICATION-PROFILE-002.yaml` proposed bounds, including the currently null egress-currentness, hard-fence, Human HALT, recovery-barrier, Critical Input, venue-constraint, conformance, aggregate-risk, and action-flow loss/invalidation/containment, context/decision/command/proof/permit/snapshot-age, amplification, readiness-age, failure-domain, replacement, and non-trade bounds, and provide broker-measured values where required.
 2. Ratify (or amend) the §2 greenfield boundary, ADR-002-007 §§9.1–9.5 protocol,
    ADR-002-012 mechanism, ADR-002-013 final-egress security boundary, ADR-002-014
    safety-configuration governance, ADR-002-015 human-authority governance, ADR-002-016
-   evidence-integrity/replay architecture, ADR-002-017 safe-start/recovery-barrier architecture, ADR-002-018 Critical Input/context-integrity architecture, ADR-002-019 venue/session/tradability-constraint architecture, ADR-002-020 Intent-to-order conformance architecture, and ADR-002-021 aggregate-risk evaluation architecture; select conforming
+   evidence-integrity/replay architecture, ADR-002-017 safe-start/recovery-barrier architecture, ADR-002-018 Critical Input/context-integrity architecture, ADR-002-019 venue/session/tradability-constraint architecture, ADR-002-020 Intent-to-order conformance architecture, ADR-002-021 aggregate-risk evaluation architecture, and ADR-002-022 action-flow governance architecture; select conforming
    consensus, signer/credential, identity-aware route, Quorum Commit Certificate,
    voter/principal/failure-domain topology, hard fence, session, artifact, semantic-normalization,
    registry, signing, approval, compatibility-manifest, identity, authenticator, Effective Principal Graph,
@@ -302,6 +316,6 @@ implementation code before this plan, greenfield boundary, and mechanism substra
    Canonical Broker Command, Economic Effect Envelope, Order Conformance Proof, serializer/SDK constraints,
    Construction Generation, actual-outbound comparison, Aggregate Risk Policy, state consistency cut,
    Adverse Scenario Set, risk-vector and valuation/benefit rules, deterministic risk evaluator/independent verifier,
-   Aggregate Risk Generation, exact Aggregate Risk Decision/RCL admission, and active context/constraint/conformance/risk-currentness mechanisms.
+   Aggregate Risk Generation, exact Aggregate Risk Decision/RCL admission, Action Flow Policy/Generation, exact shared-scope state/cause/vector/Decision, atomic RCL Permit, protective reserve/lease, and active context/constraint/conformance/risk/action-flow currentness mechanisms.
 3. Approve this plan so Phase 1 (EV-L1 models + property tests, non-transmitting) can begin.
 4. Name the independent reviewer (or confirm it is external to this work).

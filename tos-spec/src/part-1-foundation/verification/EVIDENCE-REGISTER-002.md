@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **255**
-- NOT_IMPLEMENTED: **255**
+- Total evidence items: **267**
+- NOT_IMPLEMENTED: **267**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -278,6 +278,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | ARE-EV-010 | Aggregate Risk Evaluation | Protective Exit and Partition Behavior | ADR-002-021 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | ARE-EV-011 | Aggregate Risk Evaluation | Authority Separation and Security Bypass | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | ARE-EV-012 | Aggregate Risk Evaluation | Recovery Economic Continuity and Non-Revival | ADR-002-021 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-001 | Action Flow Governance | Distributed Shared-Limit Serialization | ADR-002-022 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-002 | Action Flow Governance | Duplicate Event and Fan-Out Amplification | ADR-002-022 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-003 | Action Flow Governance | Missing-ACK Retry and Reconnect Storm | ADR-002-022 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-004 | Action Flow Governance | Cancel Amend and Replace Storm | ADR-002-022 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-005 | Action Flow Governance | Complete Action and Resource Classification | ADR-002-022 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-006 | Action Flow Governance | Protective Reserve Exclusivity | ADR-002-022 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-007 | Action Flow Governance | RCL Atomicity and Permit Single Use | ADR-002-022 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-008 | Action Flow Governance | Time Refill and Counter Integrity | ADR-002-022 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-009 | Action Flow Governance | Invalidation and Final-Egress Currentness | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-010 | Action Flow Governance | Partition Stale Writer and Protective Lease | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-011 | Action Flow Governance | Authority Separation and Bypass | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| AFG-EV-012 | Action Flow Governance | Recovery Economic Continuity and Non-Revival | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

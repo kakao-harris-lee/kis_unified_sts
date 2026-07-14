@@ -1,0 +1,53 @@
+artifact_type: ACTION_FLOW_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+action_flow_generation: null
+canonical_digest: TBD
+status: DRAFT
+environment_scope: []
+safety_cell_scope: []
+broker_scope: []
+legal_portfolio_scope: []
+account_scope: []
+credential_session_route_and_endpoint_scope: []
+venue_and_instrument_scope: []
+strategy_intent_and_cause_scope: []
+global_scope_included: false
+hard_safety_envelope:
+  envelope_id: TBD
+  generation: null
+  canonical_digest: TBD
+runtime_safety_profile:
+  profile_id: TBD
+  generation: null
+  canonical_digest: TBD
+action_classes: []
+resource_dimensions_and_units: []
+scope_aggregation_and_shared_limit_rules: []
+rate_burst_queue_and_in_flight_limits: []
+cause_amplification_limits: []
+retry_reconnect_replay_and_redelivery_rules: []
+protective_flow_reservations: []
+trustworthy_time_and_refill_rules: []
+atomic_risk_and_flow_commitment_rules: []
+materiality_default: MATERIAL
+unknown_disposition: DENY_NEW_NORMAL_RISK
+invalidation_and_containment_rules: []
+recovery_and_non_revival_rules: []
+compatibility_requirements: []
+approved_by: []
+effective_from: null
+review_due: null
+authority:
+  policy_active: false
+  grants_action_flow_allocation: false
+  creates_or_refills_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

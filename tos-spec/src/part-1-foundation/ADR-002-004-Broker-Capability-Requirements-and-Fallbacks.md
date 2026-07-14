@@ -934,6 +934,8 @@ Unexpected throttling, undocumented limit changes, or persistent head-of-line bl
 
 When accounts share a broker/global quota, protective and reconciliation budgets SHALL have an approved arbitration policy. First failure must not consume all capacity without considering other exposed accounts.
 
+ADR-002-022 defines the complete Action Flow Policy, distributed shared-scope accounting, cause amplification, retry/reconnect containment, RCL-serialized single-use permits, and Protective Flow Reserve. Local priority or per-process throttling is insufficient; the active Broker Capability Profile supplies evidence and constraints but creates no action-flow capacity.
+
 ---
 
 ## 18. Session and Credential Architecture
@@ -1387,6 +1389,7 @@ ADR-002-004 may move from **Proposed** to **Accepted** only when:
 - ADR-002-016 raw broker, portal, dealer, support, session, query-page, correction, and external-activity evidence is durably retained and replayable without turning omission into proof, and applicable ERI evidence passes;
 - ADR-002-019 binds each supported capability to exact current venue/session/tradability, order/account/margin/borrow/settlement constraints and final-egress enforcement, and applicable VTG evidence passes;
 - ADR-002-020 binds each supported command semantic, default, canonicalization, serializer/SDK, signer, redirect, idempotency, and actual-outbound behavior to an exact non-authorizing proof and final-egress comparison, and applicable IOC evidence passes;
+- ADR-002-022 binds complete shared-limit scope, action classes, rate/burst/queue/in-flight semantics, retry/reconnect amplification, and protective resource guarantees to RCL and final-egress enforcement, and applicable AFG evidence passes;
 - all Critical acceptance criteria pass;
 - capability drift causes fail-closed behavior;
 - VER-002-001 evidence entries are complete and independently reviewed;

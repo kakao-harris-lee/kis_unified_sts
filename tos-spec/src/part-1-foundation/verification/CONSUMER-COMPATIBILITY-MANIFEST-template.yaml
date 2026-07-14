@@ -42,6 +42,10 @@ supported_contracts:
   aggregate_risk_state_snapshot_schema_versions: []
   adverse_scenario_set_schema_versions: []
   aggregate_risk_decision_schema_versions: []
+  action_flow_policy_schema_versions: []
+  action_flow_state_snapshot_schema_versions: []
+  action_flow_decision_schema_versions: []
+  action_flow_permit_schema_versions: []
   source_continuity_protocol_versions: []
   transformation_manifest_versions: []
 
@@ -64,6 +68,8 @@ attestation:
   aggregate_risk_policy_digest: TBD
   adverse_scenario_set_generation: null
   adverse_scenario_set_digest: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
   context_generation: null
   reproduced_semantic_digest: TBD
   compatible: false
@@ -88,6 +94,9 @@ fail_closed_contract:
   invalidated_order_conformance_proof: DENY
   stale_aggregate_risk_generation: DENY
   invalidated_aggregate_risk_decision: DENY
+  stale_action_flow_generation: DENY
+  invalidated_action_flow_decision: DENY
+  invalid_or_consumed_action_flow_permit: DENY
   actual_outbound_mismatch: DENY
 
 authorization_notice: >-

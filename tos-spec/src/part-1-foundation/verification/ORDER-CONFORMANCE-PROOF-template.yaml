@@ -37,6 +37,11 @@ aggregate_risk_decision:
   aggregate_risk_generation: null
   canonical_digest: TBD
   granted_allocation_vector: {}
+action_flow_decision:
+  decision_id: TBD
+  action_flow_generation: null
+  canonical_digest: TBD
+  granted_resource_vector: {}
 capacity_binding:
   capacity_domain_id: TBD
   capacity_commitment_id: TBD
@@ -44,6 +49,12 @@ capacity_binding:
   rcl_revision: null
   writer_epoch: null
   dominates_envelope: false
+action_flow_binding:
+  action_flow_commitment_id: TBD
+  action_flow_permit_id: TBD
+  committed_resource_vector: {}
+  exact_action_and_cause_bound: false
+  permit_unclaimed_at_proof_issue: false
 required_authority_scope: {}
 required_authority_scope_complete: false
 construction_identity:
@@ -75,6 +86,7 @@ downstream_consumption:
   transmission_attempt_id: null
   live_authorization_id: null
   transmission_capability_id: null
+  action_flow_permit_claim_id: null
   commit_proof_id: null
   egress_request_digest: null
   note: Later authority and egress artifacts bind this proof; these fields are not proof-issuance prerequisites.

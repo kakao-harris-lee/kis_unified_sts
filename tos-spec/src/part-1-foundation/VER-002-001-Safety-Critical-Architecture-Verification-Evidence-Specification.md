@@ -2,8 +2,8 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-021
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-021; implementation evidence has not been executed
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-022
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-022; implementation evidence has not been executed
 - **Extension State:** ADR-002-005/006/007/008/009/010/011/012/013/014/015/016/017/018/019 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, PR-EV-001..012, RCLP-EV-001..012, EGRESS-EV-001..012, SPG-EV-001..012, HAG-EV-001..012, ERI-EV-001..012, SBR-EV-001..012, CII-EV-001..012, and VTG-EV-001..012. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
@@ -2202,9 +2202,93 @@ An untested Critical requirement blocks production approval.
 - **Injection:** Restart, restore, roll back, fail over, rebuild cache, recover source/model/library, reconcile, replay, improve prices or margin, and reconnect broker while prior decisions, UNKNOWN, commitments, or possible effects remain.
 - **Expected:** Stale generations and decisions remain fenced; existing effects retain conservative capacity; fresh evaluation and governed re-arm are required and no automatic re-arm occurs.
 
+## 266. AFG-EV-001 — Distributed Shared-Limit Serialization
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-022 AFG-AC-001
+- **Injection:** Drive concurrent producers across processes, nodes, accounts, credentials, sessions, routes, endpoints, and action classes against overlapping local, broker-global, and unknown-scope limits.
+- **Expected:** The RCL serializes the complete shared action-flow vector; local counters cannot over-allocate, choose a narrower scope, or create headroom.
+
+## 267. AFG-EV-002 — Duplicate Event and Fan-Out Amplification
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-022 AFG-AC-002
+- **Injection:** Duplicate, reorder, fork, replay, redeliver, and fail over one root cause through multiple consumers, queues, and schedulers while attempting to reset cause identity.
+- **Expected:** One immutable cause lineage remains within finite fan-out, depth, attempts, queue, elapsed-time, and broker-mutation bounds; overflow invokes containment.
+
+## 268. AFG-EV-003 — Missing-ACK Retry and Reconnect Storm
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker evidence
+- **Supports:** ADR-002-022 AFG-AC-003
+- **Injection:** Drop responses after possible broker acceptance, trigger timeouts, SDK/proxy retries, reconnect callbacks, redirects, route failover, and new client-order identities.
+- **Expected:** Missing ACK never becomes non-acceptance; the original action remains potentially live and capacity-covered, every retry is governed, and blind resubmission is denied.
+
+## 269. AFG-EV-004 — Cancel Amend and Replace Storm
+
+- **Minimum Level:** EV-L1/EV-L3 plus broker evidence
+- **Supports:** ADR-002-022 AFG-AC-004
+- **Injection:** Cross partial fills, price changes, cancel ACKs, timeouts, reconnects, and protective replacement while repeatedly oscillating cancel, amend, replace, and submit.
+- **Expected:** Cause amplification remains bounded; cancel ACK is not Final Quantity Proof; overlap, late-fill, reversal, protection-gap, economic-capacity, and flow-capacity rules remain conservative.
+
+## 270. AFG-EV-005 — Complete Action and Resource Classification
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker evidence
+- **Supports:** ADR-002-022 AFG-AC-005
+- **Injection:** Exhaust submit, cancel, amend, replace, query, session, reconnect, queue, in-flight, credential, route, endpoint, and administrative resources separately and jointly while relabeling actions.
+- **Expected:** Every broker-facing class and common-mode resource is counted under the most conservative applicable shared scope; no label or omitted class bypasses admission.
+
+## 271. AFG-EV-006 — Protective Reserve Exclusivity
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker and security assessment
+- **Supports:** ADR-002-022 AFG-AC-006
+- **Injection:** Saturate ordinary request, order, cancel, query, queue, in-flight, credential, session, route, endpoint, and broker-rate resources, then require protective, reconciliation, and HALT-supporting traffic while presenting priority-only claims.
+- **Expected:** Normal traffic cannot consume the minimum reserve; only physically or logically reserved proven scope is counted; priority-only or common-mode uncertainty narrows or prohibits live scope.
+
+## 272. AFG-EV-007 — RCL Atomicity and Permit Single Use
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-022 AFG-AC-007
+- **Injection:** Race economic and action-flow commitments, lose commit responses, duplicate permits and claim nonces, crash before and after claim, replay consumed identities, and advance RCL state between decision and admission.
+- **Expected:** Economic and flow coverage commit atomically or not at all; every permit is exact and single-use; ambiguous claims remain consumed or quarantined and cannot be replayed.
+
+## 273. AFG-EV-008 — Time Refill and Counter Integrity
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-022 AFG-AC-008
+- **Injection:** Step, freeze, roll back, and recover wall clocks; break monotonic continuity; compare cross-host timestamps; restart counters; race window boundaries; restore stale snapshots; and create counter divergence.
+- **Expected:** Only approved trustworthy-time and RCL history can replenish capacity; uncertainty is restrictive and no clock, restart, restore, or divergence manufactures headroom.
+
+## 274. AFG-EV-009 — Invalidation and Final-Egress Currentness
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-022 AFG-AC-009
+- **Injection:** Change policy, broker limit, scope graph, session, credential, route, endpoint, reserve, queue, constraint, capability, or generation between decision, RCL commit, claim, and first byte; suppress invalidation and offer cached health or tokens.
+- **Expected:** RCL and final egress actively prove exact current state and deny stale or unprovable actions; ambiguous races remain potentially live, permit-consumed or quarantined, and economically covered without blind retry.
+
+## 275. AFG-EV-010 — Partition Stale Writer and Protective Lease
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-022 AFG-AC-010
+- **Injection:** Partition the control plane from broker-reachable egress, lose quorum, resume stale RCL/governor/scheduler/egress instances, overlap protective sub-ledgers, and attempt remote or wall-clock refill.
+- **Expected:** Normal permits stop; stale generations remain fenced; only an exclusive pre-issued bounded protective lease may consume a monotonic local sub-budget, otherwise transmission is denied.
+
+## 276. AFG-EV-011 — Authority Separation and Bypass
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-022 AFG-AC-011
+- **Injection:** Attempt direct capacity mutation or broker send from strategy, Action Flow Governor, local limiter, scheduler, queue, retry/reconnect service, SDK, signer, reconciliation, recovery, replay, operator, and alternate credentials/routes.
+- **Expected:** RCL remains the sole capacity mutation authority, final egress remains the sole transmission enforcement point, and no evaluator, local token, priority, or intermediary creates permission.
+
+## 277. AFG-EV-012 — Recovery Economic Continuity and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-022 AFG-AC-012
+- **Injection:** Restart, roll back, restore, fail over, reconnect, drain queues, expire backoff, refill counters, recover broker health, and replay matching history while prior actions, permits, claims, UNKNOWN, or possible effects remain.
+- **Expected:** Old decisions, permits, counters, capabilities, authority, and live scope do not revive; possible effects remain capacity-covered; recovery stays non-live until fresh governed re-arm.
+
 ---
 
-## 266. Model-Based and Property Verification
+## 278. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -2228,6 +2312,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Venue Constraint Policy, Constraint Generation, Session Phase, tradability, exact order shape, Snapshot, Order Admissibility Decision, invalidation, final-egress currentness, and recovery state;
 - Order Construction Policy, Authorized Construction Envelope, Canonical Broker Command, Economic Effect Envelope, Order Conformance Proof, Construction Generation, retry/split/replace lineage, downstream mutation, actual-outbound equivalence, and recovery state;
 - Aggregate Risk Policy, Aggregate Risk Generation, Aggregate Risk State Snapshot, Adverse Scenario Set, dimension/scope vectors, projected state, benefit evidence, Aggregate Risk Decision, RCL admission, invalidation, final-egress currentness, and recovery state;
+- Action Flow Policy, Action Flow Generation, Action Flow State Snapshot, cause lineage, amplification envelope, shared-scope resource vector, Action Flow Decision, RCL Permit allocation/claim/consumption/quarantine, protective reserve/lease, invalidation, final-egress currentness, and recovery state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2294,13 +2379,19 @@ No omitted risk dimension, scenario truncation, scalar collapse, unit/sign/scope
 No Aggregate Risk Decision mutation, union, partial refresh, widening, substitution, or replay survives exact effect-to-RCL binding
 No aggregate-risk invalidation misses RCL admission or final egress beyond its approved bound
 No evaluator, verifier, cache, model, restore, reconciliation, improved market state, or replay mutates capacity, revives a prior grant, or automatically re-arms
+No local limiter, producer, scheduler, queue, SDK, retry, reconnect, replay, or failover path can exceed one complete shared action-flow vector
+No duplicate event, changed cause identity, fan-out, redelivery, reconnect, cancel/replace loop, or replay exceeds its finite amplification envelope
+No Action Flow Decision or Permit mutation, union, widening, substitution, double claim, or replay survives exact action-to-RCL-to-egress binding
+No ordinary priority, queue position, broker connection, or local headroom consumes or proves Protective Flow Reserve
+No action-flow invalidation misses RCL admission or final egress beyond its approved bound
+No counter refill, backoff expiry, queue drain, broker recovery, restart, restore, or replay revives a permit, creates headroom, or automatically re-arms
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 267. Fault-Injection Requirements
+## 279. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2319,6 +2410,7 @@ The test harness SHALL support controlled injection at least for:
 - scheduled and unscheduled session transition, delayed open, auction and volatility phase, halt/suspension conflict, stale tradability, price-band/tick/lot/order-shape drift, account/margin/borrow/settlement conflict, broker-capability degradation, Constraint Generation cache, exact-decision substitution, invalidation race, and venue/broker recovery attempting old-decision reuse;
 - side/direction/position-effect inversion, account/instrument/contract/environment/route substitution, unit/multiplier/currency/numeric drift, quantity/tick/lot/rounding boundary, price/order/TIF/expiry/mode mutation, effect-envelope understatement, parser differential, duplicate/unknown fields, downstream serializer/signer/SDK mutation, retry/cancel/amend/replace/split/aggregate lineage loss, Construction Generation cache, and compiler recovery attempting old-proof reuse;
 - omitted aggregate scope, stale/mixed state cut, snapshot/effect substitution, missing dimension, unit/sign/scale/limit drift, adverse-scenario truncation, hedge-leg/basis/correlation/liquidity/margin failure, valuation/tail error, overflow/NaN/non-convergence/differential, concurrent stale grant, RCL state advance, Aggregate Risk Generation cache, invalidation suppression/delay beyond `B_aggregate_risk_invalid_to_rcl` or `B_aggregate_risk_invalid_to_egress`, and evaluator recovery attempting old-decision reuse;
+- concurrent producer and shared-limit over-allocation, unknown broker-limit scope, duplicate-event/fan-out/redelivery/replay amplification, missing-ACK retry, SDK/proxy/redirect/reconnect flood, cancel/amend/replace storm, queue/in-flight exhaustion, ordinary-to-protective reserve intrusion, priority-only reserve claim, RCL permit double spend, stale/cross-host refill, Action Flow Generation cache, invalidation suppression/delay beyond `B_action_flow_invalid_to_rcl`, `B_action_flow_invalid_to_egress`, or `B_action_flow_violation_to_containment`, control-plane partition with broker-reachable egress, and recovery attempting old-permit reuse;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -2342,7 +2434,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 268. Broker Verification Safety Rules
+## 280. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -2360,7 +2452,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 269. Continuous Conformance Evidence
+## 281. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -2382,6 +2474,7 @@ After approval, continuous monitors SHALL detect at least:
 - Venue Constraint Policy, Constraint Generation, session phase, halt/suspension, tradability, price/tick/lot/quantity/order-shape, account/margin/borrow/settlement, Broker Capability Profile, Snapshot/decision age and digest, or final-egress currentness contradiction;
 - Order Construction Policy, Construction Generation, Authorized Construction Envelope, Canonical Broker Command, Economic Effect Envelope, capacity dominance, Order Conformance Proof, compiler/serializer/SDK compatibility, command/proof age, downstream mutation, or actual-outbound equivalence contradiction;
 - Aggregate Risk Policy, Aggregate Risk Generation, Aggregate Risk State Snapshot cut/age, Adverse Scenario Set, dimension/scope completeness, valuation/benefit/numerical derivation, Aggregate Risk Decision age/digest, allocation vector, RCL binding, or final-egress currentness contradiction;
+- Action Flow Policy, Action Flow Generation, State Snapshot cut/age, cause lineage/amplification, shared-scope resource vector, Decision/Permit age and digest, RCL allocation/claim/consumption, protective reserve/lease, counter/refill, queue/in-flight, invalidation, or final-egress currentness contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -2398,7 +2491,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 270. Residual Risk Register
+## 282. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -2419,7 +2512,7 @@ Every unresolved limitation SHALL record:
 
 ---
 
-## 271. Independent Review Checklist
+## 283. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -2444,6 +2537,7 @@ The reviewer SHALL confirm:
 - every broker-directed action binds one exact current Venue Constraint Snapshot and Order Admissibility Decision, exits and protective actions are not assumed executable, and material constraint invalidation reaches authority and final egress under ADR-002-019;
 - every broker-directed action is deterministically constructed from one exact Intent and closed Authorized Construction Envelope, its conservative Economic Effect Envelope is dominated by the exact RCL commitment, and final egress verifies the actual outbound representation under ADR-002-020;
 - every capacity request binds one complete current aggregate-state cut, approved scenario set, exact command effect, deterministic conservative projected vector, current Aggregate Risk Decision, and RCL commitment under ADR-002-021; unproven benefit is zero and evaluator authority does not mutate capacity or transmit;
+- every broker-directed action binds one complete current shared-scope action-flow cut, immutable cause lineage, finite amplification envelope, exact resource vector, current Action Flow Decision, RCL commitment, and single-use permit under ADR-002-022; priority is not reserve and governor/scheduler authority does not mutate capacity or transmit;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -2453,12 +2547,13 @@ The reviewer SHALL confirm:
 
 ---
 
-## 272. Approval Gates by ADR
+## 284. Approval Gates by ADR
 
 ### ADR-002-002
 
 Requires:
 
+- AFG-EV-001, AFG-EV-003, AFG-EV-004, AFG-EV-006 through AFG-EV-010, and AFG-EV-012;
 - ARE-EV-001 through ARE-EV-012;
 - IOC-EV-006, IOC-EV-009, IOC-EV-011, and IOC-EV-012;
 - RC-EV-001 through RC-EV-018;
@@ -2486,6 +2581,7 @@ Requires:
 
 Requires:
 
+- AFG-EV-001, AFG-EV-003 through AFG-EV-006, AFG-EV-009, AFG-EV-010, and AFG-EV-012;
 - IOC-EV-001 through IOC-EV-012;
 - VTG-EV-001 through VTG-EV-005, VTG-EV-007 through VTG-EV-010, and VTG-EV-012;
 - BC-EV-001 through BC-EV-022 for each approved broker profile, with `NOT_APPLICABLE` justified by profile scope where valid;
@@ -2607,6 +2703,7 @@ Requires:
 
 Requires:
 
+- AFG-EV-001, AFG-EV-003, and AFG-EV-006 through AFG-EV-012;
 - ARE-EV-002, ARE-EV-008, ARE-EV-009, ARE-EV-011, and ARE-EV-012;
 - IOC-EV-002 and IOC-EV-006 through IOC-EV-012;
 - VTG-EV-003, VTG-EV-004, VTG-EV-006, VTG-EV-007, VTG-EV-011, and VTG-EV-012;
@@ -2625,6 +2722,7 @@ Requires:
 
 Requires:
 
+- AFG-EV-001, AFG-EV-005 through AFG-EV-012;
 - ARE-EV-004, ARE-EV-005, ARE-EV-007, ARE-EV-009, ARE-EV-011, and ARE-EV-012;
 - IOC-EV-003, IOC-EV-004, IOC-EV-007, IOC-EV-011, and IOC-EV-012;
 - VTG-EV-006, VTG-EV-007, VTG-EV-010, and VTG-EV-012;
@@ -2657,6 +2755,7 @@ Requires:
 
 Requires:
 
+- AFG-EV-001 through AFG-EV-012;
 - ARE-EV-001 through ARE-EV-012;
 - IOC-EV-001 through IOC-EV-012;
 - VTG-EV-001 through VTG-EV-012;
@@ -2672,6 +2771,7 @@ Requires:
 
 Requires:
 
+- AFG-EV-001 through AFG-EV-012;
 - ARE-EV-001, ARE-EV-002, and ARE-EV-008 through ARE-EV-012;
 - IOC-EV-008 through IOC-EV-012;
 - VTG-EV-001, VTG-EV-002, VTG-EV-005, VTG-EV-007, VTG-EV-010, and VTG-EV-012;
@@ -2731,6 +2831,7 @@ Requires:
 
 Requires:
 
+- AFG-EV-001, AFG-EV-006 through AFG-EV-010, and AFG-EV-012;
 - ARE-EV-001 through ARE-EV-012;
 - IOC-EV-003, IOC-EV-006 through IOC-EV-009, IOC-EV-011, and IOC-EV-012, VTG-EV-005 through VTG-EV-010 and VTG-EV-012, and CII-EV-003 through CII-EV-010 and CII-EV-012;
 - RC-EV-001 through RC-EV-018, RCLP-EV-002 through RCLP-EV-012, RECON-EV-001 through RECON-EV-005, STATE-EV-001 through STATE-EV-005, and NT-EV-001 through NT-EV-012;
@@ -2739,6 +2840,19 @@ Requires:
 - approved and measured `B_aggregate_risk_invalid_to_rcl`, `B_aggregate_risk_invalid_to_egress`, `MAX_aggregate_risk_state_snapshot_age`, `MAX_aggregate_risk_decision_age`, and applicable Critical Input, venue, conformance, capacity, authority, capability-claim, HALT, evidence, broker, and recovery bounds;
 - broker/account/product-scoped assurance for every claimed position/order/fill, margin, collateral, liquidity, FX, concentration, basis, correlation, hedge, option, assignment/exercise, settlement, external, trapped, protective, and Final Quantity Proof behavior;
 - independent risk-model, scenario-completeness, numerical, source/snapshot, common-mode, policy/limit, authority-separation, RCL-binding, stale-evaluator, final-egress, restore, and automatic-rearm security and safety assessment.
+
+### ADR-002-022
+
+Requires:
+
+- AFG-EV-001 through AFG-EV-012;
+- RC-EV-001 through RC-EV-005, RC-EV-009, RC-EV-012, RC-EV-013, RC-EV-017, and RC-EV-018;
+- RCLP-EV-001 through RCLP-EV-012, EGRESS-EV-001 through EGRESS-EV-012, ARE-EV-002, ARE-EV-003, ARE-EV-008 through ARE-EV-012, IOC-EV-006, IOC-EV-008, IOC-EV-009, and IOC-EV-012;
+- BC-EV-001 through BC-EV-005, BC-EV-009 through BC-EV-017, BC-EV-020 through BC-EV-022, FD-EV-002 through FD-EV-005, FD-EV-007, FD-EV-010 through FD-EV-012, PR-EV-003, PR-EV-004, PR-EV-007 through PR-EV-012, TIME-EV-001 through TIME-EV-010, SBR-EV-002 through SBR-EV-012, and applicable SA, REARM, SPG, HAG, ERI, CII, VTG, NT, and cross-system evidence;
+- approved Action Flow Policy, State Snapshot, Decision, Permit, shared-scope/resource-vector, cause-lineage/amplification, atomic economic/action commitment, RCL claim/consumption/quarantine/release, protective reserve/lease, trustworthy-time refill, invalidation, and active final-egress currentness mechanisms;
+- approved and measured `B_action_flow_invalid_to_rcl`, `B_action_flow_invalid_to_egress`, `B_action_flow_violation_to_containment`, `MAX_action_flow_state_snapshot_age`, `MAX_action_flow_decision_age`, `MAX_action_flow_permit_age`, `MAX_action_amplification_per_cause`, and applicable broker, capability-claim, HALT, recovery, evidence, queue, in-flight, refill, and protective bounds;
+- broker-scoped assurance for every claimed submit, cancel, amend, replace, retry, query, reconnect, session, credential, route, endpoint, queue, in-flight, rate, burst, idempotency, throttle, and Protective Flow Reserve behavior;
+- independent scope-aggregation, counter/refill, RCL atomicity, permit single-use, cause-amplification, retry/reconnect, protective-reserve, common-mode, authority-separation, final-egress, restore, and automatic-rearm security and safety assessment.
 
 ### Production Restricted Live Gate
 
@@ -2754,7 +2868,7 @@ Requires:
 
 ---
 
-## 273. Current Evidence Readiness Assessment
+## 285. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -2784,6 +2898,7 @@ Critical Input integrity, provenance, independent approval, context binding, and
 Venue, session, tradability, exact order constraint, and final-egress currentness evidence: NOT EXECUTED
 Intent-to-order conformance, canonical command, economic-effect, and actual-outbound evidence: NOT EXECUTED
 Aggregate risk projection, adverse-scenario, exact allocation-decision, and currentness evidence: NOT EXECUTED
+Action-flow budgeting, retry-storm containment, protective-reserve, and permit-currentness evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -2792,13 +2907,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 274. Required Next Execution Sequence
+## 286. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, and aggregate-risk evaluation models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, and action-flow governance models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -2811,7 +2926,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 275. Verification Specification Approval Gate
+## 287. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

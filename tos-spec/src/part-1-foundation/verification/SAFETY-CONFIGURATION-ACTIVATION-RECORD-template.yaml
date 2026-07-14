@@ -44,6 +44,9 @@ bundle:
   adverse_scenario_set_id: TBD
   adverse_scenario_set_generation: null
   adverse_scenario_set_digest: TBD
+  action_flow_policy_id: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 

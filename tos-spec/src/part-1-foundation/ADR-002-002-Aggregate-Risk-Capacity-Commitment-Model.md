@@ -585,24 +585,25 @@ No transition to a less conservative state may be made solely from timeout, abse
 4. Independent Approval Service approves or denies the exact unchanged proposal, envelope, candidate command, and venue decision; approval registers the immutable Intent without granting capacity or transmission authority.
 5. ADR-002-020 derives the conservative Economic Effect Envelope from the unchanged approved candidate.
 6. Under ADR-002-021, the Aggregate Risk Authority binds that envelope to one exact current Aggregate Risk State Snapshot and Adverse Scenario Set, evaluates all existing/potentially-live effects across every applicable scope/dimension, and issues an Aggregate Risk Decision containing the exact Adverse Increment Vector and allocation request.
+7. Under ADR-002-022, the Action Flow Governor binds the exact command/action and cause lineage to one current Action Flow State Snapshot, evaluates every applicable shared broker-resource and amplification dimension, and issues a non-authorizing Action Flow Decision containing the exact allocation request.
 
 ### 11.2 Atomic Commitment
 
-7. Risk Capacity Ledger verifies current epoch, limits, revisions, exact command/effect/risk-decision binding, Aggregate Risk Generation/currentness, and scope.
-8. Ledger atomically commits a unique reservation in `COMMITTED_UNBOUND` or rejects the request.
-9. The reservation is immediately unavailable to all competing actions.
-10. ADR-002-020 produces a non-authorizing Order Conformance Proof binding the unchanged approved Intent, candidate command, venue decision, Economic Effect Envelope, and exact RCL commitment dominance.
+8. Risk Capacity Ledger verifies current epoch, limits, revisions, exact command/effect/risk/flow-decision bindings, Aggregate Risk and Action Flow Generation/currentness, complete scope, and sufficient economic and broker-resource capacity.
+9. Ledger atomically commits the exact economic and action-flow vectors in `COMMITTED_UNBOUND`, creates one exact single-use Action Flow Permit, or rejects the complete request.
+10. Both commitments are immediately unavailable to all competing actions; producer-local counters and scheduler priority create no headroom.
+11. ADR-002-020 produces a non-authorizing Order Conformance Proof binding the unchanged approved Intent, candidate command, venue decision, Economic Effect Envelope, and exact RCL commitment dominance.
 
 ### 11.3 Attempt Binding
 
-11. Execution Coordinator creates a unique attempt request bound to the exact conformance proof.
-12. Ledger verifies the reservation and proof binding are eligible and atomically binds the attempt.
-13. Ledger transitions to `ATTEMPT_BOUND` and issues or authorizes issuance of one single-use Transmission Capability.
+12. Execution Coordinator creates a unique attempt request bound to the exact conformance proof and Action Flow Permit.
+13. Ledger verifies the reservation, permit, and proof binding are eligible and atomically binds the attempt.
+14. Ledger transitions to `ATTEMPT_BOUND` and issues or authorizes issuance of one single-use Transmission Capability.
 
 ### 11.4 Send Boundary
 
-14. Broker Adapter verifies all capability, command, proof, economic-effect, capacity, venue, and actual-outbound bindings.
-15. Broker Adapter atomically consumes the capability and durably records `SEND_STARTED` before the external call can be retried as a new send.
+15. Broker Adapter verifies all capability, command, proof, economic-effect, economic/action-flow capacity, venue, permit, cause-lineage, and actual-outbound bindings.
+16. Broker Adapter requests the RCL-owned atomic Action Flow Permit claim/consume-or-quarantine transition with the capability claim and durably records `SEND_STARTED` before the external call can be retried as a new send; the Adapter does not mutate the budget itself.
 16. Reservation transitions to `POTENTIALLY_LIVE`.
 17. Broker Adapter performs the network call.
 18. Response, acknowledgement, error, or timeout is recorded as evidence.
@@ -1625,6 +1626,7 @@ ADR-002-002 may move from **Proposed** to **Accepted** only when:
 - ADR-002-016 capacity, claim, send, release, UNKNOWN, recovery, and rejection evidence is durably ordered, gap-detected, retained, and replayable without becoming capacity authority, and applicable ERI evidence passes;
 - ADR-002-020 Economic Effect Envelope, exact command, capacity-dominance result, conformance proof, invalidation, and actual-outbound binding are implemented without giving the compiler or proof capacity authority, and applicable IOC evidence passes;
 - ADR-002-021 Aggregate Risk Policy, complete state snapshot, adverse scenarios, exact decision/vector, currentness, invalidation, and RCL binding are implemented without giving the evaluator capacity mutation or broker authority, and applicable ARE evidence passes;
+- ADR-002-022 Action Flow Policy, complete shared-scope state, cause amplification, exact decision/vector, single-use permit, protective reserve, currentness, invalidation, and RCL binding are implemented without giving the governor or scheduler capacity mutation or broker authority, and applicable AFG evidence passes;
 - protective pool and sub-ledger semantics are demonstrated;
 - broker-specific Final Quantity Proof rules exist;
 - all Critical acceptance criteria pass;
