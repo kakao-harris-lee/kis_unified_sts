@@ -20,11 +20,13 @@ The Context Integrity Service SHALL construct an immutable **Critical Input Snap
 
 Proposal, approval, Intent, capacity request, Live Authorization, Transmission Capability, Commit Proof, and broker request SHALL bind the exact Decision Context Capsule identity and digest where that context can affect the authorized economic effect. Substitution, union, partial refresh, hidden recomputation, or mutation creates a new capsule and requires every affected downstream decision to be repeated.
 
+Whether context can affect authorized economic effect SHALL be determined only by the active Critical Input Policy under §8 and the conservative Material Context Change definition in §5.8. A proposer, consumer, or implementation component SHALL NOT self-exempt a context dependency. Missing, stale, contradictory, or unresolved materiality defaults to Critical and requires exact binding.
+
 The Independent Approval Service SHALL validate safety-critical facts independently from the proposing component. A shared upstream source, parser, mapping table, feature store, cache, transformation library, administrator, or data plane SHALL be treated as a common-mode dependency rather than independent corroboration. Where independent corroboration is unavailable, the limitation SHALL be approved as explicit residual risk under SAFE-034, with additional validation and corresponding live-scope reduction; the proposer cannot approve the exception.
 
 Missing, stale, future-dated, crossed, out-of-range, incorrectly scaled, ambiguously mapped, discontinuous, contradictory, unsupported, or unverifiable Critical Input is `UNKNOWN`, `STALE`, `CONFLICTED`, or `INVALID` as applicable. It SHALL block new risk in the affected dependency closure. Last-known-good data, a majority vote, cache agreement, service health, a heartbeat, a TTL, eventual consistency, or absence of a correction SHALL NOT convert uncertainty into permission.
 
-Material correction, retraction, source-continuity change, policy change, mapping change, newer authoritative revision, or trust degradation SHALL invalidate every affected Snapshot, Capsule, proposal, approval, Intent, authorization, and unconsumed capability before future new-risk transmission. Invalidating an artifact never expires an order, fill, exposure, UNKNOWN state, or Risk-Capacity commitment already capable of economic effect.
+Material correction, retraction, source-continuity change, policy change, mapping change, newer authoritative revision, or trust degradation SHALL invalidate every affected Snapshot, Capsule, proposal, approval, Intent, authorization, and unconsumed capability before future new-risk transmission. Materiality SHALL be classified only by the active §8 policy under §5.8; unknown or unresolved materiality is treated as material. Invalidating an artifact never expires an order, fill, exposure, UNKNOWN state, or Risk-Capacity commitment already capable of economic effect.
 
 Final egress remains the last enforcement point. For every new-risk send it SHALL verify the exact Capsule binding and actively establish current policy, source-continuity, context-generation, validity, and invalidation status within approved bounds. A permissive cache or absence-of-invalidation event is not proof. If currentness cannot be positively established at the irreversible send boundary, transmission is denied. Final egress does not recompute strategy logic; it verifies that the exact already-approved context and its safety-critical currentness predicates remain valid.
 
@@ -371,13 +373,15 @@ The exact Capsule identity/digest SHALL be included or cryptographically bound i
 1. proposal and rationale;
 2. independent approval request, attestation, and Approval Set;
 3. immutable Intent;
-4. aggregate-risk evaluation and RCL commitment request where context affects capacity;
+4. aggregate-risk evaluation and RCL commitment request where the active §8 policy determines that context affects capacity;
 5. Live Authorization and per-action Transmission Capability;
 6. Quorum Commit Certificate / Commit Proof;
 7. evidence pre-effect receipt and `SEND_STARTED` record;
 8. final broker request construction and egress decision.
 
 Every consumer SHALL reject a missing, mismatched, stale, invalidated, wrong-scope, wrong-environment, or unsupported Capsule. A consumer may derive a narrower restriction, but it cannot silently substitute a more permissive value or newer input into an existing chain.
+
+The applicability of a binding cannot be decided ad hoc by a consumer. It SHALL follow the Critical Input Policy and §5.8 materiality rules; unknown dependency or materiality requires the binding and the more restrictive result.
 
 RCL remains the sole capacity mutation/serialization authority. Context invalidation may request quarantine or re-evaluation, but only RCL transitions can preserve, enlarge conservatively, transfer, or release capacity. No context expiry or “decision cancelled” status releases capacity after potential economic effect.
 
@@ -405,6 +409,8 @@ Final egress verifies safety-context validity; it does not choose signals, recom
 ## 17. Correction, Retraction, and Continuous Invalidation
 
 Corrections and retractions SHALL be new immutable observations linked to the superseded record. Destructive overwrite is prohibited.
+
+Materiality and affected-scope classification SHALL follow §5.8 and the active §8 policy. No source, proposer, approver, consumer, or operator may classify its own correction as immaterial outside that policy. Unknown or unresolved materiality is material and expands the restrictive dependency closure.
 
 At minimum, the following trigger impact analysis and restrictive invalidation where material:
 

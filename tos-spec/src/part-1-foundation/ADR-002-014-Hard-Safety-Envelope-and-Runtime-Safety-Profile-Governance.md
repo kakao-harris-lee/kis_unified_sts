@@ -351,6 +351,8 @@ No transition from `SUSPENDED`, `SUPERSEDED`, `REVOKED`, or `EXPIRED` returns th
 
 `ACTIVE` means the bundle is the current validated configuration basis for the declared scope. It does not mean trading is live. ADR-002-007 Live Authorization remains a separate, fresh, revocable authority.
 
+Activation does not establish Critical Input validity, freshness, source continuity, Context Generation currentness, Decision Context Capsule validity, or absence of correction/invalidation. Those predicates remain independently governed and enforced under ADR-002-018; missing or unverifiable context remains denial even when the configuration bundle is `ACTIVE`.
+
 ---
 
 ## 13. Atomic Activation Protocol
