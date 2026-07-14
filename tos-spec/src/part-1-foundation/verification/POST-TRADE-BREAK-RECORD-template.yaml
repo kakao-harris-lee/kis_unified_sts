@@ -1,0 +1,73 @@
+artifact_type: POST_TRADE_BREAK_RECORD
+schema_version: "1.0-DRAFT"
+break_id: TBD
+canonical_digest: TBD
+status: DRAFT
+break_state: OPEN_UNVERIFIED
+break_class: UNKNOWN
+exact_binding:
+  post_trade_finality_policy_id: TBD
+  post_trade_finality_policy_generation: null
+  post_trade_finality_policy_digest: TBD
+  post_trade_obligation_generation: null
+  economic_obligation_id: TBD
+  economic_obligation_digest: TBD
+  active_economic_obligation_set_id: TBD
+  active_economic_obligation_set_digest: TBD
+  statement_coverage_manifest_id: TBD
+  statement_coverage_manifest_digest: TBD
+  binding_complete: false
+scope:
+  observed_scope_digest: TBD
+  greatest_credible_dependency_scope_digest: TBD
+  scope_complete: false
+first_observed_at: null
+last_observed_at: null
+credible_break_interval:
+  earliest_start: null
+  latest_end: null
+  bounded: false
+source_revisions_and_conflicts: []
+old_and_new_obligation_versions: []
+greatest_credible_economic_union: []
+affected_cash_collateral_margin_borrow_custody_and_settlement: []
+required_rcl_restrictions: []
+required_authority_and_egress_fences: []
+required_incident_signal: true
+evidence_receipts_and_gaps: []
+repair_and_finality_proof_requirements: []
+independent_review:
+  required: true
+  completed: false
+  reviewers: []
+closure_proof_id: TBD
+closure_proof_digest: TBD
+invalidation_conditions: []
+unresolved_conditions: []
+restrictive: true
+old_and_new_union_required: true
+may_timeout_to_safe: false
+may_acknowledge_to_safe: false
+may_match_totals_to_safe: false
+may_auto_close: false
+consumer_union_permitted: false
+authority:
+  active: false
+  creates_finality: false
+  creates_available_cash_or_assets: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_external_economic_transmission: false
+  clears_halt_latch_break_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT break is open, unverified, and restrictive. Repair, matching totals,
+  acknowledgement, timeout, statement arrival, source recovery, or independent
+  review does not itself close the break, release capacity, restore scope, or
+  re-arm.

@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **351**
-- NOT_IMPLEMENTED: **351**
+- Total evidence items: **363**
+- NOT_IMPLEMENTED: **363**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -374,6 +374,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | SCI-EV-010 | Software Supply-Chain and Runtime Artifact Admission | Active Currentness, Revocation, Partition, and Send Race | ADR-002-029 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | SCI-EV-011 | Software Supply-Chain and Runtime Artifact Admission | Authority Separation, Broker Finality, and Economic Continuity | ADR-002-029 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 | SCI-EV-012 | Software Supply-Chain and Runtime Artifact Admission | Evidence, Recovery, Hotfix, and Non-Revival | ADR-002-029 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-001 | Post-Trade Economic Obligations and Finality | Fill/FQP vs Post-Trade Obligation Separation | ADR-002-030 | EV-L1/2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-002 | Post-Trade Economic Obligations and Finality | Fee/Tax/Interest/Financing Legs and Corrections | ADR-002-030 | EV-L1/2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-003 | Post-Trade Economic Obligations and Finality | Settlement, Cash Availability, Partial/Failure Semantics | ADR-002-030 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-004 | Post-Trade Economic Obligations and Finality | Margin/Collateral/Encumbrance/Haircut/Double-Use | ADR-002-030 | EV-L1/2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-005 | Post-Trade Economic Obligations and Finality | Borrow/Recall/Return/Buy-In | ADR-002-030 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-006 | Post-Trade Economic Obligations and Finality | Exercise/Assignment/Delivery/Corporate-Action Obligations | ADR-002-030 | EV-L1/2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-007 | Post-Trade Economic Obligations and Finality | Custody/Transfer/In-Flight/Legal-Title Behavior | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-008 | Post-Trade Economic Obligations and Finality | Statement Coverage, Provenance, Conflict/Common-Mode | ADR-002-030 | EV-L1/2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-009 | Post-Trade Economic Obligations and Finality | Breaks/Busts/Corrections/Reversal/Finality Reopen | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-010 | Post-Trade Economic Obligations and Finality | RCL Transfer/Release + Generation Currentness/Send Race | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-011 | Post-Trade Economic Obligations and Finality | Partition/Compromise/Stale Writer/Route Bypass | ADR-002-030 | EV-L3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| PTF-EV-012 | Post-Trade Economic Obligations and Finality | Evidence/Recovery/Non-Revival/Status Honesty | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

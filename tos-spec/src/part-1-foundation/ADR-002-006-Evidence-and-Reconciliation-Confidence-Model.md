@@ -46,7 +46,7 @@ The failure this prevents: a system that reduces many independent uncertainties 
 
 **Decides:** the per-field evidence structure, corroboration/independence rules, conflict and negative-evidence handling, freshness handling, the generic proof-rule contract for `RECONCILED`, and reconciliation triggers.
 
-**Does not decide:** broker-specific Final Quantity Proof or evidence semantics (ADR-002-004); numeric freshness/detection bounds (Verification Profile); evidence persistence, custody, integrity, and replay (ADR-002-016); the trustworthy-time mechanism (ADR-002-008). Those SHALL conform to this model.
+**Does not decide:** broker-specific Final Quantity Proof or evidence semantics (ADR-002-004); post-trade obligation lifecycle serialization or field-specific finality recipes (ADR-002-030); numeric freshness/detection bounds (Verification Profile); evidence persistence, custody, integrity, and replay (ADR-002-016); the trustworthy-time mechanism (ADR-002-008). Those SHALL conform to this model.
 
 ---
 
@@ -60,7 +60,13 @@ cumulative filled quantity remaining executable quantity
 position quantity          cash / margin / collateral
 protective coverage        instrument identity
 external / unattributed activity
+post-trade obligation identity and version
+settlement / cash availability / collateral eligibility
+borrow / custody / transfer / legal-title state
+statement coverage / break / correction / field-specific finality
 ```
+
+ADR-002-030 consumes these per-field confidence results but does not redefine them. PTOL may serialize an evidence-bound obligation transition; it cannot declare an unresolved field reconciled, select a favorable source, mutate capacity, or treat repeated or matching statements as finality.
 
 Each field carries a **confidence class**:
 

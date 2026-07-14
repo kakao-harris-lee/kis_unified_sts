@@ -316,6 +316,8 @@ The Snapshot SHALL bind the exact account and subaccount, legal and tax classifi
 
 Margin, buying power, borrow availability, or account eligibility is not inferred from a stale balance, a previous successful order, or the absence of a broker error. Conflicting account, order, fill, position, margin, borrow, and settlement evidence remains conservative under ADR-002-006.
 
+ADR-002-030 Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set, Statement Coverage Manifest, unresolved breaks/corrections, and field-specific settlement/cash/collateral/borrow/custody finality are account-constraint inputs where applicable. A fill, Final Quantity Proof, flat position, statement balance, scheduled date, or PTOL state never proves current order eligibility or creates headroom; missing or stale post-trade state makes the affected constraint `UNKNOWN` or `INADMISSIBLE`.
+
 The Broker Capability Profile is a required ceiling on live scope and SHALL match the exact broker, API, environment, account type, market, order type, session, and relevant capability generation. `BEST_EFFORT`, `UNAVAILABLE`, expired, contradictory, or insufficiently evidenced capability cannot be promoted by the Gate.
 
 Rate, session, credential, and connection budgets are constraints, not reserved protective capacity. Shared or priority-only resources retain their guarantee class under ADR-002-001 and ADR-002-004.

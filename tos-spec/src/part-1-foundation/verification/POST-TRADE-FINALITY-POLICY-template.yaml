@@ -1,0 +1,87 @@
+artifact_type: POST_TRADE_FINALITY_POLICY
+schema_version: "1.0-DRAFT"
+policy_id: TBD
+policy_version: TBD
+policy_generation: null
+canonical_digest: TBD
+status: DRAFT
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+  environments: []
+  safety_cells: []
+  legal_entities: []
+  accounts: []
+  brokers: []
+  clearing_systems: []
+  custodians: []
+  settlement_locations: []
+  currencies: []
+  instruments: []
+exact_configuration_binding:
+  safety_configuration_bundle_id: TBD
+  safety_configuration_bundle_generation: null
+  safety_configuration_bundle_digest: TBD
+  hard_safety_envelope_id: TBD
+  hard_safety_envelope_generation: null
+  hard_safety_envelope_digest: TBD
+  runtime_safety_profile_id: TBD
+  runtime_safety_profile_generation: null
+  runtime_safety_profile_digest: TBD
+  binding_complete: false
+supported_obligation_classes: []
+obligation_leg_schema_ids: []
+source_authority_and_continuity_rules: []
+field_confidence_and_finality_recipes: []
+statement_coverage_and_revision_rules: []
+cash_availability_rules: []
+margin_collateral_and_encumbrance_rules: []
+borrow_recall_return_and_buy_in_rules: []
+exercise_assignment_delivery_and_corporate_action_rules: []
+custody_transfer_and_legal_title_rules: []
+netting_setoff_and_reuse_rules: []
+break_correction_reversal_and_restatement_rules: []
+obligation_generation_and_writer_fence_rules: []
+rcl_transition_and_currentness_rules: []
+external_economic_instruction_rules: []
+evidence_recovery_and_non_revival_rules: []
+approved_bound_keys: []
+approved_limit_keys: []
+materiality_default: CRITICAL
+unknown_scope_disposition: EXPAND_TO_GREATEST_CREDIBLE_SCOPE
+failure_responses:
+  policy_or_schema_unavailable: DENY_DEPENDENT_NEW_RISK
+  source_or_statement_unknown: CREATE_BREAK_AND_RESTRICT
+  obligation_set_incomplete: QUARANTINE_AND_RESTRICT
+  finality_unproven: KEEP_OBLIGATION_AND_CAPACITY_CONSERVATIVE
+  writer_or_generation_unknown: HALT_OR_CONTAIN
+  rcl_transition_unproven: KEEP_CAPACITY_CONSUMED
+  external_route_unproven: DENY_TRANSMISSION
+  recovery_state_unknown: KEEP_RECOVERY_BARRIER_CLOSED
+approved_by: []
+effective_from: null
+review_due: null
+consumer_union_permitted: false
+authority:
+  policy_active: false
+  creates_obligation_fact: false
+  creates_finality: false
+  creates_available_cash_or_assets: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_external_economic_transmission: false
+  clears_halt_latch_break_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT policy is inactive and grants no finality, cash or asset
+  availability, capacity, authority, external transmission, scope restoration,
+  or re-arm. Missing, null, TBD, stale, conflicting, or unapproved values keep
+  the greatest credible obligation set capacity-consuming and block dependent
+  new risk.

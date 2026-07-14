@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "2.0-PROPOSED"
+version: "2.1-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -104,6 +104,14 @@ scope:
   release_artifact_manifest_digest: TBD
   runtime_artifact_attestation_id: TBD
   runtime_artifact_attestation_digest: TBD
+  post_trade_finality_policy_id: TBD
+  post_trade_finality_policy_generation: null
+  post_trade_finality_policy_digest: TBD
+  active_economic_obligation_set_id: TBD
+  post_trade_obligation_generation: null
+  active_economic_obligation_set_digest: TBD
+  statement_coverage_manifest_id: TBD
+  statement_coverage_manifest_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -516,6 +524,48 @@ bounds:
     rationale: "MEASURE. Maximum interval from actual executable, image, plugin, sidecar, proxy, signer, SDK, or dynamically loaded artifact divergence to restrictive detection and runtime fencing (ADR-002-029)."
     measurement_source: expected_release_manifest_and_actual_runtime_artifact_attestation_trace
     failure_response: HALT_AND_FENCE_RUNTIME
+  B_post_trade_effect_to_obligation_commit:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from a possible external economic effect to durable PTOL obligation identity and conservative RCL coverage; expiry or missing evidence never releases capacity (ADR-002-030)."
+    measurement_source: broker_effect_ptol_commit_and_rcl_capacity_trace
+    failure_response: STOP_NEW_RISK_AND_QUARANTINE_CAPACITY
+  B_post_trade_change_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from a material settlement, cash, collateral, borrow, custody, statement, break, correction, or finality change to detection over the greatest credible dependency closure (ADR-002-030)."
+    measurement_source: post_trade_source_statement_break_and_correction_trace
+    failure_response: STOP_NEW_RISK_AND_MARK_UNKNOWN
+  B_post_trade_break_to_restrict:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from a confirmed or suspected post-trade break to restrictive authority and conservative capacity treatment; workflow or operator acknowledgement cannot extend it (ADR-002-030)."
+    measurement_source: post_trade_break_ptol_rcl_and_authority_trace
+    failure_response: HALT_OR_CONTAIN
+  B_post_trade_invalid_to_egress_deny:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from invalid or stale post-trade state to denial of dependent future external-economic sends at final egress without permissive cache (ADR-002-030)."
+    measurement_source: post_trade_generation_finality_break_and_egress_trace
+    failure_response: HALT
+  B_post_trade_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from Post-Trade Obligation Generation advance, restore, correction, or owner replacement to rejection of stale PTOL writers, consumers, proofs, authorities, RCL commands, and egress attempts (ADR-002-030)."
+    measurement_source: ptol_generation_writer_consumer_rcl_authority_and_egress_fence_trace
+    failure_response: HALT
+  B_statement_coverage_gap_detect:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval to detect incomplete, truncated, stale, conflicting, preliminary, or common-mode statement coverage for the applicable source and obligation scope (ADR-002-030)."
+    measurement_source: statement_pagination_cutoff_revision_and_coverage_trace
+    failure_response: STOP_NEW_RISK_AND_MARK_UNKNOWN
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
@@ -694,6 +744,11 @@ limits:
   MAX_admitted_release_set_age_ms: null                    # APPROVE per scope; stale set cannot prove current eligibility or revive a release
   MAX_runtime_artifact_attestation_age_ms: null            # APPROVE per runtime identity; stale attestation denies dependent new risk
   MAX_release_key_status_age_ms: null                      # APPROVE per signer/key class; stale or unknown status is restrictive
+  MAX_post_trade_obligation_snapshot_age_ms: null          # APPROVE per obligation class/scope; stale active-set state blocks dependent new risk
+  MAX_post_trade_finality_proof_age_ms: null               # APPROVE per exact field/class; stale proof cannot establish current finality or release capacity
+  MAX_statement_coverage_manifest_age_ms: null             # APPROVE per source/scope; stale or unknown coverage remains incomplete
+  MAX_unresolved_post_trade_break_age_ms: null             # APPROVE only as escalation deadline; age never converts a break to resolved
+  MAX_pending_external_transfer_age_ms: null               # APPROVE per transfer rail; timeout never proves non-acceptance, failure, or finality
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

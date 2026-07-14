@@ -306,6 +306,8 @@ Unconfirmed election acceptance remains UNKNOWN. Deadline expiry does not prove 
 
 Broker corrections, trade bust consequences, transfers, journals, fees, tax, interest, collateral, and margin adjustments SHALL retain source provenance and effective time.
 
+ADR-002-030 governs the resulting Economic Obligation Records, Post-Trade Obligation Generation, statement coverage, field-specific finality, breaks, corrections, and conservative PTOL-to-RCL transition. This ADR owns the non-trade event and transformation identity; ADR-002-030 owns the obligation-lifecycle serialization. Neither event recognition nor PTOL state may declare external truth, mutate RCL capacity, collapse Final Quantity Proof into settlement or legal-title finality, or expire economic effect.
+
 The system SHALL not relabel an unexplained position change as a correction merely to make reconciliation pass.
 
 A recognized correction may alter prior economic state, but local history SHALL preserve both the original observation and correcting event. Capacity and authority shall be recomputed from the corrected transition envelope.

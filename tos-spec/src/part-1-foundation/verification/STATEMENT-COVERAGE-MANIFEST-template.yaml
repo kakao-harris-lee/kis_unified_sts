@@ -1,0 +1,92 @@
+artifact_type: STATEMENT_COVERAGE_MANIFEST
+schema_version: "1.0-DRAFT"
+manifest_id: TBD
+manifest_version: TBD
+canonical_digest: TBD
+status: DRAFT
+coverage_result: UNKNOWN
+exact_binding:
+  post_trade_finality_policy_id: TBD
+  post_trade_finality_policy_generation: null
+  post_trade_finality_policy_digest: TBD
+  post_trade_obligation_generation: null
+  source_identity: TBD
+  source_continuity_id: TBD
+  source_revision: null
+  broker_or_custodian_capability_profile_id: TBD
+  broker_or_custodian_capability_profile_version: TBD
+  broker_or_custodian_capability_profile_digest: TBD
+  binding_complete: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+  legal_entity: TBD
+  account: TBD
+  subaccount: TBD
+  broker: TBD
+  clearing_system: TBD
+  custodian: TBD
+  settlement_location: TBD
+statement_identity:
+  statement_type: UNKNOWN
+  issue_id: TBD
+  issue_revision: null
+  issue_time: null
+  preliminary_or_final: UNVERIFIED
+reporting_period:
+  start: null
+  end: null
+  boundary_semantics: UNKNOWN
+  cutoff: null
+  timezone: TBD
+  business_calendar_id: TBD
+page_cursor_and_file_coverage:
+  expected_pages_files_or_sections: []
+  received_pages_files_or_sections: []
+  first_cursor: TBD
+  last_cursor: TBD
+  record_count: null
+  checksums: []
+  missing_intervals: []
+covered_obligation_classes: []
+covered_instruments_assets_and_currencies: []
+declared_exclusions: []
+correction_and_restatement_semantics:
+  correction_horizon_key: TBD
+  revision_chain_complete: false
+  later_restatement_possible: UNKNOWN
+declared_common_modes: []
+independent_path_claims: []
+trustworthy_time:
+  time_health_generation: null
+  receipt_anchor: null
+  maximum_age_key: MAX_statement_coverage_manifest_age_ms
+  age_within_approved_limit: false
+coverage_complete: false
+absence_may_prove_zero_obligation: false
+consumer_union_permitted: false
+partial_refresh_permitted: false
+unresolved_conditions: []
+failure_response: CREATE_BREAK_AND_RESTRICT
+authority:
+  active: false
+  creates_external_economic_truth: false
+  creates_finality: false
+  creates_available_cash_or_assets: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_external_economic_transmission: false
+  clears_halt_latch_break_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT manifest is UNKNOWN and incomplete. Missing, preliminary, stale,
+  truncated, paginated, revised, conflicting, or common-mode coverage cannot
+  prove zero obligation, finality, capacity release, cash or asset availability,
+  authority, external transmission, scope restoration, or re-arm.

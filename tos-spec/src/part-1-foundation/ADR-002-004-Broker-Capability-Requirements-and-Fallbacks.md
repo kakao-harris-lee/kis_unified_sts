@@ -1367,6 +1367,7 @@ The following must be answered per broker profile before live approval:
 14. How are corporate actions and symbol remaps exposed?
 15. Which production behaviors differ from sandbox?
 16. What profile restrictions are necessary for accounts that allow manual HTS activity?
+17. Which exact sources, statement-coverage limits, correction horizons, field-specific finality recipes, settlement/cash/collateral/borrow/custody semantics, and external-instruction acknowledgement behaviors support ADR-002-030 without treating broker status or omission as finality?
 
 Unanswered questions result in `UNKNOWN` capability status.
 
@@ -1390,6 +1391,7 @@ ADR-002-004 may move from **Proposed** to **Accepted** only when:
 - ADR-002-019 binds each supported capability to exact current venue/session/tradability, order/account/margin/borrow/settlement constraints and final-egress enforcement, and applicable VTG evidence passes;
 - ADR-002-020 binds each supported command semantic, default, canonicalization, serializer/SDK, signer, redirect, idempotency, and actual-outbound behavior to an exact non-authorizing proof and final-egress comparison, and applicable IOC evidence passes;
 - ADR-002-022 binds complete shared-limit scope, action classes, rate/burst/queue/in-flight semantics, retry/reconnect amplification, and protective resource guarantees to RCL and final-egress enforcement, and applicable AFG evidence passes;
+- ADR-002-030 binds every supported post-trade obligation class, source and statement-coverage rule, correction horizon, finality recipe, external instruction, and broker/custody acknowledgement semantic without collapsing Final Quantity Proof, settlement, cash availability, legal title, or capacity release, and applicable PTF evidence passes;
 - all Critical acceptance criteria pass;
 - capability drift causes fail-closed behavior;
 - VER-002-001 evidence entries are complete and independently reviewed;

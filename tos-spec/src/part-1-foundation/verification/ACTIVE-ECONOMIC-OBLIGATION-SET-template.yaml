@@ -1,0 +1,80 @@
+artifact_type: ACTIVE_ECONOMIC_OBLIGATION_SET
+schema_version: "1.0-DRAFT"
+active_set_id: TBD
+canonical_digest: TBD
+status: DRAFT
+result: UNKNOWN
+exact_binding:
+  post_trade_finality_policy_id: TBD
+  post_trade_finality_policy_generation: null
+  post_trade_finality_policy_digest: TBD
+  post_trade_obligation_generation: null
+  ptol_writer_epoch: null
+  ptol_restore_generation: null
+  binding_complete: false
+scope:
+  scope_digest: TBD
+  dependency_closure_digest: TBD
+  scope_complete: false
+consistency_cut:
+  cut_id: TBD
+  ptol_revision: null
+  source_revisions: []
+  source_continuities: []
+  statement_revision_set_digest: TBD
+  cut_complete: false
+trustworthy_time:
+  time_health_generation: null
+  receipt_anchor: null
+  maximum_age_key: MAX_post_trade_obligation_snapshot_age_ms
+  age_within_approved_limit: false
+obligation_record_id_and_digest_pairs: []
+potential_obligations: []
+recognized_and_due_obligations: []
+in_flight_and_partially_satisfied_obligations: []
+finality_pending_obligations: []
+open_breaks_and_corrections: []
+unknown_and_conflicting_obligations: []
+external_instruction_set:
+  instruction_set_id: TBD
+  instruction_set_digest: TBD
+  set_complete: false
+aggregate_risk_and_rcl_state:
+  aggregate_risk_state_snapshot_id: TBD
+  aggregate_risk_state_snapshot_digest: TBD
+  rcl_state_revision: null
+  rcl_state_digest: TBD
+  binding_complete: false
+statement_coverage_manifest_id: TBD
+statement_coverage_manifest_digest: TBD
+statement_coverage_complete: false
+greatest_credible_economic_union: []
+unresolved_conditions: []
+currentness:
+  policy_current: false
+  obligation_generation_current: false
+  ptol_writer_current: false
+  source_and_statement_revisions_current: false
+  invalidations: []
+consumer_union_permitted: false
+partial_refresh_permitted: false
+authority:
+  active: false
+  marks_obligations_final: false
+  creates_available_cash_or_assets: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_external_economic_transmission: false
+  clears_halt_latch_break_or_incident: false
+  establishes_recovery_readiness: false
+  restores_scope: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT active set is UNKNOWN and incomplete. It is a non-authorizing
+  conservative snapshot; it cannot be patched or unioned to create completeness,
+  release capacity, establish asset availability, permit transmission, restore
+  scope, or re-arm.

@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety telemetry classification and provenance, monitor coverage, continuous conformance, detection and restriction, monitoring gaps, suppression and maintenance, alert correlation and delivery, escalation, final-egress currentness, evidence, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 §6, §§7.1–7.5, §§11.3–11.5, §§13.4–13.6, Appendix B, and SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-013 through SAFE-015, SAFE-022 through SAFE-025, SAFE-030, SAFE-031, SAFE-035, SAFE-040 through SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§4.2, 4.4–4.7, 7.4–7.5, 8, 9.1, 10.16–10.19, 10.21, 10.26–10.29, 15, 16, 17, 20, and 22–24; VER-002-001 §§5, 338–349, 362, and 365–369
+- **Refines:** RFC-001 §6, §§7.1–7.5, §§11.3–11.5, §§13.4–13.6, Appendix B, and SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-013 through SAFE-015, SAFE-022 through SAFE-025, SAFE-030, SAFE-031, SAFE-035, SAFE-040 through SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§4.2, 4.4–4.7, 7.4–7.5, 8, 9.1, 10.16–10.19, 10.21, 10.26–10.29, 15, 16, 17, 20, and 22–24; VER-002-001 §§5, 338–349, 374, and 377–381
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-027
 
 ---
@@ -249,6 +249,7 @@ Unknown materiality is Critical. A producer, monitor owner, dashboard owner, or 
 The Critical Telemetry Manifest SHALL bind at minimum:
 
 - ADR-002-029 source/build/dependency/toolchain lineage status, signer/key and registry integrity, admission and Release Generation, Admitted Release Set, deployment/runtime artifact attestation, compatibility, restriction propagation, stale-instance fencing, and final-egress release currentness;
+- ADR-002-030 Post-Trade Finality Policy and Obligation Generation, Active Economic Obligation Set completeness, PTOL writer fencing, source and Statement Coverage Manifest continuity, obligation/finality/break/correction state, RCL transition ordering, external-instruction route confinement, and post-trade restriction/currentness;
 
 - canonical telemetry and semantic identity;
 - owner and publisher identity and epoch;

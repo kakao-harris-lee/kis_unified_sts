@@ -198,6 +198,7 @@ Every Live Authorization SHALL bind at least:
 - Broker Capability Profile version and conformance class;
 - software artifact digest, configuration digest, and deployment provenance;
 - ADR-002-029 Software Release Policy, Release Generation, complete Admitted Release Set digest, exact Release Artifact Manifest, Runtime Artifact Attestation, compatibility result, signer/key status, and release restriction floor;
+- ADR-002-030 Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set digest, Statement Coverage Manifest, unresolved break/correction scope, field-specific finality status, and conservative RCL capacity binding;
 - credential and broker-egress identity;
 - Recovery Evidence Package identity and evidence generation;
 - Critical Input Policy, Context Generation, Critical Input Snapshot, and exact Decision Context Capsule identities and digests under ADR-002-018;

@@ -252,6 +252,7 @@ For the exact action, the vector SHALL bind at least:
 - ADR-002-027 Safety Incident Policy, Incident Generation, Active Safety Incident Set, exact affected-scope disposition, and incident restriction floor;
 - ADR-002-028 Safety Monitoring Policy, Monitor Generation, Critical Telemetry and Monitor Coverage Manifest digests, exact coverage result, unresolved Monitoring Gaps, suppression state, and monitoring restriction floor;
 - ADR-002-029 Software Release Policy, Release Generation, complete Admitted Release Set digest, exact Release Artifact Manifest, actual Runtime Artifact Attestation, compatibility result, signer/key status, and release restriction floor;
+- ADR-002-030 Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set digest, Statement Coverage Manifest, unresolved break/correction set, field-specific finality state, conservative RCL binding, and post-trade restriction floor;
 - Trustworthy Time, Recovery, Critical Input, Context, Constraint, Construction, Trading Approval, Aggregate Risk, and Action Flow generations;
 - exact decision, proof, Intent, commitment, permit, and invalidation identities required by the action;
 - Egress Generation, active principal, credential, route, endpoint, signer, session, and trust-bundle generations;

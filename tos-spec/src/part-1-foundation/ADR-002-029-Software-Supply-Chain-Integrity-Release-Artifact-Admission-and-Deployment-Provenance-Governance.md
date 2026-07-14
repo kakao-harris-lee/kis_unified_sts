@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Source revision integrity, isolated build provenance, dependency and toolchain closure, release-artifact identity, signing and registry custody, independent artifact admission, Release Generation, deployment promotion, runtime attestation, restriction, rollback, restore, currentness, evidence, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 §§6–8, §§11.3–11.5, §§13.4–13.6, Appendix B, and SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-013, SAFE-014, SAFE-030, SAFE-031, SAFE-033 through SAFE-035, SAFE-041, SAFE-044 through SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§4.1–4.7, 7, 8, 9.1, 10.13, 10.16, 10.18–10.21, 10.24, 10.26–10.30, 17–19, and 23–25; VER-002-001 §§5, 350–361, 362, and 365–369
+- **Refines:** RFC-001 §§6–8, §§11.3–11.5, §§13.4–13.6, Appendix B, and SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-013, SAFE-014, SAFE-030, SAFE-031, SAFE-033 through SAFE-035, SAFE-041, SAFE-044 through SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§4.1–4.7, 7, 8, 9.1, 10.13, 10.16, 10.18–10.21, 10.24, 10.26–10.30, 17–19, and 23–25; VER-002-001 §§5, 350–361, 374, and 377–381
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-028
 
 ---

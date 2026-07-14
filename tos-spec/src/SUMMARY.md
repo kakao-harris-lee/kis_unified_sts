@@ -38,6 +38,7 @@
 - [ADR-002-027 — Safety Incident Declaration, Containment, Controlled Shutdown, and Closure Governance](part-1-foundation/ADR-002-027-Safety-Incident-Declaration-Containment-Controlled-Shutdown-and-Closure-Governance.md)
 - [ADR-002-028 — Safety Telemetry Integrity, Continuous Conformance Monitoring, and Alert Escalation Governance](part-1-foundation/ADR-002-028-Safety-Telemetry-Integrity-Continuous-Conformance-Monitoring-and-Alert-Escalation-Governance.md)
 - [ADR-002-029 — Software Supply-Chain Integrity, Release-Artifact Admission, and Deployment Provenance Governance](part-1-foundation/ADR-002-029-Software-Supply-Chain-Integrity-Release-Artifact-Admission-and-Deployment-Provenance-Governance.md)
+- [ADR-002-030 — Post-Trade Economic Obligations, Settlement Finality, and Conservative Account-State Governance](part-1-foundation/ADR-002-030-Post-Trade-Economic-Obligations-Settlement-Finality-and-Conservative-Account-State-Governance.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)

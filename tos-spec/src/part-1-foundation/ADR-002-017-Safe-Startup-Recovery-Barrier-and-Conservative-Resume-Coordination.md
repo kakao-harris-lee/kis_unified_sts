@@ -420,7 +420,7 @@ The decision SHALL bind:
 - maximum safe scope and explicit excluded scopes;
 - all UNKNOWN, external, non-trade, protective, capacity, broker, time, configuration, identity, evidence, incident, and residual-risk state;
 - issue trustworthy-time snapshot, maximum age, expiry, and invalidation conditions;
-- RCL, authority, HALT, profile, broker, deployment, ADR-002-029 Release Generation, Admitted Release Set, actual Runtime Artifact Attestation and restriction state, egress, evidence, and human-policy generation vector;
+- RCL, authority, HALT, profile, broker, deployment, ADR-002-029 Release Generation, Admitted Release Set, actual Runtime Artifact Attestation and restriction state, ADR-002-030 Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set, Statement Coverage Manifest, open break/correction scope, field-specific finality and conservative capacity state, egress, evidence, and human-policy generation vector;
 - explicit statements that it creates no capacity, Live Authorization, capability, broker permission, protective classification, or re-arm.
 
 `READY` requires all obligations for the exact requested scope to pass with no blocking Critical hazard.

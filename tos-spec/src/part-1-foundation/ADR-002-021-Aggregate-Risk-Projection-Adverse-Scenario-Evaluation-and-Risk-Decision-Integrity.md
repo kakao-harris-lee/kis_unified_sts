@@ -149,7 +149,9 @@ Any change that may alter a governed current/projected vector, limit, scenario, 
 
 ### ARE-INV-001 — Complete Aggregate Scope
 
-Every evaluation includes all applicable strategies, accounts, instruments, venues, positions, orders, commitments, external effects, and concurrent actions.
+Every evaluation includes all applicable strategies, accounts, instruments, venues, positions, orders, commitments, external effects, ADR-002-030 active or possibly active Economic Obligation Records, statement-coverage gaps, breaks, corrections, pending settlement/cash/collateral/borrow/custody/transfer effects, and concurrent actions.
+
+The Post-Trade Obligation Ledger supplies exact lifecycle and generation state but does not grant risk benefit or mutate capacity. Unknown, corrected, partially final, common-mode, or stale post-trade state uses the greatest credible vector; only the RCL can serialize a later capacity transfer, quarantine, or release after current policy-defined evidence.
 
 ### ARE-INV-002 — Exact Effect Binding
 

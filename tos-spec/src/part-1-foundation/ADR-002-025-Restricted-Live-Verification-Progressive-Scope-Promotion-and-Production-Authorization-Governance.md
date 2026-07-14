@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** EV-L5 restricted-live trial governance, exact trial scope, pre-registration, bounded economic effect, trial authorization prerequisites, abort and demotion, evidence validity, independent review, progressive promotion, production authorization, continuous conformance, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-024, SAFE-025, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§9.1, 11, 20, 23, and 28–29; VER-002-001 §§5, 365, and 368–369
+- **Refines:** RFC-001 SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-021, SAFE-024, SAFE-025, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, and SAFE-052; RFC-002 §§9.1, 11, 20, 23, and 28–29; VER-002-001 §§5, 377, and 380–381
 - **Depends On:** RFC-000; RFC-001; ADR-002-001 through ADR-002-024
 
 ---

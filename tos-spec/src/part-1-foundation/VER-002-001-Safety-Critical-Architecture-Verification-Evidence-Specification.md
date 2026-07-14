@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-029
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-029; implementation evidence has not been executed
-- **Extension State:** ADR-002-005 through ADR-002-029 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, and SCI evidence families. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-030
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-030; implementation evidence has not been executed
+- **Extension State:** ADR-002-005 through ADR-002-030 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, SCI, and PTF evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -2907,7 +2907,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 362. Model-Based and Property Verification
+# Part XXX — Post-Trade Economic Obligation and Finality Evidence
+
+## 362. PTF-EV-001 — Fill/FQP vs Post-Trade Obligation Separation
+
+- **Minimum Level:** EV-L1/EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-030 PTF-AC-001
+- **Injection:** Treat full or partial fill, trade capture, Final Quantity Proof, a closed order, or a flat position as proof that settlement, fee, tax, cash, collateral, borrow, custody, or legal-title obligations are final.
+- **Expected:** Every economic obligation leg remains independently identified and conservatively covered; Final Quantity Proof proves only the broker-order quantity fact, and no order or position state releases post-trade capacity.
+
+## 363. PTF-EV-002 — Fee/Tax/Interest/Financing Legs and Corrections
+
+- **Minimum Level:** EV-L1/EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-030 PTF-AC-002
+- **Injection:** Omit, net away, estimate favorably, duplicate, reverse, or correct a fee, tax, interest, financing, currency, rounding, or accrual leg after initial booking or apparent finality.
+- **Expected:** Exact immutable obligation legs and versions are appended under policy; ambiguity and corrections retain worst-credible coverage, advance the Post-Trade Obligation Generation, and never create headroom by omission or favorable netting.
+
+## 364. PTF-EV-003 — Settlement, Cash Availability, Partial/Failure Semantics
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker and custody assessment
+- **Supports:** ADR-002-030 PTF-AC-003
+- **Injection:** Present instruction acceptance, scheduled date, partial settlement, status text, quiet interval, or transfer acknowledgement as completed settlement or reusable cash; delay, fail, or reverse one leg.
+- **Expected:** Instruction, settlement, cash availability, and custody finality remain orthogonal field-specific facts; partial/failure state is conservative, pending effect consumes capacity, and timeout or expiry proves neither non-acceptance nor finality.
+
+## 365. PTF-EV-004 — Margin/Collateral/Encumbrance/Haircut/Double-Use
+
+- **Minimum Level:** EV-L1/EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-030 PTF-AC-004
+- **Injection:** Reuse pledged, pending, recalled, haircut-changed, cross-account, cross-currency, disputed, or stale collateral; count margin release before exact eligibility and settlement proof; apply favorable netting under conflict.
+- **Expected:** Encumbrance, eligibility, haircut, location, legal owner, reuse, and release are exact current fields; unknown or conflicting collateral produces no benefit, consumes conservative capacity, and cannot be double-used.
+
+## 366. PTF-EV-005 — Borrow/Recall/Return/Buy-In
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-030 PTF-AC-005
+- **Injection:** Treat locate, borrow confirmation, delivery, return request, recall acknowledgement, position close, or statement omission as borrow discharge; inject recall, forced buy-in, rate change, partial return, and contradictory lender/broker facts.
+- **Expected:** Borrow, recall, return, financing, and buy-in obligations remain separate and conservatively covered; missing or conflicting evidence blocks affected new risk, and neither close nor acknowledgement releases the obligation.
+
+## 367. PTF-EV-006 — Exercise/Assignment/Delivery/Corporate-Action Obligations
+
+- **Minimum Level:** EV-L1/EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-030 PTF-AC-006
+- **Injection:** Apply exercise, assignment, expiry, physical delivery, cash settlement, dividend, split, conversion, merger, or withholding as a fill or zero-risk event; deliver partial, corrected, or conflicting notices.
+- **Expected:** Each resulting asset, cash, delivery, fee, tax, funding, and custody leg is independently identified under ADR-002-010 and PTOL; uncertainty preserves the greatest credible effect and no event, calendar, or favorable projection releases capacity.
+
+## 368. PTF-EV-007 — Custody/Transfer/In-Flight/Legal-Title Behavior
+
+- **Minimum Level:** EV-L2/EV-L3 plus custody and security assessment
+- **Supports:** ADR-002-030 PTF-AC-007
+- **Injection:** Treat an initiated, acknowledged, internally booked, externally visible, failed, reversed, or in-flight transfer as settled legal title or available inventory; substitute account, custodian, currency, asset, route, or beneficiary.
+- **Expected:** Transfer instruction, acceptance, movement, custody receipt, legal title, availability, and reversal remain exact separate facts; ambiguity is capacity-consuming, and every external instruction uses the separately governed chain and final egress.
+
+## 369. PTF-EV-008 — Statement Coverage, Provenance, Conflict/Common-Mode
+
+- **Minimum Level:** EV-L1/EV-L2/EV-L3 plus broker and custody assessment
+- **Supports:** ADR-002-030 PTF-AC-008
+- **Injection:** Truncate pagination, omit account/subledger/date/class coverage, use preliminary or stale statements, reset continuity, replay a revision, select the favorable source, or claim independence where sources share parser, administrator, endpoint, or origin.
+- **Expected:** Exact coverage, provenance, continuity, cutoff, revision, class, and completeness are positively established; missing or common-mode coverage remains UNKNOWN, cannot be silently unioned, and blocks affected new risk.
+
+## 370. PTF-EV-009 — Breaks/Busts/Corrections/Reversal/Finality Reopen
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker and security assessment
+- **Supports:** ADR-002-030 PTF-AC-009
+- **Injection:** Bust, correct, reverse, rebook, cancel, dispute, or restate a previously matched or final field; overwrite prior facts, hide dependency fan-out, retain a stale proof, or release capacity before correction closure.
+- **Expected:** Corrections append and advance generation, field-specific finality reopens over the complete dependency closure, prior evidence remains auditable, and RCL retains or expands conservative coverage until new positive proof supports a serialized transition.
+
+## 371. PTF-EV-010 — RCL Transfer/Release + Generation Currentness/Send Race
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker and security assessment
+- **Supports:** ADR-002-030 PTF-AC-010
+- **Injection:** Race fill, obligation commit, PTOL transition, correction, RCL transfer/release, authority issuance, capability claim, `SEND_STARTED`, and first external byte; use a cached active set, proof, or Post-Trade Obligation Generation.
+- **Expected:** PTOL serializes obligation lifecycle only and RCL alone mutates capacity; transitions are conservatively ordered with no gap or double release, stale or unprovable currentness denies, and ambiguous sends remain potentially live and capacity-covered without blind retry.
+
+## 372. PTF-EV-011 — Partition/Compromise/Stale Writer/Route Bypass
+
+- **Minimum Level:** EV-L3 plus broker, custody, and security assessment
+- **Supports:** ADR-002-030 PTF-AC-011
+- **Injection:** Partition PTOL, reconciliation, statement, RCL, authority, or final-egress planes while an external route remains reachable; resume a stale writer or restore; compromise a source, mapper, finality signer, operator, transfer credential, or route.
+- **Expected:** Stale writers, proofs, authorities, and routes are hard fenced; absent current exact proof restricts the greatest credible scope, post-trade identities cannot mutate RCL or bypass final egress, and external reachability creates no permission.
+
+## 373. PTF-EV-012 — Evidence/Recovery/Non-Revival/Status Honesty
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker and security assessment
+- **Supports:** ADR-002-030 PTF-AC-012
+- **Injection:** Present statements, matching balances, audit, monitoring, replay, break closure, service health, restore, quiet time, written cases, or registered evidence as finality, completed verification, capacity release, readiness, authority restoration, or re-arm.
+- **Expected:** Evidence remains evidence and every case remains `NOT_IMPLEMENTED` until executed; recovery reconstructs exact obligations behind the closed barrier under a new generation, restrictions and economic effects survive, and no automatic re-arm or live-readiness claim occurs.
+
+---
+
+## 374. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -3040,13 +3128,17 @@ No mutable source name, incomplete source closure, floating dependency, unpinned
 No compromised, stale, revoked, substituted, mixed, incompatible, restored, or unattested software artifact survives Release Generation, authority, or final-egress currentness checks
 No repository, builder, signer, registry, scanner, admission, deployment, or attestation identity mutates RCL, activates configuration, issues authority, transmits, clears safety state, restores scope, or re-arms
 No software rollback, hotfix, restore, rebuild, evidence repair, monitoring recovery, or incident closure revives a prior admission, activation, capability, economic-state interpretation, or live scope
+No fill, Final Quantity Proof, trade capture, statement, scheduled date, acknowledgement, flat position, or closed order proves any independent post-trade obligation final
+No omitted, stale, conflicting, common-mode, corrected, partially settled, or in-flight fee, tax, cash, collateral, borrow, custody, transfer, delivery, or legal-title leg creates headroom or permission
+No PTOL writer, finality proof, statement, reconciliation result, operator, evidence, replay, or recovery mutates RCL capacity, issues authority, or bypasses final egress
+No obligation correction, break closure, statement arrival, cutoff, quiet time, restore, or Post-Trade Obligation Generation change erases economic effect, releases capacity by itself, revives authority, or automatically re-arms
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 363. Fault-Injection Requirements
+## 375. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -3072,6 +3164,7 @@ The test harness SHALL support controlled injection at least for:
 - missed, suppressed, downgraded, delayed, or under-scoped incident signal; favorable or stale Active Safety Incident Set; concurrent incident/common-mode omission; Incident Generation cache; declaration or scope-expansion delay beyond approved incident bounds; restriction/claim/first-byte race; incident-plane partition with broker reachability; shutdown-before-fence; queue draining by send; stale principal/session/route survival; blind protection cancellation or blanket liquidation; process stop treated as broker finality; external-route rewrite; same-effective-person closure; incomplete recovery handoff; and closure, remediation, or recovery attempting old-scope or authority revival;
 - omitted, wildcarded, patched, optionalized, partially refreshed, or unioned monitoring scope; source restart, continuity reset, endpoint/credential/provider change, schema/unit/mapping/lineage/time drift, frozen payload, stale green cache, health-as-currentness, common-mode monitor paths, local permissive threshold, NaN/overflow/empty-window coercion, conflicting-source favorable selection, broad or expired suppression, deduplication collision, alert/retry storm, queue overflow, delivery/provider/roster failure, acknowledgement-as-containment, stale Monitor Generation, monitoring-plane partition with broker reachability, gap/claim/first-byte race, direct monitoring route bypass, and monitoring recovery attempting capacity release, incident clear, scope restoration, or automatic re-arm;
 - source-history/tag movement, incomplete submodule/generated-source/build-script closure, mutable or network-fetched build input, builder/provenance substitution, dependency/toolchain/plugin/base-image/runtime-load omission, lockfile or registry compromise, signer/key rollback or revocation, artifact/tag/layer/platform substitution, scan/sign/deploy TOCTOU, effective-control collapse, admission scope widening or union, stale Release Generation, mixed-version incompatibility, non-live-to-live artifact crossover, runtime drift, stale deployment survival, release-plane partition with broker reachability, restriction/claim/first-byte race, and rollback/restore/hotfix/recovery attempting prior admission or authority revival;
+- fill/FQP/trade-capture versus obligation-finality collapse; omitted or corrected fee/tax/interest/financing legs; partial/failed settlement and cash-availability confusion; collateral encumbrance/haircut/double-use; borrow recall/return/buy-in; exercise/assignment/delivery/corporate-action legs; custody/transfer/legal-title ambiguity; statement truncation, stale revision, and common mode; break/bust/correction/reversal; stale PTOL writer or proof; Post-Trade Obligation Generation, RCL transfer/release, authority, capability-claim, and first-byte races; post-trade-plane partition with an external route; and recovery attempting prior finality, capacity release, or authority revival;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -3095,7 +3188,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 364. Broker Verification Safety Rules
+## 376. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -3111,11 +3204,13 @@ Controlled production verification SHALL:
 
 Trial completion, success counters, elapsed time, incident absence, monitoring, or evidence-package creation SHALL NOT widen scope. Every promotion remains an exact, independently reviewed, single-use, non-authorizing decision under ADR-002-025.
 
+Post-trade broker, clearing, custody, bank, transfer, and statement probes SHALL pre-cover the worst credible obligation and shall not treat a cleanup transfer, broker correction, statement match, settlement date, or operator action as evidence that an obligation was safely prevented or finalized.
+
 A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 365. Continuous Conformance Evidence
+## 377. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -3143,6 +3238,7 @@ After approval, continuous monitors SHALL detect at least:
 - Safety Incident Policy, signal classification, severity/materiality, dependency closure, Incident Generation, Active Safety Incident Set, lifecycle, containment plan, controlled-shutdown ordering, hard fence, economic/protection obligation, recovery handoff, closure independence, or final-egress currentness contradiction;
 - Safety Monitoring Policy, Critical Telemetry Manifest, Monitor Coverage Manifest, source continuity, telemetry semantics, deterministic evaluator, hard-bound semantics, Monitor Generation, Continuous Conformance Snapshot, Monitoring Gap, common-mode analysis, suppression, alert correlation, delivery, acknowledgement, escalation, restrictive/incident handoff, or final-egress currentness contradiction;
 - Software Release Policy, source/tree identity, build recipe/provenance, dependency/toolchain/runtime closure, signer/key state, Release Artifact Manifest, admission decision, Release Generation, Admitted Release Set, compatibility graph, actual runtime attestation, restriction, deployment, or final-egress currentness contradiction;
+- Post-Trade Finality Policy, Post-Trade Obligation Generation, active obligation-set completeness, obligation identity/version, field-specific finality, statement coverage/provenance, cash/collateral/margin/borrow/custody/transfer state, break/correction closure, PTOL writer fence, RCL transition, or final-egress currentness contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -3159,7 +3255,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 366. Residual Risk Register
+## 378. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -3182,7 +3278,7 @@ Where RFC-001 permits a deviation, the register SHALL additionally bind the exac
 
 ---
 
-## 367. Independent Review Checklist
+## 379. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -3213,6 +3309,7 @@ The reviewer SHALL confirm:
 - every ADR-002-027 material signal restricts before investigation completes, scope is the greatest credible dependency closure, Incident Generation and the Active Safety Incident Set are current and complete, containment/shutdown preserve economic and protection obligations, handoff is explicitly accepted by one Recovery Session, closure is independent and non-permissive, and no incident artifact bypasses existing authority;
 - every ADR-002-028 Critical obligation maps to exact current telemetry and deterministic monitor coverage, source continuity and semantics are proven, hard-bound meaning is preserved, gaps and common modes are restrictive, suppression cannot silence safety, alert acknowledgement is not containment, Monitor Generation is active through final egress, and no monitoring artifact becomes authority;
 - every ADR-002-029 safety-critical runtime artifact is content-addressed to complete reviewed source, build, dependency/toolchain and runtime lineage, independently admitted for exact scope, fenced by one current Release Generation, positively attested at runtime and final egress, and no supply-chain artifact or workflow becomes authority;
+- every ADR-002-030 economic obligation leg has exact identity, scope, provenance, lifecycle, dependency closure, field-specific finality, correction history, current Post-Trade Obligation Generation, conservative RCL coverage, and any external instruction remains confined to final egress; PTOL, statements, proofs, evidence, and recovery never become capacity or transmission authority;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -3222,7 +3319,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 368. Approval Gates by ADR
+## 380. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -3606,6 +3703,17 @@ Requires:
 - security assessment of repository history rewrite, omitted source/build/dependency closure, builder and registry compromise, signer/key rollback, effective-control collapse, substitution and TOCTOU, mixed versions, runtime drift, stale writer/deployment, supply-chain partition, direct broker route, restore, hotfix, recovery, and automatic re-arm;
 - proof that admission is a non-authorizing negative gate, signatures/scans/tests/SBOM/deployment health do not create permission, exact actual runtime bytes are current at final egress, economic effect and broker finality survive software expiry/revocation, and recovery never revives prior admission or authority.
 
+### ADR-002-030
+
+Requires:
+
+- PTF-EV-001 through PTF-EV-012 at the specified non-live levels, plus applicable RC, RECON, NT, CII, VTG, IOC, ARE, AFG, IAP, CUR, RCLP, EGRESS, ERI, SBR, STM, SCI, FD, BC, TIME, REARM, and cross-system evidence;
+- approved canonical Post-Trade Finality Policy, Economic Obligation Record, Active Economic Obligation Set, Post-Trade Finality Proof, Post-Trade Break Record, and Statement Coverage Manifest schemas;
+- approved obligation compiler and independent verifier, PTOL serializer and writer fence, Post-Trade Obligation Generation, source-authority and statement-coverage rules, class-specific finality recipes, correction/reopen protocol, PTOL-to-RCL ordered transition, active currentness, recovery, and external-instruction final-egress mechanisms;
+- approved and measured `B_post_trade_effect_to_obligation_commit`, `B_post_trade_change_detect`, `B_post_trade_break_to_restrict`, `B_post_trade_invalid_to_egress_deny`, `B_post_trade_generation_fence`, `B_statement_coverage_gap_detect`, `MAX_post_trade_obligation_snapshot_age_ms`, `MAX_post_trade_finality_proof_age_ms`, `MAX_statement_coverage_manifest_age_ms`, `MAX_unresolved_post_trade_break_age_ms`, `MAX_pending_external_transfer_age_ms`, and every applicable upstream bound;
+- security assessment of obligation omission/substitution, statement truncation/revision/common mode, PTOL/RCL writer compromise, finality-proof replay, correction suppression, favorable netting, collateral double use, stale generation, post-trade partition, external credential/route bypass, restore, recovery, and automatic re-arm;
+- proof that PTOL is only the obligation-lifecycle serializer, RCL remains sole capacity mutation/serialization authority, final egress remains the external transmission enforcement point, missing ACK and Cancel ACK semantics remain conservative, field-specific finality and economic continuity survive expiry, and recovery never revives prior finality or authority.
+
 ### Restricted-Live Trial Gate
 
 Requires:
@@ -3631,7 +3739,7 @@ Requires:
 
 ---
 
-## 369. Current Evidence Readiness Assessment
+## 381. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -3669,6 +3777,7 @@ Safety waiver, deviation, compensating-control, residual-risk, expiry, and curre
 Safety incident declaration, scope, containment, controlled-shutdown, recovery-handoff, closure, and currentness governance evidence: NOT EXECUTED
 Safety telemetry, monitor coverage, continuous-conformance, gap, suppression, alert-delivery, escalation, and currentness governance evidence: NOT EXECUTED
 Software supply-chain, build provenance, dependency/toolchain closure, release admission, deployment, runtime-attestation, and currentness evidence: NOT EXECUTED
+Post-trade economic-obligation, settlement, finality, statement-coverage, correction, capacity-coupling, and currentness evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -3677,13 +3786,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 370. Required Next Execution Sequence
+## 382. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, safety-telemetry/continuous-monitoring-governance, and software-supply-chain/runtime-artifact-admission models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, safety-telemetry/continuous-monitoring-governance, software-supply-chain/runtime-artifact-admission, and post-trade economic-obligation/finality models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -3696,7 +3805,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 371. Verification Specification Approval Gate
+## 383. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

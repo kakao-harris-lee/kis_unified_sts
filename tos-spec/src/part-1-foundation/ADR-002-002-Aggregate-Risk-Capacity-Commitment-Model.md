@@ -843,6 +843,8 @@ After full fill:
 - any excess adverse-increment reserve may be released only after the new position and margin state are reconciled;
 - release does not imply the resulting position is risk free.
 
+ADR-002-030 further requires conservative ordered transfer from order and position usage into every applicable post-trade Economic Obligation Record. Fill, Final Quantity Proof, a flat position, statement balance, scheduled settlement, or a Post-Trade Finality Proof SHALL NOT mutate or release capacity by itself. PTOL serializes obligation lifecycle only; the RCL remains the sole capacity mutation/serialization authority and retains the worst credible union until exact current evidence supports its own transition.
+
 ### 18.6 UNKNOWN
 
 No automatic release is permitted.
