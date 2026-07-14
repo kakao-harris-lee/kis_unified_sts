@@ -80,8 +80,15 @@ validity:
   invalidation_generation: null
   invalidation_conditions: []
 upstream_bindings:
-  approval_request_id: TBD
-  approval_set_id: TBD
+  proposal_approval_request_id: TBD
+  proposal_approval_request_digest: TBD
+  independent_approval_decision_id: TBD
+  independent_approval_decision_digest: TBD
+  approval_consumption_record_id: TBD
+  approval_consumption_record_digest: TBD
+  trading_approval_generation: null
+  human_approval_request_id: null
+  human_approval_set_id: null
 downstream_consumption:
   transmission_attempt_id: null
   live_authorization_id: null

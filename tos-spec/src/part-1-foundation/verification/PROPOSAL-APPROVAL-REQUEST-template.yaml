@@ -1,0 +1,82 @@
+artifact_type: PROPOSAL_APPROVAL_REQUEST
+schema_version: "1.0-DRAFT"
+request_id: TBD
+nonce: TBD
+predecessor_request_id: null
+canonical_digest: TBD
+status: DRAFT
+proposer:
+  principal_id: TBD
+  decision_service_build_digest: TBD
+  strategy_id: TBD
+  strategy_version: TBD
+proposal:
+  proposal_id: TBD
+  proposal_digest: TBD
+  maximum_requested_effect: {}
+  required_scope_complete: false
+scope:
+  environment: TBD
+  safety_cell: TBD
+  legal_portfolio: TBD
+  account: TBD
+  strategy: TBD
+  instrument: TBD
+  contract: TBD
+  venue: TBD
+  broker: TBD
+  route: TBD
+  action_class: UNKNOWN
+  operating_mode: UNKNOWN
+decision_context_capsule:
+  capsule_id: TBD
+  canonical_digest: TBD
+authorized_construction_envelope:
+  envelope_id: TBD
+  canonical_digest: TBD
+candidate_canonical_broker_command:
+  command_id: TBD
+  canonical_digest: TBD
+venue_constraint_snapshot:
+  snapshot_id: TBD
+  canonical_digest: TBD
+order_admissibility_decision:
+  decision_id: TBD
+  canonical_digest: TBD
+governed_artifact_bindings: []
+generation_bindings:
+  context_generation: null
+  constraint_generation: null
+  construction_generation: null
+  trading_approval_generation: null
+  profile_generation: null
+  recovery_generation: null
+  time_health_generation: null
+  deployment_generation: null
+  credential_generation: null
+  route_generation: null
+  halt_generation: null
+  revocation_generation: null
+required_independent_facts: []
+declared_common_modes: []
+residual_risks_and_scope_reductions: []
+validity:
+  created_at: null
+  producer_receipt_anchor: TBD
+  maximum_age_ms: null
+  invalidation_generation: null
+  invalidation_conditions: []
+consumption:
+  single_use: true
+  exact_intent_only: true
+authority:
+  grants_approval: false
+  creates_intent: false
+  mutates_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false

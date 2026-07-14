@@ -46,6 +46,10 @@ supported_contracts:
   action_flow_state_snapshot_schema_versions: []
   action_flow_decision_schema_versions: []
   action_flow_permit_schema_versions: []
+  trading_approval_policy_schema_versions: []
+  proposal_approval_request_schema_versions: []
+  independent_approval_decision_schema_versions: []
+  approval_consumption_record_schema_versions: []
   source_continuity_protocol_versions: []
   transformation_manifest_versions: []
 
@@ -70,6 +74,8 @@ attestation:
   adverse_scenario_set_digest: TBD
   action_flow_policy_generation: null
   action_flow_policy_digest: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
   context_generation: null
   reproduced_semantic_digest: TBD
   compatible: false
@@ -97,6 +103,10 @@ fail_closed_contract:
   stale_action_flow_generation: DENY
   invalidated_action_flow_decision: DENY
   invalid_or_consumed_action_flow_permit: DENY
+  stale_trading_approval_generation: DENY
+  invalidated_independent_approval_decision: DENY
+  invalid_or_conflicting_approval_consumption: DENY
+  approval_intent_binding_mismatch: DENY
   actual_outbound_mismatch: DENY
 
 authorization_notice: >-

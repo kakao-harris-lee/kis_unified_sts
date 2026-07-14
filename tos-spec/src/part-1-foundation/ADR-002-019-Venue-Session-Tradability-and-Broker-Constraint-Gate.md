@@ -696,7 +696,8 @@ ADR-002-019 remains `Proposed` until all applicable conditions pass:
 9. Numeric bounds and limits are approved in the Verification Profile and measured under fault injection.
 10. `VTG-EV-001` through `VTG-EV-012` are executed at required EV-L1/EV-L2/EV-L3, Broker, and Security levels with independent review.
 11. ADR-002-020 exact candidate command and later conformance-proof binding preserve the decision's complete order shape without circular dependency or downstream mutation, and applicable IOC evidence passes.
-12. All Critical or Major findings from architecture and security review are resolved.
-13. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
+12. ADR-002-023 binds the exact current Snapshot/Decision and complete order shape into one independently validated single-use approval/Intent lineage without converting admissibility into approval, and applicable IAP evidence passes.
+13. All Critical or Major findings from architecture and security review are resolved.
+14. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
 
 This ADR authorizes architecture and implementation-planning work only. It creates no live trading authority and makes no verification-completion or live-readiness claim.

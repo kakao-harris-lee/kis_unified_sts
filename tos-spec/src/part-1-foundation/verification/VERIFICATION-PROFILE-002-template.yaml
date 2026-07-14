@@ -48,6 +48,9 @@ scope:
   action_flow_policy_id: TBD
   action_flow_policy_generation: null
   action_flow_policy_digest: TBD
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -231,6 +234,27 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+  B_approval_invalid_to_intent:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
+  B_approval_invalid_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_approval_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
   B_final_quantity_proof:
     value_ms: null
     semantics: broker_specific
@@ -382,6 +406,8 @@ limits:
   MAX_action_flow_decision_age_ms: null
   MAX_action_flow_permit_age_ms: null
   MAX_action_amplification_per_cause: null
+  MAX_proposal_approval_request_age_ms: null
+  MAX_independent_approval_decision_age_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

@@ -116,7 +116,7 @@ An immutable artifact that selects a strictly equal-or-narrower operating scope 
 
 ### 5.3 Safety Configuration Bundle
 
-The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, ADR-002-022 Action Flow Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
+The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, ADR-002-022 Action Flow Policy, ADR-002-023 Trading Approval Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
 
 ### 5.4 Profile Generation
 
@@ -664,6 +664,7 @@ The architecture is selected. The following product, schema, governance, topolog
 15. How are ADR-002-018 Critical Input Policy identity, generation, digest, source/mapping/lineage compatibility, and restrictive invalidation bound into the bundle without letting configuration activation declare context valid or current?
 16. How are ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set identities, generations, digests, evaluator/verifier compatibility, and restrictive invalidation bound into the bundle without letting activation grant allocation or create capacity?
 17. How are ADR-002-022 Action Flow Policy identity, generation, digest, resource/scope semantics, governor/RCL/egress compatibility, and restrictive invalidation bound into the bundle without letting activation create capacity, reserve, permit, or transmission authority?
+18. How are ADR-002-023 Trading Approval Policy identity, generation, digest, evaluator/verifier compatibility, independent-path allocation, and restrictive invalidation bound into the bundle without letting activation approve a proposal or create an Intent?
 
 Unresolved questions reduce authority or keep the affected scope non-live. They SHALL NOT create a permissive default.
 
@@ -688,7 +689,8 @@ ADR-002-014 SHALL remain **Proposed** until all of the following are complete:
 13. ADR-002-019 Venue Constraint Policy identity, generation, digest, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming order admissibility, approval, capacity, or egress authority, and applicable VTG evidence passes;
 14. ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set identities, generations, digests, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming allocation, capacity, Live Authorization, or egress authority, and applicable ARE evidence passes;
 15. ADR-002-022 Action Flow Policy identity, generation, digest, resource/scope semantics, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming capacity, protective reserve, Action Flow Permit, Live Authorization, or egress authority, and applicable AFG evidence passes;
-16. applicable activation, revocation, restriction-propagation, recovery-barrier, Critical Input, venue-constraint, aggregate-risk, and action-flow invalidation, context/decision/permit/snapshot-age, readiness-age, time, evidence, and egress bounds are approved and measured;
-17. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+16. ADR-002-023 Trading Approval Policy identity, generation, digest, independent-validation requirements, compatibility, and restrictive invalidation behavior are bound into the complete configuration bundle without becoming proposal approval, Intent transition, capacity, authority, or egress permission, and applicable IAP evidence passes;
+17. applicable activation, revocation, restriction-propagation, recovery-barrier, Critical Input, venue-constraint, aggregate-risk, action-flow, and approval invalidation, context/request/decision/permit/snapshot-age, readiness-age, time, evidence, and egress bounds are approved and measured;
+18. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, signatures, successful parsing, repository merge, staged distribution, written acceptance cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, configuration-driven capacity mutation, or automatic re-arm.

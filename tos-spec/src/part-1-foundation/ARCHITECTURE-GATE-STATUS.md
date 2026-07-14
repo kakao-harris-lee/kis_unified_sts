@@ -1,9 +1,9 @@
 # TOS Safety Architecture Gate Status
 
 - **Date:** 2026-07-14
-- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-022
-- **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, and action-flow governance decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-022 PASS at document-review level; no status or live-readiness promotion
+- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-023
+- **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, and independent proposal-approval decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-022 PASS at document-review level; ADR-002-023 independent review pending; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -36,8 +36,9 @@ The following design decisions now have normative documents:
 21. ADR-002-020 Intent-to-Order Conformance, Canonical Command Construction, and Economic-Effect Fencing
 22. ADR-002-021 Aggregate Risk Projection, Adverse-Scenario Evaluation, and Risk-Decision Integrity
 23. ADR-002-022 Action-Flow Budgeting, Retry-Storm Containment, and Protective-Traffic Preservation
-24. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
-25. Evidence Register and configuration/evidence templates
+24. ADR-002-023 Independent Proposal Approval, Exact-Decision Binding, and Consumption Fencing
+25. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
+26. Evidence Register and configuration/evidence templates
 
 ---
 
@@ -85,6 +86,10 @@ The current bundle decides:
 - missing ACK never creates retry permission, cancel ACK is not Final Quantity Proof, and permit expiry never expires possible broker or economic effect.
 - Protective Flow Reserve is a proven exclusive RCL pre-commitment across request, queue, in-flight, credential, session, route, endpoint, and broker-rate dimensions; priority is not reserve.
 - final egress actively verifies current Action Flow Generation, exact decision/vector/cause, RCL commitment, unused permit, broker constraint state, and protective lease; local token, TTL, heartbeat, connection health, queue priority, or absence of invalidation is insufficient.
+- every ordinary exposure-increasing proposal is independently evaluated under one current Trading Approval Policy and Generation against a complete immutable request; `APPROVE` is deterministic, exact, and non-authorizing.
+- the Intent Registry alone atomically consumes one current `APPROVE` decision into one immutable Intent and one Approval Consumption Record; duplicate, concurrent, stale-writer, union, widening, and replay paths cannot create another Intent.
+- final egress actively verifies exact current approval request/decision/consumption/Intent lineage; cached `APPROVED`, Intent state, TTL, heartbeat, service health, or absence of invalidation is insufficient.
+- human approval cannot replace automated independent approval, and automated approval cannot satisfy a human quorum; neither creates capacity, protective classification, Live Authorization, broker permission, or re-arm.
 - restart, reconnect, queue drain, backoff expiry, counter refill, broker recovery, audit, or replay cannot revive an old permit, create headroom, or automatically re-arm.
 - Aggregate Risk Authority owns policy evaluation but does not independently mutate capacity.
 - stale capacity writers are fenced by monotonic epochs.
@@ -134,7 +139,7 @@ The review files were section-level amendments, not canonical-document diffs. Th
 | Partition and time | §16.5 and §17 | Added currentness checks, monotonic lease validity, restart invalidation, and writer/authority fencing | SAFE-035, 041, 048 |
 | Protective capacity | §21 | Distinguished reservation from priority; added intermediate-state proof, replacement gaps, ownership, and cancellation arbitration | SAFE-001, 002, 040, 043, 048 |
 | Failure domains and verification | §24 and §29 | Added common-mode allocation and measurable trigger/detection/containment/pass-fail obligations | SAFE-011, 041, 045, 048, 051, 052 |
-| ADR backlog and findings | §26 and §31 | Preserved IDs ADR-002-002 through 022 and mapped A-01 through A-14 to canonical sections | Corrected the earlier erroneous “009 through 017” history note while later allocating canonical ADR-002-017 to safe startup/recovery, ADR-002-018 to Critical Input integrity, ADR-002-019 to venue/session/tradability constraints, ADR-002-020 to Intent-to-order conformance, ADR-002-021 to aggregate-risk evaluation, and ADR-002-022 to action-flow governance |
+| ADR backlog and findings | §26 and §31 | Preserved IDs ADR-002-002 through 023 and mapped A-01 through A-14 to canonical sections | Corrected the earlier erroneous “009 through 017” history note while later allocating canonical ADR-002-017 to safe startup/recovery, ADR-002-018 to Critical Input integrity, ADR-002-019 to venue/session/tradability constraints, ADR-002-020 to Intent-to-order conformance, ADR-002-021 to aggregate-risk evaluation, ADR-002-022 to action-flow governance, and ADR-002-023 to independent proposal approval |
 
 ### 3.2 ADR-002-001 v0.2
 
@@ -153,19 +158,19 @@ The review files were section-level amendments, not canonical-document diffs. Th
 
 - RFC-000 was not changed because no contradiction was found.
 - Patch-local section numbers are provenance only; canonical section numbers now govern.
-- ADR IDs remain ADR-002-001 through ADR-002-022; ADR-002-002 through ADR-002-022 remain Proposed.
+- ADR IDs remain ADR-002-001 through ADR-002-023; ADR-002-002 through ADR-002-023 remain Proposed.
 - Every `SAFE-xxx` identifier in the RFC-002 and ADR-002-001 traceability tables exists in RFC-001.
-- The Evidence Register contains 267 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, and AFG coverage for ADR-002-005 through ADR-002-022. Registration created no verification evidence or live authority.
+- The Evidence Register contains 279 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, and IAP coverage for ADR-002-005 through ADR-002-023. Registration created no verification evidence or live authority.
 
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
 
-ADR-002-005 through ADR-002-022 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, and action-flow governance authorship are complete, but none of those decisions is accepted.
+ADR-002-005 through ADR-002-023 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, and independent proposal-approval authorship are complete, but none of those decisions is accepted.
 
-ADR-002-007 selects the egress-currentness protocol, ADR-002-012 selects quorum ordering and RCL writer fencing, ADR-002-013 selects the effective final-egress security boundary, ADR-002-014 selects immutable safety-configuration artifacts and activation, ADR-002-015 selects effective-human identity, exact approvals, dual control, independent Human HALT, and break-glass confinement, ADR-002-016 selects immutable causal evidence, pre-effect durability, integrity anchoring, gap containment, protected retention, and isolated deterministic replay, ADR-002-017 selects closed startup, monotonic Recovery Generations, fenced recovery ownership, conservative Inventory Cuts, dependency-complete obligations, non-authorizing readiness, partial-scope isolation, and fresh re-arm handoff, ADR-002-018 selects Critical Input classification, source continuity/provenance, exact transformation lineage, immutable Snapshots/Capsules, independent approval common-mode analysis, correction/invalidation fan-out, and active final-egress context currentness, ADR-002-019 selects exact venue/session/tradability, instrument/order/account/margin/borrow/settlement, Broker Capability Profile, Order Admissibility Decision, Constraint Generation, protective-path, final-egress currentness, and non-revival rules, ADR-002-020 selects deterministic closed-envelope construction, canonical command semantics, conservative effect proof, downstream-mutation fencing, and actual-outbound verification, ADR-002-021 selects complete aggregate-state cuts, adverse scenarios, vector/scoped projection, benefit proof, numerical safety, exact allocation decisions, and active RCL/egress currentness, and ADR-002-022 selects complete action classification, shared-scope budgets, bounded cause amplification, RCL-serialized single-use permits, retry/reconnect containment, Protective Flow Reserve, and active RCL/egress currentness. Conforming products, schemas, registries, compilers/evaluators/verifiers, numeric/unit/risk/flow rules, canonicalization, scenario/valuation models, SDK/serializer constraints, active currentness, failure-domain allocation, bounds, and broker evidence remain acceptance blockers.
+ADR-002-007 selects the egress-currentness protocol, ADR-002-012 selects quorum ordering and RCL writer fencing, ADR-002-013 selects the effective final-egress security boundary, ADR-002-014 selects immutable safety-configuration artifacts and activation, ADR-002-015 selects effective-human identity, exact approvals, dual control, independent Human HALT, and break-glass confinement, ADR-002-016 selects immutable causal evidence, pre-effect durability, integrity anchoring, gap containment, protected retention, and isolated deterministic replay, ADR-002-017 selects closed startup, monotonic Recovery Generations, fenced recovery ownership, conservative Inventory Cuts, dependency-complete obligations, non-authorizing readiness, partial-scope isolation, and fresh re-arm handoff, ADR-002-018 selects Critical Input classification, source continuity/provenance, exact transformation lineage, immutable Snapshots/Capsules, independent approval common-mode analysis, correction/invalidation fan-out, and active final-egress context currentness, ADR-002-019 selects exact venue/session/tradability, instrument/order/account/margin/borrow/settlement, Broker Capability Profile, Order Admissibility Decision, Constraint Generation, protective-path, final-egress currentness, and non-revival rules, ADR-002-020 selects deterministic closed-envelope construction, canonical command semantics, conservative effect proof, downstream-mutation fencing, and actual-outbound verification, ADR-002-021 selects complete aggregate-state cuts, adverse scenarios, vector/scoped projection, benefit proof, numerical safety, exact allocation decisions, and active RCL/egress currentness, ADR-002-022 selects complete action classification, shared-scope budgets, bounded cause amplification, RCL-serialized single-use permits, retry/reconnect containment, Protective Flow Reserve, and active RCL/egress currentness, and ADR-002-023 selects complete automated approval requests, true independent validation, exact decisions, single-use Intent consumption, invalidation closure, and active final-egress currentness. Conforming products, schemas, registries, compilers/evaluators/verifiers, numeric/unit/risk/flow/approval rules, canonicalization, scenario/valuation models, SDK/serializer constraints, active currentness, failure-domain allocation, bounds, and broker evidence remain acceptance blockers.
 
-Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-022, but all remain `NOT_IMPLEMENTED`. Verification Profile `1.3-PROPOSED` additionally binds the proposed Action Flow Policy and adds unapproved `B_action_flow_invalid_to_rcl`, `B_action_flow_invalid_to_egress`, `B_action_flow_violation_to_containment`, `MAX_action_flow_state_snapshot_age_ms`, `MAX_action_flow_decision_age_ms`, `MAX_action_flow_permit_age_ms`, and `MAX_action_amplification_per_cause` values while retaining all earlier unapproved bounds. The profile remains unapproved with `approved_by: []`; unresolved values reduce authority and keep live operation prohibited.
+Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-023, but all remain `NOT_IMPLEMENTED`. Verification Profile `1.4-PROPOSED` has matching actual/template key sets with 46 scope keys, 47 bounds, and 26 limits. It additionally binds the proposed Trading Approval Policy and adds unapproved `B_approval_invalid_to_intent`, `B_approval_invalid_to_egress`, `B_approval_generation_fence`, `MAX_proposal_approval_request_age_ms`, and `MAX_independent_approval_decision_age_ms` values while retaining all earlier unapproved bounds. The profile remains unapproved with `approved_by: []`; unresolved values reduce authority and keep live operation prohibited.
 
 ### 4.1 Latest Review Disposition
 
@@ -173,7 +178,7 @@ The ADR-002-015 architecture review passed its document and integration scope wi
 
 The latest independent document review reported ADR-002-016 and its integration as PASS. No finding requiring disposition was supplied with that verdict. The review result changes no ADR status: evidence-store, durable-ingress, emergency-journal, integrity-anchor, gap-detection, retention, redaction, replay-isolation, security-review, numeric-bound, and executed-evidence gates remain open. A document-review PASS is EV-L0 evidence only and creates no capacity, authority, broker permission, verification completion, or live readiness.
 
-The independent ADR-002-017 document and adversarial-sequence review found no Critical or Major issue. Four Minor findings were resolved conservatively: the nonexistent SAFE-049 range implication was replaced with explicit real SAFE IDs; Recovery Generation and readiness currentness now explicitly reject TTL, heartbeat, health, eventual-consistency, and absence-of-invalidation substitutes; ADR-002-013 now binds and verifies the exact current recovery package, decision, scope, validity, and invalidation status at every send; and `OPEN_FOR_NON_LIVE` was renamed `CLOSED_NON_LIVE`. These citation and clarity corrections do not change authority, evidence, or live-readiness status.
+The independent ADR-002-017 document and adversarial-sequence review found no Critical or Major issue. Four Minor findings were resolved conservatively: the nonexistent intervening SAFE identifier implied by a numeric range was replaced with explicit real SAFE IDs; Recovery Generation and readiness currentness now explicitly reject TTL, heartbeat, health, eventual-consistency, and absence-of-invalidation substitutes; ADR-002-013 now binds and verifies the exact current recovery package, decision, scope, validity, and invalidation status at every send; and `OPEN_FOR_NON_LIVE` was renamed `CLOSED_NON_LIVE`. These citation and clarity corrections do not change authority, evidence, or live-readiness status.
 
 The independent ADR-002-018 document, adversarial-sequence, integration, and traceability review found no Critical or Major issue and no unsafe sequence. Twenty-two sequences were blocked outright and two final-egress invalidation/send races were correctly classified as open-but-gated by fail-closed currentness and unapproved bounds. Two Minor clarity findings were resolved conservatively: §1/§15/§17 now make materiality and binding applicability policy-owned with unknown materiality treated as Critical/material, and ADR-002-014 §12.3 now states in its normative body that configuration activation does not establish Critical Input or Decision Context validity/currentness. The review PASS is EV-L0 only; currentness implementation, approved bounds, security review, and executed evidence remain open.
 
@@ -185,12 +190,15 @@ The independent ADR-002-021 document review passed at EV-L0. No finding requirin
 
 The independent ADR-002-022 document review passed at EV-L0. No finding requiring disposition was supplied with that verdict. The review changes no ADR status: Action Flow Policy/scope/budget/evaluator, RCL permit and atomic-claim protocol, final-egress currentness, security review, approved-bound, fault-injection, and executed AFG evidence gates remain open. No AFG case has been executed, no bound is approved, and the review creates no flow headroom, protective reserve, capacity, Accepted status, or live readiness.
 
+ADR-002-023 and its integrated IAP verification scope are authored and await independent document review. Authorship and evidence registration do not satisfy any implementation, independent-input, Intent Registry, security, numeric-bound, fault-injection, independent-review, acceptance, or live-readiness gate.
+
 ```text
 ADR-002-002 through ADR-002-018 status: Proposed; document review PASS
 ADR-002-019 status: Proposed; independent document review PASS; two non-safety Minor findings resolved
 ADR-002-020 status: Proposed; independent document review PASS; one soft Minor finding resolved
 ADR-002-021 status: Proposed; independent document review PASS; no finding supplied for disposition
 ADR-002-022 status: Proposed; independent document review PASS; no finding supplied for disposition
+ADR-002-023 status: Proposed; independent document review pending
 ADR-002-018 independent document review: PASS; two Minor findings resolved
 ADR-002-016 independent document review: PASS; no finding supplied for disposition
 ADR-002-017 independent document review: PASS; four Minor findings resolved
@@ -230,8 +238,9 @@ The Proposed status is preserved because the applicable approval gates, includin
 | ADR-002-020 | Proposed | YES | NO |
 | ADR-002-021 | Proposed | YES | NO |
 | ADR-002-022 | Proposed | YES | NO |
+| ADR-002-023 | Proposed | YES | NO |
 | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
-| Verification Profile 1.3 | `PROPOSED`, `approved_by: []` | YES, as draft | NO |
+| Verification Profile 1.4 | `PROPOSED`, `approved_by: []` | YES, as draft | NO |
 | Broker-specific Capability Profile | Template only | YES | NO |
 | Human authority artifacts | Templates only, all non-authorizing | YES | NO |
 | Evidence integrity and replay artifacts | Templates only, all DRAFT/unverified/non-authorizing | YES | NO |
@@ -241,7 +250,8 @@ The Proposed status is preserved because the applicable approval gates, includin
 | Order Construction Policy, Authorized Construction Envelope, Canonical Broker Command, Economic Effect Envelope, and Order Conformance Proof artifacts | Templates only; DRAFT/PENDING/UNKNOWN/non-authorizing/fail-closed | YES | NO |
 | Aggregate Risk Policy, Aggregate Risk State Snapshot, Adverse Scenario Set, and Aggregate Risk Decision artifacts | Templates only; DRAFT/INVALID/UNKNOWN/non-authorizing or non-mutating/fail-closed | YES | NO |
 | Action Flow Policy, Action Flow State Snapshot, Action Flow Decision, and Action Flow Permit artifacts | Templates only; DRAFT/INVALID/UNKNOWN/non-authorizing/non-mutating/fail-closed | YES | NO |
-| Verification evidence | 267 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Trading Approval Policy, Proposal Approval Request, Independent Approval Decision, and Approval Consumption Record artifacts | Templates only; DRAFT/UNKNOWN/INVALID/non-authorizing/non-mutating/fail-closed | YES | NO |
+| Verification evidence | 279 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
 
 ---
 
@@ -265,10 +275,10 @@ A written test case, mock output, or design review is not completed verification
 ## 7. Immediate Engineering Sequence
 
 ```text
-1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, approval, evidence/replay/recovery, Critical Input/context, venue constraint, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, adverse-scenario/state-cut/shared-scope/cause-amplification protocols, deterministic compiler/evaluator/verifier, numeric/unit/mapping/risk/flow registry, canonicalization, serializer/SDK, actual-outbound comparison, generation fencing, signing, and independent Human HALT substrates.
-2. Assign implementation owners, evidence owners, and independent reviewers for all 267 items in EVIDENCE-REGISTER-002.csv.
+1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, human and automated approval, evidence/replay/recovery, Critical Input/context, venue constraint, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Trading Approval Policy, independent-validation/common-mode, single-use Intent consumption, adverse-scenario/state-cut/shared-scope/cause-amplification protocols, deterministic compiler/evaluator/verifier, numeric/unit/mapping/risk/flow registry, canonicalization, serializer/SDK, actual-outbound comparison, generation fencing, signing, and independent Human HALT substrates.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 279 items in EVIDENCE-REGISTER-002.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
-4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, exact-approval, Human HALT, Recovery Barrier, Critical Input/context, venue constraint/admissibility, canonical command, economic-effect, aggregate-risk projection/decision, action-flow decision/permit/reserve, conformance-proof, downstream-mutation, and invalidation state-machine models.
+4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, human and automated exact approval, single-use Intent consumption, Human HALT, Recovery Barrier, Critical Input/context, venue constraint/admissibility, canonical command, economic-effect, aggregate-risk projection/decision, action-flow decision/permit/reserve, conformance-proof, downstream-mutation, and invalidation state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.
 6. Implement durable evidence identities and event capture.
 7. Implement the credential-confined Egress Gateway, authenticated currentness session, monotonic deny latch, Recovery Generation fence, single-use capability journal, epoch fencing, and bounded claim-to-send checks; remove every direct live broker-order path.

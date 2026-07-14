@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **267**
-- NOT_IMPLEMENTED: **267**
+- Total evidence items: **279**
+- NOT_IMPLEMENTED: **279**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -290,6 +290,18 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | AFG-EV-010 | Action Flow Governance | Partition Stale Writer and Protective Lease | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | AFG-EV-011 | Action Flow Governance | Authority Separation and Bypass | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | AFG-EV-012 | Action Flow Governance | Recovery Economic Continuity and Non-Revival | ADR-002-022 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-001 | Independent Proposal Approval | Complete Exact Request | ADR-002-023 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-002 | Independent Proposal Approval | Independent Validation and Common Mode | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-003 | Independent Proposal Approval | Deterministic Restrictive Decision | ADR-002-023 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-004 | Independent Proposal Approval | Exact Artifact and Scope Binding | ADR-002-023 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-005 | Independent Proposal Approval | Single-Use Intent Consumption | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-006 | Independent Proposal Approval | No Widening or Authority Escalation | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-007 | Independent Proposal Approval | Invalidation Dependency Closure | ADR-002-023 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-008 | Independent Proposal Approval | Active Final-Egress Currentness | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-009 | Independent Proposal Approval | UNKNOWN Protective and Human Confinement | ADR-002-023 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-010 | Independent Proposal Approval | Partition and Stale-Generation Fencing | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-011 | Independent Proposal Approval | Economic Continuity and Broker Ambiguity | ADR-002-023 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| IAP-EV-012 | Independent Proposal Approval | Recovery Evidence and Non-Revival | ADR-002-023 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

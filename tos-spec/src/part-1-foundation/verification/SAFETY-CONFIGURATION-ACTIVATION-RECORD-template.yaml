@@ -47,6 +47,9 @@ bundle:
   action_flow_policy_id: TBD
   action_flow_policy_generation: null
   action_flow_policy_digest: TBD
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
   referenced_artifact_digests: []
   canonical_bundle_digest: TBD
 

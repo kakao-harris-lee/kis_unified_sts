@@ -64,7 +64,7 @@ A model that cannot hold this combination will either fabricate certainty (unsaf
 
 ## 5. Dimension: Intent State
 
-Owned by the **Intent Registry**, advanced by Decision/Approval/Aggregate-Risk authorities per RFC-002 §11.
+Owned by the **Intent Registry**. Under ADR-002-023, only the current fenced Registry may atomically consume one exact Independent Approval Decision into the `PROPOSED -> APPROVED` transition; later aggregate-risk state advancement remains separate under RFC-002 §11.
 
 ```text
 PROPOSED -> APPROVED -> AUTHORIZED_FOR_CAPACITY -> ACTIVE -> CLOSED

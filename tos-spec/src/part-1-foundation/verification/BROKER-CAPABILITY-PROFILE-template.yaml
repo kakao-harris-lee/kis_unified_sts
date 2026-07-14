@@ -192,6 +192,15 @@ action_flow_binding:
   priority_alone_is_reservation: false
   permissive_local_token_or_cache_prohibited: true
 
+independent_approval_binding:
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
+  approval_consumption_record_required: true
+  exact_intent_binding_required: true
+  active_currentness_mechanism: TBD
+  permissive_intent_state_or_cache_prohibited: true
+
 egress_security:
   final_egress_boundary_id: TBD
   egress_generation: TBD

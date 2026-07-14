@@ -686,5 +686,6 @@ ADR-002-022 remains `Proposed` until all of the following are true:
 10. `AFG-EV-001` through `AFG-EV-012` are executed at the required EV-L1/EV-L2/EV-L3/Broker/Security levels and independently reviewed.
 11. Security review finds no direct broker route, capacity mutation path, local-budget over-allocation, reserve borrowing, stale-currentness cache, or post-claim retry path.
 12. Critical and Major findings, including broker common-mode and send-race findings, are resolved or reduce live scope to non-live.
+13. ADR-002-023 exact approval/consumption/Intent lineage is bound before flow allocation without allowing approval or Intent Registry identities to create action-flow capacity, and applicable IAP evidence passes.
 
 This ADR authorizes architecture and implementation-planning work only. It authorizes no live trading. Written acceptance cases and registered evidence are not completed evidence. No automatic re-arm is permitted.

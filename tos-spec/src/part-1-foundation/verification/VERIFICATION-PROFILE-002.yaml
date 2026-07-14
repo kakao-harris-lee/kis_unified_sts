@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "1.3-PROPOSED"
+version: "1.4-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -64,6 +64,9 @@ scope:
   action_flow_policy_id: TBD
   action_flow_policy_generation: null
   action_flow_policy_digest: TBD
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -252,6 +255,27 @@ bounds:
     rationale: "MEASURE. Maximum interval from authoritative rate, burst, amplification, queue, in-flight, counter-divergence, duplicate-permit, or protective-reserve violation detection to completed new-risk denial and required containment across the complete affected shared scope (ADR-002-022 §19)."
     measurement_source: action_flow_violation_rcl_authority_and_egress_trace
     failure_response: HALT_OR_CONTAIN
+  B_approval_invalid_to_intent:
+    value_ms: null   # APPROVE after Trading Approval Generation and Intent Registry invalidation are implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed material approval-policy, request, input, common-mode, decision, or dependency invalidation to rejection of affected unconsumed decisions and dependent Intent registration/use (ADR-002-023 §§12, 14)."
+    measurement_source: approval_generation_invalidation_decision_consumption_and_intent_registry_trace
+    failure_response: STOP_NEW_RISK
+  B_approval_invalid_to_egress:
+    value_ms: null   # APPROVE after active final-egress approval currentness is implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from committed material approval or consumption invalidation to denial of every affected dependent new-risk request at final egress (ADR-002-023 §15)."
+    measurement_source: approval_generation_consumption_invalidation_and_egress_boundary_trace
+    failure_response: HALT
+  B_approval_generation_fence:
+    value_ms: null   # APPROVE after evaluator, Intent Registry writer, and egress fencing are implemented
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from commitment of a newer Trading Approval Generation to proven inability of predecessor evaluators, registry writers, approval decisions, and egress consumers to create or use dependent new-risk permission (ADR-002-023 §17)."
+    measurement_source: trading_approval_generation_writer_fence_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
@@ -404,6 +428,8 @@ limits:
   MAX_action_flow_decision_age_ms: null            # APPROVE per exact action/scope; expiry never expires possible broker or economic effect
   MAX_action_flow_permit_age_ms: null              # APPROVE per exact action/claim path; stale permit denies send and cannot release economic capacity
   MAX_action_amplification_per_cause: null          # APPROVE per cause/action class; unknown or exceeded amplification invokes containment
+  MAX_proposal_approval_request_age_ms: null        # APPROVE per action class; stale or unknown request age denies approval and consumption
+  MAX_independent_approval_decision_age_ms: null    # APPROVE per exact request/Intent scope; expiry never expires economic effect
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

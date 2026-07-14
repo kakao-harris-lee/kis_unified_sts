@@ -741,7 +741,8 @@ ADR-002-020 remains `Proposed` until all applicable conditions pass:
 9. Numeric bounds and limits are approved in the Verification Profile and measured under fault injection.
 10. `IOC-EV-001` through `IOC-EV-012` are executed at required EV-L1/EV-L2/EV-L3, Broker, and Security levels with independent review.
 11. ADR-002-021 exact aggregate-risk decision/allocation and currentness are bound between the Economic Effect Envelope and RCL commitment, with applicable ARE evidence passing.
-12. All Critical or Major findings from architecture, numeric, canonicalization, parser-differential, and security review are resolved.
-13. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
+12. ADR-002-023 exact request/decision/consumption/Intent lineage binds the unchanged proposal, envelope, candidate command, venue decision, and construction generation before downstream use, with applicable IAP evidence passing.
+13. All Critical or Major findings from architecture, numeric, canonicalization, parser-differential, and security review are resolved.
+14. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
 
 This ADR authorizes architecture and implementation-planning work only. It creates no live trading authority and makes no verification-completion or live-readiness claim.

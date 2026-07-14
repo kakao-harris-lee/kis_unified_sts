@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-022
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-022; implementation evidence has not been executed
-- **Extension State:** ADR-002-005/006/007/008/009/010/011/012/013/014/015/016/017/018/019 map one-to-one to STATE-EV-001..005, RECON-EV-001..005, REARM-EV-001..012, TIME-EV-001..010, FD-EV-001..012, NT-EV-001..012, PR-EV-001..012, RCLP-EV-001..012, EGRESS-EV-001..012, SPG-EV-001..012, HAG-EV-001..012, ERI-EV-001..012, SBR-EV-001..012, CII-EV-001..012, and VTG-EV-001..012. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-023
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-023; implementation evidence has not been executed
+- **Extension State:** ADR-002-005 through ADR-002-023 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, and IAP evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -89,6 +89,7 @@ Every evidence run SHALL bind to an immutable baseline containing:
 - Recovery Barrier Policy generation and digest;
 - Critical Input Policy generation and digest;
 - Venue Constraint Policy generation and digest;
+- Trading Approval Policy generation and digest;
 - Broker Capability Profile version;
 - Verification Profile version;
 - database/schema migration version;
@@ -2288,7 +2289,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 278. Model-Based and Property Verification
+# Part XXIII — Independent Proposal Approval Evidence
+
+## 278. IAP-EV-001 — Complete Exact Request
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-023 IAP-AC-001
+- **Injection:** Omit, wildcard, default, patch, partially refresh, union, or substitute each request field and bound artifact independently and in combinations.
+- **Expected:** No incomplete or changed request yields or preserves `APPROVE`; every material change creates a new identity and chain.
+
+## 279. IAP-EV-002 — Independent Validation and Common Mode
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-023 IAP-AC-002
+- **Injection:** Corrupt proposer output and repeat through nominally separate approvers sharing source, parser, mapping, library, cache, registry, administrator, deployment, network, credential, or clock dependencies.
+- **Expected:** Shared paths are identified as common mode and cannot satisfy independent validation; unavailable independence denies or enforces only the independently approved reduced scope.
+
+## 280. IAP-EV-003 — Deterministic Restrictive Decision
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-023 IAP-AC-003
+- **Injection:** Replay identical complete inputs across evaluator instances and platforms, then introduce missing, stale, conflicting, unsupported, unverifiable, future-time, and timeout conditions.
+- **Expected:** Complete identical inputs produce one deterministic result; every uncertain condition is `DENY` or `UNKNOWN`, never promoted by retry, majority, prior success, or unused capacity.
+
+## 281. IAP-EV-004 — Exact Artifact and Scope Binding
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-023 IAP-AC-004
+- **Injection:** Substitute account, instrument, direction, quantity, unit, price, Capsule, venue decision, construction envelope, candidate command, broker, route, environment, policy, software, deployment, or generation after request or decision.
+- **Expected:** Every mismatch is rejected; no narrower approval, alias, default, or later favorable input can authorize the changed action.
+
+## 282. IAP-EV-005 — Single-Use Intent Consumption
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-023 IAP-AC-005
+- **Injection:** Race concurrent Intent Registry writers and consumers; replay identical and conflicting commands; restore an old database; reuse the decision across scopes and Intent identities.
+- **Expected:** At most one exact immutable Intent and authoritative Consumption Record exist; identical duplicate commands are idempotent, conflicts and stale writers are fenced.
+
+## 283. IAP-EV-006 — No Widening or Authority Escalation
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-023 IAP-AC-006
+- **Injection:** Union decisions, widen scope after approval, request capacity mutation, classify protection, issue authority/capability, clear HALT, re-arm, or transmit from approval and Intent Registry identities.
+- **Expected:** Every escalation and direct route fails; later gates may only narrow or deny and exclusive authority ownership remains intact.
+
+## 284. IAP-EV-007 — Invalidation Dependency Closure
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-023 IAP-AC-007
+- **Injection:** Correct inputs, change policy/generation/software/deployment/route, discover common mode or compromise, and invalidate before decision, during consumption, after Intent creation, and before send.
+- **Expected:** Complete affected dependency closure is denied before future new-risk use while any possible prior broker/economic effect remains explicit and capacity-covered.
+
+## 285. IAP-EV-008 — Active Final-Egress Currentness
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-023 IAP-AC-008
+- **Injection:** Present cached, stale, invalidated, unconsumed, multiply consumed, wrong-Intent, wrong-generation, over-age, or unavailable approval lineage; delay invalidation across claim/first-byte boundaries.
+- **Expected:** Egress actively proves exact current lineage without cache/TTL/heartbeat inference; ambiguity denies send and any raced attempt remains potentially live, capacity-covered, and non-retryable without proof.
+
+## 286. IAP-EV-009 — UNKNOWN, Protective, and Human Confinement
+
+- **Minimum Level:** EV-L1/EV-L3 plus broker assessment
+- **Supports:** ADR-002-023 IAP-AC-009
+- **Injection:** Combine UNKNOWN approval with unused capacity, human approval, emergency/exit/hedge/reduce-only/protective labels, queue priority, or expected broker rejection.
+- **Expected:** Ordinary new risk remains blocked; labels and humans create neither automated approval nor protective classification/reserve, and only separately authorized complete protective flow may proceed.
+
+## 287. IAP-EV-010 — Partition and Stale-Generation Fencing
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-023 IAP-AC-010
+- **Injection:** Partition proposer/approval/registry/currentness planes while broker egress remains reachable; resume stale evaluator, writer, deployment, recovery, authority, and egress generations.
+- **Expected:** No stale decision is consumed or transmitted; predecessors remain potentially active until hard fenced and unavailable currentness denies new risk.
+
+## 288. IAP-EV-011 — Economic Continuity and Broker Ambiguity
+
+- **Minimum Level:** EV-L1/EV-L3 plus broker assessment
+- **Supports:** ADR-002-023 IAP-AC-011
+- **Injection:** Expire, revoke, deny, or invalidate approval after send; lose ACK; receive cancel ACK without Final Quantity Proof; restart while order state is UNKNOWN.
+- **Expected:** Future permission is denied but order/exposure/UNKNOWN state and conservative RCL coverage remain; no blind retry or approval-driven capacity release occurs.
+
+## 289. IAP-EV-012 — Recovery, Evidence, and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-023 IAP-AC-012
+- **Injection:** Restart, restore, roll back, replay, recover sources/policy/approval/registry/evidence, and reproduce an identical historical result while prior effects or generations remain.
+- **Expected:** Historical artifacts remain evidence only; no auto-consumption, permission revival, capacity release, broker transmission, or automatic re-arm occurs.
+
+---
+
+## 290. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -2313,6 +2402,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Order Construction Policy, Authorized Construction Envelope, Canonical Broker Command, Economic Effect Envelope, Order Conformance Proof, Construction Generation, retry/split/replace lineage, downstream mutation, actual-outbound equivalence, and recovery state;
 - Aggregate Risk Policy, Aggregate Risk Generation, Aggregate Risk State Snapshot, Adverse Scenario Set, dimension/scope vectors, projected state, benefit evidence, Aggregate Risk Decision, RCL admission, invalidation, final-egress currentness, and recovery state;
 - Action Flow Policy, Action Flow Generation, Action Flow State Snapshot, cause lineage, amplification envelope, shared-scope resource vector, Action Flow Decision, RCL Permit allocation/claim/consumption/quarantine, protective reserve/lease, invalidation, final-egress currentness, and recovery state;
+- Trading Approval Policy, Trading Approval Generation, Proposal Approval Request, independent/common-mode fact evaluation, Independent Approval Decision, Intent Registry writer and single-use consumption, immutable Intent binding, invalidation closure, final-egress currentness, and recovery state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2385,13 +2475,19 @@ No Action Flow Decision or Permit mutation, union, widening, substitution, doubl
 No ordinary priority, queue position, broker connection, or local headroom consumes or proves Protective Flow Reserve
 No action-flow invalidation misses RCL admission or final egress beyond its approved bound
 No counter refill, backoff expiry, queue drain, broker recovery, restart, restore, or replay revives a permit, creates headroom, or automatically re-arms
+No incomplete, patched, unioned, stale, unsupported, conflicting, or proposer-only approval request produces usable `APPROVE`
+No shared source, parser, mapping, library, cache, registry, administrator, deployment, network, credential, or clock path is counted as independent without evidence
+No Independent Approval Decision mutation, widening, replay, duplicate consumption, stale writer, or wrong-Intent binding creates a second or different Intent
+No approval or Intent Registry identity mutates capacity, classifies protection, issues authority/capability, reaches the broker, clears HALT, or re-arms
+No approval invalidation misses affected Intent registration or final egress beyond its approved bound
+No approval expiry, denial, invalidation, recovery, restore, or replay erases possible economic effect, releases capacity, or revives authority
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
 
 ---
 
-## 279. Fault-Injection Requirements
+## 291. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2411,6 +2507,7 @@ The test harness SHALL support controlled injection at least for:
 - side/direction/position-effect inversion, account/instrument/contract/environment/route substitution, unit/multiplier/currency/numeric drift, quantity/tick/lot/rounding boundary, price/order/TIF/expiry/mode mutation, effect-envelope understatement, parser differential, duplicate/unknown fields, downstream serializer/signer/SDK mutation, retry/cancel/amend/replace/split/aggregate lineage loss, Construction Generation cache, and compiler recovery attempting old-proof reuse;
 - omitted aggregate scope, stale/mixed state cut, snapshot/effect substitution, missing dimension, unit/sign/scale/limit drift, adverse-scenario truncation, hedge-leg/basis/correlation/liquidity/margin failure, valuation/tail error, overflow/NaN/non-convergence/differential, concurrent stale grant, RCL state advance, Aggregate Risk Generation cache, invalidation suppression/delay beyond `B_aggregate_risk_invalid_to_rcl` or `B_aggregate_risk_invalid_to_egress`, and evaluator recovery attempting old-decision reuse;
 - concurrent producer and shared-limit over-allocation, unknown broker-limit scope, duplicate-event/fan-out/redelivery/replay amplification, missing-ACK retry, SDK/proxy/redirect/reconnect flood, cancel/amend/replace storm, queue/in-flight exhaustion, ordinary-to-protective reserve intrusion, priority-only reserve claim, RCL permit double spend, stale/cross-host refill, Action Flow Generation cache, invalidation suppression/delay beyond `B_action_flow_invalid_to_rcl`, `B_action_flow_invalid_to_egress`, or `B_action_flow_violation_to_containment`, control-plane partition with broker-reachable egress, and recovery attempting old-permit reuse;
+- incomplete/wildcard/patched approval request, proposer-only or common-mode validation, deterministic-evaluator differential, artifact/scope substitution, duplicate and cross-scope consumption, stale Intent Registry writer, approval authority escalation, Trading Approval Generation cache, invalidation suppression/delay beyond `B_approval_invalid_to_intent`, `B_approval_invalid_to_egress`, or `B_approval_generation_fence`, control-plane partition with broker-reachable egress, and recovery attempting old-decision or consumption reuse;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -2434,7 +2531,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 280. Broker Verification Safety Rules
+## 292. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -2452,7 +2549,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 281. Continuous Conformance Evidence
+## 293. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -2491,7 +2588,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 282. Residual Risk Register
+## 294. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -2512,7 +2609,7 @@ Every unresolved limitation SHALL record:
 
 ---
 
-## 283. Independent Review Checklist
+## 295. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -2547,7 +2644,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 284. Approval Gates by ADR
+## 296. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -2854,6 +2951,17 @@ Requires:
 - broker-scoped assurance for every claimed submit, cancel, amend, replace, retry, query, reconnect, session, credential, route, endpoint, queue, in-flight, rate, burst, idempotency, throttle, and Protective Flow Reserve behavior;
 - independent scope-aggregation, counter/refill, RCL atomicity, permit single-use, cause-amplification, retry/reconnect, protective-reserve, common-mode, authority-separation, final-egress, restore, and automatic-rearm security and safety assessment.
 
+### ADR-002-023
+
+Requires:
+
+- IAP-EV-001 through IAP-EV-012;
+- CII-EV-001 through CII-EV-012, VTG-EV-001 through VTG-EV-012, IOC-EV-001 through IOC-EV-012, and applicable ARE, AFG, HAG, ERI, SBR, TIME, RCLP, EGRESS, RC, SA, BC, FD, and cross-system evidence;
+- approved Trading Approval Policy, Proposal Approval Request, Independent Approval Decision, Approval Consumption Record, deterministic evaluator/verifier, independent validation-path allocation, common-mode taxonomy, residual-risk scope-reduction, Trading Approval Generation, Intent Registry single-use transaction, writer fencing, invalidation closure, and active final-egress currentness mechanisms;
+- approved and measured `B_approval_invalid_to_intent`, `B_approval_invalid_to_egress`, `B_approval_generation_fence`, `MAX_proposal_approval_request_age`, `MAX_independent_approval_decision_age`, and applicable context, venue, construction, capability-claim, HALT, recovery, evidence, broker, and send-race bounds;
+- security assessment of proposer/approver common mode, canonicalization/parser differential, policy/evaluator/dependency-registry compromise, duplicate consumption, stale writer, direct route, cache currentness, restore, replay, and automatic re-arm;
+- proof that `APPROVE` creates only one exact Intent registration eligibility and never capacity, protective classification, Live Authorization, Transmission Capability, broker transmission, HALT clear, or re-arm.
+
 ### Production Restricted Live Gate
 
 Requires:
@@ -2868,7 +2976,7 @@ Requires:
 
 ---
 
-## 285. Current Evidence Readiness Assessment
+## 297. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -2899,6 +3007,7 @@ Venue, session, tradability, exact order constraint, and final-egress currentnes
 Intent-to-order conformance, canonical command, economic-effect, and actual-outbound evidence: NOT EXECUTED
 Aggregate risk projection, adverse-scenario, exact allocation-decision, and currentness evidence: NOT EXECUTED
 Action-flow budgeting, retry-storm containment, protective-reserve, and permit-currentness evidence: NOT EXECUTED
+Independent proposal approval, single-use Intent consumption, invalidation, and currentness evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -2907,13 +3016,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 286. Required Next Execution Sequence
+## 298. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, and action-flow governance models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, and independent proposal-approval models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -2926,7 +3035,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 287. Verification Specification Approval Gate
+## 299. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

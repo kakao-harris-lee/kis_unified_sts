@@ -677,6 +677,7 @@ Open questions reduce authority or keep scope non-live. They do not weaken the r
 11. What disaster-recovery procedure proves predecessor writer, egress, broker-session, credential, and recovery-owner fencing?
 12. What values for `B_recovery_trigger_to_barrier`, `B_recovery_barrier_to_egress`, `B_startup_reconciliation`, `MAX_recovery_readiness_age`, source freshness, convergence, and invalidation bounds are approved?
 13. Which ADR-002-018 Critical Input Policy, source-continuity, Snapshot/Capsule, correction, common-mode, and invalidation obligations must be current before recovery readiness for each scope?
+14. Which ADR-002-023 Trading Approval Policy/Generation, pending decision, consumption namespace, Intent binding, writer fence, and invalidation obligations must be inventoried before recovery readiness?
 
 ---
 
@@ -699,8 +700,9 @@ ADR-002-017 SHALL remain **Proposed** until all of the following are complete:
 13. ADR-002-020 construction policy/generation, deterministic compiler/verifier, exact command/proof/effect binding, invalidation, downstream mutation, recovery inventory, and non-revival are complete recovery obligations and applicable IOC evidence passes;
 14. ADR-002-021 risk policy/generation, state consistency cut, scenarios, vectors, evaluator/verifier, exact decision/RCL binding, invalidation, recovery inventory, and non-revival are complete recovery obligations and applicable ARE evidence passes;
 15. ADR-002-022 action-flow policy/generation, state consistency cut, cause/amplification lineage, exact decision/vector/RCL permit binding, protective reserve, invalidation, recovery inventory, and non-revival are complete recovery obligations and applicable AFG evidence passes;
-16. recovery trigger, barrier, egress, inventory, convergence, Critical Input, venue-constraint, conformance, aggregate-risk, and action-flow invalidation, context/decision/command/proof/permit/snapshot-age, readiness-age, time, evidence, and broker bounds are approved and measured;
-17. no unresolved stale-owner, partial-scope, forced-ready, optimistic-snapshot, restore, stale-context/constraint/conformance/risk/flow-decision, capacity-release, permit-reuse, HALT, egress, or automatic re-arm path remains;
-18. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
+16. ADR-002-023 approval policy/generation, request/decision/consumption/Intent lineage, independent-path status, writer fencing, invalidation, recovery inventory, and non-revival are complete recovery obligations and applicable IAP evidence passes;
+17. recovery trigger, barrier, egress, inventory, convergence, Critical Input, venue-constraint, conformance, aggregate-risk, action-flow, and approval invalidation, context/request/decision/command/proof/permit/snapshot-age, readiness-age, time, evidence, and broker bounds are approved and measured;
+18. no unresolved stale-owner, partial-scope, forced-ready, optimistic-snapshot, restore, stale-context/constraint/conformance/risk/flow/approval-decision, duplicate-consumption, capacity-release, permit-reuse, HALT, egress, or automatic re-arm path remains;
+19. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Until those gates pass, this ADR authorizes architecture and implementation-planning work only. It does not claim verification completion, ADR acceptance, restricted-live readiness, production readiness, or live trading authority.

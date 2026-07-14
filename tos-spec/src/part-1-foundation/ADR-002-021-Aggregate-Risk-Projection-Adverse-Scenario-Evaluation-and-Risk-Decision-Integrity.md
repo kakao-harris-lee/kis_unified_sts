@@ -727,5 +727,6 @@ ADR-002-021 SHALL remain `Proposed` until all of the following are complete:
 11. No open Critical or Major finding remains; numerical, scenario-completeness, common-mode, currentness, and security findings are included.
 12. Architecture, risk, security, broker/venue, operations, and independent safety reviewers approve the residual-risk and live-scope disposition.
 13. ADR-002-022 binds the exact action-flow vector and single-use permit to the same command/effect/risk-decision chain without creating a second capacity authority, and applicable AFG evidence passes.
+14. ADR-002-023 ensures the upstream immutable Intent was created by one exact current independently validated and singly consumed approval decision without allowing approval to grant aggregate-risk allocation, and applicable IAP evidence passes.
 
 This ADR authorizes architecture and implementation-planning work only. It grants no capacity, Accepted status, restricted-live readiness, production readiness, or live trading authority.

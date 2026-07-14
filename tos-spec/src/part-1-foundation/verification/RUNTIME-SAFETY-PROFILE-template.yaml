@@ -111,6 +111,12 @@ references:
   adverse_scenario_set_id: TBD
   adverse_scenario_set_generation: null
   adverse_scenario_set_digest: TBD
+  action_flow_policy_id: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
   broker_capability_profiles: []
   verification_profile_id: TBD
   verification_profile_version: TBD

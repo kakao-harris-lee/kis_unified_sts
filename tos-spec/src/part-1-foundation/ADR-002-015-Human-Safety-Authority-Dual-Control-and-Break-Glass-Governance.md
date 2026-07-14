@@ -93,6 +93,8 @@ This ADR does not select:
 
 Human authority under this ADR is TOS safety authority. Broker portal, support desk, dealer, or other external manual authority remains external activity under ADR-002-004, ADR-002-006, and ADR-002-013.
 
+ADR-002-023 separately governs automated per-proposal independent approval and its single-use Intent Registry consumption. A Human Approval Set may approve governance, residual risk, or re-arm where policy requires, but it cannot substitute for the ADR-002-023 independent automated decision; conversely an automated `APPROVE` cannot satisfy a human quorum.
+
 ---
 
 ## 5. Definitions

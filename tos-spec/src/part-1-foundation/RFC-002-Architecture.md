@@ -501,7 +501,7 @@ The following matrix is the normative authority model.
 | Action | Policy authority | State-transition or enforcement authority | Prohibited combination |
 |---|---|---|---|
 | Propose trading action | Decision Service | None | Decision Service SHALL NOT approve, commit, or transmit |
-| Approve proposal | Independent Approval Service | None | Approval Service SHALL NOT commit or transmit |
+| Approve proposal | Independent Approval Service | Intent Registry atomically consumes one exact current decision into one immutable Intent | Approval Service SHALL NOT create Intent state, commit capacity, issue authority, or transmit |
 | Construct canonical broker command | Order Construction Policy governance supplies rules | Order Construction Service produces a non-authorizing candidate and later conformance proof; Broker Egress Gateway verifies the actual outbound representation | Order Construction Service SHALL NOT approve, mutate capacity, classify protection, issue authority, transmit, or arm live scope |
 | Evaluate venue and order admissibility | Venue Constraint Policy governance supplies rules | Venue Constraint Gate produces a non-authorizing decision; Broker Egress Gateway enforces the exact current result | Venue Constraint Gate SHALL NOT approve, commit capacity, classify protection, transmit, or arm live scope |
 | Evaluate aggregate risk | Aggregate Risk Policy governance supplies rules; Aggregate Risk Authority grants or denies an exact allocation request | RCL admits and serializes only the exact current decision; final egress fences its current binding | Aggregate Risk Authority SHALL NOT mutate capacity, issue live authority, or transmit |
@@ -574,12 +574,14 @@ The Decision Service SHALL NOT:
 
 Responsibilities:
 
-* validate intent against approved policy;
-* independently verify safety-critical intent fields;
+* validate one exact immutable proposal against the current Trading Approval Policy;
+* independently verify safety-critical proposal fields and common-mode dependencies;
 * validate account, instrument, direction, quantity, unit, and price constraints;
-* reject intent that does not conform to trusted context.
+* reject or return `UNKNOWN` for a proposal that is incomplete, stale, conflicting, unsupported, unverifiable, or does not conform to trusted context.
 
 Approval SHALL NOT imply final execution authority.
+
+ADR-002-023 defines the normative Trading Approval Policy and Generation, complete immutable Proposal Approval Request, independent recomputation and common-mode analysis, deterministic `APPROVE`/`DENY`/`UNKNOWN` decision, single-use Intent Registry consumption, dependency-complete invalidation, and active final-egress approval currentness. `APPROVE` is eligible only for one exact Intent registration and creates no capacity, protective classification, Live Authorization, Transmission Capability, broker permission, or re-arm authority.
 
 ---
 
@@ -693,6 +695,7 @@ Before any risk-relevant or broker-resource-consuming transmission, it SHALL ver
 - exact current Venue Constraint Snapshot and Order Admissibility Decision binding;
 - current venue, session, halt, tradability, account, margin, settlement, and broker-constraint generation;
 - current Order Construction Policy, Construction Generation, Authorized Construction Envelope, Canonical Broker Command, Order Conformance Proof, and Economic Effect Envelope;
+- exact current Trading Approval Policy, Trading Approval Generation, Proposal Approval Request, Independent Approval Decision, single-use Approval Consumption Record, and immutable Intent binding;
 - exact current Action Flow Policy, Action Flow Generation, Action Flow Decision, RCL action-flow commitment, and unused single-use Action Flow Permit;
 - conformance of the actual outbound representation to the exact command and authorized economic effect.
 
@@ -1001,6 +1004,8 @@ ADR-002-018 requires the exact Decision Context Capsule identity and digest to r
 ADR-002-019 additionally requires one exact current Venue Constraint Snapshot and Order Admissibility Decision for the complete broker-request shape. A calendar, quote, connection, or “exit” label does not prove executability; constraint invalidation blocks future new-risk send without erasing prior economic effect.
 
 ADR-002-020 requires the candidate Canonical Broker Command to be constructed deterministically from one immutable proposal before venue evaluation and independent approval. Approval and Intent registration bind the unchanged proposal, envelope, candidate digest, and exact admissibility decision. Its later non-authorizing Order Conformance Proof binds those results to the RCL commitment before authority issuance. Final egress compares the actual outbound representation and does not repair or recompile a mismatch.
+
+ADR-002-023 requires one complete Proposal Approval Request and one exact Independent Approval Decision over the unchanged Capsule, proposal, construction envelope, candidate command, venue decision, policies, generations, and independent facts. The Intent Registry atomically consumes `APPROVE` once into one immutable Intent; later stages may only narrow or deny, and final egress actively verifies the exact current approval and consumption lineage.
 
 ADR-002-021 requires one exact current aggregate-state snapshot and approved adverse-scenario set to project the Economic Effect Envelope across every applicable risk dimension and scope. The Aggregate Risk Decision precedes RCL commitment and grants only an exact allocation request; the RCL remains the sole capacity mutation/serialization authority, and the later conformance proof binds decision and commitment without a cyclic dependency.
 
@@ -1651,6 +1656,8 @@ ADR-002-021 defines complete aggregate-state consistency cuts, adverse-scenario 
 
 ADR-002-022 defines complete broker-directed action classification, distributed shared-scope budgets, bounded cause amplification, RCL-serialized single-use Action Flow Permits, retry/reconnect containment, Protective Flow Reserve, and active final-egress currentness. Action Flow Governors, producer-local limiters, schedulers, queues, retry/reconnect services, evidence, and replay identities SHALL NOT mutate distributed capacity, issue Live Authorization or Transmission Capability, classify protection, transmit outside final egress, clear HALT, or re-arm.
 
+ADR-002-023 defines automated independent proposal approval, complete exact request and decision binding, true validation-path independence, serialized single-use Intent registration, invalidation fan-out, and active final-egress approval currentness. Approval evaluators, independent-input services, policy engines, Intent Registry identities, evidence, and replay identities SHALL NOT mutate capacity, issue Live Authorization or Transmission Capability, classify protection, transmit, clear HALT, or re-arm.
+
 ---
 
 ## 26. Architectural Decision Records
@@ -1681,8 +1688,9 @@ The following ADRs are initially required.
 | ADR-002-020 | Intent-to-Order Conformance, Canonical Command Construction, and Economic-Effect Fencing | Proposed |
 | ADR-002-021 | Aggregate Risk Projection, Adverse-Scenario Evaluation, and Risk-Decision Integrity | Proposed |
 | ADR-002-022 | Action-Flow Budgeting, Retry-Storm Containment, and Protective-Traffic Preservation | Proposed |
+| ADR-002-023 | Independent Proposal Approval, Exact-Decision Binding, and Consumption Fencing | Proposed |
 
-ADR-002-002 through ADR-002-022 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability, Intent-to-order conformance, aggregate-risk evaluation, and action-flow governance decisions ADR-002-012 → ADR-002-013 → ADR-002-014 → ADR-002-015 → ADR-002-016 → ADR-002-017 → ADR-002-018 → ADR-002-019 → ADR-002-020 → ADR-002-021 → ADR-002-022 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-022, including one-to-one dedicated cases for ADR-002-005 through ADR-002-022. All 267 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
+ADR-002-002 through ADR-002-023 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, and independent proposal-approval decisions ADR-002-012 → ADR-002-013 → ADR-002-014 → ADR-002-015 → ADR-002-016 → ADR-002-017 → ADR-002-018 → ADR-002-019 → ADR-002-020 → ADR-002-021 → ADR-002-022 → ADR-002-023 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-023, including one-to-one dedicated cases for ADR-002-005 through ADR-002-023. All 279 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status.
 
 ---
 
@@ -1694,13 +1702,13 @@ ADR-002-002 through ADR-002-022 are authored as co-located `Proposed` decisions.
 | SAFE-002            | Protective Action Controller, Position Projection, Cancellation Arbiter |
 | SAFE-003            | Safety Profile Validator                                |
 | SAFE-004            | Hard Safety Envelope Registry                           |
-| SAFE-010            | Aggregate Risk Authority, Risk Capacity Ledger, Broker Egress Gateway |
+| SAFE-010            | Independent Approval Service, Intent Registry, Aggregate Risk Authority, Risk Capacity Ledger, Broker Egress Gateway |
 | SAFE-011            | Safety Control Plane                                    |
 | SAFE-012            | Aggregate Risk Policy, Adverse Scenario Set, Aggregate Risk Authority |
 | SAFE-013            | Aggregate Risk State Snapshot, Aggregate Risk Authority, Risk Capacity Ledger |
 | SAFE-014            | Action Flow Governor, Risk Capacity Ledger, Execution Coordinator, Broker Egress Gateway |
 | SAFE-015            | Risk Capacity Ledger, Action Flow Permit                |
-| SAFE-020            | Intent Registry                                         |
+| SAFE-020            | Independent Approval Decision, Approval Consumption Record, Intent Registry |
 | SAFE-021            | Execution Coordinator, Intent Registry, Risk Capacity Ledger, Broker Egress Gateway |
 | SAFE-022            | Reconciliation Service                                  |
 | SAFE-023            | Reconciliation Service                                  |
@@ -1710,7 +1718,7 @@ ADR-002-002 through ADR-002-022 are authored as co-located `Proposed` decisions.
 | SAFE-031            | Context Integrity Service, Critical Input Policy, Evidence Store |
 | SAFE-032            | Venue Constraint Gate, Context Integrity Service, Broker Egress Gateway |
 | SAFE-033            | Decision Context Capsule, Order Construction Service, Canonical Broker Command, Order Conformance Proof, Order Admissibility Decision, Independent Approval Service, Execution Coordinator, Broker Egress Gateway |
-| SAFE-034            | Independent Approval Service, Critical Input common-mode analysis, Human Authority Governance |
+| SAFE-034            | Trading Approval Policy, Independent Approval Service, Critical Input common-mode analysis, Human Authority Governance |
 | SAFE-035            | Trustworthy Time Service                                |
 | SAFE-040            | Protective Action Controller, Cancellation Arbiter, Broker Egress Gateway |
 | SAFE-041            | Safety Authority, Human Authority Governance            |
@@ -1731,7 +1739,7 @@ This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
 ## 28. Open Architectural Decisions
 
-ADR-002-005 through ADR-002-022 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, and action-flow governance models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, Critical Input Policy, Venue Constraint Policy, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Recovery Barrier Policy, Evidence Integrity Policy, or Broker Capability Profile.
+ADR-002-005 through ADR-002-023 now define the normative orthogonal-state, evidence-confidence, trustworthy-time, re-arm, failure-domain, protective-replacement, non-trade-event, RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, and independent proposal-approval models. Their listed implementation and acceptance questions remain open while those ADRs are `Proposed`. The following architecture and implementation choices SHALL be resolved by the assigned ADR, implementation specification, Verification Profile, Critical Input Policy, Venue Constraint Policy, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Trading Approval Policy, Recovery Barrier Policy, Evidence Integrity Policy, or Broker Capability Profile.
 
 1. Which conforming replicated-state-machine product, storage engine, voter topology, and durability configuration implement ADR-002-012's selected quorum Safety Commit Log mechanism?
 2. Which conforming non-exportable signer or credential service, identity-aware order route, Quorum Commit Certificate format, Active Egress Principal topology, and Hard Egress Fence implement ADR-002-013 while carrying ADR-002-007 and ADR-002-012 generations to the broker-send boundary?
@@ -1744,12 +1752,13 @@ ADR-002-005 through ADR-002-022 now define the normative orthogonal-state, evide
 9. Which canonical schemas, deterministic numeric/unit system, mapping registry, compiler, independent verifier, serializer/SDK constraints, actual-outbound comparison, Construction Generation, and invalidation mechanism implement ADR-002-020?
 10. Which Aggregate Risk Policy, state consistency-cut, risk-vector, scenario, valuation, uncertainty, netting/hedge, numerical, independent-verification, Aggregate Risk Generation, and active RCL/final-egress currentness mechanisms implement ADR-002-021?
 11. Which Action Flow Policy, scope graph, RCL vector/permit, atomic risk/action commitment, cause-lineage/amplification, distributed refill, protective lease/reserve, and active RCL/final-egress currentness mechanisms implement ADR-002-022?
-12. What deployment topology provides the required failure-domain isolation?
-13. What numeric detection, containment, protective-gap, lease, retry, action-flow, amplification, queue, evidence-persistence, evidence-gap, recovery-barrier, Critical Input invalidation, venue-constraint invalidation, conformance invalidation, aggregate-risk invalidation, context/decision/command/proof/snapshot-age, readiness-age, retention, and replay bounds are approved?
-14. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
-15. Which broker resources can be physically or logically reserved for protection?
-16. How are corporate actions and other non-trade changes attributed and remapped?
-17. What restricted-production evidence is required beyond non-live verification?
+12. Which Trading Approval Policy, canonical request/decision/consumption schemas, independent validation and common-mode paths, Trading Approval Generation, Intent Registry single-use transaction, invalidation graph, and active final-egress currentness mechanisms implement ADR-002-023?
+13. What deployment topology provides the required failure-domain isolation?
+14. What numeric detection, containment, protective-gap, lease, retry, action-flow, amplification, queue, approval-invalidation, evidence-persistence, evidence-gap, recovery-barrier, Critical Input invalidation, venue-constraint invalidation, conformance invalidation, aggregate-risk invalidation, context/request/decision/command/proof/snapshot-age, readiness-age, retention, and replay bounds are approved?
+15. What evidence establishes broker-specific Final Quantity Proof and external-activity detection bounds?
+16. Which broker resources can be physically or logically reserved for protection?
+17. How are corporate actions and other non-trade changes attributed and remapped?
+18. What restricted-production evidence is required beyond non-live verification?
 
 Open decisions SHALL NOT be resolved by informal implementation convention.
 
@@ -1873,7 +1882,7 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Added re-arm governance prohibiting automatic re-arm.
 * Added the Failure-Domain Allocation requirement.
 * Added verification and acceptance-bound requirements.
-* Expanded the ADR register through ADR-002-022 and registered ADR-002-002 through ADR-002-022 as Proposed.
+* Expanded the ADR register through ADR-002-023 and registered ADR-002-002 through ADR-002-023 as Proposed.
 * Added the Phase B failure-domain isolation, protective-replacement, and corporate-action/non-trade decisions without changing verification or live-readiness status.
 * Selected the quorum-replicated deterministic Safety Commit Log mechanism class for RCL persistence, consensus, writer fencing, currentness ordering, and recovery in ADR-002-012; concrete products and deployment values remain open.
 * Defined the effective Final Egress Trust Boundary, credential and route confinement, quorum-sufficient Commit Proof validation, and stale-egress hard fencing in ADR-002-013.
@@ -1886,5 +1895,6 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Defined deterministic Intent-to-order construction, closed Authorized Construction Envelopes, Canonical Broker Commands, conservative Economic Effect Envelopes, Order Conformance Proofs, downstream mutation fencing, and actual-outbound verification in ADR-002-020.
 * Defined complete aggregate-state cuts, adverse-scenario evaluation, vector/scoped projection, positive benefit proof, deterministic numerical safety, exact allocation decisions, RCL binding, and active currentness in ADR-002-021.
 * Defined complete broker-directed action classification, distributed shared-scope action-flow budgets, bounded cause amplification, RCL-serialized single-use permits, retry/reconnect containment, Protective Flow Reserve, and active currentness in ADR-002-022.
-* Expanded VER-002-001 and the Evidence Register to 267 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-022.
+* Defined automated independent proposal approval, exact immutable request/decision binding, true validation-path independence, serialized single-use Intent consumption, invalidation closure, and active egress currentness in ADR-002-023.
+* Expanded VER-002-001 and the Evidence Register to 279 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-023.
 * Resolves review findings A-01 through A-14.
