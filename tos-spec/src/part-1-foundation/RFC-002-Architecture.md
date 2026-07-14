@@ -494,6 +494,7 @@ The following matrix is the normative authority model.
 |---|---|---|---|
 | Propose trading action | Decision Service | None | Decision Service SHALL NOT approve, commit, or transmit |
 | Approve proposal | Independent Approval Service | None | Approval Service SHALL NOT commit or transmit |
+| Evaluate venue and order admissibility | Venue Constraint Policy governance supplies rules | Venue Constraint Gate produces a non-authorizing decision; Broker Egress Gateway enforces the exact current result | Venue Constraint Gate SHALL NOT approve, commit capacity, classify protection, transmit, or arm live scope |
 | Evaluate aggregate risk | Aggregate Risk Authority | None | Aggregate Risk Authority SHALL NOT mutate capacity or transmit |
 | Commit normal risk capacity | Aggregate Risk Authority supplies a grant decision | Risk Capacity Ledger is the sole serialization and mutation authority | Execution Coordinator SHALL NOT mutate capacity |
 | Pre-commit protective pool | Aggregate Risk Authority supplies a grant decision | Risk Capacity Ledger commits the pool | Protective Action Controller SHALL NOT enlarge the pool |

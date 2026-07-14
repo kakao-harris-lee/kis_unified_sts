@@ -3,7 +3,7 @@
 - **Date:** 2026-07-14
 - **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-019
 - **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, and venue/session/tradability-constraint decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
-- **Latest Architecture Review:** ADR-002-002 through ADR-002-018 PASS at document-review level; ADR-002-019 independent review pending; no status or live-readiness promotion
+- **Latest Architecture Review:** ADR-002-002 through ADR-002-019 PASS at document-review level; no status or live-readiness promotion
 - **Verification Execution:** Not started
 - **Production Authorization:** NO
 
@@ -33,8 +33,8 @@ The following design decisions now have normative documents:
 18. ADR-002-017 Safe Startup, Recovery Barrier, and Conservative Resume Coordination
 19. ADR-002-018 Critical Input Integrity, Provenance, and Decision-Context Fencing
 20. ADR-002-019 Venue, Session, Tradability, and Broker Constraint Gate
-20. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
-21. Evidence Register and configuration/evidence templates
+21. VER-002-001 Safety-Critical Architecture Verification Evidence Specification
+22. Evidence Register and configuration/evidence templates
 
 ---
 
@@ -162,11 +162,11 @@ The independent ADR-002-017 document and adversarial-sequence review found no Cr
 
 The independent ADR-002-018 document, adversarial-sequence, integration, and traceability review found no Critical or Major issue and no unsafe sequence. Twenty-two sequences were blocked outright and two final-egress invalidation/send races were correctly classified as open-but-gated by fail-closed currentness and unapproved bounds. Two Minor clarity findings were resolved conservatively: §1/§15/§17 now make materiality and binding applicability policy-owned with unknown materiality treated as Critical/material, and ADR-002-014 §12.3 now states in its normative body that configuration activation does not establish Critical Input or Decision Context validity/currentness. The review PASS is EV-L0 only; currentness implementation, approved bounds, security review, and executed evidence remain open.
 
-ADR-002-019 is newly authored and integrated. Its independent architecture, adversarial-sequence, security-boundary, and traceability review is pending. Registration of VTG acceptance cases and evidence does not constitute review completion, executed evidence, acceptance, or live readiness.
+The independent ADR-002-019 document, adversarial-sequence, integration, and traceability review found no Critical or Major issue and no unsafe sequence. Twenty-two sequences were blocked outright and two final-egress invalidation/send or constraint-plane-partition races were correctly classified as open-but-gated by fail-closed currentness and unapproved bounds. Two non-safety Minor findings were resolved: the Completed Design Artifacts list now has unique sequential numbering, and RFC-002 §9.1 now includes the Venue Constraint Gate as an explicitly non-authorizing evaluator whose decision cannot approve, commit capacity, classify protection, transmit, or arm live scope. The review PASS is EV-L0 only; the fenced currentness protocol, approved bounds, security review, and executed evidence remain open.
 
 ```text
 ADR-002-002 through ADR-002-018 status: Proposed; document review PASS
-ADR-002-019 status: Proposed; independent document review pending
+ADR-002-019 status: Proposed; independent document review PASS; two non-safety Minor findings resolved
 ADR-002-018 independent document review: PASS; two Minor findings resolved
 ADR-002-016 independent document review: PASS; no finding supplied for disposition
 ADR-002-017 independent document review: PASS; four Minor findings resolved
