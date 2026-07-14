@@ -89,7 +89,7 @@ Requirement traceability requires stable identifiers.
 
 # 5. Normative Requirement Structure
 
-Every constitutional requirement SHALL contain the following fields.
+Every constitutional requirement SHALL contain the following mandatory fields.
 
 ```
 Identifier
@@ -113,11 +113,39 @@ Risk of Violation
 Verification
 
 Derived Requirements
+```
 
+A constitutional requirement MAY additionally carry the following optional
+fields. They are supplementary cross-references, not completeness gates:
+
+```
 Traceability
 
 Revision History
 ```
+
+Document-level change history is recorded in the Review History section rather
+than per-requirement, so a `Revision History` field is present only where a
+requirement carries requirement-specific history.
+
+A `Derived Requirements` entry marked `(reserved)` names an identifier
+namespace that is anticipated but not yet instantiated in this specification
+set. Three such namespaces are reserved:
+
+* `ARCH-xxx` — architecture-level requirements. These are currently discharged
+  through the `ADR-002-xxx` decision series (see RFC-002 §26) rather than a
+  standalone `ARCH-xxx` register; the reserved marker preserves the intended
+  constitution-to-architecture trace until or unless a dedicated register is
+  introduced.
+* `DEC-xxx` — decision-layer requirements, anticipated for the future RFC-003
+  Decision Framework and its part-2 companions.
+* `TEST-xxx` — test-and-verification requirements, currently discharged through
+  VER-002-001 and the Evidence Register rather than a standalone `TEST-xxx`
+  register.
+
+A reserved marker is a forward placeholder only. It grants no requirement,
+creates no obligation, and SHALL NOT be treated as a defined identifier until
+its namespace is formally instantiated through governance.
 
 ### Rationale
 
@@ -609,7 +637,7 @@ Architecture SHALL demonstrate logical separation between Decision and Approval.
 
 ### Derived Requirements
 
-ARCH-002
+ARCH-002 (reserved)
 
 SAFE-004
 
@@ -742,9 +770,9 @@ Decision Context SHALL include venue state.
 
 ### Derived Requirements
 
-ARCH-005
+ARCH-005 (reserved)
 
-DEC-003
+DEC-003 (reserved)
 
 SAFE-015
 
@@ -800,7 +828,7 @@ Architecture SHALL define reconciliation mechanisms.
 
 ### Derived Requirements
 
-ARCH-008
+ARCH-008 (reserved)
 
 SAFE-020
 
@@ -980,7 +1008,7 @@ Architecture SHALL demonstrate independence of constitutional safety authority.
 
 ### Derived Requirements
 
-ARCH-011
+ARCH-011 (reserved)
 
 SAFE-041
 
@@ -1135,9 +1163,9 @@ Architecture SHALL define operational validation.
 
 ### Derived Requirements
 
-ARCH-015
+ARCH-015 (reserved)
 
-SAFE-060
+SAFE-022, SAFE-023, SAFE-024, SAFE-035, SAFE-044, SAFE-046
 
 ---
 
@@ -1197,11 +1225,11 @@ All downstream specifications SHALL preserve pre-execution assurance.
 
 ### Derived Requirements
 
-SAFE-070
+SAFE-010, SAFE-020, SAFE-021, SAFE-025, SAFE-033, SAFE-051, SAFE-052
 
-ARCH-020
+ARCH-020 (reserved)
 
-TEST-001
+TEST-001 (reserved)
 
 ---
 

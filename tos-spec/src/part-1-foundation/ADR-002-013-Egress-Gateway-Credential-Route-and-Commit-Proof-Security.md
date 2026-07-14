@@ -98,7 +98,7 @@ Any implementation may conform only if its actual credential, route, session, ad
 
 ### 5.1 Broker Egress Authority
 
-The sole logical authority permitted to transform a quorum-claimed transmission attempt into a broker-directed order-affecting request for one declared Safety Cell and scope.
+The sole logical authority permitted to transform a quorum-claimed transmission attempt into a broker-directed order-affecting request for one declared Safety Cell and scope. This is the authority exercised by the RFC-002 §10.8 Broker Adapter / Broker Egress Gateway component; "Broker Egress Authority" names the authority, not a separate component.
 
 ### 5.2 Final Egress Trust Boundary
 
@@ -125,6 +125,8 @@ The finite set of non-transferable runtime workload identities authorized under 
 ### 5.7 Quorum Commit Certificate
 
 Consumer-verifiable proof that a quorum sufficient under ADR-002-012 durably accepted the exact committed command and result. It may use individual signatures, an aggregate signature, or another reviewed quorum-verifiable construction, but SHALL NOT reduce to one leader signature, local receipt, cache entry, or projection.
+
+Where this ADR's body says "Commit Proof" (including the §11 heading and EGRESS-INV-004), it means the Quorum Commit Certificate defined here — the egress-boundary artifact that carries the ADR-002-012 Commit Proof as one of its bound claims. The bare ADR-002-012 Commit Proof is necessary but not sufficient at final egress; the full Quorum Commit Certificate claim set in §11.1 SHALL be satisfied.
 
 ### 5.8 Hard Egress Fence
 

@@ -16,7 +16,7 @@ Safety-incident response SHALL be governed as a monotonic, restrictive, exact-sc
 
 One active ADR-002-014 governed **Safety Incident Policy** SHALL define authoritative incident signals, severity and scope rules, required restriction, escalation and notification paths, controlled-shutdown rules, evidence obligations, independence requirements, closure conditions, and failure behavior. Missing, stale, ambiguous, conflicting, or incompletely classified incident state is restrictive for the greatest credible affected scope.
 
-A material safety signal SHALL create or update an immutable **Safety Incident Record** and advance the **Incident Generation** before later dependent permission can be treated as current. Formal ticket creation, human availability, or classification completion SHALL NOT delay an independently available Human HALT, Safety Authority restriction, Currentness Fence, or final-egress deny latch.
+A material safety signal SHALL create or update an immutable **Safety Incident Record** and advance the **Incident Generation** before later dependent permission can be treated as current. Formal ticket creation, human availability, or classification completion SHALL NOT delay an independently available Human HALT, Safety Authority restriction, ADR-002-024 Restrictive Fence Record, or final-egress deny latch.
 
 The **Active Safety Incident Set** SHALL be the canonical dependency-complete union of every open, suspected, overlapping, parent, child, and common-mode incident applicable to an exact Safety Cell and scope. A consumer SHALL NOT select a favorable subset, close one child while a shared unresolved cause remains, or union narrow closure decisions into broader permission.
 
