@@ -398,7 +398,7 @@ No monitor or alert may downgrade an existing fence or incident, select a narrow
 
 ## 18. Final-Egress Active Currentness
 
-Where a Monitoring Policy declares continuous monitoring mandatory for the exact action scope, the Broker Egress Gateway SHALL include these facts in the ADR-002-024 Safety Currentness Vector:
+Where continuous monitoring is required for the exact action scope — as established by the requirement, hazard, and control registry (§9), not by policy self-declaration alone — the Broker Egress Gateway SHALL include these facts in the ADR-002-024 Safety Currentness Vector:
 
 1. exact Safety Monitoring Policy identity, generation, and digest;
 2. exact Critical Telemetry and Monitor Coverage Manifest digests;
@@ -598,11 +598,11 @@ Publisher restart, sequence gap, schema/unit drift, derivation change, or time d
 
 Missing telemetry, quiet time, health heartbeats, cache, empty query, or stale dashboard cannot produce `CONFORMING` or permission.
 
-### STM-AC-004 — Independence and Common Mode
+### STM-AC-004 — Effective Independence and Common Mode
 
 Shared collector, parser, clock, datastore, administrator, deployment, or notification route is disclosed and cannot count as independent corroboration.
 
-### STM-AC-005 — Bound and Evaluator Integrity
+### STM-AC-005 — Deterministic Evaluation and Bound Integrity
 
 Hard maximum, units, trigger, uncertainty, hysteresis, debounce, and failure response are exact; parser differential, NaN, overflow, or local threshold change fails closed.
 
