@@ -248,7 +248,7 @@ For the exact action, the vector SHALL bind at least:
 - Currentness Policy identity, generation, digest, and compatibility manifest;
 - Safety Commit Log cluster, membership, restore, writer, and committed-prefix identities;
 - Safety Authority epoch, revocation generation, HALT generation, and Live Authorization;
-- Hard Safety Envelope, Runtime Safety Profile, and activation generations;
+- Hard Safety Envelope, Runtime Safety Profile, activation, ADR-002-026 Safety Deviation Policy, Active Deviation Set, and Deviation generations;
 - Trustworthy Time, Recovery, Critical Input, Context, Constraint, Construction, Trading Approval, Aggregate Risk, and Action Flow generations;
 - exact decision, proof, Intent, commitment, permit, and invalidation identities required by the action;
 - Egress Generation, active principal, credential, route, endpoint, signer, session, and trust-bundle generations;

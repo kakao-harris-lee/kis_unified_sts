@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **303**
-- NOT_IMPLEMENTED: **303**
+- Total evidence items: **315**
+- NOT_IMPLEMENTED: **315**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -326,7 +326,19 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | RLP-EV-010 | Restricted-Live and Promotion Governance | Restart, Recovery, and Non-Revival | ADR-002-025 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | RLP-EV-011 | Restricted-Live and Promotion Governance | Continuous Conformance and Demotion | ADR-002-025 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
 | RLP-EV-012 | Restricted-Live and Promotion Governance | Gate Honesty and Status Separation | ADR-002-025 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-001 | Safety Deviation and Residual Risk | Non-Waivable Boundary | ADR-002-026 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-002 | Safety Deviation and Residual Risk | Exact Scope and Dependency Closure | ADR-002-026 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-003 | Safety Deviation and Residual Risk | Compensating-Control Effectiveness | ADR-002-026 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-004 | Safety Deviation and Residual Risk | Independent Effective-Person Approval | ADR-002-026 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-005 | Safety Deviation and Residual Risk | Non-Authorizing Single-Use Activation | ADR-002-026 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-006 | Safety Deviation and Residual Risk | Currentness, Revocation, and Send Race | ADR-002-026 | EV-L3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-007 | Safety Deviation and Residual Risk | UNKNOWN, Capacity, and Protective Confinement | ADR-002-026 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-008 | Safety Deviation and Residual Risk | Broker Finality and Economic Continuity | ADR-002-026 | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-009 | Safety Deviation and Residual Risk | Expiry, Renewal, Recovery, and Non-Revival | ADR-002-026 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-010 | Safety Deviation and Residual Risk | Evidence and Status Honesty | ADR-002-026 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-011 | Safety Deviation and Residual Risk | Security, Alternate Route, and Emergency Behavior | ADR-002-026 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| WDR-EV-012 | Safety Deviation and Residual Risk | Combined Deviations and Gate Separation | ADR-002-026 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 
-An ADR cannot move to `Accepted` while any required item is `NOT_IMPLEMENTED`, `READY`, `RUNNING`, `FAIL`, `INCONCLUSIVE`, `BLOCKED`, or `EXPIRED`. `WAIVED_WITH_RESIDUAL_RISK` is allowed only where RFC-001 explicitly permits it and the live scope is reduced accordingly.
+An ADR cannot move to `Accepted` while any required item is `NOT_IMPLEMENTED`, `READY`, `RUNNING`, `FAIL`, `INCONCLUSIVE`, `BLOCKED`, or `EXPIRED`. `WAIVED_WITH_RESIDUAL_RISK` is allowed only where RFC-001 explicitly permits it and one exact current ADR-002-026 decision, Residual-Risk Acceptance Record, compensating-control proof, Active Deviation Set, reduced configuration scope, and independent review are bound. That status remains non-PASS and non-authorizing.

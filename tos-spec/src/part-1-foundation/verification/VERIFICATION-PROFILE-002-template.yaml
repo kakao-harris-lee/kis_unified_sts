@@ -57,6 +57,12 @@ scope:
   restricted_live_trial_policy_id: TBD
   restricted_live_trial_policy_generation: null
   restricted_live_trial_policy_digest: TBD
+  safety_deviation_policy_id: TBD
+  safety_deviation_policy_generation: null
+  safety_deviation_policy_digest: TBD
+  active_deviation_set_id: TBD
+  active_deviation_set_generation: null
+  active_deviation_set_digest: TBD
 bounds:
   B_authority_partition_detect:
     value_ms: null
@@ -324,6 +330,27 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+  B_deviation_revoke_to_authority:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
+  B_deviation_revoke_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
+  B_deviation_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT_OR_CONTAIN
   B_final_quantity_proof:
     value_ms: null
     semantics: broker_specific
@@ -484,6 +511,9 @@ limits:
   MAX_trial_action_count: null
   MAX_trial_duration_ms: null
   MAX_trial_evidence_age_ms: null
+  MAX_deviation_duration_ms: null
+  MAX_deviation_decision_age_ms: null
+  MAX_residual_risk_review_interval_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD

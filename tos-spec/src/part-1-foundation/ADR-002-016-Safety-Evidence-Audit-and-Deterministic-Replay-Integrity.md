@@ -256,6 +256,7 @@ Evidence SHALL be captured at the component that owns the decision or irreversib
 15. **recovery boundary** — startup barrier, inventory, UNKNOWN, external activity, gap, decision, and governed re-arm request;
 16. **verification boundary** — baseline, fault injection, raw artifacts, invariant result, review, and supersession;
 17. **restricted-live and promotion boundary** — exact Trial Policy, Plan, Run, authorization, action/effect/count/duration envelope, abort, negative and inconclusive evidence, Trial Evidence Package, coverage claim, independent promotion decision, single-use consumption, configuration activation, demotion, and continuous-conformance history.
+18. **safety-deviation and residual-risk boundary** — exact Policy, Non-Waivable Boundary result, Request, requirement/hazard citations, dependency closure, combined risk, compensating controls, Effective Principal review, Decision, Residual-Risk Acceptance Record, Active Deviation Set, single-use consumption, configuration activation, Deviation Generation, currentness, expiry, revocation, and non-revival history.
 
 ADR-002-025 Trial Evidence Packages and Production Scope Promotion Decisions are derived evidence and governance artifacts. Their custody, integrity, completeness, or review status cannot create capacity, validate currentness, activate configuration, issue Live Authorization, transmit, clear HALT, resume a run, promote automatically, or re-arm.
 

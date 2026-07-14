@@ -458,7 +458,7 @@ A decision is invalidated by any material change to:
 - non-trade event, reference identity, settlement, assignment, exercise, transfer, fee, or financing state;
 - Safety Authority, HALT, revocation, time, profile, authorization, currentness, egress, credential, route, deployment, software, schema, or identity generation;
 - protection, ownership, gap, overlap, resource guarantee, venue, tradability, or account usability;
-- evidence confidence, source continuity, gap, integrity, anchor, policy, replay, incident, alert, approval, or residual risk.
+- evidence confidence, source continuity, gap, integrity, anchor, policy, replay, incident, alert, approval, ADR-002-026 Safety Deviation Policy/Active Deviation Set/Deviation Generation/expiry/revocation/compensating-control state, or residual risk.
 
 Invalidation advances or closes the barrier for affected scope before a later Live Authorization may be issued. A consumer cannot continue using a cached readiness decision beyond `MAX_recovery_readiness_age` or after a newer generation is observed. Expiry is restrictive and does not affect economic lifetime.
 

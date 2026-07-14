@@ -271,7 +271,7 @@ Every Approval Request SHALL bind at least:
 - Recovery Evidence Package and readiness decision identities;
 - Hard Safety Envelope, Runtime Safety Profile, Human Authority Policy, Broker Capability Profile, Verification Profile, and Failure-Domain Allocation Matrix identities and digests;
 - software, deployment, workload, credential, route, egress, trust-bundle, RCL, writer, authority, time, revocation, and HALT generations;
-- unresolved state, residual risks, exceptions, and scope reductions;
+- unresolved state, exact ADR-002-026 Safety Deviation Policy/Request/Decision/Residual-Risk Acceptance Record/Active Deviation Set/Deviation Generation identities and digests where applicable, residual risks, exceptions, and scope reductions;
 - reason, requested validity, consumption rule, and invalidation conditions;
 - required independent inputs and reviewer roles.
 
@@ -418,7 +418,7 @@ The sequence is:
 5. have the Live Authorization Service issue a fresh, scoped, revocable, time-bounded authorization;
 6. have final egress verify the current approval-set reference, authorization, generations, capability, capacity, and deny state.
 
-The approval quorum cannot waive a Hard Safety Envelope, RCL capacity, UNKNOWN, reconciliation, time, broker, failure-domain, egress, or verification gate. Human acceptance of residual risk applies only where RFC-000/RFC-001 and the active policy permit it and cannot waive a Critical invariant.
+The approval quorum cannot waive a Hard Safety Envelope, RCL capacity, UNKNOWN, reconciliation, time, broker, failure-domain, egress, or verification gate. Human acceptance of residual risk applies only through the exact ADR-002-026 contract where RFC-000/RFC-001 and the active policy permit it, remains non-authorizing and non-PASS, and cannot waive the Non-Waivable Boundary or a Critical invariant.
 
 Partial re-arm restores only the exact approved scope. Expansion, renewal, extension, fallback, or reuse requires a new current request and approval set.
 

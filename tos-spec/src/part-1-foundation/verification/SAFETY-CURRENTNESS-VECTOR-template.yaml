@@ -34,6 +34,13 @@ action_binding:
   canonical_broker_command_id: TBD
   canonical_broker_command_digest: TBD
 required_generation_facts: []
+deviation_binding:
+  safety_deviation_policy_id: TBD
+  deviation_generation: null
+  active_deviation_set_id: TBD
+  active_deviation_set_digest: TBD
+  exact_reduced_configuration_scope_verified: false
+  no_applicable_invalidation_proven: false
 minimum_restrictive_floors: []
 bound_decisions_and_proofs: []
 dependency_closure:

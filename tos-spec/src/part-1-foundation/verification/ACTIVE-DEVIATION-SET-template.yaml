@@ -1,0 +1,54 @@
+artifact_type: ACTIVE_DEVIATION_SET
+schema_version: "1.0-DRAFT"
+set_id: TBD
+canonical_digest: TBD
+status: DRAFT
+deviation_generation: null
+policy:
+  policy_id: TBD
+  canonical_digest: TBD
+  generation_current: false
+configuration_binding:
+  hard_safety_envelope_id: TBD
+  hard_safety_envelope_digest: TBD
+  runtime_safety_profile_id: TBD
+  runtime_safety_profile_generation: null
+  runtime_safety_profile_digest: TBD
+  safety_configuration_bundle_digest: TBD
+scope:
+  scope_digest: TBD
+  scope_complete: false
+active_deviations: []
+residual_risk_acceptance_record_ids: []
+required_compensating_controls: []
+combined_risk:
+  evaluation_id: TBD
+  dependency_closure_digest: TBD
+  all_interactions_included: false
+  bounded_inside_hard_safety_envelope: false
+currentness:
+  owner_generation_facts: []
+  control_currentness_proofs: []
+  invalidations: []
+validity:
+  activated_at: null
+  earliest_deviation_expiry: null
+  review_due: null
+signatures: []
+authority:
+  active: false
+  marks_requirement_pass: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  activates_configuration: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+authorization_notice: >-
+  This DRAFT set is inactive and grants no deviation or authority. Missing any
+  applicable deviation, interaction, compensation, scope, currentness, or expiry
+  invalidates the set and restricts dependent new risk.

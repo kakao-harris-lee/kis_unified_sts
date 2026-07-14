@@ -116,7 +116,7 @@ An immutable artifact that selects a strictly equal-or-narrower operating scope 
 
 ### 5.3 Safety Configuration Bundle
 
-The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, ADR-002-022 Action Flow Policy, ADR-002-023 Trading Approval Policy, ADR-002-024 Currentness Policy, ADR-002-025 Restricted-Live Trial Policy, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
+The complete closed set of artifacts required to evaluate safety authority for one scope, including the Hard Safety Envelope, Runtime Safety Profile, Broker Capability Profile, Verification Profile, Recovery Barrier Policy, ADR-002-018 Critical Input Policy, ADR-002-019 Venue Constraint Policy, ADR-002-020 Order Construction Policy, ADR-002-021 Aggregate Risk Policy and Adverse Scenario Set, ADR-002-022 Action Flow Policy, ADR-002-023 Trading Approval Policy, ADR-002-024 Currentness Policy, ADR-002-025 Restricted-Live Trial Policy, ADR-002-026 Safety Deviation Policy and explicit empty or complete canonical Active Deviation Set, Failure-Domain Allocation Matrix, applicable time/calendar data, software compatibility manifests, and referenced policy objects.
 
 ### 5.4 Profile Generation
 
@@ -307,7 +307,7 @@ The Safety Profile Validator SHALL validate the complete Safety Configuration Bu
 6. conservative comparison of every Runtime Safety Profile dimension with the Hard Safety Envelope;
 7. maximum credible aggregate effect, concurrent-action union, partial-fill states, replacement overlap, UNKNOWN, external activity, and trapped exposure assumptions;
 8. software, parser, schema, Consumer Compatibility Manifest, deployment, and egress compatibility;
-9. Broker Capability Profile, Recovery Barrier Policy, Critical Input Policy, source/mapping/lineage contract, and Failure-Domain Allocation consistency;
+9. Broker Capability Profile, Recovery Barrier Policy, Critical Input Policy, Safety Deviation Policy, canonical Active Deviation Set, source/mapping/lineage contract, and Failure-Domain Allocation consistency;
 10. trustworthy-time validity and expiry behavior;
 11. authority-direction classification for every change;
 12. absence of a bypass through omitted, unknown, deprecated, duplicated, or extension fields.

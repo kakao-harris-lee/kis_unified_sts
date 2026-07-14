@@ -2,9 +2,9 @@
 
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
-- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-025
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-025; implementation evidence has not been executed
-- **Extension State:** ADR-002-005 through ADR-002-025 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, and RLP evidence families. Registration is not completed evidence
+- **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-026
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-026; implementation evidence has not been executed
+- **Extension State:** ADR-002-005 through ADR-002-026 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, and WDR evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 
 ---
@@ -2555,7 +2555,95 @@ An untested Critical requirement blocks production approval.
 
 ---
 
-## 314. Model-Based and Property Verification
+# Part XXVI — Safety Waiver, Deviation, and Residual-Risk Evidence
+
+## 314. WDR-EV-001 — Non-Waivable Boundary
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-026 WDR-AC-001
+- **Injection:** Request deviations from RFC-000, RFC-001's prohibited set, RCL exclusivity, final-egress enforcement, UNKNOWN conservatism, broker-finality semantics, economic continuity, stale-generation fencing, segregation, independent HALT, evidence honesty, and no-auto-rearm.
+- **Expected:** Every request is deterministically denied before configuration eligibility; no quorum, emergency path, policy change, or scope reduction can approve it.
+
+## 315. WDR-EV-002 — Exact Scope and Dependency Closure
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-026 WDR-AC-002
+- **Injection:** Omit or wildcard an account, broker, strategy, action, software, route, failure domain, requirement, hazard, shared dependency, or active deviation; patch, widen, substitute, or union narrow decisions after review.
+- **Expected:** Incomplete or non-canonical scope and dependency closure is denial; no local union or post-review mutation becomes eligible or active.
+
+## 316. WDR-EV-003 — Compensating-Control Effectiveness
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-026 WDR-AC-003
+- **Injection:** Offer documentation, monitoring, alerting, operator presence, priority, expected rejection, capacity reservation, or a control sharing the failed control's dependency as the sole compensation; then fail that compensation.
+- **Expected:** Observational, permissive, unknown, or common-mode-only compensation is rejected; loss of an accepted control restricts the complete dependency closure.
+
+## 317. WDR-EV-004 — Independent Effective-Person Approval
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-026 WDR-AC-004
+- **Injection:** Use one natural person through multiple accounts, shared administrators, delegated identities, device/recovery paths, requester-reviewer role aliases, or a compromised workflow to satisfy the approval quorum.
+- **Expected:** Effective Principal collapse and conflicts prevent self-approval; unresolved identity or administrative common mode is denial.
+
+## 318. WDR-EV-005 — Non-Authorizing Single-Use Activation
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-026 WDR-AC-005
+- **Injection:** Replay, duplicate-consume, partially consume, union, or present a request, decision, acceptance record, ticket, or active-set artifact directly to configuration, RCL, authority, protection, or egress.
+- **Expected:** Artifacts create no capacity or authority; only one exact eligible decision may request separate restricted configuration once, and all later gates remain mandatory.
+
+## 319. WDR-EV-006 — Currentness, Revocation, and Send Race
+
+- **Minimum Level:** EV-L3 plus security assessment
+- **Supports:** ADR-002-026 WDR-AC-006
+- **Injection:** Cache old policy, control, decision, active-set, configuration, or Deviation Generation state; partition the workflow while broker egress remains reachable; race revocation or expiry against claim, `SEND_STARTED`, and first byte.
+- **Expected:** Stale or unproven currentness denies later send; ambiguous attempts remain potentially live, capacity-covered, and non-retriable without fresh proof.
+
+## 320. WDR-EV-007 — UNKNOWN, Capacity, and Protective Confinement
+
+- **Minimum Level:** EV-L1/EV-L3 plus broker assessment
+- **Supports:** ADR-002-026 WDR-AC-007
+- **Injection:** Make applicability, residual risk, broker/order/exposure/control/evidence/currentness unknown while capacity is reserved or the action is labelled protective, priority, exit, hedge, or emergency.
+- **Expected:** New risk remains denied, worst-credible possible effect remains capacity-covered, and no label, priority, or reserve creates permission or executability.
+
+## 321. WDR-EV-008 — Broker Finality and Economic Continuity
+
+- **Minimum Level:** EV-L2/EV-L3 plus broker assessment
+- **Supports:** ADR-002-026 WDR-AC-008
+- **Injection:** Lose submission ACK, receive Cancel ACK without Final Quantity Proof, partially fill, late-fill, correct, bust, revoke, expire, or roll back the deviation-dependent configuration while attempting retry or capacity release.
+- **Expected:** Missing ACK remains potentially accepted, Cancel ACK remains non-final, economic effect survives artifact expiry, and only proof-gated RCL transitions release capacity.
+
+## 322. WDR-EV-009 — Expiry, Renewal, Recovery, and Non-Revival
+
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-026 WDR-AC-009
+- **Injection:** Expire or revoke a deviation, then restart, reconnect, fail over, restore, roll back, replay, repair evidence, recover time/workflow/reviewer state, reconcile, silently renew, or restore a predecessor profile.
+- **Expected:** Dependent scope stays restricted; prior artifacts remain fenced and no renewal, rollback, recovery, or reconciliation restores permission or automatically re-arms.
+
+## 323. WDR-EV-010 — Evidence and Status Honesty
+
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-026 WDR-AC-010
+- **Injection:** Relabel failed, missing, inconclusive, blocked, expired, or waived evidence as `PASS`, hide negative history, use a review or incident-free period as completion, or delete a superseded residual-risk record.
+- **Expected:** Exact non-PASS status and history remain durable; documentation, audit, replay, review, and incident absence create no verification completion or authority.
+
+## 324. WDR-EV-011 — Security, Alternate Route, and Emergency Behavior
+
+- **Minimum Level:** EV-L2/EV-L3 plus security and broker assessment
+- **Supports:** ADR-002-026 WDR-AC-011
+- **Injection:** Compromise or disable the deviation registry/workflow, give it a broker credential or route, use break-glass or a broker portal, suppress revocation, or attempt a post-hoc deviation for an external action.
+- **Expected:** Workflow loss restricts rather than broadens scope; no deviation identity bypasses final egress, external action remains external, and break-glass remains restrictive-only.
+
+## 325. WDR-EV-012 — Combined Deviations and Gate Separation
+
+- **Minimum Level:** EV-L1/EV-L3 plus security assessment
+- **Supports:** ADR-002-026 WDR-AC-012
+- **Injection:** Activate interacting individually approved deviations without combined analysis and treat ADR acceptance, decision eligibility, residual-risk acceptance, configuration activation, live authorization, restricted-live review, or production review as interchangeable.
+- **Expected:** One canonical combined Active Deviation Set and reduced scope are required; every governance, evidence, configuration, authority, and readiness state remains distinct and non-authorizing.
+
+---
+
+## 326. Model-Based and Property Verification
 
 Before restricted live operation, the following state models SHALL be explored with model checking or equivalent exhaustive/bounded analysis:
 
@@ -2583,6 +2671,7 @@ Before restricted live operation, the following state models SHALL be explored w
 - Trading Approval Policy, Trading Approval Generation, Proposal Approval Request, independent/common-mode fact evaluation, Independent Approval Decision, Intent Registry writer and single-use consumption, immutable Intent binding, invalidation closure, final-egress currentness, and recovery state;
 - Currentness Policy, owner/dependency closure, Safety Currentness Vector, restrictive floors, Restrictive Fence Record, Local Restrictive Latch, Egress Currentness Proof, capability/permit claim, `SEND_STARTED`, first-byte ordering, cross-domain barrier, and recovery state;
 - Restricted-Live Trial Policy, exact Trial Plan and Run, effect/count/duration envelope, abort generation, evidence completeness, coverage, Promotion Generation, single-use Production Scope Promotion Decision, configuration handoff, demotion, and continuous-conformance state;
+- Safety Deviation Policy, Non-Waivable Boundary, exact Request, dependency closure, compensating controls, effective-person quorum, Decision consumption, Residual-Risk Acceptance Record, Active Deviation Set, Deviation Generation, configuration binding, expiry, revocation, and recovery state;
 - protective-replacement gap, overlap, and partial-fill interleavings;
 - non-trade transition envelopes, correction, and event idempotency;
 - startup recovery and re-arm;
@@ -2677,7 +2766,7 @@ Counterexamples SHALL be stored as evidence and converted into deterministic reg
 
 ---
 
-## 315. Fault-Injection Requirements
+## 327. Fault-Injection Requirements
 
 The test harness SHALL support controlled injection at least for:
 
@@ -2699,6 +2788,7 @@ The test harness SHALL support controlled injection at least for:
 - concurrent producer and shared-limit over-allocation, unknown broker-limit scope, duplicate-event/fan-out/redelivery/replay amplification, missing-ACK retry, SDK/proxy/redirect/reconnect flood, cancel/amend/replace storm, queue/in-flight exhaustion, ordinary-to-protective reserve intrusion, priority-only reserve claim, RCL permit double spend, stale/cross-host refill, Action Flow Generation cache, invalidation suppression/delay beyond `B_action_flow_invalid_to_rcl`, `B_action_flow_invalid_to_egress`, or `B_action_flow_violation_to_containment`, control-plane partition with broker-reachable egress, and recovery attempting old-permit reuse;
 - incomplete/wildcard/patched approval request, proposer-only or common-mode validation, deterministic-evaluator differential, artifact/scope substitution, duplicate and cross-scope consumption, stale Intent Registry writer, approval authority escalation, Trading Approval Generation cache, invalidation suppression/delay beyond `B_approval_invalid_to_intent`, `B_approval_invalid_to_egress`, or `B_approval_generation_fence`, control-plane partition with broker-reachable egress, and recovery attempting old-decision or consumption reuse;
 - incomplete/wildcard/patched/unioned Trial Plan, underestimated credible effect, Trial Budget used as capacity, trial-label bypass, action/effect/count/duration overrun, abort delay beyond `B_trial_abort_to_authority_revoke` or `B_trial_abort_to_egress_deny`, evidence gap delay beyond `B_trial_evidence_gap_to_containment`, selected or hidden negative runs, post-hoc metric/stopping change, coverage extrapolation, promotion skip/union/replay, Promotion Generation fence delay, monitor drift, demotion, and recovery attempting run or promotion reuse;
+- non-waivable or unclassified request, incomplete/wildcard/patched/unioned scope, combined residual-risk underestimation, observational or common-mode compensation, same-effective-person approval, decision double spend, evidence relabeling, stale Active Deviation Set, invalidation suppression/delay beyond `B_deviation_revoke_to_authority` or `B_deviation_revoke_to_egress`, Deviation Generation fence delay, expiry/claim/first-byte race, silent renewal, predecessor rollback, emergency-route bypass, and recovery attempting deviation or authority revival;
 - stale read;
 - broker response loss;
 - fill/cancel ordering;
@@ -2722,7 +2812,7 @@ Fault injection SHALL identify the exact boundary at which it acted.
 
 ---
 
-## 316. Broker Verification Safety Rules
+## 328. Broker Verification Safety Rules
 
 Controlled production verification SHALL:
 
@@ -2742,7 +2832,7 @@ A test that requires violating the Hard Safety Envelope is prohibited.
 
 ---
 
-## 317. Continuous Conformance Evidence
+## 329. Continuous Conformance Evidence
 
 After approval, continuous monitors SHALL detect at least:
 
@@ -2766,6 +2856,7 @@ After approval, continuous monitors SHALL detect at least:
 - Aggregate Risk Policy, Aggregate Risk Generation, Aggregate Risk State Snapshot cut/age, Adverse Scenario Set, dimension/scope completeness, valuation/benefit/numerical derivation, Aggregate Risk Decision age/digest, allocation vector, RCL binding, or final-egress currentness contradiction;
 - Action Flow Policy, Action Flow Generation, State Snapshot cut/age, cause lineage/amplification, shared-scope resource vector, Decision/Permit age and digest, RCL allocation/claim/consumption, protective reserve/lease, counter/refill, queue/in-flight, invalidation, or final-egress currentness contradiction;
 - Restricted-Live Trial Policy, Plan, Run, scope, Promotion Generation, remaining action/effect/count/duration envelope, abort, evidence completeness, coverage, promotion consumption, production scope, demotion, or monitoring contradiction;
+- Safety Deviation Policy, requirement/hazard classification, Non-Waivable Boundary, exact scope/dependency closure, combined residual risk, compensating-control state, Effective Principal quorum, decision consumption, Residual-Risk Acceptance Record, Active Deviation Set, Deviation Generation, expiry, revocation, or final-egress currentness contradiction;
 - protective reserve guarantee degradation;
 - unexpected session or rate-limit behavior;
 - Time Health snapshot age or generation-propagation bound misses;
@@ -2782,7 +2873,7 @@ A continuous violation invalidates the corresponding evidence item and may rever
 
 ---
 
-## 318. Residual Risk Register
+## 330. Residual Risk Register
 
 Every unresolved limitation SHALL record:
 
@@ -2799,11 +2890,13 @@ Every unresolved limitation SHALL record:
 - required scope reduction;
 - evidence references.
 
+Where RFC-001 permits a deviation, the register SHALL additionally bind the exact current ADR-002-026 request, decision, Active Deviation Set, reduced configuration scope, independently verified compensating controls, Deviation Generation, hard expiry, review interval, and non-PASS evidence status. Separate residual risks SHALL NOT be unioned at a consumer; combined risk requires one canonical reviewed set.
+
 “Broker limitation” is not a sufficient residual-risk description.
 
 ---
 
-## 319. Independent Review Checklist
+## 331. Independent Review Checklist
 
 The reviewer SHALL confirm:
 
@@ -2830,6 +2923,7 @@ The reviewer SHALL confirm:
 - every capacity request binds one complete current aggregate-state cut, approved scenario set, exact command effect, deterministic conservative projected vector, current Aggregate Risk Decision, and RCL commitment under ADR-002-021; unproven benefit is zero and evaluator authority does not mutate capacity or transmit;
 - every broker-directed action binds one complete current shared-scope action-flow cut, immutable cause lineage, finite amplification envelope, exact resource vector, current Action Flow Decision, RCL commitment, and single-use permit under ADR-002-022; priority is not reserve and governor/scheduler authority does not mutate capacity or transmit;
 - every ADR-002-025 Trial Plan is exact and pre-registered, the worst credible effect is RCL-covered, abort dominates evidence collection, negative evidence is retained, coverage does not extrapolate, promotion is progressive and single-use, and no trial or promotion artifact creates live authority;
+- every ADR-002-026 request is outside the Non-Waivable Boundary and exact in scope/dependency closure, compensation is enforceable and independently evidenced, Effective Principal approval is independent, combined risk is bounded, decision consumption is single-use, evidence remains non-PASS, and expiry/revocation/currentness cannot be cached or revived;
 - protective gap, overlap, and Final Quantity Proof evidence cover adverse interleavings;
 - non-trade transition evidence covers old and new economic effects and corrections;
 - no manual cleanup occurred before final evidence capture;
@@ -2839,7 +2933,7 @@ The reviewer SHALL confirm:
 
 ---
 
-## 320. Approval Gates by ADR
+## 332. Approval Gates by ADR
 
 ### ADR-002-002
 
@@ -3179,6 +3273,17 @@ Requires:
 - security assessment of effective-principal collapse, plan/evidence/promotion substitution, alternate broker routes, abort suppression, negative-evidence deletion, optional stopping, scope union, promotion replay, stale restore, monitor compromise, and automatic re-arm;
 - proof that accepting this governance mechanism remains non-live and non-authorizing. A specific EV-L5 trial is a later separately authorized execution gate.
 
+### ADR-002-026
+
+Requires:
+
+- WDR-EV-001 through WDR-EV-012 at the specified non-live levels, plus applicable SPG, HAG, ERI, SBR, CUR, RCLP, EGRESS, CII, VTG, IOC, ARE, AFG, IAP, RLP, RC, SA, BC, FD, TIME, REARM, PR, NT, and cross-system evidence;
+- approved canonical Safety Deviation Policy, Request, Decision, Residual-Risk Acceptance Record, Active Deviation Set, requirement/hazard registry, Non-Waivable Boundary, dependency-closure, combined-risk, compensating-control, and evidence-status contracts;
+- approved Effective Principal quorum/conflict, single-use decision consumption, exact restricted-configuration activation, Deviation Generation, restrictive revocation, final-egress currentness, expiry, renewal, rollback, recovery, and non-revival mechanisms;
+- approved and measured `B_deviation_revoke_to_authority`, `B_deviation_revoke_to_egress`, `B_deviation_generation_fence`, `MAX_deviation_duration_ms`, `MAX_deviation_decision_age_ms`, `MAX_residual_risk_review_interval_ms`, and every applicable upstream bound;
+- security assessment of requirement/policy/registry manipulation, effective-person collapse, reviewer/configuration/armer common mode, compensation common mode, decision replay, active-set omission or union, stale cache, expiry suppression, predecessor restore, break-glass or alternate-route bypass, evidence relabeling, and automatic re-arm;
+- proof that accepting this governance mechanism accepts no specific deviation, marks no evidence `PASS`, and remains non-live and non-authorizing.
+
 ### Restricted-Live Trial Gate
 
 Requires:
@@ -3204,7 +3309,7 @@ Requires:
 
 ---
 
-## 321. Current Evidence Readiness Assessment
+## 333. Current Evidence Readiness Assessment
 
 As of 2026-07-14:
 
@@ -3238,6 +3343,7 @@ Action-flow budgeting, retry-storm containment, protective-reserve, and permit-c
 Independent proposal approval, single-use Intent consumption, invalidation, and currentness evidence: NOT EXECUTED
 Active currentness, restrictive-fence, local-latch, per-send proof, and claim/send-ordering evidence: NOT EXECUTED
 Restricted-live trial, evidence coverage, abort, promotion, demotion, and production-authorization governance evidence: NOT EXECUTED
+Safety waiver, deviation, compensating-control, residual-risk, expiry, and currentness governance evidence: NOT EXECUTED
 Independent review: NOT STARTED
 Production authorization: NO
 ```
@@ -3246,13 +3352,13 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 322. Required Next Execution Sequence
+## 334. Required Next Execution Sequence
 
 ```text
 1. Assign implementation owner, evidence owner, and independent reviewer for every registered item.
 2. Approve the Verification Profile bounds and scope.
 3. Implement trace and evidence identities.
-4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, and restricted-live/promotion-governance models.
+4. Implement model/property tests for all ADR-002 capacity, consensus, state, authority, time, failure-domain, replacement, non-trade, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/context-integrity, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, and safety-deviation/residual-risk-governance models.
 5. Build deterministic fault-injection harness.
 6. Complete one broker Capability Profile at document/evidence level.
 7. Execute component tests.
@@ -3265,7 +3371,7 @@ This status is intentionally strict. The documents define completion criteria; t
 
 ---
 
-## 323. Verification Specification Approval Gate
+## 335. Verification Specification Approval Gate
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 

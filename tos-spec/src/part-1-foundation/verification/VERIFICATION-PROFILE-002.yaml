@@ -14,7 +14,7 @@
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
 
 profile_id: VERIFICATION-PROFILE-002
-version: "1.6-PROPOSED"
+version: "1.7-PROPOSED"
 status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
 approved_by: []                # MUST be non-empty before APPROVED
 effective_from: null
@@ -73,6 +73,12 @@ scope:
   restricted_live_trial_policy_id: TBD
   restricted_live_trial_policy_generation: null
   restricted_live_trial_policy_digest: TBD
+  safety_deviation_policy_id: TBD
+  safety_deviation_policy_generation: null
+  safety_deviation_policy_digest: TBD
+  active_deviation_set_id: TBD
+  active_deviation_set_generation: null
+  active_deviation_set_digest: TBD
 
 # ---------------------------------------------------------------------------
 # Bounds. `semantics: hard_maximum` = must be met every time (pass/fail gate).
@@ -345,6 +351,27 @@ bounds:
     rationale: "MEASURE. Maximum interval from commitment of a newer Promotion Generation to proven inability of predecessor plans, runs, evidence packages, promotion decisions, authorization requests, and egress consumers to create or widen permission."
     measurement_source: promotion_generation_registry_authority_and_egress_trace
     failure_response: HALT_OR_CONTAIN
+  B_deviation_revoke_to_authority:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from authoritative ADR-002-026 deviation expiry, revocation, compensating-control loss, evidence invalidation, or scope conflict to revocation or restrictive fencing of every affected unconsumed approval and new-risk authority."
+    measurement_source: deviation_generation_control_authority_and_currentness_trace
+    failure_response: HALT_OR_CONTAIN
+  B_deviation_revoke_to_egress:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from authoritative deviation restriction or committed Deviation Generation to denial of every later affected new-risk transmission at final egress; permissive caches and absence of a revocation event are not currentness proof."
+    measurement_source: deviation_restriction_generation_and_egress_boundary_trace
+    failure_response: HALT
+  B_deviation_generation_fence:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from commitment of a newer Deviation Generation to proven inability of predecessor policy, evaluator, decision, Active Deviation Set, configuration, authority, and egress consumers to create or use dependent permission."
+    measurement_source: deviation_generation_registry_configuration_authority_and_egress_trace
+    failure_response: HALT_OR_CONTAIN
   B_final_quantity_proof:
     value_ms: null   # MEASURE per broker/order type
     semantics: broker_specific
@@ -506,6 +533,9 @@ limits:
   MAX_trial_action_count: null                       # APPROVE per exact plan; unavailable or ambiguous counter denies later trial action
   MAX_trial_duration_ms: null                        # APPROVE per exact run; expiry ends future action but never economic effect
   MAX_trial_evidence_age_ms: null                    # APPROVE per promotion scope; stale evidence denies promotion and never releases capacity
+  MAX_deviation_duration_ms: null                    # APPROVE per exact reduced scope; expiry restricts future authority and never expires economic effect
+  MAX_deviation_decision_age_ms: null                # APPROVE per exact request/configuration consumption; stale or unknown age denies activation and send
+  MAX_residual_risk_review_interval_ms: null          # APPROVE per risk class; missed or unproven review restricts scope and never auto-renews
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture
