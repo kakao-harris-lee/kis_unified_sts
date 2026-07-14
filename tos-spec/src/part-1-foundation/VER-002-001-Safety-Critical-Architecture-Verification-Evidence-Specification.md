@@ -2205,6 +2205,8 @@ An untested Critical requirement blocks production approval.
 - **Injection:** Restart, restore, roll back, fail over, rebuild cache, recover source/model/library, reconcile, replay, improve prices or margin, and reconnect broker while prior decisions, UNKNOWN, commitments, or possible effects remain.
 - **Expected:** Stale generations and decisions remain fenced; existing effects retain conservative capacity; fresh evaluation and governed re-arm are required and no automatic re-arm occurs.
 
+# Part XXII — Action Flow Governance Evidence
+
 ## 266. AFG-EV-001 — Distributed Shared-Limit Serialization
 
 - **Minimum Level:** EV-L1/EV-L3

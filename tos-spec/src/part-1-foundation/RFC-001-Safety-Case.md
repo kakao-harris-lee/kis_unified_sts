@@ -1785,10 +1785,10 @@ A `SPECIFIED` entry indicates that RFC-001 defines the required safety obligatio
 
 | Constitutional requirement | Added safety discharge                                              |
 | -------------------------- | ------------------------------------------------------------------ |
-| CONST-001                  | SAFE-004, SAFE-015, SAFE-023, SAFE-024, SAFE-025, SAFE-035, SAFE-048 |
-| CONST-002                  | SAFE-004, SAFE-015, SAFE-023, SAFE-024, SAFE-025                    |
+| CONST-001                  | SAFE-004, SAFE-015, SAFE-023, SAFE-024, SAFE-025, SAFE-035, SAFE-047, SAFE-048 |
+| CONST-002                  | SAFE-004, SAFE-015, SAFE-023, SAFE-024, SAFE-025, SAFE-047          |
 | CONST-004                  | SAFE-035, SAFE-048                                                  |
-| CONST-006                  | SAFE-004, SAFE-015                                                  |
+| CONST-006                  | SAFE-004, SAFE-015, SAFE-047                                        |
 | CONST-008                  | SAFE-023, SAFE-024, SAFE-025                                        |
 | CONST-009                  | SAFE-015, SAFE-023, SAFE-025, SAFE-035                             |
 | CONST-010                  | SAFE-004, SAFE-035                                                  |

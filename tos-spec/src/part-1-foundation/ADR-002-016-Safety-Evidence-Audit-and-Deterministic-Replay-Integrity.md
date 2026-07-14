@@ -5,7 +5,7 @@
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety-evidence identity, capture boundaries, durability, ordering, provenance, integrity, completeness, gap detection, retention, redaction, access, deterministic replay, incident reconstruction, failure behavior, recovery, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 SAFE-031, SAFE-051, SAFE-052, and §11; RFC-002 §§4.2, 10.16, 15, 23, 25, and 29; VER-002-001 §§2–9 and 281–283
+- **Refines:** RFC-001 SAFE-031, SAFE-051, SAFE-052, and §11; RFC-002 §§4.2, 10.16, 15, 23, 25, and 29; VER-002-001 §§2–9 and 194–205
 - **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-010, SAFE-011, SAFE-020 through SAFE-025, SAFE-030, SAFE-031, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-048, SAFE-050, SAFE-051, SAFE-052; ADR-002-001 through ADR-002-015
 
 ---
