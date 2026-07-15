@@ -342,8 +342,9 @@ The decision layer, and any strategy or Decision Policy within it, SHALL NOT:
     permission (ADR-002-019/020/021/023);
 13. use wildcard or "latest policy" scope in any construction it produces
     (ADR-002-020 §8);
-14. infer context or market-state validity from its own component health,
-    uptime, or last-known-good state (ADR-002-018 CII-INV-013; philosophy §16);
+14. infer context or market-state validity or source continuity from its own
+    component health, uptime, or last-known-good state (ADR-002-018 §9;
+    philosophy §16);
 15. bypass, remove, or reorder any stage of the RFC-000 §10 pipeline;
 16. treat a locally-compliant decision as excusing an unsafe aggregate portfolio
     state (RFC-000 §5; RFC-001 §7.4; philosophy §18).
@@ -507,3 +508,7 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   now reproduces ADR-002-018 §10's "deterministic or explicitly stochastic"
   language, aligning it with the §10 reproducibility carve-out. The review is
   EV-L0 only and confers no acceptance or live-readiness.
+* During the RFC-004 review, §11 item 14's health-is-not-validity citation was
+  corrected from ADR-002-018 CII-INV-013 (recovery non-revival) to ADR-002-018
+  §9 (source continuity is not inferred from health), keeping RFC-003 and RFC-004
+  consistent on the same rule.
