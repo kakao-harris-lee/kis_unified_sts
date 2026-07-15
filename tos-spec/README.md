@@ -1,15 +1,64 @@
 # Trading Operating System Specification
 
-The canonical safety-architecture documents live under `src/part-1-foundation/`.
+A layered safety-architecture specification for an autonomous trading system. Read
+it as a book with `mdbook`, or navigate the source directly; the full table of
+contents is in [`src/SUMMARY.md`](src/SUMMARY.md).
 
+The specification is a strict authority hierarchy — every layer is governed by the
+ones above it (RFC-000 §9 layering), and no lower document may redefine the intent
+of a higher one.
+
+## Part 0 — Introduction
+
+- [Vision](src/part-0-introduction/vision.md) — what the system is for
+- [Philosophy](src/part-0-introduction/philosophy.md) — the safety principles every later document inherits
+
+## Part 1 — Foundation (safety architecture)
+
+The canonical safety-architecture documents live under `src/part-1-foundation/`.
 Start with:
 
 1. [RFC-000 — Trading Constitution](src/part-1-foundation/RFC-000-Trading-Constitution.md)
 2. [RFC-001 — Safety Case](src/part-1-foundation/RFC-001-Safety-Case.md)
 3. [RFC-002 — Trading Operating System Architecture](src/part-1-foundation/RFC-002-Architecture.md)
-4. [ADR-002-001 — Degraded-Mode Protective Capacity](src/part-1-foundation/ADR-002-001-Degraded-Mode-Protective-Capacity.md)
-5. [Architecture Gate Status and semantic merge map](src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md)
+4. [ADR-002-001 — Degraded-Mode Protective Capacity](src/part-1-foundation/ADR-002-001-Degraded-Mode-Protective-Capacity.md) through ADR-002-030 — the thirty-record ADR-002 architecture-decision series
+5. [VER-002-001 — Safety-Critical Architecture Verification](src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md) and the [Evidence Register](src/part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
+6. [Architecture Gate Status and semantic merge map](src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md)
 
-The current safety ADRs remain `Proposed`. Verification cases and registers define required work but are not executed evidence. See [Architecture Gate Status](src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md) for the current authorization state.
+## Part 2 — Decision Framework
 
-Verification assets are under `src/part-1-foundation/verification/`; source review patches remain under `src/part-1-foundation/patches/` for provenance and are not separately operative after consolidation.
+How the system decides what to do, subordinate to Part 1 (`src/part-2-decision/`).
+
+- [RFC-003 — Decision Framework](src/part-2-decision/RFC-003-Decision-Framework.md)
+- [RFC-004 — Market Model](src/part-2-decision/RFC-004-Market-Model.md)
+- [RFC-005 — Execution Model](src/part-2-decision/RFC-005-Execution-Model.md)
+- [RFC-006 — Risk Model](src/part-2-decision/RFC-006-Risk-Model.md)
+- [RFC-007 — Portfolio Hedge Model](src/part-2-decision/RFC-007-Portfolio-Hedge-Model.md)
+
+## Part 3 — Development
+
+How a strategy is authored, tested, and operated within the Part 1/2 boundaries
+(`src/part-3-development/`).
+
+- [RFC-008 — Strategy DSL](src/part-3-development/RFC-008-Strategy-DSL.md)
+- [RFC-009 — Agent Guide](src/part-3-development/RFC-009-Agent-Guide.md)
+- [RFC-010 — Testing Strategy](src/part-3-development/RFC-010-Testing-Strategy.md)
+- [RFC-011 — Operational Guidelines](src/part-3-development/RFC-011-Operational-Guidelines.md)
+
+## Status
+
+- **Part 1 — Foundation.** The safety ADRs remain `Proposed`. Verification cases and
+  registers define required work but are not executed evidence. See
+  [Architecture Gate Status](src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md) for
+  the current authorization state.
+- **Part 2 — Decision Framework.** RFC-003 through RFC-007 are `0.1 Review Draft`.
+- **Part 3 — Development.** RFC-008 through RFC-011 are `0.1 Review Draft`; each has
+  completed an independent adversarial EV-L0 document review (`PASS-WITH-FIXES`, no
+  Critical finding).
+
+A Review Draft — and any EV-L0 review it carries — confers no acceptance and no
+live-readiness; those are governed by RFC-001 and VER-002-001.
+
+Verification assets are under `src/part-1-foundation/verification/`; source review
+patches remain under `src/part-1-foundation/patches/` for provenance and are not
+separately operative after consolidation.
