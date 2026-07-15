@@ -41,7 +41,7 @@ so that strategies remain replaceable while the safety model remains durable.
 RFC-003 is a decision-layer specification. Its authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document. RFC-003 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim.
 * **RFC-001 — Safety Case** constrains this document. No decision process
   defined here may weaken, bypass, or reinterpret any SAFE-xxx requirement.

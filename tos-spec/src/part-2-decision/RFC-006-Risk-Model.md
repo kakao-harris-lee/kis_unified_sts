@@ -46,7 +46,7 @@ configuration and approved policy.
 RFC-006's authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document; RFC-006 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim. It co-owns CONST-003 (Positive Expectancy) with RFC-003.
 * **RFC-001 — Safety Case** constrains this document; RFC-006 operates strictly
   inside the Hard Safety Envelope (§5.20, SAFE-004) and honors SAFE-012 and

@@ -43,7 +43,7 @@ Safety Envelope.
 RFC-007's authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document; RFC-007 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim. CONST-012 (Safe Operational State) is the constitutional
   root of protective-action authorization.
 * **RFC-001 — Safety Case** constrains this document; SAFE-002, SAFE-040, and

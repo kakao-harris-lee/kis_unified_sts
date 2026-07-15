@@ -43,7 +43,7 @@ hardcoded into this specification.
 RFC-004's authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document; RFC-004 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim.
 * **RFC-001 — Safety Case** constrains this document; any market datum, feature,
   or signal RFC-004 describes is a Critical Input under RFC-001 §5.3 and SAFE-030

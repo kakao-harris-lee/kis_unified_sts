@@ -42,7 +42,7 @@ and its acceptance does not authorize live operation.
 RFC-010's authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document. RFC-010 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim.
 * **RFC-001 — Safety Case** constrains this document. Testing supplies objective
   evidence toward the `ACCEPTED` state RFC-001 §1 requires, but a passing test
@@ -490,8 +490,9 @@ have demonstrated.
   to RFC-008 §9 and §14 Q3 (reproducibility/staleness) rather than §14 Q2
   (enforcement mechanism). The review is EV-L0 only and confers no acceptance or
   live-readiness.
-* Governance note (inherited citation imprecision). The one Major finding raised —
-  §2's RFC-000 §12 citation for "SHALL NOT redefine constitutional intent," whose
-  literal phrase is in RFC-000 §9 (§12 states the cognate "reinterpret higher-level
-  intent") — is the series-wide item shared by RFC-003 through RFC-011; it is to be
-  resolved consistently across the series rather than by a lone divergent edit here.
+* Governance note (inherited citation imprecision — RESOLVED). The one Major finding
+  raised — §2's RFC-000 §12 citation for "SHALL NOT redefine constitutional intent,"
+  whose literal phrase is in RFC-000 §9 (§12 states the cognate "reinterpret
+  higher-level intent") — was the series-wide item shared by RFC-003 through
+  RFC-011; §2 now cites RFC-000 §9, corrected consistently across the series in a
+  single companion change.

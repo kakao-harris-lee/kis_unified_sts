@@ -47,7 +47,7 @@ authority, and its acceptance does not authorize live operation.
 RFC-011's authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document. RFC-011 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim.
 * **RFC-001 — Safety Case** constrains this document. No operational procedure,
   runbook, or convenience defined here may weaken, bypass, or reinterpret any
@@ -529,7 +529,8 @@ Unresolved questions reduce, and do not expand, the conforming operational postu
   Implementation-layer specification governing the distinct Operational Procedures
   layer (RFC-000 §12). The review is EV-L0 only and confers no acceptance or
   live-readiness.
-* Governance note (inherited citation imprecision). As recorded from RFC-008
-  onward, §2's RFC-000 §12 citation for "SHALL NOT redefine constitutional intent"
-  is imprecise (the literal phrase is in RFC-000 §9); this is a series-wide
-  governance item, not corrected unilaterally here.
+* Governance note (inherited citation imprecision — RESOLVED). As recorded from
+  RFC-008 onward, §2's citation for "SHALL NOT redefine constitutional intent" now
+  points to RFC-000 §9, where the literal phrase appears (§12 states the cognate
+  "reinterpret higher-level intent"); the series-wide imprecision across RFC-003
+  through RFC-011 was corrected consistently in a single companion change.

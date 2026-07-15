@@ -44,7 +44,7 @@ fixes no numeric parameter; those are living configuration.
 RFC-005's authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document; RFC-005 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim.
 * **RFC-001 — Safety Case** constrains this document; in particular SAFE-021
   (At-Most-One Exposure Effect) governs retries, reconnects, and ambiguous

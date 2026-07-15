@@ -46,7 +46,7 @@ authorize live operation.
 RFC-008's authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document. RFC-008 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim.
 * **RFC-001 — Safety Case** constrains this document. No language construct,
   runtime, or authoring convenience defined here may weaken, bypass, or
@@ -554,10 +554,9 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   value to be produced outside and before evaluation and delivered into the
   Decision Context Capsule as Critical Input, so DSL evaluation itself performs no
   live call. The review is EV-L0 only and confers no acceptance or live-readiness.
-* Governance note (inherited citation imprecision). §2 and §4 cite RFC-000 §12 for
-  the "SHALL NOT redefine constitutional intent" rule; that literal phrase appears
-  in RFC-000 §9 (Constitutional Boundaries), while §12 (Constitutional Governance)
-  states the cognate "SHALL NOT reinterpret higher-level intent." The imprecision
-  is identical across RFC-003 through RFC-007 and is not corrected unilaterally
-  here; it is recorded as a series-wide governance item to be resolved
-  consistently, not by a lone divergent edit in RFC-008.
+* Governance note (inherited citation imprecision — RESOLVED). §2's "SHALL NOT
+  redefine constitutional intent" now cites RFC-000 §9 (Constitutional Boundaries),
+  where that literal phrase appears; §12 (Constitutional Governance) states the
+  cognate "SHALL NOT reinterpret higher-level intent." The identical imprecision in
+  RFC-003 through RFC-011 was corrected consistently across the series in a single
+  companion change rather than by a lone divergent edit.

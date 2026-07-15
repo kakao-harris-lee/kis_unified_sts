@@ -44,7 +44,7 @@ authority, and its acceptance does not authorize live operation.
 RFC-009's authority is bounded as follows:
 
 * **RFC-000 — Trading Constitution** governs this document. RFC-009 SHALL NOT
-  redefine constitutional intent (RFC-000 §12) and SHALL use RFC-000 §6
+  redefine constitutional intent (RFC-000 §9) and SHALL use RFC-000 §6
   vocabulary verbatim.
 * **RFC-001 — Safety Case** constrains this document. No authoring practice,
   automation, or agent convenience defined here may weaken, bypass, or reinterpret
@@ -494,8 +494,8 @@ Unresolved questions reduce, and do not expand, the conforming authoring surface
   ADR-002-029 §1 (which covers branch/build identity) to §§15, 25.5, and SCI-AC-006
   (which cover tests, CI success, and self-approval) (§§8, 11.10). The review is
   EV-L0 only and confers no acceptance or live-readiness.
-* Governance note (inherited citation imprecision). As recorded in RFC-008, §2's
-  RFC-000 §12 citation for "SHALL NOT redefine constitutional intent" is
-  imprecise (the literal phrase is in RFC-000 §9); the imprecision is identical
-  across RFC-003 through RFC-009 and is tracked as a series-wide governance item,
-  not corrected unilaterally here.
+* Governance note (inherited citation imprecision — RESOLVED). §2's citation for
+  "SHALL NOT redefine constitutional intent" now points to RFC-000 §9, where the
+  literal phrase appears (§12 states the cognate "reinterpret higher-level intent").
+  The identical imprecision across RFC-003 through RFC-011 was corrected
+  consistently across the series in a single companion change.
