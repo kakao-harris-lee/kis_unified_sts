@@ -22,7 +22,10 @@ how an operator runs an admitted strategy in production — monitoring it, respo
 to degraded states, controlling re-arming, and coordinating recovery. Per RFC-000
 §9 Implementation defines HOW SOFTWARE IS BUILT; RFC-011 occupies that layer as the
 operational companion that closes the lifecycle RFC-008 (author the surface),
-RFC-009 (author the strategy), and RFC-010 (test it) begin.
+RFC-009 (author the strategy), and RFC-010 (test it) begin. RFC-011 is an
+Implementation-layer specification that governs the distinct Operational Procedures
+layer (RFC-000 §12); it constrains how operational procedures are conducted and does
+not itself operate the system or become an operational authority.
 
 RFC-011 is subordinate to RFC-000, RFC-001, RFC-002, every accepted ADR-002-xxx,
 and RFC-003. Its governing thesis is inherited from philosophy §22 and RFC-002
@@ -53,11 +56,14 @@ RFC-011's authority is bounded as follows:
 * **RFC-002 — Architecture** and the accepted **ADR-002-xxx** series own the
   authority, containment, re-arm, recovery, incident, and monitoring mechanisms
   RFC-011 operates. RFC-011 describes operating *within* them and defines none of
-  them: live authorization and re-arm are owned by ADR-002-007; human authority,
-  dual control, and break-glass by ADR-002-015; safe startup and conservative
-  resume by ADR-002-017; restricted-live promotion by ADR-002-025; incident
-  containment and controlled shutdown by ADR-002-027; continuous conformance
-  monitoring by ADR-002-028.
+  them. The owners it operates within include, but are not limited to: live
+  authorization and re-arm (ADR-002-007); human authority, dual control, and
+  break-glass (ADR-002-015); safe startup and conservative resume (ADR-002-017);
+  protective-order replacement and protection-gap control (ADR-002-011); safety
+  waiver, deviation, and residual-risk governance (ADR-002-026 and its RFC-002
+  §10.28 component); restricted-live promotion (ADR-002-025); incident containment
+  and controlled shutdown (ADR-002-027); and continuous conformance monitoring
+  (ADR-002-028).
 * **RFC-003 — Decision Framework** and the model RFCs (RFC-004–007) define what the
   operated system decides; RFC-011 operates the running system and inherits every
   RFC-003 boundary.
@@ -99,6 +105,11 @@ This document does not decide:
   owns those;
 * incident declaration, containment, controlled shutdown, or closure — ADR-002-027
   owns those;
+* protective-order replacement, cancellation, or protection-gap control — the
+  Cancellation Arbiter and Protective Action Controller under ADR-002-011 (RFC-002
+  §9.1) own those;
+* safety-waiver, deviation, or residual-risk-acceptance governance — ADR-002-026
+  (and its RFC-002 §10.28 component) owns those;
 * continuous conformance monitoring, telemetry, or alert escalation — ADR-002-028
   owns those;
 * restricted-live promotion or production authorization — ADR-002-025 owns those;
@@ -342,7 +353,7 @@ An operator, runbook, operational tool, or Operational Act SHALL NOT:
 7. clear a HALT, containment state, incident, monitoring gap, or restrictive latch
    that its owner has not cleared (ADR-002-027; ADR-002-028);
 8. issue Live Authorization or a Transmission Capability, or transmit an order, by
-   operational action (ADR-002-007; RFC-002 §7.3, §7.6);
+   operational action (ADR-002-007; RFC-002 §9.1 — Arm live scope, Transmit);
 9. re-arm or restore production scope while position, open-order, account,
    configuration, venue, or critical-input state is unknown or unreconciled
    (Vision §7.4; RFC-001 SC-040 State Integrity Claim);
@@ -352,7 +363,16 @@ An operator, runbook, operational tool, or Operational Act SHALL NOT:
 11. infer state validity, source continuity, or authority from component health,
     uptime, or last-known-good state (ADR-002-018 §9; philosophy §16);
 12. reclaim reserved protective capacity, margin headroom, or conservative limits
-    for throughput under operational pressure (Vision §11.7; philosophy §21).
+    for throughput under operational pressure (Vision §11.7; philosophy §21);
+13. accept, record, or act on residual risk outside ADR-002-026 governance, or
+    treat an operator's acceptance of residual risk as a waiver of a Critical or
+    Non-Waivable safety requirement, as satisfaction of a failed requirement, or as
+    an enlargement of scope; residual-risk acceptance is an independently approved,
+    exact-scope, non-authorizing safety artifact (ADR-002-026; RFC-002 §10.28);
+14. cancel, remove, reduce, replace, or weaken a required protective order, or
+    create a protection gap, by operational action; the protective-order lifecycle
+    is owned by the Cancellation Arbiter and the Protective Action Controller
+    (ADR-002-011; RFC-002 §9.1).
 
 The single generalizing rule (RFC-002 §9.1; philosophy §22): human authority is
 part of the safety model, but it is bounded, authenticated, and auditable — never
@@ -380,6 +400,12 @@ below are non-normative scope markers; RFC-011 SHALL NOT define their content.
   defers to.
 * **ADR-002-027 (Incident, Containment, Controlled Shutdown).** Owns the incident
   and containment lifecycle the operator invokes.
+* **ADR-002-011 (Protective Replacement and Protection-Gap Control).** Owns the
+  protective-order lifecycle — the Cancellation Arbiter and Protective Action
+  Controller — that an operator invokes but never overrides or bypasses.
+* **ADR-002-026 (Safety Waiver, Deviation, and Residual-Risk Governance).** Owns
+  the waiver, deviation, and residual-risk-acceptance governance within which any
+  operator acceptance of residual risk SHALL occur.
 * **ADR-002-028 (Continuous Conformance Monitoring).** Owns the runtime monitoring
   the operator observes and responds to.
 * **ADR-002-025 (Restricted-Live Promotion).** Owns the promotion that precedes
@@ -412,7 +438,10 @@ initial allocation.
 | ADR-002-027 (incident / containment / shutdown) | operator invokes; does not classify protection or clear containment (§§9, 11.7) |
 | ADR-002-028 (continuous conformance monitoring) | operator observes/responds; does not own or redefine monitoring (§§8, 11.4, 11.7) |
 | ADR-002-001 §6 (protective classification) | operator never labels an action protective (§§9, 11.6) |
-| ADR-002-002 (Risk Capacity Ledger) | operation never mutates capacity (§11.5) |
+| ADR-002-011 (protective replacement / protection-gap control) | operator never cancels/removes/weakens a required protective order or creates a protection gap (§§9, 11.14) |
+| ADR-002-002 (Aggregate Risk-Capacity Commitment Model; RCL transition authority) | operation never mutates capacity; only the RCL mutates capacity (§11.5) |
+| ADR-002-026 (safety waiver / deviation / residual-risk governance) | operator accepts residual risk only within ADR-002-026 governance, never as a self-waiver of a Critical/Non-Waivable requirement (§§3, 11.13) |
+| ADR-002-025 (restricted-live promotion) | promotion precedes full-scope operation; the operator does not promote (§§2, 3, 12) |
 | ADR-002-018 §9 (health is not validity) | operator infers no validity/authority from component health (§§8, 11.11) |
 | Vision §6.4, §6.6, §6.9, §7.4, §9.3, §11.7; philosophy §§8, 11, 16, 21, 22, 23 | exposure-aware, revocable-authority, recovery-is-a-new-decision, observe-first operationalized (§§4, 6–10) |
 
@@ -464,18 +493,41 @@ Unresolved questions reduce, and do not expand, the conforming operational postu
   ADR-002-028 (§8), exposure-aware degraded operation deferring containment to
   ADR-002-027 (§9), and the re-arm/recovery discipline deferring the mechanism to
   ADR-002-007/017 with no automatic re-arm (§10).
-* Restated the boundary as twelve prohibitions on operational action (§11), each
-  traced to RFC-002 §9.1/§7.5/§4.7, RFC-000 CONST-011, RFC-001 SC-030/SC-040, and
-  ADR-002-001/002/007/015/017/018/027/028.
+* Restated the boundary as twelve prohibitions on operational action (§11;
+  expanded to fourteen by the independent review below), each traced to RFC-002
+  §9.1/§7.5/§4.7, RFC-000 CONST-011, RFC-001 SC-030/SC-040, and
+  ADR-002-001/002/007/011/015/017/018/026/027/028.
 * Marked scope relationships back to RFC-008/009/010 and to the ADR owners without
   pre-empting them (§12).
 * Introduced no SAFE-xxx requirement, numeric bound, or authority.
-* An in-context self-adversarial review was performed. The independent-reviewer
-  dispatch remained unavailable due to the same transient subagent-infrastructure
-  error that affected RFC-010; **this self-review is NOT independent and is below
-  the EV-L0 standard applied to RFC-008 and RFC-009. An independent adversarial
-  review is still owed for RFC-011 (jointly with RFC-010) and SHALL be run before
-  RFC-011 advances beyond Review Draft.** The review confers no acceptance or
+* Independent adversarial EV-L0 document review returned **PASS-WITH-FIXES** with
+  no Critical finding, restoring RFC-011 to the EV-L0 standard applied to RFC-008
+  and RFC-009 (the earlier self-review, run while the independent-reviewer dispatch
+  was unavailable, is superseded). Twenty-three adversarial sequences were
+  attempted — operator self-grant of authority/capacity/live scope, silent bypass
+  of a constitutional safety control, automatic re-arm on reconnect/failover, a
+  restored dependency or green monitor treated as restored live authority, capacity
+  mutation by operational action, a protective self-label, clearing an owner's
+  HALT/containment, issuing Live Authorization or transmitting by operational
+  action, re-arm under unreconciled state, break-glass outside governance, authority
+  inferred from component health, and reclaiming reserved protective capacity among
+  them — and the twelve original boundary items were confirmed to block their
+  targets; every load-bearing citation was verified against source, including
+  CONST-011 as the Independent Safety Authority and SC-030/SC-040. Two Major
+  findings were resolved. (M1) "Accept residual risk" was listed as an operator
+  authority (§§1, 5, 7) with no architectural owner — now bound to ADR-002-026 and
+  its RFC-002 §10.28 component in §§2, 3, 12, 13 and by a new boundary item (§11.13)
+  forbidding residual-risk acceptance outside that governance or as a self-waiver of
+  a Critical/Non-Waivable requirement. (M2) The boundary lacked an explicit
+  prohibition on an operator cancelling or removing a required protective order —
+  now §11.14 (protection-gap creation), owned by the Cancellation Arbiter and
+  Protective Action Controller (ADR-002-011; RFC-002 §9.1), with §§2, 3, 12, 13
+  pointers. Minor citation-precision fixes were applied: §11.8's operator
+  transmission prohibition now cites RFC-002 §9.1 (Arm live scope, Transmit) rather
+  than the strategy/environment-scoped §7.3/§7.6; the §13 ADR-002-002 label was made
+  precise and ADR-002-025 gained a §13 row; and §1 now states that RFC-011 is an
+  Implementation-layer specification governing the distinct Operational Procedures
+  layer (RFC-000 §12). The review is EV-L0 only and confers no acceptance or
   live-readiness.
 * Governance note (inherited citation imprecision). As recorded from RFC-008
   onward, §2's RFC-000 §12 citation for "SHALL NOT redefine constitutional intent"
