@@ -307,8 +307,10 @@ mistaken for readiness.
   (philosophy §37.8). RFC-010 SHALL NOT let a coverage number stand in for
   demonstrated failure-mode behavior.
 * **Test confidence is bounded.** A visible pass is still bounded by its
-  assumptions; testing avoids the false confidence philosophy §37 warns against
-  (historical, technical, monitoring, redundancy, configuration, test confidence).
+  assumptions; testing avoids the false confidence philosophy §37 warns against —
+  its historical, technical, monitoring, redundancy, configuration, broker, human,
+  and test-confidence forms (§37.1–37.8), of which test confidence (§37.8) is only
+  one.
 
 Testing earns the right for a claim to be reviewed. It does not earn the claim.
 
@@ -420,7 +422,7 @@ unwritten. They SHALL NOT be resolved by informal testing convention.
    rather than open, and how is that set kept current as the DSL evolves?
 2. How reproducible must a Conformance Test be — bit-for-bit vs.
    reproducible-from-recorded-inputs — for the artifact tested to be provably the
-   artifact admitted (§9; ADR-002-016; RFC-008 §14 Q2)?
+   artifact admitted (§9; ADR-002-016; RFC-008 §9 and §14 Q3)?
 3. What backtest methodology and cost/slippage realism (RFC-005 §9, RFC-006 §11)
    is required before a backtest is admissible evidence toward a hypothesis, and
    what explicitly disqualifies a look-ahead-biased or overfit backtest?
@@ -463,20 +465,33 @@ have demonstrated.
 * Marked scope relationships to RFC-008/009 and forward to RFC-011 without
   pre-empting them (§12).
 * Introduced no SAFE-xxx requirement, numeric bound, or authority.
-* An in-context self-adversarial review was performed (the independent-reviewer
-  dispatch used for RFC-008 and RFC-009 was repeatedly unavailable due to a
-  transient subagent-infrastructure error). It corrected one substantive
-  ownership defect: §12 and §14 Q6 had implied that runtime continuous conformance
-  monitoring is an RFC-011 concern, whereas it is architecturally owned by
-  ADR-002-028 (and its RFC-002 §10.30 component); the pointers now attribute it to
-  ADR-002-028 and confine RFC-010 to pre-deployment demonstration, with
-  ADR-002-028 added to §13. Ten false-readiness / authority-via-testing sequences
-  were checked against §§6, 8, 9, 10, 11 and found blocked (green-suite-as-
-  acceptance, scan/CI-as-admission, backtest-as-live-edge, coverage-as-correctness,
-  author-result-as-verification, same-agent-twice-as-independent, control-relaxed-
-  because-tests-pass, live-broker-from-test-path, untested-containment-claim,
-  testing-as-prevention-substitute). **This self-review is NOT independent and is
-  therefore below the EV-L0 standard applied to RFC-008 and RFC-009; an
-  independent adversarial review is still owed and SHALL be run before RFC-010
-  advances beyond Review Draft.** The review confers no acceptance or
+* An in-context self-adversarial review corrected one substantive ownership defect
+  before independent review: §12 and §14 Q6 had implied that runtime continuous
+  conformance monitoring is an RFC-011 concern, whereas it is architecturally owned
+  by ADR-002-028 (and its RFC-002 §10.30 component); the pointers now attribute it
+  to ADR-002-028 and confine RFC-010 to pre-deployment demonstration, with
+  ADR-002-028 added to §13.
+* Independent adversarial EV-L0 document review then returned **PASS-WITH-FIXES**
+  with no Critical finding, restoring RFC-010 to the EV-L0 standard applied to
+  RFC-008 and RFC-009 (the earlier self-review is superseded). Fifteen
+  false-readiness / authority-via-testing sequences were attempted —
+  green-suite-as-acceptance, scan/CI-as-admission, backtest-as-live-edge,
+  coverage-as-correctness, author-result-as-verification,
+  same-agent-twice-as-independent, control-relaxed-because-tests-pass,
+  live-broker-from-test-path, untested-containment-claim, and
+  testing-as-prevention-substitute among them — and all were confirmed blocked by
+  §§6, 8, 9, 10, 11; every load-bearing citation was verified against source,
+  including ADR-002-029 §25.5 (the rejected "a passing scan or test admits the
+  artifact" alternative), ADR-002-020 §8's verbatim "latest policy" prohibition,
+  Vision §6.5's "concentrates assurance before execution," and philosophy §37.8's
+  governing thesis. Two Minor precision fixes were applied: §10's false-confidence
+  parenthetical now lists all eight philosophy §37.1–37.8 forms rather than reading
+  as a partial enumeration, and §14 Q2's reproducibility cross-reference now points
+  to RFC-008 §9 and §14 Q3 (reproducibility/staleness) rather than §14 Q2
+  (enforcement mechanism). The review is EV-L0 only and confers no acceptance or
   live-readiness.
+* Governance note (inherited citation imprecision). The one Major finding raised —
+  §2's RFC-000 §12 citation for "SHALL NOT redefine constitutional intent," whose
+  literal phrase is in RFC-000 §9 (§12 states the cognate "reinterpret higher-level
+  intent") — is the series-wide item shared by RFC-003 through RFC-011; it is to be
+  resolved consistently across the series rather than by a lone divergent edit here.
