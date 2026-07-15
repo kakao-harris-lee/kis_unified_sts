@@ -287,12 +287,18 @@ nondeterministic by accident.
   global, network, or filesystem; the trustworthy-time evidence a strategy may
   read is the value delivered inside the Capsule (ADR-002-008, ADR-002-018), not a
   live clock.
-* **Declared, seeded nondeterminism.** Where a strategy legitimately uses a
-  stochastic or externally-sourced component (for example a Monte Carlo estimate
-  or an LLM-derived interpretation), the DSL SHALL require the seed and the
-  recorded response to be declared and captured as decision evidence, so
-  re-execution reconstructs the same outcome (RFC-003 §10; ADR-002-018 §10). An
-  undeclared nondeterministic source is non-conforming.
+* **Declared, seeded nondeterminism — captured before evaluation, never called
+  during it.** Where a strategy legitimately uses a stochastic or
+  externally-sourced component (for example a Monte Carlo estimate or an
+  LLM-derived interpretation), that value SHALL be produced *outside and before*
+  DSL evaluation and delivered into the Decision Context Capsule as Critical Input
+  (§10; ADR-002-018), together with its seed and recorded response as decision
+  evidence, so that re-execution reconstructs the same outcome (RFC-003 §10;
+  ADR-002-018 §10). DSL evaluation itself performs no live call: it reads the
+  captured value from the Capsule and never reaches a network, model endpoint, or
+  other ambient source, preserving §6 principle 3 and the §11 item 12 ambient-state
+  prohibition. An undeclared nondeterministic source, or one obtained by a live
+  call during evaluation, is non-conforming.
 * **Recorded provenance.** Evaluation SHALL record the exact Capsule
   identity/digest, the Authored Strategy version, the DSL version, and the
   configuration version it used, as inputs to the evidence and replay integrity
@@ -480,14 +486,15 @@ convention.
 
 1. Is the DSL a standalone constrained language, a sandboxed embedding in a host
    language, or a restricted API surface — and which realization most credibly
-   guarantees §11 item 16 (no escape) for the agents authoring under RFC-009?
+   guarantees §11 item 17 (no escape) for the agents authoring under RFC-009?
 2. What is the exact mechanism by which the runtime *enforces* purity and the
    absence of ambient state (§9) — a capability-restricted interpreter, static
    rejection of prohibited references, a sandbox, or a combination — and how is
    that mechanism itself verified (RFC-010)?
-3. How does the DSL express a strategy that legitimately needs an
-   externally-sourced or LLM-derived interpretation while keeping the whole
-   evaluation reproducible (§9), without opening an escape channel (§11.16)?
+3. Beyond the pre-evaluation capture §9 now requires, what evidence and staleness
+   discipline governs an externally-sourced or LLM-derived interpretation so that
+   it remains reproducible (§9) and cannot become a live side channel (§11 items
+   12, 17)?
 4. How does the DSL represent "no-action / hold" versus "explicit flat
    (target = 0)" as distinct, first-class, reproducible outcomes (RFC-003 §16 Q4)?
 5. Is the atomic authored unit a per-instrument target or a portfolio-wide target
@@ -528,3 +535,29 @@ Unresolved questions reduce, and do not expand, the conforming action set.
 * Marked scope relationships to RFC-003–007 and forward to RFC-009–011 without
   pre-empting them (§12).
 * Introduced no SAFE-xxx requirement, numeric bound, or authority.
+* Independent adversarial EV-L0 document review returned PASS-WITH-FIXES with no
+  Critical finding. Twelve authority-leak sequences were attempted — self-approval
+  via a confidence field, aggregate-state laundering via rationale text, wildcard
+  "latest config" smuggling, arm-live via a `live=true` timing constraint,
+  self-certified freshness, a transmit-race skipping Approval, a dynamic-plugin
+  escape, and a protective self-label via a rationale keyword among them — and all
+  were found blocked by §7 and the §11 boundary; every citation was verified
+  against source, including the two verbatim load-bearing quotes (RFC-002 §9.1
+  "Strategy SHALL NOT self-label an action as protective" and RFC-003 §10's
+  "an LLM-derived interpretation"), and all sixteen RFC-003 §11 prohibitions were
+  confirmed present (items 11 and 12 honestly merged into item 11). Two Major
+  findings were resolved: (M1) §14 Open Questions 1 and 3 mislabeled the
+  escape-closure clause as "item 16"/"§11.16" when it is item 17 (ambient-state is
+  item 12) — corrected; (M2) §9's stochastic/externally-sourced carve-out (for
+  example an LLM-derived interpretation) was in tension with the §6 principle 3 and
+  §11 item 12 ambient-state/network prohibition — resolved by requiring such a
+  value to be produced outside and before evaluation and delivered into the
+  Decision Context Capsule as Critical Input, so DSL evaluation itself performs no
+  live call. The review is EV-L0 only and confers no acceptance or live-readiness.
+* Governance note (inherited citation imprecision). §2 and §4 cite RFC-000 §12 for
+  the "SHALL NOT redefine constitutional intent" rule; that literal phrase appears
+  in RFC-000 §9 (Constitutional Boundaries), while §12 (Constitutional Governance)
+  states the cognate "SHALL NOT reinterpret higher-level intent." The imprecision
+  is identical across RFC-003 through RFC-007 and is not corrected unilaterally
+  here; it is recorded as a series-wide governance item to be resolved
+  consistently, not by a lone divergent edit in RFC-008.
