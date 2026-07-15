@@ -369,10 +369,12 @@ non-normative scope markers; RFC-010 SHALL NOT define their content.
 * **RFC-009 — Agent Guide.** The authoring actor whose conformance claims RFC-010
   makes independently verifiable; RFC-009 requires such verification to exist,
   RFC-010 defines it.
-* **RFC-011 — Operational Guidelines.** How an admitted strategy is operated and
-  monitored in production, including continuous conformance monitoring distinct
-  from pre-deployment testing. RFC-010 ends at pre-deployment demonstration;
-  RFC-011 governs runtime operation and monitoring.
+* **RFC-011 — Operational Guidelines.** How an admitted strategy is operated in
+  production. Runtime continuous conformance monitoring is a distinct discipline
+  from pre-deployment testing and is architecturally owned by ADR-002-028 (and its
+  RFC-002 §10.30 component), not by RFC-010 or RFC-011; RFC-010 ends at
+  pre-deployment demonstration and supplies no runtime monitor. RFC-011 governs
+  operating within that monitoring, and SHALL NOT be pre-empted here.
 
 Until RFC-011 is authored and accepted, its concerns remain open and SHALL NOT be
 resolved by testing convention.
@@ -399,6 +401,7 @@ This table is an initial allocation and SHALL be refined as RFC-011 is accepted.
 | ADR-002-016 (evidence/replay integrity) | hermetic, reproducible tests supply conforming inputs; do not replace the protocol (§§9, 11.11) |
 | ADR-002-025 (restricted-live promotion) | backtests/suites are not live-readiness; promotion separately owned (§§6, 10, 11.9) |
 | ADR-002-029 (software-artifact admission) | a green run/scan/CI is not admission identity (§§10, 11.2) |
+| ADR-002-028 (continuous conformance monitoring) | runtime monitoring is owned by ADR-002-028, not by RFC-010's pre-deployment testing (§12) |
 | VER-002-001 (verification-evidence specification) | testing produces evidence into the verification artifacts; it does not define the acceptance gate (§§2, 3, 10) |
 | Vision §9.5; philosophy §§11, 28, 33, 34, 37.8 | testable, prevention-first, backtest-is-evidence, demonstration-required, bounded-test-confidence operationalized (§§4, 6, 10) |
 
@@ -427,9 +430,10 @@ unwritten. They SHALL NOT be resolved by informal testing convention.
 5. How are Test Assumptions recorded and reviewed so that the bounded scope of a
    passing suite (philosophy §37.8) is visible to an independent reviewer rather
    than implied?
-6. Where does the boundary sit between RFC-010 pre-deployment testing and RFC-011
-   continuous conformance monitoring, so that neither leaves a gap nor duplicates
-   the other?
+6. Where does the boundary sit between RFC-010 pre-deployment testing and the
+   runtime continuous conformance monitoring owned by ADR-002-028, so that
+   pre-deployment demonstration and runtime monitoring neither leave a gap nor
+   duplicate each other?
 
 Unresolved questions reduce, and do not expand, the properties a suite may claim to
 have demonstrated.
@@ -459,3 +463,20 @@ have demonstrated.
 * Marked scope relationships to RFC-008/009 and forward to RFC-011 without
   pre-empting them (§12).
 * Introduced no SAFE-xxx requirement, numeric bound, or authority.
+* An in-context self-adversarial review was performed (the independent-reviewer
+  dispatch used for RFC-008 and RFC-009 was repeatedly unavailable due to a
+  transient subagent-infrastructure error). It corrected one substantive
+  ownership defect: §12 and §14 Q6 had implied that runtime continuous conformance
+  monitoring is an RFC-011 concern, whereas it is architecturally owned by
+  ADR-002-028 (and its RFC-002 §10.30 component); the pointers now attribute it to
+  ADR-002-028 and confine RFC-010 to pre-deployment demonstration, with
+  ADR-002-028 added to §13. Ten false-readiness / authority-via-testing sequences
+  were checked against §§6, 8, 9, 10, 11 and found blocked (green-suite-as-
+  acceptance, scan/CI-as-admission, backtest-as-live-edge, coverage-as-correctness,
+  author-result-as-verification, same-agent-twice-as-independent, control-relaxed-
+  because-tests-pass, live-broker-from-test-path, untested-containment-claim,
+  testing-as-prevention-substitute). **This self-review is NOT independent and is
+  therefore below the EV-L0 standard applied to RFC-008 and RFC-009; an
+  independent adversarial review is still owed and SHALL be run before RFC-010
+  advances beyond Review Draft.** The review confers no acceptance or
+  live-readiness.
