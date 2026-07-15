@@ -57,3 +57,4 @@
 - [RFC-009 — Agent Guide](part-3-development/RFC-009-Agent-Guide.md)
 - [RFC-010 — Testing Strategy](part-3-development/RFC-010-Testing-Strategy.md)
 - [RFC-011 — Operational Guidelines](part-3-development/RFC-011-Operational-Guidelines.md)
+- [ADR-DEV-001 — DSL Realization and Purity/Escape-Closure Enforcement](part-3-development/ADR-DEV-001-DSL-Realization-and-Purity-Escape-Closure-Enforcement.md)

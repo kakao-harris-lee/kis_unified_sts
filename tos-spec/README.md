@@ -45,6 +45,10 @@ How a strategy is authored, tested, and operated within the Part 1/2 boundaries
 - [RFC-010 — Testing Strategy](src/part-3-development/RFC-010-Testing-Strategy.md)
 - [RFC-011 — Operational Guidelines](src/part-3-development/RFC-011-Operational-Guidelines.md)
 
+Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
+
+- [ADR-DEV-001 — DSL Realization and Purity/Escape-Closure Enforcement](src/part-3-development/ADR-DEV-001-DSL-Realization-and-Purity-Escape-Closure-Enforcement.md)
+
 ## Status
 
 - **Part 1 — Foundation.** The safety ADRs remain `Proposed`. Verification cases and
@@ -54,7 +58,9 @@ How a strategy is authored, tested, and operated within the Part 1/2 boundaries
 - **Part 2 — Decision Framework.** RFC-003 through RFC-007 are `0.1 Review Draft`.
 - **Part 3 — Development.** RFC-008 through RFC-011 are `0.1 Review Draft`; each has
   completed an independent adversarial EV-L0 document review (`PASS-WITH-FIXES`, no
-  Critical finding).
+  Critical finding). The `ADR-DEV` decision records resolve the RFCs' open questions;
+  ADR-DEV-001 (DSL realization & enforcement) is at `0.1 Review Draft`, independent
+  EV-L0 `PASS-WITH-FIXES`.
 
 A Review Draft — and any EV-L0 review it carries — confers no acceptance and no
 live-readiness; those are governed by RFC-001 and VER-002-001.

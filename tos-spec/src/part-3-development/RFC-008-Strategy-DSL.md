@@ -487,10 +487,15 @@ convention.
 1. Is the DSL a standalone constrained language, a sandboxed embedding in a host
    language, or a restricted API surface — and which realization most credibly
    guarantees §11 item 17 (no escape) for the agents authoring under RFC-009?
+   *(Resolved by ADR-DEV-001: a default-deny, capability-restricted authoring
+   surface; any family is permitted only if escape-closure holds.)*
 2. What is the exact mechanism by which the runtime *enforces* purity and the
    absence of ambient state (§9) — a capability-restricted interpreter, static
    rejection of prohibited references, a sandbox, or a combination — and how is
-   that mechanism itself verified (RFC-010)?
+   that mechanism itself verified (RFC-010)? *(Resolved by ADR-DEV-001: three-layer
+   non-self-trusting enforcement — static admissibility analysis, capability-
+   restricted evaluation, isolation boundary — with the mechanism itself
+   adversarially verified per RFC-010 §8.)*
 3. Beyond the pre-evaluation capture §9 now requires, what evidence and staleness
    discipline governs an externally-sourced or LLM-derived interpretation so that
    it remains reproducible (§9) and cannot become a live side channel (§11 items
