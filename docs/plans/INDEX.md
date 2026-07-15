@@ -1,6 +1,6 @@
 # Plans Index
 
-Last updated: 2026-07-09 (CandleChart wiring handoff added; UX Tier 1-3 shipped).
+Last updated: 2026-07-15 (tos-spec Part 3 ADR decision map added).
 
 This index separates plans that still affect operational decisions from completed
 implementation records. For the current runtime snapshot, start with
@@ -12,6 +12,7 @@ the scattered plan docs for "where is each asset headed".
 
 | Plan | Status |
 |---|---|
+| [2026-07-15-tos-spec-part3-adr-decision-map.md](2026-07-15-tos-spec-part3-adr-decision-map.md) | **tos-spec Part 3 ADR 결정 지도 (분해 제안서)** — RFC-008~011의 §14 Open Questions **25개를 15개 후보 ADR로 통합 매핑**(재현성·독립리뷰·provenance·외부값 staleness 등 절반이 RFC 교차 결정이라 per-RFC 번호 부적합). 검증 사실: ADR은 `ADR-002`(RFC-002 분해) 30개뿐, Part 2·3 둘 다 자체 ADR 0개 → "Part 2처럼"은 ADR 부재를 의미. Part 3만 25개 미해결 결정(Part 2는 0)이라 ADR 필요 신호. **권장안:** 통합 중립 `ADR-DEV-NNN` 시리즈 · T1 기반 4개(D1 DSL강제/D2 재현성/D4 provenance↔admission/D5 독립리뷰) 먼저 착수·각 독립 EV-L0 · D9는 D1 선행. 총 ~12–15 ADR = ~12–15 EV-L0. **go/no-go 대기 (ADR 미착수).** |
 | [2026-07-08-new-architecture-gap-analysis.md](2026-07-08-new-architecture-gap-analysis.md) | **신규 아키텍처(TA-Lib+vectorbt+선언형 YAML) Gap Analysis** — 지시서 [docs/2026-07-08_new_architencture.md](../2026-07-08_new_architencture.md) 대비 컴포넌트별 현황: TA-Lib 엔진·builder_v1·실행계층 seam은 이미 존재(채택 미완), vectorbt는 미착수, 리스크는 2세계 이중화. 6개 병렬 코드 조사 종합. |
 | [2026-07-08-new-architecture-refactoring-plan.md](2026-07-08-new-architecture-refactoring-plan.md) | **신규 아키텍처 단계별 리팩토링 계획** — P0 정리 → P1 지표 TA-Lib 위임 완성 → P2 builder_v1 선언형 승격 → P3 vectorbt 백테스트(WS-A4 승격) → P4 Risk Engine 통합 → P5 Futures Context/Hedge 배선 → P6 실행계층 마감. 각 Phase parity 게이트 필수. 기존 indicator-engine 로드맵(WS-A4)과 정합. |
 | [2026-07-09-di-pydantic-integration-addendum.md](2026-07-09-di-pydantic-integration-addendum.md) | **DI + Pydantic + Polars/DuckDB 통합 보강안** — 지시서에 없는 별도 추가 4종을 위 리팩토링 계획에 얹는 횡단 레인. **Pydantic**은 이미 v2 표준(65파일)이라 신규 Phase 없이 P4(risk config 통일)+P2(전략검증 수렴)+ConfigMixin 폐기 위생 레인에 흡수. **dependency-injector**는 참조 0건 신규 프레임워크 — registry/adapter 원칙과 겹쳐 **서비스 조립 루트 + KIS 데이터 파사드로 범위 한정**, order_router PoC(v2호환/lazy-import/asyncio 3대 리스크 검증) 선행 후 **후행 P6.5**로 확산. **DuckDB**는 이미 프로덕션 채택(Parquet 질의 6사이트) — 커넥션 재사용 최적화만. **Polars**는 로드맵 WS-A2/A4 배정 미도입 — P3(vectorbt)와 묶어 numpy 2.0 스윕 선행, 고아 test_data_engine.py 정리가 첫 관문, pandas 전면 대체 아님(배치/백테스트 한정). 결정 로그 포함. |
