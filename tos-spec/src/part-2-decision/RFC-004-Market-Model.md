@@ -381,8 +381,8 @@ their content.
   the shared estimate carries one provenance (§8).
 * **RFC-007 — Portfolio Hedge Model.** RFC-004 supplies the market state
   (basis, correlation, volatility) a hedge decision interprets; the hedge
-  decision and its protective classification remain owned by RFC-007 and
-  ADR-002-001.
+  methodology remains owned by RFC-007, and its protective classification is
+  owned exclusively by the Protective Action Controller under ADR-002-001 §6.
 
 Until each companion RFC is accepted, its concerns remain open and SHALL NOT be
 resolved by market-model convention.
@@ -461,3 +461,9 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   CII-INV-013 correction was applied to RFC-003 §11 to keep the two documents
   consistent. The review is EV-L0 only and confers no acceptance or
   live-readiness.
+* During the part-2 cross-RFC consistency audit, §13's RFC-007 pointer was
+  corrected: protective classification is owned exclusively by the Protective
+  Action Controller under ADR-002-001 §6, not "by RFC-007 and ADR-002-001." This
+  aligns RFC-004 with RFC-007 §§3, 10, 12, which state that RFC-007 classifies
+  nothing and supplies only the methodology the Controller evaluates. RFC-007
+  retains ownership of the hedge methodology only.

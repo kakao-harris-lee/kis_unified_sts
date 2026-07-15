@@ -384,7 +384,8 @@ computation or sizing component, SHALL NOT:
 6. approve a proposal, size beyond the Aggregate Risk Decision or RCL commitment,
    or transmit (RFC-003 §11; ADR-002-002);
 7. classify a de-risking or hedge action as protective on its own authority
-   (RFC-001 §5.25; RFC-007, ADR-002-001 own protective classification);
+   (RFC-001 §5.25; the Protective Action Controller owns protective
+   classification exclusively under ADR-002-001 §6);
 8. present a VaR/ES value, sizing output, drawdown signal, or expectancy estimate
    as authority to release capacity, re-arm, or bypass a gate (§§7, 9, 10, 11);
 9. increase risk appetite because recent performance was favorable (philosophy
@@ -449,8 +450,9 @@ content.
   define execution tactics.
 * **RFC-007 — Portfolio Hedge Model.** RFC-006 supplies the risk methodology a
   hedge decision uses (hedge ratio, basis risk, correlation), but hedge
-  construction and protective classification remain owned by RFC-007 and
-  ADR-002-001; a hedge's risk-reduction benefit is subject to ARE-INV-005 (§8).
+  construction remains owned by RFC-007 and its protective classification is
+  owned exclusively by the Protective Action Controller under ADR-002-001 §6; a
+  hedge's risk-reduction benefit is subject to ARE-INV-005 (§8).
 
 Until each companion RFC is accepted, its concerns remain open and SHALL NOT be
 resolved by risk-model convention.
@@ -477,8 +479,10 @@ companion RFCs are accepted.
 **Governance note (CONST-002 traceability gap).** CONST-002's Traceability field
 lists only RFC-001 and RFC-005 and omits RFC-006, although capital preservation is
 substantively a risk-model concern. RFC-006 does not silently amend the
-constitution; this omission is recorded here and in the consistency audit and
-SHALL be resolved through governance, not by unilateral edit.
+constitution; this omission is recorded here and as an open reviewer finding in
+the decision-layer research references, and SHALL be resolved through governance,
+not by unilateral edit. (It is not in the part-1 Consistency Audit, whose scope
+excludes the part-2 RFCs.)
 
 RFC-006 introduces no SAFE-xxx requirement and no numeric bound.
 
@@ -546,3 +550,13 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   source text, and the boundary was cross-checked as consistent with RFC-003
   §14, RFC-004 §13, and RFC-005 §14 written from the other side. The review is
   EV-L0 only and confers no acceptance or live-readiness.
+* During the part-2 cross-RFC consistency audit, two corrections were applied.
+  (1) §13 item 7 and §15's RFC-007 pointer were corrected: protective
+  classification is owned exclusively by the Protective Action Controller under
+  ADR-002-001 §6, not "by RFC-007 and ADR-002-001"; this aligns RFC-006 with
+  RFC-007 §§3, 10, 12, under which RFC-007 classifies nothing. (2) §16's
+  governance note previously cited "the consistency audit" as recording the
+  CONST-002/RFC-006 traceability gap; the part-1 Consistency Audit excludes the
+  part-2 RFCs, so the citation was corrected to the decision-layer research
+  references, where the gap is recorded as an open reviewer finding. The gap
+  itself is unchanged and remains a governance item.

@@ -427,8 +427,9 @@ their content.
   methodology behind expectancy and risk is RFC-006's; RFC-005 provides
   execution-cost inputs, not the risk methodology.
 * **RFC-007 — Portfolio Hedge Model.** A hedge order executes through this model,
-  but its protective classification and hedge sizing remain owned by RFC-007 and
-  ADR-002-001; RFC-005 executes, it does not classify.
+  but its hedge sizing remains owned by RFC-007 and its protective classification
+  is owned exclusively by the Protective Action Controller under ADR-002-001 §6;
+  RFC-005 executes, it does not classify.
 
 Until each companion RFC is accepted, its concerns remain open and SHALL NOT be
 resolved by execution-model convention.
@@ -510,3 +511,8 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   (§§11, 12). Twelve bypass/leak/SAFE-021 sequences were attempted and blocked,
   and every ADR/SAFE/CONST/philosophy citation was verified against source text.
   The review is EV-L0 only and confers no acceptance or live-readiness.
+* During the part-2 cross-RFC consistency audit, §14's RFC-007 pointer was
+  corrected: protective classification is owned exclusively by the Protective
+  Action Controller under ADR-002-001 §6, not "by RFC-007 and ADR-002-001." This
+  aligns RFC-005 with RFC-007 §§3, 10, 12, under which RFC-007 classifies nothing.
+  RFC-007 retains ownership of hedge sizing only.
