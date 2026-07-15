@@ -499,7 +499,8 @@ convention.
 3. Beyond the pre-evaluation capture §9 now requires, what evidence and staleness
    discipline governs an externally-sourced or LLM-derived interpretation so that
    it remains reproducible (§9) and cannot become a live side channel (§11 items
-   12, 17)?
+   12, 17)? *(Reproducibility aspect resolved by ADR-DEV-002; the externally-sourced-
+   value capture and staleness discipline is owned by ADR-DEV-003.)*
 4. How does the DSL represent "no-action / hold" versus "explicit flat
    (target = 0)" as distinct, first-class, reproducible outcomes (RFC-003 §16 Q4)?
 5. Is the atomic authored unit a per-instrument target or a portfolio-wide target
@@ -511,7 +512,10 @@ convention.
 7. What is the versioning and substitution protocol for an Authored Strategy and
    its DSL version such that a change is always a recorded, versioned substitution
    (§§6, 9; RFC-003 §13), and how does it interact with software-artifact
-   admission (ADR-002-029)?
+   admission (ADR-002-029)? *(Resolved by ADR-DEV-004: a change to the artifact, DSL
+   version, enforcement version, or configuration is a recorded Versioned
+   Substitution producing a new Artifact Identity and a new ADR-002-029 Release
+   Generation that inherits no admission.)*
 
 Unresolved questions reduce, and do not expand, the conforming action set.
 

@@ -58,3 +58,6 @@
 - [RFC-010 — Testing Strategy](part-3-development/RFC-010-Testing-Strategy.md)
 - [RFC-011 — Operational Guidelines](part-3-development/RFC-011-Operational-Guidelines.md)
 - [ADR-DEV-001 — DSL Realization and Purity/Escape-Closure Enforcement](part-3-development/ADR-DEV-001-DSL-Realization-and-Purity-Escape-Closure-Enforcement.md)
+- [ADR-DEV-002 — Artifact Reproducibility and Identity Granularity](part-3-development/ADR-DEV-002-Artifact-Reproducibility-and-Identity-Granularity.md)
+- [ADR-DEV-004 — Authoring Provenance, Versioning/Substitution, and Admission Binding](part-3-development/ADR-DEV-004-Authoring-Provenance-Versioning-and-Admission-Binding.md)
+- [ADR-DEV-005 — Independent Review of AI-Authored Strategies and Rationale Representation](part-3-development/ADR-DEV-005-Independent-Review-of-AI-Authored-Strategies-and-Rationale-Representation.md)

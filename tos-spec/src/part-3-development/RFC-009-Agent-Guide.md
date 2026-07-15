@@ -431,15 +431,22 @@ convention.
 
 1. What minimum Authoring Provenance record (actor, prompt/input set, tool and
    model versions, source revision) is required to make an AI-authored strategy
-   admissible under ADR-002-029, and where is that record bound?
+   admissible under ADR-002-029, and where is that record bound? *(Resolved by
+   ADR-DEV-004: minimum record defined; bound to the Artifact Identity and the
+   ADR-002-029 Source Revision Manifest/admission evidence.)*
 2. What constitutes *independent* review of an AI-authored strategy — must the
    reviewing authority be human, a distinct tool, or either — given Vision
-   §12.4/§12.7 and the no-self-review rule (§10)?
+   §12.4/§12.7 and the no-self-review rule (§10)? *(Resolved by ADR-DEV-005:
+   independence is of the authority, not the substrate — human or a verified tool or
+   either — defined by three exclusions.)*
 3. To what extent must an authoring pipeline be reproducible (bit-for-bit vs.
    reproducible-from-recorded-inputs) for the artifact reviewed to be provably the
-   artifact that runs (§9; ADR-002-016)?
+   artifact that runs (§9; ADR-002-016)? *(Resolved by ADR-DEV-002: identity is
+   exact/content-addressed; behavior is reproducible-from-recorded-inputs.)*
 4. How is an author's rationale represented so it aids review without being
-   mistaken for verified conformance (§10; RFC-003 §12)?
+   mistaken for verified conformance (§10; RFC-003 §12)? *(Resolved by ADR-DEV-005:
+   rationale is recorded and presented as a claim to be checked, distinct from
+   verified conformance, with no evidentiary weight until independently checked.)*
 5. How does the authoring discipline handle an Authoring Agent that revises a
    large family of strategies at once, so that per-artifact review and admission
    are not diluted by scale (§10)?

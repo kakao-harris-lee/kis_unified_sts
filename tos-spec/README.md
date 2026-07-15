@@ -48,6 +48,9 @@ How a strategy is authored, tested, and operated within the Part 1/2 boundaries
 Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
 
 - [ADR-DEV-001 — DSL Realization and Purity/Escape-Closure Enforcement](src/part-3-development/ADR-DEV-001-DSL-Realization-and-Purity-Escape-Closure-Enforcement.md)
+- [ADR-DEV-002 — Artifact Reproducibility and Identity Granularity](src/part-3-development/ADR-DEV-002-Artifact-Reproducibility-and-Identity-Granularity.md)
+- [ADR-DEV-004 — Authoring Provenance, Versioning/Substitution, and Admission Binding](src/part-3-development/ADR-DEV-004-Authoring-Provenance-Versioning-and-Admission-Binding.md)
+- [ADR-DEV-005 — Independent Review of AI-Authored Strategies and Rationale Representation](src/part-3-development/ADR-DEV-005-Independent-Review-of-AI-Authored-Strategies-and-Rationale-Representation.md)
 
 ## Status
 
@@ -59,8 +62,8 @@ Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
 - **Part 3 — Development.** RFC-008 through RFC-011 are `0.1 Review Draft`; each has
   completed an independent adversarial EV-L0 document review (`PASS-WITH-FIXES`, no
   Critical finding). The `ADR-DEV` decision records resolve the RFCs' open questions;
-  ADR-DEV-001 (DSL realization & enforcement) is at `0.1 Review Draft`, independent
-  EV-L0 `PASS-WITH-FIXES`.
+  the foundational block ADR-DEV-001, -002, -004, and -005 is authored, each at
+  `0.1 Review Draft` with an independent EV-L0 `PASS-WITH-FIXES`.
 
 A Review Draft — and any EV-L0 review it carries — confers no acceptance and no
 live-readiness; those are governed by RFC-001 and VER-002-001.

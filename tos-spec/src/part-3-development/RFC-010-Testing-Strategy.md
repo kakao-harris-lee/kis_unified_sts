@@ -422,13 +422,18 @@ unwritten. They SHALL NOT be resolved by informal testing convention.
    rather than open, and how is that set kept current as the DSL evolves?
 2. How reproducible must a Conformance Test be — bit-for-bit vs.
    reproducible-from-recorded-inputs — for the artifact tested to be provably the
-   artifact admitted (§9; ADR-002-016; RFC-008 §9 and §14 Q3)?
+   artifact admitted (§9; ADR-002-016; RFC-008 §9 and §14 Q3)? *(Resolved by
+   ADR-DEV-002: exact/content-addressed identity binds tested to admitted; behavior
+   is reproducible-from-recorded-inputs.)*
 3. What backtest methodology and cost/slippage realism (RFC-005 §9, RFC-006 §11)
    is required before a backtest is admissible evidence toward a hypothesis, and
    what explicitly disqualifies a look-ahead-biased or overfit backtest?
 4. What constitutes *independent* verification of an AI-authored strategy's
    conformance claims — must the verifying party be human, a distinct tool, or
-   either — consistent with RFC-009 §10's no-self-review rule?
+   either — consistent with RFC-009 §10's no-self-review rule? *(Resolved by
+   ADR-DEV-005: the same independence standard — human or a verified tool or either,
+   never the author or the author re-run or a common-mode reviewer; the author's own
+   asserted result is not verification.)*
 5. How are Test Assumptions recorded and reviewed so that the bounded scope of a
    passing suite (philosophy §37.8) is visible to an independent reviewer rather
    than implied?
