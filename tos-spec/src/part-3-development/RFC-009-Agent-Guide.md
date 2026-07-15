@@ -197,10 +197,10 @@ establishes the same about the layer that *creates* the strategy: the author is
 untrusted at authoring time. The two are complementary — a trusted author would
 reintroduce, at build time, exactly the coupling RFC-008 removes at run time.
 
-* **Capability is not trust.** A highly capable human or AI author can produce a
-  subtly non-conforming strategy as easily as a conforming one; sophistication
-  raises the stakes of review, it does not lower the need for it (Vision §9.2,
-  §11.10).
+* **Capability is not trust.** Sophisticated technology does not guarantee
+  correctness (philosophy §37.2); a highly capable human or AI author can produce
+  a subtly non-conforming strategy as easily as a conforming one. Sophistication
+  raises the stakes of review, it does not lower the need for it (Vision §11.10).
 * **Output is a candidate, always.** The product of any Authoring Act is a
   candidate Authored Strategy for review and admission. It is not runnable by
   virtue of having been authored; it becomes runnable only through the separately
@@ -240,9 +240,10 @@ conflates them is non-conforming.
   (ADR-002-021), independent of authorship.
 * **Authoring vs. admission.** Whether an authored artifact may run at all is
   decided by software-artifact admission against an immutable, content-addressed,
-  generation-fenced release identity (ADR-002-029). A branch name, a passing
-  build, a green test run, or an author's sign-off is not admission
-  (ADR-002-029 §1).
+  generation-fenced release identity (ADR-002-029). A branch name or a passing
+  build is not artifact identity or admission proof (ADR-002-029 §1), and a green
+  test run, a passing scan, CI success, or an author's self-approval cannot create
+  admission eligibility (ADR-002-029 §§15, 25.5, SCI-AC-006).
 * **Authoring vs. live promotion.** Whether a conforming, admitted strategy is
   promoted toward live is decided by restricted-live governance on pre-registered
   evidence (ADR-002-025); authorship extrapolates to no live scope.
@@ -354,9 +355,11 @@ An authoring actor — human, tool, or Authoring Agent — SHALL NOT:
    RFC-003 §12);
 9. review, accept, admit, or promote its own output, or stand in for the
    independent review and admission required by Vision §12.4/§12.7 and
-   ADR-002-025/029;
-10. treat a passing build, green test run, branch, tag, `latest`, or its own
-    sign-off as artifact identity or admission proof (ADR-002-029 §1);
+   ADR-002-025/029 (RFC-001 §7.5 forbids an actor declaring its own safety
+   evidence accepted);
+10. treat a branch, tag, `latest`, or passing build as artifact identity
+    (ADR-002-029 §1), or a green test run, passing scan, CI success, or its own
+    self-approval as admission eligibility (ADR-002-029 §§15, 25.5, SCI-AC-006);
 11. ship an authored artifact whose Authoring Provenance — actor, inputs, versions,
     source revision — cannot be established for review and admission (ADR-002-029
     §1; §9);
@@ -403,7 +406,7 @@ allocation and SHALL be refined as RFC-010 and RFC-011 are accepted.
 | Requirement | Discharge in RFC-009 |
 |---|---|
 | RFC-000 §9 layering (Implementation defines HOW SOFTWARE IS BUILT) | RFC-009 confined to the authoring actor for a Decision Policy; defines no WHY/WHAT/HOW-DECISIONS content (§§1, 2) |
-| RFC-000 CONST-005 (no self-authorization) | authorship is not approval; no self-review/self-accept (§§8, 10, 11.1, 11.9) |
+| RFC-000 CONST-005 (Independent Approval Authority) + RFC-001 §7.5 (Separation of Authority) | authorship is not approval; the separation-of-authority pattern is generalized so an actor SHALL NOT self-review/self-accept its output (§§8, 10, 11.1, 11.9) |
 | RFC-002 §7.3 Strategy Boundary | the author's product is an untrusted candidate proposer, contained to the RFC-008 surface (§§7, 10, 11) |
 | RFC-002 §7.5 Human Operations Boundary | authoring automation does not remove or bypass responsible human roles (§§4, 10) |
 | RFC-002 §9.1 authority ownership | authorship gains none of approve/commit/transmit/arm/classify (§§8, 11) |
@@ -468,3 +471,31 @@ Unresolved questions reduce, and do not expand, the conforming authoring surface
 * Marked scope relationships to RFC-008 and forward to RFC-010/011 without
   pre-empting them (§12).
 * Introduced no SAFE-xxx requirement, numeric bound, or authority.
+* Independent adversarial EV-L0 document review returned PASS-WITH-FIXES with no
+  Critical finding. Ten author-time leak sequences were attempted —
+  self-review/self-accept, authorship-as-approval, capacity/live-authorization
+  presumption, using scale to dilute per-artifact review, presenting a fluent AI
+  rationale as verified conformance, treating a passing build/test/branch/sign-off
+  as admission, shipping without establishable provenance, embedding a live call
+  in authored logic, and using two instances of the same agent as "independent"
+  review — and all were found blocked by §§7, 8, 10, 11, each tied to a real
+  separately-owned enforcer (Independent Approval Service, RCL, Live Authorization
+  Service, Protective Action Controller, ADR-002-029 admission, ADR-002-025
+  promotion). The RFC-008 (surface) / RFC-009 (actor) split was confirmed clean and
+  non-overlapping, and no SAFE-xxx, numeric bound, synonym, or authority grant was
+  introduced. Three Major findings, all citation-precision rather than substance,
+  were resolved: (M1) the CONST-005 traceability row was relabeled as a
+  generalization of the separation-of-authority pattern and paired with RFC-001
+  §7.5, whose "declare its own safety evidence accepted" prohibition is the tight
+  fit for the no-self-review rule (§§11.9, 13); (M2) "capability is not trust" was
+  re-anchored from Vision §9.2/§11.10 to philosophy §37.2 (Technical Confidence —
+  "Sophisticated technology does not guarantee correctness"), an exact match (§7);
+  (M3) the "green test run / sign-off is not admission" claims were re-cited from
+  ADR-002-029 §1 (which covers branch/build identity) to §§15, 25.5, and SCI-AC-006
+  (which cover tests, CI success, and self-approval) (§§8, 11.10). The review is
+  EV-L0 only and confers no acceptance or live-readiness.
+* Governance note (inherited citation imprecision). As recorded in RFC-008, §2's
+  RFC-000 §12 citation for "SHALL NOT redefine constitutional intent" is
+  imprecise (the literal phrase is in RFC-000 §9); the imprecision is identical
+  across RFC-003 through RFC-009 and is tracked as a series-wide governance item,
+  not corrected unilaterally here.
