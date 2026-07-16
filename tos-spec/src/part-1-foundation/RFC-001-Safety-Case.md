@@ -3,14 +3,14 @@
 **Document ID:** RFC-001
 **Document Type:** Safety Requirements Specification and Safety Case
 **Title:** Trading Operating System Safety Case
-**Version:** 0.3 Review Draft
+**Version:** 0.4 Review Draft
 **Status:** Review Draft — Not Ratified
 **Classification:** Foundational Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-13
-**Last Updated:** 2026-07-13
-**Supersedes:** RFC-001 v0.2 Review Draft
+**Last Updated:** 2026-07-17
+**Supersedes:** RFC-001 v0.3 Review Draft
 
 ---
 
@@ -1634,6 +1634,75 @@ Replay SHALL NOT be treated as proof that preventive controls are adequate.
 
 ---
 
+### SAFE-053 — Independent Approval of Risk-Increasing Re-Arm and Scope Promotion
+
+**Priority:** Critical
+**Type:** Preventive
+**Derived from:** CONST-005, CONST-011, CONST-013
+
+Every risk-increasing live re-arm, Live Authorization issuance, and
+production-scope promotion SHALL require the independent approval of at least
+two distinct effective principals. An effective principal is the equivalence
+class of all identities, credentials, devices, sessions, service identities, and
+administrative control paths under one controller.
+
+The two-independent-effective-principal requirement MAY be satisfied by either:
+
+* a quorum of at least two distinct authenticated natural persons; or
+* an approved Governed Single-Operator Re-Arm Variant defined by ADR-002-015, in
+  which a time-separated, re-authenticated single-operator path, an independent
+  non-authorizing attestation, and — where available — an external independent
+  reviewer recognized as a second effective principal together satisfy the
+  independence requirement for a reduced, explicitly bound scope.
+
+Under satisfaction path (ii), where no external independent reviewer is
+available, the variant's time-separation and independent attestation substitute
+for the second effective principal's provenance rather than adding a second
+natural person; the substitution is confined to a reduced scope and never lowers
+a gate.
+
+The satisfaction path SHALL be fixed in advance by approved policy and bound
+into the approval scope. It SHALL NOT be selected, changed, or invented at the
+time of re-arm.
+
+Neither satisfaction path may waive a non-waivable safety boundary, widen
+emergency (break-glass) authority, expand the Hard Safety Envelope, or lower any
+other required safety, capacity, currentness, or final-egress gate. The variant
+path may arm no scope broader than the two-natural-person path and no broader
+than the smallest explicitly approved scope delta (Progressive Promotion step) declared for the variant under ADR-002-025 §5.11.
+
+Where the required independence cannot be positively established — including
+where an attestation required by the variant is unavailable, indeterminate, or
+bound to a stale generation — approval SHALL fail closed and no re-arm,
+issuance, or promotion may proceed.
+
+Approval under this requirement is not authority. It authorizes only the exact
+requested re-arm, issuance, or promotion and creates no capacity, protective
+classification, Live Authorization, or transmission authority.
+
+### Acceptance Conditions
+
+**Trigger:** A risk-increasing live re-arm, Live Authorization issuance, or
+production-scope promotion is requested.
+
+**Expected result:** The request proceeds only after two independent effective
+principals are established through the pre-declared satisfaction path; otherwise
+it is denied.
+
+**Forbidden outcome:** A single effective principal obtains a risk-increasing
+re-arm, issuance, or promotion — whether through multiple accounts, an
+unattested or undelayed single-operator self-approval, an ad-hoc satisfaction
+path substitution, or a variant path proceeding without its required
+independent attestation.
+
+**Pass rule:** Every tested collapse of the two approvers to one effective
+controller, every ad-hoc satisfaction-path substitution, and every missing,
+stale, or indeterminate variant attestation fails closed.
+
+**Initial status:** SPECIFIED
+
+---
+
 ## 11. Verification and Evidence
 
 ### 11.1 Requirement Lifecycle
@@ -1796,6 +1865,14 @@ A `SPECIFIED` entry indicates that RFC-001 defines the required safety obligatio
 | CONST-012                  | SAFE-048                                                            |
 | CONST-013                  | SAFE-023, SAFE-024, SAFE-035                                        |
 | CONST-014                  | SAFE-025                                                            |
+
+### Additional Safety Discharges (v0.4)
+
+| Constitutional requirement | Added safety discharge |
+| -------------------------- | ---------------------- |
+| CONST-005                  | SAFE-053               |
+| CONST-011                  | SAFE-053               |
+| CONST-013                  | SAFE-053               |
 
 ---
 
@@ -2002,6 +2079,13 @@ Material changes to hazards, Critical requirements, safe-state semantics, or pro
 * Removed the RFC-001-specific constitutional precedence hierarchy.
 * Aligned safe-state behavior with RFC-000 (PATCH-0006).
 * Strengthened production-readiness gates.
+
+### v0.4 — Independent Re-Arm Approval Parent
+
+* Added SAFE-053 as the Safety-Case-level parent for independent approval of risk-increasing live re-arm, Live Authorization issuance, and production-scope promotion, resolving the philosophy §35 hierarchy inversion in which ADR-002-015 originated a parentless obligation (CORPUS-REVIEW-0001 CR-02).
+* Named the two lawful satisfaction paths: a two-natural-person quorum, or the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1).
+* Extended the Constitutional Verification Matrix (CONST-005/011/013 → SAFE-053).
+* Recorded per DR-0001 — Single-Operator Live Governance.
 
 ---
 

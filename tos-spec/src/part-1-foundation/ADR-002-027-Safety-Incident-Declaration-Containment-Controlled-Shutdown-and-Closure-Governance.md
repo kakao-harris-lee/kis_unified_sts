@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-14
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety-incident detection and declaration, exact affected scope, restrictive escalation, containment coordination, controlled shutdown, demotion, external emergency activity, investigation, closure, recovery handoff, evidence, currentness, and acceptance
 - **Supersedes:** None
@@ -213,7 +215,7 @@ Restart, reconnect, restore, rollback, remediation deployment, root-cause comple
 
 ### SIR-INV-016 — Closure Independence and Non-Self-Exemption
 
-The detector, affected service owner, response implementer, evidence producer, performance beneficiary, and live armer cannot collapse into one Effective Principal for closure. Unknown independence denies closure.
+The detector, affected service owner, response implementer, evidence producer, performance beneficiary, and live armer cannot collapse into one Effective Principal for closure. Unknown independence denies closure. Where two distinct natural persons are unavailable, the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) MAY supply the second independent effective principal for closure within its reduced bound scope; this adds a satisfaction path and does not relax the independence obligation or the fail-closed default on unknown independence.
 
 ---
 
@@ -236,6 +238,8 @@ The detector, affected service owner, response implementer, evidence producer, p
 | Re-arm | ADR-002-007/015 governance | fresh Live Authorization and final egress | automatic or incident-driven re-arm prohibited |
 
 Incident coordinators may coordinate work but SHALL NOT accumulate the authorities of the components they coordinate.
+
+Where a second natural person is unavailable, the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) MAY satisfy the independent Effective Principal quorum for administrative closure within its reduced bound scope, without lowering any gate in this table or clearing a HALT.
 
 ---
 
@@ -494,7 +498,7 @@ Administrative closure requires all of the following for the exact current Incid
 7. root cause, contributing causes, control failures, and affected generations are recorded without substituting analysis for enforcement;
 8. remediation and rollback effects are governed by fresh configuration and do not silently restore scope;
 9. recovery obligations are transferred to ADR-002-017 behind a closed Recovery Barrier;
-10. the closure request and evidence are current, exact, and independently reviewed by the required Effective Principals;
+10. the closure request and evidence are current, exact, and independently reviewed by the required Effective Principals, or by the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) for the exact reduced scope;
 11. no open parent, child, overlapping incident, shared cause, or common mode invalidates closure;
 12. the closure decision explicitly states that it creates no capacity, readiness, HALT clear, authority, transmission, production scope, or re-arm.
 
@@ -751,3 +755,18 @@ ADR-002-027 SHALL remain **Proposed** until all of the following are complete:
 Acceptance of this governance mechanism closes no incident, authorizes no shutdown action, accepts no evidence item, and permits no live scope. Every actual incident remains governed by exact current artifacts and separately owned enforcement.
 
 Authorship, EV-L0 review, a ticket, page, message, incident record, plan, dashboard, root-cause report, postmortem, replay, quiet time, remediation deployment, closure signature, configuration activation, or recovery status does not satisfy these gates. This ADR authorizes architecture and implementation planning only. It does not authorize acceptance, restricted-live or production operation, broker transmission, incident closure, scope restoration, or automatic re-arm.
+
+---
+
+## 30. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-14)
+
+Initial safety-incident declaration, containment, controlled shutdown, and closure governance decision.
+
+### v0.2 — Single-Operator Re-Arm Recognition (2026-07-17)
+
+- Recognized the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) as an additional path to satisfy the second independent effective principal in administrative incident closure, within a reduced bound scope, adding a satisfaction path without relaxing the closure-independence obligation.
+- Closure remains administrative and non-authorizing; the variant cannot clear a HALT or re-arm, and unknown independence still denies closure.
+- Amended SIR-INV-016, §7, and §20 item 10.
+- Recorded per DR-0001 — Single-Operator Live Governance (CORPUS-REVIEW-0001 CR-02, option (c)).

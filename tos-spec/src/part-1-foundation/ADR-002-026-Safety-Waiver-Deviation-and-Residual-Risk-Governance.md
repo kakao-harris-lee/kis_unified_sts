@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-14
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety waivers, deviations, exceptions, residual-risk acceptance, non-waivable boundaries, compensating controls, exact scope, independent approval, configuration activation, currentness, expiry, revocation, recovery, evidence, and acceptance
 - **Supersedes:** None
@@ -167,7 +169,7 @@ Multiple deviations, compensating controls, and common modes are evaluated as on
 
 ### WDR-INV-007 — Independent Effective-Person Approval
 
-The requester, control owner, performance beneficiary, implementer, evidence producer, and live armer cannot collectively satisfy approval through one Effective Principal or shared administrative control.
+The requester, control owner, performance beneficiary, implementer, evidence producer, and live armer cannot collectively satisfy approval through one Effective Principal or shared administrative control. Where two distinct natural persons are unavailable, the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) MAY supply the second independent effective principal for a deviation outside the Non-Waivable Boundary. The variant SHALL NOT approve, satisfy, or compensate for any deviation inside the Non-Waivable Boundary (WDR-INV-002). This adds a satisfaction path and does not relax the independence obligation.
 
 ### WDR-INV-008 — Configuration and Re-arm Remain Separate
 
@@ -220,6 +222,8 @@ Deviation expiry or revocation causes a restrictive transition. It never automat
 | Record evidence | source owners and Evidence Store | ADR-002-016 | evidence cannot authorize or relabel a failure as PASS |
 
 The deviation registry, evaluator, workflow, dashboard, ticketing system, and residual-risk service SHALL NOT possess a usable live-order credential, signer, session, or route. Any component that does possess usable live-order authority plus a route is inside the ADR-002-013 Final Egress Trust Boundary and must enforce the full gate.
+
+Where a second natural person is unavailable, the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) MAY satisfy the effective-principal quorum for a deviation outside the Non-Waivable Boundary only; it can never satisfy or compensate for a non-waivable requirement (§8, WDR-INV-002).
 
 ---
 
@@ -344,6 +348,8 @@ At minimum:
 - the live armer cannot approve a broader scope than independently decided;
 - an identity administrator able to impersonate all reviewers is a declared common mode;
 - delegation cannot multiply quorum or cross a conflict boundary.
+
+Where two distinct natural persons are unavailable, the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) MAY satisfy the second effective principal for a deviation outside the Non-Waivable Boundary. The variant adds a satisfaction path and never waives, satisfies, or compensates for a non-waivable requirement (§8).
 
 The evaluator first proves the request is outside the Non-Waivable Boundary. Failure or ambiguity produces `DENY`.
 
@@ -746,3 +752,18 @@ ADR-002-026 SHALL remain **Proposed** until all of the following are complete:
 Acceptance of this governance mechanism accepts no specific deviation. Every future deviation requires its own exact independently reviewed artifacts and remains subject to RFC-001 §14, the stricter active policy, every unaffected safety requirement, and separate configuration and live-authorization gates.
 
 Authorship, EV-L0 review, a ticket, request, decision, residual-risk signature, profile draft, deployment, dashboard state, monitoring, incident absence, configuration activation, or prior approval does not satisfy these gates. This ADR authorizes architecture and implementation planning only. It does not authorize an exception, mark evidence complete, accept any ADR, permit restricted-live or production operation, enable broker transmission, or allow automatic re-arm.
+
+---
+
+## 29. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-14)
+
+Initial safety-waiver, deviation, and residual-risk governance decision.
+
+### v0.2 — Single-Operator Re-Arm Recognition (2026-07-17)
+
+- Recognized the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) as an additional path to satisfy the second independent effective principal in deviation and residual-risk approval, restricted to deviations outside the Non-Waivable Boundary, adding a satisfaction path without relaxing the independence obligation.
+- Kept the Non-Waivable Boundary and WDR-INV-002 fully intact; the variant can never satisfy or compensate for a non-waivable requirement.
+- Amended WDR-INV-007, §7, and §12.
+- Recorded per DR-0001 — Single-Operator Live Governance (CORPUS-REVIEW-0001 CR-02, option (c)).

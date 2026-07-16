@@ -88,6 +88,7 @@ The current bundle decides:
 - Approval Requests, Attestations, and Approval Sets bind one exact current context; a set is consumed once and is never configuration, capacity, protective-classification, Live Authorization, or broker-transmission authority.
 - one current authenticated Human Safety Principal may invoke a monotonic restrictive HALT without a permissive quorum; break-glass can only deny, narrow, HALT, or request separately authorized containment.
 - delegation, roster change, identity recovery, approval expiry/revocation, workflow recovery, or compromise cannot multiply quorum, erase economic effect, or automatically re-arm.
+- risk-increasing re-arm, Live Authorization issuance, and production-scope promotion require two independent effective principals (RFC-001 SAFE-053), satisfiable by a two-natural-person quorum or the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1); the variant adds a fail-closed, scope-reduced satisfaction path and waives no non-waivable boundary, break-glass limit, or Hard Safety Envelope.
 - safety evidence is source-attributed, immutable, causally linked, integrity-anchored, gap-detected, retention-governed, and replayed only in an isolated non-authorizing environment.
 - exact pre-effect and `SEND_STARTED` evidence durability is required before risk-increasing first broker byte; an Evidence Commit Receipt proves custody only and creates no permission.
 - evidence gaps, forks, restore conflicts, replay divergence, and evidence-service recovery fail closed, preserve economic effect, and cannot release capacity, clear UNKNOWN, or re-arm.
@@ -190,6 +191,19 @@ The review files were section-level amendments, not canonical-document diffs. Th
 - Every `SAFE-xxx` identifier in the RFC-002 and ADR-002-001 traceability tables exists in RFC-001.
 - The Evidence Register contains 363 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, SCI, and PTF coverage for ADR-002-005 through ADR-002-030. Registration created no verification evidence or live authority.
 
+### 3.4 DR-0001 Single-Operator Live Governance (CR-02, option (c))
+
+DR-0001 adopts CORPUS-REVIEW-0001 CR-02 option (c). The following patches were consolidated into the canonical documents named below. No numbered section was renumbered; all additions are additive.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| Independent re-arm/promotion approval parent | RFC-001 §10 SAFE-053 (new); §12 matrix (CONST-005/011/013 → SAFE-053); §18 v0.4 | RFC-001-Patch-0008; resolves the philosophy §35 hierarchy inversion — the ADR-002-015 obligation now has a Safety-Case parent |
+| Governed Single-Operator Re-Arm Variant | ADR-002-015 §5.10–§5.12, HAG-INV-015..019, §17.1, §27 (SAFE-053 row), §30 Review History; header v0.2 | PATCH-ADR-002-015-v0.2; refines SAFE-053; Non-Waivable Boundary, break-glass, and Hard Safety Envelope unchanged |
+| Recognition as an added satisfaction path | ADR-002-025 (RLP-INV-014, §7, §11(10), §22); ADR-002-026 (WDR-INV-007, §7, §12); ADR-002-027 (SIR-INV-016, §7, §20(10)); each header v0.2 + Review History | PATCH-ADR-002-025/026/027-v0.2; obligation not relaxed; ADR-002-026 restricted to deviations outside the Non-Waivable Boundary |
+| Governance decision record | decision-records/DR-0001-Single-Operator-Live-Governance.md (new) | vision.md, philosophy.md, and RFC-000 unchanged |
+
+The variant's armable scope is bound to the smallest explicitly approved scope delta (Progressive Promotion step) declared for the variant under ADR-002-025 §5.11 and may be narrower than a two-natural-person quorum could arm. RFC-000 is not amended in this wave; a dedicated constitutional bounded-human-authority principle (the RFC-000-level parent of SAFE-053) is owed to a later wave.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -257,6 +271,17 @@ Production readiness: NO
 ```
 
 The Proposed status is preserved because the applicable approval gates, including ADR-002-007 §25, still require protocol implementation, independent security review, approved bounds, and executed evidence. A passed document review is not verification completion and creates no live authority.
+
+### 4.2 Evidence Debt — DR-0001 / CR-02 (single-operator live governance)
+
+DR-0001 introduced one new Safety-Case requirement (RFC-001 SAFE-053) and five new ADR-002-015 invariants (HAG-INV-015 through HAG-INV-019) defining the Governed Single-Operator Re-Arm Variant. These carry verification-evidence obligations that are **deliberately not registered in EVIDENCE-REGISTER-002 in this wave**, to prevent evidence-count drift while the Part-2/3 register consolidation is pending. The register count remains 363 `NOT_IMPLEMENTED` items; no row was added or removed.
+
+Recorded evidence debt (to be discharged in the Part-2/3 register consolidation wave):
+
+- SAFE-053 — independent approval of risk-increasing re-arm/issuance/promotion: requires acceptance-criteria evidence that fails closed on collapsed principals, ad-hoc satisfaction-path substitution, and missing or indeterminate variant attestation.
+- HAG-INV-015..019 and ADR-002-015 §17.1 — the variant: requires prospective `HAG-EV-013` and successor rows covering pre-approval, time-separation, independent block-only attestation (fail-closed on unavailable/indeterminate), external-reviewer independence, and the no-scope-expansion / no-boundary-waiver guarantee.
+
+Acceptance criteria for the new invariants are stated in ADR-002-015 §17.1 and carried in the HAG-INV-015..019 statements. Until the evidence is registered, passed, and independently reviewed, the variant is non-authorizing and confers no live readiness; the ADR-002-015 §29 Approval Gate is unchanged. This is an acceptance blocker, not a status promotion.
 
 ---
 

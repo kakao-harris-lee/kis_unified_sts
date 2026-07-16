@@ -2,11 +2,13 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-13
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Effective human principal identity, approval policy, quorum independence, approval attestations and sets, separation of duties, delegation, authentication, emergency HALT, break-glass containment, re-arm, approval revocation, compromise response, availability, evidence, and acceptance
 - **Supersedes:** None
-- **Refines:** RFC-001 §§7.5–7.6, SAFE-041, SAFE-042, SAFE-046, and SAFE-050; RFC-002 §§9.1, 10.17, 23, and 28; ADR-002-003 §§9, 16, and 18; ADR-002-007 §§5, 12–13, and 25; ADR-002-013 §§7, 16, and 25; ADR-002-014 §§8, 13–14, and 26
-- **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, SAFE-052; ADR-002-001 through ADR-002-014
+- **Refines:** RFC-001 §§7.5–7.6, SAFE-041, SAFE-042, SAFE-046, SAFE-050, and SAFE-053; RFC-002 §§9.1, 10.17, 23, and 28; ADR-002-003 §§9, 16, and 18; ADR-002-007 §§5, 12–13, and 25; ADR-002-013 §§7, 16, and 25; ADR-002-014 §§8, 13–14, and 26
+- **Depends On:** RFC-000 constitutional safe state; RFC-001 SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, SAFE-052, SAFE-053; ADR-002-001 through ADR-002-014
 
 ---
 
@@ -18,12 +20,12 @@ The architecture SHALL distinguish four authority directions:
 
 1. **HALT or deny** — one current authorized Human Safety Principal may invoke an authenticated restrictive latch for the permitted scope without waiting for an expansion quorum;
 2. **request containment or protection** — a human may request only an approved action class, while classification, exclusive capacity, state, time, egress, and broker rules remain mandatory;
-3. **approve authority increase or re-arm** — requires an approved quorum containing at least two distinct effective Human Safety Principals, exact context binding, current independent evidence, and single-use consumption where specified;
+3. **approve authority increase or re-arm** — requires an approved quorum containing at least two distinct effective Human Safety Principals, exact context binding, current independent evidence, and single-use consumption where specified, or the approved Governed Single-Operator Re-Arm Variant (§17.1, RFC-001 SAFE-053) where two distinct natural persons are unavailable;
 4. **mutate capacity or transmit** — no human approval, operator session, or break-glass credential may directly perform either action; RCL and final egress remain the exclusive authorities.
 
 Emergency authority is asymmetric: it SHALL be easier to reduce authority than to create or restore it. A break-glass path may HALT, deny, narrow, or request separately authorized containment. It SHALL NOT enlarge the Hard Safety Envelope, broaden a Runtime Safety Profile, issue Live Authorization, create or release capacity, clear UNKNOWN, cancel required protection, submit directly to a broker, or automatically re-arm after recovery.
 
-Every risk-increasing re-arm approval SHALL use at least two distinct authenticated natural persons whose effective control paths satisfy the active separation policy. Multiple accounts, credentials, devices, service identities, delegated bots, or sessions controlled by the same natural person count as one principal.
+Every risk-increasing re-arm approval SHALL use at least two distinct authenticated natural persons whose effective control paths satisfy the active separation policy, or, where two distinct natural persons are unavailable, the approved Governed Single-Operator Re-Arm Variant (§17.1) recognized by RFC-001 SAFE-053, which adds a fail-closed, scope-reduced satisfaction path without lowering any gate. Multiple accounts, credentials, devices, service identities, delegated bots, or sessions controlled by the same natural person count as one principal.
 
 Approval attests to one exact decision context, including the ADR-002-018 Decision Context Capsule identity and digest, the ADR-002-019 Venue Constraint Snapshot and Order Admissibility Decision identities and digests, and the ADR-002-020 Intent proposal, Authorized Construction Envelope, and candidate Canonical Broker Command identities and digests where the action is broker-directed. Any material change to input, source continuity, Capsule, venue/session/tradability/account/order constraint, Intent, construction envelope, candidate command, evidence, scope, artifact digest, generation, software, deployment, broker, credential, route, time, residual risk, or approval policy invalidates the affected approval before authority issuance. Approval expiry, revocation, service recovery, venue reopen, compiler recovery, or credential recovery never expires economic effect and never re-arms authority.
 
@@ -137,13 +139,25 @@ The authoritative binding of an Approval Set to the one activation, issuance, re
 
 An authenticated, monotonic, scope-bound restrictive command that final egress and the Safety Authority may accept without waiting for the normal risk-increasing approval path.
 
+### 5.10 Governed Single-Operator Re-Arm Variant
+
+A pre-approved, explicitly declared governance mode that satisfies the RFC-001 SAFE-053 two-independent-effective-principal requirement for a single-operator deployment through time-separated re-authenticated confirmation, an independent non-authorizing attestation, and — where available — an external independent reviewer, for a reduced and explicitly bound scope. It is not an ad-hoc power and cannot be invoked outside its approved declaration.
+
+### 5.11 Independent Re-Arm Attestation
+
+Evidence produced by a non-authorizing gate in a failure domain independent of the operator, confirming that the enumerated re-arm preconditions hold. The attestor may block or abstain; it cannot grant authority and cannot count as a human principal (§12).
+
+### 5.12 External Independent Reviewer
+
+A verified natural person who is authenticatable and attributable, is not the operator, and is not under the operator's effective control per the Effective Principal Graph (§8). When present and current, an External Independent Reviewer is a genuine second effective principal under HAG-INV-001.
+
 ---
 
 ## 6. Safety Invariants
 
 ### HAG-INV-001 — Effective-Person Distinctness
 
-Two required human approvals come from two distinct effective natural persons, not merely two accounts, sessions, credentials, devices, or role labels.
+Two required human approvals come from two distinct effective natural persons, not merely two accounts, sessions, credentials, devices, or role labels. This distinctness governs the ordinary quorum and the operator-plus-external-reviewer configuration; where the approved Governed Single-Operator Re-Arm Variant (§17.1) applies, principal counting is governed by §17.1.4 — an available External Independent Reviewer is the second effective principal, and in its absence compensating controls substitute for the second principal's provenance under a reduced scope (RFC-001 SAFE-053).
 
 ### HAG-INV-002 — Exact Context Binding
 
@@ -197,6 +211,26 @@ Broker portal, support, dealer, phone, chat, email, ticket, or other manual acti
 
 Recovery of a human, credential, device, identity provider, workflow, approval service, or control plane cannot reuse approval or restore live authority automatically.
 
+### HAG-INV-015 — Variant Is Pre-Approved and Non-Ad-Hoc
+
+The Governed Single-Operator Re-Arm Variant applies only where an approved Human Authority Policy declares it in advance for the exact scope. It cannot be selected, enabled, or widened at the time of re-arm.
+
+### HAG-INV-016 — Time-Separated Re-Authenticated Self-Approval
+
+The variant's single-operator path requires two separately authenticated, separately attributable events — an initial request and a later re-authenticated confirmation — separated by a policy-owned cooling interval. Both events are independently auditable. Collapsing them into one act, or confirming before the interval elapses, is denial.
+
+### HAG-INV-017 — Independent Attestation Is Mandatory and Block-Only
+
+A risk-increasing re-arm under the variant SHALL carry a current Independent Re-Arm Attestation from a failure domain independent of the operator. The attestor verifies the re-arm preconditions and produces evidence; it can only block or abstain, never grant. If attestation is unavailable, indeterminate, stale, or bound to a superseded generation, the re-arm is denied.
+
+### HAG-INV-018 — External Reviewer Preferred and Properly Independent
+
+Where an External Independent Reviewer is available, the variant SHOULD use that reviewer as the second effective principal, subject to the same Effective Principal Graph collapse (§8) that governs any quorum. A reviewer under the operator's effective control does not count.
+
+### HAG-INV-019 — Variant Cannot Expand Authority or Scope
+
+The variant SHALL NOT waive any requirement inside the ADR-002-026 Non-Waivable Boundary, widen break-glass authority (which remains restrictive-only), or expand the Hard Safety Envelope. The scope armable through the variant is bound to the smallest explicitly approved scope delta (Progressive Promotion step) declared for the variant under ADR-002-025 §5.11 and may be narrower than a two-natural-person quorum could arm.
+
 ---
 
 ## 7. Authority Classes and Direction
@@ -232,7 +266,7 @@ The identity system SHALL maintain an authenticated **Effective Principal Graph*
 
 Quorum evaluation SHALL collapse all nodes under common effective control before counting principals. Independence is absent when one person can reset, impersonate, mint credentials for, approve as, or change the role of another counted principal within the decision path.
 
-Organizational separation, reporting line, geographic location, or different devices MAY strengthen independence but do not replace proof of distinct natural persons and control paths.
+Organizational separation, reporting line, geographic location, or different devices MAY strengthen independence but do not replace proof of distinct natural persons and control paths, except where the approved Governed Single-Operator Re-Arm Variant (§17.1) applies, in which case principal counting follows §17.1.4.
 
 The graph and policy generation SHALL be bound into every Approval Set. Unknown, stale, contradictory, or incompletely resolved effective-control state is denial for authority increase.
 
@@ -407,7 +441,7 @@ If the proposed action cannot be proven protective, it is risk increasing and re
 
 ## 17. Authority Increase and Re-arm
 
-Every risk-increasing re-arm SHALL use at least two distinct effective Human Safety Principals and the complete ADR-002-007 workflow.
+Every risk-increasing re-arm SHALL use at least two distinct effective Human Safety Principals and the complete ADR-002-007 workflow. Where two distinct natural persons are unavailable, the two-effective-principal requirement MAY instead be satisfied by the Governed Single-Operator Re-Arm Variant (§17.1) as recognized by RFC-001 SAFE-053; the variant substitutes only the second principal's provenance and never lowers a gate.
 
 The sequence is:
 
@@ -421,6 +455,54 @@ The sequence is:
 The approval quorum cannot waive a Hard Safety Envelope, RCL capacity, UNKNOWN, reconciliation, time, broker, failure-domain, egress, or verification gate. Human acceptance of residual risk applies only through the exact ADR-002-026 contract where RFC-000/RFC-001 and the active policy permit it, remains non-authorizing and non-PASS, and cannot waive the Non-Waivable Boundary or a Critical invariant.
 
 Partial re-arm restores only the exact approved scope. Expansion, renewal, extension, fallback, or reuse requires a new current request and approval set.
+
+### 17.1 Governed Single-Operator Re-Arm Variant
+
+The Governed Single-Operator Re-Arm Variant is the ADR-002-015 mechanism that satisfies RFC-001 SAFE-053 satisfaction path (ii). It applies only to a deployment operating under the single-operator reality of vision §12.7 and only within the constraints below. It is invoked in place of, and never in addition to weakening, the two-natural-person quorum of §17.
+
+#### 17.1.1 Pre-Approved Explicit Mode
+
+The variant SHALL be declared in advance in the approved Human Authority Policy, bound to an exact scope, and recorded in the approval scope of every request that relies on it. It SHALL NOT be enabled, selected, broadened, or reinterpreted at the time of re-arm. Absence of a current, exact declaration is denial.
+
+#### 17.1.2 Time-Separated Re-Authenticated Self-Approval
+
+The single-operator path SHALL consist of two separately authenticated, separately attributable events:
+
+1. an initial authenticated re-arm request bound to the exact Recovery Generation and requested narrow scope; and
+2. a later re-authenticated confirmation, issued after a **policy-owned cooling interval** has elapsed against Trustworthy Time, that revalidates the current context.
+
+Both events SHALL be independently auditable and bound to the same request identity. The cooling interval is a policy/Verification-Profile-owned bound; its numeric value SHALL NOT be fixed in this ADR. If material context changes during the interval (§8, HAG-INV-008), the request is invalidated and a fresh request is required. Confirmation before the interval elapses, or through a single combined act, is denial.
+
+#### 17.1.3 Independent Non-Authorizing Attestation
+
+A risk-increasing re-arm under the variant SHALL carry a current **Independent Re-Arm Attestation** produced by a gate in a failure domain independent of the operator. The attestation SHALL positively verify the enumerated re-arm preconditions, at minimum:
+
+- the ADR-002-017 Recovery Barrier, Recovery Generation, Recovery Evidence Package, and Recovery Readiness Decision are current and valid for the exact scope; and
+- the re-arm reconciled-state checklist (the minimum reconciled-state confirmation set; the operator-facing instance is defined by ADR-DEV-012) is satisfied for the exact scope.
+
+The attestor produces evidence and MAY block or abstain. The attestor SHALL NOT grant authority, mutate capacity, activate configuration, issue Live Authorization, or count as a human principal (§8, §12). If the attestation is unavailable, indeterminate, stale, or bound to a superseded generation, the re-arm SHALL fail closed.
+
+#### 17.1.4 External Independent Reviewer as Second Effective Principal
+
+Where an External Independent Reviewer (§5.12) is available, the variant SHOULD recognize that reviewer as the second effective principal, and the approval is then evaluated as a two-effective-principal quorum under the ordinary Effective Principal Graph collapse (§8) plus §17.1.2–§17.1.3. Recognition requires that the reviewer be authenticatable, attributable, and not under the operator's effective control; a reviewer who collapses to the operator under §8 does not count.
+
+Where no External Independent Reviewer is available, the variant relies on §17.1.2 (time-separation) as the compensating independence control together with the mandatory §17.1.3 attestation. This solo configuration provides less independence than either a two-natural-person quorum or an operator-plus-reviewer pairing, and it SHALL therefore be confined to the smallest explicitly approved scope delta (Progressive Promotion step) declared for the variant under ADR-002-025 §5.11 (§17.1.5). The §17.1.3 attestation is a non-authorizing precondition gate, not the second principal.
+
+#### 17.1.5 What the Variant Cannot Do
+
+The variant SHALL NOT:
+
+- waive, satisfy, or compensate for any requirement inside the ADR-002-026 Non-Waivable Boundary;
+- widen emergency authority — break-glass remains restrictive-only per §16 and HAG-INV-006;
+- expand the Hard Safety Envelope or broaden a Runtime Safety Profile;
+- lower any capacity, currentness, reconciliation, time, broker, failure-domain, or final-egress gate required by §17;
+- arm a scope broader than the smallest explicitly approved scope delta (Progressive Promotion step) declared for the variant under ADR-002-025 §5.11, which may be narrower than a two-natural-person quorum could arm.
+
+The variant runs the complete ADR-002-007 re-arm workflow (§17 steps 1–6); it substitutes only the second effective principal's provenance, never any gate.
+
+#### 17.1.6 Acceptance and Evidence Debt
+
+HAG-INV-015 through HAG-INV-019 and §17.1 are subject to independent verification evidence. That evidence (prospective HAG-EV-013 and successors) is **not** registered in EVIDENCE-REGISTER-002 in this wave; it is recorded as an explicit evidence-debt item in ARCHITECTURE-GATE-STATUS §4.2 and scheduled for the Part-2/3 register consolidation. Until that evidence is registered, passed, and independently reviewed, the variant remains non-authorizing and SHALL NOT be relied upon to reach live; the §29 Approval Gate is not lowered by this amendment.
 
 ---
 
@@ -624,7 +706,7 @@ The following cases are mandatory and map one-to-one to `HAG-EV-001` through `HA
 | `HAG-AC-007` | Human-labelled cancel, close, hedge, replace, or emergency action cannot bypass protective classification, exclusive capacity, UNKNOWN, Final Quantity Proof, or egress rules |
 | `HAG-AC-008` | Delegation, roster change, authenticator recovery, identity-provider migration, and unavailable personnel cannot multiply authority, reduce quorum, or transfer prior approvals automatically |
 | `HAG-AC-009` | Compromised principal, device, session, workflow, signer, roster, or recovery path revokes affected pending authority, restricts scope, preserves economic effects, and requires fresh governance |
-| `HAG-AC-010` | Risk-increasing re-arm requires at least two distinct effective humans, consumes an exact Approval Set once, restores only the approved narrow scope, and cannot waive any safety gate |
+| `HAG-AC-010` | Risk-increasing re-arm requires at least two distinct effective humans (or the approved Governed Single-Operator Re-Arm Variant per §17.1), consumes an exact Approval Set once, restores only the approved narrow scope, and cannot waive any safety gate |
 | `HAG-AC-011` | Approval expiry, revocation, outage, recovery, or ambiguous HALT cannot cancel orders, release capacity, resolve UNKNOWN, prove non-acceptance/final quantity, or automatically re-arm |
 | `HAG-AC-012` | Independent replay reconstructs identity, effective control, policy, evidence review, approval, denial, HALT, consumption, compromise, external activity, and re-arm without treating evidence as authority |
 
@@ -642,6 +724,7 @@ The following cases are mandatory and map one-to-one to `HAG-EV-001` through `HA
 | SAFE-048 | Partitions block permissive authority while locally verifiable restrictive HALT remains available (§20) |
 | SAFE-050 | Human policy, roles, approval artifacts, delegation, and changes are immutable, authenticated, attributable, and independently governed (§§8–13) |
 | SAFE-051, SAFE-052 | Complete human decision, denial, command, compromise, and recovery lineage supports evidence and replay without replacing enforcement (§22) |
+| SAFE-053 | Independent approval of risk-increasing re-arm and scope promotion is satisfied by a two-natural-person quorum (§17) or the Governed Single-Operator Re-Arm Variant (§17.1), which never lowers a gate or expands scope |
 
 ---
 
@@ -691,3 +774,21 @@ ADR-002-015 SHALL remain **Proposed** until all of the following are complete. H
 16. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, policy drafting, two account names, ticket approval, successful authentication, audit logs, written cases, or document review do not satisfy this gate. This ADR does not authorize acceptance, restricted-live operation, production operation, direct human capacity mutation, direct broker transmission, or automatic re-arm.
+
+---
+
+## 30. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-13)
+
+Initial human-authority, dual-control, and break-glass governance decision.
+
+### v0.2 — Governed Single-Operator Re-Arm Variant (2026-07-17)
+
+- Added §5.10–§5.12 definitions (Governed Single-Operator Re-Arm Variant, Independent Re-Arm Attestation, External Independent Reviewer).
+- Added HAG-INV-015 through HAG-INV-019.
+- Added §17.1 defining the variant as the mechanism that satisfies RFC-001 SAFE-053 satisfaction path (ii), keeping the ADR-002-026 Non-Waivable Boundary intact, break-glass restrictive-only, and the Hard Safety Envelope fixed, with armable scope bound to the ADR-002-025 §5.11 Progressive Promotion step.
+- Reconciled HAG-INV-001 and the §8 independence-proof clause with §17.1 principal counting so the variant does not contradict effective-person distinctness, and anchored the variant's armable scope to the ADR-002-025 §5.11 Progressive Promotion step (independent-review corrections).
+- Bound the ADR to SAFE-053 (Refines/Depends On).
+- Recorded variant acceptance evidence as evidence-debt (ARCHITECTURE-GATE-STATUS §4.2); the §29 Approval Gate is unchanged.
+- Recorded per DR-0001 — Single-Operator Live Governance (CORPUS-REVIEW-0001 CR-02, option (c)).

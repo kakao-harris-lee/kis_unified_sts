@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-14
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** EV-L5 restricted-live trial governance, exact trial scope, pre-registration, bounded economic effect, trial authorization prerequisites, abort and demotion, evidence validity, independent review, progressive promotion, production authorization, continuous conformance, recovery, and acceptance
 - **Supersedes:** None
@@ -197,7 +199,7 @@ Restart, reconnect, restore, replay, reconciliation, quorum recovery, trustworth
 
 ### RLP-INV-014 — Independent Acceptance
 
-Trial implementers, strategy owners, evidence producers, and performance beneficiaries cannot be the sole reviewers or production authorizers of their trial.
+Trial implementers, strategy owners, evidence producers, and performance beneficiaries cannot be the sole reviewers or production authorizers of their trial. Where two distinct natural persons are unavailable, the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) MAY supply the second independent effective principal for the exact reduced promotion scope; this adds a satisfaction path and does not relax the independence obligation.
 
 ### RLP-INV-015 — Continuous Monitoring Is Not Preventive Proof
 
@@ -224,6 +226,8 @@ ADR-002-028 governs the exact Safety Monitoring Policy, Critical Telemetry and M
 | Re-arm promoted scope | ADR-002-007/015 workflow | fresh Live Authorization and final egress | no automatic promotion or re-arm |
 
 No trial planner, evidence service, promotion workflow, dashboard, monitor, or statistical evaluator may possess usable live broker authority plus an order route unless it is inside the ADR-002-013 Final Egress Trust Boundary and enforces the complete normal gate.
+
+Where the required independent reviewer or production authorizer cannot be a second natural person, the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) MAY satisfy the second effective principal for restricted-live promotion within its reduced bound scope, without lowering any gate in this table.
 
 ---
 
@@ -308,7 +312,7 @@ Before a Trial Plan may become eligible to request Live Authorization:
 7. RCL capacity, Action Flow Permit/reserve, protective capacity, and abort/recovery overlap are positively available for the requested action envelope;
 8. broker/order/exposure state is reconciled and no blocking UNKNOWN, Evidence Gap, obligation, or external activity remains;
 9. abort, HALT, hard-fence, local-latch, evidence, reconciliation, and operator paths have passed current exercises;
-10. required human quorum and conflict-of-interest rules are satisfied;
+10. required human quorum and conflict-of-interest rules are satisfied, or the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) is satisfied for the exact reduced scope;
 11. residual risk is explicitly approved only within the exact reduced scope;
 12. ARCHITECTURE-GATE-STATUS records restricted-live authorization as still requiring a separate fresh Live Authorization.
 
@@ -528,6 +532,8 @@ The design SHALL resist:
 
 Trial and production identities, evidence paths, abort paths, final egress, reviewers, and administrators require an approved Failure-Domain Allocation Matrix. Unknown effective control or common mode denies promotion.
 
+The approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) is the only governed path by which a single operator may drive promotion. It substitutes time-separated re-authentication and an independent non-authorizing attestation for the second natural person and does not collapse the listed roles into one unattested act.
+
 ---
 
 ## 23. Failure Modes and Required Responses
@@ -739,3 +745,17 @@ EV-L5 is not required to accept the non-self-authorizing governance mechanism; r
 No production scope may be promoted until the exact EV-L5 Trial Evidence Package passes independent review, the §18 promotion decision is eligible and consumed once, configuration is activated break-before-make, predecessor paths are fenced, and a fresh re-arm/Live Authorization is completed. EV-L6 continuous conformance is additionally required for continued production scope.
 
 Authorship, EV-L0 review, a passing simulation, plan approval, low notional, deployment, operator presence, trial completion, evidence-package creation, promotion eligibility, configuration activation, dashboard state, or incident-free time does not satisfy these gates. This ADR authorizes architecture and implementation planning only. It does not authorize acceptance, restricted-live operation, production operation, broker transmission, scope promotion, or automatic re-arm.
+
+---
+
+## 30. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-14)
+
+Initial restricted-live verification, progressive scope promotion, and production authorization governance decision.
+
+### v0.2 — Single-Operator Re-Arm Recognition (2026-07-17)
+
+- Recognized the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1, RFC-001 SAFE-053) as an additional path to satisfy the second independent effective principal in restricted-live promotion and production authorization, within a reduced bound scope, adding a satisfaction path without relaxing the independence obligation or lowering any eligibility gate.
+- Amended RLP-INV-014, §7, §11 item 10, and §22.
+- Recorded per DR-0001 — Single-Operator Live Governance (CORPUS-REVIEW-0001 CR-02, option (c)).
