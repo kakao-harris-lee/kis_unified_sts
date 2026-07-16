@@ -449,7 +449,9 @@ convention.
    verified conformance, with no evidentiary weight until independently checked.)*
 5. How does the authoring discipline handle an Authoring Agent that revises a
    large family of strategies at once, so that per-artifact review and admission
-   are not diluted by scale (§10)?
+   are not diluted by scale (§10)? *(Resolved by ADR-DEV-006: the reviewable/admissible
+   unit stays the individual artifact; no artifact inherits another's review, provenance,
+   or admission; batch tooling is assistance, not authority.)*
 6. Where an authored strategy embeds an externally-sourced value, what staleness
    and re-authoring discipline governs that value between authoring time and
    runtime capture (§9; RFC-008 §9)? *(Resolved by ADR-DEV-003: an explicit Validity

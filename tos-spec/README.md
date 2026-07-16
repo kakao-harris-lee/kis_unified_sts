@@ -52,6 +52,7 @@ Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
 - [ADR-DEV-003 — External Value: Capture, Staleness, and Re-Authoring](src/part-3-development/ADR-DEV-003-External-Value-Capture-Staleness-and-Re-Authoring.md)
 - [ADR-DEV-004 — Authoring Provenance, Versioning/Substitution, and Admission Binding](src/part-3-development/ADR-DEV-004-Authoring-Provenance-Versioning-and-Admission-Binding.md)
 - [ADR-DEV-005 — Independent Review of AI-Authored Strategies and Rationale Representation](src/part-3-development/ADR-DEV-005-Independent-Review-of-AI-Authored-Strategies-and-Rationale-Representation.md)
+- [ADR-DEV-006 — Bulk and Family Authoring: Per-Artifact Review at Scale](src/part-3-development/ADR-DEV-006-Bulk-and-Family-Authoring-Per-Artifact-Review-at-Scale.md)
 - [ADR-DEV-007 — Strategy Output Semantics: No-Action, Flat, and the Atomic Unit](src/part-3-development/ADR-DEV-007-Strategy-Output-Semantics-No-Action-Flat-and-Atomic-Unit.md)
 - [ADR-DEV-008 — Authoring Under a Degraded or Unavailable Companion Model](src/part-3-development/ADR-DEV-008-Authoring-Under-a-Degraded-or-Unavailable-Companion-Model.md)
 - [ADR-DEV-009 — Containment Escape-Vector Minimum Set and Currency](src/part-3-development/ADR-DEV-009-Containment-Escape-Vector-Minimum-Set-and-Currency.md)
@@ -60,6 +61,7 @@ Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
 - [ADR-DEV-012 — Re-Arm Reconciled-State Checklist and Barrier Binding](src/part-3-development/ADR-DEV-012-Re-Arm-Reconciled-State-Checklist-and-Barrier-Binding.md)
 - [ADR-DEV-013 — Operator Boundaries: Break-Glass and Containment](src/part-3-development/ADR-DEV-013-Operator-Boundaries-Break-Glass-and-Containment.md)
 - [ADR-DEV-014 — Operator Observability and "Withhold Re-Arm" as a First-Class Outcome](src/part-3-development/ADR-DEV-014-Operator-Observability-and-Withhold-Re-Arm-as-a-First-Class-Outcome.md)
+- [ADR-DEV-015 — Operator Authority-Scope Expression and Revocation](src/part-3-development/ADR-DEV-015-Operator-Authority-Scope-Expression-and-Revocation.md)
 
 ## Status
 
@@ -75,8 +77,10 @@ Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
   -007, -008, -009, -010, -011), and the operational tier so far (ADR-DEV-012, -013, -014)
   are authored, each at `0.1 Review Draft` with an independent EV-L0 review
   (`PASS-WITH-FIXES` / `CHANGES-REQUESTED-resolved`; ADR-DEV-011 additionally passed a
-  confirming re-review after one Critical finding was resolved). ADR-DEV-015 (operator
-  authority-scope) and ADR-DEV-006 (bulk authoring) remain to complete the series.
+  confirming re-review after one Critical finding was resolved). The final two,
+  ADR-DEV-006 (bulk authoring) and ADR-DEV-015 (operator authority-scope), are authored and
+  self-consistency-checked but **still owe an independent EV-L0 review** (the reviewer
+  dispatch hit a session limit); that review completes the 15-ADR series.
 
 A Review Draft — and any EV-L0 review it carries — confers no acceptance and no
 live-readiness; those are governed by RFC-001 and VER-002-001.

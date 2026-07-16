@@ -62,6 +62,7 @@
 - [ADR-DEV-003 — External Value: Capture, Staleness, and Re-Authoring](part-3-development/ADR-DEV-003-External-Value-Capture-Staleness-and-Re-Authoring.md)
 - [ADR-DEV-004 — Authoring Provenance, Versioning/Substitution, and Admission Binding](part-3-development/ADR-DEV-004-Authoring-Provenance-Versioning-and-Admission-Binding.md)
 - [ADR-DEV-005 — Independent Review of AI-Authored Strategies and Rationale Representation](part-3-development/ADR-DEV-005-Independent-Review-of-AI-Authored-Strategies-and-Rationale-Representation.md)
+- [ADR-DEV-006 — Bulk and Family Authoring: Per-Artifact Review at Scale](part-3-development/ADR-DEV-006-Bulk-and-Family-Authoring-Per-Artifact-Review-at-Scale.md)
 - [ADR-DEV-007 — Strategy Output Semantics: No-Action, Flat, and the Atomic Unit](part-3-development/ADR-DEV-007-Strategy-Output-Semantics-No-Action-Flat-and-Atomic-Unit.md)
 - [ADR-DEV-008 — Authoring Under a Degraded or Unavailable Companion Model](part-3-development/ADR-DEV-008-Authoring-Under-a-Degraded-or-Unavailable-Companion-Model.md)
 - [ADR-DEV-009 — Containment Escape-Vector Minimum Set and Currency](part-3-development/ADR-DEV-009-Containment-Escape-Vector-Minimum-Set-and-Currency.md)
@@ -70,3 +71,4 @@
 - [ADR-DEV-012 — Re-Arm Reconciled-State Checklist and Barrier Binding](part-3-development/ADR-DEV-012-Re-Arm-Reconciled-State-Checklist-and-Barrier-Binding.md)
 - [ADR-DEV-013 — Operator Boundaries: Break-Glass and Containment](part-3-development/ADR-DEV-013-Operator-Boundaries-Break-Glass-and-Containment.md)
 - [ADR-DEV-014 — Operator Observability and "Withhold Re-Arm" as a First-Class Outcome](part-3-development/ADR-DEV-014-Operator-Observability-and-Withhold-Re-Arm-as-a-First-Class-Outcome.md)
+- [ADR-DEV-015 — Operator Authority-Scope Expression and Revocation](part-3-development/ADR-DEV-015-Operator-Authority-Scope-Expression-and-Revocation.md)

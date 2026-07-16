@@ -484,7 +484,9 @@ resolved by informal operational convention.
    lifecycle and the CONST-011 independent authority.)*
 6. How are operator authority scopes (account, strategy, instrument, venue, mode,
    software version, safety configuration) expressed and revoked, consistent with
-   Vision §6.6 and ADR-002-015?
+   Vision §6.6 and ADR-002-015? *(Resolved by ADR-DEV-015: authority is expressed along
+   explicit dimensions, an act must be within current scope on every applicable
+   dimension, and revocation is immediate and complete.)*
 
 Unresolved questions reduce, and do not expand, the conforming operational posture.
 
