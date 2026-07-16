@@ -503,9 +503,14 @@ convention.
    re-authoring resolved by ADR-DEV-003.)*
 4. How does the DSL represent "no-action / hold" versus "explicit flat
    (target = 0)" as distinct, first-class, reproducible outcomes (RFC-003 §16 Q4)?
+   *(Resolved by ADR-DEV-007: distinct, first-class, reproducible outcomes — hold
+   leaves exposure, flat proposes a zero-position action — never conflated or null.)*
 5. Is the atomic authored unit a per-instrument target or a portfolio-wide target
    vector, and does the Proposal Builder support both without letting a strategy
-   aggregate a combined authority (RFC-003 §§13, 16 Q1)?
+   aggregate a combined authority (RFC-003 §§13, 16 Q1)? *(Resolved by ADR-DEV-007:
+   both are supported and the unit is explicit; a portfolio vector is a set of
+   per-instrument targets each independently approved and capacity-evaluated, never one
+   aggregated authority.)*
 6. How does an Authored Strategy express a decision made when a companion model
    (RFC-004/006/007) is itself degraded or unavailable, such that degradation
    narrows rather than widens the action set (RFC-003 §16 Q6; §6, §10)? *(Resolved by

@@ -62,5 +62,8 @@
 - [ADR-DEV-003 — External Value: Capture, Staleness, and Re-Authoring](part-3-development/ADR-DEV-003-External-Value-Capture-Staleness-and-Re-Authoring.md)
 - [ADR-DEV-004 — Authoring Provenance, Versioning/Substitution, and Admission Binding](part-3-development/ADR-DEV-004-Authoring-Provenance-Versioning-and-Admission-Binding.md)
 - [ADR-DEV-005 — Independent Review of AI-Authored Strategies and Rationale Representation](part-3-development/ADR-DEV-005-Independent-Review-of-AI-Authored-Strategies-and-Rationale-Representation.md)
+- [ADR-DEV-007 — Strategy Output Semantics: No-Action, Flat, and the Atomic Unit](part-3-development/ADR-DEV-007-Strategy-Output-Semantics-No-Action-Flat-and-Atomic-Unit.md)
 - [ADR-DEV-008 — Authoring Under a Degraded or Unavailable Companion Model](part-3-development/ADR-DEV-008-Authoring-Under-a-Degraded-or-Unavailable-Companion-Model.md)
 - [ADR-DEV-009 — Containment Escape-Vector Minimum Set and Currency](part-3-development/ADR-DEV-009-Containment-Escape-Vector-Minimum-Set-and-Currency.md)
+- [ADR-DEV-010 — Backtest Admissibility, Cost Realism, and Disqualifiers](part-3-development/ADR-DEV-010-Backtest-Admissibility-Cost-Realism-and-Disqualifiers.md)
+- [ADR-DEV-011 — Test Assumptions and the Pre-Deployment / Runtime-Monitoring Boundary](part-3-development/ADR-DEV-011-Test-Assumptions-and-the-Pre-Deployment-Runtime-Monitoring-Boundary.md)

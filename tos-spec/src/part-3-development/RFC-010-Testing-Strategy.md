@@ -430,7 +430,10 @@ unwritten. They SHALL NOT be resolved by informal testing convention.
    is reproducible-from-recorded-inputs.)*
 3. What backtest methodology and cost/slippage realism (RFC-005 §9, RFC-006 §11)
    is required before a backtest is admissible evidence toward a hypothesis, and
-   what explicitly disqualifies a look-ahead-biased or overfit backtest?
+   what explicitly disqualifies a look-ahead-biased or overfit backtest? *(Resolved by
+   ADR-DEV-010: admissible only if net of realistic cost, population/significance-treated,
+   look-ahead-free, and hermetic/reproducible; look-ahead, overfit, optimistic cost,
+   unrepresentative population, and irreproducibility are disqualifiers.)*
 4. What constitutes *independent* verification of an AI-authored strategy's
    conformance claims — must the verifying party be human, a distinct tool, or
    either — consistent with RFC-009 §10's no-self-review rule? *(Resolved by
@@ -439,11 +442,14 @@ unwritten. They SHALL NOT be resolved by informal testing convention.
    asserted result is not verification.)*
 5. How are Test Assumptions recorded and reviewed so that the bounded scope of a
    passing suite (philosophy §37.8) is visible to an independent reviewer rather
-   than implied?
+   than implied? *(Resolved by ADR-DEV-011: a structured, reviewable Assumption Record
+   per suite; the demonstrated claim extends only over recorded assumptions.)*
 6. Where does the boundary sit between RFC-010 pre-deployment testing and the
    runtime continuous conformance monitoring owned by ADR-002-028, so that
    pre-deployment demonstration and runtime monitoring neither leave a gap nor
-   duplicate each other?
+   duplicate each other? *(Resolved by ADR-DEV-011: distinct phases — pre-deployment
+   demonstration on a fixed Artifact Identity vs. ADR-002-028 runtime monitoring — with
+   no gap, no duplication, bridged by Monitored Assumptions.)*
 
 Unresolved questions reduce, and do not expand, the properties a suite may claim to
 have demonstrated.
