@@ -23,8 +23,8 @@ When an Authoring Agent produces or revises a large family of strategies at once
 * the **reviewable and admissible unit is the individual artifact** — a batch is not
   reviewed or admitted as one unit (RFC-009 §10; ADR-DEV-004 APA-INV-007);
 * **no artifact inherits another's review, provenance, or admission** — each carries its own
-  complete Authoring Provenance and its own admission candidacy (ADR-DEV-004
-  APA-INV-001/004/005; ADR-002-029);
+  complete Authoring Provenance (ADR-DEV-004 APA-INV-001) and its own admission candidacy on
+  its own content-addressed identity (ADR-DEV-002; ADR-002-029; ADR-DEV-004 APA-INV-005);
 * each artifact's conformance is **independently reviewed per ADR-DEV-005** — running the
   author over many artifacts is not review of any of them (ADR-DEV-005 AIR-INV-002);
 * **volume is a hazard, not a warrant**: throughput of authorship is not evidence of quality
@@ -92,9 +92,9 @@ artifact under bulk authorship.
 
 ## 5. Definitions
 
-This ADR reuses canonical terms from RFC-009 §5 (**Authoring Agent**, **Authoring Act**,
-**Authored Strategy**), RFC-002 §3.1, and ADR-DEV-004/005/002-029, and SHALL NOT introduce
-synonyms. The following terms are scoped to this decision and are non-authorizing.
+This ADR reuses canonical terms from RFC-009 §5 (**Authoring Agent**, **Authoring Act**),
+RFC-008 §5 (**Authored Strategy**), RFC-002 §3.1, and ADR-DEV-004/005/002-029, and SHALL NOT
+introduce synonyms. The following terms are scoped to this decision and are non-authorizing.
 
 * **Bulk/Family Authoring** — an Authoring Act (or a coordinated set of them) in which an
   Authoring Agent produces or revises many Authored Strategies at once (RFC-009 §10).
@@ -128,7 +128,8 @@ admission.
   triage and organization but confers no review, admission, or acceptance; the unit remains
   the individual artifact (RFC-009 §10; ADR-002-029).
 * **BFA-INV-006 — Bulk Authoring Grants No Authority.** Producing many artifacts creates no
-  authority, admission, or acceptance (RFC-002 §9.1; ADR-002-029).
+  authority, admission, or acceptance (RFC-002 §9.1 for authority; ADR-002-029 for admission;
+  RFC-001 §1 / VER-002-001 for the `ACCEPTED` gate).
 
 ---
 
@@ -137,11 +138,13 @@ admission.
 Under Bulk/Family Authoring the unit does not change (BFA-INV-001, -002):
 
 * each artifact is independently reviewed (ADR-DEV-005) and admitted on its own
-  content-addressed identity (ADR-002-029; ADR-DEV-004 APA-INV-005); there is no batch-level
-  review verdict or batch-level admission;
+  content-addressed identity (ADR-DEV-002; ADR-002-029; ADR-DEV-004 APA-INV-005); there is no
+  batch-level review verdict or batch-level admission;
 * no artifact inherits another's review, provenance, or admission — a family sharing a
   template still requires each member to carry its own complete Authoring Provenance
-  (ADR-DEV-004 APA-INV-001) and its own admission candidacy (APA-INV-004);
+  (ADR-DEV-004 APA-INV-001) and its own admission candidacy on its own content-addressed
+  identity (APA-INV-005; ADR-DEV-002; ADR-002-029 per-artifact identity is what forbids the
+  lateral template→member inheritance);
 * a change to one member is a Versioned Substitution of that member (ADR-DEV-004
   APA-INV-005), not of the family;
 * volume is a hazard, not a warrant — a large, fluent, quickly-produced batch is not thereby
@@ -175,7 +178,11 @@ verdict.
 * **9.1 Review/admit a batch as one unit.** Rejected: admission is per content-addressed
   artifact; a batch has no single admissible identity (BFA-INV-001; ADR-002-029).
 * **9.2 Let family members inherit a template's review/admission.** Rejected: no artifact
-  inherits another's review or admission (BFA-INV-002; ADR-DEV-004 APA-INV-004).
+  inherits another's review or admission (BFA-INV-002; ADR-DEV-004 APA-INV-005; ADR-002-029
+  per-artifact identity).
+* **9.6 Review a representative sample and admit the rest by inheritance.** Rejected: each
+  artifact is independently reviewed *and* admitted; sampling reviews only the sampled
+  members and the rest would inherit nothing (BFA-INV-001, -002).
 * **9.3 Treat throughput/coverage of a batch as quality evidence.** Rejected: volume is a
   hazard, not a warrant (BFA-INV-003; RFC-009 §10).
 * **9.4 Let a batch-pass tool stand in for per-artifact review.** Rejected: tooling confers
@@ -259,7 +266,7 @@ operation, which remain governed by RFC-001 and VER-002-001.
 | ADR-DEV-005 AIR-INV-002 (no self-review; independent per artifact) | independent review per artifact; tool reviewer per ADR-DEV-005 (§§7, 8; BFA-INV-004, -005) |
 | ADR-002-029 (per content-addressed admission) | no batch-level admission; per-artifact identity (§7; BFA-INV-001) |
 | RFC-002 §9.1 (authority ownership) | bulk authoring grants no authority (BFA-INV-006) |
-| philosophy §7 (fluency/prediction limited authority) | throughput/fluency is not quality (§3; BFA-INV-003) |
+| RFC-009 §10 (primary); philosophy §7 | throughput/fluency is not evidence of quality (§3; BFA-INV-003) |
 
 This ADR introduces no SAFE-xxx requirement and no numeric bound. It fixes the bulk-authoring
 review-at-scale discipline and relies on ADR-002-029, ADR-DEV-004, and ADR-DEV-005 for
@@ -282,10 +289,15 @@ admission, provenance, and independent review.
   philosophy §7.
 * Introduced no SAFE-xxx requirement, numeric bound, or authority; confers no acceptance
   or live-readiness.
-* **Independent EV-L0 review is OWED.** An in-context self-adversarial consistency review
-  was performed (invariants defined and cross-referenced; citations checked against source),
-  but the independent EV-L0 reviewer dispatch failed on a session/usage limit (resets
-  2026-07-16 18:50 KST). Unlike ADR-DEV-001 through -014, this ADR has **not** yet had an
-  independent adversarial EV-L0 review; that review is owed and SHALL be run before
-  ADR-DEV-006 advances beyond Review Draft. The self-review is not independent and confers
-  no acceptance or live-readiness.
+* Independent adversarial EV-L0 document review returned **PASS-WITH-FIXES** with no Critical
+  and no Major finding (the earlier session-limit dispatch failure is resolved and the review
+  debt is cleared). All thirteen attack sequences were blocked — batch-as-one-unit admission,
+  template/family inheritance, throughput-as-quality, tool-pass-as-review,
+  one-content-addressed-identity-for-a-family, author-run-as-review, cluster-then-admit-one,
+  and representative-sample-and-inherit among them — and every citation was verified. Five
+  Minor citation-precision fixes were applied: the lateral no-inheritance anchor corrected
+  from APA-INV-004 to APA-INV-005 + ADR-002-029 per-artifact identity (§§7, 9.2); ADR-DEV-002
+  cited where content-addressed identity is load-bearing; BFA-INV-006's "acceptance" grounded
+  in RFC-001 §1 / VER-002-001; "Authored Strategy" attributed to RFC-008 §5; and a §9.6
+  sample-and-inherit alternative added. The review is EV-L0 only and confers no acceptance or
+  live-readiness.

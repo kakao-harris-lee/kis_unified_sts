@@ -25,8 +25,9 @@ dimension**; acting outside any dimension is out-of-scope and routes to the ADR-
 dual-control/break-glass boundary. Scope is **explicit, attributable, and does not persist
 merely because it was valid in the past**; it is time-bounded where appropriate.
 **Revocation is immediate and complete** — a revoked scope grants nothing. The
-scope-issuance and revocation *mechanism* is owned by ADR-002-015 (human authority) and
-ADR-002-007 (live authorization); this ADR fixes the operator-facing expression and
+scope-issuance and revocation *mechanism* is owned by each dimension's owner — ADR-002-015
+(human authority), ADR-002-007 (live authorization), ADR-002-002 (risk capacity), and the
+RFC-002/ADR series (safety state); this ADR fixes the operator-facing expression and
 revocation discipline.
 
 This ADR grants no authority; expressing a scope issues none.
@@ -45,7 +46,9 @@ governance (Changed Context Invalidates, Approval Is Not Authority); ADR-002-007
 live authorization and its scope.
 
 RFC-011 §14 Q6 leaves open how operator authority scopes are *expressed and revoked*
-consistent with Vision §6.6 and ADR-002-015. This ADR fixes that discipline — and, in
+consistent with Vision §6.6 and ADR-002-015. (Q6 lists seven dimensions parenthetically;
+this ADR resolves it with the full nine of Vision §6.6 / RFC-011 §7 — adding risk capacity
+and current safety state — as Q6's "consistent with Vision §6.6" requires.) This ADR fixes that discipline — and, in
 doing so, supplies the scope definition on which the ADR-DEV-013 degraded-response /
 out-of-scope boundary depends. It defines neither the human-authority mechanism
 (ADR-002-015) nor the live-authorization mechanism (ADR-002-007) — it fixes the
@@ -60,8 +63,9 @@ operator-facing expression and revocation.
 2. **Authority is multi-dimensional** (RFC-011 §7). A single "operator role" is
    insufficient; scope is per-dimension.
 3. **Authority does not persist** (Vision §6.6). Past validity is not present authority.
-4. **Revocation must be immediate and complete** (ADR-002-015 HAG-INV-008). A stale grant
-   is a live hazard.
+4. **Revocation must be immediate and complete** (ADR-002-007 §9, §8.2/§8.3; ADR-002-015
+   §13). A stale grant is a live hazard, and a changed context invalidates the scope
+   (ADR-002-015 HAG-INV-008).
 5. **The out-of-scope boundary needs a scope definition** (ADR-DEV-013). Q2's line is only
    testable once scope is expressed.
 
@@ -96,10 +100,11 @@ synonyms. The following terms are scoped to this decision and are non-authorizin
   is valid: account, strategy, instrument, venue, operating mode, software version, safety
   configuration, risk capacity, and current safety state (Vision §6.6; RFC-011 §7).
 * **Out-of-Scope Act** — an Operational Act outside the operator's current, valid Authority
-  Scope on any applicable dimension; it is non-conforming as ordinary operation and routes
-  to ADR-DEV-013.
+  Scope on any applicable dimension (a dimension that bounds the act), or on a bounding
+  dimension whose scope is unknown, stale, or unverifiable; it is non-conforming as ordinary
+  operation and routes to ADR-DEV-013.
 * **Revocation** — the immediate, complete withdrawal of an Authority Scope; a revoked scope
-  grants no authority (ADR-002-015 HAG-INV-008).
+  grants no authority and does not auto-clear (ADR-002-007 §9, §8.2/§8.3; ADR-002-015 §13).
 
 These terms describe an authority-scope discipline. None grants authority.
 
@@ -111,19 +116,26 @@ These terms describe an authority-scope discipline. None grants authority.
   expressed along explicit dimensions — account, strategy, instrument, venue, operating
   mode, software version, safety configuration, risk capacity, and current safety state
   (Vision §6.6; RFC-011 §7).
-* **OAS-INV-002 — An Act Is Conforming Only Within Current Scope on Every Dimension.** An
-  Operational Act is conforming only if within the operator's current, valid Authority Scope
-  on every applicable dimension; acting outside any dimension is an Out-of-Scope Act that
-  routes to ADR-DEV-013 (dual-control or break-glass by direction).
+* **OAS-INV-002 — An Act Is Conforming Only Within Current Scope on Every Applicable
+  Dimension.** An Operational Act is conforming only if within the operator's current, valid
+  Authority Scope on every *applicable* dimension — a dimension that bounds the act. Acting
+  outside any applicable dimension, **or on a bounding dimension whose scope is unknown,
+  stale, or unverifiable**, is an Out-of-Scope Act that routes to ADR-DEV-013 (dual-control or
+  break-glass by direction); an unevaluated bounding dimension is never treated as vacuously
+  within scope (fail-closed: philosophy §8; Vision §6.3; RFC-011 §6 principle 6).
 * **OAS-INV-003 — Authority Is Explicit, Attributable, and Does Not Persist.** An Authority
-  Scope is explicit and attributable; it does not persist merely because it was valid in the
-  past and is time-bounded where appropriate (Vision §6.6; philosophy §14).
+  Scope is explicit and attributable; it does not persist indefinitely merely because it was
+  valid in the past and is time-bounded where appropriate (Vision §6.6; philosophy §14).
 * **OAS-INV-004 — Revocation Is Immediate and Complete.** Revoking an Authority Scope is
-  immediate and complete; a revoked scope grants no authority, and an act under a revoked
-  scope is an Out-of-Scope Act (RFC-011 §7; ADR-002-015 HAG-INV-008).
-* **OAS-INV-005 — Scope Mechanism Is Owned Upstream.** The scope-issuance and revocation
-  mechanism is owned by ADR-002-015 (human authority) and ADR-002-007 (live authorization);
-  this ADR fixes only the operator-facing expression/revocation discipline.
+  immediate and complete — there is no grace period, and a suspended or non-permissive scope
+  does not auto-clear or return to active; a revoked or expired scope grants no authority,
+  and an act under it is an Out-of-Scope Act (RFC-011 §7; ADR-002-007 §9, §8.2/§8.3;
+  ADR-002-015 §13). A changed safety-relevant context invalidates the affected scope
+  (ADR-002-015 HAG-INV-008).
+* **OAS-INV-005 — Scope Mechanism Is Owned Upstream.** The per-dimension scope-issuance and
+  revocation mechanism is owned by its owners — ADR-002-015 (human authority), ADR-002-007
+  (live authorization), ADR-002-002 (risk capacity), and the RFC-002/ADR series (safety
+  state); this ADR fixes only the operator-facing expression/revocation discipline.
 * **OAS-INV-006 — Expression Grants No Authority.** Expressing, observing, or recording an
   Authority Scope creates no authority; authority is issued by its owner and remains
   revocable (RFC-002 §9.1).
@@ -139,6 +151,10 @@ Operator authority SHALL be expressed per dimension (OAS-INV-001, -002, -003):
 * an Operational Act is conforming only if within the operator's current, valid scope on
   every applicable dimension — a valid account scope does not authorize an out-of-scope
   instrument or mode;
+* a dimension is *applicable* if it bounds the act; a bounding dimension whose scope is
+  unknown, stale, or unverifiable makes the act Out-of-Scope — an unevaluated dimension is
+  never treated as vacuously within scope (fail-closed; philosophy §8; Vision §6.3; RFC-011
+  §6 principle 6);
 * the scope is explicit and attributable, so both the operator and review can point to the
   exact authority under which an act was taken (philosophy §14);
 * the scope does not persist merely because it was valid in the past, and is time-bounded
@@ -154,7 +170,8 @@ decidable test rather than a judgment call.
 Revocation is immediate and complete (OAS-INV-004):
 
 * revoking an Authority Scope withdraws it immediately and completely; there is no grace
-  period during which a revoked scope still authorizes;
+  period during which a revoked scope still authorizes, and a suspended or non-permissive
+  scope does not auto-clear or return to active (ADR-002-007 §8.2/§8.3);
 * an act attempted under a revoked or expired scope is an Out-of-Scope Act (OAS-INV-002),
   routed to ADR-DEV-013;
 * a changed safety-relevant context invalidates the affected scope (ADR-002-015
@@ -180,6 +197,10 @@ A scope is authority only while current; revocation returns it to nothing.
 * **9.4 Treat a valid scope on one dimension as sufficient.** Rejected: an act must be within
   scope on every applicable dimension (OAS-INV-002).
 * **9.5 Define the scope-issuance mechanism here.** Rejected: owned by ADR-002-015/007 (§4).
+* **9.6 Treat an unknown or unevaluated dimension as within scope (fail-open).** Rejected:
+  uncertainty restricts operation; an unknown, stale, or unverifiable scope on a bounding
+  dimension is an Out-of-Scope Act, not vacuously satisfied (OAS-INV-002; philosophy §8;
+  Vision §6.3).
 
 ---
 
@@ -228,6 +249,10 @@ ADR-002-015/007):
 * **12.4** A valid scope on one dimension does not authorize an act out of scope on another
   (OAS-INV-002).
 * **12.5** Expressing or recording a scope grants no authority (OAS-INV-006).
+* **12.6** An act on a bounding dimension whose scope is unknown/stale/unverifiable is
+  out-of-scope (fail-closed), never treated as vacuously within scope (OAS-INV-002).
+* **12.7** A safety-relevant context change mid-operation invalidates the affected scope; the
+  operator does not infer continued authority from a pre-change scope (OAS-INV-004; §8).
 
 ---
 
@@ -256,8 +281,9 @@ operation, which remain governed by RFC-001 and VER-002-001.
 | RFC-011 §14 Q6 (operator authority-scope expression/revocation) | per-dimension expression (§7); immediate/complete revocation (§8) |
 | RFC-011 §7 (bounded by many dimensions) | the dimension list; act within scope on every dimension (§7; OAS-INV-001, -002) |
 | Vision §6.6 (explicit, scoped, time-bounded, attributable, revocable; not persistent) | explicit non-persistent scope; immediate revocation (§§7, 8; OAS-INV-003, -004) |
-| ADR-002-015 (human authority; HAG-INV-008 changed context invalidates) | changed context invalidates scope; mechanism owned there (§8; OAS-INV-004, -005) |
-| ADR-002-007 (live authorization scope) | live-authorization scope mechanism owned there (OAS-INV-005) |
+| ADR-002-015 §13; HAG-INV-008 (revoke attestations; changed context invalidates) | changed context invalidates scope; revocation mechanism owned there (§8; OAS-INV-004, -005) |
+| ADR-002-007 §8.2/§8.3/§9 (suspended/non-permissive states don't auto-clear; live-auth scope) | immediate, complete, no-grace revocation; mechanism owned there (§8; OAS-INV-004, -005) |
+| philosophy §8; Vision §6.3; RFC-011 §6 principle 6 (uncertainty restricts) | unknown/unverifiable bounding-dimension scope is out-of-scope, fail-closed (§7; OAS-INV-002) |
 | ADR-DEV-013 (degraded-response vs out-of-scope) | this scope is what ADR-DEV-013's out-of-scope test consumes (§7; OAS-INV-002) |
 | RFC-002 §9.1 (authority ownership) | expression grants no authority (OAS-INV-006) |
 | philosophy §14 (authority must be explicit) | explicit, attributable scope (§7; OAS-INV-003) |
@@ -283,10 +309,17 @@ authority-scope expression and revocation and relies on ADR-002-015/007 for the 
   ADR-002-015 (HAG-INV-008), ADR-002-007, ADR-DEV-013, RFC-002 §9.1, and philosophy §14.
 * Introduced no SAFE-xxx requirement, numeric bound, or authority; confers no acceptance
   or live-readiness.
-* **Independent EV-L0 review is OWED.** An in-context self-adversarial consistency review
-  was performed (invariants defined and cross-referenced; citations checked against source;
-  the ADR-DEV-013 dependency confirmed coherent), but the independent EV-L0 reviewer
-  dispatch failed on a session/usage limit (resets 2026-07-16 18:50 KST). Unlike
-  ADR-DEV-001 through -014, this ADR has **not** yet had an independent adversarial EV-L0
-  review; that review is owed and SHALL be run before ADR-DEV-015 advances beyond Review
-  Draft. The self-review is not independent and confers no acceptance or live-readiness.
+* Independent adversarial EV-L0 document review returned **PASS-WITH-FIXES** with no Critical
+  finding (the earlier session-limit dispatch failure is resolved and the review debt is
+  cleared); the ADR-DEV-013 dependency was confirmed coherent and bidirectional. Two Major
+  findings were resolved: (M1) "every applicable dimension" was a fail-open loophole —
+  "applicable" is now defined (a dimension that bounds the act) and an unknown, stale, or
+  unverifiable scope on a bounding dimension is now an Out-of-Scope Act (fail-closed;
+  philosophy §8, Vision §6.3, RFC-011 §6 principle 6), with a §9.6 alternative and §12.6/§12.7
+  tests; (M2) OAS-INV-004's immediate/complete revocation was mis-anchored solely to
+  HAG-INV-008 (changed-context) — the immediacy/no-auto-clear pin-cites are now ADR-002-007
+  §9/§8.2/§8.3 and ADR-002-015 §13, with HAG-INV-008 kept only for the changed-context path.
+  Five Minor fixes: OAS-INV-005 owner set aligned with §4 (adding ADR-002-002 and the
+  RFC-002/ADR series); "indefinitely" restored to the non-persistence clause; the Q6 seven→nine
+  dimension expansion noted in §2; and the §12/§9 gaps closed. The review is EV-L0 only and
+  confers no acceptance or live-readiness.

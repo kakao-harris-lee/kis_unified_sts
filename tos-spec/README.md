@@ -73,14 +73,11 @@ Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
 - **Part 3 — Development.** RFC-008 through RFC-011 are `0.1 Review Draft`; each has
   completed an independent adversarial EV-L0 document review (`PASS-WITH-FIXES`, no
   Critical finding). The `ADR-DEV` decision records resolve the RFCs' open questions;
-  the foundational block (ADR-DEV-001, -002, -004, -005), the core tier (ADR-DEV-003,
-  -007, -008, -009, -010, -011), and the operational tier so far (ADR-DEV-012, -013, -014)
-  are authored, each at `0.1 Review Draft` with an independent EV-L0 review
-  (`PASS-WITH-FIXES` / `CHANGES-REQUESTED-resolved`; ADR-DEV-011 additionally passed a
-  confirming re-review after one Critical finding was resolved). The final two,
-  ADR-DEV-006 (bulk authoring) and ADR-DEV-015 (operator authority-scope), are authored and
-  self-consistency-checked but **still owe an independent EV-L0 review** (the reviewer
-  dispatch hit a session limit); that review completes the 15-ADR series.
+  the complete 15-record `ADR-DEV` series (ADR-DEV-001 through -015) is authored, each at
+  `0.1 Review Draft`, and **each has passed an independent adversarial EV-L0 review**
+  (`PASS-WITH-FIXES`; ADR-DEV-011 and -013 raised a Critical and a set of Majors
+  respectively that were resolved, ADR-DEV-011 additionally passing a confirming
+  re-review). The EV-L0 reviews confer no acceptance and no live-readiness.
 
 A Review Draft — and any EV-L0 review it carries — confers no acceptance and no
 live-readiness; those are governed by RFC-001 and VER-002-001.
