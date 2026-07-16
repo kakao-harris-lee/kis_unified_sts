@@ -177,7 +177,9 @@ and model versions, source revision) with the targeted DSL, Enforcement Mechanis
 configuration versions, because the same source under a different DSL or enforcement
 version is a different behavior surface (ADR-DEV-002; ADR-DEV-001 §9). A record missing
 any minimum field leaves provenance unestablished and the artifact inadmissible
-(APA-INV-004). The concrete schema is approved configuration; the minimum field set is
+(APA-INV-004). A captured External Value's own capture provenance (as-of/production time,
+source, seed, response) is owned by ADR-DEV-003, not enumerated in this authored-artifact
+minimum record. The concrete schema is approved configuration; the minimum field set is
 the safety obligation.
 
 ---

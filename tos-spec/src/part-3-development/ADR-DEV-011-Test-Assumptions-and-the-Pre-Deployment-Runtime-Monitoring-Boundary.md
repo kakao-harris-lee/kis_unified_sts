@@ -148,7 +148,7 @@ the monitoring protocol.
   architecture's pre-execution barriers — is a distinct discipline this boundary does not
   enumerate, and **being monitored is not adequacy where the architecture requires
   prevention**: monitoring observes, it does not prevent (philosophy §11, §37.3; RFC-010
-  §6.5; ADR-002-028 §1). Properties owned by other phases — admission (ADR-002-029),
+  §6 principle 5; ADR-002-028 §1). Properties owned by other phases — admission (ADR-002-029),
   promotion (ADR-002-025), human authority (ADR-002-015), incident (ADR-002-027) — are
   outside this purview, not gaps.
 * **TAB-INV-005 — No Duplication.** Pre-deployment demonstration does not run continuously
@@ -366,7 +366,7 @@ ADR-002-028 for the runtime monitoring protocol.
   "no gap" to the *joint purview* of testing and monitoring, state that runtime
   prevention/enforcement is a distinct discipline outside this boundary, that being
   monitored is not adequacy where prevention is required (philosophy §11, §37.3; RFC-010
-  §6.5; ADR-002-028 §1), and that admission/promotion/human-authority/incident properties
+  §6 principle 5; ADR-002-028 §1), and that admission/promotion/human-authority/incident properties
   are outside the purview, not gaps. Three Major findings were resolved: (M1) pre-deployment
   gap detection was mis-assigned to runtime monitoring — now split by phase (pre-deployment
   gaps caught by independent review / the ADR-DEV-009 floor, runtime gaps by ADR-002-028),

@@ -199,7 +199,8 @@ carried (DCM-INV-004):
   RFC-007 output is not protective; protective classification is owned by the Protective
   Action Controller (RFC-008 §11 item 6; ADR-002-001 §6);
 * substitution that would widen authority is a §11 boundary violation, unexpressible by
-  construction (ADR-DEV-001), and caught by the ADR-DEV-009 containment suite.
+  construction (ADR-DEV-001), and exercised by the containment suite (RFC-010 §8) against
+  the ADR-DEV-009 minimum set.
 
 Degradation narrows what a strategy may claim; it never lets the strategy step into the
 degraded model's authority.
@@ -250,9 +251,9 @@ degraded model's authority.
 * **12.1 Optimistic fill.** A degraded output read as a neutral prior; blocked by the
   no-coercion rule of ADR-002-018 §10 and CII-INV-005 (an `UNKNOWN` input is never
   coerced to a value) together with DCM-INV-002, and exercised by this ADR's §13.2
-  model-degradation test under RFC-010 — not by the ADR-DEV-009 containment suite, whose
-  minimum set is the RFC-008 §11 prohibited-effect boundary and includes no neutral-prior
-  vector.
+  model-degradation test under RFC-010 — not by the RFC-010 §8 containment suite, whose
+  ADR-DEV-009 minimum set is the RFC-008 §11 prohibited-effect boundary and includes no
+  neutral-prior vector.
 * **12.2 Authority laundering.** A self-computed substitute treated as capacity/protection;
   blocked by DCM-INV-004 and RFC-008 §11 items 6/9.
 * **12.3 Swallowed degradation.** A degraded decision hidden as an error; prevented by

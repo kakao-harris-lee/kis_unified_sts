@@ -114,9 +114,9 @@ decision and are non-authorizing.
   (RFC-008 §9).
 * **Validity Window** — the explicit currentness bound, measured from the value's
   as-of/production time, within which a captured External Value may be used for new
-  risk; beyond it the value is `STALE`. It is the external-value-scoped name for the
-  ADR-002-018 currentness/maximum-age bound (CII-INV-006) and introduces no new
-  mechanism.
+  risk; beyond it the value is `STALE`. It is an external-value-scoped *alias* (not a new
+  synonym) for the ADR-002-018 currentness/maximum-age bound (CII-INV-006) and introduces
+  no new mechanism.
 * **Re-Authoring** — replacing a stale captured External Value with a freshly captured
   one as a new Critical Input, never an in-place mutation (ADR-DEV-004).
 
@@ -132,8 +132,9 @@ defines Critical Input governance.
   no live fetch of it (RFC-008 §9, §11 items 12/17; ADR-DEV-001 DCE-INV-003; RFC-009 §9).
 * **EXV-INV-002 — Staleness Is Bounded and Restrictive, Anchored to Production Time.**
   Each captured External Value carries an explicit Validity Window **anchored to the
-  value's recorded as-of/production time** (Authoring Provenance, ADR-DEV-004), not to
-  the time it is placed in a Capsule; re-wrapping a value in a newer Capsule SHALL NOT
+  value's recorded as-of/production time** (its capture provenance under ADR-002-018 and
+  §7 — this ADR owns the external-value as-of record; it is not a field of the ADR-DEV-004
+  authored-artifact minimum record), not to the time it is placed in a Capsule; re-wrapping a value in a newer Capsule SHALL NOT
   reset its currentness. Once `STALE` — past the window measured from its production
   time — it blocks new risk in its dependency closure; a TTL, cache, or last-known-good
   does not convert staleness into permission (ADR-002-018 CII-INV-005/006). An External
@@ -181,7 +182,8 @@ reviewable, replayable input.
 A captured External Value is fresh only within its Validity Window (EXV-INV-002, -003):
 
 * the window is measured from the External Value's recorded as-of/production time
-  (Authoring Provenance, ADR-DEV-004), never from the time the value is wrapped into a
+  (its capture provenance under ADR-002-018 and §7), never from the time the value is
+  wrapped into a
   Capsule; re-delivering an authoring-time value in a fresh Capsule does not reset its
   currentness — otherwise a value produced once could read fresh forever, defeating the
   discipline this ADR exists to enforce;
@@ -254,7 +256,8 @@ by re-authoring, not extended by reuse.
   contained by EXV-INV-004 and ADR-002-018 CII-INV-008, but a fan-out gap is a process
   risk owned by ADR-002-018.
 * **11.4 Live-fetch smuggling.** An author routes a "feature" as a live call; unexpressible
-  by DCE-INV-003 and caught by the ADR-DEV-009 containment suite (ambient/network vector).
+  by DCE-INV-003 and caught by the containment suite (RFC-010 §8) via the ADR-DEV-009
+  minimum-set ambient/network vector.
 
 ---
 

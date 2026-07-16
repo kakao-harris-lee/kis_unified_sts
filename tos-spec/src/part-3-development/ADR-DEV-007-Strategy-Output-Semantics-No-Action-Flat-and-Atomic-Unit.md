@@ -340,5 +340,5 @@ semantics and relies on ADR-002-020/023/002 for the field set, approval, and cap
   §14). Three Minor fixes: a §12.6 obligation for SOS-INV-005; "Explicit Flat … for a
   scope" narrowed to a single instrument (a portfolio flat is a vector of per-instrument
   flats); and §10 clarified that the vector case is verified via ADR-002-020/023
-  conformance, not the ADR-DEV-009 containment suite. The review is EV-L0 only and confers
+  conformance, not the RFC-010 §8 containment suite. The review is EV-L0 only and confers
   no acceptance or live-readiness.

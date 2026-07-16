@@ -104,9 +104,10 @@ this decision and are non-authorizing.
 * **Observability Surface** — the operator-facing presentation of load-bearing operational
   state (RFC-011 §8). It is evidence for operator action; it is not permission and holds no
   authority.
-* **Withheld Re-Arm** — the conforming operator outcome of declining to request or grant
-  re-arm, represented as a first-class, recorded, attributable, auditable decision with its
-  rationale (RFC-011 §10).
+* **Withheld Re-Arm** — the conforming operator outcome of declining to request (or, where
+  the operator is the granting authority, grant) re-arm, represented as a first-class,
+  recorded, attributable, auditable decision with its rationale (RFC-011 §10; the
+  request-side instance is ADR-DEV-012's "Withhold").
 
 These terms describe an observability-and-outcome discipline. None grants authority or
 re-arms.
@@ -283,7 +284,7 @@ operation, which remain governed by RFC-001 and VER-002-001.
 | ADR-DEV-007 SOS-INV-001 (no-action first-class) | withhold is first-class, like no-action (§8; OBS-INV-004) |
 | ADR-DEV-012 (re-arm checklist) | a withhold records the unreconciled item (§8) |
 | RFC-002 §9.1 (authority ownership) | observability/withholding grant no authority (OBS-INV-006) |
-| philosophy §8, §11, §16, §37.3 | uncertainty restrictive; prevention-first; state from evidence; visible failure is a failure (§3, §7) |
+| philosophy §8, §16, §37.3 | uncertainty restrictive; state from evidence; visible failure is a failure (§3, §7) |
 
 This ADR introduces no SAFE-xxx requirement and no numeric bound. It fixes required
 observability and the first-class withhold and relies on ADR-002-028 for the monitoring

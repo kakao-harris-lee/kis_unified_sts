@@ -107,8 +107,9 @@ RFC-005 §5 (**Slippage**, **TCA**), RFC-006 §11, and RFC-003 §12, and SHALL N
 synonyms. The following terms are scoped to this decision and are non-authorizing.
 
 * **Admissible Backtest** — a Backtest that meets every §1 condition and so may be offered
-  as evidence toward a hypothesis. Admissibility is evidentiary, not acceptance,
-  promotion, or live-readiness.
+  as evidence toward a hypothesis. Admissibility here is evidentiary — unrelated to the
+  ADR-002-029 software-artifact admission sense — and is not acceptance, promotion, or
+  live-readiness.
 * **Look-Ahead Bias** — the use, in a simulated decision at time t, of any input not
   available at or before t (future prices, revised data, survivorship-filtered universes).
 * **Overfit** — a result that does not generalize because it depends on tuning parameters

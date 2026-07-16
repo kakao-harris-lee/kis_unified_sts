@@ -92,7 +92,7 @@ by RFC-010 and its ADR.
 * the concrete surface grammar, keywords, or API signatures — approved
   configuration and detailed design, not a safety decision;
 * the *minimum adversarial escape-vector set* the containment suite must attempt —
-  owned by RFC-010 (§8, §14 Q1) and its ADR;
+  owned by ADR-DEV-009 (RFC-010 §14 Q1); RFC-010 §8 builds and runs the suite;
 * deterministic-replay and evidence integrity — owned by ADR-002-016; this ADR
   supplies conforming inputs;
 * software-artifact admission of the enforcement components and authored artifacts —
@@ -244,9 +244,9 @@ The Enforcement Mechanism SHALL NOT be self-certifying (DCE-INV-005):
 * **Adversarially tested.** It SHALL be exercised by the RFC-010 §8 containment
   suite, which attempts to express each RFC-008 §11 prohibited effect and each
   escape vector (item 17) and demonstrates rejection, unreachability, or
-  containment. The *minimum* escape-vector set is owned by RFC-010 (§14 Q1) and its
-  ADR; this ADR requires only that the mechanism be tested against it, not what it
-  contains.
+  containment. The *minimum* escape-vector set is owned by ADR-DEV-009 (RFC-010 §14 Q1);
+  RFC-010 §8 builds and runs the suite. This ADR requires only that the mechanism be
+  tested against it, not what it contains.
 * **Admitted as software.** The analyzer, capability runtime, and isolation boundary
   are software artifacts subject to ADR-002-029 admission and content-addressed
   identity; a change to any of them is a versioned substitution (RFC-008 §6
