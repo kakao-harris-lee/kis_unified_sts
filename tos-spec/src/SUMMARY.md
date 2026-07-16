@@ -67,3 +67,6 @@
 - [ADR-DEV-009 — Containment Escape-Vector Minimum Set and Currency](part-3-development/ADR-DEV-009-Containment-Escape-Vector-Minimum-Set-and-Currency.md)
 - [ADR-DEV-010 — Backtest Admissibility, Cost Realism, and Disqualifiers](part-3-development/ADR-DEV-010-Backtest-Admissibility-Cost-Realism-and-Disqualifiers.md)
 - [ADR-DEV-011 — Test Assumptions and the Pre-Deployment / Runtime-Monitoring Boundary](part-3-development/ADR-DEV-011-Test-Assumptions-and-the-Pre-Deployment-Runtime-Monitoring-Boundary.md)
+- [ADR-DEV-012 — Re-Arm Reconciled-State Checklist and Barrier Binding](part-3-development/ADR-DEV-012-Re-Arm-Reconciled-State-Checklist-and-Barrier-Binding.md)
+- [ADR-DEV-013 — Operator Boundaries: Break-Glass and Containment](part-3-development/ADR-DEV-013-Operator-Boundaries-Break-Glass-and-Containment.md)
+- [ADR-DEV-014 — Operator Observability and "Withhold Re-Arm" as a First-Class Outcome](part-3-development/ADR-DEV-014-Operator-Observability-and-Withhold-Re-Arm-as-a-First-Class-Outcome.md)

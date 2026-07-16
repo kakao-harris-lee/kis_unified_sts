@@ -57,6 +57,9 @@ Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
 - [ADR-DEV-009 — Containment Escape-Vector Minimum Set and Currency](src/part-3-development/ADR-DEV-009-Containment-Escape-Vector-Minimum-Set-and-Currency.md)
 - [ADR-DEV-010 — Backtest Admissibility, Cost Realism, and Disqualifiers](src/part-3-development/ADR-DEV-010-Backtest-Admissibility-Cost-Realism-and-Disqualifiers.md)
 - [ADR-DEV-011 — Test Assumptions and the Pre-Deployment / Runtime-Monitoring Boundary](src/part-3-development/ADR-DEV-011-Test-Assumptions-and-the-Pre-Deployment-Runtime-Monitoring-Boundary.md)
+- [ADR-DEV-012 — Re-Arm Reconciled-State Checklist and Barrier Binding](src/part-3-development/ADR-DEV-012-Re-Arm-Reconciled-State-Checklist-and-Barrier-Binding.md)
+- [ADR-DEV-013 — Operator Boundaries: Break-Glass and Containment](src/part-3-development/ADR-DEV-013-Operator-Boundaries-Break-Glass-and-Containment.md)
+- [ADR-DEV-014 — Operator Observability and "Withhold Re-Arm" as a First-Class Outcome](src/part-3-development/ADR-DEV-014-Operator-Observability-and-Withhold-Re-Arm-as-a-First-Class-Outcome.md)
 
 ## Status
 
@@ -68,10 +71,12 @@ Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
 - **Part 3 — Development.** RFC-008 through RFC-011 are `0.1 Review Draft`; each has
   completed an independent adversarial EV-L0 document review (`PASS-WITH-FIXES`, no
   Critical finding). The `ADR-DEV` decision records resolve the RFCs' open questions;
-  the foundational block (ADR-DEV-001, -002, -004, -005) and the core tier (ADR-DEV-003,
-  -007, -008, -009, -010, -011) are authored, each at `0.1 Review Draft` with an
-  independent EV-L0 review (`PASS-WITH-FIXES`; ADR-DEV-011 additionally passed a
-  confirming re-review after one Critical finding was resolved).
+  the foundational block (ADR-DEV-001, -002, -004, -005), the core tier (ADR-DEV-003,
+  -007, -008, -009, -010, -011), and the operational tier so far (ADR-DEV-012, -013, -014)
+  are authored, each at `0.1 Review Draft` with an independent EV-L0 review
+  (`PASS-WITH-FIXES` / `CHANGES-REQUESTED-resolved`; ADR-DEV-011 additionally passed a
+  confirming re-review after one Critical finding was resolved). ADR-DEV-015 (operator
+  authority-scope) and ADR-DEV-006 (bulk authoring) remain to complete the series.
 
 A Review Draft — and any EV-L0 review it carries — confers no acceptance and no
 live-readiness; those are governed by RFC-001 and VER-002-001.

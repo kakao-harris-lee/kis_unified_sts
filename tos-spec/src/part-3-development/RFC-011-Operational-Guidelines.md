@@ -458,18 +458,30 @@ resolved by informal operational convention.
 1. What minimum reconciled-state checklist (positions, open orders, account,
    configuration, venue, critical input, time, single-instance) must an operator
    confirm before requesting a Re-arm Decision, and where is that checklist bound
-   relative to ADR-002-017's recovery barrier?
+   relative to ADR-002-017's recovery barrier? *(Resolved by ADR-DEV-012: a nine-item
+   positively-confirmed checklist; any unreconciled item withholds; it sits before, and
+   never replaces, the ADR-002-017 barrier and the ADR-002-007 grant.)*
 2. How is the boundary drawn between an approved operator response to a degraded
    state and a break-glass action requiring ADR-002-015 dual-control governance?
+   *(Resolved by ADR-DEV-013: the line is the operator's scoped authority — anything
+   that would enlarge authority, act out of scope, or touch a control is break-glass
+   under ADR-002-015 and cannot expand.)*
 3. What operator-facing observability is required so that authority, capacity,
    trapped exposure, reconciliation, and degraded mode are visible without the
-   dashboard itself becoming a trusted authority (Vision §9.3; ADR-002-028)?
+   dashboard itself becoming a trusted authority (Vision §9.3; ADR-002-028)? *(Resolved
+   by ADR-DEV-014: the load-bearing state is observable, but the surface is evidence,
+   not authority — validity is never inferred from a green dashboard/snapshot/health.)*
 4. How does the operator discipline represent "withhold re-arm" as a first-class,
    recorded, auditable outcome rather than an absence of action (§10; philosophy
-   §8)?
+   §8)? *(Resolved by ADR-DEV-014: a withheld re-arm is a first-class, recorded,
+   attributable, auditable outcome with its rationale, whose missed opportunity is
+   acceptable.)*
 5. What is the relationship between operator-initiated containment and the
    independently-owned Safety Authority / incident governance (ADR-002-027), so
-   that operator action complements rather than pre-empts the owner?
+   that operator action complements rather than pre-empts the owner? *(Resolved by
+   ADR-DEV-013: the operator invokes restrictive containment using normal authority
+   and complements — never declares, closes, clears, or pre-empts — the ADR-002-027
+   lifecycle and the CONST-011 independent authority.)*
 6. How are operator authority scopes (account, strategy, instrument, venue, mode,
    software version, safety configuration) expressed and revoked, consistent with
    Vision §6.6 and ADR-002-015?
