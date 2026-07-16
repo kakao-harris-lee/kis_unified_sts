@@ -2,7 +2,7 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.11 Review Draft
+**Version**: 0.12 Review Draft
 **Status**: Working Draft
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
@@ -171,21 +171,49 @@ Classification as Critical SHALL NOT imply that all constitutional requirements 
 
 Where two constitutional requirements conflict, the interpretation that provides greater operational safety, stronger capital preservation and lower systemic risk SHALL prevail.
 
-The constitutional objectives SHALL be ordered as follows.
+The constitutional objectives SHALL be ordered as follows, mirroring the North Star ordering of vision §5.
 
 ```
-Survivability
+Long-Term Survivability
         │
         ▼
 Capital Preservation
         │
         ▼
+Operational Safety
+        │
+        ▼
+Decision and Execution Integrity
+        │
+        ▼
 Positive Expectancy
+        │
+        ▼
+Profitability
+        │
+        ▼
+Performance Optimization
 ```
+
+The following table maps each North Star tier to the constitutional requirements that express it.
+
+| North Star tier (vision §5) | Constitutional expression |
+| --- | --- |
+| Long-Term Survivability | CONST-001 |
+| Capital Preservation | CONST-002 |
+| Operational Safety | CONST-004, CONST-006, CONST-007, CONST-010, CONST-011, CONST-012, CONST-013, CONST-015 |
+| Decision and Execution Integrity | CONST-005, CONST-008, CONST-009, CONST-014 |
+| Positive Expectancy | CONST-003 |
+| Profitability | Definition of Success (§16); subordinate to every higher tier |
+| Performance Optimization | Non-Goals (§17); subordinate to all preventive and safety requirements |
+
+Positive Expectancy (CONST-003), although classified Critical, is ordered below survivability, capital preservation, operational safety, and decision-and-execution integrity. CONST-003 SHALL NOT be satisfied by weakening any operational-safety or integrity requirement, and in particular SHALL remain subordinate to CONST-005 (Independent Approval Authority) and CONST-009 (Pre-Trade Constitutional Assurance).
 
 Preventive and safety requirements SHALL take precedence over performance objectives.
 
 No optimization, performance improvement or feature addition SHALL weaken a higher-precedence requirement to satisfy a lower-precedence one.
+
+In every conflict, the safety-favoring resolution rule above governs; the tier ordering provides direction only and SHALL NOT be used to weaken any preventive or integrity requirement in favour of a lower tier.
 
 Safety-favoring resolution preserves survivability under uncertainty, which is the constitution's highest objective.
 
@@ -298,7 +326,7 @@ Demonstrable confirmation, before an action is transmitted for execution, that t
 
 **Authoritative Source**
 
-The single source recognized under CONST-008 as ground truth for positions, orders and account state, superseding the system's internal representation.
+The authoritative basis for positions, orders and account state recognized under CONST-008: the account's true operational state established through reconciliation from corroborating evidence. Individual internal or external responses, including any single API response, are evidence contributing to that basis and SHALL NOT by themselves be treated as unconditionally correct. The system's internal representation SHALL NOT override the Authoritative Source.
 
 **Operational State**
 
@@ -311,6 +339,19 @@ The condition in which Operational State has been reconciled against the Authori
 **Replay**
 
 The reconstruction of a past decision and its execution from recorded inputs for audit purposes; replay is diagnostic and SHALL NOT substitute for preventive assurance.
+
+### Authoritative-State Term Relationships
+
+The following related terms SHALL be read as one concept expressed at different levels; none SHALL be interpreted as a single infallible source.
+
+| Term | Defined in | Meaning |
+| --- | --- | --- |
+| Authoritative Position | RFC-000 CONST-008 | The constitutional principle that positions, orders, and account state have an authoritative basis the internal representation SHALL NOT override. |
+| Authoritative Source | RFC-000 §6 | The account's true operational state established through reconciliation from corroborating evidence; individual responses are evidence, not themselves ground truth. |
+| Operational State | RFC-000 §6 | The true state of positions, orders, and account reflected by the Authoritative Source, as distinct from the system's internal representation. |
+| Authoritative State | RFC-001 §5.1 | The Safety-Case discharge of the Authoritative Source: the state accepted as the governing basis after safety-relevant corroborating evidence has been reconciled. |
+
+Constitutionally Validated (this section) is the condition in which Operational State has been reconciled against the Authoritative Source; it corresponds to the RFC-001 Reconciled State (RFC-001 §5.13). RFC-001 §5.1 (Authoritative State) is the Safety-Case discharge of CONST-008 and SHALL be read as consistent with it, not as a reinterpretation of it.
 
 ### Rationale
 
@@ -516,7 +557,7 @@ Fail-safe operation SHALL NOT abandon existing exposure or terminate required pr
 
 ### Constraint
 
-No autonomous risk-increasing action SHALL be authorized while the system is in the Constitutional Safe State.
+No risk-increasing action, whether autonomous or human-authorized, SHALL be authorized while the system is in the Constitutional Safe State, except bounded protective actions permitted under CONST-012.
 
 Any protective action authorized in the Constitutional Safe State SHALL:
 
@@ -794,13 +835,17 @@ Critical
 
 ### Requirement
 
-The Trading Operating System SHALL recognize a single authoritative source for trading positions.
+The Trading Operating System SHALL recognize an authoritative basis for trading positions, orders, and account state that its internal representation SHALL NOT override.
 
-Internal state SHALL NOT supersede authoritative execution state.
+The authoritative basis SHALL be the reconciled state established from corroborating evidence, and SHALL NOT be any single internal or external source or any single API response.
+
+No single source SHALL be treated as unconditionally correct where a single-source error could cause critical or catastrophic exposure.
 
 ### Constraint
 
-Position inconsistencies SHALL trigger constitutional safety behaviour.
+Position, order, or account-state inconsistencies SHALL trigger constitutional safety behaviour.
+
+An unresolved disagreement between evidence sources SHALL preserve unknown state and SHALL NOT be resolved by selecting the most convenient source.
 
 ### Rationale
 
@@ -808,13 +853,15 @@ Incorrect position information invalidates every downstream decision.
 
 ### Failure Scenario
 
-Broker reports one position.
-
-Internal cache reports another.
+Two evidence sources disagree about a position.
 
 ↓
 
-Decision engine trades incorrect quantity.
+The most convenient source is accepted as ground truth.
+
+↓
+
+Decision engine trades an incorrect quantity.
 
 ### Risk of Violation
 
@@ -1233,6 +1280,100 @@ TEST-001 (reserved)
 
 ---
 
+## CONST-015
+
+### Title
+
+Bounded Human Authority
+
+### Classification
+
+Constitutional Requirement
+
+### Priority
+
+Critical
+
+### Requirement
+
+The Trading Operating System SHALL treat authorized human authority as a necessary but bounded element of the safety model.
+
+Every human or operator action that grants, modifies, suspends, restores, or increases safety-relevant authority SHALL be authenticated, scoped, attributable, reviewable, and auditable.
+
+Human authority SHALL NOT bypass, disable, weaken, or override a constitutional safety control, and SHALL NOT extend exposure, operational authority, or new-risk capacity beyond the operational safety limits required by CONST-006 or beyond the independently governed maximum operational authority (the Hard Safety Envelope defined by the Safety Case).
+
+No single human acting alone SHALL possess unilateral authority to increase new-risk authority beyond bounded protective action. Any risk-increasing re-arm, live-authorization issuance, or production-scope promotion SHALL require independent approval established through an approved satisfaction path.
+
+### Constraint
+
+A human-authorized action SHALL be subject to the same constitutional safety requirements as an autonomous action. Being human-initiated SHALL NOT exempt an action from CONST-006, CONST-009, CONST-012, or CONST-014.
+
+This requirement SHALL NOT be construed to mandate any specific number of natural persons. The independent-approval obligation for risk-increasing re-arm, issuance, and promotion SHALL be discharged through the approved satisfaction paths defined by its derived Safety-Case requirement, which SHALL fail closed when the required independence cannot be established.
+
+Emergency human authority SHALL be limited to actions that restrict, suspend, or contain, and SHALL NOT become a path to increase new risk.
+
+### Depends On
+
+CONST-006 — Operational Safety Limits
+
+CONST-009 — Pre-Trade Constitutional Assurance
+
+CONST-011 — Independent Safety Authority
+
+CONST-012 — Safe Operational State
+
+### Rationale
+
+Automation exists to improve consistency and control, not to remove responsible human authority; that authority is part of the safety model but is not an unbounded override.
+
+A single mistaken, stressed, or compromised human is a credible source of catastrophic loss, so human authority is bounded exactly as autonomous authority is.
+
+Fixing the number of natural persons at the constitutional level would foreclose governed single-operator operation; the number and the independence mechanism are therefore delegated to the Safety Case, which preserves a fail-closed posture.
+
+### Failure Scenario
+
+An operator, acting alone, re-arms live trading after a material failure.
+
+↓
+
+No independent approval or attestation constrains the action.
+
+↓
+
+A single mistaken or compromised human expands new-risk authority.
+
+↓
+
+Exposure is created outside the safety envelope.
+
+### Risk of Violation
+
+Critical
+
+Single-actor bypass of safety authority.
+
+### Verification
+
+RFC-001 SHALL define bounded-human-authority safety behaviour and the independent-approval requirement for risk-increasing re-arm, issuance, and promotion.
+
+### Derived Requirements
+
+SAFE-042
+
+SAFE-046
+
+SAFE-053
+
+### Traceability
+
+RFC-001 Safety Case
+
+RFC-002 Architecture
+
+DR-0001 Single-Operator Live Governance
+
+---
+
 # 8. Constitutional Axioms
 
 The following axioms define the philosophical foundation of the Trading Operating System.
@@ -1569,3 +1710,15 @@ Replaced unconditional "no new exposure" wording with "no new risk-increasing ex
 Clarified that bounded protective actions may be authorized only when their projected aggregate effect reduces constitutional risk and remains within all applicable safety boundaries.
 
 Aligned CONST-004 with CONST-012.
+
+v0.12
+
+Applied PATCH-0009 (CORPUS-REVIEW-0001 Theme A, M-01..M-04).
+
+Encoded the full seven-tier North Star ordering in Constitutional Precedence and added a North Star to constitutional-requirement mapping table; fixed CONST-003 (Positive Expectancy) as subordinate to the operational-safety and integrity requirements, in particular CONST-005 and CONST-009.
+
+Removed the "autonomous" qualifier from CONST-004's safe-state constraint so that no risk-increasing action, whether autonomous or human-authorized, is authorized in the Constitutional Safe State except bounded protective action.
+
+Added CONST-015 (Bounded Human Authority) as the constitutional parent of RFC-001 SAFE-053 owed by DR-0001 §6; it does not mandate any number of natural persons and preserves the governed single-operator satisfaction path.
+
+Reframed CONST-008 in evidence terms (the authoritative basis is the reconciled state from corroborating evidence, not any single source) and added an Authoritative-State term-relationship table to Section 6.

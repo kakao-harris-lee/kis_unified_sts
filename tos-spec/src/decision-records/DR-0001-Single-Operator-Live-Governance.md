@@ -160,17 +160,17 @@ This decision record is a governance artifact. Its normative force is carried
 entirely by the documents named under **Normative Carriers**; DR-0001 itself
 grants no authority and creates no live readiness.
 
-A dedicated constitutional principle bounding human authority
-(the RFC-000-level parent of SAFE-053) remains owed to a later wave and is out
-of scope here (RFC-000 is untouched by this wave). When that principle is
-authored, SAFE-053 is its intended Safety-Case discharge and SHALL be listed as
-such; SAFE-053 is written to accept that parent without further change to its
-requirement text.
+The dedicated constitutional principle bounding human authority that this
+section originally recorded as owed to a later wave has since been delivered:
+**RFC-000 CONST-015 (Bounded Human Authority)**, authored in CORPUS-REVIEW-0001
+Wave 2 (RFC-000 v0.12). SAFE-053 is its Safety-Case discharge and now lists
+CONST-015 in its `Derived from` set (RFC-001 §10, §12); as anticipated,
+SAFE-053's requirement text required no change to accept that parent.
 
 ## 7. Related Documents
 
-- CORPUS-REVIEW-0001 — CR-02 (originating finding); M-03 (the future
-  bounded-human-authority constitutional principle, next wave)
+- CORPUS-REVIEW-0001 — CR-02 (originating finding); M-03 (bounded-human-
+  authority constitutional principle — discharged by RFC-000 CONST-015, Wave 2)
 - vision §5, §6.9, §12.1, §12.7 (baseline, unmodified)
 - philosophy §22, §34, §35 (baseline, unmodified)
 - RFC-000 CONST-005, CONST-011, CONST-013 (existing constitutional anchors)

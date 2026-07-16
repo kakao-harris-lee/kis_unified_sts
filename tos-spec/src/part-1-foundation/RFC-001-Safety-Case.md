@@ -3,14 +3,14 @@
 **Document ID:** RFC-001
 **Document Type:** Safety Requirements Specification and Safety Case
 **Title:** Trading Operating System Safety Case
-**Version:** 0.4 Review Draft
+**Version:** 0.5 Review Draft
 **Status:** Review Draft — Not Ratified
 **Classification:** Foundational Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-13
 **Last Updated:** 2026-07-17
-**Supersedes:** RFC-001 v0.3 Review Draft
+**Supersedes:** RFC-001 v0.4 Review Draft
 
 ---
 
@@ -308,7 +308,7 @@ The TOS MAY expose real capital only when all Critical safety requirements appli
 
 ### SC-010 — Hazard Completeness Claim
 
-All reasonably foreseeable single-defect and common operational failure paths capable of causing catastrophic or critical capital impairment SHALL be identified, classified, and controlled.
+All reasonably foreseeable single-defect and common operational failure paths — including authorized human and operator error and a defect or compromise of the final egress enforcement point — capable of causing catastrophic or critical capital impairment SHALL be identified, classified, and controlled.
 
 ### SC-020 — Pre-Trade Prevention Claim
 
@@ -325,6 +325,8 @@ The system SHALL NOT authorize new exposure while position, open-order, account,
 ### SC-050 — Containment Claim
 
 A defect in decision generation, strategy logic, or ordinary execution flow SHALL NOT disable the independent authority required to contain that defect.
+
+A defect or compromise of the final egress enforcement point itself is outside the scope of this claim and is addressed by HAZ-025 and SAFE-054 (out-of-band containment of final egress).
 
 ### SC-060 — Operational Segregation Claim
 
@@ -673,6 +675,34 @@ Exposure known to be non-reducible is treated as available risk capacity, allowi
 
 **Constitutional basis:** CONST-001, CONST-002, CONST-006, CONST-007, CONST-012
 **Controlled by:** SAFE-013, SAFE-032, SAFE-043
+
+---
+
+### HAZ-024 — Operator/Human Configuration or Authorization Error
+
+**Severity:** CATASTROPHIC
+
+An authenticated operator, acting within granted TOS authority, makes a safety-relevant mistake — selecting the wrong account, arming or re-arming an incorrect scope, approving an unintended action, or applying an incorrect safety configuration — creating unintended exposure or an unsafe authority state.
+
+This hazard concerns erroneous action inside the operator's own authority and is distinct from HAZ-021, which concerns external or unattributed activity that cannot be traced to an approved TOS Intent.
+
+**Constitutional basis:** CONST-001, CONST-011, CONST-015
+**Controlled by:** SAFE-042, SAFE-046, SAFE-050, SAFE-053
+**Architecture:** ADR-002-015 (human safety authority, dual control, and the Governed Single-Operator Re-Arm Variant)
+
+---
+
+### HAZ-025 — Defect or Compromise of the Final Egress Enforcement Point
+
+**Severity:** CATASTROPHIC
+
+The final egress enforcement point — the sole holder of usable live-order credentials and the broker-order route — is itself defective, misconfigured, or compromised, so that in-band safety enforcement at that point can no longer be relied upon to prevent unauthorized real-capital transmission.
+
+This hazard concerns a defect in the enforcement point itself. It is distinct from HAZ-010 (a defect elsewhere disabling containment) and from defects in decision, strategy, or ordinary execution flow (SC-050), which assume the egress enforcement point remains intact.
+
+**Constitutional basis:** CONST-009, CONST-011, CONST-014
+**Controlled by:** SAFE-041, SAFE-048, SAFE-054
+**Architecture:** RFC-002 §10.8; ADR-002-009, ADR-002-013 (egress credential, route, and failure-domain isolation)
 
 ---
 
@@ -1638,7 +1668,7 @@ Replay SHALL NOT be treated as proof that preventive controls are adequate.
 
 **Priority:** Critical
 **Type:** Preventive
-**Derived from:** CONST-005, CONST-011, CONST-013
+**Derived from:** CONST-005, CONST-011, CONST-013, CONST-015
 
 Every risk-increasing live re-arm, Live Authorization issuance, and
 production-scope promotion SHALL require the independent approval of at least
@@ -1698,6 +1728,39 @@ independent attestation.
 **Pass rule:** Every tested collapse of the two approvers to one effective
 controller, every ad-hoc satisfaction-path substitution, and every missing,
 stale, or indeterminate variant attestation fails closed.
+
+**Initial status:** SPECIFIED
+
+---
+
+### SAFE-054 — Out-of-Band Containment of Final Egress
+
+**Priority:** Critical
+**Type:** Containment / Recovery
+**Derived from:** CONST-009, CONST-011, CONST-014
+
+The Safety Case SHALL assume that the final egress enforcement point may itself become defective or compromised, so that in-band controls at that point cannot be relied upon to stop unauthorized real-capital transmission.
+
+A containment path independent of the final egress enforcement point SHALL be defined and evidenced that can, without relying on the compromised point's own cooperation, terminate its ability to transmit real-capital orders. Such a path may include, where the operating environment provides them:
+
+* revocation or invalidation of the live-order credential;
+* deactivation or suspension of the account or its order-entry capability;
+* network- or session-level isolation of the enforcement point;
+* an equivalent broker-side or out-of-band control.
+
+The available out-of-band containment capability SHALL be established as evidence for the operating environment. Where no such capability exists, the residual risk SHALL be explicitly recorded and accepted under Section 14 before live operation, and the affected live scope SHALL be reduced accordingly.
+
+This requirement SHALL NOT be interpreted to require any specific broker product or proprietary mechanism. It requires a demonstrated capability appropriate to the operating environment, expressed in Broker Capability Profile terms.
+
+### Acceptance Conditions
+
+**Trigger:** The final egress enforcement point is suspected or confirmed defective or compromised and continues, or may continue, to transmit.
+
+**Expected result:** An out-of-band containment path terminates the enforcement point's real-capital transmission capability without depending on that point's cooperation.
+
+**Forbidden outcome:** Containment of a compromised egress point depends solely on that same point functioning correctly.
+
+**Pass rule:** Every tested defect or compromise of the enforcement point is contained by the out-of-band path within the approved containment bound, or the absence of that capability is recorded and accepted as residual risk with a correspondingly reduced live scope.
 
 **Initial status:** SPECIFIED
 
@@ -1843,10 +1906,11 @@ Numeric criteria MAY reside in an approved Safety Profile or Verification Plan, 
 | CONST-008 — Authoritative Position             | SAFE-022, SAFE-044                                                                                             | HAZ-009                                                       | SPECIFIED                 |
 | CONST-009 — Pre-Trade Constitutional Assurance | SAFE-010, SAFE-012, SAFE-020, SAFE-021, SAFE-030, SAFE-033, SAFE-045, SAFE-046                                 | HAZ-002, HAZ-003, HAZ-004, HAZ-006, HAZ-012, HAZ-014, HAZ-015 | SPECIFIED                 |
 | CONST-010 — Fail-Closed Configuration          | SAFE-003, SAFE-011, SAFE-050                                                                                   | HAZ-002, HAZ-011                                              | SPECIFIED                 |
-| CONST-011 — Independent Safety Authority       | SAFE-011, SAFE-014, SAFE-041, SAFE-042, SAFE-050                                                               | HAZ-005, HAZ-010                                              | SPECIFIED                 |
+| CONST-011 — Independent Safety Authority       | SAFE-011, SAFE-014, SAFE-041, SAFE-042, SAFE-050                                                               | HAZ-005, HAZ-010, HAZ-024, HAZ-025                            | SPECIFIED                 |
 | CONST-012 — Safe Operational State             | SAFE-001, SAFE-002, SAFE-040, SAFE-043                                                                         | HAZ-008                                                       | SPECIFIED                 |
 | CONST-013 — Safe Operational Start             | SAFE-022, SAFE-044, SAFE-046                                                                                   | HAZ-009, HAZ-012                                              | SPECIFIED                 |
 | CONST-014 — Irreversibility Principle          | SAFE-010, SAFE-020, SAFE-021, SAFE-033, SAFE-051, SAFE-052                                                     | HAZ-003, HAZ-004, HAZ-014, HAZ-015                            | SPECIFIED                 |
+| CONST-015 — Bounded Human Authority             | SAFE-042, SAFE-046, SAFE-053                                                                                   | HAZ-010, HAZ-024                                              | SPECIFIED                 |
 
 A `SPECIFIED` entry indicates that RFC-001 defines the required safety obligation. It does not indicate implementation or demonstration.
 
@@ -1873,6 +1937,14 @@ A `SPECIFIED` entry indicates that RFC-001 defines the required safety obligatio
 | CONST-005                  | SAFE-053               |
 | CONST-011                  | SAFE-053               |
 | CONST-013                  | SAFE-053               |
+
+### Additional Safety Discharges (v0.5)
+
+| Constitutional requirement | Added safety discharge |
+| -------------------------- | ---------------------- |
+| CONST-009                  | SAFE-054               |
+| CONST-011                  | SAFE-054               |
+| CONST-014                  | SAFE-054               |
 
 ---
 
@@ -1936,7 +2008,7 @@ Production operation SHALL NOT begin or continue unless:
 * SAFE-025 is `ACCEPTED`;
 * SAFE-035 is `ACCEPTED`;
 * SAFE-048 is `ACCEPTED`;
-* no unresolved HAZ-016 through HAZ-023 remains Catastrophic;
+* no unresolved HAZ-016 through HAZ-025 remains Catastrophic;
 * every Critical requirement has a complete acceptance record;
 * external account activity is continuously reconciled;
 * time-source failure behavior has been demonstrated;
@@ -2086,6 +2158,14 @@ Material changes to hazards, Critical requirements, safe-state semantics, or pro
 * Named the two lawful satisfaction paths: a two-natural-person quorum, or the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1).
 * Extended the Constitutional Verification Matrix (CONST-005/011/013 → SAFE-053).
 * Recorded per DR-0001 — Single-Operator Live Governance.
+
+### v0.5 — Operator-Error and Egress-Defect Hazard Coverage
+
+* Added HAZ-024 (Operator/Human Configuration or Authorization Error), distinct from HAZ-021 external/unattributed activity, and extended SC-010's completeness claim to name authorized human and operator error (CORPUS-REVIEW-0001 M-05).
+* Added HAZ-025 (Defect or Compromise of the Final Egress Enforcement Point) and SAFE-054 (Out-of-Band Containment of Final Egress); scoped SC-050 explicitly to exclude egress-self-defect, now covered by HAZ-025/SAFE-054 (CORPUS-REVIEW-0001 M-06).
+* Linked SAFE-053 to its new constitutional parent CONST-015 (Bounded Human Authority) and added CONST-015 to the Constitutional Verification Matrix (CORPUS-REVIEW-0001 M-03).
+* Extended the Constitutional Verification Matrix (CONST-009/011/014 → SAFE-054) and the production-readiness Catastrophic-hazard blocker to HAZ-016 through HAZ-025.
+* Evidence for SAFE-054, HAZ-024, and HAZ-025 is recorded as evidence debt in ARCHITECTURE-GATE-STATUS §4.3; the Evidence Register count is unchanged (363).
 
 ---
 

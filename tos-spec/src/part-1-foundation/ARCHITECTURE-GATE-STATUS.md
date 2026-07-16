@@ -204,6 +204,22 @@ DR-0001 adopts CORPUS-REVIEW-0001 CR-02 option (c). The following patches were c
 
 The variant's armable scope is bound to the smallest explicitly approved scope delta (Progressive Promotion step) declared for the variant under ADR-002-025 §5.11 and may be narrower than a two-natural-person quorum could arm. RFC-000 is not amended in this wave; a dedicated constitutional bounded-human-authority principle (the RFC-000-level parent of SAFE-053) is owed to a later wave.
 
+### 3.5 CORPUS-REVIEW-0001 Wave 2 (Theme A/B — constitutional fidelity and safety-case coverage)
+
+Wave 2 resolves CORPUS-REVIEW-0001 Theme A (M-01..M-04) and Theme B (M-05..M-06). The following patches were consolidated into the canonical documents named below. No numbered section was renumbered; all changes are additive except the in-place rewording of CONST-004's constraint and of CONST-008's requirement, constraint, failure scenario, and the §6 Authoritative Source definition.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| Seven-tier North Star precedence + mapping table; CONST-003 subordinated to integrity | RFC-000 §5 Constitutional Precedence | RFC-000-Patch-0009; resolves M-01 |
+| CONST-004 safe-state constraint made actor-neutral (autonomous or human-authorized) | RFC-000 CONST-004 §7 | RFC-000-Patch-0009; resolves M-02; aligned with CONST-012 and the §6 safe-state definition |
+| CONST-015 Bounded Human Authority (new); constitutional parent of SAFE-053 | RFC-000 §7 (new CONST-015); §5 mapping table | RFC-000-Patch-0009; resolves M-03; discharges the RFC-000 parent owed by DR-0001 §6 without reintroducing an absolute two-natural-person rule |
+| CONST-008 reframed in evidence terms + §6 Authoritative-State term table | RFC-000 CONST-008 §7; §6 Definitions | RFC-000-Patch-0009; resolves M-04; RFC-001 §5.1 is now a discharge of, not a reinterpretation of, CONST-008 |
+| SAFE-053 gains parent CONST-015; §12 matrix CONST-015 row | RFC-001 §10 SAFE-053 Derived-from; §12 matrix; §18 v0.5 | RFC-001-Patch-0010; completes M-03 wiring |
+| HAZ-024 Operator/Human Configuration or Authorization Error (new) | RFC-001 §9; SC-010; §12 matrix | RFC-001-Patch-0010; resolves M-05; distinct from HAZ-021 |
+| HAZ-025 Final-Egress defect + SAFE-054 Out-of-Band Containment (new) | RFC-001 §9; §10 SAFE-054; SC-050 note; §12 matrix; §13.6 blocker | RFC-001-Patch-0010; resolves M-06; capability-neutral, no broker named |
+
+CONST-015 discharges the constitutional bounded-human-authority principle that §3.4 recorded as "owed to a later wave"; SAFE-053's requirement text is unchanged (only its Derived-from parent set is extended), consistent with DR-0001 §6. The two-natural-person quorum and the Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) remain the two lawful SAFE-053 satisfaction paths; CONST-015 does not mandate any number of natural persons. vision.md and philosophy.md are unchanged.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -282,6 +298,18 @@ Recorded evidence debt (to be discharged in the Part-2/3 register consolidation 
 - HAG-INV-015..019 and ADR-002-015 §17.1 — the variant: requires prospective `HAG-EV-013` and successor rows covering pre-approval, time-separation, independent block-only attestation (fail-closed on unavailable/indeterminate), external-reviewer independence, and the no-scope-expansion / no-boundary-waiver guarantee.
 
 Acceptance criteria for the new invariants are stated in ADR-002-015 §17.1 and carried in the HAG-INV-015..019 statements. Until the evidence is registered, passed, and independently reviewed, the variant is non-authorizing and confers no live readiness; the ADR-002-015 §29 Approval Gate is unchanged. This is an acceptance blocker, not a status promotion.
+
+### 4.3 Evidence Debt — CORPUS-REVIEW-0001 Wave 2 (Theme A/B)
+
+Wave 2 (RFC-000-Patch-0009, RFC-001-Patch-0010) introduced one new constitutional requirement (CONST-015), two new Catastrophic hazards (HAZ-024, HAZ-025), and one new Critical safety requirement (SAFE-054). Consistent with §4.2, the associated verification-evidence obligations are **deliberately not registered in EVIDENCE-REGISTER-002 in this wave**, to prevent evidence-count drift while the Part-2/3 register consolidation is pending. The register count remains 363 `NOT_IMPLEMENTED` items; no row was added or removed.
+
+Recorded evidence debt (to be discharged in the Part-2/3 register consolidation wave):
+
+- CONST-015 (Bounded Human Authority): verification rides on its derived Safety-Case requirements SAFE-042, SAFE-046, and SAFE-053; SAFE-053's evidence debt is already recorded in §4.2. No separate register row is owed for CONST-015 itself.
+- HAZ-024 (Operator/Human Configuration or Authorization Error): requires SAFE→HAZ coverage evidence that its controlling requirements (SAFE-042, SAFE-046, SAFE-050, SAFE-053) prevent wrong-account, wrong-arming, mis-authorization, and misconfiguration paths and fail closed.
+- HAZ-025 (Defect or Compromise of the Final Egress Enforcement Point) and SAFE-054 (Out-of-Band Containment of Final Egress): require prospective evidence that an out-of-band containment path independent of the final egress enforcement point exists and terminates its real-capital transmission capability, or that its absence is recorded and accepted as residual risk with a correspondingly reduced live scope — established in Broker Capability Profile terms, without dependence on any named broker.
+
+Until this evidence is registered, passed, and independently reviewed, CONST-015, HAZ-024, HAZ-025, and SAFE-054 confer no live readiness; production readiness remains NO. This is an acceptance blocker, not a status promotion.
 
 ---
 
