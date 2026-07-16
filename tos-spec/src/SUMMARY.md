@@ -59,5 +59,8 @@
 - [RFC-011 — Operational Guidelines](part-3-development/RFC-011-Operational-Guidelines.md)
 - [ADR-DEV-001 — DSL Realization and Purity/Escape-Closure Enforcement](part-3-development/ADR-DEV-001-DSL-Realization-and-Purity-Escape-Closure-Enforcement.md)
 - [ADR-DEV-002 — Artifact Reproducibility and Identity Granularity](part-3-development/ADR-DEV-002-Artifact-Reproducibility-and-Identity-Granularity.md)
+- [ADR-DEV-003 — External Value: Capture, Staleness, and Re-Authoring](part-3-development/ADR-DEV-003-External-Value-Capture-Staleness-and-Re-Authoring.md)
 - [ADR-DEV-004 — Authoring Provenance, Versioning/Substitution, and Admission Binding](part-3-development/ADR-DEV-004-Authoring-Provenance-Versioning-and-Admission-Binding.md)
 - [ADR-DEV-005 — Independent Review of AI-Authored Strategies and Rationale Representation](part-3-development/ADR-DEV-005-Independent-Review-of-AI-Authored-Strategies-and-Rationale-Representation.md)
+- [ADR-DEV-008 — Authoring Under a Degraded or Unavailable Companion Model](part-3-development/ADR-DEV-008-Authoring-Under-a-Degraded-or-Unavailable-Companion-Model.md)
+- [ADR-DEV-009 — Containment Escape-Vector Minimum Set and Currency](part-3-development/ADR-DEV-009-Containment-Escape-Vector-Minimum-Set-and-Currency.md)

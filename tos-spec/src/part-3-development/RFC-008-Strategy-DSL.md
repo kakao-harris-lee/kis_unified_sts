@@ -499,8 +499,8 @@ convention.
 3. Beyond the pre-evaluation capture §9 now requires, what evidence and staleness
    discipline governs an externally-sourced or LLM-derived interpretation so that
    it remains reproducible (§9) and cannot become a live side channel (§11 items
-   12, 17)? *(Reproducibility aspect resolved by ADR-DEV-002; the externally-sourced-
-   value capture and staleness discipline is owned by ADR-DEV-003.)*
+   12, 17)? *(Reproducibility aspect resolved by ADR-DEV-002; capture, staleness, and
+   re-authoring resolved by ADR-DEV-003.)*
 4. How does the DSL represent "no-action / hold" versus "explicit flat
    (target = 0)" as distinct, first-class, reproducible outcomes (RFC-003 §16 Q4)?
 5. Is the atomic authored unit a per-instrument target or a portfolio-wide target
@@ -508,7 +508,10 @@ convention.
    aggregate a combined authority (RFC-003 §§13, 16 Q1)?
 6. How does an Authored Strategy express a decision made when a companion model
    (RFC-004/006/007) is itself degraded or unavailable, such that degradation
-   narrows rather than widens the action set (RFC-003 §16 Q6; §6, §10)?
+   narrows rather than widens the action set (RFC-003 §16 Q6; §6, §10)? *(Resolved by
+   ADR-DEV-008: a degraded/UNKNOWN/STALE output is expressible only restrictively, the
+   degraded decision is first-class and reproducible, and no self-computed substitute
+   acquires the degraded model's authority.)*
 7. What is the versioning and substitution protocol for an Authored Strategy and
    its DSL version such that a change is always a recorded, versioned substitution
    (§§6, 9; RFC-003 §13), and how does it interact with software-artifact

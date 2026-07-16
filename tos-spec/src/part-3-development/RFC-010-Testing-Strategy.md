@@ -419,7 +419,10 @@ unwritten. They SHALL NOT be resolved by informal testing convention.
 
 1. What minimum set of adversarial escape vectors must the containment suite (§8)
    attempt for the RFC-008 unexpressibility claim to be treated as demonstrated
-   rather than open, and how is that set kept current as the DSL evolves?
+   rather than open, and how is that set kept current as the DSL evolves? *(Resolved
+   by ADR-DEV-009: the minimum set is the union of the whole RFC-008 §11 boundary plus
+   the ambient, realization, and single-layer classes; versioned with the surface and
+   grown with discovered regressions.)*
 2. How reproducible must a Conformance Test be — bit-for-bit vs.
    reproducible-from-recorded-inputs — for the artifact tested to be provably the
    artifact admitted (§9; ADR-002-016; RFC-008 §9 and §14 Q3)? *(Resolved by

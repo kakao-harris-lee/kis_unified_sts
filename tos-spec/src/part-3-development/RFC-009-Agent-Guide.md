@@ -452,7 +452,9 @@ convention.
    are not diluted by scale (§10)?
 6. Where an authored strategy embeds an externally-sourced value, what staleness
    and re-authoring discipline governs that value between authoring time and
-   runtime capture (§9; RFC-008 §9)?
+   runtime capture (§9; RFC-008 §9)? *(Resolved by ADR-DEV-003: an explicit Validity
+   Window beyond which the value is STALE and restrictive, and re-authoring — not
+   reuse — of a stale value, with correction invalidating dependents.)*
 
 Unresolved questions reduce, and do not expand, the conforming authoring surface.
 
