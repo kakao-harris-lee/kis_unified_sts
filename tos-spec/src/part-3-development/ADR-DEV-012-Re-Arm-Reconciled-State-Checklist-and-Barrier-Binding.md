@@ -9,7 +9,7 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-011 §14 Q1
 **Date:** 2026-07-16
-**Version:** 0.2 Review Draft
+**Version:** 0.3 Review Draft
 **Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
@@ -164,9 +164,10 @@ In addition to the nine reconciliation confirmations above, the operator SHALL c
 representation requirement — a complementary check, not a tenth reconciliation item:
 
 * **trapped exposure represented** — any trapped or irreducible exposure is represented at
-  full conservative risk and does not release capacity (ADR-002-001 §15; ADR-002-017
-  SBR-INV-005, which enforces this independently); an unreconciled or misrepresented trapped
-  exposure withholds the request under RRC-INV-002.
+  full conservative risk and does not release capacity (ADR-002-001 §15; conservative capacity
+  consumption enforced by ADR-002-017 SBR-INV-006), and is included in the recovery inventory
+  (ADR-002-017 SBR-INV-005, which requires it be included in the recovery inventory); an
+  unreconciled or misrepresented trapped exposure withholds the request under RRC-INV-002.
 
 Each item is positively established and current at the time of the request; a cache,
 heartbeat, last-known-good, or a once-true-but-now-stale reconciliation does not satisfy
@@ -335,3 +336,21 @@ re-arm checklist and its binding and relies on ADR-002-007/017 for the grant and
   SBR-INV-005. Narrow-only and additive; no SAFE-xxx, no numeric bound, no new RRC-INV or EV.
   Independent EV-L0 review is owed, with reviewer provenance recorded per ADR-DEV-005 §7 /
   VER-002-001 §5 (M-18).
+
+### v0.3 — SBR-INV-005 Citation Precision (CORPUS-REVIEW-0001 Wave 8, mn-1)
+
+* **mn-1 (Wave-7 EV-L0 finding).** Split the §7 trapped-exposure citation, which had
+  over-attributed the whole claim to ADR-002-017 SBR-INV-005 ("which enforces this
+  independently"). SBR-INV-005 is Complete Economic Inventory (inventory completeness) — it
+  requires that trapped/irreducible exposure be included in the recovery inventory. The
+  "represented at full conservative risk and does not release capacity" property is owned by
+  ADR-002-001 §15 (Trapped Exposure), with recovery-context conservative capacity consumption
+  enforced by ADR-002-017 SBR-INV-006 (UNKNOWN Remains Conservative). §7 now cites §15 +
+  SBR-INV-006 for conservative valuation and non-release, and SBR-INV-005 only for
+  recovery-inventory inclusion. This supersedes the v0.2 phrasing "SBR-INV-005, which enforces
+  it independently."
+* Narrow-only and additive: citation precision only; the trapped-exposure item remains a
+  complementary check, not a tenth reconciliation confirmation, so the "nine reconciliation
+  items" (RRC-INV-001; RRC-EV-001) are preserved unchanged. No SAFE-xxx, no numeric bound, no
+  new RRC-INV or EV (development-track count stays 98). Independent EV-L0 review is owed,
+  reviewer provenance per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

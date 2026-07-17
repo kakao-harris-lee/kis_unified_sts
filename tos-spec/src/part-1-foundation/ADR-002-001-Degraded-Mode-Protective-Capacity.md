@@ -7,9 +7,9 @@
 **Parent Document:** RFC-002 — Trading Operating System Architecture
 **Governed By:** RFC-000 and RFC-001
 **Date:** 2026-07-13
-**Version:** 0.6 Seam-Sealing Draft (CORPUS-REVIEW-0001 Wave 7)
+**Version:** 0.7 Draft (CORPUS-REVIEW-0001 Wave 8)
 **Last Updated:** 2026-07-17
-**Supersedes:** ADR-002-001 v0.5 Seam-Sealing Draft (CORPUS-REVIEW-0001 Wave 6)
+**Supersedes:** ADR-002-001 v0.6 Seam-Sealing Draft (CORPUS-REVIEW-0001 Wave 7)
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -371,6 +371,50 @@ Where the applicability condition cannot be established for the current structur
 Automated execution authority is withdrawn.
 
 Only explicitly authorized emergency human operations MAY proceed.
+
+### 8.5 De-Restriction Between Degraded Modes
+
+Movement toward a more restrictive degraded mode is always available, monotonic, and
+restrictive-authorized (§12.5). Movement toward a less restrictive degraded mode is a
+de-restriction and is governed, never incidental.
+
+The only de-restriction this ADR governs is `CONTAINED` → `DEGRADED_PROTECTIVE`: the controlled
+re-enabling of the autonomous protective classification of §6 after it had become unavailable or
+no longer sufficiently trustworthy (§8.3). This transition grants no new-risk authority and no
+live authority — both modes prohibit new risk-increasing action — and it is therefore not a
+re-arm: the ADR-002-007 §12 re-arm workflow and its §13 live dual-control quorum are neither
+invoked nor satisfied by it, and no Live Authorization is created, widened, or revived.
+
+De-restriction SHALL satisfy all of the following. If any cannot be positively established at the
+time of the decision, the system SHALL remain `CONTAINED` (fail-closed):
+
+* **Not automatic.** Elapsed time, connectivity or session restoration, broker reconnection,
+  quiet time, cache agreement, or the mere absence of new adverse signals SHALL NOT cause or
+  contribute to this transition (philosophy §39.8; the non-revival principle of ADR-002-027
+  SIR-INV-015).
+* **Affirmative re-establishment of the classification trust premises.** The autonomous
+  classifier of §6 SHALL be shown trustworthy again by positive, current evidence — not by the
+  disappearance of the triggering condition: current reconciled authoritative position,
+  open-order, and exposure state for the affected scope; a current and valid Safety Authority
+  (ADR-002-003); a current and valid Hard Safety Envelope and Runtime Safety Profile; and
+  restored trust in every Critical Input the §6 conservative aggregate-risk analysis depends upon
+  (ADR-002-018). A cached, last-known-good, or heartbeat-derived value does not establish any of
+  these.
+* **Explicit Safety Authority governance decision.** The transition SHALL be an explicit decision
+  of the current Safety Authority under its restrictive-authority governance. Because it extends
+  no new-risk or live authority it does not require the ADR-002-007 §13 re-arm quorum; equally, it
+  SHALL NOT be taken by a strategy, by ordinary execution, or by an operator-convenience path, and
+  it SHALL NOT be inferred from any readiness, health, reconciliation, or connectivity artifact.
+* **No dominating stronger restriction.** Any dominating `HALTED` state, and any unresolved safety
+  incident or containment that independently sustains restriction, SHALL be cleared under its own
+  governing authority (ADR-002-027; ADR-002-015) before or independently of this transition; §8.5
+  clears only the protective-classification-trust dimension and never a HALT or a safety incident.
+
+After de-restriction, every protective action in `DEGRADED_PROTECTIVE` remains subject in full to
+the §6.1 final-state and §6.2 intermediate-state conservative proofs; re-enabling the classifier
+restores its use, not any exemption from per-action proof. De-restriction confers no durable
+authority and is revocable: if the classification trust premises later fail, the system SHALL
+return to `CONTAINED` (§12.5).
 
 ---
 
@@ -1080,3 +1124,9 @@ This decision does not guarantee that every position can be exited. It ensures o
 * **M-07-2 (Wave-6 deferred).** Reworded the §8.3.1 bullet-2 parenthetical from "(§6.2 non-worsening)" to "(the §6.2-equivalent non-worsening property, established at approval time for the pre-approved emergency-action set rather than recomputed live)", because §8.3.1 explicitly forbids relying on a fresh §6.2 computation in CONTAINED; the prior phrasing misleadingly implied a live §6.2 test.
 * **M-24 cross-reference.** Bound the §6.2 "every credible combination" universal to the Credible State Space (RFC-002 §3.1.17) — the active Broker Capability Profile (ADR-002-004) and the approved Adverse Scenario Set (ADR-002-021) — with any unbounded combination treated conservatively as UNKNOWN.
 * Both changes are narrow-only and additive; they introduce no SAFE-xxx requirement, no numeric bound, and no new EV ID (Evidence Register count unchanged at 372). Independent EV-L0 review is owed, with reviewer provenance recorded per VER-002-001 §5 (M-18).
+
+### v0.7 — CONTAINED → DEGRADED_PROTECTIVE De-Restriction (CORPUS-REVIEW-0001 Wave 8, U1)
+
+* **U1 (Wave-7 EV-L0 debt).** Added §8.5 (De-Restriction Between Degraded Modes), fixing the previously-UNRESOLVED inter-protective edge that no earlier ADR governed: the controlled `CONTAINED` → `DEGRADED_PROTECTIVE` transition — the re-enabling of the §6 autonomous protective classifier after it had become unavailable or no longer sufficiently trustworthy (§8.3). This is a **new normative decision**, not a derivation: the conservative default was inferable by principle but was fixed by no ADR (RFC-002 §20.1 D). The transition grants no new-risk authority and no live authority — both modes prohibit new risk-increasing action — so it is not a re-arm and neither invokes nor satisfies the ADR-002-007 §12 re-arm workflow or its §13 dual-control quorum, and creates, widens, or revives no Live Authorization.
+* The transition is governed and fail-closed: it is never automatic (elapsed time, reconnection, quiet time, cache agreement, or the absence of adverse signals never cause it — philosophy §39.8; ADR-002-027 SIR-INV-015); it requires affirmative, current re-establishment of the §6 classifier trust premises (reconciled authoritative state; valid Safety Authority per ADR-002-003; current Hard Safety Envelope and Runtime Safety Profile; restored Critical-Input trust per ADR-002-018); it is an explicit current-Safety-Authority governance decision; and it clears only the protective-classification-trust dimension, never a dominating HALTED or an unresolved safety incident (ADR-002-027; ADR-002-015). After de-restriction every protective action remains subject in full to the §6.1/§6.2 conservative proofs (defense-in-depth, not a proof bypass), and the transition is revocable — the system returns to CONTAINED if the trust premises later fail.
+* Refines SAFE-003 (fail-closed), SAFE-041 (Safety Authority governs protective operation), and SAFE-044 (safe resume / no automatic re-arm), all already in §22; no new SAFE-xxx and no numeric bound. Narrow-only in the risk sense (no new-risk or live authority), following the M-07 §8.3.1 precedent that added a whole subsection with zero new EV. No new EV ID (Evidence Register count unchanged at 372); the added guarded-transition scenario is recorded as scenario-extension debt within the existing SA-EV (Safety-Authority) and FD-EV (protective-classification independence) families in ARCHITECTURE-GATE-STATUS §3.11. Independent adversarial EV-L0 review is owed, with reviewer provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

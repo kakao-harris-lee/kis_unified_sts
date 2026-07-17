@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-002
 **Title:** Trading Operating System Architecture
-**Version:** 0.3 Review Draft
+**Version:** 0.4 Review Draft
 **Status:** Review Draft — Architecture
 **Classification:** Foundational Architecture Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -1639,7 +1639,7 @@ Incident lifecycle state is orthogonal to these operational modes and never gran
 
 ### 20.1 Mode-Transition Matrix
 
-Every edge below is derived from existing normative fragments; none is invented. Three edges that no ADR fixes are marked **UNRESOLVED** rather than asserted (see D), and recorded as Wave-7 debt in ARCHITECTURE-GATE-STATUS §3.10.
+Every edge below is derived from existing normative fragments, except U1, which is fixed by a new normative decision (ADR-002-001 §8.5); none is invented. Three edges that no earlier ADR fixed (see D) were resolved in Wave 8 — U1 by a new normative decision (ADR-002-001 §8.5), U2 by enumeration (ADR-002-007 §14), and U3 by the informative naming-map below — discharging the Wave-7 debt recorded in ARCHITECTURE-GATE-STATUS §3.10/§3.11.
 
 **Restriction lattice** (derived from ADR-002-001 §8 ordering and the §20 table; increasing restriction left to right):
 
@@ -1648,6 +1648,15 @@ LIVE_NORMAL ⊐ LIVE_RESTRICTED ⊐ DEGRADED_PROTECTIVE ⊐ CONTAINED ⊐ HALTED
 ```
 
 `RECOVERY` is the non-live pre-arm reconciliation state; `NON_LIVE` is the no-live-authority baseline.
+
+**Naming map (informative; U3).** The §20 names are the canonical labels for the operational
+*mode*; the ADR-002-017 §9 `CLOSED_NON_LIVE`, `CLOSED_RECOVERY`, `CLOSED_CONTAINED`, and
+`CLOSED_HALTED` names are the canonical labels for the corresponding recovery-*barrier state*
+(which describes new-risk-denial context, not permission — ADR-002-017 §9). They name different
+objects and correspond one-to-one by the non-live condition they describe: mode `NON_LIVE` ↔
+barrier `CLOSED_NON_LIVE`; mode `RECOVERY` ↔ barrier `CLOSED_RECOVERY`; mode `CONTAINED` ↔ barrier
+`CLOSED_CONTAINED`; mode `HALTED` ↔ barrier `CLOSED_HALTED`. Neither vocabulary is renamed; the
+`CLOSED_` prefix is the barrier-state form of the same non-live condition.
 
 **A. Restrictive (degradation) edges — always available, monotonic, restrictive-authorized** (derived: SIR-INV-002 asymmetry; ADR-002-007 §9/§10/§17; ADR-002-001 §8):
 
@@ -1677,11 +1686,29 @@ LIVE_NORMAL ⊐ LIVE_RESTRICTED ⊐ DEGRADED_PROTECTIVE ⊐ CONTAINED ⊐ HALTED
 * Re-arm where one identity both enlarges limits and arms (ADR-002-007 §13; §23.1).
 * Recovery downgrading HALTED → RECOVERY automatically (ADR-002-017 §15).
 
-**D. UNRESOLVED edges (not derivable from any ADR → marked UNRESOLVED; recorded as Wave-7 debt in ARCHITECTURE-GATE-STATUS §3.10):**
+**D. Previously-UNRESOLVED edges — resolved in Wave 8 (Wave-7 debt discharged; ARCHITECTURE-GATE-STATUS §3.10/§3.11):**
 
-* **U1 (substantive) — CONTAINED → DEGRADED_PROTECTIVE:** regaining autonomous protective classification between two new-risk-prohibited modes. The corpus specifies exit-toward-LIVE (requires re-arm) and HALT-dominance, but no ADR states the trigger, guard, or owner for this inter-protective de-restriction. A conservative default (de-restriction is never automatic; requires Safety Authority governance) is inferable by principle but is not fixed by any ADR. → **UNRESOLVED.**
-* **U2 (minor) — LIVE_RESTRICTED → LIVE_NORMAL readiness-refresh extent:** modeled as ADR-002-007 §14 staged promotion (the §12 step 1 pointedly omits LIVE_RESTRICTED as a re-arm start, supporting "expansion via §14, not §12"), but how much of §12's recovery-readiness must be re-established for an in-place §14 expansion is not enumerated. → **UNRESOLVED (partial).**
-* **U3 (naming seam) — NON_LIVE vs ADR-002-017 CLOSED_NON_LIVE / RECOVERY label:** the §20 `NON_LIVE`/`RECOVERY` modes and ADR-002-017's `CLOSED_NON_LIVE`/`CLOSED_RECOVERY` states are not explicitly unified. → **UNRESOLVED (terminology).**
+* **U1 — CONTAINED → DEGRADED_PROTECTIVE (inter-protective de-restriction), resolved by a new
+  normative decision in ADR-002-001 §8.5.** Trigger: an explicit current-Safety-Authority
+  governance decision (never elapsed time, reconnection, or quiet time). Guard: affirmative
+  re-establishment of the §6 classifier trust premises — current reconciled authoritative state,
+  valid Safety Authority (ADR-002-003), current Hard Safety Envelope / Runtime Safety Profile, and
+  restored Critical-Input trust (ADR-002-018); no dominating HALTED or unresolved incident
+  (ADR-002-027; ADR-002-015). Owner: the current Safety Authority under restrictive-authority
+  governance. It grants no new-risk and no live authority and is not a re-arm (ADR-002-007
+  §12/§13); the guard fails closed to CONTAINED and is revocable. → **new normative decision: ADR-002-001 §8.5.**
+* **U2 — LIVE_RESTRICTED → LIVE_NORMAL in-place readiness-refresh extent, resolved by enumeration
+  in ADR-002-007 §14.** An in-place expansion re-establishes the §12 recovery-readiness elements
+  proportional to the delta (reconciled state, admissibility, capacity and protective coverage,
+  envelope/profile headroom, Recovery Readiness Decision, and Decision Context Capsule for the
+  added scope), requires a new Live Authorization for the delta (§7), preserves the §13 rule that
+  the limit-increase approver is not the sole armer, and obeys the ADR-002-025 progressive-promotion
+  gate; a full §12 re-arm from a non-live start is required only where a failure, incident, or
+  containment interrupted continuous validity. → **enumerated: ADR-002-007 §14.**
+* **U3 — NON_LIVE / RECOVERY vs ADR-002-017 CLOSED_NON_LIVE / CLOSED_RECOVERY, resolved by the
+  informative naming-map above (§20.1).** The two vocabularies name different objects — operating
+  mode vs recovery-barrier state — and map one-to-one by the non-live condition; neither is
+  renamed. → **mapped (informative): §20.1.**
 
 ---
 
@@ -2205,3 +2232,7 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 ### v0.3 — Architecture Terminology and Mode-Transition (Wave 7)
 
 * Wave 7 (CORPUS-REVIEW-0001, 2026-07-17): added §3.1.17 Credible State Space (M-24) — the corpus-wide canonical term the ADR-002-011/012/020/021 "credible"/"worst credible" universals range over, bounded by the active Broker Capability Profile (ADR-002-004) and the approved Adverse Scenario Set (ADR-002-021) — and §20.1 Mode-Transition Matrix (M-26 / M-07-3), normativizing the derived restrictive/restorative edges, the RECOVERY-transit rule, and the forbidden transitions, while marking three underivable edges UNRESOLVED (U1 CONTAINED→DEGRADED_PROTECTIVE; U2 LIVE_RESTRICTED→LIVE_NORMAL §14 readiness-refresh extent; U3 NON_LIVE vs ADR-002-017 CLOSED_NON_LIVE/RECOVERY label). No SAFE-xxx, no numeric bound, no broker proper noun; the §26 "(96 items)" and "372" figures are Wave-4 history and are preserved unchanged. EV-L0 review items, reviewer provenance per VER-002-001 §5 (M-18).
+
+### v0.4 — Mode-Transition Seam Resolution (Wave 8)
+
+* Wave 8 (CORPUS-REVIEW-0001, 2026-07-17): resolved the three §20.1 D edges that Wave 7 had marked UNRESOLVED, discharging the Wave-7 debt recorded in ARCHITECTURE-GATE-STATUS §3.10/§3.11. **U1 (CONTAINED → DEGRADED_PROTECTIVE)** is fixed by a new normative decision in ADR-002-001 §8.5 — a governed, never-automatic, Safety-Authority-owned inter-protective de-restriction that grants no new-risk and no live authority, is not a re-arm, fails closed to CONTAINED, and is revocable; this is flagged explicitly as a new normative decision, not a derived edge. **U2 (LIVE_RESTRICTED → LIVE_NORMAL in-place readiness-refresh extent)** is fixed by enumeration in ADR-002-007 §14.1 (delta-proportional §12 re-establishment, a new Live Authorization for the delta, approver ≠ sole armer, and the ADR-002-025 progressive-promotion gate; a full §12 re-arm from a non-live start only where continuous validity broke). **U3 (NON_LIVE/RECOVERY vs ADR-002-017 CLOSED_* labels)** is resolved by the informative §20.1 naming-map (operating-mode names vs recovery-barrier-state names, one-to-one by the non-live condition; neither vocabulary renamed). No edge is invented; the §20.1 preamble and section D are updated accordingly. No SAFE-xxx, no numeric bound, no broker proper noun; the Evidence Register counts are held (Part-1 372; development-track 98). EV-L0 review items, reviewer provenance per VER-002-001 §5 (M-18).

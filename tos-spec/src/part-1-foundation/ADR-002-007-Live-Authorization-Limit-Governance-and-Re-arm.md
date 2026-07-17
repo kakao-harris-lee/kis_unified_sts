@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-13
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Default non-live state, Hard Safety Envelope and Runtime Safety Profile governance, live-scope authorization, continuous validity, suspension and revocation, recovery readiness, human dual control, partial re-arm, and final egress enforcement
 - **Supersedes:** None
@@ -451,6 +453,46 @@ Partial re-arm SHALL:
 
 Successful operation of a narrow scope is evidence for review, not automatic authorization for expansion.
 
+### 14.1 In-Place Scope Expansion Readiness Extent
+
+An already-live but restricted scope (for example `LIVE_RESTRICTED`) that expands in place toward
+a wider scope (for example `LIVE_NORMAL`) does not restart the §12 re-arm workflow from a non-live
+start — §12 step 1 begins only from `NON_LIVE`, `HALTED`, `CONTAINED`, or `RECOVERY`. In-place
+expansion is a staged promotion under this section and SHALL satisfy all of the following:
+
+1. **New Live Authorization for the delta.** The expansion SHALL be issued as a new Live
+   Authorization for the enlarged scope under the full current authorization gate (§7); scope
+   expansion is never an automatic rollover or an in-place widening of the existing authorization.
+2. **Proportional recovery-readiness re-establishment.** The §12 steps specific to the expansion
+   delta SHALL be currently re-established for the added scope before the expansion: account-wide
+   reconciliation for the added accounts, instruments, and strategies (§12 step 4); resolution of
+   UNKNOWN and unattributed activity in the added scope (step 5); Risk Capacity Ledger consistency
+   and independent capacity reservation for the delta (steps 6–7); protective leases, orders, and
+   coverage for the added scope (step 7); Hard Safety Envelope and atomically active Runtime Safety
+   Profile validation covering the enlarged limits (step 8); Broker Capability Profile sufficiency
+   for the added scope and conformance class (step 9); verification that no blocking Critical alert
+   and no unapproved residual risk remains for the added scope (step 11; residual-risk governance
+   per ADR-002-026); a current ADR-002-017 Recovery Readiness
+   Decision bound to the enlarged dependency-complete scope (step 12); and a fresh ADR-002-018
+   Decision Context Capsule bound to the enlarged scope (step 13). The steps not specific to the
+   delta — current Safety Authority epoch and stale-writer fencing (step 2), `TRUSTED` time
+   (step 3), and deployment, software, identity, credential, and egress confinement (steps 10, 16)
+   — need not be re-proven from a non-live start but SHALL remain continuously valid under §9
+   throughout; loss of any of them is a restrictive transition, not an expansion.
+3. **Dual control preserved.** The principal who approves the authority-increasing limit change for
+   the delta SHALL NOT be the sole principal who arms the enlarged scope (§13); changed evidence or
+   scope invalidates prior approvals.
+4. **Progressive-promotion gate.** The expansion SHALL obey the ADR-002-025 progressive
+   scope-promotion gate: progressive, independently reviewed, explicit, generation-fenced, and
+   break-before-make. No success count, elapsed time, or absence of incidents automatically
+   increases scope (ADR-002-025).
+
+Where any failure, invalidation, safety incident, or containment interrupted continuous validity
+(§9) — such that the scope was no longer continuously live — the proportional path SHALL NOT be
+used and the full §12 re-arm workflow from a non-live start is required. Failure or uncertainty at
+any step above leaves the scope at its current, narrower authority; a later step SHALL NOT
+compensate for a failed earlier step.
+
 ---
 
 ## 15. Startup, Restart, Failover, and Deployment
@@ -659,3 +701,16 @@ ADR-002-007 may move from **Proposed** to **Accepted** only when:
 - evidence is immutable and independently reviewed.
 
 Until then, this ADR authorizes design and non-live implementation-planning work only. It does not authorize ADR acceptance, restricted-live operation, or production live trading.
+
+---
+
+## 26. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-13)
+
+Initial live-authorization, limit-governance, and re-arm decision.
+
+### v0.2 — In-Place Scope Expansion Readiness (CORPUS-REVIEW-0001 Wave 8) (2026-07-17)
+
+- **U2 (Wave-7 EV-L0 debt).** Added §14.1 (In-Place Scope Expansion Readiness Extent), enumerating the recovery-readiness extent for an already-live restricted scope that expands in place (for example `LIVE_RESTRICTED` → `LIVE_NORMAL`), which the §12 re-arm workflow deliberately does not cover because §12 step 1 begins only from a non-live start. The expansion re-establishes the §12 steps proportional to the delta (account-wide reconciliation, UNKNOWN/unattributed resolution, Risk Capacity Ledger consistency and independent capacity, protective leases/orders/coverage, Hard Safety Envelope and Runtime Safety Profile headroom, Broker Capability Profile sufficiency, the ADR-002-017 Recovery Readiness Decision, and a fresh ADR-002-018 Decision Context Capsule for the added scope); requires a new Live Authorization for the delta under the full current §7 gate; preserves the §13 rule that the authority-increasing-limit approver is not the sole armer; and obeys the ADR-002-025 progressive-promotion gate. The non-delta steps (Safety Authority epoch and fencing, `TRUSTED` time, and deployment/identity/credential/egress confinement) need not be re-proven from a non-live start but SHALL remain continuously valid under §9; any failure, invalidation, incident, or containment that broke continuous validity voids the proportional path and requires the full §12 re-arm from a non-live start.
+- Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent (ARCHITECTURE-GATE-STATUS §3.6/§3.9). The change is restrictive and narrow-only — it only adds constraints on the already-existing expansion pathway (§14 "define promotion gates for any later expansion") and grants no new authority; it introduces no SAFE-xxx requirement, no numeric bound, and no new EV ID (Evidence Register count unchanged at 372), and the in-place-expansion scenario is recorded as a conservative debt within the existing REARM-EV/SBR-EV/SA-EV families in ARCHITECTURE-GATE-STATUS §3.11. Independent EV-L0 review is owed, with reviewer provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

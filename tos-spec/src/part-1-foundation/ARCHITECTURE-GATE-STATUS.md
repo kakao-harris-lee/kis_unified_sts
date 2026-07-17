@@ -368,17 +368,73 @@ carry the changes; the following table is the committed merge record.
 > **Wave-7 debt (M-26 UNRESOLVED mode-transition edges; no new EV IDs):**
 > * **U1 (substantive).** CONTAINED → DEGRADED_PROTECTIVE inter-protective de-restriction: no
 >   ADR fixes the trigger/guard/owner. Marked UNRESOLVED in RFC-002 §20.1 D; a conservative
->   default is inferable by principle but not normatively fixed.
+>   default is inferable by principle but not normatively fixed. **DISCHARGED (Wave 8):**
+>   resolved by a new normative decision — ADR-002-001 §8.5 (governed, never-automatic,
+>   Safety-Authority-owned de-restriction; grants no new-risk/live authority; fail-closed to
+>   CONTAINED; revocable); RFC-002 §20.1 D updated. Scenario-extension debt within SA-EV/FD-EV;
+>   no new EV; Part-1 stays 372. Patches 0043/0044; merge map §3.11.
 > * **U2 (partial).** LIVE_RESTRICTED → LIVE_NORMAL §14 in-place readiness-refresh extent is
->   not enumerated. Marked UNRESOLVED (partial).
+>   not enumerated. Marked UNRESOLVED (partial). **DISCHARGED (Wave 8):** resolved by
+>   enumeration in ADR-002-007 §14.1 (delta-proportional §12 re-establishment; new Live
+>   Authorization for the delta; §13 approver ≠ sole-armer; ADR-002-025 progressive-promotion
+>   gate; full §12 only if continuous validity broke). ADR-002-007 → v0.2 (Version field +
+>   Review History on first patch). No new EV; count 372. Patches 0045/0044; §3.11.
 > * **U3 (terminology).** RFC-002 §20 `NON_LIVE`/`RECOVERY` vs ADR-002-017
 >   `CLOSED_NON_LIVE`/`CLOSED_RECOVERY` labels are not explicitly unified. Marked UNRESOLVED
->   (naming seam).
+>   (naming seam). **DISCHARGED (Wave 8):** resolved by the informative RFC-002 §20.1
+>   naming-map (mode names vs recovery-barrier CLOSED_* names; 1:1 by non-live condition;
+>   neither renamed). No meaning change; no new EV. Patch 0044; §3.11.
 
 Patch documents 0030 through 0041 are recorded in the git-excluded `patches/` per the
 repository convention (each born-MERGED, pointing here); this subsection is the committed
 merge record. The Wave-7 changes are EV-L0 review items, with reviewer provenance to be
 recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).
+
+---
+
+### 3.11 CORPUS-REVIEW-0001 Wave 8 (EV-L0 carry-over discharge: mn-1 citation precision; U1/U2/U3 mode-transition seams)
+
+Wave 8 discharges the Wave-7 EV-L0 carry-over items: the mn-1 citation-precision fix and the
+three §20.1 mode-transition edges (U1/U2/U3) that Wave 7 recorded as debt in §3.10. All changes
+are narrow-only and additive except U1, which is a new normative decision — a governed,
+risk-neutral, revocable de-restriction that grants no new-risk or live authority. No numbered
+section was renumbered; vision.md, philosophy.md, RFC-000, COMPLEXITY-REGISTER-002.md, SUMMARY.md,
+and both Evidence Registers are unchanged (Part-1 372; development-track 98). The canonical
+documents already carry the changes; the following table is the committed merge record.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| mn-1: split the §7 trapped-exposure citation — SBR-INV-005 scoped to recovery-inventory inclusion; conservative valuation and non-release attributed to ADR-002-001 §15 + ADR-002-017 SBR-INV-006 (previously over-attributed to SBR-INV-005 "which enforces this independently"); forward-only v0.3 Review-History entry supersedes the v0.2 phrasing | ADR-DEV-012 §7/§15 (0.2 → **0.3**) | Patch 0042; citation precision only; no SAFE-xxx, no numeric bound, no new RRC-INV or EV (development-track count stays 98) |
+| U1: new §8.5 De-Restriction Between Degraded Modes — the governed CONTAINED → DEGRADED_PROTECTIVE re-enabling of the §6 protective classifier (never automatic; affirmative trust-premise re-establishment; explicit Safety-Authority decision; no dominating HALT/incident; fail-closed to CONTAINED; revocable) | ADR-002-001 §8.5 (0.6 → **0.7**); RFC-002 §20.1 D/preamble (0.3 → **0.4**) | Patches 0043/0044; **new normative decision** (not a derived edge); refines SAFE-003/041/044; no new SAFE-xxx, no numeric bound, no new EV (Part-1 stays 372); U1 scenario debt below |
+| U2: new §14.1 In-Place Scope Expansion Readiness Extent — delta-proportional §12 re-establishment for an in-place LIVE_RESTRICTED → LIVE_NORMAL expansion; new Live Authorization for the delta (§7); §13 approver ≠ sole armer; ADR-002-025 progressive-promotion gate; full §12 only where continuous validity broke | ADR-002-007 §14.1 (— → **0.2**, Version field + Review History on first patch); RFC-002 §20.1 D (**0.4**) | Patches 0045/0044; restrictive and narrow-only (adds constraints on the existing §14 expansion pathway, grants no authority); no SAFE-xxx, no numeric bound, no new EV (Part-1 stays 372); U2 scenario debt below |
+| U3: informative RFC-002 §20.1 naming-map — §20 mode names vs ADR-002-017 §9 CLOSED_* recovery-barrier-state names, one-to-one by the non-live condition; neither vocabulary renamed | RFC-002 §20.1 (**0.4**) | Patch 0044; informative only, no meaning change; no SAFE-xxx, no new EV |
+| Hygiene: §5 Current Approval State versions synchronized to the current canonical headers (the two stale version-bearing rows corrected — RFC-002 v0.2 → v0.4; ADR-002-001 v0.3 → v0.7) | ARCHITECTURE-GATE-STATUS §5 | Direct edit; presentational hygiene only — no ADR authored, no SAFE-xxx, no new EV |
+
+> Wave 8 discharges the Wave-7 EV-L0 carry-over. No new SAFE-xxx requirement or numeric bound is
+> introduced; no broker proper noun appears; vision.md, philosophy.md, RFC-000, and both Evidence
+> Registers are unchanged (Part-1 372; development-track 98). ADR-DEV-012 → v0.3; ADR-002-001 →
+> v0.7; RFC-002 → v0.4; ADR-002-007 receives a Version field (v0.2) and Review History on first
+> patch, per the ADR-002-025/026/027 precedent (§3.4). U1 is a new normative decision and is
+> flagged as such wherever it appears; it is narrow-only in the risk sense (no new-risk or live
+> authority), following the M-07 §8.3.1 precedent that added a whole subsection with zero new EV.
+>
+> **Wave-8 evidence debt (no new EV IDs; scenario extensions within existing families):**
+> * **U1.** SA-EV-003/004/006/007 (Safety-Authority governance) and FD-EV-001 (protective-
+>   classification independence) are owed a scenario in which de-restriction never occurs
+>   automatically, requires the explicit Safety-Authority decision plus affirmative trust
+>   premises, grants no new-risk or live authority, and returns to CONTAINED on premise failure.
+>   Discharged within those existing families; no new EV row; Part-1 count stays 372.
+> * **U2.** REARM-EV-009 (partial re-arm), SBR-EV-007/009 (readiness isolation/invalidation),
+>   and the SA-EV continuous-validity families are owed a scenario in which an in-place expansion
+>   re-establishes the delta-proportional readiness elements, issues a new Live Authorization for
+>   the delta, preserves approver ≠ sole armer, and falls back to the full §12 re-arm when
+>   continuous validity broke. Discharged within those existing families; no new EV row; count
+>   stays 372.
+
+Patch documents 0042 through 0045 are recorded in the git-excluded `patches/` per the repository
+convention (each born-MERGED, pointing here); this subsection is the committed merge record. The
+Wave-8 changes are EV-L0 review items — most load-bearing, the U1 new normative de-restriction
+decision — with reviewer provenance to be recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).
 
 ---
 
@@ -528,8 +584,8 @@ ADR, introduces no SAFE-xxx, and adds no evidence row.
 
 | Artifact | Current state | Can implement? | Can accept? |
 |---|---|---:|---:|
-| RFC-002 v0.2 | Consolidated Review Draft | YES | after RFC review gates pass |
-| ADR-002-001 v0.3 | Proposed | YES | after protective evidence passes |
+| RFC-002 v0.4 | Consolidated Review Draft | YES | after RFC review gates pass |
+| ADR-002-001 v0.7 | Proposed | YES | after protective evidence passes |
 | ADR-002-002 | Proposed | YES | NO |
 | ADR-002-003 | Proposed | YES | NO |
 | ADR-002-004 | Proposed | YES | NO |
