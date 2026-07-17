@@ -2,8 +2,8 @@
 
 **Document ID:** RFC-002
 **Title:** Trading Operating System Architecture
-**Version:** 0.6 Review Draft
-**Status:** Review Draft — Architecture
+**Version:** 0.6
+**Status:** Ratified (2026-07-18 — GOV-001 G5 record RR-0004, ARCHITECTURE-GATE-STATUS §9.7; ratification confers no live authorization, no ADR acceptance, and no capacity)
 **Classification:** Foundational Architecture Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case

@@ -928,14 +928,12 @@ The authoring-track dependency chain (GOV-001; RFC-000 §12):
 
 ### 9.3 Per-Document Ladder Rung
 
-Ratified count: **3** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), and RFC-001 v0.8
-(RR-0003), all 2026-07-17, all in §9.7. Ratification-Ready count: **1** — **RFC-002 v0.6**
-(P1 satisfied 2026-07-18: v0.5 FAIL/CRITICAL → applied narrow-only in v0.6 with the upstream
-ADR-002-007 v0.3 root-cause correction → delta re-review **PASS** with zero residual findings,
-GEMINI-EVL0-VERDICT-0006; P2/P4/P5 held; P3 satisfied through RR-0001/RR-0003), awaiting the
-System Owner ratification act. The vision/philosophy directional baseline is adopted (BA-0001,
-§9.7). Next candidates after RFC-002: **RFC-003..007** — their P3 completes when RFC-002 is
-Ratified, and their P1 (external review) has not yet been performed. All other documents' P1
+Ratified count: **4** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), RFC-001 v0.8
+(RR-0003), and RFC-002 v0.6 (RR-0004, 2026-07-18), all in §9.7. Ratification-Ready count:
+**0**. The vision/philosophy directional baseline is adopted (BA-0001, §9.7). Next candidates:
+**RFC-003..007** — their P3 is now satisfied (RFC-000 through RFC-002 Ratified); their blocker
+is P1 (no external-substrate EV-L0 review has been performed for them yet). All other
+documents' P1
 remains unmet corpus-wide. All other normative RFC-class documents remain at Working/Review
 Draft; all ADRs remain Proposed; both Verification Evidence specifications remain Proposed.
 
@@ -945,7 +943,7 @@ Draft; all ADRs remain Proposed; both Verification Evidence specifications remai
 | philosophy | Part-0 (non-normative) | **Baseline adopted** (BA-0001, 2026-07-17) | n/a | not a ratification target (GOV-001 §7) |
 | RFC-000 | Normative RFC | **Ratified** (v0.16, 2026-07-17) | **YES** | — (record RR-0001, §9.7) |
 | RFC-001 | Normative RFC | **Ratified** (v0.8, 2026-07-17) | **YES** | — (record RR-0003, §9.7) |
-| RFC-002 | Normative RFC | **Ratification-Ready** (v0.6) | NO | none — awaiting the System Owner ratification act (GOV-001 G4/G5) |
+| RFC-002 | Normative RFC | **Ratified** (v0.6, 2026-07-18) | **YES** | — (record RR-0004, §9.7) |
 | ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC-002 not Ratified |
 | VER-002-001 | Verification Evidence | Proposed | n/a (not ratified) | §383 approval gate |
 | RFC-003..007 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
@@ -1119,6 +1117,48 @@ states that the ratification confers no live authority, no ADR acceptance, and n
   G6); de-ratification per G7.
 - **Non-authority statement:** this ratification establishes RFC-001 v0.8 as the governing
   safety-case baseline and confers no live authorization, no ADR acceptance, and no capacity.
+
+#### RR-0004 — RFC-002 v0.6 (Trading Operating System Architecture) — RATIFIED
+
+- **Target:** RFC-002 — Trading Operating System Architecture, version 0.6 (content commit
+  `4f4472d5`).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-18.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4;
+  ratification confers no live authority, so SAFE-053 does not apply to this act.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0005 (v0.5:
+  FAIL, 1 CRITICAL verified against source; upstream root cause ADR-002-007 §13/§14.1/
+  REARM-AC-005 — a missed Wave-1 CR-02 propagation site — corrected in ADR-002-007 v0.3) and
+  GEMINI-EVL0-VERDICT-0006 (v0.6 delta: PASS, zero residual findings; quorum-path dual control
+  confirmed unweakened, variant exception confirmed strictly bound to the ADR-002-015 §17.1
+  constraints, no backdoor authority widening). Provenance: the §10 External EV-L0 rows
+  (Gemini app, vendor Google; owner-captured app UI model "Gemini 3.1 Pro"; no tools/browsing;
+  recorded decorrelation argument per ADR-DEV-005 AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied (2026-07-18); P2 findings resolved with the explicit
+  deferrals below; P3 satisfied through RR-0001 and RR-0003; P4 citations resolve (references
+  to Proposed ADRs are acceptance-track, narrow-only); P5 version stable at v0.6.
+- **Accepted requirements:** the full v0.6 normative text — the component architecture and
+  contracts (§10), the §9.1 authority matrix with the SAFE-053 two-path linkage, the state
+  models (§12–§15), the §19 safety-configuration architecture, the §20/§20.1 operating modes
+  and transition matrix, the §23 recovery architecture, the §27 requirements-traceability
+  matrix (all 36 Critical SAFE allocations), and the §30 gates.
+- **Deferred (explicit, with rationale):** (1) the TRACEABILITY-MATRIX-002 §5.3 source gaps
+  (ADR-002-002..006 requirements-traceability tables) — acceptance-tier work with no coverage
+  lost (§4.5); (2) all evidence execution — every requirement remains `NOT_IMPLEMENTED` in the
+  registers (372/98); ratification is evidence-independent by design (GOV-001 G1).
+- **Residual risks accepted:** none new; the M-06 out-of-band containment attestation is
+  carried at the RFC-001 tier (RR-0003).
+- **Cited-version pins:** RFC-000 v0.16, RFC-001 v0.8, GOV-001 v0.1 (all Ratified);
+  ADR-002-015 v0.2 (§17.1 variant constraints the §10.18/§20.1/§23.1 exceptions bind to);
+  ADR-002-007 v0.3 (§13/§14.1 dual-control source mirrored by §20.1/§23.1); ADR-002-001 v0.7
+  (§8.5 de-restriction the §20.1 matrix derives); ADR-002-025 v0.2 (progressive-promotion
+  gates). Other ADR citations follow the Proposed-tier acceptance track and cannot weaken this
+  Ratified text (RFC-000 §12 narrow-only). A change to a pinned clause triggers a
+  citation-integrity re-check (GOV-001 G6).
+- **Re-review trigger:** material change via RFC-000 §18 amendment + re-ratification (GOV-001
+  G6); de-ratification per G7.
+- **Non-authority statement:** this ratification establishes RFC-002 v0.6 as the governing
+  architecture baseline and confers no live authorization, no ADR acceptance, and no capacity.
 
 *(empty)*
 
