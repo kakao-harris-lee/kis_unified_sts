@@ -7,9 +7,9 @@
 **Parent Document:** RFC-002 — Trading Operating System Architecture
 **Governed By:** RFC-000 and RFC-001
 **Date:** 2026-07-13
-**Version:** 0.3 Evidence-Gate Binding Draft
+**Version:** 0.4 Part-2/3 Register Consolidation Draft
 **Last Updated:** 2026-07-17
-**Supersedes:** ADR-002-001 v0.2 Consolidated Review Draft
+**Supersedes:** ADR-002-001 v0.3 Evidence-Gate Binding Draft
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -915,11 +915,11 @@ These written scenarios are verification requirements, not completed evidence. A
 
 ## 21. Acceptance Criteria
 
-Each criterion below binds the verification evidence that discharges it. The consolidated required-evidence set for this ADR is enumerated in VER-002-001 §380 (`ADR-002-001`); no register row was added (register count remains 363).
+Each criterion below binds the verification evidence that discharges it. The consolidated required-evidence set for this ADR is enumerated in VER-002-001 §380 (`ADR-002-001`); the Part-2/3 register consolidation (Wave 4) registered dedicated rows PRD-EV-001 and PRD-EV-002 for criteria #1 and #11, and the Evidence Register count is now 372.
 
 This ADR MAY be accepted when:
 
-* protective resource domains are identified for each supported broker and market (Evidence: BC-EV-013, BC-EV-021 — PARTIAL; dedicated protective-resource-domain enumeration-completeness evidence is owed to the Part-2/3 register consolidation, see ARCHITECTURE-GATE-STATUS §4.4);
+* protective resource domains are identified for each supported broker and market (Evidence: PRD-EV-001, supported by BC-EV-013, BC-EV-021; dedicated enumeration-completeness row registered in the Wave-4 consolidation);
 * the minimum reservation policy is defined in the Safety Profile (Evidence: SPG-EV-001, SPG-EV-002, SPG-EV-011);
 * normal trading cannot consume the protected reserve (Evidence: RC-EV-001, X-EV-005, AFG-EV-001, RCLP-EV-004);
 * protective classification is independent of strategy (Evidence: FD-EV-001, ARE-EV-010);
@@ -932,7 +932,7 @@ This ADR MAY be accepted when:
 
 It additionally requires:
 
-* every protective resource assigned an evidenced guarantee level (Evidence: SPG-EV-001 — PARTIAL; per-resource guarantee-level enumeration evidence is owed to the Part-2/3 register consolidation, see ARCHITECTURE-GATE-STATUS §4.4);
+* every protective resource assigned an evidenced guarantee level (Evidence: PRD-EV-002, supported by SPG-EV-001; dedicated per-resource guarantee-level row registered in the Wave-4 consolidation);
 * aggregate commitment and Protective Consumption implemented without ambiguity (Evidence: RCLP-EV-001, RCLP-EV-011, RC-EV-001);
 * duplicate-consumption prevention and stale-owner fencing selected and demonstrated (Evidence: RC-EV-002, SA-EV-006, SA-EV-007, RCLP-EV-003);
 * degraded lease validity and restart behavior defined (Evidence: SA-EV-004, SA-EV-005, SA-EV-006, RC-EV-013, X-EV-008);
@@ -1045,3 +1045,9 @@ This decision does not guarantee that every position can be exited. It ensures o
 * Added the consolidated `ADR-002-001` approval gate to VER-002-001 §380 (required RC/SA/PR/ARE/IOC/FD/RCLP/AFG/SPG/BC/VTG/X evidence set plus an approved Broker Capability Profile and Safety Profile per protective resource domain and guarantee level, and independent review).
 * Recorded criteria #1 (protective-resource-domain enumeration completeness) and #11 (per-resource guarantee level) as PARTIAL: they are gated by Broker Capability Profile / Safety Profile artifacts and carry dedicated evidence debt in ARCHITECTURE-GATE-STATUS §4.4. No register row was added; the Evidence Register count remains 363.
 * Change recorded in PATCH-ADR-002-001-v0.3-Evidence-Gate-Binding.md. The §21↔evidence mapping is an EV-L0 review item; the ADR remains Proposed pending executed and independently reviewed evidence.
+
+### v0.4 — Part-2/3 Register Consolidation (Wave 4)
+
+* Registered dedicated evidence rows PRD-EV-001 (protective-resource-domain enumeration completeness) and PRD-EV-002 (per-resource guarantee-level assignment completeness) under the new ADR-002-001-owned `PRD` family, discharging the criteria #1 and #11 evidence debt recorded in ARCHITECTURE-GATE-STATUS §4.4.
+* Re-bound §21 criteria #1 and #11 from PARTIAL (BC-EV-013/BC-EV-021 and SPG-EV-001) to their dedicated PRD-EV rows, supported by those existing families; added PRD-EV-001/PRD-EV-002 to the ADR-002-001 approval gate in VER-002-001 §380 (VER §391–392).
+* The Evidence Register count moved from 363 to 372 (nine Part-1 debt rows across ADR-002-001/013/015). The ADR remains `Proposed` pending executed and independently reviewed evidence; the PRD family placement and criticality are EV-L0 review items.

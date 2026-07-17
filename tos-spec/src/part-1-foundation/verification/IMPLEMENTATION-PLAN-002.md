@@ -3,7 +3,7 @@
 - **Status:** PROPOSED PLAN — not approved; no implementation code has been written.
 - **Date:** 2026-07-14
 - **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..030 evidence cases.
-- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..030, VER-002-001. Current VER and Evidence Register coverage includes 363 items and one-to-one dedicated acceptance cases for ADR-002-005..030; registration is not executed evidence.
+- **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..030, VER-002-001. Current VER and Evidence Register coverage includes 372 items and one-to-one dedicated acceptance cases for ADR-002-005..030; registration is not executed evidence.
 - **Authorization:** This plan authorizes nothing. Production, live, and ADR-Accepted status remain NO.
 
 ---
@@ -32,12 +32,12 @@ This document exists so those gates are explicit and ratifiable, not bypassed.
 |---|---|---|
 | Approve/replace bounds in `VERIFICATION-PROFILE-002.yaml` | Safety/Risk authority | Tests need pass/fail thresholds, including Human HALT ingress-to-commit, recovery-trigger-to-barrier, Critical Input and venue-constraint loss/invalidation, context/decision age, barrier-to-egress, and readiness age; unapproved bounds are not bounds |
 | Measure broker-specific bounds from an approved Broker Capability Profile | Broker/Exec eng | Final Quantity Proof, late fill, rate/session, query, replacement gap/overlap, and non-trade detection/reconciliation |
-| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (363 items); independence is mandatory |
+| Assign implementation owner + evidence owner + **independent reviewer** per evidence item | System owner | `EVIDENCE-REGISTER-002.csv` (372 items); independence is mandatory |
 | Ratify this plan, the §2 greenfield boundary, and the mechanism substrate | Architecture board | Determines what is implemented and where |
 
 I will not fabricate any of these. I can *draft candidates* (done for bounds; role scheme in §3) for you to ratify.
 
-> **Register-count note.** The Evidence Register holds 363 items. The Wave 1/2 evidence debt (ARCHITECTURE-GATE-STATUS §4.2/§4.3) and the ADR-002-001 evidence-gate-binding debt (§4.4) are deliberately not registered here to prevent evidence-count drift; they are scheduled for the Part-2/3 register consolidation (Wave 4). The count remains 363 until that consolidation wave.
+> **Register-count note.** The Evidence Register holds 372 items. Wave 4 consolidated the §4.2/§4.3/§4.4 evidence debt into EVIDENCE-REGISTER-002 (nine new rows, count 363 → 372); Part-2/3 development-track evidence is registered separately in EVIDENCE-REGISTER-DEV (96 items, all NOT_IMPLEMENTED). The DEV register is independent and never enters this Part-1 count.
 
 ---
 

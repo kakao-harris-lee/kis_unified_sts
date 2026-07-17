@@ -456,9 +456,17 @@ as RFC-004 through RFC-007 are accepted.
 | RFC-002 §10.2 Decision Service contract | elaborated as the conforming decision pipeline and Proposal output (§§7, 9) |
 | RFC-002 §9.1 authority separation | restated as the decision↔safety boundary (§11) |
 | philosophy §§6, 7, 8, 13, 28, 29 | operationalized as framework principles (§§4, 6, 12, 13) |
+| RFC-000 §12 narrow-only; §11 Decision↔Safety Boundary | registered as DEC-001 (VER-DEV-001, EVIDENCE-REGISTER-DEV; evidence DEC-EV-001); widens no Part-1 authority |
 
 RFC-003 introduces no SAFE-xxx requirement and no numeric bound. It relies
 entirely on the enforcement points already defined upstream.
+
+**CONST-003 composite-discharge note.** RFC-003 §12 accepts the CONST-003
+positive-expectancy obligation at the framework level only; it does not and cannot
+declare CONST-003 discharged in full. The named composite discharge is RFC-003 §12
+(framework obligation) → RFC-006 §11 (methodology) → ADR-002-025 (live-readiness
+demonstration, RLP-EV-001 through RLP-EV-012), completable only via the
+ADR-002-025 restricted-live evidence (RFC-000 CONST-003 Traceability).
 
 ---
 

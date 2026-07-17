@@ -475,6 +475,13 @@ companion RFCs are accepted.
 | ADR-002-021 ARE-INV-005, ARE-INV-006 | unproven benefit is zero; UNKNOWN is worst-credible (§§6, 8, 13) |
 | ADR-002-002 (Risk Capacity Ledger) | methodology never mutates capacity; the RCL alone does (§§6, 13) |
 | philosophy §§5, 18, 29 | capital-finite, aggregate-dominates-local, expectancy-survives-reality operationalized (§4) |
+| RFC-000 §12 narrow-only; §13 Risk-Model↔Safety Boundary | registered as DEC-004 (VER-DEV-001, EVIDENCE-REGISTER-DEV; evidence DEC-EV-004); widens no Part-1 authority |
+
+**CONST-003 completion note.** RFC-006 §11 owns the statistical expectancy
+methodology, co-owned with RFC-003 §12; the live-readiness completion of CONST-003
+is ADR-002-025's (RLP-EV-001 through RLP-EV-012) and is declarable in full only via
+the ADR-002-025 restricted-live evidence (RFC-000 CONST-003 Traceability). RFC-006
+does not declare CONST-003 discharged in full.
 
 **Governance note (CONST-002 traceability gap).** CONST-002's Traceability field
 lists only RFC-001 and RFC-005 and omits RFC-006, although capital preservation is

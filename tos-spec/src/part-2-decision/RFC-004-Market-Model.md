@@ -404,6 +404,7 @@ the companion RFCs are accepted.
 | ADR-002-018 §10 derived-input lineage | every indicator/feature carries deterministic or explicitly stochastic lineage (§9) |
 | ADR-002-019 tradability/session ownership | market-model observation is explicitly not the authoritative Tradability State (§10) |
 | philosophy §§7, 16, 17 | prediction-is-evidence, state-from-evidence, time-is-data operationalized (§§4, 6, 9) |
+| RFC-000 §12 narrow-only; §12 Market-Model↔Safety Boundary | registered as DEC-003 (VER-DEV-001, EVIDENCE-REGISTER-DEV; evidence DEC-EV-003; instantiates the CONST-007 DEC-003 venue-constraint requirement); widens no Part-1 authority |
 
 RFC-004 introduces no SAFE-xxx requirement and no numeric bound.
 

@@ -3,7 +3,7 @@
 - **Date:** 2026-07-17
 - **Scope:** RFC-001 SAFE-001..054 (defined requirements) and HAZ-001..025, resolved to VER-002-001 / EVIDENCE-REGISTER-002 evidence families for ADR-002-001 through ADR-002-030.
 - **Method:** EVIDENCE-REGISTER-002 records carry no direct evidence→SAFE annotation (the VER-002-001 §10 Traceability Model is not yet instantiated in the register). SAFE→evidence coverage is therefore derived through an ADR bridge: `SAFE → (realizing ADR, each ADR's §22/§2x Requirements Traceability table) → EV-family (register primary_adr)`. HAZ→evidence coverage reuses the verified HAZ→SAFE control mapping (RFC-001 §9 Constitutional-basis and §10 Controlled-by) then the same SAFE→evidence bridge. Per-individual-evidence-item SAFE mapping is not asserted here because it is not present in the source records; inventing it is prohibited. Family-level derivation is the strongest mapping the current sources support.
-- **Status:** DERIVED — traceability accounting only. Registration and derivation create no verification evidence, no ADR acceptance, and no live readiness. Register count remains 363; no evidence row was added.
+- **Status:** DERIVED — traceability accounting only. Registration and derivation create no verification evidence, no ADR acceptance, and no live readiness. The Wave-4 consolidation moved the Evidence Register count to 372; this matrix itself adds no evidence row.
 
 ---
 
@@ -26,6 +26,7 @@ Each evidence family's dedicated acceptance rows are owned by one primary ADR (E
 | IOC-EV | Intent-to-Order Conformance | ADR-002-020 |
 | NT-EV | Non-Trade Events | ADR-002-010 |
 | PR-EV | Protective Replacement | ADR-002-011 |
+| PRD-EV | Protective Resource Domain | ADR-002-001 |
 | PTF-EV | Post-Trade Economic Obligations and Finality | ADR-002-030 |
 | RC-EV | Risk Capacity | ADR-002-002 |
 | RCLP-EV | RCL Persistence and Consensus | ADR-002-012 |
@@ -86,8 +87,8 @@ ADR column shows the realizing ADR suffixes (ADR-002-0xx) whose Requirements Tra
 | SAFE-050 | Safety Configuration Governance | 001, 007, 008, 009, 010, 014, 015, 016, 017, 018, 019, 020, 021, 022, 023, 024, 025, 026, 027, 028, 029, 030 | AFG, ARE, CII, CUR, ERI, FD, HAG, IAP, IOC, NT, PTF, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
 | SAFE-051 | Decision and Execution Evidence | 001, 007, 008, 009, 010, 011, 012, 013, 014, 015, 016, 017, 018, 019, 020, 021, 022, 023, 024, 025, 026, 027, 028, 029, 030 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
 | SAFE-052 | Replay and Incident Reconstruction | 007, 008, 009, 010, 011, 012, 013, 014, 015, 016, 017, 018, 019, 020, 021, 022, 023, 024, 025, 026, 027, 028, 029, 030 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
-| SAFE-053 | Independent Approval of Risk-Increasing Re-Arm and Scope Promotion | 015 | UNMAPPED | UNMAPPED — evidence debt (gate-status §4.2) |
-| SAFE-054 | Out-of-Band Containment of Final Egress | — | UNMAPPED | UNMAPPED — evidence debt (gate-status §4.3) |
+| SAFE-053 | Independent Approval of Risk-Increasing Re-Arm and Scope Promotion | 015 | HAG | COVERED (HAG-EV-013..017; §4.2 discharged Wave 4) |
+| SAFE-054 | Out-of-Band Containment of Final Egress | 013 | EGRESS | COVERED (EGRESS-EV-013; §4.3 discharged Wave 4) |
 
 ---
 
@@ -120,8 +121,8 @@ SAFE control set from RFC-001 §9 Constitutional-basis / §10 Controlled-by. EV 
 | HAZ-021 | Unattributed External Exposure | SAFE-023, SAFE-024, SAFE-044 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, STM, TIME, VTG, WDR | COVERED |
 | HAZ-022 | Partial-Fill State Corruption | SAFE-021, SAFE-022, SAFE-025, SAFE-043, SAFE-051 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
 | HAZ-023 | Trapped-Exposure Compounding | SAFE-013, SAFE-032, SAFE-043 | AFG, ARE, CII, CUR, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG | COVERED |
-| HAZ-024 | Operator/Human Configuration or Authorization Error | SAFE-042, SAFE-046, SAFE-050, SAFE-053 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PTF, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED (partial); SAFE-053 UNMAPPED debt |
-| HAZ-025 | Defect or Compromise of the Final Egress Enforcement Point | SAFE-041, SAFE-048, SAFE-054 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED (partial); SAFE-054 UNMAPPED debt |
+| HAZ-024 | Operator/Human Configuration or Authorization Error | SAFE-042, SAFE-046, SAFE-050, SAFE-053 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PTF, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED (HAG-EV-018; §4.3 discharged Wave 4) |
+| HAZ-025 | Defect or Compromise of the Final Egress Enforcement Point | SAFE-041, SAFE-048, SAFE-054 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED (EGRESS-EV-013; §4.3 discharged Wave 4) |
 
 ---
 
@@ -136,10 +137,11 @@ Derived reverse of §2 (family appears for a SAFE when the family's primary ADR 
 | BC-EV | — (none via bridge) |
 | CII-EV | SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-013, SAFE-015, SAFE-020, SAFE-021, SAFE-022, SAFE-025, SAFE-030, SAFE-031, SAFE-032, SAFE-033, SAFE-034, SAFE-035, SAFE-040, SAFE-041, SAFE-044, SAFE-046, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
 | CUR-EV | SAFE-001, SAFE-003, SAFE-010, SAFE-011, SAFE-013, SAFE-015, SAFE-020, SAFE-021, SAFE-022, SAFE-025, SAFE-030, SAFE-035, SAFE-040, SAFE-043, SAFE-044, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
-| EGRESS-EV | SAFE-010, SAFE-011, SAFE-014, SAFE-015, SAFE-021, SAFE-024, SAFE-033, SAFE-040, SAFE-041, SAFE-042, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-051, SAFE-052 |
+| EGRESS-EV | SAFE-010, SAFE-011, SAFE-014, SAFE-015, SAFE-021, SAFE-024, SAFE-033, SAFE-040, SAFE-041, SAFE-042, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-051, SAFE-052, SAFE-054 |
 | ERI-EV | SAFE-010, SAFE-011, SAFE-020, SAFE-021, SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-031, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
 | FD-EV | SAFE-003, SAFE-004, SAFE-011, SAFE-013, SAFE-015, SAFE-021, SAFE-022, SAFE-024, SAFE-030, SAFE-031, SAFE-035, SAFE-041, SAFE-044, SAFE-045, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
-| HAG-EV | SAFE-010, SAFE-011, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
+| HAG-EV | SAFE-010, SAFE-011, SAFE-034, SAFE-035, SAFE-041, SAFE-042, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, SAFE-052, SAFE-053 |
+| PRD-EV | ADR-002-001 §21 #1/#11 (protective-resource-domain enumeration and per-resource guarantee-level completeness); no SAFE reached via the current ADR bridge |
 | IAP-EV | SAFE-001, SAFE-003, SAFE-010, SAFE-011, SAFE-013, SAFE-015, SAFE-020, SAFE-021, SAFE-030, SAFE-031, SAFE-032, SAFE-033, SAFE-034, SAFE-035, SAFE-040, SAFE-041, SAFE-043, SAFE-044, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
 | IOC-EV | SAFE-003, SAFE-004, SAFE-010, SAFE-011, SAFE-013, SAFE-015, SAFE-020, SAFE-021, SAFE-024, SAFE-025, SAFE-030, SAFE-032, SAFE-033, SAFE-034, SAFE-035, SAFE-040, SAFE-041, SAFE-043, SAFE-044, SAFE-046, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
 | NT-EV | SAFE-002, SAFE-004, SAFE-011, SAFE-013, SAFE-015, SAFE-020, SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-032, SAFE-035, SAFE-040, SAFE-041, SAFE-044, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
@@ -166,16 +168,19 @@ Derived reverse of §2 (family appears for a SAFE when the family's primary ADR 
 
 ## 5. UNMAPPED Entries and Source Gaps
 
-### 5.1 UNMAPPED SAFE requirements (accepted evidence debt)
+### 5.1 UNMAPPED SAFE requirements (resolved Wave 4)
 
-| SAFE | Reason | Debt record |
+The Wave-4 Part-2/3 register consolidation resolved both previously UNMAPPED SAFE
+requirements; there are no remaining UNMAPPED SAFE requirements.
+
+| SAFE | Resolution | Record |
 |---|---|---|
-| SAFE-053 | Independent-approval re-arm/promotion evidence (HAG-INV-015..019, prospective HAG-EV-013) not yet registered; the generic HAG-EV family does not carry a dedicated SAFE-053 acceptance row. | ARCHITECTURE-GATE-STATUS §4.2 |
-| SAFE-054 | Out-of-band final-egress containment evidence not yet registered; capability-neutral, established in Broker Capability Profile terms. | ARCHITECTURE-GATE-STATUS §4.3 |
+| SAFE-053 | Registered HAG-EV-013..017 (Governed Single-Operator Re-Arm Variant, HAG-INV-015..019) under the HAG family. | ARCHITECTURE-GATE-STATUS §4.2 (discharged) |
+| SAFE-054 | Registered EGRESS-EV-013 (out-of-band final-egress containment, capability-neutral). | ARCHITECTURE-GATE-STATUS §4.3 (discharged) |
 
-### 5.2 UNMAPPED HAZ (accepted evidence debt)
+### 5.2 HAZ coverage (resolved Wave 4)
 
-HAZ-024 and HAZ-025 obtain partial coverage from their non-debt controlling SAFEs (§3), but their dedicated coverage rides on SAFE-053 and SAFE-054 respectively, which are UNMAPPED evidence debt (§5.1). No dedicated register row was added; the count remains 363. See ARCHITECTURE-GATE-STATUS §4.3 (HAZ-024/HAZ-025) and §4.2 (SAFE-053).
+HAZ-024 and HAZ-025 are now fully covered: HAZ-024's SAFE-053 control resolves to HAG-EV-018 and the HAG family, and HAZ-025's SAFE-054 control resolves to EGRESS-EV-013 and the EGRESS family. The Evidence Register count is now 372 after the Wave-4 consolidation. See ARCHITECTURE-GATE-STATUS §4.2 (SAFE-053 / HAG-EV-013..017) and §4.3 (HAZ-024 / HAG-EV-018; HAZ-025 / SAFE-054 / EGRESS-EV-013), all discharged.
 
 ### 5.3 Source gaps — ADRs without a Requirements Traceability table
 
@@ -193,8 +198,8 @@ The following ADRs declare no §2x Requirements Traceability table, so their evi
 
 ## 6. Coverage Summary
 
-- Defined SAFE requirements: 36; COVERED via ADR bridge: 34; UNMAPPED (evidence debt): 2 (SAFE-053, SAFE-054).
-- Defined hazards: 25; every hazard resolves to ≥1 evidence family or is recorded as accepted evidence debt.
+- Defined SAFE requirements: 36; COVERED via ADR bridge: 36; UNMAPPED (evidence debt): 0 (SAFE-053 and SAFE-054 resolved in Wave 4).
+- Defined hazards: 25; every hazard resolves to ≥1 evidence family.
 - ADRs with a Requirements Traceability table: 25/30; source gaps: 5 (ADR-002-002, ADR-002-003, ADR-002-004, ADR-002-005, ADR-002-006).
-- This matrix is the instantiated bidirectional coverage matrix referenced by VER-002-001 §383. It changes no ADR status and adds no evidence row (register count 363).
+- This matrix is the instantiated bidirectional coverage matrix referenced by VER-002-001 §383. It changes no ADR status; the Wave-4 consolidation added nine rows to the Evidence Register (count now 372).
 

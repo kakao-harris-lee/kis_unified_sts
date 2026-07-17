@@ -2,7 +2,7 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.12 Review Draft
+**Version**: 0.13 Review Draft
 **Status**: Working Draft
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
@@ -130,22 +130,31 @@ requirement carries requirement-specific history.
 
 A `Derived Requirements` entry marked `(reserved)` names an identifier
 namespace that is anticipated but not yet instantiated in this specification
-set. Three such namespaces are reserved:
+set. Three such namespaces were reserved; as of the Wave-4 Part-2/3 register
+consolidation, two (`DEC-xxx`, `TEST-xxx`) are now instantiated through
+governance and one (`ARCH-xxx`) remains reserved:
 
 * `ARCH-xxx` — architecture-level requirements. These are currently discharged
   through the `ADR-002-xxx` decision series (see RFC-002 §26) rather than a
   standalone `ARCH-xxx` register; the reserved marker preserves the intended
   constitution-to-architecture trace until or unless a dedicated register is
   introduced.
-* `DEC-xxx` — decision-layer requirements, anticipated for the future RFC-003
-  Decision Framework and its part-2 companions.
-* `TEST-xxx` — test-and-verification requirements, currently discharged through
-  VER-002-001 and the Evidence Register rather than a standalone `TEST-xxx`
-  register.
+* `DEC-xxx` — decision-layer requirements, now instantiated in VER-DEV-001 and
+  EVIDENCE-REGISTER-DEV (the Part-2/3 development track): DEC-001 through DEC-005
+  for the RFC-003 Decision Framework and its part-2 companions RFC-004 through
+  RFC-007, with evidence DEC-EV-001 through DEC-EV-005.
+* `TEST-xxx` — test-and-verification requirements, now instantiated in VER-DEV-001
+  and EVIDENCE-REGISTER-DEV as TEST-001 for the RFC-010 Testing↔Safety Boundary
+  (evidence TEST-EV-001). VER-002-001 and the Part-1 Evidence Register remain the
+  Part-1 verification track.
 
 A reserved marker is a forward placeholder only. It grants no requirement,
 creates no obligation, and SHALL NOT be treated as a defined identifier until
-its namespace is formally instantiated through governance.
+its namespace is formally instantiated through governance. Two of the three
+namespaces (`DEC-xxx`, `TEST-xxx`) have now been so instantiated through the
+Wave-4 governance consolidation; `ARCH-xxx` remains reserved. Any
+subordinate-layer instantiation is bound by the narrow-only governance rule of
+§12 and MAY narrow but SHALL NOT widen any Part-1 authority.
 
 ### Rationale
 
@@ -531,6 +540,8 @@ RFC-003
 
 RFC-006
 
+CONST-003 is discharged through a named composite chain: RFC-003 §12 accepts the framework-level obligation, RFC-006 §11 owns the statistical expectancy methodology, and ADR-002-025 owns the live-readiness demonstration (RLP-EV-001 through RLP-EV-012). Completion of CONST-003 is declarable only via the ADR-002-025 restricted-live evidence; no single document declares CONST-003 discharged in full.
+
 ---
 
 ## CONST-004
@@ -813,7 +824,7 @@ Decision Context SHALL include venue state.
 
 ARCH-005 (reserved)
 
-DEC-003 (reserved)
+DEC-003 — venue-constraint decision requirement; instantiated in VER-DEV-001 and realized by RFC-004 §12 (Market-Model↔Safety Boundary); evidence DEC-EV-003
 
 SAFE-015
 
@@ -1276,7 +1287,7 @@ SAFE-010, SAFE-020, SAFE-021, SAFE-025, SAFE-033, SAFE-051, SAFE-052
 
 ARCH-020 (reserved)
 
-TEST-001 (reserved)
+TEST-001 — testing-and-verification boundary requirement; instantiated in VER-DEV-001 and realized by RFC-010 §11 (Testing↔Safety Boundary); evidence TEST-EV-001
 
 ---
 
@@ -1517,6 +1528,8 @@ Higher-level specifications SHALL govern lower-level specifications.
 
 Lower-level specifications SHALL NOT reinterpret higher-level intent.
 
+No Part-2 or Part-3 artifact — RFC-003 through RFC-011, ADR-DEV-001 through ADR-DEV-015, and their verification evidence — SHALL widen, relax, or reinterpret any Part-1 authority, limit, gate, or Hard Safety Envelope constraint. A subordinate-layer artifact MAY only narrow authority, never widen it.
+
 ---
 
 # 13. Engineering Governance
@@ -1722,3 +1735,13 @@ Removed the "autonomous" qualifier from CONST-004's safe-state constraint so tha
 Added CONST-015 (Bounded Human Authority) as the constitutional parent of RFC-001 SAFE-053 owed by DR-0001 §6; it does not mandate any number of natural persons and preserves the governed single-operator satisfaction path.
 
 Reframed CONST-008 in evidence terms (the authoritative basis is the reconciled state from corroborating evidence, not any single source) and added an Authoritative-State term-relationship table to Section 6.
+
+v0.13
+
+Applied PATCH-0012 (CORPUS-REVIEW-0001 CR-01, Part-2/3 register consolidation).
+
+Added the narrow-only governance meta-principle to §12 Constitutional Governance: no Part-2 or Part-3 artifact SHALL widen, relax, or reinterpret any Part-1 authority, limit, gate, or Hard Safety Envelope constraint, and a subordinate-layer artifact MAY only narrow authority; cross-referenced from the §5 reserved-namespace note.
+
+Instantiated the reserved DEC-xxx and TEST-xxx namespaces through governance: CONST-007's DEC-003 is realized by RFC-004 §12 (evidence DEC-EV-003) and CONST-014's TEST-001 by RFC-010 §11 (evidence TEST-EV-001), both registered in VER-DEV-001 / EVIDENCE-REGISTER-DEV; ARCH-xxx remains reserved.
+
+Named the CONST-003 composite discharge (RFC-003 §12 framework obligation, RFC-006 §11 methodology, ADR-002-025 live-readiness RLP-EV-001..012), declarable in full only via the ADR-002-025 restricted-live evidence.

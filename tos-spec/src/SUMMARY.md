@@ -72,3 +72,5 @@
 - [ADR-DEV-013 — Operator Boundaries: Break-Glass and Containment](part-3-development/ADR-DEV-013-Operator-Boundaries-Break-Glass-and-Containment.md)
 - [ADR-DEV-014 — Operator Observability and "Withhold Re-Arm" as a First-Class Outcome](part-3-development/ADR-DEV-014-Operator-Observability-and-Withhold-Re-Arm-as-a-First-Class-Outcome.md)
 - [ADR-DEV-015 — Operator Authority-Scope Expression and Revocation](part-3-development/ADR-DEV-015-Operator-Authority-Scope-Expression-and-Revocation.md)
+- [VER-DEV-001 — Development-Track Verification Evidence](part-3-development/VER-DEV-001-Development-Track-Verification-Evidence-Specification.md)
+- [Development Evidence Register](part-3-development/verification/EVIDENCE-REGISTER-DEV.md)

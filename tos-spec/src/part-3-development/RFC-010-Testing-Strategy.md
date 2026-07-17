@@ -406,6 +406,7 @@ This table is an initial allocation and SHALL be refined as RFC-011 is accepted.
 | ADR-002-028 (continuous conformance monitoring) | runtime monitoring is owned by ADR-002-028, not by RFC-010's pre-deployment testing (§12) |
 | VER-002-001 (verification-evidence specification) | testing produces evidence into the verification artifacts; it does not define the acceptance gate (§§2, 3, 10) |
 | Vision §9.5; philosophy §§11, 28, 33, 34, 37.8 | testable, prevention-first, backtest-is-evidence, demonstration-required, bounded-test-confidence operationalized (§§4, 6, 10) |
+| RFC-000 §12 narrow-only; §11 Testing↔Safety Boundary | registered as TEST-001 (VER-DEV-001, EVIDENCE-REGISTER-DEV; evidence TEST-EV-001; instantiates the CONST-014 TEST-001 requirement); widens no Part-1 authority |
 
 RFC-010 introduces no SAFE-xxx requirement and no numeric bound. It relies entirely
 on the enforcement, acceptance, and admission points already defined upstream.

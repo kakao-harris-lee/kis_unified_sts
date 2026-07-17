@@ -2175,6 +2175,10 @@ Material changes to hazards, Critical requirements, safe-state semantics, or pro
 * Recorded the new instantiated bidirectional coverage matrix verification/TRACEABILITY-MATRIX-002.md, referenced by VER-002-001 §383; SAFE-053 and SAFE-054 remain UNMAPPED accepted evidence debt (ARCHITECTURE-GATE-STATUS §4.2/§4.3).
 * Change recorded in RFC-001-Patch-0011. No new SAFE requirement or hazard was added; the Evidence Register count is unchanged (363); vision.md, philosophy.md, and RFC-000 are unchanged.
 
+### Wave-4 note — Part-2/3 Register Consolidation (2026-07-17)
+
+* CORPUS-REVIEW-0001 CR-01 discharged the SAFE-053, SAFE-054, HAZ-024, and HAZ-025 evidence debt recorded in v0.5/v0.6 above: EVIDENCE-REGISTER-002 gained HAG-EV-013..018 and EGRESS-EV-013 (count 363 → 372), and the previously UNMAPPED SAFE-053/054 are now COVERED in TRACEABILITY-MATRIX-002 §2 (§5.1 resolved). This RFC-001 carries no requirement or hazard change in this wave; the note is dated and additive only.
+
 ---
 
 ## Appendix A — Safety Requirement Dependency Map

@@ -9,8 +9,8 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 ## Status Summary
 
-- Total evidence items: **363**
-- NOT_IMPLEMENTED: **363**
+- Total evidence items: **372**
+- NOT_IMPLEMENTED: **372**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -182,6 +182,7 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | EGRESS-EV-010 | Egress Security | Credential Compromise and Unknown Revocation | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | TBD | TBD |
 | EGRESS-EV-011 | Egress Security | Degraded Protective Egress Exclusivity | ADR-002-013 | EV-L3/5+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 | EGRESS-EV-012 | Egress Security | Manual Authority and Recovery Cannot Re-arm | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | TBD | TBD |
+| EGRESS-EV-013 | Egress Security | Out-of-Band Containment of a Defective or Compromised Final Egress Point | ADR-002-013 | EV-L3/5+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 | SPG-EV-001 | Safety Profile Governance | Envelope Governance and Non-Silent Expansion | ADR-002-014 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | SPG-EV-002 | Safety Profile Governance | Semantic Units, Numeric, and Cross-Field Validation | ADR-002-014 | EV-L1/2 | NOT_IMPLEMENTED | TBD | TBD |
 | SPG-EV-003 | Safety Profile Governance | Schema, Omission, and Canonicalization Safety | ADR-002-014 | EV-L1/2+Security | NOT_IMPLEMENTED | TBD | TBD |
@@ -206,6 +207,12 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | HAG-EV-010 | Human Authority Governance | Dual-Control Re-arm and Narrow Scope | ADR-002-015 | EV-L1/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | HAG-EV-011 | Human Authority Governance | Approval and Economic-State Continuity and Non-Revival | ADR-002-015 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 | HAG-EV-012 | Human Authority Governance | Human Authority Replay and Evidence Completeness | ADR-002-015 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-013 | Human Authority Governance | Governed Single-Operator Variant Pre-Approved and Non-Ad-Hoc | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-014 | Human Authority Governance | Time-Separated Re-Authenticated Self-Approval | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-015 | Human Authority Governance | Independent Attestation Mandatory and Block-Only | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-016 | Human Authority Governance | External Reviewer Independence | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-017 | Human Authority Governance | Variant Cannot Expand Authority or Scope | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
+| HAG-EV-018 | Human Authority Governance | Operator Configuration or Authorization Error Fail-Closed | ADR-002-015 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | ERI-EV-001 | Evidence and Replay Integrity | Complete Immutable Causal Evidence Chain | ADR-002-016 | EV-L2/3 | NOT_IMPLEMENTED | TBD | TBD |
 | ERI-EV-002 | Evidence and Replay Integrity | Pre-Effect Durability and Exact Receipt Binding | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
 | ERI-EV-003 | Evidence and Replay Integrity | Evidence Outage and Emergency Path Confinement | ADR-002-016 | EV-L2/3+Security | NOT_IMPLEMENTED | TBD | TBD |
@@ -386,6 +393,8 @@ Before an item becomes `READY`, assign implementation owner, evidence owner, ind
 | PTF-EV-010 | Post-Trade Economic Obligations and Finality | RCL Transfer/Release + Generation Currentness/Send Race | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 | PTF-EV-011 | Post-Trade Economic Obligations and Finality | Partition/Compromise/Stale Writer/Route Bypass | ADR-002-030 | EV-L3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
 | PTF-EV-012 | Post-Trade Economic Obligations and Finality | Evidence/Recovery/Non-Revival/Status Honesty | ADR-002-030 | EV-L2/3+Broker+Security | NOT_IMPLEMENTED | TBD | TBD |
+| PRD-EV-001 | Protective Resource Domain | Protective-Resource-Domain Enumeration Completeness | ADR-002-001 | EV-L1/3+Broker | NOT_IMPLEMENTED | TBD | TBD |
+| PRD-EV-002 | Protective Resource Domain | Per-Resource Guarantee-Level Assignment Completeness | ADR-002-001 | EV-L1/3 | NOT_IMPLEMENTED | TBD | TBD |
 
 ## Gate Rule
 

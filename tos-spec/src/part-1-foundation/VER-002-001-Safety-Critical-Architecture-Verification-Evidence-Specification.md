@@ -3361,6 +3361,7 @@ Requires:
 - BC-EV-013, BC-EV-016, and BC-EV-021;
 - VTG-EV-010;
 - X-EV-002, X-EV-003, X-EV-005, X-EV-006, and X-EV-008;
+- PRD-EV-001 and PRD-EV-002;
 - an approved Broker Capability Profile and Safety Profile for every protective resource domain and guarantee level;
 - independent review.
 
@@ -3522,7 +3523,7 @@ Requires:
 - ARE-EV-002, ARE-EV-008, ARE-EV-009, ARE-EV-011, and ARE-EV-012;
 - IOC-EV-002 and IOC-EV-006 through IOC-EV-012;
 - VTG-EV-003, VTG-EV-004, VTG-EV-006, VTG-EV-007, VTG-EV-011, and VTG-EV-012;
-- EGRESS-EV-001 through EGRESS-EV-012;
+- EGRESS-EV-001 through EGRESS-EV-013;
 - CII-EV-007 through CII-EV-009, CII-EV-011, and CII-EV-012;
 - SBR-EV-001 through SBR-EV-003 and SBR-EV-008 through SBR-EV-012;
 - ERI-EV-001 through ERI-EV-007, ERI-EV-009, ERI-EV-011, and ERI-EV-012;
@@ -3557,7 +3558,7 @@ Requires:
 
 - IOC-EV-002, IOC-EV-005, and IOC-EV-010 through IOC-EV-012;
 - VTG-EV-006, VTG-EV-007, VTG-EV-011, and VTG-EV-012;
-- HAG-EV-001 through HAG-EV-012;
+- HAG-EV-001 through HAG-EV-018;
 - CII-EV-006, CII-EV-007, CII-EV-011, and CII-EV-012;
 - SBR-EV-001, SBR-EV-004, SBR-EV-006 through SBR-EV-009, SBR-EV-011, and SBR-EV-012;
 - ERI-EV-001, ERI-EV-003 through ERI-EV-010, and ERI-EV-012;
@@ -3860,5 +3861,73 @@ VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 - fault-injection responsibilities are assigned;
 - broker production-test safety rules are approved;
 - evidence retention and access controls are defined.
+
+Approval for execution does not authorize live trading.
+
+---
+
+# Part XXXVI — Part-2/3 Register Consolidation (Wave 4): Newly Registered Part-1 Evidence
+
+**Wave-4 note (2026-07-17).** The Part-2/3 register consolidation
+(CORPUS-REVIEW-0001 CR-01) registered HAG-EV-013 through HAG-EV-018,
+EGRESS-EV-013, and PRD-EV-001/PRD-EV-002 as §§384–392 below and updated the
+ADR-002-001, ADR-002-013, and ADR-002-015 approval gates in §380. The Evidence
+Register count is now 372. These nine cases discharge the
+ARCHITECTURE-GATE-STATUS §4.2/§4.3/§4.4 evidence debt. All remain
+`NOT_IMPLEMENTED`; registration is not execution and grants no live readiness.
+
+## 384. HAG-EV-013 — Governed Single-Operator Variant Pre-Approved and Non-Ad-Hoc
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-015 HAG-INV-015 (§17.1); RFC-001 SAFE-053
+- **Injection:** Invoke the single-operator re-arm variant with no pre-approved explicit mode, or an ad-hoc/patched/post-hoc variant definition, across concurrent and failover paths.
+- **Expected:** Only a pre-approved, explicitly declared variant mode is eligible; ad-hoc/unregistered/post-hoc variants are denied and grant no authority.
+
+## 385. HAG-EV-014 — Time-Separated Re-Authenticated Self-Approval
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-015 HAG-INV-016 (§17.1); RFC-001 SAFE-053
+- **Injection:** Attempt the variant's self-approval steps within one session, without the required time separation, or without fresh re-authentication at each step.
+- **Expected:** Each step requires the mandated time separation and a fresh re-authentication; a collapsed-in-time or single-authentication self-approval is denied and fails closed.
+
+## 386. HAG-EV-015 — Independent Attestation Mandatory and Block-Only
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-015 HAG-INV-017 (§17.1); RFC-001 SAFE-053
+- **Injection:** Present the variant with a missing, unavailable, or indeterminate independent attestation, and attempt to treat an attestation as an authority-granting (rather than block-only) input.
+- **Expected:** Independent attestation is mandatory and block-only; a missing/unavailable/indeterminate attestation fails closed, and attestation can only block, never grant authority.
+
+## 387. HAG-EV-016 — External Reviewer Independence
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-015 HAG-INV-018 (§17.1); RFC-001 SAFE-053
+- **Injection:** Supply an external reviewer whose effective principal collapses into the operator's (§8 collapse), or who shares the operator's identity, credentials, or control.
+- **Expected:** The external reviewer must be effectively independent of the operator; a collapsed or shared principal is rejected and the variant fails closed.
+
+## 388. HAG-EV-017 — Variant Cannot Expand Authority or Scope
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-015 HAG-INV-019 (§17.1); RFC-001 SAFE-053
+- **Injection:** Use the variant to widen scope, relax a gate, or waive a Hard Safety Envelope constraint beyond the smallest approved scope delta.
+- **Expected:** The variant expands no authority, scope, gate, or envelope; any attempted widening is denied and grants no new-risk authority.
+
+## 389. HAG-EV-018 — Operator Configuration or Authorization Error Fail-Closed
+- **Minimum Level:** EV-L2/EV-L3 plus security assessment
+- **Supports:** ADR-002-015 §17.1; RFC-001 SAFE-042, SAFE-046, SAFE-050, SAFE-053; HAZ-024
+- **Injection:** Inject wrong-account, wrong-arming, mis-authorization, and misconfiguration paths through the operator/human authority surface.
+- **Expected:** The controlling requirements (SAFE-042/046/050/053) prevent each path and fail closed; an operator configuration or authorization error confers no live readiness.
+
+## 390. EGRESS-EV-013 — Out-of-Band Containment of a Defective or Compromised Final Egress Point
+- **Minimum Level:** EV-L3/EV-L5 plus broker and security assessment
+- **Supports:** ADR-002-013; RFC-001 SAFE-054; HAZ-025
+- **Injection:** Defect or compromise the final egress enforcement point and require containment of its real-capital transmission capability, established in Broker Capability Profile terms without dependence on any named broker.
+- **Expected:** An out-of-band containment path independent of the final egress point terminates its transmission capability, or its absence is recorded and accepted as residual risk with a correspondingly reduced live scope; no named broker is assumed.
+
+## 391. PRD-EV-001 — Protective-Resource-Domain Enumeration Completeness
+- **Minimum Level:** EV-L1/EV-L3 plus broker
+- **Supports:** ADR-002-001 §21 criterion #1
+- **Probe:** Inspect whether protective resource domains are enumerated completely for each supported broker and market, gated by an approved Broker Capability Profile and Safety Profile per domain.
+- **Expected:** Every protective-resource domain is enumerated for each supported broker/market; an incomplete enumeration fails closed and grants no acceptance.
+
+## 392. PRD-EV-002 — Per-Resource Guarantee-Level Assignment Completeness
+- **Minimum Level:** EV-L1/EV-L3
+- **Supports:** ADR-002-001 §21 criterion #11
+- **Probe:** Inspect whether every protective resource is assigned an evidenced guarantee level through the Safety Profile artifact.
+- **Expected:** Every protective resource carries an assigned, evidenced guarantee level; a missing assignment fails closed and grants no acceptance.
 
 Approval for execution does not authorize live trading.

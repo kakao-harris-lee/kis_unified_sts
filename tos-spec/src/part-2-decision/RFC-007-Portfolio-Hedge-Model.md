@@ -453,6 +453,7 @@ companion RFCs are accepted.
 | ADR-002-002 §19 | reserved protective capacity is consumed, never mutated (§§11, 12) |
 | ADR-002-021 ARE-INV-005/006 | unproven hedge/correlation benefit is zero; breakdown is worst-credible (§§6, 8) |
 | philosophy §§10, 18, 39.5 | exposure-aware safety, aggregate-dominates-local, no "hedge means safe" (§§4, 6) |
+| RFC-000 §12 narrow-only; §12 Hedge-Model↔Safety Boundary | registered as DEC-005 (VER-DEV-001, EVIDENCE-REGISTER-DEV; evidence DEC-EV-005); widens no Part-1 authority |
 
 RFC-007 introduces no SAFE-xxx requirement and no numeric bound.
 

@@ -235,6 +235,35 @@ Wave 3 resolves review items M-09 through M-12 and mn-01 through mn-06. The foll
 
 The mn-02 finding (EVIDENCE-REGISTER-002.csv quoting/alignment) was re-verified and closed as **verified-resolved**: the CSV is RFC-4180-conformant (363 data rows, every row 16 fields, zero misaligned); no edit was made and the file is unchanged. The M-09 §21↔evidence mapping, the mn-05/mn-06 reworded criteria, and the HAZ-010/CONST-015 remove-vs-keep decision are recorded as EV-L0 review items in RFC-001-Patch-0011 and PATCH-ADR-002-001-v0.3. vision.md, philosophy.md, RFC-000, and RFC-002 are unchanged in this wave.
 
+### 3.7 CORPUS-REVIEW-0001 Wave 4 (CR-01 — Part-2/3 register consolidation)
+
+Wave 4 resolves CORPUS-REVIEW-0001 CR-01: it instantiates the Part-2/3
+verification track, discharges the §4.2/§4.3/§4.4 Part-1 evidence debt, promotes
+the narrow-only meta-principle to RFC-000 §12, and instantiates the reserved
+`DEC-xxx` / `TEST-xxx` namespaces. No numbered section was renumbered; the
+VER-002-001 case sections were appended as §§384–392 so the §380/§383
+cross-references are preserved.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| New development-track verification specification and register (96 items: 90 ADR-DEV invariants + DEC-EV-001..005 + TEST-EV-001) | part-3-development/VER-DEV-001-Development-Track-Verification-Evidence-Specification.md; part-3-development/verification/EVIDENCE-REGISTER-DEV.{md,csv}; SUMMARY.md | CR-01; independent of the Part-1 count |
+| Narrow-only governance meta-principle; DEC-003 / TEST-001 instantiation; CONST-003 composite discharge | RFC-000 §12, §5 reserved-namespace note, CONST-007, CONST-014, CONST-003; header/Review History v0.13 | RFC-000-Patch-0012; residual items in §4.5 |
+| Part-1 evidence debt discharged: nine new rows (HAG-EV-013..018, EGRESS-EV-013, PRD-EV-001/002); count 363 → 372 | EVIDENCE-REGISTER-002.{md,csv}; VER-002-001 §§384–392 and §380 gates (ADR-002-001/013/015); ADR-002-001 v0.4 §21/§25; TRACEABILITY-MATRIX-002 | CR-01; SAFE-053/054 UNMAPPED resolved |
+| Part-2/3 RFC DEC/TEST narrow-only traceability rows | RFC-003 §15, RFC-004 §14, RFC-005 §15, RFC-006 §16, RFC-007 §15, RFC-010 §13 | CR-01; RFC-003/RFC-006 also carry CONST-003 notes |
+| IMPLEMENTATION-PLAN-002 count refreshed to 372; DEV register recorded | verification/IMPLEMENTATION-PLAN-002.md | CR-01 |
+
+The Wave-4 EV-L0 review items (each MUST record reviewer provenance —
+model/substrate/determining inputs — per ADR-DEV-005; M-18) are: (1) DEV-row
+uniform `Critical` criticality vs per-family `High`; (2) per-family Minimum-Level
+defaults, especially AIR/BFA EV-L0/L1 and TAB's runtime-monitoring boundary;
+(3) SAFE-054 home (EGRESS-EV-013 chosen vs a new OBC family); (4) HAZ-024 anchor
+(HAG-EV-018 chosen vs a cross-system case); (5) PRD as a new ADR-002-001-owned
+family (chosen vs folding into SPG/BC); (6) the DEC-003 → RFC-004 venue mapping
+satisfying CONST-007's intent; (7) M-18 reviewer-provenance compliance for all
+Wave-4 artifacts; (8) narrow-only placement §12 (chosen) vs §5 and clause vs a
+new CONST-016; (9) per-case Probe/Injection/Expected wording fidelity to each
+source invariant.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -314,6 +343,8 @@ Recorded evidence debt (to be discharged in the Part-2/3 register consolidation 
 
 Acceptance criteria for the new invariants are stated in ADR-002-015 §17.1 and carried in the HAG-INV-015..019 statements. Until the evidence is registered, passed, and independently reviewed, the variant is non-authorizing and confers no live readiness; the ADR-002-015 §29 Approval Gate is unchanged. This is an acceptance blocker, not a status promotion.
 
+**DISCHARGED (Wave 4):** registered as HAG-EV-013 through HAG-EV-017 (the Governed Single-Operator Re-Arm Variant, HAG-INV-015..019, and SAFE-053); see §3.7 and VER-002-001 §§384–388. Register count 363 → 372. The variant remains non-authorizing and `NOT_IMPLEMENTED`; registration is not execution.
+
 ### 4.3 Evidence Debt — CORPUS-REVIEW-0001 Wave 2 (Theme A/B)
 
 Wave 2 (RFC-000-Patch-0009, RFC-001-Patch-0010) introduced one new constitutional requirement (CONST-015), two new Catastrophic hazards (HAZ-024, HAZ-025), and one new Critical safety requirement (SAFE-054). Consistent with §4.2, the associated verification-evidence obligations are **deliberately not registered in EVIDENCE-REGISTER-002 in this wave**, to prevent evidence-count drift while the Part-2/3 register consolidation is pending. The register count remains 363 `NOT_IMPLEMENTED` items; no row was added or removed.
@@ -326,6 +357,8 @@ Recorded evidence debt (to be discharged in the Part-2/3 register consolidation 
 
 Until this evidence is registered, passed, and independently reviewed, CONST-015, HAZ-024, HAZ-025, and SAFE-054 confer no live readiness; production readiness remains NO. This is an acceptance blocker, not a status promotion.
 
+**DISCHARGED (Wave 4):** registered as HAG-EV-018 (HAZ-024; SAFE-042/046/050/053) and EGRESS-EV-013 (HAZ-025 / SAFE-054); see §3.7 and VER-002-001 §§389–390. Register count 363 → 372. CONST-015 rides on SAFE-042/046/053 and owed no separate row. The M-06 question of whether an out-of-band egress path actually exists remains open (§4.5); SAFE-054 permits closing EGRESS-EV-013 via the accepted-residual-risk / reduced-scope branch. All rows remain `NOT_IMPLEMENTED`.
+
 ### 4.4 Evidence Debt — CORPUS-REVIEW-0001 Wave 3 (ADR-002-001 evidence-gate binding)
 
 Wave 3 (PATCH-ADR-002-001-v0.3, RFC-001-Patch-0011) bound ADR-002-001's §21 acceptance criteria to verification evidence and added the consolidated `ADR-002-001` approval gate to VER-002-001 §380. Two criteria are only PARTIALLY discharged by existing evidence families and carry dedicated evidence debt. Consistent with §4.2/§4.3, no register row was added; the count remains 363 `NOT_IMPLEMENTED` items.
@@ -337,6 +370,15 @@ Recorded evidence debt (to be discharged in the Part-2/3 register consolidation 
 - The TRACEABILITY-MATRIX-002 UNMAPPED entries SAFE-053 and SAFE-054 remain accepted evidence debt already recorded in §4.2 and §4.3 respectively; no additional row is owed for them here.
 
 Until this evidence is registered, passed, and independently reviewed, ADR-002-001 remains `Proposed` and criteria #1 and #11 confer no acceptance. This is an acceptance blocker, not a status promotion.
+
+**DISCHARGED (Wave 4):** registered as PRD-EV-001 (§21 criterion #1, protective-resource-domain enumeration completeness) and PRD-EV-002 (§21 criterion #11, per-resource guarantee-level assignment) under the new ADR-002-001-owned PRD family; see §3.7, ADR-002-001 v0.4 §21/§25, and VER-002-001 §§391–392. Register count 363 → 372. ADR-002-001 remains `Proposed`; both rows are `NOT_IMPLEMENTED`.
+
+### 4.5 Remaining Debt After Wave 4
+
+- **M-06 architectural existence.** Whether an out-of-band final-egress containment path independent of the egress enforcement point actually exists remains open. EGRESS-EV-013 registers the evidence obligation; SAFE-054 permits closing it via the accepted-residual-risk / reduced-scope branch. This is a separate Major finding, not part of CR-01.
+- **No execution.** All 372 Part-1 items (EVIDENCE-REGISTER-002) and all 96 Part-2/3 items (EVIDENCE-REGISTER-DEV) remain `NOT_IMPLEMENTED`; registration is not execution and confers no live readiness.
+- **TRACEABILITY-MATRIX-002 §5.3 source gaps.** ADR-002-002 through ADR-002-006 lack a §2x Requirements Traceability table, so their families (RC, SA, BC, STATE, RECON) are not reachable through the SAFE→ADR bridge. This is deferred and scoped out of CR-01; no coverage is lost because those SAFEs are co-claimed by other realizing ADRs.
+- **Part-2/3 ratification pending.** RFC-003 through RFC-011, ADR-DEV-001 through ADR-DEV-015, and VER-DEV-001 remain `Proposed`.
 
 ---
 
@@ -393,7 +435,8 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
 | Safety Monitoring Policy, Critical Telemetry and Monitor Coverage Manifests, Continuous Conformance Snapshot, Safety Monitoring Gap, Safety Alert Record, and Alert Escalation Record artifacts | Templates only; DRAFT/INCOMPLETE/UNKNOWN/SUSPECTED/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Software Release Policy, reviewed-source, dependency/toolchain-closure, build-provenance, artifact, admission, admitted-set, and runtime-attestation artifacts | Templates only; DRAFT/UNKNOWN/INVALID/DENY/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Post-Trade Finality Policy, Economic Obligation Record, Active Economic Obligation Set, Post-Trade Finality Proof, Post-Trade Break Record, and Statement Coverage Manifest artifacts | Templates only; DRAFT/UNKNOWN/UNPROVEN/OPEN/non-authorizing/non-mutating/fail-closed | YES | NO |
-| Verification evidence | 363 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Verification evidence | 372 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Development-track verification evidence | 96 items registered (EVIDENCE-REGISTER-DEV), all `NOT_IMPLEMENTED` | NO claim of completion | NO |
 
 ---
 
@@ -418,7 +461,7 @@ A written test case, mock output, or design review is not completed verification
 
 ```text
 1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, human and automated approval, evidence/replay/recovery, Critical Input/context, venue constraint, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Trading Approval Policy, Currentness Policy, Restricted-Live Trial Policy, Software Release Policy, reviewed-source/dependency/toolchain/build-provenance/signing/registry/admission/release-set/runtime-attestation mechanisms, plan/run/abort/promotion registry, evidence-coverage model, owner/dependency registry, Currentness Ordering Domain, restrictive ingress, local latch, per-send proof/claim, independent-validation/common-mode, single-use Intent and promotion consumption, adverse-scenario/state-cut/shared-scope/cause-amplification protocols, deterministic compiler/evaluator/verifier, numeric/unit/mapping/risk/flow/trial/release registry, canonicalization, serializer/SDK, actual-outbound comparison, generation fencing, signing, and independent Human HALT substrates.
-2. Assign implementation owners, evidence owners, and independent reviewers for all 363 items in EVIDENCE-REGISTER-002.csv.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 372 items in EVIDENCE-REGISTER-002.csv, and for all 96 items in EVIDENCE-REGISTER-DEV.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, human and automated exact approval, single-use Intent consumption, Human HALT, Recovery Barrier, Critical Input/context, venue constraint/admissibility, canonical command, economic-effect, aggregate-risk projection/decision, action-flow decision/permit/reserve, conformance-proof, downstream-mutation, and invalidation state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.

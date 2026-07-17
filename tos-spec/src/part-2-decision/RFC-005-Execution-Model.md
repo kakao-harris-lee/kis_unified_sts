@@ -453,6 +453,7 @@ companion RFCs are accepted.
 | ADR-002-022 action-flow/retry-storm | execution stays within the action-flow budget and protective reserve (§§8, 11, 12) |
 | ADR-002-024 final-egress currentness | execution never bypasses send-boundary currentness/ordering (§§10, 12) |
 | philosophy §§12, 19, 20 | execution-is-irreversible, potential-exposure, partial≠complete operationalized (§4) |
+| RFC-000 §12 narrow-only; §12 Execution-Model↔Safety Boundary | registered as DEC-002 (VER-DEV-001, EVIDENCE-REGISTER-DEV; evidence DEC-EV-002); widens no Part-1 authority |
 
 RFC-005 introduces no SAFE-xxx requirement and no numeric bound.
 

@@ -6,3 +6,6 @@
 
 # mdbook build output
 /book/
+
+# OMC framework state (not part of the published spec tree)
+**/.omc/
