@@ -2,14 +2,14 @@
 
 **Document ID:** RFC-006
 **Title:** Risk Model
-**Version:** 0.1 Review Draft
+**Version:** 0.2 Review Draft
 **Status:** Review Draft — Decision Framework
 **Classification:** Decision-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case and RFC-002 — Architecture
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-17
 
 ---
 
@@ -415,6 +415,13 @@ into this specification.
   the worst-case single-day move on an unhedged position — a Korea-specific input
   to tail-risk calibration that differs from markets without hard daily limits.
   The methodology uses the band as a living input, not a hardcoded value.
+* **Unhedged overnight gap (tail input).** The KOSPI200 futures night session is disabled by
+  operator policy, so equity exposure carries an overnight and global-event gap that is not
+  hedgeable via the futures leg outside day-session hours — a binding constraint surfaced by
+  RFC-007 §13 as residual risk. The tail methodology SHALL accept this unhedged overnight
+  residual exposure as an explicit input to tail calibration, because an overnight/global-event
+  gap can exceed a single KRX day-session price-limit band; it SHALL NOT assume an intraday
+  price-limit bound covers the held exposure across the overnight boundary.
 * **Fat tails and jumps.** KOSPI200 futures returns are fat-tailed and jump-prone
   around scheduled macro events; normal-parametric VaR alone can understate tail
   risk (§7).
@@ -452,7 +459,9 @@ content.
   hedge decision uses (hedge ratio, basis risk, correlation), but hedge
   construction remains owned by RFC-007 and its protective classification is
   owned exclusively by the Protective Action Controller under ADR-002-001 §6; a
-  hedge's risk-reduction benefit is subject to ARE-INV-005 (§8).
+  hedge's risk-reduction benefit is subject to ARE-INV-005 (§8). RFC-006 also consumes
+  RFC-007 §13's night-session-disabled unhedged-overnight-gap as an explicit tail-calibration
+  input (§14).
 
 Until each companion RFC is accepted, its concerns remain open and SHALL NOT be
 resolved by risk-model convention.
@@ -567,3 +576,13 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   part-2 RFCs, so the citation was corrected to the decision-layer research
   references, where the gap is recorded as an open reviewer finding. The gap
   itself is unchanged and remains a governance item.
+
+### v0.2 — Wave 5 (CORPUS-REVIEW-0001 mn-09)
+
+* §14 now accepts RFC-007 §13's night-session-disabled unhedged-overnight-gap (a binding
+  constraint) as an explicit input to the tail methodology, and §15 records the reciprocal
+  pointer. This is a one-line traceability link (CORPUS-REVIEW-0001 mn-09); it introduces no
+  SAFE-xxx requirement, numeric bound, or authority, and every value remains living
+  configuration inside the Hard Safety Envelope.
+* Independent adversarial EV-L0 review of this Wave-5 change is **owed** (reviewer provenance
+  to be recorded per ADR-DEV-005; M-18); it confers no acceptance or live-readiness.

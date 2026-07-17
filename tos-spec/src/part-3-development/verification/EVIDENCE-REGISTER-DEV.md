@@ -14,13 +14,13 @@ the machine-editable source.
 
 ## Status Summary
 
-- Total evidence items: **96**
-- NOT_IMPLEMENTED: **96**
+- Total evidence items: **97**
+- NOT_IMPLEMENTED: **97**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
 
-Of the 96 items, 90 are 1:1 with the Part-3 ADR-DEV invariants (15 families,
+Of the 97 items, 91 are 1:1 with the Part-3 ADR-DEV invariants (15 families,
 `PFX-EV-0nn` ↔ `PFX-INV-0nn`), five are the Part-2 decision-boundary cluster
 (`DEC-EV-001` through `DEC-EV-005`), and one is the RFC-010 testing-boundary
 cluster (`TEST-EV-001`).
@@ -91,6 +91,7 @@ widens any Part-1 authority, limit, or gate (RFC-000 §12).
 | SOS-EV-003 | Strategy Output Semantics | No Combined Authority via Aggregation | ADR-DEV-007 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
 | SOS-EV-004 | Strategy Output Semantics | Each Target Is Well-Formed and Bounded | ADR-DEV-007 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
 | SOS-EV-005 | Strategy Output Semantics | Output Semantics Grant No Authority | ADR-DEV-007 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
+| SOS-EV-006 | Strategy Output Semantics | Vector Component Interdependence Is Declared; Undeclared Is Atomic | ADR-DEV-007 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
 | DCM-EV-001 | Degraded Companion Model | Degradation Narrows Never Widens | ADR-DEV-008 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
 | DCM-EV-002 | Degraded Companion Model | Degraded Output Is Restrictive Not Neutral | ADR-DEV-008 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
 | DCM-EV-003 | Degraded Companion Model | The Degraded Decision Is First-Class and Reproducible | ADR-DEV-008 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
@@ -156,3 +157,6 @@ widens any Part-1 authority, limit, or gate (RFC-000 §12).
   their RFCs, not by an ADR-DEV.
 - Per-case probe/injection and expected outcomes are specified in VER-DEV-001 §5;
   the per-ADR-DEV and per-cluster approval gates are in VER-DEV-001.
+- SOS-EV-006 was added by the Wave-5 patch (CORPUS-REVIEW-0001 M-14; ADR-DEV-007 SOS-INV-006):
+  total 96 → 97, SOS family 5 → 6, invariant cases 90 → 91. Registration creates no
+  verification evidence, ADR-DEV acceptance, or live readiness; the item is `NOT_IMPLEMENTED`.

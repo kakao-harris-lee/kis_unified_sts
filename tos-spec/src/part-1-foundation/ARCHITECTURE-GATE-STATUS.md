@@ -264,6 +264,35 @@ Wave-4 artifacts; (8) narrow-only placement §12 (chosen) vs §5 and clause vs a
 new CONST-016; (9) per-case Probe/Injection/Expected wording fidelity to each
 source invariant.
 
+### 3.8 CORPUS-REVIEW-0001 Wave 5 (Theme E — decision-output semantics; mn-08/mn-09)
+
+Wave 5 resolves CORPUS-REVIEW-0001 Theme E (M-13, M-14, M-15) and mn-08/mn-09. All changes are
+narrow-only and additive; no numbered section was renumbered, and vision.md, philosophy.md,
+RFC-000, and every Part-1 document are unchanged. No SAFE-xxx requirement or numeric bound was
+introduced. RFC-003, RFC-006, and ADR-DEV-007 move to v0.2.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| M-13: no-action (hold) vs explicit flat (target=0) defined as distinct reproducible auditable outcome types, with a type-aware restrictive default (a reduction routes through ADR-002-001 §6 protective classification; hold blocks new risk); §16 Q4 resolved | RFC-003 §7, §9, new §9.1, §16 Q4; header/Review History v0.2 | RFC-003-Patch-0013; adopts ADR-DEV-007 SOS-INV-001 at the decision layer; grounds in CONST-012, philosophy §39.4; introduces no SAFE-xxx |
+| M-15: LLM/stochastic Critical-Input proviso — recorded-response reproducibility satisfies audit but not SAFE-034 independent recomputation; a Critical-Input LLM value is non-approvable (restrictive), soft-evidence only; §16 Q3 reformulated and resolved | RFC-003 §10, §16 Q3; header/Review History v0.2 | RFC-003-Patch-0013; cites SAFE-034, ADR-002-018 §13, ADR-002-023; introduces no SAFE-xxx |
+| mn-08: portfolio reasoning at Interpretation, per-target semantics at emission/approval binding; §16 Q1 resolved | RFC-003 §9/§9.1, §16 Q1; header/Review History v0.2 | RFC-003-Patch-0013; cites ADR-DEV-007 SOS-INV-002/006, ADR-002-023 |
+| M-14: new SOS-INV-006 (vector component interdependence declared; undeclared atomic, fail-closed; partial approval of an atomic vector → whole-vector non-realization + strategy re-evaluation); §10 "represent gracefully" replaced; declared-coverage-vs-mistaken-omission sharpened (no SOS-INV-007) | ADR-DEV-007 §1, §5, §6 (SOS-INV-006), §8, §10, §11.5, §12.7, §13, §14; header/Review History v0.2 | ADR-DEV-007-Patch-0014; safety floor held by ADR-002-021 aggregate projection (M-14 mitigant confirmed); SOS-INV-006 adds intent-fidelity only; introduces no SAFE-xxx |
+| M-14 sync: SOS-EV-006 added; ADR-DEV-007 gate now requires SOS-EV-001..006; invariant→evidence coverage 90 → 91; development-track total 96 → 97 | VER-DEV-001 §1/§5/§6/§7/§8; EVIDENCE-REGISTER-DEV.{md,csv} | ADR-DEV-007-Patch-0014; independent of the Part-1 count; all rows `NOT_IMPLEMENTED`. Note: RFC-002 §26's "(96 items)" is the Wave-4 establishment figure and is preserved as history; the current development-track total is 97 per this row |
+| mn-09: unhedged overnight gap (RFC-007 §13 binding constraint) accepted as an explicit input to the tail methodology | RFC-006 §14 (and §15 pointer); header/Review History v0.2 | RFC-006-Patch-0015; one-line link; introduces no SAFE-xxx |
+
+The Wave-5 EV-L0 review items (each MUST record reviewer provenance — model/substrate/
+determining inputs — per ADR-DEV-005, M-18; none is self-reviewed by the author) are:
+(1) SOS-INV-007 excluded — the declared-coverage-vs-mistaken-omission distinction folded into
+ADR-DEV-007 §8 prose rather than a seventh invariant; (2) RFC-003 §16 Q3 marked
+resolved-with-narrowed-residual (soft-evidence boundary deferred to RFC-004) rather than left
+precise-open; (3) the decision-layer adoption of ADR-DEV-007 SOS-INV-001/002/006 as a
+parent-to-child citation; (4) placement of the hold/flat taxonomy in a new RFC-003 §9.1 versus
+inline in §9; (5) SOS-INV-006's cross-reference into RFC-003 §9.1 for the atomic-vector
+re-evaluation (M-13 ↔ M-14 mutual consistency); (6) mn-09 tail-input placement in RFC-006 §14
+versus §7 tail caveats. Patch documents (RFC-003-Patch-0013, ADR-DEV-007-Patch-0014,
+RFC-006-Patch-0015) are recorded in the git-excluded patches/ per the repository convention;
+this section is the committed merge record.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -376,7 +405,7 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
 ### 4.5 Remaining Debt After Wave 4
 
 - **M-06 architectural existence.** Whether an out-of-band final-egress containment path independent of the egress enforcement point actually exists remains open. EGRESS-EV-013 registers the evidence obligation; SAFE-054 permits closing it via the accepted-residual-risk / reduced-scope branch. This is a separate Major finding, not part of CR-01.
-- **No execution.** All 372 Part-1 items (EVIDENCE-REGISTER-002) and all 96 Part-2/3 items (EVIDENCE-REGISTER-DEV) remain `NOT_IMPLEMENTED`; registration is not execution and confers no live readiness.
+- **No execution.** All 372 Part-1 items (EVIDENCE-REGISTER-002) and all 97 Part-2/3 items (EVIDENCE-REGISTER-DEV) remain `NOT_IMPLEMENTED`; registration is not execution and confers no live readiness. (The Part-2/3 count rose 96 → 97 in Wave 5; see §3.8.)
 - **TRACEABILITY-MATRIX-002 §5.3 source gaps.** ADR-002-002 through ADR-002-006 lack a §2x Requirements Traceability table, so their families (RC, SA, BC, STATE, RECON) are not reachable through the SAFE→ADR bridge. This is deferred and scoped out of CR-01; no coverage is lost because those SAFEs are co-claimed by other realizing ADRs.
 - **Part-2/3 ratification pending.** RFC-003 through RFC-011, ADR-DEV-001 through ADR-DEV-015, and VER-DEV-001 remain `Proposed`.
 
@@ -436,7 +465,7 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
 | Software Release Policy, reviewed-source, dependency/toolchain-closure, build-provenance, artifact, admission, admitted-set, and runtime-attestation artifacts | Templates only; DRAFT/UNKNOWN/INVALID/DENY/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Post-Trade Finality Policy, Economic Obligation Record, Active Economic Obligation Set, Post-Trade Finality Proof, Post-Trade Break Record, and Statement Coverage Manifest artifacts | Templates only; DRAFT/UNKNOWN/UNPROVEN/OPEN/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Verification evidence | 372 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
-| Development-track verification evidence | 96 items registered (EVIDENCE-REGISTER-DEV), all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Development-track verification evidence | 97 items registered (EVIDENCE-REGISTER-DEV), all `NOT_IMPLEMENTED` | NO claim of completion | NO |
 
 ---
 
@@ -461,7 +490,7 @@ A written test case, mock output, or design review is not completed verification
 
 ```text
 1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, human and automated approval, evidence/replay/recovery, Critical Input/context, venue constraint, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Trading Approval Policy, Currentness Policy, Restricted-Live Trial Policy, Software Release Policy, reviewed-source/dependency/toolchain/build-provenance/signing/registry/admission/release-set/runtime-attestation mechanisms, plan/run/abort/promotion registry, evidence-coverage model, owner/dependency registry, Currentness Ordering Domain, restrictive ingress, local latch, per-send proof/claim, independent-validation/common-mode, single-use Intent and promotion consumption, adverse-scenario/state-cut/shared-scope/cause-amplification protocols, deterministic compiler/evaluator/verifier, numeric/unit/mapping/risk/flow/trial/release registry, canonicalization, serializer/SDK, actual-outbound comparison, generation fencing, signing, and independent Human HALT substrates.
-2. Assign implementation owners, evidence owners, and independent reviewers for all 372 items in EVIDENCE-REGISTER-002.csv, and for all 96 items in EVIDENCE-REGISTER-DEV.csv.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 372 items in EVIDENCE-REGISTER-002.csv, and for all 97 items in EVIDENCE-REGISTER-DEV.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, human and automated exact approval, single-use Intent consumption, Human HALT, Recovery Barrier, Critical Input/context, venue constraint/admissibility, canonical command, economic-effect, aggregate-risk projection/decision, action-flow decision/permit/reserve, conformance-proof, downstream-mutation, and invalidation state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.

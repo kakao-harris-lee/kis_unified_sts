@@ -2,14 +2,14 @@
 
 **Document ID:** RFC-003
 **Title:** Decision Framework
-**Version:** 0.1 Review Draft
+**Version:** 0.2 Review Draft
 **Status:** Review Draft — Decision Framework
 **Classification:** Decision-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case and RFC-002 — Architecture
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-17
 
 ---
 
@@ -205,9 +205,11 @@ Within its span, a conforming decision process proceeds as:
 2. **Interpret.** Apply the Decision Policy to the context to form a view. All
    derived quantities SHALL trace deterministically to admitted context; no
    hidden state, default, or out-of-context fetch is permitted.
-3. **Decide.** Select exactly one outcome: a single Proposal, or an explicit
-   no-action. The outcome SHALL be within the scope the context and current
-   configuration permit.
+3. **Decide.** Select exactly one decision outcome, of a distinct, reproducible, and
+   auditable outcome type (§9.1): a **no-action (hold)**, or an **action** expressed as one
+   or more Proposals — a per-instrument target, or a portfolio-wide target vector emitted as
+   a set of per-instrument Proposals. The outcome SHALL be within the scope the context and
+   current configuration permit.
 4. **Bind and emit.** Bind the outcome to the exact Decision Context Capsule
    identity and digest, attach rationale, and emit it to the Approval stage.
    Binding does not create authority.
@@ -253,12 +255,13 @@ it.
 
 ## 9. Decision Output: the Proposal
 
-The decision layer's only output is a **Proposal**. Per RFC-002 §10.2 the
-Decision Service SHALL identify the intended account, instrument, direction,
-quantity, and constraints, and SHALL provide decision rationale. A Proposal
-becomes an **Intent** only when the Independent Approval Service approves it and
-the Intent Registry consumes it exactly once (ADR-002-023); the decision layer
-owns none of those transitions.
+The decision layer emits one of two distinct, reproducible, and auditable outcome types
+(§9.1): a **no-action (hold)** outcome, or an **action** expressed as one or more
+**Proposals**. Per RFC-002 §10.2 the Decision Service SHALL identify the intended account,
+instrument, direction, quantity, and constraints, and SHALL provide decision rationale for
+each Proposal. A Proposal becomes an **Intent** only when the Independent Approval Service
+approves it and the Intent Registry consumes it exactly once (ADR-002-023); the decision
+layer owns none of those transitions.
 
 A Proposal SHALL be complete and immutable, and SHALL be capable of populating
 the Approved Intent Contract field set defined in ADR-002-020 §8, including at
@@ -276,6 +279,62 @@ A Proposal SHALL NOT use wildcard account, instrument, side, quantity, unit, or
 for live use. The decision layer does not assign Intent identity, does not manage
 the Intent lifecycle (ADR-002-005), and SHALL NOT presume that a well-formed
 Proposal is or will become authorized.
+
+### 9.1 Decision Outcome Types: No-Action (Hold), Explicit Flat, and the Atomic Unit
+
+A conforming decision produces exactly one outcome of a distinct, reproducible, and auditable
+type. RFC-003 adopts, at the decision layer, the outcome distinctions resolved for the
+authoring layer by ADR-DEV-007 (SOS-INV-001, -002, -006), and states them here as
+decision-layer norms without redefining that realization.
+
+* **No-action (hold).** A no-action (hold) outcome proposes nothing and leaves existing
+  exposure, open orders, and position unchanged; it introduces no new risk. It is a
+  first-class decision (philosophy §6; §6 principle 4), produced, recorded, and reproduced
+  with the rigor of an action (§10), and it is never an error, a null, or an omission.
+* **Explicit flat (target = 0).** An explicit flat is an *action* — a Proposal whose target
+  is a zero position for a single instrument (a portfolio-wide flat is a set of per-instrument
+  explicit-flat Proposals, never one wildcard flat). Its intent is to *reduce* exposure.
+  No-action (hold) and explicit flat are opposite in exposure terms (maintain vs. reduce) and
+  SHALL NOT be conflated: a decision that intends to reduce exposure SHALL emit an explicit
+  flat, not a no-action, which would leave the exposure in place.
+* **Type-aware restrictive default under Critical Uncertainty.** The restrictive default of
+  §6 principle 3 is applied *by outcome type* where a valid Decision Context exists, because
+  a single "unresolved → no-action" rule is ambiguous for a reduction:
+  * for a decision to *open or increase* exposure, the restrictive outcome is a no-action
+    (hold): the decision declines to add risk and existing exposure is left unchanged;
+  * for a decision to *reduce* exposure, the restrictive treatment is **not** a downgrade to
+    no-action (which would strand the exposure). The decision SHALL emit an explicit flat so
+    that its protective status can be established by the Protective Action Controller under
+    ADR-002-001 §6 (Final-State and Intermediate-State tests). The decision layer SHALL NOT
+    classify its own flat as protective (§11 item 6; RFC-001 §5.25); if the reduction cannot
+    be established protective under ADR-002-001 §6 it is denied there, and any resulting
+    trapped exposure is handled by the safety machinery, not by the decision layer.
+
+  This is the Constitutional Safe-State treatment (RFC-000 CONST-012): in the Constitutional
+  Safe State no risk-increasing action is authorized while a bounded protective action may be,
+  and "stop/flat means safe" is not assumed (philosophy §39.4) — a reduction is safe only when
+  proven so at every intermediate state.
+
+  **An invalid context is not a decision.** Under §7 step 1 — a missing, stale, incomplete,
+  or invalid Capsule — the process SHALL NOT decide and SHALL NOT emit any action, including
+  an explicit flat; the only outcome is the restrictive no-action bound to that context state.
+  Exposure that requires protection while the context is invalid is owned by the Constitutional
+  Safe State and the Protective Action Controller (RFC-000 CONST-012; ADR-002-001 §6), not by
+  the decision layer. The type-aware reduction → explicit-flat rule above applies only where a
+  valid Decision Context exists and Critical Uncertainty applies (§6 principle 3).
+* **The atomic unit (portfolio reasoning vs. emission).** Portfolio-level *reasoning* —
+  forming a target across multiple instruments — is performed in the Interpretation stage
+  (§7 step 2). *Emission and approval binding* follow the per-target semantics: the atomic
+  unit is a per-instrument target (one Proposal) or a portfolio-wide target vector emitted as
+  a **set** of per-instrument Proposals, each its own ADR-002-020 §8 contract, each
+  independently approved and capacity-evaluated (ADR-002-023; ADR-002-002/021), never a single
+  aggregated authority (§11 item 16; §13). A vector carries its component interdependence
+  declaration (all-or-none, else atomic by default) per ADR-DEV-007 SOS-INV-006; a partial
+  approval of an atomic vector yields whole-vector non-realization plus a recorded
+  re-evaluation (never a silent partial), and that re-evaluation follows the hold/flat rule
+  above — a still-intended reduction is re-expressed as explicit flat(s), never stranded as a
+  hold. Both units are supported; the unit is declared, not inferred (ADR-DEV-007
+  SOS-INV-002).
 
 ---
 
@@ -300,6 +359,22 @@ To achieve this, the process SHALL:
   externally-sourced component (for example an LLM-derived interpretation) SHALL
   be reproducible from a recorded seed and a recorded response, and the recorded
   artifact SHALL be part of the decision evidence.
+
+**Replayable is not independently recomputable (Critical-Input proviso).** Reproducibility
+from a recorded seed and recorded response satisfies *audit* — it lets a reviewer replay what
+the component returned — but it does **not** satisfy the independent-recomputation requirement
+of RFC-001 SAFE-034 (Independent Approval Inputs; ADR-002-018 §13; ADR-002-023), under which
+the Independent Approval Service re-derives the decision's safety-critical facts (account,
+instrument, direction, quantity, price constraints, exposure) from the Critical Input Snapshot
+rather than trusting the proposer's values. A stochastic or external-source-derived value (for
+example an LLM-derived interpretation) can be *replayed* but cannot be *independently
+recomputed* from first principles, so the approval side cannot verify it. Therefore, where such
+a value is a **Critical Input** — one that determines direction, instrument, quantity, price,
+or exposure (§8) — the proposal is non-approvable (restrictive), because it cannot pass
+independent recomputation; this is fail-closed. Such a value MAY be used only as **soft
+evidence**: non-direction/quantity/exposure-determining context corroborating a decision whose
+determining inputs are themselves independently recomputable. Relabeling the value does not
+change this (§8; §11 item 10).
 
 Reproducibility is a decision-layer discipline. It does not replace the evidence,
 audit, and replay integrity governed by ADR-002-016; it supplies conforming
@@ -452,11 +527,12 @@ as RFC-004 through RFC-007 are accepted.
 | RFC-000 CONST-003 (Positive Expectancy; delegated by RFC-001 §12) | framework-level obligation and evidentiary standard; methodology deferred to RFC-006 (§12) |
 | RFC-000 §9 layering; §10 decision hierarchy | RFC-003 confined to Interpretation → Decision, no bypass/reorder (§§1, 7) |
 | RFC-000 §11 Decision Context | decision consumes immutable validated context only (§§6, 8) |
-| RFC-001 SAFE-030, SAFE-031, SAFE-034 | Critical Input governance, provenance, and independent recomputation honored (§§8, 11) |
+| RFC-001 SAFE-030, SAFE-031, SAFE-034 | Critical Input governance, provenance, and independent recomputation honored, including the recorded-response-≠-recomputation proviso (§§8, 10, 11) |
 | RFC-002 §10.2 Decision Service contract | elaborated as the conforming decision pipeline and Proposal output (§§7, 9) |
 | RFC-002 §9.1 authority separation | restated as the decision↔safety boundary (§11) |
 | philosophy §§6, 7, 8, 13, 28, 29 | operationalized as framework principles (§§4, 6, 12, 13) |
 | RFC-000 §12 narrow-only; §11 Decision↔Safety Boundary | registered as DEC-001 (VER-DEV-001, EVIDENCE-REGISTER-DEV; evidence DEC-EV-001); widens no Part-1 authority |
+| CORPUS-REVIEW-0001 Wave 5 (M-13, M-15, mn-08); RFC-003 §16 Q1/Q3/Q4 | hold vs explicit-flat outcome types with a type-aware restrictive default (§9.1); LLM Critical-Input recomputation-independence proviso (§10); per-target emission semantics (§9.1) — narrow-only, introduces no SAFE-xxx |
 
 RFC-003 introduces no SAFE-xxx requirement and no numeric bound. It relies
 entirely on the enforcement points already defined upstream.
@@ -472,19 +548,35 @@ ADR-002-025 restricted-live evidence (RFC-000 CONST-003 Traceability).
 
 ## 16. Open Questions
 
-These questions are open while RFC-003 is a Review Draft and while RFC-004
-through RFC-007 are unwritten. They SHALL NOT be resolved by informal decision-
-layer convention.
+These questions accompany RFC-003 as a Review Draft. Q1, Q3, and Q4 are resolved below
+through governed patch (CORPUS-REVIEW-0001 Wave 5), not by informal decision-layer convention;
+the remainder stay open while the companion models (RFC-004–007) are accepted only in part. An
+open question SHALL NOT be resolved by informal decision-layer convention.
 
-1. Is the atomic decision unit a per-instrument target position or a
-   portfolio-wide target vector, and does the framework support both?
+1. **Resolved (Wave 5).** Both are supported. Portfolio-level reasoning is performed at
+   Interpretation; emission and approval binding follow the per-target semantics — a
+   per-instrument target is one Proposal and a portfolio vector is a set of per-instrument
+   Proposals, each its own ADR-002-020 §8 contract independently approved, with declared
+   component interdependence (atomic when undeclared) (§9.1; ADR-DEV-007 SOS-INV-002/006;
+   ADR-002-023). No aggregated authority is created (§11 item 16).
 2. What is the minimum decision-evidence granularity required to reconstruct a
    decision's rationale long after the fact without any live service?
-3. For a seeded-stochastic or externally-sourced interpretation component, is
-   "reproducible from a recorded seed and response" a sufficient reproducibility
-   standard, or is stricter determinism required for specific action classes?
-4. How are "no-action / hold" and "explicit flat (target = 0)" represented so
-   that both are distinct, reproducible, and auditable?
+3. **Reformulated and resolved (Wave 5) — recomputation independence.** Recorded-seed /
+   recorded-response reproducibility satisfies audit but not the RFC-001 SAFE-034
+   independent-recomputation requirement (§10 proviso; ADR-002-018 §13; ADR-002-023). A value
+   derived from a stochastic or external source (for example an LLM) is replayable but not
+   independently recomputable; where it is a Critical Input that determines
+   direction/instrument/quantity/price/exposure, the proposal is non-approvable (restrictive),
+   and such a value may be used only as soft, non-determining evidence. The residual boundary
+   question — the precise line between soft evidence and a Critical Input for a given
+   interpretation, and any market-model-specific handling — is deferred to RFC-004 and does not
+   reopen the safety-determining resolution.
+4. **Resolved (Wave 5).** No-action (hold) — propose nothing, exposure unchanged, no new
+   risk — and explicit flat (target = 0) — a Proposal to reduce exposure — are distinct,
+   reproducible, auditable outcome types (§9.1), realized at the authoring layer by
+   ADR-DEV-007 SOS-INV-001. They are never conflated; a reduction intent SHALL be an explicit
+   flat, and under Critical Uncertainty a reduction routes through ADR-002-001 §6 protective
+   classification rather than being downgraded to a hold (§9.1).
 5. Which concrete market-state, execution-cost, risk, and hedge models
    (RFC-004–007) supply the inputs and the expectancy-realism apparatus this
    framework requires?
@@ -520,3 +612,30 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   corrected from ADR-002-018 CII-INV-013 (recovery non-revival) to ADR-002-018
   §9 (source continuity is not inferred from health), keeping RFC-003 and RFC-004
   consistent on the same rule.
+
+### v0.2 — Wave 5 (CORPUS-REVIEW-0001 Theme E: M-13, M-15; mn-08)
+
+* **M-13 (hold vs flat).** Added §9.1 defining no-action (hold) and explicit flat (target = 0)
+  as distinct, reproducible, auditable decision-layer outcome types (adopting ADR-DEV-007
+  SOS-INV-001), with a type-aware restrictive default under Critical Uncertainty: an
+  open/increase decision defaults to no-action (no new risk), while a reduction is expressed as
+  an explicit flat and routed through the Protective Action Controller's ADR-002-001 §6 tests
+  rather than downgraded to a hold (which would strand the exposure); the decision layer never
+  self-classifies protection (§11 item 6; RFC-001 §5.25). Grounded in CONST-012 and
+  philosophy §39.4. §16 Q4 resolved.
+* **M-15 (stochastic/LLM Critical Input).** Added a §10 proviso: recorded-seed/response
+  reproducibility satisfies audit but not the SAFE-034 independent-recomputation requirement
+  (ADR-002-018 §13; ADR-002-023). An LLM/external-source value that is a Critical Input
+  (direction/quantity/price/exposure-determining) makes the proposal non-approvable
+  (restrictive, fail-closed); such a value is admissible only as soft, non-determining
+  evidence. §16 Q3 reformulated and resolved (residual soft-evidence boundary deferred to
+  RFC-004).
+* **mn-08 (§9 singular Proposal vs §16 Q1).** §9/§9.1 now state that portfolio reasoning occurs
+  at Interpretation while emission and approval binding follow the per-target semantics of
+  ADR-DEV-007 (SOS-INV-002/006) and ADR-002-023 — a vector is a set of per-instrument
+  Proposals, never an aggregated authority. §16 Q1 resolved (citing SOS-INV-006).
+* All changes are narrow-only and introduce no SAFE-xxx requirement, numeric bound, or
+  authority; every restriction cites an existing Part-1 enforcement point (SAFE-034,
+  ADR-002-018 §13, ADR-002-023, ADR-002-001 §6, CONST-012). Independent adversarial EV-L0
+  review of these Wave-5 changes is **owed** (reviewer provenance to be recorded per
+  ADR-DEV-005; M-18); this patch confers no acceptance or live-readiness.

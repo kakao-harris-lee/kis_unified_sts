@@ -25,7 +25,7 @@ normative content carried no requirement identity or evidence row. The
 requirement identity and an evidence obligation for the first time.
 
 This specification is independent of VER-002-001 and does not change the Part-1
-evidence count. Its companion register (`EVIDENCE-REGISTER-DEV`, 96 items) never
+evidence count. Its companion register (`EVIDENCE-REGISTER-DEV`, 97 items) never
 enters the Part-1 count accounting.
 
 ## 2. Result States and Evidence Strength Levels (by reference)
@@ -53,7 +53,7 @@ authority, no admission, and no live readiness.
 
 ## 5. Evidence Cases
 
-The 90 invariant cases are 1:1 with the Part-3 ADR-DEV invariants
+The 91 invariant cases are 1:1 with the Part-3 ADR-DEV invariants
 (`PFX-EV-0nn` supports `PFX-INV-0nn`). The label **Injection** is used where the
 minimum level exercises a fault; **Probe** is used for pure EV-L0 design
 inspection.
@@ -323,6 +323,12 @@ inspection.
 - **Supports:** ADR-DEV-007 SOS-INV-005
 - **Injection:** Treat representing an outcome as approving, committing capacity, or transmitting.
 - **Expected:** Representing any outcome is a Proposal only; it approves nothing, commits no capacity, and transmits nothing.
+
+#### SOS-EV-006 — Vector Component Interdependence Is Declared; Undeclared Is Atomic
+- **Minimum Level:** EV-L1
+- **Supports:** ADR-DEV-007 SOS-INV-006
+- **Injection:** Emit a portfolio vector with no interdependence declaration and confirm the default; partially approve an atomic vector (reject one per-target) and attempt to realize the approved remainder as a partial position; attempt to satisfy atomicity by unionizing per-target approvals.
+- **Expected:** An undeclared vector is atomic; partial approval of an atomic vector yields whole-vector non-realization plus a recorded, first-class strategy-level re-evaluation (never a silent naked partial), and that re-evaluation follows RFC-003 §9.1 (a still-intended reduction is re-expressed as Explicit Flat(s) classified under ADR-002-001 §6); per-target Independent Approval/capacity/consumption remain un-unionized (ADR-002-023, ADR-002-002/021), and the naked-leg consequence is independently bounded by ADR-002-021 aggregate projection.
 
 ### DCM — ADR-DEV-008 (Degraded Companion Model)
 
@@ -720,7 +726,7 @@ Requires:
 
 Requires:
 
-- SOS-EV-001 through SOS-EV-005;
+- SOS-EV-001 through SOS-EV-006;
 - independent review (reviewer provenance recorded per ADR-DEV-005).
 
 ### ADR-DEV-008
@@ -791,7 +797,7 @@ ADR-DEV-005).
 
 ## 7. Coverage Summary
 
-Invariant → evidence coverage is 90/90 (1:1). Part-2 decision RFCs and RFC-010
+Invariant → evidence coverage is 91/91 (1:1). Part-2 decision RFCs and RFC-010
 map to boundary clusters:
 
 | Owning RFC / ADR-DEV | Requirement / boundary | Evidence |
@@ -805,7 +811,7 @@ map to boundary clusters:
 | RFC-009 (Agent Guide) | §11 boundary | owned by AIR/APA/BFA families (ADR-DEV-004/005/006) |
 | RFC-010 (Testing Strategy) | TEST-001 (§11) + testing discipline | TEST-EV-001 + BTE/TAB families |
 | RFC-011 (Operational Guidelines) | §11 boundary | owned by OPB/OBS/OAS/RRC families (ADR-DEV-012/013/014/015) |
-| ADR-DEV-001..015 | PFX-INV-0nn | PFX-EV-0nn (90 rows) |
+| ADR-DEV-001..015 | PFX-INV-0nn | PFX-EV-0nn (91 rows) |
 
 RFC-008, RFC-009, and RFC-011 introduce no separate cluster evidence row: their
 §11 boundary lists are owned by the ADR-DEV families named above, which avoids
@@ -828,5 +834,5 @@ VER-DEV-001 moves from **Proposed** to **Approved for Execution** when:
   this track.
 
 Approval for execution authorizes no live trading, creates no capacity, and
-admits no artifact. All 96 development-track items remain `NOT_IMPLEMENTED` until
+admits no artifact. All 97 development-track items remain `NOT_IMPLEMENTED` until
 executed and independently reviewed.

@@ -41,6 +41,7 @@ SOS-EV-002,Strategy Output Semantics,The Atomic Authored Unit Is Explicit,ADR-DE
 SOS-EV-003,Strategy Output Semantics,No Combined Authority via Aggregation,ADR-DEV-007,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 SOS-EV-004,Strategy Output Semantics,Each Target Is Well-Formed and Bounded,ADR-DEV-007,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 SOS-EV-005,Strategy Output Semantics,Output Semantics Grant No Authority,ADR-DEV-007,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
+SOS-EV-006,Strategy Output Semantics,Vector Component Interdependence Is Declared; Undeclared Is Atomic,ADR-DEV-007,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 DCM-EV-001,Degraded Companion Model,Degradation Narrows Never Widens,ADR-DEV-008,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 DCM-EV-002,Degraded Companion Model,Degraded Output Is Restrictive Not Neutral,ADR-DEV-008,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 DCM-EV-003,Degraded Companion Model,The Degraded Decision Is First-Class and Reproducible,ADR-DEV-008,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,

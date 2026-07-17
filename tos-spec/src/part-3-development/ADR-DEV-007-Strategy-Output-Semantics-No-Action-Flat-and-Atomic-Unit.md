@@ -9,8 +9,8 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-008 §14 Q4 and RFC-008 §14 Q5
 **Date:** 2026-07-16
-**Version:** 0.1 Review Draft
-**Last Updated:** 2026-07-16
+**Version:** 0.2 Review Draft
+**Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -33,6 +33,14 @@ The DSL represents strategy output with two decisions fixed here:
   evaluation, and isolation** — never a single aggregated authority that bypasses
   per-Proposal governance (RFC-003 §16 Q1; ADR-002-023 and ADR-002-020 §8; RFC-008 §9
   states the analogous cross-strategy rule).
+* **A portfolio vector declares its component interdependence; absent a declaration it is
+  atomic (fail-closed).** A portfolio-vector emission carries an explicit all-or-none
+  (atomic) or mutual-independence declaration for its component targets; undeclared, it is
+  atomic. Partial approval of an atomic vector (one or more per-target rejections under
+  ADR-002-023) yields whole-vector non-realization plus a recorded strategy-level
+  re-evaluation, never a silent naked partial — while per-target approval, capacity, and
+  consumption remain un-unionized and the safety consequence of any partial is independently
+  bounded by ADR-002-021 aggregate projection (RFC-003 §16 Q1; SOS-INV-006).
 
 This ADR fixes output semantics. It grants no authority, approves nothing, commits no
 capacity, and authorizes no live operation.
@@ -115,6 +123,11 @@ non-authorizing.
   emitted as a **set** of per-instrument Proposals, **each its own ADR-002-020 §8
   contract** — never a single multi-instrument Proposal. The unit is declared, not
   implicit.
+* **Vector Interdependence Declaration** — a portfolio vector's explicit statement that its
+  component targets are all-or-none (atomic) or mutually independent, carried with the
+  emission as an authoring-semantics property; absent the declaration the vector is atomic
+  (fail-closed). It grants no authority and does not unionize per-target approval
+  (SOS-INV-006).
 
 These terms describe output semantics. None grants authority, approves, or commits
 capacity.
@@ -145,6 +158,25 @@ capacity.
 * **SOS-INV-005 — Output Semantics Grant No Authority.** Representing an outcome —
   no-action, flat, or a target — is a Proposal only; it approves nothing, commits no
   capacity, and transmits nothing (RFC-008 §8; RFC-002 §9.1).
+* **SOS-INV-006 — Vector Component Interdependence Is Declared; Undeclared Is Atomic
+  (Fail-Closed).** A portfolio-vector emission SHALL carry, for its component targets, either
+  (a) an explicit all-or-none atomicity declaration or (b) an explicit mutual-independence
+  declaration; absent an explicit declaration the vector SHALL be treated as atomic. On
+  partial approval — one or more per-target rejections under ADR-002-023 — an atomic vector
+  SHALL NOT be partially realized as though the whole vector were approved; the outcome SHALL
+  be whole-vector non-realization plus a recorded, first-class strategy-level re-evaluation on
+  fresh context (SOS-INV-001), never a silent naked partial. That re-evaluation is itself
+  subject to RFC-003 §9.1: if the strategy still intends to reduce exposure it re-expresses
+  Explicit Flat(s), each individually classified by the Protective Action Controller under
+  ADR-002-001 §6, so an atomic default preserves intent and never silently strands an intended
+  reduction as a hold. A declared-independent vector allows its non-rejected targets to
+  proceed under their own per-target governance, the strategy having declared that a rejected
+  component does not compromise the others. This invariant fixes authoring intent-fidelity
+  only: the per-target Independent Approval, capacity, and single-use consumption mechanics
+  (ADR-002-023, ADR-002-002/021) are unchanged and never unionized, and the safety consequence
+  of any partial (for example a naked hedge leg) is independently bounded by ADR-002-021
+  aggregate projection, which credits no unproven offset (ARE-INV-005) and covers partial-fill
+  prefixes.
 
 ---
 
@@ -181,10 +213,23 @@ The Proposal Builder SHALL support both units explicitly (SOS-INV-002, -003):
   Proposal;
 * the vector's **scope is exactly its enumerated targets**: an instrument outside that
   enumerated scope is untouched by this emission (its existing position and orders are
-  left as-is). This is the vector's declared coverage, not a no-action-by-omission — a
-  strategy that intends to flatten an instrument includes an Explicit Flat target for it,
-  and the strategy-level decision remains a first-class outcome, never a null evaluation
+  left as-is), a deliberate hold of that instrument. This is the vector's **declared
+  coverage**, not a no-action-by-omission and not an inferred flatten: the emitted set *is*
+  the strategy's coverage for this evaluation, which is what distinguishes an intended
+  exclusion from a mistaken omission. A strategy that intends to flatten an instrument SHALL
+  include an Explicit Flat target for it (the DSL never infers a flatten from silence), and
+  the strategy-level decision remains a first-class recorded outcome, never a null evaluation
   (SOS-INV-001);
+* the vector's **component interdependence is declared**: it carries an explicit all-or-none
+  (atomic) or mutual-independence declaration, and absent a declaration it is atomic
+  (SOS-INV-006). On partial approval — a per-target rejection under ADR-002-023 — an atomic
+  vector is not partially realized: the strategy-level outcome is a recorded re-evaluation on
+  fresh context (subject to RFC-003 §9.1, so a still-intended reduction is re-expressed as
+  Explicit Flat(s) individually classified under ADR-002-001 §6), never a silent naked
+  partial. This preserves authoring intent; it neither unionizes approval (each target
+  remains its own non-unionable Independent Approval Decision) nor adds a safety floor, since
+  the naked-leg consequence is independently bounded by ADR-002-021 aggregate projection
+  (ARE-INV-005; partial-fill-prefix coverage);
 * whichever unit a strategy uses is declared, so per-Proposal approval and capacity
   evaluation attach to the right object (RFC-003 §13);
 * the vector is **not** a single aggregated authority. The primary structural block is
@@ -231,9 +276,15 @@ authority.
 * The DSL must carry two distinct outcome forms and both unit forms — more surface to
   design and test. The vector-as-combined-authority case is not an RFC-008 §11
   containment-escape class (so it is not in the ADR-DEV-009 minimum set); it is verified
-  by §12.4 against ADR-002-020 §8 and ADR-002-023 conformance.
-* A portfolio vector's per-target independent governance may reject part of a vector,
-  which the authoring model must represent gracefully.
+  by §12.4 against ADR-002-020 §8 and ADR-002-023 conformance, and the vector-interdependence
+  case (SOS-INV-006) by §12.7 against ADR-002-023 and ADR-002-021 conformance.
+* A portfolio vector's per-target independent governance may reject part of a vector. The
+  authoring model SHALL represent this by declared interdependence (SOS-INV-006): partial
+  approval of an atomic vector (the fail-closed default) yields whole-vector non-realization
+  plus a recorded strategy-level re-evaluation — never a silent partial — and a
+  declared-independent vector lets its non-rejected targets proceed under their own per-target
+  governance. This is intent-fidelity only; the safety consequence of any partial is
+  independently bounded by ADR-002-021 aggregate projection.
 * Authors must choose hold vs flat deliberately; the DSL cannot infer intent.
 
 ---
@@ -248,6 +299,10 @@ authority.
   decision; prevented by SOS-INV-001.
 * **11.4 Wildcard target in a vector.** A vector component with a wildcard/"latest" scope;
   blocked by SOS-INV-004 and ADR-002-020 §8 (and the ADR-DEV-009 wildcard vector).
+* **11.5 Silent naked partial.** An atomic portfolio vector, partially approved (one leg
+  rejected), is partially realized and leaves an unintended naked position; prevented by
+  SOS-INV-006 (whole-vector non-realization + strategy-level re-evaluation) and independently
+  bounded by ADR-002-021 aggregate projection.
 
 ---
 
@@ -268,6 +323,11 @@ The following SHALL be demonstrated (executed by RFC-010):
   ADR-DEV-009 wildcard vector).
 * **12.6** Emitting an outcome — no-action, flat, or a target — commits no capacity and
   transmits nothing; it is a Proposal only (SOS-INV-005; RFC-002 §9.1).
+* **12.7** A portfolio vector declares its component interdependence (atomic when
+  undeclared); a per-target rejection of an atomic vector yields whole-vector non-realization
+  plus a recorded strategy-level re-evaluation, with per-target approval/capacity/consumption
+  un-unionized (SOS-INV-006; verified against ADR-002-023 and ADR-002-021 conformance, not the
+  RFC-010 §8 containment suite).
 
 ---
 
@@ -281,6 +341,9 @@ ADR-DEV-007 is acceptable when:
   supported (SOS-INV-002);
 * no aggregation yields a combined authority (SOS-INV-003);
 * each target is well-formed and grants no authority (SOS-INV-004, -005);
+* a portfolio vector's component interdependence is declared (atomic when undeclared), and
+  partial approval of an atomic vector yields whole-vector non-realization plus a
+  strategy-level re-evaluation (SOS-INV-006);
 * independent adversarial review (EV-L0) confirms every §12 obligation is discharged and
   every citation resolves against source.
 
@@ -302,6 +365,9 @@ operation, which remain governed by RFC-001 and VER-002-001.
 | ADR-002-020 §8 (canonical field set; no wildcard) | targets populate the field set, wildcard-free (SOS-INV-004) |
 | ADR-002-023 (independent proposal approval, consumption fencing) | each target is a non-unionable Independent Approval Decision — the primary intra-vector block (§8; SOS-INV-003) |
 | ADR-002-002/021 (capacity) | each target independently capacity-evaluated (§8; SOS-INV-003) |
+| ADR-002-021 (aggregate projection; no unproven benefit; partial-fill prefixes) | naked-leg safety consequence of any partial is independently bounded; SOS-INV-006 adds intent-fidelity only (§8; SOS-INV-006) |
+| RFC-003 §16 Q1 / mn-08 (portfolio reasoning at interpretation; per-target at emission) | vector emitted as per-target set; interdependence declared, undeclared atomic (§8; SOS-INV-002/006) |
+| CORPUS-REVIEW-0001 M-14 (vector partial approval) | "represent gracefully" replaced by declared interdependence + fail-closed atomic default (§§8, 10; SOS-INV-006) |
 | ADR-DEV-002 (reproducibility) | outcomes reproducible and recorded (§7; SOS-INV-001) |
 | ADR-DEV-008 DCM-INV-003 (degraded decision first-class) | degraded → recorded No-Action, not an error (§7) |
 | RFC-002 §9.1 (authority ownership) | output semantics grant no authority (SOS-INV-005) |
@@ -342,3 +408,33 @@ semantics and relies on ADR-002-020/023/002 for the field set, approval, and cap
   flats); and §10 clarified that the vector case is verified via ADR-002-020/023
   conformance, not the RFC-010 §8 containment suite. The review is EV-L0 only and confers
   no acceptance or live-readiness.
+
+### v0.2 — Wave 5 (CORPUS-REVIEW-0001 Theme E, M-14)
+
+* Added **SOS-INV-006** (Vector Component Interdependence Is Declared; Undeclared Is Atomic,
+  fail-closed): a portfolio vector carries an explicit all-or-none or mutual-independence
+  declaration for its components; undeclared it is atomic. Partial approval of an atomic
+  vector (per-target rejection under ADR-002-023) yields whole-vector non-realization plus a
+  recorded, first-class strategy-level re-evaluation (SOS-INV-001), never a silent naked
+  partial; the re-evaluation follows RFC-003 §9.1 (a still-intended reduction re-expresses
+  Explicit Flat(s) classified under ADR-002-001 §6). This replaced the §10 "represent
+  gracefully" phrase with a normative rule (§§1, 5, 6, 8, 10, 11.5, 12.7, 13, 14).
+* Recorded that SOS-INV-006 fixes authoring intent-fidelity only and introduces no SAFE-xxx:
+  per-target Independent Approval, capacity, and single-use consumption (ADR-002-023,
+  ADR-002-002/021) are unchanged and never unionized, and the naked-leg safety consequence of
+  any partial is independently bounded by ADR-002-021 aggregate projection (ARE-INV-005;
+  partial-fill-prefix coverage) — confirming the CORPUS-REVIEW-0001 M-14 mitigant that the
+  review had left unconfirmed.
+* Sharpened §8's declared-coverage prose to name the declared-coverage-vs-mistaken-omission
+  distinction explicitly. A seventh invariant (SOS-INV-007) was judged unnecessary: the
+  enumerated set is the strategy's declared coverage, omission is a deliberate hold, and the
+  DSL never infers a flatten from silence, so an intended exclusion is already distinguished
+  from a mistaken omission without new mechanism (a strategy bug that drops a target is caught
+  by RFC-010 testing and ADR-DEV-005 review, not by a DSL invariant that cannot know unstated
+  intent).
+* Synchronized VER-DEV-001 and EVIDENCE-REGISTER-DEV: added SOS-EV-006, the ADR-DEV-007 gate
+  now requires SOS-EV-001..006, invariant→evidence coverage 90→91, development-track total
+  96→97.
+* Introduced no SAFE-xxx requirement, numeric bound, or authority. Independent adversarial
+  EV-L0 review of these Wave-5 changes is **owed** (reviewer provenance to be recorded per
+  ADR-DEV-005; M-18); this patch confers no acceptance or live-readiness.
