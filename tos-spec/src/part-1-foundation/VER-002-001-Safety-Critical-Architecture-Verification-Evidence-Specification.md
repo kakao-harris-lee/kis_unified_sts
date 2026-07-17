@@ -763,63 +763,85 @@ An untested Critical requirement blocks production approval.
 ## 66. X-EV-001 — End-to-End Normal Order
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-002; ADR-002-013
 - **Sequence:** context validation → proposal → approval → capacity commitment → capability → egress → fill → reconciliation → capacity transfer.
-- **Expected:** One traceable identity chain; all state transitions and invariants correct.
+- **Expected:** (a) exactly one intent-identity chain links context-validation → proposal → approval → capacity-commitment → capability → egress → fill → reconciliation → capacity-transfer; (b) each stage's pre/post invariant holds; (c) capacity is transferred, not duplicated, at fill; (d) no orphaned or duplicate identity is produced.
 
 ## 67. X-EV-002 — Safety Authority Failover During Commit
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-001; ADR-002-003; ADR-002-009; ADR-002-014
 - **Injection:** Advance Safety Authority epoch while a capacity commit and transmission binding are in progress.
 - **Expected:** No stale capability can authorize transmission; committed capacity remains consistent.
 
 ## 68. X-EV-003 — Ledger Failover During Authority Partition
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-001; ADR-002-003; ADR-002-009; ADR-002-014; ADR-002-017
+- **Injection:** Fail the Risk Capacity Ledger over while central authority is partitioned.
 - **Expected:** No new normal commitment; protective consumption only under exclusive valid lease; no double consumption.
 
 ## 69. X-EV-004 — ACK Loss Plus External Manual Order
 
 - **Minimum Level:** EV-L3/EV-L5
+- **Supports:** ADR-002-002; ADR-002-004; ADR-002-013; ADR-002-017; ADR-002-019
+- **Injection:** Drop a broker acknowledgement and inject a concurrent external manual order on the same account.
 - **Expected:** Ambiguity expands containment scope; no duplicate retry or optimistic attribution.
 
 ## 70. X-EV-005 — Protective Action Under Broker Saturation
 
 - **Minimum Level:** EV-L3/EV-L5
+- **Supports:** ADR-002-001; ADR-002-004; ADR-002-011
+- **Injection:** Drive the broker session and rate budget to saturation while a protective action is required.
 - **Expected:** Actual latency and success match declared guarantee; otherwise system contains and records residual failure.
 
 ## 71. X-EV-006 — Cancel/Replace During Safety HALT
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-001; ADR-002-003; ADR-002-011; ADR-002-013; ADR-002-015
+- **Injection:** Issue cancel and replace of risk-reducing protective orders while a Safety HALT is active.
 - **Expected:** HALT blocks new risk but does not blindly remove risk-reducing protection; cancellation arbiter applies.
 
 ## 72. X-EV-007 — Restart With Live UNKNOWN Orders
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-002; ADR-002-007; ADR-002-014; ADR-002-015; ADR-002-017
+- **Injection:** Restart the system while live orders remain in UNKNOWN execution state.
 - **Expected:** Startup barrier prevents re-arm; unknown capacity remains quarantined.
 
 ## 73. X-EV-008 — Clock Failure During Degraded Protection
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-001; ADR-002-003; ADR-002-008; ADR-002-018
+- **Injection:** Fail trustworthy time while the system operates under degraded protection.
 - **Expected:** Lease invalidates; prior attempts remain tracked; no new protective transmission.
 
 ## 74. X-EV-009 — Deployment Rollback Restores Stale Instance
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-002; ADR-002-003; ADR-002-007; ADR-002-009; ADR-002-013; ADR-002-014; ADR-002-015; ADR-002-017
+- **Injection:** Roll a deployment back so a stale build, epoch, and profile instance is restored and attempts to act.
 - **Expected:** Old build/epoch/profile cannot mutate or transmit.
 
 ## 75. X-EV-010 — Corporate Action During Open Order
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-004; ADR-002-010; ADR-002-017
+- **Injection:** Apply a corporate action that remaps instrument, multiplier, and position while an order is open.
 - **Expected:** Order, position, multiplier, and capacity uncertainty causes containment until remapped.
 
 ## 76. X-EV-011 — Broker Capability Drift During Live Session
 
 - **Minimum Level:** EV-L3/EV-L5
+- **Supports:** ADR-002-004; ADR-002-013
+- **Injection:** Degrade the active Broker Capability Profile during a live session.
 - **Expected:** Active profile degrades; egress rejects dependent actions; potentially-live effects remain conserved.
 
 ## 77. X-EV-012 — Recovery and Partial Re-arm
 
 - **Minimum Level:** EV-L3
+- **Supports:** ADR-002-002; ADR-002-003; ADR-002-007; ADR-002-013; ADR-002-014; ADR-002-015; ADR-002-017; ADR-002-018; ADR-002-019
+- **Injection:** Drive recovery and request partial re-arm of one narrow approved scope.
 - **Expected:** Only approved narrow scope is re-armed with new epoch/capabilities; previous capabilities remain invalid.
 
 ---
@@ -1429,7 +1451,7 @@ An untested Critical requirement blocks production approval.
 - **Minimum Level:** EV-L3 plus security assessment
 - **Supports:** ADR-002-013 EGRESS-AC-002
 - **Injection:** Attempt broker mutations from strategy, orchestration, stale and removed egress instances, administrators, recovery jobs, market-data, test, and research identities through direct, legacy, alternate, proxy, and borrowed-session paths.
-- **Expected:** Every attempt is denied before broker acceptance, triggers evidence and containment where appropriate, and cannot borrow the current gateway's signer, session, credential, or route.
+- **Expected:** Every attempt is denied before broker acceptance, records evidence for **every** attempt, and triggers containment for **any** attempt that reaches a usable live path (a reachable live credential, session, signer, or route), and cannot borrow the current gateway's signer, session, credential, or route.
 
 ## 160. EGRESS-EV-003 — Environment, Scope, Endpoint, and Route Substitution
 
@@ -3323,6 +3345,25 @@ The reviewer SHALL confirm:
 
 ## 380. Approval Gates by ADR
 
+### ADR-002-001
+
+Requires:
+
+- RC-EV-001, RC-EV-002, RC-EV-006, RC-EV-012, RC-EV-013, RC-EV-014, and RC-EV-016;
+- SA-EV-003 through SA-EV-007;
+- PR-EV-001, PR-EV-002, PR-EV-005 through PR-EV-007, PR-EV-011, and PR-EV-012;
+- ARE-EV-001, ARE-EV-003, and ARE-EV-010;
+- IOC-EV-006;
+- FD-EV-001, FD-EV-008, and FD-EV-010;
+- RCLP-EV-001, RCLP-EV-003, RCLP-EV-004, and RCLP-EV-011;
+- AFG-EV-001 and AFG-EV-003;
+- SPG-EV-001, SPG-EV-002, and SPG-EV-011;
+- BC-EV-013, BC-EV-016, and BC-EV-021;
+- VTG-EV-010;
+- X-EV-002, X-EV-003, X-EV-005, X-EV-006, and X-EV-008;
+- an approved Broker Capability Profile and Safety Profile for every protective resource domain and guarantee level;
+- independent review.
+
 ### ADR-002-002
 
 Requires:
@@ -3811,7 +3852,8 @@ This status is intentionally strict. The documents define completion criteria; t
 
 VER-002-001 may move from **Proposed** to **Approved for Execution** when:
 
-- every Critical RFC/ADR invariant maps to at least one evidence item;
+- every Critical RFC/ADR invariant maps to at least one evidence item in the instantiated coverage matrix (verification/TRACEABILITY-MATRIX-002.md);
+- the instantiated bidirectional coverage matrix (verification/TRACEABILITY-MATRIX-002.md) is complete, with every Critical SAFE/HAZ resolving to ≥1 evidence item or an UNMAPPED entry recorded as accepted debt in ARCHITECTURE-GATE-STATUS;
 - Verification Profile schema is approved;
 - evidence package format is implemented;
 - artifact integrity and reviewer sign-off workflow exist;

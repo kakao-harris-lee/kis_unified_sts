@@ -220,6 +220,21 @@ Wave 2 resolves CORPUS-REVIEW-0001 Theme A (M-01..M-04) and Theme B (M-05..M-06)
 
 CONST-015 discharges the constitutional bounded-human-authority principle that §3.4 recorded as "owed to a later wave"; SAFE-053's requirement text is unchanged (only its Derived-from parent set is extended), consistent with DR-0001 §6. The two-natural-person quorum and the Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) remain the two lawful SAFE-053 satisfaction paths; CONST-015 does not mandate any number of natural persons. vision.md and philosophy.md are unchanged.
 
+### 3.6 CORPUS-REVIEW-0001 Wave 3 (evidence-gate binding, hazard-coverage completeness, and traceability instantiation)
+
+Wave 3 resolves review items M-09 through M-12 and mn-01 through mn-06. The following patches were consolidated into the canonical documents named below. No numbered section was renumbered except the in-place correction of the ADR-002-002 §11.4 duplicate step number; all other changes are additive.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| ADR-002-001 §21 acceptance criteria bound to discharging evidence; consolidated `ADR-002-001` approval gate added to VER §380 | ADR-002-001 §21, §25 Review History (v0.3); VER-002-001 §380 | PATCH-ADR-002-001-v0.3; M-09; criteria #1/#11 PARTIAL → §4.4 debt |
+| EVIDENCE-REGISTER-002 Gate Rule rewritten as an explicit accepting-state whitelist cross-referencing VER §4 | EVIDENCE-REGISTER-002 Gate Rule | M-10; no register row changed (count 363) |
+| §12 Constitutional Verification Matrix extended so HAZ-016..025 appear against their bases; HAZ-010 removed from CONST-015; SAFE-042/046 Derived-from += CONST-015 | RFC-001 §10 (SAFE-042/046), §12, §18 Review History (v0.6) | RFC-001-Patch-0011; M-11 |
+| New instantiated bidirectional coverage matrix; VER approval gate points to it | verification/TRACEABILITY-MATRIX-002.md (new); VER-002-001 §383 | RFC-001-Patch-0011; M-11 |
+| IMPLEMENTATION-PLAN-002 count/range refreshed to 363 and ADR-002-001..030; ADR-002-030 post-trade role, phases, and decision item added | verification/IMPLEMENTATION-PLAN-002.md | M-12; register count held at 363 pending Part-2/3 consolidation |
+| Mechanical corrections: ADR-002-002 §11.4 step renumber; X-EV-001..012 `Supports:`/`Injection:` fields and X-EV-001 enumerated pass criterion; EGRESS-EV-002 containment wording | ADR-002-002 §11.4, §40 Review History; VER-002-001 §66–77 and EGRESS-EV-002 | mn-01, mn-05, mn-06; X-EV-002/003/005/006/008 also bound to ADR-002-001 |
+
+The mn-02 finding (EVIDENCE-REGISTER-002.csv quoting/alignment) was re-verified and closed as **verified-resolved**: the CSV is RFC-4180-conformant (363 data rows, every row 16 fields, zero misaligned); no edit was made and the file is unchanged. The M-09 §21↔evidence mapping, the mn-05/mn-06 reworded criteria, and the HAZ-010/CONST-015 remove-vs-keep decision are recorded as EV-L0 review items in RFC-001-Patch-0011 and PATCH-ADR-002-001-v0.3. vision.md, philosophy.md, RFC-000, and RFC-002 are unchanged in this wave.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -311,6 +326,18 @@ Recorded evidence debt (to be discharged in the Part-2/3 register consolidation 
 
 Until this evidence is registered, passed, and independently reviewed, CONST-015, HAZ-024, HAZ-025, and SAFE-054 confer no live readiness; production readiness remains NO. This is an acceptance blocker, not a status promotion.
 
+### 4.4 Evidence Debt — CORPUS-REVIEW-0001 Wave 3 (ADR-002-001 evidence-gate binding)
+
+Wave 3 (PATCH-ADR-002-001-v0.3, RFC-001-Patch-0011) bound ADR-002-001's §21 acceptance criteria to verification evidence and added the consolidated `ADR-002-001` approval gate to VER-002-001 §380. Two criteria are only PARTIALLY discharged by existing evidence families and carry dedicated evidence debt. Consistent with §4.2/§4.3, no register row was added; the count remains 363 `NOT_IMPLEMENTED` items.
+
+Recorded evidence debt (to be discharged in the Part-2/3 register consolidation wave):
+
+- ADR-002-001 §21 criterion #1 (protective resource domains identified for each supported broker and market): BC-EV-013 and BC-EV-021 establish broker-capability behavior but not enumeration completeness across every protective-resource domain. A dedicated protective-resource-domain enumeration-completeness EV is owed, gated by an approved Broker Capability Profile and Safety Profile per domain. No register row added (count 363).
+- ADR-002-001 §21 criterion #11 (every protective resource assigned an evidenced guarantee level): SPG-EV-001 establishes Safety-Profile governance but not a per-resource guarantee-level assignment for every protective resource. A dedicated per-resource guarantee-level EV is owed, gated by the Safety Profile artifact. No register row added (count 363).
+- The TRACEABILITY-MATRIX-002 UNMAPPED entries SAFE-053 and SAFE-054 remain accepted evidence debt already recorded in §4.2 and §4.3 respectively; no additional row is owed for them here.
+
+Until this evidence is registered, passed, and independently reviewed, ADR-002-001 remains `Proposed` and criteria #1 and #11 confer no acceptance. This is an acceptance blocker, not a status promotion.
+
 ---
 
 ## 5. Current Approval State
@@ -318,7 +345,7 @@ Until this evidence is registered, passed, and independently reviewed, CONST-015
 | Artifact | Current state | Can implement? | Can accept? |
 |---|---|---:|---:|
 | RFC-002 v0.2 | Consolidated Review Draft | YES | after RFC review gates pass |
-| ADR-002-001 v0.2 | Proposed | YES | after protective evidence passes |
+| ADR-002-001 v0.3 | Proposed | YES | after protective evidence passes |
 | ADR-002-002 | Proposed | YES | NO |
 | ADR-002-003 | Proposed | YES | NO |
 | ADR-002-004 | Proposed | YES | NO |

@@ -7,8 +7,9 @@
 **Parent Document:** RFC-002 — Trading Operating System Architecture
 **Governed By:** RFC-000 and RFC-001
 **Date:** 2026-07-13
-**Version:** 0.2 Consolidated Review Draft
-**Last Updated:** 2026-07-13
+**Version:** 0.3 Evidence-Gate Binding Draft
+**Last Updated:** 2026-07-17
+**Supersedes:** ADR-002-001 v0.2 Consolidated Review Draft
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -914,30 +915,32 @@ These written scenarios are verification requirements, not completed evidence. A
 
 ## 21. Acceptance Criteria
 
+Each criterion below binds the verification evidence that discharges it. The consolidated required-evidence set for this ADR is enumerated in VER-002-001 §380 (`ADR-002-001`); no register row was added (register count remains 363).
+
 This ADR MAY be accepted when:
 
-* protective resource domains are identified for each supported broker and market;
-* the minimum reservation policy is defined in the Safety Profile;
-* normal trading cannot consume the protected reserve;
-* protective classification is independent of strategy;
-* partition behavior is implemented and tested;
-* capacity exhaustion behavior is implemented and tested;
-* partial-fill behavior is demonstrated;
-* trapped-exposure behavior is demonstrated;
-* no test permits a protective label to bypass aggregate-risk evaluation;
-* evidence is independently reviewed.
+* protective resource domains are identified for each supported broker and market (Evidence: BC-EV-013, BC-EV-021 — PARTIAL; dedicated protective-resource-domain enumeration-completeness evidence is owed to the Part-2/3 register consolidation, see ARCHITECTURE-GATE-STATUS §4.4);
+* the minimum reservation policy is defined in the Safety Profile (Evidence: SPG-EV-001, SPG-EV-002, SPG-EV-011);
+* normal trading cannot consume the protected reserve (Evidence: RC-EV-001, X-EV-005, AFG-EV-001, RCLP-EV-004);
+* protective classification is independent of strategy (Evidence: FD-EV-001, ARE-EV-010);
+* partition behavior is implemented and tested (Evidence: SA-EV-003, SA-EV-004, RC-EV-012, X-EV-002, X-EV-003);
+* capacity exhaustion behavior is implemented and tested (Evidence: PR-EV-007, FD-EV-010, AFG-EV-003);
+* partial-fill behavior is demonstrated (Evidence: RC-EV-006, PR-EV-005, ARE-EV-003);
+* trapped-exposure behavior is demonstrated (Evidence: RC-EV-014);
+* no test permits a protective label to bypass aggregate-risk evaluation (Evidence: ARE-EV-001, ARE-EV-010, IOC-EV-006);
+* evidence is independently reviewed (Evidence: independent-review gate clause, VER-002-001 §380 `ADR-002-001`).
 
 It additionally requires:
 
-* every protective resource assigned an evidenced guarantee level;
-* aggregate commitment and Protective Consumption implemented without ambiguity;
-* duplicate-consumption prevention and stale-owner fencing selected and demonstrated;
-* degraded lease validity and restart behavior defined;
-* intermediate-state proof implemented;
-* replacement-gap handling defined per Broker Capability Profile;
-* cancellation ownership and arbitration enforced;
-* exhaustion and retry bounds approved and measured;
-* common-mode broker limitations explicitly accepted with reduced scope.
+* every protective resource assigned an evidenced guarantee level (Evidence: SPG-EV-001 — PARTIAL; per-resource guarantee-level enumeration evidence is owed to the Part-2/3 register consolidation, see ARCHITECTURE-GATE-STATUS §4.4);
+* aggregate commitment and Protective Consumption implemented without ambiguity (Evidence: RCLP-EV-001, RCLP-EV-011, RC-EV-001);
+* duplicate-consumption prevention and stale-owner fencing selected and demonstrated (Evidence: RC-EV-002, SA-EV-006, SA-EV-007, RCLP-EV-003);
+* degraded lease validity and restart behavior defined (Evidence: SA-EV-004, SA-EV-005, SA-EV-006, RC-EV-013, X-EV-008);
+* intermediate-state proof implemented (Evidence: PR-EV-005, RC-EV-016, ARE-EV-003);
+* replacement-gap handling defined per Broker Capability Profile (Evidence: PR-EV-001, PR-EV-002, PR-EV-006, PR-EV-012);
+* cancellation ownership and arbitration enforced (Evidence: PR-EV-011, X-EV-006);
+* exhaustion and retry bounds approved and measured (Evidence: PR-EV-007, AFG-EV-003);
+* common-mode broker limitations explicitly accepted with reduced scope (Evidence: BC-EV-016, FD-EV-008, VTG-EV-010).
 
 Until those conditions are supported by completed evidence, this ADR remains `Proposed`.
 
@@ -1035,3 +1038,10 @@ This decision does not guarantee that every position can be exited. It ensures o
 * Required conservative safety proof across credible intermediate execution states.
 * Added ownership, cancellation arbitration, Protection Gap, Final Quantity Proof, UNKNOWN-send, dynamic reserve, multi-account, and bounded-retry rules.
 * Kept the ADR Proposed pending executed and independently reviewed evidence.
+
+### v0.3 — Evidence-Gate Binding
+
+* Bound every §21 acceptance criterion to its discharging verification evidence, closing the prior gap in which the acceptance criteria named no evidence items and VER-002-001 §380 carried no ADR-002-001 gate.
+* Added the consolidated `ADR-002-001` approval gate to VER-002-001 §380 (required RC/SA/PR/ARE/IOC/FD/RCLP/AFG/SPG/BC/VTG/X evidence set plus an approved Broker Capability Profile and Safety Profile per protective resource domain and guarantee level, and independent review).
+* Recorded criteria #1 (protective-resource-domain enumeration completeness) and #11 (per-resource guarantee level) as PARTIAL: they are gated by Broker Capability Profile / Safety Profile artifacts and carry dedicated evidence debt in ARCHITECTURE-GATE-STATUS §4.4. No register row was added; the Evidence Register count remains 363.
+* Change recorded in PATCH-ADR-002-001-v0.3-Evidence-Gate-Binding.md. The §21↔evidence mapping is an EV-L0 review item; the ADR remains Proposed pending executed and independently reviewed evidence.

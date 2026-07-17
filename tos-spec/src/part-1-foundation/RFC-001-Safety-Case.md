@@ -3,14 +3,14 @@
 **Document ID:** RFC-001
 **Document Type:** Safety Requirements Specification and Safety Case
 **Title:** Trading Operating System Safety Case
-**Version:** 0.5 Review Draft
+**Version:** 0.6 Review Draft
 **Status:** Review Draft — Not Ratified
 **Classification:** Foundational Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-13
 **Last Updated:** 2026-07-17
-**Supersedes:** RFC-001 v0.4 Review Draft
+**Supersedes:** RFC-001 v0.5 Review Draft
 
 ---
 
@@ -1391,7 +1391,7 @@ The authority required by SAFE-041 SHALL remain effective under the communicatio
 
 **Priority:** Critical
 **Type:** Containment / Recovery
-**Derived from:** CONST-011, CONST-012
+**Derived from:** CONST-011, CONST-012, CONST-015
 
 An authenticated human operator SHALL retain the authority to suspend autonomous trading and invoke approved emergency containment.
 
@@ -1509,7 +1509,7 @@ Research, backtest, simulation, development, test, and paper-trading activity SH
 
 **Priority:** Critical
 **Type:** Preventive
-**Derived from:** CONST-001, CONST-009, CONST-013
+**Derived from:** CONST-001, CONST-009, CONST-013, CONST-015
 
 The default operating state SHALL be non-live.
 
@@ -1894,23 +1894,23 @@ Numeric criteria MAY reside in an approved Safety Profile or Verification Plan, 
 
 ## 12. Constitutional Verification Matrix
 
-| Constitutional requirement                     | Safety discharge                                                                                               | Principal hazards                                             | Current status            |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------- |
-| CONST-001 — Long-Term Survivability            | SAFE-010, SAFE-012, SAFE-013, SAFE-014, SAFE-021, SAFE-042, SAFE-045                                           | HAZ-001, HAZ-002, HAZ-004, HAZ-005, HAZ-012, HAZ-013          | SPECIFIED                 |
-| CONST-002 — Capital Preservation               | SAFE-010, SAFE-012, SAFE-013, SAFE-021, SAFE-045                                                               | HAZ-001, HAZ-002, HAZ-003, HAZ-004, HAZ-012, HAZ-013          | SPECIFIED                 |
-| CONST-003 — Positive Expectancy                | Constrained by all Critical safety requirements; performance demonstration delegated to the Decision Framework | —                                                             | NOT DISCHARGED BY RFC-001 |
-| CONST-004 — Fail-Safe Operating Principle      | SAFE-001, SAFE-002, SAFE-030, SAFE-040                                                                         | HAZ-006, HAZ-008                                              | SPECIFIED                 |
-| CONST-005 — Independent Approval Authority     | SAFE-031, SAFE-033, SAFE-034, SAFE-051                                                                         | HAZ-006, HAZ-014                                              | SPECIFIED                 |
-| CONST-006 — Operational Safety Limits          | SAFE-003, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014                                                     | HAZ-002, HAZ-003, HAZ-005, HAZ-011, HAZ-013                   | SPECIFIED                 |
-| CONST-007 — Venue Constraints                  | SAFE-032, SAFE-043                                                                                             | HAZ-007, HAZ-008                                              | SPECIFIED                 |
-| CONST-008 — Authoritative Position             | SAFE-022, SAFE-044                                                                                             | HAZ-009                                                       | SPECIFIED                 |
-| CONST-009 — Pre-Trade Constitutional Assurance | SAFE-010, SAFE-012, SAFE-020, SAFE-021, SAFE-030, SAFE-033, SAFE-045, SAFE-046                                 | HAZ-002, HAZ-003, HAZ-004, HAZ-006, HAZ-012, HAZ-014, HAZ-015 | SPECIFIED                 |
-| CONST-010 — Fail-Closed Configuration          | SAFE-003, SAFE-011, SAFE-050                                                                                   | HAZ-002, HAZ-011                                              | SPECIFIED                 |
-| CONST-011 — Independent Safety Authority       | SAFE-011, SAFE-014, SAFE-041, SAFE-042, SAFE-050                                                               | HAZ-005, HAZ-010, HAZ-024, HAZ-025                            | SPECIFIED                 |
-| CONST-012 — Safe Operational State             | SAFE-001, SAFE-002, SAFE-040, SAFE-043                                                                         | HAZ-008                                                       | SPECIFIED                 |
-| CONST-013 — Safe Operational Start             | SAFE-022, SAFE-044, SAFE-046                                                                                   | HAZ-009, HAZ-012                                              | SPECIFIED                 |
-| CONST-014 — Irreversibility Principle          | SAFE-010, SAFE-020, SAFE-021, SAFE-033, SAFE-051, SAFE-052                                                     | HAZ-003, HAZ-004, HAZ-014, HAZ-015                            | SPECIFIED                 |
-| CONST-015 — Bounded Human Authority             | SAFE-042, SAFE-046, SAFE-053                                                                                   | HAZ-010, HAZ-024                                              | SPECIFIED                 |
+| Constitutional requirement                     | Safety discharge                                                                                               | Principal hazards                                                                                                   | Current status            |
+|------------------------------------------------|----------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|---------------------------|
+| CONST-001 — Long-Term Survivability            | SAFE-010, SAFE-012, SAFE-013, SAFE-014, SAFE-021, SAFE-042, SAFE-045                                           | HAZ-001, HAZ-002, HAZ-004, HAZ-005, HAZ-012, HAZ-013, HAZ-016, HAZ-017, HAZ-019, HAZ-020, HAZ-021, HAZ-023, HAZ-024 | SPECIFIED                 |
+| CONST-002 — Capital Preservation               | SAFE-010, SAFE-012, SAFE-013, SAFE-021, SAFE-045                                                               | HAZ-001, HAZ-002, HAZ-003, HAZ-004, HAZ-012, HAZ-013, HAZ-017, HAZ-020, HAZ-021, HAZ-022, HAZ-023                   | SPECIFIED                 |
+| CONST-003 — Positive Expectancy                | Constrained by all Critical safety requirements; performance demonstration delegated to the Decision Framework | —                                                                                                                   | NOT DISCHARGED BY RFC-001 |
+| CONST-004 — Fail-Safe Operating Principle      | SAFE-001, SAFE-002, SAFE-030, SAFE-040                                                                         | HAZ-006, HAZ-008, HAZ-016, HAZ-018                                                                                  | SPECIFIED                 |
+| CONST-005 — Independent Approval Authority     | SAFE-031, SAFE-033, SAFE-034, SAFE-051                                                                         | HAZ-006, HAZ-014                                                                                                    | SPECIFIED                 |
+| CONST-006 — Operational Safety Limits          | SAFE-003, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014                                                     | HAZ-002, HAZ-003, HAZ-005, HAZ-011, HAZ-013, HAZ-019, HAZ-020, HAZ-023                                              | SPECIFIED                 |
+| CONST-007 — Venue Constraints                  | SAFE-032, SAFE-043                                                                                             | HAZ-007, HAZ-008, HAZ-023                                                                                           | SPECIFIED                 |
+| CONST-008 — Authoritative Position             | SAFE-022, SAFE-044                                                                                             | HAZ-009, HAZ-017, HAZ-021, HAZ-022                                                                                  | SPECIFIED                 |
+| CONST-009 — Pre-Trade Constitutional Assurance | SAFE-010, SAFE-012, SAFE-020, SAFE-021, SAFE-030, SAFE-033, SAFE-045, SAFE-046                                 | HAZ-002, HAZ-003, HAZ-004, HAZ-006, HAZ-012, HAZ-014, HAZ-015, HAZ-016, HAZ-017, HAZ-020, HAZ-022, HAZ-025          | SPECIFIED                 |
+| CONST-010 — Fail-Closed Configuration          | SAFE-003, SAFE-011, SAFE-050                                                                                   | HAZ-002, HAZ-011, HAZ-016, HAZ-019                                                                                  | SPECIFIED                 |
+| CONST-011 — Independent Safety Authority       | SAFE-011, SAFE-014, SAFE-041, SAFE-042, SAFE-050                                                               | HAZ-005, HAZ-010, HAZ-018, HAZ-024, HAZ-025                                                                         | SPECIFIED                 |
+| CONST-012 — Safe Operational State             | SAFE-001, SAFE-002, SAFE-040, SAFE-043                                                                         | HAZ-008, HAZ-018, HAZ-023                                                                                           | SPECIFIED                 |
+| CONST-013 — Safe Operational Start             | SAFE-022, SAFE-044, SAFE-046                                                                                   | HAZ-009, HAZ-012, HAZ-016, HAZ-021                                                                                  | SPECIFIED                 |
+| CONST-014 — Irreversibility Principle          | SAFE-010, SAFE-020, SAFE-021, SAFE-033, SAFE-051, SAFE-052                                                     | HAZ-003, HAZ-004, HAZ-014, HAZ-015, HAZ-022, HAZ-025                                                                | SPECIFIED                 |
+| CONST-015 — Bounded Human Authority            | SAFE-042, SAFE-046, SAFE-053                                                                                   | HAZ-024                                                                                                             | SPECIFIED                 |
 
 A `SPECIFIED` entry indicates that RFC-001 defines the required safety obligation. It does not indicate implementation or demonstration.
 
@@ -2166,6 +2166,14 @@ Material changes to hazards, Critical requirements, safe-state semantics, or pro
 * Linked SAFE-053 to its new constitutional parent CONST-015 (Bounded Human Authority) and added CONST-015 to the Constitutional Verification Matrix (CORPUS-REVIEW-0001 M-03).
 * Extended the Constitutional Verification Matrix (CONST-009/011/014 → SAFE-054) and the production-readiness Catastrophic-hazard blocker to HAZ-016 through HAZ-025.
 * Evidence for SAFE-054, HAZ-024, and HAZ-025 is recorded as evidence debt in ARCHITECTURE-GATE-STATUS §4.3; the Evidence Register count is unchanged (363).
+
+### v0.6 — Hazard Coverage Completeness and Traceability Matrix
+
+* Extended the §12 Constitutional Verification Matrix "Principal hazards" cells so HAZ-016 through HAZ-023 appear against their §9 Constitutional-basis CONST rows, and added HAZ-024 (CONST-001) and HAZ-025 (CONST-009, CONST-014) to their remaining bases; every catalogued hazard HAZ-001..025 now appears in the matrix (CORPUS-REVIEW-0001 Wave 3 M-11).
+* Corrected the CONST-015 row to drop HAZ-010, whose sole Constitutional basis is CONST-011 (the CONST-015 remove-vs-keep decision is an EV-L0 review item recorded in RFC-001-Patch-0011).
+* Added CONST-015 to the Derived-from set of SAFE-042 (Human Emergency Authority) and SAFE-046 (Explicit Live Arming), completing the CONST-015 → SAFE-042/046/053 discharge triple.
+* Recorded the new instantiated bidirectional coverage matrix verification/TRACEABILITY-MATRIX-002.md, referenced by VER-002-001 §383; SAFE-053 and SAFE-054 remain UNMAPPED accepted evidence debt (ARCHITECTURE-GATE-STATUS §4.2/§4.3).
+* Change recorded in RFC-001-Patch-0011. No new SAFE requirement or hazard was added; the Evidence Register count is unchanged (363); vision.md, philosophy.md, and RFC-000 are unchanged.
 
 ---
 

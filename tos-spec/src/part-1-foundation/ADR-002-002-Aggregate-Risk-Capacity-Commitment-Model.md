@@ -604,9 +604,9 @@ No transition to a less conservative state may be made solely from timeout, abse
 
 15. Broker Adapter verifies all capability, command, proof, economic-effect, economic/action-flow capacity, venue, permit, cause-lineage, and actual-outbound bindings.
 16. Broker Adapter requests the RCL-owned atomic Action Flow Permit claim/consume-or-quarantine transition with the capability claim and durably records `SEND_STARTED` before the external call can be retried as a new send; the Adapter does not mutate the budget itself.
-16. Reservation transitions to `POTENTIALLY_LIVE`.
-17. Broker Adapter performs the network call.
-18. Response, acknowledgement, error, or timeout is recorded as evidence.
+17. Reservation transitions to `POTENTIALLY_LIVE`.
+18. Broker Adapter performs the network call.
+19. Response, acknowledgement, error, or timeout is recorded as evidence.
 
 The local write and broker call cannot be globally atomic. Therefore a crash after `SEND_STARTED` but before actual broker receipt is intentionally treated as potentially live. This creates conservative capacity retention rather than duplicate economic effect.
 
@@ -1638,3 +1638,11 @@ ADR-002-002 may move from **Proposed** to **Accepted** only when:
 - independent review confirms that no implementation shortcut permits uncommitted or duplicate economic effect.
 
 Until then, this ADR authorizes implementation and verification work but does not authorize production live trading.
+
+---
+
+## 40. Review History
+
+### Wave 3 — §11.4 Send-Boundary Step Renumbering
+
+* Corrected the §11.4 Send Boundary numbered list, which repeated step `16` and so mis-numbered the tail: the second `16` and the following steps are renumbered to `17`, `18`, and `19`, restoring a contiguous `15..19` sequence. No step text and no cross-reference changed (CORPUS-REVIEW-0001 Wave 3 mn-01; recorded in PATCH-ADR-002-001-v0.3-Evidence-Gate-Binding.md §mn-01). The decision remains Proposed; no evidence row was added (register count 363).
