@@ -790,17 +790,18 @@ The authoring-track dependency chain (GOV-001; RFC-000 §12):
 
 ### 9.3 Per-Document Ladder Rung
 
-Ratified count: **1** — RFC-000 v0.16 (2026-07-17, record RR-0001, §9.7). Ratification-Ready
-count: **1** — GOV-001 v0.1 (P1 satisfied by the external EV-L0 PASS, §10; P3 satisfied by the
-RFC-000 ratification; P2/P4/P5 held), awaiting the System Owner ratification act. All other
-documents' P1 remains unmet corpus-wide (no external review recorded for them). All other
-normative RFC-class documents remain at Working/Review Draft; all ADRs remain Proposed; both
-Verification Evidence specifications remain Proposed.
+Ratified count: **2** — RFC-000 v0.16 (2026-07-17, RR-0001) and GOV-001 v0.1 (2026-07-17,
+RR-0002), both in §9.7. Ratification-Ready count: **0**. The vision/philosophy directional
+baseline is adopted (BA-0001, §9.7). Next candidate: **RFC-001** — P3 is satisfied by RR-0001;
+its blocker is P1 (no external-substrate EV-L0 review has been performed for RFC-001 yet). All
+other documents' P1 remains unmet corpus-wide. All other normative RFC-class documents remain at
+Working/Review Draft; all ADRs remain Proposed; both Verification Evidence specifications remain
+Proposed.
 
 | Document | Class | Current rung | Ratification-Ready? | Blocking precondition |
 |---|---|---|---|---|
-| vision | Part-0 (non-normative) | Baseline Adoption only | n/a | not a ratification target (GOV-001 §7) |
-| philosophy | Part-0 (non-normative) | Baseline Adoption only | n/a | not a ratification target (GOV-001 §7) |
+| vision | Part-0 (non-normative) | **Baseline adopted** (BA-0001, 2026-07-17) | n/a | not a ratification target (GOV-001 §7) |
+| philosophy | Part-0 (non-normative) | **Baseline adopted** (BA-0001, 2026-07-17) | n/a | not a ratification target (GOV-001 §7) |
 | RFC-000 | Normative RFC | **Ratified** (v0.16, 2026-07-17) | **YES** | — (record RR-0001, §9.7) |
 | RFC-001 | Normative RFC | Review Draft (v0.7) | NO | P1; P3 (upstream RFC-000 not yet Ratified) |
 | RFC-002 | Normative RFC | Review Draft (v0.4) | NO | P1; P3 (RFC-000/001 not Ratified) |
@@ -810,7 +811,7 @@ Verification Evidence specifications remain Proposed.
 | RFC-008..011 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
 | ADR-DEV-001..015 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC not Ratified |
 | VER-DEV-001 | Verification Evidence | Proposed | n/a (not ratified) | §8 approval gate |
-| GOV-001 | Governance process (content-inert) | Review Draft (v0.1) | NO | P3 (upstream RFC-000 not yet Ratified) |
+| GOV-001 | Governance process (content-inert) | **Ratified** (v0.1, 2026-07-17) | **YES** | — (record RR-0002, §9.7) |
 
 ### 9.4 Ratification-Ready Precondition Checklist (GOV-001 G3)
 
@@ -893,6 +894,47 @@ states that the ratification confers no live authority, no ADR acceptance, and n
   process and re-ratification (GOV-001 G6); de-ratification per GOV-001 G7.
 - **Non-authority statement:** this ratification establishes RFC-000 v0.16 as the governing
   baseline and confers no live authorization, no ADR acceptance, and no capacity.
+
+#### RR-0002 — GOV-001 v0.1 (Ratification and Change Governance) — RATIFIED
+
+- **Target:** GOV-001 — Ratification and Change Governance, version 0.1 (content commit
+  `cb7f8a65`, unchanged since creation).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-17.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4;
+  ratification confers no live authority, so RFC-001 SAFE-053 does not apply to this act. This
+  is the controlled self-reference G2 anticipates: GOV-001 is ratified under the process it
+  defines, recorded here.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0001, GOV-001
+  v0.1 verdict **PASS**; the reviewer specifically challenged the three-act separation, the
+  single-operator ratifier argument, and the de-ratification fail-safe and found them sound.
+  Provenance: §10 (Gemini app, vendor Google; owner-captured app UI model "Gemini 3.1 Pro";
+  no tools/browsing; recorded decorrelation argument per ADR-DEV-005 AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied; P2 all internal-review findings fixed before the
+  creating commit and zero external findings; P3 satisfied by RR-0001 (RFC-000 v0.16 Ratified);
+  P4 citations resolve; P5 version stable at v0.1.
+- **Accepted requirements:** the full v0.1 normative text — G1 through G8, the status ladder,
+  preconditions P1–P5, the ratification-record schema, Baseline Adoption (§7), amendment and
+  re-ratification (G6), de-ratification (G7), and the non-authority safety belt (G8).
+- **Deferred:** none. **Residual risks accepted:** none arising from the document text.
+- **Cited-version pins:** RFC-000 v0.16 (the §13 delegation GOV-001 derives its authority
+  from, and the §18 amendment procedure it operates). A change to the pinned clauses triggers
+  a citation-integrity re-check of GOV-001 (G6).
+- **Re-review trigger:** material change via RFC-000 §18 amendment + re-ratification (G6);
+  de-ratification per G7.
+- **Non-authority statement:** this ratification establishes GOV-001 v0.1 as the governing
+  process baseline and confers no live authorization, no ADR acceptance, and no capacity.
+
+#### BA-0001 — vision.md and philosophy.md — BASELINE ADOPTED (GOV-001 §7)
+
+- **Target:** `part-0-introduction/vision.md` (v0.1 Draft, created 2026-07-13) and
+  `part-0-introduction/philosophy.md` (v0.1 Draft, created 2026-07-13), as present at commit
+  `d0805ad2` — both unmodified throughout the CORPUS-REVIEW-0001 resolution track.
+- **Act:** the System Owner records these versions as the accepted directional baseline from
+  which the normative corpus derives (GOV-001 §7). **Date:** 2026-07-17.
+- **Effect:** none beyond the record — Baseline Adoption modifies neither document and confers
+  no requirement, no authority, and no live readiness; the documents remain non-normative and
+  are not ratification targets (GOV-001 G2).
 
 *(empty)*
 

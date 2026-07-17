@@ -2,8 +2,8 @@
 
 **Document ID:** GOV-001
 **Title:** Ratification and Change Governance
-**Version:** 0.1 Review Draft
-**Status:** Review Draft — Not Ratified
+**Version:** 0.1
+**Status:** Ratified (2026-07-17 — GOV-001 G5 record RR-0002, ARCHITECTURE-GATE-STATUS §9.7; ratification confers no live authorization, no ADR acceptance, and no capacity)
 **Classification:** Governance Process Specification
 **Authority:** Derived from RFC-000 §13 (Engineering Governance); process-normative, content-inert
 **Owner:** Trading Operating System Architecture Board
