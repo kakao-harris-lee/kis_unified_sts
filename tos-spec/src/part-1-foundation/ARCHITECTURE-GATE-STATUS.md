@@ -438,6 +438,43 @@ decision — with reviewer provenance to be recorded per ADR-DEV-005 §7 / VER-0
 
 ---
 
+### 3.12 CORPUS-REVIEW-0001 Wave 9 (ratification machinery: GOV-001; ratification ledger and provenance record)
+
+Wave 9 supplies the ratification machinery the corpus presupposed but never defined (mn-15): it
+creates GOV-001 as the governance process delegated by RFC-000 §13, points RFC-000 §13/§18 and
+RFC-001 §17 at it, and adds the §9 Ratification Ledger and §10 Wave Review Provenance Record to
+this document. All changes are narrow-only and additive; GOV-001 is process-normative and
+content-inert. No numbered section was renumbered; vision.md, philosophy.md, COMPLEXITY-REGISTER-002.md,
+and both Evidence Registers are unchanged (Part-1 372; development-track 98). The canonical
+documents already carry the changes; the following table is the committed merge record.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| GOV-001 created — Ratification and Change Governance: the three governance acts (G1); the RFC-class status ladder Working/Review/Ratification-Ready/Ratified with the ADR (Proposed/Accepted), VER (Proposed/Approved for Execution), and vision/philosophy (Baseline Adoption) exclusions (G2); Ratification-Ready preconditions P1–P5 (G3); the single-operator System-Owner ratifying authority reconciled with SAFE-053 non-applicability and CONST-015 (G4); the ratification-record schema (G5); Baseline Adoption (§7); amendment/re-ratification and cited-version-pin citation-integrity re-check (G6); fail-safe de-ratification (G7); the non-authority safety belt (G8) | NEW part-1-foundation/GOV-001-Ratification-and-Change-Governance.md (v0.1 Review Draft); SUMMARY.md gains the GOV-001 entry | Direct creation, born-MERGED (no patch file), per the COMPLEXITY-REGISTER-002 precedent; process-normative, content-inert; no SAFE-xxx, no numeric bound, no ADR, no new EV (Part-1 stays 372; development track stays 98) |
+| RFC-000 §13 pointer to GOV-001 (the approved, independently specified governance process, per the existing §13 sentence) and §18 pointer naming GOV-001 as the source of the ratifying authority, preconditions, and record; ratification confers no live authorization | RFC-000 §13/§18 (0.14 → **0.15**); Appendix A v0.15 entry | Patch 0046; pointer only, narrow-only and additive; no CONST/AX change, no new requirement, no numeric bound, no new EV |
+| RFC-001 §17 pointer naming GOV-001 as the ratification-governance source; document ratification of the Safety Case confers no live authorization, which remains governed by ADR-002-007 and ADR-002-025 | RFC-001 §17 (0.6 → **0.7**); §18 Review History v0.7 entry | Patch 0047; pointer only, narrow-only and additive; no SAFE-xxx, no hazard change, no numeric bound, no new EV |
+| §9 Ratification Ledger added — the three-act declaration, ratification order, per-document ladder-rung table (all Working/Review Draft; Ratification-Ready count 0, P1/M-18 unmet), the P1–P5 checklist, the empty ratification-record store, the CORPUS-REVIEW-0001 open-questions disposition table, and the §4.5 residual-debt classification; non-normative, cites GOV-001 for the normative procedure | ARCHITECTURE-GATE-STATUS §9 | Direct edit; status-ledger content only; no ADR, no SAFE-xxx, no new EV |
+| §10 Wave Review Provenance Record added — the M-18 provenance table for CORPUS-REVIEW-0001 and the Wave 1–8 EV-L0 reviews, with the substrate-decorrelation honesty limitation recorded | ARCHITECTURE-GATE-STATUS §10 | Direct edit; provenance metadata about existing EV-L0 design inspections; adds no evidence-register row (Part-1 stays 372); no SAFE-xxx, no numeric bound |
+| M-06 owner attestation recorded — the System Owner attested (2026-07-17) that an out-of-band broker-side containment path exists for the final egress enforcement point; recorded in capability-class terms only; closes the M-06 open question; EGRESS-EV-013 remains the acceptance-track evidence obligation (`NOT_IMPLEMENTED`) | ARCHITECTURE-GATE-STATUS §4.5 (M-06 item) and §9 disposition table | Direct edit; owner disposition only; no register change (Part-1 stays 372); no broker proper noun |
+| DR-0001 registered in the reading order | SUMMARY.md gains the DR-0001 entry | Direct edit; presentational only — no document authored, no SAFE-xxx, no new EV |
+
+> Wave 9 supplies the ratification machinery (mn-15). No new SAFE-xxx requirement or numeric bound
+> is introduced; no broker proper noun appears (the M-06 owner attestation is recorded in
+> capability-class terms); vision.md, philosophy.md, and both Evidence Registers are unchanged
+> (Part-1 372; development-track 98). GOV-001 is process-normative and content-inert: it derives
+> from RFC-000 §13, governs process only, does not enter the §12 content hierarchy, and grants no
+> authority. Ratification is evidence-independent and confers no live authorization, no ADR
+> acceptance, and no capacity. Nothing in this wave is ratified — the §9 ladder is empty because
+> precondition P1 (the M-18 independent-review provenance) is only now being recorded and no
+> ratification act has been performed.
+
+Patch documents 0046 and 0047 are recorded in the git-excluded `patches/` per the repository
+convention (each born-MERGED, pointing here); GOV-001 and the gate-status/SUMMARY edits are direct
+(born-MERGED, no patch file). The Wave-9 changes are EV-L0 review items, with reviewer provenance
+to be recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18) — see §10.
+
+---
+
 ## 4. Remaining Architecture and Acceptance Work
 
 ADR-002-005 through ADR-002-030 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, safety-telemetry/continuous-monitoring-governance, software-supply-chain/runtime-artifact-admission, and post-trade economic-obligation/finality authorship are complete, but none of those decisions is accepted.
@@ -547,7 +584,7 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
 
 ### 4.5 Remaining Debt After Wave 4
 
-- **M-06 architectural existence.** Whether an out-of-band final-egress containment path independent of the egress enforcement point actually exists remains open. EGRESS-EV-013 registers the evidence obligation; SAFE-054 permits closing it via the accepted-residual-risk / reduced-scope branch. This is a separate Major finding, not part of CR-01.
+- **M-06 architectural existence.** Whether an out-of-band final-egress containment path independent of the egress enforcement point actually exists remains open. EGRESS-EV-013 registers the evidence obligation; SAFE-054 permits closing it via the accepted-residual-risk / reduced-scope branch. This is a separate Major finding, not part of CR-01. **Owner disposition (Wave 9, 2026-07-17):** the System Owner attested that an out-of-band broker-side containment path exists for the final egress enforcement point (credential revocation and account deactivation through broker-side channels), recorded in capability-class terms only; the concrete procedure belongs to a non-normative Broker Capability Profile instance on the implementation track. This closes the M-06 open question; EGRESS-EV-013 remains the acceptance-track evidence obligation (`NOT_IMPLEMENTED`).
 - **No execution.** All 372 Part-1 items (EVIDENCE-REGISTER-002) and all 98 Part-2/3 items (EVIDENCE-REGISTER-DEV) remain `NOT_IMPLEMENTED`; registration is not execution and confers no live readiness. (The Part-2/3 count rose 96 → 97 in Wave 5, §3.8; 97 → 98 in Wave 7, §3.10.)
 - **TRACEABILITY-MATRIX-002 §5.3 source gaps.** ADR-002-002 through ADR-002-006 lack a §2x Requirements Traceability table, so their families (RC, SA, BC, STATE, RECON) are not reachable through the SAFE→ADR bridge. This is deferred and scoped out of CR-01; no coverage is lost because those SAFEs are co-claimed by other realizing ADRs.
 - **Part-2/3 ratification pending.** RFC-003 through RFC-011, ADR-DEV-001 through ADR-DEV-015, and VER-DEV-001 remain `Proposed`.
@@ -683,3 +720,140 @@ Ready for ADR acceptance: NO
 Ready for restricted live trading: NO
 Ready for production live trading: NO
 ```
+
+---
+
+## 9. Ratification Ledger
+
+This ledger records the status of the authoring-track ratification defined normatively by GOV-001.
+It is non-normative; where it and GOV-001 differ, GOV-001 governs. Nothing below is ratified.
+
+### 9.1 The Three Governance Acts
+
+Ratification, ADR acceptance, and live authorization are distinct acts (GOV-001 G1):
+
+- **Document ratification** establishes an exact document version as the governing baseline. It is the terminal state of the authoring track, is independent of verification-evidence execution, and confers no live authorization, no ADR acceptance, no capacity, and no transmission authority.
+- **ADR acceptance** moves an ADR from Proposed to Accepted under the EVIDENCE-REGISTER-002 Gate Rule and VER-002-001 §380, and requires its Architecture RFC to be Ratified.
+- **Live authorization** is governed solely by ADR-002-007, ADR-002-025, and RFC-001 SAFE-053; only this act grants live authority.
+
+Ratification is a precondition for acceptance and for live authorization; it substitutes for neither.
+
+### 9.2 Ratification Order
+
+The authoring-track dependency chain (GOV-001; RFC-000 §12):
+
+0. Baseline adoption of vision and philosophy — not ratification (GOV-001 §7); recorded by committed version and date.
+1. RFC-000 (Trading Constitution).
+2. RFC-001 (Safety Case) — requires the M-06 residual-risk disposition as a named input (now recorded, §4.5).
+3. RFC-002 (Architecture) — ADR-002-001..030 do not ratify here; they follow the acceptance track. RFC-002 ratification pins the cited ADR versions. VER-002-001 travels its own §383 approval gate (not ratified).
+4. RFC-003..007 (Decision Framework).
+5. RFC-008..011 and ADR-DEV-001..015 (Development); VER-DEV-001 via its §8 gate.
+6. Operational procedures (runtime) — no ratification vocabulary.
+
+### 9.3 Per-Document Ladder Rung
+
+Ratified count: **0**. Ratification-Ready count: **0**. Reason: precondition P1 is unmet
+corpus-wide — the independent EV-L0 review provenance (M-18) required by GOV-001 G3(P1) /
+VER-002-001 §5 is only now being recorded (§10), and no ratification act has been performed. All
+normative RFC-class documents remain at Working/Review Draft; all ADRs remain Proposed; both
+Verification Evidence specifications remain Proposed.
+
+| Document | Class | Current rung | Ratification-Ready? | Blocking precondition |
+|---|---|---|---|---|
+| vision | Part-0 (non-normative) | Baseline Adoption only | n/a | not a ratification target (GOV-001 §7) |
+| philosophy | Part-0 (non-normative) | Baseline Adoption only | n/a | not a ratification target (GOV-001 §7) |
+| RFC-000 | Normative RFC | Review Draft (v0.15) | NO | P1 (EV-L0 provenance pending) |
+| RFC-001 | Normative RFC | Review Draft (v0.7) | NO | P1; P3 (upstream RFC-000 not yet Ratified) |
+| RFC-002 | Normative RFC | Review Draft (v0.4) | NO | P1; P3 (RFC-000/001 not Ratified) |
+| ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC-002 not Ratified |
+| VER-002-001 | Verification Evidence | Proposed | n/a (not ratified) | §383 approval gate |
+| RFC-003..007 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
+| RFC-008..011 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
+| ADR-DEV-001..015 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC not Ratified |
+| VER-DEV-001 | Verification Evidence | Proposed | n/a (not ratified) | §8 approval gate |
+| GOV-001 | Governance process (content-inert) | Review Draft (v0.1) | NO | P1; P3 (upstream RFC-000 not yet Ratified) |
+
+### 9.4 Ratification-Ready Precondition Checklist (GOV-001 G3)
+
+A document is Ratification-Ready only when all hold. A precondition that cannot be positively
+established is treated as unmet.
+
+- **P1 — Independent EV-L0 review with recorded provenance.** A review meeting the ADR-DEV-005 §7 independence standard has passed at EV-L0 with reviewer provenance recorded per VER-002-001 §5 (§10). Corpus status: **unmet, fail-closed** — provenance is now recorded, but under ADR-DEV-005 §6 AIR-INV-002 an AI review of an AI-authored artifact whose reviewer shares the author's model family is treated as common-mode absent an affirmative decorrelation demonstration; the Wave 1–8 reviews (§10) do not carry that demonstration, so P1 cannot be positively established by them and is unmet under GOV-001 G3. Discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
+- **P2 — Findings resolved or explicitly deferred.** Corpus status: 5 of 6 CORPUS-REVIEW-0001 questions resolved in canonical text (§9.5); M-06 now recorded by owner disposition (§4.5); the RFC-002 §20.1 U1/U2/U3 mode-transition seams are resolved in Wave 8 (§3.11).
+- **P3 — Upstream documents Ratified.** Corpus status: **unmet** — nothing is Ratified yet, so only RFC-000 can become Ratification-Ready first.
+- **P4 — No dangling citation and no unresolved cross-document conflict** (CONSISTENCY-AUDIT-002 clean for the document).
+- **P5 — Version stable, not under active revision.**
+
+### 9.5 Open-Questions Disposition (CORPUS-REVIEW-0001)
+
+CORPUS-REVIEW-0001 is a working artifact recorded in the git-excluded `reviews/`; its
+open-questions list is dispositioned canonically here.
+
+| # | Open question | Disposition | Canonical evidence |
+|---|---|---|---|
+| M-06 | Does an out-of-band broker-side final-egress containment path already exist? | **RESOLVED (owner attestation, Wave 9)** | System Owner attested (2026-07-17) that an out-of-band broker-side containment path exists for the final egress enforcement point (credential revocation and account deactivation through broker-side channels), recorded in capability-class terms only; the concrete procedure belongs to a non-normative Broker Capability Profile instance on the implementation track. Closes the finding; EGRESS-EV-013 remains the acceptance-track evidence obligation (`NOT_IMPLEMENTED`). See §4.5. |
+| M-04 | CONST-008 "single authoritative source" — account-as-entity, responses-as-evidence? | **RESOLVED** | RFC-000 §6 "Authoritative Source": individual responses, including any single API response, are evidence and SHALL NOT by themselves be treated as unconditionally correct; plus the Authoritative-State term-relationships table. |
+| M-07 | ADR-002-001 §6.2 "remain satisfied" — absolute or non-worsening? | **RESOLVED (re-confirmed Wave 8)** | ADR-002-001 §6.2 reformulated as the non-worsening test against the no-protective-action counterfactual; reduces to the prior "remain satisfied" where none exceeded; Review-History M-07. Final v0.7 text confirmed. |
+| M-14 | Does ADR-002-021 aggregate projection evaluate the naked-leg case on partial vector approval? | **RESOLVED by existing text (EV-L0 spec-check)** | ADR-002-021: the Adverse Increment Vector SHALL include full and partial fill prefixes and simultaneous credible actions; an alternative is rejected because hedge-leg failure can be worse; ARE-AC-003. The literal "naked-leg" term is absent — coverage confirmed rather than assumed. |
+| M-15 | Are LLM-derived interpretations only soft, direction-non-determining evidence? | **RESOLVED** | RFC-003: LLM-derived interpretations are admissible only as soft, non-determining evidence. Residual sub-question (the exact soft-vs-Critical-Input line) noted, non-blocking. |
+| mn-14 | Is the backward-only "Depends On" convention intentional? | **RESOLVED** | preface Conventions: "Depends On" headers are backward-only; forward dependencies live in each ADR's Approval Gate section. |
+
+The Wave-7 mode-transition items U1/U2/U3 (RFC-002 §20.1) recorded as debt in §3.10 are
+**resolved in Wave 8** (§3.11): U1 by the new ADR-002-001 §8.5 normative de-restriction decision,
+U2 by the ADR-002-007 §14.1 enumeration, and U3 by the §20.1 informative naming-map. No open
+ratification-blocking mode-transition seam remains.
+
+### 9.6 Residual-Debt Classification (ratification-blocking vs acceptance-track)
+
+| §4.5 item | Classification | Blocks ratification? |
+|---|---|---|
+| M-06 out-of-band egress containment existence | Owner-decision-required (now recorded, §4.5) + acceptance-track (EGRESS-EV-013) | No — the owner disposition is the required residual-risk-acceptance input to RFC-001 ratification and is now recorded; EGRESS-EV-013 remains an acceptance-track obligation |
+| No execution (all 372 Part-1 / 98 development-track items `NOT_IMPLEMENTED`) | Acceptance/live-track only | No — the corpus can be fully ratified with zero evidence executed; ratification is evidence-independent (GOV-001 G1) |
+| TRACEABILITY-MATRIX-002 §5.3 source gaps (ADR-002-002..006) | Acceptance-track, explicitly deferred (no coverage lost) | No — but must be listed as a deferred item in RFC-002's ratification record (P2) |
+| Part-2/3 ratification pending | This is the plan (§9.2) | N/A |
+
+### 9.7 Ratification Records
+
+No document has been ratified; this store is empty. Each future ratification SHALL be recorded here
+per the GOV-001 G5 schema — the target document and its exact version and commit; the decision and
+date; the ratifying authority and the conformance attestor; the passing independent EV-L0 review
+and its provenance; the P1–P5 evidence; accepted and deferred requirements; residual risks accepted
+by the System Owner; the cited-version pins; the Ratified upstream documents relied upon; the
+effective date; and the re-review or expiry trigger — and SHALL state that the ratification confers
+no live authority, no ADR acceptance, and no capacity.
+
+*(empty)*
+
+---
+
+## 10. Wave Review Provenance Record
+
+This record discharges the M-18 provenance obligation that VER-002-001 §5 and §9.4 place on the
+corpus's own EV-L0 reviews: every EV-L0 review of a corpus document SHALL record its reviewer
+provenance per the ADR-DEV-005 §7 independence standard. It is provenance metadata about existing
+EV-L0 design inspections, not a new executable evidence item; it adds no row to either Evidence
+Register (Part-1 stays 372; development track stays 98).
+
+| Review | Target | Reviewer substrate | Determining inputs | Date | Disposition |
+|---|---|---|---|---|---|
+| CORPUS-REVIEW-0001 (9 lenses) | Entire corpus | 8× `oh-my-claudecode:critic` + 1× `deep-reasoner` subagents, model session-inherited (`claude-fable-5`), independent isolated context lanes, read-only; orchestrator synthesis on `claude-fable-5` | canonical corpus text; vision/philosophy baseline; prior CONSISTENCY-AUDIT-002 / gate-status (known-issue exclusion) | 2026-07-16..17 | Report issued (working artifact) |
+| Wave 1 EV-L0 | RFC-001 / ADR-002-015 / 025 / 026 / 027 / DR-0001 | `oh-my-claudecode:critic`, `claude-fable-5` (session-inherited), separate lane from author (`deep-reasoner`, `claude-fable-5`) | uncommitted git diff; CORPUS-REVIEW-0001 CR-02; canonical originals | 2026-07-17 | APPROVE-WITH-FIXES → fixes applied → committed de57c55e |
+| Wave 2 EV-L0 | RFC-000 v0.12 / RFC-001 v0.5 | Same pattern (critic, fable-5, separate lane) | git diff; M-01..M-06; originals | 2026-07-17 | APPROVE-WITH-FIXES → c3f43fa1 |
+| Wave 3 EV-L0 | VER / register / ADR-001·002 / RFC-001 v0.6 | critic (fable-5); author: deep-reasoner design + `oh-my-claudecode:executor` (`claude-opus-4-8` explicitly specified) applied | git diff; spec; originals | 2026-07-17 | APPROVE → 455b363f |
+| Wave 4 EV-L0 | VER-DEV-001 / register-DEV / RFC-000 v0.13 et al. | critic (fable-5); designer deep-reasoner + executor (opus-4-8) | git diff; spec; inventory | 2026-07-17 | APPROVE-WITH-FIXES → d1020a09 |
+| Wave 5 EV-L0 | RFC-003 v0.2 / ADR-DEV-007 v0.2 / RFC-006 v0.2 | critic (fable-5); author deep-reasoner (applied directly) | git diff; M-13..15; originals | 2026-07-17 | APPROVE-WITH-FIXES → 8dbe9b4e |
+| Wave 6 EV-L0 | ADR-002-001 v0.5 and 15 others | critic (fable-5); designer deep-reasoner + executor (opus-4-8) | git diff; 6 spec judgments; originals | 2026-07-17 | APPROVE-WITH-FIXES → 9391fa83 |
+| Wave 7 EV-L0 | RFC-000 v0.14 / RFC-002 v0.3 et al. | critic (fable-5); designer deep-reasoner + executor (opus-4-8) | git diff; spec; originals | 2026-07-17 | ACCEPT → 7e7ee9cb |
+| Wave 8 EV-L0 | ADR-002-001 v0.7 / ADR-002-007 v0.2 / RFC-002 v0.4 | critic (fable-5); designer deep-reasoner + executor (opus-4-8) | git diff; spec; originals | 2026-07-17 | APPROVE-WITH-FIXES → c861da82 |
+
+**Honesty limitation.** Lane separation (not-the-author, not-author-rerun, read-only) is
+established for every review above; substrate decorrelation is NOT — authors and reviewers ran on
+the same session-inherited model family. This limitation is recorded rather than obscured (M-18
+falsifiability). Under ADR-DEV-005 §6 AIR-INV-002 this is not a discretionary judgment: absent an
+affirmative decorrelation demonstration, a same-model-family AI-on-AI review is treated as
+common-mode and fails closed, so these reviews cannot positively establish GOV-001 G3(P1) — P1
+remains unmet corpus-wide until an affirmatively decorrelated, human, or demonstrably
+independent-substrate review is recorded (see §9.4 P1).
+
+The Wave-9 changes recorded in §3.12 are themselves EV-L0 review items; their provenance row SHALL
+be appended here once their independent review completes.

@@ -41,8 +41,10 @@
 - [ADR-002-030 — Post-Trade Economic Obligations, Settlement Finality, and Conservative Account-State Governance](part-1-foundation/ADR-002-030-Post-Trade-Economic-Obligations-Settlement-Finality-and-Conservative-Account-State-Governance.md)
 - [VER-002-001 — Safety-Critical Architecture Verification](part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md)
 - [Evidence Register](part-1-foundation/verification/EVIDENCE-REGISTER-002.md)
+- [GOV-001 — Ratification and Change Governance](part-1-foundation/GOV-001-Ratification-and-Change-Governance.md)
 - [Architecture Gate Status and Semantic Merge Map](part-1-foundation/ARCHITECTURE-GATE-STATUS.md)
 - [Complexity Justification Register](part-1-foundation/COMPLEXITY-REGISTER-002.md)
+- [DR-0001 — Single-Operator Live Governance](decision-records/DR-0001-Single-Operator-Live-Governance.md)
 
 # Decision Framework
 

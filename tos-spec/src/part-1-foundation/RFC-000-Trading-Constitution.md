@@ -2,7 +2,7 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.14 Review Draft
+**Version**: 0.15 Review Draft
 **Status**: Working Draft
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
@@ -1552,6 +1552,8 @@ The governance process SHALL be specified independently from this Constitution.
 
 Implementation SHALL NEVER become the source of architectural truth.
 
+The approved governance process is specified in GOV-001 (Ratification and Change Governance), which derives its authority from this section and governs process only.
+
 ---
 
 # 14. Requirements Traceability
@@ -1678,6 +1680,8 @@ Every amendment SHALL include
 
 Constitutional amendments SHALL require explicit ratification before becoming effective.
 
+The ratifying authority, preconditions, and record are defined by GOV-001; ratification confers no live authorization.
+
 Unratified drafts SHALL NOT supersede previously ratified constitutional requirements.
 
 ---
@@ -1767,3 +1771,11 @@ Inserted Architecture Decision Records as a tier below the Architecture RFCs and
 Added an intra-tier tie-break (a conflict resolves to the safer/more-restrictive interpretation; failing that, the higher/governing document; else escalation through §13) and a note that each document's ratification/approval status is recorded in ARCHITECTURE-GATE-STATUS §5, with precedence applying at recorded status.
 
 Narrow-only and additive; no CONST/AX change, no new requirement, no numeric bound; §12's existing narrow-only meta-principle is preserved unchanged, and vision.md and philosophy.md are untouched.
+
+v0.15
+
+Delegated the §13 governance process and named the §18 ratifying authority to GOV-001 (patch 0046).
+
+Added a §13 sentence pointing to GOV-001 (Ratification and Change Governance) as the approved, independently specified governance process, and a §18 sentence naming GOV-001 as the source of the ratifying authority, preconditions, and record, with ratification conferring no live authorization.
+
+Narrow-only and additive; pointer only; no CONST/AX change, no new requirement, no numeric bound; §12 and §13's existing text are preserved, and vision.md and philosophy.md are untouched.

@@ -3,7 +3,7 @@
 **Document ID:** RFC-001
 **Document Type:** Safety Requirements Specification and Safety Case
 **Title:** Trading Operating System Safety Case
-**Version:** 0.6 Review Draft
+**Version:** 0.7 Review Draft
 **Status:** Review Draft — Not Ratified
 **Classification:** Foundational Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -2112,6 +2112,8 @@ Ratification SHALL identify:
 * effective date;
 * expiration or re-review date.
 
+The ratifying authority, preconditions, and record schema are defined by GOV-001; document ratification of this Safety Case confers no live authorization, which remains governed by ADR-002-007 and ADR-002-025.
+
 Material changes to hazards, Critical requirements, safe-state semantics, or production gates SHALL require a new RFC-001 revision and renewed review.
 
 ---
@@ -2178,6 +2180,11 @@ Material changes to hazards, Critical requirements, safe-state semantics, or pro
 ### Wave-4 note — Part-2/3 Register Consolidation (2026-07-17)
 
 * CORPUS-REVIEW-0001 CR-01 discharged the SAFE-053, SAFE-054, HAZ-024, and HAZ-025 evidence debt recorded in v0.5/v0.6 above: EVIDENCE-REGISTER-002 gained HAG-EV-013..018 and EGRESS-EV-013 (count 363 → 372), and the previously UNMAPPED SAFE-053/054 are now COVERED in TRACEABILITY-MATRIX-002 §2 (§5.1 resolved). This RFC-001 carries no requirement or hazard change in this wave; the note is dated and additive only.
+
+### v0.7 — Named GOV-001 as the ratification-governance source (patch 0047)
+
+* Added a §17 pointer identifying GOV-001 as the source of the ratifying authority, preconditions, and record schema, and clarifying that document ratification of this Safety Case confers no live authorization, which remains governed by ADR-002-007 and ADR-002-025.
+* Pointer only, narrow-only and additive: no SAFE requirement, hazard, safe-state semantic, or numeric bound changed; the Evidence Register count is unchanged (Part-1 372); vision.md, philosophy.md, and RFC-000 are unchanged.
 
 ---
 
