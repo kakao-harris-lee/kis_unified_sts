@@ -790,19 +790,18 @@ The authoring-track dependency chain (GOV-001; RFC-000 §12):
 
 ### 9.3 Per-Document Ladder Rung
 
-Ratified count: **0**. Ratification-Ready count: **0**. Reason: no document yet clears all of
-P1–P5. The first external-substrate EV-L0 review (§10) positively establishes P1 for GOV-001 v0.1
-(verdict PASS), but GOV-001 is blocked by P3 (upstream RFC-000 not yet Ratified). RFC-000's P1 is
-pending the v0.16 delta re-review after the external FAIL on v0.15 was resolved in v0.16 (§3.13,
-§10). All other documents' P1 remains unmet corpus-wide (no external review recorded), and no
-ratification act has been performed. All normative RFC-class documents remain at Working/Review
-Draft; all ADRs remain Proposed; both Verification Evidence specifications remain Proposed.
+Ratified count: **1** — RFC-000 v0.16 (2026-07-17, record RR-0001, §9.7). Ratification-Ready
+count: **1** — GOV-001 v0.1 (P1 satisfied by the external EV-L0 PASS, §10; P3 satisfied by the
+RFC-000 ratification; P2/P4/P5 held), awaiting the System Owner ratification act. All other
+documents' P1 remains unmet corpus-wide (no external review recorded for them). All other
+normative RFC-class documents remain at Working/Review Draft; all ADRs remain Proposed; both
+Verification Evidence specifications remain Proposed.
 
 | Document | Class | Current rung | Ratification-Ready? | Blocking precondition |
 |---|---|---|---|---|
 | vision | Part-0 (non-normative) | Baseline Adoption only | n/a | not a ratification target (GOV-001 §7) |
 | philosophy | Part-0 (non-normative) | Baseline Adoption only | n/a | not a ratification target (GOV-001 §7) |
-| RFC-000 | Normative RFC | **Ratification-Ready** (v0.16) | NO | none — awaiting the System Owner ratification act (GOV-001 G4/G5) |
+| RFC-000 | Normative RFC | **Ratified** (v0.16, 2026-07-17) | **YES** | — (record RR-0001, §9.7) |
 | RFC-001 | Normative RFC | Review Draft (v0.7) | NO | P1; P3 (upstream RFC-000 not yet Ratified) |
 | RFC-002 | Normative RFC | Review Draft (v0.4) | NO | P1; P3 (RFC-000/001 not Ratified) |
 | ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC-002 not Ratified |
@@ -857,13 +856,43 @@ ratification-blocking mode-transition seam remains.
 
 ### 9.7 Ratification Records
 
-No document has been ratified; this store is empty. Each future ratification SHALL be recorded here
-per the GOV-001 G5 schema — the target document and its exact version and commit; the decision and
-date; the ratifying authority and the conformance attestor; the passing independent EV-L0 review
-and its provenance; the P1–P5 evidence; accepted and deferred requirements; residual risks accepted
-by the System Owner; the cited-version pins; the Ratified upstream documents relied upon; the
-effective date; and the re-review or expiry trigger — and SHALL state that the ratification confers
-no live authority, no ADR acceptance, and no capacity.
+Each ratification is recorded here per the GOV-001 G5 schema — the target document and its exact
+version and commit; the decision and date; the ratifying authority and the conformance attestor;
+the passing independent EV-L0 review and its provenance; the P1–P5 evidence; accepted and deferred
+requirements; residual risks accepted by the System Owner; the cited-version pins; the Ratified
+upstream documents relied upon; the effective date; and the re-review or expiry trigger — and
+states that the ratification confers no live authority, no ADR acceptance, and no capacity.
+
+#### RR-0001 — RFC-000 v0.16 (Trading Constitution) — RATIFIED
+
+- **Target:** RFC-000 — Trading Constitution, version 0.16 (content commit `3bed676d`).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-17.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4 and the
+  vision §12 closing note; ratification confers no live authority, so RFC-001 SAFE-053 does not
+  apply to this act.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0001 (v0.15: FAIL,
+  1 MAJOR + 1 MINOR, both verified against source and applied in v0.16) and
+  GEMINI-EVL0-VERDICT-0002 (v0.16 delta: PASS, zero residual findings). Provenance: the §10
+  External EV-L0 rows (Gemini app, vendor Google; owner-captured app UI model "Gemini 3.1 Pro";
+  no tools/browsing; recorded decorrelation argument per ADR-DEV-005 AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied (2026-07-17); P2 findings resolved and open questions
+  dispositioned (§9.5); P3 vacuously satisfied (RFC-000 is governed by no higher document,
+  GOV-001 G3); P4 no dangling citation (DEC/TEST namespaces instantiated, ARCH-xxx explicitly
+  reserved); P5 version stable at v0.16.
+- **Accepted requirements:** the full v0.16 normative text — CONST-001..CONST-015, the §5
+  requirement structure and North Star precedence mapping, the §8 axioms, the §12 governance
+  hierarchy with the narrow-only meta-principle, and the §18 amendment process.
+- **Deferred:** the ARCH-xxx derived-requirement namespace remains explicitly reserved; no other
+  deferral.
+- **Residual risks accepted:** none arising from the RFC-000 document text itself.
+- **Cited-version pins:** GOV-001 v0.1 (the §13 governance-process delegation and the §18
+  ratifying-authority reference). A change to the pinned clauses triggers a citation-integrity
+  re-check of RFC-000 (GOV-001 G6).
+- **Re-review trigger:** any material change proceeds only through the RFC-000 §18 amendment
+  process and re-ratification (GOV-001 G6); de-ratification per GOV-001 G7.
+- **Non-authority statement:** this ratification establishes RFC-000 v0.16 as the governing
+  baseline and confers no live authorization, no ADR acceptance, and no capacity.
 
 *(empty)*
 

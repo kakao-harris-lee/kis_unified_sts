@@ -2,8 +2,8 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.16 Review Draft
-**Status**: Working Draft
+**Version**: 0.16
+**Status**: Ratified (2026-07-17 — GOV-001 G5 record RR-0001, ARCHITECTURE-GATE-STATUS §9.7; ratification confers no live authorization, no ADR acceptance, and no capacity)
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
 **Owner**: Trading Operating System Architecture Board
