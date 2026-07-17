@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-009
 **Title:** Agent Guide
-**Version:** 0.1 Review Draft
+**Version:** 0.2 Review Draft
 **Status:** Review Draft — Development
 **Classification:** Implementation-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -11,7 +11,7 @@
 **Authoring Surface:** Realized through RFC-008 — Strategy DSL
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-17
 
 ---
 
@@ -425,36 +425,36 @@ entirely on the enforcement, review, and admission points already defined upstre
 
 ## 14. Open Questions
 
-These questions are open while RFC-009 is a Review Draft and while RFC-010 and
-RFC-011 are unwritten. They SHALL NOT be resolved by informal authoring-actor
-convention.
+These questions are open while RFC-009 is a Review Draft. Each is addressed by a proposed
+ADR-DEV as noted; because every such ADR-DEV is `Proposed` (unaccepted), a proposed ADR-DEV
+does not resolve its question — resolution follows acceptance. None SHALL be resolved by
+informal authoring-actor convention.
 
 1. What minimum Authoring Provenance record (actor, prompt/input set, tool and
    model versions, source revision) is required to make an AI-authored strategy
-   admissible under ADR-002-029, and where is that record bound? *(Resolved by
-   ADR-DEV-004: minimum record defined; bound to the Artifact Identity and the
+   admissible under ADR-002-029, and where is that record bound? *(Addressed by proposed ADR-DEV-004; pending acceptance: minimum record defined; bound to the Artifact Identity and the
    ADR-002-029 Source Revision Manifest/admission evidence.)*
 2. What constitutes *independent* review of an AI-authored strategy — must the
    reviewing authority be human, a distinct tool, or either — given Vision
-   §12.4/§12.7 and the no-self-review rule (§10)? *(Resolved by ADR-DEV-005:
+   §12.4/§12.7 and the no-self-review rule (§10)? *(Addressed by proposed ADR-DEV-005; pending acceptance:
    independence is of the authority, not the substrate — human or a verified tool or
    either — defined by three exclusions.)*
 3. To what extent must an authoring pipeline be reproducible (bit-for-bit vs.
    reproducible-from-recorded-inputs) for the artifact reviewed to be provably the
-   artifact that runs (§9; ADR-002-016)? *(Resolved by ADR-DEV-002: identity is
+   artifact that runs (§9; ADR-002-016)? *(Addressed by proposed ADR-DEV-002; pending acceptance: identity is
    exact/content-addressed; behavior is reproducible-from-recorded-inputs.)*
 4. How is an author's rationale represented so it aids review without being
-   mistaken for verified conformance (§10; RFC-003 §12)? *(Resolved by ADR-DEV-005:
+   mistaken for verified conformance (§10; RFC-003 §12)? *(Addressed by proposed ADR-DEV-005; pending acceptance:
    rationale is recorded and presented as a claim to be checked, distinct from
    verified conformance, with no evidentiary weight until independently checked.)*
 5. How does the authoring discipline handle an Authoring Agent that revises a
    large family of strategies at once, so that per-artifact review and admission
-   are not diluted by scale (§10)? *(Resolved by ADR-DEV-006: the reviewable/admissible
+   are not diluted by scale (§10)? *(Addressed by proposed ADR-DEV-006; pending acceptance: the reviewable/admissible
    unit stays the individual artifact; no artifact inherits another's review, provenance,
    or admission; batch tooling is assistance, not authority.)*
 6. Where an authored strategy embeds an externally-sourced value, what staleness
    and re-authoring discipline governs that value between authoring time and
-   runtime capture (§9; RFC-008 §9)? *(Resolved by ADR-DEV-003: an explicit Validity
+   runtime capture (§9; RFC-008 §9)? *(Addressed by proposed ADR-DEV-003; pending acceptance: an explicit Validity
    Window beyond which the value is STALE and restrictive, and re-authoring — not
    reuse — of a stale value, with correction invalidating dependents.)*
 
@@ -510,3 +510,14 @@ Unresolved questions reduce, and do not expand, the conforming authoring surface
   literal phrase appears (§12 states the cognate "reinterpret higher-level intent").
   The identical imprecision across RFC-003 through RFC-011 was corrected
   consistently across the series in a single companion change.
+
+### v0.2 — Wave 6 (CORPUS-REVIEW-0001 seam-sealing: M-22)
+
+* **M-22 (§14 status hygiene).** Reframed the §14 Open Questions preamble and each item so
+  that a `Proposed` (unaccepted) ADR-DEV *addresses* a question but does not *resolve* it —
+  resolution follows acceptance; deleted the stale "while RFC-010 and RFC-011 are unwritten"
+  clause.
+* The change is narrow-only and additive; RFC-009 introduces no SAFE-xxx requirement,
+  numeric bound, or authority, and no new EV (register counts unchanged). Independent
+  adversarial EV-L0 review of this Wave-6 change is owed; this patch confers no acceptance
+  or live-readiness.

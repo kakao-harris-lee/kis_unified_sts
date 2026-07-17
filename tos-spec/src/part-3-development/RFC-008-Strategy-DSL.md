@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-008
 **Title:** Strategy DSL
-**Version:** 0.1 Review Draft
+**Version:** 0.2 Review Draft
 **Status:** Review Draft — Development
 **Classification:** Implementation-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -10,7 +10,7 @@
 **Decision Authority:** Constrained by RFC-003 — Decision Framework
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-17
 
 ---
 
@@ -480,47 +480,47 @@ is to make the prohibited effects unexpressible at the authoring surface.
 
 ## 14. Open Questions
 
-These questions are open while RFC-008 is a Review Draft and while RFC-009 through
-RFC-011 are unwritten. They SHALL NOT be resolved by informal authoring-surface
-convention.
+These questions are open while RFC-008 is a Review Draft. Each is addressed by a proposed
+ADR-DEV as noted; because every such ADR-DEV is `Proposed` (unaccepted), a proposed ADR-DEV
+does not resolve its question — resolution follows acceptance. None SHALL be resolved by
+informal authoring-surface convention.
 
 1. Is the DSL a standalone constrained language, a sandboxed embedding in a host
    language, or a restricted API surface — and which realization most credibly
    guarantees §11 item 17 (no escape) for the agents authoring under RFC-009?
-   *(Resolved by ADR-DEV-001: a default-deny, capability-restricted authoring
+   *(Addressed by proposed ADR-DEV-001; pending acceptance: a default-deny, capability-restricted authoring
    surface; any family is permitted only if escape-closure holds.)*
 2. What is the exact mechanism by which the runtime *enforces* purity and the
    absence of ambient state (§9) — a capability-restricted interpreter, static
    rejection of prohibited references, a sandbox, or a combination — and how is
-   that mechanism itself verified (RFC-010)? *(Resolved by ADR-DEV-001: three-layer
+   that mechanism itself verified (RFC-010)? *(Addressed by proposed ADR-DEV-001; pending acceptance: three-layer
    non-self-trusting enforcement — static admissibility analysis, capability-
    restricted evaluation, isolation boundary — with the mechanism itself
    adversarially verified per RFC-010 §8.)*
 3. Beyond the pre-evaluation capture §9 now requires, what evidence and staleness
    discipline governs an externally-sourced or LLM-derived interpretation so that
    it remains reproducible (§9) and cannot become a live side channel (§11 items
-   12, 17)? *(Reproducibility aspect resolved by ADR-DEV-002; capture, staleness, and
-   re-authoring resolved by ADR-DEV-003.)*
+   12, 17)? *(Reproducibility aspect addressed by proposed ADR-DEV-002; capture, staleness, and
+   re-authoring addressed by proposed ADR-DEV-003; pending acceptance.)*
 4. How does the DSL represent "no-action / hold" versus "explicit flat
    (target = 0)" as distinct, first-class, reproducible outcomes (RFC-003 §16 Q4)?
-   *(Resolved by ADR-DEV-007: distinct, first-class, reproducible outcomes — hold
+   *(Addressed by proposed ADR-DEV-007; pending acceptance: distinct, first-class, reproducible outcomes — hold
    leaves exposure, flat proposes a zero-position action — never conflated or null.)*
 5. Is the atomic authored unit a per-instrument target or a portfolio-wide target
    vector, and does the Proposal Builder support both without letting a strategy
-   aggregate a combined authority (RFC-003 §§13, 16 Q1)? *(Resolved by ADR-DEV-007:
+   aggregate a combined authority (RFC-003 §§13, 16 Q1)? *(Addressed by proposed ADR-DEV-007; pending acceptance:
    both are supported and the unit is explicit; a portfolio vector is a set of
    per-instrument targets each independently approved and capacity-evaluated, never one
    aggregated authority.)*
 6. How does an Authored Strategy express a decision made when a companion model
    (RFC-004/006/007) is itself degraded or unavailable, such that degradation
-   narrows rather than widens the action set (RFC-003 §16 Q6; §6, §10)? *(Resolved by
-   ADR-DEV-008: a degraded/UNKNOWN/STALE output is expressible only restrictively, the
+   narrows rather than widens the action set (RFC-003 §16 Q6; §6, §10)? *(Addressed by proposed ADR-DEV-008; pending acceptance: a degraded/UNKNOWN/STALE output is expressible only restrictively, the
    degraded decision is first-class and reproducible, and no self-computed substitute
    acquires the degraded model's authority.)*
 7. What is the versioning and substitution protocol for an Authored Strategy and
    its DSL version such that a change is always a recorded, versioned substitution
    (§§6, 9; RFC-003 §13), and how does it interact with software-artifact
-   admission (ADR-002-029)? *(Resolved by ADR-DEV-004: a change to the artifact, DSL
+   admission (ADR-002-029)? *(Addressed by proposed ADR-DEV-004; pending acceptance: a change to the artifact, DSL
    version, enforcement version, or configuration is a recorded Versioned
    Substitution producing a new Artifact Identity and a new ADR-002-029 Release
    Generation that inherits no admission.)*
@@ -577,3 +577,14 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   cognate "SHALL NOT reinterpret higher-level intent." The identical imprecision in
   RFC-003 through RFC-011 was corrected consistently across the series in a single
   companion change rather than by a lone divergent edit.
+
+### v0.2 — Wave 6 (CORPUS-REVIEW-0001 seam-sealing: M-22)
+
+* **M-22 (§14 status hygiene).** Reframed the §14 Open Questions preamble and each item so
+  that a `Proposed` (unaccepted) ADR-DEV *addresses* a question but does not *resolve* it —
+  resolution follows acceptance; deleted the stale "while RFC-009 through RFC-011 are
+  unwritten" clause.
+* The change is narrow-only and additive; RFC-008 introduces no SAFE-xxx requirement,
+  numeric bound, or authority, and no new EV (register counts unchanged). Independent
+  adversarial EV-L0 review of this Wave-6 change is owed; this patch confers no acceptance
+  or live-readiness.

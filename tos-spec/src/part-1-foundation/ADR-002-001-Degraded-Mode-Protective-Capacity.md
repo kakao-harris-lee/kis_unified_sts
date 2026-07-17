@@ -7,9 +7,9 @@
 **Parent Document:** RFC-002 — Trading Operating System Architecture
 **Governed By:** RFC-000 and RFC-001
 **Date:** 2026-07-13
-**Version:** 0.4 Part-2/3 Register Consolidation Draft
+**Version:** 0.5 Seam-Sealing Draft (CORPUS-REVIEW-0001 Wave 6)
 **Last Updated:** 2026-07-17
-**Supersedes:** ADR-002-001 v0.3 Evidence-Gate Binding Draft
+**Supersedes:** ADR-002-001 v0.4 Part-2/3 Register Consolidation Draft
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -131,6 +131,7 @@ A Protective Lease SHALL include:
 * Authority Epoch and single active owner;
 * monotonic lifetime and consumption-state identity;
 * Hard Safety Envelope and Runtime Safety Profile versions.
+* a bounded pre-proven admissibility scope — the exact venue/session/account/instrument/order-shape space for which a current ADR-002-019 Order Admissibility Decision was positively established at issuance — together with an explicit staleness tolerance beyond which that pre-proven admissibility SHALL NOT be relied upon.
 
 #### 3.1.3 Protective Consumption
 
@@ -259,6 +260,8 @@ Current conservative aggregate risk
 
 for the relevant risk dimensions while remaining within the Hard Safety Envelope.
 
+Where observed exposure already exceeds the Hard Safety Envelope (ADR-002-002 §23.2), "remaining within the Hard Safety Envelope" is discharged by a final state that reduces conservative aggregate risk and does not increase any hard-limit exceedance — a return-toward-envelope trajectory; a single protective action need not restore full envelope compliance, and successive protective actions may be required. This test never authorizes a final state that increases an exceedance.
+
 ### 6.2 Intermediate-State Test
 
 The final-state test is necessary but not sufficient.
@@ -271,9 +274,9 @@ Worst-case conservative risk after the intermediate state
 Risk of taking no protective action
 ```
 
-and every hard limit SHALL remain satisfied.
+and that no credible intermediate state increases any hard-limit exceedance: where a hard limit is currently satisfied it SHALL remain satisfied, and where observed exposure already exceeds a hard limit (ADR-002-002 §23.2) the action SHALL NOT increase that exceedance beyond the exceedance that taking no protective action would present over the same resolution horizon. The resolution horizon is the bounded interval over which the protective action's credible intermediate states are evaluated against the no-protective-action counterfactual; its value is owned by the Safety Profile and SHALL be chosen conservatively — no longer than the shortest interval sufficient for the protective action itself to resolve — and SHALL NOT be widened to enlarge the no-action baseline. Where no hard limit is currently exceeded, this condition is exactly the requirement that every hard limit remain satisfied.
 
-If this cannot be demonstrated, the action SHALL be classified as risk increasing and denied in degraded mode.
+If this cannot be demonstrated, the action SHALL be classified as risk increasing and denied in degraded mode. Where the exposure is already outside the Hard Safety Envelope and even a non-worsening protective path cannot be proven under this test, the de-risking is not silently abandoned: it is routed to the CONTAINED emergency-action path (§8.3, §8.3.1).
 
 ### 6.3 Risk Dimensions
 
@@ -351,6 +354,18 @@ Permitted:
 * reconciliation;
 * human escalation.
 
+### 8.3.1 CONTAINED Emergency-Action Proof Standard
+
+In CONTAINED the autonomous §6 classification is unavailable or not sufficiently trustworthy, so the "narrowly bounded emergency actions" of §8.3 SHALL NOT rely on a fresh §6.2 computation for their protective justification. Such an action is admissible only when all of the following hold:
+
+* it belongs to a pre-approved bounded emergency-action set defined in the Safety Profile, whose members were established not to increase conservative aggregate risk (§6) for the applicable position structures at approval time, under an explicit applicability and staleness condition;
+* it is reduce-only by construction on every governed exposure dimension for the current authoritative (reconciled) position structure, so that it cannot increase any hard-limit exceedance in any credible intermediate or final state (§6.2 non-worsening) without depending on the degraded classifier;
+* it remains within the bounded emergency envelope — quantity, notional, action rate, duration, and instrument/account scope — approved in the Safety Profile;
+* it is independently authorized by a current Safety Authority or, where that is unavailable, through the operator emergency path under §23.2; operator authorization does not convert an unproven action into a protective one (§23.2);
+* the Potentially-Live / UNKNOWN-outcome and Final Quantity Proof rules (§14.1–§14.4) apply unchanged.
+
+Where the applicability condition cannot be established for the current structure, or reduce-only-by-construction cannot be shown, no emergency de-risking proceeds: the exposure is treated as trapped (§15) and escalated (§13). The concrete emergency-action set, its applicability and staleness conditions, and the bounded-envelope values belong to the Safety Profile and Verification Specification.
+
 ### 8.4 HALTED
 
 Automated execution authority is withdrawn.
@@ -385,6 +400,8 @@ A Protective Lease is valid for new transmission only while all of the following
 * no evidence conflict that makes the protective effect uncertain.
 
 Wall-clock comparison alone is insufficient. If ownership, epoch, scope, remaining capacity, or validity cannot be proven, no new protective transmission may use the lease.
+
+During a Safety Control Plane partition, the current ADR-002-019 Order Admissibility Decision that ADR-002-011 §5 binds to every replacement leg, and the positively-proven current restrictive-path constraints that ADR-002-019 §19 requires of every protective action, are obtainable only within the lease's bounded pre-proven admissibility scope and staleness tolerance (§3.1.2). Within that scope and tolerance the lease MAY support overlap-first / add-only protective action — establishing new protection before any existing protection is removed. A protective replacement that involves cancellation — cancel-first, or any action that removes, reduces, or weakens existing protection before equivalent replacement is authoritatively confirmed live — SHALL NOT proceed under the lease during partition when it falls outside the pre-proven scope or its staleness tolerance is exceeded, because current admissibility cannot then be established; the exposure remains conservatively covered and trapped (§15) rather than transmitted on stale admissibility. ADR-002-001 owns this partition-time lease-admissibility rule; ADR-002-011 §5 and ADR-002-019 §19 cross-reference it.
 
 Potentially-live actions already issued under the lease remain capacity-consuming and enter reconciliation. Authority expiry does not expire their economic effect.
 
@@ -887,9 +904,9 @@ Expected result:
 
 ### 20.11 Intermediate Fill and Ordering Safety
 
-The test set SHALL cover 0%, partial, and full fills; multi-leg ordering inversion; external position change during the detection window; and margin, basis, and liquidity shocks.
+The test set SHALL cover 0%, partial, and full fills; multi-leg ordering inversion; external position change during the detection window; and margin, basis, and liquidity shocks; the already-exceeded-envelope regime (§23.2); and the CONTAINED by-construction emergency-action path (§8.3.1).
 
-Expected result: every credible intermediate state remains within the Hard Safety Envelope and is no worse than taking no protective action.
+Expected result: every credible intermediate state is no worse than taking no protective action and increases no hard-limit exceedance — where the envelope is already exceeded (ADR-002-002 §23.2) no intermediate state increases the exceedance beyond the no-action baseline, and where it is not exceeded every hard limit remains satisfied.
 
 ### 20.12 Protection Replacement Gap
 
@@ -1002,7 +1019,7 @@ Operator action does not convert an unproven action into a protective action.
 
 ### 23.3 Dependencies
 
-This decision depends on RFC-000, RFC-001, RFC-002, ADR-002-002, ADR-002-003, ADR-002-004, ADR-002-005, ADR-002-008, ADR-002-011, and VER-002-001. Detailed state, time, and replacement mechanisms remain delegated to their assigned ADRs.
+This decision depends on RFC-000, RFC-001, RFC-002, ADR-002-002, ADR-002-003, ADR-002-004, ADR-002-005, ADR-002-008, ADR-002-011, ADR-002-019, and VER-002-001. Detailed state, time, and replacement mechanisms remain delegated to their assigned ADRs.
 
 ---
 
@@ -1051,3 +1068,9 @@ This decision does not guarantee that every position can be exited. It ensures o
 * Registered dedicated evidence rows PRD-EV-001 (protective-resource-domain enumeration completeness) and PRD-EV-002 (per-resource guarantee-level assignment completeness) under the new ADR-002-001-owned `PRD` family, discharging the criteria #1 and #11 evidence debt recorded in ARCHITECTURE-GATE-STATUS §4.4.
 * Re-bound §21 criteria #1 and #11 from PARTIAL (BC-EV-013/BC-EV-021 and SPG-EV-001) to their dedicated PRD-EV rows, supported by those existing families; added PRD-EV-001/PRD-EV-002 to the ADR-002-001 approval gate in VER-002-001 §380 (VER §391–392).
 * The Evidence Register count moved from 363 to 372 (nine Part-1 debt rows across ADR-002-001/013/015). The ADR remains `Proposed` pending executed and independently reviewed evidence; the PRD family placement and criticality are EV-L0 review items.
+
+### v0.5 — Seam-Sealing (CORPUS-REVIEW-0001 Wave 6)
+
+* **M-07.** Reformulated the §6.2 Intermediate-State hard-limit conjunct as a non-worsening test anchored to the no-protective-action counterfactual: where a hard limit is already exceeded (ADR-002-002 §23.2) an action SHALL NOT increase the exceedance beyond the no-action baseline over the same resolution horizon, and where none is exceeded the test reduces exactly to the prior "every hard limit remain satisfied." Clarified §6.1 for the already-exceeded regime (a return-toward-envelope trajectory that never increases an exceedance); added §8.3.1 defining the CONTAINED emergency-action proof standard (reduce-only by construction on every governed dimension over the reconciled position structure, a pre-approved bounded Safety-Profile action set, bounded emergency envelope, and independent authorization) so degraded de-risking does not depend on the untrustworthy §6 classifier; aligned the §20.11 expected result; and added ADR-002-019 to §23.3 Dependencies.
+* **M-08.** Added a bounded pre-proven admissibility scope and explicit staleness tolerance to the §3.1.2 Protective Lease, and a §9 partition-time lease-admissibility rule: within that scope and tolerance the lease MAY support overlap-first / add-only protection; a cancellation-involving protective replacement outside the scope or past the tolerance SHALL NOT proceed during partition because current admissibility cannot be established, leaving the exposure conservatively covered and trapped. ADR-002-001 owns this rule; ADR-002-011 §5 and ADR-002-019 §19 cross-reference it.
+* All changes are narrow-only and additive; they introduce no SAFE-xxx requirement and no new EV ID (Evidence Register count unchanged at 372). Two conservative scenario-extension debts (the already-exceeded-envelope / §8.3.1 intermediate-state path; the partition-time pre-proven-admissibility-scope validity scenario) are recorded in ARCHITECTURE-GATE-STATUS §3.9 and are discharged within existing PR-EV/RC-EV/ARE-EV and SA-EV/VTG-EV/PR-EV families. Independent adversarial EV-L0 review of these Wave-6 changes — especially the M-07 no-action-counterfactual anchor — is owed; this patch confers no acceptance or live-readiness.

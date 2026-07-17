@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-14
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** cross-artifact active currentness, monotonic restrictive fencing, currentness ordering domains, exact generation vectors, local deny latches, per-send currentness proof, claim-versus-restriction ordering, partition behavior, multi-domain admission, recovery, evidence, and acceptance
 - **Supersedes:** None
@@ -253,6 +255,7 @@ For the exact action, the vector SHALL bind at least:
 - ADR-002-028 Safety Monitoring Policy, Monitor Generation, Critical Telemetry and Monitor Coverage Manifest digests, exact coverage result, unresolved Monitoring Gaps, suppression state, and monitoring restriction floor;
 - ADR-002-029 Software Release Policy, Release Generation, complete Admitted Release Set digest, exact Release Artifact Manifest, actual Runtime Artifact Attestation, compatibility result, signer/key status, and release restriction floor;
 - ADR-002-030 Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set digest, Statement Coverage Manifest, unresolved break/correction set, field-specific finality state, conservative RCL binding, and post-trade restriction floor;
+- where the action is within an ADR-002-025 restricted-live trial or promotion scope, the exact ADR-002-025 Restricted-Live Trial Policy, Trial Plan, Trial Run, Promotion Generation, remaining action/effect/count/duration envelope, and abort generation (a conditional dimension of the vector, matching the §12 Egress Currentness Proof binding and ADR-002-025 §13);
 - Trustworthy Time, Recovery, Critical Input, Context, Constraint, Construction, Trading Approval, Aggregate Risk, and Action Flow generations;
 - exact decision, proof, Intent, commitment, permit, and invalidation identities required by the action;
 - Egress Generation, active principal, credential, route, endpoint, signer, session, and trust-bundle generations;
@@ -660,3 +663,16 @@ ADR-002-024 SHALL remain **Proposed** until all of the following are complete:
 14. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, schema drafting, successful vector/proof generation, signatures, logs, cache freshness, written cases, registered evidence, or EV-L0 document review do not satisfy this gate. This ADR authorizes architecture and implementation planning only. It does not authorize acceptance, restricted-live operation, production operation, broker transmission, or automatic re-arm.
+
+---
+
+## 29. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-14)
+
+Initial active-currentness, revocation, and final-egress admission-fencing decision.
+
+### v0.2 — Seam-Sealing (CORPUS-REVIEW-0001 Wave 6) (2026-07-17)
+
+- Added the conditional ADR-002-025 dimension to the §9 Safety Currentness Vector (mn-13): where the action is within a restricted-live trial or promotion scope, the vector binds the exact ADR-002-025 Restricted-Live Trial Policy, Trial Plan, Trial Run, Promotion Generation, remaining action/effect/count/duration envelope, and abort generation. This is a consistency fix aligning §9 with the §12 Egress Currentness Proof binding and ADR-002-025 §13, which already require those facts in both the vector and the proof.
+- Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent. The change is narrow-only and additive; it introduces no SAFE-xxx requirement and no new EV ID (vector completeness is the existing CUR-INV-001 / CUR-AC-001; Evidence Register count unchanged). Independent EV-L0 review is owed.

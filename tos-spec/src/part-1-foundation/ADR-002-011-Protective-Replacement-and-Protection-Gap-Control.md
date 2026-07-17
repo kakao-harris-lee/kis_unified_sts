@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-13
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Protective-order replacement, cancellation authority, non-atomic replace, overlap and gap capacity, proof of protection, Final Quantity Proof, partial fills, broker-resource scarcity, failure containment, recovery, and evidence
 - **Supersedes:** None
@@ -134,7 +136,7 @@ Any uncertain state -> RECOVERY_REQUIRED
 
 No lifecycle label by itself authorizes capacity release or removal of protection.
 
-No lifecycle label or “protective” classification proves that cancel, amend, replace, reduce-only, or new protection is executable. Each leg SHALL bind a current exact ADR-002-019 Order Admissibility Decision for its venue/session/account/order shape; missing or unknown admissibility preserves conservative gap, overlap, and trapped-exposure treatment.
+No lifecycle label or “protective” classification proves that cancel, amend, replace, reduce-only, or new protection is executable. Each leg SHALL bind a current exact ADR-002-019 Order Admissibility Decision for its venue/session/account/order shape; missing or unknown admissibility preserves conservative gap, overlap, and trapped-exposure treatment. During a Safety Control Plane partition, that current Order Admissibility Decision is obtainable only within a degraded Protective Lease's bounded pre-proven admissibility scope and staleness tolerance (ADR-002-001 §3.1.2, §9, which owns this rule); a cancellation-involving replacement leg outside that scope or past that tolerance cannot establish current admissibility and SHALL NOT proceed during partition, leaving only overlap-first / add-only protective action within scope.
 
 ---
 
@@ -527,3 +529,16 @@ This ADR SHALL remain **Proposed** until all of the following are complete:
 9. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship of this ADR does not prove safe replacement and does not authorize restricted-live or production operation.
+
+---
+
+## 25. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-13)
+
+Initial protective-replacement, cancellation-authority, and protection-gap control decision.
+
+### v0.2 — Seam-Sealing (CORPUS-REVIEW-0001 Wave 6) (2026-07-17)
+
+- Added a §5 cross-reference (M-08) to the ADR-002-001-owned partition-time lease-admissibility rule: during a Safety Control Plane partition the current ADR-002-019 Order Admissibility Decision each replacement leg binds is obtainable only within a degraded Protective Lease's bounded pre-proven admissibility scope and staleness tolerance (ADR-002-001 §3.1.2, §9); a cancellation-involving replacement leg outside that scope or past that tolerance SHALL NOT proceed during partition, leaving only overlap-first / add-only protection within scope.
+- Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent. The change is narrow-only and additive; it introduces no SAFE-xxx requirement and no new EV ID (Evidence Register count unchanged), and the partition-time admissibility-scope scenario is recorded as a conservative debt within the existing SA-EV/VTG-EV/PR-EV families in ARCHITECTURE-GATE-STATUS §3.9. Independent EV-L0 review is owed.

@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-13
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Broker capability contracts, order identity, idempotency, evidence semantics, cancellation, fills, reconciliation, rate limits, sessions, credentials, protective execution, capability degradation, and live-scope gating
 - **Supersedes:** None
@@ -787,6 +789,14 @@ Required fallback:
 - require restricted production verification for safety-critical semantics;
 - do not inherit capability status across environments.
 
+### 13.15 Composed Consequence — Minimal Partition-Time Protective Class
+
+The fallbacks above are per-dimension. Their composition can further reduce the achievable protective envelope, and one composition SHALL be stated explicitly because it collapses partition-time autonomous protection.
+
+For the capability class in which a Broker Capability Profile simultaneously exhibits {a single serialized session or head-of-line-blocking channel (§13.11); no broker-side immediate session or credential revocation (§13.12); and a shared global account rate limit (§13.10)}, composed with the single-credential-holder-per-cell boundary (ADR-002-009 §10.1), the final-egress enforcement point (ADR-002-001 §5), and egress-reachability fencing (ADR-002-003 §11.3): during a Safety Control Plane partition the achievable degraded-protective envelope reduces to HALT plus operator escalation (ADR-002-001 §8.4, §13). In that class, autonomous protective transmission during partition would require a channel ordinary traffic can head-of-line-block, rate capacity classifiable only as `PRIORITIZED_ONLY` or `BEST_EFFORT` (§13.10; ADR-002-001 §12.4), and a current admissibility/currentness proof the partition makes unobtainable (ADR-002-024; ADR-002-001 §9, §11.4); and offline protective ownership is prohibited because stale direct access cannot be bounded (§13.12; ADR-002-001 §3.1.6). A profile in this class SHALL either reduce live scope so that no unattended partition-time autonomous protection is relied upon — compensating through earlier degradation, smaller live scope, larger protective reserve, or prohibition of strategies depending on the unavailable protection (ADR-002-001 §12.4) — or be classified CLASS-C / CLASS-D for the affected scope (§10).
+
+This consequence is stated in Broker Capability Profile dimension language and names no concrete broker. Facts about any specific broker that would place it in or out of this class belong to a non-normative Broker Capability Profile instance produced on the implementation track (§21), not to this normative decision.
+
 ---
 
 ## 14. Attribution and Containment Scope
@@ -1398,3 +1408,16 @@ ADR-002-004 may move from **Proposed** to **Accepted** only when:
 - residual risks and scope restrictions are approved.
 
 Until then, broker integrations remain paper, shadow, or explicitly non-production.
+
+---
+
+## 31. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-13)
+
+Initial Broker Capability Profile, capability-dimension, fallback-matrix, and live-scope-gating decision.
+
+### v0.2 — Seam-Sealing (CORPUS-REVIEW-0001 Wave 6) (2026-07-17)
+
+- Added §13.15 (composed-consequence capability-class narrative): for the class combining a single serialized or head-of-line-blocking channel (§13.11), no broker-side immediate session or credential revocation (§13.12), and a shared global account rate limit (§13.10) — composed with the single-credential-holder-per-cell boundary (ADR-002-009 §10.1), the final-egress enforcement point (ADR-002-001 §5), and egress-reachability fencing (ADR-002-003 §11.3) — the achievable partition-time degraded-protective envelope reduces to HALT plus operator escalation, and a profile in this class SHALL reduce live scope or be classified CLASS-C / CLASS-D for the affected scope. Stated in Broker Capability Profile dimension language, naming no concrete broker; broker-specific placement belongs to a non-normative profile instance on the implementation track.
+- Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent. The change is narrow-only, additive, and scope-reducing; it introduces no SAFE-xxx requirement and no new EV ID (within the existing BC-EV-016 / FD-EV-008 / VTG-EV-010 and BC-AC-013/014 coverage; Evidence Register count unchanged). Independent EV-L0 review is owed.

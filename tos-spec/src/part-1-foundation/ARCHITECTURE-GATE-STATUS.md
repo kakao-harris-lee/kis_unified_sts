@@ -293,6 +293,50 @@ versus §7 tail caveats. Patch documents (RFC-003-Patch-0013, ADR-DEV-007-Patch-
 RFC-006-Patch-0015) are recorded in the git-excluded patches/ per the repository convention;
 this section is the committed merge record.
 
+### 3.9 CORPUS-REVIEW-0001 Wave 6 (seam-sealing)
+
+Wave 6 seals cross-ADR and cross-part seams identified in CORPUS-REVIEW-0001. All changes
+are narrow-only and additive; no numbered section was renumbered, and vision.md,
+philosophy.md, and RFC-000 are unchanged. The canonical documents already carry the changes;
+the following table is the committed merge record.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| M-07: §6.2 Intermediate-State non-worsening test anchored to the no-protective-action counterfactual; §6.1 already-exceeded clarification; new §8.3.1 CONTAINED emergency-action proof standard (reduce-only by construction over the reconciled structure); §20.11 aligned; ADR-002-019 added to §23.3 Dependencies | ADR-002-001 (0.4 → **0.5**) | Patch 0016; introduces no SAFE-xxx and no new EV (count stays 372); M-07 scenario debt below |
+| M-08: partition-time lease-admissibility rule — §3.1.2 bounded pre-proven admissibility scope + staleness tolerance and §9 owning rule (overlap-first / add-only within scope; cancellation-involving replacement outside scope prohibited during partition) | ADR-002-001 §3.1.2/§9 owns (**0.5**); ADR-002-011 §5 (— → **0.2**) and ADR-002-019 §19 (— → **0.2**) cross-reference | Patches 0016/0017/0018; introduces no SAFE-xxx and no new EV; M-08 scenario debt below |
+| Capability class: §13.15 composed-consequence minimal partition-time protective class ({§13.11; §13.12; §13.10} composed with ADR-002-009 §10.1, ADR-002-001 §5, ADR-002-003 §11.3) reduces to HALT + operator escalation | ADR-002-004 §13.15 (— → **0.2**) | Patch 0019; Broker Capability Profile dimension language, no broker named; scope-reducing; no SAFE-xxx and no new EV (within BC-EV-016 / FD-EV-008 / VTG-EV-010) |
+| M-19: Proposal bound — unchanged — into the ADR-002-023 §5.3 Proposal Approval Request (§9); §5 "candidate" → "provisional"; ADR-002-023 §5.3 informative back-reference | RFC-003 §5/§9 (0.2 → **0.3**); ADR-002-023 §5.3 (— → **0.2**) | Patches 0020/0021; introduces no SAFE-xxx and no new EV |
+| M-21: admitted ≠ promotable — §4 non-scope bullet, §8 clause, new §8.1 Authoring-to-Live lifecycle; live promotion owned by ADR-002-025 | ADR-DEV-004 §4/§8/§8.1 (0.1 → **0.2**) | Patch 0022; no new APA-INV, no new APA-EV, no SAFE-xxx; DEV count stays 97 |
+| M-22: §14 Open-Questions status hygiene — a `Proposed` ADR-DEV *addresses* but does not *resolve* a question; stale "unwritten" clauses removed | RFC-008/009/010/011 §14 (each 0.1 → **0.2**) | Patches 0023/0024/0025/0026; introduces no SAFE-xxx and no new EV |
+| mn-16: RFC-010 demonstrates only the authoring-track subset of the Vision §9.5 list; execution-layer/architecture items owned by VER-002-001 families (e.g. RC-EV-006, BC-EV-005); §9 identity SHALL attributed upstream to ADR-DEV-002 / ADR-002-029 | RFC-010 §4/§9 (**0.2**) | Patch 0025; introduces no SAFE-xxx and no new EV |
+| M-23: Monitor Coverage Manifest assumption-derived intake (Monitored Assumption); ADR-DEV-011 open-coordination-dependency flipped to a defined §9 intake with monitoring evidence still owed | ADR-002-028 §9 (— → **0.2**); ADR-DEV-011 TAB-INV-006/§8/§12.5 (0.1 → **0.2**) | Patches 0027/0028; flips a dependency status, adds no obligation ID; no SAFE-xxx and no new EV (STM-INV-002 / STM-AC-001; DEV count stays 97) |
+| mn-13: conditional ADR-002-025 dimension added to the §9 Safety Currentness Vector, aligning it with the §12 Egress Currentness Proof binding and ADR-002-025 §13 | ADR-002-024 §9 (— → **0.2**) | Patch 0029; consistency fix; no SAFE-xxx and no new EV (CUR-INV-001 / CUR-AC-001) |
+| M-20 / mn-18 / mn-14: `preface.md` filled — derivation + governance-precedence map carrying every layer on both axes, effective-state guidance, backward-only `Depends On` convention, broker-agnosticism rule | `src/preface.md` (new; non-normative) | Direct edit (in this subsection); harmonizes vision §7.7 and RFC-000 §12; no EV impact; `SUMMARY.md` already links it |
+
+> Wave 6 seals cross-ADR/cross-part seams. All changes are narrow-only and additive;
+> vision.md, philosophy.md, and RFC-000 are unchanged. No SAFE-xxx requirement or numeric
+> bound is introduced, and the Evidence Register counts are unchanged (Part-1 372; Part-2/3
+> 97). ADR-002-001 → v0.5; RFC-003 → v0.3; ADR-DEV-004/011 and RFC-008/009/010/011 → v0.2;
+> ADR-002-004/011/019/023/024/028 receive a Version field (0.2) and Review History on first
+> patch, per the ADR-002-025/026/027 precedent (§3.4).
+>
+> **Wave-6 evidence debt (no new EV IDs; scenario extensions within existing families):**
+> * **M-07.** The intermediate-state proof (PR-EV-005, RC-EV-016, ARE-EV-003), §20.11, and
+>   trapped-exposure (RC-EV-014, §20.7) verification scenarios are owed an extension covering
+>   the already-exceeded-envelope regime (ADR-002-002 §23.2) and the §8.3.1 CONTAINED
+>   by-construction emergency-action path. Discharged within those existing families; no new
+>   EV row; count stays 372.
+> * **M-08.** SA-EV-004/005/006 (lease validity), VTG-EV (admissibility), and
+>   PR-EV-001/002/006/012 (replacement) are owed a partition-time pre-proven-admissibility-scope
+>   + staleness-tolerance validity scenario. Discharged within those existing families; no new
+>   EV row; count stays 372.
+
+Patch documents 0016 through 0029 are recorded in the git-excluded `patches/` per the
+repository convention (each born-MERGED, pointing here); this subsection is the committed
+merge record. The Wave-6 changes are EV-L0 review items — most load-bearing, the M-07
+no-protective-action-counterfactual anchor — with reviewer provenance to be recorded per
+ADR-DEV-005 (M-18).
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work

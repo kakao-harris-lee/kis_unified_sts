@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-010
 **Title:** Testing Strategy
-**Version:** 0.1 Review Draft
+**Version:** 0.2 Review Draft
 **Status:** Review Draft — Development
 **Classification:** Implementation-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -11,7 +11,7 @@
 **Authoring Surface:** Realized through RFC-008 — Strategy DSL and RFC-009 — Agent Guide
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-17
 
 ---
 
@@ -114,6 +114,15 @@ does not restate, them.
   partition, external activity, configuration error, protective-capacity
   exhaustion — SHALL be demonstrable through repeatable tests; a safety property
   that cannot be tested objectively remains an unproven claim.
+
+  The Vision §9.5 list spans the whole system; RFC-010 demonstrates only its
+  authoring-track subset — the Authored Strategy, the DSL and its containment, and the
+  authoring pipeline (§§7–9). The execution-layer and architecture items in that list
+  (duplicate events, stale input, clock failure, broker inconsistency, partial fill,
+  unknown order state, restart, partition, external activity, protective-capacity
+  exhaustion) are owned by VER-002-001 and its evidence families — for example RC-EV-006
+  (partial fill) and BC-EV-005 (duplicate / out-of-order fill) — not by this testing
+  strategy; RFC-010 does not claim them.
 * **Safety claims require demonstration** (philosophy §33). Specified,
   Implemented, Demonstrated, and Accepted are distinct states; implementing a
   control does not prove it works, and passing a nominal test does not prove it
@@ -268,9 +277,10 @@ reviewable. RFC-010 supplies the tests that make review and replay possible.
   Where a test must exercise an external interaction, it does so against a recorded
   or simulated boundary, never a live real-capital path (RFC-001 §5.10 Non-Live Mode;
   RFC-002 §7.6).
-* **Reproducible artifact identity.** Testing SHOULD run against the exact artifact
-  that will be reviewed and admitted, so the artifact tested is provably the
-  artifact that runs (ADR-002-016; ADR-002-029). A test result bound to a mutable
+* **Reproducible artifact identity.** That the artifact tested is exactly the artifact
+  reviewed, admitted, and run is a SHALL owned upstream by ADR-DEV-002 (content-addressed
+  Artifact Identity) and ADR-002-029 (admission); RFC-010 inherits it and SHALL run its
+  Conformance Tests against that exact Artifact Identity. A test result bound to a mutable
   or unidentified artifact is weak evidence.
 * **Provenance of test evidence.** Test results offered as safety evidence SHALL
   carry the versions and inputs they ran against, as conforming inputs to the
@@ -415,40 +425,38 @@ on the enforcement, acceptance, and admission points already defined upstream.
 
 ## 14. Open Questions
 
-These questions are open while RFC-010 is a Review Draft and while RFC-011 is
-unwritten. They SHALL NOT be resolved by informal testing convention.
+These questions are open while RFC-010 is a Review Draft. Each is addressed by a proposed
+ADR-DEV as noted; because every such ADR-DEV is `Proposed` (unaccepted), a proposed ADR-DEV
+does not resolve its question — resolution follows acceptance. None SHALL be resolved by
+informal testing convention.
 
 1. What minimum set of adversarial escape vectors must the containment suite (§8)
    attempt for the RFC-008 unexpressibility claim to be treated as demonstrated
-   rather than open, and how is that set kept current as the DSL evolves? *(Resolved
-   by ADR-DEV-009: the minimum set is the union of the whole RFC-008 §11 boundary plus
+   rather than open, and how is that set kept current as the DSL evolves? *(Addressed by proposed ADR-DEV-009; pending acceptance: the minimum set is the union of the whole RFC-008 §11 boundary plus
    the ambient, realization, and single-layer classes; versioned with the surface and
    grown with discovered regressions.)*
 2. How reproducible must a Conformance Test be — bit-for-bit vs.
    reproducible-from-recorded-inputs — for the artifact tested to be provably the
-   artifact admitted (§9; ADR-002-016; RFC-008 §9 and §14 Q3)? *(Resolved by
-   ADR-DEV-002: exact/content-addressed identity binds tested to admitted; behavior
+   artifact admitted (§9; ADR-002-016; RFC-008 §9 and §14 Q3)? *(Addressed by proposed ADR-DEV-002; pending acceptance: exact/content-addressed identity binds tested to admitted; behavior
    is reproducible-from-recorded-inputs.)*
 3. What backtest methodology and cost/slippage realism (RFC-005 §9, RFC-006 §11)
    is required before a backtest is admissible evidence toward a hypothesis, and
-   what explicitly disqualifies a look-ahead-biased or overfit backtest? *(Resolved by
-   ADR-DEV-010: admissible only if net of realistic cost, population/significance-treated,
+   what explicitly disqualifies a look-ahead-biased or overfit backtest? *(Addressed by proposed ADR-DEV-010; pending acceptance: admissible only if net of realistic cost, population/significance-treated,
    look-ahead-free, and hermetic/reproducible; look-ahead, overfit, optimistic cost,
    unrepresentative population, and irreproducibility are disqualifiers.)*
 4. What constitutes *independent* verification of an AI-authored strategy's
    conformance claims — must the verifying party be human, a distinct tool, or
-   either — consistent with RFC-009 §10's no-self-review rule? *(Resolved by
-   ADR-DEV-005: the same independence standard — human or a verified tool or either,
+   either — consistent with RFC-009 §10's no-self-review rule? *(Addressed by proposed ADR-DEV-005; pending acceptance: the same independence standard — human or a verified tool or either,
    never the author or the author re-run or a common-mode reviewer; the author's own
    asserted result is not verification.)*
 5. How are Test Assumptions recorded and reviewed so that the bounded scope of a
    passing suite (philosophy §37.8) is visible to an independent reviewer rather
-   than implied? *(Resolved by ADR-DEV-011: a structured, reviewable Assumption Record
+   than implied? *(Addressed by proposed ADR-DEV-011; pending acceptance: a structured, reviewable Assumption Record
    per suite; the demonstrated claim extends only over recorded assumptions.)*
 6. Where does the boundary sit between RFC-010 pre-deployment testing and the
    runtime continuous conformance monitoring owned by ADR-002-028, so that
    pre-deployment demonstration and runtime monitoring neither leave a gap nor
-   duplicate each other? *(Resolved by ADR-DEV-011: distinct phases — pre-deployment
+   duplicate each other? *(Addressed by proposed ADR-DEV-011; pending acceptance: distinct phases — pre-deployment
    demonstration on a fixed Artifact Identity vs. ADR-002-028 runtime monitoring — with
    no gap, no duplication, bridged by Monitored Assumptions.)*
 
@@ -511,3 +519,20 @@ have demonstrated.
   higher-level intent") — was the series-wide item shared by RFC-003 through
   RFC-011; §2 now cites RFC-000 §9, corrected consistently across the series in a
   single companion change.
+
+### v0.2 — Wave 6 (CORPUS-REVIEW-0001 seam-sealing: M-22, mn-16)
+
+* **M-22 (§14 status hygiene).** Reframed the §14 Open Questions preamble and each item so
+  that a `Proposed` (unaccepted) ADR-DEV *addresses* a question but does not *resolve* it —
+  resolution follows acceptance; deleted the stale "while RFC-011 is unwritten" clause.
+* **mn-16 (scope of the Testable claim).** §4 now states that RFC-010 demonstrates only the
+  authoring-track subset of the Vision §9.5 list (the Authored Strategy, the DSL and its
+  containment, and the authoring pipeline, §§7–9); the execution-layer and architecture items
+  are owned by VER-002-001 and its evidence families (for example RC-EV-006, BC-EV-005), not
+  by this testing strategy. §9's "Reproducible artifact identity" bullet now attributes the
+  exact-identity SHALL upstream to ADR-DEV-002 and ADR-002-029, which RFC-010 inherits and
+  runs its Conformance Tests against.
+* All changes are narrow-only and additive; RFC-010 introduces no SAFE-xxx requirement,
+  numeric bound, or authority, and no new EV (register counts unchanged). Independent
+  adversarial EV-L0 review of these Wave-6 changes is owed; this patch confers no acceptance
+  or live-readiness.

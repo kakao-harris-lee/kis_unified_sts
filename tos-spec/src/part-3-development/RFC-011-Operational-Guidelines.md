@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-011
 **Title:** Operational Guidelines
-**Version:** 0.1 Review Draft
+**Version:** 0.2 Review Draft
 **Status:** Review Draft — Development
 **Classification:** Implementation-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -11,7 +11,7 @@
 **Authoring Lifecycle:** Follows RFC-008 — Strategy DSL, RFC-009 — Agent Guide, RFC-010 — Testing Strategy
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-17
 
 ---
 
@@ -452,39 +452,39 @@ on the enforcement, authority, and containment points already defined upstream.
 
 ## 14. Open Questions
 
-These questions are open while RFC-011 is a Review Draft. They SHALL NOT be
-resolved by informal operational convention.
+These questions are open while RFC-011 is a Review Draft. Each is addressed by a proposed
+ADR-DEV as noted; because every such ADR-DEV is `Proposed` (unaccepted), a proposed ADR-DEV
+does not resolve its question — resolution follows acceptance. None SHALL be resolved by
+informal operational convention.
 
 1. What minimum reconciled-state checklist (positions, open orders, account,
    configuration, venue, critical input, time, single-instance) must an operator
    confirm before requesting a Re-arm Decision, and where is that checklist bound
-   relative to ADR-002-017's recovery barrier? *(Resolved by ADR-DEV-012: a nine-item
+   relative to ADR-002-017's recovery barrier? *(Addressed by proposed ADR-DEV-012; pending acceptance: a nine-item
    positively-confirmed checklist; any unreconciled item withholds; it sits before, and
    never replaces, the ADR-002-017 barrier and the ADR-002-007 grant.)*
 2. How is the boundary drawn between an approved operator response to a degraded
    state and a break-glass action requiring ADR-002-015 dual-control governance?
-   *(Resolved by ADR-DEV-013: the line is the operator's scoped authority — anything
+   *(Addressed by proposed ADR-DEV-013; pending acceptance: the line is the operator's scoped authority — anything
    that would enlarge authority, act out of scope, or touch a control is break-glass
    under ADR-002-015 and cannot expand.)*
 3. What operator-facing observability is required so that authority, capacity,
    trapped exposure, reconciliation, and degraded mode are visible without the
-   dashboard itself becoming a trusted authority (Vision §9.3; ADR-002-028)? *(Resolved
-   by ADR-DEV-014: the load-bearing state is observable, but the surface is evidence,
+   dashboard itself becoming a trusted authority (Vision §9.3; ADR-002-028)? *(Addressed by proposed ADR-DEV-014; pending acceptance: the load-bearing state is observable, but the surface is evidence,
    not authority — validity is never inferred from a green dashboard/snapshot/health.)*
 4. How does the operator discipline represent "withhold re-arm" as a first-class,
    recorded, auditable outcome rather than an absence of action (§10; philosophy
-   §8)? *(Resolved by ADR-DEV-014: a withheld re-arm is a first-class, recorded,
+   §8)? *(Addressed by proposed ADR-DEV-014; pending acceptance: a withheld re-arm is a first-class, recorded,
    attributable, auditable outcome with its rationale, whose missed opportunity is
    acceptable.)*
 5. What is the relationship between operator-initiated containment and the
    independently-owned Safety Authority / incident governance (ADR-002-027), so
-   that operator action complements rather than pre-empts the owner? *(Resolved by
-   ADR-DEV-013: the operator invokes restrictive containment using normal authority
+   that operator action complements rather than pre-empts the owner? *(Addressed by proposed ADR-DEV-013; pending acceptance: the operator invokes restrictive containment using normal authority
    and complements — never declares, closes, clears, or pre-empts — the ADR-002-027
    lifecycle and the CONST-011 independent authority.)*
 6. How are operator authority scopes (account, strategy, instrument, venue, mode,
    software version, safety configuration) expressed and revoked, consistent with
-   Vision §6.6 and ADR-002-015? *(Resolved by ADR-DEV-015: authority is expressed along
+   Vision §6.6 and ADR-002-015? *(Addressed by proposed ADR-DEV-015; pending acceptance: authority is expressed along
    explicit dimensions, an act must be within current scope on every applicable
    dimension, and revocation is immediate and complete.)*
 
@@ -548,3 +548,13 @@ Unresolved questions reduce, and do not expand, the conforming operational postu
   points to RFC-000 §9, where the literal phrase appears (§12 states the cognate
   "reinterpret higher-level intent"); the series-wide imprecision across RFC-003
   through RFC-011 was corrected consistently in a single companion change.
+
+### v0.2 — Wave 6 (CORPUS-REVIEW-0001 seam-sealing: M-22)
+
+* **M-22 (§14 status hygiene).** Reframed the §14 Open Questions preamble and each item so
+  that a `Proposed` (unaccepted) ADR-DEV *addresses* a question but does not *resolve* it —
+  resolution follows acceptance. (RFC-011's preamble carried no "unwritten" clause to delete.)
+* The change is narrow-only and additive; RFC-011 introduces no SAFE-xxx requirement,
+  numeric bound, or authority, and no new EV (register counts unchanged). Independent
+  adversarial EV-L0 review of this Wave-6 change is owed; this patch confers no acceptance
+  or live-readiness.

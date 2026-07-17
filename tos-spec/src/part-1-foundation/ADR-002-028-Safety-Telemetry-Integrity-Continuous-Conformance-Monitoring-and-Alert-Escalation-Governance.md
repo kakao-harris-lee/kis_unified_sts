@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-14
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety telemetry classification and provenance, monitor coverage, continuous conformance, detection and restriction, monitoring gaps, suppression and maintenance, alert correlation and delivery, escalation, final-egress currentness, evidence, recovery, and acceptance
 - **Supersedes:** None
@@ -282,6 +284,8 @@ Coverage SHALL begin from the normative requirement and hazard registry, not fro
 10. failure-domain and common-mode analysis;
 11. final-egress or recovery currentness dependency where applicable;
 12. approved exclusions with proof that corruption or omission cannot affect safety.
+
+The manifest SHALL additionally enumerate assumption-derived monitoring obligations submitted to it — in particular each Monitored Assumption (ADR-DEV-011 TAB-INV-006): a recorded pre-deployment Test Assumption whose runtime falsity would invalidate a property demonstrated under it. Each submitted Monitored Assumption is a manifest item subject to the same 1–12 closure above or an approved exclusion, admitted through the coverage-completeness discipline (STM-INV-002) and never as an out-of-band addition. This is the intake that closes the ADR-DEV-011 coordination dependency: the runtime validity of a pre-deployment assumption becomes a monitored obligation with an owner, telemetry, and a restrictive response rather than a silently trusted condition.
 
 An exclusion is valid only when independent policy governance proves that telemetry corruption or omission cannot affect a safety decision, delay containment, weaken evidence, or falsely preserve live eligibility. Unknown scope or impact is included.
 
@@ -692,3 +696,16 @@ ADR-002-028 remains `Proposed` until all of the following are satisfied:
 13. Architecture Gate acceptance remains explicit; document review alone does not promote status.
 
 Authorship, EV-L0 review, a monitor definition, dashboard, page, alert acknowledgement, passing replay, incident-free interval, policy approval, configuration activation, recovery status, or registered evidence item does not satisfy these gates. This ADR authorizes architecture and implementation planning only. It does not authorize acceptance, restricted-live or production operation, broker transmission, scope promotion, incident closure, capacity release, or automatic re-arm.
+
+---
+
+## 31. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-14)
+
+Initial safety-telemetry-integrity, continuous-conformance-monitoring, and alert-escalation governance decision.
+
+### v0.2 — Seam-Sealing (CORPUS-REVIEW-0001 Wave 6) (2026-07-17)
+
+- Added a §9 Monitor Coverage Manifest intake (M-23) enumerating assumption-derived monitoring obligations — in particular each Monitored Assumption (ADR-DEV-011 TAB-INV-006) — as manifest items subject to the same §9 1–12 closure or an approved exclusion, admitted through the coverage-completeness discipline (STM-INV-002) and never as an out-of-band addition. This closes the ADR-DEV-011 coordination dependency at the specification level: the runtime validity of a pre-deployment assumption becomes a monitored obligation with an owner, telemetry, and a restrictive response. The runtime monitoring protocol and its evidence remain owned by, and unexecuted in, this ADR.
+- Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent. The change is narrow-only and additive; it introduces no SAFE-xxx requirement and no new EV ID (manifest completeness is the existing STM-INV-002 / STM-AC-001; Evidence Register count unchanged). An EV-L0 review item — confirm STM-AC-001 adequately covers the assumption-derived item class — is owed.

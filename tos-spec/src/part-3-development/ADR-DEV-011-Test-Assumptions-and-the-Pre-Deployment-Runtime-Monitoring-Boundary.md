@@ -9,8 +9,8 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-010 §14 Q5 and RFC-010 §14 Q6
 **Date:** 2026-07-16
-**Version:** 0.1 Review Draft
-**Last Updated:** 2026-07-16
+**Version:** 0.2 Review Draft
+**Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -33,8 +33,8 @@ Two decisions are fixed here:
   promotion, and incident handling are owned elsewhere and are out of scope — and being
   monitored never substitutes for prevention (philosophy §11). A recorded pre-deployment
   Test Assumption whose runtime falsity would invalidate a demonstrated property is proposed
-  as a runtime-Monitored Assumption — an open coordination dependency on ADR-002-028 — the
-  assumptions being the bridge.
+  as a runtime-Monitored Assumption — admitted through the ADR-002-028 §9 manifest intake,
+  its monitoring evidence still owed there — the assumptions being the bridge.
 
 This ADR fixes the assumption-recording discipline and the testing/monitoring boundary.
 It defines no monitoring protocol (ADR-002-028 owns it), grants no authority, and
@@ -157,10 +157,11 @@ the monitoring protocol.
 * **TAB-INV-006 — Assumptions Bridge the Two (Proposed Coordination with ADR-002-028).**
   A recorded pre-deployment Test Assumption **whose runtime falsity would invalidate a
   property demonstrated under it** SHALL be proposed, at acceptance, as a Monitored
-  Assumption. Whether and how it is monitored is owned by ADR-002-028; because
-  ADR-002-028's Monitor Coverage Manifest does not today enumerate assumption-derived
-  obligations, admitting a Monitored Assumption is a **coordination obligation on
-  ADR-002-028** (an open dependency), not something this ADR adds unilaterally. An
+  Assumption. Whether and how it is monitored is owned by ADR-002-028; ADR-002-028 §9
+  enumerates assumption-derived obligations (Monitored Assumptions) as manifest items, so
+  admitting a Monitored Assumption is a defined manifest intake rather than an open
+  dependency; the runtime monitoring protocol and its evidence remain owned by ADR-002-028
+  and are unexecuted while both ADRs are `Proposed`. An
   assumption that held in test but breaks in production is then a monitoring signal, not a
   silent failure (ADR-002-028).
 * **TAB-INV-007 — Recording and Boundary Grant No Authority.** An Assumption Record, and
@@ -217,9 +218,10 @@ The boundary is drawn so the two phases are complementary (TAB-INV-003, -004, -0
   runtime falsity would invalidate a property demonstrated under it is proposed, at
   acceptance, as a Monitored Assumption: the property was *demonstrated* under that
   assumption pre-deployment, and its *continued* validity would be *monitored* at runtime.
-  Because ADR-002-028's coverage manifest does not yet enumerate assumption-derived
-  obligations, this is an **open coordination dependency on ADR-002-028**, not an obligation
-  this ADR imposes unilaterally; an assumption that breaks in production is then surfaced by
+  ADR-002-028 §9 enumerates assumption-derived obligations (Monitored Assumptions) as
+  manifest items, closing this coordination dependency at the specification level; the
+  runtime monitoring evidence remains owned by, and unexecuted in, ADR-002-028; an
+  assumption that breaks in production is then surfaced by
   ADR-002-028, not silently trusted (TAB-INV-006).
 
 The seam is exactly the assumptions: what testing demonstrated conditionally, monitoring
@@ -297,8 +299,10 @@ by ADR-002-028):
   (TAB-INV-004).
 * **12.5** *(coordination obligation, owner ADR-002-028)* A recorded assumption whose
   runtime falsity would invalidate a demonstrated property is proposed as a Monitored
-  Assumption; its admission into the ADR-002-028 coverage manifest is an open dependency
-  (TAB-INV-006).
+  Assumption; its admission into the ADR-002-028 coverage manifest is defined by ADR-002-028
+  §9 (Monitored Assumption intake), closing the prior open dependency at the spec level.
+  Until that runtime monitoring evidence passes, a pre-deployment property conditional on a
+  Monitored Assumption remains conservatively undemonstrated at acceptance (TAB-INV-006).
 
 ---
 
@@ -332,7 +336,7 @@ operation, which remain governed by RFC-001 and VER-002-001.
 | RFC-010 §6 principle 2, §8 (assumption visibility); §11.10 (independence) | assumptions visible to and bounding the reviewer (§7; TAB-INV-002) |
 | philosophy §11, §37.3; RFC-010 §6 principle 5; ADR-002-028 §1 (prevention primacy) | being monitored is not adequacy where prevention is required; prevention is outside the purview (§8; TAB-INV-004) |
 | RFC-010 §12 (monitoring owned by ADR-002-028; RFC-010 ends at pre-deployment) | phase distinction; no monitor defined here (§8; TAB-INV-003) |
-| ADR-002-028 (continuous conformance monitoring; Safety Monitoring Gap) | runtime phase and Safety Monitoring Gap owned there; Monitored Assumptions are an open coordination dependency on it (§8; TAB-INV-003…006) |
+| ADR-002-028 (continuous conformance monitoring; Safety Monitoring Gap) | runtime phase and Safety Monitoring Gap owned there; Monitored Assumptions enter through the ADR-002-028 §9 manifest intake, monitoring evidence owed there (§8; TAB-INV-003…006) |
 | ADR-DEV-009 CEV-INV-005 (containment assumptions bound the claim) | consistent assumption discipline (§7; TAB-INV-002) |
 | ADR-DEV-002 (Artifact Identity) | pre-deployment demonstration is on a fixed identity (§8) |
 | philosophy §37.8 (tests prove only what they cover) | claim bounded by recorded assumptions (§§1, 7; TAB-INV-002) |
@@ -381,3 +385,17 @@ ADR-002-028 for the runtime monitoring protocol.
   independence); the §14 Q5/Q6 back-annotations were already added; and §12 obligations
   now name their owning discipline. The review is EV-L0 only and confers no acceptance or
   live-readiness.
+
+### v0.2 — Wave 6 (CORPUS-REVIEW-0001 seam-sealing: M-23)
+
+* **M-23 (assumption-monitoring dependency closed at spec level).** ADR-002-028 §9 now
+  enumerates assumption-derived monitoring obligations (Monitored Assumptions) as manifest
+  items, so TAB-INV-006, the §8 bridge, and §12.5 no longer describe an *open coordination
+  dependency*: admitting a Monitored Assumption is a defined ADR-002-028 §9 manifest intake.
+  The runtime monitoring protocol and its evidence remain owned by, and unexecuted in,
+  ADR-002-028; until that evidence passes, a pre-deployment property conditional on a
+  Monitored Assumption remains conservatively undemonstrated at acceptance (§12.5).
+* The change is narrow-only and additive; it flips a dependency status and adds no obligation
+  ID — no new SAFE-xxx requirement, no new TAB-INV, and no new EV (development-track count
+  unchanged at 97). Independent adversarial EV-L0 review of this Wave-6 change is owed; this
+  patch confers no acceptance or live-readiness.

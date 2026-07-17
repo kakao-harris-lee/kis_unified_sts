@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-14
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** automated independent proposal approval, policy and generation governance, exact request and decision binding, independent recomputation, common-mode control, immutable Intent registration, single-use consumption, invalidation, final-egress currentness, recovery, evidence, and acceptance
 - **Supersedes:** None
@@ -104,6 +106,8 @@ A monotonic fenced generation identifying the active Trading Approval Policy, ev
 ### 5.3 Proposal Approval Request
 
 An immutable canonical request binding the exact proposal and maximum requested business action to all approval-stage context, constraint, construction, policy, software, deployment, identity, and generation inputs.
+
+*Informative:* the object bound here is the Part-2 decision-layer Proposal (RFC-003 §9); RFC-003 defines the Proposal contract but creates no approval authority and does not construct or consume this request.
 
 ### 5.4 Independent Approval Decision
 
@@ -673,3 +677,16 @@ ADR-002-023 SHALL remain **Proposed** until all of the following are complete:
 13. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship, schema drafting, `APPROVE` output, successful Intent creation, signatures, logs, written cases, registered evidence, or EV-L0 document review do not satisfy this gate. This ADR authorizes architecture and implementation planning only. It does not authorize acceptance, restricted-live operation, production operation, broker transmission, or automatic re-arm.
+
+---
+
+## 29. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-14)
+
+Initial independent proposal-approval, exact-decision-binding, and single-use consumption-fencing decision.
+
+### v0.2 — Seam-Sealing (CORPUS-REVIEW-0001 Wave 6) (2026-07-17)
+
+- Added one informative sentence to §5.3 (M-19) recording that the object bound in a Proposal Approval Request is the Part-2 decision-layer Proposal (RFC-003 §9), and that RFC-003 defines the Proposal contract but creates no approval authority and neither constructs nor consumes this request.
+- Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent. The change is a narrow-only informative back-reference; it introduces no SAFE-xxx requirement and no new EV ID (Evidence Register count unchanged), and governance is not inverted (Part 1 still governs Part 2). Independent EV-L0 review is owed.

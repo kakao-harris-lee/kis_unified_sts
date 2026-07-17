@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-003
 **Title:** Decision Framework
-**Version:** 0.2 Review Draft
+**Version:** 0.3 Review Draft
 **Status:** Review Draft — Decision Framework
 **Classification:** Decision-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -150,8 +150,8 @@ and non-authorizing:
 
 * **Proposal** — the decision layer's output: a complete, immutable statement of
   a requested trading action that becomes an **Intent** only after independent
-  approval and Intent Registry consumption (ADR-002-023). A Proposal is a
-  candidate, not an authorization.
+  approval and Intent Registry consumption (ADR-002-023). A Proposal is
+  provisional — a proposed action awaiting independent approval, not an authorization.
 * **Decision Policy** — the deterministic (or seeded-stochastic) function a
   strategy applies to Decision Context to produce a Proposal or an explicit
   no-action outcome. A Decision Policy holds no authority of any kind.
@@ -262,6 +262,8 @@ instrument, direction, quantity, and constraints, and SHALL provide decision rat
 each Proposal. A Proposal becomes an **Intent** only when the Independent Approval Service
 approves it and the Intent Registry consumes it exactly once (ADR-002-023); the decision
 layer owns none of those transitions.
+
+The Proposal is delivered to the Approval stage, where it is bound — unchanged — as the exact proposal within an ADR-002-023 §5.3 Proposal Approval Request, the immutable input object the Independent Approval Service evaluates (ADR-002-023 §9). The decision layer does not assemble that request, grant approval, or consume it.
 
 A Proposal SHALL be complete and immutable, and SHALL be capable of populating
 the Approved Intent Contract field set defined in ADR-002-020 §8, including at
@@ -639,3 +641,19 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   ADR-002-018 §13, ADR-002-023, ADR-002-001 §6, CONST-012). Independent adversarial EV-L0
   review of these Wave-5 changes is **owed** (reviewer provenance to be recorded per
   ADR-DEV-005; M-18); this patch confers no acceptance or live-readiness.
+
+### v0.3 — Wave 6 (CORPUS-REVIEW-0001 seam-sealing: M-19)
+
+* **M-19 (Proposal ↔ approval binding).** §9 now states that the Proposal is delivered to
+  the Approval stage and bound — unchanged — as the exact proposal within an ADR-002-023
+  §5.3 Proposal Approval Request (ADR-002-023 §9), closing the prior half-bound gap in which
+  §9 bound the Proposal only to the ADR-002-020 §8 Approved Intent Contract and never to the
+  §5.3 request the Independent Approval Service evaluates. The decision layer assembles,
+  approves, and consumes none of it.
+* **M-19 (terminology).** Renamed the single informal §5 "candidate" — a Proposal is now
+  "provisional — a proposed action awaiting independent approval, not an authorization" —
+  removing the collision with the Part-1 "candidate Canonical Broker Command" (ADR-002-020).
+* All changes are narrow-only and additive; the binding is to the existing ADR-002-023
+  §5.3/§9 contract, and no conflict arises with the Wave-5 §9.1/§16 work. RFC-003 introduces
+  no SAFE-xxx requirement, numeric bound, or authority, and no new EV (register counts
+  unchanged). Independent adversarial EV-L0 review of these Wave-6 changes is owed.

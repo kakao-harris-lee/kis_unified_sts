@@ -9,8 +9,8 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-009 §14 Q1 and RFC-008 §14 Q7
 **Date:** 2026-07-15
-**Version:** 0.1 Review Draft
-**Last Updated:** 2026-07-15
+**Version:** 0.2 Review Draft
+**Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -95,6 +95,8 @@ binding; it defines no part of the admission mechanism.
 
 * the Artifact Admission Decision, manifests, Release Generation, and runtime
   attestation *mechanism* — ADR-002-029; this ADR feeds them;
+* live promotion — restricted-live trial through production authorization — ADR-002-025;
+  admission does not confer it;
 * the exact content-addressed identity mechanism — ADR-002-029 SCI-INV-002; the
   identity granularity is fixed by ADR-DEV-002;
 * what constitutes *independent review* of an AI-authored artifact — ADR-DEV-005;
@@ -196,11 +198,29 @@ The Authoring Provenance SHALL bind (APA-INV-003):
 
 This ADR requires the binding; ADR-002-029 owns the manifest structure, the admission
 decision, and generation fencing. An `ADMIT` remains a non-authorizing eligibility
-gate (ADR-002-029 §1); provenance binding does not create admission. Realizing the
+gate (ADR-002-029 §1); provenance binding does not create admission. An `ADMIT` is a
+non-authorizing eligibility gate and does not make an artifact promotable to live operation:
+promotion from admitted to restricted-live and then to production is owned by ADR-002-025
+(restricted-live verification and progressive scope promotion), governed independently of
+authoring and admission. Admitted ≠ promotable. Realizing the
 binding requires the ADR-002-029 Source Revision Manifest schema (whose field set
 ADR-002-029 leaves open) to carry the minimum Authoring Provenance record — including
 the AI-authoring fields (agent prompts, retrieved context, model and tool versions) —
 so the obligation is not orphaned at the admission gate.
+
+### 8.1 Authoring-to-Live Lifecycle
+
+Provenance binding places this ADR at the first hop of a longer lifecycle whose later hops it does not own:
+
+```text
+Authoring (RFC-008 / RFC-009; provenance ADR-DEV-004)
+    -> Artifact Identity (ADR-DEV-002)
+    -> Admission decision ADMIT / DENY / UNKNOWN (ADR-002-029)   [non-authorizing eligibility]
+    -> Restricted-live trial (ADR-002-025)                       [progressive, bounded, single-use]
+    -> Production scope promotion (ADR-002-025)                   [independent authorization]
+```
+
+Each arrow is a distinct, separately governed gate; passing an earlier gate never confers a later one. In particular, admission (ADR-002-029) makes an artifact *eligible*, not *promotable*: live promotion is owned entirely by ADR-002-025. This diagram is informative and creates no authority (APA-INV-006).
 
 ---
 
@@ -376,3 +396,17 @@ admission and ADR-DEV-002 for identity.
   planned; §10.2 re-cited to ADR-DEV-002 ARI-INV-003/§9; and §7 makes transparent that
   the minimum record extends RFC-009 §14 Q1 with the targeted DSL/enforcement/config
   versions. The review is EV-L0 only and confers no acceptance or live-readiness.
+
+### v0.2 — Wave 6 (CORPUS-REVIEW-0001 seam-sealing: M-21)
+
+* **M-21 (admitted ≠ promotable).** Sharpened the admission/promotion boundary: added a §4
+  non-scope bullet excluding live promotion (ADR-002-025); a §8 clause stating that an
+  `ADMIT` does not make an artifact promotable and that promotion from admitted to
+  restricted-live to production is owned by ADR-002-025; and a new §8.1 consolidated
+  Authoring-to-Live lifecycle diagram (authoring → Artifact Identity → admission →
+  restricted-live trial → production scope promotion), each hop a distinct, separately
+  governed gate that never confers a later one.
+* All changes are narrow-only and additive, citing the existing ADR-002-025; they introduce
+  no new APA-INV, no new APA-EV, and no SAFE-xxx requirement (development-track evidence
+  count unchanged at 97). Independent adversarial EV-L0 review of these Wave-6 changes is
+  owed; this patch confers no acceptance or live-readiness.

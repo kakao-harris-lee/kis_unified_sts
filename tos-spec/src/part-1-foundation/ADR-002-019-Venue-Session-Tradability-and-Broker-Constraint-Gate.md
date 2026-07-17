@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-14
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Venue and market state, session phase, instrument tradability, price and quantity constraints, order-type and time-in-force restrictions, account eligibility, margin and settlement constraints, broker restrictions, exact order-admissibility decisions, invalidation, final-egress currentness, degraded and protective behavior, recovery, evidence, and acceptance
 - **Supersedes:** None
@@ -426,6 +428,8 @@ Under `UNKNOWN`, `STALE`, `CONFLICTED`, `INADMISSIBLE`, closed, halted, suspende
 - blind retry, permissive fallback, manual bypass, alternative route, or broker portal is prohibited;
 - lack of a safe executable protective path triggers containment, HALT, escalation, and explicit trapped-exposure treatment rather than fabrication of permission.
 
+During a Safety Control Plane partition, the positively-proven current restrictive-path constraints required above are, for a protective action consuming a degraded Protective Lease, obtainable only within that lease's bounded pre-proven admissibility scope and staleness tolerance; ADR-002-001 §9 owns this rule. Outside that scope or past that tolerance, and for any cancellation-involving protective replacement, the action is not admissible during partition; only overlap-first / add-only protective action within the pre-proven scope may proceed.
+
 ADR-002-011 governs protective replacement. Priority, queue order, or reserved internal worker capacity is not broker or venue protective capacity.
 
 ---
@@ -705,3 +709,16 @@ ADR-002-019 remains `Proposed` until all applicable conditions pass:
 14. Architecture Gate acceptance, restricted-live, and production criteria pass for the exact proven scope.
 
 This ADR authorizes architecture and implementation-planning work only. It creates no live trading authority and makes no verification-completion or live-readiness claim.
+
+---
+
+## 31. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-14)
+
+Initial venue, session, tradability, and broker-constraint gate decision.
+
+### v0.2 — Seam-Sealing (CORPUS-REVIEW-0001 Wave 6) (2026-07-17)
+
+- Added an informative §19 paragraph (M-08) cross-referencing the ADR-002-001-owned partition-time lease-admissibility rule: during a Safety Control Plane partition the positively-proven current restrictive-path constraints §19 requires are, for a protective action consuming a degraded Protective Lease, obtainable only within the lease's bounded pre-proven admissibility scope and staleness tolerance (ADR-002-001 §9); outside that scope or past that tolerance, and for any cancellation-involving protective replacement, the action is not admissible during partition, leaving only overlap-first / add-only protective action within the pre-proven scope.
+- Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent. The change is narrow-only and additive; it introduces no SAFE-xxx requirement and no new EV ID (Evidence Register count unchanged). Independent EV-L0 review is owed.
