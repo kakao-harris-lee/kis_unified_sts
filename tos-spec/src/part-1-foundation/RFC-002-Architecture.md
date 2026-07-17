@@ -2,14 +2,14 @@
 
 **Document ID:** RFC-002
 **Title:** Trading Operating System Architecture
-**Version:** 0.4 Review Draft
+**Version:** 0.5 Review Draft
 **Status:** Review Draft — Architecture
 **Classification:** Foundational Architecture Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-13
-**Last Updated:** 2026-07-17
+**Last Updated:** 2026-07-18
 
 ---
 
@@ -327,6 +327,8 @@ The following safety properties are mandatory architectural inputs.
 | Safe start and resume          | SAFE-044                               |
 | Live and non-live segregation  | SAFE-045, SAFE-046, SAFE-047           |
 | Evidence and replay            | SAFE-051, SAFE-052                     |
+| Bounded human authority        | SAFE-042, SAFE-046, SAFE-050, SAFE-053 |
+| Final-egress out-of-band containment | SAFE-054                         |
 
 No architecture alternative MAY be selected without demonstrating how it satisfies these drivers.
 
@@ -558,12 +560,12 @@ The following matrix is the normative authority model.
 | Consume protective reserve | Protective Action Controller classifies and requests consumption within a valid lease | Protective sub-ledger or Risk Capacity Ledger transition function defined by ADR-002-002 | Strategy SHALL NOT self-label an action as protective |
 | Issue Safety Authority | Safety Authority | Final broker egress validates current epoch and scope | Safety Authority SHALL NOT hold broker transmission credentials |
 | Arm live scope | Live Authorization Service | Final broker egress validates scope | Limit administrator SHALL NOT also arm live scope |
-| Change Runtime Safety Profile | Safety Profile governance authority | Safety Profile Validator activates only after validation | Live armer SHALL NOT change limits |
-| Change Hard Safety Envelope | Independent Hard Safety Envelope governance | Hard Safety Envelope Registry publishes an immutable version | Runtime trading identity SHALL NOT administer the envelope |
+| Change Runtime Safety Profile | Safety Profile governance authority; an authority-increasing profile change requires two independent effective principals per RFC-001 SAFE-053 (quorum or ADR-002-015 §17.1 variant) | Safety Profile Validator activates only after validation | Live armer SHALL NOT change limits |
+| Change Hard Safety Envelope | Independent Hard Safety Envelope governance; an envelope-expanding change requires two independent effective principals per RFC-001 SAFE-053 (quorum or ADR-002-015 §17.1 variant) | Hard Safety Envelope Registry publishes an immutable version | Runtime trading identity SHALL NOT administer the envelope |
 | Create transmission attempt | Execution Coordinator | Intent Registry and Risk Capacity Ledger bind the attempt before send | Broker Adapter SHALL NOT invent an unbound attempt |
 | Transmit | Execution Coordinator requests | Broker Adapter / Broker Egress Gateway is the final enforcement point | No valid Transmission Capability means no send |
 | Establish per-send active currentness | Underlying owners publish exact facts; Currentness Sequencer orders them | Currentness Ordering Domain creates a non-authorizing proof within the capability-claim transaction; final egress enforces it | Currentness components SHALL NOT invent facts, mutate capacity, issue business authority, or transmit |
-| Govern restricted-live trial and production-scope promotion | Independent safety and broker reviewers evaluate exact pre-registered evidence; Human Authority approves eligibility | Configuration governance activates a new scope and Live Authorization Service issues fresh authority only through existing gates | Trial plans, evidence packages, promotion decisions, dashboards, and monitors SHALL NOT create capacity, activate production, transmit, or re-arm |
+| Govern restricted-live trial and production-scope promotion | Independent safety and broker reviewers evaluate exact pre-registered evidence; Human Authority approves eligibility (two independent effective principals per RFC-001 SAFE-053 — quorum or ADR-002-015 §17.1 variant; see §20.1, §23.1) | Configuration governance activates a new scope and Live Authorization Service issues fresh authority only through existing gates | Trial plans, evidence packages, promotion decisions, dashboards, and monitors SHALL NOT create capacity, activate production, transmit, or re-arm |
 | Evaluate safety deviation and residual risk | Safety Deviation Policy governance supplies the Non-Waivable Boundary; independent effective-person quorum evaluates exact reduced scope | Configuration governance may consume one eligible decision into one new restricted Safety Configuration Bundle; all ordinary gates remain | Request, decision, residual-risk record, ticket, evidence, and monitor SHALL NOT mark a requirement PASS, mutate capacity, activate configuration, issue live authority, transmit, or re-arm |
 | Declare and coordinate safety incident | Safety Incident Policy governance supplies signal, severity, scope, containment, shutdown, handoff, and closure rules; the incident coordinator produces non-authorizing artifacts | Safety Authority, Human HALT, ADR-002-024 Restrictive Fence Record, RCL, Protective Action Controller, Cancellation Arbiter, Recovery Coordinator, and final egress retain their existing enforcement ownership | Incident records, plans, messages, evidence, handoffs, and closure decisions SHALL NOT mutate or release capacity, classify protection, issue live authority, transmit, clear HALT, establish readiness, restore scope, or re-arm |
 | Evaluate safety telemetry and continuous conformance | Safety Monitoring Policy governance supplies exact telemetry, coverage, evaluator, suppression, and alert rules; source owners publish facts | Safety Monitoring Service produces non-authorizing snapshots, gaps, alerts, and restrictive requests; ADR-002-024/027 and existing owners enforce restriction and incident lifecycle | Monitoring, alert, paging, dashboard, and escalation artifacts SHALL NOT mark a requirement PASS, mutate or release capacity, classify protection, issue live authority, transmit, clear safety state, close an incident, restore scope, or re-arm |
@@ -574,7 +576,7 @@ The following matrix is the normative authority model.
 | Cancel protective order | Protective Action Controller requests | Cancellation Arbiter authorizes; broker egress sends | Strategy SHALL NOT directly cancel safety-owned protection |
 | Classify protective action | Protective Action Controller | Aggregate-risk proof and protective rules enforce classification | Decision Service SHALL NOT classify its own action as protective |
 | Halt | Safety Authority or authenticated emergency operator | Broker-egress deny gate applies monotonically | Halt SHALL NOT depend on proposer availability |
-| Re-arm | Recovery Coordinator verifies prerequisites; Live Authorization Service issues new authority; explicit human control approves | Broker egress accepts only the new epoch and scope | Automatic re-arm is prohibited |
+| Re-arm | Recovery Coordinator verifies prerequisites; Live Authorization Service issues new authority; explicit human control approves (two independent effective principals per RFC-001 SAFE-053 — quorum or ADR-002-015 §17.1 variant; see §20.1, §23.1) | Broker egress accepts only the new epoch and scope | Automatic re-arm is prohibited |
 | Reconcile | Reconciliation Service evaluates evidence | Ledger transitions only through defined proof rules | Reconciliation Service SHALL NOT arbitrarily release capacity |
 
 During a Safety Control Plane partition, no new aggregate capacity may be committed. A Protective Action Controller may consume only capacity pre-committed to a valid, exclusive, scope-limited protective lease before the partition. Consumption SHALL remain within the lease and be serialized by the protective sub-ledger or equivalent mechanism defined by ADR-002-002. If exclusivity or current lease validity cannot be proven, no protective transmission is permitted.
@@ -761,6 +763,8 @@ It SHALL reject the request when any required fact is missing, stale, conflictin
 The Broker Adapter / Broker Egress Gateway is the final live-transmission enforcement point. It SHALL NOT expose a general-purpose live-order method to strategy, research, simulation, backtest, or operator-interface components.
 
 No broker integration may be approved for live use without a versioned, evidence-backed Broker Capability Profile covering the supported broker, API, account, market, order type, and session scope. Missing, contradictory, or insufficient capability evidence SHALL reduce or prohibit live scope; it SHALL NOT weaken a safety requirement.
+
+Because this gateway is the final live-transmission enforcement point, a defect or compromise of the gateway itself SHALL be assumed possible. A containment path independent of the gateway — one that can, without that gateway's own cooperation, terminate its ability to transmit real-capital orders (for example, revocation of the live-order credential, deactivation of the account's order-entry capability, or network- or session-level isolation of the enforcement point) — SHALL be defined and evidenced for the operating environment in capability-neutral terms. Where no such out-of-band containment capability exists, the residual risk SHALL be explicitly recorded and accepted and the affected live scope reduced accordingly (RFC-001 SAFE-054).
 
 ---
 
@@ -1613,7 +1617,9 @@ Validation SHALL cover:
 
 ### 19.4 Runtime Changes
 
-Changes that increase authority SHALL NOT silently take effect during live operation.
+Changes that increase operational authority or widen a safety limit SHALL require independent approval satisfying the two-effective-principal requirement of RFC-001 SAFE-053 — satisfiable by the two-natural-person quorum or by the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) — and SHALL NOT take effect silently during live operation.
+
+This discharges the RFC-000 CONST-015 bounded-human-authority principle for runtime safety-configuration changes; it adds no authority and preserves both SAFE-053 satisfaction paths.
 
 ---
 
@@ -2041,6 +2047,8 @@ ADR-002-002 through ADR-002-030 are authored as co-located `Proposed` decisions.
 | SAFE-050            | Hard Safety Envelope Registry, Safety Profile Validator, Human Authority Policy, Restricted-Live Trial Policy, Safety Deviation Policy, Safety Incident Policy, Safety Monitoring Policy, Software Release Policy |
 | SAFE-051            | Evidence Store, source decision owners, Build Provenance Attestation, Artifact Admission Decision, Runtime Artifact Attestation, Economic Obligation Record, Statement Coverage Manifest, Post-Trade Finality Proof, Safety Monitoring Service, Broker Egress Gateway, Trial Evidence Package, Residual-Risk Acceptance Record, Safety Incident Record |
 | SAFE-052            | Replay and Evidence Service, Evidence Store, Supply-Chain and Release Admission Review, Post-Trade Obligation and Finality Review, Safety Monitoring Review, Production Promotion Review, Safety Deviation Review, Incident Reconstruction and Closure Review |
+| SAFE-053            | Human Authority Governance, Operator Control Interface, Live Authorization Service, Restricted-Live Trial Governance, Production Scope Promotion Governance, Recovery Coordinator |
+| SAFE-054            | Broker Egress Gateway, Deployment and Identity Architecture, Safety Authority |
 
 This matrix is an initial allocation and SHALL be refined as ADRs are accepted.
 
@@ -2236,3 +2244,12 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 ### v0.4 — Mode-Transition Seam Resolution (Wave 8)
 
 * Wave 8 (CORPUS-REVIEW-0001, 2026-07-17): resolved the three §20.1 D edges that Wave 7 had marked UNRESOLVED, discharging the Wave-7 debt recorded in ARCHITECTURE-GATE-STATUS §3.10/§3.11. **U1 (CONTAINED → DEGRADED_PROTECTIVE)** is fixed by a new normative decision in ADR-002-001 §8.5 — a governed, never-automatic, Safety-Authority-owned inter-protective de-restriction that grants no new-risk and no live authority, is not a re-arm, fails closed to CONTAINED, and is revocable; this is flagged explicitly as a new normative decision, not a derived edge. **U2 (LIVE_RESTRICTED → LIVE_NORMAL in-place readiness-refresh extent)** is fixed by enumeration in ADR-002-007 §14.1 (delta-proportional §12 re-establishment, a new Live Authorization for the delta, approver ≠ sole armer, and the ADR-002-025 progressive-promotion gate; a full §12 re-arm from a non-live start only where continuous validity broke). **U3 (NON_LIVE/RECOVERY vs ADR-002-017 CLOSED_* labels)** is resolved by the informative §20.1 naming-map (operating-mode names vs recovery-barrier-state names, one-to-one by the non-live condition; neither vocabulary renamed). No edge is invented; the §20.1 preamble and section D are updated accordingly. No SAFE-xxx, no numeric bound, no broker proper noun; the Evidence Register counts are held (Part-1 372; development-track 98). EV-L0 review items, reviewer provenance per VER-002-001 §5 (M-18).
+
+### v0.5 — Pre-Ratification Self-Scan (Ratified-Baseline SAFE-053/054 Absorption)
+
+* Pre-ratification self-scan (two-lens: self-gate conformance §30; CONST-015/SAFE-053 linkage) — C-1/M-1/M-2 applied; ratified-baseline SAFE-053/054 absorbed. All changes are narrow-only realignment to the Ratified RFC-001 v0.8 (RR-0003); no RFC-000 v0.16, RFC-001 v0.8, or GOV-001 v0.1 (all Ratified), vision, or philosophy text is changed.
+* **C-1 (SAFE-053/054 absorption):** added two §5 Architecture Drivers rows — `Bounded human authority → SAFE-042, SAFE-046, SAFE-050, SAFE-053` and `Final-egress out-of-band containment → SAFE-054`; added §27 Requirements Traceability rows for SAFE-053 and SAFE-054 (§27 SAFE row count 34 → 36); and added the §10.8 SAFE-054 out-of-band containment mechanism in capability-neutral terms, preserving RFC-001 SAFE-054's defined-and-evidenced / accepted-residual-risk-with-reduced-scope branch structure. The M-06 owner attestation remains ARCHITECTURE-GATE-STATUS §4.5 and is referenced through SAFE-054, not restated.
+* **M-1 (§19.4 authority-widening):** replaced the former §19.4 authority-increase sentence with a clause requiring independent approval satisfying the two-effective-principal requirement of RFC-001 SAFE-053 — satisfiable by the two-natural-person quorum or by the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) — and added the same SAFE-053 linkage to the §9.1 "Change Runtime Safety Profile" and "Change Hard Safety Envelope" rows; RFC-000 CONST-015 is now cited explicitly in §19.4.
+* **M-2 (§9.1 re-arm / promotion):** added "(two independent effective principals per RFC-001 SAFE-053 — quorum or ADR-002-015 §17.1 variant; see §20.1, §23.1)" to the §9.1 Re-arm and production-scope-promotion rows, consistent with the §20.1 table B restorative-edge owners.
+* SAFE-053's two-satisfaction-path structure is preserved verbatim throughout; no absolute two-natural-person requirement is reintroduced (CR-02 / DR-0001). ADR-002-014's profile-commit/approval wording was checked against SAFE-053's two paths and judged consistent — it uses a generic approval "quorum" whose composition is deferred to ADR-002-015 (§26 Q3, §27 item 3), and effective-principal separation is carried by SPG-INV-010 — so no ADR-002-014 change was required.
+* No new SAFE-xxx, no numeric bound, no broker proper noun; the Evidence Register counts are held (Part-1 372; development-track 98). Independent external EV-L0 review of v0.5 is requested in the git-excluded reviews/GEMINI-EVL0-REQUEST-0005.md; reviewer provenance per VER-002-001 §5 (M-18).
