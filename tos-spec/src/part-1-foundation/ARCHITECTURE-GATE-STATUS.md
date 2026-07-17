@@ -831,23 +831,20 @@ The authoring-track dependency chain (GOV-001; RFC-000 §12):
 
 ### 9.3 Per-Document Ladder Rung
 
-Ratified count: **2** — RFC-000 v0.16 (2026-07-17, RR-0001) and GOV-001 v0.1 (2026-07-17,
-RR-0002), both in §9.7. Ratification-Ready count: **1** — **RFC-001 v0.8** (P1 satisfied
-2026-07-17: v0.7 FAIL → both MAJOR findings applied in v0.8 → delta re-review **PASS** with zero
-residual findings, GEMINI-EVL0-VERDICT-0004; P2 — findings resolved, flag-only MINOR explicitly
-deferred to the acceptance tier; P3 satisfied by RR-0001; P4/P5 held), awaiting the System Owner
-ratification act. The vision/philosophy directional baseline is adopted (BA-0001, §9.7). Next
-candidate after RFC-001: **RFC-002** — its P3 completes when RFC-001 is Ratified, and its P1
-(external review) has not yet been performed. All other documents' P1 remains unmet corpus-wide.
-All other normative RFC-class documents remain at Working/Review Draft; all ADRs remain Proposed;
-both Verification Evidence specifications remain Proposed.
+Ratified count: **3** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), and RFC-001 v0.8
+(RR-0003), all 2026-07-17, all in §9.7. Ratification-Ready count: **0**. The vision/philosophy
+directional baseline is adopted (BA-0001, §9.7). Next candidate: **RFC-002** — P3 is now
+satisfied (governing documents RFC-000 and RFC-001 are Ratified); its blocker is P1 (no
+external-substrate EV-L0 review has been performed for RFC-002 yet). All other documents' P1
+remains unmet corpus-wide. All other normative RFC-class documents remain at Working/Review
+Draft; all ADRs remain Proposed; both Verification Evidence specifications remain Proposed.
 
 | Document | Class | Current rung | Ratification-Ready? | Blocking precondition |
 |---|---|---|---|---|
 | vision | Part-0 (non-normative) | **Baseline adopted** (BA-0001, 2026-07-17) | n/a | not a ratification target (GOV-001 §7) |
 | philosophy | Part-0 (non-normative) | **Baseline adopted** (BA-0001, 2026-07-17) | n/a | not a ratification target (GOV-001 §7) |
 | RFC-000 | Normative RFC | **Ratified** (v0.16, 2026-07-17) | **YES** | — (record RR-0001, §9.7) |
-| RFC-001 | Normative RFC | **Ratification-Ready** (v0.8) | NO | none — awaiting the System Owner ratification act (GOV-001 G4/G5) |
+| RFC-001 | Normative RFC | **Ratified** (v0.8, 2026-07-17) | **YES** | — (record RR-0003, §9.7) |
 | RFC-002 | Normative RFC | Review Draft (v0.4) | NO | P1; P3 (RFC-000/001 not Ratified) |
 | ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC-002 not Ratified |
 | VER-002-001 | Verification Evidence | Proposed | n/a (not ratified) | §383 approval gate |
@@ -980,6 +977,47 @@ states that the ratification confers no live authority, no ADR acceptance, and n
 - **Effect:** none beyond the record — Baseline Adoption modifies neither document and confers
   no requirement, no authority, and no live readiness; the documents remain non-normative and
   are not ratification targets (GOV-001 G2).
+
+#### RR-0003 — RFC-001 v0.8 (Safety Case) — RATIFIED
+
+- **Target:** RFC-001 — Trading Operating System Safety Case, version 0.8 (content commit
+  `904299cd`).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-17.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4;
+  ratification confers no live authority, so SAFE-053 does not apply to this act.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0003 (v0.7:
+  FAIL, 2 MAJOR verified against source and applied in v0.8; 1 flag-only MINOR deferred) and
+  GEMINI-EVL0-VERDICT-0004 (v0.8 delta: PASS, zero residual findings; SAFE-053
+  two-satisfaction-path preservation specifically confirmed). Provenance: the §10 External
+  EV-L0 rows (Gemini app, vendor Google; owner-captured app UI model "Gemini 3.1 Pro"; no
+  tools/browsing; recorded decorrelation argument per ADR-DEV-005 AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied (2026-07-17); P2 findings resolved with the explicit
+  deferrals below; P3 satisfied by RR-0001 (RFC-000 v0.16 Ratified); P4 citations resolve
+  (references to Proposed ADRs are acceptance-track, narrow-only); P5 version stable at v0.8.
+- **Accepted requirements:** the full v0.8 normative text — HAZ-001..HAZ-025, SAFE-001..
+  SAFE-054, the safety claims, the §12 Constitutional Verification Matrix, the §13 production
+  gates, the §14 non-waivable set (eight items, including the Hard Safety Envelope), the §15
+  evidence-register obligations, and the §17 ratification linkage to GOV-001.
+- **Deferred (explicit, with rationale):** (1) the flag-only MINOR of VERDICT-0003 — whether
+  ADR-002-025 §5.11 quantifiably bounds the SAFE-053 variant-path "Progressive Promotion
+  step" — is verified at the ADR-acceptance tier, not at document ratification (ADRs are
+  Proposed and evidence-gated); (2) all evidence execution — every SAFE requirement remains
+  `NOT_IMPLEMENTED` in the registers (372/98); ratification is evidence-independent by design
+  (GOV-001 G1).
+- **Residual risks accepted:** none new. The M-06 out-of-band final-egress containment path is
+  owner-attested to exist (2026-07-17, §4.5/§9.5) in capability-class terms; EGRESS-EV-013
+  remains the acceptance-track evidence obligation.
+- **Cited-version pins:** RFC-000 v0.16 (Ratified, governing), GOV-001 v0.1 (Ratified, §17
+  ratification linkage), ADR-002-015 v0.2 (SAFE-053 two-path mechanism), ADR-002-025 v0.2
+  (SAFE-053 variant scope bound), ADR-002-026 v0.3 (§14 non-waivable mirror). Other ADR
+  citations follow the Proposed-tier acceptance track and cannot weaken this Ratified text
+  (RFC-000 §12 narrow-only). A change to a pinned clause triggers a citation-integrity
+  re-check (GOV-001 G6).
+- **Re-review trigger:** material change via RFC-000 §18 amendment + re-ratification (GOV-001
+  G6); de-ratification per G7.
+- **Non-authority statement:** this ratification establishes RFC-001 v0.8 as the governing
+  safety-case baseline and confers no live authorization, no ADR acceptance, and no capacity.
 
 *(empty)*
 

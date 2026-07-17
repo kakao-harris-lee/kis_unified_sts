@@ -3,8 +3,8 @@
 **Document ID:** RFC-001
 **Document Type:** Safety Requirements Specification and Safety Case
 **Title:** Trading Operating System Safety Case
-**Version:** 0.8 Review Draft
-**Status:** Review Draft — Not Ratified
+**Version:** 0.8
+**Status:** Ratified (2026-07-17 — GOV-001 G5 record RR-0003, ARCHITECTURE-GATE-STATUS §9.7; ratification confers no live authorization, no ADR acceptance, and no capacity)
 **Classification:** Foundational Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Owner:** Trading Operating System Architecture Board
