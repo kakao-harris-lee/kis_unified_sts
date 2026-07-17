@@ -475,6 +475,39 @@ to be recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18) — see §10.
 
 ---
 
+### 3.13 External independent EV-L0 review (GOV-001 G3 P1): RFC-000 v0.15 → v0.16 and GOV-001 v0.1
+
+The first external-substrate EV-L0 review (GEMINI-EVL0-REQUEST-0001 package) was executed to
+discharge the GOV-001 G3(P1) independent-review precondition on a substrate demonstrably
+independent of the authoring substrate (ADR-DEV-005 AIR-INV-002). The reviewer (Gemini, vendor
+Google, self-reported) returned **RFC-000 v0.15: FAIL** (1 MAJOR + 1 MINOR) and **GOV-001 v0.1:
+PASS**. The authoring side independently verified both findings against the source before applying
+them; the verdict is preserved verbatim in the git-excluded `reviews/GEMINI-EVL0-VERDICT-0001.md`.
+All changes are narrow-only and additive; no CONST/AX renumbering, no new requirement, no numeric
+bound, no new evidence row; vision.md, philosophy.md, and both Evidence Registers are unchanged
+(Part-1 372; development-track 98). The canonical documents already carry the changes; the
+following table is the committed merge record.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| Finding 1 (MAJOR) — §5 schema self-violation: `Depends On` declared in the §5 optional-field list (with a backward-only cross-reference note), justifying the existing CONST-004/012/015 usage; CONST-001, CONST-002, and CONST-003 completed with the previously absent `Classification` (`Constitutional Requirement`) and `Derived Requirements` fields. CONST-001/002 Derived Requirements are transcribed verbatim from the RFC-001 §12 Constitutional Verification Matrix Safety-discharge column (CONST-001: SAFE-010/012/013/014/021/042/045; CONST-002: SAFE-010/012/013/021/045); CONST-003 is recorded as deliberately not discharged by RFC-001, consistent with its Traceability composite chain (RFC-003, RFC-006, ADR-002-025) | RFC-000 §5 and §7 CONST-001/002/003 (0.15 → **0.16**); Appendix A v0.16 entry | Patch 0048; schema-completion and optional-field declaration only; no CONST/AX change, no new requirement, no numeric bound, no new EV (Part-1 stays 372); Derived Requirements values transcribed from RFC-001 §12, not invented |
+| Finding 2 (MINOR) — §5 precedence-table lead-in corrected to match the column header: "maps each North Star tier to its constitutional expression" (the mapped cells for Profitability/Performance Optimization are document sections, not CONST-xxx identifiers) | RFC-000 §5 (0.16) | Patch 0048; terminology only; no meaning change |
+| GOV-001 v0.1 — verdict PASS; no change required. P1 positively established via the external substrate, blocked only by P3 (upstream RFC-000 not yet Ratified) | GOV-001 (unchanged, v0.1) | No edit; §9.3/§9.4 status update only |
+| External EV-L0 provenance recorded — the §10 External EV-L0 row and the external-substrate decorrelation argument (the AIR-INV-002 "recorded decorrelation argument"); §9.3 ladder rungs and §9.4 P1 updated to the per-document status | ARCHITECTURE-GATE-STATUS §10, §9.3, §9.4 | Direct edit; provenance metadata and status-ledger content only; adds no evidence-register row (Part-1 stays 372); no SAFE-xxx, no numeric bound |
+
+> The external review is the first affirmatively decorrelated EV-L0 review in the ledger (§10). No
+> new SAFE-xxx requirement or numeric bound is introduced; no broker proper noun appears; vision.md,
+> philosophy.md, and both Evidence Registers are unchanged (Part-1 372; development-track 98). The
+> v0.16 delta re-review (RFC-000 only) is requested in the git-excluded
+> `reviews/GEMINI-EVL0-REQUEST-0002.md`; RFC-000 P1 remains pending until that delta confirms the
+> fixes are complete and introduce no new defect (§9.3, §9.4).
+
+Patch document 0048 is recorded in the git-excluded `patches/` per the repository convention
+(born-MERGED, pointing here); the gate-status edits are direct. The `reviews/` verdict and
+delta-request packages are git-excluded working artifacts.
+
+---
+
 ## 4. Remaining Architecture and Acceptance Work
 
 ADR-002-005 through ADR-002-030 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, safety-telemetry/continuous-monitoring-governance, software-supply-chain/runtime-artifact-admission, and post-trade economic-obligation/finality authorship are complete, but none of those decisions is accepted.
@@ -752,17 +785,19 @@ The authoring-track dependency chain (GOV-001; RFC-000 §12):
 
 ### 9.3 Per-Document Ladder Rung
 
-Ratified count: **0**. Ratification-Ready count: **0**. Reason: precondition P1 is unmet
-corpus-wide — the independent EV-L0 review provenance (M-18) required by GOV-001 G3(P1) /
-VER-002-001 §5 is only now being recorded (§10), and no ratification act has been performed. All
-normative RFC-class documents remain at Working/Review Draft; all ADRs remain Proposed; both
-Verification Evidence specifications remain Proposed.
+Ratified count: **0**. Ratification-Ready count: **0**. Reason: no document yet clears all of
+P1–P5. The first external-substrate EV-L0 review (§10) positively establishes P1 for GOV-001 v0.1
+(verdict PASS), but GOV-001 is blocked by P3 (upstream RFC-000 not yet Ratified). RFC-000's P1 is
+pending the v0.16 delta re-review after the external FAIL on v0.15 was resolved in v0.16 (§3.13,
+§10). All other documents' P1 remains unmet corpus-wide (no external review recorded), and no
+ratification act has been performed. All normative RFC-class documents remain at Working/Review
+Draft; all ADRs remain Proposed; both Verification Evidence specifications remain Proposed.
 
 | Document | Class | Current rung | Ratification-Ready? | Blocking precondition |
 |---|---|---|---|---|
 | vision | Part-0 (non-normative) | Baseline Adoption only | n/a | not a ratification target (GOV-001 §7) |
 | philosophy | Part-0 (non-normative) | Baseline Adoption only | n/a | not a ratification target (GOV-001 §7) |
-| RFC-000 | Normative RFC | Review Draft (v0.15) | NO | P1 (EV-L0 provenance pending) |
+| RFC-000 | Normative RFC | Review Draft (v0.16) | NO | P1 (v0.16 delta re-review pending) |
 | RFC-001 | Normative RFC | Review Draft (v0.7) | NO | P1; P3 (upstream RFC-000 not yet Ratified) |
 | RFC-002 | Normative RFC | Review Draft (v0.4) | NO | P1; P3 (RFC-000/001 not Ratified) |
 | ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC-002 not Ratified |
@@ -771,14 +806,17 @@ Verification Evidence specifications remain Proposed.
 | RFC-008..011 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
 | ADR-DEV-001..015 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC not Ratified |
 | VER-DEV-001 | Verification Evidence | Proposed | n/a (not ratified) | §8 approval gate |
-| GOV-001 | Governance process (content-inert) | Review Draft (v0.1) | NO | P1; P3 (upstream RFC-000 not yet Ratified) |
+| GOV-001 | Governance process (content-inert) | Review Draft (v0.1) | NO | P3 (upstream RFC-000 not yet Ratified) |
 
 ### 9.4 Ratification-Ready Precondition Checklist (GOV-001 G3)
 
 A document is Ratification-Ready only when all hold. A precondition that cannot be positively
 established is treated as unmet.
 
-- **P1 — Independent EV-L0 review with recorded provenance.** A review meeting the ADR-DEV-005 §7 independence standard has passed at EV-L0 with reviewer provenance recorded per VER-002-001 §5 (§10). Corpus status: **unmet, fail-closed** — provenance is now recorded, but under ADR-DEV-005 §6 AIR-INV-002 an AI review of an AI-authored artifact whose reviewer shares the author's model family is treated as common-mode absent an affirmative decorrelation demonstration; the Wave 1–8 reviews (§10) do not carry that demonstration, so P1 cannot be positively established by them and is unmet under GOV-001 G3. Discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
+- **P1 — Independent EV-L0 review with recorded provenance.** A review meeting the ADR-DEV-005 §7 independence standard has passed at EV-L0 with reviewer provenance recorded per VER-002-001 §5 (§10). Corpus status: **partially established via an external substrate.** The Wave 1–8 internal reviews (§10) do not carry a decorrelation demonstration, so under ADR-DEV-005 §6 AIR-INV-002 they cannot by themselves establish P1. The first external-substrate EV-L0 review (Gemini, vendor Google; §10 External EV-L0 row and its recorded decorrelation argument) supplies the affirmative decorrelation AIR-INV-002 requires. Per-document status:
+  - **GOV-001 v0.1 — P1 satisfied.** The external review returned PASS on GOV-001 v0.1 with recorded external-substrate provenance, so P1 is positively established. GOV-001 remains not Ratification-Ready because **P3 is unmet** (upstream RFC-000 not yet Ratified).
+  - **RFC-000 — P1 pending.** The external review returned FAIL on RFC-000 v0.15 (1 MAJOR + 1 MINOR); both findings were verified against source and applied in v0.16 (§3.13, patch 0048). RFC-000 P1 is pending the **v0.16 delta re-review** (GEMINI-EVL0-REQUEST-0002.md) confirming the fixes are complete and introduce no new defect.
+  All other corpus documents remain **unmet, fail-closed** for P1 — no external review is yet recorded for them; discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
 - **P2 — Findings resolved or explicitly deferred.** Corpus status: 5 of 6 CORPUS-REVIEW-0001 questions resolved in canonical text (§9.5); M-06 now recorded by owner disposition (§4.5); the RFC-002 §20.1 U1/U2/U3 mode-transition seams are resolved in Wave 8 (§3.11).
 - **P3 — Upstream documents Ratified.** Corpus status: **unmet** — nothing is Ratified yet, so only RFC-000 can become Ratification-Ready first.
 - **P4 — No dangling citation and no unresolved cross-document conflict** (CONSISTENCY-AUDIT-002 clean for the document).
@@ -845,15 +883,32 @@ Register (Part-1 stays 372; development track stays 98).
 | Wave 6 EV-L0 | ADR-002-001 v0.5 and 15 others | critic (fable-5); designer deep-reasoner + executor (opus-4-8) | git diff; 6 spec judgments; originals | 2026-07-17 | APPROVE-WITH-FIXES → 9391fa83 |
 | Wave 7 EV-L0 | RFC-000 v0.14 / RFC-002 v0.3 et al. | critic (fable-5); designer deep-reasoner + executor (opus-4-8) | git diff; spec; originals | 2026-07-17 | ACCEPT → 7e7ee9cb |
 | Wave 8 EV-L0 | ADR-002-001 v0.7 / ADR-002-007 v0.2 / RFC-002 v0.4 | critic (fable-5); designer deep-reasoner + executor (opus-4-8) | git diff; spec; originals | 2026-07-17 | APPROVE-WITH-FIXES → c861da82 |
+| External EV-L0 (GOV-001 G3 P1) | RFC-000 v0.15 + GOV-001 v0.1 | Gemini app (vendor Google), human-relayed; self-reported "Gemini 1.5 Pro", owner-captured app UI model "Gemini 3.1 Pro" (same-day follow-up session) — self-report recorded as unreliable for version identity, UI capture the better evidence | GEMINI-EVL0-REQUEST-0001.md package only (RFC-000 v0.15, GOV-001 v0.1, vision, philosophy baselines); no tools/browsing | 2026-07-17 | RFC-000: FAIL (1 MAJOR + 1 MINOR — verified against source, applied in v0.16); GOV-001: PASS |
 
-**Honesty limitation.** Lane separation (not-the-author, not-author-rerun, read-only) is
-established for every review above; substrate decorrelation is NOT — authors and reviewers ran on
-the same session-inherited model family. This limitation is recorded rather than obscured (M-18
+**Honesty limitation (internal reviews).** Lane separation (not-the-author, not-author-rerun,
+read-only) is established for every review above. For the CORPUS-REVIEW-0001 and Wave 1–8 rows,
+substrate decorrelation is NOT established — those authors and reviewers ran on the same
+session-inherited model family. This limitation is recorded rather than obscured (M-18
 falsifiability). Under ADR-DEV-005 §6 AIR-INV-002 this is not a discretionary judgment: absent an
 affirmative decorrelation demonstration, a same-model-family AI-on-AI review is treated as
-common-mode and fails closed, so these reviews cannot positively establish GOV-001 G3(P1) — P1
-remains unmet corpus-wide until an affirmatively decorrelated, human, or demonstrably
-independent-substrate review is recorded (see §9.4 P1).
+common-mode and fails closed, so those internal reviews cannot by themselves positively establish
+GOV-001 G3(P1) (see §9.4 P1).
+
+**External-substrate decorrelation argument (GOV-001 G3 P1).** The External EV-L0 row above is
+recorded as the affirmative decorrelation demonstration that AIR-INV-002 requires for the review of
+an AI-authored artifact. The reviewer substrate is a different vendor (Google) with a different
+model lineage and a different training/alignment pipeline than the authoring and internal-review
+substrate (the Anthropic Claude family). Under ADR-DEV-005 §6 AIR-INV-002, decorrelation may be
+shown by "disjoint determining training/data provenance to the extent establishable, or a recorded
+decorrelation argument"; distinct vendor, lineage, and pipeline are the establishable disjoint
+provenance, and this paragraph is that recorded argument. The residual — possible overlap in the
+public web-corpus pretraining data shared across vendors — cannot be eliminated and is honestly
+recorded, not obscured (M-18 falsifiability). The substrate identity rests on the reviewer's
+PROVENANCE SELF-REPORT (the Gemini app UI model name was not separately captured); the verdict is
+preserved verbatim in reviews/GEMINI-EVL0-VERDICT-0001.md. On this basis the external review
+positively establishes P1 for GOV-001 v0.1 (verdict PASS); for RFC-000 the v0.15 verdict was FAIL
+and the two findings are applied in v0.16, so RFC-000 P1 is pending the v0.16 delta re-review
+(GEMINI-EVL0-REQUEST-0002.md) — see §9.4.
 
 The Wave-9 changes recorded in §3.12 are themselves EV-L0 review items; their provenance row SHALL
 be appended here once their independent review completes.

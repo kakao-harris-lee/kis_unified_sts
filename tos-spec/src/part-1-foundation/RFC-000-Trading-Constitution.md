@@ -2,7 +2,7 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.15 Review Draft
+**Version**: 0.16 Review Draft
 **Status**: Working Draft
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
@@ -119,10 +119,16 @@ A constitutional requirement MAY additionally carry the following optional
 fields. They are supplementary cross-references, not completeness gates:
 
 ```
+Depends On
+
 Traceability
 
 Revision History
 ```
+
+A `Depends On` field names other constitutional requirements whose satisfaction
+this requirement composes with. It is a backward-only cross-reference to sibling
+requirements — never an additional obligation and never a widening of authority.
 
 Document-level change history is recorded in the Review History section rather
 than per-requirement, so a `Revision History` field is present only where a
@@ -204,7 +210,7 @@ Profitability
 Performance Optimization
 ```
 
-The following table maps each North Star tier to the constitutional requirements that express it.
+The following table maps each North Star tier to its constitutional expression.
 
 | North Star tier (vision §5) | Constitutional expression |
 | --- | --- |
@@ -378,6 +384,10 @@ Undefined terms in a constitution propagate divergent interpretations into every
 
 Long-Term Survivability
 
+### Classification
+
+Constitutional Requirement
+
 ### Priority
 
 Critical
@@ -422,6 +432,10 @@ Permanent capital loss.
 
 Every child RFC SHALL explicitly demonstrate compliance with CONST-001.
 
+### Derived Requirements
+
+SAFE-010, SAFE-012, SAFE-013, SAFE-014, SAFE-021, SAFE-042, SAFE-045
+
 ### Traceability
 
 RFC-001 Safety Case
@@ -437,6 +451,10 @@ RFC-003 Decision Framework
 ### Title
 
 Capital Preservation
+
+### Classification
+
+Constitutional Requirement
 
 ### Priority
 
@@ -478,6 +496,10 @@ Loss of operational continuity.
 
 Risk policies SHALL demonstrate compliance.
 
+### Derived Requirements
+
+SAFE-010, SAFE-012, SAFE-013, SAFE-021, SAFE-045
+
 ### Traceability
 
 RFC-001
@@ -491,6 +513,10 @@ RFC-005
 ### Title
 
 Positive Expectancy
+
+### Classification
+
+Constitutional Requirement
 
 ### Priority
 
@@ -533,6 +559,10 @@ False optimization.
 ### Verification
 
 Performance evaluation SHALL use expectation-based metrics.
+
+### Derived Requirements
+
+None directly. CONST-003 is deliberately not discharged by RFC-001; it is discharged through the named composite chain (RFC-003, RFC-006), with completion declarable only via ADR-002-025 restricted-live evidence — see Traceability.
 
 ### Traceability
 
@@ -1779,3 +1809,13 @@ Delegated the §13 governance process and named the §18 ratifying authority to 
 Added a §13 sentence pointing to GOV-001 (Ratification and Change Governance) as the approved, independently specified governance process, and a §18 sentence naming GOV-001 as the source of the ratifying authority, preconditions, and record, with ratification conferring no live authorization.
 
 Narrow-only and additive; pointer only; no CONST/AX change, no new requirement, no numeric bound; §12 and §13's existing text are preserved, and vision.md and philosophy.md are untouched.
+
+v0.16
+
+Applied the first external independent EV-L0 review (GEMINI-EVL0-REQUEST-0001 package; RFC-000 v0.15 verdict FAIL) — two findings reflected (patch 0048).
+
+Finding 1 (MAJOR, §5 schema self-violation): declared `Depends On` in the §5 optional-field list (with a backward-only cross-reference note), justifying the existing CONST-004/012/015 usage; and completed the §5 mandatory schema for CONST-001, CONST-002, and CONST-003 by adding their previously absent `Classification` (`Constitutional Requirement`) and `Derived Requirements` fields. The CONST-001 and CONST-002 Derived Requirements values are transcribed from the RFC-001 §12 Constitutional Verification Matrix Safety-discharge column; CONST-003 is recorded as deliberately not discharged by RFC-001, consistent with its Traceability composite chain (RFC-003, RFC-006, ADR-002-025).
+
+Finding 2 (MINOR, §5 precedence-table lead-in): corrected the mapping-table introductory sentence to match the column header — "maps each North Star tier to its constitutional expression."
+
+Narrow-only and additive; no CONST/AX renumbering, no new requirement, no numeric bound, no new evidence row (Part-1 Evidence Register stays 372; development-track stays 98); vision.md and philosophy.md are untouched. The external verdict is preserved verbatim in reviews/GEMINI-EVL0-VERDICT-0001.md; the v0.16 delta re-review is requested in reviews/GEMINI-EVL0-REQUEST-0002.md.
