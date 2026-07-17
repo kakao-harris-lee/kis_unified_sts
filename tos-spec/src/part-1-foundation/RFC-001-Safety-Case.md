@@ -3,7 +3,7 @@
 **Document ID:** RFC-001
 **Document Type:** Safety Requirements Specification and Safety Case
 **Title:** Trading Operating System Safety Case
-**Version:** 0.7 Review Draft
+**Version:** 0.8 Review Draft
 **Status:** Review Draft — Not Ratified
 **Classification:** Foundational Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -1596,11 +1596,11 @@ RFC-002 SHALL define the communication, authority-validity, and failure-detectio
 
 **Priority:** Critical
 **Type:** Preventive / Detective
-**Derived from:** CONST-006, CONST-010, CONST-011
+**Derived from:** CONST-006, CONST-010, CONST-011, CONST-015
 
 Critical safety configuration SHALL be versioned, authenticated, reviewable, attributable, and protected from unilateral modification by a trading strategy.
 
-Changes that increase operational authority SHALL require explicit approval and SHALL NOT take effect silently during live operation.
+Changes that increase operational authority or widen any safety limit SHALL require independent approval satisfying the two-effective-principal requirement of SAFE-053 — satisfiable by the two-natural-person quorum or by the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) — and SHALL NOT take effect silently during live operation.
 
 Safety configuration activation SHALL be complete and internally consistent from the perspective of safety authorization.
 
@@ -1910,7 +1910,7 @@ Numeric criteria MAY reside in an approved Safety Profile or Verification Plan, 
 | CONST-012 — Safe Operational State             | SAFE-001, SAFE-002, SAFE-040, SAFE-043                                                                         | HAZ-008, HAZ-018, HAZ-023                                                                                           | SPECIFIED                 |
 | CONST-013 — Safe Operational Start             | SAFE-022, SAFE-044, SAFE-046                                                                                   | HAZ-009, HAZ-012, HAZ-016, HAZ-021                                                                                  | SPECIFIED                 |
 | CONST-014 — Irreversibility Principle          | SAFE-010, SAFE-020, SAFE-021, SAFE-033, SAFE-051, SAFE-052                                                     | HAZ-003, HAZ-004, HAZ-014, HAZ-015, HAZ-022, HAZ-025                                                                | SPECIFIED                 |
-| CONST-015 — Bounded Human Authority            | SAFE-042, SAFE-046, SAFE-053                                                                                   | HAZ-024                                                                                                             | SPECIFIED                 |
+| CONST-015 — Bounded Human Authority            | SAFE-042, SAFE-046, SAFE-050, SAFE-053                                                                         | HAZ-024                                                                                                             | SPECIFIED                 |
 
 A `SPECIFIED` entry indicates that RFC-001 defines the required safety obligation. It does not indicate implementation or demonstration.
 
@@ -2047,6 +2047,7 @@ No waiver is permitted for:
 * unreconciled authoritative position state;
 * unbounded single-action risk;
 * unbounded aggregate risk;
+* exceeding or disabling the Hard Safety Envelope (SAFE-004);
 * a known path to duplicate exposure.
 
 ---
@@ -2185,6 +2186,14 @@ Material changes to hazards, Critical requirements, safe-state semantics, or pro
 
 * Added a §17 pointer identifying GOV-001 as the source of the ratifying authority, preconditions, and record schema, and clarifying that document ratification of this Safety Case confers no live authorization, which remains governed by ADR-002-007 and ADR-002-025.
 * Pointer only, narrow-only and additive: no SAFE requirement, hazard, safe-state semantic, or numeric bound changed; the Evidence Register count is unchanged (Part-1 372); vision.md, philosophy.md, and RFC-000 are unchanged.
+
+### v0.8 — External EV-L0 FAIL closure: SAFE-050 independent-approval linkage and §14 Hard Safety Envelope non-waiver (patch 0049)
+
+* Closed the two verified MAJOR findings of the first external-substrate EV-L0 review of RFC-001 (GEMINI-EVL0-REQUEST-0003 package → GEMINI-EVL0-VERDICT-0003; GOV-001 G3 P1; Gemini app, vendor Google; **RFC-001 v0.7 FAIL**).
+* Finding 1 (MAJOR) — SAFE-050: the risk-increasing-change clause now requires independent approval satisfying the two-effective-principal requirement of SAFE-053, closing the loophole by which a single effective principal could unilaterally widen a safety limit. The SAFE-053 two-satisfaction-path structure is preserved verbatim (two-natural-person quorum, or the approved Governed Single-Operator Re-Arm Variant, ADR-002-015 §17.1); no absolute two-natural-person requirement is reintroduced (CR-02 / DR-0001). CONST-015 was added to SAFE-050's Derived-from set, and SAFE-050 was added to the §12 Constitutional Verification Matrix CONST-015 Safety-discharge cell. RFC-000 is Ratified and is unchanged; the CONST-side Derived Requirements curated subset (CONST-015 → SAFE-042/046/053) is the established one-directional-add convention, so the §12/Derived-from asymmetry against RFC-000 is intentional and permitted.
+* Finding 2 (MAJOR) — §14: added "exceeding or disabling the Hard Safety Envelope (SAFE-004)" to the explicit no-waiver set (positioned within the risk series, after unbounded aggregate risk), closing the path by which a waiver could exceed or disable the Hard Safety Envelope contrary to CONST-015.
+* Finding 3 (flag-only MINOR) — SAFE-053's ADR-002-025 §5.11 Progressive-Promotion-step reference could not be judged because ADR-002-025 was not in the review package; no text change. Disposition: deferred to the acceptance-tier review where ADR-002-025 §5.11 is verified to define the scope delta quantifiably (recorded in GEMINI-EVL0-VERDICT-0003 and the ratification record).
+* No new SAFE-xxx requirement or hazard is added; no numeric bound and no new EV; the Evidence Register count is unchanged (Part-1 372); no broker proper noun; vision.md, philosophy.md, and RFC-000 are unchanged. The v0.8 delta re-review is requested in GEMINI-EVL0-REQUEST-0004. Independent EV-L0 review of this change set is owed, reviewer provenance per ADR-DEV-005 §7 / VER-002-001 §5.
 
 ---
 

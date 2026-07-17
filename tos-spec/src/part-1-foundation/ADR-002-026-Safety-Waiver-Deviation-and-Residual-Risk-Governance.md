@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-14
-- **Version:** 0.2
+- **Version:** 0.3
 - **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Safety waivers, deviations, exceptions, residual-risk acceptance, non-waivable boundaries, compensating controls, exact scope, independent approval, configuration activation, currentness, expiry, revocation, recovery, evidence, and acceptance
@@ -232,7 +232,7 @@ Where a second natural person is unavailable, the approved Governed Single-Opera
 At minimum, no deviation may waive, reinterpret, or bypass:
 
 1. any RFC-000 constitutional requirement;
-2. RFC-001's explicit no-waiver set: independent halt authority, live/non-live segregation, a valid Safety Profile, reconciled authoritative position state, bounded single-action risk, bounded aggregate risk, and prevention of known duplicate-exposure paths;
+2. RFC-001's explicit no-waiver set: independent halt authority, live/non-live segregation, a valid Safety Profile, reconciled authoritative position state, bounded single-action risk, bounded aggregate risk, the Hard Safety Envelope (SAFE-004), and prevention of known duplicate-exposure paths;
 3. fail-closed treatment of missing, stale, conflicting, unverifiable, or UNKNOWN safety state;
 4. Risk Capacity Ledger exclusivity for capacity mutation and serialization;
 5. Broker Adapter / Egress Gateway final enforcement and broker-route confinement;
@@ -767,3 +767,8 @@ Initial safety-waiver, deviation, and residual-risk governance decision.
 - Kept the Non-Waivable Boundary and WDR-INV-002 fully intact; the variant can never satisfy or compensate for a non-waivable requirement.
 - Amended WDR-INV-007, §7, and §12.
 - Recorded per DR-0001 — Single-Operator Live Governance (CORPUS-REVIEW-0001 CR-02, option (c)).
+
+### v0.3 — RFC-001 §14 No-Waiver Set Synchronization: Hard Safety Envelope (2026-07-17)
+
+- Synchronized the §8 item-2 enumeration of RFC-001's explicit no-waiver set with RFC-001 §14, which added "exceeding or disabling the Hard Safety Envelope (SAFE-004)" in v0.8: added "the Hard Safety Envelope (SAFE-004)" to the §8 item-2 list (positioned after bounded aggregate risk, before prevention of known duplicate-exposure paths), keeping the mirror 1:1 with RFC-001 §14 (now eight items). The §5.6 Non-Waivable Boundary definition is a union pointer and is unchanged; §8 item 9 (exact Hard Safety Envelope and Runtime Safety Profile enforcement) is retained.
+- Recorded to reflect the external EV-L0 FAIL closure of RFC-001 v0.7 → v0.8 (GEMINI-EVL0-VERDICT-0003, Finding 2 MAJOR). No new invariant, requirement, numeric bound, or EV; no broker proper noun; RFC-000 is Ratified and unchanged.
