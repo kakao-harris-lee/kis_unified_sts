@@ -2,7 +2,7 @@
 
 **Document ID**: RFC-000
 **Title**: Trading Constitution
-**Version**: 0.13 Review Draft
+**Version**: 0.14 Review Draft
 **Status**: Working Draft
 **Classification**: Constitutional Specification
 **Authority**: Highest-Level Governing Specification
@@ -1515,6 +1515,9 @@ Safety Case
 Architecture RFCs
         │
         ▼
+Architecture Decision Records
+        │
+        ▼
 Decision Framework
         │
         ▼
@@ -1522,11 +1525,20 @@ Implementation
         │
         ▼
 Operational Procedures
+        │
+        ▼
+Verification Evidence (demonstration / acceptance)
 ```
 
 Higher-level specifications SHALL govern lower-level specifications.
 
 Lower-level specifications SHALL NOT reinterpret higher-level intent.
+
+Architecture Decision Records refine and are governed by the Architecture RFCs; Verification Evidence (VER-002-001, VER-DEV-001) is the demonstration/acceptance tier that shows whether each tier's mechanisms work (philosophy §35). Verification Evidence governs nothing — a passing document review or a registration is not acceptance — and its position at the foot of the hierarchy denotes demonstration, not authority. This harmonizes §12 with philosophy §35 and the preface governance-precedence map.
+
+Within a tier, a conflict resolves to the safer (more restrictive) interpretation; failing that, to the higher/governing document; if still unresolved, it escalates through governance (§13).
+
+Each document's ratification/approval status is recorded in ARCHITECTURE-GATE-STATUS §5; precedence applies at recorded status.
 
 No Part-2 or Part-3 artifact — RFC-003 through RFC-011, ADR-DEV-001 through ADR-DEV-015, and their verification evidence — SHALL widen, relax, or reinterpret any Part-1 authority, limit, gate, or Hard Safety Envelope constraint. A subordinate-layer artifact MAY only narrow authority, never widen it.
 
@@ -1745,3 +1757,13 @@ Added the narrow-only governance meta-principle to §12 Constitutional Governanc
 Instantiated the reserved DEC-xxx and TEST-xxx namespaces through governance: CONST-007's DEC-003 is realized by RFC-004 §12 (evidence DEC-EV-003) and CONST-014's TEST-001 by RFC-010 §11 (evidence TEST-EV-001), both registered in VER-DEV-001 / EVIDENCE-REGISTER-DEV; ARCH-xxx remains reserved.
 
 Named the CONST-003 composite discharge (RFC-003 §12 framework obligation, RFC-006 §11 methodology, ADR-002-025 live-readiness RLP-EV-001..012), declarable in full only via the ADR-002-025 restricted-live evidence.
+
+v0.14
+
+Applied Wave 7 (CORPUS-REVIEW-0001, mn-15) — confined to §12 Constitutional Governance.
+
+Inserted Architecture Decision Records as a tier below the Architecture RFCs and added Verification Evidence as the demonstration/acceptance tier, harmonizing §12 with philosophy §35 and the preface governance-precedence map; Verification Evidence governs nothing and denotes demonstration, not authority.
+
+Added an intra-tier tie-break (a conflict resolves to the safer/more-restrictive interpretation; failing that, the higher/governing document; else escalation through §13) and a note that each document's ratification/approval status is recorded in ARCHITECTURE-GATE-STATUS §5, with precedence applying at recorded status.
+
+Narrow-only and additive; no CONST/AX change, no new requirement, no numeric bound; §12's existing narrow-only meta-principle is preserved unchanged, and vision.md and philosophy.md are untouched.

@@ -2,14 +2,14 @@
 
 **Document ID:** RFC-002
 **Title:** Trading Operating System Architecture
-**Version:** 0.2 Review Draft
+**Version:** 0.3 Review Draft
 **Status:** Review Draft — Architecture
 **Classification:** Foundational Architecture Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-13
-**Last Updated:** 2026-07-14
+**Last Updated:** 2026-07-17
 
 ---
 
@@ -237,6 +237,10 @@ An Economic Obligation Record is not external truth, settled cash, legal title, 
 An immutable non-authorizing proof that one exact field of one exact Economic Obligation Record reached its policy-defined finality state under the current Post-Trade Obligation Generation and complete evidence recipe.
 
 Finality is field- and class-specific. Execution finality, Final Quantity Proof, trade capture, instruction acceptance, settlement completion, cash availability, collateral eligibility, custody or legal title, fee or tax finality, borrow discharge, and corporate-action completion SHALL NOT substitute for one another. Proof expiry or invalidation restricts future reliance but does not expire economic effect or release capacity.
+
+#### 3.1.17 Credible State Space
+
+The bounded set of behaviours a universally-quantified safety claim ("every credible …", "worst credible …") ranges over. The Credible State Space for a given evaluation is the union of (a) the behaviour/interpretation set admitted by the active **Broker Capability Profile** (ADR-002-004) — supported broker interpretation, partial-execution, ordering, rounding, overlap, and reversal semantics — and (b) the approved **Adverse Scenario Set** (ADR-002-021). A behaviour outside this bounded set is either excluded by the active profile or, if unbounded or unknown, forces the conservative UNKNOWN treatment — it does not silently drop out. "Credible" is never the proposer's or an operator's judgement; it is fixed by these two governing artifacts. This is the set the ADR-002-011/012/020/021 "credible"/"worst credible" universals range over, and it is the coverage target for the VER-002-001 §2.7 coverage argument.
 
 ---
 
@@ -1633,6 +1637,52 @@ Restoration of connectivity SHALL NOT automatically transition the system to `LI
 
 Incident lifecycle state is orthogonal to these operational modes and never grants a mode transition. Controlled shutdown SHALL deny or fence new economic action before ordinary producers are stopped, preserve RCL and potentially-live state, required protection, reconciliation, evidence, and recovery obligations, and leave the scope behind a closed Recovery Barrier. Process death, scale-to-zero, socket close, credential disablement, or queue deletion is not a Hard Egress Fence or broker-finality proof.
 
+### 20.1 Mode-Transition Matrix
+
+Every edge below is derived from existing normative fragments; none is invented. Three edges that no ADR fixes are marked **UNRESOLVED** rather than asserted (see D), and recorded as Wave-7 debt in ARCHITECTURE-GATE-STATUS §3.10.
+
+**Restriction lattice** (derived from ADR-002-001 §8 ordering and the §20 table; increasing restriction left to right):
+
+```text
+LIVE_NORMAL ⊐ LIVE_RESTRICTED ⊐ DEGRADED_PROTECTIVE ⊐ CONTAINED ⊐ HALTED
+```
+
+`RECOVERY` is the non-live pre-arm reconciliation state; `NON_LIVE` is the no-live-authority baseline.
+
+**A. Restrictive (degradation) edges — always available, monotonic, restrictive-authorized** (derived: SIR-INV-002 asymmetry; ADR-002-007 §9/§10/§17; ADR-002-001 §8):
+
+| Edge | Trigger | Guard | Authorizing owner |
+|---|---|---|---|
+| any live/degraded → HALTED | human HALT or Critical safety signal | none required beyond authentication (HALT is broader/easier than re-arm, ADR-002-007 §13) | Human Safety Principal / Safety Authority (ADR-002-017 §21) |
+| LIVE_NORMAL → LIVE_RESTRICTED | dependency degradation, Safety Authority still verified (ADR-002-001 §8.1) | reduced-authority envelope approved | Safety Authority (automatic restrictive, ADR-002-007 §10) |
+| LIVE_NORMAL / LIVE_RESTRICTED → DEGRADED_PROTECTIVE | loss of a new-risk continuous-validity predicate (ADR-002-007 §9) | protective classification still trustworthy | Safety Authority (suspend/revoke, §8.2) |
+| any → CONTAINED | autonomous protective classification unavailable/untrustworthy (ADR-002-001 §8.3) **or** incident containment | Safety Authority action (§20) | Safety Authority; in CONTAINED, emergency de-risking per §8.3.1 is authorized by the current Safety Authority, or the operator emergency path (ADR-002-001 §23.2) when the Safety Authority is unavailable — **this resolves M-07-3** (the §6.2→§8.3.1 routing authority); an action not provable reduce-only routes to trapped exposure (ADR-002-001 §15), with no mode change |
+
+**B. Restorative (toward-live) edges — governed, never automatic** (derived):
+
+| Edge | Trigger | Guard | Owner |
+|---|---|---|---|
+| NON_LIVE / HALTED / CONTAINED / DEGRADED_PROTECTIVE → RECOVERY | recovery trigger (ADR-002-017 §8) | barrier advanced/closed; fenced current Recovery Generation | Recovery Coordinator (fenced) |
+| RECOVERY → LIVE_RESTRICTED | READY_RESTRICTED (ADR-002-017 §16) + full ADR-002-007 §12 workflow | positively-isolated safe subset; new Live Authorization; human dual control (§13); no dominating CONTAINED/HALTED | Live Authorization Service issues; ADR-002-015 quorum (or §17.1 variant) approves |
+| RECOVERY → LIVE_NORMAL | READY (full scope) + full §12 workflow | as above at full scope | as above |
+| LIVE_RESTRICTED → LIVE_NORMAL | staged scope expansion (ADR-002-007 §14; ADR-002-025 progressive promotion) | promotion gates; new Live Authorization for the authority increase; approver of the limit increase ≠ sole armer (§13) | governed authority-increase quorum |
+
+**The RECOVERY-transit rule (normative).** No transition *into* LIVE_NORMAL or LIVE_RESTRICTED is permitted except as the terminal step of the ADR-002-007 §12 re-arm workflow, whose guards include a current ADR-002-017 Recovery Readiness Decision; equivalently, recovery readiness is a mandatory precondition for any live re-entry (ADR-002-001 §16; §23.1). HALTED is dominant: leaving HALTED requires explicit human governance clearing HALT under fresh re-arm — recovery cannot downgrade HALTED → RECOVERY or clear a deny latch (ADR-002-017 §15 / SBR-INV-009; ADR-002-007 §17).
+
+**C. Forbidden transitions (explicit — derived):**
+
+* Any → LIVE_NORMAL that is automatic or connectivity/health/quiet-time/replay/cooldown-triggered (§20, §23.2; ADR-002-007 §17; SBR-INV-014; SIR-INV-015; philosophy §23; anti-pattern §39.8).
+* HALTED → any live mode directly, bypassing recovery readiness + fresh re-arm (SBR-INV-009/-014; ADR-002-007 §17).
+* Any mode transition driven by incident lifecycle state or by administrative incident closure (§20 "orthogonal … never grants a mode transition"; SIR-INV-012 closure is non-permissive; SIR-INV-015 recovery does not revive; ADR-002-027 §19/§21).
+* Re-arm where one identity both enlarges limits and arms (ADR-002-007 §13; §23.1).
+* Recovery downgrading HALTED → RECOVERY automatically (ADR-002-017 §15).
+
+**D. UNRESOLVED edges (not derivable from any ADR → marked UNRESOLVED; recorded as Wave-7 debt in ARCHITECTURE-GATE-STATUS §3.10):**
+
+* **U1 (substantive) — CONTAINED → DEGRADED_PROTECTIVE:** regaining autonomous protective classification between two new-risk-prohibited modes. The corpus specifies exit-toward-LIVE (requires re-arm) and HALT-dominance, but no ADR states the trigger, guard, or owner for this inter-protective de-restriction. A conservative default (de-restriction is never automatic; requires Safety Authority governance) is inferable by principle but is not fixed by any ADR. → **UNRESOLVED.**
+* **U2 (minor) — LIVE_RESTRICTED → LIVE_NORMAL readiness-refresh extent:** modeled as ADR-002-007 §14 staged promotion (the §12 step 1 pointedly omits LIVE_RESTRICTED as a re-arm start, supporting "expansion via §14, not §12"), but how much of §12's recovery-readiness must be re-established for an in-place §14 expansion is not enumerated. → **UNRESOLVED (partial).**
+* **U3 (naming seam) — NON_LIVE vs ADR-002-017 CLOSED_NON_LIVE / RECOVERY label:** the §20 `NON_LIVE`/`RECOVERY` modes and ADR-002-017's `CLOSED_NON_LIVE`/`CLOSED_RECOVERY` states are not explicitly unified. → **UNRESOLVED (terminology).**
+
 ---
 
 ## 21. Protective Capacity
@@ -2151,3 +2201,7 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Expanded VER-002-001 and the Evidence Register to 363 `NOT_IMPLEMENTED` items with one-to-one acceptance-case coverage for ADR-002-005 through ADR-002-030.
 * Resolves review findings A-01 through A-14.
 * Wave 4 (CORPUS-REVIEW-0001 CR-01, 2026-07-17): the Part-2/3 register consolidation raised the Evidence Register to 372 `NOT_IMPLEMENTED` items (nine Part-1 debt rows discharged, §26 body updated) and created the separate development-track register EVIDENCE-REGISTER-DEV (96 items). RFC-002's normative architecture content is unchanged; this is a count and traceability note only.
+
+### v0.3 — Architecture Terminology and Mode-Transition (Wave 7)
+
+* Wave 7 (CORPUS-REVIEW-0001, 2026-07-17): added §3.1.17 Credible State Space (M-24) — the corpus-wide canonical term the ADR-002-011/012/020/021 "credible"/"worst credible" universals range over, bounded by the active Broker Capability Profile (ADR-002-004) and the approved Adverse Scenario Set (ADR-002-021) — and §20.1 Mode-Transition Matrix (M-26 / M-07-3), normativizing the derived restrictive/restorative edges, the RECOVERY-transit rule, and the forbidden transitions, while marking three underivable edges UNRESOLVED (U1 CONTAINED→DEGRADED_PROTECTIVE; U2 LIVE_RESTRICTED→LIVE_NORMAL §14 readiness-refresh extent; U3 NON_LIVE vs ADR-002-017 CLOSED_NON_LIVE/RECOVERY label). No SAFE-xxx, no numeric bound, no broker proper noun; the §26 "(96 items)" and "372" figures are Wave-4 history and are preserved unchanged. EV-L0 review items, reviewer provenance per VER-002-001 §5 (M-18).

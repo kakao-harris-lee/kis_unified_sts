@@ -36,6 +36,7 @@ BFA-EV-003,Bulk and Family Authoring,Volume Is a Hazard Not a Warrant,ADR-DEV-00
 BFA-EV-004,Bulk and Family Authoring,Independent Review Per Artifact,ADR-DEV-006,Critical,EV-L0/L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 BFA-EV-005,Bulk and Family Authoring,Batch Tooling Is Assistance Not Authority,ADR-DEV-006,Critical,EV-L0/L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 BFA-EV-006,Bulk and Family Authoring,Bulk Authoring Grants No Authority,ADR-DEV-006,Critical,EV-L0/L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
+BFA-EV-007,Bulk and Family Authoring,Per-Artifact Review Depth Is Evidenced (Family Similarity Is Not a Warrant),ADR-DEV-006,Critical,EV-L0/L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 SOS-EV-001,Strategy Output Semantics,No-Action and Explicit Flat Are Distinct First-Class Reproducible,ADR-DEV-007,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 SOS-EV-002,Strategy Output Semantics,The Atomic Authored Unit Is Explicit,ADR-DEV-007,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,
 SOS-EV-003,Strategy Output Semantics,No Combined Authority via Aggregation,ADR-DEV-007,Critical,EV-L1,NOT_IMPLEMENTED,TBD,TBD,TBD,TBD,N/A,,,,

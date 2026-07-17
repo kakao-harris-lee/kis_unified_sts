@@ -339,6 +339,49 @@ ADR-DEV-005 (M-18).
 
 ---
 
+### 3.10 CORPUS-REVIEW-0001 Wave 7 (final wave: AI-on-AI review, review depth, provenance, credible state space, complexity register, mode-transition matrix)
+
+Wave 7 closes the remaining CORPUS-REVIEW-0001 items. All changes are narrow-only and
+additive; no numbered section was renumbered, and vision.md and philosophy.md are unchanged.
+The only evidence-count change anywhere is the development-track total moving **97 → 98**
+(BFA-EV-007, M-17); the Part-1 count is unchanged at 372. The canonical documents already
+carry the changes; the following table is the committed merge record.
+
+| Patch content | Canonical target | Traceability update |
+|---|---|---|
+| M-16: AI-on-AI review presumption inverted for the review of an AI-*authored* artifact (proponent SHALL affirmatively demonstrate decorrelation, else common-mode, fail-closed); human-in-the-loop independent review normativized (SHALL) at the ADR-002-025 production gate | ADR-DEV-005 §7/§9/§10.7/§12.2/§14 (0.1 → **0.2**) | Patch 0030; amends existing AIR-INV-002 + a §9 binding on existing evidence (AIR-EV-002/-005, HAG-EV-016, RLP-EV-008); **no new AIR-INV, no new AIR-EV**, no SAFE-xxx; DEV count unaffected by this item |
+| M-17: BFA-INV-007 (per-artifact review depth is evidenced; family similarity is not a warrant) + paired BFA-EV-007; ADR-DEV-006 gate now requires BFA-EV-001..007; invariant→evidence coverage 91 → 92; development-track total **97 → 98**, BFA family 6 → 7 | ADR-DEV-006 §1/§6/§7/§8/§12/§13/§14 (0.1 → **0.2**); EVIDENCE-REGISTER-DEV.{md,csv}; VER-DEV-001 §1/§5/§6/§7/§8 | Patch 0031; independent of the Part-1 count; all rows `NOT_IMPLEMENTED`. Note: RFC-002 §26's "(96 items)" and §3.7/§3.8's Wave-4/Wave-5 figures are preserved as history; the current development-track total is 98 per this row |
+| M-18: EV-L0 reviewer-provenance obligation added (model/substrate + determining inputs per ADR-DEV-005 §7), applying to the corpus's own specification reviews and these gate-status merge records | VER-002-001 §5 (EV-L0), §9.5 (sign-off provenance SHALL); dated header note | Patch 0032; no new EV; VER-DEV-001 already inherits the obligation by citing VER-002-001 §5 for evidence-strength levels (§2), so provenance inherits automatically — confirmed, no VER-DEV-001 edit required |
+| M-24: Credible State Space defined at the architecture tier (RFC-002 §3.1.17) — bounded by the active Broker Capability Profile (ADR-002-004) and the approved Adverse Scenario Set (ADR-002-021) — and bound into the ADR-002-011 §9 and ADR-002-012 §18 "credible"/"worst credible" universals and the ADR-002-001 §6.2 protective universal; VER-002-001 §2.7 Coverage Argument for universally-quantified claims added, with a §374 pointer | RFC-002 §3.1.17 (0.2 → **0.3**); ADR-002-011 §9 (0.2 → **0.3**); ADR-002-012 §18 (— → **0.2**, Version field added); ADR-002-001 §6.2 (0.5 → **0.6**); VER-002-001 §2.7/§374 | Patches 0033/0034/0035; no new SAFE-xxx, no numeric bound, no new EV (Part-1 count stays 372) |
+| M-25: Complexity Justification Register created (discharges RFC-000 AX-005 via philosophy §24's six questions across eight load-bearing mechanisms); every cell cites an existing HAZ/SAFE/ADR/EV, unanswered cells marked OPEN (Q5 consolidated operator-degraded-state view and Q6 safe removability are OPEN corpus-wide; egress single-point carries the M-06 residual) | `part-1-foundation/COMPLEXITY-REGISTER-002.md` (new; **non-normative**); SUMMARY.md | Direct edit; creates no verification evidence, acceptance, or live readiness; **adds nothing to either evidence count** (Part-1 372; development track 98) |
+| M-26 / M-07-3: RFC-002 §20.1 Mode-Transition Matrix — derived restrictive/restorative edges, the RECOVERY-transit rule, and forbidden transitions normativized; the §6.2→§8.3.1 CONTAINED emergency-action routing authority resolved (M-07-3); three underivable edges marked UNRESOLVED (see Wave-7 debt below) | RFC-002 §20.1 (**0.3**) | Patch 0033; no SAFE-xxx, no numeric bound; only derived edges normativized, no edge invented |
+| M-07-2 (Wave-6 deferred): §8.3.1 bullet-2 parenthetical reworded so it no longer implies a live §6.2 test in CONTAINED (established at approval time for the pre-approved emergency-action set) | ADR-002-001 §8.3.1 (**0.6**) | Patch 0035; folded into the ADR-002-001 v0.6 patch with the M-24 §6.2 cross-reference; no SAFE-xxx, no new EV |
+| Minors: **mn-10** operator-as-granting-authority limited to ADR-002-015 quorum / §17.1 variant membership; **mn-11** External-Value Validity Window must be *adequate* to the source's real currentness (ADR-002-018 CII-INV-005/006); **mn-12** trapped-exposure representation added to the re-arm checklist as a complementary item (not a tenth reconciliation confirmation — "nine reconciliation items" preserved); **mn-15** RFC-000 §12 governance hierarchy harmonized (ADR + Verification Evidence tiers, intra-tier tie-break, recorded-status precedence); **mn-17** operator scoped residual-risk acceptance distinguished from the System Owner's final acceptance; **Wave-5-deferred** RFC-003 §10 Critical-Input classification is fixed by ADR-002-018, not the proposer | ADR-DEV-014 §5 (0.1 → **0.2**); ADR-DEV-003 §6/§8 (0.1 → **0.2**); ADR-DEV-012 §7 (0.1 → **0.2**); RFC-000 §12 (0.13 → **0.14**); RFC-011 §5 (0.2 → **0.3**); RFC-003 §10 (0.3 → **0.4**) | Patches 0036–0041; each narrow-only and additive; no SAFE-xxx, no numeric bound, no new EV; RFC-000 change is confined to §12 (the H1 governance hierarchy), vision/philosophy untouched |
+| G-02..G-05 scoped-future-specification gaps registered; G-01 recorded resolved | ARCHITECTURE-GATE-STATUS §4.6 (new subsection) | Direct edit; gap registration only — no ADR authored, no SAFE-xxx, no new EV |
+
+> Wave 7 closes CORPUS-REVIEW-0001. No new SAFE-xxx requirement or numeric bound is
+> introduced; no broker proper noun appears; vision.md and philosophy.md are unchanged. The
+> Part-1 Evidence Register count is unchanged (372); the development-track count moves 97 → 98
+> (BFA-EV-007 only). Historical counts are preserved: RFC-002 §26 "(96 items)" and §3.7/§3.8
+> remain as Wave-4/Wave-5 history.
+>
+> **Wave-7 debt (M-26 UNRESOLVED mode-transition edges; no new EV IDs):**
+> * **U1 (substantive).** CONTAINED → DEGRADED_PROTECTIVE inter-protective de-restriction: no
+>   ADR fixes the trigger/guard/owner. Marked UNRESOLVED in RFC-002 §20.1 D; a conservative
+>   default is inferable by principle but not normatively fixed.
+> * **U2 (partial).** LIVE_RESTRICTED → LIVE_NORMAL §14 in-place readiness-refresh extent is
+>   not enumerated. Marked UNRESOLVED (partial).
+> * **U3 (terminology).** RFC-002 §20 `NON_LIVE`/`RECOVERY` vs ADR-002-017
+>   `CLOSED_NON_LIVE`/`CLOSED_RECOVERY` labels are not explicitly unified. Marked UNRESOLVED
+>   (naming seam).
+
+Patch documents 0030 through 0041 are recorded in the git-excluded `patches/` per the
+repository convention (each born-MERGED, pointing here); this subsection is the committed
+merge record. The Wave-7 changes are EV-L0 review items, with reviewer provenance to be
+recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).
+
+---
+
 ## 4. Remaining Architecture and Acceptance Work
 
 ADR-002-005 through ADR-002-030 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, safety-telemetry/continuous-monitoring-governance, software-supply-chain/runtime-artifact-admission, and post-trade economic-obligation/finality authorship are complete, but none of those decisions is accepted.
@@ -449,9 +492,35 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
 ### 4.5 Remaining Debt After Wave 4
 
 - **M-06 architectural existence.** Whether an out-of-band final-egress containment path independent of the egress enforcement point actually exists remains open. EGRESS-EV-013 registers the evidence obligation; SAFE-054 permits closing it via the accepted-residual-risk / reduced-scope branch. This is a separate Major finding, not part of CR-01.
-- **No execution.** All 372 Part-1 items (EVIDENCE-REGISTER-002) and all 97 Part-2/3 items (EVIDENCE-REGISTER-DEV) remain `NOT_IMPLEMENTED`; registration is not execution and confers no live readiness. (The Part-2/3 count rose 96 → 97 in Wave 5; see §3.8.)
+- **No execution.** All 372 Part-1 items (EVIDENCE-REGISTER-002) and all 98 Part-2/3 items (EVIDENCE-REGISTER-DEV) remain `NOT_IMPLEMENTED`; registration is not execution and confers no live readiness. (The Part-2/3 count rose 96 → 97 in Wave 5, §3.8; 97 → 98 in Wave 7, §3.10.)
 - **TRACEABILITY-MATRIX-002 §5.3 source gaps.** ADR-002-002 through ADR-002-006 lack a §2x Requirements Traceability table, so their families (RC, SA, BC, STATE, RECON) are not reachable through the SAFE→ADR bridge. This is deferred and scoped out of CR-01; no coverage is lost because those SAFEs are co-claimed by other realizing ADRs.
 - **Part-2/3 ratification pending.** RFC-003 through RFC-011, ADR-DEV-001 through ADR-DEV-015, and VER-DEV-001 remain `Proposed`.
+
+### 4.6 Scoped Future Specifications (G-02..G-05)
+
+These are architecture gaps identified in CORPUS-REVIEW-0001 that are out of the current
+corpus's scope. Each is registered here (not authored) with its basis, the trigger condition
+under which a specification becomes required, and an owner candidate. Registration authors no
+ADR, introduces no SAFE-xxx, and adds no evidence row.
+
+- **G-01 — resolved.** The single-operator live-governance gap is resolved via CR-02 option
+  (c) / DR-0001 (§3.4).
+- **G-02 — Capital/portfolio allocation governance.** Basis: vision §8 (Long-Term Scope),
+  §10.4 (Economic Viability). Trigger: the first cross-strategy or cross-account capital
+  allocation beyond per-action RCL headroom. Owner candidate: Architecture Board (a new
+  ADR-002-0xx or an RFC-006 successor).
+- **G-03 — Market-data / context ingestion pipeline.** Basis: vision §6.8 (Evidence-Based
+  State); ADR-002-018 governs Critical Inputs *after* arrival but not their ingestion.
+  Trigger: the first feed with continuity, gap, or backfill needs. Owner candidate: an RFC-004
+  successor or a new ADR.
+- **G-04 — Multi-account / multi-broker concurrent operating model.** Basis: aggregation
+  exists (ADR-002-021) but the writer-epoch scope is open (ADR-002-002 §37); initial live is
+  single-account. Trigger: a second concurrent account or broker. Owner candidate: Architecture
+  Board.
+- **G-05 — Performance / latency budget for the safety machinery.** Basis: philosophy §29
+  (safety and expectancy must survive real conditions); all latency bounds currently defer to
+  the unapproved Verification Profile. Trigger: before restricted-live for a latency-sensitive
+  market. Owner candidate: the Verification Profile / an RFC-002 §29 successor.
 
 ---
 
@@ -509,7 +578,7 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
 | Software Release Policy, reviewed-source, dependency/toolchain-closure, build-provenance, artifact, admission, admitted-set, and runtime-attestation artifacts | Templates only; DRAFT/UNKNOWN/INVALID/DENY/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Post-Trade Finality Policy, Economic Obligation Record, Active Economic Obligation Set, Post-Trade Finality Proof, Post-Trade Break Record, and Statement Coverage Manifest artifacts | Templates only; DRAFT/UNKNOWN/UNPROVEN/OPEN/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Verification evidence | 372 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
-| Development-track verification evidence | 97 items registered (EVIDENCE-REGISTER-DEV), all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Development-track verification evidence | 98 items registered (EVIDENCE-REGISTER-DEV), all `NOT_IMPLEMENTED` | NO claim of completion | NO |
 
 ---
 
@@ -534,7 +603,7 @@ A written test case, mock output, or design review is not completed verification
 
 ```text
 1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, human and automated approval, evidence/replay/recovery, Critical Input/context, venue constraint, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Trading Approval Policy, Currentness Policy, Restricted-Live Trial Policy, Software Release Policy, reviewed-source/dependency/toolchain/build-provenance/signing/registry/admission/release-set/runtime-attestation mechanisms, plan/run/abort/promotion registry, evidence-coverage model, owner/dependency registry, Currentness Ordering Domain, restrictive ingress, local latch, per-send proof/claim, independent-validation/common-mode, single-use Intent and promotion consumption, adverse-scenario/state-cut/shared-scope/cause-amplification protocols, deterministic compiler/evaluator/verifier, numeric/unit/mapping/risk/flow/trial/release registry, canonicalization, serializer/SDK, actual-outbound comparison, generation fencing, signing, and independent Human HALT substrates.
-2. Assign implementation owners, evidence owners, and independent reviewers for all 372 items in EVIDENCE-REGISTER-002.csv, and for all 97 items in EVIDENCE-REGISTER-DEV.csv.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 372 items in EVIDENCE-REGISTER-002.csv, and for all 98 items in EVIDENCE-REGISTER-DEV.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, human and automated exact approval, single-use Intent consumption, Human HALT, Recovery Barrier, Critical Input/context, venue constraint/admissibility, canonical command, economic-effect, aggregate-risk projection/decision, action-flow decision/permit/reserve, conformance-proof, downstream-mutation, and invalidation state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.

@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-011
 **Title:** Operational Guidelines
-**Version:** 0.2 Review Draft
+**Version:** 0.3 Review Draft
 **Status:** Review Draft — Development
 **Classification:** Implementation-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -165,7 +165,11 @@ discipline and are non-authorizing.
 * **Operational Act** — an authenticated, scoped, attributable, auditable action
   an Operator takes on the running system (observe, halt, withhold re-arm, invoke
   approved containment, accept residual risk). An Operational Act exercises
-  existing authority; it does not manufacture it.
+  existing authority; it does not manufacture it. The operator's "accept residual
+  risk" here is the scoped, range-limited acceptance of an already-governed
+  ADR-002-026 artifact — never a self-waiver of a Critical or Non-Waivable
+  requirement — and is distinct from the System Owner's final risk acceptance
+  (Vision §12.1); §11.13 already implies this reconciliation.
 * **Re-arm Decision** — the explicit human decision to restore live authority
   after a halt, degradation, or recovery. A Re-arm Decision is never automatic and
   is owned by ADR-002-007; RFC-011 governs the operator discipline around
@@ -558,3 +562,13 @@ Unresolved questions reduce, and do not expand, the conforming operational postu
   numeric bound, or authority, and no new EV (register counts unchanged). Independent
   adversarial EV-L0 review of this Wave-6 change is owed; this patch confers no acceptance
   or live-readiness.
+
+### v0.3 — Wave 7 (CORPUS-REVIEW-0001 mn-17)
+
+* **mn-17 (residual-risk acceptance scope).** Distinguished the operator's scoped,
+  range-limited residual-risk acceptance (an already-governed ADR-002-026 artifact, never a
+  self-waiver of a Critical/Non-Waivable requirement) from the System Owner's final risk
+  acceptance (Vision §12.1) in the §5 Operational Act definition, noting §11.13 already
+  implies the reconciliation. Narrow-only and additive; no SAFE-xxx, no numeric bound, no new
+  EV (register counts unchanged). Independent EV-L0 review is owed, with reviewer provenance
+  recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

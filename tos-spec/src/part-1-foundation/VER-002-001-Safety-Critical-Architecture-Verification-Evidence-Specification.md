@@ -6,6 +6,7 @@
 - **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-030; implementation evidence has not been executed
 - **Extension State:** ADR-002-005 through ADR-002-030 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, SCI, and PTF evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
+- **Last Updated:** 2026-07-17 — Wave 7 (CORPUS-REVIEW-0001): M-18 added the EV-L0 reviewer-provenance obligation (§5, §9.5), applying to the corpus's own specification reviews; M-24 added the §2.7 Coverage Argument for universally-quantified claims and a §374 pointer to it. Narrow-only and additive; no new evidence ID, no SAFE-xxx, no numeric bound, no broker proper noun; the Part-1 evidence count is unchanged (372).
 
 ---
 
@@ -72,6 +73,10 @@ A mock may validate internal logic but cannot establish external broker semantic
 
 Critical evidence SHALL be reviewed by a principal who did not implement the tested mechanism and did not approve the relevant residual-risk exception.
 
+### 2.7 Coverage Argument for Universally-Quantified Claims
+
+A finite set of executed evidence cases does not by itself discharge a universally-quantified safety claim over the Credible State Space (RFC-002 §3.1.17; philosophy §33 — a safety property that cannot be tested objectively remains an unproven claim). Each such claim's evidence SHALL carry a coverage argument stating how the finite cases stand in for the universal set — at minimum the boundary values of each governed dimension and the adversarial combinations of the approved Adverse Scenario Set (ADR-002-021) — and SHALL record any part of the Credible State Space not exercised as residual (§378 Residual Risk Register).
+
 ---
 
 ## 3. Verification Object Baseline
@@ -131,6 +136,8 @@ WAIVED_WITH_RESIDUAL_RISK
 ### EV-L0 — Design Inspection
 
 Static architecture and requirement review. Necessary but insufficient for runtime approval.
+
+Every EV-L0 review SHALL record the reviewer's provenance — model/substrate (human, or the tool's model and version) and determining inputs — per the ADR-DEV-005 §7 independence standard, so its independence is falsifiable; an EV-L0 record without reviewer provenance is not independent-review evidence. This obligation applies to the corpus's own specification reviews, including the recorded EV-L0 review histories in the ADRs and RFCs and the ARCHITECTURE-GATE-STATUS merge records.
 
 ### EV-L1 — Model and Property Verification
 
@@ -356,7 +363,7 @@ Raw broker and system evidence SHALL be retained before normalization. Derived s
 
 ### 9.5 Reviewer Sign-Off
 
-A `PASS` for a Critical item is incomplete until independent review signs the evidence manifest.
+A `PASS` for a Critical item is incomplete until independent review signs the evidence manifest. The sign-off record SHALL include the reviewer's provenance — model/substrate (human, or the tool's model and version) and determining inputs — per the ADR-DEV-005 §7 independence standard (§5), so the reviewer's independence from the author is falsifiable.
 
 ---
 
@@ -3159,6 +3166,8 @@ No obligation correction, break closure, statement arrival, cutoff, quiet time, 
 ```
 
 Counterexamples SHALL be stored as evidence and converted into deterministic regression tests.
+
+A universally-quantified property proven here over an abstract or bounded model still requires the §2.7 coverage argument to state how the executed cases stand in for the Credible State Space (RFC-002 §3.1.17), with any unexercised part recorded as residual (§378).
 
 ---
 

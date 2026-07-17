@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-13
-- **Version:** 0.2
+- **Version:** 0.3
 - **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Protective-order replacement, cancellation authority, non-atomic replace, overlap and gap capacity, proof of protection, Final Quantity Proof, partial fills, broker-resource scarcity, failure containment, recovery, and evidence
@@ -228,7 +228,7 @@ HALT dominates ordinary replacement initiation. Only a HALT-compatible protectiv
 
 ## 9. Risk Capacity Accounting
 
-Before the first externally effective step, the Risk Capacity Ledger SHALL atomically commit capacity for the maximum aggregate risk over all credible intermediate outcomes.
+Before the first externally effective step, the Risk Capacity Ledger SHALL atomically commit capacity for the maximum aggregate risk over all credible intermediate outcomes. The credible intermediate-outcome set is the Credible State Space (RFC-002 §3.1.17): bounded by the active Broker Capability Profile (ADR-002-004) and the approved Adverse Scenario Set (ADR-002-021); an outcome not bounded by these is treated conservatively as UNKNOWN.
 
 The model SHALL include at least:
 
@@ -542,3 +542,7 @@ Initial protective-replacement, cancellation-authority, and protection-gap contr
 
 - Added a §5 cross-reference (M-08) to the ADR-002-001-owned partition-time lease-admissibility rule: during a Safety Control Plane partition the current ADR-002-019 Order Admissibility Decision each replacement leg binds is obtainable only within a degraded Protective Lease's bounded pre-proven admissibility scope and staleness tolerance (ADR-002-001 §3.1.2, §9); a cancellation-involving replacement leg outside that scope or past that tolerance SHALL NOT proceed during partition, leaving only overlap-first / add-only protection within scope.
 - Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent. The change is narrow-only and additive; it introduces no SAFE-xxx requirement and no new EV ID (Evidence Register count unchanged), and the partition-time admissibility-scope scenario is recorded as a conservative debt within the existing SA-EV/VTG-EV/PR-EV families in ARCHITECTURE-GATE-STATUS §3.9. Independent EV-L0 review is owed.
+
+### v0.3 — Credible State Space Binding (CORPUS-REVIEW-0001 Wave 7) (2026-07-17)
+
+- **M-24.** Bound the §9 "maximum aggregate risk over all credible intermediate outcomes" universal to the Credible State Space (RFC-002 §3.1.17): the credible intermediate-outcome set is bounded by the active Broker Capability Profile (ADR-002-004) and the approved Adverse Scenario Set (ADR-002-021), and an outcome not bounded by these is treated conservatively as UNKNOWN. Narrow-only and additive; it introduces no SAFE-xxx requirement, no numeric bound, and no new EV ID (Evidence Register count unchanged at 372). Independent EV-L0 review is owed, with reviewer provenance recorded per VER-002-001 §5 (M-18).

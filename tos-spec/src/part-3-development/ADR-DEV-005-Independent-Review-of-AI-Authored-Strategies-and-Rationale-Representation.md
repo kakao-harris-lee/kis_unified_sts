@@ -9,8 +9,8 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-009 §14 Q2, RFC-009 §14 Q4, and RFC-010 §14 Q4
 **Date:** 2026-07-15
-**Version:** 0.1 Review Draft
-**Last Updated:** 2026-07-15
+**Version:** 0.2 Review Draft
+**Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -137,7 +137,13 @@ These terms describe a review standard. None grants authority, accepts, or admit
   observable sharing is the decision rule; it is the testable proxy for the
   common-mode failure that would reproduce the author's blind spots. A reviewer built
   on a distinct model with disjoint determining inputs is not excluded by this rule
-  (RFC-009 §10; philosophy §34; Vision §12.7).
+  for the human or genuinely-decorrelated-tool case. **For the AI-on-AI review of an
+  AI-*authored* artifact, the presumption is inverted (§7):** model distinctness is
+  necessary but not sufficient, and the proponent SHALL affirmatively demonstrate
+  decorrelation; absent that demonstration the review is treated as common-mode,
+  fail-closed. The testable proxy is unchanged for the human / decorrelated-tool case,
+  so this tightens the scope of AIR-EV-002 rather than adding a new evidence obligation
+  (RFC-009 §10; philosophy §34, §37.4, §15; Vision §12.7).
 * **AIR-INV-003 — Rationale Is a Claim to Be Checked.** An Author's Rationale and any
   self-asserted result are inputs to review, recorded and presented as distinct from
   verified conformance; a fluent rationale SHALL NOT be presentable as, or substituted
@@ -176,6 +182,17 @@ are checkable:
   built on a distinct model with disjoint determining inputs is independent under this
   rule. Where a correlated failure mode is suspected beyond this observable proxy, the
   burden is on the proponent to demonstrate independence, not to presume it (§12.2).
+  **For the review of an AI-*authored* artifact by an AI reviewer, distinctness of model
+  is necessary but not sufficient.** A shared-training-corpus blind spot is by
+  construction *unsuspected*, so the "suspected" trigger above cannot fire in precisely
+  the dangerous case; the presumption "distinct model + disjoint determining inputs ⇒
+  independent" is therefore inverted for this case. The proponent SHALL affirmatively
+  demonstrate decorrelation — disjoint determining training/data provenance to the extent
+  establishable, or a recorded decorrelation argument — and where decorrelation cannot be
+  affirmatively shown the AI-on-AI review is treated as common-mode (not independent),
+  fail-closed (philosophy §37.4, §15). This inversion does not disturb the "determining"
+  clarification above: a human reviewer, or a genuinely-decorrelated tool, is not
+  over-blocked (AIR-INV-001 substrate-neutrality is preserved).
 * **Reviewer provenance is recorded.** So the three exclusions are checkable, an
   independent review SHALL record the reviewer's identity, substrate (human, or the
   tool's model and version), and determining inputs, to be compared against the
@@ -232,6 +249,18 @@ Independent review is evidence-producing, not gate-owning (AIR-INV-005):
 * the same separation RFC-009 §11 and RFC-010 §11 enforce holds here: the identity that
   reviews is not thereby the identity that accepts, admits, or authorizes.
 
+At the highest-risk promotion gate — the ADR-002-025 production authorization — at least
+one independent review SHALL be performed by a **human-in-the-loop** independent reviewer.
+This requirement is satisfiable by the second natural person of the two-person quorum
+**or** by the external independent reviewer of the Governed Single-Operator Re-Arm Variant
+(ADR-002-015 §17.1; evidence HAG-EV-016 "External Reviewer Independence"). This is a
+*binding of* the existing independent-review requirement at that gate — not a new
+authority or safety control — and it rides on the already-registered HAG-EV-016 /
+RLP-EV-008 obligations; it introduces no new SAFE-xxx and no new AIR-EV. It is consistent
+with the single-operator reality (DR-0001) and its already-existing external-reviewer
+path; a fully-automated (AI-on-AI) review, however decorrelated, does not by itself
+satisfy this gate.
+
 ---
 
 ## 10. Alternatives Considered
@@ -252,6 +281,14 @@ Independent review is evidence-producing, not gate-owning (AIR-INV-005):
   gates are separately owned (AIR-INV-005; RFC-001; ADR-002-029).
 * **10.6 Trust a tool reviewer without verifying it.** Rejected: a reviewer is software
   and earns no trust it has not demonstrated (AIR-INV-004; philosophy §33).
+* **10.7 Presume independence from model-distinctness alone (for AI-on-AI review of an
+  AI-authored artifact).** Rejected: an unsuspectable shared-corpus blind spot defeats the
+  §7 suspicion trigger precisely when it is most dangerous; the burden is therefore
+  inverted onto the proponent to affirmatively demonstrate decorrelation (§7; philosophy
+  §37.4, §15). Deferring the concern to an Open Question absorbed by the acceptance gate
+  was also rejected: it leaves the operative rule intact and, with every gate unexecuted
+  and all evidence `NOT_IMPLEMENTED`, defers the fix indefinitely; the residual it would
+  have flagged is instead discharged by this inversion (§12.2).
 
 ---
 
@@ -284,8 +321,12 @@ Independent review is evidence-producing, not gate-owning (AIR-INV-005):
   author provenance alone is necessary but not sufficient to detect reviewer == author
   or common-mode.
 * **12.2 Common-mode tool reviewer.** A distinct tool shares the author's model/inputs;
-  blocked by AIR-INV-002's third exclusion, but establishing non-correlation is a real
-  burden (a residual this ADR flags).
+  blocked by AIR-INV-002's third exclusion. For the AI-on-AI review of an AI-authored
+  artifact this is not merely flagged as a residual: it is discharged by the §7
+  burden-inversion (the proponent SHALL affirmatively demonstrate decorrelation, else the
+  review is common-mode, fail-closed), and the residual at the production-authorization
+  gate is closed by the §9 human-in-the-loop requirement. Establishing decorrelation
+  remains a real, deliberate cost.
 * **12.3 Rationale laundering.** A fluent rationale is presented as a passed check;
   blocked by AIR-INV-003 representation discipline.
 * **12.4 Review-as-acceptance.** A green independent review is treated as acceptance or
@@ -326,6 +367,11 @@ ADR-DEV-005 is acceptable when:
 * a tool reviewer must be independent and itself verified (AIR-INV-004);
 * review remains evidence toward, never a substitute for, the acceptance/admission
   gates (AIR-INV-005);
+* independence for the AI-on-AI review of an AI-authored artifact requires
+  affirmatively-demonstrated decorrelation, not model-distinctness alone (§7;
+  AIR-INV-002);
+* the ADR-002-025 production-authorization gate requires at least one human-in-the-loop
+  independent review (§9; HAG-EV-016);
 * independent adversarial review (EV-L0) confirms every §13 obligation is discharged
   and every citation resolves against source.
 
@@ -398,3 +444,26 @@ ADR-002-029, and ADR-002-025 for the gates it feeds.
   evidence-producing and auditable (§8; RFC-010 §9/§11.10); and "determining" clarified
   to prevent over-blocking a reviewer that merely consulted a model. The review is
   EV-L0 only and confers no acceptance or live-readiness.
+
+### v0.2 — Wave 7 (CORPUS-REVIEW-0001 M-16)
+
+* Inverted the AI-on-AI review presumption for the review of an AI-*authored* artifact:
+  model distinctness is necessary but not sufficient, because a shared-training-corpus
+  blind spot is unsuspectable and defeats the §7 "suspected" trigger precisely when it is
+  most dangerous; the proponent SHALL now affirmatively demonstrate decorrelation, and
+  absent that demonstration the review is treated as common-mode and fails closed
+  (§7; AIR-INV-002; philosophy §37.4, §15). This adopts presumption-inversion (option A)
+  over Open-Question-promotion (option B, §10.7), which would have left the operative rule
+  intact and deferred the fix indefinitely.
+* Normativized (SHALL) a human-in-the-loop independent reviewer at the highest-risk
+  ADR-002-025 production-authorization gate (§9; §14), satisfiable by the two-person
+  quorum's second natural person or the ADR-002-015 §17.1 external independent reviewer,
+  riding on the existing HAG-EV-016 / RLP-EV-008 obligations.
+* Reframed §12.2 from a flagged residual to one discharged by the §7 inversion and the §9
+  gate; added §10.7 and two §14 acceptance criteria.
+* **No new AIR-INV and no new AIR-EV were introduced** (deliberate count discipline): the
+  change is an amendment to the existing AIR-INV-002 plus a §9 binding on already-registered
+  evidence (AIR-EV-002/-005, HAG-EV-016, RLP-EV-008), so the development-track evidence
+  count is unchanged by this item. No SAFE-xxx, no numeric bound, no broker proper noun.
+  The Wave-7 changes are EV-L0 review items with reviewer provenance to be recorded per
+  ADR-DEV-005 §7 / VER-002-001 §5 (M-18); this patch confers no acceptance or live-readiness.

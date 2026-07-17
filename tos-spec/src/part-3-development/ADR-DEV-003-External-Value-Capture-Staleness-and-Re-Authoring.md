@@ -9,8 +9,8 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-008 §14 Q3 (staleness/side-channel clause) and RFC-009 §14 Q6
 **Date:** 2026-07-16
-**Version:** 0.1 Review Draft
-**Last Updated:** 2026-07-16
+**Version:** 0.2 Review Draft
+**Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -139,7 +139,11 @@ defines Critical Input governance.
   time — it blocks new risk in its dependency closure; a TTL, cache, or last-known-good
   does not convert staleness into permission (ADR-002-018 CII-INV-005/006). An External
   Value with no positively-established Validity Window is `UNKNOWN` and blocks new risk
-  (ADR-002-018 CII-INV-005/006); staleness cannot be escaped by omitting the window.
+  (ADR-002-018 CII-INV-005/006); staleness cannot be escaped by omitting the window. The
+  Validity Window SHALL further be **adequate** to the source's actual currentness
+  characteristics: a window that merely exists and is honored is insufficient if it exceeds
+  the source's real freshness. Adequacy of the currentness bound is owned by ADR-002-018
+  (CII-INV-005/006); this ADR requires that the captured External Value's window not exceed it.
 * **EXV-INV-003 — Stale Requires Re-Authoring, Not Reuse.** A stale External Value SHALL
   be re-captured as a new Critical Input; where it is a configuration binding,
   Re-Authoring is a Versioned Substitution producing a new Artifact Identity (ADR-DEV-004
@@ -191,7 +195,9 @@ A captured External Value is fresh only within its Validity Window (EXV-INV-002,
   new risk in its dependency closure (ADR-002-018 CII-INV-005/006). Absence of a
   correction, a cache hit, a heartbeat, or an unexpired TTL is not freshness (ADR-002-018
   line 27). A value with no positively-established window is `UNKNOWN` and blocks new
-  risk — omitting the window is not a way to escape staleness;
+  risk — omitting the window is not a way to escape staleness; and the window SHALL be
+  *adequate* to the source's real currentness (owned by ADR-002-018 CII-INV-005/006) — a
+  window longer than the source's actual freshness does not make a stale value fresh;
 * a stale value SHALL be **re-authored** — re-captured as a new Critical Input — never
   silently reused. Where the value is a configuration binding of the Authored Strategy,
   Re-Authoring is a Versioned Substitution producing a new Artifact Identity and a new
@@ -352,3 +358,13 @@ Critical Input governance.
   materiality citation points to ADR-002-018 §1 (with §5.8); and the RFC-009 §14 Q6
   back-annotation was already added. The review is EV-L0 only and confers no acceptance
   or live-readiness.
+
+### v0.2 — Wave 7 (CORPUS-REVIEW-0001 mn-11)
+
+* Added an *adequacy* requirement to EXV-INV-002 (§6) and §8: the External Value's Validity
+  Window SHALL be adequate to the source's actual currentness characteristics — a window that
+  merely exists and is honored is insufficient if it exceeds the source's real freshness.
+  Adequacy of the currentness bound is owned by ADR-002-018 (CII-INV-005/006); this ADR
+  requires only that the captured value's window not exceed it. Narrow-only and additive; no
+  SAFE-xxx, no numeric bound, no new EXV-INV or EV. Independent EV-L0 review is owed, with
+  reviewer provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

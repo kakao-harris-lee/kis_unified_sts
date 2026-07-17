@@ -9,8 +9,8 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-009 §14 Q5
 **Date:** 2026-07-16
-**Version:** 0.1 Review Draft
-**Last Updated:** 2026-07-16
+**Version:** 0.2 Review Draft
+**Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -27,6 +27,10 @@ When an Authoring Agent produces or revises a large family of strategies at once
   its own content-addressed identity (ADR-DEV-002; ADR-002-029; ADR-DEV-004 APA-INV-005);
 * each artifact's conformance is **independently reviewed per ADR-DEV-005** — running the
   author over many artifacts is not review of any of them (ADR-DEV-005 AIR-INV-002);
+* **each per-artifact review exercises that artifact and records what it checked** — family
+  similarity, a shared template, or a cluster/diff presentation is not a warrant for a
+  shallower, diff-plus-template pass that is formally per-artifact but substantively batch
+  (BFA-INV-007);
 * **volume is a hazard, not a warrant**: throughput of authorship is not evidence of quality
   (RFC-009 §10). Batch tooling MAY assist triage and organization but confers no review or
   admission; the unit remains the individual artifact.
@@ -130,6 +134,13 @@ admission.
 * **BFA-INV-006 — Bulk Authoring Grants No Authority.** Producing many artifacts creates no
   authority, admission, or acceptance (RFC-002 §9.1 for authority; ADR-002-029 for admission;
   RFC-001 §1 / VER-002-001 for the `ACCEPTED` gate).
+* **BFA-INV-007 — Per-Artifact Review Depth Is Evidenced.** Each per-artifact independent
+  review SHALL produce evidence that it exercised *that* artifact — recording what was
+  checked — as an evidence-producing check per ADR-DEV-005 §8 applied to each family member.
+  Family similarity, a shared template, or a cluster/diff presentation (§8) is not a warrant
+  for reduced review depth: a diff-plus-template pass that is formally per-artifact but
+  substantively batch does not satisfy this invariant (RFC-009 §10; ADR-DEV-005 §8;
+  BFA-INV-003, -004).
 
 ---
 
@@ -148,7 +159,11 @@ Under Bulk/Family Authoring the unit does not change (BFA-INV-001, -002):
 * a change to one member is a Versioned Substitution of that member (ADR-DEV-004
   APA-INV-005), not of the family;
 * volume is a hazard, not a warrant — a large, fluent, quickly-produced batch is not thereby
-  reviewed, and throughput is not evidence of quality (RFC-009 §10; philosophy §7).
+  reviewed, and throughput is not evidence of quality (RFC-009 §10; philosophy §7);
+* the per-artifact review exercises *that* artifact and records what it checked — an
+  evidence-producing check per ADR-DEV-005 §8 applied to each member; a diff-plus-template
+  pass that is formally per-artifact but substantively batch (reusing a family verdict
+  behind a per-member label) does not satisfy the per-artifact review depth (BFA-INV-007).
 
 The response to scale is more disciplined per-artifact review and admission, never more
 trust in the producer (RFC-009 §10).
@@ -165,6 +180,9 @@ Tooling may help at scale without becoming a shortcut (BFA-INV-005):
   and admitted nothing (BFA-INV-005; ADR-002-029);
 * a tool acting as the independent reviewer of any artifact is subject to ADR-DEV-005
   (independent, itself verified, not the author or common-mode with it);
+* clustering, diffing, and template presentation assist the *mechanics* of review but do
+  not reduce the per-member evidence-producing check: each member's review still exercises
+  that member and records what it checked (BFA-INV-007; ADR-DEV-005 §8);
 * the reviewable/admissible unit remains the individual artifact regardless of how the batch
   is organized.
 
@@ -233,6 +251,9 @@ The following SHALL be demonstrated (executed by RFC-010):
 * **12.4** Each artifact is independently reviewed per ADR-DEV-005 (BFA-INV-004).
 * **12.5** Batch tooling confers no review or admission, and producing many artifacts grants
   no authority (BFA-INV-005, -006).
+* **12.6** Each per-artifact review records what it exercised on *that* artifact; a
+  diff-plus-template pass that is formally per-artifact but substantively batch is rejected
+  as not satisfying the per-artifact review depth (BFA-INV-007).
 
 ---
 
@@ -247,6 +268,8 @@ ADR-DEV-006 is acceptable when:
   (BFA-INV-003, -004);
 * batch tooling is assistance not authority, and bulk authoring grants nothing (BFA-INV-005,
   -006);
+* each per-artifact review is evidenced against that artifact, and family similarity is not
+  a warrant for reduced review depth (BFA-INV-007);
 * independent adversarial review (EV-L0) confirms every §12 obligation is discharged and
   every citation resolves against source.
 
@@ -267,6 +290,7 @@ operation, which remain governed by RFC-001 and VER-002-001.
 | ADR-002-029 (per content-addressed admission) | no batch-level admission; per-artifact identity (§7; BFA-INV-001) |
 | RFC-002 §9.1 (authority ownership) | bulk authoring grants no authority (BFA-INV-006) |
 | RFC-009 §10 (primary); philosophy §7 | throughput/fluency is not evidence of quality (§3; BFA-INV-003) |
+| RFC-009 §14 Q5 (per-artifact review not diluted by scale); ADR-DEV-005 §8 (evidence-producing check) | each per-artifact review is evidenced against that member; family similarity is not a warrant for a diff-plus-template pass (§§7, 8; BFA-INV-007) |
 
 This ADR introduces no SAFE-xxx requirement and no numeric bound. It fixes the bulk-authoring
 review-at-scale discipline and relies on ADR-002-029, ADR-DEV-004, and ADR-DEV-005 for
@@ -301,3 +325,21 @@ admission, provenance, and independent review.
   in RFC-001 §1 / VER-002-001; "Authored Strategy" attributed to RFC-008 §5; and a §9.6
   sample-and-inherit alternative added. The review is EV-L0 only and confers no acceptance or
   live-readiness.
+
+### v0.2 — Wave 7 (CORPUS-REVIEW-0001 M-17)
+
+* Added **BFA-INV-007 — Per-Artifact Review Depth Is Evidenced** (§6): each per-artifact
+  independent review SHALL produce evidence that it exercised *that* artifact, as an
+  evidence-producing check per ADR-DEV-005 §8 applied to each family member; family
+  similarity, a shared template, or a cluster/diff presentation is not a warrant for a
+  shallower, diff-plus-template pass that is formally per-artifact but substantively batch.
+* Threaded BFA-INV-007 through §1 (decision bullet), §7 (depth clause), §8 (clustering/diff
+  assists the mechanics but does not reduce the per-member check), §12.6 (verification),
+  §13 (acceptance), and §14 (traceability row, RFC-009 §14 Q5 / ADR-DEV-005 §8).
+* Registered the paired evidence row **BFA-EV-007** in EVIDENCE-REGISTER-DEV (.md/.csv) and
+  VER-DEV-001 §5, extending the ADR-DEV-006 approval gate to BFA-EV-001..007: the
+  development-track total moves **97 → 98**, the BFA family **6 → 7**, and invariant→evidence
+  cases **91 → 92**. The item is `NOT_IMPLEMENTED`; registration creates no verification
+  evidence, ADR-DEV acceptance, or live readiness. No SAFE-xxx, no numeric bound, no broker
+  proper noun. Independent EV-L0 review is owed, with reviewer provenance recorded per
+  ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

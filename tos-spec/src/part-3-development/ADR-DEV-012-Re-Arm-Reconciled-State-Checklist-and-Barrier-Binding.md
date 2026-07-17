@@ -9,8 +9,8 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-011 §14 Q1
 **Date:** 2026-07-16
-**Version:** 0.1 Review Draft
-**Last Updated:** 2026-07-16
+**Version:** 0.2 Review Draft
+**Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -159,6 +159,14 @@ exposure may be authorized while any of these is unknown or unreconciled (RFC-00
   §10; RFC-001 SC-030);
 * **reconciled account/venue/critical-input state** — account, venue, and Critical
   Input state are current and reconciled (ADR-002-018/019).
+
+In addition to the nine reconciliation confirmations above, the operator SHALL confirm one
+representation requirement — a complementary check, not a tenth reconciliation item:
+
+* **trapped exposure represented** — any trapped or irreducible exposure is represented at
+  full conservative risk and does not release capacity (ADR-002-001 §15; ADR-002-017
+  SBR-INV-005, which enforces this independently); an unreconciled or misrepresented trapped
+  exposure withholds the request under RRC-INV-002.
 
 Each item is positively established and current at the time of the request; a cache,
 heartbeat, last-known-good, or a once-true-but-now-stale reconciliation does not satisfy
@@ -316,3 +324,14 @@ re-arm checklist and its binding and relies on ADR-002-007/017 for the grant and
   Authorization item clarified as a basis/governance, not an active grant; and SBR-INV-002
   added to RRC-INV-004. The review is EV-L0 only and confers no acceptance or
   live-readiness.
+
+### v0.2 — Wave 7 (CORPUS-REVIEW-0001 mn-12)
+
+* Added a **trapped-exposure representation** item to the §7 checklist as a complementary
+  check — *not* a tenth reconciliation confirmation, so the nine reconciliation items
+  (RRC-INV-001; RRC-EV-001) are preserved: any trapped or irreducible exposure is represented
+  at full conservative risk and does not release capacity (ADR-002-001 §15; ADR-002-017
+  SBR-INV-005, which enforces it independently), aligning the operator checklist with
+  SBR-INV-005. Narrow-only and additive; no SAFE-xxx, no numeric bound, no new RRC-INV or EV.
+  Independent EV-L0 review is owed, with reviewer provenance recorded per ADR-DEV-005 §7 /
+  VER-002-001 §5 (M-18).

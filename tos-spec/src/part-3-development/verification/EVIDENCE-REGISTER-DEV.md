@@ -14,13 +14,13 @@ the machine-editable source.
 
 ## Status Summary
 
-- Total evidence items: **97**
-- NOT_IMPLEMENTED: **97**
+- Total evidence items: **98**
+- NOT_IMPLEMENTED: **98**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
 
-Of the 97 items, 91 are 1:1 with the Part-3 ADR-DEV invariants (15 families,
+Of the 98 items, 92 are 1:1 with the Part-3 ADR-DEV invariants (15 families,
 `PFX-EV-0nn` ↔ `PFX-INV-0nn`), five are the Part-2 decision-boundary cluster
 (`DEC-EV-001` through `DEC-EV-005`), and one is the RFC-010 testing-boundary
 cluster (`TEST-EV-001`).
@@ -86,6 +86,7 @@ widens any Part-1 authority, limit, or gate (RFC-000 §12).
 | BFA-EV-004 | Bulk and Family Authoring | Independent Review Per Artifact | ADR-DEV-006 | EV-L0/L1 | NOT_IMPLEMENTED | TBD | TBD |
 | BFA-EV-005 | Bulk and Family Authoring | Batch Tooling Is Assistance Not Authority | ADR-DEV-006 | EV-L0/L1 | NOT_IMPLEMENTED | TBD | TBD |
 | BFA-EV-006 | Bulk and Family Authoring | Bulk Authoring Grants No Authority | ADR-DEV-006 | EV-L0/L1 | NOT_IMPLEMENTED | TBD | TBD |
+| BFA-EV-007 | Bulk and Family Authoring | Per-Artifact Review Depth Is Evidenced (Family Similarity Is Not a Warrant) | ADR-DEV-006 | EV-L0/L1 | NOT_IMPLEMENTED | TBD | TBD |
 | SOS-EV-001 | Strategy Output Semantics | No-Action and Explicit Flat Are Distinct First-Class Reproducible | ADR-DEV-007 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
 | SOS-EV-002 | Strategy Output Semantics | The Atomic Authored Unit Is Explicit | ADR-DEV-007 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
 | SOS-EV-003 | Strategy Output Semantics | No Combined Authority via Aggregation | ADR-DEV-007 | EV-L1 | NOT_IMPLEMENTED | TBD | TBD |
@@ -159,4 +160,7 @@ widens any Part-1 authority, limit, or gate (RFC-000 §12).
   the per-ADR-DEV and per-cluster approval gates are in VER-DEV-001.
 - SOS-EV-006 was added by the Wave-5 patch (CORPUS-REVIEW-0001 M-14; ADR-DEV-007 SOS-INV-006):
   total 96 → 97, SOS family 5 → 6, invariant cases 90 → 91. Registration creates no
+  verification evidence, ADR-DEV acceptance, or live readiness; the item is `NOT_IMPLEMENTED`.
+- BFA-EV-007 was added by the Wave-7 patch (CORPUS-REVIEW-0001 M-17; ADR-DEV-006 BFA-INV-007):
+  total 97 → 98, BFA family 6 → 7, invariant cases 91 → 92. Registration creates no
   verification evidence, ADR-DEV acceptance, or live readiness; the item is `NOT_IMPLEMENTED`.

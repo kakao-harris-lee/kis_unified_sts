@@ -25,7 +25,7 @@ normative content carried no requirement identity or evidence row. The
 requirement identity and an evidence obligation for the first time.
 
 This specification is independent of VER-002-001 and does not change the Part-1
-evidence count. Its companion register (`EVIDENCE-REGISTER-DEV`, 97 items) never
+evidence count. Its companion register (`EVIDENCE-REGISTER-DEV`, 98 items) never
 enters the Part-1 count accounting.
 
 ## 2. Result States and Evidence Strength Levels (by reference)
@@ -53,7 +53,7 @@ authority, no admission, and no live readiness.
 
 ## 5. Evidence Cases
 
-The 91 invariant cases are 1:1 with the Part-3 ADR-DEV invariants
+The 92 invariant cases are 1:1 with the Part-3 ADR-DEV invariants
 (`PFX-EV-0nn` supports `PFX-INV-0nn`). The label **Injection** is used where the
 minimum level exercises a fault; **Probe** is used for pure EV-L0 design
 inspection.
@@ -291,6 +291,12 @@ inspection.
 - **Supports:** ADR-DEV-006 BFA-INV-006
 - **Probe:** Inspect whether producing many artifacts is treated as creating authority, admission, or acceptance.
 - **Expected:** Producing many artifacts creates no authority, admission, or acceptance.
+
+#### BFA-EV-007 — Per-Artifact Review Depth Is Evidenced (Family Similarity Is Not a Warrant)
+- **Minimum Level:** EV-L0/L1
+- **Supports:** ADR-DEV-006 BFA-INV-007
+- **Injection:** Present a family review that is formally per-artifact but substantively batch — a diff-plus-template pass that reuses a family verdict behind per-member labels without exercising each member — and treat family similarity or a cluster/diff presentation as a warrant for reduced review depth.
+- **Expected:** Each per-artifact review produces evidence that it exercised *that* artifact, recording what was checked (an evidence-producing check per ADR-DEV-005 §8); a diff-plus-template pass that does not exercise the member fails the per-artifact review-depth requirement; family similarity, a shared template, or a cluster/diff presentation is not a warrant for reduced depth.
 
 ### SOS — ADR-DEV-007 (Strategy Output Semantics)
 
@@ -719,7 +725,7 @@ Requires:
 
 Requires:
 
-- BFA-EV-001 through BFA-EV-006;
+- BFA-EV-001 through BFA-EV-007;
 - independent review (reviewer provenance recorded per ADR-DEV-005).
 
 ### ADR-DEV-007
@@ -797,7 +803,7 @@ ADR-DEV-005).
 
 ## 7. Coverage Summary
 
-Invariant → evidence coverage is 91/91 (1:1). Part-2 decision RFCs and RFC-010
+Invariant → evidence coverage is 92/92 (1:1). Part-2 decision RFCs and RFC-010
 map to boundary clusters:
 
 | Owning RFC / ADR-DEV | Requirement / boundary | Evidence |
@@ -811,7 +817,7 @@ map to boundary clusters:
 | RFC-009 (Agent Guide) | §11 boundary | owned by AIR/APA/BFA families (ADR-DEV-004/005/006) |
 | RFC-010 (Testing Strategy) | TEST-001 (§11) + testing discipline | TEST-EV-001 + BTE/TAB families |
 | RFC-011 (Operational Guidelines) | §11 boundary | owned by OPB/OBS/OAS/RRC families (ADR-DEV-012/013/014/015) |
-| ADR-DEV-001..015 | PFX-INV-0nn | PFX-EV-0nn (91 rows) |
+| ADR-DEV-001..015 | PFX-INV-0nn | PFX-EV-0nn (92 rows) |
 
 RFC-008, RFC-009, and RFC-011 introduce no separate cluster evidence row: their
 §11 boundary lists are owned by the ADR-DEV families named above, which avoids
@@ -834,5 +840,5 @@ VER-DEV-001 moves from **Proposed** to **Approved for Execution** when:
   this track.
 
 Approval for execution authorizes no live trading, creates no capacity, and
-admits no artifact. All 97 development-track items remain `NOT_IMPLEMENTED` until
+admits no artifact. All 98 development-track items remain `NOT_IMPLEMENTED` until
 executed and independently reviewed.

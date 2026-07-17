@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-003
 **Title:** Decision Framework
-**Version:** 0.3 Review Draft
+**Version:** 0.4 Review Draft
 **Status:** Review Draft — Decision Framework
 **Classification:** Decision-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -376,7 +376,10 @@ or exposure (§8) — the proposal is non-approvable (restrictive), because it c
 independent recomputation; this is fail-closed. Such a value MAY be used only as **soft
 evidence**: non-direction/quantity/exposure-determining context corroborating a decision whose
 determining inputs are themselves independently recomputable. Relabeling the value does not
-change this (§8; §11 item 10).
+change this (§8; §11 item 10). Whether a value *is* a Critical Input — one that determines
+direction, instrument, quantity, price, or exposure — is not the proposer's judgement: it is
+fixed by ADR-002-018 Critical Input governance, and a proposer relabeling the value does not
+change its classification (§8; §11 item 10).
 
 Reproducibility is a decision-layer discipline. It does not replace the evidence,
 audit, and replay integrity governed by ADR-002-016; it supplies conforming
@@ -657,3 +660,13 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   §5.3/§9 contract, and no conflict arises with the Wave-5 §9.1/§16 work. RFC-003 introduces
   no SAFE-xxx requirement, numeric bound, or authority, and no new EV (register counts
   unchanged). Independent adversarial EV-L0 review of these Wave-6 changes is owed.
+
+### v0.4 — Wave 7 (CORPUS-REVIEW-0001, Wave-5 deferred)
+
+* Reinforced the §10 Critical-Input proviso: whether a value *is* a Critical Input —
+  direction/instrument/quantity/price/exposure-determining — is not the proposer's judgement
+  but is fixed by ADR-002-018 Critical Input governance, and a proposer relabeling the value
+  does not change its classification (reinforces the existing §10 proviso and §11 item 10).
+* Narrow-only and additive; RFC-003 introduces no SAFE-xxx requirement, numeric bound, or
+  authority, and no new EV (register counts unchanged). Independent EV-L0 review is owed, with
+  reviewer provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

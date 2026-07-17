@@ -2,6 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-13
+- **Version:** 0.2
+- **Last Updated:** 2026-07-17
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Authoritative Risk Capacity Ledger persistence, replicated-state-machine consensus, durable commit, writer epochs, stale-writer fencing, capability-order coupling, egress claim ordering, quorum loss, membership change, snapshot/restore, and disaster recovery
 - **Supersedes:** None
@@ -467,7 +469,7 @@ Before a replacement cluster may authorize normal risk, it SHALL establish:
 - a new cluster identity, membership generation, Restore Generation, Writer Epoch, and Live Authorization are issued;
 - the full Recovery Coordinator and human re-arm gates pass.
 
-If two histories both plausibly contain economic effects, capacity SHALL cover the worst credible union without double-counting states proven mutually exclusive. Documentation or operator preference cannot choose the more permissive branch.
+If two histories both plausibly contain economic effects, capacity SHALL cover the worst credible union without double-counting states proven mutually exclusive. Documentation or operator preference cannot choose the more permissive branch. The "worst credible union" ranges over the Credible State Space (RFC-002 §3.1.17): the union of reconstructable histories admitted by the active Broker Capability Profile (ADR-002-004) and the approved Adverse Scenario Set (ADR-002-021); a history state not bounded by these is treated conservatively as UNKNOWN and capacity-consuming, never dropped.
 
 ---
 
@@ -700,3 +702,16 @@ ADR-002-012 SHALL remain **Proposed** until all of the following are complete:
 15. ARCHITECTURE-GATE-STATUS records an explicit acceptance decision.
 
 Authorship and document review do not satisfy these conditions. This ADR does not authorize acceptance, restricted-live operation, production operation, or automatic re-arm.
+
+---
+
+## 29. Review History
+
+### v0.1 — Initial Proposed Decision (2026-07-13)
+
+Initial Risk Capacity Ledger persistence, quorum-consensus, writer-fencing, and disaster-recovery decision.
+
+### v0.2 — Credible State Space Binding (CORPUS-REVIEW-0001 Wave 7) (2026-07-17)
+
+- **M-24.** Bound the §18 disaster-recovery "worst credible union" to the Credible State Space (RFC-002 §3.1.17): the union ranges over the reconstructable histories admitted by the active Broker Capability Profile (ADR-002-004) and the approved Adverse Scenario Set (ADR-002-021), with any unbounded history state treated conservatively as UNKNOWN and capacity-consuming.
+- Received a Version field and this Review History on first patch, per the ADR-002-011/025/026/027 precedent. The change is narrow-only and additive; it introduces no SAFE-xxx requirement, no numeric bound, and no new EV ID (Evidence Register count unchanged at 372). Independent EV-L0 review is owed, with reviewer provenance recorded per VER-002-001 §5 (M-18).

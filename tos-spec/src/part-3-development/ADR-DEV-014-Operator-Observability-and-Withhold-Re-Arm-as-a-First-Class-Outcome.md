@@ -9,8 +9,8 @@
 **Constrained By:** RFC-002 — Architecture and RFC-003 — Decision Framework
 **Resolves:** RFC-011 §14 Q3 and RFC-011 §14 Q4
 **Date:** 2026-07-16
-**Version:** 0.1 Review Draft
-**Last Updated:** 2026-07-16
+**Version:** 0.2 Review Draft
+**Last Updated:** 2026-07-17
 **Owners:** Trading Operating System Architecture Board
 
 ---
@@ -107,7 +107,12 @@ this decision and are non-authorizing.
 * **Withheld Re-Arm** — the conforming operator outcome of declining to request (or, where
   the operator is the granting authority, grant) re-arm, represented as a first-class,
   recorded, attributable, auditable decision with its rationale (RFC-011 §10; the
-  request-side instance is ADR-DEV-012's "Withhold").
+  request-side instance is ADR-DEV-012's "Withhold"). The operator acts as a *granting*
+  authority only as a member of the ADR-002-015 dual-control quorum (or the §17.1 Governed
+  Single-Operator Re-Arm Variant), never by role alone — reconciling this "granting" framing
+  with ADR-DEV-012's operator-as-*requester*: the operator grants only *as* an ADR-002-015
+  effective principal, and the ADR-002-007 grant and ADR-002-017 barrier remain the
+  enforcement points.
 
 These terms describe an observability-and-outcome discipline. None grants authority or
 re-arms.
@@ -320,3 +325,13 @@ protocol.
   ADR-002-028; OBS-INV-001 notes it obliges presentation of upstream-owned facts and assigns
   no ownership; and §12 records that OBS-INV-005 is a non-testable value stance verified by
   review. The review is EV-L0 only and confers no acceptance or live-readiness.
+
+### v0.2 — Wave 7 (CORPUS-REVIEW-0001 mn-10)
+
+* Reconciled the §5 "Withheld Re-Arm" operator-as-granting-authority framing with
+  ADR-DEV-012's operator-as-*requester*: the operator grants re-arm only *as* an ADR-002-015
+  effective principal (a member of the dual-control quorum, or the §17.1 Governed
+  Single-Operator Re-Arm Variant), never by role alone; the ADR-002-007 grant and ADR-002-017
+  barrier remain the enforcement points. Narrow-only and additive; no SAFE-xxx, no numeric
+  bound, no new OBS-INV or EV. Independent EV-L0 review is owed, with reviewer provenance
+  recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).
