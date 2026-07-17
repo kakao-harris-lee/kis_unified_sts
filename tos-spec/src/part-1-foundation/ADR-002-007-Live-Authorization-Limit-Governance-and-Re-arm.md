@@ -2,8 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-07-13
-- **Version:** 0.2
-- **Last Updated:** 2026-07-17
+- **Version:** 0.3
+- **Last Updated:** 2026-07-18
 - **Decision Type:** Safety-Critical Architecture Decision
 - **Scope:** Default non-live state, Hard Safety Envelope and Runtime Safety Profile governance, live-scope authorization, continuous validity, suspension and revocation, recovery readiness, human dual control, partial re-arm, and final egress enforcement
 - **Supersedes:** None
@@ -426,7 +426,7 @@ Re-arm approval SHALL require authenticated human identities with roles defined 
 At minimum:
 
 - every risk-increasing re-arm requires approval by at least two distinct authenticated human principals under the approved quorum policy;
-- the principal who approves an authority-increasing limit change SHALL NOT be the sole principal who arms that enlarged scope;
+- the principal who approves an authority-increasing limit change SHALL NOT be the sole principal who arms that enlarged scope, except through the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) satisfying RFC-001 SAFE-053, whose compensating controls substitute for the second effective principal;
 - the Recovery Coordinator, Live Authorization Service, and implementation author SHALL NOT act as the independent human reviewer of their own evidence;
 - approvals SHALL be bound to the exact evidence package, versions, requested scope, reason, and expiry;
 - changed evidence or scope invalidates prior approvals;
@@ -479,8 +479,10 @@ expansion is a staged promotion under this section and SHALL satisfy all of the 
    (step 3), and deployment, software, identity, credential, and egress confinement (steps 10, 16)
    — need not be re-proven from a non-live start but SHALL remain continuously valid under §9
    throughout; loss of any of them is a restrictive transition, not an expansion.
-3. **Dual control preserved.** The principal who approves the authority-increasing limit change for
-   the delta SHALL NOT be the sole principal who arms the enlarged scope (§13); changed evidence or
+3. **Dual control preserved (two effective principals).** The principal who approves the authority-increasing limit change for
+   the delta SHALL NOT be the sole principal who arms the enlarged scope (§13), except through the
+   approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) satisfying RFC-001 SAFE-053,
+   whose compensating controls substitute for the second effective principal; changed evidence or
    scope invalidates prior approvals.
 4. **Progressive-promotion gate.** The expansion SHALL obey the ADR-002-025 progressive
    scope-promotion gate: progressive, independently reviewed, explicit, generation-fenced, and
@@ -615,7 +617,7 @@ ADR-002-007 SHALL remain Proposed until executed evidence demonstrates at least:
 - **REARM-AC-002 — Full gate:** removing any one re-arm prerequisite denies authorization.
 - **REARM-AC-003 — No automatic re-arm:** health recovery, reconciliation completion, timeout, and leader election never arm live scope.
 - **REARM-AC-004 — Fresh identity:** revoked, expired, suspended, superseded, or stale authorization cannot be revived or replayed.
-- **REARM-AC-005 — Dual control:** one principal cannot both enlarge limits and arm the enlarged scope.
+- **REARM-AC-005 — Dual control:** one principal cannot both enlarge limits and arm the enlarged scope except through the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) satisfying RFC-001 SAFE-053.
 - **REARM-AC-006 — Atomic configuration:** partial and mixed-version profile activation fails closed.
 - **REARM-AC-007 — UNKNOWN:** unresolved order, exposure, or external activity blocks risk-increasing re-arm while remaining conservatively capacity-covered.
 - **REARM-AC-008 — Continuous invalidation:** loss of time, reconciliation, authority, broker capability, identity, or profile validity creates an authoritative restrictive generation and suspends new risk within `B_risk_increase_revoke` plus `B_revocation_to_egress`.
@@ -714,3 +716,9 @@ Initial live-authorization, limit-governance, and re-arm decision.
 
 - **U2 (Wave-7 EV-L0 debt).** Added §14.1 (In-Place Scope Expansion Readiness Extent), enumerating the recovery-readiness extent for an already-live restricted scope that expands in place (for example `LIVE_RESTRICTED` → `LIVE_NORMAL`), which the §12 re-arm workflow deliberately does not cover because §12 step 1 begins only from a non-live start. The expansion re-establishes the §12 steps proportional to the delta (account-wide reconciliation, UNKNOWN/unattributed resolution, Risk Capacity Ledger consistency and independent capacity, protective leases/orders/coverage, Hard Safety Envelope and Runtime Safety Profile headroom, Broker Capability Profile sufficiency, the ADR-002-017 Recovery Readiness Decision, and a fresh ADR-002-018 Decision Context Capsule for the added scope); requires a new Live Authorization for the delta under the full current §7 gate; preserves the §13 rule that the authority-increasing-limit approver is not the sole armer; and obeys the ADR-002-025 progressive-promotion gate. The non-delta steps (Safety Authority epoch and fencing, `TRUSTED` time, and deployment/identity/credential/egress confinement) need not be re-proven from a non-live start but SHALL remain continuously valid under §9; any failure, invalidation, incident, or containment that broke continuous validity voids the proportional path and requires the full §12 re-arm from a non-live start.
 - Received a Version field and this Review History on first patch, per the ADR-002-025/026/027 precedent (ARCHITECTURE-GATE-STATUS §3.6/§3.9). The change is restrictive and narrow-only — it only adds constraints on the already-existing expansion pathway (§14 "define promotion gates for any later expansion") and grants no new authority; it introduces no SAFE-xxx requirement, no numeric bound, and no new EV ID (Evidence Register count unchanged at 372), and the in-place-expansion scenario is recorded as a conservative debt within the existing REARM-EV/SBR-EV/SA-EV families in ARCHITECTURE-GATE-STATUS §3.11. Independent EV-L0 review is owed, with reviewer provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).
+
+### v0.3 — SAFE-053 Variant-Path Recognition in the Re-Arm Dual-Control Prohibitions (Wave 1 CR-02 propagation gap) (2026-07-18)
+
+- **Upstream source of the RFC-002 v0.5 CRITICAL.** The external independent EV-L0 review of the RFC-002 v0.5 mirror (GEMINI-EVL0-VERDICT-0005, owner-captured app UI model "Gemini 3.1 Pro", vendor Google; 2026-07-18) surfaced a partial-update inconsistency whose root cause is this ADR: three absolute dual-control prohibitions — §13 ("SHALL NOT be the sole principal who arms that enlarged scope"), §14.1 item 3 ("Dual control preserved"), and REARM-AC-005 ("one principal cannot both enlarge limits and arm the enlarged scope") — predate the SAFE-053 two-satisfaction-path structure and, read literally, outlawed the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) that RFC-001 v0.8 (Ratified, RR-0003) recognizes. This ADR was a **Wave-1 CR-02 propagation gap**: ADR-002-025/026/027 received the recognition clause in Wave 1 (ARCHITECTURE-GATE-STATUS §3.4), but ADR-002-007 §13 did not, and the omission was found only when the external reviewer read it through the RFC-002 §20.1/§23.1 mirror.
+- **Fix (narrow-only, restrictive intent preserved).** Each of the three prohibitions now carries the strict conditional exception — permitted **only** through the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) satisfying RFC-001 SAFE-053, whose compensating controls substitute for the second effective principal; the variant's own constraints (pre-declared exact scope, smallest approved scope delta, Hard Safety Envelope not expanded, Non-Waivable Boundary preserved — ADR-002-015 §17.1.5) remain fully binding. The two-natural-person quorum path is unchanged and its dual control is not weakened. The §14.1 item 3 heading is retained but annotated "(two effective principals)" so the two-effective-principal intent is evident. Synchronized with RFC-002 v0.6 (Patch 0052), which carries the identical exception wording at §10.18, §20.1 Table B/Section C, and §23.1.
+- Narrow-only realignment to the Ratified RFC-001 v0.8; no RFC-000 v0.16, RFC-001 v0.8, or GOV-001 v0.1 (all Ratified), vision, or philosophy text is changed. No SAFE-xxx requirement, no numeric bound, and no new EV ID (Evidence Register count unchanged at 372); no broker proper noun. Independent EV-L0 review is owed, with reviewer provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

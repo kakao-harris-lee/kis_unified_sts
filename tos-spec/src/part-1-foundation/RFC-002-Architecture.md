@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-002
 **Title:** Trading Operating System Architecture
-**Version:** 0.5 Review Draft
+**Version:** 0.6 Review Draft
 **Status:** Review Draft — Architecture
 **Classification:** Foundational Architecture Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -912,7 +912,7 @@ Responsibilities:
 * activate a profile atomically, or leave the previous valid profile in force only when continued use is explicitly authorized and time-valid;
 * fail closed when correctness cannot be proven.
 
-The Safety Profile Validator SHALL be independent from strategy configuration and SHALL NOT expand the Hard Safety Envelope. The identity permitted to approve or publish a Runtime Safety Profile SHALL NOT also arm live trading.
+The Safety Profile Validator SHALL be independent from strategy configuration and SHALL NOT expand the Hard Safety Envelope. The identity permitted to approve or publish a Runtime Safety Profile SHALL NOT also arm live trading, except through the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) satisfying RFC-001 SAFE-053, whose compensating controls substitute for the second effective principal and whose scope remains bound to the variant's pre-declared smallest approved scope delta.
 
 ADR-002-014 defines the complete Safety Configuration Bundle, canonical semantic validation, consumer-compatibility attestations, quorum-committed Profile Generation, break-before-make atomic activation, restrictive precedence, and rollback non-revival rules.
 
@@ -1680,7 +1680,7 @@ barrier `CLOSED_NON_LIVE`; mode `RECOVERY` ↔ barrier `CLOSED_RECOVERY`; mode `
 | NON_LIVE / HALTED / CONTAINED / DEGRADED_PROTECTIVE → RECOVERY | recovery trigger (ADR-002-017 §8) | barrier advanced/closed; fenced current Recovery Generation | Recovery Coordinator (fenced) |
 | RECOVERY → LIVE_RESTRICTED | READY_RESTRICTED (ADR-002-017 §16) + full ADR-002-007 §12 workflow | positively-isolated safe subset; new Live Authorization; human dual control (§13); no dominating CONTAINED/HALTED | Live Authorization Service issues; ADR-002-015 quorum (or §17.1 variant) approves |
 | RECOVERY → LIVE_NORMAL | READY (full scope) + full §12 workflow | as above at full scope | as above |
-| LIVE_RESTRICTED → LIVE_NORMAL | staged scope expansion (ADR-002-007 §14; ADR-002-025 progressive promotion) | promotion gates; new Live Authorization for the authority increase; approver of the limit increase ≠ sole armer (§13) | governed authority-increase quorum |
+| LIVE_RESTRICTED → LIVE_NORMAL | staged scope expansion (ADR-002-007 §14; ADR-002-025 progressive promotion) | promotion gates; new Live Authorization for the authority increase; approver of the limit increase ≠ sole armer, except via the approved ADR-002-015 §17.1 variant per RFC-001 SAFE-053 (§13) | governed authority increase — two independent effective principals per RFC-001 SAFE-053 (quorum or ADR-002-015 §17.1 variant) |
 
 **The RECOVERY-transit rule (normative).** No transition *into* LIVE_NORMAL or LIVE_RESTRICTED is permitted except as the terminal step of the ADR-002-007 §12 re-arm workflow, whose guards include a current ADR-002-017 Recovery Readiness Decision; equivalently, recovery readiness is a mandatory precondition for any live re-entry (ADR-002-001 §16; §23.1). HALTED is dominant: leaving HALTED requires explicit human governance clearing HALT under fresh re-arm — recovery cannot downgrade HALTED → RECOVERY or clear a deny latch (ADR-002-017 §15 / SBR-INV-009; ADR-002-007 §17).
 
@@ -1689,7 +1689,7 @@ barrier `CLOSED_NON_LIVE`; mode `RECOVERY` ↔ barrier `CLOSED_RECOVERY`; mode `
 * Any → LIVE_NORMAL that is automatic or connectivity/health/quiet-time/replay/cooldown-triggered (§20, §23.2; ADR-002-007 §17; SBR-INV-014; SIR-INV-015; philosophy §23; anti-pattern §39.8).
 * HALTED → any live mode directly, bypassing recovery readiness + fresh re-arm (SBR-INV-009/-014; ADR-002-007 §17).
 * Any mode transition driven by incident lifecycle state or by administrative incident closure (§20 "orthogonal … never grants a mode transition"; SIR-INV-012 closure is non-permissive; SIR-INV-015 recovery does not revive; ADR-002-027 §19/§21).
-* Re-arm where one identity both enlarges limits and arms (ADR-002-007 §13; §23.1).
+* Re-arm where one identity both enlarges limits and arms other than through the approved Governed Single-Operator Re-Arm Variant satisfying RFC-001 SAFE-053 (ADR-002-007 §13; §23.1).
 * Recovery downgrading HALTED → RECOVERY automatically (ADR-002-017 §15).
 
 **D. Previously-UNRESOLVED edges — resolved in Wave 8 (Wave-7 debt discharged; ARCHITECTURE-GATE-STATUS §3.10/§3.11):**
@@ -1852,7 +1852,7 @@ Re-arm SHALL require all of the following:
 15. new Live Authorization issued;
 16. explicit human control according to the approved separation-of-duty policy.
 
-No blocking Critical hazard may remain. The same human or service identity SHALL NOT both enlarge limits and arm live trading.
+No blocking Critical hazard may remain. The same human or service identity SHALL NOT both enlarge limits and arm live trading, except through the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) satisfying RFC-001 SAFE-053; a service identity SHALL NOT use the variant, which is a human-authority path.
 
 ### 23.2 No Automatic Re-Arming
 
@@ -2253,3 +2253,10 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * **M-2 (§9.1 re-arm / promotion):** added "(two independent effective principals per RFC-001 SAFE-053 — quorum or ADR-002-015 §17.1 variant; see §20.1, §23.1)" to the §9.1 Re-arm and production-scope-promotion rows, consistent with the §20.1 table B restorative-edge owners.
 * SAFE-053's two-satisfaction-path structure is preserved verbatim throughout; no absolute two-natural-person requirement is reintroduced (CR-02 / DR-0001). ADR-002-014's profile-commit/approval wording was checked against SAFE-053's two paths and judged consistent — it uses a generic approval "quorum" whose composition is deferred to ADR-002-015 (§26 Q3, §27 item 3), and effective-principal separation is carried by SPG-INV-010 — so no ADR-002-014 change was required.
 * No new SAFE-xxx, no numeric bound, no broker proper noun; the Evidence Register counts are held (Part-1 372; development-track 98). Independent external EV-L0 review of v0.5 is requested in the git-excluded reviews/GEMINI-EVL0-REQUEST-0005.md; reviewer provenance per VER-002-001 §5 (M-18).
+
+### v0.6 — External EV-L0 CRITICAL Closure (SAFE-053 variant-path legalization in the residual absolute prohibitions)
+
+* The external independent EV-L0 review of v0.5 (owner-captured app UI model "Gemini 3.1 Pro", vendor Google; REQUEST-0005 package; GEMINI-EVL0-VERDICT-0005, 2026-07-18) returned **FAIL** with one **CRITICAL** finding: while the v0.5 §9.1 and §19.4 SAFE-053 absorption correctly carried both satisfaction paths (two-natural-person quorum **or** the ADR-002-015 §17.1 Governed Single-Operator Re-Arm Variant), four legacy absolute prohibitions were left un-updated — §10.18, §20.1 Table B (the LIVE_RESTRICTED → LIVE_NORMAL guard and owner), §20.1 Section C (forbidden re-arm edge), and §23.1 — so that a literal reading outlawed the SAFE-053 single-operator variant path entirely (a partial-update inconsistency that collapsed the newly absorbed SAFE-053 branch structure and conflicted with the Ratified RFC-001 v0.8).
+* The finding was verified against source (all four sites confirmed) and applied narrow-only: each residual absolute prohibition now carries a strict conditional exception — permitted **only** through the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) satisfying RFC-001 SAFE-053, with the variant's existing constraints (pre-declared exact scope, smallest approved scope delta binding, Hard Safety Envelope not expanded, Non-Waivable Boundary preserved — ADR-002-015 §17.1.5) carried in-clause or by adjacent reference. The §20.1 Table B owner cell — formerly a single-path quorum-only label — now reads "governed authority increase — two independent effective principals per RFC-001 SAFE-053 (quorum or ADR-002-015 §17.1 variant)". The quorum-path dual control is not weakened; the §23.1 clause additionally states that a service identity SHALL NOT use the variant, which is a human-authority path.
+* Upstream synchronization: the same partial-update pattern was found at the source ADR-002-007 (§13, §14.1 item 3, REARM-AC-005) — a Wave-1 CR-02 propagation site that had been missed while ADR-002-025/026/027 received the recognition clause — and is corrected in ADR-002-007 v0.3 (Patch 0053) with the identical exception wording. The three NON-FINDINGS in VERDICT-0005 (§10.8 SAFE-054 branch preservation; §27/§30 traceability-matrix gate over SAFE-001..054; §12.1 orthogonal fail-closed UNKNOWN state) confirm the v0.5 pre-fixes pass.
+* Narrow-only realignment to the Ratified RFC-001 v0.8; no RFC-000 v0.16, RFC-001 v0.8, or GOV-001 v0.1 (all Ratified), vision, or philosophy text is changed. SAFE-053's two-satisfaction-path structure is preserved and no absolute two-natural-person requirement is reintroduced (CR-02 / DR-0001); the variant's ADR-002-015 §17.1 constraints are preserved unchanged. No new SAFE-xxx, no numeric bound, no broker proper noun; the Evidence Register counts are held (Part-1 372; development-track 98). The v0.6 delta re-review is requested in the git-excluded reviews/GEMINI-EVL0-REQUEST-0006.md; reviewer provenance per VER-002-001 §5 (M-18).

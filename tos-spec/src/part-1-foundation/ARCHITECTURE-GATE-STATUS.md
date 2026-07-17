@@ -596,6 +596,54 @@ package is a git-excluded working artifact.
 
 ---
 
+### 3.16 External independent EV-L0 review (GOV-001 G3 P1): RFC-002 v0.5 → v0.6 + ADR-002-007 v0.2 → v0.3 (CRITICAL closure; Wave-1 CR-02 propagation gap)
+
+The first external-substrate EV-L0 review of RFC-002 v0.5 (owner-captured app UI model
+"Gemini 3.1 Pro", vendor Google; REQUEST-0005 package; GEMINI-EVL0-VERDICT-0005, 2026-07-18)
+returned **FAIL** with one **CRITICAL** finding and three NON-FINDINGS. The CRITICAL is a
+systematic partial-update inconsistency: v0.5 §9.1 and §19.4 correctly absorbed the SAFE-053
+dual-path structure (two-natural-person quorum **or** the ADR-002-015 §17.1 Governed
+Single-Operator Re-Arm Variant), but four legacy absolute prohibitions were left un-updated
+(§10.18; §20.1 Table B LIVE_RESTRICTED → LIVE_NORMAL guard and owner; §20.1 Section C forbidden
+edge; §23.1), so a literal reading outlawed the SAFE-053 variant path entirely — collapsing the
+newly absorbed branch structure and conflicting with the Ratified RFC-001 v0.8. All four sites
+were verified against source. The root cause traces **upstream** to ADR-002-007: §13, §14.1 item 3,
+and REARM-AC-005 carry the same absolute prohibition and were a **missed Wave-1 CR-02 propagation
+site** — ADR-002-025/026/027 received the recognition clause in Wave 1 (§3.4) but ADR-002-007 §13
+did not, and the omission surfaced only when the external reviewer read it through the RFC-002
+§20.1/§23.1 mirror. Every fix is narrow-only realignment to the Ratified RFC-001 v0.8; the SAFE-053
+two-satisfaction-path structure is preserved and no absolute two-natural-person requirement is
+reintroduced (CR-02 / DR-0001); the variant's ADR-002-015 §17.1.5 constraints (pre-declared exact
+scope, smallest approved scope delta, Hard Safety Envelope not expanded, Non-Waivable Boundary
+preserved) remain fully binding and the quorum path's dual control is not weakened. No SAFE-xxx
+requirement, hazard, numeric bound, or evidence row is added; no broker proper noun appears;
+vision.md, philosophy.md, RFC-000 (Ratified v0.16), RFC-001 (Ratified v0.8), and GOV-001 (Ratified
+v0.1) are unchanged; both Evidence Registers are unchanged (Part-1 372; development-track 98). The
+canonical documents already carry the changes; the following table is the committed merge record.
+
+| Finding | Canonical target | Traceability update |
+|---|---|---|
+| CRITICAL (RFC-002 legacy absolute prohibitions collapse the SAFE-053 variant path) — added the strict conditional exception (variant permitted **only** through ADR-002-015 §17.1 satisfying RFC-001 SAFE-053, constraints binding) to §10.18, the §20.1 Table B guard, and §20.1 Section C; changed the §20.1 Table B owner cell (formerly a single-path quorum-only label) to "governed authority increase — two independent effective principals per RFC-001 SAFE-053 (quorum or ADR-002-015 §17.1 variant)"; and updated §23.1 with the exception plus the clause that a service identity SHALL NOT use the variant (human-authority path) | RFC-002 §10.18, §20.1 (B, C), §23.1 (0.5 → **0.6**); §32 v0.6 entry | Patch 0052; no new SAFE-xxx, no numeric bound, no new EV (Part-1 stays 372); SAFE-053 two paths preserved (CR-02 / DR-0001); quorum dual control not weakened |
+| CRITICAL upstream root cause (ADR-002-007 Wave-1 CR-02 propagation gap) — added the identical strict conditional exception to §13, §14.1 item 3 (heading annotated "two effective principals"), and REARM-AC-005 | ADR-002-007 §13, §14.1 item 3, §21 REARM-AC-005 (0.2 → **0.3**); §26 v0.3 entry | Patch 0053; no new SAFE-xxx, no numeric bound, no new EV (Part-1 stays 372); RFC-001 v0.8 Ratified and unchanged |
+| NON-FINDINGS (three) — external reviewer affirmatively passed the v0.5 pre-fixes: §10.8 SAFE-054 out-of-band-containment branch preservation; the §27/§30 Requirements Traceability Matrix gate over all 36 Critical SAFE-001..054 allocations; and the §12.1 orthogonal fail-closed UNKNOWN execution state (CONST-008 / SAFE-022) | No canonical text change (confirmation of v0.5 content) | Recorded in GEMINI-EVL0-VERDICT-0005 and RFC-002 §32 v0.6; no register change |
+| External EV-L0 provenance — RFC-002 v0.5 FAIL recorded; §9.3 RFC-002 row advanced to v0.6; §9.4 P1 RFC-002 sub-bullet added; §10 External EV-L0 row appended; this merge map | ARCHITECTURE-GATE-STATUS §3.16, §9.3, §9.4, §10; RFC-002 §32; ADR-002-007 §26 | Direct edit; provenance/status-ledger content only; adds no evidence-register row (Part-1 stays 372); no SAFE-xxx, no numeric bound |
+
+> RFC-002 P1 remains unmet: the v0.5 external review returned FAIL, and P1 is positively
+> established only when the RFC-002 v0.6 delta re-review (full post-fix §10.18 / §20.1 B·C / §23.1,
+> the paired ADR-002-007 §13 / §14.1 item 3 / REARM-AC-005, and the ADR-002-015 §17.1 variant
+> constraints as the judgment yardstick) is executed on a demonstrably independent substrate
+> (ADR-DEV-005 AIR-INV-002; GOV-001 G3 P1) and returns a passing disposition. That delta re-review
+> is requested in the git-excluded `reviews/GEMINI-EVL0-REQUEST-0006.md`. P3 for RFC-002 is
+> satisfied (RFC-000 and RFC-001 are Ratified).
+
+Patch documents 0052 (RFC-002) and 0053 (ADR-002-007) are recorded in the git-excluded `patches/`
+per the repository convention (born-MERGED, pointing here); the gate-status edits are direct. The
+`reviews/` verdict and request packages are git-excluded working artifacts. (Patch number 0052 was
+reserved-and-skipped in §3.15 for the ADR-002-014 alignment check, which required no canonical
+change; it is assigned here to the RFC-002 v0.6 CRITICAL closure.)
+
+---
+
 ## 4. Remaining Architecture and Acceptance Work
 
 ADR-002-005 through ADR-002-030 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, safety-telemetry/continuous-monitoring-governance, software-supply-chain/runtime-artifact-admission, and post-trade economic-obligation/finality authorship are complete, but none of those decisions is accepted.
@@ -876,8 +924,10 @@ The authoring-track dependency chain (GOV-001; RFC-000 §12):
 Ratified count: **3** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), and RFC-001 v0.8
 (RR-0003), all 2026-07-17, all in §9.7. Ratification-Ready count: **0**. The vision/philosophy
 directional baseline is adopted (BA-0001, §9.7). Next candidate: **RFC-002** — P3 is now
-satisfied (governing documents RFC-000 and RFC-001 are Ratified); its blocker is P1 (no
-external-substrate EV-L0 review has been performed for RFC-002 yet). All other documents' P1
+satisfied (governing documents RFC-000 and RFC-001 are Ratified); its blocker is P1 (the first
+external-substrate EV-L0 review of v0.5 returned FAIL with one CRITICAL, verified against source
+and applied narrow-only in v0.6 and the upstream ADR-002-007 v0.3; the v0.6 delta re-review
+requested in REQUEST-0006 is pending). All other documents' P1
 remains unmet corpus-wide. All other normative RFC-class documents remain at Working/Review
 Draft; all ADRs remain Proposed; both Verification Evidence specifications remain Proposed.
 
@@ -887,7 +937,7 @@ Draft; all ADRs remain Proposed; both Verification Evidence specifications remai
 | philosophy | Part-0 (non-normative) | **Baseline adopted** (BA-0001, 2026-07-17) | n/a | not a ratification target (GOV-001 §7) |
 | RFC-000 | Normative RFC | **Ratified** (v0.16, 2026-07-17) | **YES** | — (record RR-0001, §9.7) |
 | RFC-001 | Normative RFC | **Ratified** (v0.8, 2026-07-17) | **YES** | — (record RR-0003, §9.7) |
-| RFC-002 | Normative RFC | Review Draft (v0.5) | NO | P1 (external EV-L0 review requested, REQUEST-0005) |
+| RFC-002 | Normative RFC | Review Draft (v0.6) | NO | P1 (v0.5 external EV-L0 FAIL — 1 CRITICAL applied narrow-only in v0.6; v0.6 delta re-review requested, REQUEST-0006) |
 | ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC-002 not Ratified |
 | VER-002-001 | Verification Evidence | Proposed | n/a (not ratified) | §383 approval gate |
 | RFC-003..007 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
@@ -905,7 +955,8 @@ established is treated as unmet.
   - **GOV-001 v0.1 — P1 satisfied.** The external review returned PASS on GOV-001 v0.1 with recorded external-substrate provenance, so P1 is positively established. GOV-001 remains not Ratification-Ready because **P3 is unmet** (upstream RFC-000 not yet Ratified).
   - **RFC-000 — P1 satisfied (2026-07-17).** The external review returned FAIL on RFC-000 v0.15 (1 MAJOR + 1 MINOR); both findings were verified against source and applied in v0.16 (§3.13, patch 0048). The v0.16 delta re-review (GEMINI-EVL0-REQUEST-0002.md → GEMINI-EVL0-VERDICT-0002) returned **PASS with zero residual findings** on the external substrate (owner-captured app UI model "Gemini 3.1 Pro", vendor Google). With P2 (findings resolved, §9.5), P3 (vacuously satisfied — RFC-000 is governed by no higher document), P4, and P5 held, **RFC-000 v0.16 is Ratification-Ready**; the remaining step is the System Owner ratification act recorded per GOV-001 G5.
   - **RFC-001 — P1 satisfied (2026-07-17).** The first external-substrate EV-L0 review (GEMINI-EVL0-REQUEST-0003.md → GEMINI-EVL0-VERDICT-0003) returned **FAIL** on RFC-001 v0.7 with two MAJOR findings (SAFE-050 independent-approval linkage; §14 Hard Safety Envelope non-waiver) plus one flag-only MINOR (SAFE-053 → ADR-002-025 §5.11, unjudgeable from the package — deferred to the acceptance tier). Both MAJOR findings were verified against source and applied in v0.8 (§3.14). The v0.8 delta re-review (GEMINI-EVL0-REQUEST-0004.md → GEMINI-EVL0-VERDICT-0004) returned **PASS with zero residual findings** on the external substrate (owner-captured app UI model "Gemini 3.1 Pro", vendor Google), specifically confirming that the SAFE-050 correction preserves SAFE-053's two-satisfaction-path structure. With P2 (findings resolved, flag-only MINOR explicitly deferred), P3 (satisfied by RR-0001), P4, and P5 held, **RFC-001 v0.8 is Ratification-Ready**; the remaining step is the System Owner ratification act recorded per GOV-001 G5.
-  All other corpus documents (beyond GOV-001, RFC-000, and RFC-001) remain **unmet, fail-closed** for P1 — no external review is yet recorded for them; discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
+  - **RFC-002 — P1 in progress, not yet satisfied (2026-07-18).** The first external-substrate EV-L0 review (GEMINI-EVL0-REQUEST-0005.md → GEMINI-EVL0-VERDICT-0005) returned **FAIL** on RFC-002 v0.5 with one CRITICAL finding — four legacy absolute prohibitions (§10.18; §20.1 Table B guard and owner; §20.1 Section C forbidden edge; §23.1) collapsed the SAFE-053 single-operator variant path, a partial-update inconsistency against the correctly-absorbed §9.1/§19.4 dual-path structure. The finding was verified against source and applied narrow-only in v0.6 (Patch 0052); the same partial-update pattern at the upstream root cause ADR-002-007 (§13, §14.1 item 3, REARM-AC-005 — a missed Wave-1 CR-02 propagation site) is corrected in ADR-002-007 v0.3 (Patch 0053). The three NON-FINDINGS (§10.8 SAFE-054 branch preservation; §27/§30 SAFE-001..054 traceability gate; §12.1 fail-closed UNKNOWN state) confirm the v0.5 pre-fixes pass. P1 is **not yet positively established**: it becomes established only when the v0.6 delta re-review (GEMINI-EVL0-REQUEST-0006.md) is executed on the demonstrably independent substrate and returns a passing disposition.
+  All other corpus documents (beyond GOV-001, RFC-000, RFC-001, and RFC-002) remain **unmet, fail-closed** for P1 — no external review is yet recorded for them; discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
 - **P2 — Findings resolved or explicitly deferred.** Corpus status: 5 of 6 CORPUS-REVIEW-0001 questions resolved in canonical text (§9.5); M-06 now recorded by owner disposition (§4.5); the RFC-002 §20.1 U1/U2/U3 mode-transition seams are resolved in Wave 8 (§3.11).
 - **P3 — Upstream documents Ratified.** Corpus status: **satisfied through RFC-001** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), and RFC-001 v0.8 (RR-0003) are Ratified, so RFC-002's P3 is satisfied. Documents downstream of RFC-002 (RFC-003 and below) remain P3-blocked until RFC-002 is Ratified; the ratification order of §9.2 governs.
 - **P4 — No dangling citation and no unresolved cross-document conflict** (CONSISTENCY-AUDIT-002 clean for the document).
@@ -1088,6 +1139,7 @@ Register (Part-1 stays 372; development track stays 98).
 | External EV-L0 delta (GOV-001 G3 P1) | RFC-000 v0.16 (delta of the v0.15 findings) | Gemini app (vendor Google), human-relayed; owner-captured app UI model "Gemini 3.1 Pro"; self-report version-less ("Gemini") | GEMINI-EVL0-REQUEST-0002.md package only (change summary; corrected §5 schema; full corrected CONST-001/002/003; corrected precedence-table lead-in); no tools/browsing | 2026-07-17 | PASS — zero residual findings; RFC-000 P1 satisfied (GEMINI-EVL0-VERDICT-0002; a prior preamble-only void attempt correctly FAILed for missing material and is superseded) |
 | External EV-L0 (GOV-001 G3 P1) | RFC-001 v0.7 | Gemini app (vendor Google), human-relayed; owner-captured app UI model "Gemini 3.1 Pro" (authoritative); self-report version mismatch **recurred** — self-report "Gemini 1.5 Pro (operating under Gemini instructions)" recorded as unreliable for version identity, consistent with the VERDICT-0001 correction note | GEMINI-EVL0-REQUEST-0003.md package only (RFC-001 v0.7, RFC-000 v0.16 Ratified, vision, philosophy baselines); no tools/browsing | 2026-07-17 | **FAIL** — 2 MAJOR (SAFE-050 independent-approval linkage; §14 Hard Safety Envelope non-waiver — both verified against source and applied in v0.8) + 1 flag-only MINOR (SAFE-053 → ADR-002-025 §5.11, unjudgeable from the package — deferred to acceptance tier); GEMINI-EVL0-VERDICT-0003; v0.8 delta re-review pending (REQUEST-0004) |
 | External EV-L0 delta (GOV-001 G3 P1) | RFC-001 v0.8 (delta of the v0.7 findings) | Gemini app (vendor Google), human-relayed; owner-captured app UI model "Gemini 3.1 Pro"; self-report version-less ("Gemini") | GEMINI-EVL0-REQUEST-0004.md package only (change summary; post-fix SAFE-050 incl. Derived-from; post-fix §14 list; context-only §12/ADR-002-026 sync); no tools/browsing | 2026-07-17 | **PASS** — zero residual findings; SAFE-053 two-satisfaction-path preservation specifically confirmed; RFC-001 P1 satisfied (GEMINI-EVL0-VERDICT-0004) |
+| External EV-L0 (GOV-001 G3 P1) | RFC-002 v0.5 | Gemini app (vendor Google), human-relayed; owner-captured app UI model "Gemini 3.1 Pro" (authoritative); self-report version-less ("Gemini (Large Language Model)") — recorded as unreliable for version identity per the VERDICT-0001 correction note | GEMINI-EVL0-REQUEST-0005.md package only (RFC-002 v0.5; Ratified RFC-000 v0.16 and RFC-001 v0.8; vision/philosophy baselines); no tools/browsing | 2026-07-18 | **FAIL** — 1 CRITICAL (legacy absolute prohibitions at §10.18 / §20.1 Table B guard+owner / §20.1 Section C / §23.1 collapse the SAFE-053 variant path — verified against source; upstream root cause ADR-002-007 §13/§14.1 item 3/REARM-AC-005 confirmed) applied narrow-only in RFC-002 v0.6 (Patch 0052) and ADR-002-007 v0.3 (Patch 0053); 3 NON-FINDINGS confirm the v0.5 pre-fixes (§10.8 SAFE-054 branch; §27/§30 SAFE-001..054 traceability gate; §12.1 fail-closed UNKNOWN) pass; GEMINI-EVL0-VERDICT-0005; v0.6 delta re-review pending (REQUEST-0006) |
 
 **Honesty limitation (internal reviews).** Lane separation (not-the-author, not-author-rerun,
 read-only) is established for every review above. For the CORPUS-REVIEW-0001 and Wave 1–8 rows,
