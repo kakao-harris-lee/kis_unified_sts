@@ -2,8 +2,8 @@
 
 **Document ID:** RFC-003
 **Title:** Decision Framework
-**Version:** 0.4 Review Draft
-**Status:** Review Draft — Decision Framework
+**Version:** 0.4
+**Status:** Ratified (2026-07-18 — GOV-001 G5 record RR-0005, ARCHITECTURE-GATE-STATUS §9.7; ratification confers no live authorization, no ADR acceptance, and no capacity)
 **Classification:** Decision-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case and RFC-002 — Architecture

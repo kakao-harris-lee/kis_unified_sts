@@ -670,6 +670,37 @@ is satisfied; the §9.3 ladder advanced RFC-003 v0.4, RFC-004 v0.1, RFC-005 v0.1
 and RFC-007 v0.1 to **Ratification-Ready**, awaiting the System Owner ratification acts
 (GOV-001 G4/G5). No SAFE-xxx, no numeric bound, no new EV; registers unchanged (372/98).
 
+### 3.18 Part-2 batch ratification (GOV-001 G4/G5): RFC-003..007 — RATIFIED
+
+Following the batch external review PASS (§3.17), the System Owner performed the five Part-2
+ratification acts on 2026-07-18 (GOV-001 G4/G5) as a single decision, recorded as five discrete
+records RR-0005..RR-0009 (§9.7). Each act is evidence-independent and confers no live
+authorization, no ADR acceptance, and no capacity (GOV-001 G1/G8). SAFE-053 does not apply — a
+non-live authoring-track act — and the System Owner and Architecture Board roles are held by the
+same natural person (GOV-001 G4). No SAFE-xxx requirement, hazard, numeric bound, or evidence row
+is added; no broker proper noun appears; the register counts are unchanged (Part-1 372;
+development track 98) and every registered item remains `NOT_IMPLEMENTED`; the Ratified-ladder
+count advances 4 → 9 and Ratification-Ready returns to 0 by design. vision.md, philosophy.md, and
+the Ratified RFC-000 v0.16 / RFC-001 v0.8 / RFC-002 v0.6 / GOV-001 v0.1 are unchanged. The
+canonical documents already carry the header transitions; the following table is the committed
+merge record.
+
+| Ratification act | Canonical target | Traceability update |
+|---|---|---|
+| RFC-003 v0.4 RATIFIED (record RR-0005) — decision-framework baseline; NON-FINDINGS exercised the §9.1 hold/flat semantics and §10 LLM/stochastic proviso (waves 5–7 deltas) | RFC-003 header Version → 0.4 and Status → Ratified (RR-0005) | §9.7 RR-0005 added; no new SAFE-xxx, no numeric bound, no new EV (registers stay 372/98) |
+| RFC-004 v0.1 RATIFIED (record RR-0006) — market-model baseline | RFC-004 header Version → 0.1 and Status → Ratified (RR-0006) | §9.7 RR-0006 added; no new SAFE-xxx, no numeric bound, no new EV |
+| RFC-005 v0.1 RATIFIED (record RR-0007) — execution-model baseline | RFC-005 header Version → 0.1 and Status → Ratified (RR-0007) | §9.7 RR-0007 added; no new SAFE-xxx, no numeric bound, no new EV |
+| RFC-006 v0.2 RATIFIED (record RR-0008) — risk-model baseline; NON-FINDINGS exercised the §14 ↔ RFC-007 §13 overnight-gap coherence (mn-09 delta); the §16 CONST-002 traceability-gap governance item is retained (resolved through governance, not by unilateral edit) | RFC-006 header Version → 0.2 and Status → Ratified (RR-0008) | §9.7 RR-0008 added; no new SAFE-xxx, no numeric bound, no new EV |
+| RFC-007 v0.1 RATIFIED (record RR-0009) — hedge-model baseline; the §13 night-session unhedged-overnight-gap binding constraint is carried into RFC-006 §14 tail calibration | RFC-007 header Version → 0.1 and Status → Ratified (RR-0009) | §9.7 RR-0009 added; no new SAFE-xxx, no numeric bound, no new EV |
+| Ledger update — §9.3 RFC-003..007 row advanced to Ratified with the Ratified count 4 → 9 and Ratification-Ready 0; §9.4 P3 extended through Part 2 (RFC-008..011 P3 now satisfied, sole blocker P1); this merge map | ARCHITECTURE-GATE-STATUS §9.3, §9.4, §9.7, §3.18 | Direct edit; status-ledger content only; adds no evidence-register row (Part-1 stays 372; development track stays 98); no SAFE-xxx, no numeric bound |
+
+> These ratifications close the Part-2 authoring track. They confer no live authorization, no ADR
+> acceptance, and no capacity (GOV-001 G1/G8): every registered item remains `NOT_IMPLEMENTED`
+> (372/98), all ADR-002-xxx and ADR-DEV-xxx remain Proposed, and the DEC-EV-001..005 evidence
+> obligations stay on the acceptance track. Next candidates are RFC-008..011 — their P3 is now
+> satisfied and their sole remaining blocker is P1 (no independent external EV-L0 review has yet
+> been performed for them).
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -949,18 +980,19 @@ The authoring-track dependency chain (GOV-001; RFC-000 §12):
 
 ### 9.3 Per-Document Ladder Rung
 
-Ratified count: **4** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), RFC-001 v0.8
-(RR-0003), and RFC-002 v0.6 (RR-0004, 2026-07-18), all in §9.7. Ratification-Ready count:
-**5** — **RFC-003 v0.4, RFC-004 v0.1, RFC-005 v0.1, RFC-006 v0.2, RFC-007 v0.1** (P1 satisfied
-2026-07-18: the Part-2 batch external review returned **PASS for all five with zero findings**,
-GEMINI-EVL0-VERDICT-0007, with the recorded review debt — the RFC-003 wave-5..7 deltas and the
-RFC-006 mn-09 delta — specifically exercised in the NON-FINDINGS; P2 held via the three-lens
-pre-scan hygiene, §3.17; P3 satisfied through RR-0001/RR-0003/RR-0004; P4/P5 held), awaiting
-the System Owner ratification acts. The vision/philosophy directional baseline is adopted
-(BA-0001, §9.7). Next candidates after Part 2: **RFC-008..011** — their P3 completes when
-RFC-003..007 are Ratified, and their P1 has not yet been performed. All other documents' P1
-remains unmet corpus-wide. All other normative RFC-class documents remain at Working/Review
-Draft; all ADRs remain Proposed; both Verification Evidence specifications remain Proposed.
+Ratified count: **9** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), and RFC-001 v0.8
+(RR-0003) on 2026-07-17; RFC-002 v0.6 (RR-0004) and the Part-2 batch — RFC-003 v0.4 (RR-0005),
+RFC-004 v0.1 (RR-0006), RFC-005 v0.1 (RR-0007), RFC-006 v0.2 (RR-0008), and RFC-007 v0.1
+(RR-0009) — on 2026-07-18; all in §9.7. Ratification-Ready count: **0** — the five Part-2
+documents completed their System Owner ratification acts (GOV-001 G4/G5) on 2026-07-18, on the
+strength of the batch external review that returned **PASS for all five with zero findings**
+(GEMINI-EVL0-VERDICT-0007), with the recorded review debt — the RFC-003 wave-5..7 deltas and the
+RFC-006 mn-09 delta — specifically exercised in the NON-FINDINGS. The vision/philosophy
+directional baseline is adopted (BA-0001, §9.7). Next candidates: **RFC-008..011** — their P3 is
+now satisfied (RFC-003..007 Ratified), so the sole remaining blocker is P1 (an independent
+external EV-L0 review has not yet been performed for them). All other documents' P1 remains
+unmet corpus-wide. All other normative RFC-class documents remain at Working/Review Draft; all
+ADRs remain Proposed; both Verification Evidence specifications remain Proposed.
 
 | Document | Class | Current rung | Ratification-Ready? | Blocking precondition |
 |---|---|---|---|---|
@@ -971,9 +1003,9 @@ Draft; all ADRs remain Proposed; both Verification Evidence specifications remai
 | RFC-002 | Normative RFC | **Ratified** (v0.6, 2026-07-18) | **YES** | — (record RR-0004, §9.7) |
 | ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track — Parent RFC-002 Ratified (RR-0004); evidence gate remains (all items `NOT_IMPLEMENTED`) |
 | VER-002-001 | Verification Evidence | Proposed | n/a (not ratified) | §383 approval gate |
-| RFC-003..007 | Normative RFC | **Ratification-Ready** (v0.4/v0.1/v0.1/v0.2/v0.1, 2026-07-18) | NO | none — awaiting the System Owner ratification act (GOV-001 G4/G5) |
-| RFC-008..011 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
-| ADR-DEV-001..015 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC not Ratified |
+| RFC-003..007 | Normative RFC | **Ratified** (v0.4/v0.1/v0.1/v0.2/v0.1, 2026-07-18) | **YES** | — (records RR-0005..RR-0009, §9.7) |
+| RFC-008..011 | Normative RFC | Review Draft | NO | P1 (external review not yet performed) |
+| ADR-DEV-001..015 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC-008..011 not Ratified |
 | VER-DEV-001 | Verification Evidence | Proposed | n/a (not ratified) | §8 approval gate |
 | GOV-001 | Governance process (content-inert) | **Ratified** (v0.1, 2026-07-17) | **YES** | — (record RR-0002, §9.7) |
 
@@ -990,7 +1022,7 @@ established is treated as unmet.
   - **RFC-003..007 — P1 satisfied (2026-07-18, batch).** The Part-2 batch external review (GEMINI-EVL0-REQUEST-0007.md → GEMINI-EVL0-VERDICT-0007; Gemini app, owner-captured app UI model "Gemini 3.1 Pro") returned **PASS for all five documents with zero findings** — the first batch to clear the external review without a FAIL round-trip, following the three-lens pre-scan (§3.17). The NON-FINDINGS specifically exercised the recorded review debt: the RFC-003 §9.1 hold/flat outcome semantics and §10 LLM/stochastic Critical-Input proviso (waves 5–7 deltas), the RFC-006 §14 ↔ RFC-007 §13 overnight-gap coherence (mn-09 delta), and the companion models' non-authorizing boundary adherence. With P2 (pre-scan hygiene applied, zero external findings), P3 (satisfied through RR-0001/RR-0003/RR-0004), P4, and P5 held, **RFC-003 v0.4, RFC-004 v0.1, RFC-005 v0.1, RFC-006 v0.2, and RFC-007 v0.1 are Ratification-Ready**; the remaining step is the System Owner ratification acts recorded per GOV-001 G5.
   All other corpus documents (beyond GOV-001, RFC-000..002, and RFC-003..007) remain **unmet, fail-closed** for P1 — no external review is yet recorded for them; discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
 - **P2 — Findings resolved or explicitly deferred.** Corpus status: 5 of 6 CORPUS-REVIEW-0001 questions resolved in canonical text (§9.5); M-06 now recorded by owner disposition (§4.5); the RFC-002 §20.1 U1/U2/U3 mode-transition seams are resolved in Wave 8 (§3.11).
-- **P3 — Upstream documents Ratified.** Corpus status: **satisfied through RFC-001** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), and RFC-001 v0.8 (RR-0003) are Ratified, so RFC-002's P3 is satisfied. Documents downstream of RFC-002 (RFC-003 and below) remain P3-blocked until RFC-002 is Ratified; the ratification order of §9.2 governs.
+- **P3 — Upstream documents Ratified.** Corpus status: **satisfied through Part 2** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), RFC-001 v0.8 (RR-0003), RFC-002 v0.6 (RR-0004), and the Part-2 chain RFC-003 v0.4 / RFC-004 v0.1 / RFC-005 v0.1 / RFC-006 v0.2 / RFC-007 v0.1 (RR-0005..RR-0009) are all Ratified. RFC-008..011's P3 is therefore now satisfied; their sole remaining blocker is P1 (no independent external EV-L0 review has yet been performed for them). Documents downstream of RFC-008..011 (the Part-3 ADR-DEV series and below) remain P3-blocked until RFC-008..011 are Ratified; the ratification order of §9.2 governs.
 - **P4 — No dangling citation and no unresolved cross-document conflict** (CONSISTENCY-AUDIT-002 clean for the document).
 - **P5 — Version stable, not under active revision.**
 
@@ -1185,6 +1217,213 @@ states that the ratification confers no live authority, no ADR acceptance, and n
   G6); de-ratification per G7.
 - **Non-authority statement:** this ratification establishes RFC-002 v0.6 as the governing
   architecture baseline and confers no live authorization, no ADR acceptance, and no capacity.
+
+#### RR-0005 — RFC-003 v0.4 (Decision Framework) — RATIFIED
+
+- **Target:** RFC-003 — Decision Framework, version 0.4 (content commit `7e7ee9cb`).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-18.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4;
+  ratification confers no live authority, so SAFE-053 does not apply to this act.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0007, the Part-2
+  batch review that returned **PASS for all five documents with zero findings** (the first batch
+  to clear the external review without a FAIL round-trip). Under the batch's asymmetric focus the
+  NON-FINDINGS specifically exercised the RFC-003 recorded review debt: the §9.1 hold-vs-explicit-
+  flat outcome semantics and the §10 LLM/stochastic Critical-Input recomputation-independence
+  proviso (the waves 5–7 deltas). Provenance: the §10 External EV-L0 batch row (Gemini app,
+  vendor Google; owner-captured app UI model "Gemini 3.1 Pro"; no tools/browsing; recorded
+  decorrelation argument per ADR-DEV-005 AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied (2026-07-18, batch); P2 held via the three-lens
+  pre-ratification pre-scan (§3.17) with zero external findings; P3 satisfied through RR-0001,
+  RR-0003, and RR-0004; P4 citations resolve (references to Proposed ADRs are acceptance-track,
+  narrow-only); P5 version stable at v0.4.
+- **Accepted requirements:** the full v0.4 normative text — the §6 decision principles, the §7
+  decision pipeline, the §8 decision inputs, the §9 Proposal output with the §9.1 hold/flat
+  outcome taxonomy and per-target emission semantics, the §10 determinism and
+  recomputation-independence proviso, and the §11 decision↔safety boundary.
+- **Deferred (explicit, with rationale):** (1) the CONST-003 composite discharge — RFC-003 §12
+  accepts the positive-expectancy obligation at the framework level only; the named composite
+  (RFC-003 §12 → RFC-006 §11 → ADR-002-025 RLP-EV-001..012) is completable in full only via the
+  ADR-002-025 restricted-live evidence, consistent with the RFC-000 CONST-003 Traceability;
+  (2) all evidence execution — every registered item remains `NOT_IMPLEMENTED` (372/98), and
+  DEC-001 / evidence DEC-EV-001 is acceptance-track; ratification is evidence-independent by
+  design (GOV-001 G1).
+- **Residual risks accepted:** none new.
+- **Cited-version pins:** RFC-000 v0.16, RFC-001 v0.8, RFC-002 v0.6, GOV-001 v0.1 (all Ratified);
+  ADR-002-018 (Proposed, unversioned — the §10 SAFE-034 recomputation-independence proviso and
+  Critical-Input lineage), ADR-002-023 v0.2 (§9.1 independent per-target approval binding),
+  ADR-002-001 v0.7 (§9.1 §6 protective classification of a reduction under Critical Uncertainty),
+  ADR-002-025 v0.2 (CONST-003 composite-discharge completion), and ADR-DEV-007 v0.2 (§9.1
+  hold/flat outcome semantics — SOS-INV-001/002/006). Other ADR citations follow the Proposed-tier
+  acceptance track and cannot weaken this Ratified text (RFC-000 §12 narrow-only). A change to a
+  pinned clause triggers a citation-integrity re-check (GOV-001 G6).
+- **Re-review trigger:** material change via RFC-000 §18 amendment + re-ratification (GOV-001 G6);
+  de-ratification per G7.
+- **Non-authority statement:** this ratification establishes RFC-003 v0.4 as the governing
+  decision-framework baseline and confers no live authorization, no ADR acceptance, and no
+  capacity.
+
+#### RR-0006 — RFC-004 v0.1 (Market Model) — RATIFIED
+
+- **Target:** RFC-004 — Market Model, version 0.1 (content commit `0e1f2935`).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-18.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4;
+  ratification confers no live authority, so SAFE-053 does not apply to this act.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0007, the Part-2
+  batch review that returned **PASS for all five documents with zero findings**. The RFC-004
+  verdict confirmed the market model's non-authorizing boundary adherence — it consumes Critical
+  Input and never asserts tradability, which remains owned upstream. Provenance: the §10 External
+  EV-L0 batch row (Gemini app, vendor Google; owner-captured app UI model "Gemini 3.1 Pro"; no
+  tools/browsing; recorded decorrelation argument per ADR-DEV-005 AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied (2026-07-18, batch); P2 held via the three-lens
+  pre-ratification pre-scan (§3.17) with zero external findings; P3 satisfied through RR-0001,
+  RR-0003, and RR-0004; P4 citations resolve (references to Proposed ADRs are acceptance-track,
+  narrow-only); P5 version stable at v0.1.
+- **Accepted requirements:** the full v0.1 normative text — the §6 market-model principles, §7
+  market state and microstructure, §8 volatility and regime, §9 market data as Critical Input,
+  §10 the tradability boundary (authoritative tradability deferred to ADR-002-019), §11 Korean
+  market structure, and §12 the market-model↔safety boundary.
+- **Deferred (explicit, with rationale):** all evidence execution — every registered item remains
+  `NOT_IMPLEMENTED` (372/98), and DEC-003 / evidence DEC-EV-003 is acceptance-track; ratification
+  is evidence-independent by design (GOV-001 G1).
+- **Residual risks accepted:** none new.
+- **Cited-version pins:** RFC-000 v0.16, RFC-001 v0.8, RFC-002 v0.6, GOV-001 v0.1 (all Ratified);
+  ADR-002-019 v0.2 (venue/session/tradability ownership the market model defers to, §10),
+  ADR-002-018 (Proposed, unversioned — §9 derived-input Critical-Input lineage). Other ADR
+  citations follow the Proposed-tier acceptance track and cannot weaken this Ratified text
+  (RFC-000 §12 narrow-only). A change to a pinned clause triggers a citation-integrity re-check
+  (GOV-001 G6).
+- **Re-review trigger:** material change via RFC-000 §18 amendment + re-ratification (GOV-001 G6);
+  de-ratification per G7.
+- **Non-authority statement:** this ratification establishes RFC-004 v0.1 as the governing
+  market-model baseline and confers no live authorization, no ADR acceptance, and no capacity.
+
+#### RR-0007 — RFC-005 v0.1 (Execution Model) — RATIFIED
+
+- **Target:** RFC-005 — Execution Model, version 0.1 (content commit `0e1f2935`).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-18.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4;
+  ratification confers no live authority, so SAFE-053 does not apply to this act.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0007, the Part-2
+  batch review that returned **PASS for all five documents with zero findings**. The RFC-005
+  verdict confirmed the execution model's non-authorizing boundary adherence — every child order
+  runs the full pre-send machinery and execution never invents or repairs a broker command.
+  Provenance: the §10 External EV-L0 batch row (Gemini app, vendor Google; owner-captured app UI
+  model "Gemini 3.1 Pro"; no tools/browsing; recorded decorrelation argument per ADR-DEV-005
+  AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied (2026-07-18, batch); P2 held via the three-lens
+  pre-ratification pre-scan (§3.17) with zero external findings; P3 satisfied through RR-0001,
+  RR-0003, and RR-0004; P4 citations resolve (references to Proposed ADRs are acceptance-track,
+  narrow-only); P5 version stable at v0.1.
+- **Accepted requirements:** the full v0.1 normative text — the §6 execution principles, §7 the
+  approved-Intent execution path, §8 optimal execution and slicing, §9 transaction cost, slippage,
+  and impact, §10 order types, auctions, and halts, §11 retry/duplication/UNKNOWN discipline, §12
+  the execution-model↔safety boundary, and §13 the Korean execution environment.
+- **Deferred (explicit, with rationale):** all evidence execution — every registered item remains
+  `NOT_IMPLEMENTED` (372/98), and DEC-002 / evidence DEC-EV-002 is acceptance-track; ratification
+  is evidence-independent by design (GOV-001 G1).
+- **Residual risks accepted:** none new.
+- **Cited-version pins:** RFC-000 v0.16, RFC-001 v0.8, RFC-002 v0.6, GOV-001 v0.1 (all Ratified);
+  ADR-002-002 (Proposed, unversioned — §11 Normal Commitment Flow ordering), ADR-002-020
+  (Proposed, unversioned — canonical command construction), ADR-002-022 (Proposed, unversioned —
+  action-flow budget, retry-storm containment, and Protective Flow Reserve), ADR-002-024 v0.2
+  (final-egress currentness and send-boundary ordering the execution path never bypasses). Other
+  ADR citations follow the Proposed-tier acceptance track and cannot weaken this Ratified text
+  (RFC-000 §12 narrow-only). A change to a pinned clause triggers a citation-integrity re-check
+  (GOV-001 G6).
+- **Re-review trigger:** material change via RFC-000 §18 amendment + re-ratification (GOV-001 G6);
+  de-ratification per G7.
+- **Non-authority statement:** this ratification establishes RFC-005 v0.1 as the governing
+  execution-model baseline and confers no live authorization, no ADR acceptance, and no capacity.
+
+#### RR-0008 — RFC-006 v0.2 (Risk Model) — RATIFIED
+
+- **Target:** RFC-006 — Risk Model, version 0.2 (content commit `0e1f2935`).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-18.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4;
+  ratification confers no live authority, so SAFE-053 does not apply to this act.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0007, the Part-2
+  batch review that returned **PASS for all five documents with zero findings**. Under the batch's
+  asymmetric focus the NON-FINDINGS specifically exercised the RFC-006 recorded review debt: the
+  §14 ↔ RFC-007 §13 overnight-gap coherence (the mn-09 delta). Provenance: the §10 External EV-L0
+  batch row (Gemini app, vendor Google; owner-captured app UI model "Gemini 3.1 Pro"; no
+  tools/browsing; recorded decorrelation argument per ADR-DEV-005 AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied (2026-07-18, batch); P2 held via the three-lens
+  pre-ratification pre-scan (§3.17) with zero external findings; P3 satisfied through RR-0001,
+  RR-0003, and RR-0004; P4 citations resolve (references to Proposed ADRs are acceptance-track,
+  narrow-only); P5 version stable at v0.2.
+- **Accepted requirements:** the full v0.2 normative text — the §6 risk-model principles, §7 risk
+  measures, §8 volatility, correlation, and netting, §9 position sizing and leverage, §10 drawdown
+  and capital preservation, §11 the positive-expectancy methodology (co-owner with RFC-003 §12 of
+  the CONST-003 demonstration), §12 the relationship to the aggregate risk architecture, §13 the
+  risk-model↔safety boundary, and §14 the Korean risk environment.
+- **Deferred (explicit, with rationale):** (1) the CONST-003 composite discharge — RFC-006 §11
+  owns the statistical expectancy methodology, but full discharge is completable only via the
+  ADR-002-025 restricted-live evidence (RLP-EV-001..012), consistent with the RFC-000 CONST-003
+  Traceability; (2) all evidence execution — every registered item remains `NOT_IMPLEMENTED`
+  (372/98), and DEC-004 / evidence DEC-EV-004 is acceptance-track; ratification is
+  evidence-independent by design (GOV-001 G1).
+- **Residual risks accepted:** none new. The RFC-006 §16 CONST-002 traceability-gap governance
+  item is retained as recorded — CONST-002's Traceability field lists only RFC-001 and RFC-005 and
+  omits RFC-006, and this omission SHALL be resolved through governance, not by unilateral edit;
+  this ratification neither closes the gap nor amends the constitution.
+- **Cited-version pins:** RFC-000 v0.16, RFC-001 v0.8, RFC-002 v0.6, GOV-001 v0.1 (all Ratified);
+  ADR-002-021 (Proposed, unversioned — the aggregate-risk projection slots and ARE-INV-005/006 the
+  methodology populates), ADR-002-002 (Proposed, unversioned — the Risk Capacity Ledger the
+  methodology never mutates), ADR-002-025 v0.2 (CONST-003 live-readiness completion evidence).
+  Other ADR citations follow the Proposed-tier acceptance track and cannot weaken this Ratified
+  text (RFC-000 §12 narrow-only). A change to a pinned clause triggers a citation-integrity
+  re-check (GOV-001 G6).
+- **Re-review trigger:** material change via RFC-000 §18 amendment + re-ratification (GOV-001 G6);
+  de-ratification per G7.
+- **Non-authority statement:** this ratification establishes RFC-006 v0.2 as the governing
+  risk-model baseline and confers no live authorization, no ADR acceptance, and no capacity.
+
+#### RR-0009 — RFC-007 v0.1 (Portfolio Hedge Model) — RATIFIED
+
+- **Target:** RFC-007 — Portfolio Hedge Model, version 0.1 (content commit `0e1f2935`).
+- **Decision:** RATIFIED. **Date / effective:** 2026-07-18.
+- **Ratifying authority:** System Owner (vision §12.1). **Conformance attestor:** Architecture
+  Board role (vision §12.2) — both roles held by the same natural person per GOV-001 G4;
+  ratification confers no live authority, so SAFE-053 does not apply to this act.
+- **Independent EV-L0 review (P1):** external substrate — GEMINI-EVL0-VERDICT-0007, the Part-2
+  batch review that returned **PASS for all five documents with zero findings**. The RFC-007
+  verdict confirmed the hedge model's non-authorizing boundary adherence — a hedge's protective
+  status is established by projected aggregate effect via ADR-002-001 §6, never asserted by label.
+  Provenance: the §10 External EV-L0 batch row (Gemini app, vendor Google; owner-captured app UI
+  model "Gemini 3.1 Pro"; no tools/browsing; recorded decorrelation argument per ADR-DEV-005
+  AIR-INV-002).
+- **P1–P5 evidence:** §9.4 — P1 satisfied (2026-07-18, batch); P2 held via the three-lens
+  pre-ratification pre-scan (§3.17) with zero external findings; P3 satisfied through RR-0001,
+  RR-0003, and RR-0004; P4 citations resolve (references to Proposed ADRs are acceptance-track,
+  narrow-only); P5 version stable at v0.1.
+- **Accepted requirements:** the full v0.1 normative text — the §6 hedge-model principles, §7 the
+  hedging methodology, §8 basis risk and hedge effectiveness, §9 roll and expiry management, §10
+  the hedge as a protective action, §11 reserved protective capacity, §12 the
+  hedge-model↔safety boundary, and §13 the Korean hedge environment (including the binding
+  night-session overnight-gap constraint).
+- **Deferred (explicit, with rationale):** all evidence execution — every registered item remains
+  `NOT_IMPLEMENTED` (372/98), and DEC-005 / evidence DEC-EV-005 is acceptance-track; ratification
+  is evidence-independent by design (GOV-001 G1).
+- **Residual risks accepted:** none new. The RFC-007 §13 night-session-disabled unhedged
+  overnight/global-event gap is accepted as a binding constraint and surfaced as a residual risk
+  (not silently assumed away); it is consumed as an explicit tail-calibration input by RFC-006 §14
+  — the coherent cross-model treatment the batch review's mn-09 focus confirmed.
+- **Cited-version pins:** RFC-000 v0.16, RFC-001 v0.8, RFC-002 v0.6, GOV-001 v0.1 (all Ratified);
+  ADR-002-001 v0.7 (§§4–7 protective classification, protective envelope, and reserved capacity —
+  §§10, 11), ADR-002-011 v0.3 (protection-gap-controlled roll/replacement — §9), ADR-002-002
+  (Proposed, unversioned — §19 reserved protective capacity consumed, never mutated),
+  ADR-002-021 (Proposed, unversioned — ARE-INV-005/006 benefit proof — §§6, 8). Other ADR
+  citations follow the Proposed-tier acceptance track and cannot weaken this Ratified text
+  (RFC-000 §12 narrow-only). A change to a pinned clause triggers a citation-integrity re-check
+  (GOV-001 G6).
+- **Re-review trigger:** material change via RFC-000 §18 amendment + re-ratification (GOV-001 G6);
+  de-ratification per G7.
+- **Non-authority statement:** this ratification establishes RFC-007 v0.1 as the governing
+  hedge-model baseline and confers no live authorization, no ADR acceptance, and no capacity.
 
 *(empty)*
 
