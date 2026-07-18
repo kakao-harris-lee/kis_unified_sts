@@ -9,7 +9,7 @@
 **Safety Authority:** Constrained by RFC-001 — Safety Case and RFC-002 — Architecture
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-15
+**Last Updated:** 2026-07-17
 
 ---
 

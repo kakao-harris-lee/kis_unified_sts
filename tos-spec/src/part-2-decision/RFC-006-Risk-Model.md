@@ -50,7 +50,7 @@ RFC-006's authority is bounded as follows:
   vocabulary verbatim. It co-owns CONST-003 (Positive Expectancy) with RFC-003.
 * **RFC-001 — Safety Case** constrains this document; RFC-006 operates strictly
   inside the Hard Safety Envelope (§5.20, SAFE-004) and honors SAFE-012 and
-  SAFE-013 (aggregate risk authority and capacity). A risk methodology may
+  SAFE-013 (bounded single-action risk and aggregate risk authority). A risk methodology may
   narrow, never widen, authority.
 * **RFC-002 — Architecture** and the **ADR-002-xxx** series own the risk-capacity
   machinery RFC-006 operates within: ADR-002-021 (aggregate risk projection,
@@ -479,7 +479,7 @@ companion RFCs are accepted.
 | RFC-000 CONST-002 (Capital Preservation) | capital-preservation, drawdown, and conservative-sizing methodology (§§4, 9, 10) — see governance note below |
 | RFC-000 CONST-003 (Positive Expectancy; Traceability names RFC-003, RFC-006) | statistical expectancy methodology, co-owned with RFC-003 §12 (§11) |
 | RFC-001 §5.20, SAFE-004 (Hard Safety Envelope) | every methodology output stays inside the envelope; narrow-only (§§6, 13) |
-| RFC-001 SAFE-012, SAFE-013 (aggregate risk authority and capacity) | methodology feeds the Aggregate Risk Policy without becoming the authority (§12) |
+| RFC-001 SAFE-012, SAFE-013 (bounded single-action risk and aggregate risk authority) | methodology feeds the Aggregate Risk Policy without becoming the authority (§12) |
 | ADR-002-021 §§8, 10, 11, 13, 14, 28 | methodology populates the approved-model slots ADR-002-021 defers, under all its invariants (§§7, 8, 12) |
 | ADR-002-021 ARE-INV-005, ARE-INV-006 | unproven benefit is zero; UNKNOWN is worst-credible (§§6, 8, 13) |
 | ADR-002-002 (Risk Capacity Ledger) | methodology never mutates capacity; the RCL alone does (§§6, 13) |
