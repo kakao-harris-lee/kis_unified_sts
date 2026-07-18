@@ -2,7 +2,7 @@
 
 **Document ID:** RFC-010
 **Title:** Testing Strategy
-**Version:** 0.2 Review Draft
+**Version:** 0.3 Review Draft
 **Status:** Review Draft — Development
 **Classification:** Implementation-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
@@ -11,7 +11,7 @@
 **Authoring Surface:** Realized through RFC-008 — Strategy DSL and RFC-009 — Agent Guide
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-17
+**Last Updated:** 2026-07-18
 
 ---
 
@@ -278,10 +278,12 @@ reviewable. RFC-010 supplies the tests that make review and replay possible.
   or simulated boundary, never a live real-capital path (RFC-001 §5.10 Non-Live Mode;
   RFC-002 §7.6).
 * **Reproducible artifact identity.** That the artifact tested is exactly the artifact
-  reviewed, admitted, and run is a SHALL owned upstream by ADR-DEV-002 (content-addressed
-  Artifact Identity) and ADR-002-029 (admission); RFC-010 inherits it and SHALL run its
-  Conformance Tests against that exact Artifact Identity. A test result bound to a mutable
-  or unidentified artifact is weak evidence.
+  reviewed, admitted, and run is a SHALL owned upstream by ADR-002-029 (release-artifact
+  admission, the architecture-tier owner); the content-addressed Artifact Identity mechanism
+  that realizes it is addressed by proposed ADR-DEV-002, pending acceptance (§14). RFC-010
+  inherits the obligation and SHALL run its Conformance Tests against the exact admitted
+  Artifact Identity. A test result bound to a mutable or unidentified artifact is weak
+  evidence.
 * **Provenance of test evidence.** Test results offered as safety evidence SHALL
   carry the versions and inputs they ran against, as conforming inputs to the
   evidence and deterministic-replay integrity ADR-002-016 owns; RFC-010 supplies
@@ -536,3 +538,18 @@ have demonstrated.
   numeric bound, or authority, and no new EV (register counts unchanged). Independent
   adversarial EV-L0 review of these Wave-6 changes is owed; this patch confers no acceptance
   or live-readiness.
+
+### v0.3 — External EV-L0 finding applied (GEMINI-EVL0-VERDICT-0008, MAJOR)
+
+* The Part-3 batch external review (PASS-WITH-FINDINGS for this document) found that §9's
+  "Reproducible artifact identity" bullet attributed normative ownership of a SHALL to
+  ADR-DEV-002, which the §14 preamble itself establishes as Proposed (unaccepted) and
+  therefore unable to resolve an obligation until acceptance — an internal coherence defect.
+  §9 now attributes the obligation to ADR-002-029 (release-artifact admission, the
+  architecture-tier owner on the acceptance track) and notes that the content-addressed
+  Artifact Identity mechanism realizing it is addressed by proposed ADR-DEV-002, pending
+  acceptance (§14). The external reviewer's suggested wording called ADR-002-029 "ratified";
+  that is corrected here — ADRs are never ratification targets (GOV-001 G2) and ADR-002-029
+  remains Proposed on the evidence-gated acceptance track; the attribution stands because it
+  names the architecture-tier mechanism owner, not because of ratification status.
+* Narrow-only, additive; no SAFE-xxx, no numeric bound, no new EV (registers unchanged).
