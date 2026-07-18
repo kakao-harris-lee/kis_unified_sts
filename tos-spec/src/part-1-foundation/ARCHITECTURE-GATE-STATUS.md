@@ -649,6 +649,27 @@ variant exception is strictly bound to the ADR-002-015 §17.1 constraints, and n
 authority widening was introduced. RFC-002 P1 is satisfied; the §9.3 ladder advanced RFC-002
 v0.6 to **Ratification-Ready**, awaiting the System Owner ratification act (GOV-001 G4/G5).
 
+### 3.17 Part-2 pre-scan hygiene + batch external EV-L0 review (GOV-001 G3 P1): RFC-003..007
+
+A three-lens pre-ratification self-scan of the five Part-2 documents (the two lenses derived
+from the RFC-000/RFC-001 external FAILs — self-schema/self-gate conformance and the
+CONST-015/SAFE-053 duals, both the missing-independence-link and the leftover-absolute-
+prohibition forms — plus ratified-baseline citation freshness) returned **substantively CLEAN
+across ~73 verification loci** with two hygiene items, applied before dispatch (commit
+`0e1f2935`): the RFC-004/005/007 `Last Updated` headers corrected to 2026-07-17 (the wave-4
+DEC-row commit date), and the RFC-006 §2/§16 SAFE-012 gloss corrected to "bounded
+single-action risk and aggregate risk authority."
+
+The batch external review (GEMINI-EVL0-REQUEST-0007.md → GEMINI-EVL0-VERDICT-0007; Gemini app,
+owner-captured app UI model "Gemini 3.1 Pro", vendor Google, 2026-07-18) returned **PASS for
+all five documents with zero findings** — the first batch to clear the external review without
+a FAIL round-trip. The NON-FINDINGS specifically exercised the recorded review debt (the
+RFC-003 §9.1 hold/flat semantics and §10 LLM/stochastic proviso; the RFC-006 §14 ↔ RFC-007 §13
+overnight-gap coherence; the companion models' non-authorizing boundary adherence). Part-2 P1
+is satisfied; the §9.3 ladder advanced RFC-003 v0.4, RFC-004 v0.1, RFC-005 v0.1, RFC-006 v0.2,
+and RFC-007 v0.1 to **Ratification-Ready**, awaiting the System Owner ratification acts
+(GOV-001 G4/G5). No SAFE-xxx, no numeric bound, no new EV; registers unchanged (372/98).
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -930,10 +951,14 @@ The authoring-track dependency chain (GOV-001; RFC-000 §12):
 
 Ratified count: **4** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), RFC-001 v0.8
 (RR-0003), and RFC-002 v0.6 (RR-0004, 2026-07-18), all in §9.7. Ratification-Ready count:
-**0**. The vision/philosophy directional baseline is adopted (BA-0001, §9.7). Next candidates:
-**RFC-003..007** — their P3 is now satisfied (RFC-000 through RFC-002 Ratified); their blocker
-is P1 (no external-substrate EV-L0 review has been performed for them yet). All other
-documents' P1
+**5** — **RFC-003 v0.4, RFC-004 v0.1, RFC-005 v0.1, RFC-006 v0.2, RFC-007 v0.1** (P1 satisfied
+2026-07-18: the Part-2 batch external review returned **PASS for all five with zero findings**,
+GEMINI-EVL0-VERDICT-0007, with the recorded review debt — the RFC-003 wave-5..7 deltas and the
+RFC-006 mn-09 delta — specifically exercised in the NON-FINDINGS; P2 held via the three-lens
+pre-scan hygiene, §3.17; P3 satisfied through RR-0001/RR-0003/RR-0004; P4/P5 held), awaiting
+the System Owner ratification acts. The vision/philosophy directional baseline is adopted
+(BA-0001, §9.7). Next candidates after Part 2: **RFC-008..011** — their P3 completes when
+RFC-003..007 are Ratified, and their P1 has not yet been performed. All other documents' P1
 remains unmet corpus-wide. All other normative RFC-class documents remain at Working/Review
 Draft; all ADRs remain Proposed; both Verification Evidence specifications remain Proposed.
 
@@ -944,9 +969,9 @@ Draft; all ADRs remain Proposed; both Verification Evidence specifications remai
 | RFC-000 | Normative RFC | **Ratified** (v0.16, 2026-07-17) | **YES** | — (record RR-0001, §9.7) |
 | RFC-001 | Normative RFC | **Ratified** (v0.8, 2026-07-17) | **YES** | — (record RR-0003, §9.7) |
 | RFC-002 | Normative RFC | **Ratified** (v0.6, 2026-07-18) | **YES** | — (record RR-0004, §9.7) |
-| ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC-002 not Ratified |
+| ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track — Parent RFC-002 Ratified (RR-0004); evidence gate remains (all items `NOT_IMPLEMENTED`) |
 | VER-002-001 | Verification Evidence | Proposed | n/a (not ratified) | §383 approval gate |
-| RFC-003..007 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
+| RFC-003..007 | Normative RFC | **Ratification-Ready** (v0.4/v0.1/v0.1/v0.2/v0.1, 2026-07-18) | NO | none — awaiting the System Owner ratification act (GOV-001 G4/G5) |
 | RFC-008..011 | Normative RFC | Review Draft | NO | P1; P3 (upstream not Ratified) |
 | ADR-DEV-001..015 | ADR | Proposed | n/a (no ratification ladder) | acceptance track; Parent RFC not Ratified |
 | VER-DEV-001 | Verification Evidence | Proposed | n/a (not ratified) | §8 approval gate |
@@ -962,7 +987,8 @@ established is treated as unmet.
   - **RFC-000 — P1 satisfied (2026-07-17).** The external review returned FAIL on RFC-000 v0.15 (1 MAJOR + 1 MINOR); both findings were verified against source and applied in v0.16 (§3.13, patch 0048). The v0.16 delta re-review (GEMINI-EVL0-REQUEST-0002.md → GEMINI-EVL0-VERDICT-0002) returned **PASS with zero residual findings** on the external substrate (owner-captured app UI model "Gemini 3.1 Pro", vendor Google). With P2 (findings resolved, §9.5), P3 (vacuously satisfied — RFC-000 is governed by no higher document), P4, and P5 held, **RFC-000 v0.16 is Ratification-Ready**; the remaining step is the System Owner ratification act recorded per GOV-001 G5.
   - **RFC-001 — P1 satisfied (2026-07-17).** The first external-substrate EV-L0 review (GEMINI-EVL0-REQUEST-0003.md → GEMINI-EVL0-VERDICT-0003) returned **FAIL** on RFC-001 v0.7 with two MAJOR findings (SAFE-050 independent-approval linkage; §14 Hard Safety Envelope non-waiver) plus one flag-only MINOR (SAFE-053 → ADR-002-025 §5.11, unjudgeable from the package — deferred to the acceptance tier). Both MAJOR findings were verified against source and applied in v0.8 (§3.14). The v0.8 delta re-review (GEMINI-EVL0-REQUEST-0004.md → GEMINI-EVL0-VERDICT-0004) returned **PASS with zero residual findings** on the external substrate (owner-captured app UI model "Gemini 3.1 Pro", vendor Google), specifically confirming that the SAFE-050 correction preserves SAFE-053's two-satisfaction-path structure. With P2 (findings resolved, flag-only MINOR explicitly deferred), P3 (satisfied by RR-0001), P4, and P5 held, **RFC-001 v0.8 is Ratification-Ready**; the remaining step is the System Owner ratification act recorded per GOV-001 G5.
   - **RFC-002 — P1 satisfied (2026-07-18).** The first external-substrate EV-L0 review (GEMINI-EVL0-REQUEST-0005.md → GEMINI-EVL0-VERDICT-0005) returned **FAIL** on RFC-002 v0.5 with one CRITICAL finding — four legacy absolute prohibitions (§10.18; §20.1 Table B guard and owner; §20.1 Section C forbidden edge; §23.1) collapsed the SAFE-053 single-operator variant path, a partial-update inconsistency against the correctly-absorbed §9.1/§19.4 dual-path structure. The finding was verified against source and applied narrow-only in v0.6 (Patch 0052); the upstream root cause ADR-002-007 (§13, §14.1 item 3, REARM-AC-005 — a missed Wave-1 CR-02 propagation site) was corrected in ADR-002-007 v0.3 (Patch 0053). The v0.6 delta re-review (GEMINI-EVL0-REQUEST-0006.md → GEMINI-EVL0-VERDICT-0006) returned **PASS with zero residual findings** on the external substrate (owner-captured app UI model "Gemini 3.1 Pro", vendor Google), specifically confirming that the quorum path's dual control is unweakened, the variant exception is strictly bound to the ADR-002-015 §17.1 constraints, and no backdoor authority widening was introduced. The three VERDICT-0005 NON-FINDINGS (§10.8 SAFE-054 branch preservation; §27/§30 SAFE-001..054 traceability gate; §12.1 fail-closed UNKNOWN state) confirmed the v0.5 pre-fixes. With P2 (findings resolved), P3 (satisfied through RR-0001/RR-0003), P4, and P5 held, **RFC-002 v0.6 is Ratification-Ready**; the remaining step is the System Owner ratification act recorded per GOV-001 G5.
-  All other corpus documents (beyond GOV-001, RFC-000, RFC-001, and RFC-002) remain **unmet, fail-closed** for P1 — no external review is yet recorded for them; discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
+  - **RFC-003..007 — P1 satisfied (2026-07-18, batch).** The Part-2 batch external review (GEMINI-EVL0-REQUEST-0007.md → GEMINI-EVL0-VERDICT-0007; Gemini app, owner-captured app UI model "Gemini 3.1 Pro") returned **PASS for all five documents with zero findings** — the first batch to clear the external review without a FAIL round-trip, following the three-lens pre-scan (§3.17). The NON-FINDINGS specifically exercised the recorded review debt: the RFC-003 §9.1 hold/flat outcome semantics and §10 LLM/stochastic Critical-Input proviso (waves 5–7 deltas), the RFC-006 §14 ↔ RFC-007 §13 overnight-gap coherence (mn-09 delta), and the companion models' non-authorizing boundary adherence. With P2 (pre-scan hygiene applied, zero external findings), P3 (satisfied through RR-0001/RR-0003/RR-0004), P4, and P5 held, **RFC-003 v0.4, RFC-004 v0.1, RFC-005 v0.1, RFC-006 v0.2, and RFC-007 v0.1 are Ratification-Ready**; the remaining step is the System Owner ratification acts recorded per GOV-001 G5.
+  All other corpus documents (beyond GOV-001, RFC-000..002, and RFC-003..007) remain **unmet, fail-closed** for P1 — no external review is yet recorded for them; discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
 - **P2 — Findings resolved or explicitly deferred.** Corpus status: 5 of 6 CORPUS-REVIEW-0001 questions resolved in canonical text (§9.5); M-06 now recorded by owner disposition (§4.5); the RFC-002 §20.1 U1/U2/U3 mode-transition seams are resolved in Wave 8 (§3.11).
 - **P3 — Upstream documents Ratified.** Corpus status: **satisfied through RFC-001** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), and RFC-001 v0.8 (RR-0003) are Ratified, so RFC-002's P3 is satisfied. Documents downstream of RFC-002 (RFC-003 and below) remain P3-blocked until RFC-002 is Ratified; the ratification order of §9.2 governs.
 - **P4 — No dangling citation and no unresolved cross-document conflict** (CONSISTENCY-AUDIT-002 clean for the document).
@@ -1189,6 +1215,7 @@ Register (Part-1 stays 372; development track stays 98).
 | External EV-L0 delta (GOV-001 G3 P1) | RFC-001 v0.8 (delta of the v0.7 findings) | Gemini app (vendor Google), human-relayed; owner-captured app UI model "Gemini 3.1 Pro"; self-report version-less ("Gemini") | GEMINI-EVL0-REQUEST-0004.md package only (change summary; post-fix SAFE-050 incl. Derived-from; post-fix §14 list; context-only §12/ADR-002-026 sync); no tools/browsing | 2026-07-17 | **PASS** — zero residual findings; SAFE-053 two-satisfaction-path preservation specifically confirmed; RFC-001 P1 satisfied (GEMINI-EVL0-VERDICT-0004) |
 | External EV-L0 (GOV-001 G3 P1) | RFC-002 v0.5 | Gemini app (vendor Google), human-relayed; owner-captured app UI model "Gemini 3.1 Pro" (authoritative); self-report version-less ("Gemini (Large Language Model)") — recorded as unreliable for version identity per the VERDICT-0001 correction note | GEMINI-EVL0-REQUEST-0005.md package only (RFC-002 v0.5; Ratified RFC-000 v0.16 and RFC-001 v0.8; vision/philosophy baselines); no tools/browsing | 2026-07-18 | **FAIL** — 1 CRITICAL (legacy absolute prohibitions at §10.18 / §20.1 Table B guard+owner / §20.1 Section C / §23.1 collapse the SAFE-053 variant path — verified against source; upstream root cause ADR-002-007 §13/§14.1 item 3/REARM-AC-005 confirmed) applied narrow-only in RFC-002 v0.6 (Patch 0052) and ADR-002-007 v0.3 (Patch 0053); 3 NON-FINDINGS confirm the v0.5 pre-fixes (§10.8 SAFE-054 branch; §27/§30 SAFE-001..054 traceability gate; §12.1 fail-closed UNKNOWN) pass; GEMINI-EVL0-VERDICT-0005; v0.6 delta re-review pending (REQUEST-0006) |
 | External EV-L0 delta (GOV-001 G3 P1) | RFC-002 v0.6 (delta of the v0.5 CRITICAL) + ADR-002-007 v0.3 context | Gemini app (vendor Google), human-relayed; owner-captured app UI model "Gemini 3.1 Pro"; self-report version-less ("Gemini") | GEMINI-EVL0-REQUEST-0006.md package only (change summary; post-fix RFC-002 §10.18/§20.1 B·C/§23.1; post-fix ADR-002-007 §13/§14.1/REARM-AC-005; ADR-002-015 §17.1 constraints as yardstick); no tools/browsing | 2026-07-18 | **PASS** — zero residual findings; quorum-path dual control confirmed unweakened, variant exception confirmed strictly bound to §17.1 constraints (smallest approved scope delta; service identities barred), no backdoor authority widening; RFC-002 P1 satisfied (GEMINI-EVL0-VERDICT-0006) |
+| External EV-L0 batch (GOV-001 G3 P1) | RFC-003 v0.4, RFC-004 v0.1, RFC-005 v0.1, RFC-006 v0.2, RFC-007 v0.1 (Part 2, per-document verdicts) | Gemini app (vendor Google), human-relayed; owner-captured app UI model "Gemini 3.1 Pro"; self-report version-imprecise ("Gemini (Latest System Version)") | GEMINI-EVL0-REQUEST-0007.md package only (five targets; Ratified RFC-000 v0.16 / RFC-001 v0.8 / RFC-002 v0.6; vision/philosophy baselines; asymmetric focus on the RFC-003 wave-5..7 and RFC-006 mn-09 deltas); no tools/browsing | 2026-07-18 | **PASS ×5 — zero findings**; NON-FINDINGS specifically exercised the recorded review debt (hold/flat + LLM proviso; overnight-gap coherence; non-authorizing boundaries); Part-2 P1 satisfied (GEMINI-EVL0-VERDICT-0007) |
 
 **Honesty limitation (internal reviews).** Lane separation (not-the-author, not-author-rerun,
 read-only) is established for every review above. For the CORPUS-REVIEW-0001 and Wave 1–8 rows,
