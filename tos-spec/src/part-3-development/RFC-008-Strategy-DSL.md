@@ -2,8 +2,8 @@
 
 **Document ID:** RFC-008
 **Title:** Strategy DSL
-**Version:** 0.2 Review Draft
-**Status:** Review Draft — Development
+**Version:** 0.2
+**Status:** Ratified (2026-07-18 — GOV-001 G5 record RR-0010, ARCHITECTURE-GATE-STATUS §9.7; ratification confers no live authorization, no ADR acceptance, and no capacity)
 **Classification:** Implementation-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case and RFC-002 — Architecture

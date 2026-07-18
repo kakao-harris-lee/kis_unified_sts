@@ -2,8 +2,8 @@
 
 **Document ID:** RFC-010
 **Title:** Testing Strategy
-**Version:** 0.3 Review Draft
-**Status:** Review Draft — Development
+**Version:** 0.3
+**Status:** Ratified (2026-07-18 — GOV-001 G5 record RR-0012, ARCHITECTURE-GATE-STATUS §9.7; ratification confers no live authorization, no ADR acceptance, and no capacity)
 **Classification:** Implementation-Layer Specification
 **Authority:** Governed by RFC-000 — Trading Constitution
 **Safety Authority:** Constrained by RFC-001 — Safety Case and RFC-002 — Architecture
