@@ -1,6 +1,8 @@
 .history/
 .sisyphus/
 .superpowers/
+# oh-my-claudecode session-local state/docs (not shared across machines)
+.omc/
 __pycache__/
 */__pycache__/
 # Playwright/Chrome MCP browser-session artifacts (console logs, page snapshots)
