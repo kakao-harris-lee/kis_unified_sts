@@ -328,7 +328,10 @@ ADR-002-007/025 게이트를 통해서만, 별도 비준으로 추가된다. 그
     forbidden contract, CI 잡 `tos-firewall`) + 최소 `tos/` 스켈레톤(§2.4,
     pyproject 독립 배포 단위·hermetic tests). 이로써 §3.2 `shared.determinism`
     허용목록 효력 발생. 잔여 수동 조치: GitHub branch-protection에서 `tos-firewall`
-    required check 지정.
+    required check 지정 — **단 워크플로우가 `main`에 착지한 뒤에** 등록한다(A안,
+    2026-07-20 결정). 워크플로우가 `main`에 없는 상태에서 먼저 required로 지정하면
+    해당 잡을 갖지 않은 PR이 "Expected — waiting for status"로 머지 무기한 차단됨.
+    현행 `main` 보호의 required check는 `test` 1건.
 
 ### 6.2 repo 분리(전략 C) 재검토 트리거 — 아래 중 하나라도 발생 시
 
