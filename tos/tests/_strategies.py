@@ -41,6 +41,12 @@ TEXT = st.text(alphabet=ASCII, max_size=6)
 OPT_TEXT = st.none() | TEXT
 FIELD_STATES = st.sampled_from(list(FieldState))
 
+# Text feeding a *required covered* field must be concrete: the model rejects
+# the reserved ``"TBD"`` placeholder sentinel (design §3.2;
+# _base.missing_required_fields). Any Hypothesis text bound to a required field
+# must exclude it, or issuance legitimately raises ValidationError.
+REQUIRED_FIELD_TEXT = st.text(max_size=8).filter(lambda s: s != "TBD")
+
 # Canon-safe (no numbers) value tree: exercises determinism / key-order /
 # injectivity without the intended magnitude fold (design §3.4 (A) vs (B)).
 _canon_scalars = st.none() | st.booleans() | TEXT

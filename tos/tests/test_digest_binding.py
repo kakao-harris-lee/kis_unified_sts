@@ -9,7 +9,6 @@ property at the model level (status + Layer-2 changes do not move the digest).
 
 from __future__ import annotations
 
-import hypothesis.strategies as st
 import pytest
 from hypothesis import given
 from pydantic import ValidationError
@@ -20,13 +19,13 @@ from tos.capsule import (
 )
 from tos.capsule.capsule import Bindings, SnapshotRef
 
-from ._strategies import SCHEME, issue_snapshot
+from ._strategies import REQUIRED_FIELD_TEXT, SCHEME, issue_snapshot
 from ._strategies import issue_capsule as _issue_capsule
 
 # ---- id = f(digest) + digest == canonicalize(covered) ----------------------
 
 
-@given(issuer=st.text(max_size=8))
+@given(issuer=REQUIRED_FIELD_TEXT)
 def test_capsule_id_derived_from_digest(issuer: str) -> None:
     """An issued capsule's id is exactly ``derive_id(prefix, digest)`` (§4.1)."""
     cap = _issue_capsule(issuer_principal_id=issuer)
@@ -35,7 +34,7 @@ def test_capsule_id_derived_from_digest(issuer: str) -> None:
     assert cap.canonical_digest == SCHEME.compute_digest(cap.covered_content())
 
 
-@given(issuer=st.text(max_size=8))
+@given(issuer=REQUIRED_FIELD_TEXT)
 def test_snapshot_id_derived_from_digest(issuer: str) -> None:
     """An issued snapshot's id is exactly ``derive_id(prefix, digest)`` (§4.1)."""
     snap = issue_snapshot(issuer_principal_id=issuer)
@@ -56,7 +55,7 @@ def test_capsule_is_frozen() -> None:
 # ---- covered sensitivity ---------------------------------------------------
 
 
-@given(a=st.text(max_size=8), b=st.text(max_size=8))
+@given(a=REQUIRED_FIELD_TEXT, b=REQUIRED_FIELD_TEXT)
 def test_covered_change_changes_digest_and_id(a: str, b: str) -> None:
     """Changing a covered field yields a different digest and id (CII-EV-007)."""
     if a == b:
