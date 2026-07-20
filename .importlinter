@@ -9,6 +9,13 @@
 # `allow_indirect_imports` (§3.3-② — that flag would disable exactly the
 # transitive check this layer exists for).
 #
+# `shared.config.secrets` is forbidden here because `shared.config.__init__`
+# unconditionally imports it, so ANY path tos takes into `shared.config` reaches
+# `shared.config.secrets` transitively — this contract thus blocks ambient
+# credential (os.environ) intake at layer ② (design §4 3차 방어), closing the hole
+# the AST gate (direct-import only) and this denylist (previously not listing it)
+# both missed.
+#
 # SoT for the forbidden set: design §2.3 / §3.3-②. Changes to it require a PR
 # editing the design doc, with a §6.1 revision-log line.
 
@@ -31,5 +38,6 @@ forbidden_modules =
     shared.llm
     shared.storage
     shared.backtest
+    shared.config.secrets
     services
     cli

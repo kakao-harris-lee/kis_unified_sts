@@ -85,9 +85,16 @@ FORBIDDEN_STDLIB: frozenset[str] = frozenset(
 # Commons subpackages tos may import (§3.2). A package-level allow is only valid
 # under the import-linter transitive check (§3.3-②), which proves the package's
 # closure does not reach a §2.3 forbidden package.
+#
+# NB: ``shared.config`` is deliberately ABSENT (removed 2026-07-20, §6.1). Its
+# ``__init__`` unconditionally executes ``from shared.config.secrets import ...``,
+# so any ``shared.config`` import transitively pulls in ambient credential access
+# (``os.environ``), violating C2 (§4 3차 방어). The whole package is therefore off
+# the allowlist — no ``shared.config.secrets`` carve-out is needed, because the
+# parent is no longer allowed in the first place. Policy loading uses pyyaml per
+# design #2 §0.3, not ``shared.config``.
 SHARED_ALLOWED: frozenset[str] = frozenset(
     {
-        "shared.config",
         "shared.models",
         "shared.indicators",
         "shared.resilience",
@@ -98,10 +105,6 @@ SHARED_ALLOWED: frozenset[str] = frozenset(
         "shared.determinism",
     }
 )
-
-# Commons carve-outs denied even though their parent package is allowed: ambient
-# credential access conflicts with C2 (§3.2 — ``shared.config.secrets`` excluded).
-SHARED_DENIED: frozenset[str] = frozenset({"shared.config.secrets"})
 
 # Full stdlib top-level module name set (§3.3-① mandates sys.stdlib_module_names).
 STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names)
@@ -144,12 +147,10 @@ def classify_module(dotted: str) -> tuple[bool, str | None]:
     if top == "tos":  # self
         return True, None
     if top == "shared":
-        # Denied carve-outs (e.g. shared.config.secrets) win over the allow.
-        if _matches_prefix(dotted, SHARED_DENIED):
-            return False, "TOS-FW-A"
         if _matches_prefix(dotted, SHARED_ALLOWED):
             return True, None
-        return False, "TOS-FW-A"  # e.g. shared.execution, bare `shared`
+        # e.g. shared.config (+ .secrets), shared.execution, bare `shared`
+        return False, "TOS-FW-A"
     if top in THIRD_PARTY_ALLOWED:
         return True, None
     if top in STDLIB:
@@ -189,9 +190,11 @@ def check_tos_file(path: Path, rel_display: str) -> list[Violation]:
         elif isinstance(node, ast.ImportFrom):
             if not (node.level and node.level > 0):
                 # Absolute `from X import a, b`: classify each X.a candidate so
-                # `from shared import execution` (denied) and `from urllib import
-                # request` (forbidden) are caught, while `from shared.config
-                # import ConfigLoader` (attr of an allowed pkg) stays allowed.
+                # `from shared import execution` (denied), `from shared.config
+                # import ConfigLoader` (parent no longer allowed) and `from urllib
+                # import request` (forbidden) are caught, while `from
+                # shared.indicators import atr` (attr of an allowed pkg) stays
+                # allowed.
                 module = node.module or ""
                 for alias in node.names:
                     cand = f"{module}.{alias.name}" if module else alias.name
