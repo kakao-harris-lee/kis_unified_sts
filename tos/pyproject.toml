@@ -1,0 +1,50 @@
+# tos — Trading Operating System kernel: independent deployable unit (§5.1).
+#
+# This is the greenfield boundary defined by
+# docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md. It is a
+# SEPARATE distribution ("tos", src-layout) from the repo-root kis-unified-sts
+# package. During development it may be editable-installed into the monorepo
+# venv (`pip install -e ./tos`); its import surface is enforced by the
+# firewall (tools/tos_firewall_check.py + repo-root .importlinter).
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tos"
+version = "0.0.1"
+description = "Trading Operating System kernel (greenfield boundary; EV-L1, non-transmitting)"
+requires-python = ">=3.11"
+authors = [{ name = "Harris Lee" }]
+
+# Third-party deps are PINNED (§3.2 / §5.1 reproducibility) to the current
+# monorepo venv actuals so a run manifest can record an exact dependency set.
+# The set is the firewall §3.2 third-party allowlist (pyyaml imports as `yaml`).
+# Adding/changing a pin requires a PR editing the design doc §3.2 (§6.1).
+dependencies = [
+    "pydantic==2.12.5",
+    "numpy==2.4.0",
+    "pandas==2.3.3",
+    "pyyaml==6.0.3",
+]
+
+[project.optional-dependencies]
+# Test-only third parties from the §3.2 allowlist, pinned to venv actuals.
+test = [
+    "pytest==9.0.2",
+    "hypothesis==6.150.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tos"]
+
+# Isolate `pytest tos/tests` from the repo-root pytest config. Because this
+# file carries a [tool.pytest.ini_options] table, pytest resolves the rootdir
+# to tos/ when tos/tests is the target — so the repo-root tests/conftest.py
+# (which loads .env and scrubs credentials) is NOT an ancestor and never runs.
+# tos tests stay hermetic (§2.4: no .env, no external I/O). Running the repo
+# suite (`pytest tests/`) still resolves to the repo-root config, unaffected.
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]

@@ -125,6 +125,11 @@ dev = [
     "ruff>=0.1",
     "mypy>=1.7",
 
+    # tos import-firewall — layer ② (transitive forbidden-package defense).
+    # Drives `.importlinter` + the `tos-firewall` CI job. See
+    # docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md §3.3-②.
+    "import-linter>=2.0",
+
     # Type Stubs
     "types-PyYAML",
     "types-requests",

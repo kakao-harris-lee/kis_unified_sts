@@ -1,0 +1,35 @@
+# tos import-firewall — layer ② (transitive defense), design §3.3-②.
+#
+# The custom AST gate (tools/tos_firewall_check.py, layer ①) enforces the
+# default-deny allowlist on DIRECT imports. import-linter complements it by
+# proving the INTERNAL forbidden packages (§2.3) are not reached even
+# TRANSITIVELY — e.g. if an allowed commons package (shared.config, ...) were
+# to pull in shared.execution through its own import closure, this contract
+# fails. Indirect detection is ON by default and MUST stay on: do NOT add
+# `allow_indirect_imports` (§3.3-② — that flag would disable exactly the
+# transitive check this layer exists for).
+#
+# SoT for the forbidden set: design §2.3 / §3.3-②. Changes to it require a PR
+# editing the design doc, with a §6.1 revision-log line.
+
+[importlinter]
+root_packages =
+    tos
+    shared
+    services
+    cli
+
+[importlinter:contract:tos-operational-firewall]
+name = tos must not import operational-only packages (direct or transitive)
+type = forbidden
+source_modules =
+    tos
+forbidden_modules =
+    shared.execution
+    shared.kis
+    shared.streaming
+    shared.llm
+    shared.storage
+    shared.backtest
+    services
+    cli

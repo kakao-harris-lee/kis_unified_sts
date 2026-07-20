@@ -1,0 +1,57 @@
+# tos import-firewall — enforcement layer ③ (design §3.3-③).
+#
+# Runs the full firewall on EVERY pull request and every push to main, with NO
+# path gating: the checks are cheap and path-gating would leave an evasion gap
+# (a PR that edits both tos/ and the gate could skip enforcement). Steps mirror
+# the three enforcement layers:
+#   1. python tools/tos_firewall_check.py  — layer ① (default-deny AST gate)
+#   2. lint-imports                        — layer ② (transitive forbidden-pkg)
+#   3. pytest tos/tests                     — hermetic package tests (§2.4)
+#
+# NOTE: marking this job a *required* check is a GitHub branch-protection
+# setting and is NOT configured here — see the handoff report.
+name: tos-firewall
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tos-firewall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install minimal dependencies
+        # Deliberately minimal — the heavy runtime stack (talib/mlflow/...) is
+        # NOT needed:
+        #   * tos + its 4 pinned third parties + pytest/hypothesis, via the
+        #     tos package's own [test] extra.
+        #   * import-linter (+ grimp) for layer ②.
+        #   * the repo-root package installed with --no-deps so grimp can LOCATE
+        #     shared/services/cli (it analyses them statically via AST and never
+        #     executes them, so their runtime deps are unnecessary).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./tos[test]"
+          pip install import-linter
+          pip install -e . --no-deps
+
+      - name: Layer 1 — custom AST firewall (default-deny)
+        run: python tools/tos_firewall_check.py
+
+      - name: Layer 2 — import-linter (transitive forbidden-package defense)
+        run: lint-imports
+
+      - name: tos hermetic package tests
+        run: pytest tos/tests
