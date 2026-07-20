@@ -25,24 +25,28 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import date
-from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
 
 from shared.decision.context import MarketContext, ScheduledEvent
-from shared.execution.contract_spec import ContractSpec
+from shared.determinism.replay import (
+    DEFAULT_WARMUP_BARS,
+    build_prev_session_close,
+    build_session_index,
+    ensure_kst,
+)
 from shared.indicators.engine import (
     IndicatorSpec,
     OHLCVWindow,
     backtest_indicator_engine,
 )
+from shared.instruments.contract_spec import ContractSpec
 from shared.macro.base import MacroSnapshot
 
-KST = ZoneInfo("Asia/Seoul")
-
-# Number of leading bars reserved for warmup (ATR, VWAP, etc.)
-_WARMUP_BARS: int = 60
+# Number of leading bars reserved for warmup (ATR, VWAP, etc.). Sourced from the
+# determinism commons so replay and any other harness share one warmup baseline.
+_WARMUP_BARS: int = DEFAULT_WARMUP_BARS
 
 # ATR period
 _ATR_PERIOD: int = 14
@@ -197,22 +201,6 @@ class MarketContextReplay:
         self._atr_90th = float(np.nanpercentile(self._atr_series, 90))
 
     # ------------------------------------------------------------------
-    # Session helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _ensure_kst(ts: pd.Timestamp) -> pd.Timestamp:
-        """Make a Timestamp timezone-aware in KST."""
-        if ts.tzinfo is None:
-            return ts.tz_localize(KST)
-        return ts.tz_convert(KST)
-
-    @staticmethod
-    def _session_date(ts: pd.Timestamp) -> date:
-        """Return the trading session date (KST date of the bar)."""
-        return ts.date()
-
-    # ------------------------------------------------------------------
     # Iterator
     # ------------------------------------------------------------------
 
@@ -249,40 +237,20 @@ class MarketContextReplay:
         atr_arr = self._atr_series  # type: ignore[assignment]
         atr_90th = self._atr_90th
 
-        # Build session-boundary index: for each bar, record its session date
-        # and the index of the first bar in that session.
-        session_dates: list[date] = []
-        session_start_idx: list[int] = []
+        # Build session-boundary index: for each bar, its session date and the
+        # index of the first bar in that session (deterministic replay primitive).
+        session_index = build_session_index(ts_col)
+        session_dates = session_index.session_dates
+        session_start_idx = session_index.session_start_idx
 
-        current_date: date | None = None
-        current_start: int = 0
-        for i in range(n):
-            ts_raw = ts_col.iloc[i]
-            ts_kst = self._ensure_kst(pd.Timestamp(ts_raw))
-            d = self._session_date(ts_kst)
-            if d != current_date:
-                current_date = d
-                current_start = i
-            session_dates.append(d)
-            session_start_idx.append(current_start)
-
-        # Build prev_close lookup: for each session date, what is the last
-        # close of the previous session?  Use None if there is no prev session.
-        date_to_last_close: dict[date, float] = {}
-        last_d: date | None = None
-        last_close: float | None = None
-        for i in range(n):
-            d = session_dates[i]
-            if last_d is not None and d != last_d:
-                # Record the last close of last_d
-                date_to_last_close[d] = last_close  # type: ignore[assignment]
-            last_d = d
-            last_close = closes[i]
+        # Build prev_close lookup: for each session date, the last close of the
+        # previous session (absent when there is no prior session).
+        date_to_last_close = build_prev_session_close(session_dates, closes)
 
         # Iterate from warmup boundary
         for i in range(_WARMUP_BARS, n):
             ts_raw = ts_col.iloc[i]
-            ts_kst = self._ensure_kst(pd.Timestamp(ts_raw))
+            ts_kst = ensure_kst(pd.Timestamp(ts_raw))
 
             d = session_dates[i]
             sess_start = session_start_idx[i]

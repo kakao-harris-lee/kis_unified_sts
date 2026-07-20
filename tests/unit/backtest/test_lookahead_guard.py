@@ -1,50 +1,28 @@
-import numpy as np
-import pytest
+"""Backward-compat test for the shared.backtest.lookahead_guard re-export.
+
+The implementation moved to shared.determinism (2026-07-20 import-firewall
+design §3.4); the historical import path must keep resolving to the same
+objects so existing backtest consumers are unaffected. Behavioural coverage
+lives in tests/unit/determinism/test_lookahead_guard.py.
+"""
 
 from shared.backtest.lookahead_guard import LookaheadGuard, LookaheadGuardMode
+from shared.determinism import (
+    LookaheadGuard as CanonicalGuard,
+)
+from shared.determinism import (
+    LookaheadGuardMode as CanonicalMode,
+)
 
 
-@pytest.mark.parametrize("mode,should_raise", [
-    (LookaheadGuardMode.OFF, False),
-    (LookaheadGuardMode.WARN, False),
-    (LookaheadGuardMode.ASSERT, True),
-])
-def test_lookahead_guard_basic(mode, should_raise, caplog):
-    guard = LookaheadGuard(mode=mode)
-    arr = np.array([1, 2, 3, 4, 5])
-    timestamps = [10, 20, 30, 40, 50]
-    context_timestamp = 30
-    # arr[3], arr[4] (timestamps 40, 50) are future
-    if should_raise:
-        with pytest.raises(AssertionError):
-            guard.check(arr, timestamps, context_timestamp, "test")
-    else:
-        guard.check(arr, timestamps, context_timestamp, "test")
-        if mode == LookaheadGuardMode.WARN:
-            assert any("lookahead" in r.message.lower() for r in caplog.records)
+def test_reexport_is_canonical_object():
+    """The backtest path re-exports the exact commons classes."""
+    assert LookaheadGuard is CanonicalGuard
+    assert LookaheadGuardMode is CanonicalMode
 
 
-def test_lookahead_guard_no_future():
+def test_reexport_still_functional():
+    """A guard built via the legacy path still enforces look-ahead safety."""
     guard = LookaheadGuard(mode=LookaheadGuardMode.ASSERT)
-    arr = np.array([1, 2, 3])
-    timestamps = [10, 20, 30]
-    context_timestamp = 30
-    # No future values
-    guard.check(arr, timestamps, context_timestamp, "test")
-
-
-def test_lookahead_guard_empty():
-    guard = LookaheadGuard(mode=LookaheadGuardMode.ASSERT)
-    arr = np.array([])
-    timestamps = []
-    context_timestamp = 10
-    guard.check(arr, timestamps, context_timestamp, "test")
-
-
-def test_lookahead_guard_warn_logs(caplog):
-    guard = LookaheadGuard(mode=LookaheadGuardMode.WARN)
-    arr = np.array([1, 2, 3, 4])
-    timestamps = [1, 2, 3, 4]
-    context_timestamp = 2
-    guard.check(arr, timestamps, context_timestamp, "warn-test")
-    assert any("lookahead" in r.message.lower() for r in caplog.records)
+    # timestamps all <= ctx -> no raise
+    guard.check([1, 2, 3], [10, 20, 30], 30, "compat")
