@@ -1,6 +1,6 @@
 # Plans Index
 
-Last updated: 2026-07-15 (tos-spec Part 3 ADR decision map added).
+Last updated: 2026-07-20 (tos-spec reuse analysis & refactor-vs-greenfield verdict added).
 
 This index separates plans that still affect operational decisions from completed
 implementation records. For the current runtime snapshot, start with
@@ -12,6 +12,8 @@ the scattered plan docs for "where is each asset headed".
 
 | Plan | Status |
 |---|---|
+| [2026-07-20-tos-boundary-and-import-firewall-design.md](2026-07-20-tos-boundary-and-import-firewall-design.md) | **설계 문서 #1 — tos/ 경계 & import-firewall 계약 (v2, 비준 대상)** — IMPLEMENTATION-PLAN-002 §2 그린필드 경계의 프로젝트 측 확정 입력물. §1 관계 모델(격리 동거→콘텐츠 이주→역전; 운영↔tos 양방향 import 금지, dual-use는 커먼즈 승격), §2 경계 3분류, §3 import 정의(직접=default-deny/내부 금지=전이 포함) + 허용목록 v2 + 3층 강제(커스텀 AST 게이트·import-linter 전이 검출·required CI check) + §3.4 `shared/determinism` 추출 선행 작업, §4 SAFE-045 계층 방어(자격증명·라우트 부재 1차, 잔여 리스크 정직 기록), §5 독립 배포 단위+VER §2.3/§3/§9 정렬 run manifest 7항목, §6 개정 로그+repo 분리 트리거, §7 비준 체크리스트 8항목. v1은 독립 비평 리뷰 REJECT(CRITICAL 2 실증: backtest 허용 모듈의 `shared.execution`·MLflow 전이 import) → v2 전 findings 반영. **2026-07-20 운영자 비준(v2) — 효력 발생.** Phase 1(EV-L1 비전송) 코드/테스트 착수 승인. §6.3 선행 작업 2건 완료(2026-07-20): `shared/determinism` 신설(+`ContractSpec`→`shared/instruments`), 3층 게이트(`tools/tos_firewall_check.py`·`.importlinter`·CI `tos-firewall`)+최소 `tos/` 스켈레톤. 다음: 설계 문서 #2 Decision Context Capsule(ADR-002-018). |
+| [2026-07-20-tos-spec-reuse-analysis.md](2026-07-20-tos-spec-reuse-analysis.md) | **tos-spec 재사용성 분석 & 리팩토링 vs 그린필드 판정** — 47개 spec 컴포넌트 × 기존 152k LOC 재사용 매트릭스(9 family). 정량: spec 표면의 ~12~18%(effort-weighted)만 기존 코드가 커버, safety core/evidence/governance 기여 ≈0%. 소스 확인 5건(S1 플래그 live-게이팅=SAFE-045 비적합, S2 원장 hash-chain 부재, S3 consensus substrate 전무, S4 전략 순수성 convention-only, S5 executor 필드 invent). **판정: 동일 repo 그린필드 `tos/` + CI import-firewall(전략 B)**, in-place 리팩토링 기각, 별도 repo는 live gate 시 재검토. dual-use 리팩토링 6건/낭비 리팩토링 6건 식별. 설계 진입: ① tos/ 경계 계약(비준 대상) ② Decision Context Capsule ③ EV-L1 모델+하네스 ④ Evidence Store. **설계 문서 #1 2026-07-20 비준 완료.** |
 | [2026-07-15-tos-spec-part3-adr-decision-map.md](2026-07-15-tos-spec-part3-adr-decision-map.md) | **tos-spec Part 3 ADR 결정 지도 (분해 제안서)** — RFC-008~011의 §14 Open Questions **25개를 15개 후보 ADR로 통합 매핑**(재현성·독립리뷰·provenance·외부값 staleness 등 절반이 RFC 교차 결정이라 per-RFC 번호 부적합). 검증 사실: ADR은 `ADR-002`(RFC-002 분해) 30개뿐, Part 2·3 둘 다 자체 ADR 0개 → "Part 2처럼"은 ADR 부재를 의미. Part 3만 25개 미해결 결정(Part 2는 0)이라 ADR 필요 신호. **권장안:** 통합 중립 `ADR-DEV-NNN` 시리즈 · T1 기반 4개(D1 DSL강제/D2 재현성/D4 provenance↔admission/D5 독립리뷰) 먼저 착수·각 독립 EV-L0 · D9는 D1 선행. 총 ~12–15 ADR = ~12–15 EV-L0. **go/no-go 대기 (ADR 미착수).** |
 | [2026-07-08-new-architecture-gap-analysis.md](2026-07-08-new-architecture-gap-analysis.md) | **신규 아키텍처(TA-Lib+vectorbt+선언형 YAML) Gap Analysis** — 지시서 [docs/2026-07-08_new_architencture.md](../2026-07-08_new_architencture.md) 대비 컴포넌트별 현황: TA-Lib 엔진·builder_v1·실행계층 seam은 이미 존재(채택 미완), vectorbt는 미착수, 리스크는 2세계 이중화. 6개 병렬 코드 조사 종합. |
 | [2026-07-08-new-architecture-refactoring-plan.md](2026-07-08-new-architecture-refactoring-plan.md) | **신규 아키텍처 단계별 리팩토링 계획** — P0 정리 → P1 지표 TA-Lib 위임 완성 → P2 builder_v1 선언형 승격 → P3 vectorbt 백테스트(WS-A4 승격) → P4 Risk Engine 통합 → P5 Futures Context/Hedge 배선 → P6 실행계층 마감. 각 Phase parity 게이트 필수. 기존 indicator-engine 로드맵(WS-A4)과 정합. |
