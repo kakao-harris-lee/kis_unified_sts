@@ -9,7 +9,10 @@ Contents (design section -> ERI-EV mapping):
 
 * §4.2 : ``classify_record_pair`` — same-id/different-bytes conflict + idempotency
   (ERI-EV-004 core, §12 central predicate).
-* §4.3 : ``compare_order`` — causal ordering priority + ambiguity (ERI-EV-006).
+* §4.3 : ``Ordering`` / ``OrderingEvent`` / ``compare_order`` — causal ordering
+  priority + ambiguity (ERI-EV-006). **Promoted** to the ``tos.ordering`` core
+  module (time design §0.4b/§5); re-exported here as a thin shim so existing
+  ``from tos.evidence.predicates import ...`` paths and ERI-EV-006 stay unchanged.
 * §5.3 : ``causal_chain_complete`` — causal closure / gap-on-omission (ERI-EV-001).
 * §2.7 : ``gap_transition_allowed`` / ``gap_chain_valid`` /
   ``gap_chain_current_status`` / ``gap_blocks_new_risk`` — gap state machine
@@ -50,6 +53,13 @@ from tos.evidence.gap import GAP_STATUS_ORDER, EvidenceGapRecord, GapStatus
 from tos.evidence.policy import EvidenceIntegrityPolicy
 from tos.evidence.receipt import EvidenceCommitReceipt
 from tos.evidence.replay import ReplayBaseline, ReplayCapsule
+
+# §4.3 ordering primitive — PROMOTED to the tos.ordering core module (time design
+# §0.4b/§5). Re-exported here (explicit ``as`` re-export) so the shipped import
+# paths and the ERI-EV-006 suite are unchanged; the logic lives in tos.ordering.
+from tos.ordering import Ordering as Ordering
+from tos.ordering import OrderingEvent as OrderingEvent
+from tos.ordering import compare_order as compare_order
 
 # ===========================================================================
 # §4.2 — same-id/different-bytes conflict + idempotency (ERI-EV-004, §12)
@@ -128,100 +138,10 @@ def is_critical_conflict(a: SafetyEvidenceEnvelope, b: SafetyEvidenceEnvelope) -
 # ===========================================================================
 # §4.3 — causal ordering priority + ambiguity (ERI-EV-006)
 # ===========================================================================
-
-
-class Ordering(StrEnum):
-    """A pairwise causal-ordering result (design §4.3, ADR §11)."""
-
-    BEFORE = "BEFORE"
-    AFTER = "AFTER"
-    AMBIGUOUS = "AMBIGUOUS"
-
-
-class OrderingEvent(FrozenModel):
-    """Ordering coordinates for one event (design §4.3, ADR §11 line 306-315).
-
-    Carries the §11 ordering bases in priority order. Cross-continuity
-    ``source_native_sequence`` / ``local_monotonic_value`` are never subtracted
-    (compared only within the same ``source_continuity_id``); a bare wall clock is
-    absent by construction (only a trustworthy-time *interval* ``time_lo``/
-    ``time_hi`` participates).
-    """
-
-    event_id: str | None = None
-    quorum_commit_index: int | None = None
-    egress_journal_sequence: int | None = None
-    source_continuity_id: str | None = None
-    source_native_sequence: int | None = None
-    local_monotonic_value: int | None = None
-    causal_predecessor_ids: tuple[str, ...] = ()
-    time_lo: int | None = None
-    time_hi: int | None = None
-
-
-def _cmp(a: int, b: int) -> Ordering | None:
-    """Return BEFORE/AFTER for a strict comparison, or ``None`` when equal."""
-    if a < b:
-        return Ordering.BEFORE
-    if a > b:
-        return Ordering.AFTER
-    return None
-
-
-def compare_order(a: OrderingEvent, b: OrderingEvent) -> Ordering:
-    """Order two events by the §11 priority, else AMBIGUOUS (design §4.3).
-
-    Priority (ADR §11 line 306-311): quorum commit index -> egress journal
-    sequence -> source-native sequence (same continuity only) -> component
-    continuity + local monotonic (same continuity only) -> typed causal links ->
-    trustworthy-time interval (disjoint only). A bare cross-host wall clock never
-    orders (ADR §11 line 304); overlapping time uncertainty is **ambiguous, not
-    sorted** (ADR §11 line 313). Cross-continuity monotonic values are never
-    subtracted (ADR §11 line 313).
-
-    Args:
-        a: The first event.
-        b: The second event.
-
-    Returns:
-        ``BEFORE`` (a precedes b), ``AFTER`` (a follows b), or ``AMBIGUOUS``.
-    """
-    if a.quorum_commit_index is not None and b.quorum_commit_index is not None:
-        result = _cmp(a.quorum_commit_index, b.quorum_commit_index)
-        if result is not None:
-            return result
-    if a.egress_journal_sequence is not None and b.egress_journal_sequence is not None:
-        result = _cmp(a.egress_journal_sequence, b.egress_journal_sequence)
-        if result is not None:
-            return result
-    same_continuity = (
-        a.source_continuity_id is not None
-        and a.source_continuity_id == b.source_continuity_id
-    )
-    if same_continuity:
-        if (
-            a.source_native_sequence is not None
-            and b.source_native_sequence is not None
-        ):
-            result = _cmp(a.source_native_sequence, b.source_native_sequence)
-            if result is not None:
-                return result
-        if a.local_monotonic_value is not None and b.local_monotonic_value is not None:
-            result = _cmp(a.local_monotonic_value, b.local_monotonic_value)
-            if result is not None:
-                return result
-    # Typed causal links (immutable id references).
-    if b.event_id is not None and b.event_id in a.causal_predecessor_ids:
-        return Ordering.AFTER
-    if a.event_id is not None and a.event_id in b.causal_predecessor_ids:
-        return Ordering.BEFORE
-    # Trustworthy-time interval: only disjoint intervals order; overlap => ambiguous.
-    if None not in (a.time_lo, a.time_hi, b.time_lo, b.time_hi):
-        if a.time_hi < b.time_lo:  # type: ignore[operator]
-            return Ordering.BEFORE
-        if b.time_hi < a.time_lo:  # type: ignore[operator]
-            return Ordering.AFTER
-    return Ordering.AMBIGUOUS
+#
+# ``Ordering`` / ``OrderingEvent`` / ``compare_order`` were PROMOTED to the
+# ``tos.ordering`` core module (time design §0.4b/§5) and are re-exported at the
+# top of this module. The definitions live in ``tos.ordering._ordering``.
 
 
 # ===========================================================================
