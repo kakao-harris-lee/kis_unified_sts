@@ -29,8 +29,8 @@ from pydantic import model_validator
 from tos.capsule._base import (
     ArtifactStatus,
     CapsuleIntegrityError,
-    DigestBoundArtifact,
     FrozenModel,
+    IdDerivedArtifact,
     PolicyRef,
     SnapshotAuthority,
 )
@@ -93,7 +93,7 @@ class CorroborationPath(FrozenModel):
     tags: tuple[str, ...] = ()
 
 
-class CriticalInputSnapshot(DigestBoundArtifact):
+class CriticalInputSnapshot(IdDerivedArtifact):
     """Immutable Critical Input Snapshot (design §2.6).
 
     A content-addressed artifact: ``snapshot_id = f(canonical_digest)`` and

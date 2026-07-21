@@ -28,8 +28,8 @@ from typing import ClassVar
 
 from tos.capsule._base import (
     CapsuleAuthority,
-    DigestBoundArtifact,
     FrozenModel,
+    IdDerivedArtifact,
     PolicyRef,
 )
 
@@ -167,7 +167,7 @@ class Bindings(FrozenModel):
     egress_request_digest: str | None = None
 
 
-class DecisionContextCapsule(DigestBoundArtifact):
+class DecisionContextCapsule(IdDerivedArtifact):
     """Immutable Decision Context Capsule (design §2.7).
 
     Content-addressed: ``capsule_id = f(canonical_digest)`` and the digest covers
