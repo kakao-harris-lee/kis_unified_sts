@@ -37,9 +37,9 @@ Pure module: ``pydantic`` + stdlib only; no ``shared.*`` (design §0.3).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from enum import StrEnum
 
-from tos.canonical import FrozenModel
+from tos.canonical import FrozenModel, RecordPairKind
+from tos.canonical import classify_record_pair as _classify_record_pair_core
 from tos.evidence.elements import (
     EdgeType,
     PreservedProperty,
@@ -66,19 +66,12 @@ from tos.ordering import compare_order as compare_order
 # ===========================================================================
 
 
-class RecordPairKind(StrEnum):
-    """Classification of two envelopes sharing identity (design §4.2, ADR §12)."""
-
-    #: Same record id (or idempotency id) + same canonical bytes — a duplicate.
-    IDEMPOTENT_DUP = "IDEMPOTENT_DUP"
-    #: Same record id + different canonical bytes — a Critical integrity conflict.
-    CRITICAL_CONFLICT = "CRITICAL_CONFLICT"
-    #: Same idempotency id + different bytes — a divergent logical emission.
-    DIVERGENT_EMISSION = "DIVERGENT_EMISSION"
-    #: No shared identity constraint is violated.
-    DISTINCT = "DISTINCT"
-    #: At least one record is pre-issuance (null digest) — not a ledger citizen.
-    NOT_COMPARABLE = "NOT_COMPARABLE"
+# ``RecordPairKind`` + the ``(identity, digest)`` classifier were PROMOTED to the
+# ``tos.canonical`` core (RCL design §0.4b/§3.1c) so ``tos.evidence`` and
+# ``tos.rcl`` share one classifier without importing each other. ``RecordPairKind``
+# is re-exported above; ``classify_record_pair`` keeps its envelope-taking
+# signature as a thin shim delegating to the core scalar classifier, so existing
+# evidence paths + ERI-EV-004 stay unchanged (ordering PROMOTE shim precedent).
 
 
 def classify_record_pair(
@@ -96,7 +89,7 @@ def classify_record_pair(
     Only ISSUED ledger citizens are classified: a record with a null
     ``canonical_digest`` is pre-issuance (a DRAFT, not a ledger member), so any
     pair with a null digest is ``NOT_COMPARABLE`` rather than a false conflict
-    (MINOR-1).
+    (MINOR-1). This is a thin shim over :func:`tos.canonical.classify_record_pair`.
 
     Args:
         a: The first envelope.
@@ -105,29 +98,14 @@ def classify_record_pair(
     Returns:
         The :class:`RecordPairKind`.
     """
-    if a.canonical_digest is None or b.canonical_digest is None:
-        return RecordPairKind.NOT_COMPARABLE
-    same_bytes = a.canonical_digest == b.canonical_digest
-    same_record = (
-        a.evidence_record_id is not None
-        and a.evidence_record_id == b.evidence_record_id
+    return _classify_record_pair_core(
+        a.evidence_record_id,
+        a.canonical_digest,
+        b.evidence_record_id,
+        b.canonical_digest,
+        a_idempotency_id=a.idempotency_id,
+        b_idempotency_id=b.idempotency_id,
     )
-    if same_record:
-        # Same record id: identical bytes is a duplicate, differing bytes is the
-        # §12 Critical conflict (independent of idempotency id).
-        return (
-            RecordPairKind.IDEMPOTENT_DUP
-            if same_bytes
-            else RecordPairKind.CRITICAL_CONFLICT
-        )
-    same_idem = a.idempotency_id is not None and a.idempotency_id == b.idempotency_id
-    if same_idem:
-        return (
-            RecordPairKind.IDEMPOTENT_DUP
-            if same_bytes
-            else RecordPairKind.DIVERGENT_EMISSION
-        )
-    return RecordPairKind.DISTINCT
 
 
 def is_critical_conflict(a: SafetyEvidenceEnvelope, b: SafetyEvidenceEnvelope) -> bool:

@@ -33,6 +33,7 @@ from tos.canonical.canonicalization import (
     get_scheme,
     register_scheme,
 )
+from tos.canonical.record_pair import RecordPairKind, classify_record_pair
 
 __all__ = [
     # base substrate
@@ -49,4 +50,7 @@ __all__ = [
     "EVL1ProvisionalCanonicalizer",
     "get_scheme",
     "register_scheme",
+    # record-pair classifier (promoted; RCL design §0.4b/§3.1c)
+    "RecordPairKind",
+    "classify_record_pair",
 ]
