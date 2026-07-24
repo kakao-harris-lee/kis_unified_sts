@@ -1,4 +1,4 @@
-# 설계 문서 #7 — Live Authorization + Limit Governance + Re-arm 계약 (2026-07-24, v1.1)
+# 설계 문서 #7 — Live Authorization + Limit Governance + Re-arm 계약 (2026-07-24, v1.2)
 
 > **문서 번호 규약**: #1 경계·import-firewall, #2 Decision Context Capsule, #4 Evidence
 > Store, #5 Risk Capacity Ledger(RCL), #6 Safety Authority가 이미 존재한다(#3은 folded).
@@ -64,7 +64,9 @@
 > propagation gap — §13/§14.1 item 3/REARM-AC-005에 strict conditional exception 추가;
 > ARCHITECTURE-GATE-STATUS §3.16). 본 문서는 v0.3 텍스트를 규범 원천으로 삼는다.
 >
-> **비준 기록**: **2026-07-24 운영자 비준(v1.1) — 효력 발생.** §10.2 판단 지점 3건 승인:
+> **비준 기록**: **2026-07-24 운영자 비준(v1.1) — 효력 발생.** *(v1.2 = §6.4 item 4 게이트 필드명
+> 오기 에라타만 — `automatic_rearm_denied`→`live_rearm_denied`; 의미 변경 아님(오기 필드는 무조건
+> True라 문면대로면 전 re-arm 차단되는 과잉제한), 비준 효력 유지; §10.1 v1.2.)* §10.2 판단 지점 3건 승인:
 > **`tos.liveauth → tos.authority` import**(두 번째 sibling edge) · **`tos.time` 직접 import**(diamond
 > acyclic) · **SAFE-053 variant = liveauth-local 14항 재표현 + drift 회귀 테스트**(compose 폐기;
 > RearmVerdict 확장은 §9.1 의존성 관찰로만). 효력: `tos/src/tos/liveauth/` Phase 1(EV-L1) 순수·비전송
@@ -917,8 +919,14 @@ ReArmOutcome`: §12 re-arm workflow의 EV-L1-decidable 결합. `admissible=True`
    == True`(**ADR-002-003 §17.3 line 678** "Re-arm SHALL issue new capabilities under the current epoch.
    Previously issued live capabilities are not revived"; **ADR-002-007 §1 line 42** "Re-arm always issues a
    new Live Authorization and new capabilities").
-4. **no partition auto-rearm**: `partition_authority_verdict(partition_control_plane_verifiable).automatic_
-   rearm_denied` 하에서 control-plane unverifiable(None/False)이면 admissible 불가(authority REUSE — §6.6).
+4. **no partition auto-rearm**: `partition_authority_verdict(partition_control_plane_verifiable).live_
+   rearm_denied`가 **False**(= control-plane verifiable이 양성 True)일 때만 admissible 가능; unverifiable
+   (None/False) ⇒ `live_rearm_denied=True` ⇒ admissible 불가(authority REUSE — §6.6).
+   **[v1.2 에라타]** v1.1은 본 항의 게이트 필드를 `automatic_rearm_denied`로 오기했다 — 그 필드는
+   authority 구현에서 **무조건 True**(quorum 복구≠auto-rearm의 문서화, authority `predicates.py` line 740)
+   이므로 문면대로 게이트하면 admissible이 **항상 False**가 되어 전 re-arm이 차단된다(fail-open 아닌
+   과잉제한이나 계약 오기). 올바른 게이트는 **`live_rearm_denied`**(verifiability 판정: None/False ⇒
+   denied — fail-closed 유지). 구현이 올바른 필드를 사용·공개했고 독립 코드 리뷰가 확정했다(§10.1 v1.2).
 
 `admissible=False`면 non-live 유지. **`ReArmOutcome.authority_effect` = all-false**(§4.1) — admissible=True도
 **live authority를 부여하지 않는다**(§11 readiness≠authority; re-arm은 **ADR-002-007 §1(line 42)**대로 새 Live
@@ -1202,7 +1210,18 @@ derandomize, append-only); (6) **소비 설정 아티팩트 digest**(주입 auth
   017/018 scope-level flag 모델링과의 비대칭 근거) 추가. **[Gap-2]** §6.5에 **narrowing-to-∅ = full
   de-authorization**(§5.3 일관) 주석 추가. §9.1에 미래 #6 `RearmVerdict.all_prerequisites` 확장을 **의존성
   관찰(결정 아님)**로 기록. 아키텍처 핵심 결정(패키지·import 방향·PROMOTE-0·REARM-EV 0건·id⊥digest)은 v1.0 그대로.
-  비준 대기.
+  2026-07-24 운영자 비준(판단 지점 3건 승인).
+- 2026-07-24: **v1.2 — §6.4 item 4 게이트 필드명 오기 에라타(의미 변경 아님, 비준 효력 유지).** 구현
+  (`tos/src/tos/liveauth/predicates.py`)과 독립 코드 리뷰(ACCEPT-WITH-MINOR, CRITICAL 0/MAJOR 0/fail-open
+  0 — rcl·authority에 이어 **3연속 클린**)가 발견: v1.1 §6.4 item 4가 partition 게이트 필드를
+  `automatic_rearm_denied`로 오기 — 그 필드는 authority 구현에서 **무조건 True**(quorum 복구≠auto-rearm
+  문서화)라 문면대로 게이트하면 admissible이 항상 False(전 re-arm 차단 — fail-open 아닌 과잉제한이나 계약
+  오기). 올바른 게이트 = **`live_rearm_denied`**(verifiability: None/False⇒denied, fail-closed 유지).
+  구현이 올바른 필드를 사용·공개(docstring), 리뷰가 확정 → 본 에라타로 계약-코드 정합. §1 표(-003 행)·
+  §6.4 no-auto-rearm 절의 `automatic_rearm_denied=True` 언급은 SA-INV-013 문맥의 **올바른 사용**이라
+  불변. 코드 리뷰 부수 판정: 공개 편차 2건(epoch을 authorization 자신에서 읽기 — 결합-seam 봉쇄 강화 /
+  frozenset 정렬 serializer — digest 결정론) **둘 다 "의도 충실+더 강함"**; MINOR-2(quorum `count>=2`
+  리터럴)는 ADR §13 규범 상수로 무조치. 그 외 조항·비준 효력(2026-07-24, v1.1) 불변.
 
 ### 10.2 비준 체크리스트 (운영자 · 독립 리뷰어 확인 사항)
 
