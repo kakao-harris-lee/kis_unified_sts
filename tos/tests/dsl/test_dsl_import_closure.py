@@ -23,7 +23,9 @@ of DCE-EV-003 (no ambient authority) and EXV-INV-001 (captured, not called):
      never socket/ssl/http/urllib). (The sibling capsule/evidence/time closure tests
      likewise do not assert network-stdlib absence.)
   5. ``tos.evidence`` is **absent** — the DSL is deliberately kept free of the
-     evidence package (``tos.dsl._base`` defines ``IndependentIdArtifact`` DSL-locally
+     evidence package (``tos.dsl._base`` re-exports ``IndependentIdArtifact`` from
+     ``tos.canonical`` — PROMOTEd by design #6 §0.4c; ``tos.canonical`` imports no
+     ``tos.evidence``, so the evidence-absence guarantee is preserved
      precisely for this; design §firewall). NB: the sibling ``tos.dsl.evidence`` is a
      different module and is NOT flagged.
   6. ``tos.capsule`` **is present** — the Decision Context Capsule is a legitimate

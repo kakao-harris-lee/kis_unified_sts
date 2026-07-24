@@ -10,18 +10,25 @@ the model realization of "an artifact is immutable" (ADR-002-018 §12 / design #
 §4.1): no field is mutable in place, so any change forces a new object -> new
 digest (design §4.1/§4.2).
 
-This module provides two layers (design #4 §3.1 (b) — split digest verification
-from id derivation):
+This module provides the two id-strategy subclasses of ``DigestBoundArtifact``
+(design #4 §3.1 (b) — split digest verification from id derivation), side by side
+so the whole id-binding substrate lives in one core home:
 
 * :class:`DigestBoundArtifact` — the **base**: enforces
   ``canonical_digest == H_ver(canonicalize(covered))`` and required-covered
-  completeness. It does **not** derive an id. ``tos.evidence`` artifacts inherit
-  this directly because evidence identity is an INDEPENDENT injected field, not
-  ``f(digest)`` (design #4 §2.1/§3.1 — so §12 same-id/different-bytes conflict
-  remains representable and detectable).
-* :class:`IdDerivedArtifact` — the **subclass**: additionally enforces
-  ``id = derive_id(prefix, digest)``. ``tos.capsule`` capsule/snapshot inherit
-  this because they are immutable content-addressed artifacts (design #2 §4.1).
+  completeness. It does **not** derive an id.
+* :class:`IdDerivedArtifact` — the **content-addressed** subclass: additionally
+  enforces ``id = derive_id(prefix, digest)``. ``tos.capsule`` capsule/snapshot
+  inherit this because they are immutable content-addressed artifacts (design #2
+  §4.1).
+* :class:`IndependentIdArtifact` — the **id-independent** subclass: the id is an
+  INDEPENDENT injected field, not ``f(digest)``, so a same-id/different-bytes
+  conflict stays representable and detectable (``classify_record_pair``
+  CRITICAL_CONFLICT — design #4 §2.1/§3.1). ``tos.evidence`` inherits
+  ``DigestBoundArtifact`` directly for the same reason; ``tos.rcl``, ``tos.dsl``,
+  and ``tos.authority`` inherit this promoted base (design #6 §0.4c PROMOTE —
+  ``tos.rcl._base`` / ``tos.dsl._base`` re-export it as thin shims, no sibling
+  import edge; the ordering / canonicalization / classify PROMOTE precedent).
 
 * :class:`ArtifactStatus` — lifecycle marker (excluded from the digest, §3.2).
 * :class:`ArtifactIntegrityError` — construction-time integrity violation
@@ -316,3 +323,40 @@ class IdDerivedArtifact(DigestBoundArtifact):
         issued_kwargs["status"] = status
         issued_kwargs["canonicalization_version"] = scheme.version
         return cls(**issued_kwargs)
+
+
+class IndependentIdArtifact(DigestBoundArtifact):
+    """Digest-bound artifact with an INDEPENDENT (non-derived) id (design #4 §3.1).
+
+    The symmetric counterpart of :class:`IdDerivedArtifact`: it reuses the
+    ``canonical_digest == H_ver(canonicalize(covered))`` verification and the
+    required-covered completeness of :class:`DigestBoundArtifact`, but does **not**
+    derive its id from the digest. The subclass names its independent id field via
+    ``_ID_FIELD``; once issued (non-``DRAFT``) that id must be concrete (non-null,
+    not the ``"TBD"`` template placeholder). Keeping identity orthogonal to the
+    digest is what lets an append-only ledger represent and detect a "duplicate
+    identity with different content" conflict (``classify_record_pair`` =>
+    ``CRITICAL_CONFLICT``) — a fact ``id = f(digest)`` would make vacuous
+    (design #4 §2.1/§3.1; ADR-002-012 §9 line 270).
+
+    Promoted to ``tos.canonical`` (design #6 §0.4c) so ``tos.rcl``, ``tos.dsl``,
+    and ``tos.authority`` share one id-independent base beside
+    :class:`IdDerivedArtifact`; ``tos.rcl._base`` and ``tos.dsl._base`` re-export it
+    as thin shims (no new sibling import edge — the ordering / canonicalization /
+    classify PROMOTE precedent).
+    """
+
+    _ID_FIELD: ClassVar[str]
+
+    @model_validator(mode="after")
+    def _require_independent_id_when_issued(self) -> IndependentIdArtifact:
+        """An issued artifact needs a concrete, independent id (design #4 §3.1)."""
+        if self.status == ArtifactStatus.DRAFT:
+            return self
+        artifact_id = getattr(self, self._ID_FIELD)
+        if artifact_id is None or artifact_id == "TBD":
+            raise ArtifactIntegrityError(
+                f"issued artifact requires a concrete {self._ID_FIELD} "
+                "(independent identity, not derived from digest) — canonical §3.1"
+            )
+        return self

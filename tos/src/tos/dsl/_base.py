@@ -5,6 +5,16 @@ The generic digest-binding substrate (``FrozenModel``, ``DigestBoundArtifact``,
 is reused verbatim from :mod:`tos.canonical` (design §0 REUSE, "재정의 금지"). This
 module adds only the DSL-local pieces:
 
+* :class:`IndependentIdArtifact` — a ``DigestBoundArtifact`` whose id is an
+  **independent** injected field, ``id != f(digest)`` (design §2.3/§2.4). **Promoted
+  to ``tos.canonical`` (design #6 §0.4c) beside ``IdDerivedArtifact``** so
+  ``tos.rcl``, ``tos.dsl``, and ``tos.authority`` share one id-independent base;
+  this module now re-exports it as a thin shim (no new sibling edge — the ordering /
+  canonicalization / classify PROMOTE precedent), so
+  ``from tos.dsl._base import IndependentIdArtifact`` paths are unchanged and the
+  ``tos.dsl`` closure stays free of ``tos.evidence``. The DSL-local copy that this
+  shim replaces existed only because no core home was available in the parallel DSL
+  track (design #6 §0.4c/§9.1 M3); it is now unified.
 * :class:`AllFalseAuthority` — the authority block every DSL artifact carries,
   mirroring ``PROPOSAL-APPROVAL-REQUEST-template.yaml`` lines 72-82 (all ten flags
   forced ``false``). It is the pure-model realization of RFC-008 §8 ("candidate
@@ -24,8 +34,6 @@ network stdlib, no ``shared.*`` operational packages, no ``numpy``/``pandas``.
 
 from __future__ import annotations
 
-from typing import ClassVar
-
 from pydantic import model_validator
 
 from tos.canonical import (
@@ -34,6 +42,7 @@ from tos.canonical import (
     DigestBoundArtifact,
     FrozenModel,
     IdDerivedArtifact,
+    IndependentIdArtifact,
     derive_id,
 )
 
@@ -48,35 +57,6 @@ __all__ = [
     "IndependentIdArtifact",
     "derive_id",
 ]
-
-
-class IndependentIdArtifact(DigestBoundArtifact):
-    """Digest-bound artifact with an INDEPENDENT (non-derived) id (design §2.3/§2.4).
-
-    Reuses the digest verification + required-covered completeness of
-    :class:`~tos.canonical.DigestBoundArtifact`, but — like the evidence records of
-    ``tos.evidence`` — its id is an independent injected field, **not**
-    ``f(digest)`` (design §2.3: Outcome / enforcement-evidence records are ledger
-    citizens, not content-addressed authored artifacts). The subclass names its id
-    field via ``_ID_FIELD``; once issued (non-DRAFT) that id must be concrete
-    (non-null, not the ``"TBD"`` placeholder). Defined DSL-locally to keep the
-    ``tos.dsl`` import closure free of ``tos.evidence`` (design §firewall).
-    """
-
-    _ID_FIELD: ClassVar[str]
-
-    @model_validator(mode="after")
-    def _require_independent_id_when_issued(self) -> IndependentIdArtifact:
-        """An issued artifact needs a concrete, independent id (design §2.3/§2.4)."""
-        if self.status == ArtifactStatus.DRAFT:
-            return self
-        artifact_id = getattr(self, self._ID_FIELD)
-        if artifact_id is None or artifact_id == "TBD":
-            raise ArtifactIntegrityError(
-                f"issued artifact requires a concrete {self._ID_FIELD} "
-                "(independent identity, not derived from digest) — design §2.3/§2.4"
-            )
-        return self
 
 
 #: The ten authority flags of ``PROPOSAL-APPROVAL-REQUEST-template.yaml`` L72-82.

@@ -12,9 +12,12 @@ the RCL-local pieces:
   identity — ``reservation_id`` is never reused after terminal release
   (ADR-002-002 §9 line 502), ``command_identity`` is the coordinate of same-id /
   different-content conflict detection (ADR-002-012 §9 line 270; RCLP-INV-006).
-  ``id = f(digest)`` would make that detection vacuous. Defined RCL-locally so the
-  ``tos.rcl`` import closure stays free of ``tos.evidence`` (RCL is evidence's
-  *upstream* — design §0.3/§3.1 layering).
+  ``id = f(digest)`` would make that detection vacuous. **Promoted to
+  ``tos.canonical`` (design #6 §0.4c) beside ``IdDerivedArtifact``** so ``tos.rcl``,
+  ``tos.dsl``, and ``tos.authority`` share one id-independent base; this module now
+  re-exports it as a thin shim (no new sibling edge — the ordering / canonicalization
+  / classify PROMOTE precedent), so ``from tos.rcl._base import IndependentIdArtifact``
+  paths are unchanged and the ``tos.rcl`` closure stays free of ``tos.evidence``.
 * :class:`AllFalseAuthority` — an authority block whose every declared boolean flag
   is forced ``false`` at construction (RCL design §4.1 layer 1; ADR-002-002 §7.1
   line 322-331; ADR-002-012 §1 line 31). ``capacity != authority``: a grant /
@@ -29,8 +32,6 @@ Pure module: ``pydantic`` + stdlib + ``tos.canonical`` only; no ``shared.*``, no
 
 from __future__ import annotations
 
-from typing import ClassVar
-
 from pydantic import model_validator
 
 from tos.canonical import (
@@ -38,6 +39,7 @@ from tos.canonical import (
     ArtifactStatus,
     DigestBoundArtifact,
     FrozenModel,
+    IndependentIdArtifact,
 )
 
 __all__ = [
@@ -48,36 +50,6 @@ __all__ = [
     "FrozenModel",
     "IndependentIdArtifact",
 ]
-
-
-class IndependentIdArtifact(DigestBoundArtifact):
-    """Digest-bound RCL ledger citizen with an INDEPENDENT (non-derived) id (§3.1).
-
-    Reuses the ``canonical_digest == H_ver(canonicalize(covered))`` verification and
-    the required-covered completeness of :class:`~tos.canonical.DigestBoundArtifact`,
-    but does **not** derive its id from the digest. The subclass names its
-    independent id field via ``_ID_FIELD``; once issued (non-DRAFT) that id must be
-    concrete (non-null, not the ``"TBD"`` template placeholder). Keeping identity
-    orthogonal to the digest is what lets an append-only Safety Commit Log represent
-    and detect an ADR-012 §9 "duplicate identity with different content" conflict
-    (RCLP-INV-006) — a fact ``id = f(digest)`` would make vacuous (RCL design
-    §2.1/§3.1).
-    """
-
-    _ID_FIELD: ClassVar[str]
-
-    @model_validator(mode="after")
-    def _require_independent_id_when_issued(self) -> IndependentIdArtifact:
-        """An issued RCL ledger citizen needs a concrete, independent id (§2.1)."""
-        if self.status == ArtifactStatus.DRAFT:
-            return self
-        artifact_id = getattr(self, self._ID_FIELD)
-        if artifact_id is None or artifact_id == "TBD":
-            raise ArtifactIntegrityError(
-                f"issued RCL artifact requires a concrete {self._ID_FIELD} "
-                "(independent identity, not derived from digest) — RCL §2.1/§3.1"
-            )
-        return self
 
 
 class AllFalseAuthority(FrozenModel):
