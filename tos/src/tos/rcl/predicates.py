@@ -471,6 +471,34 @@ def transition_allowed(
     return cause not in WEAK_CAUSES
 
 
+def capacity_at_least_as_conservative(a: CapacityState, b: CapacityState) -> bool:
+    """Whether capacity state ``a`` is at least as conservative as ``b`` (design #8 §3.4).
+
+    A thin, public, **read-only** comparator over the private conservatism rank
+    (:data:`_CONSERVATISM_RANK`; higher rank = more conservative / more
+    capacity-consuming — ``RELEASED`` lowest at 0, ``QUARANTINED_UNKNOWN`` highest at
+    8). Returns ``True`` iff ``rank[a] >= rank[b]`` — ``a`` consumes at least as much
+    capacity / assumes at least as much exposure as ``b`` (equal counts as "at least
+    as").
+
+    Exposed **additively** for the Orthogonal Trading State coupling predicates
+    (design #8 §3.4 (b) / §9.1): CPL-1 ("Capacity SHALL be at least as conservative as
+    ``POTENTIALLY_LIVE``") and the restart projection reference the capacity
+    conservatism order type-safely without re-deriving the rank in ``tos.orthostate``
+    (DRY / no drift — design #8 decision #3). This wraps the existing private rank with
+    **no behavior change and no PROMOTE** — the §5.4 ``transition_allowed`` semantics
+    are untouched.
+
+    Args:
+        a: The capacity state under test.
+        b: The reference capacity state.
+
+    Returns:
+        ``True`` iff ``a`` is at least as conservative as ``b``.
+    """
+    return _CONSERVATISM_RANK[a] >= _CONSERVATISM_RANK[b]
+
+
 # ===========================================================================
 # §6.1 — writer fencing (fail-closed)
 # ===========================================================================
