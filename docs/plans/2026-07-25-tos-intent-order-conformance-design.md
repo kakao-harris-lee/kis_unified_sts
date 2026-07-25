@@ -348,7 +348,9 @@ EV-L1만이다.
 ## 2. 데이터 모델 계약
 
 **표현 원칙**: 모든 아티팩트는 **pydantic v2 frozen 모델**(`ConfigDict(frozen=True, extra="forbid")`,
-`tos.canonical.FrozenModel` REUSE)로 저작한다. `extra="forbid"`는 **§14 line 406 "Unknown fields, duplicate
+`tos.canonical.FrozenModel` REUSE)로 저작한다. **[코드 리뷰 MAJOR-1 정정]**: `extra="forbid"`는 **모델 필드**
+수준만 차단하며, `axis_bindings` 튜플의 **잉여/중복 축**은 `command_conforms`의 **구조 가드**(중복 축 ⇒
+NON_CONFORMANT·봉투 밖 축 ⇒ NON_CONFORMANT, §5.1)가 거부한다. `extra="forbid"`는 **§14 line 406 "Unknown fields, duplicate
 semantic fields, alternate encodings … are rejection"·§9 line 263 "duplicate-field rejection, unknown-field
 handling"의 스키마 수준 실현**이다(unknown/duplicate 차단). 모든 multiplier·price scale·quantity·limit은 **주입
 `CanonicalDecimal|None`**(하드코딩 수치 0), economic effect vector는 **rcl `CapacityVector` REUSE**(§0.4c).
@@ -838,7 +840,8 @@ bool`:
   digest + refs{Intent proposal, envelope, policy, broker profile, context} + 전 broker mutation 필드(explicit
   semantic type/unit/presence/value) + endpoint/method/route/session/idempotency/client-order-id + actual-outbound
   canonicalization rule + issue/max-age/invalidation/evidence + **explicit non-authorizing flags**. unknown/
-  duplicate/alternate-encoding ⇒ rejection(§14 line 406 — `extra="forbid"` 실현, §2.1).
+  duplicate/alternate-encoding ⇒ rejection(§14 line 406 — 모델 필드는 `extra="forbid"`, **axis_bindings 잉여/
+  중복 축은 `command_conforms` 구조 가드**[코드 리뷰 MAJOR-1 정정], §2.1/§5.1).
 - **proof binding(§14 line 361–372)**: policy+envelope digest·compiler/dependency/schema/serializer/SDK/build/
   config/deployment/compatibility generation·deterministic input+output digest·field-by-field+semantic conformance·
   numeric derivation·economic-effect+capacity-dominance result·**ADR-002-021 are decision refs(digest scalar,
