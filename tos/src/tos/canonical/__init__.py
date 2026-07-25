@@ -33,6 +33,7 @@ from tos.canonical._base import (
 )
 from tos.canonical.canonicalization import (
     EV_L1_PROVISIONAL_VERSION,
+    CanonicalDecimal,
     CanonicalizationScheme,
     DigestFactory,
     EVL1ProvisionalCanonicalizer,
@@ -52,6 +53,7 @@ __all__ = [
     "derive_id",
     # canonicalization
     "EV_L1_PROVISIONAL_VERSION",
+    "CanonicalDecimal",
     "CanonicalizationScheme",
     "DigestFactory",
     "EVL1ProvisionalCanonicalizer",

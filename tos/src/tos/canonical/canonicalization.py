@@ -37,7 +37,8 @@ namespacing by version) belongs to the production canonicalization + id policy
 (design #2 §9.2 items 1/6, design #4 §3.1 (c)/§9.2, Phase-0). Do not rely on
 version being part of identity until then.
 
-Pure module: stdlib only (``hashlib``, ``decimal``); no ``numpy``/``pandas``
+Pure module: stdlib + ``pydantic`` only (``hashlib``, ``decimal``, and
+``pydantic.BeforeValidator`` for :data:`CanonicalDecimal`); no ``numpy``/``pandas``
 (design #4 §0.3 closure minimisation), no ``shared.*``.
 """
 
@@ -46,7 +47,9 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Any, Protocol, runtime_checkable
+from typing import Annotated, Any, Protocol, runtime_checkable
+
+from pydantic import BeforeValidator
 
 #: Canonicalization version string of the provisional EV-L1 fixture (design §3.4).
 EV_L1_PROVISIONAL_VERSION = "ev-l1-provisional-0"
@@ -95,6 +98,40 @@ def _num_token(value: int | float | Decimal) -> str:
     if dec == 0:  # collapse -0 / 0E+n quirks to a single "0"
         return "0"
     return format(dec, "f")
+
+
+def _normalize_decimal(value: object) -> object:
+    """Collapse numerically-equal Decimals to one canonical form (canonical §3.1a).
+
+    ``model_dump(mode="json")`` serializes a ``Decimal`` to a *string* before it
+    reaches the reused canonicalizer, so the canonicalizer's own :func:`_num_token`
+    magnitude normalization never runs on a covered Decimal field. Normalizing at
+    validation time (``1.0`` == ``1.00``; ``100`` == ``1E+2`` -> one value; ``-0`` /
+    ``0E±n`` -> ``0``) restores that property at the record-digest level for **every**
+    covered Decimal field: numerically-equal values yield equal digests, distinct
+    values differ. Not a canonicalizer redefinition — it feeds the reused
+    canonicalizer a canonical Decimal, the companion of :func:`_num_token` (canonical
+    §3.1a). Promoted here from ``tos.rcl.vector`` (design #9 §0.4c) as a self-contained
+    numeric primitive so ``tos.rcl`` and ``tos.recon`` share one normalizer without a
+    sibling import edge.
+
+    Non-numeric / ``None`` input is returned unchanged so pydantic's own validation
+    (or the ``| None`` union branch) still applies.
+    """
+    if not isinstance(value, (Decimal, int, float, str)) or isinstance(value, bool):
+        return value
+    dec = value if isinstance(value, Decimal) else Decimal(str(value))
+    dec = dec.normalize()
+    return Decimal(0) if dec == 0 else dec
+
+
+#: A covered ``Decimal`` field canonicalized (normalized) at validation time so
+#: numerically-equal magnitudes / bounds share one digest (canonical §3.1a). Use
+#: this — never a bare ``Decimal`` — for any covered Decimal field, so a future field
+#: cannot silently reintroduce the "1.0 != 1.00 at the digest" gap. Promoted to
+#: ``tos.canonical`` (design #9 §0.4c) beside :func:`_num_token`, its magnitude-token
+#: companion; ``tos.rcl.vector`` re-exports it as a courtesy back-compat shim.
+CanonicalDecimal = Annotated[Decimal, BeforeValidator(_normalize_decimal)]
 
 
 def _encode(value: Any) -> str:

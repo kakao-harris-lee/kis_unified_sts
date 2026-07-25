@@ -6,48 +6,34 @@ is integer / :class:`~decimal.Decimal` only — no float accumulation, no ``nump
 **UNKNOWN** and propagates conservatively (fail-closed at the consuming predicate,
 §5.3); it is never silently treated as ``0``.
 
-Pure module: ``pydantic`` + stdlib (``decimal``) + ``tos.rcl._base`` only; no
-``shared.*`` (RCL design §0.3).
+Pure module: ``pydantic`` + stdlib (``decimal``) + ``tos.canonical`` (the promoted
+``CanonicalDecimal``, design #9 §0.4c) + ``tos.rcl._base`` only; no ``shared.*``
+(RCL design §0.3).
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from decimal import Decimal
-from typing import Annotated
 
-from pydantic import BeforeValidator
-
+from tos.canonical import CanonicalDecimal
 from tos.rcl._base import FrozenModel
 
-
-def _normalize_decimal(value: object) -> object:
-    """Collapse numerically-equal Decimals to one canonical form (canonical §3.1a).
-
-    ``model_dump(mode="json")`` serializes a ``Decimal`` to a *string* before it
-    reaches the reused canonicalizer, so the canonicalizer's own ``_num_token``
-    magnitude normalization never runs on a covered Decimal field. Normalizing at
-    validation time (``1.0`` == ``1.00``; ``100`` == ``1E+2`` -> one value; ``-0`` /
-    ``0E±n`` -> ``0``) restores that property at the record-digest level for **every**
-    covered Decimal field: numerically-equal values yield equal digests, distinct
-    values differ. Not a canonicalizer redefinition — it feeds the reused
-    canonicalizer a canonical Decimal, mirroring ``tos.canonical`` ``_num_token``.
-
-    Non-numeric / ``None`` input is returned unchanged so pydantic's own validation
-    (or the ``| None`` union branch) still applies.
-    """
-    if not isinstance(value, (Decimal, int, float, str)) or isinstance(value, bool):
-        return value
-    dec = value if isinstance(value, Decimal) else Decimal(str(value))
-    dec = dec.normalize()
-    return Decimal(0) if dec == 0 else dec
-
-
-#: A covered ``Decimal`` field canonicalized (normalized) at validation time so
-#: numerically-equal magnitudes / bounds share one digest (canonical §3.1a). Use
-#: this — never a bare ``Decimal`` — for any covered Decimal field, so a future field
-#: cannot silently reintroduce the "1.0 != 1.00 at the digest" gap.
-CanonicalDecimal = Annotated[Decimal, BeforeValidator(_normalize_decimal)]
+#: ``CanonicalDecimal`` is re-exported from ``tos.canonical`` (promoted out of this
+#: module, design #9 §0.4c) as a **courtesy back-compat shim** so existing
+#: ``from tos.rcl.vector import CanonicalDecimal`` paths (and the ``test_rcl_digest``
+#: docstring reference) stay valid. RCL's own code sources it from ``tos.canonical``;
+#: this name is not a load-bearing definition site.
+__all__ = [
+    "CanonicalDecimal",
+    "DimensionDescriptor",
+    "CapacityComponent",
+    "CapacityVector",
+    "aggregate_usage",
+    "effective_limit",
+    "BenefitClaim",
+    "BenefitProof",
+]
 
 
 class DimensionDescriptor(FrozenModel):

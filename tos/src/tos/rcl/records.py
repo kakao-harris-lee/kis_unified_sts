@@ -15,18 +15,20 @@ magnitude fails closed at the consuming predicate instead (§5.3).
 
 Spec terms = code terms (boundary design #1 §2.4).
 
-Pure module: ``pydantic`` + stdlib (``decimal``) + ``tos.rcl`` only; no ``shared.*``,
-no ``tos.evidence`` / ``tos.capsule`` (RCL design §0.3).
+Pure module: ``pydantic`` + stdlib (``decimal``) + ``tos.canonical`` (the promoted
+``CanonicalDecimal``, design #9 §0.4c) + ``tos.rcl`` only; no ``shared.*``, no
+``tos.evidence`` / ``tos.capsule`` (RCL design §0.3).
 """
 
 from __future__ import annotations
 
 from typing import ClassVar
 
+from tos.canonical import CanonicalDecimal
 from tos.rcl._base import FrozenModel, IndependentIdArtifact
 from tos.rcl.authority import RclAuthorityEffect
 from tos.rcl.state import FenceCoordinates
-from tos.rcl.vector import CanonicalDecimal, CapacityVector
+from tos.rcl.vector import CapacityVector
 from tos.rcl.vocabulary import CapacityState, CommandType
 
 
