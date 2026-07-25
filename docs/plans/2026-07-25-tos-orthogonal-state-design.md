@@ -1,4 +1,4 @@
-# 설계 문서 #8 — Intent·Transmission Attempt·Broker Order·Knowledge State 계약 (2026-07-25, v1.1)
+# 설계 문서 #8 — Intent·Transmission Attempt·Broker Order·Knowledge State 계약 (2026-07-25, v1.2)
 
 > **문서 번호 규약**: #1 경계·import-firewall, #2 Decision Context Capsule, #4 Evidence
 > Store, #5 Risk Capacity Ledger(RCL), #6 Safety Authority, #7 Live Authorization이
@@ -56,7 +56,11 @@
 > (line 91–95). **AC**: `AC-005-1..5`(§17 line 237–241). **Coupling 불변식**: `CPL-1..7`(§10 line
 > 156–162). ADR-002-005는 **자체 INV 시리즈를 정의하지 않는다**(실측: CPL-*·AC-005-* 뿐 — §0.4g).
 >
-> **비준 기록**: **2026-07-25 운영자 비준(v1.1) — 효력 발생.** §10.2 판단 지점 3건 승인:
+> **비준 기록**: **2026-07-25 운영자 비준(v1.1) — 효력 발생.** *(v1.2 = 실측-정합 에라타 2건만 —
+> §6.1(b) 술어명 오기[`conservative_direction_allowed` → 실제 **`conservative_direction_ok`**] ·
+> §6.2 Broker `UNKNOWN`→definite "under profile" seam 서술 정정[주입 bool flag → **enum-basis**
+> `ConservatismBasis.BROKER_EVIDENCE_UNDER_PROFILE`]; **의미 변경 아님·코드 무변경**(구현이 처음부터
+> 올바르고 문서 서술만 stale), 비준 효력 유지; §10.1 v1.2.)* §10.2 판단 지점 3건 승인:
 > **`tos.orthostate → tos.rcl` import**(세 번째 sibling edge) · **rcl additive comparator**
 > (`capacity_at_least_as_conservative` 공개 노출 — ratified rcl 접촉, 순수 additive) ·
 > **§5.0 static-vs-transition project-side 판독**(권위적 해소는 §9.2 item 10 ADR-owner 이관;
@@ -747,7 +751,7 @@ an immediate new-risk halt condition." **canary(구성적 부재)**: "가장 가
 > conservatism-reduction이 걸러지지 않는 fail-open — #7 SAFE-053 under-realization defect class 방지).
 > capacity 차원**만** `rcl.transition_allowed`(rcl `WEAK_CAUSES` 사용)를 REUSE한다.
 
-**(b) direction 술어**: `conservative_direction_allowed(dimension, from_state, to_state, basis) -> bool`:
+**(b) direction 술어**: `conservative_direction_ok(dimension, from_state, to_state, basis) -> bool`:
 - dimension=`CAPACITY` ⇒ `rcl.transition_allowed(from, to, rcl_cause)` **REUSE**(재저작 금지, §3.4).
 - 그 외 네 차원 ⇒ 로컬 규칙: conservatism 증가/동일 ⇒ 임의 basis 허용(§11 line 177); conservatism 감소 ⇒
   **strong dimension-specific proof basis만** 허용, `WEAK_BASES` ∋ basis면 항상 거부; **basis None ⇒
@@ -759,6 +763,16 @@ an immediate new-risk halt condition." **canary(구성적 부재)**: "가장 가
 - **collapse 금지 canary(§11 line 173–175)**: `UNKNOWN`(Broker)→`NONE_OBSERVED`/`CANCELLED` under weak basis
   ⇒ 거부; cancel/ACK를 capacity terminal로 취급 ⇒ 거부(CPL-4 정합); recovery/reconnect(`RECOVERY_RECONNECT`)
   를 특정 상태 knowledge로 ⇒ 거부.
+
+> **[v1.2 에라타 — 술어명 오기 정정]** v1.1은 본 술어를 `conservative_direction_allowed`로 표기했으나
+> 그 이름은 **코드에 부재**하며 구현·공개된 이름은 **`conservative_direction_ok`**다
+> (`tos/src/tos/orthostate/predicates.py:302–355`; 공개 노출 `tos/src/tos/orthostate/__init__.py:62,108`).
+> 시그니처·인자 순서·(b)의 규칙(capacity ⇒ `rcl.transition_allowed` REUSE `predicates.py:336–345`;
+> 로컬 4차원 rank 비교 `:347–353`; 감소 시 strong-basis 요구 `:355`)은 전부 구현과 동일하므로
+> **의미 변경 아님**(코드 무변경 — 문서 명명만 stale). 본 문서 내 다른 발생 0건(전량 grep 실측).
+> **발견 경로**: 설계 #10(brokercap) 독립 비평 리뷰 **MAJOR-1**이 코드 실측으로 확정 — v1.1 텍스트를 그대로
+> 인용한 #10 v1.0이 부재 심볼을 참조하는 **파생 결함**을 낳았다(#11 §리뷰 이력 "(g) 실측-원천 결함 방지 —
+> #8 line 791→#10 상속 사건" 교훈). 비준 효력(2026-07-25, v1.1) 유지.
 
 **(c) per-dimension rank의 해석 여지(정직한 under-claiming)**: capacity는 rcl rank(권위적)를 REUSE하나,
 네 로컬 차원의 **완전한 conservatism total-order**는 ADR §11이 명시 열거하지 **않는다**(서술적 규칙만). ⇒
@@ -788,7 +802,27 @@ enum: `TransitionAuthority` = {`INTENT_REGISTRY`, `EXECUTION_COORDINATOR`, `BROK
   from/to로 owner 결정).
 - **경계(+Security 이연)**: 실제 actor 인증·비-owner 거부의 rejection+evidencing은 EV-L2/3+Security
   (STATE-EV-005 최소 레벨). Phase 1은 role 좌표 위 순수 ownership 술어만. Broker `UNKNOWN`→definite의
-  "under profile" evidence 조건은 주입 flag(미증명 ⇒ 거부).
+  "under profile" evidence 조건은 **enum-basis seam**으로 주입된다(§6.1(b)) — 주입 bool flag가 아니라
+  **`ConservatismBasis.BROKER_EVIDENCE_UNDER_PROFILE`**(strong basis)이며, caller가 brokercap 판정
+  `broker_evidence_admissible_under_profile(...)`의 bool을 basis로 매핑한다: `True` ⇒ 그 strong basis,
+  `False`/`None` ⇒ basis `None` ⇒ 보수성 감소 불가(fail-closed). 미증명 ⇒ 거부는 불변.
+
+> **[v1.2 에라타 — seam 형태 서술 정정]** v1.1 본 항은 이 조건을 "주입 flag"로 서술했다 — Broker 차원의
+> seam은 **bool 주입이 아니라 basis enum 주입**이므로 서술이 stale이었다(구현은 처음부터 enum-basis;
+> **코드 무변경**). 실측 앵커: `ConservatismBasis`(`tos/src/tos/orthostate/vocabulary.py:192–214`;
+> `BROKER_EVIDENCE_UNDER_PROFILE` = line 211, strong 군), `WEAK_BASES`(동 `:220–228`),
+> 감소-차단 규칙 `conservative_direction_ok`(`tos/src/tos/orthostate/predicates.py:355` — strong·non-`None`
+> `ConservatismBasis`만 감소 허용), caller-side 매핑 계약은 brokercap
+> `broker_evidence_admissible_under_profile`(`tos/src/tos/brokercap/predicates.py:783–801`, docstring
+> `:795–799` "the caller maps a `True` to `ConservatismBasis.BROKER_EVIDENCE_UNDER_PROFILE` …, and a
+> `False` to `None`").
+> **대비(두 seam의 형태가 다름)**: KnowledgeState→`RECONCILED` 쪽은 **진짜 주입 bool**이다 —
+> `final_quantity_proof_where_broker_involved: bool | None`(`tos/src/tos/orthostate/predicates.py:503`,
+> 규칙 `:540` — corroboration ∧ FQP 둘 다 `is True`일 때만). 즉 Broker=enum-basis / Knowledge=bool-flag로
+> 혼동해서는 안 된다.
+> **발견 경로·효력**: 설계 #10(brokercap) 독립 비평 리뷰 MAJOR-1이 코드 실측으로 확정(§6.1(b) 명명 에라타와
+> 동일 사건). **의미 변경 아님** — 어느 형태든 "미증명 ⇒ 거부"의 fail-closed 거동은 동일하고 STATE-EV-005
+> 경계·EV 주장 범위도 불변. 비준 효력(2026-07-25, v1.1) 유지.
 
 ### 6.3 restart-reconstruction (§13 — STATE-EV-004 substrate, predicate-only)
 
@@ -1010,6 +1044,26 @@ bounds (`STALE` thresholds) belong in the Verification Profile / Safety Profile.
   content 확정(FILLED⇒`POSITION_CONSUMED`·PARTIALLY_FILLED⇒`PARTIALLY_CONSUMED` aggregate-state 일관성;
   quantity transfer·잔량 split은 /3). §9.2 +1항목(static-vs-transition ADR-owner, 총 10). 아키텍처 핵심
   (패키지·rcl import·PROMOTE-0·id⊥digest·§11 weak-basis divergence·transcription)은 v1.0 그대로.
+- 2026-07-26: **v1.2 — 실측-정합 에라타 2건(의미 변경 아님·코드 무변경, 비준 효력 유지).** 설계 #10
+  (brokercap) **독립 비평 리뷰 MAJOR-1**이 코드 실측으로 확정한 문서-코드 불일치를 반영. 구현이 올바르고
+  **v1.1 서술만 stale**이었다(#7 v1.2·#6 v1.2와 동형의 transcription 에라타 — 계약-코드 정합화):
+  - **[E1 — §6.1(b) 술어명 오기]** `conservative_direction_allowed` → **`conservative_direction_ok`**.
+    v1.1 표기명은 코드에 **부재**하며, 구현·공개된 이름은 `tos/src/tos/orthostate/predicates.py:302–355`
+    (+`__init__.py:62,108`)의 `conservative_direction_ok`다. 시그니처·인자 순서·(b) 규칙(capacity ⇒
+    `rcl.transition_allowed` REUSE `:336–345`; 로컬 4차원 rank `:347–353`; 감소 시 strong-basis `:355`)은
+    전부 구현과 동일. 문서 내 다른 발생 0건(전량 grep). **파생 피해**: v1.1 텍스트를 인용한 #10 v1.0이 부재
+    심볼을 참조 → #10 리뷰 MAJOR-1·#11 "(g) 실측-원천 결함 방지(#8 line 791→#10 상속 사건)" 교훈의 출처.
+  - **[E2 — §6.2 seam 형태 서술]** Broker `UNKNOWN`→definite의 "under profile" evidence 조건을 v1.1이
+    **"주입 flag"**로 서술했으나, 실제 seam은 **enum-basis**다 — `ConservatismBasis.BROKER_EVIDENCE_UNDER_
+    PROFILE`(`vocabulary.py:211`, strong 군; `WEAK_BASES` `:220–228`)를 basis 인자로 주입받고, caller가
+    brokercap `broker_evidence_admissible_under_profile`(`brokercap/predicates.py:783–801`, docstring
+    `:795–799`)의 bool을 basis로 매핑한다(`True`⇒strong basis / `False`·`None`⇒basis `None`⇒감소 불가,
+    `orthostate/predicates.py:355`). **대비**: KnowledgeState→`RECONCILED` 쪽은 **진짜 주입 bool**
+    (`final_quantity_proof_where_broker_involved: bool|None`, `predicates.py:503`, 규칙 `:540`) — 두 seam의
+    형태가 다르다는 사실을 §6.2에 명시.
+  두 에라타 모두 **fail-closed 거동 불변**(미증명 ⇒ 거부)이며, 규범 규칙·EV 귀속(STATE-EV 0건 완결)·
+  아키텍처 핵심 결정(패키지·rcl import·PROMOTE-0·id⊥digest·§11 weak-basis divergence)은 **전부 불변**.
+  비준 효력(2026-07-25, v1.1) 유지.
 
 ### 10.2 비준 체크리스트 (운영자 · 독립 리뷰어 확인 사항)
 

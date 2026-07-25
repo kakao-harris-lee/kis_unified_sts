@@ -62,17 +62,25 @@ def test_none_budget_denies_retry() -> None:
 
 
 def test_possible_duplicate_effect_denies_retry() -> None:
-    """(§13.3) A possible / unknown duplicate economic effect (True / None) => no retry."""
+    """(§13.3) A possible / unknown duplicate economic effect (True / None) => no retry.
+
+    Design doc v1.2 [D2] maintenance obligation: the duplicate gate precedes the
+    unknown-outcome branch and requires a positive ``False`` proof, so the denial
+    must hold for every ``unknown_outcome`` / ``dedup_proven`` combination —
+    including ``unknown_outcome=None`` and ``dedup_proven=True``.
+    """
     for value in (True, None):
-        assert (
-            retry_admissible(
-                budget_remaining=3,
-                duplicate_economic_effect_possible=value,
-                unknown_outcome=False,
-                dedup_proven=None,
-            )
-            is False
-        )
+        for unknown in (True, False, None):
+            for dedup in (True, False, None):
+                assert (
+                    retry_admissible(
+                        budget_remaining=3,
+                        duplicate_economic_effect_possible=value,
+                        unknown_outcome=unknown,
+                        dedup_proven=dedup,
+                    )
+                    is False
+                )
 
 
 def test_unknown_outcome_without_dedup_denies_retry() -> None:

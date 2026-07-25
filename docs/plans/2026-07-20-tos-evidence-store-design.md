@@ -1,6 +1,10 @@
-# 설계 문서 #4 — Evidence Store + append-only ledger 계약 (2026-07-20, v1.1)
+# 설계 문서 #4 — Evidence Store + append-only ledger 계약 (2026-07-20, v1.2)
 
-> **비준 기록**: **2026-07-20 운영자 비준 (v1.1)**. 효력 발생 — IMPLEMENTATION-PLAN-002
+> **비준 기록**: **2026-07-20 운영자 비준 (v1.1)**. *(v1.2 = **ordering PROMOTE 교차-주석** 부기만 —
+> `Ordering`/`OrderingEvent`/`compare_order`가 설계 — Trustworthy Time(v1.1, 비준) §0.4b/§5 결정과 커밋
+> `7b73648f`로 evidence-local → 전용 core 모듈 **`tos.ordering`**으로 승격됐고 `tos.evidence.predicates`에
+> **shim re-export**가 남아 **ERI-EV-006은 green**이라는 사실을 §3.1/§4.3/§7에 명시. **본문 규범 텍스트
+> 재작성 아님·코드 무변경·의미 변경 아님**, 비준 효력 유지; §10.1 v1.2.)* 효력 발생 — IMPLEMENTATION-PLAN-002
 > §4 Phase 1(EV-L1)의 ADR-002-016 부분을 그린필드 `tos/src/tos/evidence/`에 순수·비전송
 > 데이터 모델 + property test로 작성 착수 승인. **canonicalization PROMOTE 결정 승인**:
 > digest-binding substrate를 `tos/canonical/`로 승격해 capsule·evidence가 공유하며,
@@ -492,6 +496,29 @@ scheme-relative이므로, 다중 scheme 공존 시 "같은 covered가 다른 sch
 **Phase-0로 이관**한다(설계 #2 §9.2 items 1/6과 동일 게이트). Phase 1 단일 잠정 scheme에서는
 무해하다.
 
+> **[v1.2 교차-주석 — 두 번째 PROMOTE(ordering)가 이후 발생했다]** *(본 절 규범 텍스트 재작성 아님 —
+> 아래는 stale해진 "ordering = evidence-local" 독해를 정정하는 부기다.)* 본 절이 확정한 PROMOTE는
+> **canonicalization/digest substrate 1건**이며 그 결정·근거는 불변이다. 다만 **이후 별도 설계에서 두 번째
+> PROMOTE가 실행됐다**: [설계 — Trustworthy Time 모델 계약 (v1.1, 비준)](2026-07-21-tos-trustworthy-time-design.md)
+> §0.4(b)(동 문서 line 156, 163–170)·§5(동 line 484–547)가 `Ordering`·`OrderingEvent`·`compare_order`(+`_cmp`)를
+> `tos.evidence.predicates` → **전용 core 모듈 `tos.ordering`**으로 승격했다. 근거는 본 절 (a) *근거 2*
+> ("양쪽에 필요하면 cross-import가 아니라 승격")의 **동형 적용**이다 — time·evidence 양쪽이 같은 ordering
+> 법칙을 필요로 하므로 `tos.evidence ↔ tos.time` 상호 import(개념적 순환) 대신 core로 올렸다. 구현 커밋:
+> **`7b73648f`** "feat(tos): Phase 1 (EV-L1) Trustworthy Time models; PROMOTE ordering to tos.ordering"
+> (2026-07-21).
+> - **현행 위치(실측)**: `tos/src/tos/ordering/_ordering.py` — `Ordering` line 41, `OrderingEvent` line 49,
+>   `compare_order` line 86(+`_cmp` line 77); 재노출 `tos/src/tos/ordering/__init__.py:19–25`. 의존은
+>   `tos.canonical.FrozenModel` 뿐이며 **다른 `tos` 패키지를 import하지 않는다**(`tos.ordering → tos.canonical`
+>   단방향 core-내부 edge).
+> - **shim 유지(실측)**: `tos/src/tos/evidence/predicates.py:57–62`가 세 심볼을 명시 `as` 재노출하고
+>   (`from tos.ordering import Ordering as Ordering` 등), 원래 §4.3 자리(`:117–122`)에는 위치 주석만 잔류한다.
+>   따라서 `from tos.evidence import Ordering, OrderingEvent, compare_order` / `from tos.evidence.predicates
+>   import ...` 경로가 **그대로 유효**하고 **ERI-EV-006 suite는 green**이다
+>   (`tos/tests/test_evidence_ordering.py` line 14가 이 shim 경로로 import).
+> - **성격**: 위치 이동 + shim이며 **규칙 본문은 문면 그대로 이관**됐다(§11 line 306–311 우선순위·
+>   no cross-continuity subtract·overlapping ⇒ ambiguous). 본 문서의 EV 귀속·주장 범위·append-only 계약은
+>   **불변**이고, 비준 효력(2026-07-20, v1.1)은 유지된다.
+
 ### 3.2 evidence digest-bound 아티팩트 매핑
 
 | 아티팩트 | digest 필드 | id 필드(독립) | covered = ? |
@@ -604,6 +631,16 @@ property: 임의의 lifecycle 변화 시나리오에서 기존 레코드의 어�
   않는다(§11 line 304). cross-continuity monotonic subtract 금지(§11 line 313). overlapping
   uncertainty ⇒ **ambiguous, represented not sorted**(§11 line 313). property: 임의 시각·
   continuity에서 "편한 순서로 정렬"이 표현 불가; 모호는 모호로 남는다.
+  > **[v1.2 교차-주석 — ordering PROMOTE]** *(본 항 규범 텍스트 재작성 아님.)* 이 ordering 술어의
+  > **소재는 더 이상 evidence-local이 아니다** — `Ordering`/`OrderingEvent`/`compare_order`는 설계 —
+  > Trustworthy Time(v1.1, 비준) §0.4(b)/§5 결정으로 전용 core 모듈 **`tos.ordering`**으로 PROMOTE됐다
+  > (커밋 `7b73648f`, 2026-07-21). **현행 정의**: `tos/src/tos/ordering/_ordering.py` — `Ordering` line 41,
+  > `OrderingEvent` line 49, `compare_order` line 86. `tos.evidence.predicates`는 **shim re-export만**
+  > 유지하고(`tos/src/tos/evidence/predicates.py:57–62`), 원래 이 §4.3 자리(`:117–122`)에는 위치 주석만
+  > 남아 있다. 위 규칙 본문(§11 line 306–311 우선순위 · cross-continuity subtract 금지 · overlapping ⇒
+  > ambiguous)은 **문면 그대로 이관**됐고 `compare_order` docstring이 같은 조항을 인용한다. 본 항의 규범
+  > 내용·**ERI-EV-006 green 상태**(`tos/tests/test_evidence_ordering.py`가 shim 경로로 import) 불변.
+  > 상세: §3.1 교차-주석.
 - **INV-007 / ERI-EV-004·005**: unknown/conflicting/rolled-back/truncated/forked history ⇒
   new risk 차단(§2.7 gap fail-closed, §2.5 observed_branches). property: fork ⇒ ≥2 branch
   보존 + `new_risk_blocked=true` + no merge.
@@ -732,6 +769,15 @@ reproducibility, not adequacy"(§15 line 407) 주석 불변식.
 | supersession/tombstone/retention lineage | **core(predicate)** | ERI-EV-010(§2.6·§4.5) |
 
 - **core property**: ERI-EV-004, -006, -008, -007(core), -010(core).
+  > **[v1.2 교차-주석 — ordering PROMOTE]** *(하네스 타깃·EV 귀속 재작성 아님.)* 위 표와 이 목록의
+  > **ERI-EV-006**은 여전히 evidence의 Phase-1 core 타깃이나, 그 술어의 **구현 소재**는 이제 `tos.ordering`
+  > 이다(설계 — Trustworthy Time §0.4(b)/§5 PROMOTE; 커밋 `7b73648f`). 하네스는 **shim 경로로 그대로
+  > 실행**된다 — `tos/tests/test_evidence_ordering.py:14` `from tos.evidence import Ordering, OrderingEvent,
+  > compare_order`(ERI-EV-006 green). time 측 `tos/tests/test_time_ordering.py`가 **같은 core를 공유**하므로
+  > 두 트랙 사이에 중복 저작이 없다(DRY — PROMOTE의 목적). §7.1 import-closure 검증과도 무충돌:
+  > `tos.ordering`은 금지 목록에 없고(`tos/tests/test_evidence_import_closure.py:42,57`의 금지 항목은
+  > `tos.capsule`·`shared.*` 등), `tos.ordering → tos.canonical` 단방향이라 §3.1 layering을 해치지 않는다.
+  > EV 귀속·주장 범위(§1 `-006` 행: EV-L1 core, acceptance 주장 아님) 불변. 상세: §3.1 교차-주석.
 - **predicate-only(EV-L1-complete 주장 금지)**: -001, -005, -009, -012.
 - **not Phase-1**: -002(receipt-binding 술어만 파생, §2.2), -003, -011.
 - **bound 처리(설계 #2 §7 상속)**: property는 bound를 hypothesis 생성 주입값으로 다뤄 "임의
@@ -858,6 +904,23 @@ recovery/retention/replay bound를 approved Verification Profile + EIP 소관으
   capsule 코드(`76546c6f`) base/subclass 분할 리팩터를 구현 단계 후속 작업으로 인가. 효력:
   Phase 1(EV-L1) `tos/src/tos/evidence/` 모델+property test + PROMOTE 리팩터 착수. §9.2
   Phase-0 항목·record_class taxonomy·id 배치는 별도 게이트로 유지.
+- 2026-07-26: **v1.2 — ordering PROMOTE 교차-주석 부기(본문 규범 텍스트 재작성 아님·코드 무변경·
+  의미 변경 아님, 비준 효력 유지).** 본 문서 §3.1/§4.3/§7에 남아 있던 **"ordering = evidence-local"**
+  독해가 stale해졌으므로, 각 절에 **주석/부기 블록**으로 사실을 명시했다(규범 문장 자체는 손대지 않음):
+  [설계 — Trustworthy Time 모델 계약 (v1.1, 비준)](2026-07-21-tos-trustworthy-time-design.md) §0.4(b)
+  (line 156, 163–170)·§5(line 484–547)가 `Ordering`·`OrderingEvent`·`compare_order`(+`_cmp`)를
+  `tos.evidence.predicates` → 전용 core 모듈 **`tos.ordering`**으로 승격했고(근거 = 본 문서 §3.1(a)
+  *근거 2* "양쪽에 필요하면 cross-import가 아니라 승격"의 동형 적용 — `tos.evidence ↔ tos.time` 개념적
+  순환 회피), 커밋 **`7b73648f`**("feat(tos): Phase 1 (EV-L1) Trustworthy Time models; PROMOTE ordering
+  to tos.ordering", 2026-07-21)로 실행됐다. **현행 위치**: `tos/src/tos/ordering/_ordering.py`(`Ordering`
+  line 41·`OrderingEvent` line 49·`compare_order` line 86·`_cmp` line 77) + `__init__.py:19–25` 재노출;
+  `tos.ordering → tos.canonical` 단방향 core-내부 edge뿐. **shim 유지**: `tos/src/tos/evidence/predicates.py:
+  57–62`의 명시 `as` re-export로 기존 import 경로가 그대로 살아 있고(원 §4.3 자리 `:117–122`는 위치 주석만
+  잔류) **ERI-EV-006은 green**(`tos/tests/test_evidence_ordering.py:14`가 shim 경로 사용; time 측
+  `test_time_ordering.py`가 같은 core 공유 — DRY). §7.1 import-closure와 무충돌(`tos.ordering`은 금지 목록
+  비대상 — `tos/tests/test_evidence_import_closure.py:42,57`). **본 문서의 PROMOTE 결정(canonicalization
+  1건)·`id=f(digest)` 미채택·append-only 계약·EV 귀속·§9.2 Phase-0 이관 항목은 전부 불변**이며, 비준 효력
+  (2026-07-20, v1.1)은 유지된다.
 
 ### 10.2 비준 체크리스트 (운영자·독립 리뷰어 확인 사항)
 

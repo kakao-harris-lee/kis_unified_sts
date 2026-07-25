@@ -1,4 +1,4 @@
-# 설계 문서 #11 — Degraded-Mode Protective Capacity 계약 (2026-07-25, v1.1)
+# 설계 문서 #11 — Degraded-Mode Protective Capacity 계약 (2026-07-25, v1.2)
 
 > **문서 번호 규약**: #1 경계·import-firewall, #2 Decision Context Capsule, #4 Evidence
 > Store, #5 Risk Capacity Ledger(RCL), #6 Safety Authority, #7 Live Authorization, #8
@@ -95,6 +95,11 @@
 > 앵커)와 동형이며, #6(자체 `SA-INV`)·#10(자체 `BC-INV`)이 자체 INV에 앵커한 것과는 상황이 다르다.
 >
 > **비준 기록**: **2026-07-25 운영자 비준(v1.1) — §10.2 판단 지점 승인(seam plain-bool decoupled).**
+> *(v1.2 = 구현 커밋 `02de5c54`의 독립 적대적 코드 리뷰가 **"코드 결함 아님·설계-트랙 판단 지점"**으로
+> 회부한 2건의 **처분 부기**만 — [D1] `mode_permits_protective` per-mode 표현력 ⇒ **현행 비준 signature
+> 유지·의도적 이연**(§6.1), [D2] `retry_admissible`의 `unknown_outcome=None` 미차단 ⇒ **현행 유지**
+> (duplicate-effect 게이트 선행 방어) + 회귀 보호 유지 의무(§6.4). **코드 무변경·의미 변경 아님**,
+> 비준 효력 유지; §10.1 v1.2.)*
 > (독립 비평 리뷰 **REVISE**[CRITICAL 0·MAJOR 1·MINOR 1·
 > NIT 1] 반영: **MAJOR-1** `protective_leases_reconciled` 정의 술어 추가[§6.7, 선택지 (a); ADR §5/§16 근거]·
 > **MINOR-1** §21 불릿 수 정정[10+9=19]; 60여 인용 전수·§8 키 15종·4개 실측-정정·seam 5슬롯·TRAPPED 좌표 분리·
@@ -964,6 +969,22 @@ rcl partition/trapped verdict·orthostate order-state·time-trusted·budget을 *
   bool`(§8.1–8.4)**: 주입 `mode_rank`(authority `PRECEDENCE_RANK` verdict)와 §5.3 classification·§6.6 envelope을
   조합해 per-mode 허용 판정(예: DEGRADED_PROTECTIVE는 cancellation·approved protective·reconciliation 허용, new
   risk-increasing 금지 §8.2). **mode enum 재선언 없음** — rank/verdict 주입. None ⇒ 보수(deny).
+  > **[v1.2 부기 — 설계-트랙 판단 지점 D1 처분: 현행 비준 signature 유지(의도적 이연)]** 구현 커밋
+  > `02de5c54`에 대한 **독립 적대적 코드 리뷰**가 본 술어의 **per-mode 표현력**을 *코드 결함이 아니라*
+  > **설계-트랙 판단 지점**으로 회부했다. 실측: 구현
+  > (`tos/src/tos/protective/predicates.py:398–426`)은 `mode_rank`를 **`None` 여부로만** 읽고
+  > (`:422–423` `if mode_rank is None: return False`), 나머지 판정은 `envelope_ok is not True ⇒ False`
+  > (`:424–425`)와 `action is ProtectiveActionOutcome.PROTECTIVE_PROVEN`(`:426`)이다 — 즉 rank 값 자체로는
+  > §8.1–8.4의 **mode별 허용 집합 차등**(위 예시의 DEGRADED_PROTECTIVE vs 타 mode)을 구분하지 못한다.
+  > **처분: 현행 비준 signature `(mode_rank: int|None, action, envelope_ok)` 유지 — 코드 무변경.**
+  > 근거: 이 signature는 mode별 순위·임계를 **담지 않으므로**, 여기서 per-mode 구분을 강제하려면 mode
+  > 순위/임계를 **본 패키지에 하드코딩**해야 하고 그것은 §0.4e authority-duplication 배제와 §3.5 소유권
+  > 분할(“`PRECEDENCE_RANK`의 per-mode ordering·threshold는 **authority 소유**”; 본 절 "mode enum 재선언
+  > 없음")을 정면으로 위반한다. 따라서 **per-mode 강제는 authority 하류 소관**이며, protective는 주입된
+  > rank 좌표 위에서 fail-closed 합성만 수행한다(현행 거동이 계약대로다).
+  > **향후 경로**: per-mode 구분이 *실제로* 필요해지면 **별도 설계 개정**으로 mode별 허용-집합 **주입
+  > verdict**를 추가한다(하드코딩이 아니라 seam 확장) — **현 Phase-1 스코프 아님**, 본 항목을
+  > **의도적 이연**으로 기록한다. 비준 효력(2026-07-25, v1.1)·§10.2 seam 판단 지점 승인 불변.
 - **`contained_emergency_admissible(inputs) -> bool`(§8.3.1)**: CONTAINED에서 §6.2 fresh 계산에 **의존하지
   않고**, (i) `in_preapproved_bounded_set`(주입, Safety Profile) ∧ (ii) `reduce_only_by_construction`(모든 governed
   dimension에서 현 reconciled position 기준 — line 362) ∧ (iii) `within_bounded_emergency_envelope`(qty/notional/
@@ -1023,6 +1044,24 @@ bool|None, dedup_proven: bool|None) -> bool` + `protective_capacity_exhausted(do
   False`일 때만 True(§13.3 "policy-approved retry where retry cannot create duplicate economic effect"). **UNKNOWN
   outcome + dedup 미증명 ⇒ no retry**(§14.4 line 639 "blind resubmission is prohibited"; unknown_outcome=True ∧
   dedup_proven≠True ⇒ False).
+  > **[v1.2 부기 — 설계-트랙 판단 지점 D2 처분: 현행 유지 + 회귀 보호 유지 의무]** 같은 독립 적대적 코드
+  > 리뷰(구현 커밋 `02de5c54`)가 `retry_admissible`의 **`unknown_outcome=None` 미차단**(unknown 여부 *자체*가
+  > 미상일 때 §14.4 blind-resubmission 가드가 발화하지 않음)을 *코드 결함이 아니라* **설계-트랙 판단 지점**
+  > 으로 회부했다. **처분: 현행 유지 — 코드 무변경.**
+  > 근거(리뷰 확인): 구현(`tos/src/tos/protective/predicates.py:588–620`)에서 **duplicate-effect 게이트가
+  > 선행 방어**한다 — `if duplicate_economic_effect_possible is not False: return False`(`:617–618`)가
+  > unknown 분기 `return not (unknown_outcome is True and dedup_proven is not True)`(`:620`)보다 **앞에**
+  > 놓여, "중복 경제효과 불가"가 **양성 `False`로 증명**되지 않는 한(`None` 포함 전부 차단) 어떤 retry도
+  > 통과하지 못한다(budget 가드 `:615–616`도 선행). 따라서 `unknown_outcome=None`이 도달 가능한 유일한 경로는
+  > **이미 duplicate 경제효과 불가가 증명된** 상태이고, 그 상태에서는 §14.4가 막으려는 위해(blind
+  > resubmission에 의한 중복 경제효과)가 **구성적으로 성립하지 않는다**.
+  > **유지 의무(회귀로 보호되어야 함)**: 이 방어는 (i) **게이트 순서**(duplicate 게이트가 unknown 분기에
+  > 선행)와 (ii) **`is not False` 양성-증명 요구**(`None`을 permissive로 읽지 않음) 두 성질에 **전적으로
+  > 의존**한다. 둘 중 하나라도 회귀하면 `unknown_outcome=None` 경로가 곧바로 fail-open이 되므로, 두 성질을
+  > 고정하는 canary를 §7 하네스에 **유지**한다 — `duplicate_economic_effect_possible=None`(및 `True`)로 둔 채
+  > `unknown_outcome`을 `True`/`False`/`None` 전 조합으로 훑어 `retry_admissible == False`임을 both-ways로
+  > 고정(아래 canary 불릿의 확장). 이 유지 의무는 **처분의 일부**이며 임의 완화 대상이 아니다.
+  > 비준 효력(2026-07-25, v1.1) 유지.
 - **exhaustion ⇒ containment(§13 line 594)**: `protective_capacity_exhausted := any required domain UNAVAILABLE/
   unverifiable ∨ budget_remaining ≤ 0`(§13 line 578–579 "risk capacity, margin, broker quota or session, worker or
   queue, network path, trustworthy time, current Protective Lease, or reconciliation capability"). retry-budget
@@ -1381,6 +1420,29 @@ Safety Profile/Broker Capability Profile INSTANCE로 위임한다.
   아키텍처 핵심(패키지 `tos.protective`·§3.5 소유권 분할·produced-bool seam·sibling edge 0·PROMOTE 0·PRD-EV
   core-tier shape·PRD-EV/§21/§-clause/SAFE 앵커·중앙 completeness 불변식·verbatim 전사·4개 실측-정정)은
   **v1.0 그대로**. 운영자 비준 대기.
+- 2026-07-26: **v1.2 — 설계-트랙 판단 지점 2건 처분 부기(코드 무변경·의미 변경 아님, 비준 효력 유지).**
+  구현 커밋 `02de5c54`(Phase 1 EV-L1 protective 모델 + property test)에 대한 **독립 적대적 코드 리뷰**가
+  **"코드 결함 아님"**으로 판정하되 계약 소관이라며 **설계 트랙으로 회부**한 2건을 처분·기록한다. 어느 것도
+  코드를 바꾸지 않으며 규범 텍스트·EV 귀속(**닫는 PRD-EV 0건**)·아키텍처 핵심(§3.5 소유권 분할·produced-bool
+  seam·sibling edge 0·PROMOTE 0)은 **전부 불변**:
+  - **[D1] `mode_permits_protective` per-mode 표현력 ⇒ 현행 비준 signature 유지(의도적 이연).** 실측:
+    `tos/src/tos/protective/predicates.py:398–426`이 `mode_rank`를 **`None` 여부로만** 판정
+    (`:422–423`)하고 `envelope_ok is not True ⇒ False`(`:424–425`) + `action is PROTECTIVE_PROVEN`(`:426`)
+    으로 닫으므로, §8.1–8.4의 **mode별 허용 차등**을 rank 위에서 구분하지 못한다. 처분 근거: 비준 signature
+    `(mode_rank: int|None, action, envelope_ok)`에 mode별 순위·임계가 **없으므로** per-mode 구분을 여기서
+    강제하려면 **하드코딩**이 필요하고, 이는 §0.4e authority-duplication 배제·§3.5(“`PRECEDENCE_RANK`의
+    per-mode ordering·threshold는 authority 소유”)·§6.1 "mode enum 재선언 없음"을 위반한다 ⇒ **per-mode
+    강제는 authority 하류 소관**. 향후 실제 필요가 발생하면 **별도 설계 개정**으로 mode별 허용-집합 **주입
+    verdict**를 추가(하드코딩 아닌 seam 확장); **현 Phase-1 스코프 아님**. 기록 위치: §6.1.
+  - **[D2] `retry_admissible`의 `unknown_outcome=None` 미차단 ⇒ 현행 유지(선행 방어 성립) + 회귀 보호 유지
+    의무.** 실측: `predicates.py:588–620`에서 **duplicate-effect 게이트가 선행**한다 —
+    `duplicate_economic_effect_possible is not False ⇒ False`(`:617–618`, `None`도 차단)가 unknown 분기
+    (`:620`)보다 앞이고 budget 가드(`:615–616`)가 그보다 앞이다. 따라서 `unknown_outcome=None`이 도달 가능한
+    유일한 상태는 **중복 경제효과 불가가 이미 양성 증명된** 상태이며, §14.4 line 639가 막는 위해가
+    **구성적으로 성립하지 않는다**(리뷰 확인). **유지 의무**: 이 방어는 (i) 게이트 **순서**와 (ii)
+    `is not False` **양성-증명 요구**에 의존하므로 두 성질을 고정하는 canary를 §7 하네스에 유지한다
+    (`duplicate_economic_effect_possible=None`/`True` × `unknown_outcome` 전 조합 ⇒ `False`). 기록 위치: §6.4.
+  비준 효력(2026-07-25, v1.1)·§10.2 판단 지점 승인 불변.
 
 ### 10.2 비준 체크리스트 (운영자 · 독립 리뷰어 확인 사항)
 
