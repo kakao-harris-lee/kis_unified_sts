@@ -1,4 +1,4 @@
-# 설계 문서 #9 — Evidence·Reconciliation Confidence 계약 (2026-07-25, v1.1)
+# 설계 문서 #9 — Evidence·Reconciliation Confidence 계약 (2026-07-25, v1.2)
 
 > **문서 번호 규약**: #1 경계·import-firewall, #2 Decision Context Capsule, #4 Evidence
 > Store, #5 Risk Capacity Ledger(RCL), #6 Safety Authority, #7 Live Authorization, #8
@@ -71,7 +71,9 @@
 > `INV-` 2건은 전부 ADR-002-002 `INV-012` cross-cite — §0.4g). 앵커는 `AC-006-*`·`RECON-EV-###`·
 > `§-clause`·`SAFE-*`뿐이다.
 >
-> **비준 기록**: **2026-07-25 운영자 비준(v1.1) — 효력 발생.** §10.2 판단 지점 3건 승인:
+> **비준 기록**: **2026-07-25 운영자 비준(v1.1) — 효력 발생.** *(v1.2 = §1 -004 행 time-loss class
+> gloss 에라타만 — `UNKNOWN`→`STALE`(구현·코드 리뷰 확정; ADR §7 line 103은 class 미지정·fail-closed만
+> 요구, release는 §6.1 독립 게이트로 어느 class든 차단), 의미 변경 아님·비준 효력 유지; §10.1 v1.2.)* §10.2 판단 지점 3건 승인:
 > **`CanonicalDecimal` PROMOTE(rcl→canonical)**(내부 import 사이트 2곳 갱신·courtesy shim·rcl suite
 > 무회귀 의무) · **produced-bool seam**(sibling edge 0 + MANDATED test-only cross-check) ·
 > **좌표 조정 의무 기록**(후속 설계의 별개 typed 필드 MUST). 효력: `tos/src/tos/recon/` Phase 1
@@ -395,7 +397,7 @@ Integration/Adversarial**, **+Broker = Broker Capability Profile evidence**. Pha
 | **-001** | Single Evidence-Path Corruption | `EV-L2/3` (96) | **predicate-only** | `classify_field`: 1 path 또는 **common-mode**(공유 parser/source/clock/transport로 sufficiently-independent 아님) ⇒ `CORROBORATED`/reconciled-proof **도달 불가**; 영향 필드는 conservative bound 유지·release 불가(§5.1/§6.1). **각 evidence-path 독립 corruption + common-mode corruption injection = EV-L2/3.** | AC-006-1 (174), §5 (73–80), §6 (92–95) |
 | **-002** | Query Omission and Negative Evidence | `EV-L3` (97) | **predicate-only** | negative-evidence 술어: `is_absence` observation은 confidence만 낮추고 `NONE`/`CANCELLED`/`released` 확립·bound narrow·release-proof 생성 **불가**; 재출현 order의 economic effect 미폐기(§5.3). **hide-then-reappear across page/query/session/stream + pagination/history-window 변동 injection = EV-L3.** | AC-006-2 (175), §7 (102), ADR-002-002 §22.4 |
 | **-003** | Conflicting Fill Quantity | `EV-L2/3` (98) | **predicate-only** | conflict ⇒ `CONFLICTED` + `merge_conservative`가 bound를 **union으로 widen(never average)**; (feeds) `QUARANTINED_UNKNOWN`; **no blended score·no preferred source**(§5.2/§5.3). **divergent cumulative-fill/remaining/position/correction from independent paths, multiple arrival orders injection = EV-L2/3.** | AC-006-3 (176), §5 (86), §7 (101), ADR-002-002 §22.2/22.3 |
-| **-004** | Freshness and Time-Confidence Loss | `EV-L2/3` (99) | **predicate-only** | `freshness_ok`: past horizon ⇒ `STALE`; time confidence 상실 ⇒ fail closed(`UNKNOWN`); **new generation ⇒ old marker invalid(auto-refresh 불가)**(§6.3). **age past horizon + lose trustworthy time + restart receipt-anchor owner + restore time with new generation injection = EV-L2/3.** | AC-006-4 (177), §7 (103) |
+| **-004** | Freshness and Time-Confidence Loss | `EV-L2/3` (99) | **predicate-only** | `freshness_ok`: past horizon ⇒ `STALE`; time confidence 상실 ⇒ fail closed — **[v1.2 에라타]** class는 `STALE`(v1.1 gloss `UNKNOWN`은 오기): previously-corroborated 필드의 time-loss는 "evidence는 있으나 time-신뢰 불가"이므로 `STALE`이 의미상 정확하고, ADR §7 line 103은 class를 지정하지 않고 fail-closed만 요구하며, release는 §6.1이 freshness를 독립 게이트하므로 어느 class든 차단(코드 리뷰 MINOR-2 확정); **new generation ⇒ old marker invalid(auto-refresh 불가)**(§6.3). **age past horizon + lose trustworthy time + restart receipt-anchor owner + restore time with new generation injection = EV-L2/3.** | AC-006-4 (177), §7 (103) |
 | **-005** | Field-Specific Capacity Release Proof | `EV-L3+Broker` (100) | **predicate-only** | `field_reconciled_proof_ok`: capacity-releasing 필드(final filled qty·remaining executable qty)는 **CORROBORATED ∧ FQP(주입 token) ∧ freshness ∧ no-conflict**; weaker evidence(cancel ACK·terminal-without-qty·single-source·late correction) ⇒ **not ok**(§6.1/§6.2). **broker-profile-specific FQP content + cancel-ACK/terminal-status/single-source/late-correction sequence injection = EV-L3+Broker.** | AC-006-5 (178), §8 (112–121) |
 
 **Phase-1 분류 요약**: **predicate-only(EV 주장 금지)** = {`RECON-EV-001`, `-002`, `-003`, `-004`, `-005`}
@@ -1113,7 +1115,17 @@ tolerances, freshness horizons, and detection bounds belong in the Verification/
   site를 canonical source로 갱신 MUST, `rcl.vector` re-export=courtesy shim; `test_rcl_digest.py:16` 무영향·rcl
   스위트 무변경 green). + §9.2에 리뷰어 open question(aged `freshness_marker`는 previously-assessed field에만 공급 —
   caller-side precondition, integration-scope) **item 11** 기록. 아키텍처 핵심(패키지·sibling-edge-0·CanonicalDecimal
-  PROMOTE·id⊥digest·no-blended 구조·RECON-EV 0건 완결·transcription)은 **v1.0 그대로**. 운영자 비준 대기.
+  PROMOTE·id⊥digest·no-blended 구조·RECON-EV 0건 완결·transcription)은 **v1.0 그대로**. 2026-07-25
+  운영자 비준(판단 지점 3건 승인).
+- 2026-07-25: **v1.2 — §1 -004 행 time-loss class gloss 에라타(의미 변경 아님, 비준 효력 유지).**
+  구현(`tos/src/tos/recon/predicates.py`)이 time-confidence 상실 시 would-be-CORROBORATED 필드를
+  `STALE`로 pin(공개 편차 #5); 독립 코드 리뷰(**ACCEPT-WITH-MINOR, CRITICAL 0/MAJOR 0/fail-open 0**)가
+  MINOR-2로 확정 — v1.1 §1 표의 `fail closed(UNKNOWN)` gloss는 오기(ADR §7 line 103은 class 미지정·
+  fail-closed만 요구; previously-corroborated의 time-loss는 `STALE`이 의미상 정확; release는 §6.1이
+  freshness를 corroboration과 독립 게이트하므로 어느 class든 차단 — 이중 게이트). 본 v1.2가 gloss를
+  `STALE`로 정정. 코드 리뷰 MINOR-1(field/confidence 정합 가드 부재)은 **코드 측 수정**: `field_
+  reconciled_proof_ok` 최상단에 defense-in-depth 가드(`confidence.field` 상이 ⇒ False) + mismatch
+  canary 테스트 추가(pytest 1354). 그 외 조항·비준 효력(2026-07-25, v1.1) 불변.
 
 ### 10.2 비준 체크리스트 (운영자 · 독립 리뷰어 확인 사항)
 
