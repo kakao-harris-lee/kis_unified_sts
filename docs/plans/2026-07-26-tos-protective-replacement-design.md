@@ -1,4 +1,4 @@
-# 설계 문서 #18 — Protective Replacement·Protection-Gap Control 계약 (2026-07-26, v1.1)
+# 설계 문서 #18 — Protective Replacement·Protection-Gap Control 계약 (2026-07-26, v1.2 에라타)
 
 > **문서 번호 규약 각주(#18 확정, Q5)**: v1.0은 "잠정 #18"이었으나(세션 A #17 선점 우려), **오케스트레이터
 > 판정으로 v1.1에서 #18 확정** — 세션 A가 #17 SBR(Startup/Recovery, 커밋 `9eb13bba`)을 완결하고 다음 VTG를
@@ -77,6 +77,15 @@
 >   §8 HALT precedence는 authority(`AuthorityState.HALTED`·`PRECEDENCE_RANK`·`restrictive_dominates`) 소관, §16
 >   recovery는 recon(`ConservativeBound`) 소관, §9 credible-state-space aggregate risk는 are(ADR-002-021) 소관이며
 >   PR은 전부 **주입 소비**한다. **미import**(형제).
+>
+> **v1.2 에라타 고지(2026-07-26, 비준 효력 유지)**: 본 개정은 **의미 변경이 아니라 실측-정합 에라타**다(#16 v1.2
+> [6축 전사 누락] 선례 동형). 발견 경로 = **적대적 코드 리뷰 MAJOR-1**. 내용: v1.1이 `leg_admissibility` 생산자
+> (ADR-002-019)를 "세션 A WIP·코드 부재"로 보고 `bool|None` 주입 슬롯으로만 서술했으나, **실 producer가 `tos.venue`로
+> 착지**(`OrderAdmissibilityResult` — 4토큰 truthy-untestable StrEnum)했으므로 §3.4 행을 **실측 signature + 접기
+> 규칙 + venue `protective_label_no_bypass` 경유**로 정정하고 §7 MANDATED seam 목록의 `test_seam_vtg`를 "작성됨"으로
+> 갱신한다. **접기 규칙은 보수 방향**(4토큰 중 `ADMISSIBLE` 1개만 True; 나머지 3토큰·None ⇒ fail-closed)이므로 어떤
+> 허용도 넓히지 않으며 v1.1 비준 효력·PR-EV 비-acceptance(§0.2)는 **그대로 유지**된다. 에라타 승인 = 오케스트레이터
+> 위임 비준(2026-07-25 표준지시).
 >
 > **비준 상태**: **2026-07-26 운영자 위임 자동 비준(v1.1) — 효력 발생**(표준지시 2026-07-25 + 본 세션 운영자
 > "PR 사이클도 적대적 코드 리뷰·커밋까지 끝까지 진행" 지시). 경위: v1.0 → 오케스트레이터 1차 심사 통과(앵커
@@ -684,7 +693,7 @@ seam**(sibling 서사 아님 — #10 MAJOR-1·#8 line 791 교훈; 전 인용 gre
 | **[소비]** partition-time lease admissibility | **`Admissibility` StrEnum** | protective `partition_lease_admissible` | replacement partition 처리(PR-EV-010)가 주입 소비(`protective/predicates.py:460`→ ADMISSIBLE/TRAPPED/PROHIBITED `vocabulary.py:118`; **`verdict is Admissibility.ADMISSIBLE`로만 통과** — TRAPPED/PROHIBITED/None ⇒ deny; PR `ReplacementMode.OVERLAP_FIRST`→protective `ProtectiveActionKind.OVERLAP_FIRST_ADD_ONLY` 매핑) |
 | **[소비]** protective classification present (**aggregate-risk 축, C2 정정**) | `bool` | protective `protective_classification`/`protective_classification_present` | replacement `overlap_first_sequencing_valid`의 **별개 입력** 주입 소비(`protective/predicates.py:246/309`; docstring 명제 = "**True only when PROTECTIVE_PROVEN via conservative aggregate-risk analysis**" — **§10 per-field sufficiency와 다른 축**, v1.1 C2; `is True`만 통과) |
 | **[소비]** **new Protection Sufficiency Proof current (§10 per-field, C2 신규 9번째 생산자)** | `bool` | **evidence(ADR-002-006) per-field proof + brokercap `broker_capability_sufficient`** | replacement `overlap_first_sequencing_valid`의 `new_protection_sufficiency_current` 주입 소비(§10 line 254–263 9-field; `broker_capability_sufficient` `brokercap/predicates.py:206`; §1 line 34 "ACK alone ≠ effective protection"; **PR-EV-006 좌표·+Broker 이연**; `is True`만) |
-| **[소비]** **per-leg -019 Order Admissibility (M1 신규)** | `bool` | **ADR-002-019 VTG Order Admissibility Decision** | replacement `overlap_first_sequencing_valid`/`cancel_first_admission_gate`/`replacement_mode_admissible`의 `leg_admissibility` 주입 소비(§5 line 139 (B); **VTG-EV 12행 중 4행 L1 슬라이스 보유**[VTG-EV-001/003/004/006 실측]이나 VTG producer는 Phase-1 밖·주입; missing/unknown⇒trapped; `is True`만) |
+| **[소비]** **per-leg -019 Order Admissibility (M1 신규; v1.2 에라타 정정)** | **`OrderAdmissibilityResult` 4토큰 → caller 접기 → `bool`** | **venue `OrderAdmissibilityResult`**(`venue/vocabulary.py:91`) + **venue `protective_label_no_bypass`**(`venue/predicates.py:599`) | **v1.1 서술("VTG producer는 Phase-1 밖·코드 부재")은 실측 부정합 — producer가 `tos.venue`로 착지**(설계 #19). 실 producer는 **4토큰**(`ADMISSIBLE`/`RESTRICTED_PROTECTIVE_ONLY`/`INADMISSIBLE`/`UNKNOWN`) **truthy-untestable StrEnum**(`__bool__` ⇒ `TypeError` 봉인)이고 replacement 슬롯은 `bool\|None`이다. **접기 규칙(비준)**: caller-side에서 **`result is OrderAdmissibilityResult.ADMISSIBLE`일 때만 `True`**; 나머지 3토큰·`None` ⇒ not-True ⇒ fail-closed. **`RESTRICTED_PROTECTIVE_ONLY`은 직접 접기에서 `False`**(ADR-002-019 §1:29/§19:426 — ordinary new risk 불허). 그 하에서 protective-라벨 leg의 세부 허용은 **venue 소유 `protective_label_no_bypass`**(실측 signature: `(label_is_protective, exact_admissibility, separate_protective_authority, intermediate_effects_capacity_covered) -> bool`)를 caller가 조합해 산출한 bool로만 슬롯에 착륙 — **replacement는 재결정하지 않는다**(§3.5 권위 중복 배제). 소비처: `overlap_first_sequencing_valid`/`cancel_first_admission_gate`/`replacement_mode_admissible`(§5 line 139 (B); missing/unknown ⇒ `REPLACEMENT_TRAPPED`; `is True`만). seam 테스트 `test_seam_vtg` **작성됨**(§7). |
 | **[소비]** retry admissibility / exhaustion | `bool` | protective `retry_admissible`/`protective_capacity_exhausted` | replacement PR-EV-007 주입 소비(`protective/predicates.py:588/623`) |
 | **[소비]** cancel-ACK≠FQP / missing-ACK / economic-effect-persists | `bool` | afg `cancel_ack_not_final_quantity_proof`/`no_blind_retry`/`economic_effect_persists` | replacement PR-EV-004/003·`replacement_authorization_current`(expiry) 주입 소비(`afg/predicates.py:794/713`·`afg/state.py`; §4.6 핵심 판정) |
 | **[소비]** FQP adequacy / atomic-replace semantics / idempotency / rate | `bool`·StrEnum | brokercap `fqp_adequate`/replace-amend-semantics/`same_order_retry_allowed`/`rate_admission_ok` | replacement PR-EV-004/012/003/007 주입 소비(`brokercap/predicates.py:595/377/437`·`vocabulary.py:203` "5 replace/amend semantics") |
@@ -1230,8 +1239,11 @@ bool|None) -> bool` ∧ expiry disposition:
   `broker_capability_sufficient`:206 — §10 field-proof, ACK-alone⇒False)**·`test_seam_afg`(PR-EV-004 ↔
   `cancel_ack_not_final_quantity_proof`·PR-EV-003 ↔ `no_blind_retry`·expiry ↔ `economic_effect_persists` **양극성
   `is True`**)·`test_seam_brokercap`(PR-EV-012 ↔ `ReplaceSemantics`(`vocabulary.py:202`, `ATOMIC_REPLACE`)·PR-EV-004
-  ↔ `fqp_adequate`·PR-EV-003 ↔ `same_order_retry_allowed`)·**`test_seam_vtg`(v1.1 M1 — `leg_admissibility` ↔
-  ADR-002-019 Order Admissibility Decision·missing⇒`REPLACEMENT_TRAPPED`)**·`test_seam_orthostate`(PR-EV-004 ↔
+  ↔ `fqp_adequate`·PR-EV-003 ↔ `same_order_retry_allowed`)·**`test_seam_vtg`(v1.1 M1 — **작성됨**(v1.2 에라타):
+  `leg_admissibility` ↔ venue `OrderAdmissibilityResult` **4토큰+None 전수 접기 polarity**(`is ADMISSIBLE`만 True·
+  `RESTRICTED_PROTECTIVE_ONLY` 직접 접기 False 실증)·`bool(token)` **TypeError 봉인 확인**·venue
+  `protective_label_no_bypass` **실구동 조합 경로**(4조건 양성 ⇒ protective-only leg 통과; 1조건 결손 ⇒ trapped)·
+  missing/unknown⇒`REPLACEMENT_TRAPPED`)**·`test_seam_orthostate`(PR-EV-004 ↔
   `BrokerOrderState.CANCELLED`+later-fill·PR-EV-003 ↔ `SENT_UNCONFIRMED`)·`test_seam_rcl`(overlap-first headroom ↔
   `aggregate_usage`/`effective_limit` None⇒UNKNOWN·partition ↔ `partition_verdict`). 테스트 import는 package closure
   불계상(§7.1).
@@ -1360,6 +1372,27 @@ ADR §23 Open Questions(6항)·§24 Approval Gate(9조건)에서 Phase-1 밖으�
 
 ### 10.1 개정 로그
 
+- **v1.2 (2026-07-26) — 에라타(의미 변경 아님·비준 효력 유지). 발견 경로: 구현 후 적대적 코드 리뷰
+  MAJOR-1**(판정 ACCEPT-WITH-FIXES; CRITICAL 0·fail-open 0). v1.1은 ADR-002-019 producer를 "세션 A WIP·코드 부재"로
+  보고 `leg_admissibility`를 `bool|None` 주입 슬롯으로만 서술했으나, **producer가 `tos.venue`로 착지**(설계 #19)해
+  그 사유가 소멸했다. 정정 3건:
+  - **§3.4 -019 행 정정(실측 signature)**: 실 producer `OrderAdmissibilityResult`(`venue/vocabulary.py:91`)는
+    **4토큰**(`ADMISSIBLE`/`RESTRICTED_PROTECTIVE_ONLY`/`INADMISSIBLE`/`UNKNOWN`)이며 `__bool__`이 `TypeError`를
+    올리는 **truthy-untestable 봉인**을 갖는다(설계 #19 §2.2(1)/M1). 접기 규칙을 **caller-side
+    `is OrderAdmissibilityResult.ADMISSIBLE`만 True**로 확정하고(나머지 3토큰·`None` ⇒ fail-closed),
+    `RESTRICTED_PROTECTIVE_ONLY` 하 protective-라벨 leg의 세부 허용은 **venue 소유 `protective_label_no_bypass`**
+    (`venue/predicates.py:599`, 4조건)를 caller가 조합해 산출한 bool로만 착륙시킨다 — replacement 재결정 0
+    (§3.5 권위 중복 배제 유지).
+  - **§7 MANDATED seam 목록**: `test_seam_vtg` 항목을 "이연"에서 **"작성됨"**으로 갱신(4토큰+None 전수 polarity·
+    `bool()` TypeError 확인·`protective_label_no_bypass` 실구동 조합 경로 포함).
+  - **제목/비준 parenthetical**: v1.1 → **v1.2 에라타** 표기 + 상단 에라타 고지 블록 신설.
+
+  **효력 판정**: 접기 규칙은 **보수 방향**(4토큰 중 1개만 True)이라 어떤 허용도 넓히지 않는다 ⇒ v1.1 비준 효력·
+  §0.2 비-acceptance·**닫는 PR-EV = 0건** 규율 전부 **불변**. 코드 측 동반 변경은 `vocabulary.py`
+  `ORDER_ADMISSIBILITY_ADMISSIBLE` 토큰 상수 1개(+drift lock 테스트)이며 **술어 로직 변경 0건**.
+  동반 반영된 리뷰 지적(설계 텍스트 무영향, 테스트 전용): MAJOR-2 StrEnum member→value 바인딩 고정·MINOR-1
+  `_ID_FIELD` drift lock·MINOR-2 NaN/Inf 도달 가능 가드 고정·MINOR-3 HALT 합성 순서 고정·NIT-1 `netting_absent`
+  보증 범위 명시(서명 탐지기 — 회계 정확성은 evidence/런타임 소관).
 - **v1.1 (2026-07-26) — 독립 비평 리뷰 REVISE(CRITICAL 2·MAJOR 6·MINOR 8·Gap 8·Open Q 5) 반영, 운영자 비준 대기.**
   전 1차 소스 재실측(받아쓰기 금지·phantom 재발 0; 오케스트레이터가 C1·C2·M1 재실측 확정, 저작자가 전 항목 1차
   소스 재확인 — 반론 0). 문서 번호 **#18 확정**(세션 A #17 SBR 완결·다음 VTG=#19; 제목 "(잠정)" 제거, Q5).
