@@ -1,4 +1,4 @@
-# 설계 문서 #24 — Post-Trade Economic Obligations·Settlement Finality·Conservative Account-State Governance 계약 (2026-07-27, v1.1)
+# 설계 문서 #24 — Post-Trade Economic Obligations·Settlement Finality·Conservative Account-State Governance 계약 (2026-07-27, v1.2 에라타)
 
 > **문서 번호 규약 각주(#24 확정)**: 세션 A의 #23 CUR(currentness-fencing, ADR-002-024)은 본 문서보다 앞서고, 본 문서는
 > **#24**다. 시리즈 순번은 착수 순서가 아니라 비준·선점 순서를 따른다(#16 AFG v1.0 "#15"→v1.1 "#16" 개번 선례·#18
@@ -127,6 +127,21 @@
 > - **evidence(ADR-002-016)**: §24 evidence custody·replay는 evidence 소관 런타임(EV-L2/3). PTF-INV-018 "A statement,
 >   registered item, dashboard, successful replay ... is not executed verification evidence"(ADR §24 line 548) —
 >   PTF는 frozen digest-bound 레코드만 재구성하고 replay ENGINE은 evidence 런타임이다. **미import**.
+>
+> **v1.2 에라타 고지(2026-07-27, 비준 효력 유지)**: 본 개정은 **의미 변경이 아니라 안전-방향 정합 에라타**다(#18 v1.2
+> [venue producer 실측 정정] 선례 동형). 발견 경로 = **구현 후 적대적 코드 리뷰 MAJOR**(판정 ACCEPT-WITH-MINOR;
+> CRITICAL 0·구현 fail-open 0 — 즉 구현은 v1.1 계약에 **충실**했고 결함은 **계약 텍스트 측**에 있었다). 내용:
+> §5.7 `finality_proof_non_transferable`가 `ObligationLegScope` **6성분만** 대조하는데, 그 6성분(leg·account·
+> currency·value-date·source-revision·finality-class)에는 **obligation 식별자가 없다**. 서로 다른 두 obligation이
+> 동일 scope를 정당하게 공유할 수 있으므로(같은 account가 같은 통화를 같은 value-date에 결제) **한 obligation의
+> finality proof가 다른 obligation의 동일 leg를 덮는 것으로 판정**되고, §4.8 행 10 rank 1이 미발화해
+> `POST_TRADE_ADMISSIBLE` 도달이 가능했다. 정정: **ADR §11 line 320 "exact obligation identity"** 근거로 술어에
+> **keyword-only `target_obligation_ref` / `target_obligation_version`**을 추가하고, 제공 시 `proof.obligation_ref` ·
+> `proof.obligation_version`과의 일치를 **추가 요구**한다(§5.7·§9.1). **미제공 시 기존 scope-only 거동 유지**
+> (하위호환 — 리뷰어가 호환성 실증). **보수 방향**: 인자 제공은 판정을 **좁히기만** 하므로 `True`를 `False`로 바꿀
+> 수 있을 뿐 어떤 허용도 넓히지 않는다 ⇒ v1.1 비준 효력·§0.2 비-acceptance·**닫는 PTF-EV = 0건** 규율 전부
+> **불변**. 술어 개수 **19 불변**(시그니처 확장이며 신규 술어 아님). 에라타 승인 = 오케스트레이터 위임 비준
+> (2026-07-25 표준지시).
 >
 > **비준 상태**: **2026-07-27 운영자 위임 자동 비준(v1.1) — 효력 발생**(표준지시 2026-07-25 + 본 세션 운영자 "계속"
 > 지시). 경위: v1.0 저작 → 오케스트레이터 1차 심사 통과(상호 이연 양방향·PTF-INV-013·PLAN:221 실측) → 독립 비평
@@ -1435,6 +1450,9 @@ finality_proof_non_transferable(
     proof: PostTradeFinalityProof,
     target_leg_scope: ObligationLegScope,   # M8: §2.1 정식 등재 value 모델 (leg·account·currency·
                                             #     value-date·source-revision·finality-class — ADR §11 line 328)
+    *,                                      # v1.2 에라타 — cross-obligation 봉인 (ADR §11 line 320)
+    target_obligation_ref: str | None = None,      # 제공 시 proof.obligation_ref 일치 요구
+    target_obligation_version: str | None = None,  # 제공 시 proof.obligation_version 일치 요구
 ) -> bool
 finality_proof_current(                     # M2: 순수 generation 비교 — L1-decidable
     proof: PostTradeFinalityProof, active_generation: int,
@@ -1446,9 +1464,17 @@ post_trade_consequence_all_false(consequence: AllFalsePostTradeConsequence) -> b
   value-date·generation·finality-class ∧ **`does_not_prove` 필드(what it does not prove)** present일 때만 True(§11
   line 320–326). global `SETTLED`/`CLOSED`/confidence-score/statement-flag/operator-decision로 per-field proof 대체
   시도 ⇒ False(PTF-INV-005). **실패 시 disposition `POST_TRADE_CONFLICTED`**(global-flag 치환 = 위반, §4.8 행).
-- **`finality_proof_non_transferable`(M8)**: `proof`의 leg/account/currency/value-date/source-revision/finality-class가
-  `target_leg_scope`(`ObligationLegScope` value 모델, §2.1)와 **정확히 일치**할 때만 True; 다른 leg/class로 patch·reuse
-  ⇒ False(§11 line 328 verbatim "non-transferable and non-unionable").
+- **`finality_proof_non_transferable`(M8; v1.2 에라타로 확장)**: `proof`의 leg/account/currency/value-date/
+  source-revision/finality-class가 `target_leg_scope`(`ObligationLegScope` value 모델, §2.1)와 **정확히 일치**할
+  때만 True; 다른 leg/class로 patch·reuse ⇒ False(§11 line 328 verbatim "non-transferable and non-unionable").
+  **cross-obligation 봉인(v1.2 에라타 — 적대적 코드 리뷰 MAJOR)**: 위 6성분에는 **obligation 식별자가 없어**
+  서로 다른 두 obligation이 동일 scope를 정당하게 공유할 수 있다(같은 account·통화·value-date). scope-only 대조는
+  그 경우 **다른 obligation의 proof를 유효로 판정**해 §4.8 행 10 rank 1이 미발화한다. 따라서 ADR §11 line 320
+  "exact obligation identity" 근거로 **keyword-only `target_obligation_ref`/`target_obligation_version`**을 받아
+  **제공 시** `proof.obligation_ref`·`proof.obligation_version`과의 일치를 추가 요구한다. **미제공 시 기존
+  scope-only 거동**(하위호환); 제공은 판정을 **좁히기만** 하므로 보수 방향이다. proof가 식별자를 갖지 않는데
+  (`obligation_ref is None`) 대상 식별자가 제공되면 **불일치 ⇒ False**(미비교로 흘려보내지 않는다).
+  §7 canary: §4.8 행 10에 **cross-obligation 변종**(동일 6성분 scope·다른 `obligation_ref` ⇒ False) 필수.
 - **`finality_proof_current`(M2 신설 — finality reopen 봉인)**: `return proof.bound_generation == active_generation` —
   proof가 bind한 Post-Trade Obligation Generation이 **현재 active generation과 같을 때만** current. correction이
   generation을 advance하면(§11 line 330 "supersedes the proof, advances generation") prior proof는 `bound_generation
@@ -1725,7 +1751,8 @@ Phase-1 순수 커널 밖이다.
    from_event_complete`(§5.5, m6 enum) · (11) `event_state_not_obligation_finality`(§5.5) · (12) `statement_coverage_
    complete`(§5.6) · (13) `statement_sources_independent`(§5.6) · (14) `absence_is_negative_evidence_only`(§5.6, M6
    correction-semantics) · (15) `finality_proof_class_specific`(§5.7) · (16) `finality_proof_non_transferable`(§5.7,
-   M8 `ObligationLegScope`) · (17) **`finality_proof_current`(§5.7 — M2 신설, generation 비교)** · (18) `post_trade_
+   M8 `ObligationLegScope`; **v1.2 에라타 — keyword-only `target_obligation_ref`/`target_obligation_version`
+   확장, 술어 수 불변**) · (17) **`finality_proof_current`(§5.7 — M2 신설, generation 비교)** · (18) `post_trade_
    consequence_all_false`(§5.7) · (19) `post_trade_disposition`(§5.8 — C1 16-conjunct 확장). **19**(§2.0 다이어그램·§7
    목록·§9.1과 일치).
 2. **property test 하네스**(§7): `tos/tests/posttrade/` — core 19 + ∅ 양방향 22행 + forgery 2종 + late-fill + truthy-
@@ -1766,6 +1793,28 @@ obligation, or release capacity." — 본 계약도 동일(§0.2 fail-closed).
 
 ### 10.1 개정 로그
 
+- **v1.2 (2026-07-27) — 에라타(의미 변경 아님·보수 방향·비준 효력 유지). 발견 경로: 구현 후 적대적 코드 리뷰
+  MAJOR**(판정 **ACCEPT-WITH-MINOR**; CRITICAL 0·구현 fail-open 0·MAJOR 1[설계 상속]·MINOR 6·NIT 3; 뮤테이션
+  124중 99 검출·13 등가 증명). 구현은 v1.1 계약에 **충실(FAITHFUL)**했고 결함은 **계약 텍스트 측**이었으므로
+  오케스트레이터 판정으로 **처방 (a) — 계약과 코드를 함께 정정**을 채택했다. 정정 3건:
+  - **§5.7 시그니처 확장**: `finality_proof_non_transferable`에 **keyword-only** `target_obligation_ref: str | None
+    = None` / `target_obligation_version: str | None = None`을 추가하고, 제공 시 `proof.obligation_ref` ·
+    `proof.obligation_version`과의 일치를 **추가 요구**한다. **근거 = ADR §11 line 320 "exact obligation identity"**
+    (§11 line 328 6성분 scope는 leg를 지명할 뿐 obligation을 지명하지 않는다). **결함 경로**: 동일 6성분 scope를
+    공유하는 두 obligation 사이에서 한쪽의 proof가 다른 쪽에 유효 판정 ⇒ §4.8 행 10 rank 1 미발화 ⇒
+    `POST_TRADE_ADMISSIBLE` 도달 가능.
+  - **§7 canary 추가**: §4.8 행 10에 **cross-obligation 변종**(동일 scope·다른 `obligation_ref` ⇒ False, 동일
+    obligation·다른 version ⇒ False, 완전 일치 ⇒ True) 및 미제공 시 하위호환 거동 진리표.
+  - **제목/비준 parenthetical**: v1.1 → **v1.2 에라타** 표기 + 상단 에라타 고지 블록 신설.
+
+  **효력 판정**: 두 인자는 **선택적**이며 제공 시 판정을 **좁히기만** 한다(`True`→`False`만 가능) ⇒ 어떤 허용도
+  넓히지 않는다. 따라서 v1.1 비준 효력·§0.2 비-acceptance·**닫는 PTF-EV = 0건**·EV-L1-complete 미주장 규율은
+  전부 **불변**이며, **술어 19종 카운트도 불변**(시그니처 확장이지 신규 술어가 아니다). 동반 반영된 리뷰 지적
+  (설계 텍스트 무영향·테스트 전용): MINOR-1 phantom 필드 검사 부분일치화(affix 관통 봉인)·MINOR-2
+  `_REQUIRED_COVERED` 내용 pin + required 필드 부재 시 `issue()` 거부 양성 canary·MINOR-3 행 canary가 공개
+  `VOID_TABLE_ROWS`를 조회(추적 데이터 drift 봉인)·MINOR-4 생문자열 `CashKind`/`MarginCollateralState` 거부
+  (`is` 하드닝 잠금)·MINOR-5 falsy 위조(`releases_capacity=0`) 거부 canary. MINOR-6은 설계 명문에 충실하여 무변경,
+  NIT 3건은 조치 불요.
 - **v1.0 (2026-07-27)**: 최초 저작. ADR-002-030(739줄) 전독 → EVIDENCE-REGISTER-002.csv CSV-aware 실측(PTF-EV 12행·
   L1 슬라이스 5행 001·002·004·006·008·+Broker 12/12·+Security 6행) → IMPLEMENTATION-PLAN-002 line 221 실측(PTF-EV-001
   property test 명시 지목) → VER-002-001 line 142/171 실측(EV-L1=Model/Property·EV-Ln earliest non-live stage) →
