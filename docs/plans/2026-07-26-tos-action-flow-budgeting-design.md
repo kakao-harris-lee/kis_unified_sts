@@ -1,4 +1,4 @@
-# 설계 문서 #16 — Action-Flow Budgeting·Retry-Storm Containment·Protective-Traffic Preservation 계약 (2026-07-26, v1.1)
+# 설계 문서 #16 — Action-Flow Budgeting·Retry-Storm Containment·Protective-Traffic Preservation 계약 (2026-07-26, v1.2)
 
 > **문서 번호 규약 각주(v1.1 개번)**: 본 문서는 v1.0에서 "#15"였으나 세션 A가 #15를 ADR-002-023 IAP 설계에 선점
 > (비준 커밋 `ff5a708e`)하여 v1.1에서 **#16**으로 개번했다. 시리즈 순번은 착수 순서가 아니라 비준·선점 순서를 따른다.
@@ -14,7 +14,8 @@
   `tos.spg`, v1.1)·#11(Degraded-Mode Protective Capacity, `tos.protective`, v1.1). 본 계약은 **#13 ARE와 구조적으로
   가장 가깝다**(양자 모두 rcl `GrantDecisionRef`·`CapacityVector` 소비, produced-scalar decision seam, 5/7 EV
   분할).
-- **비준 상태**: **2026-07-26 운영자 비준(v1.1) — 효력 발생**("비준 진행" 명시 지시; 자동 비준 위임 경로 아님).
+- **비준 상태**: **2026-07-26 운영자 비준(v1.1) — 효력 발생**(v1.2 에라타 반영 후에도 **비준 효력 유지** — 아래
+  §10.1 v1.2 항목 참조: ADR 원문 전사 누락 1건의 보수 방향 정정이며 계약 의미 변경·재비준 불요)("비준 진행" 명시 지시; 자동 비준 위임 경로 아님).
   경위: v1.0 → 오케스트레이터 1차 심사 통과 → 독립 비평 리뷰 **REVISE**(CRITICAL 1[C1 §10:276 방향 반전 전사]·
   MAJOR 9·MINOR 10·Gap 9, ~122 인용 전수 검증) → v1.1 전량 반영(저작자 1차 소스 재실측, 처방 반론 0) →
   오케스트레이터 스팟체크 통과(+잔존 인용 오귀속 1건 직접 정정). **§10.3 판단 지점 4건 승인**: ① decision/reserve
@@ -452,7 +453,8 @@ permissive class").
 (C1)**: unknown dependency/limit scope ⇒ **smallest** conservative containing scope(§1 line 25); broker documented
 scope incomplete/contradictory/stale/unverified ⇒ **largest** credible containing scope에 shared(§10 line 276).
 **separate processes/nodes/regions/local counters ≠ independent capacity**(§10 line 278; independence는 allocation/
-refill/broker enforcement/failure-domain/final-route 분리 증거 필요).
+refill/broker enforcement/**credential·session state**/failure-domain/final-route **6축** 분리 증거 필요 — v1.2
+에라타로 credential/session state 축 복원).
 
 **(4) `ActionFlowDimensionKind`** — **§5.6 line 133**(Action Flow Vector 정의 축)에서 명명: `BROKER_REQUEST`·
 `ORDER`·`ORDER_MUTATION`·`CANCEL_AMEND_REPLACE`·`QUERY`·`SESSION`·`CONNECTION`·`CREDENTIAL`·`ROUTE`·`ENDPOINT`·
@@ -637,7 +639,8 @@ new normal risk"(§1 line 25). 실현(구조적):
 2. **local counter·process·priority ≠ headroom**(§10 line 278): separate process/node/region/local counter가
    distributed capacity를 확립하지 못함 — rcl `producer_local_counter`/`scheduler_priority` "create **no** headroom;
    the reducer never reads them for capacity"(`records.py:127–128` 실측 동형). independence는 allocation/refill/
-   broker-enforcement/failure-domain/final-route 분리 **증거** 필요.
+   broker-enforcement/**credential·session state**/failure-domain/final-route **6축** 분리 **증거** 필요(v1.2
+   에라타 — §10 line 278 원문 6축).
 3. **headroom 방향(부등호 검산 #6)**: admission = `aggregate_usage(committed) ≤ effective_limit(hard, runtime)`
    차원별. `effective_limit`(`vector.py:139`)이 `min(hard, runtime)`·None⇒None(fail-closed)을 이미 구현 —
    **usage > limit ⇒ DENY**(진리표: usage=None⇒UNKNOWN·limit=None⇒UNKNOWN·usage≤limit⇒pass·usage>limit⇒DENY).
@@ -773,7 +776,9 @@ missing ACK·cancel ACK·changed command를 **most-restrictive**로 처리한다
 inputs) -> bool`:
 
 - `True` **only** when snapshot 존재 ∧ 모든 applicable `ActionFlowScopeKind`(§10 line 274, 17종) 포함 ∧ 각 scope가
-  allocation/refill/broker-enforcement/failure-domain/final-route independence 증거 보유(§10 line 278).
+  allocation/refill/broker-enforcement/**credential·session state**/failure-domain/final-route **6축**
+  independence 증거 보유(§10 line 278 원문 verbatim: "allocation, refill, broker enforcement, credential/session
+  state, failure domain, and final route" — v1.2 에라타로 credential/session state 축 복원).
 - **narrower-scope-select 거부**(§1 line 25): component가 다른 producer 미관측·broker 불완전 문서화를 이유로 좁은
   scope 선택 불가 ⇒ unknown ⇒ smallest conservative containing scope 확장·`False`.
 - **local-headroom 거부**(§10 line 278): local counter·separate process·scheduler priority가 distributed headroom
@@ -1134,6 +1139,21 @@ ADR §29 Open Implementation Questions(12항)·§30 Approval Gate(13조건)에�
 
 ### 10.1 개정 로그
 
+- **v1.2 (2026-07-26) — 에라타 1건(ADR 원문 전사 누락 정정). 비준 효력 유지·재비준 불요.** 구현 단계의 적대적
+  코드 리뷰가 **MAJOR-4**로 적발: 본 계약이 §10 line 278의 independence 축을 **5축**으로 전사했으나 ADR-002-022
+  §10 line 278 원문은 **6축**이다 — verbatim "Independence requires evidence that allocation, refill, broker
+  enforcement, **credential/session state**, failure domain, and final route are genuinely separate"
+  (1차 소스 실측: `tos-spec/src/part-1-foundation/ADR-002-022-Action-Flow-Budgeting-Retry-Storm-Containment-and-
+  Protective-Traffic-Preservation.md:278`). **credential/session state 축**이 누락되어 있었다.
+  - **정정 개소(3)**: §2.2-3(line 455 인근)·§4.1 item 2(line 640 인근)·§5.1(line 776 인근) — 전부 6축으로 복원.
+  - **성질**: **전사 누락의 복원**이며 계약 의미 변경이 아니다. 축 추가는 `scope_graph_complete`의 통과 조건을
+    **좁히기만** 하므로(추가 양성 증거 요구) 방향이 **보수 강화**다 — fail-open을 만들지 않고 기존 결정을 뒤집지
+    않는다. 따라서 §10.2 비준 체크리스트 재수행·재비준은 불요하고 **v1.1 비준 효력이 그대로 유지**된다.
+  - **구현 반영**: `tos/src/tos/afg/records.py` `ScopeIndependenceEvidence`에 `credential_session_state_separated`
+    필드 추가 + `_SEPARATION_AXES`(6축 ClassVar) 도입 + `is_independent()` 합취 포함; 회귀 canary
+    `test_every_adr_separation_axis_is_load_bearing`(6축 각각 개별 fail-closed 실증)·
+    `test_credential_session_state_axis_is_required_for_independence` 신설.
+  - 형식 선례: 설계 #7 liveauth v1.2 에라타.
 - **v1.1 (2026-07-26) — 독립 비평 리뷰 REVISE(CRITICAL 1·MAJOR 9·MINOR 10·Gap 9) 반영, 운영자 비준 대기.** 전
   1차 소스 재실측(받아쓰기 금지·phantom 재발 0). 문서 번호 **#15→#16** 개번(세션 A #15 IAP 선점 `ff5a708e`).
   - **C1 (fail-open 방향 반전)**: §10:276을 "smallest"로 오전사한 다개소(§0.1 item3·§2.2-3·§3.5·§4.7·§5.1)를 **두-규칙
