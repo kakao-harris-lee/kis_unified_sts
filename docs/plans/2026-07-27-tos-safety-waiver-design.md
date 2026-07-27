@@ -1,4 +1,15 @@
-# 설계 문서 #26 — Safety-Waiver / Deviation / Residual-Risk Governance 계약 (2026-07-27, v1.1)
+# 설계 문서 #26 — Safety-Waiver / Deviation / Residual-Risk Governance 계약 (2026-07-27, v1.2)
+
+> **v1.2 에라타(2026-07-27, 적대적 코드 리뷰 ACCEPT-WITH-FIXES MAJOR-2 정직화)**: §4.3 극성 표의 `is_expired`/
+> `is_revoked` 2행과 §6.4의 `economic_effect_persists(is_expired, is_revoked)` 서명은 구현에서 **의도적으로
+> 미실현** — 코드는 `economic_effect_persists(authority: AllFalseDeviationAuthority | None)`(predicates.py:842,
+> all-false authority shape: deviation-상태 변화가 capacity release/erase를 증명할 수 없음)로 실현하고,
+> expiry/revocation의 future-use 거부는 §6b `revocation_dominates_send`(predicates.py:949, revoke<send 순서·
+> 미상 None⇒potentially-live 보수)와 §6.5 non-revival 축으로 흡수했다. 리뷰어 판정: `is_expired is False`를
+> clear 조건으로 직접 소비하면 "만료 시 economic effect 소멸"로 WDR-INV-012를 역전할 위험이 있어 **치환이
+> 방향 보존이며 오히려 더 충실**(fail-open 아님 — authority 플래그는 `is False` 게이트·None/True⇒deny).
+> §4.3 2행 삭제·§6.4 서술 정정으로 표-코드 1:1을 복원한다(phantom 행 금지 규율). 동 리뷰 MAJOR-1(§10
+> field-group 4개 복원)·MINOR-1(unknown yolk에 applicability 게이트 추가)은 코드 측 반영.
 
 > **v1.1 개정(2026-07-27, 독립 비평 REVISE 반영 — CRITICAL 0·MAJOR 2·MINOR 2)**: ① §5.5a item 1·§4.4·§10 결함-클래스 표의 ∅ 가드를
 > ADR §13 line 364 "explicit empty Active Deviation Set" 명시 허용과 정합화(applicable=∅+members=∅+is_complete=True
@@ -612,8 +623,7 @@ allow/clear 조건은 `is False`만 사용하고 `is not True`를 절대 쓰지 
 | `exact_current_decision_present` | **양극성** | `is True` | `is False` / `None` | `is not True ⇒ non-waived` | §19 line 488(WAIVED 게이트) |
 | `is_complete`(active set) | **양극성** | `is True` | `is False` / `None` | `is not True ⇒ invalid config` | §13 line 364 |
 | `single_use_consumed` | **음극성** | `is False` | `is True` / `None` | `is not False ⇒ reject reuse` | §13 line 368·WDR-INV-008 "consumed exactly once" |
-| `is_expired` | **음극성** | `is False` | `is True` / `None` | `is not False ⇒ future-use deny`(capacity 불변·§6.5) | §15·WDR-INV-009/012 |
-| `is_revoked` | **음극성** | `is False` | `is True` / `None` | `is not False ⇒ deny` | §14·§15·WDR-INV-009 |
+| *(v1.2 삭제)* `is_expired`·`is_revoked` | — | — | — | **직접 소비 행 아님** — expiry/revocation future-use 거부는 §6b `revocation_dominates_send`(None⇒potentially-live 보수)·§6.5 non-revival로, economic-effect 불변은 §6.4 authority-shape로 흡수(v1.2 에라타·INV-012 역전 위험 회피) | §14·§15·WDR-INV-009/012 |
 | `scope_wildcard` / `scope_patched` / `scope_widened` / `scope_stale` / `scope_conflicting` | **음극성** | `is False` | `is True` / `None` | `is not False ⇒ deny` | §10 line 299·WDR-INV-003 |
 | `common_mode_present` | **음극성** | `is False` | `is True` / `None` | `is not False ⇒ deny` | §11·§12·WDR-INV-006 |
 | `materiality_unknown` | **음극성** | `is False` | `is True` / `None` | `is not False ⇒ material(deny)` | §9 line 273 "Unknown materiality is material" |
@@ -622,8 +632,8 @@ allow/clear 조건은 `is False`만 사용하고 `is not True`를 절대 쓰지 
 | `re_armed` / `self_reverted` / `recovered_without_fresh_chain` | **음극성** | `is False` | `is True` / `None` | `is not False ⇒ deny`(non-revival) | §18·WDR-INV-014/015 |
 
 **전수 점검 회귀(`test_wdr_polarity.py`)**: 모든 음극성 필드에 대해 `None` 입력이 **restricted/deny로 수렴**함을
-property test(hypothesis)로 확인 — `single_use_consumed=None`이 "not consumed"로 fail-open하거나 `is_expired=None`이
-"not expired"로 fail-open하거나 `broker_state_unknown=None`이 "known"으로 fail-open하는 #18/#22 MAJOR-2 재발을 구조적
+property test(hypothesis)로 확인 — `single_use_consumed=None`이 "not consumed"로 fail-open하거나
+`broker_state_unknown=None`이 "known"으로 fail-open하는 #18/#22 MAJOR-2 재발을 구조적
 봉인. **`is not True`가 음극성 필드 소비에 나타나지 않음을 grep 회귀로 강제**(task 명시 규율). 모든 양극성 필드에
 대해 `None`/`False`가 deny로 수렴.
 
@@ -844,12 +854,16 @@ AND `all_false_deviation_authority`(§6.2·activation/capacity/authority/transmi
 ### 6.4 `broker_finality_unchanged` + `economic_effect_persists` (§16·WDR-EV-008 substrate·+Broker·극성 봉합)
 `broker_finality_unchanged`: missing-ACK은 non-acceptance **아님**(potentially-live 유지)·Cancel-ACK은 Final
 Quantity Proof **아님**(§16 line 428-429·WDR-INV-011 line 186 "Missing ACK is not proof of non-acceptance. Cancel
-ACK is not Final Quantity Proof"). 구조 token 판정. `economic_effect_persists`: `is_expired is not False` ⇒
-future-use deny·**capacity/economic effect 불변**(WDR-INV-012 line 190 "Request withdrawal, decision expiry,
-revocation, active-set change, profile rollback, or authorization expiry **cannot erase** positions, orders,
-attempts, fills, external activity, obligations, or capacity"). afg/are/capsule `terminal_release_proven` shape.
-**음극성 함정 봉합**: `is_expired`/`is_revoked`가 `None`이면 "not expired/revoked" fail-open 없이 deny(§4.3·`is
-False`만 clear). 실 broker-finality 정량화는 +Broker. `EV-L2/3+Broker`.
+ACK is not Final Quantity Proof"). 구조 token 판정. `economic_effect_persists(authority:
+AllFalseDeviationAuthority | None)`(v1.2 정정·predicates.py:842): **all-false authority shape 소비** —
+`creates_capacity is False` ∧ `classifies_protection is False`(None/True⇒deny)로 "deviation-상태 변화(만료·
+철회·rollback)가 capacity release/erase를 증명할 수 없음"을 강제(WDR-INV-012 line 190 "Request withdrawal,
+decision expiry, revocation, active-set change, profile rollback, or authorization expiry **cannot erase**
+positions, orders, attempts, fills, external activity, obligations, or capacity"). afg/are/capsule
+`terminal_release_proven` shape. **v1.2 에라타**: v1.1의 `is_expired`/`is_revoked` 직접 소비 서명은 미실현 —
+`is_expired is False`를 clear로 소비하면 INV-012 역전 위험(만료⇒effect 소멸 오독)이 있어 expiry/revocation
+future-use 거부는 §6b `revocation_dominates_send`(None⇒potentially-live 보수)·§6.5 non-revival 축이 소유.
+실 broker-finality 정량화는 +Broker. `EV-L2/3+Broker`.
 
 ### 6.5 `expiry_recovery_revives_nothing` (§15·§18·WDR-EV-009 substrate·+Security·authority 선례)
 expiry no-auto-renewal(§15 line 417 "There is no automatic renewal, grace-period permission, rolling extension,
@@ -1149,7 +1163,7 @@ False`만)·#22 MAJOR-1(reconcile/no-union)·cur v1.1(enum-drift anchor)를 §4.
 - **WDR-INV-006** (168) Combined Risk, No Permissive Union — `combined_set_no_permissive_union`(§5.5·§4.4).
 - **WDR-INV-007** (172) Independent Effective-Person Approval — hag 주입(§6.2·§0.4e·Single-Operator Variant 포함).
 - **WDR-INV-008** (176) Configuration and Re-arm Remain Separate — `deviation_single_use_non_authorizing`(§6.3)·`gate_states_separated`(§5.5b).
-- **WDR-INV-009** (180) Revocation Dominates Permission — `is_revoked`/`is_expired` 음극성(§4.3·§6.4)·"Ambiguity is denial".
+- **WDR-INV-009** (180) Revocation Dominates Permission — §6b `revocation_dominates_send`(revoke<send 순서·None⇒potentially-live)·§6.5 non-revival(v1.2 — 직접 음극성 필드 소비 아님)·"Ambiguity is denial".
 - **WDR-INV-010** (184) UNKNOWN Never Becomes Permission — `unknown_denies_and_confines`(§5.3).
 - **WDR-INV-011** (188) Broker Finality Is Unchanged — `broker_finality_unchanged`(§6.4).
 - **WDR-INV-012** (192) Economic Effect Outlives Deviation State — `economic_effect_persists`(§6.4).
