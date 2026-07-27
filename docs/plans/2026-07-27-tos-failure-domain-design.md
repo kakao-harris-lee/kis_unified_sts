@@ -1,4 +1,4 @@
-# 설계 문서 #27 — Failure-Domain Isolation and Deployment Safety 계약 (ADR-002-009, EV-L1) (2026-07-27, v1.1)
+# 설계 문서 #27 — Failure-Domain Isolation and Deployment Safety 계약 (ADR-002-009, EV-L1) (2026-07-27, v1.2)
 
 > **문서 지위**: kis_unified_sts 프로젝트 측 설계 계약. tos-spec에 대해 **non-normative**이며
 > 스펙 텍스트(RFC/ADR/템플릿/프로파일)를 **변경하지 않는다.** 본 문서는 ADR-002-009를 그린필드
@@ -17,6 +17,17 @@
 > `tos.failuredomain`·§4 3종(음극성 재설계 포함)·plain FrozenModel·이연 판정 테스트(§0.4e). 효력:
 > `tos/src/tos/failuredomain/` Phase 1(EV-L1) predicate substrate 착수 승인. 본 문서는 어떤 FD-EV·ADR
 > acceptance·restricted-live·production도 승인하지 않는다.
+>
+> **v1.2 에라타 고지(2026-07-27)**: **인용 정정 2건 — 의미 변경 없음·v1.1 비준 효력 그대로 유지.**
+> 구현 단계(적대적 코드 리뷰 사이클)에서 §3.5·§6.2의 형제 심볼 인용 1건과 §2.1E의 RFC 라인 인용
+> 1건이 실측과 불일치함이 드러나 정정했다(상세: **§10 에라타 로그**). ① `rcl CapabilityClaim
+> (rcl/state.py:133)` → **`rcl ClaimRecord`(`rcl/state.py:132`)** — 132행이 `class ClaimRecord`,
+> 133행은 그 docstring "A recorded capability claim"으로, 계약이 **산문을 심볼명화**한
+> **anti-phantom-class 오류**였다(`git grep -l CapabilityClaim tos/src/tos` ⇒ 빈 결과). ② RFC-002
+> §24.1 `physical/logical/common-mode` 문장은 **:1910**(:1911은 공백행). 어느 정정도 소유권 귀속·
+> 술어 수·어휘 카운트·게이트 조건을 바꾸지 않는다. **기록 의의**: §0.5 anti-phantom 규율이
+> 저작→리뷰 방향뿐 아니라 **저작→구현 방향으로도 실작동**해, 비준된 계약 자신의 미검증 인용을
+> 구현 단계 drift-lock이 잡아낸 첫 사례다.
 >
 > **이 사이클의 특수성 — 시리즈 최박(最薄) 패키지·"0건 완결(zero-closure)"**: **register 실측
 > 결과 FD-EV-001..012 12행 전부 최소 레벨 하한이 `EV-L3`이며 어떤 행도 L1 슬라이스를 갖지
@@ -269,7 +280,7 @@ FD-EV-001..012는 **전부 `Critical`·`NOT_IMPLEMENTED`이고 최소 레벨 하
 | §8.4 Network Partitions (7 partition, line 218–228) | not-Phase-1 | FD-EV-003 | **authority `B_authority_partition_detect`**·전 형제 |
 | §9 Identity/Credential/Broker-Session (line 234–246) | not-Phase-1 | FD-EV-006/010 | **egress**(credential/route)·**brokercap**(broker session common-mode)·authority(rotation⇒generation) |
 | §10 Deployment/Rollback (line 252–272) | not-Phase-1 | FD-EV-002/009 | **spg** 소유 + authority(no-auto-rearm) + ADR-002-029(deployment provenance 이연) |
-| §10.1 Greenfield Egress/Credential Boundary (6, line 276–285) | not-Phase-1 + 무주인 1 | FD-EV-006 | **item별 재귀속(C3 — "정확 소유" 폐기)**: item1(per-cell 존재·유일성)=**미소유**·FD `SafetyCellScope` 후보/Phase-0; item2=egress `credential_route_authority_disjoint`(4-field inventory·safety_cell 없음) **부분**+상류 principal 분류; item3=**orthostate `SEND_STARTED`+rcl `CapabilityClaim`**(egress SEND_STARTED grep 0); item4(market-data 비주문 credential 분리)=**tos 무주인⇒§8.2 Phase-0 등재**; item5=cur monotonic restrictive input; item6=rcl/cur |
+| §10.1 Greenfield Egress/Credential Boundary (6, line 276–285) | not-Phase-1 + 무주인 1 | FD-EV-006 | **item별 재귀속(C3 — "정확 소유" 폐기)**: item1(per-cell 존재·유일성)=**미소유**·FD `SafetyCellScope` 후보/Phase-0; item2=egress `credential_route_authority_disjoint`(4-field inventory·safety_cell 없음) **부분**+상류 principal 분류; item3=**orthostate `SEND_STARTED`+rcl `ClaimRecord`**(egress SEND_STARTED grep 0; v1.2 에라타 ①); item4(market-data 비주문 credential 분리)=**tos 무주인⇒§8.2 Phase-0 등재**; item5=cur monotonic restrictive input; item6=rcl/cur |
 | §11 Shared Libraries/Configuration | not-Phase-1 | FD-EV-002 | **spg**(config atomicity·mixed-version) |
 | §12 Time Failure Domains | not-Phase-1 | FD-EV-008 | **time `common_mode_group`·`independent_reference_count`** |
 | §13 Safety-Cell Blast-Radius (line 311–322) | substrate(좌표만) | FD-EV-011 | **FD `SafetyCellScope` 좌표만**(§2). 수치 non-expansion 술어는 **rcl `credible_union_capacity`:739 이연**(C2 — 유일 수치술어·승인 bound 부재·§13:322 "Aggregate capacity remains serialized by the RCL"); cell 6-field·cell→global 에스컬레이션=Phase-0 무주인(§8.2) |
@@ -360,7 +371,7 @@ or namespaces"(§4.3) — 필드 present ≠ isolation 증명(§3.5 sbr `restric
 property가 7-field↔§4.3 대응을 고정).
 
 **(E) `IsolationKind(StrEnum){PHYSICAL, LOGICAL, COMMON_MODE}` (M2 — 진성 FD 소유분)**: RFC-002
-§24.1(`RFC-002-Architecture.md:1911` "the matrix SHALL identify … **physical/logical/common-mode
+§24.1(`RFC-002-Architecture.md:1910` "the matrix SHALL identify … **physical/logical/common-mode
 classification**")·ADR §7:192("Logical separation … SHALL be described as logical separation, not
 physical independence")가 규범 필수 분류 필드로 지정한다. `FailureDomainAllocationEntry.isolation_
 kind: IsolationKind|None`(§5) — **None⇒`COMMON_MODE` fail-closed**(미분류를 physical/logical로
@@ -440,7 +451,7 @@ ADR-002-009는 authority·capacity·egress·time·deployment·recovery의 **isol
 |---|---|---|---|
 | §6.1 Strategy-to-Safety (FD-EV-001) | (미소유) 좌표만 | **authority** `control_plane_verifiable`→denied(`predicates.py:714–733`)·grant 술어·cross-env(`:222/:271`, §18.4) | authority가 "strategy/UI/operator identity ↛ grant/capacity/epoch/egress" 소유. FD는 domain taxonomy만 |
 | §6.2 Capacity Serialization (FD-EV-007) | (미소유) | **rcl** `writer_fenced`(`predicates.py:507`)·`credible_union_capacity`(`predicates.py:739`, empty-fail-closed·no-last-write-wins) | rcl-only mutation(§1 line 30). silence/lease-expiry/missing-ACK/process-death ↛ release는 rcl 소유 |
-| §6.3 / §10.1 Final Egress·Credential Boundary (FD-EV-003/006) | item1 좌표 후보·item4 무주인(§8.2) | **egress** `credential_route_authority_disjoint`(`predicates.py:405`, 4-field inventory·**safety_cell 필드 없음**)·`CredentialRouteInventoryEntry`; **orthostate `SEND_STARTED`+rcl `CapabilityClaim`**(`rcl/state.py:133`) | **§10.1 item별 재귀속(C3 — "정확 소유" 폐기)**: item2=egress disjointness **부분**(per-cell/safety_cell 아님)+상류 principal 분류; item3=orthostate/rcl(**egress `SEND_STARTED` grep 0**·negative-grep §0.5); item1(per-cell 유일성)=FD `SafetyCellScope` 후보/Phase-0; item4(market-data 분리)=tos 무주인⇒§8.2; item5=cur; item6=rcl/cur |
+| §6.3 / §10.1 Final Egress·Credential Boundary (FD-EV-003/006) | item1 좌표 후보·item4 무주인(§8.2) | **egress** `credential_route_authority_disjoint`(`predicates.py:405`, 4-field inventory·**safety_cell 필드 없음**)·`CredentialRouteInventoryEntry`; **orthostate `SEND_STARTED`+rcl `ClaimRecord`**(`rcl/state.py:132`; v1.2 에라타 ①) | **§10.1 item별 재귀속(C3 — "정확 소유" 폐기)**: item2=egress disjointness **부분**(per-cell/safety_cell 아님)+상류 principal 분류; item3=orthostate/rcl(**egress `SEND_STARTED` grep 0**·negative-grep §0.5); item1(per-cell 유일성)=FD `SafetyCellScope` 후보/Phase-0; item4(market-data 분리)=tos 무주인⇒§8.2; item5=cur; item6=rcl/cur |
 | §6.4 Restrictive-Path Dominance (FD-EV-005) | (미소유) | **authority/cur/egress** — `B_revocation_to_egress`·`B_halt_to_egress`·`B_egress_hard_fence`(VP-002); ADR-002-007 §§9.1–9.5 fenced single-use protocol(§6.4 line 160 명시 이연) | restrictive state가 egress에서 authoritative 되는 bound는 형제 VP·egress 소유. FD numeric 0 |
 | §6.5 Environment Isolation (FD-EV-006) | (미소유) | **ioc `ConformanceAxis.LIVE_NONLIVE`**(`vocabulary.py:93`)·**brokercap `ConformanceClass.CLASS_D_NON_LIVE`**(`vocabulary.py:146`)·`environment_binding_ok`(`predicates.py:644`)·authority cross-env(`:271`, §18.4)·hag `ApprovalScope.environments`(`state.py:119`) | **M7 정정**: live/non-live **축은 ioc `LIVE_NONLIVE`·brokercap `CLASS_D_NON_LIVE` 소유**·환경 좌표 필드는 다수 패키지 보유 — **닫힌 값 enum만 미소유**이며 **ioc §28 q3 선례대로 Phase-0 INSTANCE 이연**(FD 신설 불필요; §9.4-2 해소) |
 | §6.6 / §15 Recovery Isolation (FD-EV-012) | (미소유) | **sbr** `restricted_isolation_proven`(`predicates.py:407`, `IsolationFacts.all_proven()` 8-axis, §17 line 447 "labels/tickets/instances do not prove isolation")·`restore_worst_credible_union`(`:741`)·`competing_owner_fenced`(`:604`)·`recovery_generation_monotone`(`state.py:161`) | **명제 유사·scope 상이(핵심 seam)**: sbr = recovery-readiness isolation(ADR-002-017); FD §4.4 = general cross-domain isolation claim. **sbr `IsolationFacts` 재저작 금지** |
@@ -491,7 +502,7 @@ ADR-002-009는 authority·capacity·egress·time·deployment·recovery의 **isol
 >    아니다. **item2**(egress identity가 usable credential+route 보유·나머지 미보유)만 egress
 >    `credential_route_authority_disjoint`(`predicates.py:405`) 소유이되 **4-field inventory·safety_
 >    cell 없음**이라 per-cell 유일성(item1)을 증명 못 한다. **item3**(broker op이 fenced capability+
->    `SEND_STARTED` 뒤)=**orthostate `SEND_STARTED`+rcl `CapabilityClaim`**(**egress `SEND_STARTED`
+>    `SEND_STARTED` 뒤)=**orthostate `SEND_STARTED`+rcl `ClaimRecord`**(v1.2 에라타 ①; **egress `SEND_STARTED`
 >    grep 0** — negative-grep §0.5). **item1**(per-cell 존재·유일성)=FD `SafetyCellScope` 후보/
 >    Phase-0. **item4**(market-data 비주문 credential 분리)=**tos 전역 무주인**(negative-grep)⇒**§8.2
 >    Phase-0 등재**(무주인을 형제 소유로 기록하면 아무도 저작하지 않는 fail-open — 이 문서 유일
@@ -573,7 +584,7 @@ domains: frozenset[FailureDomainKind]`·`shared_dependencies`·`failure_behavior
 `detection_and_containment`(observable signal·approved bound = 주입, VP)·`recovery`(reconciliation·
 epoch·re-arm barrier — 형제 owner token)·`evidence`(acceptance case·registered evidence id)·
 `residual_risk`(remaining common mode·approved owner) **+ `isolation_kind: IsolationKind | None`**
-(RFC-002 §24.1:1911 필수 physical/logical/common-mode 분류; **None⇒`COMMON_MODE` fail-closed**, §2.1E).
+(RFC-002 §24.1:1910 필수 physical/logical/common-mode 분류; **None⇒`COMMON_MODE` fail-closed**, §2.1E).
 - **`shared_dependencies` common-mode 배경 7종(ADR §4.2:86 전사·m8)**: 서로 다른 endpoint/replica/
   name이 **하나의 administrator·credential·database·network·clock·library·broker resource**(7종)를
   공유하면 그 dependency는 common-mode다 — `shared_dependencies`가 이 7-배경 축을 담아 §4.1 판정
@@ -626,7 +637,7 @@ required check(`tos-firewall`, `tools/tos_firewall_check.py` + `.importlinter`)�
 §5 owner 필드·§1.1·§3.5 형제 귀속에 등장하는 **전 형제 token**을 **test-only 모듈**이 형제를 import해
 live member와 대조(drift-lock — #24 §3.4 선례; **Gap 정정 — §3.5 전체와 동기화·13종 추가**). 대상
 token(전수 계수 = §3.5 인용 전체): egress `credential_route_authority_disjoint`·rcl `writer_fenced`·
-`credible_union_capacity`·**`CapabilityClaim`**·spg `activation_atomic`·**`activation_serializable`·
+`credible_union_capacity`·**`ClaimRecord`**(v1.2 에라타 ①)·spg `activation_atomic`·**`activation_serializable`·
 `envelope_incompatible`·`hard_and_runtime_versions_match`**·`rollback_requires_new_generation`·
 `rollback_revives_nothing`·`compatibility_manifest_matches`·authority `GenerationVector`·`control_
 plane_verifiable`·`automatic_rearm_denied`·**`hard_fence_proven`·`rearm_gate`**·sbr `restricted_
@@ -745,8 +756,8 @@ matrix/profile"). 모델은 `FailureDomainAllocationEntry.detection_and_containm
   신규 저작 0·값 승인 Phase-0(§7·§8.2-2). (C2) "≤3종" 실제 4종 → §4.4 cell-partitioning을 rcl
   `credible_union_capacity`:739 이연·**정확히 3종**·그 자리에 `IsolationKind`(§2.1E) 추가. (C3)
   egress §10.1 "정확 소유" 3/4 불성립 → item별 재귀속(item3=orthostate `SEND_STARTED`+rcl
-  `CapabilityClaim`·egress grep 0; item1/item4 무주인⇒§8.2). **MAJOR**: (M1) RFC-002 §24.1 17범주
-  하한+supply-chain 4(22종); (M2) `IsolationKind` 신설(RFC §24.1:1911·§7:192); (M3) "전부 형제 소유"
+  `CapabilityClaim`[→v1.2 에라타 ①로 `ClaimRecord` 정정]·egress grep 0; item1/item4 무주인⇒§8.2). **MAJOR**: (M1) RFC-002 §24.1 17범주
+  하한+supply-chain 4(22종); (M2) `IsolationKind` 신설(RFC §24.1:1911[→v1.2 에라타 ②로 `:1910` 정정]·§7:192); (M3) "전부 형제 소유"
   과대주장→FD-EV-004/011 L1 기여(VER:175); (M4) §4.2 fail-open 재설계(`new_risk_blocked_by_unproven_
   isolation(status)`·5 permissive 인자 제거·음극성); (M5) §4.3 volatile 주입화; (M6) rlp/hag/venue
   행; (M7) environment=ioc `LIVE_NONLIVE`/brokercap `CLASS_D_NON_LIVE` 소유·Phase-0 INSTANCE 이연;
@@ -755,6 +766,15 @@ matrix/profile"). 모델은 `FailureDomainAllocationEntry.detection_and_containm
   lock 13종 동기화·run manifest VER §3 baseline·anchor-drift(§6.4)·§4.2:86 7-배경. **Open Q**:
   Q1=plain FrozenModel·Q2=참조-token·Q3=rlp 선례·Q4=`B_rate_limit_recovery` open. 코드 인용 40건
   무결점·카운트 전수 일치는 v1.1 재확인(22 domain·9 behavior·3 status·3 isolation-kind).
+- 2026-07-27: **v1.2 — 에라타(인용 정정 2건, 의미 변경 없음·v1.1 비준 효력 유지; §10).** 구현 단계
+  적대적 코드 리뷰 사이클에서 발견: ① §3.5·§6.2 `rcl CapabilityClaim(rcl/state.py:133)` →
+  **`rcl ClaimRecord`(`rcl/state.py:132`)** — `:132`가 `class ClaimRecord`, `:133`은 그 docstring
+  "A recorded capability claim"으로 계약이 **산문을 심볼명화**한 **anti-phantom-class** 오류
+  (`git grep -l CapabilityClaim tos/src/tos` ⇒ 빈 결과); ② §2.1E `RFC-002-Architecture.md:1911` →
+  **`:1910`**(`:1911`은 공백행) off-by-one. 발견 경로는 **§6.2 drift-lock 테스트의 형제 심볼 실
+  resolve 실패**이며, §0.5 anti-phantom 규율이 *부재* 주장에만 적용되고 ***존재* 주장**에는
+  미적용이었던 사각을 구현 단계가 덮은 첫 사례로 §10.2에 기록한다. 소유권 귀속·술어 3종·어휘
+  카운트(22/9/3/3)·§0.2 NO 목록·§8.2 Phase-0 8항목·§22 게이트는 **전부 불변**.
 
 ### 9.2 비준 체크리스트 (운영자 · 독립 리뷰어 확인 사항)
 
@@ -820,3 +840,35 @@ closure/drift-lock/anchor-drift 테스트 **작성 착수**. **FD-EV 0건 완결
 소유·FD-EV-004/011만 L1 기여·EV-L3+ 이연); §8.2 Phase-0 8항목·독립 리뷰어 지정·배포 매트릭스 승인·
 실재 VP 키(`B_failure_domain_detect`/`_contain`) 값 승인은 별도 게이트. ADR-002-009는 **Proposed**
 유지(§22 10 조건 미충족·authorship 불충분).
+
+---
+
+## 10. 에라타 로그 (v1.2 — 인용 정정 2건, 의미 변경 없음)
+
+> **효력**: v1.1 비준은 **그대로 유효**하다. 아래 2건은 **인용 좌표(심볼명·라인 번호) 정정**이며
+> 소유권 귀속·술어 수(정확히 3)·어휘 카운트(22/9/3/3)·§0.2 NO 목록·§8.2 Phase-0 항목·§22 게이트
+> 조건 중 **어느 것도 바꾸지 않는다.** 문서 섹션 번호(§10)는 ADR-002-009 조항 번호(ADR §10
+> Deployment/Rollback)와 별개다 — 본 문서의 §0–§9 체계 연장이다.
+
+### 10.1 정정 항목
+
+| # | 위치 | v1.1 (오류) | v1.2 (실측 정정) | 근거·분류 |
+|---|---|---|---|---|
+| ① | §1 표(§10.1 행)·**§3.5**(§6.3/§10.1 행)·§3.5 판정4·**§6.2** drift-lock 목록·§9.1 v1.1 로그 | rcl **`CapabilityClaim`**(`rcl/state.py:133`) | rcl **`ClaimRecord`**(`rcl/state.py:132`) | `rcl/state.py:132` = `class ClaimRecord(FrozenModel):`, `:133` = 그 docstring `"""A recorded capability claim ..."""`. 계약이 **docstring 산문을 심볼명으로 굳혔다**. `git grep -l CapabilityClaim tos/src/tos` ⇒ **빈 결과**(존재하지 않는 심볼). **분류: anti-phantom-class**(§0.5) — 인용 대상의 *존재*를 grep하지 않은 사례로, v1.1이 신설한 규율이 자기 문서에 미적용된 잔여 1건. |
+| ② | **§2.1E**(`IsolationKind` 근거) | `RFC-002-Architecture.md:1911` | `RFC-002-Architecture.md:1910` | `:1910` = "For each shared dependency, the matrix SHALL identify … **physical/logical/common-mode classification** …", `:1911` = 공백행(`:1912` = "Logical service separation SHALL NOT be presented as proof of physical failure independence."). 규범 근거 문장 자체는 불변 — off-by-one만 정정. |
+
+### 10.2 발견 경위와 기록 의의
+
+- **발견 시점**: v1.1 비준 후 **구현 단계**. §6.2 drift-lock 테스트가 요구하는 "전 형제 token을
+  실제 형제 import로 대조"를 실행하자 `rcl.CapabilityClaim`이 **resolve 실패**했고, 실측으로
+  `ClaimRecord`(:132)와 그 docstring(:133)이 드러났다. ②는 ①을 계기로 전 인용을 재실측하는 과정에서
+  나왔다.
+- **의의**: **§0.5 anti-phantom 규율이 저작→구현 방향으로 실작동한 첫 증거**다. v1.1은 이 규율을
+  *부재* 주장에 적용했는데(§0.5 (i)-(iii)), ①은 대칭인 ***존재* 주장의 미검증**이었다 —
+  즉 규율의 사각. 구현 단계 drift-lock(§6.2)이 그 사각을 자동으로 덮었고, 이는 "인용은 테스트로
+  잠근다"는 §6.2 설계 결정의 정당성을 사후 입증한다.
+- **구현 반영**: `tos/src/tos/failuredomain/vocabulary.py`의 `SIBLING_OWNER_TOKENS`는 실재 심볼
+  `rcl.ClaimRecord`를 담고, `tos/tests/failuredomain/test_seam_siblings.py`가
+  (a) 42개 token 전수 resolve, (b) **`rcl.CapabilityClaim` 부재 assert**로 본 에라타를 회귀 고정한다.
+- **후속(권고)**: 시리즈 차기 설계부터 §0.5 규율을 "**부재 주장과 존재 주장 양방향 grep**"으로
+  확장 기술한다(본 문서는 non-normative이므로 규율 개정 자체는 별도 게이트).
