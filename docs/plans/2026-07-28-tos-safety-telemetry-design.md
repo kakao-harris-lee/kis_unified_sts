@@ -1673,6 +1673,9 @@ value-type/units/scale/sign/cardinality/states/missing-semantics·source-identit
 trustworthy-time/event-time/observation-time/receipt/age/skew/uncertainty·cadence/completeness/aggregation/sampling/
 loss·derivation/invariant-evaluator digests·dependency-closure/consumers/restrictive-response/evidence-class·failure-
 domains/common-modes/access/retention/security. — binding 필드군(§2.4 `CriticalTelemetryIdentity` 담지).
+**計數 12**(過 0·不 0 — §8:253–265는 253·254 포함 연속 **12불릿**·255는 렌더링 공백행일 뿐 열거 분절 아님;
+코드 리뷰 검증 (c)에서 확정·구현 drift-lock이 live ADR 재파싱으로 12를 잠금. 이 항목만 計數 선언이 누락되어
+있던 것을 리뷰 NIT-2로 보정).
 
 **(K) §1 line 25 all-false authority 12-verb + 2(`AllFalseMonitoringAuthority` 14-field·M6)**: §1:25 CONFORMING "does
 not approve an action(1), create headroom(2), mark an RFC requirement `PASS`(3), **satisfy preventive control(4)**,
@@ -1693,7 +1696,7 @@ network, region, credential, administrator, CI pipeline, deployment, notificatio
 **계수 17**(過 0·不 0). 필드는 **open `frozenset[str]` 유지 정당**(§14 "remaining common mode is recorded as residual
 risk"·disclosed common mode는 개방 열거 독법·OQ2)·anchor는 정직성용 closed 목록.
 
-**계수 검증(過/不 양방향)**: 위 앵커 계수(A=4·B=12·C=12·D=7·E=10·F=12·G=8·H=8·I=12·K=14·L=11·M=17)가 §2.2 enum·
+**계수 검증(過/不 양방향)**: 위 앵커 계수(A=4·B=12·C=12·D=7·E=10·F=12·G=8·H=8·I=12·**J=12**·K=14·L=11·M=17)가 §2.2 enum·
 §2.4 model·§5/§6 술어와 **양방향 일치**(anchor에 있으나 enum/model에 없음 0·enum/model에 있으나 anchor에 없음 0).
 §7.2 (a) field-closure + (b) anchor-drift + **(c) ADR-enumeration-closure**(M6 신규)가 구현 단계에서 이를 기계 강제한다.
 
