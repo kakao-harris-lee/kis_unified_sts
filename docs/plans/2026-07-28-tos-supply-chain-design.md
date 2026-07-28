@@ -1,5 +1,15 @@
-# 설계 문서 #29 — Software Supply-Chain Integrity / Release-Artifact Admission / Deployment Provenance Governance 계약 (ADR-002-029, EV-L1) (2026-07-28, v1.3)
+# 설계 문서 #29 — Software Supply-Chain Integrity / Release-Artifact Admission / Deployment Provenance Governance 계약 (ADR-002-029, EV-L1) (2026-07-28, v1.4)
 
+> **v1.4 에라타(2026-07-29, 적대적 코드 리뷰 ACCEPT-WITH-FIXES 후속 — 비준 효력 유지·의미 변경 아님).**
+> 5건: (E1) §6.2 spg seam 클래스 실명 `SemanticValidationInputs`(구 `SafetyChangeInputs`는 phantom —
+> line 앵커 206·467은 정확); (E2) §2.3 coordinate 비붕괴 규칙이 §2.4 covered-key 열거보다 **우선**
+> 명문화(`AdmittedReleaseSet.current`/`restriction_state`·`RuntimeArtifactAttestation.current`/
+> `invalidated` covered 제외 — 코드 리뷰 ⑨ DEVIATION-safe·주입 채널 무결성 load-bearing 명기);
+> (E3) §0.4f 조건부 seam의 착지 분기 발동 기록(sir가 구현 도중 `5aa4ade8`로 커밋 → 실 seam test
+> 승격 — 코드 리뷰 ② FAITHFUL); (E4) §5.4 item 11 결합 게이트 명문화(주입 manifest ↔ decision
+> binding `manifest_id` 대조 의무 — 코드 리뷰 MAJOR-1·PTF #24 동형·cross-decision 대체 봉쇄);
+> (E5) §6.2 "명시 예외 2건"은 명제-레벨(필드명 드리프트 0 — 코드 리뷰 ③ "구현이 계약보다 강함").
+>
 > **v1.3 개정(2026-07-28, 최종 판정 ACCEPT-WITH-MINOR·비준 진행 가능·마이크로 개정).** 2-helper 분리
 > 반론이 리뷰어 `_cmp`(`ordering/_ordering.py:77-83`·equal⇒None⇒AMBIGUOUS) 실측으로 UPHOLD(시리즈 모범).
 > **MINOR-1**: §5.4 시그니처에 `release_artifact_manifest`+`manifest_resolved` 추가·item 11로
@@ -194,6 +204,11 @@ common-mode/restrictive" 구조 술어만(§5.1 지지). **hag `effective_princi
 부재·**`posttrade` 착지**. ADR §20 line 406 incident(-027) handoff 참조. **판정**: SCI는 incident
 generation/digest를 주입 좌표로만 소비·**코드 인용 0**. 구현 시점 sir 착지 여부 디스크 재실측 — 착지 시
 seam test(venue/PR #18 선례), 미착지 시 명시 이연 docstring. **sir 타입 import 금지**.
+(**v1.4 에라타 — 조건부 seam의 착지 분기 발동**: 구현 착수 시점 `git ls-files` 실측은 미커밋이었으나
+**구현 도중 세션 A가 `5aa4ade8`(feat(tos/sir))로 커밋** ⇒ 본 계약의 착지 분기대로 실 seam test
+(`tos/tests/sci/test_seam_sir.py` — test-only import·`sir/records.py:246` `incident_generation: int |
+None` 대조·runtime edge 0 유지·closure allowlist에 `tos.sir` 여전히 금지)로 승격. 코드 리뷰 ② FAITHFUL
+판정. 본 문서의 다른 "sir 미착지" 서술은 저작 시점(2026-07-28 저작 당시) 사실로 유지.)
 
 **(g) rcl edge 판정 = 0 (§7:235 "artifact lifecycle never writes capacity"·WDR #26 동형).** SCI는
 capacity가 아니다 — §7 line 235·SCI-INV-001 line 155·§23 line 451 "RCL … sole capacity mutation."
@@ -362,7 +377,13 @@ value`(state.py:118·strip+casefold+`WILDCARD_METACHARACTERS`+비전수 honesty)
   FIELDS`·`_REQUIRED_COVERED` 선언(spg·ioc·rcl·egress·cur·rlp·wdr 선례).
 - **coordinate 비붕괴(설계 #4 §4.4)**: mutable lifecycle 좌표(`consumed`/`consumption_permitted`/
   `current`·:39-41·주입 verdict·`status`)는 covered digest **미포함** — 정당 전이가 CRITICAL_CONFLICT
-  오탐되지 않도록.
+  오탐되지 않도록. (**v1.4 에라타 — §2.3 규칙이 §2.4 covered-key 열거보다 우선**: 같은 규칙에 따라
+  `AdmittedReleaseSet.current`(:40)/`restriction_state`(:42·cur 주입 좌표)·`RuntimeArtifactAttestation.
+  current`(:52)/`invalidated`(:53)도 covered 제외 — §2.4가 이들을 covered key로 열거한 것은 문면 충돌
+  이며 본 규칙이 우선. 코드 리뷰 ⑨ DEVIATION-safe 판정: 적법 전이(supersede 시 current 반전)를 covered
+  에 넣으면 정상 재발행이 CRITICAL_CONFLICT 오탐·원장 잠김. 이 4좌표는 digest 층 탐지가 없으므로 **주입
+  채널 무결성이 load-bearing**(records docstring 명기)·술어 층(`current is True`·`restriction_state`
+  positively-resolved)이 방어.)
 - **malformed-model 자기방어 — positive-ADMIT + incomplete-binding coexistence seal(RLP `ExactTrialPlan`·
   egress QCC·wdr 동형·본 문서 핵심 seal)**: `ArtifactAdmissionDecision` `model_validator`가 **불완전
   binding과 `result is ADMIT` 공존을 구조로 봉인**. `result is AdmissionResult.ADMIT`인데 §15 mandated
@@ -847,6 +868,12 @@ exact(manifest: ReleaseArtifactManifest | None) -> bool` — `manifest is None �
 identity is False`(:51·음극성·§2.2 실소비처) AND `lineage_complete is True`(:47) AND `registry_custody_
 current is True`(:48) AND `compatibility_complete is True`(:49)(전 양극성). decision `release_artifact_
 binding`이 가리키는 manifest identity 정합(SCI-INV-002/003).
+(**v1.4 에라타 — item 11 결합 게이트 명문화(코드 리뷰 MAJOR-1·PTF #24 MAJOR-1 동형)**: "가리키는
+manifest 정합"은 단일 인자 시그니처로 표현 불가한 under-specification이었음. item 11은 지지 술어 호출
+**앞에** 결합 검사를 의무화한다 — `release_artifact_manifest is None` 또는 `release_artifact_manifest.
+manifest_id != decision.release_artifact_binding.release_artifact_manifest_id` ⇒ `False`(cross-decision
+대체 봉쇄; `canonical_digest` 대조는 발급 시점 의존이라 optional kwargs). `target_scope`(item 6)는
+`SupplyChainScope`에 digest 필드 부재로 L1 결합 불가 — docstring 명시 이연.)
 
 **반환**: item 1-11 전부 성립시에만 `True`(item 11이 `release_artifact_identity_exact`를 명시 편입·
 MINOR-1 배선 완결). **SCI-EV-006을 닫지 않음**
@@ -947,8 +974,10 @@ assert; `shared.config`·`os.environ`·numpy/pandas/yaml·전 형제 부재 asse
 서브모듈 `vars()`+AST import 스윕. required check(`tools/tos_firewall_check.py`+`.importlinter`) green.
 
 ### 6.2 sibling/template seam drift-lock (§3.5·§4 anchor)
-- **spg produced-value seam**: test-only `import tos.spg`로 `SafetyChangeInputs.software_deployment_ok`
-  필드 존재 drift-lock(brokercap #10).
+- **spg produced-value seam**: test-only `import tos.spg`로 `SemanticValidationInputs.software_deployment_ok`
+  필드 존재 drift-lock(brokercap #10). (**v1.4 에라타**: 구 명명 `SafetyChangeInputs`는 phantom —
+  실코드 클래스는 `SemanticValidationInputs`(spg/records.py:177); 필드 :206·게이트 predicates.py:467
+  앵커는 정확했음. 코드 리뷰 ① 판정 FAITHFUL — seam 테스트는 실명에 바인딩.)
 - **§4 verbatim anchor drift(WDR MAJOR-1)**: §8 17 `*_policy_digest`(§4.3)·§11 17 closure(§4.9)·§15
   10-step(§4.4)·§16 9 scope(§4.10)·§19 8-item(§4.5)·§21 12행(§4.6)·§6 16 INV(§4.1)·§27 12 AC(§4.7)가 ADR/
   template 수·이름 1:1(field-group 통째 누락 ⇒ FAIL). **canonical 템플릿 필드 ↔ 모델 필드 1:1 anchor-drift**
@@ -1109,6 +1138,14 @@ IdArtifact`)·§5 술어(5 노른자 + cross-cutting 5 + 지지 술어 3[MINOR-1
   canary(§6.3 i·j)**: (i) `restriction_floor_not_behind` `equal⇒True` 단락 이동 뮤턴트(정상 equal-floor
   전면 봉쇄 false-negative)·(j) `generation_strictly_advances` `equal⇒True` 주입 뮤턴트(§5.8 reuse
   fail-open)로 2-helper 분리 결정 회귀 고정. 아키텍처 7건·§2.4 골격·C1-C3·M1-M9·NEW-1~7 전부 UPHOLD·무변경.
+- 2026-07-29: **v1.4 — 적대적 코드 리뷰(ACCEPT-WITH-FIXES: CRITICAL 1·MAJOR 3·MINOR 4) 후속 에라타 5건
+  (비준 효력 유지·의미 변경 아님).** E1 spg seam 실명 `SemanticValidationInputs`(§6.2)·E2 §2.3 우선
+  규칙 명문화(coordinate 비붕괴 4좌표 확장·⑨ DEVIATION-safe)·E3 sir 착지 분기 발동 기록(`5aa4ade8`·②
+  FAITHFUL)·E4 item 11 결합 게이트 명문화(MAJOR-1 처방·PTF #24 동형)·E5 §6.2 예외 성격 정정(명제-레벨·
+  필드명 드리프트 0). 코드 측 처방(CRITICAL-1 placeholder 정규화[`strip().casefold()=="tbd"` — 2층
+  coexistence seal 관통 봉인]·MAJOR-2 `{"scope_complete"}` near-∅ 공허 봉인·MAJOR-3 anchor ADR 경로
+  실명/glob·MINOR 4)은 구현에 반영. 해석 지점 9건 판정: FAITHFUL 8·DEVIATION-safe 1(⑨). 아키텍처
+  7건·전사 anchor·firewall·저작-레벨 잠금 전건 UPHOLD.
 
 **본 계약이 승인하는 것**: `tos/src/tos/sci/` Phase 1(EV-L1) 어휘(2 tri-state enum + `is_mutable_name_
 notation`) + record shape 9(8 template-backed `IndependentIdArtifact` + `ReleaseRestriction`) + 노른자
