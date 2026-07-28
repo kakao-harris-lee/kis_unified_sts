@@ -1,4 +1,22 @@
-# 설계 문서 #28 — Safety Incident Declaration / Containment / Controlled Shutdown / Closure Governance 계약 (ADR-002-027, EV-L1) (2026-07-28, v1.1)
+# 설계 문서 #28 — Safety Incident Declaration / Containment / Controlled Shutdown / Closure Governance 계약 (ADR-002-027, EV-L1) (2026-07-28, v1.2)
+
+> **v1.2 에라타(2026-07-28, 적대적 코드 리뷰 ACCEPT-WITH-FIXES 후속 — 구현이 계약보다 충실한 4곳 정직화·#26 WDR
+> MAJOR-2 "코드 약화 아닌 에라타" 선례)**: **(E1)** §2.4 `ActiveSetMember.resolved`·`OngoingSafetyObligation.
+> resolved`의 "음극성" 표기 삭제 → **양극성**(§5.2 conjunct 3 operative 문면 `resolved is not True ⇒ unresolved`가
+> 우선·ADR §10:314 unknown⇒미해결 지지·음극성이면 "미해결=clear" 의미 역전 — 계약 내부 모순의 §2.4 측이 오류,
+> 코드 리뷰 FAITHFUL 확정). **(E2)** §4.4 malformed-∅ 검출 소유 정정 — `dominating_open_incident_present`는
+> 1-인자(active_set)라 `applicable`을 볼 수 없음; `members=() ∧ applicable≠∅` 거부는 `scope_exact_combined_no_
+> favorable_subset`(§5.2 conjunct 1) 소유(구현 실측 거부 확인·리뷰 MINOR-1). **(E3)** §2.4 carrier 공백 소급 등재
+> — §6.5/§6.6/§6.3/§6b 술어 시그니처의 담지 모델 4종(`IncidentUnknownState`·`BrokerFinalityTokens`·
+> `RecoveryRevivalInputs`·`ExternalActivityClaim`)·§6.4 carrier 필드 3종(`protection_blindly_cancelled`[§14:388]·
+> `cancellation_arbiter_approved`[§12 step 6]·`exposure_reported_safely_closed`[§14:397])·`IncidentDependencyClosure.
+> dependency_closure_complete` 필드(§4.3 표 소급 — 구조 파생과 AND로만 소비·플래그 단독 통과 불가)를 계약 표면으로
+> 등재(§7.2(a) field-closure 성립 필요조건·코드 리뷰 FAITHFUL 확정). **(E4)** 극성 canary 범위 정밀화 — `is not
+> True` 금지는 **음극성 등록 필드 소비**에 한함(양극성 deny 정규화 `is not True`는 §4.3 문면대로 합법); AST 검출은
+> 직접형+등가 표기(`!= True`·`not (x is True)`·`not in (True,)` 계열)이며 중간 변수·헬퍼 경유 미검출은 **비전수
+> 정직 명기**(#25 wildcard denylist 교훈 동형). 코드 리뷰 최종: **ACCEPT-WITH-FIXES**(CRITICAL 0·MAJOR 3[hag
+> verdict 소비 배선·AMBIGUOUS 양성-증명 반전·보수 분기 커버]·MINOR 4) → 전건 처방 적용·뮤테이션 26/26 KILLED·
+> sir 391 tests.
 
 > **v1.1 개정(2026-07-28, 독립 비평 REVISE 반영 — CRITICAL 2·MAJOR 8·MINOR 9·NIT 3)**: 아키텍처 4판정
 > (greenfield·sibling edge 0·rcl edge 0·PROMOTE 0)은 리뷰 지지로 **유지**. 핵심 정정: **(C1)** §0.5 anti-phantom
@@ -478,7 +496,8 @@ generation·incident_generation·safety_cell}.
 
 **`ActiveSetMember`(value·§5.5/§10·C2-2 신규·구조 파생 substrate)** — per-incident 구조 원소. 필드: `incident_id`·
 `incident_digest`·`lifecycle_state: IncidentLifecycleState`·`parent_id: str | None`·`shared_cause_ids: frozenset[
-str]`·`resolved: bool | None`(음극성·§4.3). `no_favorable_subset`(§5.2 conjunct 3)이 `open_parent_present`/
+str]`·`resolved: bool | None`(**양극성** — v1.2 E1: §5.2 conjunct 3 operative가 우선·`is not True ⇒ unresolved`·
+ADR §10:314). `no_favorable_subset`(§5.2 conjunct 3)이 `open_parent_present`/
 `shared_cause_unresolved`/`common_mode_present`를 이 구조에서 **파생**(자기신고 제거). members tuple 길이/평행성/중복
 id는 §2.3 malformed-model validator가 봉인.
 
@@ -539,7 +558,8 @@ self-exempt") — `scope_by_dimension: Mapping[ClosureDimension, frozenset[str]]
 
 **`OngoingSafetyObligation`(value·§5.11)**: incident workflow 상태를 초과 생존하는 obligation — `obligation_id`·
 `kind: str`(position/potentially-live-order/unknown-broker-effect/protection/capacity/reconciliation/evidence/
-external-activity/settlement/recovery/monitoring·§5.11 line 148–150 전수)·`resolved: bool | None`(음극성)·
+external-activity/settlement/recovery/monitoring·§5.11 line 148–150 전수)·`resolved: bool | None`(**양극성** —
+v1.2 E1·§5.2 동형)·
 `transferred_with_owner_and_evidence: bool | None`(양극성·§20 item 4/9). `obligations_survive_shutdown`(§6.4)·closure
 contract item 4/9(§6.8b)가 소비.
 
@@ -785,8 +805,10 @@ CLOSED)는 **집합 cardinality에 무언명**(한 incident의 상태와 "active
 - `members=() ∧ applicable≠∅` ⇒ **deny**(applicable 누락·§10:311).
 - `active_set is None` ⇒ deny(§5.5 canonical set 부재는 판정 불가).
 - `applicable=∅ ∧ members≠()` ⇒ deny(surplus/conflicting·both-ways).
-- **`dominating_open_incident_present(유효-∅) = False`**(무-incident ⇒ dominating 없음)·**`(malformed-∅ 또는 파생
-  불능[is_complete/is_current 미확립]) = True`**(보수·§3.6·§6.3).
+- **`dominating_open_incident_present(유효-∅) = False`**(무-incident ⇒ dominating 없음)·**`(파생 불능
+  [is_complete/is_current 미확립]) = True`**(보수·§3.6·§6.3). **v1.2 E2**: `members=() ∧ applicable≠∅`
+  (malformed-∅)는 1-인자 시그니처가 `applicable`을 볼 수 없어 이 술어의 소관이 아님 — 그 거부는 위 두 번째
+  불릿대로 `scope_exact_combined_no_favorable_subset`(§5.2 conjunct 1)이 소유하며 실제로 거부한다(구현 실측).
 
 > **v1.0 phantom 삭제(C1)**: v1.0의 "no incident는 cur/egress `NO_INCIDENT` 소유" 주장은 **삭제**한다 —
 > `grep NO_INCIDENT tos/src/tos ⇒ 빈 결과`(오케스트레이터 재확인). ADR §16:429 "Cached `NO_INCIDENT` … is not
