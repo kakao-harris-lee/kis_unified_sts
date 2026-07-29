@@ -73,10 +73,16 @@ def test_rule_a_bare_shared_denied(tmp_path):
     assert "TOS-FW-A" in _rules(fw.check_tos_file(path, "m.py"))
 
 
-def test_rule_a_secrets_carveout_denied(tmp_path):
-    # shared.config is allowed, but the secrets submodule is a denied carve-out.
-    path = _make_tos_src(tmp_path, "m.py", "from shared.config import secrets\n")
-    assert "TOS-FW-A" in _rules(fw.check_tos_file(path, "m.py"))
+def test_rule_a_shared_config_denied_entirely(tmp_path):
+    # ALL of shared.config is denied (7b09e58f, design #1 §3.2 amendment): its
+    # __init__ unconditionally imports shared.config.secrets, so ANY submodule
+    # import transitively reaches ambient credential access. No carve-out.
+    for stmt in (
+        "from shared.config import secrets\n",
+        "from shared.config import ConfigLoader\n",
+    ):
+        path = _make_tos_src(tmp_path, "m.py", stmt)
+        assert "TOS-FW-A" in _rules(fw.check_tos_file(path, "m.py"))
 
 
 def test_rule_a_nested_import_is_caught(tmp_path):
@@ -212,7 +218,6 @@ def test_allowed_imports_pass(tmp_path):
         "from datetime import datetime\n"
         "from urllib.parse import urlparse\n"
         "from pydantic import BaseModel\n"
-        "from shared.config import ConfigLoader\n"
         "from shared import models\n"
         "from shared.indicators import rsi\n"
         "from shared.determinism import LookaheadGuard\n"
@@ -259,8 +264,8 @@ def test_run_checks_reports_multiple_rules(tmp_path):
         ("numpy", True),
         ("numpy.linalg", True),
         ("requests", False),
-        ("shared.config", True),
-        ("shared.config.loader", True),
+        ("shared.config", False),  # entire package denied since 7b09e58f
+        ("shared.config.loader", False),
         ("shared.config.secrets", False),
         ("shared.execution", False),
         ("shared", False),
