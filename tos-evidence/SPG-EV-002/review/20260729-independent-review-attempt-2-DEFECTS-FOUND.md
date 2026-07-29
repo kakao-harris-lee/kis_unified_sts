@@ -1,0 +1,78 @@
+# SPG-EV-002 Independent Review — Attempt 2 — DEFECTS FOUND (valid negative result, retained per VER §2.2)
+
+- Date: 2026-07-29 22:35 KST (reviewer's provenance)
+- Channel: Desktop Gemini chat, **no repository access**; evidence supplied as
+  a single verbatim packet (`SPG-EV-002-review-packet.md` v1, sha256
+  `b0d8caeda6d34e3283aeaceb3e713dc7a0aa05a94723dc68d015b62c575e26db`)
+  assembled by the session C orchestrator. §1 command outputs in the packet
+  were author-side-executed and disclosed as such.
+- Reviewer identity (self-reported): "Gemini" (model family distinct from the
+  Claude-orchestrated author; independence statement recorded in-band).
+- Verdict returned: **DEFECTS FOUND — DO NOT SIGN**
+- **Disposition by orchestrator: VALID NEGATIVE RESULT.** Unlike attempt 1
+  (simulated, INVALID), this review analysed only the supplied packet, marked
+  gaps as "NOT IN PACKET" instead of fabricating, and both findings were
+  confirmed against disk. The review lane worked as designed.
+
+## Findings and orchestrator cross-verification
+
+| # | Reviewer finding | Disk verification (orchestrator, 2026-07-29) | Class |
+|---|---|---|---|
+| 1 | HIGH — packet missing `test_spg_records.py`, `test_digest_binding.py`, both `run.log` (cited by traceability / listed in sha256sums) | **CONFIRMED** — packet v1 contained none of them (grep 0); `test_spg_semantic.py` was also absent | Packet-assembly defect (orchestrator-side), not an evidence defect |
+| 2 | MEDIUM — EV-L1 traceability cites `predicates.py:345,357` but `semantic_validation` is at `:457` in the supplied source | **CONFIRMED** — lines 345/357 are unrelated docstring/Args lines post-hardening; the re-executed L1 run (`20260729T120556Z-eb92ea46`) had copied the pre-hardening basis string verbatim from the superseded `054355Z` run, violating the series' "re-measure basis on every run" duty (design v1.2 N3 / code-review m4/m5 class) | **Real evidence defect** (stale citation anchors) |
+
+## Remediation (all landed)
+
+1. **Runs reproduced with fully re-measured basis citations** — all four
+   stages (STATE/SPG × L1/L2) at baseline `d4160fd0`, 20 citations resolved /
+   0 defective / 0 ambiguous, stale-token grep clean; supersedes the
+   `eb92ea46` generation (retained). Commit `6f99458d`.
+2. **Structural seal** — harness gained `verify_basis_citations()`: a run now
+   refuses to start when a basis citation is past EOF, on a blank line, an
+   ambiguous basename, or **outside the span of the selected test node** (the
+   exact defect shape found here). Honest limitation documented (a drifted
+   citation into a different file landing on a real line is undetectable).
+   Commit `540d6964`.
+3. **Packet v2** assembled including every previously missing file, for
+   attempt 3 (sha256
+   `a789c2e437f5a0b7e563acf16df90e6f222e3d13dfd7cc8179d5c5e704fe6bb4`).
+
+## Appendix — full pasted reviewer output (verbatim)
+
+VERDICT: DEFECTS FOUND — DO NOT SIGN
+
+FINDINGS: (1) HIGH Missing Evidence Artifacts — EV-L1 traceability cites
+tos/tests/spg/test_spg_records.py; EV-L2 cites tos/tests/test_digest_binding.py;
+run.log listed in both manifests/sha256sums; "NOT IN PACKET: The full-text
+copies of test_spg_records.py, test_digest_binding.py, and both run.log files
+are missing from the uploaded packet." (2) MEDIUM Traceability Line Number
+Mismatch — "The actual implementation of semantic_validation in the provided
+predicates.py begins at line 457… Lines 345 and 357 do not contain the anchor
+or function described in the traceability claim."
+
+TASK RESULTS: 1 INTERNAL CONSISTENCY: FAIL (run.log listed in sums but absent
+from packet; supplied sha256 values otherwise match packet headers).
+2 TRACEABILITY: FAIL (L2 row 1 maps cleanly to design §4 for all 12 faults;
+L1 rows citing test_spg_records.py NOT IN PACKET; predicates.py line numbers
+do not align). 3 FAULT CATALOG: PASS (12 rows SPG-01,02,03,05,06,08,09,10,11,
+14,15,13; observed==expected; MET; 1:1 with design §4). 4 HARDENING: PASS
+(_base.py:87 ConfigDict pin quoted; predicates.py:535-539 metadata keys,
+:199-200 EXCLUSIVE boundary arm; canonicalization.py:261-265
+ArtifactIntegrityError; adversarial note: unreadable boundary tokens fall to
+restrictive arm at :194-198). 5 HONESTY: PASS (closes_evidence_item: false;
+open gates listed; register READY; no overclaims). 6 ADVERSARIAL: FAIL
+(broken evidence chain: with run.log and two cited test files NOT IN PACKET
+and author-side §1 outputs shielding the gaps, the packet contains an
+internal contradiction between claimed artifacts and supplied data).
+
+PROVENANCE: "Gemini / July 29, 2026 10:35:47 PM KST / Determining inputs: the
+uploaded packet SPG-EV-002-review-packet.md, its sha256 identifiers, plus the
+explicit system prompt instructions. Channel limitation: no repository
+access; every observation relies strictly on the VERBATIM text supplied.
+Shell outputs in §1 executed by the author-side session C orchestrator;
+treated as supplied observations, not independent executions. Independence:
+generated by a model family distinct from the Claude-orchestrated author."
+
+SCOPE STATEMENT: covers EV-L1+EV-L2 stage records for SPG-EV-002 at baseline
+eb92ea46 as supplied; does not cover row PASS, live authorization, broker
+scope, or formal ADR acceptance.
