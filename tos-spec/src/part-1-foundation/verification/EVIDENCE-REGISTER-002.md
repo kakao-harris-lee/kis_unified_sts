@@ -1,6 +1,6 @@
 # EVIDENCE-REGISTER-002 — Safety Architecture Evidence Register
 
-- **Status:** Active Register — 80 items `READY`; EV-L1 stage runs executed for 2 items; **0 items accepted (no `PASS`)**
+- **Status:** Active Register — **1 item `PASS` — SPG-EV-002** (EV-L1/EV-L2 minimum level, signed 2026-07-30); 79 items `READY`; EV-L1 stage runs executed for 2 items. A `PASS` is an evidence fact, not authority.
 - **Date:** 2026-07-14
 - **Specification:** VER-002-001
 - **Production Authorization:** NO
@@ -9,12 +9,14 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 An executed EV-L1 run is a stage record, not an accepting state: a run neither closes an item nor covers the `/2`, `/3`, `+Security`, or `+Broker` stages a row's minimum level names, and a `PASS` remains incomplete until independent review signs the evidence manifest (VER-002-001 §9.5). Run packages live under `tos-evidence/<evidence-id>/<run-id>/`; the CSV-only `latest_run_id` / `latest_result_date` / `evidence_location` columns carry the binding.
 
+A `PASS` records only that a row's minimum evidence level was executed, independently reviewed, and signed. It is an evidence fact, not permission: it confers no live authorization, no broker or production scope, and no ADR acceptance — accepting an ADR requires all of its evidence rows plus Architecture Gate action. The single `PASS` (SPG-EV-002) covers the EV-L1/EV-L2 stages at baseline `d4160fd0`; its signature chain is `ai-review(decorrelated)` attempt 3 plus operator countersign 2026-07-30, retained under `tos-evidence/SPG-EV-002/review/`.
+
 ## Status Summary
 
 - Total evidence items: **372**
 - NOT_IMPLEMENTED: **292**
-- READY: **80**
-- PASS: **0**
+- READY: **79**
+- PASS: **1**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
 
@@ -189,7 +191,7 @@ Mirror column mapping: the `Owner` column below mirrors the CSV `implementation_
 | EGRESS-EV-012 | Egress Security | Manual Authority and Recovery Cannot Re-arm | ADR-002-013 | EV-L3/5+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | EGRESS-EV-013 | Egress Security | Out-of-Band Containment of a Defective or Compromised Final Egress Point | ADR-002-013 | EV-L3/5+Broker+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | SPG-EV-001 | Safety Profile Governance | Envelope Governance and Non-Silent Expansion | ADR-002-014 | EV-L1/3+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
-| SPG-EV-002 | Safety Profile Governance | Semantic Units, Numeric, and Cross-Field Validation | ADR-002-014 | EV-L1/2 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| SPG-EV-002 | Safety Profile Governance | Semantic Units, Numeric, and Cross-Field Validation | ADR-002-014 | EV-L1/2 | PASS | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | SPG-EV-003 | Safety Profile Governance | Schema, Omission, and Canonicalization Safety | ADR-002-014 | EV-L1/2+Security | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | SPG-EV-004 | Safety Profile Governance | Atomic Mixed-Generation Activation | ADR-002-014 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | SPG-EV-005 | Safety Profile Governance | Concurrent and Stale-Base Activation | ADR-002-014 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
