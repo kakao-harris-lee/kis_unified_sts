@@ -396,11 +396,14 @@ def freshness_verdict(
     * negative ``source_age`` with no ``future_tolerance`` => ``CONFLICTED``
       (cannot bound the future — fail-closed).
     * negative ``source_age`` beyond ``future_tolerance`` => ``CONFLICTED``.
-    * negative ``source_age`` within tolerance => ``FRESH`` (skew within bound; the
-      negative age was *evaluated*, not clamped).
     * any ``delay_bounds`` term unknown => ``UNKNOWN`` (upper bound unestablished).
     * ``max_age_bound`` unknown (``None``) => ``UNKNOWN`` (no threshold => cannot
       declare fresh; permissive use rejected, §8 line 210).
+    * negative ``source_age`` within tolerance **and** every bound established =>
+      ``FRESH`` (skew within bound; the negative age was *evaluated*, not clamped).
+      The unestablished-bound checks above are evaluated *first*: a future-dated
+      source within tolerance is still never ``FRESH`` under an unestablished
+      threshold (§9 line 241/243 fail-closed; engine-property fail-open fix).
     * total (``source_age`` + Σ delay bounds) > ``max_age_bound`` => ``STALE``.
     * otherwise ``FRESH``.
 
@@ -433,11 +436,19 @@ def freshness_verdict(
             return FreshnessVerdict.CONFLICTED
         if -source_age > future_tolerance:
             return FreshnessVerdict.CONFLICTED
-        return FreshnessVerdict.FRESH
+    # An unestablished upper bound denies FRESH on *every* path, including the
+    # future-dated one: being within the skew tolerance is not itself a freshness
+    # verdict (ADR §9 line 241 "if the upper bound cannot be established, the
+    # evidence is STALE or UNKNOWN"; line 243 "unbounded transport path SHALL NOT
+    # be ... accepted as fresh"). These checks therefore precede any FRESH return.
     if any(bound is None for bound in delay_bounds):
         return FreshnessVerdict.UNKNOWN
     if max_age_bound is None:
         return FreshnessVerdict.UNKNOWN
+    if source_age < 0:
+        # Future-dated within tolerance and every bound established => FRESH (the
+        # negative age was *evaluated*, not clamped).
+        return FreshnessVerdict.FRESH
     total_age = source_age + sum(bound for bound in delay_bounds)  # type: ignore[misc]
     if total_age > max_age_bound:
         return FreshnessVerdict.STALE

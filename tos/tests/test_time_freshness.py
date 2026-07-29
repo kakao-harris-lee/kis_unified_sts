@@ -164,3 +164,99 @@ def test_legitimate_negative_source_age_still_evaluated() -> None:
         )
         is FreshnessVerdict.CONFLICTED
     )
+
+
+# ---- fail-open fix: an unestablished bound outranks the future-tolerance path ----
+#
+# Found by the engine hypothesis property
+# ``test_an_unestablished_threshold_never_admits`` (design #31 §2.3): the
+# future-tolerance branch returned FRESH *before* the ``max_age_bound is None`` /
+# unknown-delay-bound checks ran, so a future-dated source admitted with no
+# threshold established at all. ADR-002-008 §9 line 241 ("if the upper bound
+# cannot be established, the evidence is STALE or UNKNOWN") and line 243
+# ("unbounded transport path SHALL NOT be ... accepted as fresh") admit no
+# future-tolerance exemption, and TIME-AC-007 (line 457) says "never
+# optimistically fresh".
+
+
+def test_reported_fail_open_example_is_not_fresh() -> None:
+    """The exact falsifying example is pinned: future-dated + no threshold != FRESH.
+
+    Prior bug: source_age=-1, max_age_bound=None, future_tolerance=50 => FRESH
+    (and the engine's ``time_admits`` therefore admitted). Now UNKNOWN.
+    """
+    assert (
+        freshness_verdict(
+            source_age=-1, delay_bounds=[], max_age_bound=None, future_tolerance=50
+        )
+        is FreshnessVerdict.UNKNOWN
+    )
+
+
+def test_future_dated_within_tolerance_is_not_fresh_without_a_delay_bound() -> None:
+    """An unknown delay bound also outranks the future-tolerance path (§9 241)."""
+    assert (
+        freshness_verdict(
+            source_age=-1, delay_bounds=[None], max_age_bound=100, future_tolerance=50
+        )
+        is FreshnessVerdict.UNKNOWN
+    )
+
+
+@given(
+    source_age=st.integers(-1000, 1000),
+    bounds=st.lists(st.integers(0, 100), max_size=3),
+    tol=st.integers(0, 10**6),
+)
+def test_no_source_age_is_fresh_without_a_threshold(
+    source_age: int, bounds: list[int], tol: int
+) -> None:
+    """Matrix: for an unestablished ``max_age_bound``, *no* source age is FRESH.
+
+    Covers negative / zero / positive ``source_age``; the verdict must be a
+    fail-closed one (UNKNOWN, or CONFLICTED when the future is unbounded).
+    """
+    verdict = freshness_verdict(
+        source_age=source_age,
+        delay_bounds=bounds,
+        max_age_bound=None,
+        future_tolerance=tol,
+    )
+    assert verdict is not FreshnessVerdict.FRESH
+    expected = (
+        FreshnessVerdict.CONFLICTED
+        if source_age < 0 and -source_age > tol
+        else FreshnessVerdict.UNKNOWN
+    )
+    assert verdict is expected
+
+
+@given(
+    source_age=st.integers(-1000, 1000),
+    bounds=st.lists(st.integers(0, 100), max_size=3),
+    max_age=st.integers(0, 5000),
+    tol=st.integers(0, 10**6),
+)
+def test_established_threshold_matrix_preserves_prior_semantics(
+    source_age: int, bounds: list[int], max_age: int, tol: int
+) -> None:
+    """Counterpart: with every bound established, the prior semantics are unchanged.
+
+    The fix is an ordering correction only — negative-within-tolerance still
+    yields FRESH, and the STALE/FRESH split for non-negative ages is untouched.
+    """
+    verdict = freshness_verdict(
+        source_age=source_age,
+        delay_bounds=bounds,
+        max_age_bound=max_age,
+        future_tolerance=tol,
+    )
+    if source_age < 0:
+        expected = (
+            FreshnessVerdict.CONFLICTED if -source_age > tol else FreshnessVerdict.FRESH
+        )
+    elif source_age + sum(bounds) > max_age:
+        expected = FreshnessVerdict.STALE
+    else:
+        expected = FreshnessVerdict.FRESH
+    assert verdict is expected
