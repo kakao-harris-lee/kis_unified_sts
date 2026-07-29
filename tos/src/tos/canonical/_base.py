@@ -71,9 +71,20 @@ class ArtifactStatus(StrEnum):
 
 
 class FrozenModel(BaseModel):
-    """Immutable, schema-strict base for every tos artifact model (design §2)."""
+    """Immutable, schema-strict base for every tos artifact model (design §2).
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    ``allow_inf_nan=False`` is pinned **explicitly**, not inherited from whatever
+    pydantic's default happens to be (EV-L2 pilot design §5 H-1). ADR-002-014 §11
+    step 3 (line 304) SHALL-validates "precision, rounding, overflow, underflow,
+    NaN, infinity, and boundary inclusion", so the *enforcement owner* of the
+    non-finite rejection is **tos**, not a third-party default a future release
+    could flip open. With the pin a ``NaN`` / ``±Infinity`` ``float`` / ``Decimal``
+    bound is *unconstructable* on every tos artifact — structurally stronger than
+    a post-hoc validation reason; without it the same behaviour holds today only by
+    coincidence (design §5 H-1 / OQ-1: "기본이 미래 변경되면 fail-open").
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
 
 def derive_id(prefix: str, digest: str) -> str:

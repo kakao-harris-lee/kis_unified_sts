@@ -48,3 +48,8 @@ packages = ["src/tos"]
 minversion = "7.0"
 addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
+# `--strict-markers` above means an unregistered marker is a collection ERROR, so
+# every marker the tos suite uses is declared here.
+markers = [
+    "l2_fault: EV-L2 component-fault test — a single component under controlled failure injection with authoritative state inspection (VER-002-001 §5 line 146-148). Each marked test injects exactly one fault from the EV-L2 pilot design catalog (§3 STATE / §4 SPG) into an otherwise-valid witness and records one append-only fault-timeline row (§6.1).",
+]

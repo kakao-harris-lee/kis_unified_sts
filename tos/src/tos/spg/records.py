@@ -385,6 +385,21 @@ class HardSafetyEnvelope(IndependentIdArtifact):
                 return gdl.envelope_max
         return None
 
+    def boundary_for(self, dimension: str) -> str | None:
+        """Return the declared ``boundary`` inclusion token for ``dimension``, else ``None``.
+
+        The §11 step 3 (line 304) "boundary inclusion" metadata of the envelope-side
+        (constraint-owning) dimension, which decides whether the envelope maximum is
+        itself inside the permitted set (``tos.spg.predicates._exceeds_envelope_maximum``;
+        EV-L2 pilot design §5 H-2). First-match lookup with exactly the :meth:`max_for`
+        semantics, so a maximum and its boundary are always read from the **same**
+        declaration. Pure lookup over the frozen tuple; mutates nothing.
+        """
+        for gdl in self.governed_dimensions:
+            if gdl.dimension == dimension and gdl.dimension is not None:
+                return gdl.boundary
+        return None
+
     def declares(self, dimension: str) -> bool:
         """Whether ``dimension`` is a declared governed dimension of this envelope."""
         return any(

@@ -138,6 +138,68 @@ def profile_transition_allowed(frm: ProfileState, to: ProfileState) -> bool:
 # §5.1 — envelope dominance / non-silent expansion (SPG-EV-001 substrate)
 # ===========================================================================
 
+#: The ADR-002-014 §11 step 3 (**line 304**) "boundary inclusion" tokens carried by
+#: :attr:`~tos.spg.records.GovernedDimensionLimit.boundary`.
+BOUNDARY_INCLUSIVE = "INCLUSIVE"
+BOUNDARY_EXCLUSIVE = "EXCLUSIVE"
+
+#: The closed set of boundary tokens this model can evaluate. Membership is **exact** —
+#: no casefolding, no whitespace stripping — because normalizing an unknown declaration
+#: into a known one is precisely how a permission gets granted by a typo (design #12
+#: §4.1). Anything outside this set is unreadable, and an unreadable containment rule is
+#: unproven containment (:func:`_exceeds_envelope_maximum`), never a lenient default.
+BOUNDARY_TOKENS: frozenset[str] = frozenset({BOUNDARY_INCLUSIVE, BOUNDARY_EXCLUSIVE})
+
+
+def _exceeds_envelope_maximum(
+    profile_value: CanonicalDecimal,
+    envelope_max: CanonicalDecimal,
+    boundary: str | None,
+) -> bool:
+    """Boundary-inclusion-aware breach test (ADR §11 step 3 line 304; design §5 H-2).
+
+    ADR-002-014 §11 step 3 (line 304) SHALL-validates "**boundary inclusion**" and
+    SPG-AC-002 (line 621) requires those semantic defects to "fail closed before
+    activation", so a magnitude comparison that ignores the declared boundary cannot
+    honour either. Arms:
+
+    * :data:`BOUNDARY_EXCLUSIVE` — the maximum is itself **outside** the permitted set,
+      so ``profile == envelope_max`` is already a breach (``>=``). Before this seal that
+      exact pair returned ``valid=True`` with an empty rejected-dimension set (the
+      measured fail-open, EV-L2 pilot design §5 H-2 / C2 / SPG-08).
+    * :data:`BOUNDARY_INCLUSIVE`, or an **undeclared** (``None``) boundary — the plain
+      reading of a "maximum" admits equality (``>``); this is the pre-existing L1
+      comparison, kept unchanged so an envelope declaring no boundary is not
+      retroactively narrowed.
+    * any **other** token — unrecognized, therefore not positive proof of inclusiveness,
+      so it falls to the more restrictive ``>=`` arm (design #12 §4.1 fail-closed: there
+      is no permissive fallthrough for an unreadable declaration). Recognition is exact
+      membership in :data:`BOUNDARY_TOKENS` — no casefolding, no stripping — so
+      ``"inclusive"``, ``"INCLUSIVE "`` and ``"OPEN"`` all take the restrictive arm
+      rather than being normalized into a permission.
+
+    A same-named envelope/profile pair whose ``boundary`` tokens *disagree* is separately
+    rejected as ``UNIT_OR_MULTIPLIER_MISMATCH`` by :data:`_UNIT_METADATA_KEYS`, so the
+    boundary read here is either agreed by both sides or declared only by the envelope —
+    the constraint-owning side.
+
+    Args:
+        profile_value: The profile's concrete operating value.
+        envelope_max: The envelope's concrete maximum for the same dimension.
+        boundary: The envelope-declared boundary token (``None`` => inclusive maximum).
+
+    Returns:
+        ``True`` iff the profile value breaches the envelope maximum under ``boundary``.
+    """
+    if boundary is not None and boundary not in BOUNDARY_TOKENS:
+        # An unreadable boundary declaration establishes nothing: the envelope states a
+        # containment rule this code cannot evaluate, so containment is unproven for the
+        # dimension regardless of the magnitudes. Breach, not a silent arm choice.
+        return True
+    if boundary == BOUNDARY_EXCLUSIVE:
+        return profile_value >= envelope_max
+    return profile_value > envelope_max
+
 
 def profile_within_envelope(
     envelope: HardSafetyEnvelope | None,
@@ -164,7 +226,10 @@ def profile_within_envelope(
     * **(profile -> envelope, no exceed / redefine)** every profile governed dimension is
       **declared** by the envelope (an undeclared dimension is zero-authority — the ∅-seal;
       design #12 §4.1 / §5.1), and every profile value and its envelope maximum are concrete
-      and ``value <= max``;
+      and within the maximum **under the envelope's declared boundary inclusion**
+      (:func:`_exceeds_envelope_maximum`; ADR §11 step 3 line 304, SPG-AC-002 line 621): an
+      ``EXCLUSIVE`` boundary rejects ``value == max``, an ``INCLUSIVE`` / undeclared one
+      admits it, and an unrecognized token falls to the restrictive arm;
     * the profile scope is a subset of the envelope's permitted scope.
 
     Any violation => ``valid=False`` with ``EXCEEDS_ENVELOPE`` and the offending dimensions
@@ -230,7 +295,13 @@ def profile_within_envelope(
             continue
         env_max = envelope.max_for(dim)
         prof_value = gdl.profile_value
-        if env_max is None or prof_value is None or prof_value > env_max:
+        if (
+            env_max is None
+            or prof_value is None
+            or _exceeds_envelope_maximum(
+                prof_value, env_max, envelope.boundary_for(dim)
+            )
+        ):
             rejected.add(dim)
 
     # Profile scope must be a subset of the envelope permitted scope.
@@ -272,7 +343,16 @@ def envelope_expansion_enlarges_nothing(
     generation is activated, so ``True`` **only** when every active-profile governed value is
     still within the **old** envelope maximum (the profile was not silently expanded to the
     new, wider ceiling). Any ``None`` / undeclared / missing value fails closed. A profile
-    value that has grown to exploit the new envelope (``value > old_max``) => ``False``.
+    value that has grown to exploit the new envelope => ``False``.
+
+    The containment test is the **same** boundary-inclusion-aware comparison dominance
+    uses (:func:`_exceeds_envelope_maximum`; ADR §11 step 3 line 304). Sharing it is
+    load-bearing rather than tidy: this predicate feeds the ``envelope_not_expanded``
+    seam bool that liveauth ``Safe053VariantAttestation`` (``state.py:164``) and its
+    downstream consumers read, so a boundary-blind comparison here would report "nothing
+    was enlarged" for a profile sitting exactly on an ``EXCLUSIVE`` maximum — the very
+    value that maximum excludes — and hand a ``True`` to the re-arm path while dominance
+    was separately rejecting the same pair (EV-L2 pilot design §5 H-2).
 
     Args:
         old_envelope: The pre-expansion envelope (``None`` => ``False``).
@@ -291,7 +371,11 @@ def envelope_expansion_enlarges_nothing(
             return False
         old_max = old_envelope.max_for(dim)
         value = gdl.profile_value
-        if old_max is None or value is None or value > old_max:
+        if (
+            old_max is None
+            or value is None
+            or _exceeds_envelope_maximum(value, old_max, old_envelope.boundary_for(dim))
+        ):
             return False
     return True
 
@@ -345,9 +429,29 @@ def envelope_incompatible(
 # §5.2 — semantic validation (rich verdict; SPG-EV-002/003 substrate)
 # ===========================================================================
 
-#: The §11 units-metadata keys compared between an envelope dimension and the same-named
-#: profile dimension (a mismatch => UNIT_OR_MULTIPLIER_MISMATCH; design #12 §5.2).
-_UNIT_METADATA_KEYS: tuple[str, ...] = ("unit", "multiplier", "sign")
+#: The §11 step 3 semantic-metadata keys compared between an envelope dimension and the
+#: same-named profile dimension (a mismatch => UNIT_OR_MULTIPLIER_MISMATCH; design #12 §5.2).
+#:
+#: ADR-002-014 §11 step 3 (**line 304**) SHALL-validates "types, units, currencies,
+#: multipliers, signs, **precision, rounding**, overflow, underflow, NaN, infinity, and
+#: **boundary inclusion**", and SPG-AC-002 (**line 621**) requires that "Unit, multiplier,
+#: currency, sign, precision, rounding, overflow, and cross-field semantic defects fail
+#: closed before activation". ``precision`` / ``rounding`` / ``boundary`` are therefore
+#: compared beside ``unit`` / ``multiplier`` / ``sign``: a profile stated at
+#: ``precision=8`` / ``FLOOR`` / ``EXCLUSIVE`` is **not** semantically comparable with an
+#: envelope stated at ``precision=2`` / ``HALF_UP`` / ``INCLUSIVE``, and before this seal
+#: that pair validated ``valid=True`` with an empty reason set (a measured fail-open —
+#: EV-L2 pilot design §5 H-2 / C2). The **ratified** reason vocabulary is reused verbatim
+#: (no new :class:`~tos.spg.vocabulary.ValidationReason` value is minted) per design
+#: §5 H-3's reason-vocabulary drift-lock.
+_UNIT_METADATA_KEYS: tuple[str, ...] = (
+    "unit",
+    "multiplier",
+    "sign",
+    "precision",
+    "rounding",
+    "boundary",
+)
 
 
 def semantic_validation(
@@ -361,15 +465,20 @@ def semantic_validation(
     (§11 line 315 "deterministic result **and reason set**"):
 
     * **step 6** — profile <= envelope (:func:`profile_within_envelope`): ``EXCEEDS_ENVELOPE``.
-    * **step 3 units** — a same-``dimension`` unit / multiplier / sign mismatch between the
-      envelope and profile: ``UNIT_OR_MULTIPLIER_MISMATCH``.
+    * **step 3 semantic metadata** — a same-``dimension`` mismatch on any
+      :data:`_UNIT_METADATA_KEYS` axis (unit / multiplier / sign / **precision** /
+      **rounding** / **boundary**) between the envelope and profile:
+      ``UNIT_OR_MULTIPLIER_MISMATCH`` (ADR §11 step 3 line 304 "precision, rounding ...
+      boundary inclusion"; SPG-AC-002 line 621; EV-L2 pilot design §5 H-2 sealed the
+      precision/rounding/boundary fail-open).
     * **step 3 numeric** — NaN / infinity / overflow is enforced **structurally at
-      construction** by pydantic v2's default ``Decimal`` inf/nan rejection
-      (``allow_inf_nan=False``); the reused core :data:`~tos.canonical.CanonicalDecimal` adds
-      only scale-normalization and carries no finite check of its own, so a non-finite limit
-      is *unconstructable* — strictly stronger than a post-hoc reason. The
-      ``OVERFLOW_UNDERFLOW_NAN_INFINITY`` reason stays in the vocabulary for any future
-      non-model-sourced input (design #12 §5.2 deviation).
+      construction** by the ``allow_inf_nan=False`` pin tos owns explicitly on
+      :class:`~tos.canonical.FrozenModel` (EV-L2 pilot design §5 H-1 — the pin is tos's,
+      not an inherited pydantic default); the reused core
+      :data:`~tos.canonical.CanonicalDecimal` adds only scale-normalization and carries no
+      finite check of its own, so a non-finite limit is *unconstructable* — strictly
+      stronger than a post-hoc reason. The ``OVERFLOW_UNDERFLOW_NAN_INFINITY`` reason stays
+      in the vocabulary for any future non-model-sourced input (design #12 §5.2 deviation).
     * **step 12** — a duplicate governed dimension: ``UNKNOWN_OR_DUPLICATE_FIELD``
       (``extra="forbid"`` already rejects unknown *fields* at construction).
     * **step 5** — ``inputs.cross_field_consistent`` not ``True``: ``CROSS_FIELD_CONSTRAINT_VIOLATION``.
@@ -410,7 +519,8 @@ def semantic_validation(
         reasons.add(ValidationReason.EXCEEDS_ENVELOPE)
         rejected |= dominance.rejected_dimensions
 
-    # step 3 units — same-dimension unit / multiplier / sign mismatch.
+    # step 3 semantic metadata — same-dimension unit / multiplier / sign / precision /
+    # rounding / boundary mismatch (ADR §11 step 3 line 304; design §5 H-2).
     env_by_dim = {
         gdl.dimension: gdl
         for gdl in envelope.governed_dimensions
@@ -428,10 +538,11 @@ def semantic_validation(
                     rejected.add(dim)
                     break
 
-    # step 3 numeric — NaN / infinity is enforced structurally at construction by pydantic
-    # v2's default Decimal inf/nan rejection (allow_inf_nan=False); the core CanonicalDecimal
-    # only scale-normalizes. A non-finite limit is unconstructable, so no runtime magnitude
-    # here can be non-finite (design #12 §5.2 deviation — stronger guarantee).
+    # step 3 numeric — NaN / infinity is enforced structurally at construction by the
+    # explicit allow_inf_nan=False pin tos owns on FrozenModel (EV-L2 pilot design §5 H-1);
+    # the core CanonicalDecimal only scale-normalizes. A non-finite limit is
+    # unconstructable, so no runtime magnitude here can be non-finite (design #12 §5.2
+    # deviation — stronger guarantee).
 
     # step 12 — duplicate governed dimension (a covered-field-level ambiguity).
     for source in (envelope.governed_dimensions, profile.governed_dimensions):
@@ -486,8 +597,10 @@ def units_compatible(
     """The ``units_compatible`` seam bool (design #12 §3.4 / §5.3).
 
     ``True`` **only** when :func:`semantic_validation` produces no
-    ``UNIT_OR_MULTIPLIER_MISMATCH`` reason (units are compatible; NaN / infinity is already
-    unconstructable at the core ``CanonicalDecimal`` layer — §5.2 deviation). Feeds liveauth
+    ``UNIT_OR_MULTIPLIER_MISMATCH`` reason — i.e. every :data:`_UNIT_METADATA_KEYS` axis
+    (unit / multiplier / sign / precision / rounding / boundary) agrees, so the two sides
+    are semantically **comparable** (NaN / infinity is already unconstructable at the
+    ``FrozenModel`` ``allow_inf_nan=False`` pin — §5.2 deviation). Feeds liveauth
     ``atomic_activation_ok``'s ``units_compatible`` argument (``predicates.py:454``).
     Fail-closed: an absent bundle => ``False``.
     """

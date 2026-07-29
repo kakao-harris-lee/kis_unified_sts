@@ -242,10 +242,27 @@ def get_scheme(version: str | None) -> CanonicalizationScheme:
         The registered :class:`CanonicalizationScheme`.
 
     Raises:
-        KeyError: If no scheme is registered for ``version`` (or it is ``None``).
+        ArtifactIntegrityError: If no scheme is registered for ``version`` (or it
+            is ``None``). An unresolvable ``canonicalization_version`` means the
+            artifact's digest cannot be recomputed, i.e. its integrity cannot be
+            established — a construction-time integrity violation, **not** a raw
+            ``KeyError`` escaping the artifact layer (EV-L2 pilot design §5 H-4;
+            VER-002-001 §9.2). Because ``ArtifactIntegrityError`` subclasses
+            ``ValueError``, pydantic surfaces it as a ``ValidationError`` on the
+            construction path, so a bad version is *unconstructable* rather than
+            an unhandled lookup error.
     """
     if version is None or version not in _REGISTRY:
-        raise KeyError(f"no canonicalization scheme registered for {version!r}")
+        # Imported inside the function: ``tos.canonical._base`` imports this
+        # module, so a module-level import would be circular. Any call that can
+        # reach this branch happens long after ``_base`` is fully initialized.
+        from tos.canonical._base import ArtifactIntegrityError
+
+        raise ArtifactIntegrityError(
+            f"no canonicalization scheme registered for {version!r} — the digest "
+            "cannot be recomputed, so artifact integrity cannot be established "
+            "(design §3.1; EV-L2 pilot design §5 H-4)"
+        )
     return _REGISTRY[version]
 
 

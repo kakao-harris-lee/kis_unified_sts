@@ -12,8 +12,9 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+import tos.spg as spg
 from pydantic import ValidationError
-from tos.canonical import RecordPairKind, classify_record_pair
+from tos.canonical import IndependentIdArtifact, RecordPairKind, classify_record_pair
 from tos.spg import (
     ArtifactStatus,
     HardSafetyEnvelope,
@@ -155,6 +156,55 @@ def test_extra_field_forbidden() -> None:
     """(§2.0 / §7 line 226) extra='forbid' — an unknown authority-affecting field is rejected."""
     with pytest.raises(ValidationError):
         HardSafetyEnvelope(unexpected_field=1)  # type: ignore[call-arg]
+
+
+#: Every digest-bound spg citizen, **discovered** from the package rather than hand-listed,
+#: so a sixth citizen added later is covered the day it lands instead of silently escaping
+#: the check (the enumeration-drift defect class). The count below locks today's shape.
+_SPG_CITIZENS: tuple[type[IndependentIdArtifact], ...] = tuple(
+    sorted(
+        (
+            member
+            for member in vars(spg).values()
+            if isinstance(member, type)
+            and issubclass(member, IndependentIdArtifact)
+            and member is not IndependentIdArtifact
+        ),
+        key=lambda cls: cls.__name__,
+    )
+)
+
+
+def test_every_digest_bound_citizen_is_discovered() -> None:
+    """The five §5.3/§5.6/§5.7/§7 digest-bound citizens are all in the discovered set."""
+    assert {cls.__name__ for cls in _SPG_CITIZENS} == {
+        "ActivationRecord",
+        "ConsumerCompatibilityManifest",
+        "HardSafetyEnvelope",
+        "RuntimeSafetyProfile",
+        "SafetyConfigurationBundle",
+    }
+
+
+@pytest.mark.parametrize("citizen", _SPG_CITIZENS, ids=lambda cls: cls.__name__)
+def test_extra_field_forbidden_all_citizens(
+    citizen: type[IndependentIdArtifact],
+) -> None:
+    """(§2.0 / §7 line 226 / §11 step 12) No citizen accepts an undeclared field.
+
+    ADR-002-014 §7 line 226: "Unknown fields that can affect authority SHALL be rejected";
+    §11 step 12 (line 313): no bypass "through omitted, unknown, deprecated, duplicated, or
+    extension fields". The mechanism is the shared ``extra="forbid"`` base, so it was
+    already in force for all five — but only ``HardSafetyEnvelope`` was *tested*
+    (``test_extra_field_forbidden`` above, 1 of 5). That was a verification-lane gap, not a
+    code fail-open, and the EV-L2 pilot design §7 disposition closes it here at L1.
+
+    Scope: this is **SPG-EV-003 substrate** (``EV-L1/2+Security``, VER:1555 — the
+    unknown/duplicate/extension **field** axis). It does not gate SPG-EV-002 acceptance and
+    claims no SPG-EV-003 coverage (design §7, over-scope prohibition).
+    """
+    with pytest.raises(ValidationError):
+        citizen(unexpected_field=1)  # type: ignore[call-arg]
 
 
 def test_envelope_order_excluded_from_digest() -> None:

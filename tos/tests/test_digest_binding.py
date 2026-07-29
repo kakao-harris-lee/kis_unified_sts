@@ -9,9 +9,12 @@ property at the model level (status + Layer-2 changes do not move the digest).
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from hypothesis import given
 from pydantic import ValidationError
+from tos.canonical import CanonicalDecimal, DigestBoundArtifact, FrozenModel
 from tos.capsule import (
     ArtifactStatus,
     DecisionContextCapsule,
@@ -133,6 +136,38 @@ def test_union_of_two_capsules_rejected() -> None:
     kwargs["context_generation"] = right.context_generation  # spliced field
     with pytest.raises(ValidationError):
         DecisionContextCapsule(**kwargs)
+
+
+# ---- non-finite magnitudes are unconstructable (EV-L2 pilot design §5 H-1) --
+
+
+def test_frozen_model_pins_allow_inf_nan_explicitly() -> None:
+    """``allow_inf_nan=False`` is tos's own pin, not an inherited pydantic default.
+
+    ADR-002-014 §11 step 3 (line 304) SHALL-rejects ``NaN`` / ``infinity`` magnitudes, and
+    every tos artifact inherits that rejection from :class:`~tos.canonical.FrozenModel`.
+    Today pydantic happens to reject non-finite ``Decimal`` values by default, so a purely
+    behavioural test would keep passing with the pin deleted — and the guarantee would be
+    resting on a third-party default that a future release may flip open, with nothing in
+    the suite noticing. This asserts the **ownership**: the key is present in tos's own
+    config, so removing it fails here (EV-L2 pilot design §5 H-1 / OQ-1).
+    """
+    assert FrozenModel.model_config["allow_inf_nan"] is False
+    # inherited by every artifact base, so no subclass silently opts back in
+    for base in (DigestBoundArtifact, DecisionContextCapsule):
+        assert base.model_config["allow_inf_nan"] is False
+
+
+@pytest.mark.parametrize("magnitude", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_decimal_is_unconstructable(magnitude: str) -> None:
+    """The behavioural companion: a non-finite covered Decimal never enters an artifact."""
+
+    class _Bound(FrozenModel):
+        value: CanonicalDecimal
+
+    assert _Bound(value=Decimal("1.50")).value == Decimal("1.5")
+    with pytest.raises(ValidationError):
+        _Bound(value=Decimal(magnitude))
 
 
 # ---- (A4) excluded insensitivity at the model level ------------------------

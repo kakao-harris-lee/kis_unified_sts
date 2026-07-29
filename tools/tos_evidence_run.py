@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EV-L1 evidence run harness — design #1 §5.1 run-manifest contract (7 items).
+"""EV-L1 / EV-L2 evidence run harness — design #1 §5.1 run-manifest contract (7 items).
 
 Ratified sources (this file mechanizes them; it does not own them):
 
@@ -24,7 +24,40 @@ status **and a reason**, never with a fabricated value, on the design #1 §5.1
 standard the baseline is complete only for EV-L1.
 
 This harness never moves an Evidence Register row to ``PASS``. Every manifest
-carries the discipline tag in ``DISCIPLINE_TAG``.
+carries the discipline tag in ``DISCIPLINE_TAG`` / ``DISCIPLINE_TAG_L2``.
+
+EV-L2 stage (manifest v2)
+-------------------------
+``--evidence-level-stage EV-L2`` produces a **superset** manifest: every v1 field
+is retained unchanged and four field groups are added (EV-L2 pilot design
+``docs/plans/2026-07-29-tos-ev-l2-pilot-design.md`` §6.2) —
+``prior_stage_runs`` (the EV-L1 run(s) this stage builds on, bound by their
+``sha256sums.txt`` digest and baseline commit), ``fault_injection`` (catalog ref,
+append-only schedule artifact, seed, and the **re-counted** per-row fault
+totals), ``coverage_argument`` (VER-002-001 §2.7), and the ``claim`` block's
+``stages_executed`` / ``covered_axis``.
+
+Four EV-L2-only gates can withhold GREEN, and none of them is a self-report:
+
+  * ``fault_injection.all_faults_met`` — every row's outcome is **re-derived**
+    from its observed vs expected disposition (the row's own ``outcome`` field is
+    cross-checked, never believed). A deviation, a misreported outcome, an
+    undefined Expected, an unobserved disposition, a duplicated fault id, a row
+    from another evidence id, **zero rows**, or a recount that disagrees with
+    ``--expected-fault-count`` all withhold it ("0 faults injected" is not "no
+    violations", and a deselected fault must not shrink the schedule silently;
+    design §0.5-2 / C2-c).
+  * ``fault_injection.l1_hardening_prereq_met`` — the design §5 H-1/H-2/H-4
+    hardening is confirmed by parsing the executed source and inspecting its
+    syntax tree, never from a flag the caller passes and never by a substring
+    scan a comment could satisfy.
+  * ``prior_stage_runs[*]`` — the prior package is re-verified (every recorded
+    digest re-hashed, no uncovered file, matching evidence id, green outcome),
+    and ``baseline_matches_this_run`` carries design §6.2 M9: an EV-L1 run taken
+    at a different baseline commit is stale evidence, so the staged ``L1 ∧ L2``
+    claim is unsupported until EV-L1 is re-executed at this baseline.
+  * ``fault_injection.seed`` — an EV-L2 stage must be seed-reproducible
+    (VER §9.1), so an unpinned seed policy withholds GREEN.
 
 Layout produced (VER §8-equivalent, run-scoped)::
 
@@ -34,6 +67,7 @@ Layout produced (VER §8-equivalent, run-scoped)::
         traceability.csv    EV-ID -> ADR -> design document -> test node
         junit.xml           pytest --junitxml output
         run.log             captured stdout+stderr of the pytest invocation
+        fault-timeline.jsonl  EV-L2 only: the append-only VER §9.1 fault schedule
         sha256sums.txt      sha256 of every retained file (written last)
 
 ``run-id`` is ``<UTC timestamp>-<git short sha>``. The run directory is created
@@ -52,6 +86,7 @@ governed by the import firewall; it must still never ``import tos`` (TOS-FW-R).
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import hashlib
 import io
@@ -63,6 +98,7 @@ import sys
 import time
 import tomllib
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -80,11 +116,28 @@ DISCIPLINE_TAG = (
     "staged rows require higher stages before acceptance (VER:171)."
 )
 
+#: The EV-L2 counterpart (EV-L2 pilot design §6.2 N8, verbatim). It names the four
+#: outstanding gates by the manifest blocks that carry their state, so a reader never
+#: has to trust the tag alone.
+DISCIPLINE_TAG_L2 = (
+    "EV-L2 stage execution record only; not a row PASS; L1 hardening prereq + "
+    "coverage argument + P0-1 + independent review remain as stated in "
+    "claim/coverage_argument blocks."
+)
+
+STAGE_L1 = "EV-L1"
+STAGE_L2 = "EV-L2"
+STAGES = (STAGE_L1, STAGE_L2)
+
 #: The Verification Profile is PROPOSED, not approved — P0-1 is open. Recorded
 #: verbatim so no downstream reader can mistake it for an approved profile.
 VERIFICATION_PROFILE_VERSION = "2.1 (PROPOSED — P0-1 open)"
 
 NOT_APPLICABLE = "NOT_APPLICABLE_EV_L1"
+#: The EV-L2 N/A token (design §6.2 M2). The baseline note is *updated*, never deleted:
+#: the VER §3 unmet-field list and every reason survive the stage change, they are just
+#: attributed to the pure-model L2 stage instead of to EV-L1.
+NOT_APPLICABLE_L2 = "NOT_APPLICABLE_PURE_MODEL_L2"
 RECORDED = "RECORDED"
 PARTIAL = "PARTIAL_EV_L1"
 
@@ -118,8 +171,189 @@ BASELINE_NAME = "baseline.yaml"
 TRACEABILITY_NAME = "traceability.csv"
 JUNIT_NAME = "junit.xml"
 RUNLOG_NAME = "run.log"
+FAULT_TIMELINE_NAME = "fault-timeline.jsonl"
 SHA256SUMS_NAME = "sha256sums.txt"
 INCOMPLETE_MARKER_NAME = "INCOMPLETE_RUN.txt"
+
+# ---------------------------------------------------------------------------
+# EV-L2 constants (EV-L2 pilot design §5 / §6.2)
+# ---------------------------------------------------------------------------
+
+EVL2_DESIGN_PATH = "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md"
+
+#: The design §5 L1 hardening prerequisites. Confirming the hardening by reading the
+#: executed code, rather than by trusting a ``--hardening-done`` flag, is the whole point:
+#: a stage run that exercised SPG-05/06/08 or ST-07 against an un-hardened component would
+#: be recording DEVIATIONs as if they were MET (design §5 gating).
+#:
+#: Each entry is checked **structurally** (:func:`check_l1_hardening`), never by scanning
+#: the file for a substring. A file-wide substring test is satisfied by the token appearing
+#: *anywhere*, including in a comment or a docstring — so H-1 could be rolled back while a
+#: sentence merely mentioning ``allow_inf_nan=False`` kept the gate green (measured). H-1
+#: is therefore read out of the parsed AST: the keyword must be bound in the actual
+#: ``ConfigDict(...)`` call assigned to ``FrozenModel.model_config``, with the literal
+#: value ``False``. H-2/H-4 are matched against **code tokens only**, with comments and
+#: string contents removed by :mod:`tokenize` first.
+#:
+#: This harness must never ``import tos`` (TOS-FW-R), so every check is static analysis of
+#: the source, not introspection of loaded objects.
+#: The §11 step 3 metadata axes ``_UNIT_METADATA_KEYS`` must compare for H-2.
+H2_REQUIRED_METADATA_KEYS = frozenset(
+    {"unit", "multiplier", "sign", "precision", "rounding", "boundary"}
+)
+
+
+def _assigned_value(tree: ast.AST, name: str) -> ast.expr | None:
+    """The value expression assigned to a module-level ``name``, or ``None``."""
+    for node in ast.walk(tree):
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            return node.value
+    return None
+
+
+def _class_attr_value(tree: ast.AST, class_name: str, attr: str) -> ast.expr | None:
+    """The value expression assigned to ``<class_name>.<attr>``, or ``None``."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            for stmt in node.body:
+                targets: list[ast.expr] = []
+                if isinstance(stmt, ast.Assign):
+                    targets = list(stmt.targets)
+                elif isinstance(stmt, ast.AnnAssign):
+                    targets = [stmt.target]
+                if any(isinstance(t, ast.Name) and t.id == attr for t in targets):
+                    return stmt.value
+    return None
+
+
+def _function_def(tree: ast.AST, name: str) -> ast.FunctionDef | None:
+    """The (first) function definition called ``name``, or ``None``."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    return None
+
+
+def _raised_names(scope: ast.AST) -> list[str]:
+    """The exception class names raised anywhere inside ``scope``."""
+    names: list[str] = []
+    for node in ast.walk(scope):
+        if not isinstance(node, ast.Raise) or node.exc is None:
+            continue
+        exc = node.exc
+        func = exc.func if isinstance(exc, ast.Call) else exc
+        if isinstance(func, ast.Name):
+            names.append(func.id)
+        elif isinstance(func, ast.Attribute):
+            names.append(func.attr)
+    return names
+
+
+def check_h1(tree: ast.AST) -> tuple[bool, dict]:
+    """H-1: ``FrozenModel.model_config = ConfigDict(..., allow_inf_nan=False)``.
+
+    Read out of the AST, so the pin must be a real keyword bound in the real call with
+    the literal ``False``. A substring scan would also accept the token sitting in a
+    comment or docstring while the pin itself was deleted (measured).
+    """
+    value = _class_attr_value(tree, "FrozenModel", "model_config")
+    if not (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "ConfigDict"
+    ):
+        return False, {
+            "reason": "FrozenModel.model_config is not a ConfigDict(...) call"
+        }
+    bound = {kw.arg: kw.value for kw in value.keywords if kw.arg is not None}
+    pin = bound.get("allow_inf_nan")
+    met = isinstance(pin, ast.Constant) and pin.value is False
+    return met, {
+        "bound_keywords": sorted(bound),
+        "allow_inf_nan": None if pin is None else ast.unparse(pin),
+    }
+
+
+def check_h2(tree: ast.AST) -> tuple[bool, dict]:
+    """H-2: the six §11 step 3 metadata axes are compared, and the boundary test exists."""
+    value = _assigned_value(tree, "_UNIT_METADATA_KEYS")
+    keys = (
+        [e.value for e in value.elts if isinstance(e, ast.Constant)]
+        if isinstance(value, ast.Tuple)
+        else []
+    )
+    missing = sorted(H2_REQUIRED_METADATA_KEYS - set(keys))
+    has_comparison = _function_def(tree, "_exceeds_envelope_maximum") is not None
+    return (not missing and has_comparison), {
+        "unit_metadata_keys": keys,
+        "missing_metadata_keys": missing,
+        "boundary_comparison_defined": has_comparison,
+    }
+
+
+def check_h4(tree: ast.AST) -> tuple[bool, dict]:
+    """H-4: ``get_scheme`` raises ``ArtifactIntegrityError`` and no raw ``KeyError`` survives."""
+    scheme_fn = _function_def(tree, "get_scheme")
+    inner = _raised_names(scheme_fn) if scheme_fn is not None else []
+    module_wide = _raised_names(tree)
+    met = "ArtifactIntegrityError" in inner and "KeyError" not in module_wide
+    return met, {
+        "get_scheme_raises": sorted(set(inner)),
+        "module_raises": sorted(set(module_wide)),
+    }
+
+
+_H1_LABEL = "H-1 allow_inf_nan=False pinned on FrozenModel.model_config"
+
+#: ``(label, repo-relative path, structural checker)``. Every checker takes the parsed
+#: module AST and returns ``(met, detail)``; the detail is recorded either way so an unmet
+#: run says exactly *what* was measured, not merely that something failed.
+L1_HARDENING_PREREQUISITES: tuple[
+    tuple[str, str, Callable[[ast.AST], tuple[bool, dict]]], ...
+] = (
+    (_H1_LABEL, "tos/src/tos/canonical/_base.py", check_h1),
+    (
+        "H-2 precision/rounding/boundary comparability + boundary-aware comparison",
+        "tos/src/tos/spg/predicates.py",
+        check_h2,
+    ),
+    (
+        "H-4 canonicalization scheme lookup wrapped as ArtifactIntegrityError",
+        "tos/src/tos/canonical/canonicalization.py",
+        check_h4,
+    ),
+)
+
+#: VER-002-001 §2.7 (line 76-78) coverage-argument legs. ``boundary_values`` and
+#: ``adverse_scenario_set`` are corpus-level facts, so they are stated here once;
+#: ``unexercised_residual_ref`` is row-specific and comes from ``--residual-ref``.
+COVERAGE_BOUNDARY_VALUES = "per-dimension boundary combinations exercised (seed-fixed)"
+COVERAGE_ADVERSE_SCENARIO_SET = (
+    "ADR-002-021 PROPOSED (unapproved) — adversarial-combination leg UNMET; "
+    "applicability to non-risk row = OQ; residual per §378"
+)
+#: design §6.2 N4 — the §378 register instance is **absent** (measured: only
+#: RESIDUAL-RISK-ACCEPTANCE-RECORD-template.yaml under verification/, zero residual
+#: artifacts under tos-evidence/), so creating it is prerequisite work. Each entry must
+#: carry all twelve VER:3293-3306 SHALL fields, and separate residuals SHALL NOT be
+#: unioned at a consumer (VER:3308) — the refs below are pointers, not a union.
+COVERAGE_RESIDUAL_NOTE = (
+    "The §378 Residual Risk Register INSTANCE is absent (measured: "
+    "verification/ holds only RESIDUAL-RISK-ACCEPTANCE-RECORD-template.yaml; "
+    "tos-evidence/ holds zero residual artifacts) — creating it is prerequisite "
+    "work. Each entry SHALL carry all twelve VER:3293-3306 fields (risk identity; "
+    "affected requirement/ADR; scope; credible failure sequence; maximum economic "
+    "effect; existing controls; detection/containment bound; owner; approver; "
+    "expiration/review date; required scope reduction; evidence references), and "
+    "owner/approver come through the P0-3 role system (D1). The refs above are "
+    "pointers, not a union: separate residual risks SHALL NOT be unioned at a "
+    "consumer (VER:3308) — each is registered independently."
+)
 
 
 class HarnessError(RuntimeError):
@@ -446,6 +680,344 @@ def read_tos_package_version(repo_root: Path) -> str:
     return str(data.get("project", {}).get("version", NOT_APPLICABLE))
 
 
+# ============================================================================
+# EV-L2: hardening prerequisite, fault schedule, prior-stage binding
+# ============================================================================
+
+
+def check_l1_hardening(repo_root: Path) -> dict:
+    """Confirm the design §5 L1 hardening **structurally** (never from a flag).
+
+    Each prerequisite is decided by parsing the file that realizes it and inspecting the
+    syntax tree — the pin must be a real keyword in a real call, the metadata tuple must
+    really contain the six axes, ``get_scheme`` must really raise the integrity error and
+    no raw ``KeyError`` may survive anywhere in that module. This is deliberately not a
+    substring scan: a substring is satisfied by the token appearing in a comment or a
+    docstring, so the gate would stay green with the hardening rolled back.
+
+    A file that is absent, or that does not parse, is unmet — an unparseable file cannot
+    be certified, and treating a parse failure as "no violations found" would be the same
+    ∅-fail-open the fault schedule refuses.
+
+    Returns:
+        ``{"met": bool, "items": [...]}`` — every item is reported, met or not, with the
+        structural detail measured, so an unmet run says *which* hardening is absent.
+    """
+    items: list[dict] = []
+    for label, rel, checker in L1_HARDENING_PREREQUISITES:
+        path = repo_root / rel
+        if not path.is_file():
+            items.append(
+                {"hardening": label, "path": rel, "met": False, "reason": "FILE_ABSENT"}
+            )
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError as exc:
+            items.append(
+                {
+                    "hardening": label,
+                    "path": rel,
+                    "met": False,
+                    "reason": f"SOURCE_DOES_NOT_PARSE: {exc}",
+                }
+            )
+            continue
+        met, detail = checker(tree)
+        items.append(
+            {
+                "hardening": label,
+                "path": rel,
+                "sha256": sha256_file(path),
+                "met": met,
+                "measured": detail,
+            }
+        )
+    return {
+        "met": all(item["met"] for item in items),
+        "measured_from": (
+            "structural analysis of the executed source's syntax tree; comments and "
+            "docstrings cannot satisfy any check (the harness never imports tos)"
+        ),
+        "items": items,
+    }
+
+
+def read_fault_timeline(path: Path) -> list[dict]:
+    """Parse the append-only fault schedule (one JSON object per line).
+
+    A malformed line is surfaced as a ``HarnessError`` rather than skipped: a schedule
+    the harness cannot fully read must not be summarised as if it had been.
+    """
+    if not path.is_file():
+        return []
+    rows: list[dict] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise HarnessError(
+                f"{FAULT_TIMELINE_NAME} line {number} is not valid JSON: {exc}"
+            ) from exc
+        if not isinstance(row, dict):
+            raise HarnessError(
+                f"{FAULT_TIMELINE_NAME} line {number} is not a JSON object"
+            )
+        rows.append(row)
+    return rows
+
+
+#: The design §6.1 placeholder for a disposition the run has not actually observed. A row
+#: carrying it verbatim was never filled in at runtime, so it proves nothing.
+RUNTIME_OBSERVED_PLACEHOLDER = "<runtime-observed>"
+
+#: The design §6.1 outcome vocabulary. Duplicated from ``tos/tests/conftest.py`` by
+#: necessity, not oversight: this tool must never ``import tos`` (TOS-FW-R), and the two
+#: sides agreeing is exactly what the re-derivation below checks — a shared import would
+#: make the producer and the auditor the same authority.
+OUTCOME_MET = "MET"
+OUTCOME_DEVIATION = "DEVIATION"
+
+
+def summarise_fault_schedule(
+    rows: list[dict],
+    *,
+    expected_fault_count: int | None = None,
+    evidence_id: str | None = None,
+) -> dict:
+    """Re-derive the fault schedule's verdict (design §6.2 C2-c).
+
+    ``fault_count`` is **recounted from the artifact**, never taken from the catalog or
+    from an argument, so a suite that silently stops injecting a fault shows up as a
+    smaller count instead of an unchanged claim.
+
+    Every row's ``outcome`` is likewise **re-derived here** rather than believed: a row is
+    met only when its observed disposition equals its expected one. Consuming the row's
+    own ``outcome`` field would make the schedule self-certifying — the emitting test
+    could label a mismatch ``MET`` and this summary would agree.
+
+    ``all_faults_met`` is withheld when any of the following holds:
+
+      * the schedule is **empty** — "0 faults injected" is not "no violations found"
+        (design §0.5-2 ∅-seal, both directions);
+      * a row's observed disposition differs from its expected one, or its self-reported
+        ``outcome`` disagrees with that re-derivation (§6.1);
+      * a row's ``expected_disposition`` is missing or empty — an Expected that is not
+        stated cannot be falsified, so it can never be counted as met (§0.5-4);
+      * a row's ``observed_disposition`` is still the design §6.1
+        ``<runtime-observed>`` placeholder — a template that never met a runtime;
+      * a ``fault_id`` is duplicated (it would inflate the recount);
+      * the recount disagrees with ``expected_fault_count`` (the catalog size), or a row
+        belongs to a different ``evidence_id`` — deselecting one fault would otherwise
+        shrink the schedule silently while every remaining row still read ``MET``.
+    """
+
+    def _fid(row: dict) -> str:
+        return str(row.get("fault_id", "<unnamed>"))
+
+    def _derived_outcome(row: dict) -> str:
+        expected = str(row.get("expected_disposition") or "").strip()
+        observed = str(row.get("observed_disposition") or "").strip()
+        if not expected or not observed or observed == RUNTIME_OBSERVED_PLACEHOLDER:
+            return OUTCOME_DEVIATION
+        return OUTCOME_MET if observed == expected else OUTCOME_DEVIATION
+
+    fault_ids = [_fid(row) for row in rows]
+    deviations = sorted(
+        _fid(row) for row in rows if _derived_outcome(row) != OUTCOME_MET
+    )
+    # A row whose self-report disagrees with the re-derivation is itself the finding.
+    misreported = sorted(
+        _fid(row) for row in rows if row.get("outcome") != _derived_outcome(row)
+    )
+    undefined_expected = sorted(
+        _fid(row)
+        for row in rows
+        if not str(row.get("expected_disposition") or "").strip()
+    )
+    unobserved = sorted(
+        _fid(row)
+        for row in rows
+        if str(row.get("observed_disposition") or "").strip()
+        in ("", RUNTIME_OBSERVED_PLACEHOLDER)
+    )
+    duplicates = sorted({fid for fid in fault_ids if fault_ids.count(fid) > 1})
+    foreign = sorted(
+        {
+            f"{_fid(row)}@{row.get('evidence_id')}"
+            for row in rows
+            if evidence_id is not None and row.get("evidence_id") != evidence_id
+        }
+    )
+    count_matches = expected_fault_count is None or len(rows) == expected_fault_count
+    return {
+        "schedule_artifact": FAULT_TIMELINE_NAME,
+        "fault_count": len(rows),
+        "expected_fault_count": expected_fault_count,
+        "fault_count_matches_catalog": count_matches,
+        "fault_ids": fault_ids,
+        "duplicate_fault_ids": duplicates,
+        "foreign_evidence_id_rows": foreign,
+        "deviation_faults": deviations,
+        "misreported_outcome_faults": misreported,
+        "expected_undefined_faults": undefined_expected,
+        "unobserved_disposition_faults": unobserved,
+        "all_faults_met": (
+            bool(rows)
+            and not deviations
+            and not misreported
+            and not undefined_expected
+            and not unobserved
+            and not duplicates
+            and not foreign
+            and count_matches
+        ),
+        "all_faults_met_basis": (
+            "every row's outcome RE-DERIVED from observed vs expected (the row's own "
+            "outcome field is cross-checked, never trusted); withheld on an empty "
+            "schedule (0 injected != 0 violations), any deviation or misreport, any "
+            "undefined Expected or unobserved disposition, a duplicated fault id, a row "
+            "from another evidence id, or a recount that disagrees with the catalog size"
+        ),
+    }
+
+
+def parse_prior_stage_spec(spec: str) -> tuple[str, str, str]:
+    """``"<EVIDENCE-ID>/<run-id> | <reconcile note>"`` -> ``(evidence_id, run_id, note)``."""
+    ref, _, note = spec.partition("|")
+    ref = ref.strip()
+    if "/" not in ref:
+        raise HarnessError(
+            f"--prior-stage-run expects '<EVIDENCE-ID>/<run-id> | <note>', got {spec!r}"
+        )
+    evidence_id, _, run_id = ref.partition("/")
+    if not evidence_id.strip() or not run_id.strip():
+        raise HarnessError(f"--prior-stage-run has an empty id in {spec!r}")
+    return evidence_id.strip(), run_id.strip(), note.strip()
+
+
+def bind_prior_stage_run(
+    evidence_root: Path,
+    evidence_id: str,
+    run_id: str,
+    reconcile_note: str,
+    this_commit_sha: str,
+) -> dict:
+    """Bind an earlier stage run by artifact closure + baseline (design §6.2 M9).
+
+    The binding is the prior package's ``sha256sums.txt`` digest — that file closes over
+    every retained artifact including its manifest, so one digest pins the whole package
+    and a later edit of any prior artifact breaks the reference. Recording that digest is
+    **not** on its own a verification, so the prior package is re-verified here: every
+    entry in its ``sha256sums.txt`` is re-hashed on disk and the directory is checked for
+    files the sums file does not list. Otherwise a prior package could be edited (or
+    quietly extended) and this run would still cite it as intact.
+
+    ``baseline_matches_this_run`` is the M9 acceptance condition: an EV-L1 run taken at a
+    different baseline commit is stale, and a staged ``L1 ∧ L2`` claim built on it would
+    assert that both stages describe the same code when they do not.
+
+    Raises:
+        HarnessError: If the reference escapes the evidence root, the package is not
+            closed, its recorded digests no longer match the files on disk, it retains a
+            file the sums do not cover, its evidence id disagrees with the directory it
+            sits in, or its own run was not green. A prior stage that did not pass cannot
+            support a staged claim.
+    """
+    root = evidence_root.resolve()
+    run_dir = (evidence_root / evidence_id / run_id).resolve()
+    # Symmetric with create_run_directory: an id carrying ".." must not read outside
+    # the evidence store.
+    if root != run_dir and root not in run_dir.parents:
+        raise HarnessError(
+            f"--prior-stage-run {evidence_id}/{run_id} escapes the evidence root {root}"
+        )
+    sums = run_dir / SHA256SUMS_NAME
+    if not sums.is_file():
+        raise HarnessError(
+            f"--prior-stage-run {evidence_id}/{run_id}: {sums} not found — a prior "
+            "stage run must be a closed package (sha256sums.txt is written last)"
+        )
+
+    listed: dict[str, str] = {}
+    for number, line in enumerate(sums.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        digest, _, name = line.partition("  ")
+        if not digest or not name:
+            raise HarnessError(
+                f"--prior-stage-run {evidence_id}/{run_id}: {SHA256SUMS_NAME} line "
+                f"{number} is malformed"
+            )
+        listed[name] = digest
+    mismatched = sorted(
+        name
+        for name, digest in listed.items()
+        if not (run_dir / name).is_file() or sha256_file(run_dir / name) != digest
+    )
+    if mismatched:
+        raise HarnessError(
+            f"--prior-stage-run {evidence_id}/{run_id}: recorded digests no longer "
+            f"describe the files on disk: {mismatched}"
+        )
+    uncovered = sorted(
+        p.name
+        for p in run_dir.iterdir()
+        if p.is_file() and p.name != SHA256SUMS_NAME and p.name not in listed
+    )
+    if uncovered:
+        raise HarnessError(
+            f"--prior-stage-run {evidence_id}/{run_id}: retains files that "
+            f"{SHA256SUMS_NAME} does not cover: {uncovered}"
+        )
+
+    for required in (MANIFEST_NAME, BASELINE_NAME):
+        if not (run_dir / required).is_file():
+            raise HarnessError(
+                f"--prior-stage-run {evidence_id}/{run_id}: {required} not found"
+            )
+    prior_manifest = yaml.safe_load(
+        (run_dir / MANIFEST_NAME).read_text(encoding="utf-8")
+    )
+    prior_baseline = yaml.safe_load(
+        (run_dir / BASELINE_NAME).read_text(encoding="utf-8")
+    )
+
+    prior_evidence_id = prior_manifest.get("evidence_id")
+    if prior_evidence_id != evidence_id:
+        raise HarnessError(
+            f"--prior-stage-run {evidence_id}/{run_id}: the package declares "
+            f"evidence_id {prior_evidence_id!r} — a run filed under another row cannot "
+            "be bound as this row's prior stage"
+        )
+    prior_outcome = prior_manifest.get("execution", {}).get("outcome", "UNKNOWN")
+    if prior_outcome != "ALL_SELECTED_TESTS_GREEN":
+        raise HarnessError(
+            f"--prior-stage-run {evidence_id}/{run_id}: prior outcome is "
+            f"{prior_outcome!r} — a stage that did not pass cannot support a staged "
+            "L1 ∧ L2 claim (VER:171)"
+        )
+    prior_commit = (
+        prior_baseline.get("design1_5_1", {})
+        .get("item_1_repository_and_package", {})
+        .get("git_commit_sha", "UNKNOWN")
+    )
+    return {
+        "evidence_id": evidence_id,
+        "run_id": run_id,
+        "stage": prior_manifest.get("evidence_level_stage", "UNKNOWN"),
+        "sha256sums_digest": sha256_file(sums),
+        "artifacts_reverified": sorted(listed),
+        "baseline_commit_sha": prior_commit,
+        "baseline_matches_this_run": prior_commit == this_commit_sha,
+        "outcome": prior_outcome,
+        "reconcile_note": reconcile_note or "UNSPECIFIED",
+    }
+
+
 def read_register_row(repo_root: Path, evidence_id: str, csv_path: str) -> dict:
     path = repo_root / csv_path
     if not path.is_file():
@@ -480,6 +1052,33 @@ _NA_TEMPLATE_ONLY = (
     "consumes none. Recorded N/A per design #1 §5.1 (EV-L1 subset of VER §3)."
 )
 
+_NA_TEMPLATE_ONLY_L2 = (
+    "No instance artifact exists in the corpus (template only under "
+    "tos-spec/src/part-1-foundation/verification/); a pure-model EV-L2 "
+    "component-fault run consumes none — it injects faults into a single "
+    "in-process component and inspects that component's own authoritative "
+    "verdict. Recorded N/A per design #1 §5.1 read forward to EV-L2 "
+    "(EV-L2 pilot design §6.2 M2 / §6.3): the field, its N/A status and its "
+    "reason are retained, only the stage attribution changes."
+)
+
+
+def na_status_for(stage: str) -> str:
+    """The N/A token for ``stage`` (design §6.2 M2 — the note is updated, not deleted)."""
+    return NOT_APPLICABLE if stage == STAGE_L1 else NOT_APPLICABLE_L2
+
+
+def unmet_ver3_fields(ver3: dict) -> list[str]:
+    """The VER §3 baseline fields this run does **not** fully satisfy, by name.
+
+    VER-002-001 §3 line 109 — "A run without a complete baseline is invalid" — carries no
+    "as applicable" clause, unlike §7 line 258. The gap is therefore kept structurally
+    enumerable rather than described in prose: a reader (and the harness self-test) can
+    check that the list is non-empty without substring-matching a sentence, and the list
+    itself names exactly which of the 22 fields are outstanding (design §6.2 M2 canary).
+    """
+    return sorted(name for name, entry in ver3.items() if entry["status"] != RECORDED)
+
 
 def build_ver3_baseline(
     *,
@@ -490,17 +1089,50 @@ def build_ver3_baseline(
     seed_policy: dict,
     register_row: dict,
     profile_digest: dict,
+    stage: str = STAGE_L1,
+    fault_schedule: dict | None = None,
 ) -> dict:
     """The 22 VER §3 fields, in specification order (:86-107).
 
     Every field is present. A field is either ``RECORDED`` with a measured
-    value, ``PARTIAL_EV_L1``, or ``NOT_APPLICABLE_EV_L1`` with a reason. No
+    value, ``PARTIAL_EV_L1``, or the stage's N/A token with a reason. No
     field is silently dropped and none is fabricated.
+
+    At ``EV-L2`` two things change and nothing is removed: the N/A token becomes
+    ``NOT_APPLICABLE_PURE_MODEL_L2`` (design §6.2 M2), and
+    ``fault_injection_schedule_and_seed`` — ``PARTIAL_EV_L1`` with a deferred fault
+    schedule at EV-L1 — is completed with the real schedule summary.
     """
+    na = na_status_for(stage)
+    template_only = _NA_TEMPLATE_ONLY if stage == STAGE_L1 else _NA_TEMPLATE_ONLY_L2
+    if fault_schedule is None:
+        fault_field = _field(
+            PARTIAL,
+            {
+                "fault_schedule": _field(
+                    na,
+                    reason=(
+                        "Fault injection begins at EV-L2 (VER §5); design #1 §5.1 "
+                        "adds the §9.1 fault schedule on EV-L2 entry."
+                    ),
+                ),
+                "seed": seed_policy,
+            },
+        )
+    else:
+        fault_field = _field(
+            RECORDED,
+            {"fault_schedule": fault_schedule, "seed": seed_policy},
+            reason=(
+                "EV-L2: the VER §9.1 append-only fault schedule and the seed are both "
+                "recorded. This field is no longer PARTIAL — it is the one VER §3 field "
+                "the EV-L2 stage completes relative to EV-L1."
+            ),
+        )
     return {
         "repository_commit_sha": _field(RECORDED, commit_sha),
         "build_artifact_digest": _field(
-            NOT_APPLICABLE,
+            na,
             reason=(
                 "Phase 1 executes from the source tree; no built distribution "
                 "artifact is produced or consumed (design #1 §5.1 items 1/4 — the "
@@ -516,41 +1148,33 @@ def build_ver3_baseline(
                 "content sha256 is the version identity."
             ),
         ),
-        "hard_safety_envelope_version": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
-        ),
-        "runtime_safety_profile_version": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
-        ),
+        "hard_safety_envelope_version": _field(na, reason=template_only),
+        "runtime_safety_profile_version": _field(na, reason=template_only),
         "human_authority_policy_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
+            na, reason=template_only
         ),
         "effective_principal_graph_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
+            na, reason=template_only
         ),
         "evidence_integrity_policy_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
+            na, reason=template_only
         ),
         "recovery_barrier_policy_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
+            na, reason=template_only
         ),
-        "critical_input_policy_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
-        ),
+        "critical_input_policy_generation_and_digest": _field(na, reason=template_only),
         "venue_constraint_policy_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
+            na, reason=template_only
         ),
         "trading_approval_policy_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
+            na, reason=template_only
         ),
-        "currentness_policy_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
-        ),
+        "currentness_policy_generation_and_digest": _field(na, reason=template_only),
         "restricted_live_trial_policy_generation_and_digest": _field(
-            NOT_APPLICABLE, reason=_NA_TEMPLATE_ONLY
+            na, reason=template_only
         ),
         "broker_capability_profile_version": _field(
-            NOT_APPLICABLE,
+            na,
             reason=(
                 "Evidence Register broker_capability_profile_version for this row "
                 f"= {register_row.get('broker_capability_profile_version', '')!r}; "
@@ -577,21 +1201,21 @@ def build_ver3_baseline(
             ),
         ),
         "database_schema_migration_version": _field(
-            NOT_APPLICABLE,
+            na,
             reason=(
                 "EV-L1 model/property verification exercises no persistence "
                 "substrate; durable persistence is the deferred /2 stage."
             ),
         ),
         "deployment_manifest_digest": _field(
-            NOT_APPLICABLE,
+            na,
             reason=(
                 "Nothing is deployed: the kernel is non-transmitting and is "
                 "executed in-process by pytest."
             ),
         ),
         "workload_identities_and_key_versions": _field(
-            NOT_APPLICABLE,
+            na,
             reason=(
                 "No workload identity, credential, or key material is used — the "
                 "run is hermetic (no network, no .env, no clock authority)."
@@ -599,19 +1223,7 @@ def build_ver3_baseline(
         ),
         "environment_identifier": _field(RECORDED, environment),
         "test_harness_version": _field(RECORDED, harness),
-        "fault_injection_schedule_and_seed": _field(
-            PARTIAL,
-            {
-                "fault_schedule": _field(
-                    NOT_APPLICABLE,
-                    reason=(
-                        "Fault injection begins at EV-L2 (VER §5); design #1 §5.1 "
-                        "adds the §9.1 fault schedule on EV-L2 entry."
-                    ),
-                ),
-                "seed": seed_policy,
-            },
-        ),
+        "fault_injection_schedule_and_seed": fault_field,
     }
 
 
@@ -632,6 +1244,8 @@ def build_baseline(
     harness: dict,
     seed_policy: dict,
     config_artifacts: list[dict],
+    stage: str = STAGE_L1,
+    fault_schedule: dict | None = None,
 ) -> dict:
     installed = probe["installed"]
     drift = [
@@ -670,23 +1284,54 @@ def build_baseline(
         if profile_path.is_file()
         else {"path": PROFILE_YAML_PATH, "sha256": "FILE_ABSENT"}
     )
+    ver3 = build_ver3_baseline(
+        commit_sha=commit_sha,
+        doc_digests=doc_digests,
+        environment=environment,
+        harness=harness,
+        seed_policy=seed_policy,
+        register_row=register_row,
+        profile_digest=profile_digest,
+        stage=stage,
+        fault_schedule=fault_schedule,
+    )
+    if stage == STAGE_L1:
+        completeness = (
+            "EV-L1 subset. VER §3 requires 22 baseline fields and states that "
+            "'A run without a complete baseline is invalid'; design #1 §5.1 "
+            "ratifies the seven items below as the EV-L1 subset. Fields whose "
+            "artifacts do not exist at this stage are marked "
+            f"{NOT_APPLICABLE} with a reason. Under VER §3's full standard "
+            "this baseline is complete for EV-L1 only and is NOT a complete "
+            "baseline for EV-L2 and above."
+        )
+    else:
+        # design §6.2 M2: the EV-L1 note is UPDATED, not deleted. The unmet-field
+        # list and every reason are retained; only the stage attribution changes.
+        completeness = (
+            "EV-L2 component-fault. VER §3 requires 22 baseline fields and states "
+            "that 'A run without a complete baseline is invalid' (line 109) — a "
+            "clause carrying no 'as applicable' qualifier, unlike §7 line 258, so "
+            "it stands beside P0-1 and the independent signature as a gate, not a "
+            "waivable formality. The unmet-field list and every reason are retained "
+            f"from EV-L1 with the stage attribution updated ({NOT_APPLICABLE} -> "
+            f"{NOT_APPLICABLE_L2}); the enumerated list is "
+            "ver_002_001_section_3_unmet_fields below. The absent artifacts are the "
+            "broker, authority/human, reconciliation, network and recovery "
+            "instances — none of which a pure-model, single-component, "
+            "non-transmitting fault run brings into existence. Under VER §3's full "
+            "standard this baseline is NOT complete."
+        )
     return {
-        "schema": "tos-evidence/baseline/v1",
+        "schema": f"tos-evidence/baseline/{'v2' if stage == STAGE_L2 else 'v1'}",
         "run_id": run_id,
         "evidence_id": args.evidence_id,
+        "evidence_level_stage": stage,
         "generated_utc": _utc_now().isoformat(),
         "contract": {
             "run_manifest_contract": f"{DESIGN_1_PATH} §5.1 (seven items)",
             "ver_specification": f"{VER_SPEC_PATH} §2.3/§3/§8/§9.1/§9.2/§9.5",
-            "completeness": (
-                "EV-L1 subset. VER §3 requires 22 baseline fields and states that "
-                "'A run without a complete baseline is invalid'; design #1 §5.1 "
-                "ratifies the seven items below as the EV-L1 subset. Fields whose "
-                "artifacts do not exist at this stage are marked "
-                f"{NOT_APPLICABLE} with a reason. Under VER §3's full standard "
-                "this baseline is complete for EV-L1 only and is NOT a complete "
-                "baseline for EV-L2 and above."
-            ),
+            "completeness": completeness,
         },
         "evidence_register_row": {
             "source": REGISTER_CSV_PATH,
@@ -738,7 +1383,7 @@ def build_baseline(
                 config_artifacts
                 if config_artifacts
                 else _field(
-                    NOT_APPLICABLE,
+                    na_status_for(stage),
                     reason=(
                         "No configuration artifact is consumed: bounds are "
                         "hypothesis-injected generated values, not read from a "
@@ -753,14 +1398,14 @@ def build_baseline(
             ),
         },
         # ---- VER §3 — all 22 fields ----------------------------------------
-        "ver_002_001_section_3_baseline": build_ver3_baseline(
-            commit_sha=commit_sha,
-            doc_digests=doc_digests,
-            environment=environment,
-            harness=harness,
-            seed_policy=seed_policy,
-            register_row=register_row,
-            profile_digest=profile_digest,
+        "ver_002_001_section_3_baseline": ver3,
+        # The §3 gap, enumerable rather than described (design §6.2 M2 canary).
+        "ver_002_001_section_3_unmet_fields": unmet_ver3_fields(ver3),
+        "ver_002_001_section_3_unmet_note": (
+            "VER §3 line 109 ('A run without a complete baseline is invalid') has no "
+            "'as applicable' clause. This list names every field that is not RECORDED, "
+            "so the gap is machine-checkable: an empty list would be the claim that the "
+            "baseline is complete, and this run does not make that claim."
         ),
         "test_nodes": [n for n, _ in nodes],
     }
@@ -1031,6 +1676,71 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="repo-relative configuration artifact consumed by the run (digested)",
     )
+    parser.add_argument(
+        "--evidence-level-stage",
+        default=STAGE_L1,
+        choices=list(STAGES),
+        help=(
+            "the stage this run executes. EV-L2 emits the manifest/v2 superset "
+            "(prior_stage_runs + fault_injection + coverage_argument) and passes the "
+            "append-only fault-schedule sink to pytest"
+        ),
+    )
+    parser.add_argument(
+        "--fault-catalog-ref",
+        default="",
+        help=(
+            "the ratified fault catalog this run executes, e.g. "
+            f"'{EVL2_DESIGN_PATH}#3' (EV-L2 only; required for EV-L2)"
+        ),
+    )
+    parser.add_argument(
+        "--prior-stage-run",
+        action="append",
+        default=[],
+        metavar="'EVIDENCE-ID/run-id | reconcile note'",
+        help=(
+            "an earlier stage run this stage builds on; bound by its sha256sums.txt "
+            "digest and baseline commit (EV-L2 only; repeatable)"
+        ),
+    )
+    parser.add_argument(
+        "--expected-fault-count",
+        type=int,
+        default=None,
+        help=(
+            "the number of faults the ratified catalog defines for this row (EV-L2 "
+            "only; required for EV-L2). The schedule is recounted and must match, so "
+            "deselecting a fault cannot shrink the evidence unnoticed"
+        ),
+    )
+    parser.add_argument(
+        "--covered-axis",
+        default="",
+        help=(
+            "the exact axis this stage covers, stated by the operator (EV-L2 only; "
+            "required for EV-L2 — the harness never infers a coverage claim)"
+        ),
+    )
+    parser.add_argument(
+        "--supersedes-run-id",
+        action="append",
+        default=[],
+        help=(
+            "a run id this package supersedes (EV-L2 only; repeatable). The superseded "
+            "package is RETAINED unmodified (VER §2.2 / design §9 gate 6); this records "
+            "the forward pointer"
+        ),
+    )
+    parser.add_argument(
+        "--residual-ref",
+        action="append",
+        default=[],
+        help=(
+            "a VER §378 residual this run does NOT evidence (EV-L2 only; repeatable). "
+            "Pointers, never a union — VER:3308"
+        ),
+    )
     parser.add_argument("--evidence-root", type=Path, default=None)
     parser.add_argument("--repo-root", type=Path, default=None)
     parser.add_argument("--python", type=Path, default=None)
@@ -1048,12 +1758,61 @@ def main(argv: list[str] | None = None) -> int:
     harness_path = Path(__file__).resolve()
     repo_root = (args.repo_root or harness_path.parent.parent).resolve()
 
+    stage = args.evidence_level_stage
+    is_l2 = stage == STAGE_L2
+
     try:
         nodes = [parse_node_spec(spec) for spec in args.node]
         if args.nodes_file:
             nodes.extend(read_nodes_file(args.nodes_file))
         if not nodes:
             raise HarnessError("no test nodes given (--node / --nodes-file)")
+
+        # EV-L2 preconditions. Each of these is a *claim* the harness cannot measure —
+        # which catalog is being executed, which axis is covered, which prior stage this
+        # builds on — so it is required as an explicit argument rather than defaulted.
+        # The measurable parts (fault counts, hardening, baseline identity) are measured.
+        if is_l2:
+            if not args.fault_catalog_ref.strip():
+                raise HarnessError(
+                    "--fault-catalog-ref is required for an EV-L2 stage run: an "
+                    "unattributed fault schedule cannot be checked against a catalog"
+                )
+            if not args.covered_axis.strip():
+                raise HarnessError(
+                    "--covered-axis is required for an EV-L2 stage run: the harness "
+                    "never infers what a stage covers"
+                )
+            if not args.prior_stage_run:
+                raise HarnessError(
+                    "--prior-stage-run is required for an EV-L2 stage run: a staged "
+                    "row (VER:171) needs its EV-L1 stage bound, not assumed"
+                )
+            if args.expected_fault_count is None:
+                raise HarnessError(
+                    "--expected-fault-count is required for an EV-L2 stage run: "
+                    "without the catalog size, a deselected fault shrinks the "
+                    "schedule while every remaining row still reads MET"
+                )
+            if args.expected_fault_count <= 0:
+                raise HarnessError(
+                    "--expected-fault-count must be positive: a catalog of zero "
+                    "faults cannot evidence anything (design §0.5-2)"
+                )
+        else:
+            for flag, value in (
+                ("--fault-catalog-ref", args.fault_catalog_ref),
+                ("--covered-axis", args.covered_axis),
+                ("--prior-stage-run", args.prior_stage_run),
+                ("--residual-ref", args.residual_ref),
+                ("--expected-fault-count", args.expected_fault_count),
+                ("--supersedes-run-id", args.supersedes_run_id),
+            ):
+                if value:
+                    raise HarnessError(
+                        f"{flag} is an EV-L2 option; this run is "
+                        f"--evidence-level-stage {stage}"
+                    )
 
         for node, _ in nodes:
             if not (repo_root / node_file(node)).is_file():
@@ -1108,7 +1867,21 @@ def main(argv: list[str] | None = None) -> int:
         run_id = f"{_utc_now().strftime('%Y%m%dT%H%M%SZ')}-{short_sha}"
         evidence_root = args.evidence_root or (repo_root / "tos-evidence")
         run_dir = evidence_root / args.evidence_id / run_id
+
+        # Bind the prior stage(s) BEFORE creating this run directory, so a bad
+        # reference fails without leaving an orphan package behind.
+        prior_stage_runs = [
+            bind_prior_stage_run(
+                evidence_root, *parse_prior_stage_spec(spec), commit_sha
+            )
+            for spec in args.prior_stage_run
+        ]
         create_run_directory(run_dir, evidence_root)
+
+        fault_timeline_path = run_dir / FAULT_TIMELINE_NAME
+        extra_flags = list(seed_flags)
+        if is_l2:
+            extra_flags.append(f"--l2-fault-timeline={fault_timeline_path}")
 
         try:
             execution = run_pytest(
@@ -1117,7 +1890,7 @@ def main(argv: list[str] | None = None) -> int:
                 nodes=[n for n, _ in nodes],
                 junit_path=run_dir / JUNIT_NAME,
                 log_path=run_dir / RUNLOG_NAME,
-                extra_flags=seed_flags,
+                extra_flags=extra_flags,
             )
             junit = parse_junit(run_dir / JUNIT_NAME)
 
@@ -1143,6 +1916,22 @@ def main(argv: list[str] | None = None) -> int:
             repo_root, harness_path, worktree_before, probe["installed"].get("pytest")
         )
 
+        fault_injection: dict | None = None
+        if is_l2:
+            hardening = check_l1_hardening(repo_root)
+            fault_injection = {
+                "catalog_ref": args.fault_catalog_ref,
+                "seed": seed_policy.get("hypothesis_seed"),
+                "seed_pinned": seed_policy.get("policy") == "fixed",
+                **summarise_fault_schedule(
+                    read_fault_timeline(fault_timeline_path),
+                    expected_fault_count=args.expected_fault_count,
+                    evidence_id=args.evidence_id,
+                ),
+                "l1_hardening_prereq_met": hardening["met"],
+                "l1_hardening_prereq": hardening,
+            }
+
         baseline = build_baseline(
             args=args,
             repo_root=repo_root,
@@ -1159,6 +1948,8 @@ def main(argv: list[str] | None = None) -> int:
             harness=harness,
             seed_policy=seed_policy,
             config_artifacts=config_artifacts,
+            stage=stage,
+            fault_schedule=fault_injection,
         )
         write_exclusive(run_dir / BASELINE_NAME, dump_yaml(baseline))
         write_traceability(
@@ -1174,6 +1965,32 @@ def main(argv: list[str] | None = None) -> int:
         mutated = [
             d["path"] for d in target_digests if d["status"] != "STABLE_DURING_RUN"
         ]
+
+        # ---- EV-L2 stage gates (each measured, none self-reported) -----------
+        # The gates are kept in their OWN field: overwriting execution.outcome would
+        # erase whether the tests themselves passed, so a gated run and a run whose
+        # tests actually failed would become indistinguishable.
+        stage_gates: list[str] = []
+        if is_l2:
+            assert fault_injection is not None
+            if not fault_injection["all_faults_met"]:
+                stage_gates.append("FAULT_SCHEDULE_NOT_ALL_MET")
+            if not fault_injection["l1_hardening_prereq_met"]:
+                stage_gates.append("L1_HARDENING_PREREQ_UNMET")
+            if not fault_injection["seed_pinned"]:
+                # VER §9.1 makes the seed part of the append-only run record; an
+                # unpinned seed makes the fault schedule unreproducible.
+                stage_gates.append("SEED_NOT_PINNED")
+            if not any(
+                prior["stage"] == STAGE_L1 and prior["baseline_matches_this_run"]
+                for prior in prior_stage_runs
+            ):
+                # design §6.2 M9: an EV-L1 run at a different baseline is stale, so the
+                # staged L1 ∧ L2 claim would assert both stages describe the same code.
+                stage_gates.append("NO_PRIOR_EV_L1_RUN_AT_THIS_BASELINE")
+            if stage_gates:
+                green = False
+
         artifacts = [
             {
                 "name": p.name,
@@ -1183,14 +2000,17 @@ def main(argv: list[str] | None = None) -> int:
             for p in sorted(run_dir.iterdir())
             if p.is_file()
         ]
+        discipline_tag = DISCIPLINE_TAG_L2 if is_l2 else DISCIPLINE_TAG
+        # v2 is a strict SUPERSET of v1 (design §6.2 N8): every v1 field below is
+        # retained unchanged at EV-L2; the v2 field groups are added around them.
         manifest = {
-            "schema": "tos-evidence/manifest/v1",
+            "schema": f"tos-evidence/manifest/{'v2' if is_l2 else 'v1'}",
             "run_id": run_id,
             "evidence_id": args.evidence_id,
             "primary_adr": args.primary_adr or register_row.get("primary_adr", ""),
             "design_document": args.design_doc,
-            "evidence_level_stage": "EV-L1",
-            "discipline_tag": DISCIPLINE_TAG,
+            "evidence_level_stage": stage,
+            "discipline_tag": discipline_tag,
             "claim": {
                 "closes_evidence_item": False,
                 "register_status_moved_by_this_run": False,
@@ -1210,11 +2030,96 @@ def main(argv: list[str] | None = None) -> int:
                     "recorded baseline. It asserts no acceptance, no PASS, and no "
                     "coverage of the higher stages the row's minimum level names."
                 ),
+                # A gated run makes NO stage or coverage claim: emitting
+                # stages_executed / covered_axis regardless would state that both
+                # stages stand and that the axis is covered, which is exactly what the
+                # unmet gate denies. The withheld claim is named instead.
+                **(
+                    {
+                        "ev_l2_stage_gates_unmet": stage_gates,
+                        **(
+                            {
+                                "stages_executed": [STAGE_L1, STAGE_L2],
+                                "stages_executed_note": (
+                                    "EV-L1 is executed as its own run package and "
+                                    "bound here by prior_stage_runs; this package is "
+                                    "the EV-L2 stage."
+                                ),
+                                "covered_axis": args.covered_axis,
+                            }
+                            if not stage_gates
+                            else {
+                                "stages_executed": "WITHHELD (EV-L2 stage gate unmet)",
+                                "covered_axis": (
+                                    "WITHHELD (EV-L2 stage gate unmet) — the axis this "
+                                    "run was invoked for is recorded in "
+                                    "invoked_covered_axis; it is NOT claimed as covered."
+                                ),
+                                "invoked_covered_axis": args.covered_axis,
+                            }
+                        ),
+                    }
+                    if is_l2
+                    else {}
+                ),
             },
+            **(
+                {
+                    "prior_stage_runs": prior_stage_runs,
+                    # design §9 gate 6 / VER §2.2: a failed or gated run package is
+                    # PRESERVED, never deleted or overwritten. When a later run replaces
+                    # one, it names it here with the reason, so the superseded package
+                    # stays discoverable instead of being quietly orphaned.
+                    "supersedes_run_id": list(args.supersedes_run_id),
+                    "supersedes_note": (
+                        "Superseded packages are retained unmodified (VER §2.2); this "
+                        "field is the forward pointer, not a deletion record."
+                    ),
+                    "fault_injection": fault_injection,
+                    "coverage_argument": {
+                        "specification": (
+                            f"{VER_SPEC_PATH} §2.7 (line 76-78) — a finite set of "
+                            "executed evidence cases does not by itself discharge a "
+                            "universally-quantified safety claim. Both this row's "
+                            "Expected clauses are universally quantified, so the "
+                            "coverage argument is mandatory."
+                        ),
+                        "boundary_values": COVERAGE_BOUNDARY_VALUES,
+                        "adverse_scenario_set": COVERAGE_ADVERSE_SCENARIO_SET,
+                        "unexercised_residual_ref": list(args.residual_ref),
+                        "unexercised_residual_note": COVERAGE_RESIDUAL_NOTE,
+                        "discharged": False,
+                        "discharged_note": (
+                            "The adversarial-combination leg cannot be discharged "
+                            "while ADR-002-021 is PROPOSED, and an unresolved "
+                            "applicability question defaults to APPLICABLE (VER §2.4 "
+                            "line 64-66; VER:173 'Missing resolution is a blocker and "
+                            "SHALL NOT default to the lowest level'). This run "
+                            "therefore records the argument's state; it does not "
+                            "claim to have made it."
+                        ),
+                    },
+                }
+                if is_l2
+                else {}
+            ),
             "execution": {
                 **execution,
+                # The test result, preserved verbatim: SELECTED_TESTS_NOT_GREEN and
+                # NO_TEST_EXECUTED stay visible even when a stage gate also fires.
                 "outcome": outcome,
                 "junit_summary": junit,
+                **(
+                    {
+                        "stage_gate_outcome": (
+                            f"EV_L2_STAGE_GATE_UNMET[{','.join(stage_gates)}]"
+                            if stage_gates
+                            else "EV_L2_STAGE_GATES_MET"
+                        )
+                    }
+                    if is_l2
+                    else {}
+                ),
             },
             "test_nodes": [n for n, _ in nodes],
             "baseline": {
@@ -1223,6 +2128,16 @@ def main(argv: list[str] | None = None) -> int:
                 "completeness": (
                     f"EV-L1 subset (design #1 §5.1); VER §3 fields without an "
                     f"existing artifact are {NOT_APPLICABLE}."
+                    if not is_l2
+                    else (
+                        "NOT complete (VER §3 line 109 has no 'as applicable' "
+                        f"clause). VER §3 fields without an existing artifact are "
+                        f"{NOT_APPLICABLE_L2}; the unmet set is enumerated in "
+                        "baseline.yaml::ver_002_001_section_3_unmet_fields."
+                    )
+                ),
+                "ver3_unmet_field_count": len(
+                    baseline["ver_002_001_section_3_unmet_fields"]
                 ),
             },
             "artifacts": artifacts,
@@ -1244,7 +2159,15 @@ def main(argv: list[str] | None = None) -> int:
         f"  outcome={manifest['execution']['outcome']} rc={execution['return_code']} "
         f"junit={junit}"
     )
-    print(f"  {DISCIPLINE_TAG}")
+    if is_l2 and fault_injection is not None:
+        print(
+            f"  stage={stage} faults={fault_injection['fault_count']} "
+            f"all_faults_met={fault_injection['all_faults_met']} "
+            f"l1_hardening={fault_injection['l1_hardening_prereq_met']}"
+        )
+        if stage_gates:
+            print(f"  EV-L2 stage gates UNMET: {stage_gates}", file=sys.stderr)
+    print(f"  {manifest['discipline_tag']}")
     if mutated:
         print(
             "tos-evidence-run: ERROR — executed files changed DURING the run "

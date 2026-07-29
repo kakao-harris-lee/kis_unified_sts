@@ -128,10 +128,20 @@ class ValidationReason(StrEnum):
     verdict §11 line 315 "deterministic result **and reason set**" requires; design #12 §5.2).
     Each names one class of §11 step / §20 failure mode:
 
-    * ``UNIT_OR_MULTIPLIER_MISMATCH``       — §11 step 3 / §20 line 505
-    * ``SIGN_PRECISION_ROUNDING_DEFECT``    — §11 step 3
+    * ``UNIT_OR_MULTIPLIER_MISMATCH``       — §11 step 3 / §20 line 505. Carries the whole
+      §11 step 3 *comparability* axis: unit / multiplier / sign **and** precision /
+      rounding / boundary inclusion (``predicates._UNIT_METADATA_KEYS``), because the
+      ``units_compatible`` seam bool that liveauth ``atomic_activation_ok`` consumes is
+      keyed on exactly this reason — routing a precision / rounding / boundary mismatch
+      to a different reason would leave that seam ``True`` (EV-L2 pilot design §5 H-2/H-3).
+    * ``SIGN_PRECISION_ROUNDING_DEFECT``    — §11 step 3. Reserved for a *value-level*
+      sign / precision / rounding defect from a future non-model-sourced input; the
+      metadata-**comparability** mismatch between an envelope and profile dimension is
+      reported as ``UNIT_OR_MULTIPLIER_MISMATCH`` above (no reason is minted or retired —
+      the ratified verbatim set is unchanged).
     * ``OVERFLOW_UNDERFLOW_NAN_INFINITY``   — §11 step 3 (a non-finite Decimal; enforced at
-      construction by pydantic's default ``allow_inf_nan=False``, §5.2 deviation)
+      construction by the explicit ``allow_inf_nan=False`` pin tos owns on
+      ``tos.canonical.FrozenModel`` — EV-L2 pilot design §5 H-1, §5.2 deviation)
     * ``CROSS_FIELD_CONSTRAINT_VIOLATION``  — §11 step 5
     * ``EXCEEDS_ENVELOPE``                  — §11 step 6 / §9 (SPG-INV-001)
     * ``UNKNOWN_OR_DUPLICATE_FIELD``        — §11 step 12 / §20 line 504
