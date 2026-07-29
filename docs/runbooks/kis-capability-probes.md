@@ -1,0 +1,498 @@
+# 런북 — KIS Broker Capability 측정 프로브 (Phase-0 P0-2 / T2)
+
+> **문서 성격**: 운영 런북(비규범). 이 문서도, 프로브 실행도 **어떤 게이트도 닫지
+> 않는다.** 프로브는 *측정*하고, 승인은 *사람*이 한다. bound 값 기입은
+> **Bounds-Approver**, capability status 승격은 P0-2 승인 사슬의 소관이다
+> (초안 메모 §8 — 10개 항목 전부 미충족 상태).
+
+- **하네스**: `tools/broker_probes/` (저작 전용 패키지 — 트레이딩 런타임이 임포트하지 않음)
+- **엔트리포인트**: `python -m tools.broker_probes.run --list`
+- **근거**: 실행 계획 `docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md` §1 T2 ·
+  프로브 정본 `docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md` §5
+- **대상 INSTANCE**: `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`
+- **대상 bound**: `tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml`
+
+---
+
+## 1. 목적과 범위
+
+P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. 이 런북은
+그 측정을 **재현 가능하고 안전하게** 수행하는 절차다.
+
+**하는 것**: 모의투자(MOCK_VTS) 계좌에서 16건의 프로브를 실행해 JSON 증거
+아티팩트를 만든다. 실전(REAL_PROD)은 **조회 전용 2건**(N-16·N-18)뿐이다.
+
+**하지 않는 것**:
+
+- INSTANCE YAML·VERIFICATION-PROFILE 자동 기입 (프로브는 파일을 쓰지 않는다)
+- 값의 발명 — 관측되지 않은 것은 `null`로 남기고 UNKNOWN을 유지한다
+- 실전 주문 계열 접촉 (구조적으로 불가능 — §2.3)
+- MOCK 관측의 REAL 외삽 (ADR-002-004 §13.14 / BC-INV-009 — 샌드박스 증거는
+  그 자체로 live capability를 성립시키지 않는다)
+
+---
+
+## 2. 전제
+
+### 2.1 실행 호스트
+
+프로젝트 규약 [[verify-on-paper-server-not-local-cron]]에 따라 **모의투자 서버(배포
+호스트)** 에서 실행한다. 로컬 개발기에서의 실행은 네트워크·시각·계정 상태가 달라
+측정값의 근거가 되지 못한다.
+
+선행 조건:
+
+- `config/futures_live.yaml::enabled: false` — 주문 계열 프로브는 이 값이 true면
+  `SafetyViolation`으로 **거부**된다 (`common.py::assert_no_live_futures_config`)
+- 페이퍼 워커 정지 — P-13(쿼터 소모)·P-14(WS 세션 축출)·P-15/N-15(토큰 재발급)는
+  가동 중인 시스템을 **교란**한다
+- Redis 플래그 `futures:live:suspended` 상태 확인
+
+### 2.2 환경 변수 (이름만 — 값은 절대 커밋·명령행 노출 금지)
+
+프로브는 **환경에서만** 시크릿을 읽는다. 명령행 인자에 키를 넣는 경로는 없다.
+
+| 변수 | 용도 |
+|---|---|
+| `KIS_FUTURES_APP_KEY` / `KIS_FUTURES_APP_SECRET` | 선물 계열 (`--asset futures`, 기본값) |
+| `KIS_FUTURES_ACCOUNT_NO` | 선물 계좌 (숫자 10자리로 정규화됨) |
+| `KIS_STOCK_APP_KEY` / `KIS_STOCK_APP_SECRET` | 주식 계열 (`--asset stock`) |
+| `KIS_STOCK_ACCOUNT_NO` | 주식 계좌 (P-11 필수) |
+| `KIS_APP_KEY` / `KIS_APP_SECRET` | 자산별 변수 부재 시 폴백 |
+| `KIS_TOKEN_CACHE_DIR` | **하네스는 무시한다** — 설정돼 있으면 경고만 출력 |
+
+> **⚠ 실전/모의 자격증명은 같은 변수 이름을 공유한다.** 하네스에 `REAL_*` 별도
+> 변수는 없고, `is_real` 플래그가 base URL만 바꾼다. 따라서 **N-16/N-18은 실전
+> 자격증명을 export한 별도 셸에서** 실행하고, 그 셸에서는 모의 프로브를 실행하지
+> 않는다 (§5.4).
+>
+> 반대 방향은 안전하다: 실전 자격증명이 export된 상태로 모의 주문 프로브를 돌려도
+> `assert_mock_host`가 모의 호스트를 강제하므로 **실전 주문은 발생할 수 없다.**
+
+### 2.3 안전 모델 (규약이 아니라 코드로 강제됨)
+
+| # | 강제 | 구현 | 우회 가능? |
+|---|---|---|---|
+| 1 | 주문 계열은 모의 호스트만 | `assert_mock_host()` — `openapi.koreainvestment.com` 거부 | 불가 (플래그 없음) |
+| 2 | 주문 TR은 `V` 접두만 | `assert_mock_trading_tr()` — `TTT*`/`STTN*`/`CTF*` 거부 | 불가 |
+| 3 | live 선물 설정 무장 시 주문 프로브 거부 | `assert_no_live_futures_config()` | 불가 |
+| 4 | `--confirm` 없이는 브로커 무접촉 | `requires_confirm` + `dry_run_banner()` | — (기본값이 안전) |
+| 5 | 실전 프로브는 GET + 3중 allowlist | `assert_read_only_call()` (method ∧ tr_id ∧ path) | 불가 — 모듈에 POST 경로 자체가 없음 |
+| 6 | 시크릿·계좌 마스킹 | `redact()` — 아티팩트·로그 전수 | — |
+| 7 | 토큰 캐시 격리 | `results/.token_cache` 기본값 | `--token-cache-dir`로 명시적 변경만 |
+| 8 | P-11 체결은 이중 확인 | `--confirm` **및** `--allow-fill` | — |
+
+강제 5의 allowlist는 `probes_real.py::ALLOWLIST` 3건이 전부다. 항목 추가는 상수
+편집 = 리뷰 대상 변경이다.
+
+### 2.4 결과 디렉터리
+
+`tools/broker_probes/results/` — `.gitignore:89`의 `results/` 규칙으로 **커밋되지
+않는다.** 이는 시크릿 유출 방지에는 옳지만 §6.3의 증거 보존과 충돌하므로, 인용 전
+반드시 승인 패키지로 **복사**한다.
+
+---
+
+## 3. 프로브 전수 표 (12 정본 + 4 census = 16)
+
+공통 인자: `--asset {stock,futures}` · `--symbol` · `--quantity`(기본 1) ·
+`--price-offset-pct`(기본 10 — 미체결 유지용) · `--samples` · `--margin-pct`(기본 50) ·
+`--out-dir` · `--note`. 전수 목록은 `run.py ... --help`.
+
+| ID | 차원 | 종류 | 환경 | 명령 | 소요 | 위험 | 주문 발생 |
+|---|---|---|---|---|---|---|---|
+| **P-1** | ORDER_IDENTITY | SPEC_CROSSCHECK | NONE | `python -m tools.broker_probes.run P-1` | ~0 (offline) | LOW | 아니오 |
+| **P-2** | SUBMISSION_IDEMPOTENCY | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-2 --confirm` | ~5 min | HIGH | 예 |
+| **P-5** | OPEN_ORDER_QUERY | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-5 --confirm` | ~20 min at N=100 | HIGH | 예 |
+| **P-5b** | OPEN_ORDER_QUERY | QUERY | MOCK_VTS | `python -m tools.broker_probes.run P-5b --confirm` | ~2 min | LOW | 아니오 |
+| **P-8** | REPLACE_OR_AMEND | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-8 --confirm` | ~10 min | HIGH | 예 |
+| **P-11** | POSITIONS_BALANCES_MARGIN | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-11 --confirm` | ~15 min | HIGH | 예 |
+| **P-13** | RATE_LIMITS | QUERY | MOCK_VTS | `python -m tools.broker_probes.run P-13 --confirm` | ~10 min | MEDIUM | 아니오 |
+| **P-14** | SESSION_CONNECTION_MODEL | SESSION | MOCK_VTS | `python -m tools.broker_probes.run P-14 --confirm` | ~10 min | HIGH | 아니오 |
+| **P-15** | CREDENTIALS_AUTHORIZATION | AUTH | MOCK_VTS | `python -m tools.broker_probes.run P-15 --confirm` | ~3 min | HIGH | 아니오 |
+| **P-16** | BROKER_TIME | QUERY | MOCK_VTS | `python -m tools.broker_probes.run P-16 --confirm` | ~5 min | LOW | 아니오 |
+| **P-EXT** | POSITIONS_BALANCES_MARGIN | MANUAL | MOCK_VTS | `python -m tools.broker_probes.run P-EXT --confirm` | ~15 min/trial (운영자 개입) | MEDIUM | 아니오 |
+| **P-FQP** | CANCELLATION | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-FQP --confirm` | ~20 min | HIGH | 예 |
+| **N-15** | CREDENTIALS_AUTHORIZATION | AUTH | MOCK_VTS | `python -m tools.broker_probes.run N-15 --confirm` | ~5 min/trial (매 trial ≥60s 대기) | HIGH | 아니오 |
+| **N-16** | POSITIONS_BALANCES_MARGIN | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run N-16 --confirm` | 1 call | MEDIUM | 아니오 |
+| **N-17** | MARKET_INSTRUMENT_CONSTRAINTS | SPEC_CROSSCHECK | NONE | (스크립트 아님 — **§7 체크리스트**) | ~1 h 데스크워크 | LOW | 아니오 |
+| **N-18** | MARKET_INSTRUMENT_CONSTRAINTS | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run N-18 --confirm` | 3 calls | MEDIUM | 아니오 |
+
+### 3.1 프로브별 목적 (한 줄)
+
+| ID | 무엇을 확정하는가 |
+|---|---|
+| P-1 | 클라이언트 주문번호 필드 존부 — 우리가 안 보낸다는 사실은 broker가 안 준다는 증거가 **아니다**. 판정은 N-17 |
+| P-2 | 동일 본문 2회 전송 → ODNO 2개면 dedup 없음. 1개면 창 길이를 **구간**으로 브래킷 |
+| P-5 | 주문 수락(t0) → 조회 가시(t1) 수렴 지연. `B_broker_query_consistency`의 유일한 원천 |
+| P-5b | 연속조회 키가 실제로 전진하는가 (Q-OOQ-1 — 런타임은 항상 1페이지만 읽는다) |
+| P-8 | `RVSE_CNCL_DVSN_CD="01"` 정정의 신/구 ODNO 관계와 **중첩 구간**(비원자성 = 보호 중첩 위험) |
+| P-11 | 체결 → 잔고 반영 지연. **주식 전용**(모의는 선물 잔고 미제공 — `client.py:1026` NOTE + 가드 `:1031-1033`) |
+| P-13 | 최초 스로틀 지점과 회복 시간. repo의 5/20 rps는 **자가 상한**이지 broker 한도가 아니다 |
+| P-14 | 동시 세션 수·구독 상한. `streaming.yaml:50`의 "KIS 제한: 41" 주석을 사실화하거나 반증 |
+| P-15 | 1분 내 토큰 재발급 2회 → 거부 코드/메시지 **축자** 확정 |
+| P-16 | broker 시각 대 로컬 KST 편차. 시각 미노출이면 그 자체가 결론(BROKER_TIME=UNKNOWN) |
+| P-EXT | HTS/MTS 수동 주문의 탐지 지연. push 구독 0건이므로 **폴링 간격이 하한** |
+| P-FQP | 취소 직후 late-event 창. 관측 0건은 `0`이 **아니라** "미확립" |
+| N-15 | invalidate→재발급 사이 **토큰 공백 창** (계획 §2:68 상호작용 리스크 실측) |
+| N-16 | `CTFN6118R` 야간 잔고 응답 **스키마만** 포착 (`tr_ids.yaml` 편입은 별도 커밋) |
+| N-17 | 공식 명세 대조 — 주문 요청 필드·TIF·정정취소 값집합 (**§7**) |
+| N-18 | 실전 조회 3건: program-trade 행 상한 / SOX 표기 / 야간 코드 응답 |
+
+---
+
+## 4. 결과 → broker bounds 10키 / INSTANCE 필드 매핑
+
+### 4.1 bounds 매핑 (설계 #10 `:1168-1171` 10-bullet 전수 = distinct 11키)
+
+`B_external_activity_detect`/`_contain`이 한 bullet을 공유하므로 10 bullet = 11키다.
+현재값·semantics·failure_response·measurement_source는 VERIFICATION-PROFILE-002.yaml
+직독(행번호 표기).
+
+| bound key | VP-002 행 | 현재값 | semantics | failure_response | measurement_source | 소유 | 공급 프로브 |
+|---|---|---|---|---|---|---|---|
+| `B_external_activity_detect` | :221 | `null` | hard_maximum | CONTAIN | broker_capability_profile | **broker** | **P-EXT** |
+| `B_external_activity_contain` | :230 | 1000 | hard_maximum | CONTAIN | reconciliation_log | our-side | P-EXT (실현가능성 반증만) |
+| `B_broker_query_consistency` | :752 | `null` | broker_specific | CONSERVATIVE_UNKNOWN | broker_capability_profile | **broker** | **P-5** (주), P-5b, P-11 |
+| `B_final_quantity_proof` | :716 | `null` | broker_specific | QUARANTINE_UNKNOWN | broker_capability_profile | **broker** | **P-FQP** |
+| `B_late_fill_observation` | :725 | `null` | broker_specific | PROFILE_CONTRADICTORY | broker_capability_profile | **broker** | **P-FQP** |
+| `B_rate_limit_recovery` | :761 | `null` | broker_specific | RESTRICT_OR_CONTAIN | broker_capability_profile | **broker** | **P-13** |
+| `B_protective_request_complete` | :743 | `null` | broker_specific | CONTAIN | broker_capability_profile | **broker** | **P-8** |
+| `B_startup_reconciliation` | :239 | 60000 | operational_target_and_hard_gate | REMAIN_HALTED | recovery_coordinator_log | our-side | P-11 (실현가능성만) |
+| `B_capability_claim_to_send` | :194 | 500 | hard_maximum | QUARANTINE_UNKNOWN | egress_journal_and_broker_transport_trace | our-side | — (egress 소유·프로브 불가) |
+| `B_egress_hard_fence` | :203 | 1000 | hard_maximum | HALT | egress_identity_route_session_and_broker_denial_log | our-side | P-15, N-15 (**broker 거부 측면만**) |
+| `B_venue_constraint_loss_detect` | :293 | 2000 | source_specific_hard_maximum | STOP_NEW_RISK | venue_constraint_source_and_generation_trace | our-side | — (승인 완료·broker capability 상실은 소스 중 하나) |
+
+**읽는 법**:
+
+- **broker 소유 7키** 중 `value_ms: null`인 6키(`_detect`·`query_consistency`·`fqp`·
+  `late_fill`·`rate_limit_recovery`·`protective_request_complete`)가 이 측정 캠페인이
+  실제로 채우는 대상이다.
+- **our-side 5키는 이미 APPROVED**다. 프로브는 이 값들을 *바꾸지 않는다.* 할 수 있는
+  일은 **실현가능성 반증**뿐 — 예: P-EXT의 탐지 지연이 이미 승인된
+  `B_external_activity_contain: 1000`과 합쳐 Hard Safety Envelope를 넘기면, 그것은
+  detect 값의 문제가 아니라 **봉투 자체의 모순**으로 보고해야 한다.
+- 프로브가 공급하지 못하는 2키(`B_capability_claim_to_send`·
+  `B_venue_constraint_loss_detect`)를 **커버한 것처럼 기록하지 말 것.**
+  `python -m tools.broker_probes.run --coverage`가 이 사실을 기계적으로 출력한다.
+
+### 4.2 인접 키 (10-bullet 밖 — 과대 커버리지 주장 방지)
+
+`registry.py::ADJACENT_BOUND_KEYS`에 별도 등재: `B_protection_gap`(:788)·
+`B_protection_overlap`(:797)은 P-8이 **부분 정보만** 준다.
+`B_non_trade_event_detect`(:815)·`B_non_trade_reconcile`(:833)은 corporate-action
+표면이 repo에 부재(grep 0)하여 **정의된 프로브가 없다.**
+`B_post_trade_effect_to_obligation_commit`(:662)는 우리 측 경로로 승인 완료.
+
+### 4.3 INSTANCE 필드 매핑
+
+| 프로브 | INSTANCE 필드 (`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`) | 상태 |
+|---|---|---|
+| P-1 | `capabilities.client_generated_order_id.status` | 존재 |
+| P-2 | `capabilities.submission_idempotency.status` / `.deduplication_window_ms` | 존재 |
+| P-5 | `capabilities.open_order_query.eventual_consistency_bound_ms` / `.status` | 존재 |
+| P-5b | `capabilities.open_order_query.completeness` / `.pagination` | 존재 |
+| P-8 | `capabilities.replace_semantics.mode` / `.status` | 존재 |
+| P-11 | `capabilities.position_balance_margin.consistency_model` | 존재 |
+| P-13 | `capabilities.rate_limits.hard_limits` / `.scope` / `.sustained_and_burst_semantics` | 존재 |
+| P-14 | `capabilities.sessions.concurrent_sessions` | 존재 |
+| P-14 | `capabilities.sessions.subscription_limit` | **부재 — §9** |
+| P-15 | `capabilities.credentials_and_revocation.reissue_rejection_semantics` | **부재 — §9** |
+| P-16 | `capabilities.broker_time.timezone` / `.precision` | 존재 |
+| P-16 | `capabilities.broker_time.skew_bound_ms` | **부재 — §9** |
+| P-EXT | `external_activity.detection_bound_ms` / `.containment_bound_ms` | 존재 |
+| P-FQP | `final_quantity_proof.recipes[]` / `.late_event_window_ms` | 존재 |
+| N-15 | `capabilities.credentials_and_revocation.token_blackout_window_ms` | **부재 — §9** |
+| N-16 | `capabilities.position_balance_margin.schema_captured` | **부재 — §9** |
+| N-17 | `live_scope.time_in_force_values` | 존재 |
+| N-17 | `capabilities.command_construction_and_wire_semantics.field_inventory` | **부재 — §9** |
+| N-17 | `capabilities.replace_semantics.value_set` | **부재 — §9** |
+| N-18 | `capabilities.market_and_instrument_constraints.instrument_coverage` | **부재 — §9** |
+
+---
+
+## 5. 실행 순서와 리스크 규율
+
+### 5.1 원칙
+
+**조회 → 토큰 → 주문** 순. 파괴력이 낮고 되돌릴 수 있는 것부터 한다. 앞 단계가
+실패하면 뒤 단계는 **해석 불가**가 되므로 (예: 조회 경로가 안 되면 P-5의 t1을 정의할
+수 없다) 순서는 편의가 아니라 **의존성**이다.
+
+### 5.2 모의투자 캠페인 순서
+
+| 순서 | 프로브 | 왜 이 자리인가 | 선행 조건 |
+|---|---|---|---|
+| 0 | **P-1** | 오프라인. 네트워크 없이 코드 사실만 기록 | 없음 |
+| 1 | **P-16** | 조회 전용. 인증 경로와 시각 기준선을 먼저 확립 | `--symbol` |
+| 2 | **P-13** | 조회 클래스 rate 측정. 이후 모든 프로브의 호출 예산 판단 근거 | **페이퍼 정지** |
+| 3 | **P-15** → **N-15** | 토큰 계열. 연속 실행(둘 다 재발급을 소모) | 앱키 공유 워커 **전부 정지** |
+| 4 | **P-14** | WS 세션. 스트리밍 워커 축출 위험 | 스트리밍 워커 정지 |
+| 5 | **P-5** | 주문 계열 첫 단추. 이후 P-5b/P-8/P-FQP의 관측 경로를 검증 | 모의 개장·선물 계좌 |
+| 6 | **P-5b** | P-5가 만든 이력이 있어야 페이지 경계가 생김 | P-5 선행 |
+| 7 | **P-2** | 중복 전송. 실패 시 미체결 2건이 남을 수 있어 정리 여유 필요 | 모의 개장 |
+| 8 | **P-8** | 정정. 신/구 ODNO 2건이 동시 생존할 수 있음 | P-5 선행 |
+| 9 | **P-FQP** | 취소 후 창 관측. 가장 김 | P-5 선행 |
+| 10 | **P-EXT** | 운영자 수동 개입 필요. 반복 ≥5회 | 운영자 HTS/MTS 대기 |
+| 11 | **P-11** | **의도적 체결**. 포지션이 남는다 — 마지막에 배치 | `--asset stock` · `--allow-fill` |
+
+### 5.3 rate-limit 프로브(P-13) 특칙
+
+- **점진 상승만**: `--start-rps`(1) → `--step-rps`(1)씩, 각 단계 `--hold-seconds`(3) 유지
+- **즉시 중단**: 최초 429 / `EGW00201` 신호에서 램프 전체를 멈춘다. 한계 돌파 모드도,
+  스로틀된 호출의 자동 재시도도 **없다**
+- **상한 고정**: `--max-rps`(기본 25)를 넘지 않는다. 상한까지 신호가 없으면 결론은
+  "한도는 시험 천장보다 **위**" 이며, **천장을 한도로 기록하지 않는다**
+- **회복 측정은 단발 간격 호출**로만 (버스트 금지)
+- `--endpoint-class`는 `query`만 구현돼 있다. `submit`/`cancel` 클래스는 주문을
+  발생시키므로 **별도로 리뷰된 전용 실행**이 필요하다 (HIGH risk)
+- 보고 규율: `highest_clean_rps`는 broker 한도의 **하한**, `throttled_at_rps`는
+  **상한**이다. 점추정이 아니라 **구간**으로 기록한다
+
+### 5.4 실전 조회 절차 (N-16 · N-18) — 분리 실행
+
+1. **운영자 승인**을 먼저 받는다 (실전 자격증명 소비)
+2. **별도 셸**에서 실전 자격증명을 export한다 (§2.2 경고)
+3. N-16은 **야간 세션 18:00–05:00 KST** 안에서만 실행한다. 창 밖에서는 프로브가
+   스스로 거부한다 (`--ignore-session-window`로 강행 시 아티팩트에 라벨 필수)
+4. 두 프로브 모두 **GET + allowlist**로 구조적 조회 전용이다. 모듈에 주문 경로가
+   존재하지 않는다
+5. 실행 후 그 셸을 **종료**한다. 실전 자격증명이 남은 셸에서 모의 프로브를 돌리지 않는다
+6. N-16 결과에 따른 `config/kis/tr_ids.yaml` 편입은 **별도 커밋**이다
+
+### 5.5 사고 시 대응
+
+- **미체결 잔여**: 프로브는 `finally`에서 자기가 만든 주문을 취소하고, 실패하면
+  ODNO를 찍고 `errors[]`에 남긴다. `CLEANUP FAILED`가 보이면 **HTS/MTS로 수동 취소**
+- **P-11 포지션 잔존**: 프로브는 청산하지 않는다. 모의 계좌에서 수동 청산
+- **`SafetyViolation`**: 아티팩트를 쓰지 않고 exit 3. 관측이 일어나지 않았으므로
+  기록할 것이 없다는 뜻이다 — 재시도하지 말고 **원인을 먼저 밝힌다**
+- **exit code**: 0 정상 / 2 미지 프로브 / 3 안전 위반 / 4 선행조건 미충족 /
+  5 실행 실패(**아티팩트는 남는다** — 조용한 실패를 "미실행"으로 오인하지 않기 위함)
+
+---
+
+## 6. 결과 기입 절차
+
+### 6.1 아티팩트
+
+경로: `tools/broker_probes/results/{probe_id}-{YYYYMMDDTHHMMSS}Z.json`
+(= `artifact_id`). 포함: `mode`·`environment`·`repo_commit`·`credentials`(마스킹·
+지문)·`measurements`·`observations`·`skips`·`errors`·`targets`.
+
+모든 아티팩트는 `approval_status: UNAPPROVED_CANDIDATE`로 태어난다. 이 값을 손으로
+고치는 것은 절차가 아니다 — 승인은 아티팩트 밖에서 사람이 한다.
+
+### 6.2 인용 적격성 (기입 전 필수 확인)
+
+아래를 **전부** 만족해야 INSTANCE에 인용할 수 있다.
+
+- [ ] `mode: "live"` — `dry-run` 아티팩트는 관측이 아니다
+- [ ] `provenance_class: "MEASURED"`
+- [ ] `errors: []` — 에러가 있으면 부분 관측이므로 사유와 함께만 인용
+- [ ] `skips[]` 검토 — 명시적 스킵은 결측이지 음성이 아니다
+- [ ] `repo_commit`이 캠페인 커밋과 일치
+- [ ] `environment`가 기입 대상 문서와 일치 (**MOCK_VTS 아티팩트를 REAL_PROD 문서에
+      인용 금지** — ADR-002-004 §13.14)
+
+> **예외**: P-1은 오프라인 구조 프로브라 `mode: "live"`·`MEASURED`로 나오지만
+> `environment: NONE`이다. 이는 "broker를 측정했다"가 아니라 "**repo 코드 사실을
+> 측정했다**"는 뜻이다. P-1 단독으로 capability status를 승격할 수 없다 (판정은 N-17).
+
+### 6.3 증거 보존 (`results/`는 gitignored)
+
+`evidence_refs`가 gitignore된 경로를 가리키면 리뷰어가 재현할 수 없다. 인용 전에
+아티팩트를 **승인 패키지로 복사**하고, `evidence_refs`에는 `artifact_id`와 그
+보존 위치를 함께 적는다.
+
+### 6.4 INSTANCE 기입
+
+1. 해당 capability 블록의 `_kis.measurement`를 3분류 중 하나로 갱신
+   (`CODE-EVIDENCED` / `OFFICIAL-DOC` / `NEEDS-LIVE-MEASUREMENT`) — 실측 완료 시
+   `NEEDS-LIVE-MEASUREMENT`에서 벗어난다
+2. `evidence_refs[]`에 `artifact_id` 추가
+3. `status` / `assurance_level` 승격은 **자동이 아니다**:
+   - 측정 1건이 `LEVEL_2_CONTROLLED_TEST_VERIFIED`를 보장하지 않는다 —
+     "설계된 통제 시험"이어야 한다
+   - `VERIFIED_WITH_RESTRICTION`은 `restriction_approved: true`라는 **명시 승인**이
+     동반돼야 한다
+4. 값이 확립되지 않았으면 **`null`을 유지**한다. "관측 0건"은 `0`이 아니다
+   (VP-002:756 — 창 안의 부재는 비존재의 증명이 아니다)
+
+### 6.5 bound 값 기입 — Bounds-Approver 전용
+
+`VERIFICATION-PROFILE-002.yaml`의 `value_ms`를 쓰는 행위는 **Bounds-Approver의
+독점 권한**이다 (Live-Armer와 분리 — IMPLEMENTATION-PLAN §3). 프로브가 내놓는
+`recommended_bound_ms`는 `candidate_only: true`가 붙은 **후보**일 뿐이다.
+
+승인 신청 시 함께 제출:
+
+- `artifact_id`(들) 및 보존 위치
+- `n`(표본 수)과 관측 창 — 작은 표본의 최대값은 참 최대값을 **과소평가**한다
+- 폴링/헤더 해상도 등 **가산 오차항** (예: P-5는 표본마다 최대 1 폴 간격의 오차)
+- `applicable_scope` — 계좌·세션·엔드포인트 클래스·자산·환경
+- censored(미관측 종료) trial 수 — **버리지 말고 보고한다**
+
+---
+
+## 7. N-17 명세 대조 체크리스트
+
+N-17은 스크립트가 아니라 **문서 대조**다. 모의서버가 필요 없고, 측정으로는 답이
+나오지 않는다 (필드의 *부재*는 요청을 보내서 확인할 수 없다).
+
+**수단**: `kis-code-assistant-mcp` (과거 실적 있는 경로). 재가동 불가 시 공식 문서
+수동 대조 — 이는 실행 계획 §1 T3의 **결정 D6**에 종속된다.
+
+**원전**: KIS 공식 API 포털 / `github.com/koreainvestment/open-trading-api`.
+pykis·mojito 등 2차 커뮤니티 원천은 **값 확정 근거로 쓰지 않는다**.
+
+### 대조 항목 (전수)
+
+| # | 항목 | 확정 대상 | 현재 상태 | 관련 |
+|---|---|---|---|---|
+| 1 | **주문 요청 필드 전수** — 클라이언트 주문번호 필드 존부 | `capabilities.client_generated_order_id.status` UNKNOWN → UNSUPPORTED/VERIFIED | UNKNOWN. 우리는 안 보냄(P-1 grep 0) — 하지만 **broker가 제공하지 않는다는 증거는 아님** | P-1 |
+| 2 | **TIF 허용값 집합** | `live_scope.time_in_force_values` | 빈 리스트 | — |
+| 3 | **`RVSE_CNCL_DVSN_CD` 값집합** | 정정/취소 코드 전수 (우리는 `"01"`/`"02"`만 사용) | 코드에 2값만 등장 | P-8 |
+| 4 | **`ORD_DVSN`(주식) / `ORD_DVSN_CD`(선물) 값집합** | 주문유형 코드계가 자산군 간 다름. 미지 값을 `"01"`로 **조용히 폴백**하는 현행 동작이 permissive-repair 금지와 충돌 | Q-MIC-3 | `executor.py:785-795` |
+| 5 | **숫자 인코딩 파서 동작** | 주식 `ORD_UNPR=str(int(price))`(정수 절단) vs 선물 `UNIT_PRICE=str(price)`(float 문자열) — broker 파서가 어느 쪽을 어떻게 받는가 | Q-WIRE-1 미확인 | `executor.py:321`, `:393` |
+| 6 | **필수/선택 필드 구분과 기본값 의미론** | 빈 문자열로 보내는 `NMPR_TYPE_CD`·`KRX_NMPR_CNDT_CD`·`CTAC_TLNO`·`FUOP_ITEM_DVSN_CD`의 **생략 시 broker 기본값** | 미확인 | — |
+| 7 | **중복/미지/누락 필드 동작** | 미지 필드 무시인가 거부인가 (permissive 파서면 오타가 조용히 통과) | 미확인 | — |
+| 8 | **토큰 `expires_in` 공식 값** | 우리 fallback 86400은 **우리 기본값**이지 broker 보증이 아님 | 미확인 | `auth.py:472`, `:583` |
+| 9 | **`approval_key` 유효기간** | repo 주석 "~24h"는 공식 미확인 | 미확인 | `approval_cache.py:3,22` |
+| 10 | **WebSocket 동시 구독 상한** | `streaming.yaml:50` 주석 "KIS 제한: 41" — 커뮤니티 출처만 존재 | 미확인 | P-14가 실측 시도 |
+| 11 | **REST 유량 수치 (실전/모의)** | "실전 20건/s·모의 2건/s" 통설의 **공식 원전 부재 확인**. 확인된 공식 진술은 정성적 방향뿐("모의투자 계좌는 REST API 호출 제한이 낮습니다") | folklore 철회 확정 | P-13이 실측 |
+| 12 | **자격증명 폐기 API / 전파 시한** | `capabilities.credentials_and_revocation.revocation_bound_ms` | 미확인 | — |
+| 13 | **야간 세션 TR 계열** | 모의에 야간 TR **부재**(order/cancel/inquire 3계열 모두 `*_night_real`만) — MOCK→REAL 외삽 금지의 구체 근거 | Q-MIC-1 확정 | `tr_ids.py:40-50` |
+| 14 | **SOX 해외지수 TR id·경로** | 로드맵 `:395`가 `HHDFC55020100`을 **후보로만** 언급 — 검증된 TR id 아님. 확정 후 `probes_real.py::ALLOWLIST` 추가 → N-18b 재실행 | N-18b 스킵 사유 | N-18 |
+| 15 | **ATS(넥스트레이드) 주문 경로** | TR 4종 + `order-ats` 엔드포인트 존재하나 `ats_routing.enabled: false`로 실사용 증거 없음 | Q-MIC-2 | `tr_ids.py:35-38` |
+| 16 | **잔고 조회 TR 정본** | `config/kis/tr_ids.yaml`에 잔고 TR **0건** — 실사용 TR은 `client.py` 인라인, `CTFN6118R`은 문서만. `futures-legal-review.md:38` 감사 항목이 구조적으로 충족 불가 | SoT 결손 | N-16 |
+
+각 항목의 결론은 **출처 URL + 접근 일자**와 함께 기록한다. 확인 실패는
+"미확인"으로 남기며, **추정값으로 채우지 않는다.**
+
+---
+
+## 8. 통계 규율 (bounds semantics = hard_maximum)
+
+이 캠페인이 채우는 bound들은 `hard_maximum` 또는 `broker_specific` **최대값**이다.
+백분위수가 **아니다.**
+
+### 8.1 규칙
+
+```
+recommended_bound_ms = ceil( max_observed × (1 + margin_pct/100) )
+```
+
+- 기본 마진 50% (`--margin-pct`). Bounds-Approver가 조정할 수 있다
+- **p95/p99는 분포 모양 진단용으로만** 기록한다. 백분위수를 bound로 제안하는 것은
+  "어떤 사건도 이를 넘지 않는다"는 계약을 "대부분의 사건은 넘지 않는다"로
+  **바꿔치기**하는 것이다
+- `summarize_latencies()`가 이 규칙을 코드로 강제하고, 결과에
+  `candidate_only: true`와 규칙 문자열을 함께 박아 넣는다
+
+### 8.2 표본 적정성
+
+작은 표본에서 추정한 최대값은 **참 최대값을 과소평가한다.** 따라서 값과 함께
+`n`·관측 창·관측 조건을 반드시 남기고, `n`이 충분한지는 Bounds-Approver가 판단한다.
+P-5는 N≥100, P-8은 N≥5, P-EXT는 ≥5 trial을 권고한다.
+
+### 8.3 가산 오차
+
+폴링 기반 관측은 표본마다 최대 1 폴 간격의 오차를 갖는다. 승인 bound는
+`max_observed + poll_ms`를 **넘어야** 하며 `max_observed`만으로는 부족하다.
+P-16의 HTTP `Date` 헤더는 1초 해상도이므로 |skew| < 1000 ms는 "헤더 해상도 이내"이지
+측정값이 아니다. P-EXT의 t0은 사람의 키 입력이므로 수백 ms 오차를 마진에 접는다.
+
+### 8.4 정직한 음성 (가장 중요)
+
+- **관측 0건 ≠ 0.** P-FQP에서 late change가 하나도 안 보였다면
+  `late_event_window_ms: 0`이 아니라 **"미확립"**이며 필드는 `null`, capability는
+  UNKNOWN을 유지한다 (VP-002:756 — "absence within it is not proof of non-existence")
+- **천장까지 무신호 ≠ 한도.** P-13이 `--max-rps`까지 스로틀을 못 봤다면 결론은
+  "한도는 시험 천장보다 위"이고 `hard_limits`는 **비운 채로 둔다**
+- **미관측 종료(censored) trial을 버리지 않는다.** 최대값 계산에서 censored를
+  제외하면 최대값이 체계적으로 낮아진다 — 그 방향의 오류가 곧 fail-open이다
+- **단발 관측으로 원자성을 주장하지 않는다.** P-8에서 중첩 0으로 나와도 폴링 간격보다
+  짧은 중첩은 못 본다. 원자적 replace 모드 선언은 N≥5 합치 후에만
+- **한쪽으로 치우친 skew와 양쪽 jitter를 합치지 않는다** (P-16) — 전자는 보정 가능한
+  체계 오차, 후자는 보정 불가한 흔들림으로 처방이 다르다
+
+---
+
+## 9. 알려진 갭 (실행 전 처분 필요)
+
+### 9.1 INSTANCE에 대응 필드가 없는 프로브 산출 8건
+
+§4.3에서 **부재**로 표시된 필드들이다. 템플릿(Patch-0056 반영 후 기준)에 대응 키가
+없어 **측정해도 기입할 곳이 없다**. 이는 T1 blocker B-1~B-4와 **같은 결함 클래스**다
+(템플릿만으로는 모델의 안전 게이트를 표현하지 못함).
+
+| 프로브 산출 | 템플릿 현황 | 처분 |
+|---|---|---|
+| `sessions.subscription_limit` (P-14) | `concurrent_sessions`·`head_of_line_blocking`만 존재 | 템플릿 패치 또는 `restrictions` 문자열로 강등 기록 |
+| `credentials_and_revocation.reissue_rejection_semantics` (P-15) | `revocation_bound_ms`·`direct_worker_access_prohibited`만 | 동상 |
+| `credentials_and_revocation.token_blackout_window_ms` (N-15) | 동상 | 동상 |
+| `broker_time.skew_bound_ms` (P-16) | `timezone`·`precision`만 | 동상 |
+| `position_balance_margin.schema_captured` (N-16) | `consistency_model`만 | 스키마는 `evidence_refs`로만 남기는 선택지도 가능 |
+| `command_construction_and_wire_semantics.field_inventory` (N-17) | `required_and_default_field_semantics` 등 6키 (이름 불일치) | 기존 키로 **재매핑** 검토 우선 |
+| `replace_semantics.value_set` (N-17) | `mode`만 | 템플릿 패치 |
+| `market_and_instrument_constraints.instrument_coverage` (N-18) | `order_type_time_in_force_and_route_semantics` 등 4키 (이름 불일치) | 기존 키로 **재매핑** 검토 우선 |
+
+> **주의**: 이 8건은 `docs/broker-profiles/` 및 tos-spec 템플릿 소관이며 병렬 트랙과
+> 겹친다. 이 런북은 **보고만** 하고 어느 파일도 수정하지 않았다.
+
+### 9.2 프로브가 정의되지 않은 broker 관련 키
+
+`B_non_trade_event_detect`(:815) / `B_non_trade_reconcile`(:833) — corporate-action
+표면이 repo에 부재하여(grep 0) **측정 대상 자체가 없다.** 이 두 키는 이번 캠페인으로
+채워지지 않으며, "프로브 전건 실행 = 전 키 확보"가 아님을 승인 패키지에 명시할 것.
+
+### 9.3 결과 디렉터리 잔재
+
+`results/`에 하네스 스모크 테스트 산출물이 남아 있을 수 있다(dry-run 14건 +
+P-1 오프라인 1건). 전부 gitignored이며 `NOT_MEASURED`(P-1 제외)라 §6.2 적격성을
+통과하지 못하지만, **캠페인 시작 전 비우는 것을 권고**한다 — 오래된 `repo_commit`을
+가진 아티팩트가 증거로 오인될 여지를 없애기 위함이다.
+
+---
+
+## 부록 A — 사전 점검 명령
+
+```bash
+# 프로브 목록과 위험도
+python -m tools.broker_probes.run --list
+
+# 커버리지 (12 정본 + 4 census, 미커버 bound 키 포함)
+python -m tools.broker_probes.run --coverage
+
+# 개별 프로브 도움말 (--confirm 없이 — 브로커 무접촉)
+python -m tools.broker_probes.run P-5 --help
+
+# 드라이런 (요청 형태만 출력, 소켓 미개방)
+python -m tools.broker_probes.run P-5 --symbol 101S6000
+```
+
+## 부록 B — 축약 인용 해소표
+
+본문의 `파일명:행` 축약(초안 메모 §5와 동일 관례)은 아래로 해소한다.
+
+| 축약 | 실제 경로 |
+|---|---|
+| `executor.py` | `shared/execution/executor.py` |
+| `client.py` | `shared/kis/client.py` |
+| `auth.py` | `shared/kis/auth.py` |
+| `approval_cache.py` | `shared/kis/approval_cache.py` |
+| `tr_ids.py` | `shared/execution/tr_ids.py` |
+| `tr_ids.yaml` | `config/kis/tr_ids.yaml` |
+| `streaming.yaml` | `config/streaming.yaml` |
+| `common.py` · `registry.py` · `probes_*.py` · `run.py` | `tools/broker_probes/` |
+| `futures-legal-review.md` | `docs/runbooks/futures-legal-review.md` |
+
+## 부록 C — 관련 문서
+
+- 실행 계획: `docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md`
+- 프로브 정본·quirk 17건: `docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md`
+- 설계 #10 (bounds 10-bullet 열거 `:1168-1171`): `docs/plans/2026-07-25-tos-broker-capability-design.md`
+- 인간 게이트 레지스터 (P0-2 행): `docs/plans/2026-07-29-tos-phase0-human-gate-register.md:50`
+- INSTANCE: `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`
+- bounds: `tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml`
