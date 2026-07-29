@@ -201,10 +201,21 @@ def probe_n16(args: argparse.Namespace) -> ProbeRun:
         session.close()
         return run
     try:
+        # Param set is the OFFICIAL one for this TR ([국내선물-010]
+        # examples_llm/domestic_futureoption/inquire_ngt_balance/inquire_ngt_balance.py),
+        # NOT the day-sibling's: the first real-credential run
+        # (N-16-20260729T132547Z) returned rt_cd=7 APMP0001 "증거금구분코드은(는)
+        # 필수입력 항목입니다" against the previous day-path mirror (SORT_SQN),
+        # which is itself an N-16 finding — the night TR requires MGNA_DVSN and
+        # EXCC_STAT_CD and does not document SORT_SQN. The two code values below
+        # are the official docstring's own example pair ("01:개시", "1:정산"),
+        # not invented.
         params = {
             "CANO": creds.cano,
             "ACNT_PRDT_CD": creds.acnt_prdt_cd,
-            "SORT_SQN": "DS",
+            "MGNA_DVSN": "01",
+            "EXCC_STAT_CD": "1",
+            "ACNT_PWD": "",
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": "",
         }
