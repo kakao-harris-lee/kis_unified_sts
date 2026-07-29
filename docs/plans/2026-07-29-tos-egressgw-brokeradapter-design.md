@@ -121,12 +121,14 @@
   - `tos.egressgw` (Order Construction + Broker Egress Gateway):
     ```
     {tos, tos.canonical, tos.ordering, tos.ioc, tos.venue, tos.cur, tos.egress, tos.brokercap,
-     tos.rcl, tos.capsule, tos.evidence, tos.engine, tos.egressgw}
+     tos.rcl, tos.capsule, tos.evidence, tos.engine, tos.dsl, tos.egressgw}
     ```
     근거: ioc(구성·conformance·economic effect)·venue(admissibility)·cur(egress currentness)·**egress(QCC/
     single-use/credential 술어 — 소비, 잠식 아님)**·brokercap(profile admissibility·retry/uncertain-send 정책)·
     rcl(CapacityVector·Transmission Capability 타입)·capsule/evidence(증거)·engine(Transmit/SendHandoff/
-    AttemptRequest/StageVerdict 타입 + adapters cur edge 재사용). **로직 결합은 최소·타입/술어 소비가 대부분.**
+    AttemptRequest/StageVerdict 타입 + adapters cur edge 재사용)·dsl(ContextValueView 값-표면 캐리어 타입·
+    FLAT_QUANTITY_BASIS 단일 진리원 — 설계 #35 §0.3/§6-C9 승인 lockstep; 신규 런타임 closure 멤버 아님:
+    dsl ∈ closure(tos.engine)·직접 naming 허가 확대). **로직 결합은 최소·타입/술어 소비가 대부분.**
   - `tos.brokeradapter` (Broker Adapter transport):
     ```
     {tos, tos.canonical, tos.ordering, tos.engine, tos.brokercap, tos.brokeradapter}

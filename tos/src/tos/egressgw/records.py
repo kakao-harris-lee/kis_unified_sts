@@ -34,6 +34,7 @@ Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #34 §0.3). No clock, n
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
 
 from pydantic import model_validator
@@ -65,7 +66,7 @@ from tos.egressgw.vocabulary import (
     VerifyDisposition,
     VerifyOutcome,
 )
-from tos.engine import InstrumentKey
+from tos.engine import AttemptRequest, InstrumentKey
 from tos.ioc import (
     ApprovedIntentContract,
     AuthorizedConstructionEnvelope,
@@ -103,6 +104,7 @@ __all__ = [
     "TransportNature",
     "VenueQuantityConstraint",
     "VerifyItemVerdict",
+    "send_boundary_context",
 ]
 
 
@@ -171,6 +173,13 @@ class AdmittedPriceObservation(FrozenModel):
     value: CanonicalDecimal | None = None
     #: The snapshot the observation came from (recorded for lineage; ``None`` ⇒ denial).
     snapshot_digest: str | None = None
+    #: The **per-value** provenance pointer — the ``ContextValue.payload_digest`` of the exact
+    #: admitted value this price was projected from (``context_value.py:120``; design #35 §4.2).
+    #: The snapshot digest is coarse (one snapshot carries many fields), so on its own it makes
+    #: the tie between the decided-on number and the sized-against number a caller's promise. A
+    #: directly injected provisional observation leaves this ``None`` — an absent lineage is
+    #: recorded as absent, never fabricated.
+    value_payload_digest: str | None = None
 
 
 class VenueQuantityConstraint(FrozenModel):
@@ -558,3 +567,217 @@ def positive_decimal(value: Decimal | None) -> bool:
     if not value.is_finite():
         return False
     return value > 0
+
+
+# ===========================================================================
+# GAP-2 — the shipped send-boundary context factory (design #35 §3)
+# ===========================================================================
+
+
+def send_boundary_context(
+    *,
+    # -- the four flow artifacts everything derivable is derived from -------------------
+    attempt: AttemptRequest,
+    construction: CandidateConstruction,
+    conformance_proof: OrderConformanceProof | None,
+    reference: OrderingEvent,
+    # -- item 17 (Realize): the two artifacts that bind *this* command's digest ---------
+    egress_request_for_command: Callable[[str | None], EgressRequestRecord | None]
+    | None = None,
+    quorum_certificate_for_command: Callable[[str | None], QuorumCommitCertificate | None]
+    | None = None,
+    # -- scope + transport / environment (§4.2, §4.7) -----------------------------------
+    instrument_key: InstrumentKey | None = None,
+    transport_nature: TransportNature | None = None,
+    non_live_test_environment_token: str | None = None,
+    scope_environment: str | None = None,
+    evidence_environment: str | None = None,
+    environment_inherited: bool | None = None,
+    credential_route_inventory: tuple[CredentialRouteInventoryEntry, ...] = (),
+    # -- item 1: the single-use Transmission Capability ---------------------------------
+    transmission_capability: TransmissionCapability | None = None,
+    capability_nonce: str | None = None,
+    action_flow_permit_nonce: str | None = None,
+    prior_claims: tuple[ClaimObservation, ...] = (),
+    principal: str | None = None,
+    request_digest: str | None = None,
+    # -- item 11: the venue snapshot + admissibility decision ---------------------------
+    venue_snapshot: VenueConstraintSnapshot | None = None,
+    venue_policy: VenueConstraintPolicy | None = None,
+    venue_decision: OrderAdmissibilityDecision | None = None,
+    observed_session_phase: str | None = None,
+    action_class: ActionClass | None = None,
+    order_shape: OrderShapeFields | None = None,
+    venue_shape_constraints: VenueShapeConstraints | None = None,
+    # -- item 16: currentness ------------------------------------------------------------
+    egress_currentness_proof: EgressCurrentnessProof | None = None,
+    egress_currentness_result: ProofResult | None = None,
+    restrictive_latch_state: RestrictiveLatchState | None = None,
+    worst_credible_capacity: int | None = None,
+    # -- item 17: the authorized coordinates -------------------------------------------
+    authorized_coordinates: EgressCoordinateSet | None = None,
+    capsule_egress_request_digest: str | None = None,
+    # -- items 3 / 6 / 12 / 14 / 15: the provisional stand-in facts ---------------------
+    commitment_epoch_current: bool | None = None,
+    broker_capability_profile: BrokerCapabilityProfile | None = None,
+    required_capability_set: RequiredCapabilitySet | None = None,
+    broker_profile_version_current: bool | None = None,
+    idempotency_proven: bool | None = None,
+    account_instrument_action_allowed: bool | None = None,
+    max_quantity_within_allowance: bool | None = None,
+    venue_session_account_facts_current: bool | None = None,
+    broker_constraint_generation_current: bool | None = None,
+    approval_consumed_for_this_intent: bool | None = None,
+    action_flow_permit_identity: str | None = None,
+    action_flow_commitment_current: bool | None = None,
+    # -- step 18 outbound payload --------------------------------------------------------
+    outbound_side: str | None = None,
+) -> SendBoundaryContext:
+    """Assemble the verify list's input surface from **this flow's own artifacts** (§35 §3.1).
+
+    The gateway keys its context by ``attempt.attempt_id``, and that identity is
+    content-addressed at step 12 from (conformance-proof digest, permit identity,
+    reference-coordinate digest). Under an event-driven driver the reference coordinate is a
+    global yield-order counter, so the identity is not a function of any bar and a caller cannot
+    build the context ahead of the run. This factory is what a **lazy resolver** partially applies
+    (design #35 §3.1 (3)): the injected facts are bound once, before the run, and the eleven
+    fields below are derived per attempt from the four flow artifacts.
+
+    Derived here, never accepted from a caller — this is the whole point of the factory, because
+    a look-alike rebuilt from the same inputs would make verify items 2 and 13 self-confirming:
+
+    | field(s) | source |
+    | --- | --- |
+    | ``reservation_attempt_id`` / ``reservation_conformance_proof_digest`` /
+      ``reservation_action_flow_permit_identity`` | ``attempt`` (item 2) |
+    | ``construction`` / ``conformance_proof`` / ``approval_intent_binding_digest`` | the
+      step-2 / step-11 stage artifacts (item 13) |
+    | ``egress_request`` / ``quorum_commit_certificate`` | built **against
+      ``construction.command.canonical_digest``** (item 17) |
+    | ``outbound_quantity`` / ``outbound_price`` | ``construction.derivation`` (step 18) |
+    | ``reference`` | the event's ordering coordinates |
+
+    ∅ discipline both ways: when step 2 produced no command there is no digest to bind, so the two
+    item-17 artifacts are left **absent** rather than built against ``None`` — an absent required
+    fact is a recorded stop at the gateway (RFC-002 §10.8:761), never a skip. The same holds for
+    an absent builder: this factory issues nothing itself (issuing needs a canonicalization scheme
+    and independent identities, which are not construction facts).
+
+    Args:
+        attempt: The Coordinator's step-12 attempt request (the identity everything binds to).
+        construction: The step-2 :class:`CandidateConstruction` the stage retained.
+        conformance_proof: The step-11 :class:`~tos.ioc.OrderConformanceProof` (``None`` ⇒ stop).
+        reference: The event's ordering coordinates.
+        egress_request_for_command: Builder invoked with **this** command's canonical digest to
+            produce the exact outbound request record (item 17).
+        quorum_certificate_for_command: Builder invoked with the same digest for the provisional
+            Quorum Commit Certificate (item 17).
+        instrument_key: The send's scope (a required fact — ``None`` is a stop at the gateway).
+        transport_nature: The injected transport's declared nature (§4.2).
+        non_live_test_environment_token: The injected ``environment`` scope token (§9).
+        scope_environment: The scope's environment token.
+        evidence_environment: The evidence record's environment token.
+        environment_inherited: brokercap cross-environment inheritance (negative polarity).
+        credential_route_inventory: The credential / route inventory corroborating the transport.
+        transmission_capability: The provisional single-use Transmission Capability (item 1).
+        capability_nonce: The capability's single-use nonce (item 1).
+        action_flow_permit_nonce: The Action Flow Permit nonce (item 1).
+        prior_claims: Previously observed claims, for the single-use check (item 1).
+        principal: The active egress principal (item 1).
+        request_digest: The request identity digest (item 1).
+        venue_snapshot: The venue constraint snapshot (item 11).
+        venue_policy: The venue constraint policy (item 11).
+        venue_decision: The Order Admissibility Decision (item 11).
+        observed_session_phase: The authoritatively observed session phase (item 11).
+        action_class: The exact order action class (item 11).
+        order_shape: The exact order shape (item 11).
+        venue_shape_constraints: The injected venue shape constraints (item 11).
+        egress_currentness_proof: The Egress Currentness Proof (item 16).
+        egress_currentness_result: The proof's result (item 16).
+        restrictive_latch_state: The restrictive latch state (item 16).
+        worst_credible_capacity: The worst-credible capacity obligation cur preserves (item 16).
+        authorized_coordinates: The authorized egress coordinate set (item 17).
+        capsule_egress_request_digest: The Capsule-bound request-bytes digest (item 17).
+        commitment_epoch_current: ⚠ provisional RCL epoch stand-in (item 3).
+        broker_capability_profile: The Broker Capability Profile (items 6 / 12).
+        required_capability_set: The required capability set (items 6 / 12).
+        broker_profile_version_current: Profile version currency (items 6 / 12).
+        idempotency_proven: The positive same-order-retry witness (items 6 / 12).
+        account_instrument_action_allowed: ⚠ provisional allowance stand-in (item 6).
+        max_quantity_within_allowance: ⚠ provisional allowance stand-in (item 6).
+        venue_session_account_facts_current: ⚠ provisional currency stand-in (item 12).
+        broker_constraint_generation_current: ⚠ provisional currency stand-in (item 12).
+        approval_consumed_for_this_intent: ⚠ provisional iap stand-in (item 14).
+        action_flow_permit_identity: ⚠ provisional afg stand-in (item 15).
+        action_flow_commitment_current: ⚠ provisional afg stand-in (item 15).
+        outbound_side: The outbound side token, compared against the command's SIDE axis (§4.4).
+
+    Returns:
+        The assembled :class:`SendBoundaryContext`.
+    """
+    command = construction.command
+    command_digest = None if command is None else command.canonical_digest
+    intent = construction.intent
+    egress_request: EgressRequestRecord | None = None
+    quorum_commit_certificate: QuorumCommitCertificate | None = None
+    if command_digest is not None:
+        if egress_request_for_command is not None:
+            egress_request = egress_request_for_command(command_digest)
+        if quorum_certificate_for_command is not None:
+            quorum_commit_certificate = quorum_certificate_for_command(command_digest)
+    return SendBoundaryContext(
+        instrument_key=instrument_key,
+        transport_nature=transport_nature,
+        non_live_test_environment_token=non_live_test_environment_token,
+        scope_environment=scope_environment,
+        evidence_environment=evidence_environment,
+        environment_inherited=environment_inherited,
+        credential_route_inventory=credential_route_inventory,
+        transmission_capability=transmission_capability,
+        capability_nonce=capability_nonce,
+        action_flow_permit_nonce=action_flow_permit_nonce,
+        prior_claims=prior_claims,
+        principal=principal,
+        request_digest=request_digest,
+        # ★ derived from the attempt the sequencer just built (item 2)
+        reservation_attempt_id=attempt.attempt_id,
+        reservation_conformance_proof_digest=attempt.conformance_proof_digest,
+        reservation_action_flow_permit_identity=attempt.action_flow_permit_identity,
+        commitment_epoch_current=commitment_epoch_current,
+        broker_capability_profile=broker_capability_profile,
+        required_capability_set=required_capability_set,
+        broker_profile_version_current=broker_profile_version_current,
+        idempotency_proven=idempotency_proven,
+        account_instrument_action_allowed=account_instrument_action_allowed,
+        max_quantity_within_allowance=max_quantity_within_allowance,
+        venue_session_account_facts_current=venue_session_account_facts_current,
+        broker_constraint_generation_current=broker_constraint_generation_current,
+        venue_snapshot=venue_snapshot,
+        venue_policy=venue_policy,
+        venue_decision=venue_decision,
+        observed_session_phase=observed_session_phase,
+        action_class=action_class,
+        order_shape=order_shape,
+        venue_shape_constraints=venue_shape_constraints,
+        # ★ derived from the live step-2 / step-11 artifacts (item 13)
+        construction=construction,
+        conformance_proof=conformance_proof,
+        approval_consumed_for_this_intent=approval_consumed_for_this_intent,
+        approval_intent_binding_digest=None if intent is None else intent.canonical_digest,
+        action_flow_permit_identity=action_flow_permit_identity,
+        action_flow_commitment_current=action_flow_commitment_current,
+        egress_currentness_proof=egress_currentness_proof,
+        egress_currentness_result=egress_currentness_result,
+        restrictive_latch_state=restrictive_latch_state,
+        worst_credible_capacity=worst_credible_capacity,
+        # ★ bound to this command's digest, never to a look-alike (item 17)
+        egress_request=egress_request,
+        quorum_commit_certificate=quorum_commit_certificate,
+        authorized_coordinates=authorized_coordinates,
+        capsule_egress_request_digest=capsule_egress_request_digest,
+        # ★ derived from the step-2 derivation (step 18)
+        outbound_quantity=construction.derivation.quantity,
+        outbound_price=construction.derivation.price,
+        outbound_side=outbound_side,
+        reference=reference,
+    )

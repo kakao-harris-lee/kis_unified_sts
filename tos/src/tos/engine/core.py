@@ -390,6 +390,7 @@ class EngineCore:
                 ledger=self._ledger,
                 sink=self._sink,
                 scheme=self._scheme,
+                value_view=payload.value_view,
             )
             return EventResult(
                 kind=EventKind.DECISION_TICK,

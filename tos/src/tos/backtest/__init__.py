@@ -79,7 +79,9 @@ Public surface groups by module:
 * :mod:`tos.backtest.bars` — the pure ``Bar`` model + ∅-both-ways stream validation.
 * :mod:`tos.backtest.resolver` — the D-E2 resolver slot + the bar → time-coordinate projection.
 * :mod:`tos.backtest.converter` — the causal, prefix-bounded bar → ``DECISION_TICK`` converter.
-* :mod:`tos.backtest.fills` — the deterministic synthetic ``Transmit`` band (stage + settle).
+* :mod:`tos.backtest.fills` — the deterministic synthetic ``Transmit`` band (stage + settle), the
+  ``EgressResultSource`` re-injection port the driver drains, and the ``GatewayResultReinjector``
+  that presents a send boundary's retained results on it (design #35 §2).
 * :mod:`tos.backtest.records` — the D-E3-local fill / halt / trace records.
 * :mod:`tos.backtest.driver` — the yield-order counter + the interleaving re-injection driver.
 * :mod:`tos.backtest.results` — the run result (performance-surface-sealed) + the trace artifact.
@@ -103,7 +105,10 @@ from tos.backtest.driver import (
 )
 from tos.backtest.fills import (
     DeterministicFillModel,
+    EgressResultSource,
     FillParameters,
+    GatewayResultReinjector,
+    RetainedEgressResults,
     SettledFill,
     StagedFill,
 )
@@ -173,6 +178,10 @@ __all__ = [
     "FillParameters",
     "SettledFill",
     "StagedFill",
+    # the re-injection port + the send-boundary result adapter (design #35 §2)
+    "EgressResultSource",
+    "GatewayResultReinjector",
+    "RetainedEgressResults",
     # D-E3-local records (§1.2/§4.3)
     "DEMONSTRATION_LABEL",
     "HaltRecord",

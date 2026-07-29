@@ -57,7 +57,7 @@ reaches this gateway through its own ``Transmit`` port.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Protocol, runtime_checkable
 
 from tos.brokercap import (
@@ -1360,7 +1360,8 @@ class BrokerEgressGateway:
     def __init__(
         self,
         *,
-        contexts: Mapping[str, SendBoundaryContext],
+        contexts: Mapping[str, SendBoundaryContext]
+        | Callable[[AttemptRequest], SendBoundaryContext | None],
         transport: SendTransport | None,
         sink: GatewayEvidenceSink,
         ledger: SendAttemptLedger | None = None,
@@ -1368,9 +1369,16 @@ class BrokerEgressGateway:
         """Wire the gateway.
 
         Args:
-            contexts: attempt-id → :class:`~tos.egressgw.records.SendBoundaryContext`. A missing
-                context is a **stop**: the verify list's facts are absent, and an absent required
-                fact is a rejection (RFC-002 §10.8:761).
+            contexts: Either a mapping attempt-id →
+                :class:`~tos.egressgw.records.SendBoundaryContext`, or a **lazy resolver**
+                ``(AttemptRequest) -> SendBoundaryContext | None`` (design #35 §3.1). The
+                resolver exists because ``attempt_id`` is content-addressed at step 12 from
+                (proof digest, permit identity, reference-coordinate digest), and under an
+                event-driven driver the reference coordinate is a yield-order counter decoupled
+                from any bar index — so a caller cannot populate the mapping ahead of the run
+                without predicting the driver's yield order. Either way a missing context is the
+                **same stop** it has always been: the verify list's facts are absent, and an
+                absent required fact is a rejection (RFC-002 §10.8:761).
             transport: The injected step-18 transport. ``None`` is a stop, never a skip.
             sink: The provisional evidence sink (design #34 §4.6).
             ledger: The provisional single-use ledger; a fresh one is created when omitted.
@@ -1386,6 +1394,28 @@ class BrokerEgressGateway:
     def ledger(self) -> SendAttemptLedger:
         """The provisional single-use ledger this gateway consumes."""
         return self._ledger
+
+    def _bound_context(self, attempt: AttemptRequest) -> SendBoundaryContext | None:
+        """Resolve this attempt's send-boundary context (design #35 §3.1).
+
+        Both admitted shapes are recognised by **positive membership**, never by elimination: a
+        ``Mapping`` is looked up by the content-addressed attempt id, a callable is asked, and
+        anything that is neither resolves to ``None`` — which is the same recorded
+        ``CONTEXT_MISSING`` stop an absent mapping entry has always been. There is no branch in
+        which an unrecognised ``contexts`` argument admits a send.
+
+        Args:
+            attempt: The Coordinator's step-12 attempt request.
+
+        Returns:
+            The bound context, or ``None`` when none is bound (fail-closed).
+        """
+        contexts = self._contexts
+        if isinstance(contexts, Mapping):
+            return contexts.get(attempt.attempt_id)
+        if callable(contexts):
+            return contexts(attempt)
+        return None
 
     def _halt(
         self,
@@ -1417,7 +1447,7 @@ class BrokerEgressGateway:
             The :class:`~tos.engine.SendHandoff` — accepted only when every step succeeded.
         """
         attempt_id = attempt.attempt_id
-        context = self._contexts.get(attempt_id)
+        context = self._bound_context(attempt)
         if context is None:
             return self._halt(
                 attempt_id=attempt_id,

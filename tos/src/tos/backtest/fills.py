@@ -36,8 +36,10 @@ Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #33 §0.3). No clock, n
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sized
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Protocol, runtime_checkable
 
 from pydantic import model_validator
 
@@ -67,7 +69,15 @@ from tos.engine import (
     SendHandoff,
 )
 
-__all__ = ["DeterministicFillModel", "FillParameters", "SettledFill", "StagedFill"]
+__all__ = [
+    "DeterministicFillModel",
+    "EgressResultSource",
+    "FillParameters",
+    "GatewayResultReinjector",
+    "RetainedEgressResults",
+    "SettledFill",
+    "StagedFill",
+]
 
 #: Basis-point denominator. A named constant, not a magic literal: the *values* (slippage bps, caps)
 #: are all injected (design #33 §10), while this is the unit definition the injected value is
@@ -180,6 +190,165 @@ class SettledFill:
 
     payload: EgressResultPayload
     record: LocalFillRecord
+
+
+# ===========================================================================
+# GAP-1 — the shipped re-injection seam (design #35 §2)
+# ===========================================================================
+
+
+class _SettledEgressResult(Protocol):
+    """The minimal shape the driver reads off one settled item (``driver.py:234``).
+
+    Deliberately narrow: the driver takes ``settled.payload`` and nothing else, so widening this
+    to the whole :class:`SettledFill` would demand a D-E3-local fill record from a source that
+    has none to give (design #35 §2.1, member 2).
+    """
+
+    @property
+    def payload(self) -> EgressResultPayload:
+        """The engine payload the driver re-injects as an ``EGRESS_RESULT`` event."""
+
+
+@runtime_checkable
+class EgressResultSource(Protocol):
+    """The exact surface :class:`~tos.backtest.driver.BacktestDriver` drains (design #35 §2.1).
+
+    Slice #1's end-to-end wiring surfaced the seam this Protocol closes: when the D-E4 send
+    boundary occupies the engine's ``Transmit`` slot — the substitution design #33 §7.4 (c)
+    declares — its order results are merely *retained* on ``.results``, and nothing shipped joined
+    them to the driver's re-injection loop. The driver was typed against the concrete
+    :class:`DeterministicFillModel`, so a second re-injection source could not be handed to it at
+    all.
+
+    So the driver's consumption surface is named here as a **structural port**, and the two
+    sources satisfy it structurally rather than by inheritance: :class:`DeterministicFillModel`
+    (the synthetic fill band) and :class:`GatewayResultReinjector` (the send-boundary adapter).
+    That is the same "declared once, satisfied structurally" shape the two ``Transport`` Protocols
+    already use across the D-E4 firewall (the twin-``Transport`` seam canary in the D-E4 suite).
+
+    Exactly five members, because exactly five are consumed:
+
+    1. :meth:`bind_settlement_context` — ``driver.py:225``, before each tick is yielded;
+    2. :meth:`settle_due` — ``driver.py:233``, the re-injection origin;
+    3. :attr:`records` — ``driver.py:309``;
+    4. :meth:`unsettled_records` — ``driver.py:310``;
+    5. :attr:`handoffs` — ``driver.py:311``, where **only** ``len(...)`` is taken, so a sized
+       iterable is all this port may require (design #35 §2.1 NIT-2).
+    """
+
+    def bind_settlement_context(self, bar: Bar) -> None:
+        """Bind the bar whose ``DECISION_TICK`` the driver is about to yield."""
+
+    def settle_due(self, bar: Bar) -> Iterable[_SettledEgressResult]:
+        """The results whose settlement coordinate is ``bar`` — re-injected by the driver."""
+
+    def unsettled_records(self) -> tuple[LocalFillRecord, ...]:
+        """The D-E3-local records for anything still unsettled when the stream ends."""
+
+    @property
+    def records(self) -> tuple[LocalFillRecord, ...]:
+        """The D-E3-local fill records produced so far, in settlement order."""
+
+    @property
+    def handoffs(self) -> Sized:
+        """Every attempt handed to this source — the driver takes only its length."""
+
+
+@runtime_checkable
+class RetainedEgressResults(Protocol):
+    """The send boundary's retained-result surface, declared **locally** (design #35 §2.1).
+
+    This harness and the D-E4 send boundary exclude each other from their import closures, so the
+    adapter cannot name the send boundary's own type. It names the one member it consumes instead
+    and lets that type satisfy it structurally — the firewall-imposed twin declaration, with the
+    same drift canary the ``Transport`` pair carries (design #35 §2.1 (3) / §9-2).
+
+    The reverse edge is equally forbidden and equally unnecessary: making the send boundary
+    satisfy :class:`EgressResultSource` directly would require it to name ``Bar``, a harness type,
+    which is the mutual exclusion in the other direction (design #35 §2.2 (A)).
+    """
+
+    @property
+    def results(self) -> tuple[EgressResultPayload, ...]:
+        """Every egress result the send boundary has produced so far, in production order."""
+
+
+@dataclass(frozen=True)
+class _RetainedResult:
+    """One retained gateway result, presented on the shape the driver drains."""
+
+    payload: EgressResultPayload
+
+
+class GatewayResultReinjector:
+    """Re-inject a send boundary's retained results into the driver (design #35 §2.1).
+
+    ⚠ **Wiring, not policy.** The adapter renders no verdict, invents no result, and holds no
+    D-E3-local fill record: every result it hands over is the exact
+    :class:`~tos.engine.EgressResultPayload` the gateway produced, forwarded unchanged and in
+    production order. The price / cost model belongs to the fill band, and the send-boundary
+    judgement belongs to the gateway; there is nothing left here for a judgement to be made about.
+
+    Settlement is **same-bar** because the send boundary returns synchronously (design #31 §2.1
+    D5): the gateway's ``__call__`` has already produced its result by the time the driver drains
+    the bar it was called on. :meth:`bind_settlement_context` is therefore a no-op kept for port
+    parity — a fill-model concept the send boundary does not have.
+    """
+
+    def __init__(self, *, source: RetainedEgressResults) -> None:
+        """Wire the adapter over a retained-result source.
+
+        Args:
+            source: The send boundary whose ``.results`` are re-injected. Consumed
+                **structurally** — this module names no D-E4 symbol at all (design #35 §0.3).
+        """
+        self._source = source
+        self._drained = 0
+
+    @property
+    def drained(self) -> int:
+        """How many retained results have already been handed to the driver (observation)."""
+        return self._drained
+
+    def bind_settlement_context(self, bar: Bar) -> None:
+        """Accept the driver's settlement binding and do nothing with it.
+
+        Args:
+            bar: The bar the driver is about to tick. The send boundary settles synchronously, so
+                there is no later coordinate to bind it to — and storing it would imply a
+                settlement policy this adapter does not own.
+        """
+
+    def settle_due(self, bar: Bar) -> tuple[_RetainedResult, ...]:
+        """Hand over every result the source retained since the last drain.
+
+        Args:
+            bar: The bar the driver has just ticked (unused — settlement is same-bar).
+
+        Returns:
+            The newly retained payloads, in production order. A bar that produced none yields
+            ``()`` — nothing is invented for it.
+        """
+        del bar
+        retained = self._source.results
+        produced = retained[self._drained :]
+        self._drained = len(retained)
+        return tuple(_RetainedResult(payload=payload) for payload in produced)
+
+    def unsettled_records(self) -> tuple[LocalFillRecord, ...]:
+        """Always ``()`` — the adapter owns no D-E3-local fill record (design #35 §7-2)."""
+        return ()
+
+    @property
+    def records(self) -> tuple[LocalFillRecord, ...]:
+        """Always ``()`` — see :meth:`unsettled_records`."""
+        return ()
+
+    @property
+    def handoffs(self) -> tuple[EgressResultPayload, ...]:
+        """The retained results, exposed only so the driver can take their count."""
+        return tuple(self._source.results)
 
 
 class DeterministicFillModel:

@@ -26,21 +26,27 @@ Regime tag: orchestration authoring evidence only; closes no EV.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from tos.canonical import ArtifactIntegrityError
 from tos.engine import (
+    PROJECTION_ORDER,
+    CommitmentStep,
     EgressResultKind,
     EgressResultPayload,
     EngineEvent,
     EventKind,
     HaltReason,
     ProvisionalReservationLedger,
+    StageRequest,
 )
 from tos.rcl import CapacityState
 
 from ._engine_fixtures import (
     PROVISIONAL_MAX_UNRESOLVED_SEND_PER_SCOPE,
     RecordingTransmit,
+    admitting_stages,
     build_core,
     decision_tick,
     engine_configuration,
@@ -210,3 +216,156 @@ def test_the_retention_survives_every_terminal_result_kind() -> None:
             f"a {kind.value} result must not free the scope — release is the RCL's act"
         )
         assert len(transmit.attempts) == 1
+
+
+# ---------------------------------------------------------------------------
+# design #35 §5.2/§5.3 — the read-only held-position observation
+# ---------------------------------------------------------------------------
+
+
+def test_the_consumed_magnitude_accessor_reads_the_projection_and_changes_nothing() -> None:
+    """(design #35 §5.2/§5.3) The observation is a read; the RCL boundary is untouched.
+
+    ``outstanding_consumed_magnitude`` exists so a position-closing derivation can be sized from
+    the position that actually exists. Reading is neither serialization nor mutation, so RFC-002
+    §9.1:557 (the RCL is the sole such authority) is untouched and §9.1:558 ("producer-local
+    counters SHALL NOT create headroom") is untouched too — which is asserted here rather than
+    assumed: every capacity observable is compared before and after repeated reads.
+    """
+    transmit = RecordingTransmit()
+    core, _ = build_core(transmit=transmit)
+    key = instrument_key()
+
+    # ∅ both ways: nothing outstanding is an absent observation, not a zero.
+    assert core.ledger.outstanding(key) is None
+    assert core.ledger.outstanding_consumed_magnitude(key) is None
+
+    first = core.handle(decision_tick(sequence=1))
+    assert first.flow is not None and first.flow.attempt is not None
+    # outstanding but unfilled is *also* absent — a send that has not settled consumed nothing.
+    assert core.ledger.outstanding(key) is not None
+    assert core.ledger.outstanding_consumed_magnitude(key) is None
+
+    core.handle(
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=key,
+                attempt_id=first.flow.attempt.attempt_id,
+                kind=EgressResultKind.FULL_FILL,
+                filled_quantity=7,
+                remaining_quantity=0,
+                reference=ordering(2),
+            ),
+        )
+    )
+
+    before = core.ledger.outstanding(key)
+    assert before is not None
+    assert core.ledger.outstanding_consumed_magnitude(key) == before.filled_quantity
+
+    # ★ the read is idempotent and inert: nothing about the projection moves, however often it
+    #   is asked, and the scope stays exactly as occupied as it was.
+    for _ in range(5):
+        assert core.ledger.outstanding_consumed_magnitude(key) == before.filled_quantity
+    after = core.ledger.outstanding(key)
+    assert after == before
+    assert after is not None
+    assert after.capacity_state is CapacityState.POSITION_CONSUMED
+    assert core.ledger.outstanding_count(key) == 1
+    assert core.ledger.admits_new_exposure(key) is False
+
+
+def test_the_accessor_is_not_a_release_path_under_any_of_the_four_forbidden_names() -> None:
+    """(design #35 §5.3) A read accessor was added; no release path was.
+
+    The projection deliberately has no ``release`` / ``free`` / ``clear`` / ``reset`` — releasing
+    capacity is the RCL's act (RFC-002 §9.1:557) and a producer-local counter may not create
+    headroom (§9.1:558). The accessor is none of those, and the absence is grepped rather than
+    asserted in prose (the #27 anti-phantom discipline).
+    """
+    ledger = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
+    for name in ("release", "free", "clear", "reset"):
+        assert not hasattr(ledger, name)
+    assert hasattr(ledger, "outstanding_consumed_magnitude")
+
+    mutators = {
+        name
+        for name in dir(ledger)
+        if not name.startswith("_")
+        and any(token in name for token in ("release", "free", "clear", "reset"))
+    }
+    assert mutators == set()
+    assert CapacityState.RELEASED not in PROJECTION_ORDER
+
+
+def test_every_stage_request_carries_the_two_observations_restrictively() -> None:
+    """(design #35 §4.2/§5.2) Both additive slots default to absent, never to a stand-in value.
+
+    …and the sequencer really offers them to **every** step, so a stage that needs one does not
+    have to reach for the ledger itself — which is precisely how the projection stays the engine's.
+    """
+    key = instrument_key()
+    core, _ = build_core(transmit=RecordingTransmit())
+    first = core.handle(decision_tick(sequence=1))
+    assert first.pipeline is not None and first.pipeline.proposal is not None
+
+    bare = StageRequest(
+        step=CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION,
+        instrument_key=key,
+        proposal=first.pipeline.proposal,
+    )
+    assert bare.value_view is None
+    assert bare.held_position_magnitude is None
+
+    assert first.flow is not None and first.flow.attempt is not None
+    core.handle(
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=key,
+                attempt_id=first.flow.attempt.attempt_id,
+                kind=EgressResultKind.FULL_FILL,
+                filled_quantity=7,
+                remaining_quantity=0,
+                reference=ordering(2),
+            ),
+        )
+    )
+
+    seen: list[StageRequest] = []
+
+    def recording(stage: Any) -> Any:
+        def call(request: StageRequest) -> Any:
+            seen.append(request)
+            return stage(request)
+
+        return call
+
+    watched, _ = build_core(
+        transmit=RecordingTransmit(),
+        stages={step: recording(stage) for step, stage in admitting_stages().items()},
+        sink=None,
+    )
+    # replay the *same* projection state by filling this core's scope the same way
+    started = watched.handle(decision_tick(sequence=1))
+    assert started.flow is not None and started.flow.attempt is not None
+    watched.handle(
+        EngineEvent(
+            kind=EventKind.EGRESS_RESULT,
+            egress_result=EgressResultPayload(
+                instrument_key=key,
+                attempt_id=started.flow.attempt.attempt_id,
+                kind=EgressResultKind.FULL_FILL,
+                filled_quantity=7,
+                remaining_quantity=0,
+                reference=ordering(2),
+            ),
+        )
+    )
+    seen.clear()
+    watched.handle(decision_tick(sequence=3, capsule=issue_capsule()))
+    assert seen, "the second flow must have reached at least one injected stage"
+    assert all(
+        request.held_position_magnitude == 7 for request in seen
+    ), "every stage sees the observed held position, not just the one that consumes it"

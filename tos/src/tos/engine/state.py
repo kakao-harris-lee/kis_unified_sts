@@ -34,6 +34,8 @@ Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #31 §0.3). No clock, n
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from tos.engine._base import ArtifactIntegrityError
 from tos.engine.records import (
     EgressResultPayload,
@@ -159,6 +161,36 @@ class ProvisionalReservationLedger:
                 if reservation is not None
             ]
         )
+
+    def outstanding_consumed_magnitude(self, key: InstrumentKey) -> Decimal | None:
+        """The already-recorded consumed magnitude of ``key``'s outstanding reservation (§35 §5.2).
+
+        A **read**, and nothing else. It returns the ``filled_quantity`` a re-injected egress
+        result already wrote onto the projection, so a position-closing derivation can be sized
+        from the position that actually exists instead of from a risk budget. Reading is neither
+        serialization nor mutation, so RFC-002 §9.1:557 (the RCL is the sole such authority) is
+        untouched, and it creates no headroom for anyone (§9.1:558) — the at-most-one retention is
+        computed exactly as before and still denies an overlapping effect at the capacity stage.
+
+        Deliberately **not** named ``release`` / ``free`` / ``clear`` / ``reset``: those paths do
+        not exist here and this is not one of them (design #35 §5.2 / §5.3).
+
+        ⚠ The honest scope is one entry. What is returned is the outstanding reservation's
+        capacity-consumed magnitude, which coincides with the held position only while a scope
+        holds at most one attempt. A full net-position ledger — multi-leg, averaged — is **not**
+        this: the engine is a capacity / commitment machine, not a position ledger, and that
+        generalization is deferred (design #35 §5.3).
+
+        Args:
+            key: The (account, instrument) scope.
+
+        Returns:
+            The recorded ``filled_quantity``, or ``None`` when no reservation is outstanding for
+            the scope or none has been filled — an absent observation, never a zero standing in
+            for one (∅ both ways).
+        """
+        outstanding = self.outstanding(key)
+        return None if outstanding is None else outstanding.filled_quantity
 
     def admits_new_exposure(self, key: InstrumentKey) -> bool:
         """Whether a **new** overlapping economic effect may be requested for ``key``.

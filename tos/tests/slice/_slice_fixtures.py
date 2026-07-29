@@ -47,6 +47,7 @@ from tos.backtest import (
     Bar,
     BarTimeProjection,
     CausalBarConverter,
+    GatewayResultReinjector,
     validate_bar_stream,
 )
 from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
@@ -71,6 +72,7 @@ from tos.cur import (
     ProofResult,
 )
 from tos.dsl import (
+    FLAT_QUANTITY_BASIS,
     VALUE_NAMESPACE,
     AuthoredStrategy,
     Compare,
@@ -108,17 +110,16 @@ from tos.egressgw import (
     TransportNature,
     VenueConstraintStage,
     VenueQuantityConstraint,
+    send_boundary_context,
 )
 from tos.engine import (
     CAPSULE_CONTEXT_SOURCE,
     AttemptRequest,
     CommitmentStep,
-    EgressResultPayload,
     EngineConfiguration,
     EngineCore,
     InstrumentKey,
     RecordingEvidenceSink,
-    SendHandoff,
     Stage,
     StrategyRegistry,
     provisional_stage_map,
@@ -174,6 +175,11 @@ LOT_SIZE = Decimal("2")
 MIN_QUANTITY = Decimal("2")
 MAX_QUANTITY = Decimal("100")
 PRICE = Decimal("4200")
+
+#: The governed Critical Input field the sizing policy prices against (design #35 §4.2 (4)).
+#: It is the **same** ``field_key`` the band comparison gates on, which is the whole point: the
+#: number the strategy decided on is now the number the order is sized against.
+PRICE_FIELD_KEY = "close"
 
 # ---------------------------------------------------------------------------
 # The band-crossing bar profile (§3-1 "일부 bar만 하단 밴드 관통")
@@ -606,7 +612,10 @@ def sizing_bound(**overrides: Any) -> SizingBound:
         "min_quantity": MIN_QUANTITY,
         "max_quantity": MAX_QUANTITY,
         "quantity_unit": QuantityUnitKind.CONTRACTS,
-        "admitted_quantity_bases": frozenset({"RISK"}),
+        # design #35 §5.2 (4): the flat basis is admitted, so the exit half of the band-reversion
+        # strategy is *constructable*. It still stops — at the capacity seal (step 8), not at the
+        # sizing rule (step 2) — and those are not the same fact (§5.3).
+        "admitted_quantity_bases": frozenset({"RISK", FLAT_QUANTITY_BASIS}),
     }
     base.update(overrides)
     return SizingBound(**base)
@@ -881,23 +890,30 @@ def disjoint_inventory() -> tuple[CredentialRouteInventoryEntry, ...]:
     )
 
 
-def send_boundary_context(
+def bind_send_boundary_context(
     *,
     attempt: AttemptRequest,
     construction: CandidateConstruction,
     proof: Any,
     reference: OrderingEvent,
 ) -> SendBoundaryContext:
-    """Assemble the verify list's input surface from **this flow's own artifacts**.
+    """Partially apply the **shipped** ``send_boundary_context`` factory (design #35 §3.1).
 
-    Every identity is read off the attempt the sequencer just built and the construction /
-    proof the step-2 / step-11 stages just produced — never off a look-alike rebuilt from the
-    same inputs. That is what makes verify item 2 (reservation identity match) and item 13
-    (order construction) load-bearing rather than self-confirming.
+    Everything below is an *injected* fact — the provisional stand-ins, the venue facts, the
+    capability nonces, the environment tokens. Everything derived — the reservation identity
+    triple, the construction / proof pair, the item-17 artifacts bound to this command's digest,
+    the outbound economics — is derived **inside the factory**, from the attempt the sequencer
+    just built and the artifacts the step-2 / step-11 stages just produced. That is what keeps
+    verify item 2 (reservation identity match) and item 13 (order construction) load-bearing
+    instead of self-confirming: no look-alike is rebuilt from the same inputs here.
     """
-    assert construction.command is not None
-    assert construction.intent is not None
-    return SendBoundaryContext(
+    return send_boundary_context(
+        attempt=attempt,
+        construction=construction,
+        conformance_proof=proof,
+        reference=reference,
+        egress_request_for_command=egress_request,
+        quorum_certificate_for_command=quorum_certificate,
         instrument_key=instrument_key(),
         transport_nature=synthetic_nature(),
         non_live_test_environment_token=ENVIRONMENT,
@@ -911,9 +927,6 @@ def send_boundary_context(
         prior_claims=(),
         principal=PRINCIPAL,
         request_digest=REQUEST_DIGEST,
-        reservation_attempt_id=attempt.attempt_id,
-        reservation_conformance_proof_digest=attempt.conformance_proof_digest,
-        reservation_action_flow_permit_identity=attempt.action_flow_permit_identity,
         commitment_epoch_current=True,
         account_instrument_action_allowed=True,
         max_quantity_within_allowance=True,
@@ -926,24 +939,16 @@ def send_boundary_context(
         action_class=ActionClass.NEW_LONG,
         order_shape=venue_shape(),
         venue_shape_constraints=venue_shape_constraints(),
-        construction=construction,
-        conformance_proof=proof,
         approval_consumed_for_this_intent=True,
-        approval_intent_binding_digest=construction.intent.canonical_digest,
         action_flow_permit_identity=PERMIT_IDENTITY,
         action_flow_commitment_current=True,
         egress_currentness_proof=currentness_proof(),
         egress_currentness_result=ProofResult.CURRENT,
         restrictive_latch_state=RestrictiveLatchState.CLEAR,
         worst_credible_capacity=1,
-        egress_request=egress_request(construction.command.canonical_digest),
-        quorum_commit_certificate=quorum_certificate(construction.command.canonical_digest),
         authorized_coordinates=authorized_coordinates(),
         capsule_egress_request_digest=CAPSULE_EGRESS_REQUEST_DIGEST,
-        outbound_quantity=construction.derivation.quantity,
-        outbound_price=construction.derivation.price,
         outbound_side=SIDE,
-        reference=reference,
     )
 
 
@@ -964,6 +969,7 @@ def construction_stages(
         policy_generation=1,
         command_id="cmd-slice",
         generation=1,
+        price_field_key=PRICE_FIELD_KEY,
     )
     step3 = VenueConstraintStage(
         observed_session_phase=SESSION_PHASE,
@@ -998,119 +1004,57 @@ def construction_stages(
 
 
 # ===========================================================================
-# The two harness-local adapters the four packages leave unowned (§ gaps)
+# The lazy send-boundary context resolver (design #35 §3.1 (3))
 # ===========================================================================
 
 
-@dataclass(frozen=True)
-class _StagedEgressResult:
-    """The minimal shape :meth:`BacktestDriver.events` reads off a settled item (driver.py:233)."""
+class RecordingContextResolver:
+    """The gateway's lazy ``contexts`` resolver — a partial application, plus a log.
 
-    payload: EgressResultPayload
+    This is **not** the harness-local bridge slice #1 had to write. The two pieces of wiring no
+    shipped package owned are now shipped: :func:`~tos.egressgw.send_boundary_context` assembles
+    the context, and :class:`~tos.backtest.GatewayResultReinjector` carries the results back to
+    the driver. What is left here is the design's own resolver shape (design #35 §3.1 (3)) —
+    "injected bundles fixed before the run, flow artifacts derived per attempt" — with the
+    produced pairs recorded so the suite can assert against them.
 
-
-class SendBoundarySlot:
-    """The harness-local adapter joining D-E1's ``Transmit`` slot to D-E4 **and** back to D-E3.
-
-    It performs **no verification of its own** — every send-boundary judgement stays inside
-    :class:`~tos.egressgw.BrokerEgressGateway`. What it supplies is the two pieces of wiring no
-    shipped package owns (both reported as gaps in ``test_slice_gaps.py``):
-
-    1. **context binding.** ``BrokerEgressGateway`` looks its
-       :class:`~tos.egressgw.SendBoundaryContext` up by ``attempt_id`` (gateway.py:1420), but a
-       content-addressed ``attempt_id`` only exists **after** step 12 runs — and under D-E3 it
-       depends on the driver's yield-order coordinate, which is deliberately decoupled from
-       ``bar_index`` (driver.py:87-143). So the context is assembled here, from the attempt the
-       sequencer just handed over plus the construction / proof the step-2 / step-11 stages
-       just produced, and installed before delegating.
-    2. **result re-injection.** ``BacktestDriver`` drains ``EGRESS_RESULT`` payloads through
-       :meth:`DeterministicFillModel.settle_due` (driver.py:225/233) and the gateway merely
-       *retains* its results on ``BrokerEgressGateway.results`` (gateway.py:1574). Nothing
-       joins the two, so this object exposes the gateway's retained results on the surface the
-       driver drains — same-bar settlement, since the gateway returns synchronously.
-
-    It creates **no** headroom, judges **no** verify item, and produces **no** result of its own.
+    It assembles nothing itself and judges nothing: the factory builds the context and the
+    gateway renders every verdict. Returning ``None`` (no construction or no proof yet) is the
+    honest negative path — the gateway records the same ``CONTEXT_MISSING`` stop a missing
+    mapping entry has always produced (design #35 §3.1 (1)).
     """
 
     def __init__(
         self,
         *,
-        gateway: BrokerEgressGateway,
-        contexts: dict[str, SendBoundaryContext],
         construction_stage: OrderConstructionStage,
         proof_stage: ConformanceProofStage,
     ) -> None:
-        """Wire the slot over the gateway and the two live construction stages."""
-        self._gateway = gateway
-        self._contexts = contexts
+        """Bind the resolver to the two live construction stages."""
         self._construction_stage = construction_stage
         self._proof_stage = proof_stage
-        self._handoffs: list[AttemptRequest] = []
-        self._accepted: list[AttemptRequest] = []
-        self._drained = 0
-        self._context_bar: Bar | None = None
-        self.bound_contexts: tuple[SendBoundaryContext, ...] = ()
+        self.attempts: tuple[AttemptRequest, ...] = ()
+        self.contexts: tuple[SendBoundaryContext, ...] = ()
 
-    # -- the D-E1 Transmit port ----------------------------------------------
-
-    def __call__(self, attempt: AttemptRequest) -> SendHandoff:
-        """Bind this attempt's send-boundary context, then delegate to the real gateway."""
-        self._handoffs.append(attempt)
+    def __call__(self, attempt: AttemptRequest) -> SendBoundaryContext | None:
+        """Resolve this attempt's send-boundary context from the live flow artifacts."""
+        self.attempts += (attempt,)
         construction = self._construction_stage.construction
         proof = self._proof_stage.proof
-        if construction is not None and proof is not None:
-            context = send_boundary_context(
-                attempt=attempt,
-                construction=construction,
-                proof=proof,
-                reference=OrderingEvent(
-                    event_id=f"{CONTINUITY_ID}-send-{len(self._handoffs)}",
-                    source_continuity_id=CONTINUITY_ID,
-                    source_native_sequence=len(self._handoffs),
-                ),
-            )
-            self._contexts[attempt.attempt_id] = context
-            self.bound_contexts += (context,)
-        handoff = self._gateway(attempt)
-        if handoff.accepted_for_transmission is True:
-            self._accepted.append(attempt)
-        return handoff
-
-    # -- the surface BacktestDriver drains -----------------------------------
-
-    def bind_settlement_context(self, bar: Bar) -> None:
-        """Record the bar the driver is about to tick (kept for parity with the fill band)."""
-        self._context_bar = bar
-
-    def settle_due(self, bar: Bar) -> tuple[_StagedEgressResult, ...]:
-        """Hand the driver every gateway result produced since the last drain.
-
-        Settlement is same-bar because :meth:`BrokerEgressGateway.__call__` returns
-        synchronously (design #31 §2.1 D5); nothing is invented for a bar that produced none.
-        """
-        del bar
-        produced = self._gateway.results[self._drained :]
-        self._drained = len(self._gateway.results)
-        return tuple(_StagedEgressResult(payload=payload) for payload in produced)
-
-    def unsettled_records(self) -> tuple[Any, ...]:
-        """No D-E3-local fill record exists: the price / cost model is the fill band's, not this."""
-        return ()
-
-    @property
-    def records(self) -> tuple[Any, ...]:
-        """No D-E3-local fill record exists (see :meth:`unsettled_records`)."""
-        return ()
-
-    @property
-    def handoffs(self) -> tuple[AttemptRequest, ...]:
-        """Every attempt handed to the send boundary, in order."""
-        return tuple(self._handoffs)
-
-    @property
-    def accepted_handoffs(self) -> tuple[AttemptRequest, ...]:
-        """Every attempt the gateway positively accepted (``is True`` only)."""
-        return tuple(self._accepted)
+        if construction is None or proof is None:
+            return None
+        context = bind_send_boundary_context(
+            attempt=attempt,
+            construction=construction,
+            proof=proof,
+            reference=OrderingEvent(
+                event_id=f"{CONTINUITY_ID}-send-{len(self.attempts)}",
+                source_continuity_id=CONTINUITY_ID,
+                source_native_sequence=len(self.attempts),
+            ),
+        )
+        self.contexts += (context,)
+        return context
 
 
 # ===========================================================================
@@ -1126,7 +1070,8 @@ class SliceRun:
     book: BandBarBook
     core: EngineCore
     strategy: AuthoredStrategy
-    slot: SendBoundarySlot
+    resolver: RecordingContextResolver
+    reinjector: GatewayResultReinjector
     gateway: BrokerEgressGateway
     transport: SyntheticPaperTransport
     engine_sink: RecordingEvidenceSink
@@ -1148,43 +1093,47 @@ def run_slice(
 ) -> SliceRun:
     """Replay the band profile end to end through one core and one send boundary.
 
-    The wiring, in the direction the data flows::
+    The wiring, in the direction the data flows — every joint a **shipped** symbol
+    (design #35)::
 
         BandBarBook  →  MarketFeedContextResolver  →  CausalBarConverter  →  BacktestDriver
-                     →  EngineCore(registry, stages, transmit=SendBoundarySlot)
-                     →  BrokerEgressGateway  →  SyntheticPaperTransport
-                     →  EGRESS_RESULT re-injection  →  the same EngineCore
+                     →  EngineCore(registry, stages, transmit=BrokerEgressGateway)
+                     →  BrokerEgressGateway(contexts=lazy resolver)  →  SyntheticPaperTransport
+                     →  GatewayResultReinjector  →  EGRESS_RESULT re-injection
+                     →  the same EngineCore
+
+    The gateway now occupies the ``Transmit`` slot **directly** — the substitution design #33
+    §7.4 (c) declared — because a lazy ``contexts`` resolver can bind a context to an identity
+    that only exists after step 12, and ``GatewayResultReinjector`` presents the gateway's
+    retained results on the port the driver drains.
     """
     book = BandBarBook(profile)
     registry, strategy = registry_with_band_strategy()
     stages, step2, step11 = construction_stages(book)
 
-    contexts: dict[str, SendBoundaryContext] = {}
     gateway_sink = RecordingGatewayEvidenceSink()
     transport = SyntheticPaperTransport(
         SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=LOT_SIZE)
     )
+    context_resolver = RecordingContextResolver(
+        construction_stage=step2, proof_stage=step11
+    )
     gateway = BrokerEgressGateway(
-        contexts=contexts, transport=transport, sink=gateway_sink
+        contexts=context_resolver, transport=transport, sink=gateway_sink
     )
-    slot = SendBoundarySlot(
-        gateway=gateway,
-        contexts=contexts,
-        construction_stage=step2,
-        proof_stage=step11,
-    )
+    reinjector = GatewayResultReinjector(source=gateway)
 
     engine_sink = RecordingEvidenceSink()
     core = EngineCore(
         registry=registry,
         stages=stages,
         configuration=engine_configuration(),
-        transmit=slot,
+        transmit=gateway,
         sink=engine_sink,
     )
     driver = BacktestDriver(
         converter=build_converter(book, resolver=resolver),
-        fill_model=slot,  # type: ignore[arg-type]  # see SendBoundarySlot — the unowned seam
+        fill_model=reinjector,
         continuity_id=CONTINUITY_ID,
     )
     run = driver.run(core, book.bars)
@@ -1193,7 +1142,8 @@ def run_slice(
         book=book,
         core=core,
         strategy=strategy,
-        slot=slot,
+        resolver=context_resolver,
+        reinjector=reinjector,
         gateway=gateway,
         transport=transport,
         engine_sink=engine_sink,

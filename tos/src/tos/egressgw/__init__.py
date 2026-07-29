@@ -78,6 +78,7 @@ from tos.egressgw.construction import (
     EconomicEffectStage,
     OrderConstructionStage,
     VenueConstraintStage,
+    admitted_price_from_view,
     build_order_conformance_proof,
     candidate_command_verdict,
     construct_candidate_command,
@@ -114,6 +115,7 @@ from tos.egressgw.records import (
     VenueQuantityConstraint,
     VerifyItemVerdict,
     positive_decimal,
+    send_boundary_context,
 )
 from tos.egressgw.vocabulary import (
     ADMITTING_VERIFY_OUTCOMES,
@@ -170,6 +172,7 @@ __all__ = [
     "VenueQuantityConstraint",
     "VerifyItemVerdict",
     "positive_decimal",
+    "send_boundary_context",
     # construction (steps 2 / 3 / 5 / 11)
     "DERIVATION_CONTEXT",
     "DERIVATION_RULE",
@@ -177,6 +180,7 @@ __all__ = [
     "EconomicEffectStage",
     "OrderConstructionStage",
     "VenueConstraintStage",
+    "admitted_price_from_view",
     "build_order_conformance_proof",
     "candidate_command_verdict",
     "construct_candidate_command",

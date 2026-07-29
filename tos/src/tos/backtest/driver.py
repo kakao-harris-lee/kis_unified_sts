@@ -58,7 +58,7 @@ from collections.abc import Iterable, Iterator
 from tos.backtest._base import BacktestIntegrityError
 from tos.backtest.bars import Bar, BarStream, validate_bar_stream
 from tos.backtest.converter import CausalBarConverter
-from tos.backtest.fills import DeterministicFillModel
+from tos.backtest.fills import EgressResultSource
 from tos.backtest.records import HaltRecord, TraceEntry, WiringTrace
 from tos.backtest.results import BacktestRun
 from tos.backtest.vocabulary import ScenarioId
@@ -158,7 +158,7 @@ class BacktestDriver:
         self,
         *,
         converter: CausalBarConverter,
-        fill_model: DeterministicFillModel,
+        fill_model: EgressResultSource,
         continuity_id: str,
         scenario_id: ScenarioId | None = None,
     ) -> None:
@@ -166,7 +166,11 @@ class BacktestDriver:
 
         Args:
             converter: The causal bar → tick converter (§3.1).
-            fill_model: The deterministic synthetic ``Transmit`` band (§4).
+            fill_model: The re-injection source (§4) — any
+                :class:`~tos.backtest.fills.EgressResultSource`. The parameter name is kept
+                because the deterministic fill band is still the reference satisfier, but the
+                type is the structural port, so a send boundary's retained results can be
+                re-injected through the same loop (design #35 §2.1).
             continuity_id: The stream continuity for the yield-order coordinates (§3.4).
             scenario_id: The mandated scenario this run realizes, recorded on the result.
         """

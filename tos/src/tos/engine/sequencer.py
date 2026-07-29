@@ -44,7 +44,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from tos.dsl import Proposal
+from tos.dsl import ContextValueView, Proposal
 from tos.engine._base import (
     ArtifactIntegrityError,
     CanonicalizationScheme,
@@ -286,6 +286,7 @@ def run_commitment_flow(
     ledger: ProvisionalReservationLedger,
     sink: EvidenceSink,
     scheme: CanonicalizationScheme,
+    value_view: ContextValueView | None = None,
 ) -> FlowResult:
     """Walk ADR-002-002 §11 steps 1-14 fail-closed, then hand off to the injected transmit.
 
@@ -300,6 +301,9 @@ def run_commitment_flow(
         ledger: The provisional, non-authoritative reservation projection.
         sink: The provisional evidence sink.
         scheme: The injected canonicalization scheme.
+        value_view: The tick's resolved Critical Input value surface, carried onto every
+            :class:`StageRequest` so a stage can consume the values the decision was made on
+            (design #35 §4.2). ``None`` when the tick published none.
 
     Returns:
         The :class:`FlowResult`.
@@ -421,6 +425,11 @@ def run_commitment_flow(
             reference=reference,
             prior_verdicts=verdicts,
             attempt=attempt,
+            value_view=value_view,
+            # ★ a restrictive-only *read* of the engine's own projection (design #35 §5.2). The
+            # observation is offered to every step and consumed only by the bases that need it;
+            # nothing here creates headroom, releases a scope, or writes to the ledger.
+            held_position_magnitude=ledger.outstanding_consumed_magnitude(instrument_key),
         )
         try:
             verdict = stage(request)

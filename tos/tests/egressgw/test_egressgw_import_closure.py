@@ -59,6 +59,15 @@ import tos.egressgw.vocabulary
 #: evidence-sink edge but are imported by nothing today, so they are held out here rather than
 #: exempted from the phantom-edge check (adversarial review MINOR-3): re-add each at the moment
 #: it is really consumed.
+#:
+#: ``tos.dsl`` was added by design #35 §0.3 / §6-C9 (the single sanctioned widening of this list).
+#: It is **not a new runtime-closure member** — ``tos.dsl`` already rides along inside
+#: ``closure(tos.engine)``, as :func:`test_runtime_closure_is_bounded_by_the_declared_set_plus_the_engine_edge`
+#: computes rather than assumes — so what changed is only the *direct naming* permission:
+#: ``construction.py`` now names ``ContextValueView`` (the D-E2 value surface a price is projected
+#: from) and ``FLAT_QUANTITY_BASIS`` (the single source of truth for the flat basis token, rather
+#: than a duplicated constant). The edge is really taken, which
+#: :func:`test_every_declared_edge_is_really_taken` proves from the other side.
 _ALLOWED_TOS_PACKAGES = frozenset(
     {
         "tos",
@@ -71,6 +80,7 @@ _ALLOWED_TOS_PACKAGES = frozenset(
         "tos.brokercap",
         "tos.rcl",
         "tos.engine",
+        "tos.dsl",
         "tos.egressgw",
     }
 )

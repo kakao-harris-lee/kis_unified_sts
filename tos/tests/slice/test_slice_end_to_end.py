@@ -20,6 +20,7 @@ single-run backtest is an ADR-DEV-010 §8:191-192 disqualifier. This demonstrate
 from __future__ import annotations
 
 from tos.backtest import trace_digest, trace_document
+from tos.dsl import FLAT_QUANTITY_BASIS
 from tos.egressgw import (
     ADMITTING_VERIFY_OUTCOMES,
     DEFERRED_ITEMS,
@@ -176,8 +177,8 @@ def test_a_exactly_one_paper_order_is_handed_off_and_the_second_signal_is_denied
     assert denied.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
 
     # at-most-one, measured at every layer that could have leaked a second order.
-    assert len(sliced.slot.handoffs) == 1
-    assert len(sliced.slot.accepted_handoffs) == 1
+    assert len(sliced.resolver.attempts) == 1
+    assert len(sliced.gateway.results) == 1
     assert len(sliced.transport.requests) == 1
     assert len(sliced.gateway.results) == 1
     assert sliced.run.handoff_count == 1
@@ -250,8 +251,8 @@ def test_the_synthetic_transport_was_called_exactly_once_with_the_bound_scalars(
     """(design #34 §5.1/§5.3) One verified outbound, one result, bound to the construction."""
     sliced = run_slice()
     (request,) = sliced.transport.requests
-    (context,) = sliced.slot.bound_contexts
-    assert request.attempt.attempt_id == sliced.slot.handoffs[0].attempt_id
+    (context,) = sliced.resolver.contexts
+    assert request.attempt.attempt_id == sliced.resolver.attempts[0].attempt_id
     assert request.instrument_key == instrument_key()
     assert request.quantity == context.outbound_quantity
     assert request.price == context.outbound_price
@@ -269,14 +270,14 @@ def test_the_egress_result_is_re_injected_and_advances_the_projection() -> None:
         if entry.event_kind is EventKind.EGRESS_RESULT
     ]
     assert egress_entry.egress_result_kind is EgressResultKind.FULL_FILL
-    assert egress_entry.attempt_id == sliced.slot.handoffs[0].attempt_id
+    assert egress_entry.attempt_id == sliced.resolver.attempts[0].attempt_id
     assert egress_entry.capacity_state is CapacityState.POSITION_CONSUMED
     assert egress_entry.knowledge is not None
     assert egress_entry.knowledge.value == "FILLED"
     result = sliced.run.event_results[egress_entry.yield_sequence - 1]
     assert result.halt_reason is None
     assert result.reservation is not None
-    assert result.reservation.attempt_id == sliced.slot.handoffs[0].attempt_id
+    assert result.reservation.attempt_id == sliced.resolver.attempts[0].attempt_id
 
 
 def test_the_send_boundary_ran_only_the_steps_the_engine_refuses_to_host() -> None:
@@ -313,7 +314,7 @@ def test_d_two_runs_over_the_same_inputs_reproduce_every_identity() -> None:
         assert left.pipeline.signature == right.pipeline.signature
 
     assert (
-        first.slot.handoffs[0].attempt_id == second.slot.handoffs[0].attempt_id
+        first.resolver.attempts[0].attempt_id == second.resolver.attempts[0].attempt_id
     ), "the attempt identity is content-addressed, so replay reproduces it"
     assert first.gateway.results[0] == second.gateway.results[0]
 
@@ -383,12 +384,17 @@ def test_e_the_run_emits_the_out_of_tree_oracle_trace_document() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_upper_band_cross_emits_a_flat_proposal_that_stops_at_construction() -> None:
-    """The exit branch *is* evaluated; it halts at step 2, and the halt is recorded.
+def test_the_upper_band_cross_emits_a_flat_proposal_that_now_stops_at_the_capacity_seal() -> None:
+    """The exit branch is constructable, and the halt has **moved** (design #35 §5.3).
 
-    This is not the capacity seal firing — it is the D-E4 sizing gap
-    (``test_slice_gaps.py::test_the_explicit_flat_basis_has_no_construction_path``). Asserting
-    the real halt rather than the hoped-for one is what keeps the slice's claim honest.
+    Before GAP-4 the flat stopped at step 2 because ``derive_order_size`` had no
+    position-closing rule; it now derives its magnitude from the observed held position, so step 2
+    admits and the flow runs on until the at-most-one exposure retention denies it at step 8.
+
+    That move *is* the closure's content. Sizing a flat is not capacity admission: the scope is
+    still occupied by the entry (no release path exists — ``state.py:22``), so the exit is still
+    refused. What changed is that the recorded reason for the refusal is now the capacity seal
+    rather than the sizing rule, and the two were never the same fact.
     """
     sliced = run_slice()
     result = sliced.result_for(FLAT_BAR_INDEX)
@@ -396,9 +402,25 @@ def test_the_upper_band_cross_emits_a_flat_proposal_that_stops_at_construction()
     proposal = result.pipeline.proposal
     assert proposal is not None
     assert proposal.target_kind.value == "FLAT"
+    assert proposal.quantity_basis == FLAT_QUANTITY_BASIS
     assert result.flow is not None
     assert result.flow.handed_off is False
-    assert result.halt_reason is HaltReason.STAGE_DENIED
-    assert result.flow.halt_step is CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION
+
+    # ★ step 2 now admits: the flat was sized, from the position the entry actually took.
+    outcomes = {verdict.step: verdict.outcome for verdict in result.flow.verdicts}
+    assert (
+        outcomes[CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION] is StageOutcome.ADMIT
+    )
+
+    # ★ …and the stop is the capacity seal, named as such.
+    assert result.halt_reason is HaltReason.AT_MOST_ONE_EXPOSURE_HELD
+    assert result.flow.halt_step is CommitmentStep.LEDGER_VERIFICATION
     assert result.detail is not None
-    assert "ZERO_POSITION" in result.detail
+    assert "at-most-one" in result.detail or "capacity stage" in result.detail
+
+    # the magnitude the flat was sized from is the projection's own recorded fill — an
+    # observation, never a release (design #35 §5.2).
+    held = sliced.core.ledger.outstanding_consumed_magnitude(instrument_key())
+    assert held is not None
+    entry_context = sliced.resolver.contexts[0]
+    assert held == entry_context.outbound_quantity

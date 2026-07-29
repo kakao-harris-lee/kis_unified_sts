@@ -41,6 +41,7 @@ from __future__ import annotations
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 
 from tos.canonical import CanonicalizationScheme
+from tos.dsl import FLAT_QUANTITY_BASIS, ContextValueView
 from tos.egressgw._base import ArtifactIntegrityError
 from tos.egressgw.records import (
     AdmittedPriceObservation,
@@ -101,6 +102,7 @@ __all__ = [
     "EconomicEffectStage",
     "OrderConstructionStage",
     "VenueConstraintStage",
+    "admitted_price_from_view",
     "build_order_conformance_proof",
     "candidate_command_verdict",
     "construct_candidate_command",
@@ -115,6 +117,12 @@ __all__ = [
 #: ``floor_or_exact_multiple(risk_budget / per_unit_risk, lot_size)`` under the envelope's
 #: explicitly authored :class:`~tos.egressgw.vocabulary.LotRoundingPolicy` (design #34 §3.1).
 DERIVATION_RULE = "risk_budget / per_unit_risk under the authored lot policy"
+
+#: The flat basis's derivation rule (design #35 §5.2). Recorded instead of
+#: :data:`DERIVATION_RULE` on a position-closing derivation, because naming a computation the
+#: rule never performed would be exactly the phantom the "name it, do not assert it" discipline
+#: exists to prevent: a flat reads no risk budget at all.
+_FLAT_DERIVATION_RULE = "observed held position under the authored lot policy"
 
 #: The **pinned** arithmetic context the derivation runs under (adversarial review NIT-1).
 #: ``decimal`` arithmetic reads an ambient per-thread context, so a caller that had set a
@@ -138,20 +146,113 @@ def _denied(reason: str) -> QuantityDerivation:
     return QuantityDerivation(outcome=DerivationOutcome.DENIED, denial_reason=reason)
 
 
+def admitted_price_from_view(
+    view: ContextValueView, *, field_key: str
+) -> AdmittedPriceObservation:
+    """Project one admitted Critical Input value onto a price observation (design #35 §4.2).
+
+    The gap this closes, stated as slice #1 measured it: the strategy decided on one number (the
+    band-crossing close, read off the admitted value surface) and the order was sized against a
+    *different* one (an injected provisional scalar), and the only tie between them was a
+    ``snapshot_digest`` string the caller supplied. This projection makes the tie a **digest**:
+    the value and its own ``ContextValue.payload_digest`` travel together.
+
+    ``ContextValueView`` is D-E2's published surface (``tos.dsl`` carries the type; ``tos.dsl`` is
+    already inside this package's runtime closure through ``tos.engine``, and design #34 §0.3 now
+    admits it as a direct naming edge — design #35 §0.3/§6-C9).
+
+    **The value ⟺ digest binding is verified at production, not here** (design #32 §2.3 trust
+    seam): the D-E2 resolver publishes a view only when the snapshot binding matched exactly, and
+    ``ContextValueView`` makes a blank snapshot / view digest and a blank per-value provenance
+    pointer structurally unconstructable (``context_value.py:172-200`` / ``:120-140``).
+    Re-deriving that here would be an over-claim, so this function consumes the guarantee and
+    re-asserts none of it.
+
+    ∅ both ways — the two absences are **different events and are recorded differently**:
+
+    * an **explicit-empty** view (``values == ()``, ``context_value.py:157-158``) resolved and
+      admitted nothing, so there is no admitted Critical Input source to attribute at all: the
+      observation carries no source and ``derive_order_size`` denies on the source rule;
+    * a **populated view that lacks ``field_key``** (or carries a magnitude this projection cannot
+      render exactly) does have an admitted surface, just not this value: the observation carries
+      the capsule source and the snapshot lineage but **no value**, and the derivation denies with
+      "no positive finite value". An unknown price is a no-send, never a last-known default
+      (mirroring ``derive_order_size``'s own rule).
+
+    Only an exact integer magnitude is projected. D-E2 admits the exposed numeric form as integer
+    minor / tick units precisely because a fractional magnitude is fail-closed until the
+    deterministic-float projection rule is ratified (design #32 §2.5), and ``bool`` — an ``int``
+    subclass in Python — is refused by an exact type check rather than by an ``isinstance`` that
+    would silently admit ``True`` as ``1``.
+
+    Args:
+        view: The resolved :class:`~tos.dsl.ContextValueView` for this decision.
+        field_key: The governed field key the sizing policy names as its price (injected, never
+            hardcoded — design #35 §4.2 (4)).
+
+    Returns:
+        The :class:`~tos.egressgw.records.AdmittedPriceObservation` — carrying the value and its
+        per-value provenance digest, or a restrictive observation that denies the send.
+    """
+    if not view.values:
+        return AdmittedPriceObservation()
+    lineage = AdmittedPriceObservation(
+        source=CAPSULE_CONTEXT_SOURCE,
+        snapshot_digest=view.snapshot_canonical_digest,
+    )
+    matched = [value for value in view.values if value.field_key == field_key]
+    if len(matched) != 1:
+        # ``ContextValueView`` already rejects duplicate field keys, so the only reachable
+        # non-unique case is zero matches; the positive ``== 1`` membership keeps a future
+        # relaxation from falling open here.
+        return lineage
+    admitted = matched[0]
+    magnitude = admitted.value
+    if type(magnitude) is not int:
+        return lineage
+    return AdmittedPriceObservation(
+        source=CAPSULE_CONTEXT_SOURCE,
+        value=Decimal(magnitude),
+        snapshot_digest=view.snapshot_canonical_digest,
+        value_payload_digest=admitted.payload_digest,
+    )
+
+
 def derive_order_size(
     *,
     quantity_basis: str | None,
     envelope: ProposedConstructionEnvelope | None,
     price: AdmittedPriceObservation | None,
     venue_constraint: VenueQuantityConstraint | None,
+    held_position: Decimal | None = None,
 ) -> QuantityDerivation:
     """Derive the order size deterministically, bounded, with no repair (design #34 §3.1).
 
-    A **pure ``(proposal-basis, envelope, price, constraint)`` function**. Every denial below is
-    a denial *of the send*, never a fallback: RFC-005 §7:211-213 forbids inventing, defaulting,
-    normalizing, rounding, or repairing a broker-command field, and ADR-002-020 §9:270 makes the
-    compiler's denial total ("must not 'best effort' an unsupported field or fall back to a
-    prior mapping").
+    A **pure ``(proposal-basis, envelope, price, constraint, held position)`` function**. Every
+    denial below is a denial *of the send*, never a fallback: RFC-005 §7:211-213 forbids
+    inventing, defaulting, normalizing, rounding, or repairing a broker-command field, and
+    ADR-002-020 §9:270 makes the compiler's denial total ("must not 'best effort' an unsupported
+    field or fall back to a prior mapping").
+
+    **Two raw-size rules, chosen by the basis** (design #35 §5.2). A dsl Explicit Flat carries
+    ``quantity_basis == FLAT_QUANTITY_BASIS`` by construction (``dsl/proposal.py:49``; an ACTION
+    proposal may not use it and a FLAT proposal must), and its magnitude is *the position being
+    closed* — not a risk budget. So:
+
+    * a **flat** basis derives ``raw = held_position``, and reads neither ``risk_budget`` nor
+      ``per_unit_risk``. It does not require them either: a pure-close policy that holds no risk
+      budget at all sizes an exit correctly, because requiring an input the rule never consumes
+      would be a latent denial, not a safety property (design #35 §5.2 MINOR-2);
+    * every **other** basis derives ``raw = risk_budget / per_unit_risk`` as before, unchanged.
+
+    Both then pass through the *same* lot / envelope / venue / notional bounds — the seal is
+    shared, only the raw magnitude's source differs.
+
+    ⚠ Sizing a flat is **not** capacity admission. The at-most-one exposure retention still denies
+    an overlapping effect at the ledger stage (step 8), which runs after this one (step 2); what
+    changes is only that the recorded reason for a stop is then the capacity seal rather than the
+    sizing rule, and the two are not the same fact (design #35 §5.3). Reduce-only capacity
+    semantics — letting a position-reducing order through the seal — wait for the real RCL.
 
     Denies when — in this order, so the recorded reason names the first missing fact:
 
@@ -163,13 +264,17 @@ def derive_order_size(
        carries no value / snapshot lineage — a market value carried as an authored constant is
        the RFC-008 §10:327-331 relabelling prohibition, and an unknown price is a no-send rather
        than a last-known default (design #34 §3.1 (a));
-    4. any governance bound (risk budget, per-unit risk, lot size, min / max quantity, unit) or
-       the **authored lot policy** is absent or non-positive — an unstated lot policy is a
-       denial, never a silent round;
-    5. the venue / brokercap constraint is absent, or its unit disagrees with the envelope's;
-    6. the derived size is not an exact lot multiple under
+    4. the basis-specific raw input is missing: for a flat, the ``held_position`` is absent
+       (nothing is known to close) or is non-positive (∅ both ways — an explicit zero is
+       "nothing to close", a different recorded fact from "no observation at all"); for every
+       other basis, the risk budget or per-unit risk is absent or non-positive;
+    5. any shared governance bound (lot size, min / max quantity, unit) or the **authored lot
+       policy** is absent or non-positive — an unstated lot policy is a denial, never a silent
+       round;
+    6. the venue / brokercap constraint is absent, or its unit disagrees with the envelope's;
+    7. the derived size is not an exact lot multiple under
        :attr:`~tos.egressgw.vocabulary.LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED`;
-    7. the derived size is zero, outside the envelope's ``[min_quantity, max_quantity]``, outside
+    8. the derived size is zero, outside the envelope's ``[min_quantity, max_quantity]``, outside
        the venue constraint, or breaches a declared notional ceiling — **denial, not a clamp**
        (ioc ``compile_command``: "outside the authorized envelope — denial").
 
@@ -178,6 +283,10 @@ def derive_order_size(
         envelope: The proposed Authorized Construction Envelope enclosing the sizing bound.
         price: The admitted Critical Input price observation.
         venue_constraint: The injected venue / brokercap quantity constraint.
+        held_position: The **observed** magnitude of the position a flat closes, read off the
+            engine's own reservation projection (design #35 §5.2). It is an observation, never a
+            claim: this function neither obtains it nor mutates anything to get it, and no other
+            basis consumes it.
 
     Returns:
         The :class:`~tos.egressgw.records.QuantityDerivation` — ``DERIVED`` with values, or
@@ -221,13 +330,31 @@ def derive_order_size(
         return _denied("the price observation carries no snapshot lineage")
     if not positive_decimal(price.value):
         return _denied("the price observation carries no positive finite value")
-    if not positive_decimal(bound.risk_budget):
-        return _denied("the sizing bound declares no positive risk budget")
-    if not positive_decimal(bound.per_unit_risk):
-        return _denied(
-            "the sizing bound declares no positive per-unit risk — a missing per-unit risk is "
-            "never assumed to be one"
-        )
+    # ★ the basis-specific raw inputs (design #35 §5.2). The risk-budget presence guard sits
+    # *inside* the non-flat branch: it is the input of a rule a flat never runs, so demanding it
+    # unconditionally would deny a pure-close policy for lacking a number it does not use.
+    is_flat = quantity_basis == FLAT_QUANTITY_BASIS
+    if is_flat:
+        if held_position is None:
+            return _denied(
+                f"quantity_basis {FLAT_QUANTITY_BASIS!r} closes a position but no held position "
+                "was observed — an unknown held position is a no-send, never an assumed size "
+                "(design #35 §5.2)"
+            )
+        if not positive_decimal(held_position):
+            return _denied(
+                f"the observed held position is {held_position} — there is nothing to close, and "
+                f"a zero-size {FLAT_QUANTITY_BASIS!r} order is not a smaller exit, it is no order "
+                "(∅ both ways: an explicit zero is not an absent observation)"
+            )
+    else:
+        if not positive_decimal(bound.risk_budget):
+            return _denied("the sizing bound declares no positive risk budget")
+        if not positive_decimal(bound.per_unit_risk):
+            return _denied(
+                "the sizing bound declares no positive per-unit risk — a missing per-unit risk "
+                "is never assumed to be one"
+            )
     if not positive_decimal(bound.lot_size):
         return _denied("the sizing bound declares no positive lot size")
     if bound.lot_rounding is None:
@@ -259,9 +386,7 @@ def derive_order_size(
         )
 
     # -- the authored bounded rule -------------------------------------------------------
-    assert bound.risk_budget is not None  # narrowed by positive_decimal
-    assert bound.per_unit_risk is not None
-    assert bound.lot_size is not None
+    assert bound.lot_size is not None  # narrowed by positive_decimal
     lot: Decimal = bound.lot_size
     assert price.value is not None
     # ★ pinned context (NIT-1). Every Decimal operation from here on — the division, the lot
@@ -270,7 +395,15 @@ def derive_order_size(
     # the whole bounded rule *and its bound checks* run under one pinned context rather than the
     # ambient one. Returning from inside the block is safe: ``localcontext`` restores on exit.
     with localcontext(DERIVATION_CONTEXT):
-        raw: Decimal = bound.risk_budget / bound.per_unit_risk
+        # ★ structural derivation, not self-report: a flat's magnitude *is* the observed held
+        # position, so no risk budget can move it (design #35 §5.2 / §9-5).
+        if is_flat:
+            assert held_position is not None  # narrowed above
+            raw: Decimal = held_position
+        else:
+            assert bound.risk_budget is not None  # narrowed by positive_decimal
+            assert bound.per_unit_risk is not None
+            raw = bound.risk_budget / bound.per_unit_risk
         if not raw.is_finite():
             return _denied("the derived raw size is not finite")
         if bound.lot_rounding is LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED:
@@ -320,7 +453,7 @@ def derive_order_size(
             quantity=quantity,
             price=price.value,
             quantity_unit=bound.quantity_unit,
-            rule=DERIVATION_RULE,
+            rule=_FLAT_DERIVATION_RULE if is_flat else DERIVATION_RULE,
         )
 
 
@@ -729,10 +862,20 @@ class OrderConstructionStage:
         policy_generation: int,
         command_id: str,
         generation: int,
+        price_field_key: str | None = None,
     ) -> None:
-        """Configure the stage with its injected construction inputs."""
+        """Configure the stage with its injected construction inputs.
+
+        ``price_field_key`` names the governed Critical Input field the sizing policy prices
+        against (design #35 §4.2 (4)). It is injected — there is no default field name here,
+        because guessing one would be a hardcoded market-data assumption. When it is supplied
+        **and** the tick carried a value view, the price is projected off that surface and the
+        injected ``price`` observation is not consulted; otherwise the injected provisional
+        observation is used unchanged (design #35 §4.2 (3)).
+        """
         self._envelope = envelope
         self._price = price
+        self._price_field_key = price_field_key
         self._venue_constraint = venue_constraint
         self._scheme = scheme
         self._intent_id = intent_id
@@ -750,14 +893,28 @@ class OrderConstructionStage:
         """The injected Economic Effect Envelope specs the proposed envelope encloses."""
         return self._envelope.effect_dimensions
 
+    def _price_for(self, request: StageRequest) -> AdmittedPriceObservation | None:
+        """The price this construction sizes against (design #35 §4.2 (3)).
+
+        The value surface wins when both a governed ``price_field_key`` and a published view are
+        present, because that is the number the decision was actually made on. A tick that carried
+        no view is *value-free*, not "no price": the injected provisional observation stands in,
+        and it is provisional exactly as it was before this seam existed.
+        """
+        view = request.value_view
+        if self._price_field_key is None or view is None:
+            return self._price
+        return admitted_price_from_view(view, field_key=self._price_field_key)
+
     def __call__(self, request: StageRequest) -> StageVerdict:
         """Run the derivation + compile and return the positive-admit step-2 verdict."""
         proposal = request.proposal
         derivation = derive_order_size(
             quantity_basis=getattr(proposal, "quantity_basis", None),
             envelope=self._envelope,
-            price=self._price,
+            price=self._price_for(request),
             venue_constraint=self._venue_constraint,
+            held_position=request.held_position_magnitude,
         )
         self.construction = construct_candidate_command(
             proposal_id=getattr(proposal, "proposal_id", None),

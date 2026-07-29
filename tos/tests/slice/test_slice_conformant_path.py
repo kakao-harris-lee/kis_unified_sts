@@ -209,7 +209,7 @@ def test_without_the_value_surface_every_decision_collapses_to_no_action() -> No
     provisional = ProvisionalContextResolver()
     starved = run_slice(resolver=provisional)
 
-    assert starved.slot.handoffs == ()
+    assert starved.resolver.attempts == ()
     assert starved.transport.requests == ()
     assert starved.gateway.results == ()
     assert starved.gateway.verifications == ()

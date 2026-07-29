@@ -15,6 +15,8 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
+from tos.canonical import EV_L1_PROVISIONAL_VERSION
+from tos.dsl import ContextValue, ContextValueView, ScalarValue
 from tos.egressgw import (
     DERIVED_AXES,
     AllFalseConstructionCoordinatorAuthority,
@@ -25,12 +27,18 @@ from tos.egressgw import (
     OrderConstructionStage,
     ProposedConstructionEnvelope,
     VenueConstraintStage,
+    admitted_price_from_view,
     candidate_command_verdict,
     derive_economic_effect_envelope,
     derive_order_size,
     fold_venue_admissibility,
 )
-from tos.engine import CONFIG_CONTEXT_SOURCE, CommitmentStep, StageOutcome
+from tos.engine import (
+    CAPSULE_CONTEXT_SOURCE,
+    CONFIG_CONTEXT_SOURCE,
+    CommitmentStep,
+    StageOutcome,
+)
 from tos.ioc import AxisBinding, ConformanceAxis, ConformanceResult, QuantityUnitKind
 from tos.venue import ActionClass, OrderAdmissibilityResult
 
@@ -610,11 +618,25 @@ class _Proposal:
 
 
 class _Request:
-    """A minimal ``StageRequest`` stand-in (the stage reads ``step`` and ``proposal`` only)."""
+    """A minimal ``StageRequest`` stand-in.
 
-    def __init__(self, step: CommitmentStep) -> None:
+    The stage reads ``step`` / ``proposal`` plus the two observations design #35 threads onto
+    every request: the tick's resolved value surface (§4.2) and the projection's held-position
+    magnitude (§5.2). Both default to ``None`` here — a value-free, position-free request — which
+    is precisely the shape these construction tests exercise.
+    """
+
+    def __init__(
+        self,
+        step: CommitmentStep,
+        *,
+        value_view: object | None = None,
+        held_position_magnitude: object | None = None,
+    ) -> None:
         self.step = step
         self.proposal = _Proposal()
+        self.value_view = value_view
+        self.held_position_magnitude = held_position_magnitude
 
 
 def test_the_step2_stage_admits_a_conformant_candidate() -> None:
@@ -691,3 +713,75 @@ def test_a_quantity_above_the_venue_ceiling_never_reaches_a_command() -> None:
         venue_constraint=venue_quantity_constraint(max_quantity=Decimal("10")),
     )
     assert result.outcome is DerivationOutcome.DENIED
+
+
+# ---------------------------------------------------------------------------
+# design #35 §4.2 — the value-surface price projection's exact-int admission
+# ---------------------------------------------------------------------------
+
+
+def _single_value_view(value: ScalarValue) -> ContextValueView:
+    """A resolved value view carrying exactly one admitted ``"close"`` value."""
+    return ContextValueView(
+        snapshot_id="vsnap-projection",
+        snapshot_canonical_digest="snap-digest-projection",
+        values=(
+            ContextValue(
+                field_key="close",
+                value=value,
+                as_of=1_700_000_000_000,
+                payload_digest="payload-digest-projection",
+                observation_ref="raw-projection",
+            ),
+        ),
+        canonical_digest="view-digest-projection",
+        canonicalization_version=EV_L1_PROVISIONAL_VERSION,
+    )
+
+
+@settings(max_examples=25, deadline=None)
+@given(flag=st.booleans())
+def test_a_bool_valued_context_value_is_never_projected_as_a_price(flag: bool) -> None:
+    """(design #35 §4.2; adversarial review MINOR-1) ``True`` is not the price ``1``.
+
+    ``ScalarValue`` is ``bool | int | float | str`` (``dsl/vocabulary.py:93``), so a
+    ``bool``-valued :class:`~tos.dsl.ContextValue` is **reachable**, not hypothetical — and
+    ``bool`` is an ``int`` subclass in Python. :func:`admitted_price_from_view` therefore admits a
+    magnitude by **exact type** (``type(magnitude) is not int``, ``construction.py:211``) rather
+    than by ``isinstance``; the docstring at ``construction.py:184-186`` states that claim
+    explicitly, and this is the canary that makes the claim load-bearing.
+
+    Regressing that one check to ``isinstance`` would let ``True`` become ``Decimal(1)`` and be
+    sized against as a price, silently. The review's mutation of exactly that line survived the
+    whole suite before this test existed.
+
+    Both polarities are covered: ``False`` would project to ``Decimal(0)`` and then die at the
+    positive-magnitude guard, but ``True`` would sail through it — so refusing the *type*, not the
+    value, is what closes the hole for both.
+    """
+    view = _single_value_view(flag)
+    projected = admitted_price_from_view(view, field_key="close")
+
+    # no magnitude, and no lineage pointer to a magnitude that was never carried
+    assert projected.value is None
+    assert projected.value_payload_digest is None
+    # …while the lineage the view genuinely has is still recorded honestly (∅ both ways: the
+    # view resolved, it simply carries nothing this projection may render as a price)
+    assert projected.source == CAPSULE_CONTEXT_SOURCE
+    assert projected.snapshot_digest == view.snapshot_canonical_digest
+
+    # and the consequence at the boundary that matters: no send is sized against it
+    denied = derive_order_size(
+        quantity_basis="RISK",
+        envelope=proposed_envelope(),
+        price=projected,
+        venue_constraint=venue_quantity_constraint(),
+    )
+    assert denied.outcome is DerivationOutcome.DENIED
+    assert denied.quantity is None
+
+    # ★ canary of the canary: the very same view shape with an exact integer *does* project, so
+    #   the denial above is attributable to the bool and not to a broken fixture.
+    admitted = admitted_price_from_view(_single_value_view(1), field_key="close")
+    assert admitted.value == Decimal(1)
+    assert admitted.value_payload_digest == "payload-digest-projection"

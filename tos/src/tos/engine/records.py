@@ -385,6 +385,17 @@ class StageRequest(FrozenModel):
     prior_verdicts: tuple[StageVerdict, ...] = ()
     #: Present from step 13 onward (the Coordinator's step-12 artifact).
     attempt: AttemptRequest | None = None
+    #: The tick's resolved Critical Input value surface, carried through so a stage can size
+    #: against **the values the decision was made on** rather than an injected scalar
+    #: (design #35 §4.2). ``None`` when the tick published no view — restrictive, never
+    #: permissive: a stage that needs a value and finds none must stop, not substitute.
+    value_view: ContextValueView | None = None
+    #: The magnitude of the position outstanding for this scope, read off the engine's own
+    #: reservation projection (design #35 §5.2). It is an **observation**, not a capability: the
+    #: projection creates no headroom (RFC-002 §9.1:558), releases nothing, and the real Risk
+    #: Capacity Ledger remains the sole serialization and mutation authority (§9.1:557).
+    #: ``None`` when nothing is outstanding.
+    held_position_magnitude: CanonicalDecimal | None = None
 
 
 class SendHandoff(FrozenModel):

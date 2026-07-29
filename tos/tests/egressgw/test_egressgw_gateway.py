@@ -16,6 +16,7 @@ Regime tag: authoring evidence only; closes no EV (design #34 §1.1).
 
 from __future__ import annotations
 
+import inspect
 from decimal import Decimal
 from typing import Any
 
@@ -31,7 +32,9 @@ from tos.egressgw import (
     SendHaltReason,
     SendVerifyItem,
     VerifyOutcome,
+    build_order_conformance_proof,
     outbound_binding_mismatch,
+    send_boundary_context,
     verify_send_boundary,
 )
 from tos.engine import (
@@ -48,11 +51,14 @@ from ._egressgw_fixtures import (
     LOT_SIZE,
     PRINCIPAL,
     REQUEST_DIGEST,
+    SCHEME,
+    attempt_request,
     build_gateway,
     construction,
     egress_request,
     full_fill_transport,
     happy_context,
+    ordering,
     quorum_certificate,
     venue_decision,
 )
@@ -626,3 +632,192 @@ def test_a_denied_construction_never_reaches_the_send_boundary() -> None:
     gateway, _ = build_gateway(attempt=attempt, context=context, transport=transport)
     assert gateway(attempt).accepted_for_transmission is None
     assert transport.requests == ()
+
+
+# ---------------------------------------------------------------------------
+# GAP-2 (design #35 §3) — the lazy context resolver beside the mapping
+# ---------------------------------------------------------------------------
+
+
+def test_the_mapping_and_the_resolver_paths_produce_the_identical_verification() -> None:
+    """(design #35 §3.1/§3.2) The union is additive: the mapping path is unchanged.
+
+    ``attempt_id`` is content-addressed at step 12, so a caller driven by an event loop cannot
+    populate the mapping ahead of the run — hence the resolver. But the mapping path carries every
+    committed call site in this suite, so the two must be the *same* boundary, not two boundaries.
+    """
+    attempt, context = happy_context()
+
+    mapped_gateway, mapped_sink = build_gateway(attempt=attempt, context=context)
+    mapped_handoff = mapped_gateway(attempt)
+
+    resolved_gateway = BrokerEgressGateway(
+        contexts=lambda _attempt: context,
+        transport=full_fill_transport(),
+        sink=RecordingGatewayEvidenceSink(),
+    )
+    resolved_handoff = resolved_gateway(attempt)
+
+    assert mapped_handoff.accepted_for_transmission is True
+    assert resolved_handoff == mapped_handoff
+    (mapped_verification,) = mapped_gateway.verifications
+    (resolved_verification,) = resolved_gateway.verifications
+    assert resolved_verification == mapped_verification
+    assert resolved_gateway.results == mapped_gateway.results
+    assert mapped_sink.kinds == ("VERIFY_ITEM",) * 17 + (
+        "SEND_STARTED",
+        "POTENTIALLY_LIVE_OBSERVED",
+        "EGRESS_RESULT_RECORDED",
+    )
+
+
+def test_the_resolver_is_asked_exactly_once_per_attempt_and_is_given_the_attempt() -> None:
+    """(design #35 §3.3) One call per attempt, handed the live attempt — no re-entry, no loop."""
+    attempt, context = happy_context()
+    seen: list[AttemptRequest] = []
+
+    def resolver(request: AttemptRequest) -> Any:
+        seen.append(request)
+        return context
+
+    gateway = BrokerEgressGateway(
+        contexts=resolver,
+        transport=full_fill_transport(),
+        sink=RecordingGatewayEvidenceSink(),
+    )
+    assert gateway(attempt).accepted_for_transmission is True
+    assert seen == [attempt]
+    assert seen[0] is attempt
+
+
+def test_a_resolver_that_returns_none_is_the_same_recorded_context_missing_stop() -> None:
+    """(design #35 §3.1 (1)) The lazy form of a missing entry is the same fail-closed stop."""
+    attempt, _context = happy_context()
+    transport = full_fill_transport()
+    sink = RecordingGatewayEvidenceSink()
+    gateway = BrokerEgressGateway(
+        contexts=lambda _attempt: None, transport=transport, sink=sink
+    )
+
+    assert gateway(attempt).accepted_for_transmission is None
+    assert transport.requests == ()
+    assert gateway.results == ()
+    (record,) = sink.records
+    assert record.kind == "SEND_REFUSED"
+    assert record.halt_reason is SendHaltReason.CONTEXT_MISSING
+    assert record.detail is not None
+    assert "no send-boundary context is bound" in record.detail
+
+
+def test_a_contexts_argument_that_is_neither_shape_admits_nothing() -> None:
+    """(design #35 §3.1) Both admitted shapes are positive membership — the rest is a stop.
+
+    Recognising the mapping and the callable by what they *are*, rather than the callable by
+    elimination, means an unrecognised ``contexts`` argument can only deny. There is no branch in
+    which it falls through to an admitted send.
+    """
+    attempt, _context = happy_context()
+    transport = full_fill_transport()
+    sink = RecordingGatewayEvidenceSink()
+    gateway = BrokerEgressGateway(
+        contexts="not a mapping and not callable",  # type: ignore[arg-type]
+        transport=transport,
+        sink=sink,
+    )
+
+    assert gateway(attempt).accepted_for_transmission is None
+    assert transport.requests == ()
+    (record,) = sink.records
+    assert record.halt_reason is SendHaltReason.CONTEXT_MISSING
+    assert record.detail is not None
+    assert "no send-boundary context is bound" in record.detail
+
+
+def test_the_shipped_factory_derives_the_flow_bound_fields_and_never_takes_them() -> None:
+    """(design #35 §3.1 (2)) The factory's derived fields cannot be supplied by a caller.
+
+    That is what keeps verify item 2 (reservation identity match) and item 13 (order construction)
+    load-bearing instead of self-confirming: there is no parameter through which a look-alike
+    identity, a substituted construction, or a hand-written outbound magnitude could enter.
+    """
+    parameters = inspect.signature(send_boundary_context).parameters
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in parameters.values()
+    )
+    for derived in (
+        "reservation_attempt_id",
+        "reservation_conformance_proof_digest",
+        "reservation_action_flow_permit_identity",
+        "approval_intent_binding_digest",
+        "egress_request",
+        "quorum_commit_certificate",
+        "outbound_quantity",
+        "outbound_price",
+    ):
+        assert derived not in parameters, f"{derived} must be derived, not injected"
+
+    built = construction()
+    assert built.command is not None
+    proof = build_order_conformance_proof(
+        construction=built,
+        scheme=SCHEME,
+        proof_id="ocp-proof-factory",
+        proof_generation=1,
+        required_authority_scope=("scope-1",),
+    )
+    assert proof is not None
+    attempt = attempt_request(proof_digest=proof.canonical_digest or "")
+    context = send_boundary_context(
+        attempt=attempt,
+        construction=built,
+        conformance_proof=proof,
+        reference=ordering(),
+        egress_request_for_command=egress_request,
+        quorum_certificate_for_command=quorum_certificate,
+    )
+    assert context.reservation_attempt_id == attempt.attempt_id
+    assert context.reservation_conformance_proof_digest == attempt.conformance_proof_digest
+    assert (
+        context.reservation_action_flow_permit_identity
+        == attempt.action_flow_permit_identity
+    )
+    assert context.construction is built
+    assert context.outbound_quantity == built.derivation.quantity
+    assert context.outbound_price == built.derivation.price
+    assert context.egress_request is not None
+    assert (
+        context.egress_request.canonical_command_digest == built.command.canonical_digest
+    )
+    assert context.quorum_commit_certificate is not None
+    assert (
+        context.quorum_commit_certificate.canonical_command_digest
+        == built.command.canonical_digest
+    )
+    assert built.intent is not None
+    assert context.approval_intent_binding_digest == built.intent.canonical_digest
+
+
+def test_the_factory_binds_no_item_17_artifact_when_no_command_was_constructed() -> None:
+    """(design #35 §3.1 (2), ∅ both ways) No command ⇒ no digest ⇒ nothing built against one.
+
+    Building the outbound artifacts against a ``None`` digest would manufacture a "bound" record
+    that binds nothing; leaving them absent is the recorded stop RFC-002 §10.8:761 requires.
+    """
+    from ._egressgw_fixtures import admitted_price
+
+    denied = construction(price=admitted_price(value=None))
+    assert denied.command is None
+    context = send_boundary_context(
+        attempt=attempt_request(proof_digest="proof-digest-absent-command"),
+        construction=denied,
+        conformance_proof=None,
+        reference=ordering(),
+        egress_request_for_command=egress_request,
+        quorum_certificate_for_command=quorum_certificate,
+    )
+    assert context.egress_request is None
+    assert context.quorum_commit_certificate is None
+    assert context.approval_intent_binding_digest is None
+    assert context.outbound_quantity is None
+    assert context.outbound_price is None
