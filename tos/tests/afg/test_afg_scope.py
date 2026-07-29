@@ -24,10 +24,12 @@ from decimal import Decimal
 from hypothesis import given
 from hypothesis import strategies as st
 from tos.afg import (
+    ActionFlowDimensionKind,
     ActionFlowResult,
     ActionFlowScopeKind,
     DocumentedScopeStatus,
     ScopeIndependenceEvidence,
+    action_flow_dimension_id,
     broadest_scope,
     envelope_not_enlarged,
     narrowest_scope,
@@ -493,7 +495,8 @@ def test_dimension_absent_from_the_envelope_fails_closed() -> None:
                 dimension_id=BROKER_REQUEST_DIM, magnitude=Decimal("1")
             ),
             injected_envelope_max=limit_vector(
-                dimension_id="QUEUE", magnitude=Decimal("100")
+                dimension_id=action_flow_dimension_id(ActionFlowDimensionKind.QUEUE),
+                magnitude=Decimal("100"),
             ),
             limit_source_is_injected_envelope=True,
         )

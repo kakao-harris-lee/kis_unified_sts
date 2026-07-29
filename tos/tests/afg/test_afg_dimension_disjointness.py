@@ -11,15 +11,23 @@ afg cannot import those siblings (§0.3 allowlist), so this **test-only** cross-
 where the global namespace condition is asserted — the same pattern as the MANDATED seam
 checks (design #16 §3.4(d); a test import is not a package edge, §7.1).
 
-The design fixes only the afg half of the contract; the global prefix convention across all
-four consumers stays a Phase-0 / follow-up decision (design #16 §2.2-5 / §10.3-6). A
-planted-collision canary proves the assertion is not vacuous.
+The design fixed only the afg half of the contract and deferred the global prefix
+convention to Phase-0 (design #16 §2.2-5 / §10.3-6). **That Gap-1 deferral is now closed**:
+the operator adopted Variant A (strict prefix mandate) on 2026-07-29
+(``docs/plans/2026-07-29-tos-phase0-role-scheme-and-disposition.md`` §2.2 + the bounds
+draft package enclosure 2), so every afg dimension-id carries the ``afg.`` prefix and an
+unprefixed id is reserved to rcl as the grandfathered originating owner. Disjointness is
+therefore **structural** here; the cross-consumer form of the property lives at the
+cross-package lane (``tos/tests/test_dimension_id_namespace.py``).
+
+A planted-collision canary proves the assertion is not vacuous.
 """
 
 from __future__ import annotations
 
 from tos.afg import (
     ACTION_FLOW_DIMENSION_IDS,
+    AFG_DIMENSION_ID_PREFIX,
     ActionFlowDimensionKind,
     action_flow_dimension_id,
     is_action_flow_dimension_id,
@@ -42,6 +50,31 @@ def test_afg_dimension_ids_are_exactly_the_enum_values() -> None:
     for kind in ActionFlowDimensionKind:
         assert action_flow_dimension_id(kind) == kind.value
         assert is_action_flow_dimension_id(kind.value) is True
+
+
+def test_every_afg_dimension_id_carries_the_afg_prefix() -> None:
+    """(Phase-0 Variant A) Every afg-owned dimension id is namespaced ``afg.``.
+
+    The prefix is on the **value**, not the member name: the member names stay the ADR
+    §5.6 line 133 resource words. A bare (unprefixed) token is reserved to rcl as the
+    grandfathered originating owner, so it must no longer be recognized as an afg id —
+    that negative half is what makes the mandate bite rather than merely decorate.
+    """
+    assert ACTION_FLOW_DIMENSION_IDS, "non-empty, or every assertion below is vacuous"
+    for kind in ActionFlowDimensionKind:
+        assert kind.value.startswith(AFG_DIMENSION_ID_PREFIX), (
+            f"afg dimension id {kind.value!r} must carry the "
+            f"{AFG_DIMENSION_ID_PREFIX!r} namespace prefix (Phase-0 Variant A)"
+        )
+        # The prefix is not the whole token — a bare "afg." names no resource.
+        bare = kind.value[len(AFG_DIMENSION_ID_PREFIX) :]
+        assert bare, f"{kind.value!r} must name a resource after the prefix"
+        assert kind.name == bare, (
+            f"member name {kind.name!r} must be the unprefixed resource word of "
+            f"{kind.value!r} — the ADR §5.6:133 wording is preserved in the name"
+        )
+        # The pre-Variant-A spelling must be rejected now (regression guard).
+        assert is_action_flow_dimension_id(bare) is False
 
 
 def test_afg_dimension_ids_are_disjoint_from_the_aggregate_risk_axis() -> None:
@@ -85,7 +118,21 @@ def test_ioc_economic_effect_envelope_shares_the_container_not_the_namespace() -
 
 def test_unenumerated_dimension_is_not_an_afg_dimension() -> None:
     """(§2.2-4) The enum is a named minimum set — a free string is not an afg dimension."""
-    for token in (None, "", "GROSS_NOTIONAL", "broker_request", "SOMETHING_ELSE"):
+    for token in (
+        None,
+        "",
+        "GROSS_NOTIONAL",
+        "broker_request",
+        "SOMETHING_ELSE",
+        # Namespace-shaped near misses (Phase-0 Variant A): a sibling's prefix, the
+        # bare prefix, a wrong-case prefix, and an afg-looking token under another owner.
+        "afg.",
+        "rcl.BROKER_REQUEST",
+        "are.BROKER_REQUEST",
+        "ioc.BROKER_REQUEST",
+        "AFG.BROKER_REQUEST",
+        "xafg.BROKER_REQUEST",
+    ):
         assert is_action_flow_dimension_id(token) is False
 
 

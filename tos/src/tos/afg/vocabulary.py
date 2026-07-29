@@ -20,9 +20,15 @@ action-flow dimension-id set is disjoint from the economic dimension-id set**. T
 fixes the afg half of that contract: an afg dimension id **is** an
 :class:`ActionFlowDimensionKind` value (:data:`ACTION_FLOW_DIMENSION_IDS`), every token of
 which names an action-flow *resource*, never an economic magnitude. The global namespace
-convention across the four ``CapacityVector`` consumers (rcl / are / ioc / afg) is a
-Phase-0 follow-up (design #16 §2.2-5 / §10.3-6); the disjointness itself is a §7 core
-property test.
+convention across the four ``CapacityVector`` consumers (rcl / are / ioc / afg) was
+deferred by the design to Phase-0 (design #16 §2.2-5 / §10.3-6) and **has since been
+ratified**: the operator adopted Variant A (strict prefix mandate) on 2026-07-29
+(``docs/plans/2026-07-29-tos-phase0-role-scheme-and-disposition.md`` §2.2 + bounds draft
+package enclosure 2), so every afg dimension id carries the :data:`AFG_DIMENSION_ID_PREFIX`
+``afg.`` namespace and an unprefixed id is reserved to rcl as the grandfathered
+originating owner. Disjointness is now **structural** rather than observed. It remains a
+§7 core property test (afg cannot import the siblings), and the cross-consumer form lives
+at the cross-package lane, ``tos/tests/test_dimension_id_namespace.py``.
 
 This module names **no** concrete broker (broker-agnostic — project memory
 ``tos-spec-broker-agnostic``; design #16 §0.1) and hardcodes **no** numeric rate, burst,
@@ -48,6 +54,7 @@ __all__ = [
     "ACTION_CLASS_CONSERVATISM_ORDER",
     "ACTION_FLOW_SCOPE_BREADTH_ORDER",
     "ACTION_FLOW_DIMENSION_IDS",
+    "AFG_DIMENSION_ID_PREFIX",
     "MATERIAL_CHANGE_KINDS",
     "RESERVED_GUARANTEE_TOKENS",
     "ADMISSIBILITY_ADMISSIBLE",
@@ -193,29 +200,52 @@ class ActionFlowDimensionKind(StrEnum):
     Each dimension carries an exact unit / scope / measurement point / aggregation /
     window-or-refill / burst / max-debt / failure-response (§12 line 302); every one of
     those values is **injected** (design #16 §8), none is hardcoded here.
+
+    **Member values carry the ``afg.`` namespace prefix** (Phase-0 Variant A, operator
+    decision 2026-07-29 — ``docs/plans/2026-07-29-tos-phase0-role-scheme-and-disposition``
+    §2.2 / bounds package enclosure 2, closing design #16 §10.3-6 Gap-1). The prefix is
+    the *value*, never the member name: ``ActionFlowDimensionKind.BROKER_REQUEST.value``
+    is ``"afg.BROKER_REQUEST"``. The member names stay the ADR §5.6 line 133 resource
+    words — the ADR text names those resources in prose and enumerates **no** token
+    string, so prefixing the value is a project-side namespace decision and not an edit
+    of any verbatim ADR transcription.
+
+    Why the prefix is load-bearing: the four ``CapacityVector`` consumers (rcl / are /
+    ioc / afg) share **one** container type whose ``dimension_id`` is a free string
+    matched by string equality. Under the convention an unprefixed id is **rcl-owned**
+    (rcl is the originating owner, grandfathered); every other consumer namespaces its
+    ids with its own package prefix. Uniqueness of the prefix then makes cross-consumer
+    disjointness **structural** (``afg.* ∩ rcl.* = ∅`` is self-evident) instead of a
+    coincidence that a future economic dimension could break.
     """
 
-    BROKER_REQUEST = "BROKER_REQUEST"
-    ORDER = "ORDER"
-    ORDER_MUTATION = "ORDER_MUTATION"
-    CANCEL_AMEND_REPLACE = "CANCEL_AMEND_REPLACE"
-    QUERY = "QUERY"
-    SESSION = "SESSION"
-    CONNECTION = "CONNECTION"
-    CREDENTIAL = "CREDENTIAL"
-    ROUTE = "ROUTE"
-    ENDPOINT = "ENDPOINT"
-    QUEUE = "QUEUE"
-    IN_FLIGHT = "IN_FLIGHT"
-    CAUSE_AMPLIFICATION = "CAUSE_AMPLIFICATION"
+    BROKER_REQUEST = "afg.BROKER_REQUEST"
+    ORDER = "afg.ORDER"
+    ORDER_MUTATION = "afg.ORDER_MUTATION"
+    CANCEL_AMEND_REPLACE = "afg.CANCEL_AMEND_REPLACE"
+    QUERY = "afg.QUERY"
+    SESSION = "afg.SESSION"
+    CONNECTION = "afg.CONNECTION"
+    CREDENTIAL = "afg.CREDENTIAL"
+    ROUTE = "afg.ROUTE"
+    ENDPOINT = "afg.ENDPOINT"
+    QUEUE = "afg.QUEUE"
+    IN_FLIGHT = "afg.IN_FLIGHT"
+    CAUSE_AMPLIFICATION = "afg.CAUSE_AMPLIFICATION"
 
+
+#: The afg-owned namespace prefix on every ``CapacityVector.dimension_id`` afg emits
+#: (Phase-0 Variant A, 2026-07-29). Referenced by the global namespace property so the
+#: convention has exactly one spelling in the codebase.
+AFG_DIMENSION_ID_PREFIX: str = "afg."
 
 #: The afg half of the Gap-1 dimension-id namespace contract (design #16 §2.2-5): an afg
 #: action-flow dimension id **is** an :class:`ActionFlowDimensionKind` value. Every token
-#: names an action-flow *resource*, so the set is disjoint from the economic / aggregate-
-#: risk dimension-id sets carried on the same ``CapacityVector`` container by rcl / are /
-#: ioc. The disjointness is asserted as a §7 core property (afg cannot import those
-#: siblings, so the assertion lives in the test lane).
+#: names an action-flow *resource* under the :data:`AFG_DIMENSION_ID_PREFIX` namespace, so
+#: the set is disjoint from the economic / aggregate-risk dimension-id sets carried on the
+#: same ``CapacityVector`` container by rcl / are / ioc. Since Phase-0 Variant A that
+#: disjointness is **structural** (distinct owning prefix), not merely observed. The
+#: assertion still lives in the test lane because afg cannot import those siblings.
 ACTION_FLOW_DIMENSION_IDS: frozenset[str] = frozenset(
     kind.value for kind in ActionFlowDimensionKind
 )

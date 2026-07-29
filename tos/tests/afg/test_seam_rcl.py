@@ -46,7 +46,12 @@ from tos.rcl import (
     grant_authorizes_exact_request,
 )
 
-from ._afg_strategies import flow_vector, issue_decision, limit_vector
+from ._afg_strategies import (
+    BROKER_REQUEST_DIM,
+    flow_vector,
+    issue_decision,
+    limit_vector,
+)
 
 
 def test_afg_content_ref_fills_the_action_flow_slot_of_grant_decision_ref() -> None:
@@ -139,12 +144,12 @@ def test_headroom_reuses_rcl_arithmetic_rather_than_re_deriving_it() -> None:
 def test_rcl_none_propagation_reaches_the_afg_verdict_unchanged() -> None:
     """(seam d, fail-closed parity) rcl propagates ``None`` as UNKNOWN; afg does not soften it."""
     unknown = CapacityVector(
-        components=(CapacityComponent(dimension_id="BROKER_REQUEST", magnitude=None),)
+        components=(CapacityComponent(dimension_id=BROKER_REQUEST_DIM, magnitude=None),)
     )
-    assert aggregate_usage([unknown]).magnitude("BROKER_REQUEST") is None
+    assert aggregate_usage([unknown]).magnitude(BROKER_REQUEST_DIM) is None
     assert (
         effective_limit(limit_vector(magnitude=None), limit_vector()).magnitude(
-            "BROKER_REQUEST"
+            BROKER_REQUEST_DIM
         )
         is None
     )
