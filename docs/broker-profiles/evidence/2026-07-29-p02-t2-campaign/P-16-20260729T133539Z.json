@@ -1,0 +1,121 @@
+{
+  "artifact_id": "P-16-20260729T133539Z",
+  "probe_id": "P-16",
+  "title": "BROKER_TIME — broker clock vs local KST skew",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-29T13:35:39.406717+00:00",
+  "finished_at_utc": "2026-07-29T13:35:45.096003+00:00",
+  "duration_s": 5.689,
+  "repo_commit": "7f80ce69",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-16",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "stock",
+    "symbol": "005930",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 5,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3: MOCK STOCK credential validation (operator-provided 2026-07-29). Doubles as a stock-scope BROKER_TIME observation - the wave-1 P-16 artifact is futures-scoped.",
+    "inter_trial_s": 1.0,
+    "poll_ms": 200.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "stock",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "50******01",
+    "account_fingerprint": "54e7f8a5d841"
+  },
+  "measurements": {
+    "abs_skew_bound_candidate": {
+      "label": "abs_skew_ms",
+      "n": 5,
+      "min_ms": 1975.865,
+      "p50_ms": 2050.603,
+      "p90_ms": 2078.497,
+      "p95_ms": 2082.058,
+      "p99_ms": 2084.907,
+      "max_ms": 2085.619,
+      "stdev_ms": 37.642,
+      "margin_pct": 50.0,
+      "recommended_bound_ms": 3129,
+      "statistic": "hard maximum: ceil(max_observed x (1 + margin_pct/100)). p95/p99 are shape diagnostics and MUST NOT be proposed as the bound.",
+      "sample_adequacy_note": "A maximum estimated from a small sample understates the true maximum. Record n and the observation window with the value; the Bounds-Approver decides whether n is adequate.",
+      "candidate_only": true
+    },
+    "signed_skew": {
+      "n": 5,
+      "min_ms": -2085.6,
+      "max_ms": -1975.9,
+      "all_same_sign": true,
+      "note": "A one-sided skew is a systematic offset (correctable); a two-sided spread is jitter (not correctable). They imply different treatments and must not be merged."
+    },
+    "rtt_confound": "The HTTP Date header has 1-second granularity, so a sub-second skew is not resolvable from it. Treat any |skew| below ~1000 ms as 'within header resolution', not as a measurement.",
+    "body_timestamp_like_keys": [
+      "crdt_able_yn",
+      "ovtm_vi_cls_code",
+      "rstc_wdth_prc"
+    ],
+    "precision_determination": "Record precision from the field actually used, not from the finest field present. If only HHMMSS fields exist, precision is 1 s."
+  },
+  "observations": [
+    {
+      "sample": 0,
+      "date_header": "Wed, 29 Jul 2026 13:35:38 GMT",
+      "skew_ms": -1975.9,
+      "rtt_ms": 97.5,
+      "local_kst": "2026-07-29T22:35:40.024841+09:00"
+    },
+    {
+      "sample": 1,
+      "date_header": "Wed, 29 Jul 2026 13:35:39 GMT",
+      "skew_ms": -2033.6,
+      "rtt_ms": 17.1,
+      "local_kst": "2026-07-29T22:35:41.042393+09:00"
+    },
+    {
+      "sample": 2,
+      "date_header": "Wed, 29 Jul 2026 13:35:40 GMT",
+      "skew_ms": -2050.6,
+      "rtt_ms": 16.1,
+      "local_kst": "2026-07-29T22:35:42.058812+09:00"
+    },
+    {
+      "sample": 3,
+      "date_header": "Wed, 29 Jul 2026 13:35:41 GMT",
+      "skew_ms": -2067.8,
+      "rtt_ms": 17.7,
+      "local_kst": "2026-07-29T22:35:43.076893+09:00"
+    },
+    {
+      "sample": 4,
+      "date_header": "Wed, 29 Jul 2026 13:35:42 GMT",
+      "skew_ms": -2085.6,
+      "rtt_ms": 17.1,
+      "local_kst": "2026-07-29T22:35:44.094402+09:00"
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.broker_time.timezone",
+      "capabilities.broker_time.precision",
+      "capabilities.broker_time.skew_bound_ms"
+    ],
+    "capability_dimension": "BROKER_TIME"
+  }
+}
