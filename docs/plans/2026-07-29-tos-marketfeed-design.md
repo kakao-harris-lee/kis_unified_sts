@@ -1,4 +1,4 @@
-# 설계 문서 #32 — tos.marketfeed: 시장 데이터 → Critical Input 값 표면 (D-E2, 수직 슬라이스 #1 데이터 공급 레이어, provisional·닫는 EV 0건) (2026-07-29, v1.1)
+# 설계 문서 #32 — tos.marketfeed: 시장 데이터 → Critical Input 값 표면 (D-E2, 수직 슬라이스 #1 데이터 공급 레이어, provisional·닫는 EV 0건) (2026-07-29, v1.2)
 
 > **⚖ 비준 기록**: **2026-07-29 운영자 위임 자동 비준(v1.1)** — 2026-07-29 운영자 지시(Part-2/3 설계 비준
 > 위임 연장)에 따라, 오케스트레이터가 게이트 조건을 검증하고 기록함: 독립 비평 리뷰 REVISE(CRITICAL 0·
@@ -29,11 +29,24 @@
 > **생산/검증 로직=marketfeed 소유**(marketfeed→dsl 기존 방향의 생산자). engine→marketfeed·dsl→marketfeed edge
 > 둘 다 불요·순환 0·engine allowlist 무변경(§3.2·§3.4·§12·§15 터치 전모). **(MAJOR-2·재현성 서명 충분성)**
 > resolved_context는 4번째 결정입력인데 `_captured_value_refs`는 snapshot digest만 담아(determinism.py:118-119)
-> 부정직 resolver가 같은 서명·다른 outcome 생성 가능 → `evaluate`가 resolved_context 제공 시 **value-view의
+> 부정직 resolver가 같은 서명·다른 outcome 생성 가능 → resolved-value 진입점(v1.2 에라타 `evaluate_resolved`·§16.1)이 resolved_context 제공 시 **value-view의
 > canonical digest를 `captured_external_value_refs`(determinism.py:78·이미 tuple)에 append**하도록 계약·값⟺digest는
 > **발행 시점 검증·env-주입 지점 미재검증 신뢰 seam**을 D-E1 부분봉인 동형으로 정직 명기(§2.3·§3.2·§4.3·§11·Gap-1).
 > MINOR 1-4·NIT-1 전건 반영(§16 개정 로그). **핵심 접근법(값을 covered snapshot으로 옮겨 side-channel·
 > distinctness 동시 봉인)·capsule 무변경은 리뷰 지지로 유지.**
+>
+> **v1.2 에라타 요지(2026-07-29 구현 단계 발견·오케스트레이터 경로 (a) 재정 — 비준 아래 계약 정정·비준 기록 무변경)**:
+> v1.1 §3.2가 명세한 "`evaluate`에 6번째 keyword-only 파라미터 `resolved_context` 추가" 시그니처 확장이 **committed
+> canary와 충돌**한다 — `tos/tests/dsl/test_dsl_determinism.py:136-146`의 `test_evaluate_signature_exposes_no_ambient_source`가
+> `inspect.signature(evaluate).parameters`를 정확히 5개({strategy, capsule, config, scheme, enforcement_mechanism_version})로
+> 잠근다(keyword-only 6번째도 이 canary를 깬다). **오케스트레이터 재정: 경로 (a)** — 구현이 더 충실하므로 canary를
+> 무력화(경로 b·neutered-canary 결함)하지 않고 **설계를 구현에 맞춰 정정**(WDR #26 MAJOR-2 선례). 구현 착지: 실체는
+> **신규 public 진입점 `evaluate_resolved(…, resolved_context=None)`(determinism.py:362)**로 실현되고, 기존
+> `evaluate`(determinism.py:319)는 **5-파라미터·byte-identical 유지**(canary intact); 공유 본체 `_evaluate`(determinism.py:277)가
+> env merge(:292)·서명 append(:297-303)를 수행. `build_environment(…, resolved_context)`(determinism.py:93·env merge)·
+> `evaluate_policy` 무변경·capsule 무변경·F1·서명 append·값⟺digest 신뢰 seam은 **전부 v1.1 설계대로**. **신규 교훈(§15.2③)**:
+> sanction 전제 "committed 테스트 파괴 0"은 터치 표면의 **모든** committed canary(시그니처·closure·drift anchor)를 전수
+> grep해야 성립 — v1.1은 engine closure allowlist만 실측하고 **dsl 시그니처 canary를 놓쳤다**(저작·리뷰·델타 재검증 모두).
 >
 > **선행 문서(의존)**:
 > - [설계 #31 — tos.engine 단일 이벤트 코어 (D-E1, v1.1, 운영자 위임 자동 비준 2026-07-29)](2026-07-29-tos-engine-event-core-design.md).
@@ -83,8 +96,9 @@
    구조 바인딩**되어 side channel이 아닌 admitted Critical Input임을 발행 시점 보증. 기존 capsule 모델 **무변경**.
 3. **env-조립 seam 계약**(§3·핵심 결정 B·**본 문서의 하중 콘텐츠**) — 값이 `resolve_operand`가 걷는
    `env["capsule"]` 밑 governed sub-path의 **스칼라 leaf**로 도달하는 유일 채널. `evaluate_policy`(인터프리터)
-   **무변경**, `build_environment`/`evaluate`는 dsl-타입 소비 **additive 확장**(D-E1 §3.2(A) 위임 "입력 조립")·
-   resolved_context 제공 시 서명에 value-view digest **append**(재현성 4번째 입력 커버·MAJOR-2), `DecisionTick
+   **무변경**, `build_environment`(resolved_context 추가)와 **신규 진입점 `evaluate_resolved`**(v1.2 에라타·기존
+   `evaluate`는 5-파라미터 유지)가 dsl-타입 소비 **additive 확장**(D-E1 §3.2(A) 위임 "입력 조립")·resolved_context
+   제공 시 서명에 value-view digest **append**(재현성 4번째 입력 커버·MAJOR-2), `DecisionTick
    Payload`는 **dsl-타입 optional 필드**(D-E1 이연 records.py:157-163·engine→dsl 기존 edge). **capsule 계약 무변경**(§15).
 4. **per-bar identity distinctness**(§4·핵심 결정 C·D-E1 Gap-1 이연분 해소) — 값이 covered snapshot으로 흐르면
    distinct bar → distinct **covered `source_event_time`** → distinct observation → distinct snapshot digest →
@@ -151,7 +165,7 @@
 | # | 결정 | 판정 | 근거(요지) | 리스크 |
 |---|---|---|---|---|
 | **A** | 값-싣는 표면 형태 + 소유권 (§2) | env-값 **형=dsl 소유**(`ContextValueView`/`ContextValue`·§2.2)·**생산/검증=marketfeed 소유**. 값은 covered `payload_digest`에 **발행 시점** 구조 바인딩(값⟺digest·§2.3)·VALID-gate=worst(3상태)==VALID(§2.2). VALID만 노출·그 외 key 부재(→ UNKNOWN restrictive). capsule 모델 **무변경** | Observation은 수치 leaf 0·`raw.payload_digest`만(G6·G8·observation.py:70-74). 값은 covered raw payload 뒤에 산다(ADR §9:256·259). **shape=dsl**은 engine 순환 회피(MAJOR-1·records.py:28-33 engine→dsl 기존 edge) | 값⟺digest 미바인딩 시 side channel(RFC-004 §9:244)·distinctness 붕괴. 바인딩이 두 위반 동시 봉인·검증은 발행 seam(§4.3 정직) |
-| **B** | env-조립 seam (§3·**하중**) | 값은 `env["capsule"]` 밑 governed **스칼라 leaf**로만 도달(resolve_operand dict-walk·scalar-leaf 전용·vocabulary.py:334·338). `build_environment`/`evaluate` dsl-타입 소비 **additive**(D-E1 §3.2(A))·resolved_context 서명 digest **append**(재현성 4입력·MAJOR-2·determinism.py:78)·`evaluate_policy` **무변경**·`DecisionTickPayload` dsl-타입 필드(D-E1 이연) | 시장값=`"capsule"` 소스 전용(D-E1 §3.2·`ADMISSIBLE_CONTEXT_SOURCES`={capsule,config} vocabulary.py:88). 3rd `"market"` 소스 기각(core.py:96) | dsl/engine additive 터치가 **capsule 계약 아님**·순환 0·allowlist 무변경 — 오케스트레이터 sanction 조건=터치 전모 공개(§15 미결-1) |
+| **B** | env-조립 seam (§3·**하중**) | 값은 `env["capsule"]` 밑 governed **스칼라 leaf**로만 도달(resolve_operand dict-walk·scalar-leaf 전용·vocabulary.py:334·338). `build_environment`(resolved_context)+**신규 진입점 `evaluate_resolved`** dsl-타입 소비 **additive**(D-E1 §3.2(A)·v1.2 에라타: `evaluate` 5-파라미터 유지)·resolved_context 서명 digest **append**(재현성 4입력·MAJOR-2·determinism.py:297-303)·`evaluate_policy` **무변경**·`DecisionTickPayload` dsl-타입 필드(D-E1 이연) | 시장값=`"capsule"` 소스 전용(D-E1 §3.2·`ADMISSIBLE_CONTEXT_SOURCES`={capsule,config} vocabulary.py:88). 3rd `"market"` 소스 기각(core.py:96) | dsl/engine additive 터치가 **capsule 계약 아님**·순환 0·allowlist 무변경 — 오케스트레이터 sanction 조건=터치 전모 공개(§15 미결-1) |
 | **C** | per-bar distinctness (§4) | distinct bar → distinct **covered `source_event_time`**(observation.py:85·covered snapshot.py:131) → distinct snapshot digest → distinct capsule digest → distinct proposal_id **구조 corollary**. 발행 gate가 `source_event_time`(as-of)+`payload_digest` concrete 강제. capsule `_REQUIRED_COVERED` **무변경** | G13 근인=스파이크가 값을 uncovered `config`로 relabel(G10)→capsule_id 불변. 값을 covered 관측으로 옮기면 근본 해소(D-E1 §7.2-5) | 진부 producer가 as-of 누락 시 붕괴 — 발행 gate fail-closed. 완전 봉인 producer 정직 의존(정직 명기·§4.3) |
 | **D** | 지표 파이프라인 (§5) | 밴드·MA 등 파생값=상류 계산·admitted observation + 기구현 `TransformationLineage`(REUSE·lineage.py:96-115). look-ahead: 파생 parent as-of ≤ 파생 as-of(RFC-004 §6:162-165). D-E2는 estimator **미구현** | RFC-008 §9:290-301 "captured *outside and before* DSL evaluation and delivered into the Capsule as Critical Input". DSL 산술/bar 이력 부재(G1·G3) | 완전 look-ahead 강제는 D-E3 LookaheadGuard 소관. D-E2는 lineage로 표현·검증 가능케만(정직 명기·§5.4) |
 
@@ -387,14 +401,14 @@ int/float 전용·bool 제외(vocabulary.py:366-368). 귀결(v1.1 강화):
    - `build_environment(capsule, config, *, resolved_context: ContextValueView | None = None)` — 신규 **keyword-
      only** optional param(dsl 타입). `None`이면 오늘과 **바이트 동일**(하위호환). 제공 시 `env["capsule"]
      [VALUE_NAMESPACE] = {v.field_key: v.value for v in resolved_context.values}` 병합.
-   - `evaluate(…, resolved_context=None)` — threading + **서명 조립(MAJOR-2a)**: resolved_context 제공 시
+   - **신규 public 진입점 `evaluate_resolved(…, resolved_context=None)`(v1.2 에라타·determinism.py:362)** — threading + **서명 조립(MAJOR-2a)**: resolved_context 제공 시
      `signature.captured_external_value_refs`(determinism.py:78·이미 `tuple[str,...]`)에 **`resolved_context.
-     canonical_digest`를 append** → `_captured_value_refs(capsule) + (resolved_context.canonical_digest,)`. 다른
-     값 집합 → 다른 view digest → 다른 서명 → replay/audit 검출(재현성 4번째 입력 커버). `evaluate_policy` 호출부
-     (determinism.py:268)·`_decision_to_outcome`·`RecordedInputSignature` 나머지는 **무변경**.
+     canonical_digest`를 append** → `_captured_value_refs(capsule) + (resolved_context.canonical_digest,)`(공유 본체 `_evaluate`·determinism.py:297-303). 다른
+     값 집합 → 다른 view digest → 다른 서명 → replay/audit 검출(재현성 4번째 입력 커버). **⚠ v1.2 정정: 기존 `evaluate`(determinism.py:319)는 5-파라미터·byte-identical 유지**(committed 시그니처 canary test_dsl_determinism.py:136-146 green·§15.2③). `evaluate_policy` 호출부
+     (`_evaluate`·determinism.py:293)·`_decision_to_outcome`·`RecordedInputSignature` 나머지는 **무변경**.
    - `DecisionTickPayload`에 `value_view: ContextValueView | None = None` **additive dsl-타입 필드**(D-E1 이연
      records.py:157-163·engine→dsl 기존 edge records.py:28-33). `run_decision_pipeline`이 `payload.value_view`를
-     `evaluate(…, resolved_context=…)`에 전달(pipeline.py:311 additive).
+     `evaluate_resolved(…, resolved_context=…)`에 전달(pipeline.py:311 additive).
 4. **소유권**: dsl이 env-shape·형·조립·서명을 소유하고, marketfeed는 형의 **값 데이터**(검증된 ContextValueView)를
    공급한다 — "dsl owns shape+env, marketfeed owns value production/verification."
 
@@ -605,9 +619,9 @@ config_version은 안정.
    None` → restrictive. more-permissive substitute 뮤테이션 KILLED.
 7. **field_key governance(§2.4)**: wildcard/latest·중복 field_key 거부·field_key↔field_evaluation.field_ref VALID
    대응 강제(source disagreement §6).
-8. **재현성 서명 충분성(v1.1 MAJOR-2a)**: `evaluate(…, resolved_context=v)` 서명의 `captured_external_value_refs`가
+8. **재현성 서명 충분성(v1.1 MAJOR-2a·v1.2 진입점 `evaluate_resolved`)**: `evaluate_resolved(…, resolved_context=v)` 서명의 `captured_external_value_refs`가
    `v.canonical_digest`를 포함. 다른 값 집합→다른 서명. resolved_context=None → 서명 오늘과 동일(하위호환).
-9. **하위호환**: `build_environment(capsule, config)`(resolved_context=None) 반환 오늘과 바이트 동일.
+9. **하위호환 + 시그니처 canary(v1.2)**: `build_environment(capsule, config)`(resolved_context=None) 반환 오늘과 바이트 동일·**기존 `evaluate` 5-파라미터 불변**(committed `test_dsl_determinism.py:136-146` green — resolved-value는 별도 진입점 `evaluate_resolved`).
 10. **lineage look-ahead(§5.4)**: 파생값 parent as_of ≤ 파생값 as_of. reproducible=false/parent 누락→INVALID→미노출.
 11. **∅ 양방향(§6)**: explicit-empty view(값 0) vs missing snapshot 구별 기록·둘 다 restrictive.
 12. **값 타입(§2.5)**: 순서비교 수치=정수 tick-scale·Decimal 노출→미노출(구조 UNKNOWN·silent float 금지)·bool
@@ -671,7 +685,7 @@ distinctness·지표 lineage 계약·property 타깃(저작 증거)·resolver sl
    additive·하위호환·D-E1 명시 이연(§3.2(A)·records.py:157-163·core.py:93-98). **형=dsl(F1·MAJOR-1)로 engine→
    marketfeed 순환 회피**·engine allowlist 무변경. `evaluate_policy`·capsule 무변경. **오케스트레이터 sanction
    대상·터치 전모 공개가 조건**(§15 미결-1).
-3. **"재현성 서명이 4번째 입력(값)을 안 담는다"**(v1.1 MAJOR-2 반영) — 해소: resolved_context 제공 시 `evaluate`가
+3. **"재현성 서명이 4번째 입력(값)을 안 담는다"**(v1.1 MAJOR-2 반영) — 해소: resolved_context 제공 시 `evaluate_resolved`(v1.2 에라타·별도 진입점)가
    value-view canonical digest를 `captured_external_value_refs`(determinism.py:78)에 append(§3.2) → 다른 값 집합→
    다른 서명→replay 검출. 검증은 발행 시점·env-주입은 신뢰 seam임을 정직 명기(§2.3·§4.3).
 4. **"값 타입 float 투영이 decimal 정규화(설계 #2 §3.4)와 모순?"**(v1.1 MINOR-2 반영) — 해소: 순서비교 수치=정수
@@ -722,8 +736,8 @@ distinctness·지표 lineage 계약·property 타깃(저작 증거)·resolver sl
 
 - **dsl 신규 형**: `ContextValue`/`ContextValueView`(env-값 shape·§2.2·신규 dsl 모듈). dsl closure 무변경(capsule
   이미 포함·determinism.py:35).
-- dsl `build_environment(capsule, config, *, resolved_context=None)` + `evaluate(…, resolved_context=None)` —
-  additive keyword-only·하위호환·서명에 view digest append(MAJOR-2a). `evaluate_policy` 무변경.
+- dsl `build_environment(capsule, config, *, resolved_context=None)` + **신규 public 진입점 `evaluate_resolved(…, resolved_context=None)`**(v1.2 에라타·기존 `evaluate` 5-파라미터 byte-identical 불변·공유 본체 `_evaluate`) —
+  additive keyword-only·하위호환·서명에 view digest append(MAJOR-2a·determinism.py:297-303). `evaluate_policy` 무변경.
 - engine `DecisionTickPayload.value_view: ContextValueView | None = None` — additive dsl-타입 필드(engine→dsl
   기존 edge). pipeline `run_decision_pipeline`이 `payload.value_view` 전달(pipeline.py:311). **engine allowlist
   무변경·순환 0.**
@@ -782,7 +796,7 @@ admitted Critical Input 채널로 DSL에 도달하는 값 표면 계약. 확정(
 (`ContextValueView`·MAJOR-1 F1로 engine 순환 회피)·**생산/검증은 marketfeed 소유**, 각 값을 covered
 `payload_digest`에 발행 시점 바인딩해 side channel·distinctness 붕괴를 동시 봉인하되 **env-주입 지점은 신뢰 seam**
 임을 정직 명기(§2), (2) 값은 `env["capsule"]` 밑 governed scalar leaf로만 도달하며 통로는 `build_environment`
-additive 확장(dsl-타입)·resolved_context는 서명에 view digest **append**(재현성 4입력·MAJOR-2)이고 `evaluate_
+additive 확장(dsl-타입·신규 진입점 `evaluate_resolved`·v1.2 에라타)·resolved_context는 서명에 view digest **append**(재현성 4입력·MAJOR-2)이고 `evaluate_
 policy`·**capsule 모델 무변경**(§3), (3) per-bar distinctness는 값을 covered `source_event_time`으로 옮긴 구조
 corollary(G13 해소·§4), (4) 밴드 등 파생 지표는 상류 계산·기구현 `TransformationLineage`(REUSE)·look-ahead 경계
 명시(§5). D-E1 §12-1 `DecisionContextResolver` slot을 채운다.
@@ -811,18 +825,27 @@ distinctness도 `_REQUIRED_COVERED` 변경 없이 marketfeed 발행 gate로 달�
    - **① dsl**: (a) 값-carrier **형** 모듈 신설 — `ContextValue`/`ContextValueView`(§2.2·필드 field_key/value/
      as_of/payload_digest/observation_ref + snapshot 바인딩/canonical_digest/canonicalization_version). dsl→capsule
      기존 edge(determinism.py:35)로 `FieldState` 참조 가능·**dsl closure 무변경**. (b) `build_environment(capsule,
-     config, *, resolved_context=None)`·`evaluate(…, resolved_context=None)` **keyword-only additive param**·
-     하위호환(None→오늘과 바이트 동일). (c) **서명 조립 변경**(MAJOR-2c): resolved_context 제공 시
-     `captured_external_value_refs`(determinism.py:78)에 `resolved_context.canonical_digest` append. `evaluate_
-     policy`(호출부 determinism.py:268)·인터프리터 **무변경**.
+     config, *, resolved_context=None)`(keyword-only additive·determinism.py:93)·**신규 public 진입점
+     `evaluate_resolved(…, resolved_context=None)`(determinism.py:362)**·하위호환(None→오늘과 바이트 동일).
+     **⚠ v1.2 정정**: v1.1 원안은 `evaluate` 자체에 6번째 param을 얹었으나 committed 시그니처 canary
+     (`test_dsl_determinism.py:136-146`)와 충돌 → 기존 `evaluate`(determinism.py:319)는 **5-파라미터·byte-identical
+     유지**·실체는 별도 진입점 `evaluate_resolved`·공유 본체 `_evaluate`(determinism.py:277). (c) **서명 조립 변경**
+     (MAJOR-2c): resolved_context 제공 시 `captured_external_value_refs`(determinism.py:78)에
+     `resolved_context.canonical_digest` append(`_evaluate`:297-303). `evaluate_policy`(호출부 `_evaluate`·
+     determinism.py:293)·인터프리터 **무변경**.
    - **② engine**: `DecisionTickPayload`에 `value_view: ContextValueView | None = None`(dsl-타입 optional 필드·
      D-E1 records.py:157-163 자기증언 slot 충족). `run_decision_pipeline`이 `payload.value_view`를 `evaluate`에
      전달(pipeline.py:311). **engine→dsl 기존 edge**(records.py:28-33)·**engine allowlist(14패키지) 무변경**·
      **engine closure에 marketfeed 미유입**.
-   - **③ 순환 0·committed 테스트 파괴 0**: `dsl→marketfeed`·`engine→marketfeed` edge **부재**(negative-grep·
-     §0.5-6) → `engine→marketfeed→engine`·`dsl→marketfeed→dsl` 순환 없음. committed `test_engine_import_closure.
-     py` subset(:310-315)·declared-edge(:318-327) 둘 다 green 유지(marketfeed ∉ engine closure). marketfeed만
-     dsl·engine을 소비(생산 대상).
+   - **③ 순환 0·committed 테스트 파괴(v1.2 정직 정정)**: `dsl→marketfeed`·`engine→marketfeed` edge **부재**
+     (negative-grep·§0.5-6) → `engine→marketfeed→engine`·`dsl→marketfeed→dsl` 순환 없음. committed
+     `test_engine_import_closure.py` subset(:310-315)·declared-edge(:318-327) 둘 다 green 유지(marketfeed ∉ engine
+     closure). marketfeed만 dsl·engine을 소비(생산 대상). **⚠ v1.2 정직 정정**: v1.1의 "committed 테스트 파괴 0"
+     검증 범위는 **engine closure allowlist만 실측**했고 **dsl 시그니처 canary(`test_dsl_determinism.py:136-146` —
+     `evaluate` 5-파라미터 잠금)를 놓쳤다**(저작·리뷰·델타 재검증 3중 누락). 그 canary는 `evaluate`에 6번째 param을
+     얹으면 깨진다 → 구현이 `evaluate_resolved` 별도 진입점으로 착지(경로 a·§16.1). **신규 교훈: sanction 전제
+     "committed 테스트 파괴 0"은 터치 표면의 모든 committed canary(시그니처·closure·drift anchor)를 전수 grep해야
+     성립 — closure allowlist만으로 부족**(neutered-canary 결함 클래스 회피).
    - **판정**: 셋 다 capsule 계약 아님·additive·하위호환. **오케스트레이터 sanction 권고**(전제 (a) 서명 충분성이
      v1.1에서 참이 됨 — MAJOR-2 반영). 은폐-변경 아님을 이 공개로 성립.
 2. **[미결-2]** 명명 `tos.marketfeed` 확정(§10.1). runner-up `tos.marketvalue`/`tos.contextvalue`. 운영자.
@@ -881,3 +904,50 @@ refs` snapshot digest만(:118-119)·`worst` empty→VALID+UNKNOWN floor(field_st
 state`(predicates.py:239-253)·capsule top-level 17필드(capsule.py:225-245)·`resolve_operand` dict-전용
 (vocabulary.py:334)·순서비교 int/float(vocabulary.py:366-368)·observation `payload_digest`/`source_event_time`
 (observation.py:74·85)·`observations ∈ _COVERED_FIELDS`(snapshot.py:131). **전건 실측 일치.**
+
+---
+
+### 16.1 에라타 v1.2 (2026-07-29 — 구현 단계 발견·오케스트레이터 경로 (a) 재정)
+
+**발견 경위(구현자 실측)**: v1.1 §3.2가 명세한 "`evaluate`에 6번째 keyword-only 파라미터 `resolved_context` 추가" 시그니처 확장이 committed
+`tos/tests/dsl/test_dsl_determinism.py:136-146`(`test_evaluate_signature_exposes_no_ambient_source` —
+`inspect.signature(evaluate).parameters`를 정확히 5개 {strategy, capsule, config, scheme,
+enforcement_mechanism_version}로 잠금)와 충돌. keyword-only 6번째 파라미터도 이 canary를 깬다.
+
+**재정(오케스트레이터·경로 (a) 채택·WDR #26 MAJOR-2 선례 "구현이 더 충실할 때는 코드 약화가 아닌 에라타가
+정답")**: canary 개정(경로 b)은 기각 — canary는 만들어진 목적(비준된 표면의 무성 시그니처 드리프트 검출) 그대로
+작동했다(neutered-canary 회피). 설계를 구현에 맞춰 정정.
+
+**구현 착지 위치**: 실체 = **신규 public 진입점 `evaluate_resolved(…, resolved_context=None)`(determinism.py:362)**·
+기존 `evaluate`(determinism.py:319)는 **5-파라미터·byte-identical 유지**(canary intact)·공유 본체
+`_evaluate`(determinism.py:277)가 env merge(build_environment 호출:292)·서명 append(:297-303) 수행.
+`build_environment`(:93, resolved_context 보유)·`evaluate_policy`(호출부 `_evaluate`:293)·capsule·F1·값⟺digest
+신뢰 seam은 **전부 v1.1 설계대로**. dsl export `ContextValue`/`ContextValueView`/`evaluate_resolved`
+(dsl/__init__:75-76·85·195) 착지 확인.
+
+| finding | 처분 | 변경 위치(§) |
+|---|---|---|
+| **에라타-1** `evaluate`에 6번째 param `resolved_context` 추가 시그니처 확장 ↔ committed 5-파라미터 canary 충돌 | 경로 (a): `evaluate_resolved` 별도 public 진입점으로 정정·`evaluate` byte-identical 유지·canary intact | 배너 v1.2 블록·§0.1(3)·§0.4 B·§3.2(3)·§7.2-8/9·§10.2-3·§12.2·§14·§15.2①(b)(c)·본 §16.1 |
+| **에라타-2(교훈)** sanction 전제 "committed 테스트 파괴 0"이 dsl 시그니처 canary 미검증(engine closure allowlist만 실측) | §15.2③ 정직 정정 + 신규 교훈 명문화 | §15.2③·배너 v1.2 블록 |
+
+**신규 defect class(교훈)**: **neutered-canary 회피 + sanction 전제 canary 전수-grep**. sanction 전제 "committed
+테스트 파괴 0"은 터치 표면의 **모든** committed canary(시그니처·closure·drift anchor)를 전수 grep해야 성립한다 —
+closure allowlist만으로 부족. v1.1은 engine closure만 보고 dsl 시그니처 canary를 놓쳤다(저작·리뷰·델타 재검증 3중
+누락). canary를 깨는 실현이 아니라 canary를 존중하는 실현(별도 진입점)이 정답이며, 구현자가 이를 실행했다.
+
+**정정된 인용 + determinism.py 행 이동 지도(v1.1 → v1.2·구현 refactor)**: 구현자가 `tos.dsl.context_value` import
+(determinism.py:41)·VALUE_NAMESPACE merge(:137-143)·공유 본체 `_evaluate`(:277)·`evaluate_resolved`(:362)를 추가해
+determinism.py 다수 행이 하향 이동했다. **§1-§3의 determinism.py 인용은 저작 시점(pre-implementation) 기준값**이며,
+현행 disk 앵커 지도: `captured_external_value_refs`(필드) :78→**83** · `config.bindings` :60→**65** · `config_version`
+:59→**64** · `build_environment`(def) :88→**93** · build_environment return/`model_dump` :105-108/:106→**:144-147** ·
+`_captured_value_refs`(def) :118-119→**150** · `evaluate`(def) :238→**319** · `evaluate_policy` 호출 :268→**293** ·
+서명 append **:297-303**(공유 `_evaluate`) · `_decision_to_outcome`/`RecordedInputSignature` :269-283→하향. **불변
+(재확인)**: `from tos.capsule.capsule import DecisionContextCapsule` **:35**(dsl→capsule edge)·captured-not-called
+docstring **:11-15**는 이동 없음. **정본 post-impl 앵커** = 본 §16.1·§3.2(3)·§15.2①(b)(c)의 값(:319/:362/:277/:293/
+:297-303/:93/:83). 리뷰어 델타 재검증은 이 지도를 기준으로 §1-§3 pre-impl 인용의 행 이동을 phantom이 아닌
+refactor-이동으로 판정할 것.
+
+**재실측 인용(v1.2·쓰기 전 재grep·anti-phantom §0.5)**: `def test_evaluate_signature_exposes_no_ambient_source`
+(test_dsl_determinism.py:136·`assert params == {5개}`:139-146)·`def evaluate`(determinism.py:319, 5-param)·
+`def evaluate_resolved`(:362)·`def _evaluate`(:277)·`def build_environment`(:93·resolved_context:97)·
+`evaluate_policy` 호출(:293)·서명 append(:297-303)·dsl export(dsl/__init__:75-76·85·195). **전건 실측 일치.**
