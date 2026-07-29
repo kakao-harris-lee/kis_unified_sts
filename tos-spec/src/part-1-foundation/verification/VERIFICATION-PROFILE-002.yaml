@@ -12,6 +12,9 @@
 #     the identity approving bounds SHALL NOT also arm live trading);
 #   - `effective_from` / `review_due` are set.
 # Values below marked MEASURE are deliberately left null pending broker-specific measurement.
+# PATCH-0054 registered previously absent keys (2 bounds, 24 limits) with null values
+# and owner TBD so the completion gap is visible to the Bounds-Approver; registering a
+# key approves nothing and creates no bound.
 
 profile_id: VERIFICATION-PROFILE-002
 version: "2.1-PROPOSED"
@@ -692,6 +695,20 @@ bounds:
     rationale: "MEASURE. Maximum interval from confirmed safety-relevant Evidence Gap to completed new-risk denial at every affected authority and final egress; unknown scope expands containment (ADR-002-016 §§14, 18)."
     measurement_source: evidence_gap_authority_and_egress_trace
     failure_response: HALT_OR_CONTAIN
+  B_evidence_anchor:
+    value_ms: null   # APPROVE per Evidence Integrity Policy anchor cadence and record class
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from one committed Integrity Anchor to the next required anchor commit for the affected ordered-segment scope; an unproven or exceeded interval is an anchor-cadence gap and cannot be claimed as detected (ADR-002-016 §13). Registered by PATCH-0054 (Phase-0 profile completion): the Evidence Integrity Policy declares an anchor cadence but the profile carried no distinct anchor bound (source: 2026-07-20 evidence-store design §8)."
+    measurement_source: evidence_segment_chain_and_integrity_anchor_trace
+    failure_response: STOP_NEW_RISK
+  B_cell_halt_to_global_halt:
+    value_ms: null   # APPROVE per concrete deployment profile and Failure-Domain Allocation Matrix
+    semantics: hard_maximum
+    owner: TBD
+    rationale: "MEASURE. Maximum interval from a Safety Cell HALT whose blast radius cannot be bounded to committed escalation to the broader Safety Cell or global HALT (ADR-002-009 §§13-14). B_failure_domain_detect and B_failure_domain_contain bound detection and containment within the affected cell and are a different quantity. Registered by PATCH-0054 (Phase-0 profile completion; source: 2026-07-27 failure-domain design §7)."
+    measurement_source: failure_domain_escalation_and_authority_log
+    failure_response: HALT
 
 limits:
   MAX_normal_capability_age_ms: 1000          # PROPOSED: max consumer-local age of the normal capability/currentness proof before denial
@@ -749,6 +766,35 @@ limits:
   MAX_statement_coverage_manifest_age_ms: null             # APPROVE per source/scope; stale or unknown coverage remains incomplete
   MAX_unresolved_post_trade_break_age_ms: null             # APPROVE only as escalation deadline; age never converts a break to resolved
   MAX_pending_external_transfer_age_ms: null               # APPROVE per transfer rail; timeout never proves non-acceptance, failure, or finality
+  # --- PATCH-0054 (Phase-0 profile completion) ---------------------------------
+  # Keys below were absent from this profile although the owning decision requires
+  # the quantity. They are registered so the gap is visible to the Bounds-Approver
+  # and enter the same approval flow as every other unapproved key. A registered
+  # key with a null value is not an approved bound (VER-002-001 §6).
+  MAX_critical_input_source_production_delay_ms: null       # APPROVE per Critical Input source class; source production delay is a delay class separate from snapshot age and is not folded into it (ADR-002-018 §14; source: 2026-07-20 capsule design §8)
+  MAX_critical_input_transport_and_queue_delay_ms: null     # APPROVE per Critical Input source and transport class; unknown or unbounded transport denies dependent new risk (ADR-002-018 §14; source: 2026-07-20 capsule design §8)
+  MAX_critical_input_consumer_receipt_age_ms: null          # APPROVE per consumer and dependency scope; consumer-local receipt age is distinct from issuer-side production and snapshot age (ADR-002-018 §14; source: 2026-07-20 capsule design §8)
+  MAX_critical_input_correction_horizon_ms: null            # APPROVE per source and record class; the correction and late-revision horizon does not shrink because no correction has arrived (ADR-002-018 §14; source: 2026-07-20 capsule design §8)
+  MAX_time_transport_and_queue_uncertainty_ms: null         # APPROVE per Time Health distribution path; transport, queueing, buffering, replay, and batching uncertainty is additive to snapshot age and not folded into it (ADR-002-008 §§8-9; source: 2026-07-21 trustworthy-time design §8)
+  MAX_clock_domain_conversion_uncertainty_ms: null          # APPROVE per continuity-identity pair; a consumer not sharing the issuer's continuity identity adds this bound instead of subtracting clocks (ADR-002-008 §§8-9; source: 2026-07-21 trustworthy-time design §8)
+  MAX_time_source_disagreement_ms: null                     # APPROVE per reference-source set; disagreement beyond this tolerance denies TRUSTED time, which drift alone does not express (ADR-002-008 §§7, 13; source: 2026-07-21 trustworthy-time design §8)
+  MAX_clock_offset_ms: null                                 # APPROVE per reference-source class; offset is a separate approved bound from MAX_clock_drift_ppm (ADR-002-008 §§7-8; source: 2026-07-21 trustworthy-time design §8)
+  MIN_time_stabilization_interval_ms: null                  # APPROVE per recovery scope; synchronization and disagreement checks must pass for at least this interval before time is trusted again, and a shorter interval proves no stability (ADR-002-008 §16; source: 2026-07-21 trustworthy-time design §8)
+  MAX_future_timestamp_tolerance_ms: null                   # APPROVE per source class; a timestamp from the future outside this tolerance is rejected and never coerced to zero (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8)
+  MIN_holdover_safety_margin_ms: null                       # APPROVE per lease class; the margin subtracted when deriving conservative usable lifetime, distinct from the MAX_degraded_lease_holdover_ms total budget (ADR-002-008 §11.2; source: 2026-07-21 trustworthy-time design §8)
+  MAX_time_source_precision_ms: null                        # APPROVE per reference-source class; source timestamp precision and uncertainty enter the conservative freshness upper bound (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8)
+  MAX_time_source_sequence_gap_ms: null                     # APPROVE per reference-source class; an unknown or unbounded source sequence gap denies TRUSTED time (ADR-002-008 §9; source: 2026-07-21 trustworthy-time design §8)
+  MIN_reserved_protective_capacity: null                    # APPROVE per capacity scope; normal strategy activity cannot consume the configured minimum Reserved Protective Capacity, and an unknown minimum is not a satisfied minimum (ADR-002-002 INV-009; source: 2026-07-21 risk-capacity-ledger design §8)
+  MIN_capacity_domain_voter_quorum: null                    # APPROVE together with the Capacity Domain boundary and fault-tolerance model, which is a separate architecture decision; this key registers the numeric gap only and grants no consensus model (ADR-002-012; source: 2026-07-21 risk-capacity-ledger design §8)
+  MAX_quarantined_capacity_age_ms: null                     # APPROVE only as escalation deadline; age never releases quarantined capacity or converts UNKNOWN to resolved (ADR-002-002 §37; source: 2026-07-21 risk-capacity-ledger design §8)
+  MIN_lease_expiry_fence_ms: null                           # APPROVE per offline-capable scope; reassignment waits at least this long under worst-case duration, drift, suspension, and communication-delay assumptions unless a Hard Fence proves the former owner cannot transmit (ADR-002-003 §§5.9, 14.5; source: 2026-07-23 safety-authority design §8)
+  MAX_live_authorization_validity_ms: null                  # APPROVE per authorization scope; the Live Authorization artifact's own maximum validity, distinct from readiness, capability, and context age (ADR-002-007 §§7, 9; source: 2026-07-24 live-authorization design §8)
+  MAX_safety_profile_validity_ms: null                      # APPROVE per Runtime Safety Profile scope; expiry restricts future authority and never expires economic effect (ADR-002-014 §7; source: 2026-07-25 safety-profile-governance design §8)
+  MAX_envelope_review_interval_ms: null                     # APPROVE per Hard Safety Envelope scope; a missed or unproven review deadline restricts scope and never auto-renews (ADR-002-014 §7; source: 2026-07-25 safety-profile-governance design §8)
+  MAX_activation_staging_age_ms: null                       # APPROVE per activation scope; a stale staged bundle cannot be activated and staging age creates no permission (ADR-002-014 §§13, 21; source: 2026-07-25 safety-profile-governance design §8)
+  MAX_compatibility_attestation_age_ms: null                # APPROVE per consumer identity and exact digest; a stale Consumer Compatibility attestation denies activation and proves no current compatibility (ADR-002-014 §§7, 13; source: 2026-07-25 safety-profile-governance design §8)
+  MAX_safety_cell_blast_radius: null                        # APPROVE per Failure-Domain Allocation Matrix; maximum economic exposure and capacity affected by one Safety Cell failure including shared common modes, an unbounded value escalating rather than narrowing scope (ADR-002-009 §13; source: 2026-07-27 failure-domain design §7)
+  MAX_dsl_evaluation_ms: null                               # APPROVE per strategy evaluation scope; exhausting the evaluation time and resource bound degrades to no action and never to a partial unrecorded action (RFC-008 §6; source: 2026-07-21 strategy-dsl design §7)
 
 review:
   independent_reviewer: TBD    # MUST NOT be the author/integrator of the architecture

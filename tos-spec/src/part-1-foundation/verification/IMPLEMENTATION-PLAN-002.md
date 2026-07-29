@@ -1,6 +1,6 @@
 # IMPLEMENTATION-PLAN-002 — Safety Architecture Implementation & Verification Plan
 
-- **Status:** PROPOSED PLAN — not approved; no implementation code has been written.
+- **Status:** PROPOSED PLAN — not approved. Implementation code now exists outside this plan's authority; none of it has been executed as evidence, fault-injected, or independently reviewed, and this plan still authorizes nothing.
 - **Date:** 2026-07-14
 - **Covers:** ARCHITECTURE-GATE-STATUS §7 implementation, fault injection, evidence execution, and independent review for all currently registered ADR-002-001..030 evidence cases.
 - **Governed by:** RFC-000, RFC-001, RFC-002 v0.2, ADR-002-001..030, VER-002-001. Current VER and Evidence Register coverage includes 372 items and one-to-one dedicated acceptance cases for ADR-002-005..030; registration is not executed evidence.
@@ -36,6 +36,8 @@ This document exists so those gates are explicit and ratifiable, not bypassed.
 | Ratify this plan, the §2 greenfield boundary, and the mechanism substrate | Architecture board | Determines what is implemented and where |
 
 I will not fabricate any of these. I can *draft candidates* (done for bounds; role scheme in §3) for you to ratify.
+
+> **P0-4 cross-reference (non-normative).** The project workflow to which P0-4 is delegated recorded an operator ratification on 2026-07-20 in `docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md` — confirming the §2 boundary on the project side and authorizing non-transmitting Phase-1 work — a project-side record outside this corpus which states that bounds approval (P0-1) and independent-reviewer assignment (P0-3) remain separate gates that it neither closes nor substitutes for.
 
 > **Register-count note.** The Evidence Register holds 372 items. Wave 4 consolidated the §4.2/§4.3/§4.4 evidence debt into EVIDENCE-REGISTER-002 (nine new rows, count 363 → 372); Part-2/3 development-track evidence is registered separately in EVIDENCE-REGISTER-DEV (96 items, all NOT_IMPLEMENTED). The DEV register is independent and never enters this Part-1 count.
 

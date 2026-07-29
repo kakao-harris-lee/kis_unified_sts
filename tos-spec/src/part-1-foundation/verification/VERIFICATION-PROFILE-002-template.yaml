@@ -671,6 +671,20 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+  B_evidence_anchor:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: STOP_NEW_RISK
+  B_cell_halt_to_global_halt:
+    value_ms: null
+    semantics: hard_maximum
+    owner: TBD
+    rationale: TBD
+    measurement_source: TBD
+    failure_response: HALT
 limits:
   MAX_normal_capability_age_ms: null
   MAX_time_health_snapshot_age_ms: null
@@ -727,6 +741,30 @@ limits:
   MAX_statement_coverage_manifest_age_ms: null
   MAX_unresolved_post_trade_break_age_ms: null
   MAX_pending_external_transfer_age_ms: null
+  MAX_critical_input_source_production_delay_ms: null
+  MAX_critical_input_transport_and_queue_delay_ms: null
+  MAX_critical_input_consumer_receipt_age_ms: null
+  MAX_critical_input_correction_horizon_ms: null
+  MAX_time_transport_and_queue_uncertainty_ms: null
+  MAX_clock_domain_conversion_uncertainty_ms: null
+  MAX_time_source_disagreement_ms: null
+  MAX_clock_offset_ms: null
+  MIN_time_stabilization_interval_ms: null
+  MAX_future_timestamp_tolerance_ms: null
+  MIN_holdover_safety_margin_ms: null
+  MAX_time_source_precision_ms: null
+  MAX_time_source_sequence_gap_ms: null
+  MIN_reserved_protective_capacity: null
+  MIN_capacity_domain_voter_quorum: null
+  MAX_quarantined_capacity_age_ms: null
+  MIN_lease_expiry_fence_ms: null
+  MAX_live_authorization_validity_ms: null
+  MAX_safety_profile_validity_ms: null
+  MAX_envelope_review_interval_ms: null
+  MAX_activation_staging_age_ms: null
+  MAX_compatibility_attestation_age_ms: null
+  MAX_safety_cell_blast_radius: null
+  MAX_dsl_evaluation_ms: null
 review:
   independent_reviewer: TBD
   evidence_location: TBD
