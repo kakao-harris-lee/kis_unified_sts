@@ -33,7 +33,12 @@ from __future__ import annotations
 from typing import Any
 
 from tos.capsule.capsule import DecisionContextCapsule
-from tos.dsl._base import DecisionContextCapsuleRef, FrozenModel
+from tos.dsl._base import (
+    ArtifactIntegrityError,
+    DecisionContextCapsuleRef,
+    FrozenModel,
+)
+from tos.dsl.context_value import VALUE_NAMESPACE, ContextValueView
 from tos.dsl.outcome import NoActionOutcome, Outcome, PortfolioVector
 from tos.dsl.proposal import Proposal, Proposer, build_flat, build_proposal
 from tos.dsl.strategy import AuthoredStrategy
@@ -86,24 +91,58 @@ class EvaluationResult(FrozenModel):
 
 
 def build_environment(
-    capsule: DecisionContextCapsule, config: EvaluationConfig
+    capsule: DecisionContextCapsule,
+    config: EvaluationConfig,
+    *,
+    resolved_context: ContextValueView | None = None,
 ) -> dict[str, Any]:
     """Build the Decision Context environment from the Capsule + config (design §4).
 
     The environment is the *only* source a policy reads. It namespaces the read-only
     Capsule content under ``"capsule"`` and the injected config bindings under
     ``"config"``; there is no ``clock``/``random``/``network`` namespace, so an
-    ambient read is unreachable (DCE-INV-003). Pure function of its two inputs.
+    ambient read is unreachable (DCE-INV-003). Pure function of its inputs.
+
+    **The resolved-value merge (design #32 §3.2).** When ``resolved_context`` is supplied, its
+    admitted values are merged as a flat scalar mapping at
+    ``env["capsule"][VALUE_NAMESPACE][field_key]`` — under the ``"capsule"`` source, because a
+    market-derived value reaches a policy as Critical Input and **never** relabelled as
+    configuration (RFC-008 §10:327-331; RFC-004 §9:251-252). No third context source is invented
+    (``ADMISSIBLE_CONTEXT_SOURCES`` is unchanged), and ``evaluate_policy`` is unchanged: the values
+    arrive as ordinary scalar leaves the shipped interpreter already walks.
+
+    **Backward compatibility is exact.** With ``resolved_context=None`` (the default, and every
+    call site that predates design #32) the returned mapping is what it has always been — the same
+    two keys over the same content.
+
+    **Namespace disjointness is checked, not declared** (design #32 §3.2 (1), MINOR-3). The merge
+    key is verified absent from the *actual* dumped Capsule mapping; a collision raises rather than
+    overwriting a covered Capsule field, so a future Capsule field named ``resolved_values`` fails
+    loudly instead of being silently shadowed by market values.
 
     Args:
         capsule: The read-only Decision Context Capsule.
         config: The versioned evaluation configuration.
+        resolved_context: The published, already-verified value view whose admitted values are
+            merged under the Capsule source, or ``None`` for the value-free environment.
 
     Returns:
         A nested, JSON-native environment mapping.
+
+    Raises:
+        ArtifactIntegrityError: If the value namespace collides with a Capsule top-level key.
     """
+    capsule_view: dict[str, Any] = capsule.model_dump(mode="json")
+    if resolved_context is not None:
+        if VALUE_NAMESPACE in capsule_view:
+            raise ArtifactIntegrityError(
+                f"the resolved-value namespace {VALUE_NAMESPACE!r} collides with a Decision "
+                "Context Capsule top-level key — merging would overwrite covered Capsule content "
+                "with market-derived values, so the merge is refused (design #32 §3.2 (1))"
+            )
+        capsule_view[VALUE_NAMESPACE] = resolved_context.as_environment_mapping()
     return {
-        "capsule": capsule.model_dump(mode="json"),
+        "capsule": capsule_view,
         "config": dict(config.bindings),
     }
 
@@ -235,6 +274,48 @@ def _decision_to_outcome(
     )
 
 
+def _evaluate(
+    strategy: AuthoredStrategy,
+    capsule: DecisionContextCapsule,
+    config: EvaluationConfig,
+    *,
+    scheme: Any,
+    enforcement_mechanism_version: str,
+    resolved_context: ContextValueView | None,
+) -> EvaluationResult:
+    """The single evaluation body shared by :func:`evaluate` / :func:`evaluate_resolved`.
+
+    One body, two entry points — the difference is *only* whether a resolved value view takes part.
+    Duplicating the outcome/signature assembly at a second call site would be the DRY breach design
+    #32 §3.5 (B) rejects, so both public entry points funnel through here.
+    """
+    env = build_environment(capsule, config, resolved_context=resolved_context)
+    decision = evaluate_policy(strategy.policy, env)  # type: ignore[arg-type]
+    outcome = _decision_to_outcome(
+        decision, scheme=scheme, strategy=strategy, config=config, capsule=capsule
+    )
+    captured_refs = _captured_value_refs(capsule)
+    if resolved_context is not None:
+        # ★ The fourth decision input joins the recorded provenance (design #32 §3.2 (3b),
+        # MAJOR-2a). Without this, two runs over the *same* Capsule but *different* resolved
+        # values would record an identical signature while producing different outcomes, and
+        # replay could not detect the divergence (RFC-008 §9:302-306).
+        captured_refs = captured_refs + (resolved_context.canonical_digest,)
+    signature = RecordedInputSignature(
+        capsule_id=capsule.capsule_id,
+        capsule_canonical_digest=capsule.canonical_digest,
+        # Content-addressed strategy version, consistent with the bare
+        # ``canonical_digest`` recorded as ``strategy_version`` on the emitted
+        # Outcome/Proposer (design §4.1) — not the prefixed ``strategy_id``.
+        authored_strategy_version=strategy.canonical_digest,
+        dsl_version=strategy.dsl_version,
+        config_version=config.config_version,
+        enforcement_mechanism_version=enforcement_mechanism_version,
+        captured_external_value_refs=captured_refs,
+    )
+    return EvaluationResult(outcome=outcome, recorded_input_signature=signature)
+
+
 def evaluate(
     strategy: AuthoredStrategy,
     capsule: DecisionContextCapsule,
@@ -253,6 +334,10 @@ def evaluate(
     provenance/canonicalization parameters (not decision inputs): they are recorded,
     and do not alter which Decision the policy selects.
 
+    Design #32 adds a *fourth* decision input — a resolved Critical Input value view — through the
+    separate :func:`evaluate_resolved` entry point rather than through this signature; see that
+    function for why the parameter set here is deliberately left untouched.
+
     Args:
         strategy: The Authored Strategy (its embedded policy is evaluated).
         capsule: The read-only Decision Context Capsule (frozen input).
@@ -264,21 +349,72 @@ def evaluate(
     Returns:
         The :class:`EvaluationResult` (Outcome + recorded input signature).
     """
-    env = build_environment(capsule, config)
-    decision = evaluate_policy(strategy.policy, env)  # type: ignore[arg-type]
-    outcome = _decision_to_outcome(
-        decision, scheme=scheme, strategy=strategy, config=config, capsule=capsule
-    )
-    signature = RecordedInputSignature(
-        capsule_id=capsule.capsule_id,
-        capsule_canonical_digest=capsule.canonical_digest,
-        # Content-addressed strategy version, consistent with the bare
-        # ``canonical_digest`` recorded as ``strategy_version`` on the emitted
-        # Outcome/Proposer (design §4.1) — not the prefixed ``strategy_id``.
-        authored_strategy_version=strategy.canonical_digest,
-        dsl_version=strategy.dsl_version,
-        config_version=config.config_version,
+    return _evaluate(
+        strategy,
+        capsule,
+        config,
+        scheme=scheme,
         enforcement_mechanism_version=enforcement_mechanism_version,
-        captured_external_value_refs=_captured_value_refs(capsule),
+        resolved_context=None,
     )
-    return EvaluationResult(outcome=outcome, recorded_input_signature=signature)
+
+
+def evaluate_resolved(
+    strategy: AuthoredStrategy,
+    capsule: DecisionContextCapsule,
+    config: EvaluationConfig,
+    *,
+    scheme: Any,
+    enforcement_mechanism_version: str,
+    resolved_context: ContextValueView | None = None,
+) -> EvaluationResult:
+    """Evaluate with a resolved Critical Input value view (design #32 §3.2 (3)).
+
+    Identical to :func:`evaluate` in every respect except one: the admitted values of
+    ``resolved_context`` are merged into ``env["capsule"][VALUE_NAMESPACE]`` before the policy runs,
+    and the view's canonical digest is **appended** to
+    :attr:`RecordedInputSignature.captured_external_value_refs`. That append is the point: a
+    resolved value set is a decision input, so two runs that differ only in their values must differ
+    in their recorded signature or replay cannot detect the divergence (RFC-008 §9:302-306; design
+    #32 §3.2 (3b), MAJOR-2a).
+
+    ``resolved_context=None`` reproduces :func:`evaluate` exactly — same environment, same outcome,
+    same signature — which is what lets the engine pipeline forward ``payload.value_view``
+    unconditionally without changing behaviour for a value-free tick.
+
+    ⚠ **Why this is a separate function rather than a keyword argument on** :func:`evaluate`
+    **(deviation from design #32 §3.2 (3)/§15.2 ①(b), recorded honestly).** The design specifies
+    ``evaluate(…, resolved_context=None)``. The committed canary
+    ``tos/tests/dsl/test_dsl_determinism.py:136-146`` asserts ``evaluate``'s parameter set is
+    *exactly* the five existing names, so adding a sixth parameter — ambient or not — breaks a
+    shipped test. The design's own sanction premise is "committed 테스트 파괴 0" (§15.2 ③), and
+    editing a canary so new code fits is the neutered-canary defect class this series refuses. So
+    the *substance* of the design (the merge, the digest append, ``evaluate_policy`` unchanged, the
+    Capsule model unchanged, one shared body) is implemented in full and only the entry-point
+    spelling differs. Reconciling the two — an errata that names this function, or an explicit
+    sanction to amend the canary — is the orchestrator's call, and until then both the design's
+    safety property and the committed canary hold simultaneously.
+
+    ⚠ **Trust seam.** The value ⟺ ``payload_digest`` binding was verified by the ``tos.marketfeed``
+    producer at publication time; this function does **not** re-verify it (design #32 §2.3/§4.3).
+    What it adds is detectability, not enforcement.
+
+    Args:
+        strategy: The Authored Strategy (its embedded policy is evaluated).
+        capsule: The read-only Decision Context Capsule (frozen input).
+        config: The versioned evaluation configuration (injected bindings).
+        scheme: The canonicalization scheme bound into the emitted artifacts.
+        enforcement_mechanism_version: The recorded escape-checker version (design §7).
+        resolved_context: The published value view, or ``None`` for a value-free evaluation.
+
+    Returns:
+        The :class:`EvaluationResult` (Outcome + recorded input signature).
+    """
+    return _evaluate(
+        strategy,
+        capsule,
+        config,
+        scheme=scheme,
+        enforcement_mechanism_version=enforcement_mechanism_version,
+        resolved_context=resolved_context,
+    )

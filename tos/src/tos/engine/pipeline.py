@@ -40,7 +40,7 @@ from tos.dsl import (
     Proposal,
     RecordedInputSignature,
     degrades_to_no_action,
-    evaluate,
+    evaluate_resolved,
     resolve_bound,
     select_outcome,
 )
@@ -308,12 +308,19 @@ def run_decision_pipeline(
         )
 
     # --- phases 2-4: interpret / decide / bind and emit (RFC-003 §7:205-215) ------------------
-    result: EvaluationResult = evaluate(
+    # The resolved Critical Input value view rides through unconditionally (design #32 §3.2 (3)):
+    # ``payload.value_view`` is ``None`` for a value-free tick, and ``evaluate_resolved`` with
+    # ``resolved_context=None`` reproduces the shipped ``evaluate`` exactly — same environment,
+    # same outcome, same signature. When a view *is* present its canonical digest is appended to
+    # the recorded signature, so two bars that differ only in their values are distinguishable on
+    # replay (RFC-008 §9:302-306).
+    result: EvaluationResult = evaluate_resolved(
         entry.strategy,
         payload.capsule,
         entry.config,
         scheme=scheme,
         enforcement_mechanism_version=configuration.enforcement_mechanism_version,
+        resolved_context=payload.value_view,
     )
     outcome = select_outcome(
         bound_state, completed_outcome=result.outcome, on_exhaustion=_on_exhaustion

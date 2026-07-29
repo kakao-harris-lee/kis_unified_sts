@@ -28,6 +28,7 @@ from tos.capsule import DecisionContextCapsule
 from tos.dsl import (
     WILDCARD_TOKENS,
     AuthoredStrategy,
+    ContextValueView,
     EvaluationConfig,
     Proposal,
 )
@@ -158,9 +159,22 @@ class DecisionTickPayload(FrozenModel):
     """A ``DECISION_TICK`` payload (design #31 §2.2).
 
     The resolved Decision Context Capsule for one bound instrument plus the injected reference
-    time coordinates. The Critical Input **value surface** (a Snapshot body carrying admitted
-    observations with source identity / continuity / provenance) is D-E2's to add
-    (design #31 §3.2 (4)); slice #1 binds the Capsule's ``SnapshotRef`` only.
+    time coordinates. The Critical Input **value surface** — the admitted, provenance-bound scalar
+    values a policy actually compares — was D-E1's declared deferral (design #31 §3.2 (4)) and is
+    supplied by D-E2 through :attr:`value_view` (design #32 §3.2 (3)). The Capsule's ``SnapshotRef``
+    binding is unchanged.
+
+    ``value_view`` is typed :class:`~tos.dsl.ContextValueView` — a **dsl** type, deliberately. A
+    ``tos.marketfeed`` type here would drag ``tos.marketfeed`` into the engine's import closure,
+    breaching the committed fourteen-package allowlist
+    (``tos/tests/engine/test_engine_import_closure.py:59-76``) and creating an
+    ``engine -> marketfeed -> engine`` cycle. Riding the existing ``engine -> dsl`` edge (the import
+    block above) leaves the allowlist untouched and gives the cycle no origin (design #32 §2.2 F1).
+
+    ``None`` is the honest default and stays restrictive: with no view, the merged value namespace
+    is absent from the environment, every capsule-sourced value operand resolves to ``UNKNOWN``, and
+    every comparison against it is ``False`` (``vocabulary.py:337-340``) — the action set can only
+    narrow (RFC-008 §10:347-350).
     """
 
     instrument_key: InstrumentKey
@@ -168,6 +182,9 @@ class DecisionTickPayload(FrozenModel):
     time: TimeAdmissionInputs = TimeAdmissionInputs()
     #: The causal-ordering coordinates of this event (design #31 §2.1(ii)).
     reference: OrderingEvent = OrderingEvent()
+    #: The resolved Critical Input value surface for this tick (design #32 §3.2 (3)); ``None``
+    #: when no value view was published — restrictive, never permissive.
+    value_view: ContextValueView | None = None
 
 
 class EgressResultPayload(FrozenModel):

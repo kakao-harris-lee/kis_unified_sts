@@ -33,6 +33,9 @@ Public surface groups by module:
 * :mod:`tos.dsl.proposal` — the Proposal + effect-free Proposal Builder.
 * :mod:`tos.dsl.outcome` — No-Action / Explicit-Flat / Portfolio-Vector semantics.
 * :mod:`tos.dsl.strategy` — the Authored Strategy artifact.
+* :mod:`tos.dsl.context_value` — the env-value carrier shape (``ContextValue`` /
+  ``ContextValueView``) whose *production and verification* belong to ``tos.marketfeed``
+  (design #32 §2.2 — the shape is dsl-owned so no ``engine -> marketfeed`` cycle can exist).
 * :mod:`tos.dsl.determinism` — the pure ``evaluate`` + recorded-input signature.
 * :mod:`tos.dsl.bounds` — the bounded-evaluation (symbolic) state machine.
 * :mod:`tos.dsl.evidence` — the enforcement-evidence records.
@@ -67,12 +70,19 @@ from tos.dsl.candidate import (
     CandidateProgram,
     iter_nodes,
 )
+from tos.dsl.context_value import (
+    VALUE_NAMESPACE,
+    ContextValue,
+    ContextValueView,
+    is_wildcard_field_key,
+)
 from tos.dsl.determinism import (
     EvaluationConfig,
     EvaluationResult,
     RecordedInputSignature,
     build_environment,
     evaluate,
+    evaluate_resolved,
 )
 from tos.dsl.evidence import (
     PHASE1_CAPABILITY_SCOPE,
@@ -171,12 +181,18 @@ __all__ = [
     "resolve_vector_realization",
     # strategy
     "AuthoredStrategy",
+    # context value carrier (design #32 §2.2 — shape is dsl-owned, production is marketfeed's)
+    "VALUE_NAMESPACE",
+    "ContextValue",
+    "ContextValueView",
+    "is_wildcard_field_key",
     # determinism
     "EvaluationConfig",
     "EvaluationResult",
     "RecordedInputSignature",
     "build_environment",
     "evaluate",
+    "evaluate_resolved",
     # bounds
     "BoundState",
     "degrades_to_no_action",
