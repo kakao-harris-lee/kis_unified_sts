@@ -1,0 +1,413 @@
+# RESIDUAL-RISK-REGISTER-002 — the VER-002-001 §378 (line 3291-3310) register
+#
+# WHAT THIS IS
+#   The §378 Residual Risk Register instance for the ADR-002 evidence track.
+#   §378 line 3293: "Every unresolved limitation SHALL record:" followed by
+#   twelve items. Each entry below carries all twelve under those names.
+#
+# SHAPE
+#   No template exists for this artifact (measured: verification/ ships
+#   RESIDUAL-RISK-ACCEPTANCE-RECORD-template.yaml, which is the ADR-002-026
+#   deviation-acceptance record — a different artifact with a different
+#   authority). The shape here is derived directly from VER §378's twelve SHALL
+#   items, in the specification's own order and wording.
+#
+# THIS IS NOT A DEVIATION ACCEPTANCE
+#   §378 line 3308 adds binding requirements "Where RFC-001 permits a deviation".
+#   None of the three entries claims a deviation: no ADR-002-026 request, no
+#   decision, no Active Deviation Set, no compensating-control acceptance, no
+#   Deviation Generation. Entry R-1 in particular CANNOT be accepted that way —
+#   VER:130 forbids WAIVED_WITH_RESIDUAL_RISK for a Critical requirement. These
+#   are recorded gaps that block, not accepted risks that release.
+#
+# NON-UNION RULE
+#   §378 line 3308: "Separate residual risks SHALL NOT be unioned at a consumer;
+#   combined risk requires one canonical reviewed set." R-1, R-2, and R-3 are
+#   three independent entries. A consumer SHALL cite them individually and SHALL
+#   NOT summarise them as one aggregate residual.
+#
+# "BROKER LIMITATION" PROHIBITION
+#   §378 line 3310: "Broker limitation" is not a sufficient residual-risk
+#   description. No entry below invokes one; the scope is broker-free.
+#
+# APPROVAL RECORD
+#   Operator directive 2026-07-29 ("§378 Residual Risk Register 생성: 승인");
+#   session C record. Approver identity `operator` = D1 role scheme System owner /
+#   Bounds-Approver (docs/plans/2026-07-29-tos-phase0-role-scheme-and-disposition.md
+#   lines 15-16). Separation of duties preserved: this identity is not the
+#   Live-Armer (unassigned), and per VER §2.6 the independent reviewer of the
+#   affected evidence SHALL NOT be the identity that approved these residuals.
+
+artifact_type: RESIDUAL_RISK_REGISTER
+schema_version: "1.0-DRAFT"
+register_id: RESIDUAL-RISK-REGISTER-002
+register_version: "1.0"
+canonical_digest: null   # no approved canonicalization scheme for spec-layer YAML; the git object is the integrity reference
+status: APPROVED
+approved_by: ["operator"]
+effective_from: "2026-07-29"
+review_due: "2027-01-25"
+# review_due rationale: the approved MAX_residual_risk_review_interval_ms
+# (VERIFICATION-PROFILE-002.yaml line 949) is 15552000000 ms = 180 days. From
+# effective_from 2026-07-29 that bound lands on 2027-01-25, four days before the
+# profile's own review_due 2027-01-29 (line 56). The earlier, bound-conforming
+# date governs every entry; a later date would breach an approved bound.
+
+scope:
+  environment: non-live-test
+  detail: >-
+    Pure model layer at commit eb92ea467cb55d923b5c9eb4307b65491b14fe26. No
+    broker session, no account, no instrument, no order path, no live
+    authorization. Matches VERIFICATION-PROFILE-002.yaml scope.environment
+    (line 60).
+  covered_rows: [STATE-EV-001, SPG-EV-002]
+
+union_prohibition: >-
+  Per VER-002-001 §378 line 3308 these entries SHALL NOT be unioned at a
+  consumer. Each is registered independently with its own scope, controls,
+  bound, owner, approver, review date, and required scope reduction.
+
+deviation_binding_applicability: >-
+  NOT_APPLICABLE — no entry claims an RFC-001 permitted deviation, so the §378
+  line 3308 ADR-002-026 binding requirements (request, decision, Active Deviation
+  Set, reduced configuration scope, independently verified compensating controls,
+  Deviation Generation, hard expiry, review interval, non-PASS evidence status)
+  do not attach. R-1 is additionally ineligible for that route (VER:130).
+
+entries_scope_note: >-
+  This register holds exactly the three entries the operator approved on
+  2026-07-29. One further candidate limitation was identified while authoring the
+  companion scenario set and is recorded there rather than invented into this
+  register: ADVERSE-SCENARIO-SET-002-EVL2-PILOT.yaml
+  `dominance_and_pruning_proofs` id ASS-DOM-05 (STATE-EV-001 dimensions
+  intent_state and capacity_state were never directly mutated; their coverage
+  rests on a structural-identity argument, not an executed one). Registering it
+  as R-4 is an open operator decision.
+
+entries:
+
+  - risk_identity: >-
+      R-1 — STATE-EV-001 durable/persisted limb is unevidenced. The EV-L2 pilot
+      covers the representability and no-silent-derivation axes of the row's
+      Expected; the "durable" half of that same Expected has no evidence at all,
+      because no persisted authoritative record exists to fault.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 STATE-EV-001 Expected (line 1024): "Every valid composite
+        remains representable and durable; no dimension is silently derived from
+        another except through an explicit CPL invariant and owned transition."
+        Minimum level EV-L1/EV-L2 (line 1021).
+      adr: >-
+        ADR-002-005 §13 (line 197): "All five dimensions SHALL be durable and
+        reconstructable after crash, restart, or failover." AC-005-1 (line 237):
+        the composite states "are all representable and persisted". The durable
+        referent's own row, STATE-EV-004, is minimum level EV-L3 (line 1042).
+      criticality_note: >-
+        The requirement is Critical, so VER:130 makes
+        WAIVED_WITH_RESIDUAL_RISK unavailable. This is a blocking gap, not an
+        acceptable one.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test only; the affected artifact is the in-memory
+        tos.orthostate.records.CompositeState at commit eb92ea46. No broker,
+        account, or instrument is in scope, and no broker limitation is invoked
+        or implied (VER:3310).
+    credible_failure_sequence: >-
+      (1) A durability or reconstruction defect exists in whatever persistence is
+      later chosen — a write that is not durable at the claimed point, or a
+      reconstruction that resolves a dimension differently after crash. (2) The
+      defect is invisible at the model layer, so the EV-L2 pilot cannot fail on
+      it. (3) A reader of the pilot evidence treats STATE-EV-001 as covering the
+      row's whole Expected and builds restart, recovery-barrier, or reconciliation
+      logic on "durable and reconstructable" as an established premise. (4) The
+      defect first surfaces at a real crash-restart, when a composite state is
+      reconstructed with a different capacity_state or knowledge_state than the
+      one that was committed. (5) The conservative-resume barrier is then armed
+      from a false premise, which is exactly the condition ADR-002-005 §13 exists
+      to prevent.
+    maximum_economic_effect:
+      present: >-
+        None. The declared scope has no broker route, no account, and no order
+        path, so no economic effect can be produced by this residual today.
+      path_to_economic_effect: >-
+        The credible economic path is evidence-chain contamination, not direct
+        loss: a coverage or PASS claim resting on this row could later be cited
+        as a satisfied precondition in a live-authorization or scope-promotion
+        decision. The effect would then be bounded by whatever live scope that
+        later decision opens — which is presently unbounded on the record,
+        because MAX_trial_authorized_economic_effect and
+        MAX_trial_concurrent_potential_effect are null and key-level unapproved
+        in VERIFICATION-PROFILE-002.yaml (lines 942-943).
+      statement: "No present economic effect; future effect unbounded-by-record until those keys are approved."
+    existing_controls:
+      - "The run manifest's claim.covered_axis names the exclusion in-band: 'representability + non-derivation ONLY (NOT durable)'."
+      - "coverage_argument.discharged is false in the same manifest; unexercised_residual_ref carries the durable limb with its anchors."
+      - "claim.closes_evidence_item and claim.register_status_moved_by_this_run are both false, so no register row moved."
+      - "VER:130 structurally forbids waiving a Critical requirement, so no acceptance route can quietly close this."
+      - "The durable referent has its own higher-level row (STATE-EV-004, EV-L3), so the gap has a named destination."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED. There is no runtime detector because there is no durable
+        substrate to monitor — ADR-002-005 §4 (line 61) leaves the persistence
+        technology undecided. Detection today is document-gate only: review of the
+        evidence package's covered_axis and coverage_argument fields.
+      containment: >-
+        Gate-level only. The row cannot reach PASS while the coverage argument is
+        undischarged, and no automated fence exists (none can, absent a substrate).
+      time_bound: "None claimed. A gate reviewed at most every 180 days is not a time-to-detect bound."
+    owner: operator
+    approver:
+      identity: operator
+      basis: "Operator directive 2026-07-29 (§378 register creation approved); session C record. D1 role scheme System owner."
+      separation_of_duties: "Not the Live-Armer (unassigned). Per VER §2.6 this identity SHALL NOT also be the independent reviewer of the affected evidence."
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: "MAX_residual_risk_review_interval_ms = 15552000000 ms = 180 days from 2026-07-29 (VERIFICATION-PROFILE-002.yaml line 949)."
+      expiry_semantics: >-
+        This entry does not expire into acceptance. A missed or unproven review
+        restricts scope and never auto-renews; the underlying requirement stays
+        Critical and unwaivable regardless of the date.
+    required_scope_reduction:
+      - "STATE-EV-001 SHALL NOT be marked PASS on the strength of the EV-L2 pilot."
+      - "No live scope, restricted-live trial, or production authorization may cite STATE-EV-001 as evidence of durability."
+      - "Any consumer needing the durable limb SHALL cite STATE-EV-004 at EV-L3 with a real persistence substrate, not this row."
+      - "Resolution prerequisite: the persistence technology decision deferred by ADR-002-005 §4 (line 61) must be made first; an EV-L3 crash/restart fault run then discharges the limb."
+    evidence_references:
+      - "tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/manifest.yaml (run_id 20260729T120613Z-eb92ea46; coverage_argument.unexercised_residual_ref[0]; claim.covered_axis)"
+      - "tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/fault-timeline.jsonl (11 faults, all MET, none durable)"
+      - "tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/baseline.yaml (sha256 77c0234e9c83d5a662a39faf0a7ee9631e577c1a8b0f62cc72016aecbd7658f2; 16 VER §3 fields unmet)"
+      - "baseline commit eb92ea467cb55d923b5c9eb4307b65491b14fe26; evidence commit 9611142d"
+      - "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md §2.3, §9 gate 3, §10 (ratified at commit fdb74324)"
+      - "VER-002-001 lines 1021, 1024, 1042, 130; ADR-002-005 lines 61, 197, 237"
+
+  - risk_identity: >-
+      R-2 — the overflow/underflow limb of Safety-Profile semantic validation is
+      unexercised, because no approved bound defines a safe magnitude range for a
+      governed dimension. The fault was written, then excluded from the catalogue
+      for lack of a falsifiable Expected.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 SPG-EV-002 Expected (line 1549): "Every unsafe or incomparable
+        semantic mutation is rejected deterministically before activation; no
+        parser or consumer interpretation grants a more permissive result."
+        Minimum level EV-L1/EV-L2 (line 1546).
+      adr: >-
+        ADR-002-014 §11 step 3 (line 304) SHALL-validates "types, units,
+        currencies, multipliers, signs, precision, rounding, overflow, underflow,
+        NaN, infinity, and boundary inclusion"; SPG-AC-002 (line 621) requires
+        those defects to "fail closed before activation". The overflow/underflow
+        words in that list have no executed evidence.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test only; the affected artifact is
+        tos.spg.records.GovernedDimensionLimit (lines 87-114) as consumed by
+        tos.spg.predicates.semantic_validation and profile_within_envelope. No
+        broker, account, or instrument is in scope.
+    credible_failure_sequence: >-
+      (1) A Runtime Safety Profile is authored with a governed-dimension magnitude
+      outside any sane operating range — not merely above an envelope maximum,
+      but outside the range the downstream representation can carry. (2) Nothing
+      rejects it on absolute grounds: CanonicalDecimal is arbitrary-precision, so
+      no float overflow is raised, and the only magnitude check is the relative
+      comparison against envelope_max, which is itself only present when the
+      envelope declares that dimension. (3) The value is activated. (4) A
+      downstream consumer with a narrower representation — a broker field width, a
+      fixed-scale serialization, an integer conversion — truncates, wraps, or
+      saturates it. (5) The activated limit no longer represents the approved
+      limit, and the direction of the error is not guaranteed conservative: a
+      wrapped or truncated magnitude can be larger-permissive than intended.
+    maximum_economic_effect:
+      present: "None. Non-live-test scope; no order path exists to carry a permissive limit into a broker command."
+      path_to_economic_effect: >-
+        Same evidence-chain path as R-1: SPG-EV-002 is the row closest to PASS in
+        this track, so a coverage claim over its Expected that silently includes
+        the step-3 overflow/underflow words would be the artefact a later
+        live-scope decision cites. That decision's ceiling is unbounded on the
+        record while MAX_trial_authorized_economic_effect is null
+        (VERIFICATION-PROFILE-002.yaml line 942).
+      statement: "No present economic effect; future effect unbounded-by-record."
+    existing_controls:
+      - "NaN and Infinity magnitudes are rejected at construction — the §5 H-1 hardening pins allow_inf_nan=False on FrozenModel, measured met in the run manifest's l1_hardening_prereq block, and exercised as SPG-05 / SPG-06."
+      - "A None magnitude fails closed rather than reading as unbounded (SPG-15; records.py:106-114 contract)."
+      - "A magnitude above a declared envelope_max is rejected (SPG-09 EXCEEDS_ENVELOPE), and an undeclared or omitted dimension is rejected rather than skipped (SPG-10, SPG-11)."
+      - "Coverage honesty: the run manifest's coverage_argument.unexercised_residual_ref names SPG-07 explicitly, so the gap is in-band with the evidence."
+      - "Residual after those controls: the ABSOLUTE safe-range check. Nothing bounds a magnitude that is finite, present, and below whatever envelope_max happens to say."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED, and measurably so. VERIFICATION-PROFILE-002.yaml was
+        approved at profile level on 2026-07-29 (P0-1) for 146 of its 163 numeric
+        keys, but it contains no governed-dimension magnitude or safe-range key at
+        all: a grep of the file for magnitude / overflow / underflow / safe_range /
+        scale matches only MAX_time_source_precision_ms (line 985) and
+        MIN_capacity_domain_voter_quorum (line 988), neither of which is a
+        magnitude range. The bound this residual needs is not among the approved
+        146 — it does not yet exist as a key.
+      containment: "Gate-level only: the SPG-EV-002 coverage argument SHALL NOT claim the step-3 overflow/underflow limb."
+      resolution_path: >-
+        Two steps, in order. (a) Register and approve a governed-dimension
+        magnitude range bound — the D4 patch track precedent is
+        VERIFICATION-PROFILE-002 PATCH-0054, which registered absent keys as null
+        with owner TBD so the gap was visible, followed by Bounds-Approver
+        approval; alternatively bind the range to an approved Hard Safety Envelope
+        instance. (b) With a falsifiable Expected then available, add SPG-07 to the
+        design §4 catalogue as a subsequent EV-L2 fault and re-run. Step (b) alone
+        cannot discharge this residual; without step (a) the Expected stays
+        non-falsifiable (design §0.5-4).
+    owner: operator
+    approver:
+      identity: operator
+      basis: "Operator directive 2026-07-29 (§378 register creation approved); session C record. Also the Bounds-Approver for the key this residual needs."
+      separation_of_duties: "Not the Live-Armer (unassigned). Per VER §2.6 not eligible as the independent reviewer of the affected evidence."
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: "MAX_residual_risk_review_interval_ms = 180 days from 2026-07-29 (VERIFICATION-PROFILE-002.yaml line 949)."
+      expiry_semantics: "No auto-renewal and no ripening into acceptance; a missed review restricts scope."
+    required_scope_reduction:
+      - "SPG-EV-002's coverage argument SHALL NOT claim the ADR-002-014 §11 step-3 overflow/underflow limb, and any PASS proposed for the row SHALL carry this exclusion verbatim."
+      - "No Runtime Safety Profile may be activated for a live or restricted-live scope on the strength of SPG-EV-002 alone."
+      - "Until a range bound is approved, profile magnitudes remain constrained only relatively (against envelope_max), which SHALL be stated wherever the row is cited."
+    evidence_references:
+      - "tos-evidence/SPG-EV-002/20260729T120633Z-eb92ea46/manifest.yaml (run_id 20260729T120633Z-eb92ea46; coverage_argument.unexercised_residual_ref[0] = SPG-07)"
+      - "tos-evidence/SPG-EV-002/20260729T120633Z-eb92ea46/fault-timeline.jsonl (12 faults, all MET; SPG-07 absent by design)"
+      - "baseline commit eb92ea467cb55d923b5c9eb4307b65491b14fe26; evidence commit 9611142d; hardening commit eb92ea46"
+      - "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md §4 (SPG-07 exclusion), §0.5-4, §10 (ratified at commit fdb74324)"
+      - "ADVERSE-SCENARIO-SET-002-EVL2-PILOT.yaml unbounded_credible_effects ASS-UNB-01; dominance_and_pruning_proofs ASS-DOM-01"
+      - "VERIFICATION-PROFILE-002.yaml lines 1-51 (P0-1 scope-limited approval), 942, 949, 985, 988"
+      - "ADR-002-014 lines 304, 621; VER-002-001 lines 1546, 1549"
+
+  - risk_identity: >-
+      R-3 — currency has no independent representation in the governed-dimension
+      model. ADR-002-014 §11 step 3 and SPG-AC-002 both name currency as a
+      fail-closed defect class, but the only carrier available is the free-text
+      `unit` field, so a currency defect cannot be expressed, mutated, or
+      validated on its own.
+    affected_requirement_and_adr:
+      requirement: >-
+        VER-002-001 SPG-EV-002 Expected (line 1549), the "incomparable semantic
+        mutation" clause: a currency-only mismatch is exactly such a mutation and
+        is not independently detectable.
+      adr: >-
+        ADR-002-014 §11 step 3 (line 304) lists "currencies" among the SHALL-
+        validated attributes; SPG-AC-002 (line 621) requires "Unit, multiplier,
+        currency, sign, precision, rounding, overflow, and cross-field semantic
+        defects fail closed before activation". ADR-002-021 §10 (line 281) adds
+        that "Currency conversion ... [is a] Critical Input and cannot silently
+        default".
+      measured_gap: >-
+        tos.spg.records.GovernedDimensionLimit (tos/src/tos/spg/records.py:87-114)
+        declares dimension, envelope_max, profile_value, unit, multiplier, sign,
+        precision, rounding, boundary — and no currency field. Negative grep over
+        tos/src/tos/spg/ for "currency" returns exactly one hit, a docstring at
+        predicates.py:438 quoting SPG-AC-002; there is no field and no validator.
+        The docstring names a guarantee the fields cannot carry.
+    broker_account_instrument_scope:
+      brokers: []
+      accounts: []
+      instruments: []
+      statement: >-
+        Non-live-test, and additionally single-currency by omission: the exercised
+        dimensions (qty, notional, latency) carry no currency at all. No broker,
+        account, or instrument is in scope.
+    credible_failure_sequence: >-
+      (1) A multi-currency deployment encodes currency by convention inside the
+      free-text `unit` string, or omits it. (2) An envelope dimension and a
+      profile dimension of the same name differ only in currency — say an envelope
+      maximum denominated in one currency and a profile value in another — while
+      their `unit` strings match, either because the convention was not followed
+      or because both were written as a currency-free unit such as "notional".
+      (3) profile_within_envelope compares the metadata tuple, finds no mismatch,
+      and compares the magnitudes directly. (4) The comparison is arithmetically
+      valid and semantically meaningless: an amount in a weaker unit of account
+      passes against a maximum in a stronger one, and the activated profile
+      permits more economic exposure than the envelope approved. (5) Nothing
+      downstream re-checks, because the currency conversion that ADR-002-021 §10
+      (line 281) requires to be explicit was never expressed as an input at all.
+    maximum_economic_effect:
+      present: >-
+        None. The scope is non-live-test and currency-free; no multi-currency
+        profile exists to activate and no order path exists to carry it.
+      path_to_economic_effect: >-
+        Two-step. First the evidence-chain path shared with R-1 and R-2: a
+        coverage claim over SPG-EV-002's Expected that reads as covering "currency"
+        because the ADR lists it would be cited later. Second, and specific to this
+        entry, the defect's own effect scales with the FX ratio between the two
+        currencies rather than with any approved limit — the over-permission is
+        multiplicative, not additive, and no approved bound caps it (the profile
+        has no currency-aware key, and MAX_trial_authorized_economic_effect is
+        null, line 942).
+      statement: "No present economic effect; the future effect is proportional to an unmodelled FX ratio and is unbounded-by-record."
+    existing_controls:
+      - "Unit-string equality is enforced between an envelope dimension and the same-named profile dimension (SPG-01 exercised; guard at predicates.py:536-537), so IF currency is embedded in `unit` by convention, a currency-only difference is caught as a unit mismatch."
+      - "That control is convention-dependent: nothing validates that the convention was followed, and no test asserts it. It is a practice, not a mechanism."
+      - "Multiplier and sign are separate fields, so a currency change disguised as a multiplier change is caught (SPG-02, SPG-03)."
+      - "Coverage honesty: the run manifest's coverage_argument.unexercised_residual_ref names SPG-04 and its cause explicitly."
+    detection_and_containment_bound:
+      detection: >-
+        NOT_ESTABLISHED at the model layer. There is no field to inspect, so no
+        detector can be written without a model change; a currency defect is
+        detectable today only by human reading of the `unit` strings.
+      containment: >-
+        Scope-level only: the exercised dimensions are currency-free, so the
+        defect cannot be instantiated at the present scope. This contains the
+        risk exactly as long as that stays true.
+      resolution_path: >-
+        A model change is required, not another test: either add an independent
+        currency field to GovernedDimensionLimit and compare it beside unit /
+        multiplier / sign (reusing the ratified ValidationReason vocabulary per the
+        design §5 H-3 drift-lock, minting no new reason value), or bind currency
+        through an approved conversion policy as ADR-002-021 §10 (line 281)
+        requires. Only then can SPG-04 be written with a deterministic, falsifiable
+        Expected and added to the catalogue.
+    owner: operator
+    approver:
+      identity: operator
+      basis: "Operator directive 2026-07-29 (§378 register creation approved); session C record."
+      separation_of_duties: "Not the Live-Armer (unassigned). Per VER §2.6 not eligible as the independent reviewer of the affected evidence."
+    expiration_or_review_date:
+      review_date: "2027-01-25"
+      basis: "MAX_residual_risk_review_interval_ms = 180 days from 2026-07-29 (VERIFICATION-PROFILE-002.yaml line 949)."
+      expiry_semantics: "No auto-renewal; review confirms the single-currency containment still holds or restricts scope."
+    required_scope_reduction:
+      - "No multi-currency Runtime Safety Profile may be authored or activated while GovernedDimensionLimit has no currency field."
+      - "SPG-EV-002's coverage argument SHALL NOT claim the ADR-002-014 §11 step-3 currency limb, and SHALL NOT cite SPG-AC-002 as satisfied in full."
+      - "Any governed dimension whose magnitude is denominated in a unit of account SHALL be treated as out of scope for this evidence track until the model change lands."
+    evidence_references:
+      - "tos-evidence/SPG-EV-002/20260729T120633Z-eb92ea46/manifest.yaml (coverage_argument.unexercised_residual_ref[1] = SPG-04)"
+      - "tos/src/tos/spg/records.py:87-114 (GovernedDimensionLimit field list — the measured absence)"
+      - "tos/src/tos/spg/predicates.py:438 (the sole 'currency' occurrence in tos/src/tos/spg/, a docstring quoting SPG-AC-002)"
+      - "baseline commit eb92ea467cb55d923b5c9eb4307b65491b14fe26; evidence commit 9611142d"
+      - "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md §4 (SPG-04 exclusion), ratified at commit fdb74324"
+      - "ADVERSE-SCENARIO-SET-002-EVL2-PILOT.yaml dominance_and_pruning_proofs ASS-DOM-02"
+      - "ADR-002-014 lines 304, 621; ADR-002-021 line 281; VER-002-001 line 1549"
+
+authority:
+  accepts_residual_risk: false
+  creates_capacity: false
+  mutates_or_releases_capacity: false
+  activates_configuration: false
+  creates_protective_classification: false
+  creates_live_authorization: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+  marks_any_evidence_item_pass: false
+
+authorization_notice: >-
+  This register records unresolved limitations; it accepts none of them and
+  grants nothing. Registration is disclosure, not acceptance: an entry here does
+  not become an approved deviation, does not permit the affected evidence item to
+  be marked PASS, and does not authorise any live, restricted-live, or production
+  scope. R-1 in particular cannot be accepted at all while the requirement is
+  Critical (VER-002-001 line 130). The three entries SHALL be cited individually
+  and never unioned (line 3308), and none of them rests on a broker limitation
+  (line 3310). Every review date here is bound by the approved
+  MAX_residual_risk_review_interval_ms; a missed review restricts scope and never
+  auto-renews.

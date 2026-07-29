@@ -1,8 +1,11 @@
-# VERIFICATION-PROFILE-002 — PROPOSED (NOT APPROVED)
+# VERIFICATION-PROFILE-002 — APPROVED (scope-limited; 17 null keys remain
+# key-level UNAPPROVED and fail-closed)
 #
-# STATUS: PROPOSED engineering draft. These are strawman candidate bounds for
-# review and ratification. They are NOT approved and MUST NOT be relied upon.
-# Per VER-002-001 §6, an unapproved or placeholder bound is not an approved bound.
+# STATUS: APPROVED at profile level (operator, 2026-07-29) for the 146 keys
+# carrying approved values. Per VER-002-001 §6 the key-level rule is unchanged:
+# an unapproved or placeholder bound is not an approved bound — the 17 null
+# keys (10 broker bounds pending P0-2 measurement, 6 instance/architecture
+# limits, MIN_evidence_retention_ms) remain unapproved and fail-closed.
 #
 # Rules for ratification (all required before status -> APPROVED):
 #   - each `value_ms` is confirmed or replaced by the accountable owner;
@@ -31,12 +34,25 @@
 #     before any future APPROVED transition.
 #   - scope.environment stays non-live-test: these are EV-L1..L3 harness ceilings,
 #     not live calibration.
+#
+# 2026-07-29 P0-1 profile-level approval (operator directive, session C record):
+#   - The operator, as Bounds-Approver, APPROVES the profile at profile level.
+#     This is a SCOPE-LIMITED approval: it covers exactly the 146 keys carrying
+#     approved values above; the strict all-keys reading of the ratification
+#     rules is amended by this decision to "every key carrying a value is
+#     confirmed by the accountable owner; null keys remain key-level unapproved
+#     and fail-closed until P0-2 measurement or the pending instance decision".
+#   - Effect: the "bounds were measured / approved Profile" precondition for
+#     non-broker EV rows (e.g. SPG-EV-002) is discharged for the keys they
+#     consume; broker rows remain blocked on P0-2. No live calibration implied
+#     (scope.environment stays non-live-test). Approving bounds does not arm
+#     live trading (separation of duties preserved; Live-Armer unassigned).
 
 profile_id: VERIFICATION-PROFILE-002
-version: "2.1-PROPOSED"
-status: PROPOSED               # PROPOSED -> (human review) -> APPROVED
-approved_by: []                # MUST be non-empty before APPROVED
-effective_from: null
+version: "2.1"
+status: APPROVED               # profile-level, scope-limited (see 2026-07-29 header record)
+approved_by: ["operator"]      # Bounds-Approver (D1 role scheme; SHALL NOT also arm live trading)
+effective_from: "2026-07-29"
 review_due: "2027-01-29"
 
 scope:
