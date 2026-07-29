@@ -771,6 +771,48 @@ SAFE-xxx requirement or broker proper noun is added, and the profile remains `2.
 `approved_by: []` — the patch widens the approval surface for the Bounds-Approver; it approves
 nothing. Actual/template key sets remain identical (91 scope keys, 84 bounds, 79 limits).
 
+### 3.22 Per-bound schema completion (Patch-0055) and the 2026-07-29 partial bounds approval — APPLIED
+
+Two distinct acts landed together against the same profile; they are recorded separately because
+they carry different authority.
+
+**Patch-0055 (Architecture Board — schema).** VER-002-001 §6 requires seven attributes for every
+bound; the profile's `bounds:` shape carried six, holding applicable scope and review date only at
+profile level. Patch-0055 appends `applicable_scope` and `review_date` to all 84 bounds in the
+profile **and** its template, completing the seven-attribute shape (84 × 8 = 672 bound fields per
+file) and discharging the third PATCH-0054 §5 owed follow-up. `applicable_scope` is derived without
+invention by three rules: the profile's own `per X` inline comment carried verbatim (13 bounds), the
+declared `measurement_source: broker_capability_profile` (4 bounds), and profile-scope inheritance
+`non-live-test` (67 bounds). The `limits:` block keeps its flat-scalar shape, which §6 does not
+address. In the template both new fields are `TBD`/`null`. Adding a field approves nothing and no
+value, `semantics`, `measurement_source`, or `failure_response` changes.
+
+**2026-07-29 Bounds-Approver decision (operator — values).** The accountable owner approved
+**146 of the 163** numeric keys against the project-side candidate package
+(`docs/plans/2026-07-29-tos-phase0-bounds-draft-package.md`, commit `d6babce9`, §15 approval record):
+74 bounds and 72 limits now carry a value, `owner: operator` on every valued bound, a per-key
+`[APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 …]` provenance marker, and
+`review_date: 2027-01-29`. **17 keys remain null and fail-closed:** the 10 broker bounds await P0-2
+measurement from an approved Broker Capability Profile, and 6 instance/architecture limits plus
+`MIN_evidence_retention_ms` await deployment-Matrix, trial-scope, Capacity-Domain, and
+retention-horizon decisions; all 17 keep `owner: TBD`. Where the candidate package gave a range
+rather than a single number, the conservative end was taken (`MAX_` short, `MIN_` long), except
+`MAX_critical_input_correction_horizon_ms`, whose safe direction is *longer* — a short correction
+horizon would read an unarrived correction as final; the 19 such discretion sites are enumerated in
+package §15.6. No broker proper noun and no venue/market-microstructure specific enters the profile.
+
+**What did not change.** `status: PROPOSED`, `approved_by: []`, `version: "2.1-PROPOSED"`,
+`effective_from: null`, and `scope.environment: non-live-test` are all unchanged: the profile's own
+ratification rules require every `value_ms` to be confirmed by the accountable owner before
+`APPROVED`, and 17 null keys mean that condition is unmet. `review_due` is set to `2027-01-29`,
+which those same rules list as a precondition of a future `APPROVED` transition rather than a
+consequence of one. Actual/template key sets remain identical at 257 keys (91 scope, 84 bounds,
+79 limits, 3 review). No SAFE-xxx requirement, no invariant, no acceptance criterion, and no EV ID
+is introduced; the Evidence Register count is unchanged (Part-1 372) and all 372 items remain
+`NOT_IMPLEMENTED`. A key with an approved value is not executed evidence: EV-L1 is a pure predicate
+level that consumes no wall-clock threshold, so these values are ceilings the EV-L2/L3 harness will
+enforce, not measurements. Independent EV-L0 review of both acts is owed.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -779,7 +821,7 @@ ADR-002-005 through ADR-002-030 are authored as `Proposed`. Phase B and follow-o
 
 ADR-002-007 selects the single-use capability currentness model, ADR-002-012 selects quorum ordering and RCL writer fencing, ADR-002-013 selects the effective final-egress security boundary, ADR-002-014 selects immutable safety-configuration artifacts and activation, ADR-002-015 selects effective-human identity, exact approvals, dual control, independent Human HALT, and break-glass confinement, ADR-002-016 selects immutable causal evidence, pre-effect durability, integrity anchoring, gap containment, protected retention, and isolated deterministic replay, ADR-002-017 selects closed startup, monotonic Recovery Generations, fenced recovery ownership, conservative Inventory Cuts, dependency-complete obligations, non-authorizing readiness, partial-scope isolation, and fresh re-arm handoff, ADR-002-018 selects Critical Input classification, source continuity/provenance, exact transformation lineage, immutable Snapshots/Capsules, independent approval common-mode analysis, correction/invalidation fan-out, and active final-egress context currentness, ADR-002-019 selects exact venue/session/tradability, instrument/order/account/margin/borrow/settlement, Broker Capability Profile, Order Admissibility Decision, Constraint Generation, protective-path, final-egress currentness, and non-revival rules, ADR-002-020 selects deterministic closed-envelope construction, canonical command semantics, conservative effect proof, downstream-mutation fencing, and actual-outbound verification, ADR-002-021 selects complete aggregate-state cuts, adverse scenarios, vector/scoped projection, benefit proof, numerical safety, exact allocation decisions, and active RCL/egress currentness, ADR-002-022 selects complete action classification, shared-scope budgets, bounded cause amplification, RCL-serialized single-use permits, retry/reconnect containment, Protective Flow Reserve, and active RCL/egress currentness, ADR-002-023 selects complete automated approval requests, true independent validation, exact decisions, single-use Intent consumption, invalidation closure, and active final-egress currentness, ADR-002-024 selects the complete cross-artifact vector, restrictive-fence/local-latch, per-send proof, and claim/fence/first-byte ordering protocol, ADR-002-025 selects exact restricted-live pre-registration, worst-credible-effect coverage, abort dominance, evidence non-extrapolation, progressive single-use promotion, and fresh production-authorization handoff, ADR-002-026 selects the Non-Waivable Boundary, exact safety-deviation scope, compensating-control and combined residual-risk rules, independent Effective Principal approval, single-use restricted-configuration eligibility, Deviation Generation currentness, evidence honesty, expiry/revocation, and non-revival, ADR-002-027 selects restrictive incident declaration, greatest-credible dependency scope, Incident Generation, Active Safety Incident Set, non-authorizing containment and controlled shutdown, lossless recovery handoff, administrative closure, and non-revival, ADR-002-028 selects exact telemetry and monitor coverage, deterministic conformance evaluation, Monitor Generation, restrictive gaps, suppression safety, bounded alert delivery/escalation, active egress currentness, and non-revival, ADR-002-029 selects exact reviewed-source identity, complete dependency/toolchain closure, isolated build provenance, immutable artifact custody, independent admission, monotonic Release Generation, complete Admitted Release Sets, runtime attestation, restriction currentness, rollback/restore fencing, and non-revival, and ADR-002-030 selects exact economic-obligation legs, field-specific finality, PTOL lifecycle serialization, source and statement coverage, breaks/corrections, Post-Trade Obligation Generation, conservative RCL capacity coupling, external-instruction confinement, and non-revival. Conforming products, schemas, registries, compilers/evaluators/verifiers, numeric/unit/risk/flow/approval/currentness/trial/deviation/incident/monitoring/release/post-trade rules, canonicalization, scenario/valuation models, SDK/serializer constraints, failure-domain allocation, bounds, and broker evidence remain acceptance blockers.
 
-Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-030, but all remain `NOT_IMPLEMENTED`. Verification Profile `2.1-PROPOSED` has matching actual/template key sets with 91 scope keys, 84 bounds, and 79 limits (Patch-0054, §3.21, added 26 null placeholder keys from the project-side design-cycle census; none carries a value). It additionally binds the proposed Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set, Statement Coverage Manifest, and their unapproved effect-to-obligation, change-detection, break-to-restriction, egress-denial, generation-fence, statement-gap, obligation/finality/statement/break/transfer age values while retaining every earlier unapproved bound. The profile remains unapproved with `approved_by: []`; unresolved values keep the affected scope contained and live operation prohibited.
+Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-030, but all remain `NOT_IMPLEMENTED`. Verification Profile `2.1-PROPOSED` has matching actual/template key sets with 91 scope keys, 84 bounds, and 79 limits (Patch-0054, §3.21, added 26 null placeholder keys from the project-side design-cycle census; Patch-0055, §3.22, then completed the per-bound shape with `applicable_scope` and `review_date`). Of the 163 numeric keys, **146 values were approved by the accountable owner on 2026-07-29** (74 bounds, 72 limits, each carrying `owner: operator` where the shape has an owner field, a per-key approval-provenance marker, and `review_date: 2027-01-29`); **17 remain null and fail-closed** — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — and therefore keep every scope depending on them contained. Because those 17 are unresolved, **the profile itself stays `2.1-PROPOSED` with `approved_by: []`**: per-key value approval is not profile approval, and the review-disposition records above that describe bounds as unapproved remain accurate as records of their review dates. It additionally binds the proposed Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set, Statement Coverage Manifest, and their effect-to-obligation, change-detection, break-to-restriction, egress-denial, generation-fence, statement-gap, obligation/finality/statement/break/transfer age quantities — all of which are now among the 146 owner-approved values, while the broker-dependent quantities they rely on stay null. The profile remains unapproved with `approved_by: []`; an approved value is a harness ceiling awaiting EV-L2/L3 execution, not evidence, and the still-unresolved values keep the affected scope contained and live operation prohibited.
 
 ### 4.1 Latest Review Disposition
 

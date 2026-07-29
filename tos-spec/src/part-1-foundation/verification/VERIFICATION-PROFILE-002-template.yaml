@@ -104,6 +104,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_risk_increase_revoke:
     value_ms: null
     semantics: hard_maximum
@@ -111,6 +113,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_revocation_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -118,6 +122,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_halt_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -125,6 +131,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_human_halt_to_commit:
     value_ms: null
     semantics: hard_maximum
@@ -132,6 +140,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: LATCH_LOCAL_HALT_AND_ESCALATE
+    applicable_scope: TBD
+    review_date: null
   B_time_health_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -139,6 +149,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_capability_claim_to_send:
     value_ms: null
     semantics: hard_maximum
@@ -146,6 +158,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: QUARANTINE_UNKNOWN
+    applicable_scope: TBD
+    review_date: null
   B_egress_hard_fence:
     value_ms: null
     semantics: hard_maximum
@@ -153,6 +167,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_stale_epoch_reject:
     value_ms: null
     semantics: hard_maximum
@@ -160,6 +176,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_external_activity_detect:
     value_ms: null
     semantics: hard_maximum
@@ -167,6 +185,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_external_activity_contain:
     value_ms: null
     semantics: hard_maximum
@@ -174,6 +194,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_startup_reconciliation:
     value_ms: null
     semantics: operational_target_and_hard_gate
@@ -181,6 +203,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: REMAIN_HALTED
+    applicable_scope: TBD
+    review_date: null
   B_recovery_trigger_to_barrier:
     value_ms: null
     semantics: hard_maximum
@@ -188,6 +212,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HARD_FENCE_AND_HALT
+    applicable_scope: TBD
+    review_date: null
   B_recovery_barrier_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -195,6 +221,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_critical_input_loss_detect:
     value_ms: null
     semantics: source_specific_hard_maximum
@@ -202,6 +230,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_critical_input_invalid_to_authority:
     value_ms: null
     semantics: hard_maximum
@@ -209,6 +239,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_critical_input_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -216,6 +248,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_venue_constraint_loss_detect:
     value_ms: null
     semantics: source_specific_hard_maximum
@@ -223,6 +257,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_venue_constraint_invalid_to_authority:
     value_ms: null
     semantics: hard_maximum
@@ -230,6 +266,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_venue_constraint_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -237,6 +275,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_order_conformance_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -244,6 +284,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_aggregate_risk_invalid_to_rcl:
     value_ms: null
     semantics: hard_maximum
@@ -251,6 +293,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_aggregate_risk_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -258,6 +302,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_action_flow_invalid_to_rcl:
     value_ms: null
     semantics: hard_maximum
@@ -265,6 +311,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_action_flow_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -272,6 +320,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_action_flow_violation_to_containment:
     value_ms: null
     semantics: hard_maximum
@@ -279,6 +329,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_approval_invalid_to_intent:
     value_ms: null
     semantics: hard_maximum
@@ -286,6 +338,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_approval_invalid_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -293,6 +347,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_approval_generation_fence:
     value_ms: null
     semantics: hard_maximum
@@ -300,6 +356,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_currentness_gap_to_local_deny:
     value_ms: null
     semantics: hard_maximum
@@ -307,6 +365,8 @@ bounds:
     rationale: "MEASURE. Maximum interval from a final egress detecting credible currentness loss or authenticated restriction to its Local Restrictive Latch reaching DENY_LATCHED (ADR-002-024 §§11, 14)."
     measurement_source: restrictive_ingress_and_local_egress_latch_trace
     failure_response: LATCH_LOCAL_HALT_AND_ESCALATE
+    applicable_scope: TBD
+    review_date: null
   B_restrictive_fence_commit:
     value_ms: null
     semantics: hard_maximum
@@ -314,6 +374,8 @@ bounds:
     rationale: "MEASURE. Maximum interval from authoritative owner restriction to committed Restrictive Fence Record over the complete dependency scope (ADR-002-024 §§10-11)."
     measurement_source: owner_restriction_and_currentness_ordering_trace
     failure_response: KEEP_LOCAL_DENY_AND_HALT
+    applicable_scope: TBD
+    review_date: null
   B_currentness_fence_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -321,6 +383,8 @@ bounds:
     rationale: "MEASURE. Maximum interval from committed Restrictive Fence Record to denial of later affected claims and sends at every final egress (ADR-002-024 §§11-15)."
     measurement_source: restrictive_fence_and_egress_admission_trace
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_currentness_proof_issue:
     value_ms: null
     semantics: hard_maximum
@@ -328,6 +392,8 @@ bounds:
     rationale: "MEASURE. Maximum interval to validate one complete vector and atomically create its single-use Egress Currentness Proof with capability claim and SEND_STARTED (ADR-002-024 §§12-13)."
     measurement_source: currentness_vector_claim_and_proof_trace
     failure_response: DENY_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_currentness_generation_fence:
     value_ms: null
     semantics: hard_maximum
@@ -335,6 +401,8 @@ bounds:
     rationale: "MEASURE. Maximum interval from commitment of a newer currentness, restore, writer, or egress generation to proven inability of every predecessor to create or consume a current vector or proof (ADR-002-024 §§15, 19)."
     measurement_source: currentness_generation_and_hard_fence_trace
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_trial_abort_to_authority_revoke:
     value_ms: null
     semantics: hard_maximum
@@ -342,6 +410,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_trial_abort_to_egress_deny:
     value_ms: null
     semantics: hard_maximum
@@ -349,6 +419,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_trial_evidence_gap_to_containment:
     value_ms: null
     semantics: hard_maximum
@@ -356,6 +428,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_scope_promotion_generation_fence:
     value_ms: null
     semantics: hard_maximum
@@ -363,6 +437,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_deviation_revoke_to_authority:
     value_ms: null
     semantics: hard_maximum
@@ -370,6 +446,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_deviation_revoke_to_egress:
     value_ms: null
     semantics: hard_maximum
@@ -377,6 +455,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_deviation_generation_fence:
     value_ms: null
     semantics: hard_maximum
@@ -384,6 +464,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_incident_signal_to_authority_restrict:
     value_ms: null
     semantics: hard_maximum
@@ -391,6 +473,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_incident_signal_to_egress_deny:
     value_ms: null
     semantics: hard_maximum
@@ -398,6 +482,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_incident_scope_expansion_to_egress_deny:
     value_ms: null
     semantics: hard_maximum
@@ -405,6 +491,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: EXPAND_CONTAINMENT_AND_HALT
+    applicable_scope: TBD
+    review_date: null
   B_incident_generation_fence:
     value_ms: null
     semantics: hard_maximum
@@ -412,6 +500,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_controlled_shutdown_hard_fence:
     value_ms: null
     semantics: hard_maximum
@@ -419,6 +509,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: REMAIN_HALTED_UNTIL_PROVEN_FENCED
+    applicable_scope: TBD
+    review_date: null
   B_incident_handoff_to_recovery_barrier:
     value_ms: null
     semantics: hard_maximum
@@ -426,6 +518,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CLOSE_BARRIER_AND_HALT
+    applicable_scope: TBD
+    review_date: null
   B_safety_telemetry_loss_detect:
     value_ms: null
     semantics: hard_maximum
@@ -433,6 +527,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK_AND_DECLARE_GAP
+    applicable_scope: TBD
+    review_date: null
   B_monitoring_gap_to_authority_restrict:
     value_ms: null
     semantics: hard_maximum
@@ -440,6 +536,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_monitoring_gap_to_egress_deny:
     value_ms: null
     semantics: hard_maximum
@@ -447,6 +545,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_critical_alert_delivery:
     value_ms: null
     semantics: hard_maximum
@@ -454,6 +554,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: KEEP_RESTRICTED_AND_ALTERNATE_ESCALATE
+    applicable_scope: TBD
+    review_date: null
   B_alert_escalation:
     value_ms: null
     semantics: hard_maximum
@@ -461,6 +563,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: INCIDENT_REMAINS_OPEN_AND_ESCALATE
+    applicable_scope: TBD
+    review_date: null
   B_monitoring_generation_fence:
     value_ms: null
     semantics: hard_maximum
@@ -468,6 +572,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_supply_chain_compromise_detect:
     value_ms: null
     semantics: hard_maximum
@@ -475,6 +581,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK_AND_RESTRICT_RELEASE_SCOPE
+    applicable_scope: TBD
+    review_date: null
   B_release_restriction_to_authority_restrict:
     value_ms: null
     semantics: hard_maximum
@@ -482,6 +590,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_release_restriction_to_egress_deny:
     value_ms: null
     semantics: hard_maximum
@@ -489,6 +599,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_release_generation_fence:
     value_ms: null
     semantics: hard_maximum
@@ -496,6 +608,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_runtime_artifact_drift_detect:
     value_ms: null
     semantics: hard_maximum
@@ -503,6 +617,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_AND_FENCE_RUNTIME
+    applicable_scope: TBD
+    review_date: null
   B_post_trade_effect_to_obligation_commit:
     value_ms: null
     semantics: hard_maximum
@@ -510,6 +626,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK_AND_QUARANTINE_CAPACITY
+    applicable_scope: TBD
+    review_date: null
   B_post_trade_change_detect:
     value_ms: null
     semantics: hard_maximum
@@ -517,6 +635,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK_AND_MARK_UNKNOWN
+    applicable_scope: TBD
+    review_date: null
   B_post_trade_break_to_restrict:
     value_ms: null
     semantics: hard_maximum
@@ -524,6 +644,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_post_trade_invalid_to_egress_deny:
     value_ms: null
     semantics: hard_maximum
@@ -531,6 +653,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_post_trade_generation_fence:
     value_ms: null
     semantics: hard_maximum
@@ -538,6 +662,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_statement_coverage_gap_detect:
     value_ms: null
     semantics: hard_maximum
@@ -545,6 +671,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK_AND_MARK_UNKNOWN
+    applicable_scope: TBD
+    review_date: null
   B_final_quantity_proof:
     value_ms: null
     semantics: broker_specific
@@ -552,6 +680,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: QUARANTINE_UNKNOWN
+    applicable_scope: TBD
+    review_date: null
   B_late_fill_observation:
     value_ms: null
     semantics: broker_specific
@@ -559,6 +689,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: PROFILE_CONTRADICTORY
+    applicable_scope: TBD
+    review_date: null
   B_protective_request_start:
     value_ms: null
     semantics: hard_maximum
@@ -566,6 +698,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_protective_request_complete:
     value_ms: null
     semantics: broker_specific
@@ -573,6 +707,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_broker_query_consistency:
     value_ms: null
     semantics: broker_specific
@@ -580,6 +716,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONSERVATIVE_UNKNOWN
+    applicable_scope: TBD
+    review_date: null
   B_rate_limit_recovery:
     value_ms: null
     semantics: broker_specific
@@ -587,6 +725,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: RESTRICT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_failure_domain_detect:
     value_ms: null
     semantics: hard_maximum
@@ -594,6 +734,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_failure_domain_contain:
     value_ms: null
     semantics: hard_maximum
@@ -601,6 +743,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_protection_gap:
     value_ms: null
     semantics: broker_specific
@@ -608,6 +752,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_protection_overlap:
     value_ms: null
     semantics: broker_specific
@@ -615,6 +761,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_protective_replacement_contain:
     value_ms: null
     semantics: hard_maximum
@@ -622,6 +770,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_non_trade_event_detect:
     value_ms: null
     semantics: source_and_broker_specific
@@ -629,6 +779,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_non_trade_transition_apply:
     value_ms: null
     semantics: hard_maximum
@@ -636,6 +788,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: REMAIN_HALTED
+    applicable_scope: TBD
+    review_date: null
   B_non_trade_reconcile:
     value_ms: null
     semantics: source_and_broker_specific
@@ -643,6 +797,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: QUARANTINE_UNKNOWN
+    applicable_scope: TBD
+    review_date: null
   B_operator_escalation:
     value_ms: null
     semantics: hard_maximum
@@ -650,6 +806,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
   B_evidence_persist:
     value_ms: null
     semantics: hard_maximum
@@ -657,6 +815,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_evidence_gap_detect:
     value_ms: null
     semantics: hard_maximum
@@ -664,6 +824,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_evidence_gap_contain:
     value_ms: null
     semantics: hard_maximum
@@ -671,6 +833,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT_OR_CONTAIN
+    applicable_scope: TBD
+    review_date: null
   B_evidence_anchor:
     value_ms: null
     semantics: hard_maximum
@@ -678,6 +842,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: STOP_NEW_RISK
+    applicable_scope: TBD
+    review_date: null
   B_cell_halt_to_global_halt:
     value_ms: null
     semantics: hard_maximum
@@ -685,6 +851,8 @@ bounds:
     rationale: TBD
     measurement_source: TBD
     failure_response: HALT
+    applicable_scope: TBD
+    review_date: null
 limits:
   MAX_normal_capability_age_ms: null
   MAX_time_health_snapshot_age_ms: null

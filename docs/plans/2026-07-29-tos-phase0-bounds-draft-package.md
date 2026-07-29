@@ -1,5 +1,17 @@
 # D2 — P0-1 Bounds Approval Draft Package (candidate proposal) (2026-07-29)
 
+> ## ⚠ 부분 승인됨 (2026-07-29) — 본 문서는 더 이상 순수 제안서가 아니다
+>
+> 운영자(Bounds-Approver 자격)가 **2026-07-29**에 §5/§6 제안 134키(범위 키는 권고값)와 §9 재확인 12키,
+> 합 **146키를 일괄 승인**했다. 승인은 `VERIFICATION-PROFILE-002.yaml`(actual)에 적용 완료되었고, 그
+> 적용 기록·잔존 항목·정정 사항은 **아래 신설 §15**에 있다. §7(instance/architecture 6키)·§8(broker 10키)·
+> `MIN_evidence_retention_ms` 합 **17키는 승인되지 않았고 값 null·`owner: TBD`로 fail-closed 유지**된다.
+> 프로파일은 잔여 null 때문에 **`status: PROPOSED`·`approved_by: []` 그대로**다.
+>
+> **아래 §0–§14의 원문은 승인 당시의 후보 제안 상태 그대로 보존**한다(승인 근거의 감사 추적). 따라서
+> 본문의 "어떤 값도 승인 효력이 없다"·"YAML 무수정"·"P0-3 미충족" 같은 서술은 **2026-07-29 이전 시점의
+> 진술**로 읽어야 하며, 현행 상태는 §15가 정본이다.
+
 > **문서 성격 (규범성 선언).** 본 문서는 **후보 제안서**다. 여기에 적힌 **어떤 값도 승인 효력이 없다**.
 > `VERIFICATION-PROFILE-002.yaml`은 **무수정**이며 본 패키지는 그 파일의 어떤 키/값/상태도 바꾸지 않는다
 > (`status: PROPOSED`·`approved_by: []` 그대로). 규범 허용 근거는 IMPLEMENTATION-PLAN-002 §1:38 —
@@ -598,3 +610,135 @@ Patch로 afg 사이클 재검토 지점(#16 소급 승인 대상, disposition §
 8. **MIN_ 계수 6 vs task "4".** 디스크 실측 6개 — Patch-0054 §2.4 "4"는 신설분만 지칭. 6개 전부 floor 처리(§1).
 9. **dimension-id 규약 변형 A/B(동봉 2).** 구조적(A) vs 저영향(B) — 안전 하중상 A 권고하나 afg 코드 변경 수반 →
    운영자 결정.
+
+---
+
+## 15. 승인 기록 (2026-07-29, 운영자 Bounds-Approver) — 적용 완료
+
+> 본 절이 **현행 상태의 정본**이다. §0–§14는 승인 당시의 후보 제안 원문으로 보존된다(§헤더 노트).
+
+### 15.1 결정
+
+운영자가 Bounds-Approver 자격(role-scheme/disposition §1)으로 **2026-07-29**에 다음을 결정했다:
+
+- §5/§6의 **제안 134키 일괄 승인**. 범위(`[제안·범위]`) 키는 **권고값 채택**.
+- §9의 **재확인 12키 승인**(값 유지 + owner/승인 표기).
+- **§7(6키)·§8(10키)·`MIN_evidence_retention_ms`(1키) = 17키는 승인하지 않음** — 의도적 fail-closed 보류.
+- 후속 **Patch-0055 착수**(동봉 1 = per-bound `applicable_scope`/`review_date` 신설).
+
+### 15.2 무엇이 승인됐나 — 146키 (전수 계수)
+
+| 구분 | 절 | 키 수 | 적용 내용 |
+|---|---|---:|---|
+| 신규 승인 bounds | §5-A..§5-H | **67** | `value_ms` 기입 · `owner: TBD → operator` · rationale 말미 승인 표기 · `review_date: 2027-01-29` |
+| 재확인 bounds | §9-bounds | **7** | 값 유지 · owner/표기/`review_date` 동일 적용 |
+| 신규 승인 limits | §6-L1..§6-F | **67** | scalar 값 기입 · 인라인 코멘트에 승인 표기 + `owner=operator; review_date=2027-01-29` |
+| 재확인 limits | §9-limits | **5** | 값 유지 · 코멘트 표기 동일 적용 |
+| **합** | | **146** | |
+
+승인 표기 문자열: `[APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 <절>]`.
+`d6babce9`는 본 패키지의 커밋으로, 승인된 값의 **정본 출처**다.
+
+패밀리별 채택값(§5/§6 표 그대로): §5-A 500 ×18 · §5-B 500 ×13 · §5-C 2000 ×9 · §5-D 1000 ×7 ·
+§5-E 1000 ×2 · §5-F 500 ×8 · §5-G 1000/1000/500 · §5-H 1000/500/500/500/30000/5000/30000 ·
+§6-L1 1000 ×38 · §6-L3 30000 ×4 · §6-L5 10 · §6-L6 3.
+
+### 15.3 무엇이 잔존하나 — 17키 (값 null · owner TBD · fail-closed)
+
+| 키 | 절 | 이연 사유 |
+|---|---|---|
+| `B_external_activity_detect`·`B_final_quantity_proof`·`B_late_fill_observation`·`B_protective_request_complete`·`B_broker_query_consistency`·`B_rate_limit_recovery`·`B_protection_gap`·`B_protection_overlap`·`B_non_trade_event_detect`·`B_non_trade_reconcile` | §8 (10 bounds) | **P0-2** — 승인된 Broker Capability Profile INSTANCE에서 측정. broker-agnostic 원칙상 값 발명 금지 |
+| `MAX_safety_cell_blast_radius`·`MAX_trial_authorized_economic_effect`·`MAX_trial_concurrent_potential_effect`·`MAX_trial_action_count`·`MIN_reserved_protective_capacity`·`MIN_capacity_domain_voter_quorum` | §7 (6 limits) | **INSTANCE/architecture** — Allocation Matrix · live-trial scope · Capacity Domain 합의모델 의존 |
+| `MIN_evidence_retention_ms` | §6-F→§7 (1 limit) | 경제/법무 보존 지평 의존(floor·축소 금지) |
+
+**owner 처분(정직).** 패키지 §4는 broker 키의 owner 후보를 `pending-P0-2`로 제안했으나, 승인 세션은
+**`owner: TBD` 유지**를 택했다 — 해당 bound의 rationale에 `pending-P0-2` 문자열이 없어 owner 필드에만
+새 어휘를 도입하면 프로파일 어디에도 정의되지 않은 owner 값이 생기기 때문이다. 이연 사유는 owner 필드가
+아니라 §8/§15.3·프로파일 헤더 노트·본 절이 기록한다.
+
+### 15.4 프로파일 전역이 `PROPOSED`로 남는 이유
+
+프로파일 헤더의 비준 규칙(YAML:7–13)은 `status: APPROVED` 전이의 선행 조건으로 **"each `value_ms` is
+confirmed or replaced by the accountable owner"**를 요구한다. 잔여 null 17키가 있는 한 이 조건은
+미충족이므로:
+
+- `status: PROPOSED` **불변**, `approved_by: []` **불변**, `version: "2.1-PROPOSED"` **불변**,
+  `effective_from: null` **불변**.
+- `review_due: null → "2027-01-29"` **설정함**. 같은 규칙 목록이 `effective_from`/`review_due`를
+  APPROVED의 **선행 조건**으로 열거하므로(금지가 아니라 요구), PROPOSED 상태에서 설정하는 것이 규칙에
+  부합한다. per-bound `review_date`와 동일한 6개월 주기다.
+- `scope.environment: non-live-test` **불변** — 승인된 값은 EV-L1~L3 하네스 임계이지 live 캘리브레이션이
+  아니다(§0).
+
+### 15.5 §13 정정 — "P0-3 미충족"은 stale
+
+§13 첫 항목은 "**P0-3**(owner/evidence-owner/독립 리뷰어 지정 372행)이 여전히 선행 미충족"이라고
+서술한다. 이 서술은 본 패키지 저작 시점 기준이며 **현재는 사실이 아니다**: P0-3은 병렬 작업으로
+**커밋 `f85434c3`**("chore(tos-spec): P0-3 — assign owners/reviewer across all 372 evidence items",
+2026-07-29)에서 닫혔다 — 372행 전체에 impl owner·evidence owner·independent reviewer가 지정되었고,
++Broker 64행은 `pending-P0-2`로 표시되었다.
+
+**단, §13의 결론은 유효하다.** P0-1(본 승인)과 P0-3이 모두 닫혀도 EV 행은 자동으로 READY가 되지 않는다.
+`f85434c3` 자신이 "Status untouched: 372/372 NOT_IMPLEMENTED (READY still gated on P0-1)"라 기록했고,
+P0-1이 **부분** 승인이므로 §8·§7 키에 의존하는 행은 계속 차단된다. §13의 나머지 항목(broker 행 P0-2 잔존 ·
+instance/architecture 미해소 · EV 실행은 별개 · 환경 스코프 유지)은 전부 그대로 유효하다.
+
+### 15.6 재량 행사 지점 — 표에 수치가 없어 보수 측을 택한 19키
+
+§14는 승인 **전** 재량을, 본 절은 승인 **적용 시** 재량을 기록한다. 패키지 표가 단일 수치도 수치 대역도
+제시하지 않은 키는 "값 재발명 금지" 규율상 보수 측(`MAX_`=짧게, `MIN_`=길게)을 택하고 여기 전수 기록한다.
+파생 사다리(문서화된 앵커): `MINUTE = 60000`(프로파일 기존 최장 앵커 `B_startup_reconciliation`) ·
+`SESSION = 3600000`(60×MINUTE; 시장 미시구조 비의존 일반 운영 세션) · `DAY = 86400000` ·
+`REVIEW_CYCLE = 15552000000`(180일 = 본 승인이 정한 6개월 주기).
+
+| 키 | 패키지 제시 | 채택값 | 보수 근거 |
+|---|---|---:|---|
+| `B_evidence_anchor` | [범위, 정책 cadence] | 30000 | detect/contain 스케일보다 길되(§5-H "더 긺") 최장 앵커 60000보다 짧은 쪽 |
+| `MAX_human_approval_age_ms` | [분~세션] | 60000 | 대역 최단(MINUTE) |
+| `MAX_human_session_age_ms` | [세션] | 3600000 | SESSION |
+| `MAX_human_delegation_age_ms` | [delegation policy별] | 60000 | L1h 대역 최단(MINUTE) |
+| `MAX_safety_profile_validity_ms` | [≤1 세션~1일] | 3600000 | 대역 최단(SESSION) |
+| `MAX_live_authorization_validity_ms` | [≤1 세션·짧게] | 60000 | "짧게" = 세션보다 짧은 유일 앵커(MINUTE) |
+| `MAX_deviation_duration_ms` | [reduced scope 최단] | 60000 | "최단" ⇒ MINUTE |
+| `MAX_trial_duration_ms` | [exact run 최단] | 60000 | "최단" ⇒ MINUTE |
+| `MAX_envelope_review_interval_ms` | [정기 리뷰 주기] | 15552000000 | REVIEW_CYCLE(프로파일 `review_due`와 정합) |
+| `MAX_residual_risk_review_interval_ms` | [risk class별] | 15552000000 | REVIEW_CYCLE |
+| `MAX_monitoring_suppression_duration_ms` | [최단·자동 재개 금지] | 60000 | "최단" ⇒ MINUTE |
+| `MAX_clock_offset_ms` | [범위] | 50 | L4 family posture "수십~수백 ms"의 최단 |
+| `MAX_future_timestamp_tolerance_ms` | [범위 작게; 0 강제금지] | 50 | 최단이되 0 아님 |
+| `MAX_time_source_precision_ms` | [범위, source class별] | 50 | L4 최단 |
+| `MAX_time_source_sequence_gap_ms` | [범위] | 50 | L4 최단 |
+| `MAX_critical_input_source_production_delay_ms` | [범위, source class별] | 50 | L4 최단 |
+| `MAX_critical_input_transport_and_queue_delay_ms` | [범위] | 50 | L4 최단 |
+| `MAX_critical_input_correction_horizon_ms` | [범위, **길 수 있음**] | 86400000 | ⚠ **방향 반전 키**: §4의 "MAX_는 낮은 쪽" 규율이 여기선 fail-open이다(정정 지평을 짧게 잡으면 미도착 정정을 확정으로 오인). 패키지 자신의 "정정 미도착이 지평 축소 아님"에 따라 **긴 쪽**(DAY)을 택함 |
+| `MIN_holdover_safety_margin_ms` | [≥ 수백 ms~수 초] | 2000 | floor ⇒ 높은 쪽이되, holdover(5000)를 소진하지 않는 최대 — 기존 값 앵커 `MAX_process_suspension_ms=2000` 채택 |
+
+수치 대역이 제시되어 대역 끝을 그대로 택한 키(재량 아님·기계적): `B_supply_chain_compromise_detect`·
+`B_post_trade_change_detect`·`B_statement_coverage_gap_detect` 2000(대역 하단) · `B_evidence_persist` 500 ·
+`B_critical_alert_delivery` 5000 · `MAX_pending_external_transfer_age_ms` 30000 ·
+`MAX_time_transport_and_queue_uncertainty_ms`·`MAX_clock_domain_conversion_uncertainty_ms`·
+`MAX_time_source_disagreement_ms` 50 · `MAX_dsl_evaluation_ms` 10 · `MAX_action_amplification_per_cause` 3 ·
+`MIN_time_stabilization_interval_ms` 5000(floor 상단) · `MIN_lease_expiry_fence_ms` 10000(floor 상단).
+
+**floor 방향 무결 실측:** `MIN_lease_expiry_fence_ms`(10000) ≥ `MAX_degraded_lease_holdover_ms`(5000) +
+`MAX_process_suspension_ms`(2000) + `MIN_holdover_safety_margin_ms`(2000) = 9000 ✓ (§6-F 요구 부등식).
+
+### 15.7 Patch-0055 (동봉 1) — 적용됨
+
+`tos-spec/src/part-1-foundation/patches/VERIFICATION-PROFILE-002-Patch-0055.md`.
+84 bounds 전부(actual+template)에 `applicable_scope`·`review_date` 2필드 신설 → VER-002-001 §6의
+7속성 완성(6필드 → 8필드). `limits:`는 flat scalar 구조 유지(§6은 "for every **bound**"). `applicable_scope`는
+3규칙 파생(발명 0): 프로파일 자신의 `per X` 인라인 코멘트 verbatim **13** · `measurement_source ==
+broker_capability_profile` **4** · 나머지는 프로파일 스코프 상속 `non-live-test` **67**. template은
+shape 정본이므로 `TBD`/`null`.
+
+### 15.8 이 승인이 여전히 의미하지 **않는** 것
+
+§13이 그대로 유효하다(§15.5의 P0-3 정정만 반영). 추가로:
+
+- **프로파일은 승인되지 않았다.** 146키에 값이 있어도 프로파일 `status`는 PROPOSED다. VER-002-001 §6의
+  "placeholder or undocumented default is not an approved bound"은 **키 단위** 판정이고, 프로파일 단위
+  APPROVED는 별개의 더 강한 게이트다.
+- **EV-L1은 이 수치를 소비하지 않는다.** §0의 정직한 한계 1 그대로 — 타이밍 임계는 벽시계가 도는
+  EV-L2/L3에서 강제된다. 승인은 그 하네스가 쓸 천장을 확정한 것이다.
+- **동봉 2(dimension-id 규약)는 미결.** 변형 A/B 결정은 본 승인에 포함되지 않았다.
