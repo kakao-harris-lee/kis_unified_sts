@@ -1,0 +1,62 @@
+{
+  "artifact_id": "N-15-20260729T064035Z",
+  "probe_id": "N-15",
+  "title": "Token 1-minute reissue limit x invalidate→retry token blackout",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-29T06:40:35.087652+00:00",
+  "finished_at_utc": "2026-07-29T06:40:35.087817+00:00",
+  "duration_s": 0.0,
+  "repo_commit": "33565835",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "N-15",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05608",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 campaign 2026-07-29; 3rd attempt after 150s gap (1st EGW00133 quota, 2nd RemoteDisconnected on tokenP)",
+    "endpoint_class": "query",
+    "start_rps": 1.0,
+    "step_rps": 1.0,
+    "max_rps": 25.0,
+    "hold_seconds": 3.0,
+    "step_gap_seconds": 2.0,
+    "recovery_poll_s": 1.0,
+    "recovery_timeout_s": 120.0,
+    "max_sessions": 5,
+    "max_subscriptions": 45,
+    "reissue_gap_s": 5.0,
+    "reissue_poll_s": 5.0,
+    "blackout_timeout_s": 180.0,
+    "trials": 3,
+    "inter_trial_s": 1.0
+  },
+  "credentials": {},
+  "measurements": {},
+  "observations": [],
+  "skips": [],
+  "errors": [
+    "ValueError: Token issue failed: {'error_code': 'EGW00133', 'error_description': '접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)'}"
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_egress_hard_fence"
+    ],
+    "instance_fields": [
+      "capabilities.credentials_and_revocation.token_blackout_window_ms",
+      "capabilities.credentials_and_revocation.reissue_rejection_semantics"
+    ],
+    "capability_dimension": "CREDENTIALS_AUTHORIZATION"
+  }
+}

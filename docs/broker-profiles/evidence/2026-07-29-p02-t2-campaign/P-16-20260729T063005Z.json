@@ -1,0 +1,292 @@
+{
+  "artifact_id": "P-16-20260729T063005Z",
+  "probe_id": "P-16",
+  "title": "BROKER_TIME — broker clock vs local KST skew",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-29T06:30:05.782334+00:00",
+  "finished_at_utc": "2026-07-29T06:30:38.107285+00:00",
+  "duration_s": 32.325,
+  "repo_commit": "33565835",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-16",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05608",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 campaign 2026-07-29; paper stack running (query-only probe)",
+    "inter_trial_s": 1.0,
+    "poll_ms": 200.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "abs_skew_bound_candidate": {
+      "label": "abs_skew_ms",
+      "n": 30,
+      "min_ms": 945.954,
+      "p50_ms": 1647.64,
+      "p90_ms": 1872.74,
+      "p95_ms": 1899.441,
+      "p99_ms": 1921.329,
+      "max_ms": 1926.845,
+      "stdev_ms": 342.065,
+      "margin_pct": 50.0,
+      "recommended_bound_ms": 2891,
+      "statistic": "hard maximum: ceil(max_observed x (1 + margin_pct/100)). p95/p99 are shape diagnostics and MUST NOT be proposed as the bound.",
+      "sample_adequacy_note": "A maximum estimated from a small sample understates the true maximum. Record n and the observation window with the value; the Bounds-Approver decides whether n is adequate.",
+      "candidate_only": true
+    },
+    "signed_skew": {
+      "n": 30,
+      "min_ms": -1926.8,
+      "max_ms": -946.0,
+      "all_same_sign": true,
+      "note": "A one-sided skew is a systematic offset (correctable); a two-sided spread is jitter (not correctable). They imply different treatments and must not be merged."
+    },
+    "rtt_confound": "The HTTP Date header has 1-second granularity, so a sub-second skew is not resolvable from it. Treat any |skew| below ~1000 ms as 'within header resolution', not as a measurement.",
+    "body_timestamp_like_keys": [],
+    "precision_determination": "Record precision from the field actually used, not from the finest field present. If only HHMMSS fields exist, precision is 1 s."
+  },
+  "observations": [
+    {
+      "sample": 0,
+      "date_header": "Wed, 29 Jul 2026 06:30:06 GMT",
+      "skew_ms": -1504.3,
+      "rtt_ms": 88.8,
+      "local_kst": "2026-07-29T15:30:07.548797+09:00"
+    },
+    {
+      "sample": 1,
+      "date_header": "Wed, 29 Jul 2026 06:30:07 GMT",
+      "skew_ms": -1558.2,
+      "rtt_ms": 18.4,
+      "local_kst": "2026-07-29T15:30:08.567557+09:00"
+    },
+    {
+      "sample": 2,
+      "date_header": "Wed, 29 Jul 2026 06:30:08 GMT",
+      "skew_ms": -1577.1,
+      "rtt_ms": 18.7,
+      "local_kst": "2026-07-29T15:30:09.586538+09:00"
+    },
+    {
+      "sample": 3,
+      "date_header": "Wed, 29 Jul 2026 06:30:09 GMT",
+      "skew_ms": -1597.4,
+      "rtt_ms": 21.3,
+      "local_kst": "2026-07-29T15:30:10.608124+09:00"
+    },
+    {
+      "sample": 4,
+      "date_header": "Wed, 29 Jul 2026 06:30:10 GMT",
+      "skew_ms": -1619.0,
+      "rtt_ms": 21.5,
+      "local_kst": "2026-07-29T15:30:11.629917+09:00"
+    },
+    {
+      "sample": 5,
+      "date_header": "Wed, 29 Jul 2026 06:30:11 GMT",
+      "skew_ms": -1638.7,
+      "rtt_ms": 17.3,
+      "local_kst": "2026-07-29T15:30:12.647518+09:00"
+    },
+    {
+      "sample": 6,
+      "date_header": "Wed, 29 Jul 2026 06:30:12 GMT",
+      "skew_ms": -1656.5,
+      "rtt_ms": 17.6,
+      "local_kst": "2026-07-29T15:30:13.665432+09:00"
+    },
+    {
+      "sample": 7,
+      "date_header": "Wed, 29 Jul 2026 06:30:13 GMT",
+      "skew_ms": -1674.4,
+      "rtt_ms": 17.6,
+      "local_kst": "2026-07-29T15:30:14.683320+09:00"
+    },
+    {
+      "sample": 8,
+      "date_header": "Wed, 29 Jul 2026 06:30:14 GMT",
+      "skew_ms": -1693.4,
+      "rtt_ms": 19.8,
+      "local_kst": "2026-07-29T15:30:15.703407+09:00"
+    },
+    {
+      "sample": 9,
+      "date_header": "Wed, 29 Jul 2026 06:30:15 GMT",
+      "skew_ms": -1715.5,
+      "rtt_ms": 23.7,
+      "local_kst": "2026-07-29T15:30:16.727427+09:00"
+    },
+    {
+      "sample": 10,
+      "date_header": "Wed, 29 Jul 2026 06:30:16 GMT",
+      "skew_ms": -1737.0,
+      "rtt_ms": 18.7,
+      "local_kst": "2026-07-29T15:30:17.746397+09:00"
+    },
+    {
+      "sample": 11,
+      "date_header": "Wed, 29 Jul 2026 06:30:17 GMT",
+      "skew_ms": -1756.0,
+      "rtt_ms": 18.8,
+      "local_kst": "2026-07-29T15:30:18.765507+09:00"
+    },
+    {
+      "sample": 12,
+      "date_header": "Wed, 29 Jul 2026 06:30:18 GMT",
+      "skew_ms": -1775.6,
+      "rtt_ms": 19.8,
+      "local_kst": "2026-07-29T15:30:19.785694+09:00"
+    },
+    {
+      "sample": 13,
+      "date_header": "Wed, 29 Jul 2026 06:30:19 GMT",
+      "skew_ms": -1795.5,
+      "rtt_ms": 19.3,
+      "local_kst": "2026-07-29T15:30:20.805260+09:00"
+    },
+    {
+      "sample": 14,
+      "date_header": "Wed, 29 Jul 2026 06:30:20 GMT",
+      "skew_ms": -1815.6,
+      "rtt_ms": 20.2,
+      "local_kst": "2026-07-29T15:30:21.825833+09:00"
+    },
+    {
+      "sample": 15,
+      "date_header": "Wed, 29 Jul 2026 06:30:21 GMT",
+      "skew_ms": -1834.9,
+      "rtt_ms": 17.8,
+      "local_kst": "2026-07-29T15:30:22.843927+09:00"
+    },
+    {
+      "sample": 16,
+      "date_header": "Wed, 29 Jul 2026 06:30:22 GMT",
+      "skew_ms": -1853.1,
+      "rtt_ms": 18.0,
+      "local_kst": "2026-07-29T15:30:23.862187+09:00"
+    },
+    {
+      "sample": 17,
+      "date_header": "Wed, 29 Jul 2026 06:30:23 GMT",
+      "skew_ms": -1870.9,
+      "rtt_ms": 17.1,
+      "local_kst": "2026-07-29T15:30:24.879600+09:00"
+    },
+    {
+      "sample": 18,
+      "date_header": "Wed, 29 Jul 2026 06:30:24 GMT",
+      "skew_ms": -1889.2,
+      "rtt_ms": 18.8,
+      "local_kst": "2026-07-29T15:30:25.898682+09:00"
+    },
+    {
+      "sample": 19,
+      "date_header": "Wed, 29 Jul 2026 06:30:25 GMT",
+      "skew_ms": -1907.8,
+      "rtt_ms": 17.9,
+      "local_kst": "2026-07-29T15:30:26.916899+09:00"
+    },
+    {
+      "sample": 20,
+      "date_header": "Wed, 29 Jul 2026 06:30:26 GMT",
+      "skew_ms": -1926.8,
+      "rtt_ms": 19.6,
+      "local_kst": "2026-07-29T15:30:27.936726+09:00"
+    },
+    {
+      "sample": 21,
+      "date_header": "Wed, 29 Jul 2026 06:30:28 GMT",
+      "skew_ms": -946.0,
+      "rtt_ms": 18.1,
+      "local_kst": "2026-07-29T15:30:28.955119+09:00"
+    },
+    {
+      "sample": 22,
+      "date_header": "Wed, 29 Jul 2026 06:30:29 GMT",
+      "skew_ms": -965.0,
+      "rtt_ms": 19.4,
+      "local_kst": "2026-07-29T15:30:29.974830+09:00"
+    },
+    {
+      "sample": 23,
+      "date_header": "Wed, 29 Jul 2026 06:30:30 GMT",
+      "skew_ms": -986.0,
+      "rtt_ms": 22.0,
+      "local_kst": "2026-07-29T15:30:30.997093+09:00"
+    },
+    {
+      "sample": 24,
+      "date_header": "Wed, 29 Jul 2026 06:30:31 GMT",
+      "skew_ms": -1005.9,
+      "rtt_ms": 17.2,
+      "local_kst": "2026-07-29T15:30:32.014548+09:00"
+    },
+    {
+      "sample": 25,
+      "date_header": "Wed, 29 Jul 2026 06:30:32 GMT",
+      "skew_ms": -1023.8,
+      "rtt_ms": 18.1,
+      "local_kst": "2026-07-29T15:30:33.032933+09:00"
+    },
+    {
+      "sample": 26,
+      "date_header": "Wed, 29 Jul 2026 06:30:33 GMT",
+      "skew_ms": -1042.0,
+      "rtt_ms": 17.9,
+      "local_kst": "2026-07-29T15:30:34.051068+09:00"
+    },
+    {
+      "sample": 27,
+      "date_header": "Wed, 29 Jul 2026 06:30:34 GMT",
+      "skew_ms": -1060.2,
+      "rtt_ms": 17.9,
+      "local_kst": "2026-07-29T15:30:35.069279+09:00"
+    },
+    {
+      "sample": 28,
+      "date_header": "Wed, 29 Jul 2026 06:30:35 GMT",
+      "skew_ms": -1078.2,
+      "rtt_ms": 17.5,
+      "local_kst": "2026-07-29T15:30:36.087013+09:00"
+    },
+    {
+      "sample": 29,
+      "date_header": "Wed, 29 Jul 2026 06:30:36 GMT",
+      "skew_ms": -1096.5,
+      "rtt_ms": 18.5,
+      "local_kst": "2026-07-29T15:30:37.105829+09:00"
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.broker_time.timezone",
+      "capabilities.broker_time.precision",
+      "capabilities.broker_time.skew_bound_ms"
+    ],
+    "capability_dimension": "BROKER_TIME"
+  }
+}
