@@ -27,6 +27,7 @@ from tools.broker_probes.common import (
     REAL_BASE_URL,
     ProbeRun,
     ReadOnlyCall,
+    SafetyViolation,
     assert_read_only_call,
     build_auth_config,
     dry_run_banner,
@@ -43,7 +44,27 @@ KST = ZoneInfo("Asia/Seoul")
 
 _PROGRAM_TRADE_PATH = "/uapi/domestic-stock/v1/quotations/comp-program-trade-daily"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
-_NIGHT_BALANCE_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-balance"
+#: Night futures balance path. The DAY-session sibling is ``inquire-balance``;
+#: the NIGHT TR ``CTFN6118R`` is served from a distinct ``inquire-ngt-balance``
+#: endpoint. Confirmed by the N-17 spec collation, item #16
+#: (``docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:60``): "선물 야간
+#: ``CTFN6118R``(실전 전용) ``/uapi/domestic-futureoption/v1/trading/inquire-ngt-balance``
+#: [국내선물-010]". The earlier wiring here pointed at the day path — a defect
+#: this constant corrects.
+_NIGHT_BALANCE_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-ngt-balance"
+_INDEX_CHART_PATH = "/uapi/overseas-price/v1/quotations/inquire-time-indexchartprice"
+
+# --- FHKST03030200 parameter values -----------------------------------------
+# Names come from collation #16-adjacent item #14 (:58); the VALUES below are the
+# official example wrapper's own Example block for ``inquire_time_indexchartprice``
+# (해외지수분봉조회 [v1_해외주식-031]). Nothing here is invented: market div code
+# "N" = 해외지수 (X = 환율, KX = 원화환율), hour class "0" = 정규장 (1 = 시간외),
+# past-data flag is a Y/N enumeration. ``SPX`` is the spec's own worked example
+# symbol and is therefore the only VERIFIED notation on this TR.
+_INDEX_MARKET_DIV_CODE = "N"
+_INDEX_HOUR_CLS_CODE = "0"
+_INDEX_PW_DATA_INCU_YN = "Y"
+_INDEX_CONTROL_SYMBOL = "SPX"
 
 #: Complete read-only allowlist. Any call not matching an entry is refused.
 ALLOWLIST: tuple[ReadOnlyCall, ...] = (
@@ -58,11 +79,22 @@ ALLOWLIST: tuple[ReadOnlyCall, ...] = (
         "N-18c futures current price — night-code response (roadmap :340-341)",
     ),
     ReadOnlyCall(
+        "FHKST03030200",
+        _INDEX_CHART_PATH,
+        "N-18b — collation #14 확정·로드맵 후보 HHDFC55020100 반증. "
+        "해외지수분봉조회 [v1_해외주식-031]; TR id and path from "
+        "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:58, which found the "
+        "roadmap:395 candidate HHDFC55020100 absent from the spec index. "
+        "Read-only quotation endpoint; no /trading/ path, no account fields.",
+    ),
+    ReadOnlyCall(
         "CTFN6118R",
         _NIGHT_BALANCE_PATH,
         "N-16 night futures balance — response schema only (plan §1 T2:36). "
         "Read-only inquiry; the day-session sibling CTFO6118R is used the same "
-        "way at shared/kis/client.py:1049.",
+        "way at shared/kis/client.py:1049 but on the DAY path "
+        "(/trading/inquire-balance). The night path is inquire-ngt-balance per "
+        "collation #16 (2026-07-29-tos-p02-n17-spec-collation.md:60).",
     ),
 )
 
@@ -150,7 +182,7 @@ def probe_n16(args: argparse.Namespace) -> ProbeRun:
     spec = get("N-16")
     run, auth, session = _setup(spec, args, asset="futures")
     if auth is None:
-        run.observe(would_send="1 GET CTFN6118R inquire-balance")
+        run.observe(would_send="1 GET CTFN6118R inquire-ngt-balance")
         return run
     creds = resolve_credentials("futures", is_real=True)
     require_account(creds)
@@ -228,6 +260,53 @@ def probe_n16(args: argparse.Namespace) -> ProbeRun:
 # ---------------------------------------------------------------------------
 
 
+def _index_chart_leg(
+    session: Any, auth: Any, run: ProbeRun, leg: str, symbol: str
+) -> dict[str, Any]:
+    """One ``FHKST03030200`` call for N-18b. A failure IS the observation.
+
+    Never raises for a broker- or transport-level failure: the whole point of
+    the SOX legs is that the notation is UNVERIFIED, so a rejection code is the
+    finding, not an accident. A :class:`SafetyViolation` still propagates — that
+    would mean the allowlist refused the call, which is a harness defect and
+    must not be swallowed.
+    """
+    params = {
+        "FID_COND_MRKT_DIV_CODE": _INDEX_MARKET_DIV_CODE,
+        "FID_INPUT_ISCD": symbol,
+        "FID_HOUR_CLS_CODE": _INDEX_HOUR_CLS_CODE,
+        "FID_PW_DATA_INCU_YN": _INDEX_PW_DATA_INCU_YN,
+    }
+    outcome: dict[str, Any] = {"leg": leg, "symbol": symbol}
+    try:
+        status, parsed, text, _ = _get(
+            session, auth, _INDEX_CHART_PATH, "FHKST03030200", params
+        )
+    except SafetyViolation:
+        raise
+    except Exception as exc:  # noqa: BLE001 — a dead call is still evidence
+        outcome["transport_error"] = f"{type(exc).__name__}: {exc}"
+        run.observe(sub_probe="N-18b", **outcome)
+        return outcome
+    rows = parsed.get("output2")
+    rows = rows if isinstance(rows, list) else []
+    head = parsed.get("output1")
+    outcome.update(
+        http_status=status,
+        rt_cd=parsed.get("rt_cd"),
+        msg_cd=parsed.get("msg_cd"),
+        msg1=parsed.get("msg1"),
+        row_count=len(rows),
+        output1_keys=(sorted(head.keys()) if isinstance(head, dict) else []),
+        sample_row_keys=(
+            sorted(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+        ),
+        raw_excerpt=("" if parsed.get("rt_cd") == "0" else text[:300]),
+    )
+    run.observe(sub_probe="N-18b", **outcome)
+    return outcome
+
+
 def probe_n18(args: argparse.Namespace) -> ProbeRun:
     """N-18 — the three residual REAL-token read-only calls. NO ORDERS.
 
@@ -238,12 +317,16 @@ def probe_n18(args: argparse.Namespace) -> ProbeRun:
         ``tr_cont`` unset, then count rows; the count IS the cap only if a
         continuation flag came back, otherwise it is merely "fewer rows than the
         cap existed in the range".
-      * **N-18b** SOX symbol notation — SKIPPED by default. The KIS overseas-index
-        TR is not implemented anywhere in this repo; the only reference is
-        ``docs/plans/2026-07-02-unified-investment-system-roadmap.md:395`` naming
-        ``HHDFC55020100`` as a *candidate*. Inventing a TR id and path here would
-        be exactly the phantom-citation failure the P0-2 discipline forbids, so
-        the sub-probe declares the skip and defers to N-17.
+      * **N-18b** ``FHKST03030200`` overseas-index minute chart — SOX symbol
+        notation. N-17 resolved the TR: collation item #14
+        (``docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:58``) confirms
+        해외지수분봉조회 [v1_해외주식-031] at
+        ``/uapi/overseas-price/v1/quotations/inquire-time-indexchartprice`` and
+        **refutes** the roadmap:395 candidate ``HHDFC55020100`` (absent from the
+        spec index). Method: one control leg with the spec's own worked-example
+        symbol ``SPX`` to prove the TR answers under this credential, then one
+        leg per SOX candidate spelling. The candidate spellings are UNVERIFIED —
+        the response codes are the finding either way, so no leg may raise.
       * **N-18c** ``FHMIF10000000`` night-code response — does the day-session
         current-price TR serve an 8-char night KOSPI200 code? An error or stale
         day data is itself the finding (it confirms night quotes are WS-only).
@@ -256,8 +339,13 @@ def probe_n18(args: argparse.Namespace) -> ProbeRun:
     spec = get("N-18")
     run, auth, session = _setup(spec, args, asset="futures")
     if auth is None:
+        n_index = 1 + len([s for s in args.sox_symbols.split(",") if s.strip()])
         run.observe(
-            would_send="3 GET calls: FHPPG04600001, (SOX skipped), FHMIF10000000"
+            would_send=(
+                f"GET calls: 1x FHPPG04600001, {n_index}x FHKST03030200 "
+                f"(SPX control + SOX candidates {args.sox_symbols!r}), "
+                "up to 2x FHMIF10000000"
+            )
         )
         return run
     try:
@@ -301,14 +389,66 @@ def probe_n18(args: argparse.Namespace) -> ProbeRun:
         )
         time.sleep(args.inter_call_s)
 
-        # --- N-18b: SOX symbol notation ---------------------------------
-        run.skip(
-            "N-18b SOX symbol notation (KIS overseas index TR)",
-            "No KIS overseas-index TR is implemented in this repo; the only "
-            "reference is roadmap:395 naming HHDFC55020100 as a candidate, which "
-            "is not a verified TR id or path. Asserting one here would be a "
-            "phantom citation. Resolve the TR id + path under N-17 first, add it "
-            "to ALLOWLIST, then re-run. The forward source for SOX is Yahoo ^SOX "
+        # --- N-18b: overseas-index TR + SOX symbol notation --------------
+        # TR id / path / parameter names: collation #14
+        # (docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:58). Parameter
+        # VALUES: the spec's own worked example (see the _INDEX_* constants).
+        run.measure("n18b_tr_id", "FHKST03030200")
+        run.measure("n18b_path", _INDEX_CHART_PATH)
+        run.measure(
+            "n18b_source",
+            "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:58 (item #14, "
+            "확정). The roadmap:395 candidate HHDFC55020100 was NOT found in the "
+            "spec index and is thereby refuted, not merely unverified.",
+        )
+        run.measure(
+            "n18b_params_sent",
+            {
+                "FID_COND_MRKT_DIV_CODE": _INDEX_MARKET_DIV_CODE,
+                "FID_INPUT_ISCD": "<per-leg symbol>",
+                "FID_HOUR_CLS_CODE": _INDEX_HOUR_CLS_CODE,
+                "FID_PW_DATA_INCU_YN": _INDEX_PW_DATA_INCU_YN,
+            },
+        )
+        control = _index_chart_leg(
+            session, auth, run, "control_spx", _INDEX_CONTROL_SYMBOL
+        )
+        run.measure("n18b_control_leg", control)
+        run.measure(
+            "n18b_control_meaning",
+            f"{_INDEX_CONTROL_SYMBOL} is the notation the spec itself uses as the "
+            "worked example, so this leg establishes whether the TR responds AT "
+            "ALL under this credential. If the control leg fails, a failing SOX "
+            "leg says nothing about SOX notation — it says the TR is unavailable.",
+        )
+        time.sleep(args.inter_call_s)
+
+        candidates = [s.strip() for s in args.sox_symbols.split(",") if s.strip()]
+        sox_legs: list[dict[str, Any]] = []
+        if not candidates:
+            run.skip(
+                "N-18b SOX candidate legs",
+                "--sox-symbols was emptied; only the SPX control leg ran. The TR "
+                "itself is now exercised, but no SOX notation was tested.",
+            )
+        for symbol in candidates:
+            sox_legs.append(
+                _index_chart_leg(session, auth, run, "sox_candidate", symbol)
+            )
+            time.sleep(args.inter_call_s)
+        run.measure("n18b_sox_candidates", candidates)
+        run.measure("n18b_sox_legs", sox_legs)
+        run.measure(
+            "n18b_symbol_notation_caveat",
+            "⚠ THE SOX SYMBOL NOTATION IS UNVERIFIED. Collation #14 establishes "
+            "the TR id, the path and the four parameter names, and it establishes "
+            "SPX as an index symbol on the FID_INPUT_ISCD field — it does NOT "
+            "establish how SOX is spelled. Every candidate above is a guess at the "
+            "notation, so the per-leg rt_cd/msg_cd/msg1 IS the N-18b output: a "
+            "success identifies the working notation, and the set of failures "
+            "records which spellings the broker rejects. Do not record a failing "
+            "candidate as 'SOX is unavailable' — record it as 'this spelling was "
+            "rejected'. The forward source for SOX remains Yahoo ^SOX "
             "(config/macro_sources.yaml:16), which needs no KIS call.",
         )
 
@@ -372,6 +512,17 @@ def add_real_args(parser: argparse.ArgumentParser) -> None:
         "--night-symbol",
         default="",
         help="N-18c night futures code (e.g. the tr_key in config/night_futures.yaml).",
+    )
+    parser.add_argument(
+        "--sox-symbols",
+        default="SOX,.SOX,^SOX",
+        help=(
+            "N-18b: comma-separated SOX notation candidates tried on "
+            "FHKST03030200. UNVERIFIED spellings — the broker's accept/reject "
+            "code per candidate IS the probe output. The SPX control leg (the "
+            "spec's own example symbol) always runs and is not listed here. "
+            "Pass an empty string to run the control leg only."
+        ),
     )
     parser.add_argument("--inter-call-s", type=float, default=1.0)
     parser.add_argument(
