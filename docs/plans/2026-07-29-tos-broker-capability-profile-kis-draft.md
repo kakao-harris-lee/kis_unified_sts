@@ -152,7 +152,7 @@ over `tos/ shared/ services/` 결과는 tos 테스트의 **필드명** 매칭뿐
 
 ---
 
-## 5. 발견한 quirk 16건
+## 5. 발견한 quirk 17건
 
 심각도는 **TOS 안전 관점**(fail-open 가능성)이며 운영 버그 판정이 아니다.
 
@@ -167,7 +167,7 @@ over `tos/ shared/ services/` 결과는 tos 테스트의 **필드명** 매칭뿐
 | **Q-CRED-1** | CREDENTIALS_AUTHORIZATION | 템플릿 기본값 `direct_worker_access_prohibited: true`가 현행 시스템에서 **거짓**. 모든 워커가 env로 raw app_key/app_secret 보유. 사실대로 `false` 기재 | `config/kis/auth.yaml:7-8`; `mock_mirror.py:31-33` |
 | **Q-MIC-1** | MARKET_INSTRUMENT_CONSTRAINTS | **모의투자에 야간세션 TR이 없다** — order/cancel/inquire 3계열 모두 `*_night_real`만 존재. MOCK→REAL 외삽 금지의 구체적 근거 | `tr_ids.py:40-50`; `executor.py:565-567` |
 
-### MEDIUM (6)
+### MEDIUM (7)
 
 | ID | 차원 | 내용 | 근거 |
 |---|---|---|---|
@@ -325,3 +325,37 @@ API/전파 시한.
   repo 주석 또는 커뮤니티 소스에만 존재하므로 **값으로 승격하지 않고** quirk 후보
   표기에 그쳤다. pykis/mojito 등 2차 원천은 값 확정 근거로 쓰지 않았다.
 - **스키마 정합은 주장이 아니라 실행으로 확인**했다(§4 출력).
+
+---
+
+## 10. 에라타
+
+**에라타 v1.1 (2026-07-29)**: quirk 계수 16→17 정정(MEDIUM 6→7)·YAML Q-RATE-1 전사
+누락 보정 — 발견: D-E4 설계 독립 리뷰 MINOR-1 + 오케스트레이터 재실측. 카운트 전수
+규율이 file:line은 잡았으나 열거 계수를 놓친 사례.
+
+| # | 위치 | 변경 전 | 변경 후 |
+|---|---|---|---|
+| 1 | 본 메모 `§5` 헤더 | `## 5. 발견한 quirk 16건` | `## 5. 발견한 quirk 17건` |
+| 2 | 본 메모 `§5` MEDIUM 절 헤더 | `### MEDIUM (6)` | `### MEDIUM (7)` |
+| 3 | `KIS-BROKER-CAPABILITY-PROFILE-draft.yaml` — MOCK_VTS 문서 `capabilities.rate_limits._kis` | `quirks_found_in_our_client` 키 부재 (Q-RATE-1 미전사) | `quirks_found_in_our_client:` 에 `Q-RATE-1`(INFORMATIONAL) 추가 — 본 메모 `§5` INFORMATIONAL 표의 기록을 그대로 전사 |
+
+**계수 근거(재실측)**: 고유 `Q-*` ID **17개** — HIGH 6(Q-IDEMP-1·Q-IDEMP-2·Q-OOQ-1·
+Q-SESS-1·Q-CRED-1·Q-MIC-1) · MEDIUM **7**(Q-OOQ-2·Q-POS-1·Q-SESS-2·Q-SESS-3·
+Q-CRED-2·Q-WIRE-1·Q-MIC-2) · INFORMATIONAL/POSITIVE 4(Q-CXL-1·Q-CXL-2·Q-MIC-3·
+Q-RATE-1). 6+7+4 = 17.
+
+**Q-RATE-1을 넣은 위치와 근거**: `RATE_LIMITS` 차원(템플릿 키 `rate_limits`, 표 §3.1
+#13). Q-RATE-1의 내용 자체가 rate-limit 값의 근거 부재를 다루고, 인용된 3개 파일
+(`config/streaming.yaml:96`·`config/execution.yaml:5`·`shared/execution/rate_limiter.py:16,:158`)
+이 모두 해당 차원의 `_kis.our_self_imposed_limits` 항목과 동일 출처다.
+
+**MOCK_VTS 단독 적용**: 기존 16건 전부가 MOCK_VTS 문서(YAML 89–1320행)에만 전사되어
+있고 REAL_PROD 문서에는 `Q-*` ID가 0건이다(재실측). Q-RATE-1도 이 전사 패턴을 따라
+MOCK_VTS 문서에만 추가했다 — REAL_PROD를 "측정 0건" 구성으로 유지하기 위함이며,
+환경 무관 사실을 REAL 문서에 반영하는 방식은 기존 Q-CRED-1 선례(ID 전사 없이
+`direct_worker_access_prohibited: false` + rationale로 반영)와 동일하다.
+
+**미변경 확인**: 본 에라타는 카운트 정정과 기존 markdown 기록의 YAML 전사뿐이다.
+새 quirk 발굴 0건·재분류 0건·심각도 변경 0건·기존 `internal_inconsistency_note`
+(YAML `rate_limits._kis`) 삭제 0건.
