@@ -580,7 +580,14 @@ PROBES: dict[str, ProbeSpec] = {
         environment=ENV_REAL,
         dimension="POSITIONS_BALANCES_MARGIN",
         bounds_keys=(),
-        instance_fields=("capabilities.position_balance_margin.schema_captured",),
+        # Patch-0057 remap: a response-schema capture is an evidence artifact,
+        # not a profile property (ADR-002-004 §8.10 lists no schema item), so it
+        # is cited from the dimension's own `evidence_refs`. The former
+        # `…position_balance_margin.schema_captured` never existed in the draft.
+        instance_fields=(
+            "capabilities.position_balance_margin.evidence_refs",
+            "capabilities.position_balance_margin.status",
+        ),
         statistic="schema only: sorted key list of output1/output2 + rt_cd/msg_cd",
         risk="MEDIUM",
         duration="1 call",
@@ -604,7 +611,15 @@ PROBES: dict[str, ProbeSpec] = {
         bounds_keys=(),
         instance_fields=(
             "capabilities.client_generated_order_id.status",
-            "capabilities.command_construction_and_wire_semantics.field_inventory",
+            # Patch-0057 remap: the order-request field inventory IS the
+            # required/default field semantics (ADR-002-004 §8.17:512 "evidenced
+            # API/SDK defaults, field-presence rules"); §7 checklist items 6/7/5
+            # land on these three existing keys with zero residue. The former
+            # `…command_construction_and_wire_semantics.field_inventory` never
+            # existed in the draft.
+            "capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics",
+            "capabilities.command_construction_and_wire_semantics.duplicate_unknown_and_omitted_field_behavior",
+            "capabilities.command_construction_and_wire_semantics.unit_multiplier_currency_and_numeric_encoding",
             "live_scope.time_in_force_values",
             "capabilities.replace_semantics.value_set",
         ),

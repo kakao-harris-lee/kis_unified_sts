@@ -56,6 +56,27 @@
 #       vocabulary to the code enums, and re-spelling INSTANCE values is an
 #       instance-authoring act owed to the P0-2 track, not a template patch.
 #
+# PATCH-0057 SHAPE SYNC (2026-07-29). The measurement track
+#   (`docs/runbooks/kis-capability-probes.md` §9.1) found 8 probe outputs with
+#   nowhere to be written. Six became template slots and are mirrored here at
+#   their conservative default in BOTH documents: `sessions.subscription_limit`
+#   (null), `credentials_and_revocation.reissue_rejection_semantics` (UNKNOWN)
+#   and `.token_blackout_window_ms` (null), `broker_time.skew_bound_ms` (null),
+#   `replace_semantics.value_set` ([]), and
+#   `market_and_instrument_constraints.instrument_coverage` (UNKNOWN).
+#   **Nothing is mirrored from the annotations this time** — unlike PATCH-0056,
+#   every source annotation for these six is `NEEDS-LIVE-MEASUREMENT`, and
+#   `sessions._kis.subscription_limit.note` explicitly forbids promoting its own
+#   "41" to a value. Filling a new slot from an annotation that says "not a
+#   value" would launder a claim into a profile.
+#   The other two outputs got NO new slot because existing keys already carry
+#   them: a night-balance response-schema capture belongs in
+#   `position_balance_margin.evidence_refs`, and the order-request field
+#   inventory belongs in
+#   `command_construction_and_wire_semantics.required_and_default_field_semantics`
+#   (with `.duplicate_unknown_and_omitted_field_behavior` and
+#   `.unit_multiplier_currency_and_numeric_encoding`). No value changed here.
+#
 # ANNOTATION CONVENTION: every key beginning with `_` (e.g. `_model_view`,
 #   `_kis`) is an INSTANCE-LOCAL annotation, not part of the template schema.
 #   Nothing in the repo parses this file today (verified absence: no loader
@@ -494,6 +515,10 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     mode: BROKER_UNSPECIFIED
+    value_set: []                          # Patch-0057 신설 슬롯. 우리 코드가
+                                           # 쓰는 "02"(+문서상 "01")는 **우리
+                                           # 사용값**이지 broker 수용 집합이
+                                           # 아니다 — N-17 확정 전까지 빈 집합.
     restrictions: []
     restriction_approved: false
     fallback_reference: RESERVE_OVERLAP_CAPACITY_OR_REPRESENT_GAP_AS_UNPROTECTED
@@ -729,6 +754,13 @@ capabilities:
     evidence_refs: []
     concurrent_sessions: UNKNOWN
     head_of_line_blocking: UNKNOWN
+    subscription_limit: null               # Patch-0057 신설 슬롯. 아래
+                                           # `_kis.subscription_limit` 는
+                                           # our_setting 40 / repo_claim "41" 을
+                                           # 기록하면서 **"값으로 승격하지
+                                           # 않는다"** 고 스스로 명시한다. 그
+                                           # 지시를 그대로 따라 null 유지 —
+                                           # P-14 실측 전까지 미확립.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -798,6 +830,12 @@ capabilities:
     evidence_refs: []
     revocation_bound_ms: null
     direct_worker_access_prohibited: false   # ⚠ 템플릿 기본 true 에서 의도적 하향
+    reissue_rejection_semantics: UNKNOWN   # Patch-0057 신설 슬롯. 아래
+                                           # `token_reissue_limit` 는 "1분당
+                                           # 1회" 라는 **공식 진술**만 담을 뿐
+                                           # 거부 시 응답(status/msg_cd/msg1)은
+                                           # 관측된 바 없다 — P-15/N-15 대상.
+    token_blackout_window_ms: null         # Patch-0057 신설 슬롯. N-15 대상.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -866,6 +904,10 @@ capabilities:
     evidence_refs: []
     timezone: TBD
     precision: TBD
+    skew_bound_ms: null                    # Patch-0057 신설 슬롯. 아래
+                                           # `consequence` 가 "skew 와 그 상한이
+                                           # 알려져 있지 않다" 고 이미 기록한
+                                           # 그 값의 자리다 — P-16 대상.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -900,6 +942,11 @@ capabilities:
     halt_and_suspension_semantics: UNKNOWN
     price_band_tick_lot_and_quantity_semantics: UNKNOWN
     order_type_time_in_force_and_route_semantics: UNKNOWN
+    instrument_coverage: UNKNOWN           # Patch-0057 신설 슬롯. Q-MIC-1(야간
+                                           # TR 이 모의에 부재)이 바로 이
+                                           # 커버리지 사실이며, 지금까지
+                                           # quirk 주석으로만 존재했다 —
+                                           # N-18 대상.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -1498,6 +1545,7 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     mode: BROKER_UNSPECIFIED
+    value_set: []                          # Patch-0057 신설 슬롯 (보수 기본값)
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -1578,6 +1626,9 @@ capabilities:
     evidence_refs: []
     concurrent_sessions: UNKNOWN
     head_of_line_blocking: UNKNOWN
+    subscription_limit: null               # Patch-0057 신설 슬롯 (보수 기본값).
+                                           # MOCK 문서의 어떤 값도 여기로
+                                           # 외삽하지 않는다 (§13.14/BC-INV-009).
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -1590,6 +1641,11 @@ capabilities:
     evidence_refs: []
     revocation_bound_ms: null
     direct_worker_access_prohibited: false
+    reissue_rejection_semantics: UNKNOWN   # Patch-0057 신설 슬롯 (보수 기본값).
+                                           # 공식 진술은 "1분당 1회" 라는 *한도*
+                                           # 뿐이고 거부 응답 형태는 문서에도
+                                           # 없다 — 환경 무관 외삽 불가.
+    token_blackout_window_ms: null         # Patch-0057 신설 슬롯 (보수 기본값)
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -1613,6 +1669,7 @@ capabilities:
     evidence_refs: []
     timezone: TBD
     precision: TBD
+    skew_bound_ms: null                    # Patch-0057 신설 슬롯 (보수 기본값)
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -1627,6 +1684,9 @@ capabilities:
     halt_and_suspension_semantics: UNKNOWN
     price_band_tick_lot_and_quantity_semantics: UNKNOWN
     order_type_time_in_force_and_route_semantics: UNKNOWN
+    instrument_coverage: UNKNOWN           # Patch-0057 신설 슬롯 (보수 기본값).
+                                           # 야간세션 코드/해외지수 표기/조회
+                                           # 행 상한 전부 미확립 — N-18 대상.
     restrictions: []
     restriction_approved: false
     fallback_reference: null

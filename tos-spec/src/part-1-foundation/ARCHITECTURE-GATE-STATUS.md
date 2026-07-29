@@ -872,6 +872,70 @@ acceptance criterion, or authority is created, widened, or relaxed; no numeric b
 or changed; no EV ID is introduced and the Evidence Register count is unchanged (Part-1 372); and no
 broker proper noun appears anywhere in the template. Independent EV-L0 review is owed.
 
+### 3.24 Broker Capability Profile template measurement write-surface (Patch-0057) — APPLIED
+
+Patch-0056 closed the gap between the template and the **model**. Patch-0057 closes the gap
+between the template and the **measurement**. The P0-2 probe suite landed with 29 declared INSTANCE
+target paths; 8 of them named a field that did not exist, so those facts could have been measured —
+at real broker contact, at real risk — with nowhere to be written. That is the same defect class
+Patch-0056 addressed, arriving from the other side and at a worse moment: a measurement with no
+write-surface is either lost or smuggled into a free-text `restrictions` string where no predicate
+can see it. **The patch registers a write-surface; it fills no value, grants no capability, class,
+scope, or bound, and closes no gate.**
+
+**Six slots registered**, each appended at the end of its dimension's existing dimension-specific
+group so no field is reordered, each with its ADR anchor inline and each at a fail-closed default:
+`sessions.subscription_limit` (`null`; §8.14:461-468 — what **one** session may watch, which is what
+§8.14:467 independent-protective-session feasibility turns on, and neither a session count nor a
+rate); `credentials_and_revocation.reissue_rejection_semantics` (`UNKNOWN`) and
+`.token_blackout_window_ms` (`null`) (§8.15:478 — a rotation has two facts, how it is refused and how
+long the gap is, and `revocation_bound_ms` is neither, being the §8.15:477 revocation bound);
+`broker_time.skew_bound_ms` (`null`; §8.16:491 — not `precision`, since a precise clock can still be
+far off, and §8.16:493 makes this the field deciding whether broker timestamps may carry attribution
+at all); `replace_semantics.value_set` (`[]`; §8.8:384-392 — `mode` classifies replace, this is which
+discriminator values the wire accepts); and
+`market_and_instrument_constraints.instrument_coverage` (`UNKNOWN`; §8.17:495-508 — the four existing
+keys state constraints on a *covered* instrument, this is the prior fact of what is covered).
+
+**Two outputs remapped onto existing keys, deliberately given no slot.** A response-schema capture
+goes to the dimension's own `evidence_refs` (+ `status`): ADR §8.10:408-417 enumerates eight things
+the profile SHALL state and a schema is none of them — it is the evidence a property would later be
+argued *from*, and registering it as a field would promote an artifact to a property, inverting the
+assurance discipline. An order-request field inventory goes to
+`command_construction_and_wire_semantics.required_and_default_field_semantics` (with
+`.duplicate_unknown_and_omitted_field_behavior` and `.unit_multiplier_currency_and_numeric_encoding`):
+ADR §8.17:512 names that fact in the same clause as the existing key ("evidenced API/SDK defaults,
+field-presence rules"), and the inventory distributes across existing keys with **zero residue**.
+Zero residue is the test — two names for one fact is a defect, which is why Patch-0056 renamed
+`fallback` rather than adding a sibling.
+
+**One correction to the originating review, recorded rather than absorbed.** The runbook had marked a
+third output ("instrument coverage") as remap-first by symmetry. Re-measured, the symmetry fails: that
+probe has three sub-findings and only one has a plausible existing home, so a partial remap would have
+**silently dropped two of three** — the precise defect the patch exists to close. The review directed
+that remapping be *considered* first, not concluded; a disposition that survives re-measurement is
+worth more than one that matches the memo.
+
+**Companion synchronization, with no mirroring.** Both INSTANCE documents of the non-normative
+project-side KIS candidate receive the six keys at the same conservative defaults. Unlike Patch-0056 —
+which lifted values verbatim from each block's `_model_view` because those annotations recorded
+decided facts — **nothing is mirrored here**: every corresponding annotation reads
+`NEEDS-LIVE-MEASUREMENT`, and one of them states of its own recorded number that it must not be
+promoted to a value. Filling a new slot from an annotation that says "this is not a value" would
+launder a claim into a profile. Verified structurally: exactly 6 paths added per document (template,
+both INSTANCE documents), 0 removed, 0 changed; template↔INSTANCE key sets identical across all 19
+capability keys in both documents; and every probe-register target path now resolves — measured, the
+register carried 29 distinct paths of which 8 named nothing, and carries 32 after the two remaps
+expand one path into two and one into three.
+
+**What did not change.** `status: DRAFT`, `approvers: []`, and the non-live conformance class stand in
+the template and in both INSTANCE documents. ADR-002-004 remains `Proposed`. **P0-2 remains open** —
+a write-surface is not a measurement, and no probe has yet contacted a broker. No SAFE-xxx
+requirement, invariant, acceptance criterion, or authority is created, widened, or relaxed; no numeric
+bound is introduced or changed; no EV ID is introduced and the Evidence Register count is unchanged
+(Part-1 372); and no broker proper noun, field name, transaction id, endpoint, or numeric appears
+anywhere in the template. Independent EV-L0 review is owed.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work

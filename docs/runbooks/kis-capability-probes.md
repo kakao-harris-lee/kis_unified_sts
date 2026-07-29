@@ -186,6 +186,10 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 
 ### 4.3 INSTANCE 필드 매핑
 
+**갭 해소 완료(Patch-0057, 2026-07-29)**: 아래 표에 "부재"는 더 이상 없다. §9.1이
+보고한 8건은 **신설 6 + 재매핑 2**로 처분됐고, 재매핑 2건은 원래 이름 대신 **기존 키**를
+기입면으로 쓴다(한 사실에 이름 둘을 만들지 않는다). 처분 근거는 §9.1.
+
 | 프로브 | INSTANCE 필드 (`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`) | 상태 |
 |---|---|---|
 | P-1 | `capabilities.client_generated_order_id.status` | 존재 |
@@ -196,18 +200,18 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | P-11 | `capabilities.position_balance_margin.consistency_model` | 존재 |
 | P-13 | `capabilities.rate_limits.hard_limits` / `.scope` / `.sustained_and_burst_semantics` | 존재 |
 | P-14 | `capabilities.sessions.concurrent_sessions` | 존재 |
-| P-14 | `capabilities.sessions.subscription_limit` | **부재 — §9** |
-| P-15 | `capabilities.credentials_and_revocation.reissue_rejection_semantics` | **부재 — §9** |
+| P-14 | `capabilities.sessions.subscription_limit` | 존재 — **Patch-0057 신설** (`null`) |
+| P-15 | `capabilities.credentials_and_revocation.reissue_rejection_semantics` | 존재 — **Patch-0057 신설** (`UNKNOWN`) |
 | P-16 | `capabilities.broker_time.timezone` / `.precision` | 존재 |
-| P-16 | `capabilities.broker_time.skew_bound_ms` | **부재 — §9** |
+| P-16 | `capabilities.broker_time.skew_bound_ms` | 존재 — **Patch-0057 신설** (`null`) |
 | P-EXT | `external_activity.detection_bound_ms` / `.containment_bound_ms` | 존재 |
 | P-FQP | `final_quantity_proof.recipes[]` / `.late_event_window_ms` | 존재 |
-| N-15 | `capabilities.credentials_and_revocation.token_blackout_window_ms` | **부재 — §9** |
-| N-16 | `capabilities.position_balance_margin.schema_captured` | **부재 — §9** |
+| N-15 | `capabilities.credentials_and_revocation.token_blackout_window_ms` | 존재 — **Patch-0057 신설** (`null`) |
+| N-16 | `capabilities.position_balance_margin.evidence_refs` (+ `.status`) | 존재 — **재매핑** (was `schema_captured`) |
 | N-17 | `live_scope.time_in_force_values` | 존재 |
-| N-17 | `capabilities.command_construction_and_wire_semantics.field_inventory` | **부재 — §9** |
-| N-17 | `capabilities.replace_semantics.value_set` | **부재 — §9** |
-| N-18 | `capabilities.market_and_instrument_constraints.instrument_coverage` | **부재 — §9** |
+| N-17 | `capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics` (+ `.duplicate_unknown_and_omitted_field_behavior`, `.unit_multiplier_currency_and_numeric_encoding`) | 존재 — **재매핑** (was `field_inventory`) |
+| N-17 | `capabilities.replace_semantics.value_set` | 존재 — **Patch-0057 신설** (`[]`) |
+| N-18 | `capabilities.market_and_instrument_constraints.instrument_coverage` | 존재 — **Patch-0057 신설** (`UNKNOWN`) |
 
 ---
 
@@ -421,25 +425,55 @@ P-16의 HTTP `Date` 헤더는 1초 해상도이므로 |skew| < 1000 ms는 "헤�
 
 ## 9. 알려진 갭 (실행 전 처분 필요)
 
-### 9.1 INSTANCE에 대응 필드가 없는 프로브 산출 8건
+### 9.1 INSTANCE에 대응 필드가 없던 프로브 산출 8건 — **처분 완료 (Patch-0057)**
 
-§4.3에서 **부재**로 표시된 필드들이다. 템플릿(Patch-0056 반영 후 기준)에 대응 키가
-없어 **측정해도 기입할 곳이 없다**. 이는 T1 blocker B-1~B-4와 **같은 결함 클래스**다
+§4.3에서 **부재**로 표시됐던 필드들이다. 템플릿(Patch-0056 반영 후 기준)에 대응 키가
+없어 **측정해도 기입할 곳이 없었다**. 이는 T1 blocker B-1~B-4와 **같은 결함 클래스**다
 (템플릿만으로는 모델의 안전 게이트를 표현하지 못함).
 
-| 프로브 산출 | 템플릿 현황 | 처분 |
-|---|---|---|
-| `sessions.subscription_limit` (P-14) | `concurrent_sessions`·`head_of_line_blocking`만 존재 | 템플릿 패치 또는 `restrictions` 문자열로 강등 기록 |
-| `credentials_and_revocation.reissue_rejection_semantics` (P-15) | `revocation_bound_ms`·`direct_worker_access_prohibited`만 | 동상 |
-| `credentials_and_revocation.token_blackout_window_ms` (N-15) | 동상 | 동상 |
-| `broker_time.skew_bound_ms` (P-16) | `timezone`·`precision`만 | 동상 |
-| `position_balance_margin.schema_captured` (N-16) | `consistency_model`만 | 스키마는 `evidence_refs`로만 남기는 선택지도 가능 |
-| `command_construction_and_wire_semantics.field_inventory` (N-17) | `required_and_default_field_semantics` 등 6키 (이름 불일치) | 기존 키로 **재매핑** 검토 우선 |
-| `replace_semantics.value_set` (N-17) | `mode`만 | 템플릿 패치 |
-| `market_and_instrument_constraints.instrument_coverage` (N-18) | `order_type_time_in_force_and_route_semantics` 등 4키 (이름 불일치) | 기존 키로 **재매핑** 검토 우선 |
+**2026-07-29 Patch-0057이 8건 전건을 처분했다: 신설 6 · 재매핑 2.** 신설분은
+`BROKER-CAPABILITY-PROFILE-template.yaml`에 슬롯으로 등록되고 INSTANCE 초안 2문서
+(MOCK_VTS·REAL_PROD)에 보수 기본값으로 동기화됐다. **값은 하나도 채워지지 않았다** —
+슬롯 등록은 승인이 아니다.
 
-> **주의**: 이 8건은 `docs/broker-profiles/` 및 tos-spec 템플릿 소관이며 병렬 트랙과
-> 겹친다. 이 런북은 **보고만** 하고 어느 파일도 수정하지 않았다.
+| # | 프로브 산출 | 처분 | 기입면 (확정) | 기본값 |
+|---|---|---|---|---|
+| 1 | `sessions.subscription_limit` (P-14) | **신설** | 동명 | `null` |
+| 2 | `credentials_and_revocation.reissue_rejection_semantics` (P-15) | **신설** | 동명 | `UNKNOWN` |
+| 3 | `credentials_and_revocation.token_blackout_window_ms` (N-15) | **신설** | 동명 | `null` |
+| 4 | `broker_time.skew_bound_ms` (P-16) | **신설** | 동명 | `null` |
+| 5 | `replace_semantics.value_set` (N-17) | **신설** | 동명 | `[]` |
+| 6 | `market_and_instrument_constraints.instrument_coverage` (N-18) | **신설** | 동명 | `UNKNOWN` |
+| 7 | `position_balance_margin.schema_captured` (N-16) | **재매핑** | `capabilities.position_balance_margin.evidence_refs` (+ `.status`) | 기존 `[]` |
+| 8 | `command_construction_and_wire_semantics.field_inventory` (N-17) | **재매핑** | `…command_construction_and_wire_semantics.required_and_default_field_semantics` (+ `.duplicate_unknown_and_omitted_field_behavior`, `.unit_multiplier_currency_and_numeric_encoding`) | 기존 `UNKNOWN` |
+
+**재매핑 2건의 근거 (§9.1 초판의 "재매핑 검토 우선" 지시를 실측 재확인한 결과)**:
+
+- **#7 N-16**: 산출은 응답 스키마 키 목록(`top_level_keys`/`output1_keys`/
+  `output2_keys`)이다. ADR §8.10:408-417의 8개 항목에 "스키마"는 **없다** — 즉 이것은
+  프로파일 *속성*이 아니라 *증거 아티팩트*다. 공통 블록 `evidence_refs`가 정확히 그
+  자리이고(§6.3의 보존 규율이 그대로 적용된다), 도달 가능성 자체는 `status`가 담는다.
+  전용 키를 신설하면 증거를 속성으로 승격시키는 셈이 된다.
+- **#8 N-17**: 산출은 주문 요청 필드 전수(필수/선택 구분과 생략 시 기본값)다. 이는
+  §7 대조표 항목 6과 **같은 사실**이고, 템플릿 `required_and_default_field_semantics`가
+  이미 그 이름이다 (ADR §8.17:512 "evidenced API/SDK defaults, field-presence rules").
+  잔여 성분도 전부 기존 키로 간다 — 항목 7 → `duplicate_unknown_and_omitted_field_behavior`,
+  항목 5 → `unit_multiplier_currency_and_numeric_encoding`, 항목 1 →
+  `client_generated_order_id.status`. **잔여 0**이므로 신설은 중복 명명이다.
+
+**#6 N-18은 재매핑하지 않았다 (초판 판정 정정).** §9.1 초판은 N-18도 "기존 키로 재매핑
+검토 우선"으로 적었으나, 실측 결과 기존 4키 중 어느 것도 N-18a(1회 조회 행 상한)와
+N-18b(해외지수 심볼 표기)를 담지 못한다. `session_phase_semantics`로 N-18c만 부분
+매핑하면 나머지 두 산출이 **조용히 사라진다** — Patch-0056 §1이 지목한 바로 그
+"표현 불가능한 판단이 소리 없이 증발하는" 결함이다. 따라서 신설이 정답이다.
+
+**주의 (변함없음)**: 이 8건은 `docs/broker-profiles/` 및 tos-spec 템플릿 소관이며
+병렬 트랙과 겹친다. 처분은 Patch-0057 문서와 그 병합 기록(ARCHITECTURE-GATE-STATUS
+§3.24)이 정본이며, 이 런북은 **매핑을 표기**할 뿐 승인 권한을 갖지 않는다.
+
+**남은 사실**: 슬롯이 생겼다는 것은 **기입면이 생겼다**는 뜻이지 값이 생겼다는 뜻이
+아니다. 6건 전부 §6.4의 "값이 확립되지 않았으면 `null`을 유지한다" 상태이며, 실측
+후에도 `status`/`assurance_level` 승격은 자동이 아니다.
 
 ### 9.2 프로브가 정의되지 않은 broker 관련 키
 

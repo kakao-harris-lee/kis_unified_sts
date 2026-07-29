@@ -148,6 +148,21 @@ live_scope:
 # IS that explicit approval, and it is a different fact from `restrictions` (which
 # states WHAT the restriction is). It stays `false` until an accountable approver
 # sets it; `false`/null fails closed.
+#
+# DIMENSION-SPECIFIC SLOTS ADDED BY PATCH-0057 (6): `sessions.subscription_limit`,
+# `credentials_and_revocation.reissue_rejection_semantics` and
+# `.token_blackout_window_ms`, `broker_time.skew_bound_ms`,
+# `replace_semantics.value_set`,
+# `market_and_instrument_constraints.instrument_coverage`. Each carries its ADR
+# anchor inline. They exist so a measured fact HAS somewhere to be written; every
+# one is at a fail-closed default and none is filled here. Two further measured
+# outputs were NOT given slots because existing keys already carry them — a
+# response-schema capture belongs in the dimension's own `evidence_refs`, and an
+# order-request field inventory belongs in
+# `command_construction_and_wire_semantics.required_and_default_field_semantics`
+# (with `.duplicate_unknown_and_omitted_field_behavior` and
+# `.unit_multiplier_currency_and_numeric_encoding`). Two names for one fact is a
+# defect, not a convenience.
 # =============================================================================
 capabilities:
   client_generated_order_id:
@@ -226,6 +241,12 @@ capabilities:
     assurance_level: LEVEL_0_UNKNOWN
     evidence_refs: []
     mode: BROKER_UNSPECIFIED
+    # §8.8:384-392 classifies replace via `mode`; this is the DIFFERENT fact of
+    # which discriminator values the broker's replace/cancel command actually
+    # accepts on the wire (Patch-0057). Empty list = no accepted value is
+    # recorded, which authorizes none; a value observed in OUR client is our
+    # usage, not the broker's accepted set.
+    value_set: []
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -289,6 +310,13 @@ capabilities:
     evidence_refs: []
     concurrent_sessions: UNKNOWN
     head_of_line_blocking: UNKNOWN
+    # §8.14:461-468 — how many subscriptions/streams ONE session may hold. This
+    # is not `concurrent_sessions` (a count of sessions) and not a rate limit (a
+    # count per unit time); it caps what a single protective session can watch,
+    # so §8.14:467 independent-protective-session feasibility depends on it
+    # (Patch-0057). null = not established; a cap asserted by an unofficial
+    # source is not a value.
+    subscription_limit: null
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -299,6 +327,18 @@ capabilities:
     evidence_refs: []
     revocation_bound_ms: null
     direct_worker_access_prohibited: true
+    # §8.15:478 credential rotation latency, split into the two facts a rotation
+    # actually has (Patch-0057). Neither is `revocation_bound_ms`, which is the
+    # §8.15:477 revocation-propagation bound.
+    #   reissue_rejection_semantics — what the broker returns when a reissue is
+    #     refused (rate-limited, too soon, scope-denied). UNKNOWN per
+    #     BC-INV-001:191: a semantics not present and current is unavailable, so
+    #     a refusal cannot be interpreted and the affected scope stays contained.
+    reissue_rejection_semantics: UNKNOWN
+    #   token_blackout_window_ms — the interval in which NO valid credential can
+    #     be obtained (invalidation .. first successful reissue). null = not
+    #     established; 0 observations is not 0 ms.
+    token_blackout_window_ms: null
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -309,6 +349,12 @@ capabilities:
     evidence_refs: []
     timezone: TBD
     precision: TBD
+    # §8.16:491 drift / synchronization guarantee, as a bound on |broker clock -
+    # our clock| (Patch-0057). Distinct from `precision` (timestamp resolution):
+    # a precise clock can still be far off. §8.16:493 — without this, broker
+    # timestamps are audit only and may not carry attribution or any time-based
+    # finality claim. null = not established.
+    skew_bound_ms: null
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -321,6 +367,15 @@ capabilities:
     halt_and_suspension_semantics: UNKNOWN
     price_band_tick_lot_and_quantity_semantics: UNKNOWN
     order_type_time_in_force_and_route_semantics: UNKNOWN
+    # §8.17:495-508 states the CONSTRAINTS that apply to a covered instrument.
+    # This is the prior fact of which instruments, symbol notations, and session
+    # codes the interface serves at all — plus the per-call retrieval cap that
+    # bounds how much of that coverage one query can return (Patch-0057). An
+    # instrument outside coverage has no constraints to state, and §8.17:510
+    # makes a missing or degraded dimension restrictive for the affected Order
+    # Admissibility Decision. UNKNOWN per BC-INV-001:191 — coverage is never
+    # assumed from the fact that another instrument is served.
+    instrument_coverage: UNKNOWN
     restrictions: []
     restriction_approved: false
     fallback_reference: null
