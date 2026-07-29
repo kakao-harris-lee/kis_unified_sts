@@ -34,6 +34,28 @@
 #   "fixed" here — the template keys are reproduced verbatim, and the
 #   brokercap-model view is carried alongside in the `_model_view` annotation.
 #
+# PATCH-0056 SHAPE SYNC (2026-07-29). The template gained the slots the
+#   brokercap model requires but the template lacked: per capability
+#   `restrictions` / `restriction_approved` / `fallback_reference` /
+#   `assurance_sources` (records.py:103-110); `profile_identity`
+#   `evidence_package_version` / `superseded_version_link` / `change_reason`
+#   (ADR §7.2:264-270); `live_scope.reduced_off_unattended_partition_protection`
+#   (§13.15:796); the `final_quantity_proof.recipes[]` element schema
+#   (§15.2:845-851 + §15.4:867); and the `residual_risks[]` 4 attributes
+#   (§21:1087-1091). This file is synchronized to that shape:
+#     - `fallback:` was RENAMED to `fallback_reference:` (model spelling); every
+#       value is byte-preserved.
+#     - New slots take the conservative default, EXCEPT `fallback_reference` and
+#       `assurance_sources`, which MIRROR the value already recorded in the same
+#       block's own `_model_view`. Nothing is invented; the `_model_view`
+#       annotations are left byte-identical so every lift is auditable in place.
+#     - No existing value changed. In particular the vocabulary divergences the
+#       memo §6 records (`assurance_level: EV-L0`, `conformance_class: CLASS-D`,
+#       `proven_state: TRANSPORT_RECEIVED_ONLY`, `residual_risks[].text` vs the
+#       §21 `description`) are UNTOUCHED here: Patch-0056 aligned the template's
+#       vocabulary to the code enums, and re-spelling INSTANCE values is an
+#       instance-authoring act owed to the P0-2 track, not a template patch.
+#
 # ANNOTATION CONVENTION: every key beginning with `_` (e.g. `_model_view`,
 #   `_kis`) is an INSTANCE-LOCAL annotation, not part of the template schema.
 #   Nothing in the repo parses this file today (verified absence: no loader
@@ -94,6 +116,10 @@ profile_identity:
   expires_at: null
   approvers: []                          # ← P0-2 는 여기가 비어 있는 한 열려 있다.
   revocation_record: null
+  # -- ADR §7.2:264-270 승계 3필드 (Patch-0056 신설 슬롯) --------------------
+  evidence_package_version: TBD      # §7.2:266
+  superseded_version_link: null      # §7.2:269 — 최초 버전이므로 승계 링크 없음
+  change_reason: TBD                 # §7.2:270
 
   _model_view:                           # records.py ProfileKey (10좌표) 대응
     _note: >-
@@ -142,6 +168,9 @@ live_scope:
   maximum_quantity: null
   maximum_risk_vector: {}
   manual_activity_policy: TBD            # 외부 수동 활동(HTS/MTS/지점) 정책 미정의.
+  # ADR §13.15:796 (Patch-0056 신설 슬롯). false = 축소되지 않음 ⇒ fail-closed;
+  # records.py LiveScope:132 의 None 과 동일한 보수 판정이다.
+  reduced_off_unattended_partition_protection: false
 
   _model_view:                           # records.py LiveScope:125-132
     account_scope: null
@@ -166,7 +195,9 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     restrictions: []
-    fallback: NO_BLIND_RETRY_AND_CONTAIN
+    restriction_approved: false
+    fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
+    assurance_sources: []
     _model_view:
       dimension: ORDER_IDENTITY
       status: UNKNOWN
@@ -201,7 +232,9 @@ capabilities:
     evidence_refs: []
     deduplication_window_ms: null
     restrictions: []
-    fallback: NO_BLIND_RETRY_AND_CONTAIN
+    restriction_approved: false
+    fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
+    assurance_sources: []
     _model_view:
       dimension: SUBMISSION_IDEMPOTENCY
       status: UNKNOWN
@@ -252,6 +285,10 @@ capabilities:
     assurance_level: EV-L1
     evidence_refs: []
     proven_state: TRANSPORT_RECEIVED_ONLY
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: ACKNOWLEDGEMENT_SEMANTICS
       status: DOCUMENTED_NOT_VERIFIED
@@ -287,6 +324,10 @@ capabilities:
     duplicates_possible: true
     out_of_order_possible: true
     replay_supported: false
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view:
       dimension: FILL_EVENTS
       status: UNKNOWN
@@ -320,6 +361,10 @@ capabilities:
     completeness: UNKNOWN
     eventual_consistency_bound_ms: null
     pagination: CTX_AREA_FK200_AND_CTX_AREA_NK200_CONTINUATION_KEYS
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: OPEN_ORDER_QUERY
       status: DOCUMENTED_NOT_VERIFIED
@@ -367,6 +412,10 @@ capabilities:
     evidence_refs: []
     retention: UNKNOWN                   # broker 보존 기간 미확인
     pagination: CTX_AREA_FK200_AND_CTX_AREA_NK200_CONTINUATION_KEYS
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: ORDER_HISTORY_QUERY
       status: DOCUMENTED_NOT_VERIFIED
@@ -392,6 +441,10 @@ capabilities:
     evidence_refs: []
     crossing_fill_possible: true
     final_quantity_proof_recipe: FQP-KIS-FUT-CANCEL-THEN-REQUERY-DRAFT
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: CANCELLATION
       status: DOCUMENTED_NOT_VERIFIED
@@ -441,6 +494,10 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     mode: BROKER_UNSPECIFIED
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: RESERVE_OVERLAP_CAPACITY_OR_REPRESENT_GAP_AS_UNPROTECTED
+    assurance_sources: []
     _model_view:
       dimension: REPLACE_OR_AMEND
       status: UNKNOWN
@@ -468,6 +525,10 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     exact_semantics: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view:
       dimension: REDUCE_ONLY
       status: UNKNOWN
@@ -495,6 +556,10 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     reconnect_replay: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view:
       dimension: ACCOUNT_EVENT_PUSH
       status: UNKNOWN
@@ -522,6 +587,10 @@ capabilities:
     assurance_level: EV-L1
     evidence_refs: []
     consistency_model: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: POSITIONS_BALANCES_MARGIN
       status: DOCUMENTED_NOT_VERIFIED
@@ -556,6 +625,10 @@ capabilities:
     status: UNKNOWN
     assurance_level: EV-L0
     evidence_refs: []
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view:
       dimension: CORPORATE_ADMINISTRATIVE_EVENTS
       status: UNKNOWN
@@ -587,6 +660,10 @@ capabilities:
     sdk_proxy_redirect_and_reconnect_retry_behavior: UNKNOWN
     protective_guarantee: UNAVAILABLE
     protective_reserved_dimensions: []
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: RATE_LIMITS
       status: DOCUMENTED_NOT_VERIFIED
@@ -632,6 +709,18 @@ capabilities:
         429/5xx 는 KISApiErrorRateTracker 가 5분 롤링 창으로 집계해 Redis 로
         발행한다 — 측정 인프라는 이미 존재한다(P-13 프로브가 쓸 수 있다).
         evidence: shared/kis/error_rate.py:1-8; config/streaming.yaml:110-114
+      quirks_found_in_our_client:
+        - id: Q-RATE-1
+          severity: INFORMATIONAL
+          text: >-
+            같은 repo 에 5 req/s(YAML)와 20 req/s(코드 기본값)가 공존. 어느 쪽도
+            측정된 broker 한도가 아니므로 모순이 아니라 **둘 다 미근거**임을
+            드러내는 신호.
+          evidence:
+            - "config/streaming.yaml:96"
+            - "config/execution.yaml:5"
+            - "shared/execution/rate_limiter.py:16"
+            - "shared/execution/rate_limiter.py:158"
 
   # -- 14/17 · SESSION_CONNECTION_MODEL ----------------------------------
   sessions:
@@ -640,6 +729,10 @@ capabilities:
     evidence_refs: []
     concurrent_sessions: UNKNOWN
     head_of_line_blocking: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: SESSION_CONNECTION_MODEL
       status: DOCUMENTED_NOT_VERIFIED
@@ -705,6 +798,10 @@ capabilities:
     evidence_refs: []
     revocation_bound_ms: null
     direct_worker_access_prohibited: false   # ⚠ 템플릿 기본 true 에서 의도적 하향
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION, CONTROLLED_SANDBOX_TEST]
     _model_view:
       dimension: CREDENTIALS_AUTHORIZATION
       status: DOCUMENTED_NOT_VERIFIED
@@ -769,6 +866,10 @@ capabilities:
     evidence_refs: []
     timezone: TBD
     precision: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view:
       dimension: BROKER_TIME
       status: UNKNOWN
@@ -799,6 +900,10 @@ capabilities:
     halt_and_suspension_semantics: UNKNOWN
     price_band_tick_lot_and_quantity_semantics: UNKNOWN
     order_type_time_in_force_and_route_semantics: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view:
       dimension: MARKET_INSTRUMENT_CONSTRAINTS
       status: UNKNOWN
@@ -862,6 +967,10 @@ capabilities:
     margin_and_collateral_semantics: UNKNOWN
     borrow_locate_and_short_sale_semantics: UNKNOWN
     settlement_currency_and_expiration_semantics: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view:
       dimension: null                     # ⚠ CapabilityDimension 에 대응 멤버 없음
       _mismatch_ref: "메모 §6-2"
@@ -883,7 +992,10 @@ capabilities:
     canonicalization_and_parser_behavior: UNKNOWN
     serializer_sdk_signer_and_redirect_behavior: UNKNOWN
     actual_outbound_observability: UNKNOWN
-    fallback: PROHIBIT_AFFECTED_COMMAND_SCOPE
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: PROHIBIT_AFFECTED_COMMAND_SCOPE
+    assurance_sources: []
     _model_view:
       dimension: null                     # ⚠ CapabilityDimension 에 대응 멤버 없음
       _mismatch_ref: "메모 §6-2"
@@ -1124,6 +1236,25 @@ final_quantity_proof:
         - "2. 취소 ack 를 최종 수량 근거로 **사용하지 않는다** (§15.3 금지)"
         - "3. inquire-ccnl 재조회로 tot_ccld_qty / qty(잔량) / rjct_qty 확인"
         - "4. 잔량 0 이고 late-event 창 경과까지 변화 없을 때만 최종으로 취급"
+      # -- Patch-0056 신설 슬롯: recipes[] 원소 스키마 (아래 _model_view 미러) --
+      required_result:                    # §15.2:845-851 — 7 결과 전부 미성립
+        broker_order_identity_or_bounded_effect: false
+        final_cumulative_filled_quantity: false
+        zero_remaining_executable_quantity: false
+        corrections_busts_late_events_handled: false
+        evidence_source_provenance: false
+        within_valid_window: false
+        ordering_waiting_rule_satisfied: false
+      prohibited_proofs:                  # §15.3:857-863
+        - CANCEL_ACKNOWLEDGEMENT
+        - ONE_OPEN_ORDER_QUERY_OMISSION
+        - LOCAL_TIMEOUT
+        - STRATEGY_CANCELLATION_INTENT
+        - PROCESS_RESTART
+        - ACCOUNT_POSITION_MATCHING_EXPECTED_VALUE
+        - OPERATOR_ASSERTION_WITHOUT_BROKER_EVIDENCE
+      no_later_change_asserted: null      # §15.4:867 마커 1
+      late_event_window_defined: false    # §15.4:867 마커 2
       _model_view:                        # records.py FinalQuantityProofRule:149-152
         order_type: FUTURES_LIMIT
         prohibited_proofs:
@@ -1156,21 +1287,36 @@ residual_risks:
       ORDER_IDENTITY + SUBMISSION_IDEMPOTENCY 가 모두 UNKNOWN 인 상태에서
       네트워크 불확실 전송(uncertain send)의 중복 위험을 제거할 구조적 수단이
       없다. 현행 재시도 경로 2개(Q-IDEMP-1/2)가 이 위험을 실현한다.
+    owner: TBD                          # §21:1089 (Patch-0056 신설 슬롯)
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091 — 수용이 없으므로 만료도 없음
   - id: RR-2
     text: >-
       체결 관측이 폴링 파생이고 단일 페이지 조회(Q-OOQ-1)이므로, 최종 수량
       주장이 조회 누락에 취약하다.
+    owner: TBD                          # §21:1089 (Patch-0056 신설 슬롯)
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091 — 수용이 없으므로 만료도 없음
   - id: RR-3
     text: >-
       BROKER_TIME UNKNOWN — 시간 기반 최종성/late-event 판단의 근거가 없다.
+    owner: TBD                          # §21:1089 (Patch-0056 신설 슬롯)
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091 — 수용이 없으므로 만료도 없음
   - id: RR-4
     text: >-
       워커 프로세스가 raw 자격증명을 보유(Q-CRED-1)하고 non-exportable signer
       가 없어, egress 권한이 프로세스 경계로 봉인되지 않는다.
+    owner: TBD                          # §21:1089 (Patch-0056 신설 슬롯)
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091 — 수용이 없으므로 만료도 없음
   - id: RR-5
     text: >-
       MOCK 환경에는 야간세션 TR 이 없어(Q-MIC-1) 야간 관련 어떤 capability 도
       모의에서 검증할 수 없다 — MOCK→REAL 외삽 금지의 구체적 근거.
+    owner: TBD                          # §21:1089 (Patch-0056 신설 슬롯)
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091 — 수용이 없으므로 만료도 없음
 
 verification:
   required_evidence_ids: []              # BC-EV-001..022 미실행 (EVIDENCE-REGISTER-002)
@@ -1217,6 +1363,10 @@ profile_identity:
   expires_at: null
   approvers: []
   revocation_record: null
+  # -- ADR §7.2:264-270 승계 3필드 (Patch-0056 신설 슬롯) --------------------
+  evidence_package_version: TBD      # §7.2:266
+  superseded_version_link: null      # §7.2:269 — 최초 버전이므로 승계 링크 없음
+  change_reason: TBD                 # §7.2:270
   _kis:
     endpoints:
       rest_base: "https://openapi.koreainvestment.com:9443"
@@ -1254,6 +1404,9 @@ live_scope:
   maximum_quantity: null
   maximum_risk_vector: {}
   manual_activity_policy: TBD
+  # ADR §13.15:796 (Patch-0056 신설 슬롯). false = 축소되지 않음 ⇒ fail-closed;
+  # records.py LiveScope:132 의 None 과 동일한 보수 판정이다.
+  reduced_off_unattended_partition_protection: false
 
 capabilities:
   # 17 CapabilityDimension 전 멤버 + 템플릿 전용 2키 = 19키 전수.
@@ -1263,7 +1416,9 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     restrictions: []
-    fallback: NO_BLIND_RETRY_AND_CONTAIN
+    restriction_approved: false
+    fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
+    assurance_sources: []
     _model_view: {dimension: ORDER_IDENTITY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   submission_idempotency:
@@ -1272,7 +1427,9 @@ capabilities:
     evidence_refs: []
     deduplication_window_ms: null
     restrictions: []
-    fallback: NO_BLIND_RETRY_AND_CONTAIN
+    restriction_approved: false
+    fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
+    assurance_sources: []
     _model_view: {dimension: SUBMISSION_IDEMPOTENCY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   acknowledgement_semantics:
@@ -1280,6 +1437,10 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     proven_state: TRANSPORT_RECEIVED_ONLY
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: ACKNOWLEDGEMENT_SEMANTICS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   fill_event_ordering:
@@ -1289,6 +1450,10 @@ capabilities:
     duplicates_possible: true
     out_of_order_possible: true
     replay_supported: false
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: FILL_EVENTS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   open_order_query:
@@ -1298,6 +1463,10 @@ capabilities:
     completeness: UNKNOWN
     eventual_consistency_bound_ms: null
     pagination: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: OPEN_ORDER_QUERY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   order_history_query:
@@ -1306,6 +1475,10 @@ capabilities:
     evidence_refs: []
     retention: UNKNOWN
     pagination: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: ORDER_HISTORY_QUERY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   cancellation_finality:
@@ -1314,6 +1487,10 @@ capabilities:
     evidence_refs: []
     crossing_fill_possible: true
     final_quantity_proof_recipe: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: CANCELLATION, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   replace_semantics:
@@ -1321,6 +1498,10 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     mode: BROKER_UNSPECIFIED
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: REPLACE_OR_AMEND, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   reduce_only:
@@ -1328,6 +1509,10 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     exact_semantics: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: REDUCE_ONLY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   account_event_push:
@@ -1335,6 +1520,10 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     reconnect_replay: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: ACCOUNT_EVENT_PUSH, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   position_balance_margin:
@@ -1342,12 +1531,20 @@ capabilities:
     assurance_level: EV-L0
     evidence_refs: []
     consistency_model: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: POSITIONS_BALANCES_MARGIN, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   corporate_actions:
     status: UNKNOWN
     assurance_level: EV-L0
     evidence_refs: []
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: CORPORATE_ADMINISTRATIVE_EVENTS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   rate_limits:
@@ -1364,6 +1561,10 @@ capabilities:
     sdk_proxy_redirect_and_reconnect_retry_behavior: UNKNOWN
     protective_guarantee: UNAVAILABLE
     protective_reserved_dimensions: []
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: RATE_LIMITS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis:
       measurement: NEEDS-LIVE-MEASUREMENT
@@ -1377,6 +1578,10 @@ capabilities:
     evidence_refs: []
     concurrent_sessions: UNKNOWN
     head_of_line_blocking: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: SESSION_CONNECTION_MODEL, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   credentials_and_revocation:
@@ -1385,6 +1590,10 @@ capabilities:
     evidence_refs: []
     revocation_bound_ms: null
     direct_worker_access_prohibited: false
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: CREDENTIALS_AUTHORIZATION
       status: DOCUMENTED_NOT_VERIFIED
@@ -1404,6 +1613,10 @@ capabilities:
     evidence_refs: []
     timezone: TBD
     precision: TBD
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: BROKER_TIME, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   market_and_instrument_constraints:
@@ -1414,6 +1627,10 @@ capabilities:
     halt_and_suspension_semantics: UNKNOWN
     price_band_tick_lot_and_quantity_semantics: UNKNOWN
     order_type_time_in_force_and_route_semantics: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: MARKET_INSTRUMENT_CONSTRAINTS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis:
       measurement: NEEDS-LIVE-MEASUREMENT
@@ -1426,6 +1643,10 @@ capabilities:
     margin_and_collateral_semantics: UNKNOWN
     borrow_locate_and_short_sale_semantics: UNKNOWN
     settlement_currency_and_expiration_semantics: UNKNOWN
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: null
+    assurance_sources: []
     _model_view: {dimension: null, _mismatch_ref: "메모 §6-2"}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   command_construction_and_wire_semantics:
@@ -1439,7 +1660,10 @@ capabilities:
     canonicalization_and_parser_behavior: UNKNOWN
     serializer_sdk_signer_and_redirect_behavior: UNKNOWN
     actual_outbound_observability: UNKNOWN
-    fallback: PROHIBIT_AFFECTED_COMMAND_SCOPE
+    restrictions: []
+    restriction_approved: false
+    fallback_reference: PROHIBIT_AFFECTED_COMMAND_SCOPE
+    assurance_sources: []
     _model_view: {dimension: null, _mismatch_ref: "메모 §6-2"}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
 
@@ -1580,6 +1804,9 @@ residual_risks:
     text: >-
       실전 환경 측정 0건. 이 프로파일은 어떤 live scope 도 권한 부여하지
       않으며(CLASS-D), MOCK 프로파일의 어떤 declaration 도 상속하지 않는다.
+    owner: TBD                          # §21:1089 (Patch-0056 신설 슬롯)
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091 — 수용이 없으므로 만료도 없음
 
 verification:
   required_evidence_ids: []

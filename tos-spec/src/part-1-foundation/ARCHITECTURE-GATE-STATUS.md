@@ -813,6 +813,65 @@ is introduced; the Evidence Register count is unchanged (Part-1 372) and all 372
 level that consumes no wall-clock threshold, so these values are ceilings the EV-L2/L3 harness will
 enforce, not measurements. Independent EV-L0 review of both acts is owed.
 
+### 3.23 Broker Capability Profile template schema completion (Patch-0056) — APPLIED
+
+ADR-002-004 §21:1041 requires every broker profile to contain a stated minimum, and
+`BROKER-CAPABILITY-PROFILE-template.yaml` is the file that realizes it. Five parts of that minimum
+had no slot at all, so an INSTANCE author could not write the fact — and a missing slot is not a
+conservative default, it is an unrepresentable judgment. Patch-0056 registers the slots and aligns
+the vocabulary; **it fills no value, grants no capability, class, scope, or bound, and closes no
+gate.**
+
+**What was added.** (a) The per-dimension declaration common block is now uniform across all 19
+capability keys and matches `CapabilityDeclaration` name for name — `restriction_approved` is new
+(§5.3:146 makes explicit approval the hinge of the only sentence that authorizes live behavior, and
+it had no field), `assurance_sources` is new, `restrictions` was extended from 2 keys to all 19, and
+`fallback` was renamed `fallback_reference` on the 3 keys that carried a value (values byte
+preserved), giving 19 × 7 = 133 common fields. (b) `final_quantity_proof.recipes[]` gains a
+commented element schema — the seven §15.2:845-851 required results, the §15.3:857-863 prohibited
+proofs, and both §15.4:867 markers; without the markers any recipe an author wrote was structurally
+inadequate because of the file, not the broker. (c) `live_scope` gains
+`reduced_off_unattended_partition_protection`, the first of the two exits §13.15:796 allows.
+(d) `profile_identity` gains the three §7.2:264-270 items that had no field
+(`evidence_package_version`, `superseded_version_link`, `change_reason`), completing all seven.
+(e) `residual_risks[]` gains its §21:1087-1091 four-attribute element schema. (f) The file, which
+carried zero comment lines, gains a header stating the normative basis, the broker-agnostic rule,
+the vocabulary binding, the §7.1 profile-key rule, and the four fill markers (`TBD` = owed,
+`null` = absent, `UNKNOWN` = a vocabulary value, conservative default = a boolean already
+restrictive).
+
+**Vocabulary alignment (21 values).** `CLASS-D` → `CLASS_D_NON_LIVE`,
+`TRANSPORT_RECEIVED_ONLY` → `TRANSPORT_RECEIVED`, and `EV-L0` → `LEVEL_0_UNKNOWN` on all 19
+declarations. The last was the significant one: `EV-L0` belongs to the corpus **evidence-level**
+axis, and carrying it in the §9 **assurance-level** field made two coordinate systems share a
+string. Where ADR prose spells a token differently (the §10:580 heading reads "CLASS-D"), the
+difference is noted inline rather than erased. Seven further tokens
+(`NO_BLIND_RETRY_AND_CONTAIN`, `PROHIBIT_AFFECTED_COMMAND_SCOPE`,
+`PROHIBITED_UNLESS_PROVEN_IDEMPOTENT`, `QUARANTINED_UNKNOWN`, `CONTAIN`, `ACCOUNT`, `UNAVAILABLE`)
+were measured against the ADR — **0 exact-word hits each** — and deliberately **not** renamed:
+coining a token is its own act with its own basis. The header now records that they are
+template-coined and points at the prose each stands for.
+
+**Companion synchronization.** The non-normative project-side KIS INSTANCE candidate
+(`docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`, commit `662f87cc`, MOCK_VTS and
+REAL_PROD documents) declares this template as its schema spine, so both documents were synchronized
+to the new shape: conservative defaults for the new slots, and — for `fallback_reference`,
+`assurance_sources`, `prohibited_proofs`, and the two §15.4 markers — values **mirrored verbatim**
+from each block's own `_model_view` annotation, which the earlier session had authored precisely
+because the template had no slot. No value was invented and no pre-existing value changed (verified:
+0 structural diffs across both documents; the only deleted lines are the 6 `fallback:` renames). The
+INSTANCE deliberately keeps its own `EV-L0` / `CLASS-D` / `TRANSPORT_RECEIVED_ONLY` spellings: re-
+spelling INSTANCE values is an instance-authoring act owed to the P0-2 track, not something a
+template patch performs silently.
+
+**What did not change.** `status: DRAFT`, `approvers: []`, and the non-live conformance class stand
+in the template and in both INSTANCE documents. ADR-002-004 remains `Proposed`. **P0-2 remains
+open** — it closes only on an approved Broker Capability Profile INSTANCE with measured broker
+bounds, and this patch supplies shape, not measurement. No SAFE-xxx requirement, invariant,
+acceptance criterion, or authority is created, widened, or relaxed; no numeric bound is introduced
+or changed; no EV ID is introduced and the Evidence Register count is unchanged (Part-1 372); and no
+broker proper noun appears anywhere in the template. Independent EV-L0 review is owed.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -994,7 +1053,7 @@ ADR, introduces no SAFE-xxx, and adds no evidence row.
 | ADR-002-030 | Proposed | YES | NO |
 | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
 | Verification Profile 2.1 | `PROPOSED`, `approved_by: []` | YES, as draft | NO |
-| Broker-specific Capability Profile | Template only | YES | NO |
+| Broker-specific Capability Profile | Template only in tos-spec (schema-complete against ADR-002-004 §21 after Patch-0056, §3.23; all values `TBD`/`null`/`UNKNOWN`, `conformance_class: CLASS_D_NON_LIVE`). One non-normative project-side INSTANCE candidate exists (`docs/broker-profiles/…-draft.yaml`, `status: DRAFT`, `approvers: []`, 0 executed capability evidence), which authorizes nothing and does not close P0-2 | YES | NO |
 | Human authority artifacts | Templates only, all non-authorizing | YES | NO |
 | Evidence integrity and replay artifacts | Templates only, all DRAFT/unverified/non-authorizing | YES | NO |
 | Recovery barrier, session, inventory-cut, obligation, evidence-package, and readiness artifacts | Templates only; default states are DRAFT/TRIGGERED/PENDING/NOT_READY and non-authorizing/fail-closed | YES | NO |
