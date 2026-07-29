@@ -93,6 +93,7 @@ import io
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -1572,6 +1573,142 @@ def create_run_directory(run_dir: Path, evidence_root: Path | None = None) -> No
         ) from exc
 
 
+#: A ``path/to/file.py:12`` or ``file.md:3,9`` citation inside a mapping basis.
+BASIS_CITATION = re.compile(r"([A-Za-z0-9_\-./]+\.(?:py|md)):(\d+(?:,\d+)*)")
+
+#: Where a bare-basename citation may be resolved from. Deliberately narrow: a basis
+#: citing ``predicates.py`` is ambiguous across the kernel, and an ambiguous citation is
+#: not evidence, so it must be written with its path.
+BASIS_SEARCH_ROOTS = ("tos/src", "tos/tests", "docs/plans", "tos-spec/src")
+
+
+def _basis_file_index(repo_root: Path) -> dict[str, list[Path]]:
+    """Index candidate citation targets by basename **and** by repo-relative path."""
+    index: dict[str, list[Path]] = {}
+    for rel in BASIS_SEARCH_ROOTS:
+        base = repo_root / rel
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if path.suffix not in (".py", ".md") or "__pycache__" in path.parts:
+                continue
+            index.setdefault(path.name, []).append(path)
+            index.setdefault(str(path.relative_to(repo_root)), []).append(path)
+    return index
+
+
+def _selector_line_span(path: Path, selector: str) -> tuple[int, int] | None:
+    """The ``[first, last]`` source lines of the test the node selector names.
+
+    ``selector`` is the part of a pytest node id after ``::`` (``TestClass::test_x`` or
+    ``test_x``); the last component is the function. Returns ``None`` when the file does
+    not parse or the function is not found — an unknown span cannot constrain anything.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError:
+        return None
+    wanted = selector.split("::")[-1].split("[")[0]
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == wanted
+        ):
+            start = min([node.lineno] + [d.lineno for d in node.decorator_list])
+            return start, (node.end_lineno or node.lineno)
+    return None
+
+
+def verify_basis_citations(repo_root: Path, nodes: list[tuple[str, str]]) -> list[dict]:
+    """Re-measure every ``file:line`` citation in the mapping bases (design v1.2 N3).
+
+    A mapping basis is the *measured reason* a test node belongs to an evidence row, so a
+    citation inside it is a load-bearing claim about the executed source — not decoration.
+    Bases are supplied on the command line and are routinely copied forward from a previous
+    run, which is exactly how they go stale: an independent review measured a re-executed
+    L1 stage whose basis still cited pre-hardening line numbers that had since drifted onto
+    unrelated docstring lines. The run recorded them as its mapping evidence anyway.
+
+    Every citation is therefore resolved against the source on disk. A line past EOF, a
+    blank line, or a basename that resolves to more than one file is a defect: an ambiguous
+    citation cannot be checked, and an unchecked citation is indistinguishable from a
+    fabricated one.
+
+    One sharper case is also caught. When the node id carries a ``::selector`` and the
+    citation points at that same file, the cited line must fall inside that test's own
+    source span — this is the drift that survives every existence check, because the stale
+    line still exists and still holds real code, just somebody else's. That is exactly the
+    shape the independent review found.
+
+    **Limitation, stated rather than papered over**: a citation into a *different* file
+    that has drifted onto an unrelated but non-blank line cannot be detected here, because
+    the harness has no way to know what the line was supposed to say. Existence,
+    unambiguity, and node-scope containment are the mechanically checkable floor; they do
+    not make a citation true.
+
+    Returns:
+        One record per defective citation (empty when every citation resolves).
+    """
+    index = _basis_file_index(repo_root)
+    defects: list[dict] = []
+    for node, basis in nodes:
+        node_path, _, selector = node.partition("::")
+        for name, numbers in BASIS_CITATION.findall(basis):
+            candidates = index.get(name, [])
+            if len(candidates) != 1:
+                defects.append(
+                    {
+                        "node": node,
+                        "citation": f"{name}:{numbers}",
+                        "defect": (
+                            "AMBIGUOUS_BASENAME" if candidates else "UNRESOLVABLE_FILE"
+                        ),
+                        "candidates": sorted(
+                            str(c.relative_to(repo_root)) for c in candidates
+                        ),
+                    }
+                )
+                continue
+            target = candidates[0]
+            source = target.read_text(encoding="utf-8").splitlines()
+            # Only constrain scope when the citation is about the very test the node
+            # selects; a citation into any other file is out of this check's reach.
+            span = (
+                _selector_line_span(target, selector)
+                if selector and target == (repo_root / node_path).resolve()
+                else None
+            )
+            for number in (int(n) for n in numbers.split(",")):
+                if not 1 <= number <= len(source):
+                    defects.append(
+                        {
+                            "node": node,
+                            "citation": f"{name}:{number}",
+                            "defect": "PAST_EOF",
+                            "file_lines": len(source),
+                        }
+                    )
+                elif not source[number - 1].strip():
+                    defects.append(
+                        {
+                            "node": node,
+                            "citation": f"{name}:{number}",
+                            "defect": "CITES_A_BLANK_LINE",
+                        }
+                    )
+                elif span is not None and not span[0] <= number <= span[1]:
+                    defects.append(
+                        {
+                            "node": node,
+                            "citation": f"{name}:{number}",
+                            "defect": "OUTSIDE_THE_SELECTED_TEST",
+                            "selected_test_span": f"{span[0]}-{span[1]}",
+                            "cited_line": source[number - 1].strip()[:80],
+                        }
+                    )
+    return defects
+
+
 def write_traceability(
     path: Path,
     *,
@@ -1817,6 +1954,23 @@ def main(argv: list[str] | None = None) -> int:
         for node, _ in nodes:
             if not (repo_root / node_file(node)).is_file():
                 raise HarnessError(f"test node file does not exist: {node_file(node)}")
+
+        # A mapping basis is measured evidence, so its citations are re-measured here
+        # rather than trusted. Bases are hand-supplied and routinely carried forward
+        # between runs, which is how they go stale (an independent review caught exactly
+        # that). Refuse before the run: a package whose traceability cites lines that no
+        # longer hold the cited code is worse than no package.
+        basis_defects = verify_basis_citations(repo_root, nodes)
+        if basis_defects:
+            detail = "; ".join(
+                f"{d['node']} -> {d['citation']} [{d['defect']}]" for d in basis_defects
+            )
+            raise HarnessError(
+                "mapping-basis citations do not resolve against the executed source "
+                f"({len(basis_defects)} defective): {detail}. Re-measure them; a stale "
+                "file:line is a fabricated mapping claim, and an ambiguous basename "
+                "cannot be checked at all (write the repo-relative path)."
+            )
 
         register_row = read_register_row(repo_root, args.evidence_id, args.register_csv)
         commit_sha = _git(repo_root, "rev-parse", "HEAD")

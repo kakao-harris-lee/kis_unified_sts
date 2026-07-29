@@ -1455,3 +1455,134 @@ def test_parse_prior_stage_spec_splits_ref_and_note() -> None:
     assert ev.parse_prior_stage_spec(" EV-1/run-9 ") == ("EV-1", "run-9", "")
     with pytest.raises(ev.HarnessError, match="expects"):
         ev.parse_prior_stage_spec("EV-1")
+
+
+# ==========================================================================
+# mapping-basis citations are re-measured, never trusted
+# ==========================================================================
+
+_BASIS_NODE = (
+    "tos/tests/spg/test_spg_records.py::test_valid_result_must_have_empty_reason_set"
+)
+
+
+def _basis_defects(node: str, basis: str) -> list[dict]:
+    return ev.verify_basis_citations(_REPO_ROOT, [(node, basis)])
+
+
+def test_a_stale_citation_that_still_resolves_is_refused() -> None:
+    """The defect an independent review actually found, mechanically caught.
+
+    A re-executed stage copied its mapping basis forward from an earlier run. The cited
+    lines had drifted, but they still existed and still held real code — just somebody
+    else's — so every existence check passed and the run recorded them as its mapping
+    evidence. When the node selects one exact test, a citation into that same file must
+    land inside that test's own span.
+    """
+    span = ev._selector_line_span(
+        _REPO_ROOT / "tos/tests/spg/test_spg_records.py",
+        "test_valid_result_must_have_empty_reason_set",
+    )
+    assert span is not None
+    outside = span[0] - 5
+    defects = _basis_defects(
+        _BASIS_NODE, f"seals the coupling (test_spg_records.py:{outside})"
+    )
+    assert [d["defect"] for d in defects] == ["OUTSIDE_THE_SELECTED_TEST"]
+    assert defects[0]["selected_test_span"] == f"{span[0]}-{span[1]}"
+
+    # ...and the correct anchor is accepted
+    assert _basis_defects(_BASIS_NODE, f"(test_spg_records.py:{span[0]})") == []
+
+
+def test_an_ambiguous_basename_citation_is_refused() -> None:
+    """``predicates.py`` names many files; an uncheckable citation is not evidence."""
+    defects = _basis_defects("a.py", "producer predicates.py:429 carries the anchor")
+    assert [d["defect"] for d in defects] == ["AMBIGUOUS_BASENAME"]
+    assert len(defects[0]["candidates"]) > 1
+    # the same claim, written so it CAN be checked
+    assert _basis_defects("a.py", "tos/src/tos/spg/predicates.py:429") == []
+
+
+def test_a_citation_past_eof_or_on_a_blank_line_is_refused() -> None:
+    assert [
+        d["defect"] for d in _basis_defects("a.py", "test_spg_records.py:999999")
+    ] == ["PAST_EOF"]
+    blank = next(
+        i + 1
+        for i, line in enumerate(
+            (_REPO_ROOT / "tos/tests/spg/test_spg_records.py")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        if not line.strip()
+    )
+    assert [
+        d["defect"] for d in _basis_defects("a.py", f"test_spg_records.py:{blank}")
+    ] == ["CITES_A_BLANK_LINE"]
+
+
+def test_a_basis_without_citations_is_accepted() -> None:
+    """The guard constrains citations; it does not require them."""
+    assert _basis_defects("a.py", "prose only, no file:line claim") == []
+
+
+def test_a_run_with_a_defective_basis_is_refused_before_it_starts(tmp_path) -> None:
+    """End to end: no package is produced for an unverifiable mapping claim."""
+    rc = ev.main(
+        [
+            "--evidence-id",
+            "STATE-EV-001",
+            "--node",
+            f"{_SMOKE_NODE} | basis citing {_SMOKE_NODE.split('/')[-1]}:999999",
+            "--evidence-root",
+            str(tmp_path / "e"),
+        ]
+    )
+    assert rc == 2
+    assert not (tmp_path / "e").exists(), "no package for an unverifiable basis"
+
+
+def test_the_evidence_the_register_points_at_has_resolving_bases() -> None:
+    """Regression lock on the evidence actually in force.
+
+    Scoped to the packages ``EVIDENCE-REGISTER-002.csv`` names in ``latest_run_id``, plus
+    the prior stages those packages bind. Superseded packages are deliberately excluded:
+    one legitimately cites the source of the commit it ran at, and its citations having
+    drifted since is why it was superseded — not a defect in it. What must hold is that
+    the evidence a reader is directed to still cites lines that exist where it says.
+    """
+    register = _REPO_ROOT / ev.REGISTER_CSV_PATH
+    if not register.is_file():
+        pytest.skip("evidence register not present")
+    with open(register, newline="", encoding="utf-8-sig") as fh:
+        latest = {
+            (row["evidence_id"], row["latest_run_id"])
+            for row in csv.DictReader(fh)
+            if row.get("latest_run_id")
+        }
+    in_force: set[tuple[str, str]] = set()
+    for evidence_id, run_id in latest:
+        run = _REPO_ROOT / "tos-evidence" / evidence_id / run_id
+        if not run.is_dir():
+            continue
+        in_force.add((evidence_id, run_id))
+        manifest_path = run / "manifest.yaml"
+        if not manifest_path.is_file():
+            continue
+        man = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        for prior in man.get("prior_stage_runs") or []:
+            in_force.add((prior["evidence_id"], prior["run_id"]))
+
+    checked = 0
+    for evidence_id, run_id in sorted(in_force):
+        trace = _REPO_ROOT / "tos-evidence" / evidence_id / run_id / "traceability.csv"
+        if not trace.is_file():
+            continue
+        with open(trace, newline="", encoding="utf-8") as fh:
+            nodes = [(r["test_node"], r["mapping_basis"]) for r in csv.DictReader(fh)]
+        assert (
+            ev.verify_basis_citations(_REPO_ROOT, nodes) == []
+        ), f"{evidence_id}/{run_id}"
+        checked += 1
+    print(f"in-force evidence packages checked: {checked}")
