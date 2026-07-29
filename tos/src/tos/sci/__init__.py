@@ -18,7 +18,7 @@ consumer (design #29 §0.1-2/§0.4b).** Unlike WDR (#26), which had zero inbound
 compatibility manifests"; ``tos/src/tos/spg/vocabulary.py`` lines 185-187) to ADR-002-029/030. SCI
 **produces** that verdict through :func:`~tos.sci.predicates.software_deployment_ok_verdict` and
 takes **no import edge** to spg or to any other sibling. The name ``tos.sci`` is fixed by the
-register prefix and by eight landed files that already enumerate it as a not-landed excluded package
+register prefix and by eight landed files that already enumerate it as an excluded package
 (``egress/__init__.py`` line 65, ``cur/__init__.py`` line 51, ``rlp/__init__.py`` line 39,
 ``wdr/__init__.py`` line 47, plus their four import-closure tests) — a **stronger soft
 load-bearing** than WDR's (design #29 §0.4a).

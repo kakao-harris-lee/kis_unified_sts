@@ -6,12 +6,12 @@ scope / UNKNOWN / status / set / gate structural substrate** — the five yolk p
 :func:`unknown_denies_and_confines` — WDR-EV-007; :func:`evidence_status_honest` — WDR-EV-010;
 :func:`combined_set_no_permissive_union` + :func:`gate_states_separated` — WDR-EV-012) and their
 supporting predicates, plus the predicate-only §6 substrate and the not-Phase-1 §6b thin revocation
-send-race model. It **re-authors none** of the sibling / not-landed instances it consumes: spg owns the
+send-race model. It **re-authors none** of the sibling instances it consumes: spg owns the
 Hard Safety Envelope / ``residual_risk_ceiling`` / break-before-make; hag owns the effective-principal
 collapse + quorum; rcl owns the ``CapacityVector`` + worst-credible-effect; egress owns final-egress
 enforcement; cur owns the Safety Currentness Vector; evidence owns custody / causal-chain / gap; liveauth
 owns the Live Authorization; iap owns the single-use consumption shape; authority owns the epoch floor +
-non-revival; and -027 incident generation is not landed (injected opaque coordinate). wdr **consumes**
+non-revival; and -027 incident generation is sibling-owned (injected opaque coordinate). wdr **consumes**
 every produced fact as an **injected scalar / bool / verdict / digest / generation** and re-authors none
 of them (sibling edge 0, §3.5).
 

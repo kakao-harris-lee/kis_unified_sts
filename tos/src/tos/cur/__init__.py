@@ -47,8 +47,8 @@ against the #22 MAJOR-2 fail-open lesson).
 
 It imports only ``pydantic`` + stdlib + ``tos.canonical`` (the digest substrate +
 ``IndependentIdArtifact`` + ``classify_record_pair`` + ``CanonicalDecimal``) + ``tos.ordering``
-(append-only generation order). It imports **no** sibling — every real sibling and any future one
-(``tos.rlp`` / ``tos.wdr`` / ``tos.sir`` / ``tos.stm`` / ``tos.sci`` / ``tos.ptf``) is excluded by the
+(append-only generation order). It imports **no** sibling — every sibling, landed or future
+(``tos.rlp`` / ``tos.wdr`` / ``tos.sir`` / ``tos.stm`` / ``tos.sci`` / ``tos.posttrade`` — all landed since, all still excluded) is excluded by the
 §7.1 **allowlist** closure test (``tos.*`` closure ⊆ {``tos.canonical``, ``tos.ordering``,
 ``tos.cur``}) — **sibling edge 0** (design #23 §0.3/§3.4). **PROMOTE 0** — the digest / ordering
 substrate is already core.

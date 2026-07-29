@@ -6,8 +6,8 @@ interpreter, the set of top-level ``tos.*`` packages in ``sys.modules`` must be 
     {tos, tos.canonical, tos.ordering, tos.rlp}
 
 An enumerated denylist would go stale the moment a new sibling lands; the allowlist is
-**future-robust** — any sibling, present or future (including a not-landed ``tos.wdr`` / ``tos.sir`` /
-``tos.stm`` / ``tos.sci`` / ``tos.ptf``, prepared for the parallel session B ``tos.ptf`` landing),
+**future-robust** — any sibling, present or future (including ``tos.wdr`` / ``tos.sir`` /
+``tos.stm`` / ``tos.sci`` / ``tos.posttrade``, all of which landed after rlp),
 fails the assertion simply by appearing. **sibling edge 0** — rlp has **no** sanctioned sibling edge,
 so its allowlist admits only the two core packages.
 
@@ -30,7 +30,7 @@ It also asserts (design #25 §0.3):
      digests, §0.4b-g; a rlp → egress / cur import would additionally be a **cycle** since egress /
      cur consume rlp, §3.4).
 
-A planted-leak canary (including ``tos.egress`` / ``tos.cur`` / a *future* sibling ``tos.ptf`` /
+A planted-leak canary (including ``tos.egress`` / ``tos.cur`` / the placeholder name ``tos.ptf`` /
 ``tos.future_sibling`` / ``shared.config``) proves the spawn+scan pipeline catches a leak no denylist
 could have anticipated; a planted-AST-escape canary proves the static scan catches an escape — so
 "green" is evidence the checker works, not that it has been neutered.
@@ -47,7 +47,7 @@ import tos.rlp
 #: The §7.1 allowlist: the only top-level ``tos.*`` packages the rlp closure may contain.
 _ALLOWED_TOS_PACKAGES = frozenset({"tos", "tos.canonical", "tos.ordering", "tos.rlp"})
 
-#: The forbidden siblings (all real siblings + not-landed ``tos.wdr`` / ... / a future
+#: The forbidden siblings (all real siblings, including ``tos.wdr`` / ... which landed after rlp, + a future
 #: ``tos.future_sibling``) — INCLUDING the maximum re-authoring temptations ``tos.egress`` /
 #: ``tos.cur`` / ``tos.hag`` / ``tos.evidence`` / ``tos.rcl`` / ``tos.iap`` (re-authored NOT AT ALL,
 #: imported NOT AT ALL; a rlp → egress / cur import would be a cycle).
@@ -76,11 +76,12 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.spg",
         "tos.time",
         "tos.venue",
-        "tos.wdr",  # not-landed upstream — excluded by construction
-        "tos.sir",  # not-landed upstream — excluded by construction
-        "tos.stm",  # not-landed upstream — excluded by construction
-        "tos.sci",  # not-landed upstream — excluded by construction
-        "tos.ptf",  # parallel session B landing — excluded by the allowlist by construction
+        "tos.wdr",  # landed sibling — still excluded (sibling edge 0)
+        "tos.sir",  # landed sibling — still excluded (sibling edge 0)
+        "tos.stm",  # landed sibling — still excluded (sibling edge 0)
+        "tos.sci",  # landed sibling — still excluded (sibling edge 0)
+        "tos.posttrade",  # landed sibling — still excluded (sibling edge 0)
+        "tos.ptf",  # historical placeholder — landed as tos.posttrade (above); kept, never importable
         "tos.future_sibling",  # a *future* sibling — the allowlist excludes it by construction
     }
 )
@@ -198,7 +199,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "tos.cur",  # maximum re-authoring temptation — re-authored, not imported (cycle)
         "tos.hag",  # maximum re-authoring temptation — re-authored, not imported
         "tos.evidence",  # maximum re-authoring temptation — re-authored, not imported
-        "tos.ptf",  # parallel session B landing the allowlist catches
+        "tos.ptf",  # historical placeholder name the allowlist catches all the same
         "tos.future_sibling",  # a *future* sibling the allowlist catches
     ):
         sys.modules[planted] = types.ModuleType(planted)

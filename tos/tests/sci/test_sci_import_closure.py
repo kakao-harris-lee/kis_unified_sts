@@ -76,7 +76,7 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.sbr",  # §24 recovery owner
         "tos.sir",  # ADR-002-027 — landed mid-implementation; still edge 0 (§0.4f, test_seam_sir)
         "tos.spg",  # §8/§13 activation owner + the software_deployment_ok consumer (§3.5-1)
-        "tos.stm",  # ADR-002-028 — not landed
+        "tos.stm",  # ADR-002-028 — landed, still edge 0
         "tos.time",
         "tos.venue",
         "tos.wdr",

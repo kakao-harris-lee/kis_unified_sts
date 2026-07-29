@@ -132,7 +132,7 @@ def test_the_rlp_polarity_matches_what_stm_produces() -> None:
 
 
 def test_sir_anticipates_the_028_handoff_as_an_injected_coordinate() -> None:
-    """(§0.4b-5 / §3.6) sir's own sources still name the not-landed -028 handoff, anonymously."""
+    """(§0.4b-5 / §3.6) sir's own sources still name the -028 handoff, anonymously."""
     for relative in ("sir/predicates.py", "sir/state.py"):
         raw = (_TOS_SRC / relative).read_text(encoding="utf-8")
         text = " ".join(

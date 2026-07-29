@@ -41,7 +41,7 @@ guarantee the full RLP-INV-002 property; it provides a structural first line onl
 RLP-INV-002 line 154).
 
 **Injected-verdict discipline (design #25 §1/§0.4b over-realization + duplication boundary).** Every
-sibling / not-landed owner's produced verdict / generation / digest is an **injected** coordinate:
+sibling owner's produced verdict / generation / digest is an **injected** coordinate:
 rlp does **not** re-decide any owner's business content (egress QCC / TrialClaims boundary seal, cur
 RESTRICTED_LIVE_TRIAL dimension, hag effective-principal / quorum, evidence SegmentCommitmentScheme /
 causal-chain, rcl CapacityVector / worst-credible-effect, liveauth Live Authorization, spg policy

@@ -6,8 +6,9 @@ fresh interpreter, the set of top-level ``tos.*`` packages in ``sys.modules`` mu
     {tos, tos.canonical, tos.ordering, tos.egress}
 
 An enumerated denylist would go stale the moment a new sibling lands; the allowlist is
-**future-robust** — any sibling, present or future (including a parallel-landing ``tos.nt`` /
-``tos.cur`` / ``tos.sci`` / ``tos.ptf``), fails the assertion simply by appearing. **sibling edge
+**future-robust** — any sibling, present or future (including ``tos.nontrade`` /
+``tos.cur`` / ``tos.sci`` / ``tos.posttrade``, all of which landed after egress), fails the assertion
+simply by appearing. **sibling edge
 0** — egress has **no** sanctioned sibling edge, so its allowlist admits only the two core packages.
 
 It also asserts (design #22 §0.3):
@@ -46,9 +47,12 @@ _ALLOWED_TOS_PACKAGES = frozenset(
     {"tos", "tos.canonical", "tos.ordering", "tos.egress"}
 )
 
-#: The forbidden siblings (all real siblings + parallel/future ``tos.nt`` / ``tos.cur`` / a future
-#: ``tos.future_sibling``) — INCLUDING the four maximum re-authoring temptations ``tos.rcl`` /
-#: ``tos.ioc`` / ``tos.evidence`` / ``tos.capsule`` (re-authored NOT AT ALL, imported NOT AT ALL).
+#: The forbidden siblings (every real sibling, including ``tos.cur`` / ``tos.failuredomain`` /
+#: ``tos.nontrade`` / ``tos.posttrade`` / ``tos.rlp`` / ``tos.sci`` / ``tos.sir`` / ``tos.stm`` /
+#: ``tos.wdr``, all of which landed after egress, + a future ``tos.future_sibling``) — INCLUDING the
+#: four maximum re-authoring temptations ``tos.rcl`` / ``tos.ioc`` / ``tos.evidence`` /
+#: ``tos.capsule`` (re-authored NOT AT ALL, imported NOT AT ALL). The **allowlist** is the real gate;
+#: this denylist is documentation-grade reinforcement, so it is kept exhaustive as siblings land.
 _FORBIDDEN_SIBLINGS = frozenset(
     {
         "tos.afg",
@@ -71,8 +75,16 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.spg",
         "tos.time",
         "tos.venue",
-        "tos.nt",  # parallel session B landing — the allowlist excludes it by construction
-        "tos.cur",  # not-landed upstream — excluded by construction
+        "tos.cur",  # landed sibling — still excluded (sibling edge 0)
+        "tos.failuredomain",  # landed sibling — still excluded (sibling edge 0)
+        "tos.nontrade",  # landed sibling — still excluded (sibling edge 0)
+        "tos.posttrade",  # landed sibling — still excluded (sibling edge 0)
+        "tos.rlp",  # landed sibling — still excluded (sibling edge 0)
+        "tos.sci",  # landed sibling — still excluded (sibling edge 0)
+        "tos.sir",  # landed sibling — still excluded (sibling edge 0)
+        "tos.stm",  # landed sibling — still excluded (sibling edge 0)
+        "tos.wdr",  # landed sibling — still excluded (sibling edge 0)
+        "tos.nt",  # historical placeholder — landed as tos.nontrade (above); kept, never importable
         "tos.future_sibling",  # a *future* sibling — the allowlist excludes it by construction
     }
 )
@@ -190,7 +202,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "tos.ioc",  # maximum re-authoring temptation — re-authored, not imported
         "tos.evidence",  # maximum re-authoring temptation — re-authored, not imported
         "tos.capsule",  # maximum re-authoring temptation — re-authored, not imported
-        "tos.nt",  # parallel session B landing the allowlist catches
+        "tos.nt",  # historical placeholder name the allowlist catches all the same
         "tos.future_sibling",  # a *future* sibling the allowlist catches
     ):
         sys.modules[planted] = types.ModuleType(planted)

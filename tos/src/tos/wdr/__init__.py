@@ -15,7 +15,7 @@ value models (design #26 §2).
 a *deferee* — egress / cur carried the restricted-live trial claim and deferred its content validation
 to ``tos.rlp`` **by name**. **WDR has zero inbound deferral seam** (grep-witnessed, §0.4b): no landed
 sibling defers deviation content to ``tos.wdr``. The name ``tos.wdr`` is fixed only by two firewall
-*exclusion*-list comments (``cur/__init__.py:51`` / ``rlp/__init__.py:39`` enumerate the future sibling
+*exclusion*-list comments (``cur/__init__.py:51`` / ``rlp/__init__.py:39`` enumerate the then-future sibling
 ``tos.wdr`` as auto-excluded), so **naming is a *weaker* soft load-bearing than RLP's** — a different
 name would not orphan any functional reference, only make those list comments imprecise (§0.4a). WDR's
 ``Deviation Generation`` coordinates are destined to flow downstream into the cur Safety Currentness
@@ -43,8 +43,8 @@ the §13 line 364 explicit-empty set kept valid, v1.1 MAJOR-1).
 
 It imports only ``pydantic`` + stdlib + ``tos.canonical`` (the digest substrate +
 ``IndependentIdArtifact`` + ``classify_record_pair`` + ``CanonicalDecimal``) + ``tos.ordering``
-(append-only generation order). It imports **no** sibling — every real sibling and any future one
-(``tos.sir`` / ``tos.stm`` / ``tos.sci`` / ``tos.ptf``) is excluded by the §7.1 **allowlist** closure
+(append-only generation order). It imports **no** sibling — every sibling, landed or future
+(``tos.sir`` / ``tos.stm`` / ``tos.sci`` / ``tos.posttrade`` — all landed since, all still excluded), is excluded by the §7.1 **allowlist** closure
 test (``tos.*`` closure ⊆ {``tos.canonical``, ``tos.ordering``, ``tos.wdr``}) — **sibling edge 0**
 (design #26 §0.3/§3.4). **rcl edge 0** in particular: WDR does no capacity arithmetic (worst-credible
 effect is an injected opaque coordinate, not a ``CapacityVector`` type), so unlike are / ioc / afg it

@@ -5,13 +5,13 @@ completeness / subset / separation substrate** — the four yolk predicates
 (:func:`plan_scope_exact_and_complete` — RLP-EV-001; :func:`evidence_package_complete` — RLP-EV-005;
 :func:`coverage_supports_claim` — RLP-EV-006; :func:`gate_status_separated` — RLP-EV-012) and their
 supporting predicates, plus the predicate-only §6 substrate and the not-Phase-1 §6b thin abort-order
-model. It **re-authors none** of the sibling / not-landed instances it consumes: egress owns the
+model. It **re-authors none** of the sibling instances it consumes: egress owns the
 ``QuorumCommitCertificate`` / ``TrialClaims`` boundary seal; cur owns the RESTRICTED_LIVE_TRIAL
 dimension; hag owns the effective-principal collapse + quorum; evidence owns the
 ``SegmentCommitmentScheme`` + causal-chain + gap machine; rcl owns the ``CapacityVector`` +
 worst-credible-effect; liveauth owns the Live Authorization; spg owns the policy activation; iap owns
 the single-use consumption shape; authority owns the epoch floor + non-revival; and 026-030 governance
-owners are not landed (injected opaque coordinates). rlp **consumes** every produced fact as an
+owners are sibling-owned (injected opaque coordinates). rlp **consumes** every produced fact as an
 **injected scalar / bool / verdict / digest / generation** and re-authors none of them (sibling edge
 0, §3.5).
 

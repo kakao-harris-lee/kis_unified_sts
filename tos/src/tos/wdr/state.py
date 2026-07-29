@@ -41,7 +41,7 @@ request flags, §4.3). This module does **not** guarantee the full §10 property
 structural first line only.
 
 **Injected-verdict discipline (design #26 §1/§3.5 over-realization + duplication boundary).** Every
-sibling / not-landed owner's produced verdict / generation / digest is an **injected** coordinate: wdr
+sibling owner's produced verdict / generation / digest is an **injected** coordinate: wdr
 does **not** re-decide any owner's business content (spg Hard Safety Envelope / ``residual_risk_ceiling``
 / break-before-make, hag effective-principal / quorum, rcl ``CapacityVector`` / worst-credible-effect,
 egress final-egress enforcement, cur Safety Currentness Vector, evidence custody / causal-chain,

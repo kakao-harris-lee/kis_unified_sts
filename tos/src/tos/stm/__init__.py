@@ -25,7 +25,7 @@ that the coordinates this package will produce are **already consumed** by four 
 3. ``rlp/predicates.py:774-780`` ``monitoring_not_preventive`` plus its own docstring witness: "an
    EV-L6 monitor is **detective**, non-authorizing ... The monitoring generation is an **injected -028
    (STM) coordinate, not landed**."
-4. ``sir/predicates.py:15`` / ``sir/state.py:46`` — "the **not-landed -028** / -029 handoff and
+4. ``sir/predicates.py:15`` / ``sir/state.py:46`` — "the **-028** / -029 handoff and
    compromise coordinates are ... injected opaque coordinates."
 
 Every one of those consumptions is an **anonymous** dimension name, string token, ``bool | None`` or
@@ -33,7 +33,7 @@ opaque generation, and none references a ``tos.stm`` type — so the seam is **f
 edge is 0**; stm is the producer of those coordinates' *values*, artifacts and structural judgements,
 not a deferee. The name ``tos.stm`` is fixed only by four firewall *exclusion*-list comments
 (``wdr/__init__.py:47`` / ``rlp/__init__.py:39`` / ``cur/__init__.py:51`` / ``sir/__init__.py:67``
-enumerate the future sibling ``tos.stm`` as auto-excluded), so **naming is weak soft load-bearing** — a
+enumerate the then-future sibling ``tos.stm`` as auto-excluded), so **naming is weak soft load-bearing** — a
 different name would orphan no functional reference, only make those list comments imprecise (design #30
 §0.4a).
 

@@ -34,14 +34,14 @@ duration / threshold constant: ``B_safety_telemetry_loss_detect`` /
 ``MAX_alert_acknowledgement_age_ms`` are all **injected** opaque Profile-INSTANCE scalars, null in Phase
 1 and fail-closed at the consuming predicate.
 
-**Injected-verdict discipline (design #30 §3.5 duplication boundary).** Every sibling / not-landed
+**Injected-verdict discipline (design #30 §3.5 duplication boundary).** Every sibling
 owner's produced verdict / generation / digest is an **injected** coordinate: stm does **not** re-decide
 any owner's business content (cur Active Currentness Vector **and the MONITORING dimension's
 completeness judgement**, spg Safety Monitoring Policy activation + Hard Safety Envelope, rlp EV-L6
 demotion, sir Incident Generation + incident classification, egress final-egress enforcement + credential
 / route confinement, evidence custody / causal chain / gap, authority Safety Authority / HALT, liveauth
 Live Authorization, rcl capacity mutation + worst-credible effect, protective Protective Action
-Controller, time Trustworthy Time, hag Effective Principal, wdr Non-Waivable Boundary, and the not-landed
+Controller, time Trustworthy Time, hag Effective Principal, wdr Non-Waivable Boundary, and the sibling-owned
 -029 release-lineage / compromise coordinates) — it consumes the produced fact and judges only the
 coverage / determinism / bound / honesty structure.
 

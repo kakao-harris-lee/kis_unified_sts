@@ -5,7 +5,7 @@ declaration / exact-scope-combined / evidence-honesty structural substrate** —
 (:func:`restrictive_declaration_non_authorizing` — SIR-EV-001; :func:`scope_exact_combined_no_favorable_subset`
 — SIR-EV-002; :func:`evidence_communication_status_honest` — SIR-EV-009) and their supporting predicates,
 plus the nine §6 predicate-only substrate predicates and the thin §6b not-Phase-1 models. It
-**re-authors none** of the sibling / not-landed instances it consumes: sbr owns the Recovery Barrier and
+**re-authors none** of the sibling instances it consumes: sbr owns the Recovery Barrier and
 the Recovery Session; hag owns the Effective Principal collapse, the quorum and the Governed
 Single-Operator Re-Arm Variant; spg owns Safety Incident Policy activation and the Hard Safety Envelope;
 evidence owns custody / causal chain / gap; liveauth owns the Live Authorization; rcl owns capacity
@@ -13,7 +13,7 @@ mutation and the worst-credible effect; egress owns final-egress enforcement; cu
 Currentness Vector; authority owns Safety Authority / HALT; protective owns the Protective Action
 Controller and the Cancellation Arbiter; time owns Trustworthy Time; rlp owns demotion / production
 scope; wdr owns the Non-Waivable Boundary; and the -028 / -029 handoff and compromise coordinates are
-not landed (injected opaque coordinates). sir **consumes** every produced fact as an **injected scalar /
+sibling-owned (injected opaque coordinates). sir **consumes** every produced fact as an **injected scalar /
 bool / verdict / digest / generation** and re-authors none of them (sibling edge 0, design #28 §3.5).
 
 **The two boundaries (design #28 §0.4c — SIR's maximum risk is over-realization).** SIR-INV-001..016 is

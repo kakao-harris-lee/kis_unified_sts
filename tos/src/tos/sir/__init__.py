@@ -20,7 +20,7 @@ already consumed as an injected opaque coordinate by wdr (``wdr/predicates.py:14
 scalar and none references a ``tos.sir`` type, so the seam is **forward** and the **sibling edge is 0**;
 sir is the producer of those coordinates' *values*, artifacts and completeness judgements, not a deferee.
 The name ``tos.sir`` is fixed only by three firewall *exclusion*-list comments
-(``wdr/__init__.py:47`` / ``rlp/__init__.py:39`` / ``cur/__init__.py:51`` enumerate the future sibling
+(``wdr/__init__.py:47`` / ``rlp/__init__.py:39`` / ``cur/__init__.py:51`` enumerate the then-future sibling
 ``tos.sir`` as auto-excluded), so **naming is weak soft load-bearing** — a different name would orphan no
 functional reference, only make those list comments imprecise (design #28 §0.4a).
 
@@ -64,7 +64,7 @@ Incident Set kept **valid** against the #26 MAJOR-1 over-sealing lesson).
 
 It imports only ``pydantic`` + stdlib + ``tos.canonical`` (the digest substrate +
 ``IndependentIdArtifact`` + ``classify_record_pair``) + ``tos.ordering`` (Incident Generation order). It
-imports **no** sibling — every real sibling and any future one (``tos.stm`` / ``tos.sci``) is excluded by
+imports **no** sibling — every sibling, landed or future (``tos.stm`` / ``tos.sci`` — both landed since, both still excluded), is excluded by
 the §7.1 **allowlist** closure test (``tos.*`` closure ⊆ {``tos.canonical``, ``tos.ordering``,
 ``tos.sir``}) — **sibling edge 0** (design #28 §0.3/§3.4). **rcl edge 0** in particular: sir does no
 capacity arithmetic (the worst-credible effect is an injected opaque coordinate, never a

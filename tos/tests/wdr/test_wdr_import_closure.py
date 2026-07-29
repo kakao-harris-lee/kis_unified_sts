@@ -6,8 +6,9 @@ interpreter, the set of top-level ``tos.*`` packages in ``sys.modules`` must be 
     {tos, tos.canonical, tos.ordering, tos.wdr}
 
 An enumerated denylist would go stale the moment a new sibling lands; the allowlist is **future-robust**
-— any sibling, present or future (including a not-landed ``tos.sir`` / ``tos.stm`` / ``tos.sci`` /
-``tos.ptf``), fails the assertion simply by appearing. **sibling edge 0** — wdr has **no** sanctioned
+— any sibling, present or future (including ``tos.sir`` / ``tos.stm`` / ``tos.sci`` /
+``tos.posttrade``, all of which landed after wdr), fails the assertion simply by appearing. **sibling
+edge 0** — wdr has **no** sanctioned
 sibling edge, so its allowlist admits only the two core packages. **rcl edge 0 in particular** (design
 #26 §0.4g): wdr does no capacity arithmetic, so unlike are / ioc / afg it takes no rcl edge; ``tos.rcl``
 is in the forbidden set.
@@ -28,7 +29,7 @@ It also asserts (design #26 §0.3):
      AT ALL — produced facts injected as scalars / verdicts / digests, §0.4b-h).
 
 A planted-leak canary (including ``tos.spg`` / ``tos.hag`` / ``tos.rcl`` / a *future* sibling
-``tos.ptf`` / ``tos.future_sibling`` / ``shared.config``) proves the spawn+scan pipeline catches a leak
+``tos.posttrade`` / ``tos.future_sibling`` / ``shared.config``) proves the spawn+scan pipeline catches a leak
 no denylist could have anticipated; a planted-AST-escape canary proves the static scan catches an escape
 — so "green" is evidence the checker works, not that it has been neutered.
 """
@@ -44,7 +45,8 @@ import tos.wdr
 #: The §7.1 allowlist: the only top-level ``tos.*`` packages the wdr closure may contain.
 _ALLOWED_TOS_PACKAGES = frozenset({"tos", "tos.canonical", "tos.ordering", "tos.wdr"})
 
-#: The forbidden siblings (all real siblings + not-landed ``tos.sir`` / ... / a future
+#: The forbidden siblings (every real sibling, including ``tos.failuredomain`` / ``tos.posttrade`` /
+#: ``tos.sci`` / ``tos.sir`` / ``tos.stm``, all of which landed after wdr, + a future
 #: ``tos.future_sibling``) — INCLUDING the maximum re-authoring temptations ``tos.spg`` / ``tos.hag`` /
 #: ``tos.rcl`` / ``tos.egress`` / ``tos.cur`` / ``tos.evidence`` / ``tos.iap`` (re-authored NOT AT ALL,
 #: imported NOT AT ALL; rcl edge 0 — wdr does no capacity arithmetic, §0.4g).
@@ -74,11 +76,12 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.spg",
         "tos.time",
         "tos.venue",
-        "tos.posttrade",  # parallel session B — excluded by construction
-        "tos.sir",  # not-landed upstream — excluded by construction
-        "tos.stm",  # not-landed upstream — excluded by construction
-        "tos.sci",  # not-landed upstream — excluded by construction
-        "tos.ptf",  # parallel session B landing — excluded by the allowlist by construction
+        "tos.failuredomain",  # landed sibling — still excluded (sibling edge 0)
+        "tos.posttrade",  # landed sibling — still excluded (sibling edge 0)
+        "tos.sir",  # landed sibling — still excluded (sibling edge 0)
+        "tos.stm",  # landed sibling — still excluded (sibling edge 0)
+        "tos.sci",  # landed sibling — still excluded (sibling edge 0)
+        "tos.ptf",  # historical placeholder — landed as tos.posttrade (above); kept, never importable
         "tos.future_sibling",  # a *future* sibling — the allowlist excludes it by construction
     }
 )
@@ -197,7 +200,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "tos.rcl",  # rcl edge 0 — re-authored, not imported
         "tos.egress",  # maximum re-authoring temptation — re-authored, not imported
         "tos.cur",  # downstream consumer — a wdr → cur import would be a cycle
-        "tos.ptf",  # parallel session B landing the allowlist catches
+        "tos.ptf",  # historical placeholder name the allowlist catches all the same
         "tos.future_sibling",  # a *future* sibling the allowlist catches
     ):
         sys.modules[planted] = types.ModuleType(planted)

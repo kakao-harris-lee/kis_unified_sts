@@ -137,7 +137,7 @@ class TrialClaims(FrozenModel):
     §9:258: a restricted-live trial (ADR-002-025 RLP) vector / proof carries the Trial Policy / Plan /
     Run / Promotion Generation, the remaining envelope, and the abort generation as **conditional**
     claims. Phase 1 carries these as an **opaque optional scalar group**; the actual trial-content
-    validation is deferred to RLP (``tos.rlp``, not landed — design #23 §0.4f / §9.2 item 16), so cur
+    validation is deferred to RLP (``tos.rlp``, landed later — design #23 §0.4f / §9.2 item 16), so cur
     cites **no** RLP code (phantom seal). An all-optional value model — a non-trial vector leaves it
     ``None`` (§9 conditional).
     """

@@ -78,7 +78,7 @@ class QuorumCommitCertificate(IndependentIdArtifact):
     resulting state digest, §11.1 line 300-306 — rcl-owned, injected, **not** re-authored), the
     EGRESS-owned egress coordinates (egress generation / active principal / credential / session /
     route / endpoint / trust-bundle generation, §11.1 line 323-324), the sibling generation / digest
-    bindings (sbr / capsule / venue / ioc / are / afg / iap and the not-landed 024/029/030 upstream,
+    bindings (sbr / capsule / venue / ioc / are / afg / iap and the 024/029/030 upstream that landed later,
     §11.1 line 313-322 — injected, **not** re-authored), the quorum signer coordinates (§11.1 line
     325), the capability / permit nonces (§11.2 step 17), and the conditional restricted-live trial
     claim group (§11.1 line 308).
@@ -185,11 +185,11 @@ class QuorumCommitCertificate(IndependentIdArtifact):
     action_flow_decision_digest: str | None = None
     action_flow_permit_id: str | None = None
     approval_consumption_record_digest: str | None = None
-    #: 024/CUR (egress currentness proof) — not-landed upstream; injected id, ADR text only (§0.4f).
+    #: 024/CUR (egress currentness proof) — upstream landed later; injected id, ADR text only (§0.4f).
     egress_currentness_proof_id: str | None = None
-    #: 029/SCI release attestation — not-landed upstream; injected digest, ADR text only (§0.4f).
+    #: 029/SCI release attestation — upstream landed later; injected digest, ADR text only (§0.4f).
     release_artifact_attestation_digest: str | None = None
-    #: 030/PTF post-trade obligation — not-landed upstream; injected generation, ADR text only.
+    #: 030/PTF post-trade obligation — upstream landed later (as posttrade); injected generation, ADR text only.
     post_trade_obligation_generation: int | None = None
 
     # quorum signer coordinates + single-use nonces (§11.1 line 325 / §11.2 step 17)

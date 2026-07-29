@@ -36,14 +36,14 @@ threshold constant: ``B_incident_signal_to_restriction`` / ``B_incident_restrict
 ``MAX_incident_containment_plan_age_ms`` / ``MAX_incident_closure_evidence_age_ms`` are all **injected**
 opaque Profile-INSTANCE scalars, null in Phase 1 and fail-closed at the consuming predicate.
 
-**Injected-verdict discipline (design #28 §3.5 duplication boundary).** Every sibling / not-landed
+**Injected-verdict discipline (design #28 §3.5 duplication boundary).** Every sibling
 owner's produced verdict / generation / digest is an **injected** coordinate: sir does **not** re-decide
 any owner's business content (sbr Recovery Barrier / Recovery Session, hag effective-principal collapse
 + quorum + the Governed Single-Operator Re-Arm Variant, spg Safety Incident Policy activation + Hard
 Safety Envelope, evidence custody / causal chain / gap, liveauth Live Authorization, rcl capacity
 mutation + worst-credible effect, egress final-egress enforcement, cur Active Currentness Vector,
 authority Safety Authority / HALT, protective Protective Action Controller / Cancellation Arbiter, time
-Trustworthy Time, rlp demotion / production scope, wdr Non-Waivable Boundary, and the not-landed -028 /
+Trustworthy Time, rlp demotion / production scope, wdr Non-Waivable Boundary, and the sibling-owned -028 /
 -029 handoff and compromise coordinates) — it consumes the produced fact and judges only the
 declaration / scope / honesty / closure structure.
 

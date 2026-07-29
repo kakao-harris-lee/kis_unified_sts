@@ -62,7 +62,7 @@ It imports only ``pydantic`` + stdlib + ``tos.canonical`` (the digest substrate 
 ``tos.authority`` / ``tos.brokercap`` / ``tos.capsule`` / ``tos.dsl`` / ``tos.evidence`` / ``tos.hag``
 / ``tos.iap`` / ``tos.ioc`` / ``tos.liveauth`` / ``tos.orthostate`` / ``tos.protective`` / ``tos.rcl``
 / ``tos.recon`` / ``tos.replacement`` / ``tos.sbr`` / ``tos.spg`` / ``tos.time`` / ``tos.venue`` and
-any future sibling (``tos.nt`` / ``tos.cur`` / ``tos.sci`` / ``tos.ptf``) are all excluded by the
+every sibling that landed later (``tos.nontrade`` / ``tos.cur`` / ``tos.sci`` / ``tos.posttrade``) and any future one are all excluded by the
 §7.1 **allowlist** closure test (``tos.*`` closure ⊆ {``tos.canonical``, ``tos.ordering``,
 ``tos.egress``}) — **sibling edge 0** (design #22 §0.3/§3.4). The rcl ``claim_capability`` /
 ``TransmissionCapability`` / ``writer_fenced``, ioc ``derived_command_conformance`` /

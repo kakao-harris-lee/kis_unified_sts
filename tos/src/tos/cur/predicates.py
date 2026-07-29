@@ -10,7 +10,7 @@ currentness leaf (``egress_currentness_active`` / ``active_egress_currentness`` 
 ``egress_currentness_ok``); egress owns the ``QuorumCommitCertificate`` / ``RestrictiveLatchState`` /
 ``monotonic_denial_no_revival`` (§0.4c/d); authority owns the epoch floor + non-revival precedent;
 time owns freshness (wall-clock age — a **different axis** from currentness, §0.4e); spg owns the
-Currentness Policy activation; rcl owns capacity; and 026-030 governance owners are not landed
+Currentness Policy activation; rcl owns capacity; and the 026-030 governance owners, all landed since, are sibling-owned
 (injected opaque coordinates, §0.4f). cur **consumes** every produced fact as an **injected scalar /
 bool / verdict / digest** and re-authors none of them (sibling edge 0).
 

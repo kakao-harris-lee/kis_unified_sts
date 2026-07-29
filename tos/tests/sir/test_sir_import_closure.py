@@ -6,7 +6,7 @@ interpreter, the set of top-level ``tos.*`` packages in ``sys.modules`` must be 
     {tos, tos.canonical, tos.ordering, tos.sir}
 
 An enumerated denylist would go stale the moment a new sibling lands; the allowlist is **future-robust**
-— any sibling, present or future (including a not-landed ``tos.stm`` / ``tos.sci``), fails the assertion
+— any sibling, present or future (including ``tos.stm`` / ``tos.sci``, both landed after sir), fails the assertion
 simply by appearing. **sibling edge 0** — sir has **no** sanctioned sibling edge, so its allowlist admits
 only the two core packages. **rcl edge 0 in particular** (design #28 §3.5/§10.1): sir does no capacity
 arithmetic — the worst-credible effect is an injected opaque coordinate, never a ``CapacityVector`` —
@@ -49,7 +49,7 @@ import tos.sir
 #: The §7.1 allowlist: the only top-level ``tos.*`` packages the sir closure may contain.
 _ALLOWED_TOS_PACKAGES = frozenset({"tos", "tos.canonical", "tos.ordering", "tos.sir"})
 
-#: The forbidden siblings (all real siblings + the not-landed ``tos.stm`` / ``tos.sci`` + a future
+#: The forbidden siblings (all real siblings, including ``tos.stm`` / ``tos.sci`` which landed after sir, + a future
 #: ``tos.future_sibling``) — INCLUDING the maximum re-authoring temptations (design #28 §3.5).
 _FORBIDDEN_SIBLINGS = frozenset(
     {
@@ -80,8 +80,8 @@ _FORBIDDEN_SIBLINGS = frozenset(
         "tos.time",
         "tos.venue",
         "tos.wdr",
-        "tos.stm",  # not-landed upstream — excluded by construction
-        "tos.sci",  # not-landed upstream — excluded by construction
+        "tos.stm",  # landed sibling — still excluded (sibling edge 0)
+        "tos.sci",  # landed sibling — still excluded (sibling edge 0)
         "tos.future_sibling",  # a *future* sibling — the allowlist excludes it by construction
     }
 )
@@ -204,7 +204,7 @@ def _leak_canary_child(queue: mp.Queue) -> None:
         "tos.rcl",  # rcl edge 0 — re-authored, not imported
         "tos.protective",  # forward-seam consumer — an import would invert the seam
         "tos.cur",  # downstream consumer — a sir → cur import would be a cycle
-        "tos.stm",  # not-landed upstream the allowlist catches
+        "tos.stm",  # landed sibling the allowlist catches
         "tos.future_sibling",  # a *future* sibling the allowlist catches
     ):
         sys.modules[planted] = types.ModuleType(planted)
