@@ -77,6 +77,39 @@
 #   (with `.duplicate_unknown_and_omitted_field_behavior` and
 #   `.unit_multiplier_currency_and_numeric_encoding`). No value changed here.
 #
+# T4-α EVIDENCE INTAKE (2026-07-29). The P0-2 T2 probe campaign
+#   (`docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/`, 13 artifacts +
+#   README) and the N-17 official-spec collation
+#   (`docs/plans/2026-07-29-tos-p02-n17-spec-collation.md`, 확정 5 / 부분 6 /
+#   미확인 5) are folded into this draft. Rules obeyed, verbatim:
+#     - **No environment inheritance** (§13.14 / BC-INV-009). MOCK_VTS artifacts
+#       (P-13/P-14/P-15/P-16/N-15) are cited ONLY in document 1; REAL_PROD
+#       artifacts (N-16/N-18) ONLY in document 2. N-17 facts are official-spec
+#       and environment-independent, so both documents may cite them — each
+#       such entry says so and carries OFFICIAL_SPECIFICATION, never a
+#       sandbox→live lift. P-1 (`environment: NONE`) is a repo-code fact and by
+#       the runbook §6.2 exception cannot promote a status on its own.
+#     - **Citation eligibility** (runbook §6.2): only ✅ artifacts. The four N-15
+#       artifacts have `errors != []` and are therefore NOT cited as artifacts —
+#       the extended-lockout narrative is attributed to the campaign README's
+#       "정직한 음성" section and recorded as a negative result, not a value.
+#     - **Promotion conservatism**: exactly two `status` values moved
+#       (client_generated_order_id UNKNOWN → UNSUPPORTED, in both documents),
+#       each on an E1 full-request-body enumeration. No `VERIFIED` anywhere: no
+#       probe verified a declaration's own proposition. Detail fields moved only
+#       where the evidence establishes that field.
+#     - **Unestablished stays null** — `token_blackout_window_ms`,
+#       `subscription_limit`, `skew_bound_ms`, `rate_limits.hard_limits`,
+#       `sessions.concurrent_sessions`, `revocation_bound_ms`. Observations are
+#       recorded next to them with n / environment / time, and an explicit note
+#       on why the observation does not establish the value.
+#     - **VERIFICATION-PROFILE-002.yaml is untouched.** The
+#       `B_rate_limit_recovery` candidate (1635 ms, n=1, candidate_only) appears
+#       here as an observation with its evidence_ref only; writing a bound is
+#       the Bounds-Approver's exclusive act (runbook §6.5).
+#     - `status: DRAFT` · `approvers: []` · every digest field unchanged. This
+#       pass does not close P0-2.
+#
 # ANNOTATION CONVENTION: every key beginning with `_` (e.g. `_model_view`,
 #   `_kis`) is an INSTANCE-LOCAL annotation, not part of the template schema.
 #   Nothing in the repo parses this file today (verified absence: no loader
@@ -171,6 +204,18 @@ profile_identity:
       capability 테스트(BC-EV) 실행 기록은 0건이므로, 운영 경험은
       AssuranceLevel LEVEL_2_CONTROLLED_TEST_VERIFIED 를 정당화하지 않는다.
       본 초안은 전 차원에서 LEVEL_1_DOCUMENTED 이하를 유지한다(fail-closed).
+    # -- T4-α (2026-07-29): N-17 공식 명세 대조 반영 -------------------------
+    session_type_basis:
+      claim: REGULAR_DAY_ONLY
+      measurement: OFFICIAL-DOC
+      note: >-
+        모의의 주간 한정은 이제 우리 TR 표 관측이 아니라 **공식 명세 구조**로
+        확정됐다: 공식 래퍼가 `demo` 환경의 `night` 요청을 ValueError 로 막고
+        (주문·정정취소 2계열), 야간 잔고 함수에는 `env_dv` 파라미터 자체가 없어
+        모의 분기가 존재하지 않는다(TR `CTFN6118R` 실전 하드코딩). 이는 환경
+        무관한 **문서 사실**이며 MOCK 관측의 REAL 외삽이 아니다(§13.14 무관).
+      evidence_refs:
+        - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:57 (N-17 #13 · 확정)"
 
 live_scope:
   conformance_class: CLASS-D             # = ConformanceClass.CLASS_D_NON_LIVE
@@ -183,6 +228,12 @@ live_scope:
   instruments: []
   session_phases: []
   order_types: []
+  # T4-α: N-17 #2 는 선물 TIF 값집합 {"0","3","4"} 를 **공식 확정**했다. 그러나
+  # 이 리스트는 broker 수용 집합이 아니라 **승인된 live scope** 다 — CLASS-D ·
+  # approvers: [] 상태에서 채우면 권한 확대 표기가 된다(§10 line 584). 따라서
+  # 확정된 값집합은 capabilities 측
+  # (`market_and_instrument_constraints._kis.official_spec_partial`) 에만 기록하고
+  # 여기는 비운 채 유지한다. 주식 TIF 는 애초에 미확인이다(N-17 #2 부분).
   time_in_force_values: []
   action_classes: []
   maximum_concurrency: 0
@@ -212,24 +263,31 @@ capabilities:
 
   # -- 1/17 · ORDER_IDENTITY ---------------------------------------------
   client_generated_order_id:
-    status: UNKNOWN
-    assurance_level: EV-L0
-    evidence_refs: []
+    # T4-α 상향 근거(1줄): N-17 #1 이 주식 `order_cash`(body 9필드)·선물 `order`
+    # (body 12필드) **양 write-surface 의 params dict 전수(E1)** 를 확보했고 그
+    # 안에 클라이언트가 채우는 주문 식별자 필드가 없다 ⇒ 부재가 문서면 전수로
+    # 확정된다(UNKNOWN → UNSUPPORTED). 부재 주장의 **범위**: 이 2개 주문
+    # write-surface 의 request body 에 한한다 — KIS 포털 명세 전체가 아니다.
+    status: UNSUPPORTED
+    assurance_level: EV-L1                 # 공식 문서 근거이며 운영 검증은 아님
+    evidence_refs:
+      - "P-1-20260729T062925Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-1-20260729T062925Z.json; environment: NONE = repo 코드 사실 — 런북 §6.2 예외)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:45 (N-17 #1 · 확정)"
     restrictions: []
     restriction_approved: false
     fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
-    assurance_sources: []
+    assurance_sources: [OFFICIAL_SPECIFICATION]
     _model_view:
       dimension: ORDER_IDENTITY
-      status: UNKNOWN
-      assurance_level: LEVEL_0_UNKNOWN
+      status: UNSUPPORTED
+      assurance_level: LEVEL_1_DOCUMENTED
       evidence_reference: null
       restriction: null
       restriction_approved: null
       fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
-      assurance_sources: []
+      assurance_sources: [OFFICIAL_SPECIFICATION]
     _kis:
-      measurement: CODE-EVIDENCED (our client only) + NEEDS-LIVE-MEASUREMENT (broker side)
+      measurement: CODE-EVIDENCED (our client) + OFFICIAL-DOC (broker request-body 전수)
       observation: >-
         우리 클라이언트가 KIS 로 보내는 주문 본문에는 **클라이언트 생성 식별자
         필드가 하나도 없다**. 주식 본문 6필드(CANO/ACNT_PRDT_CD/PDNO/ORD_DVSN/
@@ -240,11 +298,34 @@ capabilities:
         - "shared/execution/executor.py:386-399 (선물 주문 본문 — 클라이언트 id 없음)"
         - "shared/execution/executor.py:335 (ODNO = broker 부여, 주식)"
         - "shared/execution/executor.py:412 (ODNO = broker 부여, 선물)"
-      why_not_unsupported: >-
-        "우리가 보내지 않는다" ≠ "broker 가 제공하지 않는다". KIS API 가 클라이언트
-        주문번호 필드를 제공하는지 여부는 **미확인**이므로 UNSUPPORTED 가 아니라
-        UNKNOWN 이다(anti-phantom: 부재 주장도 실측 필요). BC-INV-001 상
-        UNKNOWN 은 어차피 unavailable 로 취급되어 보수적 결과는 동일하다.
+      why_not_unsupported_SUPERSEDED: >-
+        (2026-07-29 T4-α 로 해소됨 — 기록만 남긴다.) 이전 판정: "우리가 보내지
+        않는다" ≠ "broker 가 제공하지 않는다" 이므로 UNKNOWN. 그 판정이 요구한
+        실측이 N-17 #1 로 수행됐다(공식 래퍼의 params dict 전수 = E1). 부재가
+        확정되어 UNSUPPORTED 로 상향한다. BC-INV-001 상 두 값 모두 unavailable 로
+        취급되므로 이 상향은 권한을 넓히지 않는다.
+      spec_collation_2026_07_29:
+        measurement: OFFICIAL-DOC
+        source: "github.com/koreainvestment/open-trading-api examples_llm/ (KIS 공식 1차 저장소), 접근 2026-07-29"
+        stock_order_cash_body_9:
+          [CANO, ACNT_PRDT_CD, PDNO, ORD_DVSN, ORD_QTY, ORD_UNPR,
+           EXCG_ID_DVSN_CD, SLL_TYPE, CNDT_PRIC]
+        futures_order_body_12:
+          [ORD_PRCS_DVSN_CD, CANO, ACNT_PRDT_CD, SLL_BUY_DVSN_CD, SHTN_PDNO,
+           ORD_QTY, UNIT_PRICE, NMPR_TYPE_CD, KRX_NMPR_CNDT_CD, ORD_DVSN_CD,
+           CTAC_TLNO, FUOP_ITEM_DVSN_CD]
+        broker_assigned_response_fields: [ODNO, KRX_FWDG_ORD_ORGNO, ORD_TMD]
+        absence_scope: >-
+          **주문 2개 write-surface 의 request body 전수**에 한한 부재다. KIS 포털
+          명세 전체에 대한 부재 주장이 아니다(N-17 §0 E1 등급 규율).
+        environment_independence: >-
+          이 사실은 공식 명세 대조 결과이므로 MOCK/REAL 양 문서에 동일하게
+          기입된다. 샌드박스→실전 상속(§13.14 금지)이 **아니다**.
+        p1_probe_note: >-
+          P-1(`environment: NONE`)은 우리 코드에 클라이언트 식별자 토큰이 0건임을
+          확인한 **repo 사실**이다(ORD_ID/CLNT_ORD/CLIENT_ORDER/CLORDID/USER_ORD/
+          MY_ORD 전부 grep 0). 런북 §6.2 예외대로 단독으로는 status 를 승격하지
+          못하며, 승격 근거는 N-17 이다.
 
   # -- 2/17 · SUBMISSION_IDEMPOTENCY -------------------------------------
   submission_idempotency:
@@ -457,9 +538,10 @@ capabilities:
 
   # -- 7/17 · CANCELLATION -----------------------------------------------
   cancellation_finality:
-    status: DOCUMENTED_NOT_VERIFIED
+    status: DOCUMENTED_NOT_VERIFIED        # T4-α 무변경 — 최종성은 여전히 미검증
     assurance_level: EV-L1
-    evidence_refs: []
+    evidence_refs:
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3 · 확정 — RVSE_CNCL_DVSN_CD 값집합)"
     crossing_fill_possible: true
     final_quantity_proof_recipe: FQP-KIS-FUT-CANCEL-THEN-REQUERY-DRAFT
     restrictions: []
@@ -508,21 +590,39 @@ capabilities:
       evidence:
         - "shared/execution/executor.py:598-641 (_cancel_futures_order)"
         - "shared/execution/executor.py:613-627 (취소 본문)"
+      spec_collation_2026_07_29:            # T4-α
+        measurement: OFFICIAL-DOC
+        rvse_cncl_dvsn_cd_value_set: ["01", "02"]   # 01=정정 / 02=취소
+        finding: >-
+          주식·선물 **양쪽 독립 확인**으로 값집합이 2값 전수임이 확정됐다(E2 명시
+          열거). 우리가 쓰는 "02" 는 이 집합 안에 있고 **미지 값이 존재하지
+          않는다** — 런북 §7 #3 이 P-8 리스크로 남겨 둔 "미지 값" 항목이 해소된
+          것이다. 단, 이는 값집합의 확정이며 **취소 최종성(finality)의 검증은
+          아니다** — status 는 DOCUMENTED_NOT_VERIFIED 를 유지한다.
+        evidence_refs:
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3)"
 
   # -- 8/17 · REPLACE_OR_AMEND -------------------------------------------
   replace_semantics:
+    # T4-α: status 는 **무변경**이다. N-17 #3 이 확정한 것은 구분자의 값집합이지
+    # 정정의 **원자성(ATOMIC_REPLACE 여부)** 이 아니다 — 후자가 status/mode 를
+    # 지배하므로 UNKNOWN / BROKER_UNSPECIFIED 를 유지한다.
     status: UNKNOWN
     assurance_level: EV-L0
-    evidence_refs: []
+    evidence_refs:
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3 · 확정 — value_set 한정)"
     mode: BROKER_UNSPECIFIED
-    value_set: []                          # Patch-0057 신설 슬롯. 우리 코드가
-                                           # 쓰는 "02"(+문서상 "01")는 **우리
-                                           # 사용값**이지 broker 수용 집합이
-                                           # 아니다 — N-17 확정 전까지 빈 집합.
+    value_set: ["01", "02"]                # T4-α 기입. Patch-0057 슬롯이 기다리던
+                                           # **broker 수용 집합**이 N-17 #3 으로
+                                           # 확정됐다: 주식·선물 양쪽 독립 확인,
+                                           # 둘 다 01=정정 / 02=취소 2값 전수(E2).
+                                           # 우리 사용값("02")이 아니라 공식
+                                           # 명세의 열거다.
     restrictions: []
     restriction_approved: false
     fallback_reference: RESERVE_OVERLAP_CAPACITY_OR_REPRESENT_GAP_AS_UNPROTECTED
-    assurance_sources: []
+    assurance_sources: [OFFICIAL_SPECIFICATION]   # value_set 한정 근거 — status 를
+                                                  # 승격시키지 않는다(EV-L0 유지)
     _model_view:
       dimension: REPLACE_OR_AMEND
       status: UNKNOWN
@@ -531,9 +631,9 @@ capabilities:
       restriction: null
       restriction_approved: null
       fallback_reference: RESERVE_OVERLAP_CAPACITY_OR_REPRESENT_GAP_AS_UNPROTECTED
-      assurance_sources: []
+      assurance_sources: [OFFICIAL_SPECIFICATION]
     _kis:
-      measurement: CODE-EVIDENCED (never exercised) + NEEDS-LIVE-MEASUREMENT
+      measurement: CODE-EVIDENCED (never exercised) + OFFICIAL-DOC (value_set) + NEEDS-LIVE-MEASUREMENT (atomicity)
       observation: >-
         order-rvsecncl 엔드포인트는 정정(01)/취소(02)를 구분자 하나로 나눈다.
         우리 코드는 **"02" 만** 사용한다 — 정정 경로는 한 번도 실행된 적이 없다
@@ -543,6 +643,21 @@ capabilities:
         §8.8 line 394 상 비원자 semantics 는 §13.7 fallback(중첩 capacity 예약
         또는 보호 공백의 미보호 리스크 표현)을 강제한다.
       evidence: ["shared/execution/executor.py:617 (RVSE_CNCL_DVSN_CD: \"02\")"]
+      spec_collation_2026_07_29:            # T4-α
+        measurement: OFFICIAL-DOC
+        confirmed: >-
+          `RVSE_CNCL_DVSN_CD` 값집합 = {"01" 정정, "02" 취소} **전수**. 주식
+          `order_rvsecncl`(TR TTTC0013U/VTTC0013U)·선물 `order_rvsecncl`
+          (TR TTTO1103U/TTTN1103U/VTTO1103U) 양쪽 docstring 이 독립적으로 동일
+          열거를 제시한다(E2).
+        still_unknown: >-
+          정정이 원자적으로 치환되는지(ATOMIC_REPLACE), 아니면 취소+신규로
+          분해되는지는 **명세에 서술이 없고 우리 코드는 정정 경로를 한 번도
+          실행한 적이 없다**. 따라서 §8.8 line 394 의 비원자 fallback
+          (RESERVE_OVERLAP_CAPACITY_OR_REPRESENT_GAP_AS_UNPROTECTED)이 계속
+          강제된다. 단발 관측으로 원자성을 주장하지 않는다(런북 §8.4).
+        evidence_refs:
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3)"
 
   # -- 9/17 · REDUCE_ONLY ------------------------------------------------
   reduce_only:
@@ -608,9 +723,10 @@ capabilities:
 
   # -- 11/17 · POSITIONS_BALANCES_MARGIN ---------------------------------
   position_balance_margin:
-    status: DOCUMENTED_NOT_VERIFIED
+    status: DOCUMENTED_NOT_VERIFIED        # T4-α 무변경 — consistency 미측정
     assurance_level: EV-L1
-    evidence_refs: []
+    evidence_refs:
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:60 (N-17 #16 · 확정 — 잔고 TR 정본)"
     consistency_model: UNKNOWN
     restrictions: []
     restriction_approved: false
@@ -633,6 +749,24 @@ capabilities:
       evidence:
         - "shared/kis/client.py:901 (get_stock_balance), :935 (path)"
         - "shared/kis/client.py:1023 (get_futures_balance), :1059 (path)"
+      spec_collation_2026_07_29:            # T4-α — MOCK 계열 TR 만 기입
+        measurement: OFFICIAL-DOC
+        mock_balance_tr_ids:
+          stock_day: VTTC8434R              # [v1_국내주식-006]
+          futures_day: VTFO6118R            # [v1_국내선물-004] — 런북에 없던 신규 확인
+          futures_night: null               # 모의 야간 잔고 TR **부재**(N-17 #13)
+        note: >-
+          N-17 #16 이 잔고 TR 3계열을 전수 확보했고, 그중 **모의 계열만** 여기에
+          기입한다. 실전 TR(TTTC8434R/CTFO6118R/CTFN6118R)은 REAL 문서 소관이다.
+          `futures_night: null` 은 결측이 아니라 구조적 부재다 — 야간 잔고
+          함수에는 `env_dv` 분기 자체가 없다(N-17 #13). 이 기입은 **TR 식별자의
+          확정**이며 잔고 일관성 모델(consistency_model)의 검증이 아니다.
+        followup: >-
+          `config/kis/tr_ids.yaml` 의 잔고 TR 0건 결손을 이 5개 TR 로 채우는 것은
+          **별도 승인 레인**이다(N-17 :60 경고). 본 프로파일은 제안하지 않는다.
+        evidence_refs:
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:60 (N-17 #16)"
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:57 (N-17 #13 — 야간 부재)"
       quirks_found_in_our_client:
         - id: Q-POS-1
           severity: MEDIUM
@@ -672,11 +806,20 @@ capabilities:
 
   # -- 13/17 · RATE_LIMITS -----------------------------------------------
   rate_limits:
+    # T4-α: P-13 실측 반영. status/assurance_level 은 **무변경**이다 — 스로틀
+    # 응답 1종을 관측한 것은 RATE_LIMITS 차원의 선언 명제(한도·범위·창 의미론)를
+    # 검증한 것이 아니다(런북 §6.4-3: 측정 1건 ≠ LEVEL_2).
     status: DOCUMENTED_NOT_VERIFIED
     assurance_level: EV-L1
-    evidence_refs: []
-    scope: UNKNOWN                       # per-app-key? per-account? per-IP? 미측정
-    hard_limits: {}                      # ⚠ 의도적 공백 — 아래 _kis 참조
+    evidence_refs:
+      - "P-13-20260729T063120Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-13-20260729T063120Z.json; MOCK_VTS, 2026-07-29 15:31 KST)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:55 (N-17 #11 · 미확인 — folklore 반증 유지)"
+    scope: UNKNOWN                       # per-app-key? per-account? per-IP? 여전히
+                                         # 미측정 — P-13 은 단일 계좌·단일 세션만
+                                         # 썼으므로 공유 축을 구분할 수 없다.
+    hard_limits: {}                      # ⚠ 의도적 공백 유지 — 스로틀은 관측됐으나
+                                         # 한도 **값**은 확립되지 않았다(구간
+                                         # [1.0, 2.0) rps). 아래 _kis 참조.
     sustained_and_burst_semantics: UNKNOWN
     rolling_or_fixed_window_semantics: UNKNOWN
     submit_cancel_amend_replace_query_and_session_sharing: UNKNOWN
@@ -699,7 +842,46 @@ capabilities:
       fallback_reference: null
       assurance_sources: [OFFICIAL_SPECIFICATION]
     _kis:
-      measurement: OFFICIAL-DOC (qualitative only) + NEEDS-LIVE-MEASUREMENT (all numbers)
+      measurement: OFFICIAL-DOC (qualitative) + CONTROLLED-SANDBOX-OBSERVATION (P-13) + NEEDS-LIVE-MEASUREMENT (한도 값·공유 축)
+      probe_observations_2026_07_29:        # T4-α · P-13-20260729T063120Z
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-29 15:31 (워커 정지 창)"
+        applicable_scope: >-
+          단일 계좌(60******03) · 단일 세션 · endpoint_class=query ·
+          asset=futures · 모의투자 한정. VP-002:762 가 요구하는 scope 축 그대로.
+        highest_clean_rps: 1.0              # 하한(LOWER BOUND) — 한도가 아니다
+        throttled_at_rps: 2.0               # 상한(UPPER BOUND)
+        bracketing_interval_rps: "[1.0, 2.0) — 점이 아니라 구간으로만 기록"
+        calls_per_step: 3                   # hold 3.0s · step_gap 2.0s
+        limit_signal:
+          http_status: 500                  # ⚠ 429 가 아니다
+          msg_cd: EGW00201
+          msg1: "초당 거래건수를 초과하였습니다."
+        limit_signal_note: >-
+          스로틀 신호가 **HTTP 429 가 아니라 500 + `EGW00201`** 로 온다. 우리
+          `KISApiErrorRateTracker` 는 429/5xx 를 함께 집계하므로 신호를 놓치지는
+          않으나, 429 만 보는 코드가 있다면 유량 초과를 인프라 오류로 오분류한다.
+        recovery_candidate_ms:
+          label: throttle_to_first_success_ms
+          n: 1
+          max_observed_ms: 1089.588
+          recommended_bound_ms: 1635        # ceil(max x 1.5) — 런북 §8.1
+          candidate_only: true
+          additive_error: "폴 간격 1.0s — 승인 bound 는 max_observed + poll 을 넘어야 한다(§8.3)"
+          disposition: >-
+            **VERIFICATION-PROFILE-002.yaml 무접촉.** `B_rate_limit_recovery` 의
+            value_ms 기입은 Bounds-Approver 독점 권한이며(런북 §6.5), 여기에는
+            관측치와 후보만 기록한다. n=1 의 표본 적정성 판단도 그쪽 소관이다.
+        folklore_status: >-
+          통설 "모의 초당 2건" 은 **확증되지 않았다**. 오히려 2.0 rps 에서 이미
+          초과 신호가 났고 clean 은 1.0 rps 였다 — 통설과 방향이 다를 수 있다.
+          어느 쪽이든 수치는 기입하지 않는다(N-17 #11: 공식 원전에 수치 부재).
+        not_established:
+          - "hard_limits 값 (구간만 확보)"
+          - "scope (계좌/앱키/IP 중 무엇에 걸리는지 — 단일 계좌만 시험)"
+          - "sustained vs burst 구분 (스텝당 3콜로는 분리 불가)"
+          - "rolling vs fixed window"
+          - "실전 한도 (모의 관측의 외삽 금지 — §13.14)"
       hard_limits_deliberately_empty: >-
         **이 항목이 P0-2 의 핵심이다.** 아래 숫자는 전부 *우리가 스스로 건 상한*
         이며 broker 가 강제하는 한도의 측정값이 **아니다**. 흔히 인용되는
@@ -749,18 +931,25 @@ capabilities:
 
   # -- 14/17 · SESSION_CONNECTION_MODEL ----------------------------------
   sessions:
-    status: DOCUMENTED_NOT_VERIFIED
+    status: DOCUMENTED_NOT_VERIFIED        # T4-α 무변경
     assurance_level: EV-L1
-    evidence_refs: []
-    concurrent_sessions: UNKNOWN
+    evidence_refs:
+      - "P-14-20260729T065011Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-14-20260729T065011Z.json; MOCK_VTS, 2026-07-29 15:50 KST)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:53 (N-17 #9 · 미확인 — approval_key 유효기간)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:54 (N-17 #10 · 미확인 — 구독 상한)"
+    concurrent_sessions: UNKNOWN           # T4-α: P-14 가 5 세션을 **거부 없이**
+                                           # 열었으나 이는 시험 천장이며, 더욱이
+                                           # displacement 확인(세션 N 이 N-1 을
+                                           # 무효화하는가)이 **미수행**이다.
+                                           # displacing broker 라면 실효 동시성은
+                                           # 1 이므로 "≥5" 라는 하한 주장조차
+                                           # 성립하지 않는다 — UNKNOWN 유지.
     head_of_line_blocking: UNKNOWN
-    subscription_limit: null               # Patch-0057 신설 슬롯. 아래
-                                           # `_kis.subscription_limit` 는
-                                           # our_setting 40 / repo_claim "41" 을
-                                           # 기록하면서 **"값으로 승격하지
-                                           # 않는다"** 고 스스로 명시한다. 그
-                                           # 지시를 그대로 따라 null 유지 —
-                                           # P-14 실측 전까지 미확립.
+    subscription_limit: null               # Patch-0057 신설 슬롯. P-14 실측 후에도
+                                           # **null 유지**: 관측 1건은 단일 심볼
+                                           # 반복 구독이라 broker dedup 가능성으로
+                                           # 상한을 과소평가한다. repo 주석 "41"
+                                           # 도 커뮤니티 출처라 승격 금지 그대로.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -775,7 +964,43 @@ capabilities:
       fallback_reference: null
       assurance_sources: [OFFICIAL_SPECIFICATION]
     _kis:
-      measurement: CODE-EVIDENCED (our config) + NEEDS-LIVE-MEASUREMENT (broker limits)
+      measurement: CODE-EVIDENCED (our config) + CONTROLLED-SANDBOX-OBSERVATION (P-14) + NEEDS-LIVE-MEASUREMENT (broker limits)
+      probe_observations_2026_07_29:        # T4-α · P-14-20260729T065011Z
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-29 15:50"
+        concurrent_sessions_accepted: 5
+        concurrent_sessions_tested_ceiling: 5
+        concurrent_sessions_verdict: >-
+          accepted == tested ceiling ⇒ **한도는 시험 천장보다 위이거나, 애초에
+          한도 관측이 아니다**. 천장을 한도로 기록하지 않는다(런북 §8.4).
+        displacement_check: NOT_PERFORMED
+        displacement_caveat: >-
+          ⚠ 이 관측의 하한 주장은 displacement 확인에 종속된다. 새 세션이 이전
+          세션을 조용히 무효화하는 broker 라면 "5개가 수락됐다" 는 관측은
+          동시성 5 를 의미하지 않고 실효 동시성 1 을 의미한다. 서버 close 프레임
+          확인이 수행되지 않았으므로 `concurrent_sessions` 는 **UNKNOWN 유지**이며
+          "≥5" 로도 기입하지 않는다.
+        subscriptions_accepted: 1
+        subscription_symbol: A05608         # 단일 심볼 반복 — dedup 가능성
+        subscription_reply:
+          tr_id: H0STCNT0
+          rt_cd: "0"
+          msg_cd: OPSP0000
+          msg1: "SUBSCRIBE SUCCESS"
+          encrypt: "N"
+          note: >-
+            응답 body.output 에 AES key/iv 가 동봉된다(실시간 복호화 필요 —
+            N-17 §2 부수 관측과 일치). 이 아티팩트의 원문 발췌에 key/iv 문자열이
+            포함되어 있으나 이는 **모의 세션 1회용 자료**다.
+        subscription_cap_verdict: >-
+          상한 미확립. 진짜 상한은 **서로 다른 심볼**로 채워야 나오며 현재 프로브는
+          단일 `--symbol` 만 받는다. 따라서 이 1건은 "단일 심볼 관측" 이지
+          `subscription_limit` 이 아니다 — null 유지.
+        transport_confirmed: >-
+          평문 `ws://ops.koreainvestment.com:31000` 로 approval_key 발급 + 구독이
+          실제로 성립함을 실측 확인 — Q-SESS-1(평문 WS)이 코드 관측을 넘어
+          **가동 중 사실**로 확인됐다.
+        approval_key_issued: true
       websocket_endpoints:
         mock: "ws://ops.koreainvestment.com:31000"
         real: "ws://ops.koreainvestment.com:21000"
@@ -783,8 +1008,16 @@ capabilities:
       approval_key:
         endpoint: "/oauth2/Approval"
         evidence: "shared/kis/websocket.py:754"
-        validity_claim: "~24h (repo 주석 — 공식 미확인)"
+        validity_claim: "~24h (repo 주석 — 공식 **근거 부재 확정**, 아래 참조)"
         validity_evidence: "shared/kis/approval_cache.py:3, :22"
+        validity_downgrade_2026_07_29: >-
+          T4-α · N-17 #9: `/oauth2/Approval` 응답 필드는 `approval_key`·`code`·
+          `message` **3건 전수**이며 토큰의 `expires_in` 에 대응하는 유효기간
+          필드가 **존재하지 않는다**. 즉 repo 주석 "~24h" 는 미확인을 넘어
+          **공식 근거가 없음이 확인된** 주장이다. 값으로 쓰지 말 것. 후속은
+          운영자 문의(측정으로는 상한만 나온다).
+        validity_evidence_refs:
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:53 (N-17 #9)"
         per_environment: >-
           real/mock 엔드포인트는 같은 app key 에 대해 **서로 다른** approval key
           를 발급한다(repo 관측). evidence: shared/kis/approval_cache.py:10-11
@@ -796,6 +1029,11 @@ capabilities:
         note: >-
           "41" 은 repo 주석의 주장이며 공식 원전에서 확인하지 못했다(웹 검색 상
           커뮤니티 라이브러리에서만 언급). 값으로 승격하지 않는다.
+        probe_result_2026_07_29: >-
+          T4-α · P-14 실측 후에도 이 지시는 유지된다. 관측은 단일 심볼 1건이므로
+          "41" 을 승격시키지도 반증하지도 못한다. 추가로 N-17 #10 이 공식 실시간
+          카테고리 25건을 색인 확인했으나 **구독 상한 수치·서술은 부재**였다
+          (부재 범위: 예제 래퍼 문서면 한정). 양쪽 모두 미확립 ⇒ null 유지.
       quirks_found:
         - id: Q-SESS-1
           severity: HIGH
@@ -825,17 +1063,25 @@ capabilities:
 
   # -- 15/17 · CREDENTIALS_AUTHORIZATION ---------------------------------
   credentials_and_revocation:
+    # T4-α: status/assurance_level 무변경. 거부 **표면**은 관측됐으나 재발급
+    # 정책(창 길이·해제 조건)은 여전히 미확립이다.
     status: DOCUMENTED_NOT_VERIFIED
     assurance_level: EV-L1
-    evidence_refs: []
+    evidence_refs:
+      - "P-15-20260729T063207Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-15-20260729T063207Z.json; MOCK_VTS, 2026-07-29 15:32 KST)"
+      - "docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/README.md §'정직한 음성 / 캠페인 한계' (N-15 4회 전패 기록 — N-15 아티팩트 자체는 errors≠[] 로 §6.2 부적격)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:52 (N-17 #8 · 부분 — expires_in 필드 의미)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:56 (N-17 #12 · 미확인 — 폐기 API)"
     revocation_bound_ms: null
     direct_worker_access_prohibited: false   # ⚠ 템플릿 기본 true 에서 의도적 하향
-    reissue_rejection_semantics: UNKNOWN   # Patch-0057 신설 슬롯. 아래
-                                           # `token_reissue_limit` 는 "1분당
-                                           # 1회" 라는 **공식 진술**만 담을 뿐
-                                           # 거부 시 응답(status/msg_cd/msg1)은
-                                           # 관측된 바 없다 — P-15/N-15 대상.
-    token_blackout_window_ms: null         # Patch-0057 신설 슬롯. N-15 대상.
+    # T4-α 기입: 1분 창 안의 2차 발급이 실제로 어떻게 거부되는지 **표면**이
+    # 관측됐다(P-15, MOCK_VTS). 값은 관측된 거부 표면의 서술이며 재발급 정책의
+    # 확립이 아니다. 상세·주의는 아래 `_kis.reissue_rejection` 참조.
+    reissue_rejection_semantics: HTTP_403_NON_STANDARD_ERROR_ENVELOPE_EGW00133
+    token_blackout_window_ms: null         # ⚠ **null 유지**. N-15 4회 전패로
+                                           # invalidate→재발급 공백 측정이
+                                           # 성립하지 않았다. 관측 0건은 0 이
+                                           # 아니다(런북 §8.4 · VP-002:756).
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -850,7 +1096,36 @@ capabilities:
       fallback_reference: null
       assurance_sources: [OFFICIAL_SPECIFICATION, CONTROLLED_SANDBOX_TEST]
     _kis:
-      measurement: OFFICIAL-DOC + CODE-EVIDENCED
+      measurement: OFFICIAL-DOC + CODE-EVIDENCED + CONTROLLED-SANDBOX-OBSERVATION (P-15)
+      reissue_rejection:                    # T4-α · P-15-20260729T063207Z
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-29 15:32"
+        procedure: "정상 발급 직후 5.0s 간격으로 2차 발급 시도(1분 창 내부)"
+        attempt_1: {http_status: 200, has_access_token: true, expires_in: 86400, ms: 163.5}
+        attempt_2: {http_status: 403, has_access_token: false, expires_in: null, ms: 109.9}
+        rejection_body: '{"error_code":"EGW00133","error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)"}'
+        envelope_quirk: >-
+          ⚠ 거부 응답은 표준 KIS 봉투(`rt_cd`/`msg_cd`/`msg1`)를 **쓰지 않는다** —
+          `error_code`/`error_description` 라는 다른 키 계열이다. 그래서 프로브의
+          파싱 결과에서 `msg_cd`/`msg1` 이 둘 다 null 로 남았다(캠페인 README 가
+          이를 "본문 무코드" 로 요약한 것은 **본문이 없다는 뜻이 아니라** 표준
+          코드 필드가 없다는 뜻이다). `msg_cd` 만 보는 클라이언트 코드는 이
+          거부를 **무증상 실패**로 흘린다.
+        n15_extended_lockout: >-
+          같은 캠페인의 N-15 는 4회 전패했다: 1차 `EGW00133`, 2차 tokenP POST 중
+          `RemoteDisconnected`, 3차(+266s)·4차(+8.8min) 모두 `EGW00133` 지속.
+          공식 문언("1분당 1회")과 달리 **마지막 발급으로부터 8.8분 뒤에도 재발급이
+          거부**되는 확대 잠금이 관측됐다. 이는 거부 표면의 보강 증거이지
+          창 길이의 측정이 아니다 — `token_blackout_window_ms` 는 null 이다.
+        n15_citation_caveat: >-
+          N-15 아티팩트 4건은 `errors: []` 를 만족하지 않아 런북 §6.2 상
+          **인용 부적격**이다. 위 서술의 근거는 캠페인 README 의 "정직한 음성"
+          절이며, **값 확립이 아니라 음성 결과의 기록**으로만 인용한다.
+        consequence_for_our_client: >-
+          `retry_once_on_token_expiry`(auth.py:64-104) 와 invalidate→재발급 경로
+          (auth.py:396-410)는 이 거부를 처리하지 못한다: 403 + 비표준 봉투이므로
+          만료 판정 로직에 잡히지 않고, 확대 잠금이 실재하면 재시도는 창을
+          연장시킬 뿐이다. Q-CRED-1/2 와 별개의 **실측 기반 위험**이다.
       token_reissue_limit:
         statement: "토큰 재발급 - 1분당 1회 발급됩니다"
         source: "https://github.com/koreainvestment/open-trading-api/blob/main/README.md"
@@ -866,6 +1141,19 @@ capabilities:
         note: >-
           86400 은 응답에 expires_in 이 없을 때의 **우리 기본값**이다. 실제
           만료는 응답 값이 지배한다. 공식 문서상 토큰은 1일 1회 발급 원칙.
+        broker_returned_expires_in_2026_07_29:   # T4-α
+          value: 86400
+          environment: MOCK_VTS
+          n: 1
+          source: "P-15-20260729T063207Z attempt_1 (실제 broker 반환값)"
+          note: >-
+            우리 fallback 과 **수치가 같다는 것이 관측됐을 뿐**이며, 이는
+            "86400 이 broker 보증" 이라는 뜻이 아니다. N-17 #8 은 공식 명세가
+            `expires_in` 필드의 **의미만** 정의하고 값을 명시하지 않음을
+            확인했다. 따라서 여전히 런타임 응답에서 읽어 쓰는 값이며 상수로
+            기입하지 않는다. 모의 관측 1건이므로 실전 외삽도 금지다(§13.14).
+          evidence_refs:
+            - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:52 (N-17 #8)"
         renewal_buffer_seconds: 600
         renewal_buffer_evidence: "config/kis/auth.yaml:17"
       credential_storage:
@@ -879,6 +1167,15 @@ capabilities:
         note: >-
           자격증명 폐기 API/절차와 그 전파 시한은 알려지지 않았다. 로컬
           invalidate(auth.py:396-410)는 **캐시 삭제**일 뿐 broker 측 폐기가 아니다.
+        spec_collation_2026_07_29: >-
+          T4-α · N-17 #12: 공식 인증 카테고리를 **2회 독립 전건 열거**했고 두 번
+          모두 `total_count: 2`(`auth_token`, `auth_ws_token`)뿐 — revoke/폐기
+          API 가 **색인 내 부재**다. 그러나 이는 E3(색인 범위 내 부재)이므로
+          `UNSUPPORTED` 로 확정하지 **않는다**: KIS 포털에 폐기 엔드포인트가
+          존재할 가능성을 배제하지 못한다. `broker_revocation_api: UNKNOWN` ·
+          `revocation_bound_ms: null` 유지. 후속은 운영자 문의.
+        spec_collation_evidence_refs:
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:56 (N-17 #12)"
       quirks_found:
         - id: Q-CRED-1
           severity: HIGH
@@ -899,15 +1196,24 @@ capabilities:
 
   # -- 16/17 · BROKER_TIME -----------------------------------------------
   broker_time:
+    # T4-α: P-16 실측 반영. status 는 **UNKNOWN 유지** — 관측된 것은 HTTP `Date`
+    # 헤더(전송 계층)이지 주문 응답의 broker 업무 시각(ORD_TMD 등)이 아니다.
     status: UNKNOWN
     assurance_level: EV-L0
-    evidence_refs: []
-    timezone: TBD
-    precision: TBD
-    skew_bound_ms: null                    # Patch-0057 신설 슬롯. 아래
-                                           # `consequence` 가 "skew 와 그 상한이
-                                           # 알려져 있지 않다" 고 이미 기록한
-                                           # 그 값의 자리다 — P-16 대상.
+    evidence_refs:
+      - "P-16-20260729T063005Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-16-20260729T063005Z.json; MOCK_VTS, n=30, 2026-07-29 15:30 KST)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:45 (N-17 #1 — 응답 필드 ORD_TMD 존재)"
+    timezone: TBD                          # 유지. `Date` 헤더가 GMT 인 것은 HTTP
+                                           # 규약이지 broker 업무 시각의 타임존이
+                                           # 아니다. 본문 시각 필드는 이 프로브
+                                           # 경로에서 0건 관측(body_timestamp_like_keys: []).
+    precision: TBD                         # 유지. 관측된 1초 해상도는 `Date`
+                                           # 헤더의 해상도이며, 실제로 쓰이는
+                                           # 시각 필드의 정밀도가 아니다
+                                           # (아티팩트 precision_determination).
+    skew_bound_ms: null                    # ⚠ **null 유지**. 아래 관측은 전량
+                                           # 헤더 해상도(1s)와 같은 자릿수라
+                                           # 상한을 확립하지 못한다 — 런북 §8.3.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -932,25 +1238,60 @@ capabilities:
       consequence: >-
         broker 시각과 로컬 시각의 편차(skew)와 그 상한이 알려져 있지 않으므로,
         시간 기반 최종성 주장(late-event window 등)은 현재 근거가 없다.
+      probe_observations_2026_07_29:        # T4-α · P-16-20260729T063005Z
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-29 15:30:07–15:30:37 (30s 창)"
+        source_field: "HTTP `Date` 응답 헤더 (전송 계층)"
+        n: 30
+        signed_skew_ms: {min: -1926.8, max: -946.0, all_same_sign: true}
+        abs_skew_ms: {min: 945.954, p50: 1647.64, p95: 1899.441, max: 1926.845, stdev: 342.065}
+        candidate_bound_ms: 2891            # ceil(max x 1.5) — candidate_only: true
+        one_sided_note: >-
+          부호가 30/30 동일(로컬이 broker 헤더보다 앞섬)하므로 이는 **체계
+          오프셋**의 모양이지 양방향 jitter 가 아니다. 런북 §8.4 대로 둘을 합치지
+          않는다 — 체계 오프셋은 보정 가능, jitter 는 불가로 처방이 다르다.
+        why_null_despite_measurement: >-
+          ⚠ `Date` 헤더는 **1초 해상도**다(§8.3). 관측된 |skew| 는 946–1927ms 로
+          해상도와 같은 자릿수이며, 톱니 모양(sample 20→21 에서 -1926.8 → -946.0
+          으로 점프)은 헤더 절단의 인공물과 구분되지 않는다. 따라서 이 30건은
+          "broker 시계가 로컬보다 최대 1.9초 뒤" 를 **확립하지 못한다**.
+          `skew_bound_ms` 는 null 을 유지하고, 후보값 2891 은 기록만 한다.
+        body_timestamp_like_keys: []        # 이 경로 응답 본문에 시각형 키 0건
+        official_spec_note: >-
+          N-17 #1 이 확보한 주문 응답 필드에는 `ORD_TMD`(주문시각)가 있다 — 즉
+          broker 업무 시각 표면은 **존재한다**. 다만 그 타임존·정밀도 서술은
+          확보되지 않았고 우리 코드는 이 필드를 읽지 않는다. 시각 차원의 실질
+          측정은 주문 계열 프로브 재개 시로 이월.
 
   # -- 17/17 · MARKET_INSTRUMENT_CONSTRAINTS -----------------------------
   market_and_instrument_constraints:
+    # T4-α: status 는 UNKNOWN 유지(가격제한폭·호가단위·정지 semantics 전부 여전히
+    # 미조회). 아래 두 필드만 공식 명세 확정분으로 갱신한다.
     status: UNKNOWN
     assurance_level: EV-L0
-    evidence_refs: []
+    evidence_refs:
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:57 (N-17 #13 · 확정 — 모의 야간 TR 부재)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:46 (N-17 #2 · 부분 — 선물 TIF)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:48 (N-17 #4 · 부분 — 주문유형 값집합)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:59 (N-17 #15 · 부분 — ATS 경로)"
     session_phase_semantics: UNKNOWN
     halt_and_suspension_semantics: UNKNOWN
     price_band_tick_lot_and_quantity_semantics: UNKNOWN
-    order_type_time_in_force_and_route_semantics: UNKNOWN
-    instrument_coverage: UNKNOWN           # Patch-0057 신설 슬롯. Q-MIC-1(야간
-                                           # TR 이 모의에 부재)이 바로 이
-                                           # 커버리지 사실이며, 지금까지
-                                           # quirk 주석으로만 존재했다 —
-                                           # N-18 대상.
+    order_type_time_in_force_and_route_semantics: UNKNOWN   # 유지 — 확정분은 선물
+                                                            # 뿐이고 주식 값집합이
+                                                            # 미확인이라 차원
+                                                            # 전체를 서술할 수
+                                                            # 없다. 확정분은
+                                                            # 아래 _kis 참조.
+    # T4-α 기입 근거(1줄): N-17 #13 이 모의의 야간 TR 부재를 **공식 명세 구조**로
+    # 확정했다(demo+night → ValueError · 야간 잔고에 env_dv 분기 부재). 값은 이
+    # 커버리지 사실의 서술이며, 다른 커버리지 축(종목군·해외지수 등)은 미확립이다.
+    # N-18 은 REAL_PROD 아티팩트이므로 이 문서에 인용하지 않는다(런북 §6.2).
+    instrument_coverage: DAY_SESSION_TR_SURFACE_ONLY__NIGHT_ABSENT__OTHER_COVERAGE_UNKNOWN
     restrictions: []
     restriction_approved: false
     fallback_reference: null
-    assurance_sources: []
+    assurance_sources: [OFFICIAL_SPECIFICATION]   # instrument_coverage 한정 근거
     _model_view:
       dimension: MARKET_INSTRUMENT_CONSTRAINTS
       status: UNKNOWN
@@ -959,7 +1300,7 @@ capabilities:
       restriction: null
       restriction_approved: null
       fallback_reference: null
-      assurance_sources: []
+      assurance_sources: [OFFICIAL_SPECIFICATION]
     _kis:
       measurement: CODE-EVIDENCED (local config only) + NEEDS-LIVE-MEASUREMENT
       critical_distinction: >-
@@ -976,6 +1317,44 @@ capabilities:
         futures_full_F200: 0.05
         evidence: "config/execution.yaml:149, :154, :230"
         note: "로컬 상수 — broker 조회값 아님. 틀리면 진입 전량 차단(:151 주석)."
+      official_spec_partial:                # T4-α · N-17 #2 / #4 / #15
+        measurement: OFFICIAL-DOC
+        futures_time_in_force_values:       # KRX_NMPR_CNDT_CD (E2 전수 열거)
+          "0": 없음
+          "3": IOC
+          "4": FOK
+        futures_order_type_values:          # ORD_DVSN_CD (E2 전수 10값)
+          "01": 지정가
+          "02": 시장가
+          "03": 조건부
+          "04": 최유리
+          "10": 지정가(IOC)
+          "11": 지정가(FOK)
+          "12": 시장가(IOC)
+          "13": 시장가(FOK)
+          "14": 최유리(IOC)
+          "15": 최유리(FOK)
+        stock_order_type_values_PARTIAL:    # ORD_DVSN — 전수 **미확정**
+          "00": 지정가
+          "01": 시장가
+        venue_route_values:                 # EXCG_ID_DVSN_CD (주식 [필수])
+          KRX: 한국거래소
+          NXT: 대체거래소(넥스트레이드)
+          SOR: SOR
+        why_dimension_field_stays_unknown: >-
+          위 확정분은 **선물 축과 venue 축**뿐이다. 주식 `ORD_DVSN` 전수와 주식
+          TIF 는 어느 문서면에서도 확보되지 않았고, 가격제한폭·호가단위·정지
+          semantics 는 조회 자체를 하지 않는다. 한 자산군의 확정으로 차원 전체를
+          서술하면 나머지 축의 공백이 값 뒤에 숨는다 —
+          `order_type_time_in_force_and_route_semantics` 는 UNKNOWN 유지.
+        live_scope_separation: >-
+          이 값집합은 **broker 수용 집합**이지 `live_scope.time_in_force_values`
+          (= 승인된 live scope)가 아니다. CLASS-D · approvers: [] 인 이 프로파일의
+          scope 리스트는 계속 비어 있다.
+        evidence_refs:
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:46 (N-17 #2)"
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:48 (N-17 #4)"
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:59 (N-17 #15)"
       quirks_found:
         - id: Q-MIC-1
           severity: HIGH
@@ -987,23 +1366,51 @@ capabilities:
           evidence:
             - "shared/execution/tr_ids.py:40-50 (night_real 만 존재)"
             - "shared/execution/executor.py:565-567 (야간 파라미터는 real 전용 분기)"
+          basis_upgrade_2026_07_29: >-
+            T4-α · N-17 #13: 근거가 **우리 TR 표 관측 → 공식 명세 구조**로 격상됐다.
+            공식 래퍼는 (a) 주문에서 `demo`+`night` 를 ValueError 로 거부하고
+            (b) 정정취소도 동일 가드를 두며 (c) 야간 잔고 함수에는 `env_dv`
+            파라미터 **자체가 없다**(TR `CTFN6118R` 실전 하드코딩). 즉 모의 야간
+            부재는 우리 배선의 누락이 아니라 broker 표면의 구조다.
+            evidence_ref: docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:57
         - id: Q-MIC-2
           severity: MEDIUM
           text: >-
-            주식은 KRX 외에 ATS(넥스트레이드) 라우팅 TR 이 별도로 존재한다
-            (order-ats 엔드포인트 + 전용 TR 4종). 다만 ats_routing 은 현재
-            enabled: false 이므로 실사용 증거가 없다.
+            (T4-α 정정) repo 에는 ATS(넥스트레이드) 전용 TR 4종과 `order-ats`
+            엔드포인트 호출부가 있으나, **공식 명세 색인에서 ATS 전용 주문
+            함수는 발견되지 않았다** — `order*` 전건 8개 열거에 ATS 전용이 없다.
+            현행 공식 경로는 **통합 주문 엔드포인트 + `EXCG_ID_DVSN_CD`**
+            (KRX/NXT/SOR) 값으로 표현된다. 따라서 repo 의 4종이 구(舊)경로인지
+            미사용인지 확인이 필요하다. ats_routing 은 enabled: false 라 실사용
+            증거도 없다.
+          correction_note: >-
+            이전 문안은 "ATS 라우팅 TR 이 **별도로 존재한다**" 를 broker 사실처럼
+            서술했다. 그 근거는 repo 파일뿐이었고 공식 대조에서 지지되지 않았다 —
+            존재 주장도 검증이 필요하다는 anti-phantom 대칭 규율에 따라 정정한다.
           evidence:
-            - "shared/execution/tr_ids.py:35-38 (stock_ats_* TR 4종)"
-            - "shared/execution/executor.py:326 (endpoint = order-ats)"
+            - "shared/execution/tr_ids.py:35-38 (stock_ats_* TR 4종 — repo 측 사실)"
+            - "shared/execution/executor.py:326 (endpoint = order-ats — repo 측 사실)"
             - "config/execution.yaml:110-111 (ats_routing.enabled: false)"
+            - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:59 (N-17 #15 · 부분)"
         - id: Q-MIC-3
-          severity: INFORMATIONAL
+          severity: HIGH                     # T4-α 격상 (was INFORMATIONAL)
           text: >-
             주문유형 코드계가 주식/선물 간 **다르다**(주식 ORD_DVSN 00=지정가,
             01=시장가 ↔ 선물 ORD_DVSN_CD 01=지정가, 02=시장가). 코드에 명시
-            매핑 테이블이 있고, 미지정 값은 "01"(지정가)로 폴백한다.
-          evidence: ["shared/execution/executor.py:785-795"]
+            매핑 테이블이 있고, 미지정 값은 "01"로 폴백한다.
+          severity_upgrade_2026_07_29: >-
+            T4-α · N-17 #4 확정 + §2 소견 1: 코드 `01` 의 의미가 자산군 간
+            **반대**임이 공식 명세로 확정됐다(주식=시장가 / 선물=지정가). 따라서
+            `_map_futures_order_type` 의 "미지 값 → 01" 폴백은 **주식 경로에서
+            미지 주문유형을 조용히 시장가 주문으로 변환**한다 — 가격 통제를 잃는
+            방향의 **fail-open** 이다. permissive-repair 금지 위반을 넘어서므로
+            INFORMATIONAL → HIGH 로 격상한다. 처방은 폴백 제거(미지 값 →
+            fail-closed 거부)이며, 이는 INSTANCE quirk 가 아니라 **코드 수정
+            후보**다(본 프로파일은 코드를 바꾸지 않는다).
+          evidence:
+            - "shared/execution/executor.py:785-795"
+            - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:48 (N-17 #4 · 확정분)"
+            - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:69-85 (§2 소견 1)"
 
   # -- 템플릿 전용 키 (brokercap CapabilityDimension 대응 없음 — 메모 §6-2) --
   account_margin_borrow_and_settlement_constraints:
@@ -1029,25 +1436,43 @@ capabilities:
         공매도/대차·결제통화·만기 semantics 는 조회하지 않는다.
 
   command_construction_and_wire_semantics:
+    # T4-α: status 무변경(UNKNOWN). 실제 송출 바이트 관측 메커니즘이 여전히 없고
+    # 미지/중복 필드 동작도 미확인이다. 확정된 것은 아래 2축뿐.
     status: UNKNOWN
     assurance_level: EV-L0
-    evidence_refs: []
-    required_and_default_field_semantics: UNKNOWN
+    evidence_refs:
+      - "P-1-20260729T062925Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-1-20260729T062925Z.json; repo 측 필드 전수)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:45 (N-17 #1 · 확정 — 공식 body 전수)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:49 (N-17 #5 · 부분 — String 전송 요구)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:50 (N-17 #6 · 부분 — 필수/선택)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:51 (N-17 #7 · 미확인 — 미지 필드 동작)"
+    required_and_default_field_semantics: UNKNOWN   # 유지 — 필수/선택 구분은
+                                                    # 확정됐으나 **생략 시 broker
+                                                    # 기본값**은 4필드 중 1건만
+                                                    # 서술된다(아래 _kis).
     account_symbol_side_and_position_effect_mapping: UNKNOWN
-    unit_multiplier_currency_and_numeric_encoding: UNKNOWN
-    duplicate_unknown_and_omitted_field_behavior: UNKNOWN
+    # T4-α 기입 근거(1줄): N-17 #5 가 "ORD_QTY·ORD_UNPR 등을 String 으로 전달해야
+    # 한다" 는 공식 요구를 확정했고(시장가/최유리는 가격 "0" 문자열), 반면 소수점
+    # 문자열의 파서 동작(절단/반올림/거부)은 어느 문서면에도 서술이 없다.
+    unit_multiplier_currency_and_numeric_encoding: STRING_TYPED_FIELDS_CONFIRMED__DECIMAL_ACCEPTANCE_UNKNOWN
+    duplicate_unknown_and_omitted_field_behavior: UNKNOWN   # 유지 — N-17 #7 미확인.
+                                                            # 부재 범위: 예제 래퍼
+                                                            # 문서면 한정(포털 공통
+                                                            # 규약 미확인)이므로
+                                                            # "명세에 없다"로
+                                                            # 확대하지 않는다.
     canonicalization_and_parser_behavior: UNKNOWN
     serializer_sdk_signer_and_redirect_behavior: UNKNOWN
     actual_outbound_observability: UNKNOWN
     restrictions: []
     restriction_approved: false
     fallback_reference: PROHIBIT_AFFECTED_COMMAND_SCOPE
-    assurance_sources: []
+    assurance_sources: [OFFICIAL_SPECIFICATION]   # 숫자 인코딩·필드 목록 한정 근거
     _model_view:
       dimension: null                     # ⚠ CapabilityDimension 에 대응 멤버 없음
       _mismatch_ref: "메모 §6-2"
     _kis:
-      measurement: CODE-EVIDENCED
+      measurement: CODE-EVIDENCED + OFFICIAL-DOC (field inventory · 숫자 타입)
       observation: >-
         wire 본문은 Python dict 리터럴로 **호출부에 인라인 구성**된다. 정규화
         계층도, 실제 송출 바이트를 관측/비교하는 메커니즘도 없다. 빈 문자열
@@ -1065,6 +1490,50 @@ capabilities:
           `UNIT_PRICE = str(order.price)` 로 float 문자열을 그대로 보낸다. 인코딩
           규약이 자산군 간 비대칭이며 broker 파서 동작은 미확인.
         evidence: ["shared/execution/executor.py:321", "shared/execution/executor.py:393"]
+        spec_collation_2026_07_29: >-
+          T4-α · N-17 #5: 공식 명세는 **전 필드 String 전송**을 명시적으로 요구
+          하고(시장가/최유리는 가격 `"0"`), 그것으로 끝이다 — 소수점 포함
+          문자열을 파서가 절단하는지 반올림하는지 거부하는지는 **서술이 없다**.
+          즉 Q-WIRE-1 의 비대칭(주식 정수 절단 vs 선물 float 문자열)이 안전한지는
+          여전히 답이 없다. 추정 기입 금지, P-WIRE 계열 프로브 또는 운영자 문의로
+          이월.
+      official_field_inventory_2026_07_29:  # T4-α · N-17 #1 / #6
+        measurement: OFFICIAL-DOC
+        stock_order_cash_required_9:
+          [CANO, ACNT_PRDT_CD, PDNO, ORD_DVSN, ORD_QTY, ORD_UNPR,
+           EXCG_ID_DVSN_CD, SLL_TYPE, CNDT_PRIC]
+        futures_order_12:
+          [ORD_PRCS_DVSN_CD, CANO, ACNT_PRDT_CD, SLL_BUY_DVSN_CD, SHTN_PDNO,
+           ORD_QTY, UNIT_PRICE, NMPR_TYPE_CD, KRX_NMPR_CNDT_CD, ORD_DVSN_CD,
+           CTAC_TLNO, FUOP_ITEM_DVSN_CD]
+        futures_required_optional:
+          NMPR_TYPE_CD: REQUIRED            # 공식 래퍼는 빈 값이면 ValueError
+          KRX_NMPR_CNDT_CD: REQUIRED        # 동상 — TIF 캐리어
+          CTAC_TLNO: OPTIONAL               # 생략 시 broker 기본값 **미확인**
+          FUOP_ITEM_DVSN_CD: OPTIONAL       # 기본값 서술 존재: "공란(Default)"
+        our_client_delta:
+          finding: >-
+            ⚠ 우리 클라이언트는 위 **[필수] 2필드(NMPR_TYPE_CD·KRX_NMPR_CNDT_CD)를
+            빈 문자열로 전송**한다(executor.py:386-399). 공식 래퍼는 같은 입력에서
+            호출 자체를 ValueError 로 막는다. 이는 "생략 시 기본값" 문제가 아니라
+            **필수 필드 계약 위반 후보**이며, `KRX_NMPR_CNDT_CD` 는 TIF 캐리어이므로
+            IOC/FOK 의미론이 broker 측 암묵 기본값에 위임되고 있다는 뜻이다.
+          disposition: >-
+            N-17 §2 소견 2 는 이를 **P0-2 blocker 후보**로 올릴 것을 제안한다.
+            값 확정 없이도 "빈 값 전송 금지" 는 판정 가능하다. 본 프로파일은
+            사실만 기록하고 코드를 바꾸지 않는다.
+          evidence:
+            - "shared/execution/executor.py:386-399 (빈 문자열 4필드)"
+            - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:87-98 (§2 소견 2)"
+        stock_excg_id_dvsn_cd_note: >-
+          공식 명세에서 주식 주문의 `EXCG_ID_DVSN_CD` 는 **[필수]** 인데 P-1 이
+          실측한 우리 주식 본문 6필드에는 없다(N-17 §2 부수 관측과 일치). 주식
+          주문 경로 자체가 미사용이라 즉시 영향은 없으나, 주식 경로 활성화 시
+          선행 확인 항목이다.
+        evidence_refs:
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:45 (N-17 #1)"
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:50 (N-17 #6)"
+          - "P-1-20260729T062925Z (repo 측 전송 필드 전수)"
 
 # =============================================================================
 venue_constraint_binding:
@@ -1361,9 +1830,31 @@ residual_risks:
     text: >-
       MOCK 환경에는 야간세션 TR 이 없어(Q-MIC-1) 야간 관련 어떤 capability 도
       모의에서 검증할 수 없다 — MOCK→REAL 외삽 금지의 구체적 근거.
+      (T4-α: 근거가 repo TR 표 관측에서 **공식 명세 구조**로 격상 — N-17 #13.)
     owner: TBD                          # §21:1089 (Patch-0056 신설 슬롯)
     acceptance: TBD                     # §21:1090 — TBD = 미수용
     expiry: null                        # §21:1091 — 수용이 없으므로 만료도 없음
+  - id: RR-6                            # T4-α 신설 (P-15 · N-15 실측 기반)
+    text: >-
+      토큰 재발급 거부가 (a) HTTP 403 + **비표준 오류 봉투**(`error_code`/
+      `error_description`)로 오고 (b) 마지막 발급으로부터 **8.8분 뒤에도 지속**
+      되는 확대 잠금이 관측됐다. 우리 만료 재시도 경로(auth.py:64-104, :396-410)는
+      이 거부를 만료로 인식하지 못하고 재시도가 잠금을 연장시킬 수 있다 —
+      즉 **자격증명 계층의 자기 유발 가용성 손실** 위험이다. 창 길이는 미확립
+      (`token_blackout_window_ms: null`)이므로 회복 시점을 예측할 수 없다.
+    owner: TBD                          # §21:1089
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091
+  - id: RR-7                            # T4-α 신설 (N-17 #4 확정 · §2 소견 1)
+    text: >-
+      주문유형 폴백 `"01"` 이 자산군에 따라 의미가 반대임이 공식 명세로 확정됐다
+      (주식=시장가 / 선물=지정가). 따라서 미지 주문유형이 **주식 경로에서 조용히
+      시장가 주문으로 변환**된다 — 가격 통제를 잃는 방향의 fail-open 이며
+      permissive-repair 금지(order_construction_binding) 위반이다.
+      처방은 폴백 제거(fail-closed 거부)이고 이는 코드 수정 후보다.
+    owner: TBD                          # §21:1089
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091
 
 verification:
   required_evidence_ids: []              # BC-EV-001..022 미실행 (EVIDENCE-REGISTER-002)
@@ -1433,9 +1924,21 @@ profile_identity:
         야간세션 TR 은 실전에만 존재한다. 실전 프로파일은 모의에서 얻을 수 없는
         세션 위상(야간)을 포함하므로, 세션 좌표가 다른 별개 프로파일이
         추가로 필요할 수 있다(ProfileKey.session_type).
+      basis_upgrade_2026_07_29: >-
+        T4-α · N-17 #13: 이 델타의 근거가 repo `tr_ids.py` 관측에서 **공식 명세
+        구조**로 격상됐다 — 주문/정정취소 래퍼가 `demo`+`night` 를 ValueError 로
+        막고, 야간 잔고(`CTFN6118R`, `/uapi/domestic-futureoption/v1/trading/
+        inquire-ngt-balance`)에는 `env_dv` 분기 자체가 없다. `session_type` 은
+        여전히 UNKNOWN 이다: 실전이 주간·야간 **두 위상**을 가지는데 ProfileKey
+        좌표는 단수이고, 이 프로파일은 어떤 위상도 권한 부여하지 않는다.
+        evidence_ref: docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:57
     operational_history: >-
       **없음.** 이 환경에서의 주문 실행 이력이 없다
       (config/futures_live.yaml:25 enabled: false — Gate 2 미완).
+    probe_contact_2026_07_29: >-
+      T4-α: 이 환경에 대해 수행된 접촉은 **GET 조회 전용 프로브 2건**(N-16 · N-18,
+      `probes_real.py::ALLOWLIST` 강제)뿐이며 주문 계열 호출은 0건이다. 조회
+      접촉은 주문 이력이 아니므로 위 `operational_history: 없음` 은 유효하다.
 
 live_scope:
   conformance_class: CLASS-D
@@ -1445,6 +1948,9 @@ live_scope:
   instruments: []
   session_phases: []
   order_types: []
+  # T4-α: MOCK 문서와 동일한 사유로 비운 채 유지한다 — N-17 #2 가 확정한 선물
+  # TIF 값집합은 **broker 수용 집합**이지 승인된 live scope 가 아니며, 실전에서는
+  # 그 어떤 scope 도 권한 부여되지 않았다(CLASS-D · approvers: []).
   time_in_force_values: []
   action_classes: []
   maximum_concurrency: 0
@@ -1459,15 +1965,30 @@ capabilities:
   # 17 CapabilityDimension 전 멤버 + 템플릿 전용 2키 = 19키 전수.
   # 전부 UNKNOWN / EV-L0 — 실전 측정 0건. `_dimension` 만 병기한다.
   client_generated_order_id:
-    status: UNKNOWN
-    assurance_level: EV-L0
-    evidence_refs: []
+    # T4-α 상향 근거(1줄): N-17 #1 이 주식·선물 주문 래퍼의 request body 를 전수
+    # (E1) 확보했고 클라이언트 채번 식별자 필드가 없다. 이 근거는 **공식 명세
+    # 대조**이므로 환경 무관하다 — MOCK 문서로부터의 상속이 아니다(§13.14 무관).
+    status: UNSUPPORTED
+    assurance_level: EV-L1
+    evidence_refs:
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:45 (N-17 #1 · 확정 — 공식 명세, 환경 무관)"
+      - "P-1-20260729T062925Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-1-20260729T062925Z.json; environment: NONE = repo 코드 사실 — 런북 §6.2 예외, 단독 승격 불가)"
     restrictions: []
     restriction_approved: false
     fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
-    assurance_sources: []
-    _model_view: {dimension: ORDER_IDENTITY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
-    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+    assurance_sources: [OFFICIAL_SPECIFICATION]   # 샌드박스 원천 **아님**
+    _model_view: {dimension: ORDER_IDENTITY, status: UNSUPPORTED, assurance_level: LEVEL_1_DOCUMENTED, assurance_sources: [OFFICIAL_SPECIFICATION]}
+    _kis:
+      measurement: OFFICIAL-DOC
+      absence_scope: >-
+        주문 2개 write-surface 의 request body 전수에 한한 부재다(포털 명세 전체가
+        아님). 주문 경로는 환경 간 동일 엔드포인트이고 TR id 만 다르므로 이
+        부재는 실전에도 적용된다 — 그러나 이는 **명세 동일성**에 기댄 판정이지
+        모의 관측의 외삽이 아니다.
+      not_inherited_from_mock: >-
+        MOCK 문서의 어떤 declaration 도 여기로 상속되지 않았다. 두 문서가 같은
+        값을 가지는 이유는 **같은 환경 무관 원천(공식 명세)** 을 각각 인용했기
+        때문이다.
   submission_idempotency:
     status: UNKNOWN
     assurance_level: EV-L0
@@ -1529,9 +2050,10 @@ capabilities:
     _model_view: {dimension: ORDER_HISTORY_QUERY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   cancellation_finality:
-    status: UNKNOWN
+    status: UNKNOWN                        # T4-α 무변경 — 실전 최종성 측정 0건
     assurance_level: EV-L0
-    evidence_refs: []
+    evidence_refs:
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3 · 확정 — 값집합 한정, 환경 무관)"
     crossing_fill_possible: true
     final_quantity_proof_recipe: TBD
     restrictions: []
@@ -1539,19 +2061,31 @@ capabilities:
     fallback_reference: null
     assurance_sources: []
     _model_view: {dimension: CANCELLATION, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
-    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+    _kis:
+      measurement: OFFICIAL-DOC (value_set) + NEEDS-LIVE-MEASUREMENT (finality)
+      note: >-
+        N-17 #3 이 확정한 것은 `RVSE_CNCL_DVSN_CD` 값집합 {"01","02"} 이며 실전
+        정정취소 TR(TTTO1103U/TTTN1103U)도 같은 열거를 쓴다. 취소 최종성·교차
+        체결 가능성은 **실전에서 관측된 바 0건**이므로 UNKNOWN 유지.
   replace_semantics:
-    status: UNKNOWN
+    status: UNKNOWN                        # T4-α 무변경 — 원자성 미증명
     assurance_level: EV-L0
-    evidence_refs: []
+    evidence_refs:
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3 · 확정 — 공식 명세, 환경 무관)"
     mode: BROKER_UNSPECIFIED
-    value_set: []                          # Patch-0057 신설 슬롯 (보수 기본값)
+    value_set: ["01", "02"]                # T4-α 기입. 근거는 **공식 명세**(주식·
+                                           # 선물 양쪽 독립 확인, 01=정정/02=취소
+                                           # 전수)이지 MOCK 관측의 상속이 아니다.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
-    assurance_sources: []
-    _model_view: {dimension: REPLACE_OR_AMEND, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
-    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+    assurance_sources: [OFFICIAL_SPECIFICATION]
+    _model_view: {dimension: REPLACE_OR_AMEND, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN, assurance_sources: [OFFICIAL_SPECIFICATION]}
+    _kis:
+      measurement: OFFICIAL-DOC (value_set) + NEEDS-LIVE-MEASUREMENT (atomicity)
+      note: >-
+        값집합 확정은 status 를 올리지 않는다 — ATOMIC_REPLACE 여부는 명세에
+        서술이 없고 실전 실행 이력도 0건이다.
   reduce_only:
     status: UNKNOWN
     assurance_level: EV-L0
@@ -1575,16 +2109,58 @@ capabilities:
     _model_view: {dimension: ACCOUNT_EVENT_PUSH, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   position_balance_margin:
+    # T4-α: N-16 2차(정본) 반영. status 는 **UNKNOWN 유지** — 아래대로 야간 잔고
+    # 호출이 broker 에게 거부됐으므로 스키마도 일관성도 확립되지 않았다.
     status: UNKNOWN
     assurance_level: EV-L0
-    evidence_refs: []
+    evidence_refs:
+      - "N-16-20260729T105608Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/N-16-20260729T105608Z.json; REAL_PROD 도메인, 2026-07-29 19:56 KST)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:60 (N-17 #16 · 확정 — 잔고 TR 정본)"
     consistency_model: UNKNOWN
     restrictions: []
     restriction_approved: false
     fallback_reference: null
     assurance_sources: []
     _model_view: {dimension: POSITIONS_BALANCES_MARGIN, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
-    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+    _kis:
+      measurement: OFFICIAL-DOC (TR 식별자) + NEEDS-LIVE-MEASUREMENT (스키마·일관성)
+      night_balance_probe_2026_07_29:     # T4-α · N-16-20260729T105608Z
+        target: "CTFN6118R /uapi/domestic-futureoption/v1/trading/inquire-ngt-balance"
+        session_window_kst: "2026-07-29 19:56 (night=True)"
+        result:
+          http_status: 500
+          rt_cd: "1"
+          msg_cd: EGW02004
+          msg1: "실전투자 도메인은 모의투자 앱키로 호출하실 수 없습니다."
+        captured_top_level_keys: [rt_cd, msg_cd, msg1]   # = **오류 봉투**
+        outcome: >-
+          ⚠ 야간 잔고 응답 스키마는 **확립되지 않았다.** 호출이 broker 에게
+          거부됐기 때문이다(`rt_cd: "1"`). 아티팩트의 `output1_keys: []` ·
+          `output2_keys: []` 는 "야간 포지션이 없다" 가 아니라 **오류 응답에
+          output 섹션 자체가 없다**는 뜻이다. 행 스키마는 물론 정상 봉투조차
+          포착되지 않았다.
+        readme_discrepancy: >-
+          ⚠ 캠페인 README 표의 N-16 2차 요약("envelope 키 포착 · output1/output2
+          빈 배열 = 야간 포지션 부재")은 이 아티팩트의 관측과 **일치하지 않는다**.
+          아티팩트 원문은 EGW02004 거부다. 본 프로파일은 요약이 아니라
+          **아티팩트 원문**을 기입한다. README 정정은 캠페인 트랙 소관.
+        credential_separation_observation: >-
+          이 거부 자체는 실전 도메인에 대한 유효한 관측이다: **실전 도메인이
+          모의 앱키를 거부한다**(broker 강제 환경 분리). ADR §13.14 / BC-INV-009 의
+          "샌드박스 증거는 live capability 를 성립시키지 않는다" 가 정책일 뿐
+          아니라 broker 측에서도 강제된다는 실측 신호다. 다만 어떤 자격증명이
+          실제로 제시됐는지는 프로브 배선 문제일 수 있으므로(같은 캠페인의 N-18
+          은 동일 도메인에서 `rt_cd: 0` 성공), **자격증명 배선 확인이 재실행의
+          선행 조건**이다.
+      official_balance_tr_ids:            # T4-α · N-17 #16 — 실전 계열만
+        stock_day: TTTC8434R              # [v1_국내주식-006]
+        futures_day: CTFO6118R            # [v1_국내선물-004]
+        futures_night: CTFN6118R          # [국내선물-010] — 실전 전용
+        note: >-
+          모의 계열(VTTC8434R/VTFO6118R)은 MOCK 문서 소관이며 여기 기입하지
+          않는다. `config/kis/tr_ids.yaml` 편입은 별도 승인 레인이다.
+        evidence_refs:
+          - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:60 (N-17 #16)"
   corporate_actions:
     status: UNKNOWN
     assurance_level: EV-L0
@@ -1620,6 +2196,15 @@ capabilities:
         공식 README 는 "모의투자 계좌는 REST API 호출 제한이 낮습니다" 라고만
         말한다 — 실전 한도의 **수치는 어디에도 확인되지 않았다**.
         MOCK 문서의 어떤 값도 여기로 외삽하지 않는다.
+      spec_collation_2026_07_29: >-
+        T4-α · N-17 #11: 공식 예제 전반에서 "실전 20건/s · 모의 2건/s" 류의 **수치
+        진술이 단 한 건도 없음**을 재확인했다. 유량 제어는 연속조회 루프의
+        `ka.smart_sleep()` 이라는 **정성적 지연 권고**로만 표현된다 — 계약 수치가
+        아니다. 따라서 통설의 folklore 철회 판정이 유지되고 `hard_limits` 는
+        비운 채로 둔다. 같은 캠페인의 P-13 관측은 **MOCK_VTS 한정**이며 이
+        문서로 외삽하지 않는다(§13.14 / BC-INV-009).
+      spec_collation_evidence_refs:
+        - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:55 (N-17 #11)"
   sessions:
     status: UNKNOWN
     assurance_level: EV-L0
@@ -1629,23 +2214,45 @@ capabilities:
     subscription_limit: null               # Patch-0057 신설 슬롯 (보수 기본값).
                                            # MOCK 문서의 어떤 값도 여기로
                                            # 외삽하지 않는다 (§13.14/BC-INV-009).
+                                           # T4-α: P-14 는 MOCK_VTS 아티팩트라
+                                           # 인용 자체가 금지된다(런북 §6.2).
     restrictions: []
     restriction_approved: false
     fallback_reference: null
     assurance_sources: []
     _model_view: {dimension: SESSION_CONNECTION_MODEL, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
-    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+    _kis:
+      measurement: NEEDS-LIVE-MEASUREMENT
+      spec_collation_2026_07_29: >-
+        T4-α · N-17 #10 / #9: 공식 실시간 카테고리 25건을 색인 확인했으나 **구독
+        상한의 수치도 서술도 없었고**(부재 범위: 예제 래퍼 문서면 한정),
+        `/oauth2/Approval` 응답 필드는 `approval_key`·`code`·`message` 3건 전수로
+        **유효기간 필드가 존재하지 않는다**. 즉 repo 주석 "~24h" 와
+        `streaming.yaml:50` 주석 "KIS 제한: 41" 은 실전에 대해서도 근거가 없다.
+        두 값 모두 미확립 유지.
+      spec_collation_evidence_refs:
+        - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:54 (N-17 #10)"
+        - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:53 (N-17 #9)"
   credentials_and_revocation:
-    status: DOCUMENTED_NOT_VERIFIED
+    status: DOCUMENTED_NOT_VERIFIED        # T4-α 무변경
     assurance_level: EV-L1
-    evidence_refs: []
+    evidence_refs:                         # T4-α — 환경 무관 공식 원천만
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:52 (N-17 #8 · 부분 — expires_in 값 미명시)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:56 (N-17 #12 · 미확인 — 폐기 API 색인 내 부재)"
+      - "N-16-20260729T105608Z (실전 도메인이 모의 앱키 호출을 EGW02004 로 거부 — 자격증명 환경 분리 관측)"
     revocation_bound_ms: null
     direct_worker_access_prohibited: false
     reissue_rejection_semantics: UNKNOWN   # Patch-0057 신설 슬롯 (보수 기본값).
                                            # 공식 진술은 "1분당 1회" 라는 *한도*
                                            # 뿐이고 거부 응답 형태는 문서에도
                                            # 없다 — 환경 무관 외삽 불가.
-    token_blackout_window_ms: null         # Patch-0057 신설 슬롯 (보수 기본값)
+                                           # ⚠ T4-α: P-15 가 MOCK_VTS 에서
+                                           # 403 + `EGW00133` 비표준 봉투를
+                                           # 관측했으나 그것은 **모의 관측**이며
+                                           # 여기로 상속되지 않는다(§13.14).
+                                           # UNKNOWN 유지.
+    token_blackout_window_ms: null         # Patch-0057 신설 슬롯 (보수 기본값).
+                                           # T4-α: 모의에서도 미확립(N-15 전패).
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -1663,38 +2270,113 @@ capabilities:
         source: https://github.com/koreainvestment/open-trading-api/blob/main/README.md
         direct_worker_access_prohibited: false 역시 우리 시스템 구조의 사실
         (Q-CRED-1)이며 환경에 무관하다.
+      spec_collation_2026_07_29: >-
+        T4-α · N-17 #8: 공식 응답에 `expires_in`(접근토큰 유효기간, 초) 필드가
+        존재함은 확정됐으나 **구체 수치 서술은 없다**. 모의에서 broker 가 86400 을
+        반환한 관측(P-15)은 MOCK 문서 소관이며 실전 값의 근거가 아니다 — 실전
+        `expires_in` 은 런타임 응답에서 읽어 쓴다. N-17 #12: 폐기 API 는 공식
+        인증 카테고리 전건 열거(2회, 각 `total_count: 2`)에서 발견되지 않았으나
+        E3(색인 범위) 한계로 UNSUPPORTED 확정은 금지 — `revocation_bound_ms` null
+        유지.
+      environment_separation_observed:      # T4-α · N-16-20260729T105608Z
+        observation: "실전 도메인 호출이 HTTP 500 / EGW02004 '실전투자 도메인은 모의투자 앱키로 호출하실 수 없습니다' 로 거부됨"
+        meaning: >-
+          자격증명 환경 분리가 **broker 측에서 강제**된다는 실측 신호다
+          (§13.14 / BC-INV-009 가 정책만이 아님). 다만 같은 캠페인의 N-18 은 동일
+          실전 도메인에서 `rt_cd: 0` 성공을 얻었으므로, 이 거부는 프로브의
+          자격증명 배선 차이일 가능성이 있다 — **재실행 시 배선 확인 선행**.
+          어느 해석이든 capability 승격 근거는 아니다.
   broker_time:
     status: UNKNOWN
     assurance_level: EV-L0
     evidence_refs: []
     timezone: TBD
     precision: TBD
-    skew_bound_ms: null                    # Patch-0057 신설 슬롯 (보수 기본값)
+    skew_bound_ms: null                    # Patch-0057 신설 슬롯 (보수 기본값).
+                                           # T4-α: P-16(n=30)은 MOCK_VTS 아티팩트
+                                           # 이므로 인용 금지 — 실전 skew 관측
+                                           # 0건이다(§13.14 / 런북 §6.2).
     restrictions: []
     restriction_approved: false
     fallback_reference: null
     assurance_sources: []
     _model_view: {dimension: BROKER_TIME, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
-    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+    _kis:
+      measurement: NEEDS-LIVE-MEASUREMENT
+      spec_collation_2026_07_29: >-
+        T4-α · N-17 #1: 주문 응답에 `ORD_TMD`(주문시각) 필드가 존재한다 — broker
+        업무 시각 표면 자체는 있다. 그러나 타임존·정밀도 서술은 확보되지 않았고,
+        우리 코드는 이 필드를 읽지 않는다(모든 시각 판단이 로컬 KST 시계).
+        timezone·precision·skew 전부 미확립.
+      spec_collation_evidence_refs:
+        - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:45 (N-17 #1)"
   market_and_instrument_constraints:
+    # T4-α: N-18 2차/3차(정본, REAL_PROD) + N-17 #13/#14/#15 반영.
+    # status 는 UNKNOWN 유지 — 가격제한폭·호가단위·정지 semantics 는 조회 0건.
     status: UNKNOWN
     assurance_level: EV-L0
-    evidence_refs: []
+    evidence_refs:
+      - "N-18-20260729T105609Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/N-18-20260729T105609Z.json; REAL_PROD, skips 0, 2026-07-29 19:56 KST — 정본)"
+      - "N-18-20260729T065224Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/N-18-20260729T065224Z.json; REAL_PROD, 2026-07-29 15:52 KST — N-18a/c 재현)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:57 (N-17 #13 · 확정 — 야간 TR 실전 전용)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:58 (N-17 #14 · 확정 — 해외지수 TR id)"
     session_phase_semantics: UNKNOWN
     halt_and_suspension_semantics: UNKNOWN
     price_band_tick_lot_and_quantity_semantics: UNKNOWN
     order_type_time_in_force_and_route_semantics: UNKNOWN
-    instrument_coverage: UNKNOWN           # Patch-0057 신설 슬롯 (보수 기본값).
-                                           # 야간세션 코드/해외지수 표기/조회
-                                           # 행 상한 전부 미확립 — N-18 대상.
+    # T4-α 기입 근거(1줄): N-17 #13 이 야간 세션 TR 3계열(주문 STTN1101U ·
+    # 정정취소 STTN1103U/TTTN1103U · 잔고 CTFN6118R)의 **실전 전용 존재**를
+    # 공식 명세로 확정했다. 다른 커버리지 축(종목군·해외지수 표기 등)은 미확립.
+    instrument_coverage: DAY_AND_NIGHT_TR_SURFACE_PRESENT__OTHER_COVERAGE_UNKNOWN
     restrictions: []
     restriction_approved: false
     fallback_reference: null
-    assurance_sources: []
-    _model_view: {dimension: MARKET_INSTRUMENT_CONSTRAINTS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    assurance_sources: [OFFICIAL_SPECIFICATION, CONTROLLED_PRODUCTION_PROBE]
+    _model_view: {dimension: MARKET_INSTRUMENT_CONSTRAINTS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN, assurance_sources: [OFFICIAL_SPECIFICATION, CONTROLLED_PRODUCTION_PROBE]}
     _kis:
-      measurement: NEEDS-LIVE-MEASUREMENT
+      measurement: OFFICIAL-DOC + CONTROLLED-PRODUCTION-OBSERVATION (GET 전용) + NEEDS-LIVE-MEASUREMENT
       note: "야간세션(18:00-05:00)은 실전에만 존재 — 모의 증거로 대체 불가."
+      probe_observations_2026_07_29:      # T4-α · N-18 2차·3차
+        contact_class: "GET 조회 전용(probes_real.py::ALLOWLIST 강제) — 주문 호출 0건"
+        n18a_program_trade_rows:
+          request_range_days: 150
+          single_call_rows: 101
+          reproduced: 2                   # 065224Z · 105609Z 동일
+          verdict: >-
+            **상한 후보이지 확립 아님.** 아티팩트 자신의 판정 규칙대로, 101 이
+            per-call cap 이려면 요청 구간의 **거래일 수가 101 을 명백히 초과**해야
+            하는데 150 역일 ≈ 100~103 거래일이라 "상한" 과 "가용 행 전부" 가
+            구분되지 않는다. 구간 대조 후에만 cap 으로 기록할 수 있다.
+          row_key_family: "arbt_*/nabt_*/whol_* + stck_bsop_date (스키마 포착됨)"
+        n18b_overseas_index:
+          tr_id: FHKST03030200            # N-17 #14 확정
+          path: "/uapi/overseas-price/v1/quotations/inquire-time-indexchartprice"
+          refuted_candidate: HHDFC55020100  # 로드맵 :395 후보 — 색인 부재로 반증
+          control_leg: {symbol: SPX, rt_cd: "0", msg_cd: MCA00000, row_count: 102}
+          sox_legs:
+            - {symbol: "SOX", rt_cd: "0", row_count: 102}   # 데이터 반환
+            - {symbol: ".SOX", rt_cd: "0", row_count: 0}
+            - {symbol: "^SOX", rt_cd: "0", row_count: 0}
+          verdict: >-
+            컨트롤(SPX)이 정상이므로 TR 자체는 이 자격증명에서 동작한다. 그 위에서
+            **`SOX`(접두 없음) 철자가 102행 데이터를 반환**했고 `.SOX`/`^SOX` 는
+            `rt_cd: 0` 이면서 0행이었다. 이는 "이 철자가 데이터를 반환했다" 는
+            **관측**이지 공식 표기 보증이 아니며, 0행 철자는 "SOX 미제공" 이
+            아니라 "이 철자가 거부됨" 으로만 기록한다(아티팩트 caveat 그대로).
+        n18c_night_code_rest:
+          day_leg: {symbol: "101S6000", rt_cd: "0", futs_prpr: null}
+          night_leg: {symbol: "1A01609", rt_cd: "0", futs_prpr: null}
+          observed_at_kst: "2026-07-29 19:56 (야간 세션 창)"
+          verdict: >-
+            ⚠ 두 레그 모두 `rt_cd: 0` 이지만 **가격 필드가 둘 다 null** 이다.
+            따라서 "야간 코드가 REST 로 서빙된다" 도 "서빙되지 않는다" 도
+            확립되지 않았다 — 정상 응답 봉투만 확인됐다. 야간 캡처 설계
+            (WS 전용) 재검토의 입력이며, 그 자체로 판정 근거가 아니다.
+        not_established:
+          - "instrument 별 broker 선언 제약(가격제한폭·호가단위·수량단위·정지)"
+          - "야간 REST 서빙 여부 (가격 필드 null)"
+          - "N-18a 101행의 per-call cap 여부 (거래일 수 대조 미수행)"
+          - "SOX 공식 표기 (관측된 철자일 뿐)"
   account_margin_borrow_and_settlement_constraints:
     status: UNKNOWN
     assurance_level: EV-L0
@@ -1710,12 +2392,16 @@ capabilities:
     _model_view: {dimension: null, _mismatch_ref: "메모 §6-2"}
     _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
   command_construction_and_wire_semantics:
+    # T4-α: 아래 1필드만 **환경 무관 공식 명세**로 갱신. status 무변경.
     status: UNKNOWN
     assurance_level: EV-L0
-    evidence_refs: []
+    evidence_refs:
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:49 (N-17 #5 · 부분 — String 전송 요구, 환경 무관)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:50 (N-17 #6 · 부분 — 필수/선택)"
+      - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:51 (N-17 #7 · 미확인 — 미지 필드 동작)"
     required_and_default_field_semantics: UNKNOWN
     account_symbol_side_and_position_effect_mapping: UNKNOWN
-    unit_multiplier_currency_and_numeric_encoding: UNKNOWN
+    unit_multiplier_currency_and_numeric_encoding: STRING_TYPED_FIELDS_CONFIRMED__DECIMAL_ACCEPTANCE_UNKNOWN
     duplicate_unknown_and_omitted_field_behavior: UNKNOWN
     canonicalization_and_parser_behavior: UNKNOWN
     serializer_sdk_signer_and_redirect_behavior: UNKNOWN
@@ -1723,9 +2409,18 @@ capabilities:
     restrictions: []
     restriction_approved: false
     fallback_reference: PROHIBIT_AFFECTED_COMMAND_SCOPE
-    assurance_sources: []
+    assurance_sources: [OFFICIAL_SPECIFICATION]   # 숫자 인코딩 축 한정
     _model_view: {dimension: null, _mismatch_ref: "메모 §6-2"}
-    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+    _kis:
+      measurement: OFFICIAL-DOC (숫자 타입·필수/선택) + NEEDS-LIVE-MEASUREMENT
+      spec_collation_2026_07_29: >-
+        T4-α: 공식 명세는 주문 필드를 **String 으로 전달**할 것을 명시 요구하고
+        (시장가/최유리는 가격 `"0"`), 소수점 문자열의 파서 동작은 서술하지 않는다.
+        선물 `NMPR_TYPE_CD`·`KRX_NMPR_CNDT_CD` 는 **[필수]**, `CTAC_TLNO`·
+        `FUOP_ITEM_DVSN_CD` 는 선택이며 후자만 기본값("공란")이 서술된다. 우리
+        클라이언트가 [필수] 2필드를 빈 문자열로 보내는 사실(N-17 §2 소견 2 —
+        P0-2 blocker 후보)은 환경에 무관하다. 이 기입은 공식 명세 인용이며 MOCK
+        관측의 상속이 아니다.
 
 venue_constraint_binding:
   venue_constraint_policy_id: TBD
@@ -1862,11 +2557,27 @@ final_quantity_proof:
 residual_risks:
   - id: RR-REAL-1
     text: >-
-      실전 환경 측정 0건. 이 프로파일은 어떤 live scope 도 권한 부여하지
-      않으며(CLASS-D), MOCK 프로파일의 어떤 declaration 도 상속하지 않는다.
+      실전 환경의 **주문 계열 측정 0건**. 이 프로파일은 어떤 live scope 도
+      권한 부여하지 않으며(CLASS-D), MOCK 프로파일의 어떤 declaration 도
+      상속하지 않는다.
+      (T4-α 정정: 2026-07-29 에 **GET 조회 전용 프로브 2건**(N-16 · N-18)이 실전
+      도메인에 접촉했다 — allowlist 강제로 주문 경로는 구조적으로 부재. 따라서
+      "측정 0건" 을 "주문 계열 측정 0건" 으로 정직하게 좁힌다. 조회 관측은
+      어떤 capability status 도 승격시키지 않았다.)
     owner: TBD                          # §21:1089 (Patch-0056 신설 슬롯)
     acceptance: TBD                     # §21:1090 — TBD = 미수용
     expiry: null                        # §21:1091 — 수용이 없으므로 만료도 없음
+  - id: RR-REAL-2                       # T4-α 신설 (N-16 2차 관측)
+    text: >-
+      야간 잔고 경로(`CTFN6118R`)에 대한 유일한 실전 접촉이 **EGW02004 로
+      거부**됐다("실전투자 도메인은 모의투자 앱키로 호출하실 수 없습니다").
+      같은 캠페인의 N-18 은 같은 도메인에서 성공했으므로 프로브의 자격증명
+      배선이 레그별로 다를 가능성이 있다. 결과적으로 (a) 야간 잔고 응답 스키마는
+      **미확립**이고 (b) 실전 접촉 시 어떤 자격증명이 제시되는지에 대한 우리
+      쪽 확신이 없다 — 실전 프로브 재개 전 배선 확인이 선행 조건이다.
+    owner: TBD                          # §21:1089
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091
 
 verification:
   required_evidence_ids: []
