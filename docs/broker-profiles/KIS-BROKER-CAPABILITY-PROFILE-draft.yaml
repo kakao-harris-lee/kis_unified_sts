@@ -1,0 +1,1588 @@
+# =============================================================================
+# KIS (한국투자증권) Broker Capability Profile — INSTANCE **CANDIDATE DRAFT**
+# =============================================================================
+#
+# ⚠ THIS IS A CANDIDATE, NOT AN APPROVED PROFILE. ⚠
+#
+#   `status: DRAFT` · `approvers: []` · every declaration is non-authorizing.
+#   Phase-0 gate **P0-2** ("broker-specific bounds are MEASURED from an approved
+#   Broker Capability Profile, not guessed" — IMPLEMENTATION-PLAN-002 §1:34;
+#   VERIFICATION-PROFILE-002:9-10) is closed **only** by an operator /
+#   designated authority approval act. Authoring this file does not close it.
+#   Gate row: docs/plans/2026-07-29-tos-phase0-human-gate-register.md:50 (P0-2).
+#   Companion memo (per-field provenance + open items):
+#   docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md
+#
+# DOCUMENT STATUS (규범성): **NON-NORMATIVE INSTANCE**.
+#   - tos-spec normative text (RFC / ADR / VER / templates) names no concrete
+#     broker (project memory `tos-spec-broker-agnostic`; ADR-002-004 line 798;
+#     design #10 §0.1 / header:17). A concrete broker's values live ONLY in a
+#     non-normative Profile INSTANCE (ADR-002-004 §21; design #10 :1217-1220).
+#   - This file MUST NOT be moved into tos-spec/ and MUST NOT be cited as
+#     normative by any RFC/ADR/VER.
+#
+# SCHEMA SPINE: tos-spec/src/part-1-foundation/verification/
+#               BROKER-CAPABILITY-PROFILE-template.yaml (key names verbatim).
+# MODEL AUTHORITY: tos/src/tos/brokercap/records.py (BrokerCapabilityProfile,
+#               CapabilityDeclaration, ProfileKey, ProfileVersion, LiveScope,
+#               FinalQuantityProofRule) + tos/src/tos/brokercap/vocabulary.py
+#               (CapabilityStatus:49-55, CapabilityDimension:70-86,
+#               AssuranceLevel:106-110, ConformanceClass:143-146,
+#               AssuranceSource:168-175, AcknowledgementState:194-199,
+#               ReplaceSemantics:218-222).
+#   Template↔model divergences are recorded in the memo §6 and are NOT
+#   "fixed" here — the template keys are reproduced verbatim, and the
+#   brokercap-model view is carried alongside in the `_model_view` annotation.
+#
+# ANNOTATION CONVENTION: every key beginning with `_` (e.g. `_model_view`,
+#   `_kis`) is an INSTANCE-LOCAL annotation, not part of the template schema.
+#   Nothing in the repo parses this file today (verified absence: no loader
+#   references `BROKER-CAPABILITY-PROFILE` outside tos-spec — grep over
+#   tos/ shared/ services/ returns only unrelated field-name matches).
+#
+# MEASUREMENT STATUS VOCABULARY (`_kis.measurement`), 3-way, per the P0-2
+# "MEASURED, not guessed" rule. This is an authoring-provenance axis and is
+# DISTINCT from `status` (CapabilityStatus) and `assurance_level`
+# (AssuranceLevel) — a CODE-EVIDENCED fact about *our integration* is still
+# `UNKNOWN` as a *broker capability* until the broker side is verified:
+#   CODE-EVIDENCED          measured from this repo's code/config (file:line
+#                           cited). Evidences what OUR client does/does not do.
+#   OFFICIAL-DOC            from the official 한국투자증권 source
+#                           (github.com/koreainvestment/open-trading-api,
+#                           apiportal.koreainvestment.com). URL cited.
+#   NEEDS-LIVE-MEASUREMENT  not determinable locally; a 모의투자/실전 probe is
+#                           required. A probe procedure is proposed in the memo.
+#
+# ENVIRONMENT SEPARATION: the template carries a single scalar
+#   `profile_identity.environment` (and ProfileKey.environment,
+#   records.py:63), so environments are separated by INSTANCE, not by a scope
+#   field. This file therefore holds TWO YAML documents:
+#     doc 1 → environment: MOCK_VTS   (모의투자, openapivts:29443)
+#     doc 2 → environment: REAL_PROD  (실전,     openapi:9443)
+#   ADR-002-004 §13.14 / BC-INV-009 (design #10 §6.4): sandbox evidence does
+#   NOT by itself establish live capability. Doc 2 therefore inherits NOTHING
+#   from doc 1 — it is all-UNKNOWN by construction, not by omission.
+# =============================================================================
+
+---
+# =============================================================================
+# DOCUMENT 1 of 2 — environment: MOCK_VTS (모의투자)
+# =============================================================================
+
+profile_identity:
+  artifact_id: KIS-BCP-MOCK-VTS-DRAFT-0001
+  schema_version: BROKER-CAPABILITY-PROFILE-template@part-1-foundation
+  canonicalization_version: TBD          # G2 게이트 미결 (design #10 §9.2 item 2):
+                                         # 프로덕션 canonicalization 알고리즘 미선정.
+  canonical_semantic_digest: TBD         # 위 미선정으로 산출 불가 — 승인 전 필수.
+  byte_digest: TBD                       # 동상.
+  broker_id: KIS_KOREA_INVESTMENT_SECURITIES
+  api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
+  api_version: UNKNOWN                   # 공식 원전에 버전 식별자 부재(미확인).
+  environment: MOCK_VTS
+  account_type: 모의투자_위탁            # KIS_ACCOUNT_NO (config/execution.yaml:6)
+  market: KRX_DOMESTIC
+  instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
+  order_types:
+    - LIMIT                              # stock ORD_DVSN 00 → futures ORD_DVSN_CD 01
+    - MARKET                             # stock ORD_DVSN 01 → futures ORD_DVSN_CD 02
+  session_type: REGULAR_DAY_ONLY         # 야간 TR은 real 전용 (아래 _kis 참조)
+  credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+  profile_version: 0.1.0-draft
+  status: DRAFT
+  effective_from: null
+  expires_at: null
+  approvers: []                          # ← P0-2 는 여기가 비어 있는 한 열려 있다.
+  revocation_record: null
+
+  _model_view:                           # records.py ProfileKey (10좌표) 대응
+    _note: >-
+      ProfileKey(records.py:59-68) 은 order_type 을 **단수** 스칼라로 가지는데
+      템플릿 profile_identity 는 order_types 를 **리스트**로 가진다(메모 §6-1).
+      모델 충실도를 위해 아래에 단수 좌표별 분해를 병기한다.
+    broker_id: KIS_KOREA_INVESTMENT_SECURITIES
+    api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
+    api_version: UNKNOWN
+    environment: MOCK_VTS
+    account_type: 모의투자_위탁
+    market: KRX_DOMESTIC
+    instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
+    order_type: LIMIT                    # 좁은 좌표 우선 — MARKET 은 별도 profile 필요
+    session_type: REGULAR_DAY_ONLY
+    credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+
+  _kis:
+    endpoints:
+      rest_base: "https://openapivts.koreainvestment.com:29443"
+      _evidence: "shared/kis/auth.py:148; shared/execution/config.py:319-321"
+      _measurement: CODE-EVIDENCED
+      websocket: "ws://ops.koreainvestment.com:31000"
+      _websocket_evidence: "shared/kis/websocket.py:434"
+      _websocket_measurement: CODE-EVIDENCED
+    operational_history: >-
+      이 환경은 수개월간 모의투자 페이퍼 운영에 사용되었다. 그러나 설계된
+      capability 테스트(BC-EV) 실행 기록은 0건이므로, 운영 경험은
+      AssuranceLevel LEVEL_2_CONTROLLED_TEST_VERIFIED 를 정당화하지 않는다.
+      본 초안은 전 차원에서 LEVEL_1_DOCUMENTED 이하를 유지한다(fail-closed).
+
+live_scope:
+  conformance_class: CLASS-D             # = ConformanceClass.CLASS_D_NON_LIVE
+                                         # (vocabulary.py:146). §10 line 584:
+                                         # "A class cannot override a failed
+                                         # mandatory dimension." 승인 전 CLASS-D 고정.
+  accounts: []
+  venues: []
+  market_segments: []
+  instruments: []
+  session_phases: []
+  order_types: []
+  time_in_force_values: []
+  action_classes: []
+  maximum_concurrency: 0
+  maximum_quantity: null
+  maximum_risk_vector: {}
+  manual_activity_policy: TBD            # 외부 수동 활동(HTS/MTS/지점) 정책 미정의.
+
+  _model_view:                           # records.py LiveScope:125-132
+    account_scope: null
+    instrument_scope: null
+    order_type_scope: null
+    quantity_risk_limit: null
+    session_scope: null
+    action_classes: []
+    mode: NON_LIVE
+    reduced_off_unattended_partition_protection: null   # None ⇒ fail-closed
+
+# =============================================================================
+# capabilities — 템플릿 19키 전수. 각 키에 brokercap CapabilityDimension
+# (17멤버 전수) 매핑을 `_model_view.dimension` 으로 병기한다. 템플릿 전용 2키
+# (account_margin_...·command_construction_...) 는 대응 dimension 이 없다(메모 §6-2).
+# =============================================================================
+capabilities:
+
+  # -- 1/17 · ORDER_IDENTITY ---------------------------------------------
+  client_generated_order_id:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    restrictions: []
+    fallback: NO_BLIND_RETRY_AND_CONTAIN
+    _model_view:
+      dimension: ORDER_IDENTITY
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
+      assurance_sources: []
+    _kis:
+      measurement: CODE-EVIDENCED (our client only) + NEEDS-LIVE-MEASUREMENT (broker side)
+      observation: >-
+        우리 클라이언트가 KIS 로 보내는 주문 본문에는 **클라이언트 생성 식별자
+        필드가 하나도 없다**. 주식 본문 6필드(CANO/ACNT_PRDT_CD/PDNO/ORD_DVSN/
+        ORD_QTY/ORD_UNPR), 선물 본문 11필드 모두 broker 정의 필드다. 주문
+        식별자 ODNO 는 응답에서 broker 가 부여한다.
+      evidence:
+        - "shared/execution/executor.py:315-322 (주식 주문 본문 — 클라이언트 id 없음)"
+        - "shared/execution/executor.py:386-399 (선물 주문 본문 — 클라이언트 id 없음)"
+        - "shared/execution/executor.py:335 (ODNO = broker 부여, 주식)"
+        - "shared/execution/executor.py:412 (ODNO = broker 부여, 선물)"
+      why_not_unsupported: >-
+        "우리가 보내지 않는다" ≠ "broker 가 제공하지 않는다". KIS API 가 클라이언트
+        주문번호 필드를 제공하는지 여부는 **미확인**이므로 UNSUPPORTED 가 아니라
+        UNKNOWN 이다(anti-phantom: 부재 주장도 실측 필요). BC-INV-001 상
+        UNKNOWN 은 어차피 unavailable 로 취급되어 보수적 결과는 동일하다.
+
+  # -- 2/17 · SUBMISSION_IDEMPOTENCY -------------------------------------
+  submission_idempotency:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    deduplication_window_ms: null
+    restrictions: []
+    fallback: NO_BLIND_RETRY_AND_CONTAIN
+    _model_view:
+      dimension: SUBMISSION_IDEMPOTENCY
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
+      assurance_sources: []
+    _kis:
+      measurement: NEEDS-LIVE-MEASUREMENT
+      observation: >-
+        중복 제거 창(deduplication window)에 대한 broker 보증은 알려진 바 없다.
+        ORDER_IDENTITY 부재와 결합하면 재전송은 **증명 불가능한 중복 위험**이다.
+      quirks_found_in_our_client:
+        - id: Q-IDEMP-1
+          severity: HIGH
+          text: >-
+            executor.py 의 주문 재시도 루프는 `response.order_no` 가 있을 때만
+            재시도를 멈춘다(:225-232). 그러나 **예외 경로**(:238-241 — 타임아웃/
+            네트워크 오류)에서는 order_no 를 알 수 없는 채로 최대 max_retries 회
+            재전송한다. 전송되었을 수 있는 주문의 blind retry = BC-INV-002/003
+            위반 후보.
+          evidence:
+            - "shared/execution/executor.py:218 (for attempt in range(max_retries))"
+            - "shared/execution/executor.py:225-232 (order_no 있으면 재시도 중단)"
+            - "shared/execution/executor.py:238-241 (예외 시 재시도 — 미보호)"
+            - "config/execution.yaml:3 (max_retries: 3), :4 (retry_delay: 1.0)"
+        - id: Q-IDEMP-2
+          severity: HIGH
+          text: >-
+            `_request_json` 은 **모든** KIS 호출(주문 POST 포함)을
+            `retry_once_on_token_expiry` 로 감싼다. 토큰 만료로 판정되면 동일
+            주문 본문을 1회 재전송한다. 판정은 응답 payload 기반이므로 서버가
+            주문을 수락한 뒤 만료 응답을 낸 경우를 배제할 수 없다.
+          evidence:
+            - "shared/execution/executor.py:403 (주문 POST 가 _request_json 경유)"
+            - "shared/execution/executor.py:674+ (_request_json)"
+            - "shared/kis/auth.py:64-104 (retry_once_on_token_expiry — 정확히 1회 재전송)"
+      probe_proposal: >-
+        모의투자에서 동일 본문을 의도적으로 2회 전송하고 inquire-ccnl 로 ODNO
+        2건 생성 여부를 확인. 2건이면 dedup 없음(UNSUPPORTED 확정), 1건이면
+        창 길이를 이분 탐색. 메모 §5 P-2.
+
+  # -- 3/17 · ACKNOWLEDGEMENT_SEMANTICS ----------------------------------
+  acknowledgement_semantics:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    proven_state: TRANSPORT_RECEIVED_ONLY
+    _model_view:
+      dimension: ACKNOWLEDGEMENT_SEMANTICS
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: [OFFICIAL_SPECIFICATION]
+    _kis:
+      measurement: CODE-EVIDENCED
+      observation: >-
+        수락 판정은 단일 결합 코드 `rt_cd == "0"` + `msg1` + `output.ODNO` 다.
+        ADR-002-004 §8.3 line 331 "If one response code combines these states,
+        the weakest safe interpretation applies" 에 따라 proven_state 는
+        템플릿의 최약 값 TRANSPORT_RECEIVED_ONLY 를 유지한다.
+      observed_but_unverified: >-
+        ODNO 가 반환된다는 사실은 BROKER_RECEIVED 이상을 **시사**하지만 검증
+        전이므로 승격하지 않는다. AcknowledgementState(vocabulary.py:194-199)
+        6멤버 중 ACCEPTED/WORKING 은 rt_cd=0 만으로 증명되지 않는다 — 실제로
+        코드가 별도 체결조회 폴링(:420-433, :530-596)을 두는 것 자체가
+        "수락 ≠ 작동 중" 을 우리 시스템이 이미 가정한다는 증언이다.
+      evidence:
+        - "shared/execution/executor.py:332-338 (주식: rt_cd/msg1/ODNO)"
+        - "shared/execution/executor.py:404-412 (선물: rt_cd/msg1/ODNO)"
+        - "shared/execution/executor.py:420-433 (수락 후 체결 폴링 진입)"
+
+  # -- 4/17 · FILL_EVENTS ------------------------------------------------
+  fill_event_ordering:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    duplicates_possible: true
+    out_of_order_possible: true
+    replay_supported: false
+    _model_view:
+      dimension: FILL_EVENTS
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: []
+    _kis:
+      measurement: CODE-EVIDENCED (absence of push) + NEEDS-LIVE-MEASUREMENT (semantics)
+      observation: >-
+        우리 시스템은 체결 **이벤트**를 받지 않는다. 체결은 inquire-ccnl 폴링의
+        누적 스냅샷(tot_ccld_qty / qty / rjct_qty)에서 **파생**된다. 따라서
+        duplicates_possible / out_of_order_possible 은 broker 측정값이 아니라
+        템플릿의 보수적 기본값을 유지한 것이다. replay_supported: false 역시
+        측정되지 않은 보수 기본값이다.
+      evidence:
+        - "shared/execution/executor.py:530-596 (_inquire_futures_fill_status — 폴링)"
+        - "shared/execution/executor.py:580-582 (tot_ccld_qty / qty / ord_qty 누적 스냅샷)"
+        - "config/execution.yaml:11 (poll interval 0.2s), :12 (timeout 1.0s)"
+      absence_verified: >-
+        repo 전역에서 체결통보 실시간 TR(H0STCNI*/H0IFCNI*) 구독 코드 0건
+        (grep over shared/ services/ cli/ — 0 hits).
+
+  # -- 5/17 · OPEN_ORDER_QUERY -------------------------------------------
+  open_order_query:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    completeness: UNKNOWN
+    eventual_consistency_bound_ms: null
+    pagination: CTX_AREA_FK200_AND_CTX_AREA_NK200_CONTINUATION_KEYS
+    _model_view:
+      dimension: OPEN_ORDER_QUERY
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      evidence_reference: null
+      restriction: FUTURES_ONLY_SINGLE_PAGE_READ
+      restriction_approved: null          # None ⇒ live 권한 없음(설계 #10 §5.1)
+      fallback_reference: null
+      assurance_sources: [OFFICIAL_SPECIFICATION]
+    _kis:
+      measurement: CODE-EVIDENCED
+      scope_limit: >-
+        **선물 전용.** 주식 미체결 조회 경로는 repo 에 존재하지 않는다(실측:
+        inquire-psbl-rvsecncl / ccnl-nccs 계열 호출 0건). 주식 차원은 UNKNOWN.
+      tr_ids:
+        mock: VTTO5201R
+        real: TTTO5201R
+        night_real: STTN5201R            # mock 대응 없음
+        _evidence: "shared/execution/tr_ids.py:48-50"
+      quirks_found_in_our_client:
+        - id: Q-OOQ-1
+          severity: HIGH
+          text: >-
+            연속조회 키 CTX_AREA_FK200 / CTX_AREA_NK200 을 **빈 문자열로 보내고
+            응답의 연속키를 사용하지 않는다** — 즉 항상 1페이지만 읽는다. 주문이
+            첫 페이지 밖에 있으면 조회 누락이며, 이는 ADR §15.3 의 금지 근거
+            ONE_OPEN_ORDER_QUERY_OMISSION(vocabulary.py:267) 그 자체다.
+          evidence:
+            - "shared/execution/executor.py:562-563 (CTX_AREA_FK200/NK200 = \"\")"
+            - "shared/execution/executor.py:575-579 (output1 단일 페이지만 순회)"
+        - id: Q-OOQ-2
+          severity: MEDIUM
+          text: >-
+            조회 창이 today 와 today-1 두 날짜로 하드 제한된다. 날짜 경계를 넘어
+            살아 있는 주문은 구조적으로 관측 불가.
+          evidence: ["shared/execution/executor.py:546-547"]
+      probe_proposal: >-
+        eventual_consistency_bound_ms: 주문 수락(ODNO 수신) 직후부터 해당 ODNO 가
+        inquire 결과에 나타날 때까지의 지연을 N회 측정 → 최댓값 + 마진. 메모 §5 P-5.
+
+  # -- 6/17 · ORDER_HISTORY_QUERY ----------------------------------------
+  order_history_query:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    retention: UNKNOWN                   # broker 보존 기간 미확인
+    pagination: CTX_AREA_FK200_AND_CTX_AREA_NK200_CONTINUATION_KEYS
+    _model_view:
+      dimension: ORDER_HISTORY_QUERY
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      evidence_reference: null
+      restriction: FUTURES_ONLY_TWO_DAY_WINDOW_SINGLE_PAGE
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: [OFFICIAL_SPECIFICATION]
+    _kis:
+      measurement: CODE-EVIDENCED (our window) + NEEDS-LIVE-MEASUREMENT (broker retention)
+      observation: >-
+        `retention: UNKNOWN` 은 의도적이다. today/today-1 2일 창은 **우리 질의
+        범위**이지 broker 보존 기간이 아니다 — 이 둘을 혼동하면 추측이 값이 된다.
+      evidence:
+        - "shared/execution/executor.py:546-547 (query_dates = [today, today-1])"
+        - "shared/execution/executor.py:551-564 (STRT_ORD_DT/END_ORD_DT 파라미터)"
+
+  # -- 7/17 · CANCELLATION -----------------------------------------------
+  cancellation_finality:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    crossing_fill_possible: true
+    final_quantity_proof_recipe: FQP-KIS-FUT-CANCEL-THEN-REQUERY-DRAFT
+    _model_view:
+      dimension: CANCELLATION
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      evidence_reference: null
+      restriction: FUTURES_ONLY
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: [OFFICIAL_SPECIFICATION]
+    _kis:
+      measurement: CODE-EVIDENCED
+      scope_limit: >-
+        **선물 전용.** 주식 취소 경로는 repo 에 존재하지 않는다(order-rvsecncl
+        주식 계열 호출 0건). 주식 차원은 UNKNOWN.
+      api: "/uapi/domestic-futureoption/v1/trading/order-rvsecncl"
+      request_shape:
+        RVSE_CNCL_DVSN_CD: "02"          # 02 = 취소
+        RMN_QTY_YN: "Y"                  # 잔량 전부
+        ORGN_ODNO: "<원주문 ODNO>"
+      tr_ids:
+        mock: VTTO1103U
+        real: TTTO1103U
+        night_real: STTN1103U            # mock 대응 없음
+        _evidence: "shared/execution/tr_ids.py:44-46"
+      quirks_found_in_our_client:
+        - id: Q-CXL-1
+          severity: INFORMATIONAL
+          text: >-
+            취소 응답이 **새로운 ODNO** 를 반환한다 — 즉 취소는 자체 식별자를
+            가지는 별개 주문이다. 따라서 취소 ack 는 원주문의 최종 수량을 증명
+            하지 못한다(§15.3 CANCEL_ACKNOWLEDGEMENT, vocabulary.py:266).
+          evidence: ["shared/execution/executor.py:635"]
+        - id: Q-CXL-2
+          severity: POSITIVE-FINDING
+          text: >-
+            현행 코드는 취소 후 **재조회**를 수행해 체결 수량을 갱신한다. 즉
+            "취소 ack 단독" 을 최종 수량 근거로 쓰지 않는다 — FQP 관점에서 옳은
+            방향의 기존 행위이며 아래 recipe 초안의 근거다.
+          evidence: ["shared/execution/executor.py:511-520"]
+      evidence:
+        - "shared/execution/executor.py:598-641 (_cancel_futures_order)"
+        - "shared/execution/executor.py:613-627 (취소 본문)"
+
+  # -- 8/17 · REPLACE_OR_AMEND -------------------------------------------
+  replace_semantics:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    mode: BROKER_UNSPECIFIED
+    _model_view:
+      dimension: REPLACE_OR_AMEND
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: RESERVE_OVERLAP_CAPACITY_OR_REPRESENT_GAP_AS_UNPROTECTED
+      assurance_sources: []
+    _kis:
+      measurement: CODE-EVIDENCED (never exercised) + NEEDS-LIVE-MEASUREMENT
+      observation: >-
+        order-rvsecncl 엔드포인트는 정정(01)/취소(02)를 구분자 하나로 나눈다.
+        우리 코드는 **"02" 만** 사용한다 — 정정 경로는 한 번도 실행된 적이 없다
+        (repo 전역 RVSE_CNCL_DVSN_CD 리터럴 1건, 값 "02").
+        따라서 ATOMIC_REPLACE 여부는 전혀 증명되지 않았고
+        mode 는 ReplaceSemantics.BROKER_UNSPECIFIED(vocabulary.py:221) 다.
+        §8.8 line 394 상 비원자 semantics 는 §13.7 fallback(중첩 capacity 예약
+        또는 보호 공백의 미보호 리스크 표현)을 강제한다.
+      evidence: ["shared/execution/executor.py:617 (RVSE_CNCL_DVSN_CD: \"02\")"]
+
+  # -- 9/17 · REDUCE_ONLY ------------------------------------------------
+  reduce_only:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    exact_semantics: TBD
+    _model_view:
+      dimension: REDUCE_ONLY
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: []
+    _kis:
+      measurement: CODE-EVIDENCED (absence in wire) + NEEDS-LIVE-MEASUREMENT
+      observation: >-
+        주문 본문 어디에도 reduce-only 플래그가 없다. repo 의 `reduce_only`
+        토큰은 **로컬 증거금 리스크 모드 라벨**이며 broker 주문 필드가 아니다 —
+        이름 충돌에 속아 capability 로 계상하면 안 된다(anti-phantom: 존재
+        주장도 실측).
+      evidence:
+        - "shared/risk/futures_margin.py:314-315 (level = \"reduce_only\" — 로컬 라벨)"
+        - "shared/portfolio/hedge.py:683 (_MARGIN_SUPPRESSES_ADD — 로컬 라벨)"
+        - "shared/execution/executor.py:386-399 (선물 주문 본문 — reduce-only 필드 없음)"
+
+  # -- 10/17 · ACCOUNT_EVENT_PUSH ----------------------------------------
+  account_event_push:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    reconnect_replay: UNKNOWN
+    _model_view:
+      dimension: ACCOUNT_EVENT_PUSH
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: []
+    _kis:
+      measurement: CODE-EVIDENCED (absence in our integration only)
+      observation: >-
+        우리 시스템은 계좌 이벤트 push 를 **구독하지 않는다**. WebSocket 은
+        시세(H0STCNT0 주식체결가 / H0IFCNT0 선물체결가) 전용이다. broker 가
+        체결통보 실시간 TR 을 제공하는지 여부는 **미확인**이므로 UNSUPPORTED 가
+        아니라 UNKNOWN 이다.
+      absence_verified: "grep H0STCNI|H0IFCNI|체결통보 over shared/ services/ cli/ → 0 hits"
+      evidence:
+        - "config/streaming.yaml:48-49 (stock_feed = H0STCNT0 시세)"
+        - "config/streaming.yaml:65-66 (futures_feed = H0IFCNT0 시세)"
+
+  # -- 11/17 · POSITIONS_BALANCES_MARGIN ---------------------------------
+  position_balance_margin:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    consistency_model: UNKNOWN
+    _model_view:
+      dimension: POSITIONS_BALANCES_MARGIN
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: [OFFICIAL_SPECIFICATION]
+    _kis:
+      measurement: CODE-EVIDENCED (endpoints) + NEEDS-LIVE-MEASUREMENT (consistency)
+      endpoints:
+        stock_balance: "/uapi/domestic-stock/v1/trading/inquire-balance"
+        futures_balance: "/uapi/domestic-futureoption/v1/trading/inquire-balance"
+      evidence:
+        - "shared/kis/client.py:901 (get_stock_balance), :935 (path)"
+        - "shared/kis/client.py:1023 (get_futures_balance), :1059 (path)"
+      quirks_found_in_our_client:
+        - id: Q-POS-1
+          severity: MEDIUM
+          text: >-
+            잔고 조회에 만료 재시도 래퍼(`_balance_expired`)가 붙어 있고, 운영
+            설정에 broker↔Redis 포지션 조정 로직(auto_track_external /
+            remove_redis_only)이 켜져 있다. 이는 **실제로 불일치가 관측되어
+            왔다**는 간접 증거다. consistency_model 은 여전히 UNKNOWN.
+          evidence:
+            - "shared/kis/client.py:967 (_balance_expired)"
+            - "config/execution.yaml:78-81 (broker_verification 블록)"
+
+  # -- 12/17 · CORPORATE_ADMINISTRATIVE_EVENTS ---------------------------
+  corporate_actions:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    _model_view:
+      dimension: CORPORATE_ADMINISTRATIVE_EVENTS
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: []
+    _kis:
+      measurement: CODE-EVIDENCED (absence) + NEEDS-LIVE-MEASUREMENT
+      absence_verified: >-
+        grep corporate_action|권리락|액면분할 over shared/ services/ → 0 hits.
+        권리락·액면분할·병합·상장폐지 등의 broker 통지/조정 semantics 를
+        우리 시스템은 수신도 처리도 하지 않는다.
+
+  # -- 13/17 · RATE_LIMITS -----------------------------------------------
+  rate_limits:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    scope: UNKNOWN                       # per-app-key? per-account? per-IP? 미측정
+    hard_limits: {}                      # ⚠ 의도적 공백 — 아래 _kis 참조
+    sustained_and_burst_semantics: UNKNOWN
+    rolling_or_fixed_window_semantics: UNKNOWN
+    submit_cancel_amend_replace_query_and_session_sharing: UNKNOWN
+    credential_ip_route_endpoint_and_account_sharing: UNKNOWN
+    queue_throttle_partial_processing_and_reset_behavior: UNKNOWN
+    sdk_proxy_redirect_and_reconnect_retry_behavior: UNKNOWN
+    protective_guarantee: UNAVAILABLE
+    protective_reserved_dimensions: []
+    _model_view:
+      dimension: RATE_LIMITS
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: [OFFICIAL_SPECIFICATION]
+    _kis:
+      measurement: OFFICIAL-DOC (qualitative only) + NEEDS-LIVE-MEASUREMENT (all numbers)
+      hard_limits_deliberately_empty: >-
+        **이 항목이 P0-2 의 핵심이다.** 아래 숫자는 전부 *우리가 스스로 건 상한*
+        이며 broker 가 강제하는 한도의 측정값이 **아니다**. 흔히 인용되는
+        "실전 초당 20건 / 모의 초당 2건" 은 공식 원전에서 확인하지 못했으므로
+        본 초안에 값으로 기재하지 않는다(추측 금지).
+      official_qualitative:
+        statement: "모의투자 계좌는 REST API 호출 제한이 낮습니다."
+        meaning: 모의 < 실전 (방향만 공식 확인, 수치 없음)
+        source: "https://github.com/koreainvestment/open-trading-api/blob/main/README.md"
+        measurement: OFFICIAL-DOC
+      our_self_imposed_limits:                # ← broker 한도 아님
+        - key: streaming.rate_limiter.default_rate
+          value: "${KIS_API_RATE_LIMIT:5} req/s"
+          evidence: "config/streaming.yaml:96"
+        - key: execution.orders_per_second
+          value: "5.0 orders/s"
+          evidence: "config/execution.yaml:5"
+        - key: RedisRateLimiter default
+          value: "20.0 req/s"
+          evidence: "shared/execution/rate_limiter.py:16, :158"
+        - key: data_provider.stagger_delay
+          value: "0.25s (주석: 'KIS 5req/s 제한 보호')"
+          evidence: "config/streaming.yaml:105"
+        - key: 429 penalty
+          value: "1.0s"
+          evidence: "config/streaming.yaml:97"
+      internal_inconsistency_note: >-
+        같은 repo 안에서 5 req/s(YAML)와 20 req/s(코드 기본값)가 공존한다. 어느
+        쪽도 측정된 broker 한도가 아니므로 모순이 아니라 **둘 다 미근거**임을
+        드러내는 신호로 기록한다.
+      observability: >-
+        429/5xx 는 KISApiErrorRateTracker 가 5분 롤링 창으로 집계해 Redis 로
+        발행한다 — 측정 인프라는 이미 존재한다(P-13 프로브가 쓸 수 있다).
+        evidence: shared/kis/error_rate.py:1-8; config/streaming.yaml:110-114
+
+  # -- 14/17 · SESSION_CONNECTION_MODEL ----------------------------------
+  sessions:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    concurrent_sessions: UNKNOWN
+    head_of_line_blocking: UNKNOWN
+    _model_view:
+      dimension: SESSION_CONNECTION_MODEL
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: [OFFICIAL_SPECIFICATION]
+    _kis:
+      measurement: CODE-EVIDENCED (our config) + NEEDS-LIVE-MEASUREMENT (broker limits)
+      websocket_endpoints:
+        mock: "ws://ops.koreainvestment.com:31000"
+        real: "ws://ops.koreainvestment.com:21000"
+        evidence: "shared/kis/websocket.py:433-434"
+      approval_key:
+        endpoint: "/oauth2/Approval"
+        evidence: "shared/kis/websocket.py:754"
+        validity_claim: "~24h (repo 주석 — 공식 미확인)"
+        validity_evidence: "shared/kis/approval_cache.py:3, :22"
+        per_environment: >-
+          real/mock 엔드포인트는 같은 app key 에 대해 **서로 다른** approval key
+          를 발급한다(repo 관측). evidence: shared/kis/approval_cache.py:10-11
+      subscription_limit:
+        our_setting: 40
+        repo_claim: "KIS 제한: 41"
+        evidence: "config/streaming.yaml:50"
+        measurement: NEEDS-LIVE-MEASUREMENT
+        note: >-
+          "41" 은 repo 주석의 주장이며 공식 원전에서 확인하지 못했다(웹 검색 상
+          커뮤니티 라이브러리에서만 언급). 값으로 승격하지 않는다.
+      quirks_found:
+        - id: Q-SESS-1
+          severity: HIGH
+          text: >-
+            WebSocket 이 **평문 ws://** 다(wss:// 아님). 시세 전용이라 주문
+            기밀성 문제는 아니나, approval_key 가 평문 경로로 오가며 egress
+            보안 차원(ADR-002-013)에서 하중 있는 사실이다.
+          evidence: ["shared/kis/websocket.py:433-434"]
+        - id: Q-SESS-2
+          severity: MEDIUM
+          text: >-
+            KIS 는 표준 WS ping 에 PONG 하지 않고 자체 PINGPONG(echo)을 쓴다.
+            client ping 을 켜면 정상 연결이 ping_timeout 으로 끊긴다. 그래서
+            ping_interval=0 으로 비활성화되어 있다(반쪽 연결은 OS TCP keepalive
+            + staleness 로만 감지 — 즉 세션 생존성 감지에 공백이 있다).
+          evidence: ["config/streaming.yaml:52", "shared/kis/websocket.py:803"]
+        - id: Q-SESS-3
+          severity: MEDIUM
+          text: >-
+            무한 재연결이 **KIS 계정 차단**을 유발할 수 있다는 운영 지식이
+            circuit breaker 설정으로 코드화되어 있다(연속 6회 실패 → open,
+            600초 창 4회 초과 → open). 즉 세션 재연결에 broker 측 제재 위험이
+            존재한다 — 정확한 임계는 미측정.
+          evidence:
+            - "config/streaming.yaml:59-64 (stock_feed breaker)"
+            - "config/streaming.yaml:75-78 (futures_feed breaker)"
+
+  # -- 15/17 · CREDENTIALS_AUTHORIZATION ---------------------------------
+  credentials_and_revocation:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    revocation_bound_ms: null
+    direct_worker_access_prohibited: false   # ⚠ 템플릿 기본 true 에서 의도적 하향
+    _model_view:
+      dimension: CREDENTIALS_AUTHORIZATION
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      evidence_reference: null
+      restriction: WORKER_PROCESSES_HOLD_RAW_APP_KEY_AND_SECRET
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: [OFFICIAL_SPECIFICATION, CONTROLLED_SANDBOX_TEST]
+    _kis:
+      measurement: OFFICIAL-DOC + CODE-EVIDENCED
+      token_reissue_limit:
+        statement: "토큰 재발급 - 1분당 1회 발급됩니다"
+        source: "https://github.com/koreainvestment/open-trading-api/blob/main/README.md"
+        measurement: OFFICIAL-DOC
+        consequence: >-
+          토큰 무효화 후 즉시 재발급이 **broker 측에서 거부될 수 있다**. 우리
+          코드의 invalidate→retry 경로(auth.py:396-410, :64-104)는 이 1분 창을
+          알지 못한다 — 만료 재시도가 재발급 실패로 이어지는 구간이 존재한다.
+      token_validity:
+        expires_in_default_used_by_our_client: 86400
+        evidence: "shared/kis/auth.py:472, :583"
+        measurement: CODE-EVIDENCED (우리 클라이언트의 fallback 기본값)
+        note: >-
+          86400 은 응답에 expires_in 이 없을 때의 **우리 기본값**이다. 실제
+          만료는 응답 값이 지배한다. 공식 문서상 토큰은 1일 1회 발급 원칙.
+        renewal_buffer_seconds: 600
+        renewal_buffer_evidence: "config/kis/auth.yaml:17"
+      credential_storage:
+        token_cache_file: ".kis_token_{suffix}"
+        evidence: "shared/kis/auth.py:161"
+        secure_write: "shared/kis/auth.py:218 (_save_token_cache_secure)"
+      revocation:
+        broker_revocation_api: UNKNOWN
+        revocation_bound_ms: null
+        measurement: NEEDS-LIVE-MEASUREMENT
+        note: >-
+          자격증명 폐기 API/절차와 그 전파 시한은 알려지지 않았다. 로컬
+          invalidate(auth.py:396-410)는 **캐시 삭제**일 뿐 broker 측 폐기가 아니다.
+      quirks_found:
+        - id: Q-CRED-1
+          severity: HIGH
+          text: >-
+            템플릿의 `direct_worker_access_prohibited: true` 는 현행 시스템에서
+            **성립하지 않는다**. 모든 워커 프로세스가 환경변수로 raw app_key /
+            app_secret 을 직접 보유한다. 사실대로 false 로 기재했다 — 정책
+            희망값을 기재하면 프로파일이 거짓 보증을 하게 된다.
+          evidence:
+            - "config/kis/auth.yaml:7-8 (${KIS_APP_KEY}/${KIS_APP_SECRET})"
+            - "shared/execution/mock_mirror.py:31-33 (os.getenv 로 직접 취득)"
+        - id: Q-CRED-2
+          severity: MEDIUM
+          text: >-
+            circuit breaker 가 인증 계층에 있다(연속 5회 실패 → 60초 차단,
+            half-open 3회). 자격증명 오류와 인프라 오류가 같은 차단기를 공유한다.
+          evidence: ["config/kis/auth.yaml:20-24", "shared/kis/auth.py:656"]
+
+  # -- 16/17 · BROKER_TIME -----------------------------------------------
+  broker_time:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    timezone: TBD
+    precision: TBD
+    _model_view:
+      dimension: BROKER_TIME
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: []
+    _kis:
+      measurement: CODE-EVIDENCED (absence) + NEEDS-LIVE-MEASUREMENT
+      absence_verified: >-
+        grep server_time|broker_time over shared/kis/ → 0 hits. broker 시각을
+        읽는 코드가 없다. 모든 시각 판단은 **로컬 KST 시계**로 이루어진다.
+      evidence:
+        - "shared/execution/executor.py:546 (datetime.now(KST) — 로컬 시계로 조회일자 결정)"
+        - "shared/execution/executor.py:449, :452 (datetime.now() — 로컬 시계로 타임아웃 판정)"
+      consequence: >-
+        broker 시각과 로컬 시각의 편차(skew)와 그 상한이 알려져 있지 않으므로,
+        시간 기반 최종성 주장(late-event window 등)은 현재 근거가 없다.
+
+  # -- 17/17 · MARKET_INSTRUMENT_CONSTRAINTS -----------------------------
+  market_and_instrument_constraints:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    session_phase_semantics: UNKNOWN
+    halt_and_suspension_semantics: UNKNOWN
+    price_band_tick_lot_and_quantity_semantics: UNKNOWN
+    order_type_time_in_force_and_route_semantics: UNKNOWN
+    _model_view:
+      dimension: MARKET_INSTRUMENT_CONSTRAINTS
+      status: UNKNOWN
+      assurance_level: LEVEL_0_UNKNOWN
+      evidence_reference: null
+      restriction: null
+      restriction_approved: null
+      fallback_reference: null
+      assurance_sources: []
+    _kis:
+      measurement: CODE-EVIDENCED (local config only) + NEEDS-LIVE-MEASUREMENT
+      critical_distinction: >-
+        아래 값들은 전부 **우리 로컬 설정**이다. broker 가 발행하는 종목별
+        제약(가격제한폭·호가단위·수량단위·정지/거래중단 상태)을 조회하는 코드는
+        없다. 따라서 broker-declared constraints 는 UNKNOWN 이다.
+      local_session_model:
+        stock_regular: "09:00-15:30"
+        futures_regular: "08:45-15:45"
+        futures_night: "18:00-05:00 (enabled: false — fail-closed)"
+        evidence: "config/market_schedule.yaml:9-10, :26-27, :34-36"
+      local_tick_sizes:
+        futures_mini: 0.02
+        futures_full_F200: 0.05
+        evidence: "config/execution.yaml:149, :154, :230"
+        note: "로컬 상수 — broker 조회값 아님. 틀리면 진입 전량 차단(:151 주석)."
+      quirks_found:
+        - id: Q-MIC-1
+          severity: HIGH
+          text: >-
+            **모의투자에는 야간세션 TR 이 없다.** TR 표에 futures
+            *_night_real 만 존재하고 *_night_mock 대응이 전무하다(order/cancel/
+            inquire 3계열 모두). 즉 야간 관련 어떤 capability 도 모의에서
+            검증 불가 — MOCK→REAL 외삽이 구조적으로 금지되는 지점이다.
+          evidence:
+            - "shared/execution/tr_ids.py:40-50 (night_real 만 존재)"
+            - "shared/execution/executor.py:565-567 (야간 파라미터는 real 전용 분기)"
+        - id: Q-MIC-2
+          severity: MEDIUM
+          text: >-
+            주식은 KRX 외에 ATS(넥스트레이드) 라우팅 TR 이 별도로 존재한다
+            (order-ats 엔드포인트 + 전용 TR 4종). 다만 ats_routing 은 현재
+            enabled: false 이므로 실사용 증거가 없다.
+          evidence:
+            - "shared/execution/tr_ids.py:35-38 (stock_ats_* TR 4종)"
+            - "shared/execution/executor.py:326 (endpoint = order-ats)"
+            - "config/execution.yaml:110-111 (ats_routing.enabled: false)"
+        - id: Q-MIC-3
+          severity: INFORMATIONAL
+          text: >-
+            주문유형 코드계가 주식/선물 간 **다르다**(주식 ORD_DVSN 00=지정가,
+            01=시장가 ↔ 선물 ORD_DVSN_CD 01=지정가, 02=시장가). 코드에 명시
+            매핑 테이블이 있고, 미지정 값은 "01"(지정가)로 폴백한다.
+          evidence: ["shared/execution/executor.py:785-795"]
+
+  # -- 템플릿 전용 키 (brokercap CapabilityDimension 대응 없음 — 메모 §6-2) --
+  account_margin_borrow_and_settlement_constraints:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    account_permission_semantics: UNKNOWN
+    margin_and_collateral_semantics: UNKNOWN
+    borrow_locate_and_short_sale_semantics: UNKNOWN
+    settlement_currency_and_expiration_semantics: UNKNOWN
+    _model_view:
+      dimension: null                     # ⚠ CapabilityDimension 에 대응 멤버 없음
+      _mismatch_ref: "메모 §6-2"
+    _kis:
+      measurement: NEEDS-LIVE-MEASUREMENT
+      note: >-
+        선물 증거금 관련 로컬 모델은 존재하나(shared/risk/futures_margin.py,
+        config/futures_margin.yaml) 이는 우리 계산이지 broker 선언이 아니다.
+        공매도/대차·결제통화·만기 semantics 는 조회하지 않는다.
+
+  command_construction_and_wire_semantics:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    required_and_default_field_semantics: UNKNOWN
+    account_symbol_side_and_position_effect_mapping: UNKNOWN
+    unit_multiplier_currency_and_numeric_encoding: UNKNOWN
+    duplicate_unknown_and_omitted_field_behavior: UNKNOWN
+    canonicalization_and_parser_behavior: UNKNOWN
+    serializer_sdk_signer_and_redirect_behavior: UNKNOWN
+    actual_outbound_observability: UNKNOWN
+    fallback: PROHIBIT_AFFECTED_COMMAND_SCOPE
+    _model_view:
+      dimension: null                     # ⚠ CapabilityDimension 에 대응 멤버 없음
+      _mismatch_ref: "메모 §6-2"
+    _kis:
+      measurement: CODE-EVIDENCED
+      observation: >-
+        wire 본문은 Python dict 리터럴로 **호출부에 인라인 구성**된다. 정규화
+        계층도, 실제 송출 바이트를 관측/비교하는 메커니즘도 없다. 빈 문자열
+        필드(NMPR_TYPE_CD/KRX_NMPR_CNDT_CD/CTAC_TLNO/FUOP_ITEM_DVSN_CD)의
+        broker 측 해석은 미확인이다.
+      evidence:
+        - "shared/execution/executor.py:315-322 (주식 본문 인라인)"
+        - "shared/execution/executor.py:386-399 (선물 본문 인라인 — 빈 문자열 4필드)"
+        - "shared/execution/executor.py:613-627 (취소 본문 인라인)"
+      numeric_encoding_quirk:
+        id: Q-WIRE-1
+        severity: MEDIUM
+        text: >-
+          주식은 `ORD_UNPR = str(int(order.price))` 로 **정수 절단**하고, 선물은
+          `UNIT_PRICE = str(order.price)` 로 float 문자열을 그대로 보낸다. 인코딩
+          규약이 자산군 간 비대칭이며 broker 파서 동작은 미확인.
+        evidence: ["shared/execution/executor.py:321", "shared/execution/executor.py:393"]
+
+# =============================================================================
+venue_constraint_binding:
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
+  constraint_generation: null
+  active_currentness_mechanism: TBD
+  permissive_cache_prohibited: true
+  _kis:
+    measurement: NEEDS-LIVE-MEASUREMENT
+    note: "Venue Constraint Policy 인스턴스 미존재(ADR-002-019 템플릿만)."
+
+order_construction_binding:
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
+  construction_generation: null
+  actual_outbound_comparison_mechanism: TBD
+  permissive_default_or_repair_prohibited: true
+  _kis:
+    measurement: CODE-EVIDENCED
+    note: >-
+      실제 송출 비교 메커니즘 부재(위 command_construction 참조). 또한
+      `_map_futures_order_type` 는 미지의 주문유형을 "01" 로 **조용히 복구**
+      한다(executor.py:795) — permissive repair 금지 원칙과 충돌하는 기존 동작.
+
+action_flow_binding:
+  action_flow_policy_id: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
+  shared_scope_model: UNKNOWN
+  active_currentness_mechanism: TBD
+  rcl_action_flow_permit_required: true
+  priority_alone_is_reservation: false
+  permissive_local_token_or_cache_prohibited: true
+  _kis:
+    measurement: NEEDS-LIVE-MEASUREMENT
+
+independent_approval_binding:
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
+  approval_consumption_record_required: true
+  exact_intent_binding_required: true
+  active_currentness_mechanism: TBD
+  permissive_intent_state_or_cache_prohibited: true
+  _kis:
+    measurement: NEEDS-LIVE-MEASUREMENT
+
+currentness_binding:
+  currentness_policy_id: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
+  complete_safety_currentness_vector_required: true
+  restrictive_fence_and_local_latch_required: true
+  per_send_single_use_egress_currentness_proof_required: true
+  proof_claim_and_send_started_same_ordering_domain_required: true
+  cache_ttl_heartbeat_health_or_absence_of_invalidation_sufficient: false
+  broker_reachable_control_plane_partition_allows_normal_send: false
+  _kis:
+    measurement: NEEDS-LIVE-MEASUREMENT
+
+restricted_live_and_promotion_binding:
+  restricted_live_trial_policy_id: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
+  exact_pre_registered_trial_scope_required: true
+  worst_credible_effect_rcl_commitment_required: true
+  normal_safety_controls_and_final_egress_required: true
+  trial_label_or_low_notional_is_authority: false
+  negative_and_inconclusive_evidence_retained: true
+  cross_scope_evidence_extrapolation_allowed: false
+  automatic_scope_promotion_allowed: false
+  promotion_eligibility_is_live_authority: false
+  actual_ev_l5_evidence_package_required_for_promotion: true
+  recovery_may_resume_trial_or_rearm: false
+  _kis:
+    measurement: NEEDS-LIVE-MEASUREMENT
+    existing_operational_ladder: >-
+      참고(비권위): config/futures_live.yaml 에 이미 운영 래더가 있다 —
+      enabled: false(기본), max_position_size_contracts: 1, max_daily_trades: 2,
+      symbol_lock_enabled: true, Redis 플래그 futures:live:suspended.
+      evidence: config/futures_live.yaml:24-30; shared/execution/live_mode_guard.py:29-40.
+      이는 프로젝트 자체 게이트이며 ADR-002-025 Restricted-Live Trial Policy 를
+      대체하지 않는다.
+
+egress_security:
+  final_egress_boundary_id: TBD
+  egress_generation: TBD
+  active_principal_model: TBD
+  active_principals: []
+  usable_live_order_authority_inventory: []
+  non_exportable_signer:
+    status: UNKNOWN
+    principal_binding: TBD
+    arbitrary_payload_signing_prohibited: true
+    evidence_refs: []
+    _kis:
+      measurement: CODE-EVIDENCED
+      note: >-
+        서명자 개념 자체가 없다. 인증은 Bearer access_token + appkey/appsecret
+        헤더이며, 자격증명을 가진 어떤 프로세스도 임의 페이로드를 전송할 수 있다
+        (non-exportable signer 부재). evidence: shared/kis/auth.py:494-500.
+  broker_order_route:
+    status: UNKNOWN
+    identity_aware: false
+    live_order_destinations:
+      - "https://openapivts.koreainvestment.com:29443  (MOCK — 본 문서 범위)"
+    mutation_endpoint_allowlist:
+      - "/uapi/domestic-stock/v1/trading/order-cash"
+      - "/uapi/domestic-stock/v1/trading/order-ats"
+      - "/uapi/domestic-futureoption/v1/trading/order"
+      - "/uapi/domestic-futureoption/v1/trading/order-rvsecncl"
+    approved_intermediaries: []
+    direct_and_legacy_paths_prohibited: true
+    evidence_refs: []
+    _kis:
+      measurement: CODE-EVIDENCED
+      note: >-
+        위 allowlist 는 **현행 코드가 실제로 호출하는 변경 엔드포인트 전수**다
+        (grep 실측). 승인된 allowlist 가 아니라 관측된 목록이다.
+      evidence:
+        - "shared/execution/executor.py:326-327 (order-cash / order-ats)"
+        - "shared/execution/executor.py:402 (futureoption/trading/order)"
+        - "shared/execution/executor.py:630 (order-rvsecncl)"
+        - "shared/kis/client.py:1178 (order-ats — ATS 전용 경로)"
+  quorum_commit_certificate:
+    status: UNKNOWN
+    schema_version: TBD
+    membership_and_quorum_rule: TBD
+    trust_bundle_generation: TBD
+    leader_only_receipt_prohibited: true
+    evidence_refs: []
+    _kis:
+      measurement: CODE-EVIDENCED
+      note: "정족수 커밋 개념 부재 — 단일 프로세스가 단독으로 주문을 송출한다."
+  hard_egress_fence:
+    status: UNKNOWN
+    mechanisms:
+      - "config-level: futures_live.enabled (config/futures_live.yaml:25)"
+      - "runtime flag: Redis futures:live:suspended (config/futures_live.yaml:30)"
+      - "kill-switch sentinel file (config/kill_switch.yaml:36)"
+    bound_ms: null
+    old_session_acceptance_proof: TBD
+    evidence_refs: []
+    _kis:
+      measurement: CODE-EVIDENCED (mechanisms) + NEEDS-LIVE-MEASUREMENT (bound)
+      note: >-
+        위 3종은 **우리 측 차단**이며 broker 측 하드 펜스가 아니다. 이미 전송된
+        주문을 broker 에서 차단하는 수단은 알려져 있지 않다. bound_ms 미측정.
+  broker_sessions:
+    principal_bound: false
+    generation_bound: false
+    reconnect_flush_prohibited: true
+    simultaneous_live_sessions: UNKNOWN
+    _kis:
+      measurement: NEEDS-LIVE-MEASUREMENT
+      note: >-
+        동일 app key 로 동시에 몇 개의 REST/WS 세션이 허용되는지, 새 세션이
+        기존 세션을 무효화하는지 미측정. 재연결 폭주가 계정 차단으로 이어질 수
+        있다는 운영 지식만 존재(Q-SESS-3).
+  external_manual_authority:
+    portals_and_support_paths:
+      - "HTS (eFriend 계열)"
+      - "MTS (한국투자 모바일)"
+      - "영업점/고객센터 수동 주문·정정·취소"
+    disablement_or_detection_policy: TBD
+    evidence_refs: []
+    _kis:
+      measurement: NEEDS-LIVE-MEASUREMENT
+      note: >-
+        동일 계좌에 대한 외부 수동 권한이 존재한다는 것은 상식적으로 참이나,
+        비활성화 가능 여부·탐지 경로·탐지 시한은 전부 미측정. 아래
+        external_activity 와 함께 P0-2 필수 측정 항목.
+
+uncertain_send_policy:
+  containment_scope: ACCOUNT
+  network_retry: PROHIBITED_UNLESS_PROVEN_IDEMPOTENT
+  query_sequence:
+    - "inquire-ccnl (선물) — STRT_ODNO 로 대상 주문 조회"
+    - "inquire-balance — 포지션 대조"
+  final_unresolved_state: QUARANTINED_UNKNOWN
+  _kis:
+    measurement: CODE-EVIDENCED
+    gap: >-
+      현행 코드는 `PROHIBITED_UNLESS_PROVEN_IDEMPOTENT` 를 만족하지 못한다
+      (Q-IDEMP-1 / Q-IDEMP-2). 또한 미해결 상태를 QUARANTINED_UNKNOWN 으로
+      격리하는 경로가 없다 — 타임아웃 후 취소 실패 시 success=False 로
+      반환하고 종료한다(executor.py:501-509).
+      주식 경로에는 조회 시퀀스 자체가 없다.
+
+external_activity:
+  allowed: true
+  detection_sources:
+    - "inquire-balance 대조 (broker_verification)"
+  detection_bound_ms: null
+  containment_bound_ms: null
+  bound_miss_response: CONTAIN
+  _kis:
+    measurement: CODE-EVIDENCED (source) + NEEDS-LIVE-MEASUREMENT (bounds)
+    note: >-
+      외부 활동(HTS/MTS/영업점)은 허용된다고 보아야 한다. 탐지는 시작 시점
+      잔고 대조에 의존하며(config/execution.yaml:78-81) **주기적 탐지 시한이
+      정의되어 있지 않다** — detection_bound_ms / containment_bound_ms 는
+      P0-1 bounds 승인과 P0-2 측정이 함께 필요한 항목이다
+      (B_external_activity_detect / _contain — 설계 #10 §9.2 item 3).
+
+final_quantity_proof:
+  recipes:
+    - recipe_id: FQP-KIS-FUT-CANCEL-THEN-REQUERY-DRAFT
+      order_type: FUTURES_LIMIT
+      status: DRAFT_NOT_APPROVED
+      steps:
+        - "1. 취소 요청 송신 (order-rvsecncl, RVSE_CNCL_DVSN_CD=02, RMN_QTY_YN=Y)"
+        - "2. 취소 ack 를 최종 수량 근거로 **사용하지 않는다** (§15.3 금지)"
+        - "3. inquire-ccnl 재조회로 tot_ccld_qty / qty(잔량) / rjct_qty 확인"
+        - "4. 잔량 0 이고 late-event 창 경과까지 변화 없을 때만 최종으로 취급"
+      _model_view:                        # records.py FinalQuantityProofRule:149-152
+        order_type: FUTURES_LIMIT
+        prohibited_proofs:
+          - CANCEL_ACKNOWLEDGEMENT
+          - ONE_OPEN_ORDER_QUERY_OMISSION
+          - LOCAL_TIMEOUT
+          - STRATEGY_CANCELLATION_INTENT
+          - PROCESS_RESTART
+          - ACCOUNT_POSITION_MATCHING_EXPECTED_VALUE
+          - OPERATOR_ASSERTION_WITHOUT_BROKER_EVIDENCE
+        no_later_change_asserted: null    # broker 가 "이후 변경 없음" 을 보증하지 않음
+        late_event_window_defined: false  # 창이 정의되어 있지 않음
+      _adequacy: >-
+        ⚠ 이 recipe 는 **현재 상태로는 부적합**이다. §15.4 마커 2개
+        (no_later_change_asserted / late_event_window_defined) 중 어느 것도
+        참이 아니므로 fqp_adequate 는 통과할 수 없다(설계 #10 §6.3). 또한
+        3단계가 Q-OOQ-1(단일 페이지 조회) 결함을 상속한다.
+      _evidence:
+        - "shared/execution/executor.py:495-520 (취소 후 재조회 — 현행 동작)"
+        - "shared/execution/executor.py:580-592 (수량 필드)"
+  late_event_window_ms: null              # NEEDS-LIVE-MEASUREMENT (P0-1 bounds 연계)
+  correction_policy: TBD
+  _kis:
+    measurement: NEEDS-LIVE-MEASUREMENT
+    stock_gap: "주식 FQP recipe 없음 — 주식 취소/미체결 조회 경로 자체가 부재."
+
+residual_risks:
+  - id: RR-1
+    text: >-
+      ORDER_IDENTITY + SUBMISSION_IDEMPOTENCY 가 모두 UNKNOWN 인 상태에서
+      네트워크 불확실 전송(uncertain send)의 중복 위험을 제거할 구조적 수단이
+      없다. 현행 재시도 경로 2개(Q-IDEMP-1/2)가 이 위험을 실현한다.
+  - id: RR-2
+    text: >-
+      체결 관측이 폴링 파생이고 단일 페이지 조회(Q-OOQ-1)이므로, 최종 수량
+      주장이 조회 누락에 취약하다.
+  - id: RR-3
+    text: >-
+      BROKER_TIME UNKNOWN — 시간 기반 최종성/late-event 판단의 근거가 없다.
+  - id: RR-4
+    text: >-
+      워커 프로세스가 raw 자격증명을 보유(Q-CRED-1)하고 non-exportable signer
+      가 없어, egress 권한이 프로세스 경계로 봉인되지 않는다.
+  - id: RR-5
+    text: >-
+      MOCK 환경에는 야간세션 TR 이 없어(Q-MIC-1) 야간 관련 어떤 capability 도
+      모의에서 검증할 수 없다 — MOCK→REAL 외삽 금지의 구체적 근거.
+
+verification:
+  required_evidence_ids: []              # BC-EV-001..022 미실행 (EVIDENCE-REGISTER-002)
+  last_passed_run_ids: []
+  evidence_digest: null
+  independent_reviewer: TBD              # P0-3 미지정 (register:50, :136)
+  _kis:
+    measurement: CODE-EVIDENCED
+    note: >-
+      본 초안을 뒷받침하는 실행 evidence 는 0건이다. 저작자(AI)는
+      IMPLEMENTATION-PLAN-002 §3 상 Independent-Reviewer 가 될 수 없다.
+
+---
+# =============================================================================
+# DOCUMENT 2 of 2 — environment: REAL_PROD (실전)
+#
+# ⚠ 이 문서는 **의도적으로 전 차원 UNKNOWN** 이다. 누락이 아니라 구성이다.
+#   ADR-002-004 §13.14 / BC-INV-009 (설계 #10 §6.4): 샌드박스 증거는 그
+#   자체로 live capability 를 성립시키지 않는다. 따라서 DOCUMENT 1(MOCK)의
+#   어떤 declaration 도 여기로 상속되지 않는다. 실전 값은 실전 환경에서
+#   별도로 측정되어야 하며, 그 측정은 restricted-live trial 거버넌스
+#   (ADR-002-025) 아래에서만 수행될 수 있다.
+# =============================================================================
+
+profile_identity:
+  artifact_id: KIS-BCP-REAL-PROD-DRAFT-0001
+  schema_version: BROKER-CAPABILITY-PROFILE-template@part-1-foundation
+  canonicalization_version: TBD
+  canonical_semantic_digest: TBD
+  byte_digest: TBD
+  broker_id: KIS_KOREA_INVESTMENT_SECURITIES
+  api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
+  api_version: UNKNOWN
+  environment: REAL_PROD
+  account_type: 실전_위탁
+  market: KRX_DOMESTIC
+  instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
+  order_types: []
+  session_type: UNKNOWN
+  credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+  profile_version: 0.1.0-draft
+  status: DRAFT
+  effective_from: null
+  expires_at: null
+  approvers: []
+  revocation_record: null
+  _kis:
+    endpoints:
+      rest_base: "https://openapi.koreainvestment.com:9443"
+      _evidence: "shared/kis/auth.py:147; shared/execution/config.py:323-325"
+      _measurement: CODE-EVIDENCED
+      websocket: "ws://ops.koreainvestment.com:21000"
+      _websocket_evidence: "shared/kis/websocket.py:433"
+      _websocket_measurement: CODE-EVIDENCED
+    tr_id_surface_delta_vs_mock:
+      _measurement: CODE-EVIDENCED
+      _evidence: "shared/execution/tr_ids.py:29-50"
+      real_only:
+        - "futures_order_night_real: STTN1101U"
+        - "futures_cancel_night_real: STTN1103U"
+        - "futures_inquire_night_real: STTN5201R"
+      note: >-
+        야간세션 TR 은 실전에만 존재한다. 실전 프로파일은 모의에서 얻을 수 없는
+        세션 위상(야간)을 포함하므로, 세션 좌표가 다른 별개 프로파일이
+        추가로 필요할 수 있다(ProfileKey.session_type).
+    operational_history: >-
+      **없음.** 이 환경에서의 주문 실행 이력이 없다
+      (config/futures_live.yaml:25 enabled: false — Gate 2 미완).
+
+live_scope:
+  conformance_class: CLASS-D
+  accounts: []
+  venues: []
+  market_segments: []
+  instruments: []
+  session_phases: []
+  order_types: []
+  time_in_force_values: []
+  action_classes: []
+  maximum_concurrency: 0
+  maximum_quantity: null
+  maximum_risk_vector: {}
+  manual_activity_policy: TBD
+
+capabilities:
+  # 17 CapabilityDimension 전 멤버 + 템플릿 전용 2키 = 19키 전수.
+  # 전부 UNKNOWN / EV-L0 — 실전 측정 0건. `_dimension` 만 병기한다.
+  client_generated_order_id:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    restrictions: []
+    fallback: NO_BLIND_RETRY_AND_CONTAIN
+    _model_view: {dimension: ORDER_IDENTITY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  submission_idempotency:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    deduplication_window_ms: null
+    restrictions: []
+    fallback: NO_BLIND_RETRY_AND_CONTAIN
+    _model_view: {dimension: SUBMISSION_IDEMPOTENCY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  acknowledgement_semantics:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    proven_state: TRANSPORT_RECEIVED_ONLY
+    _model_view: {dimension: ACKNOWLEDGEMENT_SEMANTICS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  fill_event_ordering:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    duplicates_possible: true
+    out_of_order_possible: true
+    replay_supported: false
+    _model_view: {dimension: FILL_EVENTS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  open_order_query:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    completeness: UNKNOWN
+    eventual_consistency_bound_ms: null
+    pagination: UNKNOWN
+    _model_view: {dimension: OPEN_ORDER_QUERY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  order_history_query:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    retention: UNKNOWN
+    pagination: UNKNOWN
+    _model_view: {dimension: ORDER_HISTORY_QUERY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  cancellation_finality:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    crossing_fill_possible: true
+    final_quantity_proof_recipe: TBD
+    _model_view: {dimension: CANCELLATION, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  replace_semantics:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    mode: BROKER_UNSPECIFIED
+    _model_view: {dimension: REPLACE_OR_AMEND, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  reduce_only:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    exact_semantics: TBD
+    _model_view: {dimension: REDUCE_ONLY, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  account_event_push:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    reconnect_replay: UNKNOWN
+    _model_view: {dimension: ACCOUNT_EVENT_PUSH, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  position_balance_margin:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    consistency_model: UNKNOWN
+    _model_view: {dimension: POSITIONS_BALANCES_MARGIN, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  corporate_actions:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    _model_view: {dimension: CORPORATE_ADMINISTRATIVE_EVENTS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  rate_limits:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    scope: UNKNOWN
+    hard_limits: {}
+    sustained_and_burst_semantics: UNKNOWN
+    rolling_or_fixed_window_semantics: UNKNOWN
+    submit_cancel_amend_replace_query_and_session_sharing: UNKNOWN
+    credential_ip_route_endpoint_and_account_sharing: UNKNOWN
+    queue_throttle_partial_processing_and_reset_behavior: UNKNOWN
+    sdk_proxy_redirect_and_reconnect_retry_behavior: UNKNOWN
+    protective_guarantee: UNAVAILABLE
+    protective_reserved_dimensions: []
+    _model_view: {dimension: RATE_LIMITS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis:
+      measurement: NEEDS-LIVE-MEASUREMENT
+      official_qualitative_direction_only: >-
+        공식 README 는 "모의투자 계좌는 REST API 호출 제한이 낮습니다" 라고만
+        말한다 — 실전 한도의 **수치는 어디에도 확인되지 않았다**.
+        MOCK 문서의 어떤 값도 여기로 외삽하지 않는다.
+  sessions:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    concurrent_sessions: UNKNOWN
+    head_of_line_blocking: UNKNOWN
+    _model_view: {dimension: SESSION_CONNECTION_MODEL, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  credentials_and_revocation:
+    status: DOCUMENTED_NOT_VERIFIED
+    assurance_level: EV-L1
+    evidence_refs: []
+    revocation_bound_ms: null
+    direct_worker_access_prohibited: false
+    _model_view:
+      dimension: CREDENTIALS_AUTHORIZATION
+      status: DOCUMENTED_NOT_VERIFIED
+      assurance_level: LEVEL_1_DOCUMENTED
+      assurance_sources: [OFFICIAL_SPECIFICATION]
+    _kis:
+      measurement: OFFICIAL-DOC
+      rationale: >-
+        유일하게 UNKNOWN 이 아닌 차원. 근거는 환경 무관한 **공식 문서 진술**
+        ("토큰 재발급 - 1분당 1회 발급됩니다")이지 MOCK 관측의 외삽이 아니다.
+        source: https://github.com/koreainvestment/open-trading-api/blob/main/README.md
+        direct_worker_access_prohibited: false 역시 우리 시스템 구조의 사실
+        (Q-CRED-1)이며 환경에 무관하다.
+  broker_time:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    timezone: TBD
+    precision: TBD
+    _model_view: {dimension: BROKER_TIME, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  market_and_instrument_constraints:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    session_phase_semantics: UNKNOWN
+    halt_and_suspension_semantics: UNKNOWN
+    price_band_tick_lot_and_quantity_semantics: UNKNOWN
+    order_type_time_in_force_and_route_semantics: UNKNOWN
+    _model_view: {dimension: MARKET_INSTRUMENT_CONSTRAINTS, status: UNKNOWN, assurance_level: LEVEL_0_UNKNOWN}
+    _kis:
+      measurement: NEEDS-LIVE-MEASUREMENT
+      note: "야간세션(18:00-05:00)은 실전에만 존재 — 모의 증거로 대체 불가."
+  account_margin_borrow_and_settlement_constraints:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    account_permission_semantics: UNKNOWN
+    margin_and_collateral_semantics: UNKNOWN
+    borrow_locate_and_short_sale_semantics: UNKNOWN
+    settlement_currency_and_expiration_semantics: UNKNOWN
+    _model_view: {dimension: null, _mismatch_ref: "메모 §6-2"}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+  command_construction_and_wire_semantics:
+    status: UNKNOWN
+    assurance_level: EV-L0
+    evidence_refs: []
+    required_and_default_field_semantics: UNKNOWN
+    account_symbol_side_and_position_effect_mapping: UNKNOWN
+    unit_multiplier_currency_and_numeric_encoding: UNKNOWN
+    duplicate_unknown_and_omitted_field_behavior: UNKNOWN
+    canonicalization_and_parser_behavior: UNKNOWN
+    serializer_sdk_signer_and_redirect_behavior: UNKNOWN
+    actual_outbound_observability: UNKNOWN
+    fallback: PROHIBIT_AFFECTED_COMMAND_SCOPE
+    _model_view: {dimension: null, _mismatch_ref: "메모 §6-2"}
+    _kis: {measurement: NEEDS-LIVE-MEASUREMENT}
+
+venue_constraint_binding:
+  venue_constraint_policy_id: TBD
+  venue_constraint_policy_generation: null
+  venue_constraint_policy_digest: TBD
+  constraint_generation: null
+  active_currentness_mechanism: TBD
+  permissive_cache_prohibited: true
+
+order_construction_binding:
+  order_construction_policy_id: TBD
+  order_construction_policy_generation: null
+  order_construction_policy_digest: TBD
+  construction_generation: null
+  actual_outbound_comparison_mechanism: TBD
+  permissive_default_or_repair_prohibited: true
+
+action_flow_binding:
+  action_flow_policy_id: TBD
+  action_flow_policy_generation: null
+  action_flow_policy_digest: TBD
+  shared_scope_model: UNKNOWN
+  active_currentness_mechanism: TBD
+  rcl_action_flow_permit_required: true
+  priority_alone_is_reservation: false
+  permissive_local_token_or_cache_prohibited: true
+
+independent_approval_binding:
+  trading_approval_policy_id: TBD
+  trading_approval_policy_generation: null
+  trading_approval_policy_digest: TBD
+  approval_consumption_record_required: true
+  exact_intent_binding_required: true
+  active_currentness_mechanism: TBD
+  permissive_intent_state_or_cache_prohibited: true
+
+currentness_binding:
+  currentness_policy_id: TBD
+  currentness_policy_generation: null
+  currentness_policy_digest: TBD
+  complete_safety_currentness_vector_required: true
+  restrictive_fence_and_local_latch_required: true
+  per_send_single_use_egress_currentness_proof_required: true
+  proof_claim_and_send_started_same_ordering_domain_required: true
+  cache_ttl_heartbeat_health_or_absence_of_invalidation_sufficient: false
+  broker_reachable_control_plane_partition_allows_normal_send: false
+
+restricted_live_and_promotion_binding:
+  restricted_live_trial_policy_id: TBD
+  restricted_live_trial_policy_generation: null
+  restricted_live_trial_policy_digest: TBD
+  exact_pre_registered_trial_scope_required: true
+  worst_credible_effect_rcl_commitment_required: true
+  normal_safety_controls_and_final_egress_required: true
+  trial_label_or_low_notional_is_authority: false
+  negative_and_inconclusive_evidence_retained: true
+  cross_scope_evidence_extrapolation_allowed: false
+  automatic_scope_promotion_allowed: false
+  promotion_eligibility_is_live_authority: false
+  actual_ev_l5_evidence_package_required_for_promotion: true
+  recovery_may_resume_trial_or_rearm: false
+
+egress_security:
+  final_egress_boundary_id: TBD
+  egress_generation: TBD
+  active_principal_model: TBD
+  active_principals: []
+  usable_live_order_authority_inventory: []
+  non_exportable_signer:
+    status: UNKNOWN
+    principal_binding: TBD
+    arbitrary_payload_signing_prohibited: true
+    evidence_refs: []
+  broker_order_route:
+    status: UNKNOWN
+    identity_aware: false
+    live_order_destinations:
+      - "https://openapi.koreainvestment.com:9443"
+    mutation_endpoint_allowlist:
+      - "/uapi/domestic-stock/v1/trading/order-cash"
+      - "/uapi/domestic-stock/v1/trading/order-ats"
+      - "/uapi/domestic-futureoption/v1/trading/order"
+      - "/uapi/domestic-futureoption/v1/trading/order-rvsecncl"
+    approved_intermediaries: []
+    direct_and_legacy_paths_prohibited: true
+    evidence_refs: []
+  quorum_commit_certificate:
+    status: UNKNOWN
+    schema_version: TBD
+    membership_and_quorum_rule: TBD
+    trust_bundle_generation: TBD
+    leader_only_receipt_prohibited: true
+    evidence_refs: []
+  hard_egress_fence:
+    status: UNKNOWN
+    mechanisms:
+      - "config-level: futures_live.enabled (config/futures_live.yaml:25 — 현재 false)"
+      - "runtime flag: Redis futures:live:suspended"
+      - "kill-switch sentinel file"
+    bound_ms: null
+    old_session_acceptance_proof: TBD
+    evidence_refs: []
+  broker_sessions:
+    principal_bound: false
+    generation_bound: false
+    reconnect_flush_prohibited: true
+    simultaneous_live_sessions: UNKNOWN
+  external_manual_authority:
+    portals_and_support_paths:
+      - "HTS (eFriend 계열)"
+      - "MTS (한국투자 모바일)"
+      - "영업점/고객센터 수동 주문·정정·취소"
+    disablement_or_detection_policy: TBD
+    evidence_refs: []
+
+uncertain_send_policy:
+  containment_scope: ACCOUNT
+  network_retry: PROHIBITED_UNLESS_PROVEN_IDEMPOTENT
+  query_sequence: []
+  final_unresolved_state: QUARANTINED_UNKNOWN
+
+external_activity:
+  allowed: true
+  detection_sources: []
+  detection_bound_ms: null
+  containment_bound_ms: null
+  bound_miss_response: CONTAIN
+
+final_quantity_proof:
+  recipes: []
+  late_event_window_ms: null
+  correction_policy: TBD
+
+residual_risks:
+  - id: RR-REAL-1
+    text: >-
+      실전 환경 측정 0건. 이 프로파일은 어떤 live scope 도 권한 부여하지
+      않으며(CLASS-D), MOCK 프로파일의 어떤 declaration 도 상속하지 않는다.
+
+verification:
+  required_evidence_ids: []
+  last_passed_run_ids: []
+  evidence_digest: null
+  independent_reviewer: TBD
