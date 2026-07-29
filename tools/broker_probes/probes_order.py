@@ -1,6 +1,6 @@
 """Order-capable probes — 모의투자 ONLY, dry-run unless ``--confirm``.
 
-Probes here: P-2, P-5, P-5b, P-8, P-11, P-EXT, P-FQP.
+Probes here: P-2, P-5, P-5b, P-8, P-11, P-EXT, P-FQP, P-NMPR.
 
 Every request in this module goes through :class:`MockTradingClient`, which calls
 ``assert_mock_host()`` and ``assert_mock_trading_tr()`` before opening a socket.
@@ -16,10 +16,15 @@ Order shape and quantity discipline
 * Every probe cancels what it created in a ``finally`` block and shouts (with the
   ODNO) if a cancel fails, so an operator can clean up by hand.
 
-Request bodies mirror ``shared/execution/executor.py`` (``:315-322`` stock,
-``:386-399`` futures order, ``:613-627`` cancel/replace, ``:551-564`` inquire) so
+Request bodies mirror ``shared/execution/executor.py`` (``:386-393`` stock order,
+``:458-471`` futures order, ``:685-699`` cancel/replace, ``:623-636`` inquire) so
 that what is measured is what the runtime actually sends. TR ids come from
 ``shared/execution/tr_ids.py::get_tr_ids`` — the audited SoT — not from literals.
+
+The one deliberate departure is P-NMPR's B-arm, which reconstructs the *pre*-fix
+futures body (both [필수] quote fields blank, executor.py before ``76d43ae9``).
+It exists precisely to test a shape the runtime no longer sends; see
+:meth:`MockTradingClient.futures_order_body`.
 """
 
 from __future__ import annotations
@@ -59,6 +64,19 @@ _STOCK_ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
 _STOCK_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 _STOCK_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
+
+#: The two [필수] futures quote fields P-NMPR puts under test, in the order the
+#: arm tuples below use.
+_NMPR_FIELDS = ("NMPR_TYPE_CD", "KRX_NMPR_CNDT_CD")
+
+#: P-NMPR arm -> the ``_NMPR_FIELDS`` pair that arm sends. Single source for both
+#: the live body builder and the dry-run report, so the two cannot drift.
+#: ``explicit`` is what the runtime sends today for ``ORD_DVSN_CD="01"``
+#: (executor.py:104-115); ``legacy_blank`` is the pre-``76d43ae9`` shape.
+_NMPR_ARMS: dict[str, tuple[str, str]] = {
+    "explicit": ("01", "0"),  # 지정가 + 호가조건 없음
+    "legacy_blank": ("", ""),
+}
 
 
 @dataclass
@@ -183,7 +201,17 @@ class MockTradingClient:
         *,
         required_fields: str = "explicit",
     ) -> dict[str, str]:
-        """Mirror of ``executor.py:456-471`` (futures order body).
+        """Mirror of ``executor.py:458-471`` (futures order body).
+
+        The A-arm pair ``("01", "0")`` is not chosen here — it is what
+        ``executor.py:104-115`` ``_FUTURES_NMPR_CODES`` maps ``ORD_DVSN_CD="01"``
+        to, and both values come from the official wrapper's own enumeration:
+        ``examples_llm/domestic_futureoption/order/order.py`` (TR
+        ``v1_국내선물-001``, mock ``VTTO1101U``), ``Args`` — ``nmpr_type_cd
+        (str): [필수] 호가유형코드 (ex. 01:지정가, ...)`` and ``krx_nmpr_cndt_cd
+        (str): [필수] 한국거래소호가조건코드 (ex. 0:없음, 3:IOC, 4:FOK)``. That
+        same file raises ``ValueError`` when either is ``""`` — which is what
+        makes the B-arm worth sending.
 
         Args:
             required_fields: Which shape to build for the two [필수] quote
@@ -201,15 +229,13 @@ class MockTradingClient:
         Raises:
             ProbeError: unknown ``required_fields`` mode.
         """
-        if required_fields == "explicit":
-            nmpr_type_cd, krx_nmpr_cndt_cd = "01", "0"  # 지정가 + 호가조건 없음
-        elif required_fields == "legacy_blank":
-            nmpr_type_cd, krx_nmpr_cndt_cd = "", ""
-        else:
+        codes = _NMPR_ARMS.get(required_fields)
+        if codes is None:
             raise ProbeError(
                 f"unknown required_fields mode {required_fields!r} "
-                "(expected 'explicit' or 'legacy_blank')"
+                f"(expected one of {sorted(_NMPR_ARMS)})"
             )
+        nmpr_type_cd, krx_nmpr_cndt_cd = codes
         return {
             "ORD_PRCS_DVSN_CD": "02",
             "CANO": self.creds.cano,
@@ -228,7 +254,7 @@ class MockTradingClient:
         }
 
     def stock_order_body(self, symbol: str, qty: int, price: float) -> dict[str, str]:
-        """Mirror of ``executor.py:386-392`` (note ORD_UNPR int-truncation, Q-WIRE-1)."""
+        """Mirror of ``executor.py:386-393`` (note ORD_UNPR int-truncation, Q-WIRE-1)."""
         return {
             "CANO": self.creds.cano,
             "ACNT_PRDT_CD": self.creds.acnt_prdt_cd,
@@ -1142,7 +1168,14 @@ def probe_nmpr_ab(args: argparse.Namespace) -> ProbeRun:
     if client is None:
         run.observe(
             would_send="two futures order bodies differing ONLY in the two "
-            "[필수] quote fields (explicit 01/0 vs pre-fix blanks)"
+            "[필수] quote fields (explicit 01/0 vs pre-fix blanks)",
+            arm_a_explicit=dict(zip(_NMPR_FIELDS, _NMPR_ARMS["explicit"], strict=True)),
+            arm_b_legacy_blank=dict(
+                zip(_NMPR_FIELDS, _NMPR_ARMS["legacy_blank"], strict=True)
+            ),
+            every_other_field="identical, built by futures_order_body() as a "
+            "mirror of executor.py:458-471; the limit price is read from the "
+            "touch at --confirm time and so is absent from a dry run",
         )
         return run
     odnos: list[str] = []

@@ -1,12 +1,16 @@
 """Machine-readable probe register — the single source for the runbook table.
 
-Sources of the probe set (canonical, 12 + 4 = 16):
+Sources of the probe set (12 + 4 = 16 ratified, plus 1 follow-up):
 
 * **12 canonical** — ``docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md``
   §5 "측정 프로시저 제안" table (:225-238): P-1, P-2, P-5, P-5b, P-8, P-11,
   P-13, P-14, P-15, P-16, P-EXT, P-FQP.
 * **4 census additions** — ``docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md``
   §1 T2 (:34-38): N-15, N-16, N-17, N-18.
+* **1 collation follow-up** — ``docs/plans/2026-07-29-tos-p02-n17-spec-collation.md``
+  §2 소견 2: P-NMPR. It is deliberately **outside** the ratified 16: its
+  ``source`` starts with neither "draft" nor "plan", so the canonical/census
+  counts in :func:`coverage_report` stay exactly as ratified.
 
 ``bounds_keys`` cite ``tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml``
 key names verified by direct read (line numbers in :data:`BOUND_KEYS`).
@@ -663,13 +667,28 @@ PROBES: dict[str, ProbeSpec] = {
     # "plan" so coverage_report()'s counts stay exactly as ratified) ----
     "P-NMPR": _S(
         probe_id="P-NMPR",
-        title="TIF_AND_QUOTE_TYPE — blank vs explicit [필수] quote fields (A/B)",
+        title="Required quote fields — blank vs explicit NMPR_TYPE_CD/KRX_NMPR_CNDT_CD (A/B)",
         source="N-17 §2 소견 2 (spec collation, 2026-07-29)",
         kind="ORDER",
         environment=ENV_MOCK,
-        dimension="ORDER_TYPE_AND_TIF",
+        # Same dimension as N-17: the brokercap CapabilityDimension enum has 17
+        # members and `command_construction_and_wire_semantics` is one of the two
+        # template-only keys with no dimension of its own (INSTANCE draft :259-260),
+        # so its probes are filed under the dimension N-17 already uses. Inventing
+        # an 18th member here would put a name in the taxonomy that the model has
+        # no slot for.
+        dimension="MARKET_INSTRUMENT_CONSTRAINTS",
         bounds_keys=(),
-        instance_fields=("live_scope.time_in_force_values",),
+        # NOT `live_scope.time_in_force_values`: both arms carry
+        # KRX_NMPR_CNDT_CD ∈ {"0", ""} — 없음 or blank. The probe never sends 3
+        # (IOC) or 4 (FOK), so it cannot enumerate the TIF value set; that stays
+        # N-17's documentary finding. What it does establish is whether a [필수]
+        # field may be blank and what a blank then means — which is exactly the
+        # required/default and omitted-field semantics below (§4.3, Patch-0057).
+        instance_fields=(
+            "capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics",
+            "capabilities.command_construction_and_wire_semantics.duplicate_unknown_and_omitted_field_behavior",
+        ),
         statistic=(
             "categorical per arm: accepted / rejected, plus whether the query "
             "surface echoes NMPR_TYPE_CD / KRX_NMPR_CNDT_CD. Acceptance parity "

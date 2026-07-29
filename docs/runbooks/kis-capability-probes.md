@@ -93,7 +93,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 
 ---
 
-## 3. 프로브 전수 표 (12 정본 + 4 census = 16)
+## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 1 = 17)
 
 공통 인자: `--asset {stock,futures}` · `--symbol` · `--quantity`(기본 1) ·
 `--price-offset-pct`(기본 10 — 미체결 유지용) · `--samples` · `--margin-pct`(기본 50) ·
@@ -117,6 +117,12 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | **N-16** | POSITIONS_BALANCES_MARGIN | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run N-16 --confirm` | 1 call | MEDIUM | 아니오 |
 | **N-17** | MARKET_INSTRUMENT_CONSTRAINTS | SPEC_CROSSCHECK | NONE | (스크립트 아님 — **§7 체크리스트**) | ~1 h 데스크워크 | LOW | 아니오 |
 | **N-18** | MARKET_INSTRUMENT_CONSTRAINTS | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run N-18 --confirm` | 3 calls | MEDIUM | 아니오 |
+| **P-NMPR** | MARKET_INSTRUMENT_CONSTRAINTS | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-NMPR --confirm --asset futures` | ~2 min | HIGH | 예 |
+
+> **P-NMPR은 정본 16에 속하지 않는다.** N-17 대조에서 파생된 **후속 1건**이며,
+> `registry.py`의 `source`가 "draft"·"plan" 어느 쪽으로도 시작하지 않아
+> `--coverage`의 정본 12 / census 4 카운트를 **바꾸지 않는다**. 캠페인 집계에서
+> "17건 실행"을 "정본 전건 실행"으로 읽지 말 것.
 
 ### 3.1 프로브별 목적 (한 줄)
 
@@ -138,6 +144,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | N-16 | `CTFN6118R` 야간 잔고 응답 **스키마만** 포착 (`tr_ids.yaml` 편입은 별도 커밋) |
 | N-17 | 공식 명세 대조 — 주문 요청 필드·TIF·정정취소 값집합 (**§7**) |
 | N-18 | 실전 조회 3건: program-trade 행 상한 / SOX 표기 / 야간 코드 응답 |
+| P-NMPR | [필수] 2필드 빈 문자열 vs 명시 코드 A/B — 수락/거부와 등가성 직접 판정. B-arm(빈 값) 거부 = 수정 전 런타임이 계약 위반이었음을 확정 (N-17 소견 2). **수락 동수는 등가성이 아니다** — 조회면이 두 필드를 되돌려주지 않으면 "blank == 01/0"은 UNKNOWN으로 남는다 |
 
 ---
 
@@ -212,6 +219,16 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | N-17 | `capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics` (+ `.duplicate_unknown_and_omitted_field_behavior`, `.unit_multiplier_currency_and_numeric_encoding`) | 존재 — **재매핑** (was `field_inventory`) |
 | N-17 | `capabilities.replace_semantics.value_set` | 존재 — **Patch-0057 신설** (`[]`) |
 | N-18 | `capabilities.market_and_instrument_constraints.instrument_coverage` | 존재 — **Patch-0057 신설** (`UNKNOWN`) |
+| P-NMPR | `capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics` (+ `.duplicate_unknown_and_omitted_field_behavior`) | 존재 — N-17 재매핑분과 **동일 기입면** (§9.1 #8) |
+
+> P-NMPR은 N-17이 **문서로** 확정한 것(두 필드가 [필수]다)을 **실측으로** 보강한다
+> — 같은 기입면에 들어가되 근거 등급이 다르다(OFFICIAL-DOC vs 실측). 기입 시
+> `_kis.measurement`와 `evidence_refs`를 분리해 적어 두 근거가 뭉개지지 않게 할 것.
+>
+> **P-NMPR은 `live_scope.time_in_force_values`를 채우지 않는다.** 두 arm 모두
+> `KRX_NMPR_CNDT_CD` ∈ {`0`(없음), 빈 값}만 보내고 `3`(IOC)·`4`(FOK)는 **전송하지
+> 않는다.** TIF 값집합 확정은 N-17(§7 항목 2) 소관이다 — §4.1의 "공급하지 못하는 키를
+> 커버한 것처럼 기록하지 말 것"이 여기에 그대로 적용된다.
 
 ---
 
@@ -235,10 +252,11 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | 5 | **P-5** | 주문 계열 첫 단추. 이후 P-5b/P-8/P-FQP의 관측 경로를 검증 | 모의 개장·선물 계좌 |
 | 6 | **P-5b** | P-5가 만든 이력이 있어야 페이지 경계가 생김 | P-5 선행 |
 | 7 | **P-2** | 중복 전송. 실패 시 미체결 2건이 남을 수 있어 정리 여유 필요 | 모의 개장 |
-| 8 | **P-8** | 정정. 신/구 ODNO 2건이 동시 생존할 수 있음 | P-5 선행 |
-| 9 | **P-FQP** | 취소 후 창 관측. 가장 김 | P-5 선행 |
-| 10 | **P-EXT** | 운영자 수동 개입 필요. 반복 ≥5회 | 운영자 HTS/MTS 대기 |
-| 11 | **P-11** | **의도적 체결**. 포지션이 남는다 — 마지막에 배치 | `--asset stock` · `--allow-fill` |
+| 8 | **P-NMPR** | A/B 2건 모두 미체결로 남긴 뒤 취소. P-5 의존 없음 — P-2와 같은 "모의 개장·선물 계좌"만 필요하므로 정리 부담이 비슷한 이 자리 | 모의 개장·선물 계좌 (`--asset futures`) |
+| 9 | **P-8** | 정정. 신/구 ODNO 2건이 동시 생존할 수 있음 | P-5 선행 |
+| 10 | **P-FQP** | 취소 후 창 관측. 가장 김 | P-5 선행 |
+| 11 | **P-EXT** | 운영자 수동 개입 필요. 반복 ≥5회 | 운영자 HTS/MTS 대기 |
+| 12 | **P-11** | **의도적 체결**. 포지션이 남는다 — 마지막에 배치 | `--asset stock` · `--allow-fill` |
 
 ### 5.3 rate-limit 프로브(P-13) 특칙
 
@@ -357,9 +375,9 @@ pykis·mojito 등 2차 커뮤니티 원천은 **값 확정 근거로 쓰지 않�
 | 1 | **주문 요청 필드 전수** — 클라이언트 주문번호 필드 존부 | `capabilities.client_generated_order_id.status` UNKNOWN → UNSUPPORTED/VERIFIED | UNKNOWN. 우리는 안 보냄(P-1 grep 0) — 하지만 **broker가 제공하지 않는다는 증거는 아님** | P-1 |
 | 2 | **TIF 허용값 집합** | `live_scope.time_in_force_values` | 빈 리스트 | — |
 | 3 | **`RVSE_CNCL_DVSN_CD` 값집합** | 정정/취소 코드 전수 (우리는 `"01"`/`"02"`만 사용) | 코드에 2값만 등장 | P-8 |
-| 4 | **`ORD_DVSN`(주식) / `ORD_DVSN_CD`(선물) 값집합** | 주문유형 코드계가 자산군 간 다름. 미지 값을 `"01"`로 **조용히 폴백**하는 현행 동작이 permissive-repair 금지와 충돌 | Q-MIC-3 | `executor.py:785-795` |
+| 4 | **`ORD_DVSN`(주식) / `ORD_DVSN_CD`(선물) 값집합** | 주문유형 코드계가 자산군 간 다름(주식 `01`=시장가 vs 선물 `01`=지정가). 미지 값을 `"01"`로 조용히 폴백하던 동작은 **제거됨** — 양 경로 모두 명시 테이블 매핑 후 HTTP 이전에 `OrderExecutionError`로 **거부**(fail-closed) | Q-MIC-3 — 코드 측면 **해소**(`76d43ae9`). 값집합 자체의 공식 전수는 확정 | `executor.py:857-919` (`_map_stock_order_type`·`_map_futures_order_type`) |
 | 5 | **숫자 인코딩 파서 동작** | 주식 `ORD_UNPR=str(int(price))`(정수 절단) vs 선물 `UNIT_PRICE=str(price)`(float 문자열) — broker 파서가 어느 쪽을 어떻게 받는가 | Q-WIRE-1 미확인 | `executor.py:321`, `:393` |
-| 6 | **필수/선택 필드 구분과 기본값 의미론** | 빈 문자열로 보내는 `NMPR_TYPE_CD`·`KRX_NMPR_CNDT_CD`·`CTAC_TLNO`·`FUOP_ITEM_DVSN_CD`의 **생략 시 broker 기본값** | 미확인 | — |
+| 6 | **필수/선택 필드 구분과 기본값 의미론** | `NMPR_TYPE_CD`·`KRX_NMPR_CNDT_CD`는 공식 명세 **[필수]**이며 이제 `ORD_DVSN_CD`에서 파생 전송된다(`executor.py:104-115`, `76d43ae9`) — 빈 문자열 전송 아님. **여전히 빈 값**인 것은 [선택] `CTAC_TLNO`·`FUOP_ITEM_DVSN_CD` 2필드이고, 이들의 **생략 시 broker 기본값**은 미확인 | 명세 측면 확정([필수] 2 + [선택] 2). **빈 값의 broker 해석**은 미확인 | **P-NMPR**이 [필수] 2필드에 한해 실측 판정 |
 | 7 | **중복/미지/누락 필드 동작** | 미지 필드 무시인가 거부인가 (permissive 파서면 오타가 조용히 통과) | 미확인 | — |
 | 8 | **토큰 `expires_in` 공식 값** | 우리 fallback 86400은 **우리 기본값**이지 broker 보증이 아님 | 미확인 | `auth.py:472`, `:583` |
 | 9 | **`approval_key` 유효기간** | repo 주석 "~24h"는 공식 미확인 | 미확인 | `approval_cache.py:3,22` |
