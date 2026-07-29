@@ -15,7 +15,7 @@ import aiohttp
 from shared.kis.auth import is_token_expired_error, retry_once_on_token_expiry
 
 from .config import ExecutionConfig, TradingMode
-from .exceptions import RateLimitExceeded
+from .exceptions import OrderExecutionError, RateLimitExceeded
 from .models import ExecutionVenue, OrderRequest, OrderResponse, OrderSide
 
 if TYPE_CHECKING:
@@ -50,6 +50,69 @@ def _record_kis_api_outcome(*, is_error: bool) -> None:
 KST = ZoneInfo("Asia/Seoul")
 NIGHT_START_KST = dt_time(18, 0)
 NIGHT_END_KST = dt_time(6, 0)
+
+
+# ---------------------------------------------------------------------------
+# KIS order-type wire codes.
+#
+# Source: KIS official ``open-trading-api`` ``examples_llm`` wrappers
+# (accessed 2026-07-29):
+#   domestic_stock/inquire_psbl_order   (order_cash enumerates no ORD_DVSN value)
+#       ORD_DVSN          00:지정가, 01:시장가
+#                         02:조건부지정가 — inquire_psbl_order 산문 및
+#                         models.py:19 기준; 공식 열거 미확정
+#   domestic_futureoption/order
+#       ORD_DVSN_CD       [필수] 01:지정가 02:시장가 03:조건부 04:최유리
+#                                10:지정가(IOC) 11:지정가(FOK) 12:시장가(IOC)
+#                                13:시장가(FOK) 14:최유리(IOC) 15:최유리(FOK)
+#       NMPR_TYPE_CD      [필수] 01:지정가, 02:시장가, 03:조건부, 04:최유리
+#       KRX_NMPR_CNDT_CD  [필수] 0:없음, 3:IOC, 4:FOK
+#
+# WARNING: the two asset classes give OPPOSITE meanings to "01" — stock
+# ORD_DVSN "01" is 시장가 (market) while futures ORD_DVSN_CD "01" is 지정가
+# (limit). Because of that inversion these tables deliberately have NO default
+# entry: an unmapped order type is refused (fail-closed) instead of being
+# silently coerced into a code that could turn a limit order into a market one.
+# ---------------------------------------------------------------------------
+
+#: Internal ``OrderType`` value -> stock ``ORD_DVSN``.
+_STOCK_ORD_DVSN: dict[str, str] = {
+    "00": "00",  # 지정가 (limit)
+    "01": "01",  # 시장가 (market)
+    "02": "02",  # 조건부지정가 (conditional limit)
+}
+
+#: Internal ``OrderType`` value (stock code system) -> futures ``ORD_DVSN_CD``.
+_FUTURES_ORD_DVSN_CD: dict[str, str] = {
+    "00": "01",  # stock limit -> futures limit
+    "01": "02",  # stock market -> futures market
+    "02": "03",  # stock conditional -> futures conditional
+}
+
+#: Futures-native ``ORD_DVSN_CD`` values accepted verbatim (KIS enumeration).
+_FUTURES_ORD_DVSN_CD_NATIVE: frozenset[str] = frozenset(
+    {"01", "02", "03", "04", "10", "11", "12", "13", "14", "15"}
+)
+
+#: Futures ``ORD_DVSN_CD`` -> (``NMPR_TYPE_CD``, ``KRX_NMPR_CNDT_CD``).
+#:
+#: Both target fields are [필수] in the KIS futures order contract. The pair is
+#: derived structurally from the order type itself (base quote type + the TIF
+#: folded into ORD_DVSN_CD), which matches the official wrapper example
+#: ``ord_dvsn_cd="02"`` sent together with ``nmpr_type_cd="02"`` and
+#: ``krx_nmpr_cndt_cd="0"``.
+_FUTURES_NMPR_CODES: dict[str, tuple[str, str]] = {
+    "01": ("01", "0"),  # 지정가
+    "02": ("02", "0"),  # 시장가
+    "03": ("03", "0"),  # 조건부
+    "04": ("04", "0"),  # 최유리
+    "10": ("01", "3"),  # 지정가 (IOC)
+    "11": ("01", "4"),  # 지정가 (FOK)
+    "12": ("02", "3"),  # 시장가 (IOC)
+    "13": ("02", "4"),  # 시장가 (FOK)
+    "14": ("04", "3"),  # 최유리 (IOC)
+    "15": ("04", "4"),  # 최유리 (FOK)
+}
 
 
 @dataclass
@@ -235,6 +298,14 @@ class OrderExecutor:
                 if attempt < self.config.max_retries - 1:
                     await asyncio.sleep(self.config.retry_delay)
 
+            except OrderExecutionError as e:
+                # Deterministic refusal (e.g. an order type outside the explicit
+                # ORD_DVSN / ORD_DVSN_CD tables). Retrying cannot change the
+                # outcome, so fail closed at once rather than burning
+                # `max_retries` sleeps and counting the same error three times.
+                logger.error(f"Order refused without retry: {e}")
+                return OrderResponse(success=False, message=str(e))
+
             except Exception as e:
                 logger.error(f"Order attempt {attempt + 1} exception: {e}")
                 if attempt < self.config.max_retries - 1:
@@ -316,7 +387,7 @@ class OrderExecutor:
             "CANO": self.account_prefix,
             "ACNT_PRDT_CD": self.account_suffix,
             "PDNO": order.code,
-            "ORD_DVSN": order.order_type,
+            "ORD_DVSN": self._map_stock_order_type(order.order_type),
             "ORD_QTY": str(order.quantity),
             "ORD_UNPR": str(int(order.price)) if order.price else "0",
         }
@@ -383,6 +454,7 @@ class OrderExecutor:
             )
 
         ord_dvsn_cd = self._map_futures_order_type(order.order_type)
+        nmpr_type_cd, krx_nmpr_cndt_cd = self._futures_quote_type_codes(ord_dvsn_cd)
         body = {
             "ORD_PRCS_DVSN_CD": "02",
             "CANO": self.account_prefix,
@@ -391,8 +463,8 @@ class OrderExecutor:
             "SHTN_PDNO": order.code,
             "ORD_QTY": str(order.quantity),
             "UNIT_PRICE": str(order.price) if order.price else "0",
-            "NMPR_TYPE_CD": "",
-            "KRX_NMPR_CNDT_CD": "",
+            "NMPR_TYPE_CD": nmpr_type_cd,
+            "KRX_NMPR_CNDT_CD": krx_nmpr_cndt_cd,
             "CTAC_TLNO": "",
             "FUOP_ITEM_DVSN_CD": "",
             "ORD_DVSN_CD": ord_dvsn_cd,
@@ -782,17 +854,103 @@ class OrderExecutor:
         )
 
     @staticmethod
+    def _map_stock_order_type(order_type: str) -> str:
+        """Map an internal order type to the KIS stock ``ORD_DVSN`` code.
+
+        Args:
+            order_type: Internal ``OrderType`` value ("00"/"01"/"02").
+
+        Returns:
+            The stock ``ORD_DVSN`` wire code.
+
+        Raises:
+            OrderExecutionError: The order type is not in the explicit table.
+                There is no fallback on purpose — see the module-level note on
+                the stock/futures "01" inversion.
+        """
+        code = _STOCK_ORD_DVSN.get(str(order_type))
+        if code is None:
+            known = sorted(_STOCK_ORD_DVSN)
+            logger.error(
+                "unknown order type refused (previously forwarded verbatim as "
+                "ORD_DVSN): order_type=%r asset_class=stock known=%s",
+                order_type,
+                known,
+            )
+            raise OrderExecutionError(
+                f"unknown order type {order_type!r} refused "
+                f"(asset_class=stock, known={known})"
+            )
+        return code
+
+    @staticmethod
     def _map_futures_order_type(order_type: str) -> str:
-        mapping = {
-            "00": "01",  # stock limit -> futures limit
-            "01": "02",  # stock market -> futures market
-            "02": "03",  # stock conditional -> futures conditional
-        }
-        if order_type in mapping:
-            return mapping[order_type]
-        if order_type in {"01", "02", "03", "04", "10", "11", "12", "13", "14", "15"}:
-            return order_type
-        return "01"
+        """Map an internal order type to the KIS futures ``ORD_DVSN_CD`` code.
+
+        Args:
+            order_type: Internal ``OrderType`` value (stock code system) or a
+                futures-native ``ORD_DVSN_CD``.
+
+        Returns:
+            The futures ``ORD_DVSN_CD`` wire code.
+
+        Raises:
+            OrderExecutionError: The order type is neither an internal order
+                type nor a futures-native ``ORD_DVSN_CD``. The previous silent
+                ``"01"`` fallback is removed: it made an unknown order type
+                look like a valid 지정가 order on the futures wire, and the same
+                literal means 시장가 on the stock wire.
+        """
+        key = str(order_type)
+        if key in _FUTURES_ORD_DVSN_CD:
+            return _FUTURES_ORD_DVSN_CD[key]
+        if key in _FUTURES_ORD_DVSN_CD_NATIVE:
+            return key
+        known = sorted(set(_FUTURES_ORD_DVSN_CD) | _FUTURES_ORD_DVSN_CD_NATIVE)
+        logger.error(
+            "unknown order type refused (previously silently became "
+            'ORD_DVSN_CD="01" = 지정가): order_type=%r asset_class=futures '
+            "known=%s",
+            order_type,
+            known,
+        )
+        raise OrderExecutionError(
+            f"unknown order type {order_type!r} refused "
+            f"(asset_class=futures, known={known})"
+        )
+
+    @staticmethod
+    def _futures_quote_type_codes(ord_dvsn_cd: str) -> tuple[str, str]:
+        """Return ``(NMPR_TYPE_CD, KRX_NMPR_CNDT_CD)`` for a futures order type.
+
+        Both fields are [필수] in the KIS futures order contract. Sending an
+        empty string delegates the quote type and the TIF (IOC/FOK) semantics
+        to an undocumented broker default; deriving them from ``ORD_DVSN_CD``
+        keeps the wire value in agreement with the requested order type.
+
+        Args:
+            ord_dvsn_cd: Futures ``ORD_DVSN_CD`` wire code.
+
+        Returns:
+            ``(NMPR_TYPE_CD, KRX_NMPR_CNDT_CD)``.
+
+        Raises:
+            OrderExecutionError: ``ord_dvsn_cd`` is outside the KIS enumeration.
+        """
+        codes = _FUTURES_NMPR_CODES.get(str(ord_dvsn_cd))
+        if codes is None:
+            known = sorted(_FUTURES_NMPR_CODES)
+            logger.error(
+                "unknown ORD_DVSN_CD refused: ord_dvsn_cd=%r "
+                "asset_class=futures known=%s",
+                ord_dvsn_cd,
+                known,
+            )
+            raise OrderExecutionError(
+                f"unknown ORD_DVSN_CD {ord_dvsn_cd!r} refused "
+                f"(asset_class=futures, known={known})"
+            )
+        return codes
 
     async def _log_success(self, order: OrderRequest, response: OrderResponse) -> None:
         """Log successful order."""

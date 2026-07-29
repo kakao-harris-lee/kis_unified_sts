@@ -175,9 +175,41 @@ class MockTradingClient:
         return float(value)
 
     def futures_order_body(
-        self, symbol: str, qty: int, price: float, side: str
+        self,
+        symbol: str,
+        qty: int,
+        price: float,
+        side: str,
+        *,
+        required_fields: str = "explicit",
     ) -> dict[str, str]:
-        """Mirror of ``executor.py:386-399``."""
+        """Mirror of ``executor.py:456-471`` (futures order body).
+
+        Args:
+            required_fields: Which shape to build for the two [필수] quote
+                fields.
+
+                * ``"explicit"`` (default) — the current production shape:
+                  ``NMPR_TYPE_CD``/``KRX_NMPR_CNDT_CD`` derived from
+                  ``ORD_DVSN_CD`` (``executor.py:923`` ``_futures_quote_type_codes``).
+                * ``"legacy_blank"`` — the pre-fix shape that sent both [필수]
+                  fields as ``""``. Kept **only** as the B-arm of P-NMPR: it is
+                  the one thing that can answer whether the broker's implicit
+                  default for a blank actually equals ``01``/``0``. Never make
+                  this the default.
+
+        Raises:
+            ProbeError: unknown ``required_fields`` mode.
+        """
+        if required_fields == "explicit":
+            nmpr_type_cd, krx_nmpr_cndt_cd = "01", "0"  # 지정가 + 호가조건 없음
+        elif required_fields == "legacy_blank":
+            nmpr_type_cd, krx_nmpr_cndt_cd = "", ""
+        else:
+            raise ProbeError(
+                f"unknown required_fields mode {required_fields!r} "
+                "(expected 'explicit' or 'legacy_blank')"
+            )
         return {
             "ORD_PRCS_DVSN_CD": "02",
             "CANO": self.creds.cano,
@@ -186,15 +218,17 @@ class MockTradingClient:
             "SHTN_PDNO": symbol,
             "ORD_QTY": str(qty),
             "UNIT_PRICE": str(price),
-            "NMPR_TYPE_CD": "",
-            "KRX_NMPR_CNDT_CD": "",
+            "NMPR_TYPE_CD": nmpr_type_cd,
+            "KRX_NMPR_CNDT_CD": krx_nmpr_cndt_cd,
             "CTAC_TLNO": "",
             "FUOP_ITEM_DVSN_CD": "",
-            "ORD_DVSN_CD": "01",  # 지정가 (executor.py:785-795 futures mapping)
+            # 지정가 — executor.py:887 ``_map_futures_order_type`` maps internal
+            # OrderType.LIMIT ("00") to futures ORD_DVSN_CD "01".
+            "ORD_DVSN_CD": "01",
         }
 
     def stock_order_body(self, symbol: str, qty: int, price: float) -> dict[str, str]:
-        """Mirror of ``executor.py:315-322`` (note ORD_UNPR int-truncation, Q-WIRE-1)."""
+        """Mirror of ``executor.py:386-392`` (note ORD_UNPR int-truncation, Q-WIRE-1)."""
         return {
             "CANO": self.creds.cano,
             "ACNT_PRDT_CD": self.creds.acnt_prdt_cd,
@@ -221,7 +255,7 @@ class MockTradingClient:
         return placed, parsed, ms
 
     def cancel_futures(self, odno: str, qty: int) -> dict[str, Any]:
-        """Cancel — ``RVSE_CNCL_DVSN_CD='02'`` (executor.py:617)."""
+        """Cancel — ``RVSE_CNCL_DVSN_CD='02'`` (executor.py:689)."""
         return self._rvsecncl(odno, qty, dvsn="02", price=0.0)
 
     def replace_futures(self, odno: str, qty: int, price: float) -> dict[str, Any]:
@@ -262,7 +296,7 @@ class MockTradingClient:
         fk200: str = "",
         nk200: str = "",
     ) -> dict[str, Any]:
-        """Mirror of ``executor.py:551-564`` but with usable continuation keys."""
+        """Mirror of ``executor.py:623-636`` but with usable continuation keys."""
         tr_id = self.tr_ids["futures_inquire_day_mock"]
         day = (datetime.now(KST) - timedelta(days=day_offset)).date().strftime("%Y%m%d")
         params = {
@@ -1070,6 +1104,143 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
                 "single trial)",
                 "late_event_window_defined (requires an approved B_late_fill_observation)",
             ],
+        )
+    finally:
+        _cleanup(client, run, odnos, args.quantity)
+        client.close()
+    return run
+
+
+def probe_nmpr_ab(args: argparse.Namespace) -> ProbeRun:
+    """P-NMPR — does a blank [필수] quote field mean the same as ``01``/``0``?
+
+    Origin: N-17 §2 소견 2. Until 2026-07-29 the runtime sent ``NMPR_TYPE_CD``
+    and ``KRX_NMPR_CNDT_CD`` as ``""`` even though the KIS wrapper marks both
+    [필수] and refuses a blank with ``ValueError``. The runtime now derives both
+    from ``ORD_DVSN_CD``. That fix was made in the "preserve observed behaviour"
+    direction, which leaves exactly one question unanswered: **is the broker's
+    implicit default for a blank actually 01/0, or something else?**
+
+    Method: place the same non-marketable resting limit twice — arm A with the
+    explicit codes, arm B with the pre-fix blanks — and compare what the broker
+    does with each. Both arms are cancelled in ``_cleanup``.
+
+    Reading the result honestly:
+
+    * Acceptance parity alone does **not** prove semantic equality. It proves
+      the broker tolerates a blank. Equality would additionally require the
+      query surface to echo the two fields back — if it does not, the answer
+      stays UNKNOWN and this probe has narrowed nothing but the rejection case.
+    * A rejected B-arm is the strong outcome: it proves the pre-fix body was
+      contract-violating and the fix is load-bearing.
+    """
+    spec = get("P-NMPR")
+    _require_symbol(args)
+    if args.asset != "futures":
+        raise ProbeError("P-NMPR is a futures-only probe (--asset futures)")
+    run, client = _setup(spec, args)
+    if client is None:
+        run.observe(
+            would_send="two futures order bodies differing ONLY in the two "
+            "[필수] quote fields (explicit 01/0 vs pre-fix blanks)"
+        )
+        return run
+    odnos: list[str] = []
+    try:
+        price, side = _resting_price(client, args)
+        body_a = client.futures_order_body(
+            args.symbol, args.quantity, price, side, required_fields="explicit"
+        )
+        body_b = client.futures_order_body(
+            args.symbol, args.quantity, price, side, required_fields="legacy_blank"
+        )
+        differing = sorted(k for k in body_a if body_a[k] != body_b[k])
+        run.observe(
+            arm_a_body=body_a,
+            arm_b_body=body_b,
+            differing_fields=differing,
+            resting_price=price,
+            side=side,
+        )
+        if differing != ["KRX_NMPR_CNDT_CD", "NMPR_TYPE_CD"]:
+            raise ProbeError(
+                "A/B arms differ in fields other than the two under test: "
+                f"{differing} — the comparison would not be attributable"
+            )
+
+        placed_a, raw_a, ms_a = client.submit_futures(body_a)
+        time.sleep(args.inter_trial_s)
+        placed_b, raw_b, ms_b = client.submit_futures(body_b)
+        for placed in (placed_a, placed_b):
+            if placed:
+                odnos.append(placed.odno)
+
+        run.measure(
+            "arm_a_explicit",
+            {"rt_cd": raw_a.get("rt_cd"), "msg1": raw_a.get("msg1"), "ms": ms_a},
+        )
+        run.measure(
+            "arm_b_blank",
+            {"rt_cd": raw_b.get("rt_cd"), "msg1": raw_b.get("msg1"), "ms": ms_b},
+        )
+
+        time.sleep(args.settle_seconds)
+        listing = client.inquire_futures(args.symbol)
+        rows = (
+            listing.get("output1") if isinstance(listing.get("output1"), list) else []
+        )
+        by_odno = {str(r.get("odno", "")).strip(): r for r in rows}
+        row_a = by_odno.get(placed_a.odno) if placed_a else None
+        row_b = by_odno.get(placed_b.odno) if placed_b else None
+        run.measure("arm_a_row", row_a)
+        run.measure("arm_b_row", row_b)
+
+        echoes = sorted(
+            k
+            for k in (row_a or {})
+            if k.lower() in {"nmpr_type_cd", "krx_nmpr_cndt_cd"}
+        )
+        run.measure("query_echoes_quote_fields", echoes)
+        if row_a and row_b:
+            run.measure(
+                "row_field_differences",
+                sorted(
+                    k
+                    for k in set(row_a) | set(row_b)
+                    if k not in {"odno", "ord_tmd"} and row_a.get(k) != row_b.get(k)
+                ),
+            )
+
+        a_ok, b_ok = placed_a is not None, placed_b is not None
+        if a_ok and not b_ok:
+            verdict = (
+                "BLANK_REJECTED — the pre-fix body is contract-violating. The "
+                "explicit-code fix is load-bearing, not cosmetic."
+            )
+        elif a_ok and b_ok and not echoes:
+            verdict = (
+                "BOTH_ACCEPTED, ECHO_ABSENT — the broker tolerates a blank, but "
+                "the query surface does not return NMPR_TYPE_CD/KRX_NMPR_CNDT_CD, "
+                "so 'blank == 01/0' remains UNKNOWN. Acceptance is not equality."
+            )
+        elif a_ok and b_ok:
+            verdict = (
+                "BOTH_ACCEPTED, ECHO_PRESENT — compare arm_a_row/arm_b_row on the "
+                "echoed fields; equal echoes establish the implicit default, "
+                "unequal echoes establish that the blank meant something else."
+            )
+        elif not a_ok:
+            verdict = (
+                "INCONCLUSIVE — the explicit arm itself was rejected; fix the "
+                "precondition (price/session/symbol) before reading arm B."
+            )
+        else:
+            verdict = "INCONCLUSIVE — neither arm was accepted."
+        run.measure("verdict", verdict)
+        run.measure(
+            "scope",
+            "모의투자 only. Per N-17 #13 the mock server has no night-session "
+            "write path, so this result must not be extrapolated to REAL night.",
         )
     finally:
         _cleanup(client, run, odnos, args.quantity)

@@ -658,6 +658,37 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         entrypoint="tools.broker_probes.probes_real:probe_n18",
     ),
+    # ---- follow-up from the N-17 collation (not part of the canonical 12 or
+    # the census 4 — `source` deliberately starts with neither "draft" nor
+    # "plan" so coverage_report()'s counts stay exactly as ratified) ----
+    "P-NMPR": _S(
+        probe_id="P-NMPR",
+        title="TIF_AND_QUOTE_TYPE — blank vs explicit [필수] quote fields (A/B)",
+        source="N-17 §2 소견 2 (spec collation, 2026-07-29)",
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="ORDER_TYPE_AND_TIF",
+        bounds_keys=(),
+        instance_fields=("live_scope.time_in_force_values",),
+        statistic=(
+            "categorical per arm: accepted / rejected, plus whether the query "
+            "surface echoes NMPR_TYPE_CD / KRX_NMPR_CNDT_CD. Acceptance parity "
+            "alone does NOT establish that a blank equals 01/0 — only an echoed "
+            "value does. Absent an echo the answer stays UNKNOWN."
+        ),
+        risk="HIGH",
+        duration="~2 min",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "모의투자 session open, futures day session (--asset futures)",
+            "non-marketable limit price (--price-offset-pct) so nothing fills",
+            "arms differ in exactly the two fields under test; the probe aborts "
+            "otherwise so a difference is always attributable",
+            "N-17 #13: mock has no night write path — do not extrapolate to REAL night",
+        ),
+        entrypoint="tools.broker_probes.probes_order:probe_nmpr_ab",
+    ),
 }
 
 

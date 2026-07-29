@@ -13,7 +13,11 @@ splits these into separate calls. The adapter stashes the awaited result by
 
 Force-close flows that need true market orders go through the same
 ``place_futures_order`` path with ``order_type="market"`` — the adapter maps
-to KIS ``OrderType.MARKET`` (``ORD_DVSN_CD="01"``).
+to :class:`OrderType.MARKET`, whose internal value is ``"01"`` in the *stock*
+code system; ``OrderExecutor`` then translates that to futures
+``ORD_DVSN_CD="02"`` (시장가). Do not read the internal ``"01"`` as a futures
+wire code — futures ``ORD_DVSN_CD="01"`` means 지정가 (limit), the exact
+inversion that ``executor._map_futures_order_type`` exists to keep separated.
 
 This adapter is unit-tested against AsyncMock dependencies; the live
 integration test belongs in the 2-week paper gate (Task 20) — runtime KIS
