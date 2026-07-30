@@ -48,6 +48,13 @@
 - **실행 창**: 2026-07-30 08:46–09:30 KST (선물 개장 08:45 / 주식 09:00 이후)
 - **세션 커밋**: `aba51f2a`(호출 페이싱) · `f1a6121a`(호가단위 스냅) — 둘 다 이
   세션에서 **실패를 근거로** 만들어진 수정이다
+  - **[해시 매핑 정정 2026-07-30]** 위 두 해시는 배포 호스트의 push 전 로컬
+    해시로, origin에는 **부재**한다(`git cat-file` 검증). origin 도달 가능
+    등가 커밋은 `e0e0cd86`(페이싱) · `d38f309b`(틱 스냅) — 제목 1:1 대응,
+    push 전 amend/rebase로 해시만 바뀐 동일 수정. 아티팩트 `repo_commit`
+    필드는 실행 시점 로컬 해시를 기록하므로 아티팩트→코드 대조 시 이 매핑을
+    사용할 것. (아래 "미실행 프로브" 표의 `e0e0cd86`·`d38f309b` 표기가 도달
+    가능 정본이다.)
 - **심볼 결정 근거**(추측 아님): `resolve_futures_instrument_from_env`
   (`FUTURES_TRADING_PRODUCT=kospi200`, `FUTURES_STRATEGY_SYMBOL` 공란) →
   `get_front_month_code(kospi200, legacy=True)` = **A01609**(Sep-2026, 만기
