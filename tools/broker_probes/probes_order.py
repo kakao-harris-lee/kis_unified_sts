@@ -12,7 +12,15 @@ Order shape and quantity discipline
 * Quantity defaults to 1 (the minimum) and is never derived from account equity.
 * Limit prices are placed ``--price-offset-pct`` AWAY from the touch so the order
   rests unfilled and can be cancelled. P-11 is the single exception: it needs a
-  fill and demands an extra ``--allow-fill`` flag.
+  fill and demands an extra ``--allow-fill`` flag. It is also the one probe that
+  defaults to a 시장가 (market) order — a marketable *limit* was accepted and then
+  never filled on 모의투자 (``P-11-20260730T002715Z.json``), which censored the
+  measurement it exists to take. ``--stock-order-type limit`` restores the old
+  shape for comparison.
+* Every limit price is snapped to a valid tick before it goes on the wire — see
+  :func:`snap_to_tick`. An off-tick price is not a degraded trial, it is no trial
+  at all: artifact ``P-5-20260730T000608Z.json`` lost trial 0 to
+  ``모의투자 주문처리가 안되었습니다(호가단위 오류)`` and reported ``n=0``.
 * Every probe cancels what it created in a ``finally`` block and shouts (with the
   ODNO) if a cancel fails, so an operator can clean up by hand.
 
@@ -25,14 +33,31 @@ The one deliberate departure is P-NMPR's B-arm, which reconstructs the *pre*-fix
 futures body (both [필수] quote fields blank, executor.py before ``76d43ae9``).
 It exists precisely to test a shape the runtime no longer sends; see
 :meth:`MockTradingClient.futures_order_body`.
+
+Call pacing
+-----------
+Every call this module makes passes through :class:`_CallPacer`, which enforces a
+minimum ``--pace-s`` interval between any two of them. This is not politeness: at
+the mock account's measured ceiling (P-13 — clean 1.0 rps, throttled 2.0 rps) an
+unpaced quote-then-submit pair is already over the line, and a throttled submit
+destroys the trial rather than degrading it. Artifact
+``P-5-20260729T235001Z.json`` is the concrete loss — trial 0 rejected with
+``초당 거래건수를 초과하였습니다``, ``n=0``, ``NOT_MEASURED``.
+
+Pacing changes what the probes must *record*. See :func:`effective_interval_ms`:
+a ``--poll-ms`` or ``--gap-ms`` below the pacing interval does not happen, so the
+recorded granularity is the effective interval, never the requested one.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -47,6 +72,7 @@ from tools.broker_probes.common import (
     dry_run_banner,
     http_json,
     probe_token_cache_dir,
+    redact,
     require_account,
     resolve_credentials,
     resolve_out_dir,
@@ -65,6 +91,68 @@ _STOCK_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 _STOCK_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 
+#: Contract-spec SoT for futures tick sizes. The block is annotated "모든 계약
+#: 상수는 여기서 로드 — 코드에 하드코딩 금지", so no tick literal appears in this
+#: module; :func:`_futures_tick` reads it through the registry instead.
+_EXECUTION_CONFIG = Path(__file__).resolve().parents[2] / "config" / "execution.yaml"
+
+#: Broker-reported 호가단위 in the domestic-stock current-price response.
+#:
+#: TR ``FHKST01010100`` (``v1_국내주식-008``,
+#: ``/uapi/domestic-stock/v1/quotations/inquire-price``), field ``output.aspr_unit``
+#: — official wrapper ``examples_llm/domestic_stock/inquire_price/
+#: chk_inquire_price.py``, ``COLUMN_MAPPING``: ``'aspr_unit': '호가단위'``.
+#:
+#: This is the only stock tick source the probe will accept. The repo carries no
+#: KRX price-band table and this module must not invent one, so if the broker does
+#: not report a unit the stock probe fails loudly (see :func:`_stock_tick`).
+_STOCK_QUOTE_UNIT_FIELD = "aspr_unit"
+
+#: Probe order type -> stock ``ORD_DVSN`` (주문구분) wire code.
+#:
+#: Official source (KIS ``open-trading-api`` ``examples_llm``, read 2026-07-30 via
+#: ``kis-code-assistant-mcp``):
+#: ``domestic_stock/inquire_psbl_order/inquire_psbl_order.py`` — 매수가능조회, TR
+#: ``v1_국내주식-007`` (real ``TTTC8908R`` / mock ``VTTC8908R``). Two docstring
+#: locations in that file enumerate the pair:
+#:
+#: * body, "2) 매수가능수량 확인": "특정 종목 전량매수 시 가능수량을 확인하실 경우
+#:   ORD_DVSN:00(지정가)는 종목증거금율이 반영되지 않습니다. 따라서 "반드시"
+#:   ORD_DVSN:01(시장가)로 지정하여 종목증거금율이 반영된 가능수량을 확인하시기
+#:   바랍니다."
+#: * ``Args``: ``ord_dvsn (str): [필수] 주문구분 (ex. 01 : 시장가)``
+#:
+#: The cross-reference is necessary because ``order_cash`` — 주식주문(현금), TR
+#: ``v1_국내주식-001``, real ``TTTC0012U`` / mock ``VTTC0012U`` for 매수, the TR this
+#: probe actually POSTs to — enumerates NO ``ORD_DVSN`` value: its ``Args`` line is a
+#: bare ``ord_dvsn (str): [필수] 주문구분``. ``shared/execution/executor.py:58-61``
+#: cites the same source for the same reason ("order_cash enumerates no ORD_DVSN
+#: value").
+#:
+#: WARNING — the two asset classes give "01" OPPOSITE meanings: stock ``ORD_DVSN``
+#: "01" is 시장가 (market), while futures ``ORD_DVSN_CD`` "01" is 지정가 (limit) and
+#: 시장가 is "02" (``executor.py:63-72``; the futures code is sent by
+#: :meth:`MockTradingClient.futures_order_body`). Never carry a code across. Like
+#: the runtime's tables this one deliberately has no default entry: an unknown
+#: order type is refused rather than coerced into a code that could turn a resting
+#: limit into a market order.
+_STOCK_ORD_DVSN: dict[str, str] = {
+    "limit": "00",  # 지정가
+    "market": "01",  # 시장가
+}
+
+#: ``ORD_UNPR`` for a 시장가 stock order — the field is present but is not a price.
+#:
+#: ``order_cash`` makes ``ORD_UNPR`` mandatory: it raises
+#: ``ValueError("ord_unpr is required")`` on ``""``, so the key cannot be dropped.
+#: The same docstring states what the broker does when an order carries no price —
+#: "※ ORD_UNPR(주문단가)가 없는 주문은 상한가로 주문금액을 선정하고 이후 체결이되면
+#: 체결금액로 정산됩니다." — it prices the order itself and settles at the fill.
+#: ``"0"`` is the encoding that satisfies both constraints (present, not a limit
+#: price), and is what the runtime already sends for a priceless order:
+#: ``executor.py:393`` ``"ORD_UNPR": str(int(order.price)) if order.price else "0"``.
+_STOCK_ORD_UNPR_MARKET = "0"
+
 #: The two [필수] futures quote fields P-NMPR puts under test, in the order the
 #: arm tuples below use.
 _NMPR_FIELDS = ("NMPR_TYPE_CD", "KRX_NMPR_CNDT_CD")
@@ -78,12 +166,348 @@ _NMPR_ARMS: dict[str, tuple[str, str]] = {
     "legacy_blank": ("", ""),
 }
 
+#: Default minimum interval between any two broker calls, in seconds.
+#:
+#: Measured, not guessed: P-13 (artifact ``P-13-20260729T063120Z``, campaign
+#: ``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/``) bracketed this
+#: mock account's query class at clean 1.0 rps / throttled 2.0 rps (``EGW00201``).
+#: 1.1 s sits just above the measured clean rate — the slowest rate that is known
+#: to work, rather than the fastest that has not yet been seen to fail.
+DEFAULT_PACE_S = 1.1
+
+
+class _CallPacer:
+    """Minimum-interval gate in front of the probe client's only socket.
+
+    Contract: :meth:`wait` blocks until the next call is permitted and returns the
+    instant it was released. The first call is never delayed — an empty pacer has
+    no previous call to be too close to.
+
+    The released instant is the *only* honest t0 for a latency measurement.
+    A timestamp taken before the gate would include the pacing sleep and charge it
+    to the broker; on a 1.1 s pace that inflates every accept-to-visible sample by
+    roughly 1100 ms, which for a ``hard_maximum`` bound propagates straight into
+    an over-wide approved value.
+    """
+
+    def __init__(self, interval_s: float) -> None:
+        self.interval_s = max(0.0, float(interval_s))
+        self._next_allowed_at: float | None = None
+
+    def wait(self) -> float:
+        """Block out the remainder of the interval; return the release instant."""
+        now = time.monotonic()
+        if self._next_allowed_at is not None and now < self._next_allowed_at:
+            # Sleep the REMAINDER only. A fixed per-call sleep would also charge
+            # the probe for time already spent in the previous request.
+            time.sleep(self._next_allowed_at - now)
+            now = time.monotonic()
+        self._next_allowed_at = now + self.interval_s
+        return now
+
+
+def pace_interval_s(args: argparse.Namespace) -> float:
+    """The pacing interval for this run, in seconds (``0`` disables pacing)."""
+    return max(0.0, float(getattr(args, "pace_s", DEFAULT_PACE_S)))
+
+
+def effective_interval_ms(requested_ms: float, args: argparse.Namespace) -> float:
+    """A requested inter-call interval, floored by the pacer, in ms.
+
+    The pacer will not release two calls closer together than ``--pace-s``, so a
+    ``--poll-ms`` or ``--gap-ms`` below it is silently widened. Probes must record
+    THIS value rather than the requested one:
+
+    * a polled sample carries up to one *effective* poll interval of additive
+      error, and runbook §8.3 makes that error part of the approved bound — an
+      understated granularity understates the bound, which is fail-open;
+    * P-2's deduplication bracket is set by the gap that actually reached the
+      wire, so recording the requested gap would mis-bracket the window.
+    """
+    return max(float(requested_ms), pace_interval_s(args) * 1000.0)
+
 
 @dataclass
 class Placed:
     odno: str
+    #: Pacer release instant of the submit — post-sleep, immediately pre-wire.
     sent_at_monotonic: float
     body: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Tick discipline — a limit price the broker will accept
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Tick:
+    """A valid price increment plus the evidence that established it.
+
+    ``source`` is carried into every artifact so a reviewer can see where the
+    number came from without re-deriving it. Neither field is ever a literal in
+    this module: a futures tick comes from ``config/execution.yaml``, a stock tick
+    from the broker's own quote response.
+
+    Attributes:
+        size: The minimum price increment, as an exact :class:`~decimal.Decimal`.
+        source: Human-readable provenance, recorded in the artifact.
+    """
+
+    size: Decimal
+    source: str
+
+
+@dataclass(frozen=True)
+class TickPrice:
+    """A limit price snapped to a broker-valid tick.
+
+    Attributes:
+        value: The snapped price as a float — an exact multiple of ``tick.size``.
+        wire: The exact string the request body carries. Built from the snapped
+            Decimal and never from float arithmetic, so a ``0.05`` multiple
+            cannot reach the broker as ``372.15000000000003``.
+        tick: The increment used, with its provenance.
+        unrounded: The price before snapping, for the artifact record.
+        rounding: ``"floor"`` or ``"ceiling"`` — which way the snap moved.
+    """
+
+    value: float
+    wire: str
+    tick: Tick
+    unrounded: float
+    rounding: str
+
+    def describe(self) -> dict[str, Any]:
+        """The artifact record: the price, the tick, and where the tick came from."""
+        return {
+            "wire_value": self.wire,
+            "unrounded": self.unrounded,
+            "tick_size": str(self.tick.size),
+            "tick_source": self.tick.source,
+            "rounding": self.rounding,
+            "rounding_rationale": (
+                "away from the touch — a resting probe depends on the order NOT "
+                "filling, so a snap must never move the price toward the touch; "
+                "P-11's marketable order is the mirror case and snaps further in"
+            ),
+        }
+
+
+def _tick_wire(value: Decimal) -> str:
+    """A snapped price as the clean decimal string a request body will carry.
+
+    ``normalize()`` drops the trailing zero a ``0.05`` snap leaves behind
+    (``372.10`` -> ``372.1``, the same shape as the ``str(price)`` the runtime
+    sends at ``executor.py:471``) but can flip an integral value into scientific
+    notation (``70100`` -> ``7.01E+4``), which no broker parser would take. The
+    format is therefore forced to fixed-point.
+    """
+    return format(value.normalize(), "f")
+
+
+def snap_to_tick(price: float, tick: Tick, *, side: str, marketable: bool) -> TickPrice:
+    """Snap ``price`` to a multiple of ``tick``, always AWAY from the touch.
+
+    The direction is derived from ``side``/``marketable`` rather than passed in by
+    the caller, because getting it backwards is the one failure here with a
+    trading consequence. The resting probes (P-2, P-5, P-8, P-FQP, P-NMPR) depend
+    on the order sitting unfilled, and a snap toward the touch narrows the
+    ``--price-offset-pct`` gap that keeps it there. P-11 is the mirror case: it is
+    deliberately marketable and must not be snapped back out of the market.
+
+    ====  ==========  ========  ==================================
+    side  marketable  rounding  rests / crosses
+    ====  ==========  ========  ==================================
+    BUY   False       floor     below the touch, moved lower
+    BUY   True        ceiling   above the touch, moved higher
+    SELL  False       ceiling   above the touch, moved higher
+    SELL  True        floor     below the touch, moved lower
+    ====  ==========  ========  ==================================
+
+    Args:
+        price: The unrounded, probe-computed limit price.
+        tick: The increment to snap to, with its provenance.
+        side: ``"BUY"`` or ``"SELL"``.
+        marketable: True when the price is deliberately across the touch.
+
+    Returns:
+        The snapped price, its wire string, and the tick provenance.
+
+    Raises:
+        ProbeError: unknown ``side``, a non-positive tick, a snapped price that is
+            not a positive multiple of the tick, or a wire string that does not
+            represent the snapped price exactly.
+    """
+    if side not in ("BUY", "SELL"):
+        raise ProbeError(f"unknown order side {side!r} (expected 'BUY' or 'SELL')")
+    if tick.size <= 0:
+        raise ProbeError(
+            f"tick size must be positive, got {tick.size} from {tick.source}"
+        )
+    # A resting BUY sits below the touch and a resting SELL above it; a marketable
+    # order sits on the opposite side of each. Away-from-touch is therefore "down"
+    # for exactly the two combinations where those two facts agree.
+    round_down = (side == "BUY") != marketable
+    # Integer-multiple arithmetic in Decimal: `multiple * tick` is exact, whereas
+    # the float form of the same product yields 7443 * 0.05 == 372.15000000000003.
+    multiple = (Decimal(str(price)) / tick.size).to_integral_value(
+        rounding=ROUND_FLOOR if round_down else ROUND_CEILING
+    )
+    snapped = multiple * tick.size
+    if snapped <= 0 or snapped % tick.size != 0:
+        raise ProbeError(
+            f"snapped price {snapped} is not a positive multiple of tick "
+            f"{tick.size} ({tick.source}); refusing to send it"
+        )
+    wire = _tick_wire(snapped)
+    if Decimal(wire) != snapped:
+        raise ProbeError(
+            f"wire string {wire!r} does not represent snapped price {snapped} "
+            "exactly; refusing to send a float artifact to the broker"
+        )
+    return TickPrice(
+        value=float(snapped),
+        wire=wire,
+        tick=tick,
+        unrounded=price,
+        rounding="floor" if round_down else "ceiling",
+    )
+
+
+def build_stock_order_body(
+    cano: str,
+    acnt_prdt_cd: str,
+    symbol: str,
+    qty: int,
+    price: TickPrice | None = None,
+    *,
+    order_type: str = "limit",
+) -> dict[str, str]:
+    """The ``order-cash`` request body — 지정가 or 시장가.
+
+    Mirror of ``executor.py:386-393`` (note ORD_UNPR int-truncation, Q-WIRE-1).
+    For a limit order ``price.wire`` is byte-identical to the runtime's
+    ``str(int(price))``: :func:`_stock_tick` refuses a fractional 호가단위, so a
+    snapped stock price is always a whole number of won and the truncation is a
+    no-op. What the truncation used to do on its own — produce a 1원 granularity
+    that no KRX price band allows — is what made this body ``호가단위 오류`` bait.
+
+    A module-level function rather than only a method because the dry-run has no
+    client and must still be able to show the exact body it would send. For a
+    market order that is the whole body: no quote is needed to build it.
+
+    Args:
+        cano: 종합계좌번호 (account prefix).
+        acnt_prdt_cd: 계좌상품코드 (account suffix).
+        symbol: 종목코드.
+        qty: 주문수량.
+        price: The tick-snapped limit price. Required for ``order_type="limit"``
+            and forbidden for ``"market"``.
+        order_type: ``"limit"`` (지정가) or ``"market"`` (시장가), resolved to a
+            wire code through :data:`_STOCK_ORD_DVSN`.
+
+    Raises:
+        ProbeError: unknown ``order_type``, a limit order with no price, or a
+            market order handed one.
+    """
+    ord_dvsn = _STOCK_ORD_DVSN.get(order_type)
+    if ord_dvsn is None:
+        raise ProbeError(
+            f"unknown stock order type {order_type!r} "
+            f"(expected one of {sorted(_STOCK_ORD_DVSN)})"
+        )
+    # Both directions are refused, not defaulted. A missing price must never
+    # become a market order by omission, and a market order that quietly carried
+    # a limit price would report a 시장가 fill it never took.
+    if order_type == "limit" and price is None:
+        raise ProbeError("a 지정가 (limit) stock order needs a tick-snapped price")
+    if order_type == "market" and price is not None:
+        raise ProbeError(
+            "a 시장가 (market) stock order must not carry a limit price "
+            f"(got {price.wire!r}); ORD_UNPR is {_STOCK_ORD_UNPR_MARKET!r} by spec"
+        )
+    return {
+        "CANO": cano,
+        "ACNT_PRDT_CD": acnt_prdt_cd,
+        "PDNO": symbol,
+        "ORD_DVSN": ord_dvsn,
+        "ORD_QTY": str(qty),
+        "ORD_UNPR": _STOCK_ORD_UNPR_MARKET if price is None else price.wire,
+    }
+
+
+def _futures_tick(symbol: str) -> Tick:
+    """The tick for a futures ``symbol``, from the repo's contract-spec registry.
+
+    ``resolve_contract_spec`` maps by ``symbol_prefix``, so the value follows the
+    ``--symbol`` actually used (``A01``/``101`` -> full contract, ``A05`` -> mini)
+    rather than being fixed to one product.
+
+    Raises:
+        ProbeError: no registered spec matches ``symbol``.
+    """
+    from shared.instruments.contract_spec import (
+        ContractSpecRegistry,
+        resolve_contract_spec,
+    )
+
+    registry = ContractSpecRegistry.from_yaml(str(_EXECUTION_CONFIG))
+    try:
+        spec = resolve_contract_spec(symbol, registry)
+    except ValueError as exc:
+        raise ProbeError(
+            f"no contract spec for --symbol {symbol}: {exc}. Register the prefix in "
+            "config/execution.yaml::futures_contract_spec rather than hardcoding a "
+            "tick in the probe."
+        ) from exc
+    return Tick(
+        size=Decimal(str(spec.tick_size_points)),
+        source=(
+            f"config/execution.yaml::futures_contract_spec.{spec.name}"
+            f".tick_size_points (matched symbol_prefix {spec.symbol_prefix!r})"
+        ),
+    )
+
+
+def _stock_tick(output: dict[str, Any], symbol: str) -> Tick:
+    """The 호가단위 the broker itself reported for a stock ``symbol``.
+
+    Read from the quote response the probe already made rather than from a table:
+    the repo holds no KRX price band and inventing one would either waste a rate
+    slot on a 호가단위 오류 rejection or, worse, be silently accepted at the wrong
+    granularity for some other price band.
+
+    The unit must be a whole number of won because the runtime's stock wire field
+    is int-truncated (``ORD_UNPR = str(int(price))``, quirk Q-WIRE-1) — a
+    fractional unit could not survive that, so it is refused rather than truncated.
+
+    Raises:
+        ProbeError: the field is absent, non-numeric, non-positive, or fractional,
+            i.e. no tick unit could be established.
+    """
+    raw = output.get(_STOCK_QUOTE_UNIT_FIELD)
+    try:
+        size = Decimal(str(raw).strip())
+    except (ArithmeticError, ValueError):
+        size = Decimal(0)
+    if size <= 0 or size != size.to_integral_value():
+        raise ProbeError(
+            f"could not establish a 호가단위 (quote unit) for {symbol}: TR "
+            f"FHKST01010100 returned {_STOCK_QUOTE_UNIT_FIELD}={raw!r}. This repo "
+            "holds no KRX price-band table and will not guess one, and ORD_UNPR is "
+            "int-truncated on the wire (Q-WIRE-1) so a fractional unit is "
+            "unrepresentable. Report this as a BLOCKED precondition — do not "
+            "re-run with a hand-picked price."
+        )
+    return Tick(
+        size=size,
+        source=(
+            f"broker-reported 호가단위: TR FHKST01010100 (v1_국내주식-008, "
+            f"/uapi/domestic-stock/v1/quotations/inquire-price) "
+            f"output.{_STOCK_QUOTE_UNIT_FIELD}={raw!r}"
+        ),
+    )
 
 
 class MockTradingClient:
@@ -92,10 +516,21 @@ class MockTradingClient:
     Not a replacement for ``OrderExecutor``: it deliberately omits the retry,
     rate-limit and fill-monitor wrappers because those are part of the behaviour
     under measurement (draft §5 Q-IDEMP-1/2, Q-RATE-1).
+
+    The one thing it does add is :class:`_CallPacer`. That is not the runtime's
+    rate limiter and measures nothing — it is a fixed floor on the interval
+    between this client's own calls, present because exceeding the account's
+    measured ceiling does not perturb a measurement, it voids it (the submit is
+    rejected and the trial produces no sample at all).
     """
 
     def __init__(
-        self, creds: Any, auth_manager: Any, run: ProbeRun, timeout: float = 15.0
+        self,
+        creds: Any,
+        auth_manager: Any,
+        run: ProbeRun,
+        timeout: float = 15.0,
+        pace_s: float = DEFAULT_PACE_S,
     ):
         import requests
 
@@ -105,6 +540,8 @@ class MockTradingClient:
         self.session = requests.Session()
         self.timeout = timeout
         self.tr_ids = self._load_tr_ids()
+        self.pacer = _CallPacer(pace_s)
+        self._last_send_monotonic: float | None = None
 
     @staticmethod
     def _load_tr_ids() -> dict[str, str]:
@@ -122,6 +559,64 @@ class MockTradingClient:
         headers["custtype"] = "P"
         return headers
 
+    # -- the single paced transport --------------------------------------
+    def _request(
+        self,
+        method: str,
+        url: str,
+        tr_id: str,
+        *,
+        params: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> tuple[int, dict[str, Any], float, str]:
+        """The one place this client opens a socket — and so the one paced site.
+
+        Both public transports funnel through here, which is what makes the pacing
+        unbypassable: a call type added later cannot forget to pace, because there
+        is nowhere else to send a request from.
+
+        Ordering matters and is deliberate:
+
+        1. headers first. ``get_auth_headers`` may itself issue a token request,
+           and a token round-trip must not land between the release instant and
+           the wire. Absorbing it into the pacing wait instead costs nothing —
+           token issuance is a different endpoint class from the one P-13
+           measured, and the pacer still separates *this* client's calls.
+        2. then the pacing gate, which sleeps out whatever remains of the
+           interval.
+        3. then the stamp, then the request — with nothing between them.
+        """
+        assert_mock_host(url)  # last line of defence; the callers gate too
+        headers = self._headers(tr_id)
+        self._last_send_monotonic = self.pacer.wait()
+        return http_json(
+            self.session,
+            method,
+            url,
+            headers=headers,
+            params=params,
+            json_body=body,
+            timeout=self.timeout,
+        )
+
+    def last_send_instant(self) -> float:
+        """Monotonic instant the most recent request was released to the wire.
+
+        This is the correct t0 for every latency a probe derives from a call it
+        made itself. Capturing ``time.monotonic()`` before the call instead would
+        fold the pacing sleep into the measurement and report it as broker
+        latency.
+
+        Raises:
+            ProbeError: no request has been issued yet.
+        """
+        if self._last_send_monotonic is None:
+            raise ProbeError(
+                "last_send_instant() called before any request was issued — "
+                "there is no send to timestamp"
+            )
+        return self._last_send_monotonic
+
     # -- guarded transports ---------------------------------------------
     def trading_call(
         self,
@@ -136,15 +631,7 @@ class MockTradingClient:
         url = f"{MOCK_BASE_URL}{path}"
         assert_mock_host(url)
         assert_mock_trading_tr(tr_id)
-        return http_json(
-            self.session,
-            method,
-            url,
-            headers=self._headers(tr_id),
-            params=params,
-            json_body=body,
-            timeout=self.timeout,
-        )
+        return self._request(method, url, tr_id, params=params, body=body)
 
     def quote_call(
         self, path: str, tr_id: str, params: dict[str, Any]
@@ -152,14 +639,7 @@ class MockTradingClient:
         """Read-only quotations call (host-gated; TR prefix rule does not apply)."""
         url = f"{MOCK_BASE_URL}{path}"
         assert_mock_host(url)
-        _status, parsed, _ms, _text = http_json(
-            self.session,
-            "GET",
-            url,
-            headers=self._headers(tr_id),
-            params=params,
-            timeout=self.timeout,
-        )
+        _status, parsed, _ms, _text = self._request("GET", url, tr_id, params=params)
         return parsed
 
     # -- domain helpers --------------------------------------------------
@@ -178,7 +658,16 @@ class MockTradingClient:
             f"could not read a futures price for {symbol}: rt_cd={data.get('rt_cd')}"
         )
 
-    def stock_last_price(self, symbol: str) -> float:
+    def stock_quote(self, symbol: str) -> tuple[float, Tick]:
+        """Last price AND the broker's own 호가단위, from one inquire-price call.
+
+        Both come out of the same response deliberately: a second call just for
+        the tick would spend another slot of the measured rate budget (P-13: clean
+        1.0 rps) on a number the first response already carried.
+
+        Raises:
+            ProbeError: no usable price, or no establishable quote unit.
+        """
         data = self.quote_call(
             _STOCK_PRICE_PATH,
             "FHKST01010100",
@@ -190,13 +679,13 @@ class MockTradingClient:
             raise ProbeError(
                 f"could not read a stock price for {symbol}: rt_cd={data.get('rt_cd')}"
             )
-        return float(value)
+        return float(value), _stock_tick(out, symbol)
 
     def futures_order_body(
         self,
         symbol: str,
         qty: int,
-        price: float,
+        price: TickPrice,
         side: str,
         *,
         required_fields: str = "explicit",
@@ -214,6 +703,10 @@ class MockTradingClient:
         makes the B-arm worth sending.
 
         Args:
+            price: A tick-snapped price. ``UNIT_PRICE`` carries ``price.wire``,
+                which has the same shape as the runtime's ``str(price)`` but is
+                guaranteed to be an exact tick multiple — an off-tick value is
+                rejected outright with ``호가단위 오류``.
             required_fields: Which shape to build for the two [필수] quote
                 fields.
 
@@ -243,7 +736,7 @@ class MockTradingClient:
             "SLL_BUY_DVSN_CD": "02" if side == "BUY" else "01",
             "SHTN_PDNO": symbol,
             "ORD_QTY": str(qty),
-            "UNIT_PRICE": str(price),
+            "UNIT_PRICE": price.wire,
             "NMPR_TYPE_CD": nmpr_type_cd,
             "KRX_NMPR_CNDT_CD": krx_nmpr_cndt_cd,
             "CTAC_TLNO": "",
@@ -253,25 +746,35 @@ class MockTradingClient:
             "ORD_DVSN_CD": "01",
         }
 
-    def stock_order_body(self, symbol: str, qty: int, price: float) -> dict[str, str]:
-        """Mirror of ``executor.py:386-393`` (note ORD_UNPR int-truncation, Q-WIRE-1)."""
-        return {
-            "CANO": self.creds.cano,
-            "ACNT_PRDT_CD": self.creds.acnt_prdt_cd,
-            "PDNO": symbol,
-            "ORD_DVSN": "00",  # 지정가
-            "ORD_QTY": str(qty),
-            "ORD_UNPR": str(int(price)),
-        }
+    def stock_order_body(
+        self,
+        symbol: str,
+        qty: int,
+        price: TickPrice | None = None,
+        *,
+        order_type: str = "limit",
+    ) -> dict[str, str]:
+        """This session's account bound to :func:`build_stock_order_body`."""
+        return build_stock_order_body(
+            self.creds.cano,
+            self.creds.acnt_prdt_cd,
+            symbol,
+            qty,
+            price,
+            order_type=order_type,
+        )
 
     def submit_futures(
         self, body: dict[str, str]
     ) -> tuple[Placed | None, dict[str, Any], float]:
         tr_id = self.tr_ids["futures_order_day_mock"]
-        sent = time.monotonic()
         status, parsed, ms, _text = self.trading_call(
             "POST", _FUT_ORDER_PATH, tr_id, body=body
         )
+        # t0 comes from the pacer, not from before the call: the pacing sleep
+        # happens inside _request and would otherwise be measured as broker
+        # latency. P-5 and P-FQP both subtract this from a later observation.
+        sent = self.last_send_instant()
         odno = str((parsed.get("output") or {}).get("ODNO") or "").strip()
         placed = (
             Placed(odno, sent, body)
@@ -282,16 +785,25 @@ class MockTradingClient:
 
     def cancel_futures(self, odno: str, qty: int) -> dict[str, Any]:
         """Cancel — ``RVSE_CNCL_DVSN_CD='02'`` (executor.py:689)."""
-        return self._rvsecncl(odno, qty, dvsn="02", price=0.0)
+        return self._rvsecncl(odno, qty, dvsn="02", price=None)
 
-    def replace_futures(self, odno: str, qty: int, price: float) -> dict[str, Any]:
+    def replace_futures(self, odno: str, qty: int, price: TickPrice) -> dict[str, Any]:
         """Amend — ``RVSE_CNCL_DVSN_CD='01'``. Never exercised by the runtime
-        (draft §3.1 row 8: the literal appears once, value ``"02"`` only)."""
+        (draft §3.1 row 8: the literal appears once, value ``"02"`` only).
+
+        The amend price needs the same tick discipline as the original submit: an
+        off-tick amend is rejected exactly like an off-tick submit, and a rejected
+        amend makes P-8 report replace semantics it never observed.
+        """
         return self._rvsecncl(odno, qty, dvsn="01", price=price)
 
     def _rvsecncl(
-        self, odno: str, qty: int, *, dvsn: str, price: float
+        self, odno: str, qty: int, *, dvsn: str, price: TickPrice | None
     ) -> dict[str, Any]:
+        if dvsn == "01" and price is None:
+            raise ProbeError(
+                "an amend (RVSE_CNCL_DVSN_CD='01') needs a tick-snapped price"
+            )
         tr_id = self.tr_ids["futures_cancel_day_mock"]
         body = {
             "ORD_PRCS_DVSN_CD": "02",
@@ -300,7 +812,7 @@ class MockTradingClient:
             "RVSE_CNCL_DVSN_CD": dvsn,
             "ORGN_ODNO": odno,
             "ORD_QTY": str(qty),
-            "UNIT_PRICE": str(price) if dvsn == "01" else "0",
+            "UNIT_PRICE": price.wire if price is not None else "0",
             "NMPR_TYPE_CD": "01",
             "KRX_NMPR_CNDT_CD": "0",
             "RMN_QTY_YN": "Y",
@@ -394,24 +906,31 @@ def _setup(
 
     cfg = build_auth_config(creds, probe_token_cache_dir(args.token_cache_dir))
     auth = KISAuthManager(cfg, use_singleton=False)
-    return run, MockTradingClient(creds, auth, run)
+    return run, MockTradingClient(creds, auth, run, pace_s=pace_interval_s(args))
 
 
 def _resting_price(
     client: MockTradingClient, args: argparse.Namespace
-) -> tuple[float, str]:
-    """A limit price far enough from the touch that the order will not fill."""
+) -> tuple[TickPrice, str]:
+    """A tick-valid limit price far enough from the touch that it will not fill.
+
+    The snap is away from the touch, so it can only widen the
+    ``--price-offset-pct`` gap that keeps the order resting, never narrow it.
+
+    Raises:
+        ProbeError: the computed price is non-positive, or no tick could be
+            established for the instrument.
+    """
+    side = "BUY"
     if args.asset == "futures":
         last = client.futures_last_price(args.symbol)
-        side = "BUY"
-        price = round(last * (1.0 - args.price_offset_pct / 100.0), 2)
+        tick = _futures_tick(args.symbol)
     else:
-        last = client.stock_last_price(args.symbol)
-        side = "BUY"
-        price = float(int(last * (1.0 - args.price_offset_pct / 100.0)))
+        last, tick = client.stock_quote(args.symbol)
+    price = last * (1.0 - args.price_offset_pct / 100.0)
     if price <= 0:
         raise ProbeError("computed resting price <= 0; check --price-offset-pct")
-    return price, side
+    return snap_to_tick(price, tick, side=side, marketable=False), side
 
 
 def _cleanup(
@@ -462,13 +981,17 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
     _require_symbol(args)
     run, client = _setup(spec, args)
     if client is None:
-        run.observe(would_send="two identical futures order bodies", gap_ms=args.gap_ms)
+        run.observe(
+            would_send="two identical futures order bodies",
+            gap_ms=effective_interval_ms(args.gap_ms, args),
+        )
         return run
     odnos: list[str] = []
     try:
         price, side = _resting_price(client, args)
         body = client.futures_order_body(args.symbol, args.quantity, price, side)
-        run.observe(order_body=body, resting_price=price, side=side)
+        run.observe(order_body=body, resting_price=price.wire, side=side)
+        run.measure("limit_price_tick", price.describe())
 
         first, raw1, ms1 = client.submit_futures(body)
         time.sleep(args.gap_ms / 1000.0)
@@ -494,7 +1017,9 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
             {str(r.get("odno", "")).strip() for r in rows} & set(distinct)
         )
 
-        run.measure("gap_ms", args.gap_ms)
+        # The effective gap, not the requested one: the pacer floors the sleep
+        # below, and the dedup bracket is set by the gap that reached the wire.
+        run.measure("gap_ms", effective_interval_ms(args.gap_ms, args))
         run.measure("distinct_odno_count", len(distinct))
         run.measure("odno_confirmed_in_query", observed)
         run.measure(
@@ -509,6 +1034,13 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
                     else "INCONCLUSIVE (0 accepted ODNOs — check rt_cd/msg1)"
                 )
             ),
+        )
+        run.measure(
+            "gap_semantics",
+            "gap_ms is the EFFECTIVE gap: --pace-s floors --gap-ms, so a requested "
+            "gap below the pacing interval never reached the wire. Bracket the "
+            "window against this value, and to probe a gap below --pace-s you must "
+            "lower --pace-s as well — accepting the throttling risk that implies.",
         )
         run.measure(
             "window_semantics",
@@ -546,13 +1078,15 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
     run, client = _setup(spec, args)
     if client is None:
         run.observe(
-            would_send=f"{args.samples} resting orders, polling inquire-ccnl every {args.poll_ms}ms"
+            would_send=f"{args.samples} resting orders, polling inquire-ccnl every "
+            f"{effective_interval_ms(args.poll_ms, args)}ms"
         )
         return run
     odnos: list[str] = []
     samples: list[float] = []
     try:
         price, side = _resting_price(client, args)
+        run.measure("limit_price_tick", price.describe())
         for trial in range(args.samples):
             body = client.futures_order_body(args.symbol, args.quantity, price, side)
             placed, raw, _ms = client.submit_futures(body)
@@ -603,11 +1137,15 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
                 samples, margin_pct=args.margin_pct, label="accept_to_visible_ms"
             ),
         )
-        run.measure("poll_granularity_ms", args.poll_ms)
+        run.measure("poll_granularity_ms", effective_interval_ms(args.poll_ms, args))
         run.measure(
             "granularity_note",
             "Each sample carries up to one poll interval of additive error. The "
-            "approved bound must exceed max_observed + poll_ms, not just max_observed.",
+            "approved bound must exceed max_observed + poll_granularity_ms, not just "
+            "max_observed. poll_granularity_ms is the EFFECTIVE interval "
+            "max(--poll-ms, --pace-s): the pacer floors polling, so a smaller "
+            "--poll-ms did not happen and recording it would understate the additive "
+            "error — and therefore the bound (runbook §8.3).",
         )
         run.measure(
             "censored_trials", len([o for o in run.observations if o.get("censored")])
@@ -735,17 +1273,25 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             run.error(f"submit rejected rt_cd={raw.get('rt_cd')} msg={raw.get('msg1')}")
             return run
         odnos.append(placed.odno)
-        new_price = round(price * 0.99, 2)
-        amended_at = time.monotonic()
+        # Amend further DOWN, i.e. further from the touch: the amended order must
+        # keep resting for the coexistence window to be observable at all.
+        new_price = snap_to_tick(
+            price.value * 0.99, price.tick, side=side, marketable=False
+        )
         amend = client.replace_futures(placed.odno, args.quantity, new_price)
+        # Same rule as submit_futures: t0 is the pacer's release instant, so the
+        # pacing sleep before the amend is not counted into coexistence_ms.
+        amended_at = client.last_send_instant()
         new_odno = str((amend.get("output") or {}).get("ODNO") or "").strip()
         run.observe(
             original_odno=placed.odno,
             amend_rt_cd=amend.get("rt_cd"),
             amend_msg=amend.get("msg1"),
             new_odno=new_odno,
-            new_price=new_price,
+            new_price=new_price.wire,
         )
+        run.measure("limit_price_tick", price.describe())
+        run.measure("amend_price_tick", new_price.describe())
         if new_odno:
             odnos.append(new_odno)
 
@@ -776,11 +1322,13 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             "coexistence_ms",
             round((coexist_last - amended_at) * 1000.0, 2) if coexist_last else 0.0,
         )
+        run.measure("poll_granularity_ms", effective_interval_ms(args.poll_ms, args))
         run.measure(
             "mode_determination",
             "Map to ReplaceSemantics only after N>=5 trials agree. A single trial "
             "showing zero coexistence does NOT prove atomicity — polling can miss "
-            "an interval shorter than --poll-ms.",
+            "an interval shorter than poll_granularity_ms, which is the EFFECTIVE "
+            "interval max(--poll-ms, --pace-s) and not the requested --poll-ms.",
         )
     finally:
         _cleanup(client, run, odnos, args.quantity)
@@ -791,6 +1339,141 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
 # ---------------------------------------------------------------------------
 # P-11 — balance reflection
 # ---------------------------------------------------------------------------
+
+#: ``measurements.fill_case`` verdicts. A run is one of exactly these two, and the
+#: second is a statement about what the harness cannot see — never a measurement.
+_FILL_OBSERVED = "FILLED_AND_REFLECTED"
+_FILL_UNDETERMINED = "UNDETERMINED_NON_FILL_OR_LAG_BEYOND_WINDOW"
+
+#: What would separate the two halves of :data:`_FILL_UNDETERMINED`.
+#:
+#: Named rather than added: an execution inquiry is a ``/trading/`` path, and this
+#: module does not grow trading-namespace surface for an interpretation aid. The
+#: manual re-check below is what today's operator actually did.
+_FILL_RESOLUTION_PATH = (
+    "A stock execution inquiry — 주식일별주문체결조회, "
+    "/uapi/domestic-stock/v1/trading/inquire-daily-ccld (real TTTC8001R / mock "
+    "VTTC8001R) — would separate the two by reporting filled quantity for the ODNO "
+    "directly. This harness deliberately does not add that trading-namespace path. "
+    "Until it does, resolve out of band: re-read the balance after the run and see "
+    "whether the holding ever moved. Artifact P-11-20260730T002715Z needed exactly "
+    "that manual re-check (~18 min later, holding unchanged at the baseline) to "
+    "establish that its CENSORED result was a NON-FILL and not a reflection lag."
+)
+
+
+def _market_price_record() -> dict[str, Any]:
+    """The ``limit_price_tick`` slot for a 시장가 run: an explicit bypass, not a gap.
+
+    The key is kept so a reviewer comparing artifacts always finds tick
+    provenance where the limit path puts it. An absent key would have to be
+    *interpreted*; ``applicable: False`` states the reason instead.
+    """
+    return {
+        "applicable": False,
+        "wire_value": _STOCK_ORD_UNPR_MARKET,
+        "unrounded": None,
+        "tick_size": None,
+        "tick_source": (
+            "NOT APPLICABLE — this run sent a 시장가 order "
+            f"(ORD_DVSN={_STOCK_ORD_DVSN['market']}), which carries no limit price. "
+            "No 호가단위 was requested and none was used: the inquire-price quote "
+            "call was skipped entirely, so nothing here came from a tick table."
+        ),
+        "rounding": None,
+        "rounding_rationale": (
+            "no snapping was attempted — there is no price to snap. Bypassing the "
+            "tick machinery also removes its failure mode: a 시장가 order cannot be "
+            "rejected with 호가단위 오류, and a broker that does not report "
+            f"output.{_STOCK_QUOTE_UNIT_FIELD} can no longer block this probe."
+        ),
+    }
+
+
+def _fill_case_record(
+    *,
+    reflected: bool,
+    symbol: str,
+    baseline_qty: int,
+    observed_qty: int,
+    window_s: float,
+    polls: int,
+    poll_interval_ms: float,
+) -> dict[str, Any]:
+    """State plainly which of the two cases the run represents, or that it cannot.
+
+    The artifact that motivated this record (``P-11-20260730T002715Z``) recorded a
+    censored window and nothing else, so "the order never filled" and "the order
+    filled and the balance lagged" were indistinguishable without an out-of-band
+    check. The distinction is the difference between a broker consistency finding
+    and no finding at all, so it is written down rather than left to a reader.
+    """
+    common: dict[str, Any] = {
+        "symbol": symbol,
+        "baseline_holding_qty": baseline_qty,
+        "final_holding_qty": observed_qty,
+        "window_s": window_s,
+        "polls": polls,
+        "poll_interval_ms_effective": poll_interval_ms,
+        "basis": (
+            "inquire-balance (VTTC8434R) holdings are the ONLY fill evidence this "
+            "harness collects; it has no execution-inquiry path."
+        ),
+    }
+    if reflected:
+        return common | {
+            "case": _FILL_OBSERVED,
+            "interpretation": (
+                f"the {symbol} holding rose {baseline_qty} -> {observed_qty}, so the "
+                "order both FILLED and was reflected in the balance inside the "
+                "window. submit_to_balance_reflection is a real fill-to-reflection "
+                "sample."
+            ),
+        }
+    return common | {
+        "case": _FILL_UNDETERMINED,
+        "interpretation": (
+            f"the {symbol} holding stayed at {baseline_qty} for the whole "
+            f"{window_s}s window. This run CANNOT tell whether (a) the order never "
+            "filled, or (b) it filled and the balance reflection lagged past the "
+            "window — the balance reports the same thing in both cases. No bound "
+            "may be derived from this run under either reading."
+        ),
+        "resolves_with": _FILL_RESOLUTION_PATH,
+    }
+
+
+def _p11_dry_run(run: ProbeRun, args: argparse.Namespace, order_type: str) -> None:
+    """Report the request P-11 would send, without contacting the broker.
+
+    A 시장가 body needs no quote, so the dry-run can show it byte for byte — which
+    is the point: the defect this probe was fixed for was an unnoticed
+    ``ORD_DVSN``/``ORD_UNPR`` pair. A 지정가 body cannot be shown, because its price
+    comes from a live quote.
+    """
+    plan = (
+        f"stock {order_type} order (ORD_DVSN={_STOCK_ORD_DVSN[order_type]}), then "
+        f"poll inquire-balance every {effective_interval_ms(args.poll_ms, args)}ms "
+        f"for up to {args.balance_timeout_s}s"
+    )
+    if order_type != "market":
+        run.observe(would_send=plan, order_type=order_type, order_body=None)
+        print(
+            f"\n  would send: {plan}\n"
+            "  body not shown — a 지정가 price is derived from a live quote."
+        )
+        return
+    # Re-resolved rather than threaded out of _setup: it is a pure env read, and
+    # every order probe shares that helper's two-value signature.
+    creds = resolve_credentials(args.asset, is_real=False)
+    body = build_stock_order_body(
+        creds.cano, creds.acnt_prdt_cd, args.symbol, args.quantity, order_type="market"
+    )
+    run.observe(would_send=plan, order_type=order_type, order_body=body)
+    # redact() before printing: the body carries the real account number, and a
+    # dry-run must not put it on an operator's terminal.
+    print(f"\n  would send POST {_STOCK_ORDER_PATH}")
+    print(f"  {json.dumps(redact(body), ensure_ascii=False)}")
 
 
 def probe_p11(args: argparse.Namespace) -> ProbeRun:
@@ -806,9 +1489,40 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
 
     This probe intentionally FILLS. It therefore requires ``--allow-fill`` in
     addition to ``--confirm``.
+
+    Why the order type defaults to 시장가
+    ------------------------------------
+    The measurement is a *fill*-to-reflection lag, so a run that does not fill
+    yields nothing at all. The marketable-limit default did not fill: artifact
+    ``P-11-20260730T002715Z.json`` was ACCEPTED (``rt_cd=0``, ODNO ``0000008686``,
+    ``ORD_DVSN="00"``, ``ORD_UNPR="232500"`` — a limit 10% above the 211,000 touch,
+    correctly tick-snapped) and the holding never moved; an out-of-band balance
+    read ~18 minutes later still showed the unchanged baseline. Being *marketable
+    in price* is evidently not the same as being *filled* on 모의투자, so
+    ``--stock-order-type`` defaults to ``market`` and asks the broker for a fill
+    instead of pricing one. ``--stock-order-type limit`` keeps the old shape
+    reachable for comparison.
+
+    A side effect worth naming: the market path makes no quote call, so it depends
+    on no tick at all. ``--price-offset-pct``, :func:`snap_to_tick` and the
+    ``aspr_unit`` precondition are all limit-path-only.
+
+    Fill versus balance lag
+    -----------------------
+    ``measurements.fill_case`` says which of the two a run represents. The balance
+    query is the harness's only holdings source, so a window that expires with the
+    holding unchanged is *undetermined* — a non-fill and a lag beyond the window
+    look identical from here. That is recorded as an interpretation caveat naming
+    what would resolve it, never as a bound.
     """
     spec = get("P-11")
     _require_symbol(args)
+    order_type = args.stock_order_type
+    if order_type not in _STOCK_ORD_DVSN:
+        raise ProbeError(
+            f"unknown --stock-order-type {order_type!r} "
+            f"(expected one of {sorted(_STOCK_ORD_DVSN)})"
+        )
     run, client = _setup(spec, args)
     if args.asset == "futures":
         run.skip(
@@ -822,7 +1536,7 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
             client.close()
         return run
     if client is None:
-        run.observe(would_send="marketable stock order, then poll inquire-balance")
+        _p11_dry_run(run, args, order_type)
         return run
     if not args.allow_fill:
         run.skip(
@@ -833,16 +1547,44 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         client.close()
         return run
     try:
-        last = client.stock_last_price(args.symbol)
-        # Marketable limit: cross the touch by the offset so it fills promptly.
-        price = float(int(last * (1.0 + args.price_offset_pct / 100.0)))
-        body = client.stock_order_body(args.symbol, args.quantity, price)
-        run.observe(order_body=body, last_price=last, marketable_price=price)
-        sent = time.monotonic()
+        if order_type == "market":
+            # No quote: a 시장가 order carries no price, so there is nothing to
+            # price it against and no tick to establish. That also saves a call
+            # out of the measured rate budget (P-13: clean 1.0 rps).
+            body = client.stock_order_body(
+                args.symbol, args.quantity, order_type="market"
+            )
+            run.observe(order_body=body, order_type=order_type)
+            run.measure("limit_price_tick", _market_price_record())
+        else:
+            last, tick = client.stock_quote(args.symbol)
+            # Marketable limit: cross the touch by the offset so it fills promptly.
+            # The snap goes UP for the same reason the resting probes snap down —
+            # away from the touch, which here means further INTO the market, never
+            # back out of it.
+            price = snap_to_tick(
+                last * (1.0 + args.price_offset_pct / 100.0),
+                tick,
+                side="BUY",
+                marketable=True,
+            )
+            body = client.stock_order_body(
+                args.symbol, args.quantity, price, order_type="limit"
+            )
+            run.observe(
+                order_body=body,
+                order_type=order_type,
+                last_price=last,
+                marketable_price=price.wire,
+            )
+            run.measure("limit_price_tick", price.describe())
         tr_id = client.tr_ids["stock_krx_buy_mock"]
         status, parsed, _ms, _text = client.trading_call(
             "POST", _STOCK_ORDER_PATH, tr_id, body=body
         )
+        # Pacer release instant, not a pre-call timestamp: submit_to_balance_ms
+        # must not include the pacing sleep that preceded this submit.
+        sent = client.last_send_instant()
         odno = str((parsed.get("output") or {}).get("ODNO") or "").strip()
         run.observe(
             submit_status=status,
@@ -866,8 +1608,14 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         run.observe(baseline_holding_qty=base_qty)
 
         reflected_at: float | None = None
-        deadline = time.monotonic() + args.visibility_timeout_s
+        polls = 0
+        final_qty = base_qty
+        # --balance-timeout-s, not the shared --visibility-timeout-s: this window
+        # has to contain a real balance update, and the pacer floors polling at
+        # --pace-s, so the shared 30s default buys only ~27 polls.
+        deadline = time.monotonic() + args.balance_timeout_s
         while time.monotonic() < deadline:
+            polls += 1
             snapshot = client.stock_balance()
             rows = (
                 snapshot.get("output1")
@@ -879,11 +1627,24 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 for r in rows
                 if str(r.get("pdno", "")).strip() == args.symbol
             )
+            final_qty = qty
             if qty > base_qty:
                 reflected_at = time.monotonic()
                 break
             time.sleep(args.poll_ms / 1000.0)
 
+        run.measure(
+            "fill_case",
+            _fill_case_record(
+                reflected=reflected_at is not None,
+                symbol=args.symbol,
+                baseline_qty=base_qty,
+                observed_qty=final_qty,
+                window_s=args.balance_timeout_s,
+                polls=polls,
+                poll_interval_ms=effective_interval_ms(args.poll_ms, args),
+            ),
+        )
         if reflected_at is None:
             run.error(
                 "balance never reflected the order within the timeout — CENSORED. "
@@ -901,6 +1662,17 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 "n_note",
                 "n=1 per invocation. Re-run --samples times and take the maximum "
                 "across artifacts before proposing a bound.",
+            )
+            run.measure(
+                "poll_granularity_ms", effective_interval_ms(args.poll_ms, args)
+            )
+            run.measure(
+                "granularity_note",
+                "The sample carries up to one poll interval of additive error, so "
+                "an approved bound must exceed it plus poll_granularity_ms — which "
+                "is the EFFECTIVE interval max(--poll-ms, --pace-s), because the "
+                "pacer floors polling and a smaller --poll-ms did not happen "
+                "(runbook §8.3).",
             )
         run.measure(
             "position_left_open",
@@ -986,7 +1758,7 @@ def probe_pext(args: argparse.Namespace) -> ProbeRun:
                     label="manual_submit_to_detect_ms",
                 ),
             )
-        run.measure("poll_interval_ms", args.poll_ms)
+        run.measure("poll_interval_ms", effective_interval_ms(args.poll_ms, args))
         run.measure("polls_used", polls)
         run.measure(
             "human_timestamp_error",
@@ -996,7 +1768,9 @@ def probe_pext(args: argparse.Namespace) -> ProbeRun:
         run.measure(
             "push_absence_note",
             "Detection is poll-bounded: no account-event push subscription exists "
-            "(draft §3.1 row 10). The bound cannot go below the poll interval.",
+            "(draft §3.1 row 10). The bound cannot go below poll_interval_ms, which "
+            "is the EFFECTIVE interval max(--poll-ms, --pace-s) — with pacing active "
+            "the pacer, not --poll-ms, is what sets the floor.",
         )
     finally:
         client.close()
@@ -1038,6 +1812,7 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
     try:
         price, side = _resting_price(client, args)
         body = client.futures_order_body(args.symbol, args.quantity, price, side)
+        run.measure("limit_price_tick", price.describe())
         placed, raw, _ms = client.submit_futures(body)
         if placed is None:
             run.error(f"submit rejected rt_cd={raw.get('rt_cd')} msg={raw.get('msg1')}")
@@ -1099,6 +1874,15 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
                 margin_pct=args.margin_pct,
                 label="submit_to_filled_plus_zero_remaining_ms",
             ),
+        )
+        run.measure("poll_granularity_ms", effective_interval_ms(args.poll_ms, args))
+        run.measure(
+            "granularity_note",
+            "Both candidates are polled observations and so carry up to one "
+            "poll_granularity_ms of additive error (runbook §8.3). That value is the "
+            "EFFECTIVE interval max(--poll-ms, --pace-s), not the requested "
+            "--poll-ms: the pacer floors polling, and it also bounds how finely a "
+            "post-terminal change can be located in time.",
         )
         run.measure("post_terminal_changes", changes)
         run.measure(
@@ -1192,9 +1976,10 @@ def probe_nmpr_ab(args: argparse.Namespace) -> ProbeRun:
             arm_a_body=body_a,
             arm_b_body=body_b,
             differing_fields=differing,
-            resting_price=price,
+            resting_price=price.wire,
             side=side,
         )
+        run.measure("limit_price_tick", price.describe())
         if differing != ["KRX_NMPR_CNDT_CD", "NMPR_TYPE_CD"]:
             raise ProbeError(
                 "A/B arms differ in fields other than the two under test: "
@@ -1305,6 +2090,21 @@ def add_order_args(parser: argparse.ArgumentParser) -> None:
         help="Pause between trials (broker courtesy).",
     )
     parser.add_argument(
+        "--pace-s",
+        type=float,
+        default=DEFAULT_PACE_S,
+        help=(
+            f"Minimum interval between ANY two broker calls (default {DEFAULT_PACE_S}s) "
+            "— quote, submit, cancel and inquire alike. The default is measured, not "
+            "chosen: P-13 bracketed this mock account's query class at clean 1.0 rps / "
+            "throttled 2.0 rps (EGW00201, artifact P-13-20260729T063120Z), so "
+            f"{DEFAULT_PACE_S}s sits just above the measured clean rate. A --poll-ms or "
+            "--gap-ms below this interval is floored to it and the probe records the "
+            "floored value. Lowering it re-opens the throttling failure that produced "
+            "P-5-20260729T235001Z (n=0, NOT_MEASURED)."
+        ),
+    )
+    parser.add_argument(
         "--visibility-timeout-s",
         type=float,
         default=30.0,
@@ -1323,6 +2123,34 @@ def add_order_args(parser: argparse.ArgumentParser) -> None:
         "--allow-fill",
         action="store_true",
         help="P-11 only: authorise a marketable order that is expected to FILL.",
+    )
+    parser.add_argument(
+        "--stock-order-type",
+        choices=tuple(_STOCK_ORD_DVSN),
+        default="market",
+        help=(
+            "P-11 only: 주문구분 for the fill order. Default 'market' "
+            f"(ORD_DVSN={_STOCK_ORD_DVSN['market']}, 시장가) because a marketable "
+            "LIMIT did not fill on 모의투자 — artifact P-11-20260730T002715Z was "
+            "accepted at a correctly tick-snapped price 10% above the touch and the "
+            "holding never moved, censoring the measurement. 'limit' "
+            f"(ORD_DVSN={_STOCK_ORD_DVSN['limit']}, 지정가) restores that shape for "
+            "comparison and is the only mode that uses --price-offset-pct or needs "
+            "a broker-reported 호가단위."
+        ),
+    )
+    parser.add_argument(
+        "--balance-timeout-s",
+        type=float,
+        default=120.0,
+        help=(
+            "P-11 only: how long to poll inquire-balance for the fill to appear. "
+            "Separate from --visibility-timeout-s because that default (30s) is "
+            "shared with probes that poll a cheap order listing, while the pacer "
+            "floors polling at --pace-s — 30s is only ~27 balance polls, short "
+            "enough to censor a slow-but-real update. Expiry stays CENSORED; it is "
+            "never converted into a measurement."
+        ),
     )
 
 

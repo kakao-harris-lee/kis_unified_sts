@@ -96,8 +96,11 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 ## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 1 = 17)
 
 공통 인자: `--asset {stock,futures}` · `--symbol` · `--quantity`(기본 1) ·
-`--price-offset-pct`(기본 10 — 미체결 유지용) · `--samples` · `--margin-pct`(기본 50) ·
-`--out-dir` · `--note`. 전수 목록은 `run.py ... --help`.
+`--price-offset-pct`(기본 10 — 미체결 유지용, **지정가 경로 전용**) · `--samples` ·
+`--margin-pct`(기본 50) · `--out-dir` · `--note`. 전수 목록은 `run.py ... --help`.
+
+P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) ·
+`--balance-timeout-s`(기본 **120**, 공유 `--visibility-timeout-s` 30초와 별개).
 
 | ID | 차원 | 종류 | 환경 | 명령 | 소요 | 위험 | 주문 발생 |
 |---|---|---|---|---|---|---|---|
@@ -106,7 +109,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | **P-5** | OPEN_ORDER_QUERY | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-5 --confirm` | ~20 min at N=100 | HIGH | 예 |
 | **P-5b** | OPEN_ORDER_QUERY | QUERY | MOCK_VTS | `python -m tools.broker_probes.run P-5b --confirm` | ~2 min | LOW | 아니오 |
 | **P-8** | REPLACE_OR_AMEND | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-8 --confirm` | ~10 min | HIGH | 예 |
-| **P-11** | POSITIONS_BALANCES_MARGIN | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-11 --confirm` | ~15 min | HIGH | 예 |
+| **P-11** | POSITIONS_BALANCES_MARGIN | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-11 --asset stock --symbol 005930 --confirm --allow-fill` | ~15 min | HIGH | 예 |
 | **P-13** | RATE_LIMITS | QUERY | MOCK_VTS | `python -m tools.broker_probes.run P-13 --confirm` | ~10 min | MEDIUM | 아니오 |
 | **P-14** | SESSION_CONNECTION_MODEL | SESSION | MOCK_VTS | `python -m tools.broker_probes.run P-14 --confirm` | ~10 min | HIGH | 아니오 |
 | **P-15** | CREDENTIALS_AUTHORIZATION | AUTH | MOCK_VTS | `python -m tools.broker_probes.run P-15 --confirm` | ~3 min | HIGH | 아니오 |
@@ -133,7 +136,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | P-5 | 주문 수락(t0) → 조회 가시(t1) 수렴 지연. `B_broker_query_consistency`의 유일한 원천 |
 | P-5b | 연속조회 키가 실제로 전진하는가 (Q-OOQ-1 — 런타임은 항상 1페이지만 읽는다) |
 | P-8 | `RVSE_CNCL_DVSN_CD="01"` 정정의 신/구 ODNO 관계와 **중첩 구간**(비원자성 = 보호 중첩 위험) |
-| P-11 | 체결 → 잔고 반영 지연. **주식 전용**(모의는 선물 잔고 미제공 — `client.py:1026` NOTE + 가드 `:1031-1033`) |
+| P-11 | 체결 → 잔고 반영 지연. **주식 전용**(모의는 선물 잔고 미제공 — `client.py:1026` NOTE + 가드 `:1031-1033`). **기본 시장가**(`--stock-order-type market`, `ORD_DVSN=01`) — 지정가는 모의에서 체결되지 않았다(§5.2 주석) |
 | P-13 | 최초 스로틀 지점과 회복 시간. repo의 5/20 rps는 **자가 상한**이지 broker 한도가 아니다 |
 | P-14 | 동시 세션 수·구독 상한. `streaming.yaml:50`의 "KIS 제한: 41" 주석을 사실화하거나 반증 |
 | P-15 | 1분 내 토큰 재발급 2회 → 거부 코드/메시지 **축자** 확정 |
@@ -256,7 +259,24 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | 9 | **P-8** | 정정. 신/구 ODNO 2건이 동시 생존할 수 있음 | P-5 선행 |
 | 10 | **P-FQP** | 취소 후 창 관측. 가장 김 | P-5 선행 |
 | 11 | **P-EXT** | 운영자 수동 개입 필요. 반복 ≥5회 | 운영자 HTS/MTS 대기 |
-| 12 | **P-11** | **의도적 체결**. 포지션이 남는다 — 마지막에 배치 | `--asset stock` · `--allow-fill` |
+| 12 | **P-11** | **의도적 체결**. 포지션이 남는다 — 마지막에 배치 | `--asset stock` · `--allow-fill` (주문구분은 기본 **시장가**) |
+
+> **P-11은 시장가로 낸다** (`--stock-order-type` 기본값 `market`,
+> `ORD_DVSN=01` 시장가 · `ORD_UNPR=0`). 지정가는 **모의투자에서 체결되지 않았다**:
+> 아티팩트 `P-11-20260730T002715Z`는 터치(211,000) 대비 +10%를 호가단위로 정확히
+> snap 한 지정가(`ORD_DVSN=00`, `ORD_UNPR=232500`)로 **접수까지 성공**했으나
+> (`rt_cd=0`, ODNO `0000008686`) 잔고는 30초 창 안에서 움직이지 않았고, 약 18분 뒤
+> 장외 재조회에서도 기준 보유량 그대로였다. 즉 CENSORED의 원인은 잔고 지연이 아니라
+> **미체결**이었고, P-11은 실제 모의 주문 1건을 쓰고 측정값을 얻지 못했다.
+> `--stock-order-type limit`으로 옛 형태를 재현할 수 있다(비교용).
+>
+> 시장가 경로는 시세 조회를 하지 않으므로 호가단위에 **의존하지 않는다**(§5.5) —
+> `--price-offset-pct`와 snap은 지정가 경로 전용이다. 잔고 폴링 창은
+> `--balance-timeout-s`(기본 120초)이며, 만료는 여전히 **CENSORED**로 남는다.
+> 관측되지 않은 반영을 측정값으로 바꾸지 않는다. 어느 경우였는지는 아티팩트
+> `measurements.fill_case`가 명시한다 — 체결+반영(`FILLED_AND_REFLECTED`)이거나,
+> 구분 불가(`UNDETERMINED_NON_FILL_OR_LAG_BEYOND_WINDOW`, 미체결과 창 초과 지연이
+> 잔고만으로는 동일하게 보임)이며 후자에는 무엇이 있으면 판별되는지가 함께 적힌다.
 
 ### 5.3 rate-limit 프로브(P-13) 특칙
 
@@ -270,6 +290,33 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
   발생시키므로 **별도로 리뷰된 전용 실행**이 필요하다 (HIGH risk)
 - 보고 규율: `highest_clean_rps`는 broker 한도의 **하한**, `throttled_at_rps`는
   **상한**이다. 점추정이 아니라 **구간**으로 기록한다
+
+### 5.3.1 주문 계열 프로브의 호출 간격 강제 (`--pace-s`)
+
+P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**, `EGW00201`,
+아티팩트 `P-13-20260729T063120Z`)은 주문 계열 프로브에도 그대로 적용된다. 이 계좌에서는
+호가 조회 직후 주문 전송처럼 **두 호출을 연달아 보내는 것만으로 이미 clean 구간을 벗어난다.**
+
+- **강제 지점**: `MockTradingClient`의 단일 전송 지점에서 `--pace-s`(기본 **1.1초**)
+  간격을 **모든 호출 종류**(호가·주문·취소·정정·조회)에 적용한다. 기본값 1.1초는 추정이
+  아니라 P-13이 측정한 clean 상한(1.0 rps) 바로 위 값이다.
+- **왜 "예의"가 아니라 필수인가**: 한도를 넘긴 주문은 측정값을 흔드는 게 아니라
+  **측정을 무효화한다.** 미적용 상태로 실행된 `P-5-20260729T235001Z`는 trial 0에서
+  `초당 거래건수를 초과하였습니다`로 거부되어 `n=0` · `NOT_MEASURED`로 끝났다.
+- **`--poll-ms`는 조용히 올림된다**: 페이싱 간격보다 작은 `--poll-ms`·`--gap-ms`는
+  실제로 일어나지 않는다. 따라서 아티팩트의 `poll_granularity_ms`·`poll_interval_ms`·
+  `gap_ms`는 요청값이 아니라 **실효값** `max(--poll-ms, --pace-s)`로 기록된다. 요청값을
+  기록하면 §8.3의 가산 오차를 과소평가하게 되고, 그 방향의 오류가 곧 **fail-open**이다.
+- **레이턴시 창은 오염되지 않는다**: 페이싱 sleep은 전송 **직전**에 끝나고 t0은 그
+  이후에 찍힌다(`MockTradingClient.last_send_instant()`). P-5/P-8/P-11/P-FQP의 t0은
+  모두 이 값을 쓰므로 페이싱 대기가 broker 레이턴시로 계상되지 않는다. 호출 앞에서
+  `time.monotonic()`을 찍는 형태로 되돌리면 표본마다 약 `--pace-s`만큼 부풀려진다.
+- **그래도 스로틀이 보이면 보고한다**: 페이싱을 적용한 실행에서 여전히
+  `초당 거래건수를 초과` 또는 `EGW00201`이 나오면 **재시도하지 말고** §5.5에 따라
+  보고한다. 측정된 한도와 관측이 불일치한다는 뜻이므로, 한도 가정 자체를 다시 세워야 한다
+  (자동 재시도는 P-13 특칙과 동일하게 **없다**).
+- **`--pace-s`를 낮추는 것**은 위 실패를 다시 여는 행위다. P-2에서 `--pace-s`보다 짧은
+  gap을 시험해야 할 때만 의도적으로 내리고, 그 사실을 아티팩트 `note`에 남긴다.
 
 ### 5.4 실전 조회 절차 (N-16 · N-18) — 분리 실행
 
@@ -287,6 +334,21 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 - **미체결 잔여**: 프로브는 `finally`에서 자기가 만든 주문을 취소하고, 실패하면
   ODNO를 찍고 `errors[]`에 남긴다. `CLEANUP FAILED`가 보이면 **HTS/MTS로 수동 취소**
 - **P-11 포지션 잔존**: 프로브는 청산하지 않는다. 모의 계좌에서 수동 청산
+- **`호가단위 오류`** (`모의투자 주문처리가 안되었습니다(호가단위 오류)`, `rt_cd=1`):
+  지정가가 해당 종목의 호가단위 배수가 아니라는 뜻 — 주문이 아예 접수되지 않으므로
+  그 trial은 열화가 아니라 **표본 0**이다(`P-5-20260730T000608Z.json`). 프로브의
+  지정가는 선물은 `config/execution.yaml::futures_contract_spec`의
+  `tick_size_points`(심볼 prefix로 해석: `A01`/`101`→full, `A05`→mini), 주식은
+  broker가 응답한 호가단위(TR `FHKST01010100`의 `output.aspr_unit`)로 snap 되며,
+  snap 방향은 항상 **터치 반대쪽**(resting은 미체결 유지, P-11은 체결 유지)이다.
+  사용한 tick과 출처는 아티팩트 `measurements.limit_price_tick`에 남는다.
+  이 거부가 다시 보이면 **가격을 손으로 조정해 재시도하지 말고 그대로 보고한다** —
+  tick 출처(YAML 등록 누락 / broker 미응답)가 원인이므로 손댄 가격은 증거를 오염시킨다.
+  주식에서 호가단위를 확정할 수 없으면 프로브는 `ProbeError`로 멈춘다. 단 **P-11의
+  기본 경로(시장가)는 지정가를 보내지 않으므로 호가단위를 조회조차 하지 않는다** —
+  이 거부에 걸리는 것은 `--stock-order-type limit`뿐이다. 시장가 실행의
+  `measurements.limit_price_tick`은 `applicable: false`로 남아 tick 기계를 의도적으로
+  우회했음을 기록한다(키를 비우지 않는다)
 - **`SafetyViolation`**: 아티팩트를 쓰지 않고 exit 3. 관측이 일어나지 않았으므로
   기록할 것이 없다는 뜻이다 — 재시도하지 말고 **원인을 먼저 밝힌다**
 - **exit code**: 0 정상 / 2 미지 프로브 / 3 안전 위반 / 4 선행조건 미충족 /
@@ -421,7 +483,9 @@ P-5는 N≥100, P-8은 N≥5, P-EXT는 ≥5 trial을 권고한다.
 ### 8.3 가산 오차
 
 폴링 기반 관측은 표본마다 최대 1 폴 간격의 오차를 갖는다. 승인 bound는
-`max_observed + poll_ms`를 **넘어야** 하며 `max_observed`만으로는 부족하다.
+`max_observed + poll_granularity_ms`를 **넘어야** 하며 `max_observed`만으로는 부족하다.
+여기서 `poll_granularity_ms`는 아티팩트에 기록된 **실효** 폴 간격
+`max(--poll-ms, --pace-s)`이다 (§5.3.1) — 요청한 `--poll-ms`가 아니다.
 P-16의 HTTP `Date` 헤더는 1초 해상도이므로 |skew| < 1000 ms는 "헤더 해상도 이내"이지
 측정값이 아니다. P-EXT의 t0은 사람의 키 입력이므로 수백 ms 오차를 마진에 접는다.
 

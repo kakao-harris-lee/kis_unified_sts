@@ -1,0 +1,74 @@
+{
+  "artifact_id": "P-5-20260729T235001Z",
+  "probe_id": "P-5",
+  "title": "OPEN_ORDER_QUERY — accept→visible convergence latency",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-29T23:50:01.019519+00:00",
+  "finished_at_utc": "2026-07-29T23:50:01.808738+00:00",
+  "duration_s": 0.789,
+  "repo_commit": "d149881a",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-5",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A01609",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-30. Symbol A01609 resolved via resolve_futures_instrument_from_env(FUTURES_TRADING_PRODUCT=kospi200, FUTURES_STRATEGY_SYMBOL empty) -> get_front_month_code(kospi200, legacy=True) = Sep-2026 front month (expiry 2026-09-10); same resolver path the paper futures trader uses (its logs show A01609). Mock futures creds sourced from .env (.env.paper KIS_FUTURES_* is now a REAL key as of 2026-07-29 night). CONFOUND DISCLOSED: kis_paper-trader-futures and kis_paper-scheduler were RUNNING - docker stop was denied by the host permission classifier. Runbook 5.2 prescribes no worker-stop prereq for the order family (that prereq covers P-13/P-14/P-15/N-15), and the trader runs VirtualBroker (FUTURES_EXECUTOR_TRADING_MODE=PAPER, FUTURES_ORDER_ROUTER_MODE=paper) so it emits no broker-side orders; any query-rate contention would surface as EGW00201.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "B_broker_query_consistency_candidate": {
+      "label": "accept_to_visible_ms",
+      "n": 0,
+      "insufficient_sample": true,
+      "recommended_bound_ms": null,
+      "statistic": "max x (1 + margin); no samples collected"
+    },
+    "poll_granularity_ms": 200.0,
+    "granularity_note": "Each sample carries up to one poll interval of additive error. The approved bound must exceed max_observed + poll_ms, not just max_observed.",
+    "censored_trials": 0
+  },
+  "observations": [],
+  "skips": [],
+  "errors": [
+    "trial 0: submit rejected rt_cd=1 msg=초당 거래건수를 초과하였습니다."
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency"
+    ],
+    "instance_fields": [
+      "capabilities.open_order_query.eventual_consistency_bound_ms",
+      "capabilities.open_order_query.status"
+    ],
+    "capability_dimension": "OPEN_ORDER_QUERY"
+  }
+}
