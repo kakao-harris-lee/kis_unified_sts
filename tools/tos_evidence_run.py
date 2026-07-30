@@ -1335,7 +1335,10 @@ def build_baseline(
             "completeness": completeness,
         },
         "evidence_register_row": {
-            "source": REGISTER_CSV_PATH,
+            # the register actually read by THIS run (``--register-csv``; default
+            # REGISTER_CSV_PATH) — never a constant, so the recorded provenance
+            # cannot claim a file the run did not read
+            "source": args.register_csv,
             "evidence_id": register_row.get("evidence_id"),
             "domain": register_row.get("domain"),
             "title": register_row.get("title"),

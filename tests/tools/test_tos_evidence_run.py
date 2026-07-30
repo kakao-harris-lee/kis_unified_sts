@@ -45,8 +45,108 @@ def _load_harness():
 ev = _load_harness()
 
 
+# --------------------------------------------------------------------------
+# hermetic Evidence Register
+#
+# The harness reads the row's ``status`` out of the Evidence Register and records
+# it verbatim (``register_status_at_run_time``) — that reading is the honest part
+# and is NOT under test here. What must not leak into a self-test is the *state*
+# of the repo's register: a real row legitimately moves (NOT_IMPLEMENTED -> READY
+# -> PASS) whenever evidence lands, which would break any expectation pinned to a
+# literal. So the self-tests inject their own frozen two-row register via the
+# harness's existing ``--register-csv`` argument and assert against that.
+#
+# The column list below is a drift anchor: ``test_hermetic_register_columns_match
+# _the_repo_register`` fails if the real register's header changes shape.
+# --------------------------------------------------------------------------
+
+_REGISTER_COLUMNS = (
+    "evidence_id",
+    "domain",
+    "title",
+    "primary_adr",
+    "criticality",
+    "minimum_evidence_level",
+    "status",
+    "implementation_owner",
+    "evidence_owner",
+    "independent_reviewer",
+    "verification_profile_version",
+    "broker_capability_profile_version",
+    "latest_run_id",
+    "latest_result_date",
+    "evidence_location",
+    "notes",
+)
+
+#: The frozen rows the self-tests run against. Only the ids the self-tests use are
+#: present, so an id outside this set is "unregistered" exactly as in the real
+#: register. ``status`` is pinned to READY: the harness must copy it through.
+_REGISTER_ROWS = (
+    {
+        "evidence_id": "STATE-EV-001",
+        "domain": "Orthogonal State",
+        "title": "Orthogonal Composite Persistence",
+        "primary_adr": "ADR-002-005",
+        "criticality": "Critical",
+        "minimum_evidence_level": "EV-L1/2",
+        "status": "READY",
+        "implementation_owner": "ai-impl(claude-orchestrated)",
+        "evidence_owner": "operator",
+        "independent_reviewer": "ai-review(decorrelated)+operator-countersign",
+        "verification_profile_version": "2.1-PROPOSED",
+        "broker_capability_profile_version": "N/A",
+    },
+    {
+        "evidence_id": "SPG-EV-002",
+        "domain": "Safety Profile Governance",
+        "title": "Semantic Units, Numeric, and Cross-Field Validation",
+        "primary_adr": "ADR-002-014",
+        "criticality": "Critical",
+        "minimum_evidence_level": "EV-L1/2",
+        "status": "READY",
+        "implementation_owner": "ai-impl(claude-orchestrated)",
+        "evidence_owner": "operator",
+        "independent_reviewer": "ai-review(decorrelated)+operator-countersign",
+        "verification_profile_version": "2.1-PROPOSED",
+        "broker_capability_profile_version": "N/A",
+    },
+)
+
+#: What ``_REGISTER_ROWS`` pins the status column to.
+_HERMETIC_REGISTER_STATUS = "READY"
+
+
+def _hermetic_register(
+    evidence_root: Path,
+    *,
+    overrides: dict[str, str] | None = None,
+    filename: str = "EVIDENCE-REGISTER-002.csv",
+) -> Path:
+    """Write the frozen mini register beside ``evidence_root`` and return its path.
+
+    Kept out of the evidence root itself so it never appears inside a run package.
+    Writing is idempotent: repeated calls for the same tmp dir rewrite the same
+    bytes. ``overrides`` (applied to every row, under its own ``filename``) lets a
+    test pin a column to a value the real register cannot hold, which is how the
+    injection itself is proved rather than assumed.
+    """
+    csv_path = evidence_root.parent / "register-fixture" / filename
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(_REGISTER_COLUMNS))
+        writer.writeheader()
+        for row in _REGISTER_ROWS:
+            out = {col: row.get(col, "") for col in _REGISTER_COLUMNS}
+            out.update(overrides or {})
+            writer.writerow(out)
+    return csv_path
+
+
 def _argv(evidence_root: Path, *, evidence_id: str = "STATE-EV-001") -> list[str]:
     return [
+        "--register-csv",
+        str(_hermetic_register(evidence_root)),
         "--evidence-id",
         evidence_id,
         "--node",
@@ -391,6 +491,56 @@ def test_unregistered_evidence_id_is_refused(tmp_path) -> None:
     assert not (tmp_path / "e").exists(), "no package for an unregistered item"
 
 
+# --------------------------------------------------------------------------
+# the injected register (hermeticity of the self-tests themselves)
+# --------------------------------------------------------------------------
+
+
+def test_the_injected_register_is_the_one_read_and_recorded(tmp_path: Path) -> None:
+    """``--register-csv`` is honoured, and the baseline names the file it read.
+
+    This is what makes the register-derived expectations in this module hermetic:
+    the status the harness copies through comes from the injected file, and the
+    recorded provenance is that file — not the default constant.
+    """
+    # a title the repo register cannot hold: if the harness silently read its
+    # default path instead, the recorded row would carry the real title
+    marker = "harness self-test fixture row (never the repo register's title)"
+    injected = _hermetic_register(
+        tmp_path / "e",
+        overrides={"title": marker},
+        filename="EVIDENCE-REGISTER-002-injection-probe.csv",
+    )
+    root = tmp_path / "e"
+    assert ev.main([*_argv(root), "--register-csv", str(injected)]) == 0
+    run = next((root / "STATE-EV-001").iterdir())
+    baseline = yaml.safe_load((run / "baseline.yaml").read_text(encoding="utf-8"))
+    manifest = yaml.safe_load((run / "manifest.yaml").read_text(encoding="utf-8"))
+
+    row = baseline["evidence_register_row"]
+    assert row["source"] == str(injected)
+    assert row["title"] == marker, "the harness read a register it was not given"
+    assert row["status_at_run_time"] == _HERMETIC_REGISTER_STATUS
+    assert manifest["claim"]["register_status_at_run_time"] == (
+        _HERMETIC_REGISTER_STATUS
+    )
+    # the default is unchanged: no injection means the repo register
+    defaults = ev.build_parser().parse_args(
+        ["--evidence-id", "STATE-EV-001", "--node", _SMOKE_NODE]
+    )
+    assert defaults.register_csv == ev.REGISTER_CSV_PATH
+
+
+def test_hermetic_register_columns_match_the_repo_register() -> None:
+    """Drift anchor: the fixture must keep the real register's column shape."""
+    register = _REPO_ROOT / ev.REGISTER_CSV_PATH
+    if not register.is_file():
+        pytest.skip("evidence register not present")
+    with open(register, newline="", encoding="utf-8-sig") as fh:
+        header = next(csv.reader(fh))
+    assert tuple(header) == _REGISTER_COLUMNS
+
+
 def test_missing_test_node_is_refused(tmp_path) -> None:
     rc = ev.main(
         [
@@ -717,6 +867,8 @@ _L2_CATALOG_SIZE = 12
 
 def _l2_argv(evidence_root: Path, *, prior: str, **overrides) -> list[str]:
     argv = [
+        "--register-csv",
+        str(_hermetic_register(evidence_root)),
         "--evidence-id",
         "SPG-EV-002",
         "--node",
@@ -766,6 +918,8 @@ def l2_package(tmp_path_factory, module_monkeypatch):
 
     rc_l1 = ev.main(
         [
+            "--register-csv",
+            str(_hermetic_register(root)),
             "--evidence-id",
             "SPG-EV-002",
             "--node",
@@ -818,7 +972,9 @@ def test_l2_manifest_is_v2_and_a_strict_superset_of_v1(
     assert (
         l2["claim"]["verification_profile_version"] == ev.VERIFICATION_PROFILE_VERSION
     )
-    assert l2["claim"]["register_status_at_run_time"] == "READY"
+    # copied through from the INJECTED register (see ``_hermetic_register``), so a
+    # real row moving READY -> PASS cannot break this expectation
+    assert l2["claim"]["register_status_at_run_time"] == _HERMETIC_REGISTER_STATUS
     assert l2["claim"]["note"]
     assert l2["claim"]["closes_evidence_item"] is False
     assert l2["claim"]["register_status_moved_by_this_run"] is False
