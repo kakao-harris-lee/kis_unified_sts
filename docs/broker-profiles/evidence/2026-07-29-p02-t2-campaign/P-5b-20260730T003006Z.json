@@ -1,0 +1,82 @@
+{
+  "artifact_id": "P-5b-20260730T003006Z",
+  "probe_id": "P-5b",
+  "title": "OPEN_ORDER_QUERY — continuation-key pagination behaviour",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-30T00:30:06.624860+00:00",
+  "finished_at_utc": "2026-07-30T00:30:07.820981+00:00",
+  "duration_s": 1.196,
+  "repo_commit": "f1a6121a",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-5b",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A01609",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-30. QUERY-only leg - runs without funding, unlike its order-family siblings. IMPORTANT INTERPRETATION LIMIT: the mock futures account 60042851-03 could place no orders at all this session (모의투자 주문가능금액이 부족합니다 for both A01609 full and A05608 mini), so there is no order history to paginate. Any absence of a page boundary here is a consequence of the empty book, NOT an observation about the broker continuation-key semantics (runbook 8.4). What this run does establish is whether the inquire-ccnl path answers at all on this account under pacing (aba51f2a).",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "pages_walked": 1,
+    "page_size_observed": 0,
+    "continuation_supported": false,
+    "completeness_note": "If total rows across pages exceeds page 1, the runtime's single-page read (executor.py:562-563, 575-579) is structurally incomplete and open_order_query.completeness must NOT be declared complete."
+  },
+  "observations": [
+    {
+      "page": 0,
+      "rows": 0,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": false,
+      "first_odno": "",
+      "last_odno": ""
+    }
+  ],
+  "skips": [
+    {
+      "what": "pagination determination",
+      "reason": "no rows in the query window — inconclusive, not 'single page'. Re-run after P-5 has generated history."
+    }
+  ],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency"
+    ],
+    "instance_fields": [
+      "capabilities.open_order_query.completeness",
+      "capabilities.open_order_query.pagination"
+    ],
+    "capability_dimension": "OPEN_ORDER_QUERY"
+  }
+}

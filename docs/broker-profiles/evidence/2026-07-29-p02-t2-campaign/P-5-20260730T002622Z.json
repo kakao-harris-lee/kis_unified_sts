@@ -1,0 +1,83 @@
+{
+  "artifact_id": "P-5-20260730T002622Z",
+  "probe_id": "P-5",
+  "title": "OPEN_ORDER_QUERY — accept→visible convergence latency",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-30T00:26:22.529604+00:00",
+  "finished_at_utc": "2026-07-30T00:26:24.080977+00:00",
+  "duration_s": 1.551,
+  "repo_commit": "f1a6121a",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-5",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05608",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 1,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "FUNDING SMOKE TEST (1 trial, not for citation): A01609 full contract was rejected with 모의투자 주문가능금액이 부족합니다 (P-5-20260730T002503Z). Testing whether the mini front-month A05608 (multiplier 50,000 vs 250,000) is fundable on this mock account before spending an N=100 run.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 1100.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "wire_value": "801.46",
+      "unrounded": 801.468,
+      "tick_size": "0.02",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "B_broker_query_consistency_candidate": {
+      "label": "accept_to_visible_ms",
+      "n": 0,
+      "insufficient_sample": true,
+      "recommended_bound_ms": null,
+      "statistic": "max x (1 + margin); no samples collected"
+    },
+    "poll_granularity_ms": 1100.0,
+    "granularity_note": "Each sample carries up to one poll interval of additive error. The approved bound must exceed max_observed + poll_granularity_ms, not just max_observed. poll_granularity_ms is the EFFECTIVE interval max(--poll-ms, --pace-s): the pacer floors polling, so a smaller --poll-ms did not happen and recording it would understate the additive error — and therefore the bound (runbook §8.3).",
+    "censored_trials": 0
+  },
+  "observations": [],
+  "skips": [],
+  "errors": [
+    "trial 0: submit rejected rt_cd=1 msg=모의투자 주문가능금액이 부족합니다."
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency"
+    ],
+    "instance_fields": [
+      "capabilities.open_order_query.eventual_consistency_bound_ms",
+      "capabilities.open_order_query.status"
+    ],
+    "capability_dimension": "OPEN_ORDER_QUERY"
+  }
+}
