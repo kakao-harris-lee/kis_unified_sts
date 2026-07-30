@@ -13,6 +13,10 @@ Order shape and quantity discipline
 * Limit prices are placed ``--price-offset-pct`` AWAY from the touch so the order
   rests unfilled and can be cancelled. P-11 is the single exception: it needs a
   fill and demands an extra ``--allow-fill`` flag.
+* Every limit price is snapped to a valid tick before it goes on the wire — see
+  :func:`snap_to_tick`. An off-tick price is not a degraded trial, it is no trial
+  at all: artifact ``P-5-20260730T000608Z.json`` lost trial 0 to
+  ``모의투자 주문처리가 안되었습니다(호가단위 오류)`` and reported ``n=0``.
 * Every probe cancels what it created in a ``finally`` block and shouts (with the
   ODNO) if a cancel fails, so an operator can clean up by hand.
 
@@ -47,6 +51,8 @@ import argparse
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -78,6 +84,23 @@ _STOCK_ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
 _STOCK_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 _STOCK_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
+
+#: Contract-spec SoT for futures tick sizes. The block is annotated "모든 계약
+#: 상수는 여기서 로드 — 코드에 하드코딩 금지", so no tick literal appears in this
+#: module; :func:`_futures_tick` reads it through the registry instead.
+_EXECUTION_CONFIG = Path(__file__).resolve().parents[2] / "config" / "execution.yaml"
+
+#: Broker-reported 호가단위 in the domestic-stock current-price response.
+#:
+#: TR ``FHKST01010100`` (``v1_국내주식-008``,
+#: ``/uapi/domestic-stock/v1/quotations/inquire-price``), field ``output.aspr_unit``
+#: — official wrapper ``examples_llm/domestic_stock/inquire_price/
+#: chk_inquire_price.py``, ``COLUMN_MAPPING``: ``'aspr_unit': '호가단위'``.
+#:
+#: This is the only stock tick source the probe will accept. The repo carries no
+#: KRX price-band table and this module must not invent one, so if the broker does
+#: not report a unit the stock probe fails loudly (see :func:`_stock_tick`).
+_STOCK_QUOTE_UNIT_FIELD = "aspr_unit"
 
 #: The two [필수] futures quote fields P-NMPR puts under test, in the order the
 #: arm tuples below use.
@@ -159,6 +182,219 @@ class Placed:
     #: Pacer release instant of the submit — post-sleep, immediately pre-wire.
     sent_at_monotonic: float
     body: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Tick discipline — a limit price the broker will accept
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Tick:
+    """A valid price increment plus the evidence that established it.
+
+    ``source`` is carried into every artifact so a reviewer can see where the
+    number came from without re-deriving it. Neither field is ever a literal in
+    this module: a futures tick comes from ``config/execution.yaml``, a stock tick
+    from the broker's own quote response.
+
+    Attributes:
+        size: The minimum price increment, as an exact :class:`~decimal.Decimal`.
+        source: Human-readable provenance, recorded in the artifact.
+    """
+
+    size: Decimal
+    source: str
+
+
+@dataclass(frozen=True)
+class TickPrice:
+    """A limit price snapped to a broker-valid tick.
+
+    Attributes:
+        value: The snapped price as a float — an exact multiple of ``tick.size``.
+        wire: The exact string the request body carries. Built from the snapped
+            Decimal and never from float arithmetic, so a ``0.05`` multiple
+            cannot reach the broker as ``372.15000000000003``.
+        tick: The increment used, with its provenance.
+        unrounded: The price before snapping, for the artifact record.
+        rounding: ``"floor"`` or ``"ceiling"`` — which way the snap moved.
+    """
+
+    value: float
+    wire: str
+    tick: Tick
+    unrounded: float
+    rounding: str
+
+    def describe(self) -> dict[str, Any]:
+        """The artifact record: the price, the tick, and where the tick came from."""
+        return {
+            "wire_value": self.wire,
+            "unrounded": self.unrounded,
+            "tick_size": str(self.tick.size),
+            "tick_source": self.tick.source,
+            "rounding": self.rounding,
+            "rounding_rationale": (
+                "away from the touch — a resting probe depends on the order NOT "
+                "filling, so a snap must never move the price toward the touch; "
+                "P-11's marketable order is the mirror case and snaps further in"
+            ),
+        }
+
+
+def _tick_wire(value: Decimal) -> str:
+    """A snapped price as the clean decimal string a request body will carry.
+
+    ``normalize()`` drops the trailing zero a ``0.05`` snap leaves behind
+    (``372.10`` -> ``372.1``, the same shape as the ``str(price)`` the runtime
+    sends at ``executor.py:471``) but can flip an integral value into scientific
+    notation (``70100`` -> ``7.01E+4``), which no broker parser would take. The
+    format is therefore forced to fixed-point.
+    """
+    return format(value.normalize(), "f")
+
+
+def snap_to_tick(price: float, tick: Tick, *, side: str, marketable: bool) -> TickPrice:
+    """Snap ``price`` to a multiple of ``tick``, always AWAY from the touch.
+
+    The direction is derived from ``side``/``marketable`` rather than passed in by
+    the caller, because getting it backwards is the one failure here with a
+    trading consequence. The resting probes (P-2, P-5, P-8, P-FQP, P-NMPR) depend
+    on the order sitting unfilled, and a snap toward the touch narrows the
+    ``--price-offset-pct`` gap that keeps it there. P-11 is the mirror case: it is
+    deliberately marketable and must not be snapped back out of the market.
+
+    ====  ==========  ========  ==================================
+    side  marketable  rounding  rests / crosses
+    ====  ==========  ========  ==================================
+    BUY   False       floor     below the touch, moved lower
+    BUY   True        ceiling   above the touch, moved higher
+    SELL  False       ceiling   above the touch, moved higher
+    SELL  True        floor     below the touch, moved lower
+    ====  ==========  ========  ==================================
+
+    Args:
+        price: The unrounded, probe-computed limit price.
+        tick: The increment to snap to, with its provenance.
+        side: ``"BUY"`` or ``"SELL"``.
+        marketable: True when the price is deliberately across the touch.
+
+    Returns:
+        The snapped price, its wire string, and the tick provenance.
+
+    Raises:
+        ProbeError: unknown ``side``, a non-positive tick, a snapped price that is
+            not a positive multiple of the tick, or a wire string that does not
+            represent the snapped price exactly.
+    """
+    if side not in ("BUY", "SELL"):
+        raise ProbeError(f"unknown order side {side!r} (expected 'BUY' or 'SELL')")
+    if tick.size <= 0:
+        raise ProbeError(
+            f"tick size must be positive, got {tick.size} from {tick.source}"
+        )
+    # A resting BUY sits below the touch and a resting SELL above it; a marketable
+    # order sits on the opposite side of each. Away-from-touch is therefore "down"
+    # for exactly the two combinations where those two facts agree.
+    round_down = (side == "BUY") != marketable
+    # Integer-multiple arithmetic in Decimal: `multiple * tick` is exact, whereas
+    # the float form of the same product yields 7443 * 0.05 == 372.15000000000003.
+    multiple = (Decimal(str(price)) / tick.size).to_integral_value(
+        rounding=ROUND_FLOOR if round_down else ROUND_CEILING
+    )
+    snapped = multiple * tick.size
+    if snapped <= 0 or snapped % tick.size != 0:
+        raise ProbeError(
+            f"snapped price {snapped} is not a positive multiple of tick "
+            f"{tick.size} ({tick.source}); refusing to send it"
+        )
+    wire = _tick_wire(snapped)
+    if Decimal(wire) != snapped:
+        raise ProbeError(
+            f"wire string {wire!r} does not represent snapped price {snapped} "
+            "exactly; refusing to send a float artifact to the broker"
+        )
+    return TickPrice(
+        value=float(snapped),
+        wire=wire,
+        tick=tick,
+        unrounded=price,
+        rounding="floor" if round_down else "ceiling",
+    )
+
+
+def _futures_tick(symbol: str) -> Tick:
+    """The tick for a futures ``symbol``, from the repo's contract-spec registry.
+
+    ``resolve_contract_spec`` maps by ``symbol_prefix``, so the value follows the
+    ``--symbol`` actually used (``A01``/``101`` -> full contract, ``A05`` -> mini)
+    rather than being fixed to one product.
+
+    Raises:
+        ProbeError: no registered spec matches ``symbol``.
+    """
+    from shared.instruments.contract_spec import (
+        ContractSpecRegistry,
+        resolve_contract_spec,
+    )
+
+    registry = ContractSpecRegistry.from_yaml(str(_EXECUTION_CONFIG))
+    try:
+        spec = resolve_contract_spec(symbol, registry)
+    except ValueError as exc:
+        raise ProbeError(
+            f"no contract spec for --symbol {symbol}: {exc}. Register the prefix in "
+            "config/execution.yaml::futures_contract_spec rather than hardcoding a "
+            "tick in the probe."
+        ) from exc
+    return Tick(
+        size=Decimal(str(spec.tick_size_points)),
+        source=(
+            f"config/execution.yaml::futures_contract_spec.{spec.name}"
+            f".tick_size_points (matched symbol_prefix {spec.symbol_prefix!r})"
+        ),
+    )
+
+
+def _stock_tick(output: dict[str, Any], symbol: str) -> Tick:
+    """The 호가단위 the broker itself reported for a stock ``symbol``.
+
+    Read from the quote response the probe already made rather than from a table:
+    the repo holds no KRX price band and inventing one would either waste a rate
+    slot on a 호가단위 오류 rejection or, worse, be silently accepted at the wrong
+    granularity for some other price band.
+
+    The unit must be a whole number of won because the runtime's stock wire field
+    is int-truncated (``ORD_UNPR = str(int(price))``, quirk Q-WIRE-1) — a
+    fractional unit could not survive that, so it is refused rather than truncated.
+
+    Raises:
+        ProbeError: the field is absent, non-numeric, non-positive, or fractional,
+            i.e. no tick unit could be established.
+    """
+    raw = output.get(_STOCK_QUOTE_UNIT_FIELD)
+    try:
+        size = Decimal(str(raw).strip())
+    except (ArithmeticError, ValueError):
+        size = Decimal(0)
+    if size <= 0 or size != size.to_integral_value():
+        raise ProbeError(
+            f"could not establish a 호가단위 (quote unit) for {symbol}: TR "
+            f"FHKST01010100 returned {_STOCK_QUOTE_UNIT_FIELD}={raw!r}. This repo "
+            "holds no KRX price-band table and will not guess one, and ORD_UNPR is "
+            "int-truncated on the wire (Q-WIRE-1) so a fractional unit is "
+            "unrepresentable. Report this as a BLOCKED precondition — do not "
+            "re-run with a hand-picked price."
+        )
+    return Tick(
+        size=size,
+        source=(
+            f"broker-reported 호가단위: TR FHKST01010100 (v1_국내주식-008, "
+            f"/uapi/domestic-stock/v1/quotations/inquire-price) "
+            f"output.{_STOCK_QUOTE_UNIT_FIELD}={raw!r}"
+        ),
+    )
 
 
 class MockTradingClient:
@@ -309,7 +545,16 @@ class MockTradingClient:
             f"could not read a futures price for {symbol}: rt_cd={data.get('rt_cd')}"
         )
 
-    def stock_last_price(self, symbol: str) -> float:
+    def stock_quote(self, symbol: str) -> tuple[float, Tick]:
+        """Last price AND the broker's own 호가단위, from one inquire-price call.
+
+        Both come out of the same response deliberately: a second call just for
+        the tick would spend another slot of the measured rate budget (P-13: clean
+        1.0 rps) on a number the first response already carried.
+
+        Raises:
+            ProbeError: no usable price, or no establishable quote unit.
+        """
         data = self.quote_call(
             _STOCK_PRICE_PATH,
             "FHKST01010100",
@@ -321,13 +566,13 @@ class MockTradingClient:
             raise ProbeError(
                 f"could not read a stock price for {symbol}: rt_cd={data.get('rt_cd')}"
             )
-        return float(value)
+        return float(value), _stock_tick(out, symbol)
 
     def futures_order_body(
         self,
         symbol: str,
         qty: int,
-        price: float,
+        price: TickPrice,
         side: str,
         *,
         required_fields: str = "explicit",
@@ -345,6 +590,10 @@ class MockTradingClient:
         makes the B-arm worth sending.
 
         Args:
+            price: A tick-snapped price. ``UNIT_PRICE`` carries ``price.wire``,
+                which has the same shape as the runtime's ``str(price)`` but is
+                guaranteed to be an exact tick multiple — an off-tick value is
+                rejected outright with ``호가단위 오류``.
             required_fields: Which shape to build for the two [필수] quote
                 fields.
 
@@ -374,7 +623,7 @@ class MockTradingClient:
             "SLL_BUY_DVSN_CD": "02" if side == "BUY" else "01",
             "SHTN_PDNO": symbol,
             "ORD_QTY": str(qty),
-            "UNIT_PRICE": str(price),
+            "UNIT_PRICE": price.wire,
             "NMPR_TYPE_CD": nmpr_type_cd,
             "KRX_NMPR_CNDT_CD": krx_nmpr_cndt_cd,
             "CTAC_TLNO": "",
@@ -384,15 +633,24 @@ class MockTradingClient:
             "ORD_DVSN_CD": "01",
         }
 
-    def stock_order_body(self, symbol: str, qty: int, price: float) -> dict[str, str]:
-        """Mirror of ``executor.py:386-393`` (note ORD_UNPR int-truncation, Q-WIRE-1)."""
+    def stock_order_body(
+        self, symbol: str, qty: int, price: TickPrice
+    ) -> dict[str, str]:
+        """Mirror of ``executor.py:386-393`` (note ORD_UNPR int-truncation, Q-WIRE-1).
+
+        ``price.wire`` is byte-identical to the runtime's ``str(int(price))`` here:
+        :func:`_stock_tick` refuses a fractional 호가단위, so a snapped stock price
+        is always a whole number of won and the truncation is a no-op. What the
+        truncation used to do on its own — produce a 1원 granularity that no KRX
+        price band actually allows — is what made this body ``호가단위 오류`` bait.
+        """
         return {
             "CANO": self.creds.cano,
             "ACNT_PRDT_CD": self.creds.acnt_prdt_cd,
             "PDNO": symbol,
             "ORD_DVSN": "00",  # 지정가
             "ORD_QTY": str(qty),
-            "ORD_UNPR": str(int(price)),
+            "ORD_UNPR": price.wire,
         }
 
     def submit_futures(
@@ -416,16 +674,25 @@ class MockTradingClient:
 
     def cancel_futures(self, odno: str, qty: int) -> dict[str, Any]:
         """Cancel — ``RVSE_CNCL_DVSN_CD='02'`` (executor.py:689)."""
-        return self._rvsecncl(odno, qty, dvsn="02", price=0.0)
+        return self._rvsecncl(odno, qty, dvsn="02", price=None)
 
-    def replace_futures(self, odno: str, qty: int, price: float) -> dict[str, Any]:
+    def replace_futures(self, odno: str, qty: int, price: TickPrice) -> dict[str, Any]:
         """Amend — ``RVSE_CNCL_DVSN_CD='01'``. Never exercised by the runtime
-        (draft §3.1 row 8: the literal appears once, value ``"02"`` only)."""
+        (draft §3.1 row 8: the literal appears once, value ``"02"`` only).
+
+        The amend price needs the same tick discipline as the original submit: an
+        off-tick amend is rejected exactly like an off-tick submit, and a rejected
+        amend makes P-8 report replace semantics it never observed.
+        """
         return self._rvsecncl(odno, qty, dvsn="01", price=price)
 
     def _rvsecncl(
-        self, odno: str, qty: int, *, dvsn: str, price: float
+        self, odno: str, qty: int, *, dvsn: str, price: TickPrice | None
     ) -> dict[str, Any]:
+        if dvsn == "01" and price is None:
+            raise ProbeError(
+                "an amend (RVSE_CNCL_DVSN_CD='01') needs a tick-snapped price"
+            )
         tr_id = self.tr_ids["futures_cancel_day_mock"]
         body = {
             "ORD_PRCS_DVSN_CD": "02",
@@ -434,7 +701,7 @@ class MockTradingClient:
             "RVSE_CNCL_DVSN_CD": dvsn,
             "ORGN_ODNO": odno,
             "ORD_QTY": str(qty),
-            "UNIT_PRICE": str(price) if dvsn == "01" else "0",
+            "UNIT_PRICE": price.wire if price is not None else "0",
             "NMPR_TYPE_CD": "01",
             "KRX_NMPR_CNDT_CD": "0",
             "RMN_QTY_YN": "Y",
@@ -533,19 +800,26 @@ def _setup(
 
 def _resting_price(
     client: MockTradingClient, args: argparse.Namespace
-) -> tuple[float, str]:
-    """A limit price far enough from the touch that the order will not fill."""
+) -> tuple[TickPrice, str]:
+    """A tick-valid limit price far enough from the touch that it will not fill.
+
+    The snap is away from the touch, so it can only widen the
+    ``--price-offset-pct`` gap that keeps the order resting, never narrow it.
+
+    Raises:
+        ProbeError: the computed price is non-positive, or no tick could be
+            established for the instrument.
+    """
+    side = "BUY"
     if args.asset == "futures":
         last = client.futures_last_price(args.symbol)
-        side = "BUY"
-        price = round(last * (1.0 - args.price_offset_pct / 100.0), 2)
+        tick = _futures_tick(args.symbol)
     else:
-        last = client.stock_last_price(args.symbol)
-        side = "BUY"
-        price = float(int(last * (1.0 - args.price_offset_pct / 100.0)))
+        last, tick = client.stock_quote(args.symbol)
+    price = last * (1.0 - args.price_offset_pct / 100.0)
     if price <= 0:
         raise ProbeError("computed resting price <= 0; check --price-offset-pct")
-    return price, side
+    return snap_to_tick(price, tick, side=side, marketable=False), side
 
 
 def _cleanup(
@@ -605,7 +879,8 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
     try:
         price, side = _resting_price(client, args)
         body = client.futures_order_body(args.symbol, args.quantity, price, side)
-        run.observe(order_body=body, resting_price=price, side=side)
+        run.observe(order_body=body, resting_price=price.wire, side=side)
+        run.measure("limit_price_tick", price.describe())
 
         first, raw1, ms1 = client.submit_futures(body)
         time.sleep(args.gap_ms / 1000.0)
@@ -700,6 +975,7 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
     samples: list[float] = []
     try:
         price, side = _resting_price(client, args)
+        run.measure("limit_price_tick", price.describe())
         for trial in range(args.samples):
             body = client.futures_order_body(args.symbol, args.quantity, price, side)
             placed, raw, _ms = client.submit_futures(body)
@@ -886,7 +1162,11 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             run.error(f"submit rejected rt_cd={raw.get('rt_cd')} msg={raw.get('msg1')}")
             return run
         odnos.append(placed.odno)
-        new_price = round(price * 0.99, 2)
+        # Amend further DOWN, i.e. further from the touch: the amended order must
+        # keep resting for the coexistence window to be observable at all.
+        new_price = snap_to_tick(
+            price.value * 0.99, price.tick, side=side, marketable=False
+        )
         amend = client.replace_futures(placed.odno, args.quantity, new_price)
         # Same rule as submit_futures: t0 is the pacer's release instant, so the
         # pacing sleep before the amend is not counted into coexistence_ms.
@@ -897,8 +1177,10 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             amend_rt_cd=amend.get("rt_cd"),
             amend_msg=amend.get("msg1"),
             new_odno=new_odno,
-            new_price=new_price,
+            new_price=new_price.wire,
         )
+        run.measure("limit_price_tick", price.describe())
+        run.measure("amend_price_tick", new_price.describe())
         if new_odno:
             odnos.append(new_odno)
 
@@ -988,11 +1270,19 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         client.close()
         return run
     try:
-        last = client.stock_last_price(args.symbol)
-        # Marketable limit: cross the touch by the offset so it fills promptly.
-        price = float(int(last * (1.0 + args.price_offset_pct / 100.0)))
+        last, tick = client.stock_quote(args.symbol)
+        # Marketable limit: cross the touch by the offset so it fills promptly. The
+        # snap goes UP for the same reason the resting probes snap down — away from
+        # the touch, which here means further INTO the market, never back out of it.
+        price = snap_to_tick(
+            last * (1.0 + args.price_offset_pct / 100.0),
+            tick,
+            side="BUY",
+            marketable=True,
+        )
         body = client.stock_order_body(args.symbol, args.quantity, price)
-        run.observe(order_body=body, last_price=last, marketable_price=price)
+        run.observe(order_body=body, last_price=last, marketable_price=price.wire)
+        run.measure("limit_price_tick", price.describe())
         tr_id = client.tr_ids["stock_krx_buy_mock"]
         status, parsed, _ms, _text = client.trading_call(
             "POST", _STOCK_ORDER_PATH, tr_id, body=body
@@ -1197,6 +1487,7 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
     try:
         price, side = _resting_price(client, args)
         body = client.futures_order_body(args.symbol, args.quantity, price, side)
+        run.measure("limit_price_tick", price.describe())
         placed, raw, _ms = client.submit_futures(body)
         if placed is None:
             run.error(f"submit rejected rt_cd={raw.get('rt_cd')} msg={raw.get('msg1')}")
@@ -1360,9 +1651,10 @@ def probe_nmpr_ab(args: argparse.Namespace) -> ProbeRun:
             arm_a_body=body_a,
             arm_b_body=body_b,
             differing_fields=differing,
-            resting_price=price,
+            resting_price=price.wire,
             side=side,
         )
+        run.measure("limit_price_tick", price.describe())
         if differing != ["KRX_NMPR_CNDT_CD", "NMPR_TYPE_CD"]:
             raise ProbeError(
                 "A/B arms differ in fields other than the two under test: "

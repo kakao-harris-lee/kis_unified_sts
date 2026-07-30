@@ -24,7 +24,13 @@ import argparse
 import pytest
 
 from tools.broker_probes.common import ProbeCredentials, ProbeError, ProbeRun
-from tools.broker_probes.probes_order import MockTradingClient, probe_nmpr_ab
+from tools.broker_probes.probes_order import (
+    MockTradingClient,
+    TickPrice,
+    _futures_tick,
+    probe_nmpr_ab,
+    snap_to_tick,
+)
 from tools.broker_probes.registry import PROBES, coverage_report, get
 
 _ACCOUNT = "1234567890"
@@ -64,6 +70,11 @@ def _args(**overrides: object) -> argparse.Namespace:
     }
     base.update(overrides)
     return argparse.Namespace(**base)
+
+
+def _tick_price(price: float) -> TickPrice:
+    """A resting price snapped the way the probes snap one (tick from the YAML SoT)."""
+    return snap_to_tick(price, _futures_tick("101S6000"), side="BUY", marketable=False)
 
 
 def _client(creds: ProbeCredentials) -> MockTradingClient:
@@ -141,7 +152,9 @@ def test_explicit_arm_matches_the_official_enumeration(
     mock_creds: ProbeCredentials,
 ) -> None:
     """01=지정가 / 0=없음 per the official ``order.py`` docstring (v1_국내선물-001)."""
-    body = _client(mock_creds).futures_order_body("101S6000", 1, 340.0, "BUY")
+    body = _client(mock_creds).futures_order_body(
+        "101S6000", 1, _tick_price(340.0), "BUY"
+    )
     assert body["NMPR_TYPE_CD"] == "01"
     assert body["KRX_NMPR_CNDT_CD"] == "0"
     assert body["ORD_DVSN_CD"] == "01"
@@ -151,7 +164,7 @@ def test_legacy_blank_arm_reproduces_the_pre_fix_body(
     mock_creds: ProbeCredentials,
 ) -> None:
     body = _client(mock_creds).futures_order_body(
-        "101S6000", 1, 340.0, "BUY", required_fields="legacy_blank"
+        "101S6000", 1, _tick_price(340.0), "BUY", required_fields="legacy_blank"
     )
     assert body["NMPR_TYPE_CD"] == ""
     assert body["KRX_NMPR_CNDT_CD"] == ""
@@ -162,9 +175,9 @@ def test_arms_differ_in_exactly_the_two_fields_under_test(
 ) -> None:
     """The attributability invariant the probe asserts at runtime."""
     client = _client(mock_creds)
-    body_a = client.futures_order_body("101S6000", 1, 340.0, "BUY")
+    body_a = client.futures_order_body("101S6000", 1, _tick_price(340.0), "BUY")
     body_b = client.futures_order_body(
-        "101S6000", 1, 340.0, "BUY", required_fields="legacy_blank"
+        "101S6000", 1, _tick_price(340.0), "BUY", required_fields="legacy_blank"
     )
     assert body_a.keys() == body_b.keys()
     differing = sorted(k for k in body_a if body_a[k] != body_b[k])
@@ -177,7 +190,7 @@ def test_unknown_required_fields_mode_is_refused(
     """Fail-closed: an unrecognised mode must not fall back to a blank body."""
     with pytest.raises(ProbeError, match="unknown required_fields mode"):
         _client(mock_creds).futures_order_body(
-            "101S6000", 1, 340.0, "BUY", required_fields="typo"
+            "101S6000", 1, _tick_price(340.0), "BUY", required_fields="typo"
         )
 
 

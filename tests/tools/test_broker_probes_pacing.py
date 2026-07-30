@@ -142,6 +142,20 @@ def _client(
     return MockTradingClient(creds, _StubAuth(), run, pace_s=pace_s)
 
 
+def _tick_price(price: float) -> probes_order.TickPrice:
+    """A resting price snapped the way the probes snap one (tick from the YAML SoT).
+
+    These tests assert call intervals, not prices, but the body builders now take a
+    snapped price — building it through the production helper keeps that shared.
+    """
+    return probes_order.snap_to_tick(
+        price,
+        probes_order._futures_tick("101S6000"),
+        side="BUY",
+        marketable=False,
+    )
+
+
 def _install_recorder(
     monkeypatch: pytest.MonkeyPatch, fake: _FakeTime, *, visible_odnos: set[str]
 ) -> list[dict[str, Any]]:
@@ -267,7 +281,9 @@ def test_quote_then_submit_is_paced(
     client = _client(mock_creds)
 
     client.futures_last_price("101S6000")
-    client.submit_futures(client.futures_order_body("101S6000", 1, 306.0, "BUY"))
+    client.submit_futures(
+        client.futures_order_body("101S6000", 1, _tick_price(306.0), "BUY")
+    )
 
     assert [c["url"].rsplit("/", 1)[-1] for c in calls] == ["inquire-price", "order"]
     gap = calls[1]["released_at"] - calls[0]["released_at"]
@@ -282,10 +298,12 @@ def test_every_call_type_goes_through_the_pacer(
     client = _client(mock_creds)
 
     client.futures_last_price("101S6000")
-    client.submit_futures(client.futures_order_body("101S6000", 1, 306.0, "BUY"))
+    client.submit_futures(
+        client.futures_order_body("101S6000", 1, _tick_price(306.0), "BUY")
+    )
     client.inquire_futures("101S6000")
     client.cancel_futures("ODNO0002", 1)
-    client.replace_futures("ODNO0002", 1, 305.0)
+    client.replace_futures("ODNO0002", 1, _tick_price(305.0))
 
     assert len(calls) == 5
     gaps = [
@@ -337,7 +355,7 @@ def test_submit_latency_window_excludes_the_pacing_sleep(
     client.futures_last_price("101S6000")
     quote_returned_at = faketime.monotonic()
     placed, _parsed, _ms = client.submit_futures(
-        client.futures_order_body("101S6000", 1, 306.0, "BUY")
+        client.futures_order_body("101S6000", 1, _tick_price(306.0), "BUY")
     )
 
     assert placed is not None
