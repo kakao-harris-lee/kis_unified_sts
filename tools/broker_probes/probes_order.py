@@ -25,6 +25,20 @@ The one deliberate departure is P-NMPR's B-arm, which reconstructs the *pre*-fix
 futures body (both [필수] quote fields blank, executor.py before ``76d43ae9``).
 It exists precisely to test a shape the runtime no longer sends; see
 :meth:`MockTradingClient.futures_order_body`.
+
+Call pacing
+-----------
+Every call this module makes passes through :class:`_CallPacer`, which enforces a
+minimum ``--pace-s`` interval between any two of them. This is not politeness: at
+the mock account's measured ceiling (P-13 — clean 1.0 rps, throttled 2.0 rps) an
+unpaced quote-then-submit pair is already over the line, and a throttled submit
+destroys the trial rather than degrading it. Artifact
+``P-5-20260729T235001Z.json`` is the concrete loss — trial 0 rejected with
+``초당 거래건수를 초과하였습니다``, ``n=0``, ``NOT_MEASURED``.
+
+Pacing changes what the probes must *record*. See :func:`effective_interval_ms`:
+a ``--poll-ms`` or ``--gap-ms`` below the pacing interval does not happen, so the
+recorded granularity is the effective interval, never the requested one.
 """
 
 from __future__ import annotations
@@ -78,10 +92,71 @@ _NMPR_ARMS: dict[str, tuple[str, str]] = {
     "legacy_blank": ("", ""),
 }
 
+#: Default minimum interval between any two broker calls, in seconds.
+#:
+#: Measured, not guessed: P-13 (artifact ``P-13-20260729T063120Z``, campaign
+#: ``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/``) bracketed this
+#: mock account's query class at clean 1.0 rps / throttled 2.0 rps (``EGW00201``).
+#: 1.1 s sits just above the measured clean rate — the slowest rate that is known
+#: to work, rather than the fastest that has not yet been seen to fail.
+DEFAULT_PACE_S = 1.1
+
+
+class _CallPacer:
+    """Minimum-interval gate in front of the probe client's only socket.
+
+    Contract: :meth:`wait` blocks until the next call is permitted and returns the
+    instant it was released. The first call is never delayed — an empty pacer has
+    no previous call to be too close to.
+
+    The released instant is the *only* honest t0 for a latency measurement.
+    A timestamp taken before the gate would include the pacing sleep and charge it
+    to the broker; on a 1.1 s pace that inflates every accept-to-visible sample by
+    roughly 1100 ms, which for a ``hard_maximum`` bound propagates straight into
+    an over-wide approved value.
+    """
+
+    def __init__(self, interval_s: float) -> None:
+        self.interval_s = max(0.0, float(interval_s))
+        self._next_allowed_at: float | None = None
+
+    def wait(self) -> float:
+        """Block out the remainder of the interval; return the release instant."""
+        now = time.monotonic()
+        if self._next_allowed_at is not None and now < self._next_allowed_at:
+            # Sleep the REMAINDER only. A fixed per-call sleep would also charge
+            # the probe for time already spent in the previous request.
+            time.sleep(self._next_allowed_at - now)
+            now = time.monotonic()
+        self._next_allowed_at = now + self.interval_s
+        return now
+
+
+def pace_interval_s(args: argparse.Namespace) -> float:
+    """The pacing interval for this run, in seconds (``0`` disables pacing)."""
+    return max(0.0, float(getattr(args, "pace_s", DEFAULT_PACE_S)))
+
+
+def effective_interval_ms(requested_ms: float, args: argparse.Namespace) -> float:
+    """A requested inter-call interval, floored by the pacer, in ms.
+
+    The pacer will not release two calls closer together than ``--pace-s``, so a
+    ``--poll-ms`` or ``--gap-ms`` below it is silently widened. Probes must record
+    THIS value rather than the requested one:
+
+    * a polled sample carries up to one *effective* poll interval of additive
+      error, and runbook §8.3 makes that error part of the approved bound — an
+      understated granularity understates the bound, which is fail-open;
+    * P-2's deduplication bracket is set by the gap that actually reached the
+      wire, so recording the requested gap would mis-bracket the window.
+    """
+    return max(float(requested_ms), pace_interval_s(args) * 1000.0)
+
 
 @dataclass
 class Placed:
     odno: str
+    #: Pacer release instant of the submit — post-sleep, immediately pre-wire.
     sent_at_monotonic: float
     body: dict[str, Any]
 
@@ -92,10 +167,21 @@ class MockTradingClient:
     Not a replacement for ``OrderExecutor``: it deliberately omits the retry,
     rate-limit and fill-monitor wrappers because those are part of the behaviour
     under measurement (draft §5 Q-IDEMP-1/2, Q-RATE-1).
+
+    The one thing it does add is :class:`_CallPacer`. That is not the runtime's
+    rate limiter and measures nothing — it is a fixed floor on the interval
+    between this client's own calls, present because exceeding the account's
+    measured ceiling does not perturb a measurement, it voids it (the submit is
+    rejected and the trial produces no sample at all).
     """
 
     def __init__(
-        self, creds: Any, auth_manager: Any, run: ProbeRun, timeout: float = 15.0
+        self,
+        creds: Any,
+        auth_manager: Any,
+        run: ProbeRun,
+        timeout: float = 15.0,
+        pace_s: float = DEFAULT_PACE_S,
     ):
         import requests
 
@@ -105,6 +191,8 @@ class MockTradingClient:
         self.session = requests.Session()
         self.timeout = timeout
         self.tr_ids = self._load_tr_ids()
+        self.pacer = _CallPacer(pace_s)
+        self._last_send_monotonic: float | None = None
 
     @staticmethod
     def _load_tr_ids() -> dict[str, str]:
@@ -122,6 +210,64 @@ class MockTradingClient:
         headers["custtype"] = "P"
         return headers
 
+    # -- the single paced transport --------------------------------------
+    def _request(
+        self,
+        method: str,
+        url: str,
+        tr_id: str,
+        *,
+        params: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> tuple[int, dict[str, Any], float, str]:
+        """The one place this client opens a socket — and so the one paced site.
+
+        Both public transports funnel through here, which is what makes the pacing
+        unbypassable: a call type added later cannot forget to pace, because there
+        is nowhere else to send a request from.
+
+        Ordering matters and is deliberate:
+
+        1. headers first. ``get_auth_headers`` may itself issue a token request,
+           and a token round-trip must not land between the release instant and
+           the wire. Absorbing it into the pacing wait instead costs nothing —
+           token issuance is a different endpoint class from the one P-13
+           measured, and the pacer still separates *this* client's calls.
+        2. then the pacing gate, which sleeps out whatever remains of the
+           interval.
+        3. then the stamp, then the request — with nothing between them.
+        """
+        assert_mock_host(url)  # last line of defence; the callers gate too
+        headers = self._headers(tr_id)
+        self._last_send_monotonic = self.pacer.wait()
+        return http_json(
+            self.session,
+            method,
+            url,
+            headers=headers,
+            params=params,
+            json_body=body,
+            timeout=self.timeout,
+        )
+
+    def last_send_instant(self) -> float:
+        """Monotonic instant the most recent request was released to the wire.
+
+        This is the correct t0 for every latency a probe derives from a call it
+        made itself. Capturing ``time.monotonic()`` before the call instead would
+        fold the pacing sleep into the measurement and report it as broker
+        latency.
+
+        Raises:
+            ProbeError: no request has been issued yet.
+        """
+        if self._last_send_monotonic is None:
+            raise ProbeError(
+                "last_send_instant() called before any request was issued — "
+                "there is no send to timestamp"
+            )
+        return self._last_send_monotonic
+
     # -- guarded transports ---------------------------------------------
     def trading_call(
         self,
@@ -136,15 +282,7 @@ class MockTradingClient:
         url = f"{MOCK_BASE_URL}{path}"
         assert_mock_host(url)
         assert_mock_trading_tr(tr_id)
-        return http_json(
-            self.session,
-            method,
-            url,
-            headers=self._headers(tr_id),
-            params=params,
-            json_body=body,
-            timeout=self.timeout,
-        )
+        return self._request(method, url, tr_id, params=params, body=body)
 
     def quote_call(
         self, path: str, tr_id: str, params: dict[str, Any]
@@ -152,14 +290,7 @@ class MockTradingClient:
         """Read-only quotations call (host-gated; TR prefix rule does not apply)."""
         url = f"{MOCK_BASE_URL}{path}"
         assert_mock_host(url)
-        _status, parsed, _ms, _text = http_json(
-            self.session,
-            "GET",
-            url,
-            headers=self._headers(tr_id),
-            params=params,
-            timeout=self.timeout,
-        )
+        _status, parsed, _ms, _text = self._request("GET", url, tr_id, params=params)
         return parsed
 
     # -- domain helpers --------------------------------------------------
@@ -268,10 +399,13 @@ class MockTradingClient:
         self, body: dict[str, str]
     ) -> tuple[Placed | None, dict[str, Any], float]:
         tr_id = self.tr_ids["futures_order_day_mock"]
-        sent = time.monotonic()
         status, parsed, ms, _text = self.trading_call(
             "POST", _FUT_ORDER_PATH, tr_id, body=body
         )
+        # t0 comes from the pacer, not from before the call: the pacing sleep
+        # happens inside _request and would otherwise be measured as broker
+        # latency. P-5 and P-FQP both subtract this from a later observation.
+        sent = self.last_send_instant()
         odno = str((parsed.get("output") or {}).get("ODNO") or "").strip()
         placed = (
             Placed(odno, sent, body)
@@ -394,7 +528,7 @@ def _setup(
 
     cfg = build_auth_config(creds, probe_token_cache_dir(args.token_cache_dir))
     auth = KISAuthManager(cfg, use_singleton=False)
-    return run, MockTradingClient(creds, auth, run)
+    return run, MockTradingClient(creds, auth, run, pace_s=pace_interval_s(args))
 
 
 def _resting_price(
@@ -462,7 +596,10 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
     _require_symbol(args)
     run, client = _setup(spec, args)
     if client is None:
-        run.observe(would_send="two identical futures order bodies", gap_ms=args.gap_ms)
+        run.observe(
+            would_send="two identical futures order bodies",
+            gap_ms=effective_interval_ms(args.gap_ms, args),
+        )
         return run
     odnos: list[str] = []
     try:
@@ -494,7 +631,9 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
             {str(r.get("odno", "")).strip() for r in rows} & set(distinct)
         )
 
-        run.measure("gap_ms", args.gap_ms)
+        # The effective gap, not the requested one: the pacer floors the sleep
+        # below, and the dedup bracket is set by the gap that reached the wire.
+        run.measure("gap_ms", effective_interval_ms(args.gap_ms, args))
         run.measure("distinct_odno_count", len(distinct))
         run.measure("odno_confirmed_in_query", observed)
         run.measure(
@@ -509,6 +648,13 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
                     else "INCONCLUSIVE (0 accepted ODNOs — check rt_cd/msg1)"
                 )
             ),
+        )
+        run.measure(
+            "gap_semantics",
+            "gap_ms is the EFFECTIVE gap: --pace-s floors --gap-ms, so a requested "
+            "gap below the pacing interval never reached the wire. Bracket the "
+            "window against this value, and to probe a gap below --pace-s you must "
+            "lower --pace-s as well — accepting the throttling risk that implies.",
         )
         run.measure(
             "window_semantics",
@@ -546,7 +692,8 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
     run, client = _setup(spec, args)
     if client is None:
         run.observe(
-            would_send=f"{args.samples} resting orders, polling inquire-ccnl every {args.poll_ms}ms"
+            would_send=f"{args.samples} resting orders, polling inquire-ccnl every "
+            f"{effective_interval_ms(args.poll_ms, args)}ms"
         )
         return run
     odnos: list[str] = []
@@ -603,11 +750,15 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
                 samples, margin_pct=args.margin_pct, label="accept_to_visible_ms"
             ),
         )
-        run.measure("poll_granularity_ms", args.poll_ms)
+        run.measure("poll_granularity_ms", effective_interval_ms(args.poll_ms, args))
         run.measure(
             "granularity_note",
             "Each sample carries up to one poll interval of additive error. The "
-            "approved bound must exceed max_observed + poll_ms, not just max_observed.",
+            "approved bound must exceed max_observed + poll_granularity_ms, not just "
+            "max_observed. poll_granularity_ms is the EFFECTIVE interval "
+            "max(--poll-ms, --pace-s): the pacer floors polling, so a smaller "
+            "--poll-ms did not happen and recording it would understate the additive "
+            "error — and therefore the bound (runbook §8.3).",
         )
         run.measure(
             "censored_trials", len([o for o in run.observations if o.get("censored")])
@@ -736,8 +887,10 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             return run
         odnos.append(placed.odno)
         new_price = round(price * 0.99, 2)
-        amended_at = time.monotonic()
         amend = client.replace_futures(placed.odno, args.quantity, new_price)
+        # Same rule as submit_futures: t0 is the pacer's release instant, so the
+        # pacing sleep before the amend is not counted into coexistence_ms.
+        amended_at = client.last_send_instant()
         new_odno = str((amend.get("output") or {}).get("ODNO") or "").strip()
         run.observe(
             original_odno=placed.odno,
@@ -776,11 +929,13 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             "coexistence_ms",
             round((coexist_last - amended_at) * 1000.0, 2) if coexist_last else 0.0,
         )
+        run.measure("poll_granularity_ms", effective_interval_ms(args.poll_ms, args))
         run.measure(
             "mode_determination",
             "Map to ReplaceSemantics only after N>=5 trials agree. A single trial "
             "showing zero coexistence does NOT prove atomicity — polling can miss "
-            "an interval shorter than --poll-ms.",
+            "an interval shorter than poll_granularity_ms, which is the EFFECTIVE "
+            "interval max(--poll-ms, --pace-s) and not the requested --poll-ms.",
         )
     finally:
         _cleanup(client, run, odnos, args.quantity)
@@ -838,11 +993,13 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         price = float(int(last * (1.0 + args.price_offset_pct / 100.0)))
         body = client.stock_order_body(args.symbol, args.quantity, price)
         run.observe(order_body=body, last_price=last, marketable_price=price)
-        sent = time.monotonic()
         tr_id = client.tr_ids["stock_krx_buy_mock"]
         status, parsed, _ms, _text = client.trading_call(
             "POST", _STOCK_ORDER_PATH, tr_id, body=body
         )
+        # Pacer release instant, not a pre-call timestamp: submit_to_balance_ms
+        # must not include the pacing sleep that preceded this submit.
+        sent = client.last_send_instant()
         odno = str((parsed.get("output") or {}).get("ODNO") or "").strip()
         run.observe(
             submit_status=status,
@@ -986,7 +1143,7 @@ def probe_pext(args: argparse.Namespace) -> ProbeRun:
                     label="manual_submit_to_detect_ms",
                 ),
             )
-        run.measure("poll_interval_ms", args.poll_ms)
+        run.measure("poll_interval_ms", effective_interval_ms(args.poll_ms, args))
         run.measure("polls_used", polls)
         run.measure(
             "human_timestamp_error",
@@ -996,7 +1153,9 @@ def probe_pext(args: argparse.Namespace) -> ProbeRun:
         run.measure(
             "push_absence_note",
             "Detection is poll-bounded: no account-event push subscription exists "
-            "(draft §3.1 row 10). The bound cannot go below the poll interval.",
+            "(draft §3.1 row 10). The bound cannot go below poll_interval_ms, which "
+            "is the EFFECTIVE interval max(--poll-ms, --pace-s) — with pacing active "
+            "the pacer, not --poll-ms, is what sets the floor.",
         )
     finally:
         client.close()
@@ -1099,6 +1258,15 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
                 margin_pct=args.margin_pct,
                 label="submit_to_filled_plus_zero_remaining_ms",
             ),
+        )
+        run.measure("poll_granularity_ms", effective_interval_ms(args.poll_ms, args))
+        run.measure(
+            "granularity_note",
+            "Both candidates are polled observations and so carry up to one "
+            "poll_granularity_ms of additive error (runbook §8.3). That value is the "
+            "EFFECTIVE interval max(--poll-ms, --pace-s), not the requested "
+            "--poll-ms: the pacer floors polling, and it also bounds how finely a "
+            "post-terminal change can be located in time.",
         )
         run.measure("post_terminal_changes", changes)
         run.measure(
@@ -1303,6 +1471,21 @@ def add_order_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=1.0,
         help="Pause between trials (broker courtesy).",
+    )
+    parser.add_argument(
+        "--pace-s",
+        type=float,
+        default=DEFAULT_PACE_S,
+        help=(
+            f"Minimum interval between ANY two broker calls (default {DEFAULT_PACE_S}s) "
+            "— quote, submit, cancel and inquire alike. The default is measured, not "
+            "chosen: P-13 bracketed this mock account's query class at clean 1.0 rps / "
+            "throttled 2.0 rps (EGW00201, artifact P-13-20260729T063120Z), so "
+            f"{DEFAULT_PACE_S}s sits just above the measured clean rate. A --poll-ms or "
+            "--gap-ms below this interval is floored to it and the probe records the "
+            "floored value. Lowering it re-opens the throttling failure that produced "
+            "P-5-20260729T235001Z (n=0, NOT_MEASURED)."
+        ),
     )
     parser.add_argument(
         "--visibility-timeout-s",
