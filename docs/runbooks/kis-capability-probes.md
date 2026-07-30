@@ -96,8 +96,11 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 ## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 1 = 17)
 
 공통 인자: `--asset {stock,futures}` · `--symbol` · `--quantity`(기본 1) ·
-`--price-offset-pct`(기본 10 — 미체결 유지용) · `--samples` · `--margin-pct`(기본 50) ·
-`--out-dir` · `--note`. 전수 목록은 `run.py ... --help`.
+`--price-offset-pct`(기본 10 — 미체결 유지용, **지정가 경로 전용**) · `--samples` ·
+`--margin-pct`(기본 50) · `--out-dir` · `--note`. 전수 목록은 `run.py ... --help`.
+
+P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) ·
+`--balance-timeout-s`(기본 **120**, 공유 `--visibility-timeout-s` 30초와 별개).
 
 | ID | 차원 | 종류 | 환경 | 명령 | 소요 | 위험 | 주문 발생 |
 |---|---|---|---|---|---|---|---|
@@ -106,7 +109,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | **P-5** | OPEN_ORDER_QUERY | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-5 --confirm` | ~20 min at N=100 | HIGH | 예 |
 | **P-5b** | OPEN_ORDER_QUERY | QUERY | MOCK_VTS | `python -m tools.broker_probes.run P-5b --confirm` | ~2 min | LOW | 아니오 |
 | **P-8** | REPLACE_OR_AMEND | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-8 --confirm` | ~10 min | HIGH | 예 |
-| **P-11** | POSITIONS_BALANCES_MARGIN | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-11 --confirm` | ~15 min | HIGH | 예 |
+| **P-11** | POSITIONS_BALANCES_MARGIN | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-11 --asset stock --symbol 005930 --confirm --allow-fill` | ~15 min | HIGH | 예 |
 | **P-13** | RATE_LIMITS | QUERY | MOCK_VTS | `python -m tools.broker_probes.run P-13 --confirm` | ~10 min | MEDIUM | 아니오 |
 | **P-14** | SESSION_CONNECTION_MODEL | SESSION | MOCK_VTS | `python -m tools.broker_probes.run P-14 --confirm` | ~10 min | HIGH | 아니오 |
 | **P-15** | CREDENTIALS_AUTHORIZATION | AUTH | MOCK_VTS | `python -m tools.broker_probes.run P-15 --confirm` | ~3 min | HIGH | 아니오 |
@@ -133,7 +136,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | P-5 | 주문 수락(t0) → 조회 가시(t1) 수렴 지연. `B_broker_query_consistency`의 유일한 원천 |
 | P-5b | 연속조회 키가 실제로 전진하는가 (Q-OOQ-1 — 런타임은 항상 1페이지만 읽는다) |
 | P-8 | `RVSE_CNCL_DVSN_CD="01"` 정정의 신/구 ODNO 관계와 **중첩 구간**(비원자성 = 보호 중첩 위험) |
-| P-11 | 체결 → 잔고 반영 지연. **주식 전용**(모의는 선물 잔고 미제공 — `client.py:1026` NOTE + 가드 `:1031-1033`) |
+| P-11 | 체결 → 잔고 반영 지연. **주식 전용**(모의는 선물 잔고 미제공 — `client.py:1026` NOTE + 가드 `:1031-1033`). **기본 시장가**(`--stock-order-type market`, `ORD_DVSN=01`) — 지정가는 모의에서 체결되지 않았다(§5.2 주석) |
 | P-13 | 최초 스로틀 지점과 회복 시간. repo의 5/20 rps는 **자가 상한**이지 broker 한도가 아니다 |
 | P-14 | 동시 세션 수·구독 상한. `streaming.yaml:50`의 "KIS 제한: 41" 주석을 사실화하거나 반증 |
 | P-15 | 1분 내 토큰 재발급 2회 → 거부 코드/메시지 **축자** 확정 |
@@ -256,7 +259,24 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | 9 | **P-8** | 정정. 신/구 ODNO 2건이 동시 생존할 수 있음 | P-5 선행 |
 | 10 | **P-FQP** | 취소 후 창 관측. 가장 김 | P-5 선행 |
 | 11 | **P-EXT** | 운영자 수동 개입 필요. 반복 ≥5회 | 운영자 HTS/MTS 대기 |
-| 12 | **P-11** | **의도적 체결**. 포지션이 남는다 — 마지막에 배치 | `--asset stock` · `--allow-fill` |
+| 12 | **P-11** | **의도적 체결**. 포지션이 남는다 — 마지막에 배치 | `--asset stock` · `--allow-fill` (주문구분은 기본 **시장가**) |
+
+> **P-11은 시장가로 낸다** (`--stock-order-type` 기본값 `market`,
+> `ORD_DVSN=01` 시장가 · `ORD_UNPR=0`). 지정가는 **모의투자에서 체결되지 않았다**:
+> 아티팩트 `P-11-20260730T002715Z`는 터치(211,000) 대비 +10%를 호가단위로 정확히
+> snap 한 지정가(`ORD_DVSN=00`, `ORD_UNPR=232500`)로 **접수까지 성공**했으나
+> (`rt_cd=0`, ODNO `0000008686`) 잔고는 30초 창 안에서 움직이지 않았고, 약 18분 뒤
+> 장외 재조회에서도 기준 보유량 그대로였다. 즉 CENSORED의 원인은 잔고 지연이 아니라
+> **미체결**이었고, P-11은 실제 모의 주문 1건을 쓰고 측정값을 얻지 못했다.
+> `--stock-order-type limit`으로 옛 형태를 재현할 수 있다(비교용).
+>
+> 시장가 경로는 시세 조회를 하지 않으므로 호가단위에 **의존하지 않는다**(§5.5) —
+> `--price-offset-pct`와 snap은 지정가 경로 전용이다. 잔고 폴링 창은
+> `--balance-timeout-s`(기본 120초)이며, 만료는 여전히 **CENSORED**로 남는다.
+> 관측되지 않은 반영을 측정값으로 바꾸지 않는다. 어느 경우였는지는 아티팩트
+> `measurements.fill_case`가 명시한다 — 체결+반영(`FILLED_AND_REFLECTED`)이거나,
+> 구분 불가(`UNDETERMINED_NON_FILL_OR_LAG_BEYOND_WINDOW`, 미체결과 창 초과 지연이
+> 잔고만으로는 동일하게 보임)이며 후자에는 무엇이 있으면 판별되는지가 함께 적힌다.
 
 ### 5.3 rate-limit 프로브(P-13) 특칙
 
@@ -324,8 +344,11 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
   사용한 tick과 출처는 아티팩트 `measurements.limit_price_tick`에 남는다.
   이 거부가 다시 보이면 **가격을 손으로 조정해 재시도하지 말고 그대로 보고한다** —
   tick 출처(YAML 등록 누락 / broker 미응답)가 원인이므로 손댄 가격은 증거를 오염시킨다.
-  주식에서 호가단위를 확정할 수 없으면 프로브는 `ProbeError`로 멈추고 P-11은
-  선행조건 미충족(BLOCKED)으로 보고한다
+  주식에서 호가단위를 확정할 수 없으면 프로브는 `ProbeError`로 멈춘다. 단 **P-11의
+  기본 경로(시장가)는 지정가를 보내지 않으므로 호가단위를 조회조차 하지 않는다** —
+  이 거부에 걸리는 것은 `--stock-order-type limit`뿐이다. 시장가 실행의
+  `measurements.limit_price_tick`은 `applicable: false`로 남아 tick 기계를 의도적으로
+  우회했음을 기록한다(키를 비우지 않는다)
 - **`SafetyViolation`**: 아티팩트를 쓰지 않고 exit 3. 관측이 일어나지 않았으므로
   기록할 것이 없다는 뜻이다 — 재시도하지 말고 **원인을 먼저 밝힌다**
 - **exit code**: 0 정상 / 2 미지 프로브 / 3 안전 위반 / 4 선행조건 미충족 /

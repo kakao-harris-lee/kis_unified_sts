@@ -106,6 +106,11 @@ def _args(**overrides: object) -> argparse.Namespace:
         "late_window_s": 120.0,
         "max_pages": 10,
         "allow_fill": True,
+        # Mirrors the real CLI defaults (add_order_args): P-11 sends a 시장가
+        # order unless a caller opts out. Every tick assertion in this file is
+        # about the 지정가 path, so those tests pass stock_order_type="limit".
+        "stock_order_type": "market",
+        "balance_timeout_s": 120.0,
         "pace_s": 0.0,
         "token_cache_dir": None,
         "out_dir": None,
@@ -473,20 +478,25 @@ def test_amend_without_a_price_is_refused(stock_creds: ProbeCredentials) -> None
 
 
 # ---------------------------------------------------------------------------
-# P-11 — the marketable path, end to end
+# P-11 — the marketable LIMIT path (--stock-order-type limit)
+#
+# This is the opt-out path, not the default: P-11 defaults to 시장가 because a
+# marketable limit was accepted and never filled on 모의투자
+# (P-11-20260730T002715Z). The limit path is kept reachable for comparison, so its
+# tick discipline still has to hold — hence stock_order_type="limit" below.
 # ---------------------------------------------------------------------------
 
 
 def test_p11_submits_a_tick_valid_marketable_price(
     monkeypatch: pytest.MonkeyPatch, stock_env: None
 ) -> None:
-    """The order P-11 actually sends is above the touch AND on a valid tick."""
+    """The limit order P-11 sends is above the touch AND on a valid tick."""
     calls = _install_stock_recorder(monkeypatch, aspr_unit="100", with_trading=True)
     monkeypatch.setattr(
         "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
     )
 
-    run = probe_p11(_args())
+    run = probe_p11(_args(stock_order_type="limit"))
 
     order = next(c for c in calls if "trading/order-cash" in c["url"])
     assert Decimal(order["body"]["ORD_UNPR"]) % 100 == 0
@@ -503,7 +513,7 @@ def test_p11_records_the_tick_and_its_source_in_the_artifact(
         "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
     )
 
-    record = probe_p11(_args()).measurements["limit_price_tick"]
+    record = probe_p11(_args(stock_order_type="limit")).measurements["limit_price_tick"]
 
     assert record["tick_size"] == "100"
     assert "FHKST01010100" in record["tick_source"]
@@ -514,14 +524,20 @@ def test_p11_records_the_tick_and_its_source_in_the_artifact(
 def test_p11_reports_a_blocked_precondition_without_a_quote_unit(
     monkeypatch: pytest.MonkeyPatch, stock_env: None
 ) -> None:
-    """No 호가단위 => no order. The probe must not fall back to 1원 granularity."""
+    """No 호가단위 => no order. The probe must not fall back to 1원 granularity.
+
+    This precondition belongs to the limit path alone. The 시장가 default sends no
+    price and so never asks for a tick — see
+    ``test_market_path_needs_no_broker_quote_unit`` in
+    ``test_broker_probes_p11_fill.py``, which is the payoff of that default.
+    """
     calls = _install_stock_recorder(monkeypatch, aspr_unit=None, with_trading=True)
     monkeypatch.setattr(
         "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
     )
 
     with pytest.raises(ProbeError, match="호가단위"):
-        probe_p11(_args())
+        probe_p11(_args(stock_order_type="limit"))
 
     assert not [c for c in calls if "trading/order-cash" in c["url"]]
 

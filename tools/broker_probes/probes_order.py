@@ -12,7 +12,11 @@ Order shape and quantity discipline
 * Quantity defaults to 1 (the minimum) and is never derived from account equity.
 * Limit prices are placed ``--price-offset-pct`` AWAY from the touch so the order
   rests unfilled and can be cancelled. P-11 is the single exception: it needs a
-  fill and demands an extra ``--allow-fill`` flag.
+  fill and demands an extra ``--allow-fill`` flag. It is also the one probe that
+  defaults to a 시장가 (market) order — a marketable *limit* was accepted and then
+  never filled on 모의투자 (``P-11-20260730T002715Z.json``), which censored the
+  measurement it exists to take. ``--stock-order-type limit`` restores the old
+  shape for comparison.
 * Every limit price is snapped to a valid tick before it goes on the wire — see
   :func:`snap_to_tick`. An off-tick price is not a degraded trial, it is no trial
   at all: artifact ``P-5-20260730T000608Z.json`` lost trial 0 to
@@ -48,6 +52,7 @@ recorded granularity is the effective interval, never the requested one.
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -67,6 +72,7 @@ from tools.broker_probes.common import (
     dry_run_banner,
     http_json,
     probe_token_cache_dir,
+    redact,
     require_account,
     resolve_credentials,
     resolve_out_dir,
@@ -101,6 +107,51 @@ _EXECUTION_CONFIG = Path(__file__).resolve().parents[2] / "config" / "execution.
 #: KRX price-band table and this module must not invent one, so if the broker does
 #: not report a unit the stock probe fails loudly (see :func:`_stock_tick`).
 _STOCK_QUOTE_UNIT_FIELD = "aspr_unit"
+
+#: Probe order type -> stock ``ORD_DVSN`` (주문구분) wire code.
+#:
+#: Official source (KIS ``open-trading-api`` ``examples_llm``, read 2026-07-30 via
+#: ``kis-code-assistant-mcp``):
+#: ``domestic_stock/inquire_psbl_order/inquire_psbl_order.py`` — 매수가능조회, TR
+#: ``v1_국내주식-007`` (real ``TTTC8908R`` / mock ``VTTC8908R``). Two docstring
+#: locations in that file enumerate the pair:
+#:
+#: * body, "2) 매수가능수량 확인": "특정 종목 전량매수 시 가능수량을 확인하실 경우
+#:   ORD_DVSN:00(지정가)는 종목증거금율이 반영되지 않습니다. 따라서 "반드시"
+#:   ORD_DVSN:01(시장가)로 지정하여 종목증거금율이 반영된 가능수량을 확인하시기
+#:   바랍니다."
+#: * ``Args``: ``ord_dvsn (str): [필수] 주문구분 (ex. 01 : 시장가)``
+#:
+#: The cross-reference is necessary because ``order_cash`` — 주식주문(현금), TR
+#: ``v1_국내주식-001``, real ``TTTC0012U`` / mock ``VTTC0012U`` for 매수, the TR this
+#: probe actually POSTs to — enumerates NO ``ORD_DVSN`` value: its ``Args`` line is a
+#: bare ``ord_dvsn (str): [필수] 주문구분``. ``shared/execution/executor.py:58-61``
+#: cites the same source for the same reason ("order_cash enumerates no ORD_DVSN
+#: value").
+#:
+#: WARNING — the two asset classes give "01" OPPOSITE meanings: stock ``ORD_DVSN``
+#: "01" is 시장가 (market), while futures ``ORD_DVSN_CD`` "01" is 지정가 (limit) and
+#: 시장가 is "02" (``executor.py:63-72``; the futures code is sent by
+#: :meth:`MockTradingClient.futures_order_body`). Never carry a code across. Like
+#: the runtime's tables this one deliberately has no default entry: an unknown
+#: order type is refused rather than coerced into a code that could turn a resting
+#: limit into a market order.
+_STOCK_ORD_DVSN: dict[str, str] = {
+    "limit": "00",  # 지정가
+    "market": "01",  # 시장가
+}
+
+#: ``ORD_UNPR`` for a 시장가 stock order — the field is present but is not a price.
+#:
+#: ``order_cash`` makes ``ORD_UNPR`` mandatory: it raises
+#: ``ValueError("ord_unpr is required")`` on ``""``, so the key cannot be dropped.
+#: The same docstring states what the broker does when an order carries no price —
+#: "※ ORD_UNPR(주문단가)가 없는 주문은 상한가로 주문금액을 선정하고 이후 체결이되면
+#: 체결금액로 정산됩니다." — it prices the order itself and settles at the fill.
+#: ``"0"`` is the encoding that satisfies both constraints (present, not a limit
+#: price), and is what the runtime already sends for a priceless order:
+#: ``executor.py:393`` ``"ORD_UNPR": str(int(order.price)) if order.price else "0"``.
+_STOCK_ORD_UNPR_MARKET = "0"
 
 #: The two [필수] futures quote fields P-NMPR puts under test, in the order the
 #: arm tuples below use.
@@ -322,6 +373,68 @@ def snap_to_tick(price: float, tick: Tick, *, side: str, marketable: bool) -> Ti
         unrounded=price,
         rounding="floor" if round_down else "ceiling",
     )
+
+
+def build_stock_order_body(
+    cano: str,
+    acnt_prdt_cd: str,
+    symbol: str,
+    qty: int,
+    price: TickPrice | None = None,
+    *,
+    order_type: str = "limit",
+) -> dict[str, str]:
+    """The ``order-cash`` request body — 지정가 or 시장가.
+
+    Mirror of ``executor.py:386-393`` (note ORD_UNPR int-truncation, Q-WIRE-1).
+    For a limit order ``price.wire`` is byte-identical to the runtime's
+    ``str(int(price))``: :func:`_stock_tick` refuses a fractional 호가단위, so a
+    snapped stock price is always a whole number of won and the truncation is a
+    no-op. What the truncation used to do on its own — produce a 1원 granularity
+    that no KRX price band allows — is what made this body ``호가단위 오류`` bait.
+
+    A module-level function rather than only a method because the dry-run has no
+    client and must still be able to show the exact body it would send. For a
+    market order that is the whole body: no quote is needed to build it.
+
+    Args:
+        cano: 종합계좌번호 (account prefix).
+        acnt_prdt_cd: 계좌상품코드 (account suffix).
+        symbol: 종목코드.
+        qty: 주문수량.
+        price: The tick-snapped limit price. Required for ``order_type="limit"``
+            and forbidden for ``"market"``.
+        order_type: ``"limit"`` (지정가) or ``"market"`` (시장가), resolved to a
+            wire code through :data:`_STOCK_ORD_DVSN`.
+
+    Raises:
+        ProbeError: unknown ``order_type``, a limit order with no price, or a
+            market order handed one.
+    """
+    ord_dvsn = _STOCK_ORD_DVSN.get(order_type)
+    if ord_dvsn is None:
+        raise ProbeError(
+            f"unknown stock order type {order_type!r} "
+            f"(expected one of {sorted(_STOCK_ORD_DVSN)})"
+        )
+    # Both directions are refused, not defaulted. A missing price must never
+    # become a market order by omission, and a market order that quietly carried
+    # a limit price would report a 시장가 fill it never took.
+    if order_type == "limit" and price is None:
+        raise ProbeError("a 지정가 (limit) stock order needs a tick-snapped price")
+    if order_type == "market" and price is not None:
+        raise ProbeError(
+            "a 시장가 (market) stock order must not carry a limit price "
+            f"(got {price.wire!r}); ORD_UNPR is {_STOCK_ORD_UNPR_MARKET!r} by spec"
+        )
+    return {
+        "CANO": cano,
+        "ACNT_PRDT_CD": acnt_prdt_cd,
+        "PDNO": symbol,
+        "ORD_DVSN": ord_dvsn,
+        "ORD_QTY": str(qty),
+        "ORD_UNPR": _STOCK_ORD_UNPR_MARKET if price is None else price.wire,
+    }
 
 
 def _futures_tick(symbol: str) -> Tick:
@@ -634,24 +747,22 @@ class MockTradingClient:
         }
 
     def stock_order_body(
-        self, symbol: str, qty: int, price: TickPrice
+        self,
+        symbol: str,
+        qty: int,
+        price: TickPrice | None = None,
+        *,
+        order_type: str = "limit",
     ) -> dict[str, str]:
-        """Mirror of ``executor.py:386-393`` (note ORD_UNPR int-truncation, Q-WIRE-1).
-
-        ``price.wire`` is byte-identical to the runtime's ``str(int(price))`` here:
-        :func:`_stock_tick` refuses a fractional 호가단위, so a snapped stock price
-        is always a whole number of won and the truncation is a no-op. What the
-        truncation used to do on its own — produce a 1원 granularity that no KRX
-        price band actually allows — is what made this body ``호가단위 오류`` bait.
-        """
-        return {
-            "CANO": self.creds.cano,
-            "ACNT_PRDT_CD": self.creds.acnt_prdt_cd,
-            "PDNO": symbol,
-            "ORD_DVSN": "00",  # 지정가
-            "ORD_QTY": str(qty),
-            "ORD_UNPR": price.wire,
-        }
+        """This session's account bound to :func:`build_stock_order_body`."""
+        return build_stock_order_body(
+            self.creds.cano,
+            self.creds.acnt_prdt_cd,
+            symbol,
+            qty,
+            price,
+            order_type=order_type,
+        )
 
     def submit_futures(
         self, body: dict[str, str]
@@ -1229,6 +1340,141 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
 # P-11 — balance reflection
 # ---------------------------------------------------------------------------
 
+#: ``measurements.fill_case`` verdicts. A run is one of exactly these two, and the
+#: second is a statement about what the harness cannot see — never a measurement.
+_FILL_OBSERVED = "FILLED_AND_REFLECTED"
+_FILL_UNDETERMINED = "UNDETERMINED_NON_FILL_OR_LAG_BEYOND_WINDOW"
+
+#: What would separate the two halves of :data:`_FILL_UNDETERMINED`.
+#:
+#: Named rather than added: an execution inquiry is a ``/trading/`` path, and this
+#: module does not grow trading-namespace surface for an interpretation aid. The
+#: manual re-check below is what today's operator actually did.
+_FILL_RESOLUTION_PATH = (
+    "A stock execution inquiry — 주식일별주문체결조회, "
+    "/uapi/domestic-stock/v1/trading/inquire-daily-ccld (real TTTC8001R / mock "
+    "VTTC8001R) — would separate the two by reporting filled quantity for the ODNO "
+    "directly. This harness deliberately does not add that trading-namespace path. "
+    "Until it does, resolve out of band: re-read the balance after the run and see "
+    "whether the holding ever moved. Artifact P-11-20260730T002715Z needed exactly "
+    "that manual re-check (~18 min later, holding unchanged at the baseline) to "
+    "establish that its CENSORED result was a NON-FILL and not a reflection lag."
+)
+
+
+def _market_price_record() -> dict[str, Any]:
+    """The ``limit_price_tick`` slot for a 시장가 run: an explicit bypass, not a gap.
+
+    The key is kept so a reviewer comparing artifacts always finds tick
+    provenance where the limit path puts it. An absent key would have to be
+    *interpreted*; ``applicable: False`` states the reason instead.
+    """
+    return {
+        "applicable": False,
+        "wire_value": _STOCK_ORD_UNPR_MARKET,
+        "unrounded": None,
+        "tick_size": None,
+        "tick_source": (
+            "NOT APPLICABLE — this run sent a 시장가 order "
+            f"(ORD_DVSN={_STOCK_ORD_DVSN['market']}), which carries no limit price. "
+            "No 호가단위 was requested and none was used: the inquire-price quote "
+            "call was skipped entirely, so nothing here came from a tick table."
+        ),
+        "rounding": None,
+        "rounding_rationale": (
+            "no snapping was attempted — there is no price to snap. Bypassing the "
+            "tick machinery also removes its failure mode: a 시장가 order cannot be "
+            "rejected with 호가단위 오류, and a broker that does not report "
+            f"output.{_STOCK_QUOTE_UNIT_FIELD} can no longer block this probe."
+        ),
+    }
+
+
+def _fill_case_record(
+    *,
+    reflected: bool,
+    symbol: str,
+    baseline_qty: int,
+    observed_qty: int,
+    window_s: float,
+    polls: int,
+    poll_interval_ms: float,
+) -> dict[str, Any]:
+    """State plainly which of the two cases the run represents, or that it cannot.
+
+    The artifact that motivated this record (``P-11-20260730T002715Z``) recorded a
+    censored window and nothing else, so "the order never filled" and "the order
+    filled and the balance lagged" were indistinguishable without an out-of-band
+    check. The distinction is the difference between a broker consistency finding
+    and no finding at all, so it is written down rather than left to a reader.
+    """
+    common: dict[str, Any] = {
+        "symbol": symbol,
+        "baseline_holding_qty": baseline_qty,
+        "final_holding_qty": observed_qty,
+        "window_s": window_s,
+        "polls": polls,
+        "poll_interval_ms_effective": poll_interval_ms,
+        "basis": (
+            "inquire-balance (VTTC8434R) holdings are the ONLY fill evidence this "
+            "harness collects; it has no execution-inquiry path."
+        ),
+    }
+    if reflected:
+        return common | {
+            "case": _FILL_OBSERVED,
+            "interpretation": (
+                f"the {symbol} holding rose {baseline_qty} -> {observed_qty}, so the "
+                "order both FILLED and was reflected in the balance inside the "
+                "window. submit_to_balance_reflection is a real fill-to-reflection "
+                "sample."
+            ),
+        }
+    return common | {
+        "case": _FILL_UNDETERMINED,
+        "interpretation": (
+            f"the {symbol} holding stayed at {baseline_qty} for the whole "
+            f"{window_s}s window. This run CANNOT tell whether (a) the order never "
+            "filled, or (b) it filled and the balance reflection lagged past the "
+            "window — the balance reports the same thing in both cases. No bound "
+            "may be derived from this run under either reading."
+        ),
+        "resolves_with": _FILL_RESOLUTION_PATH,
+    }
+
+
+def _p11_dry_run(run: ProbeRun, args: argparse.Namespace, order_type: str) -> None:
+    """Report the request P-11 would send, without contacting the broker.
+
+    A 시장가 body needs no quote, so the dry-run can show it byte for byte — which
+    is the point: the defect this probe was fixed for was an unnoticed
+    ``ORD_DVSN``/``ORD_UNPR`` pair. A 지정가 body cannot be shown, because its price
+    comes from a live quote.
+    """
+    plan = (
+        f"stock {order_type} order (ORD_DVSN={_STOCK_ORD_DVSN[order_type]}), then "
+        f"poll inquire-balance every {effective_interval_ms(args.poll_ms, args)}ms "
+        f"for up to {args.balance_timeout_s}s"
+    )
+    if order_type != "market":
+        run.observe(would_send=plan, order_type=order_type, order_body=None)
+        print(
+            f"\n  would send: {plan}\n"
+            "  body not shown — a 지정가 price is derived from a live quote."
+        )
+        return
+    # Re-resolved rather than threaded out of _setup: it is a pure env read, and
+    # every order probe shares that helper's two-value signature.
+    creds = resolve_credentials(args.asset, is_real=False)
+    body = build_stock_order_body(
+        creds.cano, creds.acnt_prdt_cd, args.symbol, args.quantity, order_type="market"
+    )
+    run.observe(would_send=plan, order_type=order_type, order_body=body)
+    # redact() before printing: the body carries the real account number, and a
+    # dry-run must not put it on an operator's terminal.
+    print(f"\n  would send POST {_STOCK_ORDER_PATH}")
+    print(f"  {json.dumps(redact(body), ensure_ascii=False)}")
+
 
 def probe_p11(args: argparse.Namespace) -> ProbeRun:
     """P-11 POSITIONS_BALANCES_MARGIN — fill to balance-reflection lag.
@@ -1243,9 +1489,40 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
 
     This probe intentionally FILLS. It therefore requires ``--allow-fill`` in
     addition to ``--confirm``.
+
+    Why the order type defaults to 시장가
+    ------------------------------------
+    The measurement is a *fill*-to-reflection lag, so a run that does not fill
+    yields nothing at all. The marketable-limit default did not fill: artifact
+    ``P-11-20260730T002715Z.json`` was ACCEPTED (``rt_cd=0``, ODNO ``0000008686``,
+    ``ORD_DVSN="00"``, ``ORD_UNPR="232500"`` — a limit 10% above the 211,000 touch,
+    correctly tick-snapped) and the holding never moved; an out-of-band balance
+    read ~18 minutes later still showed the unchanged baseline. Being *marketable
+    in price* is evidently not the same as being *filled* on 모의투자, so
+    ``--stock-order-type`` defaults to ``market`` and asks the broker for a fill
+    instead of pricing one. ``--stock-order-type limit`` keeps the old shape
+    reachable for comparison.
+
+    A side effect worth naming: the market path makes no quote call, so it depends
+    on no tick at all. ``--price-offset-pct``, :func:`snap_to_tick` and the
+    ``aspr_unit`` precondition are all limit-path-only.
+
+    Fill versus balance lag
+    -----------------------
+    ``measurements.fill_case`` says which of the two a run represents. The balance
+    query is the harness's only holdings source, so a window that expires with the
+    holding unchanged is *undetermined* — a non-fill and a lag beyond the window
+    look identical from here. That is recorded as an interpretation caveat naming
+    what would resolve it, never as a bound.
     """
     spec = get("P-11")
     _require_symbol(args)
+    order_type = args.stock_order_type
+    if order_type not in _STOCK_ORD_DVSN:
+        raise ProbeError(
+            f"unknown --stock-order-type {order_type!r} "
+            f"(expected one of {sorted(_STOCK_ORD_DVSN)})"
+        )
     run, client = _setup(spec, args)
     if args.asset == "futures":
         run.skip(
@@ -1259,7 +1536,7 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
             client.close()
         return run
     if client is None:
-        run.observe(would_send="marketable stock order, then poll inquire-balance")
+        _p11_dry_run(run, args, order_type)
         return run
     if not args.allow_fill:
         run.skip(
@@ -1270,19 +1547,37 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         client.close()
         return run
     try:
-        last, tick = client.stock_quote(args.symbol)
-        # Marketable limit: cross the touch by the offset so it fills promptly. The
-        # snap goes UP for the same reason the resting probes snap down — away from
-        # the touch, which here means further INTO the market, never back out of it.
-        price = snap_to_tick(
-            last * (1.0 + args.price_offset_pct / 100.0),
-            tick,
-            side="BUY",
-            marketable=True,
-        )
-        body = client.stock_order_body(args.symbol, args.quantity, price)
-        run.observe(order_body=body, last_price=last, marketable_price=price.wire)
-        run.measure("limit_price_tick", price.describe())
+        if order_type == "market":
+            # No quote: a 시장가 order carries no price, so there is nothing to
+            # price it against and no tick to establish. That also saves a call
+            # out of the measured rate budget (P-13: clean 1.0 rps).
+            body = client.stock_order_body(
+                args.symbol, args.quantity, order_type="market"
+            )
+            run.observe(order_body=body, order_type=order_type)
+            run.measure("limit_price_tick", _market_price_record())
+        else:
+            last, tick = client.stock_quote(args.symbol)
+            # Marketable limit: cross the touch by the offset so it fills promptly.
+            # The snap goes UP for the same reason the resting probes snap down —
+            # away from the touch, which here means further INTO the market, never
+            # back out of it.
+            price = snap_to_tick(
+                last * (1.0 + args.price_offset_pct / 100.0),
+                tick,
+                side="BUY",
+                marketable=True,
+            )
+            body = client.stock_order_body(
+                args.symbol, args.quantity, price, order_type="limit"
+            )
+            run.observe(
+                order_body=body,
+                order_type=order_type,
+                last_price=last,
+                marketable_price=price.wire,
+            )
+            run.measure("limit_price_tick", price.describe())
         tr_id = client.tr_ids["stock_krx_buy_mock"]
         status, parsed, _ms, _text = client.trading_call(
             "POST", _STOCK_ORDER_PATH, tr_id, body=body
@@ -1313,8 +1608,14 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         run.observe(baseline_holding_qty=base_qty)
 
         reflected_at: float | None = None
-        deadline = time.monotonic() + args.visibility_timeout_s
+        polls = 0
+        final_qty = base_qty
+        # --balance-timeout-s, not the shared --visibility-timeout-s: this window
+        # has to contain a real balance update, and the pacer floors polling at
+        # --pace-s, so the shared 30s default buys only ~27 polls.
+        deadline = time.monotonic() + args.balance_timeout_s
         while time.monotonic() < deadline:
+            polls += 1
             snapshot = client.stock_balance()
             rows = (
                 snapshot.get("output1")
@@ -1326,11 +1627,24 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 for r in rows
                 if str(r.get("pdno", "")).strip() == args.symbol
             )
+            final_qty = qty
             if qty > base_qty:
                 reflected_at = time.monotonic()
                 break
             time.sleep(args.poll_ms / 1000.0)
 
+        run.measure(
+            "fill_case",
+            _fill_case_record(
+                reflected=reflected_at is not None,
+                symbol=args.symbol,
+                baseline_qty=base_qty,
+                observed_qty=final_qty,
+                window_s=args.balance_timeout_s,
+                polls=polls,
+                poll_interval_ms=effective_interval_ms(args.poll_ms, args),
+            ),
+        )
         if reflected_at is None:
             run.error(
                 "balance never reflected the order within the timeout — CENSORED. "
@@ -1348,6 +1662,17 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 "n_note",
                 "n=1 per invocation. Re-run --samples times and take the maximum "
                 "across artifacts before proposing a bound.",
+            )
+            run.measure(
+                "poll_granularity_ms", effective_interval_ms(args.poll_ms, args)
+            )
+            run.measure(
+                "granularity_note",
+                "The sample carries up to one poll interval of additive error, so "
+                "an approved bound must exceed it plus poll_granularity_ms — which "
+                "is the EFFECTIVE interval max(--poll-ms, --pace-s), because the "
+                "pacer floors polling and a smaller --poll-ms did not happen "
+                "(runbook §8.3).",
             )
         run.measure(
             "position_left_open",
@@ -1798,6 +2123,34 @@ def add_order_args(parser: argparse.ArgumentParser) -> None:
         "--allow-fill",
         action="store_true",
         help="P-11 only: authorise a marketable order that is expected to FILL.",
+    )
+    parser.add_argument(
+        "--stock-order-type",
+        choices=tuple(_STOCK_ORD_DVSN),
+        default="market",
+        help=(
+            "P-11 only: 주문구분 for the fill order. Default 'market' "
+            f"(ORD_DVSN={_STOCK_ORD_DVSN['market']}, 시장가) because a marketable "
+            "LIMIT did not fill on 모의투자 — artifact P-11-20260730T002715Z was "
+            "accepted at a correctly tick-snapped price 10% above the touch and the "
+            "holding never moved, censoring the measurement. 'limit' "
+            f"(ORD_DVSN={_STOCK_ORD_DVSN['limit']}, 지정가) restores that shape for "
+            "comparison and is the only mode that uses --price-offset-pct or needs "
+            "a broker-reported 호가단위."
+        ),
+    )
+    parser.add_argument(
+        "--balance-timeout-s",
+        type=float,
+        default=120.0,
+        help=(
+            "P-11 only: how long to poll inquire-balance for the fill to appear. "
+            "Separate from --visibility-timeout-s because that default (30s) is "
+            "shared with probes that poll a cheap order listing, while the pacer "
+            "floors polling at --pace-s — 30s is only ~27 balance polls, short "
+            "enough to censor a slow-but-real update. Expiry stays CENSORED; it is "
+            "never converted into a measurement."
+        ),
     )
 
 
