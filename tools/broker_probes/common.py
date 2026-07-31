@@ -349,15 +349,25 @@ def build_auth_config(creds: ProbeCredentials, token_cache_dir: Path) -> Any:
     REUSE: ``shared.kis.auth.KISAuthConfig`` owns the real/mock base-URL split
     and the token cache file naming, so probes inherit the exact runtime
     semantics they are supposed to be measuring.
+
+    The directory is ASSET-scoped before handing it to ``KISAuthConfig``:
+    the runtime names the token file ``.kis_token_{real|mock}`` with no
+    app-key discrimination (``shared/kis/auth.py::token_cache_path``), so
+    stock and futures credentials given the same directory would share one
+    bearer-token file. The 2026-07-31 session ran a stock and a futures mock
+    probe in parallel and escaped only by timing (latent-risk register,
+    campaign README). Scoping here covers every probe module because this is
+    the single construction site for probe auth configs.
     """
     from shared.kis.auth import KISAuthConfig
 
-    token_cache_dir.mkdir(parents=True, exist_ok=True)
+    scoped_dir = token_cache_dir / creds.asset
+    scoped_dir.mkdir(parents=True, exist_ok=True)
     return KISAuthConfig(
         app_key=creds.app_key,
         app_secret=creds.app_secret,
         is_real=creds.is_real,
-        token_cache_dir=str(token_cache_dir),
+        token_cache_dir=str(scoped_dir),
     )
 
 
