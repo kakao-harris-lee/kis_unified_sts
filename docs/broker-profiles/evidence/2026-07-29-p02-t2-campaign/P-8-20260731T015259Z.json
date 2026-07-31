@@ -1,0 +1,148 @@
+{
+  "artifact_id": "P-8-20260731T015259Z",
+  "probe_id": "P-8",
+  "title": "REPLACE_OR_AMEND — RVSE_CNCL_DVSN_CD=01 semantics",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-31T01:52:59.230836+00:00",
+  "finished_at_utc": "2026-07-31T01:53:40.767298+00:00",
+  "duration_s": 41.536,
+  "repo_commit": "da6f96c2",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-8",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05608",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-31, P-8 trial 2 of 5 (runbook 8.2 recommends N>=5 before mapping ReplaceSemantics; each invocation is one independent trial and NO single trial may declare atomicity). MINI front month A05608: the amend can leave old and new ODNO coexisting, and P-2-20260731T014957Z showed the account funds only ONE full contract at a time while P-2-20260731T015102Z held two simultaneous minis.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "wire_value": "909.46",
+      "unrounded": 909.468,
+      "tick_size": "0.02",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "amend_price_tick": {
+      "wire_value": "900.36",
+      "unrounded": 900.3654,
+      "tick_size": "0.02",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "odno_wire_format": {
+      "paired": true,
+      "submit_response_field": "output.ODNO (order accept response)",
+      "query_row_field": "output1[].odno (inquire-ccnl row)",
+      "submit_response_samples": [
+        {
+          "verbatim": "0000003164",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "3164"
+        },
+        {
+          "verbatim": "0000003166",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "3166"
+        }
+      ],
+      "query_row_samples": [
+        {
+          "verbatim": "      3166",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3166"
+        },
+        {
+          "verbatim": "      3164",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3164"
+        },
+        {
+          "verbatim": "      3144",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3144"
+        }
+      ],
+      "identity_matching": "The two surfaces disagree on padding, so matching a submitted order against a query row must canonicalize BOTH sides (strip whitespace, then strip leading zeros). A raw strip-and-compare evaluates '762' == '0000000762' and never matches: artifact P-5-20260731T002112Z reported 1 CENSORED trial and n=0 for exactly that reason while the cleanup cancel of the same ODNO returned rt_cd=0, proving the order existed and the query had returned it.",
+      "reported_identifiers": "Measurements that list ODNOs report canonical keys (leading zeros stripped). The verbatim wire forms are the samples above.",
+      "scope": "One 모의투자 account, one session, mock environment. Recorded as the encoding observed here — not as a general KIS guarantee, and not extrapolated to 실전."
+    },
+    "replace_issues_new_odno": true,
+    "replace_rejected": false,
+    "coexistence_ms": 0.0,
+    "poll_granularity_ms": 1100.0,
+    "mode_determination": "Map to ReplaceSemantics only after N>=5 trials agree. A single trial showing zero coexistence does NOT prove atomicity — polling can miss an interval shorter than poll_granularity_ms, which is the EFFECTIVE interval max(--poll-ms, --pace-s) and not the requested --poll-ms."
+  },
+  "observations": [
+    {
+      "original_odno": "0000003164",
+      "amend_rt_cd": "0",
+      "amend_msg": "모의투자 정정주문이 완료 되었습니다.",
+      "new_odno": "0000003166",
+      "new_price": "900.36"
+    },
+    {
+      "cleanup_cancel": "0000003164",
+      "ok": false,
+      "msg": "모의투자 정정/취소할 수량이 없습니다."
+    },
+    {
+      "cleanup_cancel": "0000003166",
+      "ok": true,
+      "msg": "모의투자 취소주문이 완료 되었습니다."
+    }
+  ],
+  "skips": [],
+  "errors": [
+    "CLEANUP FAILED — order 0000003164 may still be resting. Cancel it manually: 모의투자 정정/취소할 수량이 없습니다."
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_protective_request_complete"
+    ],
+    "instance_fields": [
+      "capabilities.replace_semantics.mode",
+      "capabilities.replace_semantics.status"
+    ],
+    "capability_dimension": "REPLACE_OR_AMEND"
+  }
+}

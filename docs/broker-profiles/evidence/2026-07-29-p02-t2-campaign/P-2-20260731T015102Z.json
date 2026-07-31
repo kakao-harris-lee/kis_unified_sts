@@ -1,0 +1,159 @@
+{
+  "artifact_id": "P-2-20260731T015102Z",
+  "probe_id": "P-2",
+  "title": "SUBMISSION_IDEMPOTENCY — duplicate-body dedup window",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-31T01:51:02.597359+00:00",
+  "finished_at_utc": "2026-07-31T01:51:10.018452+00:00",
+  "duration_s": 7.421,
+  "repo_commit": "da6f96c2",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-2",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05608",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-31, MINI contract retry. The A01609 (full) run P-2-20260731T014957Z is CONFOUNDED and must not be read as dedup evidence: its second twin send came back 모의투자 주문가능금액이 부족합니다, i.e. the account margin funds only ONE full contract at a time, so the duplicate never got a fair chance to be deduped or accepted. Retrying on the mini front month A05608 (get_front_month_code(product=mini); multiplier 50,000 vs 250,000, tick 0.02 vs 0.05) so two simultaneous resting orders can be funded. If this send pair is also rejected on funds, the dedup window stays UNKNOWN and the blocker is account margin, not broker semantics.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "wire_value": "902.38",
+      "unrounded": 902.394,
+      "tick_size": "0.02",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "odno_wire_format": {
+      "paired": true,
+      "submit_response_field": "output.ODNO (order accept response)",
+      "query_row_field": "output1[].odno (inquire-ccnl row)",
+      "submit_response_samples": [
+        {
+          "verbatim": "0000003093",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "3093"
+        },
+        {
+          "verbatim": "0000003095",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "3095"
+        }
+      ],
+      "query_row_samples": [
+        {
+          "verbatim": "      3095",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3095"
+        },
+        {
+          "verbatim": "      3093",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3093"
+        }
+      ],
+      "identity_matching": "The two surfaces disagree on padding, so matching a submitted order against a query row must canonicalize BOTH sides (strip whitespace, then strip leading zeros). A raw strip-and-compare evaluates '762' == '0000000762' and never matches: artifact P-5-20260731T002112Z reported 1 CENSORED trial and n=0 for exactly that reason while the cleanup cancel of the same ODNO returned rt_cd=0, proving the order existed and the query had returned it.",
+      "reported_identifiers": "Measurements that list ODNOs report canonical keys (leading zeros stripped). The verbatim wire forms are the samples above.",
+      "scope": "One 모의투자 account, one session, mock environment. Recorded as the encoding observed here — not as a general KIS guarantee, and not extrapolated to 실전."
+    },
+    "gap_ms": 1100.0,
+    "distinct_odno_count": 2,
+    "odno_confirmed_in_query": [
+      "3093",
+      "3095"
+    ],
+    "verdict": "NO_DEDUP (2 accepted ODNOs)",
+    "gap_semantics": "gap_ms is the EFFECTIVE gap: --pace-s floors --gap-ms, so a requested gap below the pacing interval never reached the wire. Bracket the window against this value, and to probe a gap below --pace-s you must lower --pace-s as well — accepting the throttling risk that implies.",
+    "window_semantics": "A single ODNO does NOT establish deduplication_window_ms = gap. It establishes only that the window is >= gap. Bracket it: the largest deduping gap is a lower bound, the smallest non-deduping gap an upper bound."
+  },
+  "observations": [
+    {
+      "order_body": {
+        "ORD_PRCS_DVSN_CD": "02",
+        "CANO": "60****51",
+        "ACNT_PRDT_CD": "**",
+        "SLL_BUY_DVSN_CD": "02",
+        "SHTN_PDNO": "A05608",
+        "ORD_QTY": "1",
+        "UNIT_PRICE": "902.38",
+        "NMPR_TYPE_CD": "01",
+        "KRX_NMPR_CNDT_CD": "0",
+        "CTAC_TLNO": "",
+        "FUOP_ITEM_DVSN_CD": "",
+        "ORD_DVSN_CD": "01"
+      },
+      "resting_price": "902.38",
+      "side": "BUY"
+    },
+    {
+      "submit_1": {
+        "rt_cd": "0",
+        "msg1": "모의투자 매수주문이 완료 되었습니다.",
+        "ms": 106.94833402521908
+      }
+    },
+    {
+      "submit_2": {
+        "rt_cd": "0",
+        "msg1": "모의투자 매수주문이 완료 되었습니다.",
+        "ms": 140.86176408454776
+      }
+    },
+    {
+      "cleanup_cancel": "0000003093",
+      "ok": true,
+      "msg": "모의투자 취소주문이 완료 되었습니다."
+    },
+    {
+      "cleanup_cancel": "0000003095",
+      "ok": true,
+      "msg": "모의투자 취소주문이 완료 되었습니다."
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.submission_idempotency.status",
+      "capabilities.submission_idempotency.deduplication_window_ms"
+    ],
+    "capability_dimension": "SUBMISSION_IDEMPOTENCY"
+  }
+}

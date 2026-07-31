@@ -1,0 +1,160 @@
+{
+  "artifact_id": "P-5b-20260731T014917Z",
+  "probe_id": "P-5b",
+  "title": "OPEN_ORDER_QUERY — continuation-key pagination behaviour",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-31T01:49:17.877706+00:00",
+  "finished_at_utc": "2026-07-31T01:49:31.053484+00:00",
+  "duration_s": 13.176,
+  "repo_commit": "da6f96c2",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-5b",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A01609",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-31 (post mock-account reset). Runs AFTER P-5-20260731T014143Z, which placed and cancelled 100 orders today, so the query window now holds roughly 200 rows (order acks plus their cancel acks) — enough to exceed the one-call limit the official inquire_ccnl spec states (\"한 번의 호출에 최대 100건까지\"). Yesterdays attempt (P-5b-20260730T003006Z) had to skip the pagination determination because the funding block left zero order history.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "pages_walked": 10,
+    "page_size_observed": 15,
+    "continuation_supported": true,
+    "completeness_note": "If total rows across pages exceeds page 1, the runtime's single-page read (executor.py:562-563, 575-579) is structurally incomplete and open_order_query.completeness must NOT be declared complete."
+  },
+  "observations": [
+    {
+      "page": 0,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "3021",
+      "last_odno": "2995"
+    },
+    {
+      "page": 1,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2993",
+      "last_odno": "2969"
+    },
+    {
+      "page": 2,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2967",
+      "last_odno": "2941"
+    },
+    {
+      "page": 3,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2938",
+      "last_odno": "2918"
+    },
+    {
+      "page": 4,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2916",
+      "last_odno": "2884"
+    },
+    {
+      "page": 5,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2881",
+      "last_odno": "2855"
+    },
+    {
+      "page": 6,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2853",
+      "last_odno": "2831"
+    },
+    {
+      "page": 7,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2830",
+      "last_odno": "2804"
+    },
+    {
+      "page": 8,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2800",
+      "last_odno": "2772"
+    },
+    {
+      "page": 9,
+      "rows": 15,
+      "rt_cd": "0",
+      "next_fk200_present": false,
+      "next_nk200_present": true,
+      "first_odno": "2769",
+      "last_odno": "2747"
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_broker_query_consistency"
+    ],
+    "instance_fields": [
+      "capabilities.open_order_query.completeness",
+      "capabilities.open_order_query.pagination"
+    ],
+    "capability_dimension": "OPEN_ORDER_QUERY"
+  }
+}

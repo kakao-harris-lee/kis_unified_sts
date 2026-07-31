@@ -1,0 +1,234 @@
+{
+  "artifact_id": "P-NMPR-20260731T015139Z",
+  "probe_id": "P-NMPR",
+  "title": "Required quote fields — blank vs explicit NMPR_TYPE_CD/KRX_NMPR_CNDT_CD (A/B)",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-07-31T01:51:39.517141+00:00",
+  "finished_at_utc": "2026-07-31T01:51:46.579574+00:00",
+  "duration_s": 7.062,
+  "repo_commit": "da6f96c2",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-NMPR",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "futures",
+    "symbol": "A05608",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "P0-2 T2 wave-3 order session 2026-07-31. MINI front month A05608 deliberately, not the full A01609: this probe needs BOTH arms resting at once, and P-2-20260731T014957Z established that the account margin funds only one FULL contract at a time (the second send was rejected 모의투자 주문가능금액이 부족합니다). P-2-20260731T015102Z then held two simultaneous mini orders, so mini is the fundable choice for an A/B comparison. Arm A sends the explicit codes the runtime derives today (NMPR_TYPE_CD=01 지정가, KRX_NMPR_CNDT_CD=0 없음); arm B reconstructs the pre-76d43ae9 blanks. Acceptance parity alone is NOT semantic equality — see the verdict field.",
+    "gap_ms": 200.0,
+    "settle_seconds": 2.0,
+    "poll_ms": 200.0,
+    "inter_trial_s": 1.0,
+    "pace_s": 1.1,
+    "visibility_timeout_s": 30.0,
+    "late_window_s": 120.0,
+    "max_pages": 10,
+    "allow_fill": false,
+    "stock_order_type": "market",
+    "balance_timeout_s": 120.0
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "futures",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "60******03",
+    "account_fingerprint": "5e175fd232de"
+  },
+  "measurements": {
+    "limit_price_tick": {
+      "wire_value": "907.2",
+      "unrounded": 907.2,
+      "tick_size": "0.02",
+      "tick_source": "config/execution.yaml::futures_contract_spec.kospi200_mini.tick_size_points (matched symbol_prefix 'A05')",
+      "rounding": "floor",
+      "rounding_rationale": "away from the touch — a resting probe depends on the order NOT filling, so a snap must never move the price toward the touch; P-11's marketable order is the mirror case and snaps further in"
+    },
+    "arm_a_explicit": {
+      "rt_cd": "0",
+      "msg1": "모의투자 매수주문이 완료 되었습니다.",
+      "ms": 141.57221606001258
+    },
+    "arm_b_blank": {
+      "rt_cd": "0",
+      "msg1": "모의투자 매수주문이 완료 되었습니다.",
+      "ms": 152.03125798143446
+    },
+    "odno_wire_format": {
+      "paired": true,
+      "submit_response_field": "output.ODNO (order accept response)",
+      "query_row_field": "output1[].odno (inquire-ccnl row)",
+      "submit_response_samples": [
+        {
+          "verbatim": "0000003120",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "3120"
+        },
+        {
+          "verbatim": "0000003122",
+          "length": 10,
+          "leading_pad": "zero",
+          "canonical_key": "3122"
+        }
+      ],
+      "query_row_samples": [
+        {
+          "verbatim": "      3122",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3122"
+        },
+        {
+          "verbatim": "      3120",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3120"
+        },
+        {
+          "verbatim": "      3102",
+          "length": 10,
+          "leading_pad": "space",
+          "canonical_key": "3102"
+        }
+      ],
+      "identity_matching": "The two surfaces disagree on padding, so matching a submitted order against a query row must canonicalize BOTH sides (strip whitespace, then strip leading zeros). A raw strip-and-compare evaluates '762' == '0000000762' and never matches: artifact P-5-20260731T002112Z reported 1 CENSORED trial and n=0 for exactly that reason while the cleanup cancel of the same ODNO returned rt_cd=0, proving the order existed and the query had returned it.",
+      "reported_identifiers": "Measurements that list ODNOs report canonical keys (leading zeros stripped). The verbatim wire forms are the samples above.",
+      "scope": "One 모의투자 account, one session, mock environment. Recorded as the encoding observed here — not as a general KIS guarantee, and not extrapolated to 실전."
+    },
+    "arm_a_row": {
+      "ord_gno_brno": "00950",
+      "cano": "60****51",
+      "csac_name": "mobydic1",
+      "acnt_prdt_cd": "**",
+      "ord_dt": "20260731",
+      "odno": "      3120",
+      "orgn_odno": "         0",
+      "sll_buy_dvsn_cd": "02",
+      "trad_dvsn_name": "매수",
+      "nmpr_type_cd": "01",
+      "nmpr_type_name": "지정가",
+      "pdno": "A05608",
+      "prdt_name": "미니코스피 F 202608",
+      "prdt_type_cd": "",
+      "ord_qty": "1",
+      "ord_idx": "907.20",
+      "qty": "1",
+      "ord_tmd": "105140",
+      "tot_ccld_qty": "0",
+      "avg_idx": "0.00000000",
+      "tot_ccld_amt": "0",
+      "rjct_qty": "0",
+      "ingr_trad_rjct_rson_cd": "",
+      "ingr_trad_rjct_rson_name": "",
+      "ord_stfno": "",
+      "sprd_item_yn": "N",
+      "ord_ip_addr": ""
+    },
+    "arm_b_row": {
+      "ord_gno_brno": "00950",
+      "cano": "60****51",
+      "csac_name": "mobydic1",
+      "acnt_prdt_cd": "**",
+      "ord_dt": "20260731",
+      "odno": "      3122",
+      "orgn_odno": "         0",
+      "sll_buy_dvsn_cd": "02",
+      "trad_dvsn_name": "매수",
+      "nmpr_type_cd": "01",
+      "nmpr_type_name": "지정가",
+      "pdno": "A05608",
+      "prdt_name": "미니코스피 F 202608",
+      "prdt_type_cd": "",
+      "ord_qty": "1",
+      "ord_idx": "907.20",
+      "qty": "1",
+      "ord_tmd": "105142",
+      "tot_ccld_qty": "0",
+      "avg_idx": "0.00000000",
+      "tot_ccld_amt": "0",
+      "rjct_qty": "0",
+      "ingr_trad_rjct_rson_cd": "",
+      "ingr_trad_rjct_rson_name": "",
+      "ord_stfno": "",
+      "sprd_item_yn": "N",
+      "ord_ip_addr": ""
+    },
+    "query_echoes_quote_fields": [
+      "nmpr_type_cd"
+    ],
+    "row_field_differences": [],
+    "verdict": "BOTH_ACCEPTED, ECHO_PRESENT — compare arm_a_row/arm_b_row on the echoed fields; equal echoes establish the implicit default, unequal echoes establish that the blank meant something else.",
+    "scope": "모의투자 only. Per N-17 #13 the mock server has no night-session write path, so this result must not be extrapolated to REAL night."
+  },
+  "observations": [
+    {
+      "arm_a_body": {
+        "ORD_PRCS_DVSN_CD": "02",
+        "CANO": "60****51",
+        "ACNT_PRDT_CD": "**",
+        "SLL_BUY_DVSN_CD": "02",
+        "SHTN_PDNO": "A05608",
+        "ORD_QTY": "1",
+        "UNIT_PRICE": "907.2",
+        "NMPR_TYPE_CD": "01",
+        "KRX_NMPR_CNDT_CD": "0",
+        "CTAC_TLNO": "",
+        "FUOP_ITEM_DVSN_CD": "",
+        "ORD_DVSN_CD": "01"
+      },
+      "arm_b_body": {
+        "ORD_PRCS_DVSN_CD": "02",
+        "CANO": "60****51",
+        "ACNT_PRDT_CD": "**",
+        "SLL_BUY_DVSN_CD": "02",
+        "SHTN_PDNO": "A05608",
+        "ORD_QTY": "1",
+        "UNIT_PRICE": "907.2",
+        "NMPR_TYPE_CD": "",
+        "KRX_NMPR_CNDT_CD": "",
+        "CTAC_TLNO": "",
+        "FUOP_ITEM_DVSN_CD": "",
+        "ORD_DVSN_CD": "01"
+      },
+      "differing_fields": [
+        "KRX_NMPR_CNDT_CD",
+        "NMPR_TYPE_CD"
+      ],
+      "resting_price": "907.2",
+      "side": "BUY"
+    },
+    {
+      "cleanup_cancel": "0000003120",
+      "ok": true,
+      "msg": "모의투자 취소주문이 완료 되었습니다."
+    },
+    {
+      "cleanup_cancel": "0000003122",
+      "ok": true,
+      "msg": "모의투자 취소주문이 완료 되었습니다."
+    }
+  ],
+  "skips": [],
+  "errors": [],
+  "provenance_class": "MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics",
+      "capabilities.command_construction_and_wire_semantics.duplicate_unknown_and_omitted_field_behavior"
+    ],
+    "capability_dimension": "MARKET_INSTRUMENT_CONSTRAINTS"
+  }
+}
