@@ -156,6 +156,75 @@
 #     - `status: DRAFT` · `approvers: []` · digests unchanged. VERIFICATION-
 #       PROFILE-002.yaml untouched. This pass does not close P0-2.
 #
+# T4-β2 WAVE-3B EVIDENCE INTAKE (2026-07-31). The order-family session that ran
+#   after the operator's mock-account reset is folded: `P-5-...014143Z` (n=100
+#   정본), `P-5b-...014917Z`, `P-2-...014957Z` (full — confounded) and
+#   `...015102Z` (mini 정본), `P-NMPR-...015139Z`, `P-8` ×5, `P-FQP-...015653Z`,
+#   `P-11-...015709Z` (censored) and `...024808Z` (post-fix), plus the reset
+#   smoke `P-5-...002112Z`. Rules obeyed, verbatim:
+#     - **A superseded verdict is corrected in place, never deleted.** T4-β1
+#       recorded the 2026-07-30 P-11 censoring cause as `NON_FILL`, "proven" by
+#       an 18-minute-later re-read. The 2026-07-31 erratum demotes that to
+#       **미확인 (UNCONFIRMED)**: the harness read its holdings baseline AFTER
+#       the submit (harness defect #5, fix `6b87c03d`), so the predicate
+#       `qty > base_qty` could not become true under ANY window length; and the
+#       account reset erased the order history, so the execution inquiry
+#       `VTTC0081R` now returns 0 rows for `20260729`/`20260730` — the 07-30
+#       verdict is no longer falsifiable in either direction. The original block
+#       is kept byte-intact with a `_supersession_2026_07_31` appended, the same
+#       treatment document 2 gave RR-REAL-2.
+#     - **Citation eligibility (runbook §6.2) admitted six artifacts**:
+#       `P-5-...014143Z`, `P-5b-...014917Z`, `P-2-...015102Z`,
+#       `P-NMPR-...015139Z`, `P-FQP-...015653Z`, `P-11-...024808Z` — every one
+#       `provenance_class: MEASURED` with `errors: []` and `skips: []` (each
+#       checked in the artifact, not in the README). Excluded as `NOT_MEASURED`:
+#       the five `P-8` runs, `P-11-...015709Z`, and the reset smoke (which
+#       declares itself "not for citation"). Their broker responses are
+#       preserved verbatim in `_kis` annotations under an explicit
+#       `citation_eligibility` key — the treatment T4-α gave N-15 and T4-β1 gave
+#       the four 07-30 P-5 runs.
+#     - **One exclusion is NOT about eligibility.** `P-2-...014957Z` is
+#       `MEASURED` with `errors: []` and passes §6.2, yet it is kept out of
+#       `submission_idempotency.evidence_refs`: its second twin send was
+#       rejected for FUNDS, so the duplicate never reached a dedup decision.
+#       Reading its single ODNO as dedup would promote a confound to a value.
+#       What it does establish (account margin capacity) is recorded where that
+#       fact belongs, and cites the artifact there.
+#     - **No status moved and no `VERIFIED` appeared.** Eight dimensions were
+#       judged against their own propositions and not one was fully established;
+#       every block names the half that is still open. The facts this session
+#       produced are real but partial, and a partial fact promoted to a status
+#       hides the remaining gap behind a value.
+#     - **Unestablished stays null even when a number exists.**
+#       `open_order_query.eventual_consistency_bound_ms` (candidate 8017 ms),
+#       `submission_idempotency.deduplication_window_ms` (upper bound
+#       **< 1100 ms**, which is NOT zero), `final_quantity_proof
+#       .late_event_window_ms` (0 changes inside a 120 s window is not proof of
+#       no late change — VP-002:756), and P-11's submit→balance reflection
+#       (≤3083 ms UPPER BOUND at a 1100 ms first-poll detection floor) are
+#       recorded as observations with n, scope and additive error, never as
+#       values. Writing a bound is the Bounds-Approver's exclusive act
+#       (runbook §6.5).
+#     - **Environment inheritance still prohibited** (§13.14 / BC-INV-009).
+#       Every 2026-07-31 artifact is MOCK_VTS and appears only in document 1.
+#       Document 2 was re-read and no document-2 claim is contradicted by a mock
+#       observation. One document-2 sentence is stale for an environment-
+#       INDEPENDENT reason (a repo-code change, `76d43ae9`); it is reported to
+#       the campaign track rather than edited under a MOCK-scoped pass — see
+#       `command_construction_and_wire_semantics._kis.official_field_inventory_
+#       2026_07_29.our_client_delta._supersession_2026_07_31`.
+#     - **Every code line number added by this pass is anchored to commit
+#       `d9edcf9f`** and was re-verified against `git show HEAD:<path>`, not
+#       against the working tree: while this fold ran, another session held
+#       ~347 uncommitted lines of `shared/execution/executor.py` in the tree.
+#       Line numbers read from a mid-edit tree would have been unreproducible
+#       for any later reader. Two anchors inherited from earlier passes are
+#       corrected in place rather than silently reused — see Q-OOQ-1
+#       `line_anchor_note_2026_07_31` and Q-CXL-1
+#       `confirmed_on_the_wire_2026_07_31`.
+#     - `status: DRAFT` · `approvers: []` · digests unchanged. VERIFICATION-
+#       PROFILE-002.yaml untouched. This pass does not close P0-2.
+#
 # ANNOTATION CONVENTION: every key beginning with `_` (e.g. `_model_view`,
 #   `_kis`) is an INSTANCE-LOCAL annotation, not part of the template schema.
 #   Nothing in the repo parses this file today (verified absence: no loader
@@ -375,10 +444,18 @@ capabilities:
 
   # -- 2/17 · SUBMISSION_IDEMPOTENCY -------------------------------------
   submission_idempotency:
+    # T4-β2 (wave-3b): 2026-07-31 P-2 mini 정본 반영. status·assurance_level
+    # **무변경**. 판정 근거는 아래 `dedup_probe_2026_07_31.why_status_stays_
+    # unknown` — 관측된 것은 창의 **상한**이지 dedup 의 부재가 아니다.
     status: UNKNOWN
     assurance_level: EV-L0
-    evidence_refs: []
-    deduplication_window_ms: null
+    evidence_refs:
+      - "P-2-20260731T015102Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-2-20260731T015102Z.json; MOCK_VTS, 2026-07-31 10:51 KST — mini A05608 동일 본문 2회 → ODNO 2건. `MEASURED` · errors [] · skips [])"
+    deduplication_window_ms: null           # T4-β2 **null 유지**. 성립한 명제는
+                                            # "창 < 1100ms" 라는 **상한 하나**이며
+                                            # 0(=dedup 부재)이 아니다. 상한보다
+                                            # 짧은 창은 페이싱 하한 때문에
+                                            # 관측되지 않았다 — 아래 참조.
     restrictions: []
     restriction_approved: false
     fallback_reference: NO_BLIND_RETRY_AND_CONTAIN
@@ -426,6 +503,68 @@ capabilities:
         모의투자에서 동일 본문을 의도적으로 2회 전송하고 inquire-ccnl 로 ODNO
         2건 생성 여부를 확인. 2건이면 dedup 없음(UNSUPPORTED 확정), 1건이면
         창 길이를 이분 탐색. 메모 §5 P-2.
+      probe_proposal_decision_rule_SUPERSEDED_2026_07_31: >-
+        ⚠ 위 제안의 판정 규칙 "**2건이면 UNSUPPORTED 확정**" 은 **너무 강하다** —
+        원문은 남기고 여기서 정정한다. 2건은 "그 간격에서 dedup 되지 않았다" 만
+        말한다. 프로브는 `--pace-s` 로 하한이 잡힌 간격에서만 보낼 수 있으므로
+        (아래 `effective_gap_semantics`) 그보다 짧은 창은 **관측 대상 밖**이고,
+        아티팩트 자신의 `window_semantics` 도 "가장 작은 비-dedup 간격 = 창의
+        **상한**" 이라고 명시한다. 부재를 확정하려면 0 까지 좁힌 간격에서의
+        비-dedup 이 필요하다. 실행 결과의 처분은 아래 블록이다.
+      dedup_probe_2026_07_31:               # T4-β2 · wave-3b (인용 적격 정본)
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-31 10:51"
+        artifact_id: P-2-20260731T015102Z
+        applicable_scope: >-
+          단일 계좌(60******03, 지문 5e175fd232de) · 단일 세션 · asset=futures ·
+          mini 근월물 A05608 · 매수 지정가 · 모의투자 한정.
+        method: "완전 동일 본문(11필드, `UNIT_PRICE` 902.38 포함) 2회 전송"
+        observed:
+          submit_1: {rt_cd: "0", msg1: "모의투자 매수주문이 완료 되었습니다."}
+          submit_2: {rt_cd: "0", msg1: "모의투자 매수주문이 완료 되었습니다."}
+          distinct_odno_count: 2
+          odno_confirmed_in_query: ["3093", "3095"]   # 조회로 2건 모두 실재 확인
+          verdict_field: NO_DEDUP
+        effective_gap_semantics: >-
+          `gap_ms: 1100.0` 은 요청값이 아니라 **실효값**이다. `--pace-s 1.1` 이
+          `--gap-ms` 를 바닥에서 올려버리므로 1100ms 보다 짧은 간격은 **와이어에
+          도달한 적이 없다**. 더 짧은 간격을 시험하려면 페이싱을 낮춰야 하고,
+          그것은 P-13 이 관측한 유량 거부를 되살린다(구조적 상충).
+        licensed_claim: >-
+          **"dedup 창의 상한 < 1100ms"** — 이것 하나뿐이다. 0 이라는 뜻이 아니며
+          (캠페인 README §8.4 동일 문언), 따라서 `deduplication_window_ms` 는
+          null 을 유지한다.
+        why_status_stays_unknown: >-
+          `UNSUPPORTED` 는 "broker 가 제출 멱등성을 제공하지 않는다" 는 차원
+          전체의 명제다. 이 관측은 **1100ms 이상 간격**에 대해서만 그것을
+          보이며, 그보다 짧은 창의 존재를 배제하지 못한다. 게다가 우리 재시도
+          경로의 지연은 `retry_delay: 1.0`(config/execution.yaml:4) 로 **1100ms
+          미만이 실제로 도달 가능한 영역**이다 — 즉 미관측 구간이 운영상
+          도달 가능하다. 부재를 확정하지 못한 채 UNSUPPORTED 를 쓰면 캠페인
+          자신의 "0 이라는 뜻 아님" 판단을 값으로 뒤집는 것이 된다. UNKNOWN 유지.
+          (BC-INV-001 상 UNKNOWN·UNSUPPORTED 모두 unavailable 이므로 이 보류는
+          권한을 넓히지도 좁히지도 않는다 — 정확성만의 문제다.)
+        what_it_does_establish:
+          - "동일 본문 2회 전송이 **서로 다른 주문 2건**으로 성립할 수 있다(조회 확인)"
+          - "따라서 Q-IDEMP-1/2 의 blind retry 위험은 가설이 아니라 **실현 가능**하다"
+        what_it_does_not_establish:
+          - "1100ms 미만 간격의 dedup 여부 (페이싱 하한 밖)"
+          - "dedup 키(본문 해시? 계좌+종목+가격+수량?)의 정체 — 시험 0건"
+          - "n=1 쌍. 반복 시행 없음 — 확률적/상태 의존 dedup 은 배제되지 않았다"
+        confounded_companion_arm:           # 같은 세션 full 계약 arm
+          artifact_id: P-2-20260731T014957Z
+          citation_eligibility: >-
+            ⚠ 이 아티팩트는 `MEASURED` · `errors: []` 로 **런북 §6.2 를 통과한다**
+            — 그런데도 이 차원의 `evidence_refs[]` 에 넣지 않는다. 사유는 적격이
+            아니라 **혼입**이다: 2차 전송이 `모의투자 주문가능금액이 부족합니다`
+            로 거부돼 dedup 판정 단계에 도달하지 못했다. 아티팩트의 `verdict`
+            문자열도 "DEDUP_OR_REJECT" 로 두 원인을 구분하지 못한다고 말한다.
+            "ODNO 1건" 을 dedup 으로 읽으면 자금 거부를 값으로 바꿔치기한다.
+          preserved_path: "docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-2-20260731T014957Z.json"
+          what_it_establishes_instead: >-
+            계좌 증거금 용량 사실 —
+            `account_margin_borrow_and_settlement_constraints._kis
+            .account_capacity_observation_2026_07_31` 에 기록한다.
 
   # -- 3/17 · ACKNOWLEDGEMENT_SEMANTICS ----------------------------------
   acknowledgement_semantics:
@@ -506,15 +645,39 @@ capabilities:
     # T4-β1 (wave-3): 2026-07-30 주문 계열 세션 반영. status·assurance_level
     # **무변경** — 설계된 측정(수락→가시 지연·페이지 경계)은 한 건도 성립하지
     # 않았다. 확보된 것은 배선 사실과 broker 거부 표면뿐이다.
+    # T4-β2 (wave-3b): 2026-07-31 세션이 **설계된 측정 2건을 실제로 성립**시켰다
+    # (수락→가시 지연 n=100 · 연속조회 키 전진). status·assurance_level 은
+    # 그래도 **무변경**이다 — 아래 `why_status_stays_documented_not_verified`.
     status: DOCUMENTED_NOT_VERIFIED
     assurance_level: EV-L1
     evidence_refs:
       - "P-5b-20260730T003006Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-5b-20260730T003006Z.json; MOCK_VTS, 2026-07-30 09:30 KST — 조회 경로 응답 확인. 페이지 경계 판정은 아티팩트 `skips[]` 로 **명시 스킵**)"
-    completeness: UNKNOWN
+      - "P-5-20260731T014143Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-5-20260731T014143Z.json; MOCK_VTS, 2026-07-31 10:41–10:48 KST — 수락→가시 지연 n=100 · errors [] · skips [] · censored 0)"
+      - "P-5b-20260731T014917Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-5b-20260731T014917Z.json; MOCK_VTS, 2026-07-31 10:49 KST — 연속조회 10페이지 walk · errors [] · skips [])"
+    completeness: UNKNOWN                   # T4-β2 **UNKNOWN 유지**(이동 검토 후
+                                            # 기각). 확립된 것은 broker 의 **페이지
+                                            # 크기 15행**과 **연속키 전진**이며,
+                                            # 총 행수는 미확립이다 — walk 가
+                                            # 브로커 끝이 아니라 우리
+                                            # `--max-pages 10` 에서 멈췄다
+                                            # (10페이지째에도 다음 키가 있었다).
+                                            # 완전성 명제 자체가 미확립이므로
+                                            # 값을 만들지 않는다.
     eventual_consistency_bound_ms: null     # T4-β1 **null 유지**. P-5 4회 전부
                                             # n=0(`NOT_MEASURED`) — 주문이 한 건도
                                             # 수락되지 않아 t0 자체가 없다.
+                                            # T4-β2 **null 유지**(사유 변경): 이제
+                                            # n=100 실측이 있으나 bound 기입은
+                                            # Bounds-Approver 독점 권한이다
+                                            # (런북 §6.5). 후보 8017ms 는 아래
+                                            # `visibility_convergence_2026_07_31`.
     pagination: CTX_AREA_FK200_AND_CTX_AREA_NK200_CONTINUATION_KEYS
+                                            # T4-β2 **값 무변경**. 실측에서 실제로
+                                            # 전진한 키는 `CTX_AREA_NK200` 뿐이고
+                                            # `CTX_AREA_FK200` 은 응답 10페이지
+                                            # 전건에서 부재였다 — 관측은 아래에
+                                            # 기록하고, 이 필드는 계속 요청 측
+                                            # **키 이름의 서술**로 둔다.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -549,6 +712,30 @@ capabilities:
           evidence:
             - "shared/execution/executor.py:562-563 (CTX_AREA_FK200/NK200 = \"\")"
             - "shared/execution/executor.py:575-579 (output1 단일 페이지만 순회)"
+          measurement_scope_2026_07_31: >-
+            ⚠ **이 quirk 는 실증되지 않았다 — 반증되지도 않았다.** 2026-07-31
+            세션이 확립한 것은 **broker 의 페이징 파라미터**(페이지 15행·연속키
+            전진)이지 "런타임이 실제로 주문을 누락한다" 가 아니다. 두 질의의
+            **형상이 다르기 때문**이다: P-5b 의 walk 는 `STRT_ODNO` **없이**
+            (`odno` 기본값 `""`) 심볼·일자 목록 전체를 훑었고
+            (`tools/broker_probes/probes_order.py:1012-1041`, `:1455-1456`),
+            런타임은 방금 낸 주문 하나를 `STRT_ODNO=<order_no>` + `PDNO` +
+            `SORT_SQN=DS` 로 **좁혀서** 읽는다
+            (`shared/execution/executor.py:623-635`). 같은 세션의 P-5 는
+            **런타임과 같은 형상**으로(`probes_order.py:1369` —
+            `inquire_futures(symbol, odno=placed.odno)`) 100회 폴링해
+            **censored 0**이었고, 그 시점 창에는 ~200행이 쌓여 있었다. 따라서
+            `ONE_OPEN_ORDER_QUERY_OMISSION` 의 **실현 조건은 확인되지 않았다**.
+            남아 있는 것은 (a) 코드 사실 — 응답 연속키를 쓰지 않으므로 좁힌
+            결과집합이 한 페이지를 넘으면 잘린다, (b) 미확립 — `STRT_ODNO`
+            앵커의 서버측 의미론(그 결과집합이 한 페이지를 넘을 수 있는지)은
+            시험 0건이다. severity 는 그대로 두되 근거는 **조건부**임을 명시한다.
+          line_anchor_note_2026_07_31: >-
+            위 두 줄 번호는 T4-α/β1 시점(=`76d43ae9` 이전) 파일 기준이며 그때는
+            정확했다(검증: `1f789b96:shared/execution/executor.py:562-563` =
+            CTX_AREA 빈 문자열, `:575-576` = output1 단일 페이지 순회). `76d43ae9`
+            이후 현행 파일의 대응 위치는 `:634-635` · `:647-648` 이다 — 줄만
+            이동했고 동작은 동일하다.
         - id: Q-OOQ-2
           severity: MEDIUM
           text: >-
@@ -638,6 +825,141 @@ capabilities:
             (런북 §6.4-4 / VP-002:756). `pagination` 필드값은 코드·명세에서 온
             **키 이름**의 서술이며 이 관측으로 바뀌지 않는다.
           rerun_condition: "P-5 가 주문 이력을 만든 뒤 동일 세션에서 재실행"
+          _supersession_2026_07_31: >-      # T4-β2 — 원문 보존, 판정만 교체
+            ⚠ 위 `verdict: UNRESOLVED` 는 **해소됐다.** 원문은 남긴다. 재실행
+            조건(주문 이력 확보)이 2026-07-31 세션에서 충족됐고
+            `P-5b-20260731T014917Z` 가 다음을 실측했다: 연속조회 키가 **실제로
+            전진**하고(10페이지 전건 `next_nk200_present: true`) 페이지 크기는
+            **15행**이다. 07-30 의 0행은 broker 의미론이 아니라 자금 블록으로
+            인한 이력 부재였다는 당시 판단도 그대로 확인됐다. 새 판정과 그
+            **남은 미확립분**(총 행수)은 아래 `pagination_2026_07_31` 이다.
+      visibility_convergence_2026_07_31:    # T4-β2 · P-5-20260731T014143Z (정본)
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-31 10:41–10:48"
+        applicable_scope: >-
+          단일 계좌(60******03, 지문 5e175fd232de) · 단일 세션 · asset=futures ·
+          full 근월물 A01609 · 매수 지정가(시장가에서 10% 이격한 미체결 의도
+          가격) · 모의투자 한정. VP-002:762 가 요구하는 scope 축 그대로.
+        n: 100
+        errors: 0
+        skips: 0
+        censored_trials: 0
+        accept_to_visible_ms:
+          min: 1139.706
+          p50: 2632.931
+          p90: 3918.03
+          p95: 4448.762
+          p99: 5328.284
+          max: 5344.445
+          stdev: 942.74
+        candidate_bound:
+          key: B_broker_query_consistency
+          recommended_bound_ms: 8017        # ceil(max × 1.5) — 런북 §8.1
+          candidate_only: true
+          disposition: >-
+            **VERIFICATION-PROFILE-002.yaml 무접촉.** value_ms 기입은
+            Bounds-Approver 독점 권한이다(런북 §6.5). 여기에는 관측치와 후보만
+            기록한다. p95/p99 는 형상 진단이며 bound 후보가 **아니다**
+            (아티팩트 `statistic` 문언 그대로).
+        additive_error_note: >-
+          실효 폴 간격 **1100ms** 는 표본마다 최대 1회분의 가산 오차다(§8.3).
+          승인 bound 는 `max_observed + 1100ms` 를 넘어야 하며, 1100ms 는
+          `max(--poll-ms, --pace-s)` 의 **실효값**이다 — 요청한 더 촘촘한 폴은
+          페이서에 막혀 일어나지 않았다. 후보 8017 은 이 가산분을 **포함하지
+          않은** 숫자다.
+        what_it_establishes:
+          - "수락(ODNO 수신) 후 조회 가시화까지 **항상 지연이 있다**(min 1139.7ms — 즉시 가시 0건)"
+          - "100회 시행에서 **미가시(censored) 0건** — 이 창(30s) 안에서는 전건 수렴했다"
+        what_it_does_not_establish:
+          - "실전 환경 수렴 지연 (§13.14 외삽 금지)"
+          - "1100ms 미만 해상도의 실제 지연 분포 (폴 하한)"
+          - "다른 종목군·다중 계좌·부하 조건 (단일 축만 시험)"
+      pagination_2026_07_31:                # T4-β2 · P-5b-20260731T014917Z (정본)
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-31 10:49"
+        pages_walked: 10
+        page_size_observed: 15              # 10페이지 전건 동일
+        continuation_supported: true
+        continuation_key_actually_used: CTX_AREA_NK200
+        fk200_observed: >-
+          응답 10페이지 전건에서 `next_fk200_present: false` — 즉 이 표면에서
+          전진에 쓰인 연속키는 **NK200 하나**다. 요청 측에는 두 키가 모두
+          존재하므로 `pagination` 필드값(키 이름 서술)은 바꾸지 않는다.
+        official_spec_contradiction: >-
+          ⚠ 공식 `inquire_ccnl` 명세는 "한 번의 호출에 최대 **100건**" 이라고
+          서술하는데, 이 계좌·이 환경의 실측 페이지는 **15행**이다. 둘 중 하나가
+          틀렸다고 단정하지 않는다 — 기록되는 사실은 "모의 환경의 이 표면이
+          15행 페이지를 돌려주었다" 이며, 명세 수치를 **런타임 가정으로 쓰면
+          안 된다**는 근거로만 쓴다(실전은 미관측 · §13.14).
+        total_rows_NOT_established: >-
+          ⚠ walk 는 브로커의 끝이 아니라 **우리 `--max-pages 10`** 에서 멈췄다.
+          10페이지째에도 `next_nk200_present: true` 였다 — 즉 **더 있었다**.
+          따라서 총 행수도, "완전 walk 가 완전집합을 낸다" 는 명제도 미확립이며
+          `completeness` 는 UNKNOWN 을 유지한다.
+        query_shape_measured: >-
+          ⚠ 이 walk 는 `STRT_ODNO` **없이**(harness 기본값 `""`) 심볼·일자
+          목록을 훑은 것이다 — 런타임이 쓰는 `STRT_ODNO=<order_no>` 로 좁힌
+          형상이 **아니다**. 따라서 여기 수치는 **broker 의 목록 페이징 사실**
+          이며, 런타임 읽기의 완전성에 대한 판정이 아니다. 형상 비교는
+          `quirks_found_in_our_client[Q-OOQ-1].measurement_scope_2026_07_31`.
+        artifact_note_not_adopted: >-
+          ⚠ 아티팩트의 `completeness_note` 는 "총 행수가 1페이지를 넘으면
+          런타임의 단일 페이지 읽기(`executor.py:562-563, 575-579`)는 구조적으로
+          불완전" 이라고 결론한다. **값(page_size_observed·continuation_
+          supported·pages_walked)은 채택하고 이 규범적 결론은 채택하지 않는다.**
+          두 가지 이유다. (1) 줄 앵커가 어긋나 있다 — 아티팩트 자신의
+          `repo_commit: da6f96c2`(=`76d43ae9` 이후) 기준으로 그 줄들은 조회가
+          아니라 **체결 타임아웃/취소 반환 블록**이다. 앵커는 `76d43ae9` 이전
+          파일에서 작성돼 갱신되지 않았다(그 판에서는 정확했다 — 검증:
+          `1f789b96:...:562-563`/`:575-576`). 현행 대응 위치는 `:634-635` ·
+          `:647-648`. (2) 결론이 **다른 질의 형상**에 대한 주장이다(위
+          `query_shape_measured`). 같은 세션의 P-5 가 런타임 형상으로 100회
+          폴링해 censored 0 이었으므로, 누락은 실증되지 않았다. 이 처분은
+          하네스 결함 #3(ODNO 인코딩)·#5(baseline 순서)와 같은 취급이다 —
+          아티팩트의 **측정값은 살리고 그 해석은 독립 검증한다**.
+        consequence_for_runtime: >-
+          런타임이 응답 연속키를 쓰지 않는다는 **코드 사실**은 그대로다(Q-OOQ-1).
+          이번 실측이 더한 것은 그 조건문의 한쪽 변수 — broker 페이지는 15행이며
+          목록은 그보다 길어질 수 있다 — 뿐이고, 좁힌 질의의 결과집합이 한
+          페이지를 넘을 수 있는지는 **미확립**이다. 따라서 프로파일은
+          `completeness` 를 선언하지 않는다. 본 프로파일은 코드를 바꾸지 않는다.
+      row_schema_and_liveness_2026_07_31:   # T4-β2 · 행 스키마와 그 한계
+        source_artifacts:
+          - "P-NMPR-20260731T015139Z (정본 — `measurements.arm_a_row`/`arm_b_row` 가 행 27필드 전수)"
+          - "P-8 ×5 (⚠ `NOT_MEASURED` — 아래 취소 거부 관측의 출처. 사유와 함께만 인용)"
+        row_field_count: 27
+        row_fields:
+          [ord_gno_brno, cano, csac_name, acnt_prdt_cd, ord_dt, odno, orgn_odno,
+           sll_buy_dvsn_cd, trad_dvsn_name, nmpr_type_cd, nmpr_type_name, pdno,
+           prdt_name, prdt_type_cd, ord_qty, ord_idx, qty, ord_tmd,
+           tot_ccld_qty, avg_idx, tot_ccld_amt, rjct_qty,
+           ingr_trad_rjct_rson_cd, ingr_trad_rjct_rson_name, ord_stfno,
+           sprd_item_yn, ord_ip_addr]
+        qty_is_not_cancellable_remainder: >-
+          **`qty > 0` 인 행은 "취소 가능한 잔량" 을 뜻하지 않는다.** 27필드
+          어디에도 `cncl_yn` 같은 취소-상태 필드가 없고, 잔량 전용 필드도 없다.
+          같은 세션에서 `qty > 0` 인 행들에 취소를 시도했을 때
+          `모의투자 정정/취소할 수량이 없습니다` 로 거부됐다(P-8 5건 전건의
+          원주문 취소 + 캠페인 README 의 세션 기록: `qty > 0` 6행 중 취소 가능
+          0건). 따라서 **취소 가능 여부의 유일한 권위는 broker 의 취소 응답**
+          이다. ⚠ "6행 중 5행 거부" 는 아티팩트 1차 사실이 아니라 캠페인 README
+          §오늘 새로 확립된 브로커 의미론 #2 의 **세션 기록(2차 사실)** 이며,
+          아티팩트 1차 사실은 P-8 5건 각각의 원주문 취소 거부다.
+        runtime_impact: >-
+          런타임은 이 행의 `qty` 를 **잔여수량으로 읽는다**
+          (`shared/execution/executor.py:653` — `remaining_qty =
+          _to_int(row.get("qty"))`). 위 의미론이 맞다면 이 독해는 근거가 없고,
+          FQP 초안 3·4단계(잔량 0 확인)도 같은 가정 위에 있다. 잔여 위험 RR-9
+          참조. 본 프로파일은 코드를 바꾸지 않는다.
+      why_status_stays_documented_not_verified: >-
+        이 세션은 이 차원의 명제 **일부**를 실측했다(수락→가시 수렴 · 연속키
+        전진 · 페이지 크기). 그러나 (a) `completeness` 는 여전히 미확립이고
+        (walk 가 우리 상한에서 멈춤), (b) `eventual_consistency_bound_ms` 는
+        승인되지 않은 후보뿐이며, (c) 행의 잔량/liveness 의미론이 오히려
+        **더 불확실해졌다**(위 `qty_is_not_cancellable_remainder`). 차원 명제가
+        전부 성립해야 status 가 움직인다 — 부분 성립으로 올리면 (a)(b)(c) 의
+        공백이 값 뒤에 숨는다. `DOCUMENTED_NOT_VERIFIED` · `EV-L1` 유지.
+        (런북 §6.4-3 "측정 1건 ≠ LEVEL_2" 와 같은 규율.)
 
   # -- 6/17 · ORDER_HISTORY_QUERY ----------------------------------------
   order_history_query:
@@ -671,9 +993,14 @@ capabilities:
   # -- 7/17 · CANCELLATION -----------------------------------------------
   cancellation_finality:
     status: DOCUMENTED_NOT_VERIFIED        # T4-α 무변경 — 최종성은 여전히 미검증
+                                           # T4-β2 무변경 — P-FQP 가 확인한 것은
+                                           # **취소 ack 이 최종수량을 증명하지
+                                           # 못한다**는 금지 사실이고, 최종성의
+                                           # 성립이 아니다. 아래 _kis 참조.
     assurance_level: EV-L1
     evidence_refs:
       - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3 · 확정 — RVSE_CNCL_DVSN_CD 값집합)"
+      - "P-FQP-20260731T015653Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-FQP-20260731T015653Z.json; MOCK_VTS, 2026-07-31 10:56 KST — 취소 ack 자체 ODNO 발급 실증 · late-event 120s 창. `MEASURED` · errors [] · skips [])"
     crossing_fill_possible: true
     final_quantity_proof_recipe: FQP-KIS-FUT-CANCEL-THEN-REQUERY-DRAFT
     restrictions: []
@@ -712,6 +1039,16 @@ capabilities:
             가지는 별개 주문이다. 따라서 취소 ack 는 원주문의 최종 수량을 증명
             하지 못한다(§15.3 CANCEL_ACKNOWLEDGEMENT, vocabulary.py:266).
           evidence: ["shared/execution/executor.py:635"]
+          confirmed_on_the_wire_2026_07_31: >-
+            **코드 독해에서 broker 실측으로 승격됐다.** `P-FQP-20260731T015653Z`
+            에서 원주문 ODNO `0000003241` 에 대한 취소가 `rt_cd: 0` 으로
+            수락되며 **자기 ODNO `0000003242`** 를 발급했다(아티팩트
+            `observations[0].cancel_returns_new_odno`). 즉 취소 ack 은 원주문의
+            최종수량에 대해 아무것도 말하지 않는다 — §15.3
+            `CANCEL_ACKNOWLEDGEMENT` 금지의 근거가 이 broker 에서 실측으로
+            확인됐다. (⚠ `executor.py:635` 는 T4-α 시점 줄 번호다. `76d43ae9`
+            이후 현행 파일에서는 `shared/execution/executor.py:707` 이다 —
+            줄만 이동, 동작 동일.)
         - id: Q-CXL-2
           severity: POSITIVE-FINDING
           text: >-
@@ -734,11 +1071,55 @@ capabilities:
         evidence_refs:
           - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3)"
 
+      final_quantity_probe_2026_07_31:      # T4-β2 · P-FQP-20260731T015653Z (정본)
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-31 10:56"
+        applicable_scope: >-
+          단일 계좌(60******03) · 단일 세션 · asset=futures · mini A05608 ·
+          매수 지정가 · 취소 후 120s late-event 창 · 모의투자 한정.
+        cancel_ack_issues_own_odno:
+          original_odno: "0000003241"
+          cancel_rt_cd: "0"
+          cancel_ack_odno: "0000003242"
+          reading: "Q-CXL-1 실증 — 위 quirk 의 `confirmed_on_the_wire_2026_07_31` 과 동일 사실"
+        candidate_bound:
+          key: B_final_quantity_proof
+          label: submit_to_filled_plus_zero_remaining_ms
+          n: 1
+          max_observed_ms: 6946.861
+          recommended_bound_ms: 10421       # ceil(max × 1.5)
+          candidate_only: true
+          disposition: >-
+            **VERIFICATION-PROFILE-002.yaml 무접촉.** n=1 의 표본 적정성 판단과
+            value_ms 기입은 Bounds-Approver 소관이다(런북 §6.5). 폴 가산 오차
+            1100ms 도 별도 가산 대상이다(§8.3).
+        late_event_observation:
+          key: B_late_fill_observation
+          observation_window_s: 120.0
+          observed_changes: 0
+          latest_change_ms_after_cancel: null
+          verdict: NOT_ESTABLISHED
+          why: >-
+            **창 안의 부재는 비존재의 증명이 아니다**(VP-002:756). 120초 동안
+            변화가 0건이라는 것은 "이 창 안에서 늦은 변경을 보지 못했다" 이며
+            "늦은 변경이 없다" 가 아니다. 따라서
+            `final_quantity_proof.late_event_window_ms` 는 **null 유지**이고
+            §15.4 마커 `late_event_window_defined` 도 `false` 를 유지한다.
+        what_it_does_not_establish:
+          - "취소 최종성(finality) — 취소가 원주문을 확정적으로 끝냈는지는 여전히 미검증"
+          - "교차 체결(crossing fill) 가능성 — 보수 기본값 true 유지"
+          - "late-event 창 길이 (관측 0건은 값이 아니다)"
+
   # -- 8/17 · REPLACE_OR_AMEND -------------------------------------------
   replace_semantics:
     # T4-α: status 는 **무변경**이다. N-17 #3 이 확정한 것은 구분자의 값집합이지
     # 정정의 **원자성(ATOMIC_REPLACE 여부)** 이 아니다 — 후자가 status/mode 를
     # 지배하므로 UNKNOWN / BROKER_UNSPECIFIED 를 유지한다.
+    # T4-β2 (wave-3b): 정정 경로가 **처음으로 실행**됐다(P-8 ×5, N=5 전건 일치).
+    # 그럼에도 status·mode **무변경** — 관측 해상도(1100ms)보다 짧은 중첩은
+    # 구조적으로 볼 수 없으므로 ATOMIC_REPLACE 를 선언할 수 없고, 다섯 건 전부
+    # `NOT_MEASURED`(정리 실패)라 `evidence_refs[]` 에도 넣지 않는다. 아래 _kis
+    # `replace_probe_2026_07_31` 참조.
     status: UNKNOWN
     assurance_level: EV-L0
     evidence_refs:
@@ -790,6 +1171,58 @@ capabilities:
           강제된다. 단발 관측으로 원자성을 주장하지 않는다(런북 §8.4).
         evidence_refs:
           - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:47 (N-17 #3)"
+
+      replace_probe_2026_07_31:             # T4-β2 · P-8 ×5 (wave-3b)
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-31 10:52–11:01"
+        citation_eligibility: >-
+          ⚠ 다섯 아티팩트(`P-8-20260731T015220Z`·`...015259Z`·`...015340Z`·
+          `...015415Z`·`...020121Z`)는 전부 `provenance_class: NOT_MEASURED`
+          이고 `errors != []` 이므로 런북 §6.2 체크박스를 통과하지 못한다 —
+          `evidence_refs[]` 에 쓰지 않고 **사유와 함께** 여기 관측으로만
+          보존한다(T4-α 의 N-15, T4-β1 의 P-5 4건과 동일 처분). 보존 경로는
+          `docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/`.
+          ⚠ 다만 여기서 `errors[]` 는 **측정 실패가 아니라 정리 실패**이며,
+          그 내용 자체가 아래 핵심 관측이다 — 그래서 인용을 버리지 않는다.
+        applicable_scope: >-
+          단일 계좌(60******03) · 단일 세션 · asset=futures · mini A05608 ·
+          매수 지정가 → 가격만 바꾼 정정(`RVSE_CNCL_DVSN_CD` 01) · 모의투자 한정.
+        n_trials: 5
+        agreement: "N=5 전건 일치 — 아래 3항 모두"
+        observed_per_trial:
+          - {original_odno: "0000003143", new_odno: "0000003144", amend_rt_cd: "0"}
+          - {original_odno: "0000003164", new_odno: "0000003166", amend_rt_cd: "0"}
+          - {original_odno: "0000003180", new_odno: "0000003181", amend_rt_cd: "0"}
+          - {original_odno: "0000003194", new_odno: "0000003196", amend_rt_cd: "0"}
+          - {original_odno: "0000003331", new_odno: "0000003332", amend_rt_cd: "0"}
+        established:
+          - "정정이 **수락**된다(`rt_cd: 0`) — 이 경로의 첫 실행 확인"
+          - "정정은 **새 ODNO 를 발급**한다(5/5) — 즉 원주문 식별자를 유지하지 않는다"
+          - "폴링 관측 중첩(`coexistence_ms`) = 0.0 (5/5)"
+          - "원주문은 정정 시점에 **즉시 소진**된다 — 정리 단계의 원주문 취소가 5/5 `모의투자 정정/취소할 수량이 없습니다` 로 거부됐다. 이 거부는 폴링(해상도 1100ms)보다 강한 증거다"
+        why_mode_stays_broker_unspecified: >-
+          위 4항은 **비원자적 분해의 흔적과 양립**하지만 원자성을 증명하지
+          않는다. `coexistence_ms: 0.0` 은 "중첩이 없었다" 가 아니라 "**1100ms
+          해상도로는 중첩을 보지 못했다**" 이다(아티팩트 `mode_determination`
+          문언: 단발 0 중첩은 원자성의 증명이 아니다). ReplaceSemantics 의
+          ATOMIC_REPLACE / CANCEL_THEN_NEW / NEW_THEN_CANCEL 을 가르는 것은
+          **경계 구간의 순서**인데 그 구간이 관측 해상도 아래에 있다. 따라서
+          `mode: BROKER_UNSPECIFIED` 유지이며, §8.8 line 394 의 비원자 fallback
+          (RESERVE_OVERLAP_CAPACITY_OR_REPRESENT_GAP_AS_UNPROTECTED)도 계속
+          강제된다 — 보수 방향이 바뀌지 않으므로 이 보류는 위험을 늘리지 않는다.
+        orgn_odno_wire_form:
+          observed: "'         0'"          # 공백 9 + '0' (10자)
+          source: "P-NMPR-20260731T015139Z `arm_a_row`/`arm_b_row` (정본)"
+          reading: >-
+            원주문(정정이 아닌 주문)의 조회 행에서 `orgn_odno` 는 공백 패딩된
+            `0` 이다. 즉 이 필드는 **정정 연쇄 추적에 쓸 수 있는 표면**이며,
+            `0` 은 "원주문 없음" 을 뜻하는 것으로 보인다. ⚠ 정정으로 생성된
+            행에서 이 필드가 실제로 원주문 ODNO 를 담는지는 **확인하지 않았다**
+            (P-8 은 조회 행을 아티팩트에 남기지 않았다) — 추정 금지.
+        rate_limit_side_observation: >-
+          시행 1의 정리 중 취소가 `초당 거래건수를 초과하였습니다.` 로 거부됐다.
+          이는 replace 의미론이 아니라 유량 사실이며 `rate_limits._kis
+          .order_endpoint_class_observation_2026_07_31` 에 기록한다.
 
   # -- 9/17 · REDUCE_ONLY ------------------------------------------------
   reduce_only:
@@ -856,10 +1289,16 @@ capabilities:
   # -- 11/17 · POSITIONS_BALANCES_MARGIN ---------------------------------
   position_balance_margin:
     status: DOCUMENTED_NOT_VERIFIED        # T4-α 무변경 — consistency 미측정
+                                           # T4-β2 무변경 — 체결→잔고 반영은
+                                           # **상한 1건**만 확보됐고 점추정은
+                                           # 구조적으로 불가능하다(아래).
     assurance_level: EV-L1
     evidence_refs:
       - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:60 (N-17 #16 · 확정 — 잔고 TR 정본)"
-    consistency_model: UNKNOWN
+      - "P-11-20260731T024808Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-11-20260731T024808Z.json; MOCK_VTS, 2026-07-31 11:48 KST — baseline 수정판(`6b87c03d`). `MEASURED` · errors [] · skips [] · 체결은 체결조회로 독립 확인)"
+    consistency_model: UNKNOWN             # T4-β2 **UNKNOWN 유지**. n=1 의 상한
+                                           # 하나로 일관성 모델(read-your-writes
+                                           # 여부·지연 분포)을 서술할 수 없다.
     restrictions: []
     restriction_approved: false
     fallback_reference: null
@@ -933,6 +1372,127 @@ capabilities:
           캠페인 트랙이 재실행 설계를 변경했다(시장가 기본 + 잔고 관측 창 확대,
           체결 여부와 잔고 반영을 아티팩트에서 분리 기록). 이는 **예정 사항**이며
           본 프로파일의 값이 아니다.
+        _supersession_2026_07_31: >-        # T4-β2 — 원문 보존, 판정만 격하
+          ⚠ **위 `censoring_cause: NON_FILL` 과 그 근거는 철회한다.** 원문은
+          삭제하지 않고 여기서 정정한다. 사유는 두 겹이다.
+          · **측정 논리 결함(하네스 결함 #5, 수정 `6b87c03d`)**: `probe_p11` 이
+            holdings baseline 을 주문 전송 **후**에 읽었다(전송 → `sent` 스탬프
+            → `baseline = client.stock_balance()`). 시장가/체결 가능 주문은
+            즉시 체결되므로 baseline 이 **이미 자기 체결을 포함**하고,
+            판정 술어 `qty > base_qty` 는 **어떤 창 길이로도 참이 될 수 없다**.
+            즉 07-30 의 "창을 늘려도 안 된다" 관측은 옳았고 그 **해석**이
+            틀렸다 — 창이 아니라 기준선이 오염돼 있었다. 07-30 판 역시 같은
+            오염된 기준선 위에 있었다.
+          · **재검증 불가**: 계좌 초기화가 주문 이력을 소거해 체결조회
+            (`VTTC0081R`)가 `20260730`·`20260729` 모두 **0행**을 돌려준다.
+            어제 주문이 체결됐는지 아닌지 이제 **어느 방향으로도 확인할 수
+            없다**.
+          · 따라서 07-30 의 censoring 원인은 **NON_FILL 확정이 아니라 미확인
+            (UNCONFIRMED)** 이다. 그 아래 `censoring_cause_basis` 가 근거로 든
+            "18분 후 재조회에서 보유수량 동일" 도 같은 오염(주문 후 baseline)을
+            공유하므로 비체결의 증거가 되지 못한다.
+          · **바뀌지 않는 것**: `submit_to_balance_ms` 는 여전히 **null 유지**
+            이고 `consistency_model` 도 UNKNOWN 유지다. 근거만 "체결이 없었다"
+            에서 "이 실행으로는 아무것도 판정할 수 없다" 로 바뀐다.
+            `what_it_does_establish` 2항(조회 경로 응답 · 주문 수락)은 그대로
+            유효하다.
+          · 출처: 캠페인 README §⚠ 에라타(2026-07-31 11:20 KST) + 수정 커밋
+            `6b87c03d` + 후속 실측 `P-11-20260731T024808Z`.
+      fill_to_balance_probe_2026_07_31:     # T4-β2 · wave-3b (2회 실행)
+        environment: MOCK_VTS
+        applicable_scope: >-
+          모의 **주식** 계좌 50******01(지문 54e7f8a5d841) · 005930 · 1주 ·
+          시장가(`ORD_DVSN` "01" · `ORD_UNPR` "0") · 모의투자 한정.
+        run_1_censored:
+          artifact_id: P-11-20260731T015709Z
+          at_kst: "2026-07-31 10:57"
+          citation_eligibility: >-
+            ⚠ `provenance_class: NOT_MEASURED` (censored) 이므로 런북 §6.2 를
+            통과하지 못한다 — `evidence_refs[]` 에 쓰지 않고 여기 관측으로만
+            보존한다. 보존 경로:
+            docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/
+            P-11-20260731T015709Z.json.
+          order_accepted: {http_status: 200, rt_cd: "0", odno: "0000018925"}
+          artifact_verdict: UNDETERMINED_NON_FILL_OR_LAG_BEYOND_WINDOW
+          artifact_honesty_note: >-
+            아티팩트는 스스로 "이 실행은 (a) 미체결과 (b) 창을 넘은 반영 지연을
+            **구분할 수 없다**" 고 적었다 — 즉 값을 만들지 않았다. 이 정직한
+            기록이 아래 세션 후 판정과 충돌하지 않는다.
+          post_session_finding: >-
+            ⚠ **세션 후 판정(2차 사실 — 아티팩트 밖)**: 체결조회
+            `VTTC0081R`(주식일별주문체결조회 [v1_국내주식-005], 모의)로 ODNO
+            `0000018925` 를 직접 조회한 결과 **전량 체결**이었다
+            (`ord_dvsn_name` 시장가 · `ord_qty` 1 · `tot_ccld_qty` 1 ·
+            `rmn_qty` 0 · `cncl_yn` N · 체결가 248,500 · `ord_tmd` "105710").
+            출처는 캠페인 README §⚠ 에라타(2026-07-31 11:20 KST)이며 아티팩트
+            1차 사실이 **아니다** — 그렇게 표시한다. 잔고 대조
+            (`dnca_tot_amt` 10,000,000 → `prvs_rcdl_excc_amt` 9,751,470)도
+            같은 README 기록이다.
+          root_cause: >-
+            **하네스 결함 #5** — baseline 을 전송 후에 읽었다(수정 `6b87c03d`).
+            자기 체결이 baseline 에 들어가 있으므로 `qty > base_qty` 는 참이 될
+            수 없었다. 결함은 창 길이가 아니라 기준선 순서였다.
+        run_2_measured:
+          artifact_id: P-11-20260731T024808Z
+          at_kst: "2026-07-31 11:48"
+          repo_commit: 6b87c03d
+          citation_eligibility: >-
+            `provenance_class: MEASURED` · `errors: []` · `skips: []` — 런북
+            §6.2 통과. 위 `evidence_refs[]` 에 등재.
+          design_change: >-
+            (a) baseline 을 전송 **전**에 읽는다, (b) 체결 사실을 잔고가 아니라
+            **체결조회로 독립 확인**한다(읽기 전용 GET). 하네스가 그동안
+            의도적으로 두지 않았던 trading-namespace 조회 경로를 이 목적에
+            한해 추가한 것이며, 이는 **하네스 설계 변경**이지 broker 사실이
+            아니다.
+          fill_evidence:                    # 체결조회 원문 (아티팩트 1차 사실)
+            tr_id_mock: VTTC0081R
+            path: "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+            queried_odno: "0000023037"
+            tot_ccld_qty: "1"
+            rmn_qty: "0"
+            cncl_yn: "N"
+            avg_prvs: "249500"
+            ord_tmd: "114811"               # ⚠ 주문시각(HHMMSS)이며 체결시각이
+                                            # 아니다 — 초 단위라 하위 지연을
+                                            # 유도할 수 없다(아티팩트 문언).
+            rows_returned: 2
+            row_cap_note: "모의는 1콜 최대 15행 · 1페이지 역순 조회 — 방금 낸 주문은 그 위에 있다"
+          balance_reflection:
+            baseline_holding_qty: 1         # 전송 **전** 관측 (run_1 의 체결분)
+            final_holding_qty: 2
+            reflected_on_poll: 1            # **첫 폴**에서 이미 반영
+            observed_sample_ms: 3083.139
+            value_semantics: UPPER_BOUND_ONLY
+            detection_floor_ms: 1100.0
+            why: >-
+              반영이 **첫 폴에서 이미 보였다**. 따라서 이 표본은 "반영이 그
+              폴 구간 어딘가에서 일어났다" 는 **상한**일 뿐 하한 정보를 전혀
+              담지 않는다 — 참값은 [0, 1100] ms 안에 있다. 아티팩트의
+              `resolution_floor.do_not_report_as_measured` 가 같은 말을 한다.
+          submit_to_balance_ms: null        # **null 유지** — 값이 아니라 상한만
+                                            # 존재한다. 아티팩트가 함께 낸
+                                            # `recommended_bound_ms: 4625` 도
+                                            # **채택하지 않는다**: 측정 지연이
+                                            # 아닌 검출 하한에 마진을 곱한
+                                            # 숫자이기 때문이다.
+          point_estimate_structurally_impossible: >-
+            폴 간격은 `max(--poll-ms, --pace-s)` 로 하한이 잡히고(1100ms),
+            그것을 좁히면 P-13 이 관측한 유량 한도와 충돌한다. 즉 이 프로브가
+            낼 수 있는 것은 **"≤ 1 폴 간격" 상한**뿐이며, 1100ms 를 측정된
+            지연으로 적으면 §8.3 의 가산 오차를 값으로 바꿔치기하는 것이 된다.
+        what_this_establishes:
+          - "모의 주식 시장가 주문은 **체결된다** — 체결조회로 독립 확인(1차 사실)"
+          - "잔고는 체결을 **사실상 즉시**(≤ 1 폴 간격 = ≤3083ms 관측 상한) 반영한다"
+          - "체결 판정은 잔고 델타가 아니라 **체결조회**로 해야 한다는 측정 규율"
+        what_this_does_not_establish:
+          - "submit→balance 반영 지연의 **점추정** (구조적 불가 — 위)"
+          - "consistency_model (n=1 상한으로 모델을 서술할 수 없다)"
+          - "선물 잔고의 같은 성질 (모의 선물 잔고 조회는 broker 미지원)"
+          - "실전 환경의 반영 지연 (§13.14 외삽 금지)"
+        operator_note: >-
+          P-11 은 설계상 포지션을 청산하지 않는다 — 두 주문의 체결로 `005930`
+          **2주**가 모의 계좌에 남아 있다(캠페인 README §운영자 확인 항목).
       quirks_found_in_our_client:
         - id: Q-POS-1
           severity: MEDIUM
@@ -1074,6 +1634,39 @@ capabilities:
           `--pace-s 1.1` 페이서 도입(`aba51f2a`) 후 후속 3회 실행에서 유량 거부는
           재발하지 않았다 — 1.1s 간격이 이 계좌·세션에서 **충분했다**는 관측이지
           한도의 측정이 아니다.
+        mitigation_claim_SUPERSEDED_2026_07_31: >-
+          ⚠ **"1.1s 간격이 충분했다" 는 반증됐다.** 원문은 남긴다. 2026-07-31
+          세션의 P-8 시행 1 정리 단계에서 `--pace-s 1.1` 페이싱 **아래에서도**
+          취소가 `초당 거래건수를 초과하였습니다.` 로 거부됐다(아래
+          `order_endpoint_class_observation_2026_07_31`). 07-30 의 무재발은
+          "그 세션의 호출 혼합에서 충분했다" 였을 뿐 주문/취소 클래스의 한도가
+          1.1s 페이싱 아래에 있다는 뜻이 아니다.
+      order_endpoint_class_observation_2026_07_31:   # T4-β2 · wave-3b
+        citation_eligibility: >-
+          ⚠ 출처 `P-8-20260731T015220Z` 는 `provenance_class: NOT_MEASURED`
+          (`errors != []`) 라 런북 §6.2 를 통과하지 못한다 — `evidence_refs[]`
+          에 쓰지 않고 여기 관측으로만 보존한다. 보존 경로:
+          docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/
+          P-8-20260731T015220Z.json (MOCK_VTS, 2026-07-31 10:52 KST).
+        observation: >-
+          정정 1회 + 취소 2회를 `--pace-s 1.1` 페이싱으로 보내는 중 두 번째
+          취소가 `초당 거래건수를 초과하였습니다.` 로 거부됐다(아티팩트
+          `observations[2].cleanup_cancel` · `errors[1]`). P-13 이 query
+          클래스에서 본 문언과 **동일**하다.
+        what_it_adds: >-
+          **주문/취소 엔드포인트 클래스의 천장은 1.1s 페이싱보다 타이트하다.**
+          P-13 이 측정한 것은 `endpoint_class=query` 뿐이므로(런북 §5.3),
+          주문 클래스의 한도는 그보다 **좁을 수 있다**는 방향 사실이 새로 생겼다.
+        extrapolation_guard: >-
+          ⚠ **P-13 의 query 값을 주문 클래스로 외삽하지 말 것.** `hard_limits`
+          는 `{}` 를 유지한다. 이 관측은 (a) 임계 rps 를 산출하지 못하고
+          (정정·취소가 겹친 상황), (b) `msg_cd` 가 아티팩트에 기록되지 않아
+          P-13 의 `EGW00201` 과 같은 코드인지 확인할 수 없으며,
+          (c) query·order 가 **같은 카운터를 공유하는지**도 여전히 미확립이다.
+          `submit_cancel_amend_replace_query_and_session_sharing` UNKNOWN 유지.
+        followup: >-
+          런북 §5.3 의 **주문 클래스 전용 P-13 실행**이 잔여 항목으로 남는다.
+          그 실행은 실주문을 반복 제출해야 하므로 별도 리뷰 대상이다.
       hard_limits_deliberately_empty: >-
         **이 항목이 P0-2 의 핵심이다.** 아래 숫자는 전부 *우리가 스스로 건 상한*
         이며 broker 가 강제하는 한도의 측정값이 **아니다**. 흔히 인용되는
@@ -1714,6 +2307,37 @@ capabilities:
         선물 증거금 관련 로컬 모델은 존재하나(shared/risk/futures_margin.py,
         config/futures_margin.yaml) 이는 우리 계산이지 broker 선언이 아니다.
         공매도/대차·결제통화·만기 semantics 는 조회하지 않는다.
+      account_capacity_observation_2026_07_31:   # T4-β2 · wave-3b
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-31 10:49–11:01"
+        status_unchanged: >-
+          ⚠ 이것은 **계좌 상태 사실**이지 broker capability 선언이 아니다.
+          `status`·`margin_and_collateral_semantics` 는 UNKNOWN 을 유지한다.
+        full_contract_capacity:
+          artifact_id: P-2-20260731T014957Z   # `MEASURED` · errors [] — 적격
+          symbol: A01609                      # kospi200 full, 승수 250,000
+          observed: >-
+            동일 본문 2회 전송에서 **1차 수락 · 2차 `모의투자 주문가능금액이
+            부족합니다`**. 즉 초기화 직후 이 계좌의 주문가능금액은 full 계약
+            **동시 1건**까지다.
+          why_this_is_not_dedup_evidence: >-
+            2차가 dedup 판정 단계에 **도달하지 못했다**. 자금 거부를 dedup 으로
+            읽으면 안 된다 — 이 아티팩트가 `submission_idempotency` 의
+            `evidence_refs[]` 에서 제외된 이유다(적격 문제가 아니라 혼입).
+        mini_contract_capacity:
+          artifact_evidence: "P-2-20260731T015102Z — mini 동시 **2건** 수락(조회 확인)"
+          session_record: >-
+            ⚠ 캠페인 README §오늘 새로 확립된 브로커 의미론 #1 은 mini
+            **동시 6계약 잔존**을 기록한다. 이는 세션 기록(2차 사실)이며 단일
+            아티팩트가 담은 1차 사실은 위 2건이다. 그렇게 구분해 적는다.
+        measurement_design_consequence: >-
+          동시 2주문이 필요한 P-2·P-NMPR·P-8·P-FQP 를 **mini 로 전환**한 근거가
+          이 용량 사실이다(각 아티팩트 note 에 명시). 즉 이 관측은 capability
+          가 아니라 **측정 설계의 제약**으로 소비됐다.
+        not_established:
+          - "증거금 요구액·계산식 (broker 선언 미조회 — 거부 문언에 수치 없음)"
+          - "실전 계좌의 용량 (§13.14 외삽 금지)"
+          - "모의 선물 잔고 조회 자체가 broker 미지원(`shared/kis/client.py:1030-1032`)이라 잔액을 직접 확인할 수 없다"
 
   command_construction_and_wire_semantics:
     # T4-α: status 무변경(UNKNOWN). 실제 송출 바이트 관측 메커니즘이 여전히 없고
@@ -1726,10 +2350,17 @@ capabilities:
       - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:49 (N-17 #5 · 부분 — String 전송 요구)"
       - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:50 (N-17 #6 · 부분 — 필수/선택)"
       - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:51 (N-17 #7 · 미확인 — 미지 필드 동작)"
+      - "P-NMPR-20260731T015139Z (docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/P-NMPR-20260731T015139Z.json; MOCK_VTS, 2026-07-31 10:51 KST — 빈 값 vs 명시 값 A/B, 조회 echo 대조. `MEASURED` · errors [] · skips [])"
     required_and_default_field_semantics: UNKNOWN   # 유지 — 필수/선택 구분은
                                                     # 확정됐으나 **생략 시 broker
                                                     # 기본값**은 4필드 중 1건만
                                                     # 서술된다(아래 _kis).
+                                                    # T4-β2: 실측으로 1필드
+                                                    # (`NMPR_TYPE_CD`)의 암묵
+                                                    # 기본값이 확정됐다. 그래도
+                                                    # UNKNOWN 유지 — 나머지
+                                                    # 필드(`KRX_NMPR_CNDT_CD`
+                                                    # 포함)는 echo 조차 없다.
     account_symbol_side_and_position_effect_mapping: UNKNOWN
     # T4-α 기입 근거(1줄): N-17 #5 가 "ORD_QTY·ORD_UNPR 등을 String 으로 전달해야
     # 한다" 는 공식 요구를 확정했고(시장가/최유리는 가격 "0" 문자열), 반면 소수점
@@ -1805,6 +2436,29 @@ capabilities:
           evidence:
             - "shared/execution/executor.py:386-399 (빈 문자열 4필드)"
             - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:87-98 (§2 소견 2)"
+          _supersession_2026_07_31: >-      # T4-β2 — 원문 보존, 사실만 정정
+            ⚠ **위 `finding` 의 코드 사실은 낡았다.** 원문은 남기고 여기서
+            정정한다. 두 갈래다.
+            · **코드가 바뀌었다(환경 무관).** `76d43ae9`(2026-07-29 20:30 KST)
+              이후 런타임은 `NMPR_TYPE_CD`/`KRX_NMPR_CNDT_CD` 를 빈 문자열로
+              보내지 않는다 — `ORD_DVSN_CD` 에서 **구조적으로 파생**한다
+              (`shared/execution/executor.py:104` 매핑 표 ·`:456-457` 파생 ·
+              `:466-467` 본문). 즉 "[필수] 2필드를 빈 값으로 전송" 은 현행
+              코드의 사실이 아니다. (⚠ 위 `evidence` 의 `:386-399` 도 그
+              커밋 이전 줄 번호다 — 현행 선물 본문은 `:458-471` 이다.)
+              남아 있는 빈 문자열 2필드 `CTAC_TLNO`(`:468`)·
+              `FUOP_ITEM_DVSN_CD`(`:469`)는 공식 명세상 **선택**이고 후자는
+              기본값이 "공란(Default)" 으로 서술되므로 계약 위반이 아니다.
+            · **그 수정이 동작 보존이었는지**를 P-NMPR 이 실측했다. 결과는
+              아래 `nmpr_blank_vs_explicit_probe_2026_07_31` — 요약하면
+              `NMPR_TYPE_CD` 는 **보존 확인(단, 지정가 arm 한정)**,
+              `KRX_NMPR_CNDT_CD` 는 **미확인**이다.
+            · **문서 2 에도 같은 낡은 문장이 있다**(`command_construction_and_
+              wire_semantics._kis.spec_collation_2026_07_29` — "우리 클라이언트가
+              [필수] 2필드를 빈 문자열로 보내는 사실 ... 은 환경에 무관하다").
+              그 문장은 MOCK 관측이 아니라 **repo 코드 사실**이 낡은 것이므로
+              환경 분리와 무관하게 정정 대상이지만, 이 패스는 MOCK 문서
+              범위이므로 **여기서 고치지 않고 캠페인 트랙에 보고**한다.
         stock_excg_id_dvsn_cd_note: >-
           공식 명세에서 주식 주문의 `EXCG_ID_DVSN_CD` 는 **[필수]** 인데 P-1 이
           실측한 우리 주식 본문 6필드에는 없다(N-17 §2 부수 관측과 일치). 주식
@@ -1848,6 +2502,89 @@ capabilities:
           - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:45 (N-17 #1)"
           - "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:50 (N-17 #6)"
           - "P-1-20260729T062925Z (repo 측 전송 필드 전수)"
+      nmpr_blank_vs_explicit_probe_2026_07_31:   # T4-β2 · P-NMPR (정본)
+        environment: MOCK_VTS
+        observed_at_kst: "2026-07-31 10:51"
+        artifact_id: P-NMPR-20260731T015139Z
+        applicable_scope: >-
+          단일 계좌(60******03) · 단일 세션 · asset=futures · mini A05608 ·
+          매수 **지정가**(`ORD_DVSN_CD` "01") · 모의투자 한정. 두 arm 을 동시에
+          띄워야 해서 mini 를 썼다(계좌가 full 1계약만 감당 — P-2 full arm).
+        design: >-
+          arm A = 현행 런타임이 파생하는 명시 값(`NMPR_TYPE_CD` "01" ·
+          `KRX_NMPR_CNDT_CD` "0"), arm B = `76d43ae9` 이전의 **빈 문자열** 재현.
+          두 본문은 이 2필드만 다르다(아티팩트 `differing_fields`). 수락 여부가
+          아니라 **조회 echo 대조**가 판정 근거다 — 수락 동등은 의미 동등이
+          아니다(아티팩트 `verdict` 문언).
+        observed:
+          arm_a_explicit: {rt_cd: "0", odno: "0000003120"}
+          arm_b_blank: {rt_cd: "0", odno: "0000003122"}
+          query_echoes_quote_fields: [nmpr_type_cd]
+          arm_a_echo: {nmpr_type_cd: "01", nmpr_type_name: 지정가}
+          arm_b_echo: {nmpr_type_cd: "01", nmpr_type_name: 지정가}
+          row_field_differences: []         # 27필드 전수 대조에서 차이 0
+        established:
+          - "**빈 `NMPR_TYPE_CD` 의 broker 암묵 기본값 = `01`(지정가)** — 두 arm 의 조회 행이 27필드 전수에서 동일하다"
+          - "따라서 `76d43ae9` 의 명시 전송은 **동작 보존**이었다(계약 위반을 고쳤을 뿐 의미를 바꾸지 않았다)"
+        not_established:
+          - >-
+            ⚠ **TIF 캐리어 `KRX_NMPR_CNDT_CD` 는 echo 되지 않는다.** 조회 행에
+            대응 필드가 없으므로 빈 값이 무엇으로 해석됐는지 **알 수 없다**.
+            빈 값의 TIF 의미는 UNKNOWN 유지이며, 그 필드에 대해서는 명시 전송의
+            동작 보존도 **증명되지 않았다**(수락됐다는 사실뿐).
+          - >-
+            **지정가(`01`) arm 하나만 시험했다.** 시장가(`02`)·조건부(`03`)·
+            최유리(`04`)와 IOC/FOK 결합값(`10`~`15`)에서 빈 값의 기본값이 같은지는
+            미확인이다 — `76d43ae9` 커밋 메시지의 "reachable set {01,02,03}"
+            주장은 **이 프로브가 검증한 범위를 넘어선다**.
+          - "중복 필드·미지 필드 동작은 여전히 시험 0건 — `duplicate_unknown_and_omitted_field_behavior` UNKNOWN 유지"
+        why_dimension_fields_stay_unknown: >-
+          한 필드의 기본값 확정으로 `required_and_default_field_semantics` 를
+          서술하면 나머지 필드(주식 `EXCG_ID_DVSN_CD`·`SLL_TYPE`·`CNDT_PRIC`,
+          선물 `KRX_NMPR_CNDT_CD`·`CTAC_TLNO`)의 공백이 값 뒤에 숨는다.
+          UNKNOWN 유지.
+        n17_finding_2_disposition: >-
+          N-17 §2 소견 2("[필수] 빈 값 전송 = P0-2 blocker 후보")는 **코드 수정
+          (`76d43ae9`)으로 이미 해소됐고**, 이 프로브는 그 수정이 의미를 바꾸지
+          않았음을 `NMPR_TYPE_CD` 축에서 확인했다. `KRX_NMPR_CNDT_CD` 축은
+          미확인으로 남는다 — 소견 2 가 지적한 IOC/FOK 위임 위험은
+          **여전히 열려 있다**(§4.3 TIF 미충족 경고 유지).
+      odno_wire_encoding_2026_07_31:        # T4-β2 · 식별자 인코딩 비대칭
+        environment: MOCK_VTS
+        source_artifacts:
+          - "P-5-20260731T014143Z (정본 — `measurements.odno_wire_format`)"
+          - "P-2-20260731T015102Z · P-NMPR-20260731T015139Z · P-FQP-20260731T015653Z (정본, 동일 필드 반복 관측)"
+        observation:
+          submit_response_field: "output.ODNO"
+          submit_response_form: "0 패딩 10자리 — 예: \"0000002674\""
+          query_row_field: "output1[].odno (inquire-ccnl)"
+          query_row_form: "**공백 패딩** 10자리 · 선행 0 제거 — 예: \"      2674\""
+          canonical_key_rule: "양쪽을 strip → 선행 0 제거해야 같은 키가 된다"
+        reading: >-
+          **같은 주문번호를 두 표면이 다르게 인코딩한다.** 따라서 제출 응답과
+          조회 행을 잇는 식별자 비교는 **양쪽을 정규화**해야 한다. `.strip()`
+          만으로 비교하면 `"762" == "0000000762"` 를 묻는 셈이라 **모든 주문에
+          대해 거짓**이 된다.
+        runtime_status: >-
+          ✅ **런타임에는 이 결함이 없다.** `shared/execution/executor.py:132-136
+          (_normalize_odno)` 가 이미 같은 규칙(strip → lstrip("0"))으로
+          정규화하며 `:620`·`:650` 에서 비교에 쓴다. 이번에 드러난 것은
+          **측정 하네스**의 결함이었다(아래).
+        harness_defect_3: >-
+          하네스가 원문 비교를 쓰는 바람에 `P-5-20260731T002112Z` 가 30s 폴링
+          후 censored·n=0 이면서 **같은 ODNO 의 정리 취소는 성공**하는 조합을
+          냈다 — 이 조합이 진단 지문이다(런북 §5.5 등재). 수정 `55c3d162` 는
+          런타임과 **같은 규칙을 미러링**했고(새 규칙을 발명하지 않았다),
+          비교만 정규화하며 취소는 broker 가 수락한 0 패딩 원문을 그대로
+          보낸다. 이 결함이 P-5·P-2·P-8·P-FQP·P-NMPR **다섯 프로브를 모두**
+          같은 방식으로 실패시킬 상태였다.
+        scope_limit: >-
+          단일 계좌·단일 세션·모의 환경에서 관측된 **인코딩 사실**이며 KIS 의
+          일반 보증이 아니다. 실전으로 외삽하지 않는다(§13.14).
+        why_no_dimension_field_moves: >-
+          이 관측은 식별자 **표현**의 사실이지 `unit_multiplier_currency_and_
+          numeric_encoding`(숫자 인코딩 규약)의 명제가 아니다. 해당 필드값은
+          바꾸지 않는다.
 
 # =============================================================================
 venue_constraint_binding:
@@ -2102,14 +2839,43 @@ final_quantity_proof:
         (no_later_change_asserted / late_event_window_defined) 중 어느 것도
         참이 아니므로 fqp_adequate 는 통과할 수 없다(설계 #10 §6.3). 또한
         3단계가 Q-OOQ-1(단일 페이지 조회) 결함을 상속한다.
+      _adequacy_addendum_2026_07_31: >-
+        T4-β2 로 부적합 사유가 하나 늘었다: 3단계의 **`qty`(잔량) 판독 자체가
+        미근거**다. 조회 행 27필드에는 취소-상태 필드도 잔량 전용 필드도 없고,
+        `qty > 0` 인 행이 취소 거부되는 것이 실측됐다(위
+        `capabilities.open_order_query._kis.row_schema_and_liveness_2026_07_31`).
+        2단계(취소 ack 불사용)는 P-FQP 로 **정당성이 실측 확인**됐다 — 취소
+        ack 이 자기 ODNO 를 발급하기 때문이다. 즉 이 recipe 는 금지 항목은
+        옳게 피하지만 **긍정 근거가 아직 없다**.
       _evidence:
         - "shared/execution/executor.py:495-520 (취소 후 재조회 — 현행 동작)"
         - "shared/execution/executor.py:580-592 (수량 필드)"
   late_event_window_ms: null              # NEEDS-LIVE-MEASUREMENT (P0-1 bounds 연계)
+                                          # T4-β2 **null 유지**. P-FQP 가 120s 창
+                                          # 에서 변화 0건을 관측했으나 **창 안의
+                                          # 부재는 비존재의 증명이 아니다**
+                                          # (VP-002:756). 0 은 창 길이가 아니다.
   correction_policy: TBD
   _kis:
     measurement: NEEDS-LIVE-MEASUREMENT
     stock_gap: "주식 FQP recipe 없음 — 주식 취소/미체결 조회 경로 자체가 부재."
+    late_event_probe_2026_07_31:          # T4-β2 · P-FQP-20260731T015653Z (정본)
+      environment: MOCK_VTS
+      observation_window_s: 120.0
+      post_terminal_changes: 0
+      verdict: NOT_ESTABLISHED
+      why_null_stays: >-
+        `B_late_fill_observation` 이 성립하지 않았다. 관측 0건은 "이 창에서
+        늦은 변경을 보지 못했다" 이며 "늦은 변경이 없다" 가 아니다 —
+        VP-002:756. 창 길이를 값으로 적으면 **관측 창을 broker 보증으로
+        바꿔치기**하게 된다. 또한 아티팩트가 요구하는 §15.4 마커 2개
+        (`no_later_change_asserted` · `late_event_window_defined`)는 여전히
+        어느 것도 참이 아니므로 `fqp_adequate` 는 통과할 수 없다.
+      quantity_field_caveat: >-
+        ⚠ 이 창 관측은 조회 행의 수량 필드를 읽어 판정한다. 같은 세션이
+        **행의 `qty` 는 취소 가능 잔량이 아님**을 보였으므로(위
+        `capabilities.open_order_query._kis.row_schema_and_liveness_2026_07_31`),
+        이 recipe 3·4 단계의 "잔량 0 확인" 은 근거가 약해졌다. 잔여 위험 RR-9.
 
 residual_risks:
   - id: RR-1
@@ -2182,6 +2948,26 @@ residual_risks:
     owner: TBD                          # §21:1089
     acceptance: TBD                     # §21:1090 — TBD = 미수용
     expiry: null                        # §21:1091
+  - id: RR-9                            # T4-β2 신설 (wave-3b 행 의미론)
+    text: >-
+      **조회 행의 `qty` 를 잔여수량으로 읽는 것은 근거가 없다.** 2026-07-31
+      세션에서 `qty > 0` 인 행에 대한 취소가 `모의투자 정정/취소할 수량이
+      없습니다` 로 거부됐고(P-8 5건 전건의 원주문 + 캠페인 README 세션 기록),
+      inquire-ccnl 행 27필드에는 `cncl_yn` 같은 **취소-상태 필드도 잔량 전용
+      필드도 없다**. 그런데 런타임은 이 필드를 잔여수량으로 읽고
+      (`shared/execution/executor.py:653` — `remaining_qty =
+      _to_int(row.get("qty"))`), 그 값으로 타임아웃 시 취소 수량을 정한다
+      (`:564-566`). FQP 초안의 "잔량 0 확인" 단계도 같은 가정 위에 있다.
+      즉 **취소 가능 여부·잔량의 유일한 권위는 broker 의 취소 응답**인데
+      우리는 행 필드로 그것을 대체하고 있다. 위험 방향은 양쪽이다 — 이미
+      소진된 주문을 살아 있다고 읽거나, 반대로 잔량을 과소·과대 계상할 수
+      있다. ⚠ 근거 중 "6행 중 5행 거부" 는 캠페인 README 의 세션 기록
+      (2차 사실)이고, 아티팩트 1차 사실은 P-8 5건 각각의 원주문 취소 거부다.
+      처방(행 의미론 실측 또는 취소 응답 권위화)은 코드 수정 후보이며 본
+      프로파일은 코드를 바꾸지 않는다.
+    owner: TBD                          # §21:1089
+    acceptance: TBD                     # §21:1090 — TBD = 미수용
+    expiry: null                        # §21:1091
 
 verification:
   required_evidence_ids: []              # BC-EV-001..022 미실행 (EVIDENCE-REGISTER-002)
@@ -2243,6 +3029,74 @@ verification:
           판정(2026-07-30 로컬 git 검증): `aba51f2a`/`f1a6121a` 는 origin
           **부재**(push 전 amend/rebase 의 로컬 해시)·`e0e0cd86`/`d38f309b` 가
           도달 가능 등가(제목 1:1) — 실질 모순 아님. README 에 매핑 정정 부기.
+    campaign_status_2026_07_31:          # T4-β2 — **capability 아님. 캠페인 상태.**
+      disclaimer: >-
+        이 블록도 측정 캠페인의 진행 상태이지 broker capability 선언이 아니다.
+        어떤 `status`·`assurance_level`·bound 도 여기서 파생되지 않는다.
+      funds_block_resolved:
+        what: "모의투자 계좌 초기화(운영자 신청) 반영 확인"
+        effective_kst: "2026-07-31 09:00"
+        verified_by: >-
+          스모크 `P-5-20260731T002112Z`(`--samples 1`)에서 주문이 **수락**됐다
+          (ODNO `0000000762`) — 07-30 에 full·mini 양쪽을 막았던
+          `모의투자 주문가능금액이 부족합니다` 가 소멸했다. ⚠ 이 아티팩트는
+          `NOT_MEASURED` 이고 스스로 "not for citation" 을 명시하므로
+          `evidence_refs[]` 에 넣지 않는다 — 캠페인 상태의 근거로만 쓴다.
+        side_effect_confirmed: >-
+          07-30 블록이 **예상**으로 적었던 "초기화가 잔존 주문과 보유를 소거할
+          것" 은 확인됐고, 예상하지 않았던 부수 효과도 드러났다: **주문 이력도
+          함께 소거**돼 체결조회가 `20260729`·`20260730` 에 대해 0행을 돌려준다.
+          그래서 07-30 P-11 판정이 재검증 불가가 됐다(위 `position_balance_
+          margin._kis.fill_to_balance_probe_2026_07_30._supersession_2026_07_31`).
+      order_family_executed:
+        summary: "07-30 에 '미실행' 으로 남았던 주문 계열이 **전건 실행**됐다."
+        cited_as_evidence: [P-5-20260731T014143Z, P-5b-20260731T014917Z,
+                            P-2-20260731T015102Z, P-NMPR-20260731T015139Z,
+                            P-FQP-20260731T015653Z, P-11-20260731T024808Z]
+        observed_but_not_cited: >-
+          `P-8` ×5(정리 실패로 `NOT_MEASURED`) · `P-11-20260731T015709Z`
+          (censored) · 스모크 `P-5-20260731T002112Z` · `P-2-20260731T014957Z`
+          (적격이나 혼입). 각각의 사유는 해당 차원 블록의
+          `citation_eligibility` / `confounded_companion_arm` 에 있다.
+      harness_defects_2026_07_31:
+        summary: >-
+          07-30 의 결함 2건에 이어 3·4번째가 드러났다. 둘 다 **측정을
+          무효화하거나 오독하게 만드는** 유형이며, 값을 조용히 왜곡하는
+          유형은 아니었다.
+        defect_3:
+          what: "ODNO 인코딩 비대칭을 무시한 원문 비교 → 전 프로브 censored 위험"
+          fix_commit: 55c3d162
+          scope: "**하네스 전용** — 런타임은 이미 정규화 중이었다(`_normalize_odno`)"
+          detail_ref: "capabilities.command_construction_and_wire_semantics._kis.odno_wire_encoding_2026_07_31"
+        defect_5:
+          what: "P-11 이 holdings baseline 을 주문 전송 **후**에 읽음 → 자기 체결 포함"
+          fix_commit: 6b87c03d
+          consequence: "07-30·07-31 첫 실행의 '미체결' 판정이 모두 무효 — 07-30 은 재검증 불가"
+          detail_ref: "capabilities.position_balance_margin._kis.fill_to_balance_probe_2026_07_31"
+      harness_latent_risk_token_cache:
+        what: >-
+          토큰 캐시 파일명이 `real`/`mock` 로만 결정된다(`.kis_token_mock`) —
+          서로 다른 **모의 앱키**(선물/주식)가 같은 파일을 공유한다.
+        this_session: >-
+          P-FQP(선물)와 P-11(주식)을 의도적으로 병렬 실행했고 **양쪽 모두 인증
+          오류 0** 이라 오늘 관측은 오염되지 않았다(P-11 재실행은
+          `--token-cache-dir` 를 분리했다).
+        disposition: >-
+          ⚠ 이는 **하네스 위험**이지 broker capability 가 아니다. 후속 세션의
+          병렬 실행에서는 자산별 `--token-cache-dir` 분리를 권고한다.
+      remaining_after_this_session:
+        - "P-EXT — 운영자 HTS/MTS 수동 주문 동석(≥5 trial) 필요. 변동 없음"
+        - "N-16 행 스키마 — 실전 계좌에 야간 포지션이 있는 상태에서 야간 창(18:00–05:00 KST) 재실행 1회 (문서 2 소관)"
+        - "P-13 주문 클래스 전용 실행 — 런북 §5.3 (query 값의 외삽 금지 근거는 rate_limits 블록)"
+        - "P-11 점추정 — **구조적으로 불가능**하다. 폴 하한(1100ms)을 좁히는 것이 rate 한도와 충돌하므로 '≤ 1 폴 간격' 상한이 이 프로브의 천장이다"
+        - "P-8 liveness 술어(`qty>0`) 재검토 — RR-9"
+      readme_row_discrepancy: >-
+        ⚠ 캠페인 README 의 "미실행 프로브와 사유" 표 P-11 행이 **초판 문안
+        ("시장가로도 미체결 … 미체결 확정")을 유지**하고 있어, 같은 README
+        §⚠ 에라타(2026-07-31 11:20 KST)와 정면 충돌한다. 아티팩트
+        (`P-11-20260731T024808Z` + 세션 후 `VTTC0081R`)가 체결을 보이므로
+        **표 행이 틀렸다**. 본 프로파일은 아티팩트·에라타를 채택했고, README
+        표 행에는 에라타를 가리키는 부기를 추가했다(원문 보존).
 
 ---
 # =============================================================================
