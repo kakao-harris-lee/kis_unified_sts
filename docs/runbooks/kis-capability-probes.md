@@ -695,7 +695,10 @@ python -m tools.broker_probes.run P-R5-PRE \
 ```
 
 `--symbol`은 그날의 **mini 근월물 코드**로 바꾼다(prefix `A05`). full(`A01`/`101`)을
-주면 프로브가 거부한다.
+주면 프로브가 거부한다. 근월물 확인은 Redis DB1 `futures:contract:latest`의
+`front_symbol`(P5 컨트랙트 read-model, calendar 소스)이 가장 빠르다 — 위 예시의
+`A05609`를 그대로 쓰지 말 것(작성 시점에도 그것은 **차월물**이었다. 2026-07-31 기준
+front=`A05608` 만기 08-13).
 
 **2단계가 정당해지기 위해 1단계 아티팩트가 보여야 하는 것 — 전건:**
 
