@@ -171,22 +171,38 @@ _MOCK_FUTURES_SKIP_REASON = (
 # tr_cont semantics
 # ---------------------------------------------------------------------------
 
-#: The only ``tr_cont`` response value this repo has code evidence for.
+#: ``tr_cont`` response values with evidence for "more follows".
 #: ``shared/kis/client.py:354`` breaks its continuation loop on
-#: ``response_tr_cont != "M"``, i.e. ``"M"`` means "more follows" and every other
-#: value is treated as the end. Other KIS continuation codes are NOT interpreted
-#: here — the raw value is recorded verbatim per page instead, so an unfamiliar
-#: code shows up as a finding rather than being silently folded into a boolean.
-_TR_CONT_MORE_CODE_EVIDENCED = ("M",)
+#: ``response_tr_cont != "M"``; KIS's official ``inquire_balance`` example
+#: (open-trading-api ``examples_llm/domestic_stock/inquire_balance/
+#: inquire_balance.py``) recurses on ``tr_cont in ("M", "F")`` and logs
+#: "Data fetch complete." on every other value. A NON-EMPTY value outside this
+#: tuple is therefore the broker's end-of-set signal (P-BAL-20260731T083102Z
+#: observed ``"D"`` on the real stock endpoint with a static padded cursor
+#: still present in the body); an ABSENT header establishes nothing and the
+#: walk falls back to the continuation keys. The raw value is still recorded
+#: verbatim per page, so an unfamiliar code shows up as a finding rather than
+#: being silently folded into a boolean.
+_TR_CONT_MORE_CODE_EVIDENCED = ("M", "F")
 
 #: Request-side value for a follow-up page — ``shared/kis/client.py:356``.
 _TR_CONT_REQUEST_NEXT = "N"
+
+#: The broker's empty-result-set notation ("조회할 내용이 없습니다"). Wave-3
+#: established this msg_cd as 빈-응답 on futures trading TRs (N-16, campaign
+#: README), and the endpoints disagree on the rt_cd that accompanies it: the
+#: real STOCK balance pairs it with rt_cd='0' (P-BAL-20260731T084147Z), the
+#: real FUTURES balance with rt_cd='7' (P-BAL-20260731T114054Z). An empty set
+#: is an answer, not a rejection — but ONLY this exact msg_cd is read that way;
+#: every other non-zero rt_cd stays a rejection.
+_MSG_EMPTY_RESULT_SET = "KIOK0560"
 
 # ---------------------------------------------------------------------------
 # Termination causes — the whole point of the probe (§8.4 honest negatives)
 # ---------------------------------------------------------------------------
 
-#: The broker itself signalled end-of-set (no continuation key came back).
+#: The broker itself signalled end-of-set (no continuation key came back, or
+#: the ``tr_cont`` response header carried a non-empty non-more code).
 _TERM_BROKER_END = "BROKER_END_OF_SET"
 #: OUR ``--max-pages`` cap cut the walk. A total row count is NOT established.
 _TERM_CAP = "OUR_MAX_PAGES_CAP"
@@ -446,9 +462,21 @@ def _balance_params(
     """Mirror the runtime's balance params, with the continuation keys USABLE.
 
     Stock: ``shared/kis/client.py:921-933``. Futures: ``:1051-1057``. Every field
-    is transcribed from there; the only difference is that ``CTX_AREA_FK*`` /
-    ``CTX_AREA_NK*`` carry the previous page's keys instead of being hard-wired to
-    empty strings. That single difference IS the defect under measurement.
+    is transcribed from there, with exactly two documented divergences:
+
+    * ``CTX_AREA_FK*`` / ``CTX_AREA_NK*`` carry the previous page's keys instead
+      of being hard-wired to empty strings. That difference IS the defect under
+      measurement.
+    * Futures adds ``MGNA_DVSN`` and ``EXCC_STAT_CD``, which the runtime omits.
+      REAL_PROD rejects the runtime's exact param set with rt_cd=7 APMP0001
+      "증거금구분코드은(는) 필수입력 항목입니다" (measured:
+      P-BAL-20260731T084304Z) — and mock serves no futures balance at all, so
+      the runtime's futures-balance request has never succeeded against any
+      broker. KIS's official inquire_balance example (open-trading-api
+      ``examples_llm/domestic_futureoption/inquire_balance/inquire_balance.py``)
+      marks both fields [필수]; the values below are that example's
+      documented examples (01: 게시 margin, 1: 정산). Without them the probe
+      cannot measure pagination, because no page is ever served.
     """
     if target.asset == "stock":
         return {
@@ -468,6 +496,8 @@ def _balance_params(
         "CANO": creds.cano,
         "ACNT_PRDT_CD": creds.acnt_prdt_cd,
         "SORT_SQN": "DS",
+        "MGNA_DVSN": "01",
+        "EXCC_STAT_CD": "1",
         f"CTX_AREA_FK{target.ctx_suffix}": fk,
         f"CTX_AREA_NK{target.ctx_suffix}": nk,
     }
@@ -651,6 +681,10 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
     termination_detail = "the walk did not execute"
     fk = nk = ""
     prev_fp = {"fk": "", "nk": ""}
+    # True when the final request repeated the previous cursor position: the
+    # page is preserved in observations but its rows are the SAME rows again
+    # and must never enter a total (that would double-count holdings).
+    duplicate_final_page = False
     try:
         for index in range(int(args.max_pages)):
             status, parsed, resp_headers, text, elapsed_ms = _get(
@@ -721,7 +755,22 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
                 "nk": key_records["nk"]["fingerprint"],
             }
 
+            is_duplicate_refetch = index > 0 and (next_fk, next_nk) == (fk, nk)
+
             if rt_cd != "0":
+                if str(parsed.get("msg_cd") or "").strip() == _MSG_EMPTY_RESULT_SET:
+                    termination = _TERM_BROKER_END
+                    termination_detail = (
+                        f"page {index} answered rt_cd={rt_cd!r} with "
+                        f"msg_cd={_MSG_EMPTY_RESULT_SET!r} "
+                        f"({str(parsed.get('msg1') or '').strip()!r}) — the "
+                        "broker's empty-result-set notation, not a rejection "
+                        "(wave-3 N-16 precedent; the stock sibling pairs the "
+                        "same msg_cd with rt_cd='0'). Zero rows are an answer; "
+                        "they establish nothing about pagination and the "
+                        "page-size skip records that."
+                    )
+                    break
                 termination = _TERM_ERROR
                 termination_detail = (
                     f"the broker rejected page {index}: rt_cd={rt_cd!r} "
@@ -730,7 +779,37 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
                 )
                 run.error(termination_detail)
                 break
+            if tr_cont_out and tr_cont_out not in _TR_CONT_MORE_CODE_EVIDENCED:
+                termination = _TERM_BROKER_END
+                termination_detail = (
+                    f"page {index} answered tr_cont={tr_cont_out!r}, which is "
+                    "not a more-follows code — the BROKER signalled end-of-set. "
+                    "KIS's official inquire_balance example continues only on "
+                    "tr_cont in ('M', 'F') and treats every other value as "
+                    "fetch-complete; shared/kis/client.py:354 stops on the same "
+                    "header. Continuation keys are recorded verbatim but not "
+                    "walked past this signal, so the row total across counted "
+                    "pages is a total, not a lower bound."
+                )
+                duplicate_final_page = is_duplicate_refetch
+                if duplicate_final_page:
+                    termination_detail += (
+                        " The final page repeated the previous cursor position, "
+                        "so its rows are excluded from all totals — they are the "
+                        "same rows seen again, not new holdings."
+                    )
+                break
             if not next_fk and not next_nk:
+                if tr_cont_out in _TR_CONT_MORE_CODE_EVIDENCED:
+                    termination = _TERM_ERROR
+                    termination_detail = (
+                        f"page {index} answered tr_cont={tr_cont_out!r} (more "
+                        "follows) but returned no continuation key in body or "
+                        "headers — there is no cursor to request the next page "
+                        "with. The row total is a lower bound, not a total."
+                    )
+                    run.error(termination_detail)
+                    break
                 termination = _TERM_BROKER_END
                 termination_detail = (
                     f"page {index} returned no continuation key in body or "
@@ -741,10 +820,12 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
             if (next_fk, next_nk) == (fk, nk):
                 termination = _TERM_ERROR
                 termination_detail = (
-                    f"continuation keys did not advance on page {index} — a "
+                    f"continuation keys did not advance on page {index} while "
+                    f"tr_cont={tr_cont_out!r} did not signal end-of-set — a "
                     "further request would repeat this page. Stopped rather than "
                     "loop; the total is unestablished."
                 )
+                duplicate_final_page = True
                 run.error(termination_detail)
                 break
             fk, nk = next_fk, next_nk
@@ -759,8 +840,9 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
                 "artifact hit the same wall and had to say so)."
             )
 
+        counted_pages = pages[:-1] if duplicate_final_page else pages
         verdict = truncation_verdict(
-            page_row_counts=[int(p["rows"]) for p in pages],
+            page_row_counts=[int(p["rows"]) for p in counted_pages],
             termination=termination,
             known_page_size=known_size,
             known_page_size_source=str(args.known_page_size_source or ""),
@@ -769,10 +851,11 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
         run.measure("termination_detail", termination_detail)
         run.measure("truncation_risk", verdict)
         run.measure("pages_walked", len(pages))
+        run.measure("duplicate_final_page_excluded_from_totals", duplicate_final_page)
         run.measure("max_pages_requested", int(args.max_pages))
         run.measure(
             "rows_with_positive_qty_total",
-            sum(int(p["rows_with_positive_qty"]) for p in pages),
+            sum(int(p["rows_with_positive_qty"]) for p in counted_pages),
         )
         run.measure(
             "continuation_supported",
@@ -823,15 +906,24 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
             "this module's _get(): common.http_json discards response headers and "
             "cannot answer this question. shared/kis/client.py:341 reads the same "
             "header the same way for fetch_invest_opinion; the balance methods "
-            "(:901-1114) never read it at all. Only 'M' is interpreted as 'more' "
-            "(client.py:354) — every value is also recorded verbatim per page.",
+            "(:901-1114) never read it at all. 'M' and 'F' are interpreted as "
+            "'more' (client.py:354; KIS's official inquire_balance example "
+            "recurses on both) and any other NON-EMPTY value ends the walk as "
+            "the broker's end-of-set signal — every value is also recorded "
+            "verbatim per page.",
         )
         run.measure(
             "runtime_defect",
             "shared/kis/client.py:931-932 (stock) and :1055-1056 (futures) send "
             "empty continuation keys and the surrounding methods never read the "
             "response keys, the tr_cont header, or the row count. A correct walk "
-            "already exists at :303-356 (fetch_invest_opinion).",
+            "already exists at :303-356 (fetch_invest_opinion). Futures has a "
+            "second, independent defect: the runtime omits MGNA_DVSN and "
+            "EXCC_STAT_CD, which REAL_PROD requires (rt_cd=7 APMP0001, measured "
+            "P-BAL-20260731T084304Z) — its futures balance query therefore "
+            "always folds to [] on the real domain, before pagination even "
+            "starts. This probe supplements both fields per KIS's official "
+            "inquire_balance example in order to measure at all.",
         )
         run.measure(
             "runtime_consumer",

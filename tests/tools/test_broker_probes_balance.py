@@ -534,11 +534,156 @@ def test_non_advancing_keys_stop_the_walk_as_an_error(
     assert run.measurements["truncation_risk"]["holdings_total"] is None
 
 
+def test_tr_cont_end_code_stops_the_walk_as_broker_end(
+    stock_env: None, wire: Any
+) -> None:
+    """The real stock endpoint's shape (P-BAL-20260731T083102Z): tr_cont='D'
+    with a static padded cursor still present in the body. The broker's end
+    signal must win — one request, no error, no re-fetch of the same page."""
+    session = wire(_ScriptedSession([_stock_page(8, fk="PADDED-CURSOR", tr_cont="D")]))
+    run = pb.probe_pbal(_args())
+
+    assert run.errors == []
+    assert run.measurements["termination_cause"] == pb._TERM_BROKER_END
+    assert "tr_cont='D'" in run.measurements["termination_detail"]
+    assert len(session.calls) == 1
+    assert run.measurements["truncation_risk"]["holdings_total"] == 8
+
+
+def test_tr_cont_f_is_more_follows_and_the_walk_continues(
+    stock_env: None, wire: Any
+) -> None:
+    """KIS's official inquire_balance example recurses on tr_cont in ('M', 'F');
+    'F' must not be misread as end-of-set."""
+    session = wire(
+        _ScriptedSession(
+            [
+                _stock_page(15, fk="F1", nk="N1", tr_cont="F"),
+                _stock_page(3, fk="F2", nk="N2", tr_cont="D"),
+            ]
+        )
+    )
+    run = pb.probe_pbal(_args())
+
+    assert run.measurements["termination_cause"] == pb._TERM_BROKER_END
+    assert len(session.calls) == 2
+    assert run.measurements["truncation_risk"]["holdings_total"] == 18
+
+
+def test_duplicate_refetch_before_end_code_is_not_double_counted(
+    stock_env: None, wire: Any
+) -> None:
+    """Page 0 without a tr_cont header forces a key-driven re-request; the
+    repeat page then carries tr_cont='D'. End-of-set is honoured, but the
+    repeated page's rows are the same rows again and must not enter a total."""
+    wire(
+        _ScriptedSession(
+            [
+                _stock_page(8, fk="SAME", nk="SAME2"),
+                _stock_page(8, fk="SAME", nk="SAME2", tr_cont="D"),
+            ]
+        )
+    )
+    run = pb.probe_pbal(_args())
+
+    assert run.errors == []
+    assert run.measurements["termination_cause"] == pb._TERM_BROKER_END
+    assert run.measurements["duplicate_final_page_excluded_from_totals"] is True
+    assert run.measurements["pages_walked"] == 2
+    assert run.measurements["truncation_risk"]["holdings_total"] == 8
+    assert run.measurements["rows_with_positive_qty_total"] == 8
+
+
+def test_more_code_with_no_cursor_is_an_error_not_end_of_set(
+    stock_env: None, wire: Any
+) -> None:
+    """tr_cont says more follows but no continuation key came back: there is no
+    cursor to continue with, so the total is a lower bound, not a total."""
+    wire(_ScriptedSession([_stock_page(15, tr_cont="M")]))
+    run = pb.probe_pbal(_args())
+
+    assert run.measurements["termination_cause"] == pb._TERM_ERROR
+    assert any("no cursor" in message for message in run.errors)
+    assert run.measurements["truncation_risk"]["holdings_total"] is None
+
+
+def test_static_keys_without_end_code_stay_an_error(
+    stock_env: None, wire: Any
+) -> None:
+    """A frozen cursor while tr_cont still claims more follows is a genuine
+    anomaly — the loop-risk classification must survive the tr_cont fix."""
+    wire(
+        _ScriptedSession(
+            [
+                _stock_page(15, fk="F1", nk="N1", tr_cont="M"),
+                _stock_page(15, fk="F1", nk="N1", tr_cont="M"),
+            ]
+        )
+    )
+    run = pb.probe_pbal(_args())
+
+    assert run.measurements["termination_cause"] == pb._TERM_ERROR
+    assert any("did not advance" in message for message in run.errors)
+    assert run.measurements["truncation_risk"]["holdings_total"] is None
+
+
 def test_broker_rejection_is_an_error_termination(stock_env: None, wire: Any) -> None:
     wire(_ScriptedSession([_stock_page(0, rt_cd="1")]))
     run = pb.probe_pbal(_args())
     assert run.measurements["termination_cause"] == pb._TERM_ERROR
     assert run.measurements["truncation_risk"]["verdict"] == pb._RISK_UNESTABLISHED
+    assert any("rejected page 0" in message for message in run.errors)
+
+
+def test_kiok0560_empty_set_is_an_answer_not_a_rejection(
+    stock_env: None, wire: Any
+) -> None:
+    """The real futures balance pairs the empty-result msg_cd KIOK0560 with
+    rt_cd='7' (P-BAL-20260731T114054Z) where the stock sibling uses rt_cd='0'.
+    An empty set is an answer: no error, broker end-of-set, explicit skip."""
+    wire(
+        _ScriptedSession(
+            [
+                _FakeResponse(
+                    {
+                        "rt_cd": "7",
+                        "msg_cd": "KIOK0560",
+                        "msg1": "조회할 내용이 없습니다",
+                        "output1": [],
+                    }
+                )
+            ]
+        )
+    )
+    run = pb.probe_pbal(_args())
+
+    assert run.errors == []
+    assert run.measurements["termination_cause"] == pb._TERM_BROKER_END
+    assert run.measurements["truncation_risk"]["verdict"] == pb._RISK_UNESTABLISHED
+    assert any(entry["what"] == "page-size determination" for entry in run.skips)
+
+
+def test_kiok0560_is_the_only_nonzero_rt_cd_read_as_empty(
+    stock_env: None, wire: Any
+) -> None:
+    """Any other msg_cd with a non-zero rt_cd must stay a rejection."""
+    wire(
+        _ScriptedSession(
+            [
+                _FakeResponse(
+                    {
+                        "rt_cd": "7",
+                        "msg_cd": "APMP0001",
+                        "msg1": "증거금구분코드은(는) 필수입력 항목입니다.",
+                        "output1": [],
+                    }
+                )
+            ]
+        )
+    )
+    run = pb.probe_pbal(_args())
+
+    assert run.measurements["termination_cause"] == pb._TERM_ERROR
     assert any("rejected page 0" in message for message in run.errors)
 
 
@@ -626,6 +771,10 @@ def test_real_futures_target_is_supported(futures_env: None, wire: Any) -> None:
         "CTX_AREA_NK200",
     ]
     assert "CTX_AREA_FK200" in session.calls[0]["params"]
+    # REAL_PROD rejects the runtime's param set without these two (rt_cd=7
+    # APMP0001, P-BAL-20260731T084304Z); KIS's official example marks both 필수.
+    assert session.calls[0]["params"]["MGNA_DVSN"] == "01"
+    assert session.calls[0]["params"]["EXCC_STAT_CD"] == "1"
 
 
 def test_mock_stock_target_uses_the_mock_tr_and_host(
