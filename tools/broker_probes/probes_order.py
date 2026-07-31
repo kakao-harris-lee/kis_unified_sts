@@ -99,6 +99,7 @@ _FUT_CANCEL_PATH = "/uapi/domestic-futureoption/v1/trading/order-rvsecncl"
 _FUT_INQUIRE_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-ccnl"
 _STOCK_ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
 _STOCK_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
+_STOCK_DAILY_CCLD_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 _STOCK_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 
@@ -151,6 +152,25 @@ _STOCK_ORD_DVSN: dict[str, str] = {
     "limit": "00",  # 지정가
     "market": "01",  # 시장가
 }
+
+#: Mock TR for 주식일별주문체결조회 — the read-only execution inquiry.
+#:
+#: Official source (KIS ``open-trading-api`` ``examples_llm``, read 2026-07-31 via
+#: ``kis-code-assistant-mcp``):
+#: ``domestic_stock/inquire_daily_ccld/inquire_daily_ccld.py`` — 주식일별주문체결조회,
+#: ``[v1_국내주식-005]``. Its ``tr_id`` table maps ``env_dv="demo"`` +
+#: ``pd_dv="inner"`` (3개월 이내) to ``VTTC0081R``, the 실전 counterpart being
+#: ``TTTC0081R``. ``pd_dv="before"`` is a different TR (``VTSC9215R`` / ``CTSC9215R``)
+#: and is deliberately unused: this probe only ever asks about an order it placed
+#: seconds ago, and that wrapper's own docstring warns the 3개월-이전 TR is
+#: DB-lagged intraday.
+#:
+#: A literal rather than a ``get_tr_ids()`` lookup for the same reason
+#: :meth:`MockTradingClient.stock_balance` carries ``VTTC8434R`` as one: the audited
+#: SoT (``shared/execution/tr_ids.py``) covers the order/cancel/inquire TRs the
+#: runtime sends, and this read-only inquiry is not one the runtime uses. Adding it
+#: there would imply runtime adoption that has not happened.
+_STOCK_DAILY_CCLD_TR_MOCK = "VTTC0081R"
 
 #: ``ORD_UNPR`` for a 시장가 stock order — the field is present but is not a price.
 #:
@@ -1042,6 +1062,79 @@ class MockTradingClient:
         )
         return parsed
 
+    def stock_daily_ccld(
+        self, symbol: str, *, odno: str = "", day_offset: int = 0
+    ) -> dict[str, Any]:
+        """주식일별주문체결조회 — read-only execution inquiry (mock ``VTTC0081R``).
+
+        Spec: ``examples_llm/domestic_stock/inquire_daily_ccld/inquire_daily_ccld.py``
+        (주식일별주문체결조회, ``[v1_국내주식-005]``), whose ``API_URL`` is
+        :data:`_STOCK_DAILY_CCLD_PATH` and whose TR table gives
+        :data:`_STOCK_DAILY_CCLD_TR_MOCK`. Row field names and their Korean glosses
+        come from that wrapper's ``chk_`` companion (``COLUMN_MAPPING``); the subset
+        this harness keeps is :data:`_CCLD_ROW_FIELDS`.
+
+        A GET on a ``/trading/`` path, so it goes through :meth:`trading_call` and is
+        gated by ``assert_mock_host`` + ``assert_mock_trading_tr`` exactly like every
+        other call in this client. It reads only — there is no write counterpart here
+        and none may be added: an execution inquiry answers "did it fill", and any
+        mutation would be a different capability with a different safety argument.
+
+        Parameter choices that carry meaning:
+
+        * ``CCLD_DVSN="00"`` (전체) — NOT ``"01"`` (체결). Asking only for filled rows
+          would make an unfilled order indistinguishable from an order the inquiry
+          never returned, which collapses "did not fill" back into "cannot tell" —
+          the very ambiguity this call exists to remove.
+        * ``INQR_DVSN="00"`` (역순 — newest first). 모의 serves at most 15 rows per
+          call ("모의계좌의 경우, 한 번의 호출에 최대 15건까지 확인 가능", same
+          wrapper), so reverse order is what keeps a seconds-old order on the first
+          page. One page is read; no continuation walk is attempted.
+        * ``SLL_BUY_DVSN_CD="00"`` (전체) and ``INQR_DVSN_3="00"`` (전체) — the
+          official example's values. Narrowing is done by ``PDNO`` alone, because a
+          filter this harness has not itself verified returning zero rows is
+          indistinguishable from a non-fill.
+        * ``odno`` defaults to empty and P-11 leaves it so. The parameter exists
+          because the spec has it, but a server-side ODNO filter that encodes the
+          order number differently from the accept response would return nothing and
+          look exactly like a non-fill — the same class of defect ``odno_key()``
+          exists for. Matching is therefore done locally on the returned rows. When
+          supplied, the value goes on the wire verbatim, like ``ORGN_ODNO``.
+
+        Args:
+            symbol: 종목코드, sent as ``PDNO``.
+            odno: Optional server-side 주문번호 filter, verbatim.
+            day_offset: Days back from today (KST) to query; both
+                ``INQR_STRT_DT`` and ``INQR_END_DT`` carry that one date.
+
+        Returns:
+            The parsed response — ``output1`` is the row array, ``output2`` totals.
+        """
+        tr_id = _STOCK_DAILY_CCLD_TR_MOCK
+        assert_mock_trading_tr(tr_id)
+        day = (datetime.now(KST) - timedelta(days=day_offset)).date().strftime("%Y%m%d")
+        params = {
+            "CANO": self.creds.cano,
+            "ACNT_PRDT_CD": self.creds.acnt_prdt_cd,
+            "INQR_STRT_DT": day,
+            "INQR_END_DT": day,
+            "SLL_BUY_DVSN_CD": "00",
+            "PDNO": symbol,
+            "CCLD_DVSN": "00",
+            "INQR_DVSN": "00",
+            "INQR_DVSN_3": "00",
+            "ORD_GNO_BRNO": "",
+            "ODNO": odno,
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+            "EXCG_ID_DVSN_CD": "KRX",
+        }
+        _status, parsed, _ms, _text = self.trading_call(
+            "GET", _STOCK_DAILY_CCLD_PATH, tr_id, params=params
+        )
+        return parsed
+
 
 # ---------------------------------------------------------------------------
 # Setup / teardown helpers
@@ -1524,26 +1617,208 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
 # P-11 — balance reflection
 # ---------------------------------------------------------------------------
 
-#: ``measurements.fill_case`` verdicts. A run is one of exactly these two, and the
-#: second is a statement about what the harness cannot see — never a measurement.
-_FILL_OBSERVED = "FILLED_AND_REFLECTED"
-_FILL_UNDETERMINED = "UNDETERMINED_NON_FILL_OR_LAG_BEYOND_WINDOW"
-
-#: What would separate the two halves of :data:`_FILL_UNDETERMINED`.
+#: ``measurements.fill_case`` verdicts — FOUR states, not two.
 #:
-#: Named rather than added: an execution inquiry is a ``/trading/`` path, and this
-#: module does not grow trading-namespace surface for an interpretation aid. The
-#: manual re-check below is what today's operator actually did.
-_FILL_RESOLUTION_PATH = (
-    "A stock execution inquiry — 주식일별주문체결조회, "
-    "/uapi/domestic-stock/v1/trading/inquire-daily-ccld (real TTTC8001R / mock "
-    "VTTC8001R) — would separate the two by reporting filled quantity for the ODNO "
-    "directly. This harness deliberately does not add that trading-namespace path. "
-    "Until it does, resolve out of band: re-read the balance after the run and see "
-    "whether the holding ever moved. Artifact P-11-20260730T002715Z needed exactly "
-    "that manual re-check (~18 min later, holding unchanged at the baseline) to "
-    "establish that its CENSORED result was a NON-FILL and not a reflection lag."
+#: Two of them (``_FILL_NOT_REFLECTED``, ``_FILL_NOT_FILLED``) used to be one
+#: indistinguishable "undetermined", because holdings were the only fill evidence
+#: this harness collected. They are separable now that the execution inquiry is
+#: called, and separating them is the whole point: only one of the two is a broker
+#: consistency finding, and the other is not a measurement failure at all.
+#: ``_FILL_UNDETERMINED`` is now narrower — it means the *inquiry itself* produced
+#: no usable answer, and it is always a statement about what the harness could not
+#: see rather than a measurement.
+_FILL_OBSERVED = "FILLED_AND_REFLECTED"
+_FILL_NOT_REFLECTED = "FILLED_BUT_BALANCE_NOT_REFLECTED_IN_WINDOW"
+_FILL_NOT_FILLED = "NOT_FILLED_NOTHING_TO_MEASURE"
+_FILL_UNDETERMINED = "UNDETERMINED_FILL_EVIDENCE_UNAVAILABLE"
+
+#: The execution-inquiry path P-11 now CALLS to establish fill-vs-lag.
+#:
+#: This module used to merely NAME this path and refuse to add it, on the grounds
+#: that an interpretation aid did not justify more ``/trading/`` surface. Artifact
+#: ``P-11-20260731T015709Z`` overturned that reasoning: it reported
+#: ``fill_case: UNDETERMINED`` with ``baseline_holding_qty == final_holding_qty == 1``
+#: after 95 polls over 120 s — and the order HAD filled. A read-only execution
+#: inquiry run afterwards returned TR ``VTTC0081R``, ODNO ``0000018925``,
+#: ``ord_dvsn_name=시장가``, ``ord_qty=1``, ``tot_ccld_qty=1``, ``rmn_qty=0``,
+#: ``cncl_yn=N`` at 248,500, and the account's cash had moved by exactly the fill
+#: amount. The fill-versus-lag ambiguity is not resolvable from the balance alone,
+#: an operator had to settle it out of band, and the cost of not knowing is a real
+#: 모의 order spent on nothing. So the path is called: read-only, once per run.
+_FILL_EVIDENCE_SOURCE = (
+    "주식일별주문체결조회 — /uapi/domestic-stock/v1/trading/inquire-daily-ccld, "
+    "[v1_국내주식-005], mock VTTC0081R (real TTTC0081R), read-only GET, one page in "
+    "역순 (INQR_DVSN=00) with CCLD_DVSN=00 (전체) so an unfilled order still appears. "
+    "The fill facts are the row's tot_ccld_qty (총체결수량), rmn_qty (잔여수량) and "
+    "cncl_yn (취소여부), recorded verbatim. ord_tmd is 주문시각 (order time) per the "
+    "official COLUMN_MAPPING — NOT a fill timestamp — and it is HHMMSS, 1-second "
+    "resolution, so no sub-second lag may be derived from it; it is kept for time "
+    "context only."
 )
+
+#: Row fields copied verbatim into the artifact when a matching order is found.
+#:
+#: Names and glosses from the official wrapper's ``COLUMN_MAPPING``
+#: (``examples_llm/domestic_stock/inquire_daily_ccld/chk_inquire_daily_ccld.py``).
+_CCLD_ROW_FIELDS: tuple[str, ...] = (
+    "ord_dt",  # 주문일자
+    "odno",  # 주문번호
+    "orgn_odno",  # 원주문번호
+    "ord_dvsn_name",  # 주문구분명 (e.g. 시장가)
+    "sll_buy_dvsn_cd",  # 매도매수구분코드
+    "pdno",  # 상품번호
+    "ord_qty",  # 주문수량
+    "ord_unpr",  # 주문단가
+    "ord_tmd",  # 주문시각 (HHMMSS)
+    "tot_ccld_qty",  # 총체결수량
+    "tot_ccld_amt",  # 총체결금액
+    "avg_prvs",  # 평균가
+    "rmn_qty",  # 잔여수량
+    "cncl_yn",  # 취소여부
+    "rjct_qty",  # 거부수량
+)
+
+
+def _ccld_int(row: dict[str, Any], field: str) -> int | None:
+    """One 수량 field of a ccld row as an int, or ``None`` if it is not one.
+
+    ``None`` is a distinct outcome, never 0: an absent or unparseable 총체결수량
+    means the inquiry did not answer the question, whereas 0 means it answered
+    "nothing filled". Collapsing the two would report a non-fill the broker never
+    stated.
+    """
+    raw = row.get(field)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return int(float(str(raw).strip()))
+    except ValueError:
+        return None
+
+
+def _ccld_row_key(row: dict[str, Any]) -> str | None:
+    """A ccld row's ODNO as a canonical key, or ``None`` when it is not numeric.
+
+    Canonicalized through :func:`odno_key` on this side exactly as the submitted
+    ODNO is on the other — today's row came back zero-padded (``"0000018925"``)
+    where the inquire-ccnl row for a futures order came back space-padded, so
+    neither encoding may be assumed. A non-numeric row is skipped rather than
+    raising: this call is interpretation evidence, and one malformed row must not
+    destroy the artifact of a run that has already placed a real order.
+    """
+    try:
+        return odno_key(row.get("odno"))
+    except ProbeError:
+        return None
+
+
+def _fill_evidence(client: MockTradingClient, symbol: str, odno: str) -> dict[str, Any]:
+    """Ask the execution inquiry whether ``odno`` filled. Never raises.
+
+    ``filled`` is tri-state and that is load-bearing: ``True``/``False`` are the
+    broker's answer, ``None`` means there was no answer and the run must fall back
+    to :data:`_FILL_UNDETERMINED` rather than guess. Every failure path names what
+    is missing, because "the inquiry did not say" and "the inquiry said no" have
+    opposite consequences for how a run should be read.
+
+    A failure here degrades the verdict; it must not propagate. The balance
+    evidence and the censoring wording are independent of this call, and the run
+    has already spent a real 모의 order by the time it is made.
+    """
+    record: dict[str, Any] = {
+        "source": _FILL_EVIDENCE_SOURCE,
+        "queried_symbol": symbol,
+        "queried_odno": odno,
+    }
+    try:
+        key = odno_key(odno)
+    except ProbeError as exc:
+        return record | {
+            "filled": None,
+            "available": False,
+            "missing": f"the submitted ODNO is not a comparable order number: {exc}",
+        }
+    record["queried_odno_key"] = key
+    try:
+        parsed = client.stock_daily_ccld(symbol)
+    except Exception as exc:  # noqa: BLE001 - an inquiry failure must not mask results
+        return record | {
+            "filled": None,
+            "available": False,
+            "missing": (
+                "the execution inquiry did not complete: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+        }
+    rows = parsed.get("output1") if isinstance(parsed.get("output1"), list) else []
+    record["rt_cd"] = parsed.get("rt_cd")
+    record["msg1"] = parsed.get("msg1")
+    record["rows_returned"] = len(rows)
+    record["row_cap_note"] = (
+        "모의 serves at most 15 rows per call and this probe reads ONE page in 역순, "
+        "so a seconds-old order is on it. rows_returned is recorded so a truncated "
+        "page stays visible instead of being read as a non-fill."
+    )
+    if parsed.get("rt_cd") != "0":
+        return record | {
+            "filled": None,
+            "available": False,
+            "missing": (
+                f"the execution inquiry was refused: rt_cd={parsed.get('rt_cd')!r} "
+                f"msg1={parsed.get('msg1')!r}"
+            ),
+        }
+    matched = [r for r in rows if _ccld_row_key(r) == key]
+    record["matched_rows"] = len(matched)
+    if not matched:
+        return record | {
+            "filled": None,
+            "available": False,
+            "missing": (
+                f"no row for ODNO {key} on the returned page "
+                f"({len(rows)} row(s) for {symbol}). An accepted order should appear "
+                "here whether or not it filled (CCLD_DVSN=00), so an absent row is "
+                "NOT evidence of a non-fill — it is an unanswered question."
+            ),
+        }
+    row = matched[0]
+    record["row"] = {f: row.get(f) for f in _CCLD_ROW_FIELDS if f in row}
+    record["row_odno_encoding"] = _odno_encoding(str(row.get("odno", "")))
+    filled_qty = _ccld_int(row, "tot_ccld_qty")
+    record["filled_qty"] = filled_qty
+    record["remaining_qty"] = _ccld_int(row, "rmn_qty")
+    record["cancelled"] = row.get("cncl_yn")
+    if len(matched) > 1:
+        record["multiple_rows_note"] = (
+            f"{len(matched)} rows carried this ODNO; the first (역순 = newest) was "
+            "used and the others are visible in rows_returned. One submitted order "
+            "should yield one row, so this is recorded rather than smoothed over."
+        )
+    if filled_qty is None:
+        return record | {
+            "filled": None,
+            "available": True,
+            "missing": (
+                "the row was found but its tot_ccld_qty is "
+                f"{row.get('tot_ccld_qty')!r} — not a quantity, so whether the order "
+                "filled is unanswered rather than answered 'no'."
+            ),
+        }
+    return record | {"filled": filled_qty > 0, "available": True}
+
+
+def _stock_holding_qty(rows: list[dict[str, Any]], symbol: str) -> int:
+    """Total 보유수량 for ``symbol`` across the balance rows.
+
+    One helper for the baseline and the poll so the two readings cannot drift: they
+    are compared with ``>``, and a difference in how they sum would show up as a
+    reflection that never happened or as one that never appears.
+    """
+    return sum(
+        int(float(r.get("hldg_qty") or 0))
+        for r in rows
+        if str(r.get("pdno", "")).strip() == symbol
+    )
 
 
 def _market_price_record() -> dict[str, Any]:
@@ -1577,54 +1852,171 @@ def _market_price_record() -> dict[str, Any]:
 def _fill_case_record(
     *,
     reflected: bool,
+    fill: dict[str, Any],
     symbol: str,
     baseline_qty: int,
     observed_qty: int,
     window_s: float,
     polls: int,
     poll_interval_ms: float,
+    lag_ms: float | None,
 ) -> dict[str, Any]:
-    """State plainly which of the two cases the run represents, or that it cannot.
+    """State which of the FOUR cases the run represents, from both sources.
 
-    The artifact that motivated this record (``P-11-20260730T002715Z``) recorded a
-    censored window and nothing else, so "the order never filled" and "the order
-    filled and the balance lagged" were indistinguishable without an out-of-band
-    check. The distinction is the difference between a broker consistency finding
-    and no finding at all, so it is written down rather than left to a reader.
+    The two sources answer different questions and neither alone is enough. The
+    execution inquiry says whether the order filled; the balance poll says whether
+    this account's holdings surface showed it inside the window. Crossing them is
+    what turns "the window expired" — the only thing artifacts
+    ``P-11-20260730T002715Z`` and ``P-11-20260731T015709Z`` could say — into a
+    statement with a subject: the first of those was a genuine non-fill, the second
+    a confirmed fill the balance poll was blind to, and they had recorded the same
+    verdict.
     """
+    filled = fill.get("filled")
     common: dict[str, Any] = {
         "symbol": symbol,
         "baseline_holding_qty": baseline_qty,
         "final_holding_qty": observed_qty,
+        "balance_reflected": reflected,
         "window_s": window_s,
         "polls": polls,
         "poll_interval_ms_effective": poll_interval_ms,
+        "execution_inquiry": fill,
         "basis": (
-            "inquire-balance (VTTC8434R) holdings are the ONLY fill evidence this "
-            "harness collects; it has no execution-inquiry path."
+            "TWO independent sources. Fill: the execution inquiry above. Balance "
+            "reflection: inquire-balance (VTTC8434R) holdings for this symbol, "
+            "baseline read BEFORE the submit. Neither alone can separate a non-fill "
+            "from a reflection lag."
         ),
     }
+    if filled is None:
+        record = common | {
+            "case": _FILL_UNDETERMINED,
+            "missing": fill.get("missing"),
+            "interpretation": (
+                "the execution inquiry produced no usable answer, so this run "
+                "CANNOT tell whether (a) the order never filled, or (b) it filled "
+                f"and the {symbol} balance did or did not reflect it inside the "
+                f"{window_s}s window. No bound may be derived under any reading. "
+                f"What is missing: {fill.get('missing')}"
+            ),
+        }
+        if reflected and lag_ms is not None:
+            # The rise is real but unattributed, and the number is kept OUT of
+            # measurements deliberately — see the note.
+            record |= {
+                "balance_rise_unattributed_ms": round(lag_ms, 3),
+                "balance_rise_note": (
+                    f"the {symbol} holding DID rise {baseline_qty} -> {observed_qty} "
+                    "inside the window, but with no execution-inquiry confirmation "
+                    "the rise cannot be attributed to this probe's own fill — "
+                    "external activity on the same symbol would look identical "
+                    "(that is what P-EXT exists to detect). Recorded as an "
+                    "unattributed observation and deliberately NOT as "
+                    "submit_to_balance_reflection; no bound may be derived from it."
+                ),
+            }
+        return record
+    if not filled:
+        return common | {
+            "case": _FILL_NOT_FILLED,
+            "interpretation": (
+                "the execution inquiry reports the order did NOT fill "
+                f"(tot_ccld_qty={fill.get('filled_qty')}, "
+                f"rmn_qty={fill.get('remaining_qty')}, "
+                f"cncl_yn={fill.get('cancelled')!r}). There was no fill for the "
+                "balance to reflect, so this run measures nothing — an ABSENT "
+                "measurement, not a censored one. Widening --balance-timeout-s "
+                "would change nothing: nothing was pending."
+            ),
+        }
     if reflected:
         return common | {
             "case": _FILL_OBSERVED,
             "interpretation": (
-                f"the {symbol} holding rose {baseline_qty} -> {observed_qty}, so the "
-                "order both FILLED and was reflected in the balance inside the "
-                "window. submit_to_balance_reflection is a real fill-to-reflection "
-                "sample."
+                "the execution inquiry reports the order FILLED "
+                f"(tot_ccld_qty={fill.get('filled_qty')}, "
+                f"rmn_qty={fill.get('remaining_qty')}) and the {symbol} holding rose "
+                f"{baseline_qty} -> {observed_qty} inside the {window_s}s window, so "
+                "submit_to_balance_reflection is a real reflection sample. Read it "
+                "with resolution_floor: a reflection seen on the first poll is an "
+                "UPPER bound, not a point value."
             ),
         }
     return common | {
-        "case": _FILL_UNDETERMINED,
+        "case": _FILL_NOT_REFLECTED,
         "interpretation": (
-            f"the {symbol} holding stayed at {baseline_qty} for the whole "
-            f"{window_s}s window. This run CANNOT tell whether (a) the order never "
-            "filled, or (b) it filled and the balance reflection lagged past the "
-            "window — the balance reports the same thing in both cases. No bound "
-            "may be derived from this run under either reading."
+            "the execution inquiry reports the order FILLED "
+            f"(tot_ccld_qty={fill.get('filled_qty')}, "
+            f"rmn_qty={fill.get('remaining_qty')}, "
+            f"ord_tmd={(fill.get('row') or {}).get('ord_tmd')!r}) but the {symbol} "
+            f"holding stayed at {baseline_qty} for the whole {window_s}s window. "
+            "This is the honest negative: a fill that demonstrably happened was not "
+            "reflected in this balance surface inside the window — either the "
+            "reflection lag exceeds the window, or this query does not reflect it at "
+            "all. submit_to_balance_ms stays null, because a reflection that was "
+            "never observed is not a measurement. If baseline_holding_qty already "
+            "equals final_holding_qty here, check that the baseline was read BEFORE "
+            "the submit (it is, since P-11-20260731T015709Z) — a baseline read after "
+            "a 시장가 fill already contains it, and then no window can ever be long "
+            "enough."
         ),
-        "resolves_with": _FILL_RESOLUTION_PATH,
     }
+
+
+def _resolution_floor_record(
+    *, poll_interval_ms: float, reflected_on_poll: int | None, lag_ms: float | None
+) -> dict[str, Any]:
+    """What the smallest lag this probe can resolve is, and what that costs.
+
+    P-11 observes the balance by polling, and the pacer floors the poll interval at
+    ``--pace-s`` (1.1 s by default), so the smallest reflection lag it can resolve
+    is one effective poll interval. Today's evidence says the balance reflects a
+    시장가 fill essentially immediately, which means P-11's honest output is
+    "reflection <= one effective poll interval" — an UPPER bound. It is not a point
+    value, and it must not reach a ``hard_maximum`` key (runbook §8.3) as though
+    ~1100 ms of broker lag had been measured. The floor is recorded on every live
+    run, including runs that measured nothing, so the ceiling on what this probe can
+    ever say is visible without re-deriving it.
+    """
+    first_poll = reflected_on_poll == 1
+    record: dict[str, Any] = {
+        "poll_interval_ms_effective": poll_interval_ms,
+        "smallest_resolvable_lag_ms": poll_interval_ms,
+        "floor_source": (
+            "the poll interval is max(--poll-ms, --pace-s x 1000) — the pacer will "
+            "not release two calls closer together, so a smaller --poll-ms did not "
+            "happen (§5.3.1). Lowering --pace-s to sharpen this re-opens the "
+            "throttling failure that voided P-5-20260729T235001Z."
+        ),
+        "reflected_on_poll": reflected_on_poll,
+        "sample_is_upper_bound": True,
+        "statement": (
+            "Every polled sample here is an UPPER bound on the true reflection lag: "
+            "the reflection happened somewhere inside the interval that ended when "
+            "the poll saw it. P-11 therefore cannot report a reflection faster than "
+            f"{poll_interval_ms} ms as a value — only as '<= {poll_interval_ms} ms'."
+        ),
+    }
+    if first_poll:
+        record |= {
+            "first_poll_reflection": True,
+            "upper_bound_only_ms": round(lag_ms, 3) if lag_ms is not None else None,
+            "do_not_report_as_measured": (
+                "the reflection was already visible on the FIRST poll, so the "
+                f"recorded submit_to_balance_ms (~{poll_interval_ms} ms) is this "
+                "probe's DETECTION FLOOR, not the broker's lag. The true lag lies in "
+                f"[0, {poll_interval_ms}] ms. Report 'reflection <= one effective "
+                "poll interval'; do NOT feed the number to a hard_maximum bound as a "
+                "measured lag, and do not widen a bound to accommodate it."
+            ),
+        }
+    elif reflected_on_poll is not None:
+        record["bracket_ms"] = [
+            round(max(0.0, (reflected_on_poll - 1) * poll_interval_ms), 3),
+            round(reflected_on_poll * poll_interval_ms, 3),
+        ]
+    return record
 
 
 def _p11_dry_run(run: ProbeRun, args: argparse.Namespace, order_type: str) -> None:
@@ -1636,9 +2028,11 @@ def _p11_dry_run(run: ProbeRun, args: argparse.Namespace, order_type: str) -> No
     comes from a live quote.
     """
     plan = (
-        f"stock {order_type} order (ORD_DVSN={_STOCK_ORD_DVSN[order_type]}), then "
-        f"poll inquire-balance every {effective_interval_ms(args.poll_ms, args)}ms "
-        f"for up to {args.balance_timeout_s}s"
+        f"read the inquire-balance baseline FIRST, then a stock {order_type} order "
+        f"(ORD_DVSN={_STOCK_ORD_DVSN[order_type]}), then poll inquire-balance every "
+        f"{effective_interval_ms(args.poll_ms, args)}ms for up to "
+        f"{args.balance_timeout_s}s, then ONE read-only 주식일별주문체결조회 "
+        f"({_STOCK_DAILY_CCLD_TR_MOCK}) to confirm whether the order filled"
     )
     if order_type != "market":
         run.observe(would_send=plan, order_type=order_type, order_body=None)
@@ -1693,11 +2087,21 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
 
     Fill versus balance lag
     -----------------------
-    ``measurements.fill_case`` says which of the two a run represents. The balance
-    query is the harness's only holdings source, so a window that expires with the
-    holding unchanged is *undetermined* — a non-fill and a lag beyond the window
-    look identical from here. That is recorded as an interpretation caveat naming
-    what would resolve it, never as a bound.
+    ``measurements.fill_case`` crosses two independent sources — a read-only
+    execution inquiry (``VTTC0081R``, :data:`_FILL_EVIDENCE_SOURCE`) for whether the
+    order filled, and the balance poll for whether this account's holdings surface
+    showed it inside the window — and reports one of four states. A window that
+    expires is no longer automatically undetermined: with the fill confirmed it is
+    an honest negative about the balance surface, and with the fill refuted it is
+    simply nothing to measure.
+
+    What this probe can and cannot resolve
+    --------------------------------------
+    The poll interval is floored by ``--pace-s``, so the smallest resolvable
+    reflection lag is one effective poll interval and every sample is an UPPER
+    bound. ``measurements.resolution_floor`` records that on every live run, and a
+    reflection seen on the first poll is marked as the detection floor rather than a
+    measured lag — see :func:`_resolution_floor_record`.
     """
     spec = get("P-11")
     _require_symbol(args)
@@ -1762,6 +2166,28 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 marketable_price=price.wire,
             )
             run.measure("limit_price_tick", price.describe())
+        # ORDER OF OPERATIONS IS LOAD-BEARING: the holdings baseline is read BEFORE
+        # the submit, and must stay there. A 시장가 order fills in milliseconds, so a
+        # baseline read after the submit already contains the probe's own fill —
+        # `qty > base_qty` can then never become true and the run censors no matter
+        # how large --balance-timeout-s is. That is not hypothetical: artifact
+        # P-11-20260731T015709Z recorded fill_case UNDETERMINED with
+        # baseline_holding_qty == final_holding_qty == 1 after 95 polls over 120 s,
+        # while the order had in fact filled (VTTC0081R: ODNO 0000018925,
+        # tot_ccld_qty=1, rmn_qty=0, cncl_yn=N at 248,500, cash moved to match).
+        # Do not "tidy" this back next to the poll loop it belongs to.
+        #
+        # The cost of reading first is that the baseline is one pacing interval stale
+        # at the submit instant, so external activity in that gap would perturb it.
+        # That is the strictly better trade: a stale baseline can be wrong, whereas a
+        # post-submit baseline is wrong by construction.
+        baseline = client.stock_balance()
+        base_rows = (
+            baseline.get("output1") if isinstance(baseline.get("output1"), list) else []
+        )
+        base_qty = _stock_holding_qty(base_rows, args.symbol)
+        run.observe(baseline_holding_qty=base_qty, baseline_read="before submit")
+
         tr_id = client.tr_ids["stock_krx_buy_mock"]
         status, parsed, _ms, _text = client.trading_call(
             "POST", _STOCK_ORDER_PATH, tr_id, body=body
@@ -1780,18 +2206,8 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
             run.error("stock order not accepted; cannot measure balance lag")
             return run
 
-        baseline = client.stock_balance()
-        base_rows = (
-            baseline.get("output1") if isinstance(baseline.get("output1"), list) else []
-        )
-        base_qty = sum(
-            int(float(r.get("hldg_qty") or 0))
-            for r in base_rows
-            if str(r.get("pdno", "")).strip() == args.symbol
-        )
-        run.observe(baseline_holding_qty=base_qty)
-
         reflected_at: float | None = None
+        reflected_on_poll: int | None = None
         polls = 0
         final_qty = base_qty
         # --balance-timeout-s, not the shared --visibility-timeout-s: this window
@@ -1806,57 +2222,101 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 if isinstance(snapshot.get("output1"), list)
                 else []
             )
-            qty = sum(
-                int(float(r.get("hldg_qty") or 0))
-                for r in rows
-                if str(r.get("pdno", "")).strip() == args.symbol
-            )
-            final_qty = qty
-            if qty > base_qty:
+            final_qty = _stock_holding_qty(rows, args.symbol)
+            if final_qty > base_qty:
                 reflected_at = time.monotonic()
+                reflected_on_poll = polls
                 break
             time.sleep(args.poll_ms / 1000.0)
 
+        lag_ms = None if reflected_at is None else (reflected_at - sent) * 1000.0
+        poll_interval_ms = effective_interval_ms(args.poll_ms, args)
+        # The independent fill check, after the poll loop so it cannot delay it. One
+        # read-only call: it decides which of the four cases this run is, and without
+        # it a flat balance is unattributable (P-11-20260731T015709Z).
+        fill = _fill_evidence(client, args.symbol, odno)
         run.measure(
             "fill_case",
             _fill_case_record(
                 reflected=reflected_at is not None,
+                fill=fill,
                 symbol=args.symbol,
                 baseline_qty=base_qty,
                 observed_qty=final_qty,
                 window_s=args.balance_timeout_s,
                 polls=polls,
-                poll_interval_ms=effective_interval_ms(args.poll_ms, args),
+                poll_interval_ms=poll_interval_ms,
+                lag_ms=lag_ms,
             ),
         )
-        if reflected_at is None:
+        # Recorded on every live run, measured or not: it is the ceiling on what this
+        # probe can ever report, so it must not be inferable only from runs that
+        # happened to succeed.
+        run.measure(
+            "resolution_floor",
+            _resolution_floor_record(
+                poll_interval_ms=poll_interval_ms,
+                reflected_on_poll=reflected_on_poll,
+                lag_ms=lag_ms,
+            ),
+        )
+        case = run.measurements["fill_case"]["case"]
+        if case == _FILL_NOT_REFLECTED:
+            # Wording preserved verbatim from before the execution inquiry existed:
+            # this is still the "nothing was observed" case, and the fill
+            # confirmation makes it an honest negative rather than a mystery.
             run.error(
                 "balance never reflected the order within the timeout — CENSORED. "
                 "Do not record a bound from a censored trial."
             )
-        else:
-            lag_ms = (reflected_at - sent) * 1000.0
+        elif case == _FILL_NOT_FILLED:
+            run.error(
+                "the order did not fill (execution inquiry: "
+                f"tot_ccld_qty={fill.get('filled_qty')}, "
+                f"rmn_qty={fill.get('remaining_qty')}) — there was no fill for the "
+                "balance to reflect, so this run yields no sample. This is an ABSENT "
+                "measurement, not a censored one: do not widen --balance-timeout-s."
+            )
+        elif case == _FILL_UNDETERMINED:
+            run.error(
+                "the execution inquiry could not establish whether the order filled "
+                f"({fill.get('missing')}) — UNDETERMINED. Do not record a bound from "
+                "an unconfirmed trial."
+            )
+        elif lag_ms is not None:
+            # _FILL_OBSERVED. The record only assigns it when the balance rose, so a
+            # reflection instant exists; narrowing on it rather than asserting keeps
+            # an impossible combination from crashing a run that placed a real order.
             run.measure(
                 "submit_to_balance_reflection",
                 summarize_latencies(
                     [lag_ms], margin_pct=args.margin_pct, label="submit_to_balance_ms"
-                ),
+                )
+                | {
+                    "value_semantics": (
+                        "UPPER BOUND on the reflection lag, not a point value — the "
+                        "reflection happened somewhere inside the poll interval that "
+                        "ended when it was seen. See resolution_floor; a first-poll "
+                        "reflection carries no lower-bound information at all."
+                    ),
+                    "fill_confirmed_by": _FILL_EVIDENCE_SOURCE,
+                },
             )
             run.measure(
                 "n_note",
                 "n=1 per invocation. Re-run --samples times and take the maximum "
                 "across artifacts before proposing a bound.",
             )
-            run.measure(
-                "poll_granularity_ms", effective_interval_ms(args.poll_ms, args)
-            )
+            run.measure("poll_granularity_ms", poll_interval_ms)
             run.measure(
                 "granularity_note",
                 "The sample carries up to one poll interval of additive error, so "
                 "an approved bound must exceed it plus poll_granularity_ms — which "
                 "is the EFFECTIVE interval max(--poll-ms, --pace-s), because the "
                 "pacer floors polling and a smaller --poll-ms did not happen "
-                "(runbook §8.3).",
+                "(runbook §8.3). When the reflection landed on the first poll the "
+                "sample IS that granularity and bounds nothing below it — read "
+                "resolution_floor before proposing any value.",
             )
         run.measure(
             "position_left_open",

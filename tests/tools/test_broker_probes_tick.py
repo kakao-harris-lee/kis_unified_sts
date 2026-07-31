@@ -583,11 +583,14 @@ def _install_stock_recorder(
     aspr_unit: str | None,
     with_trading: bool = False,
 ) -> list[dict[str, Any]]:
-    """Serve a stock quote at 70,200원, plus an order + balance pair for P-11.
+    """Serve a stock quote at 70,200원, plus the order/balance/ccld set for P-11.
 
     The first balance read is the baseline (flat) and every later one reports the
     holding, so P-11's reflection loop terminates on its first poll and the test
-    needs no wall-clock wait.
+    needs no wall-clock wait. P-11 also confirms the fill through one read-only
+    주식일별주문체결조회 (``VTTC0081R``), so that path is served with a filled row for
+    the ODNO the order accept returns — otherwise these tick tests would fail on a
+    fill the harness could not confirm rather than on anything about ticks.
     """
     calls: list[dict[str, Any]] = []
     quote: dict[str, Any] = {"stck_prpr": "70200"}
@@ -607,6 +610,21 @@ def _install_stock_recorder(
         calls.append({"url": url, "method": method, "body": json_body or {}})
         if "quotations/inquire-price" in url:
             payload: dict[str, Any] = {"rt_cd": "0", "output": quote}
+        elif "trading/inquire-daily-ccld" in url:
+            payload = {
+                "rt_cd": "0",
+                "output1": [
+                    {
+                        "odno": "0000000001",
+                        "pdno": "005930",
+                        "ord_qty": "1",
+                        "ord_tmd": "105710",
+                        "tot_ccld_qty": "1",
+                        "rmn_qty": "0",
+                        "cncl_yn": "N",
+                    }
+                ],
+            }
         elif "trading/inquire-balance" in url:
             balances = [c for c in calls if "trading/inquire-balance" in c["url"]]
             held = "0" if len(balances) == 1 else "1"
