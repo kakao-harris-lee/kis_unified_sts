@@ -1,16 +1,21 @@
 """Machine-readable probe register — the single source for the runbook table.
 
-Sources of the probe set (12 + 4 = 16 ratified, plus 1 follow-up):
+Sources of the probe set (12 + 4 = 16 ratified, plus 4 follow-ups):
 
 * **12 canonical** — ``docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md``
   §5 "측정 프로시저 제안" table (:225-238): P-1, P-2, P-5, P-5b, P-8, P-11,
   P-13, P-14, P-15, P-16, P-EXT, P-FQP.
 * **4 census additions** — ``docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md``
   §1 T2 (:34-38): N-15, N-16, N-17, N-18.
-* **1 collation follow-up** — ``docs/plans/2026-07-29-tos-p02-n17-spec-collation.md``
-  §2 소견 2: P-NMPR. It is deliberately **outside** the ratified 16: its
+* **4 follow-ups**, all deliberately **outside** the ratified 16 — each one's
   ``source`` starts with neither "draft" nor "plan", so the canonical/census
-  counts in :func:`coverage_report` stay exactly as ratified.
+  counts in :func:`coverage_report` stay exactly as ratified:
+
+  * P-NMPR — ``docs/plans/2026-07-29-tos-p02-n17-spec-collation.md`` §2 소견 2.
+  * P-BAL — wave-3b runtime trace H4 (stock-balance pagination).
+  * P-R5-PRE / P-R5 — wave-3b D-2's NOT-IN-SCOPE item. **P-R5 is the only probe
+    in this register that places orders on a REAL account**; see
+    ``tools/broker_probes/probes_real_order.py`` and runbook §5.7.
 
 ``bounds_keys`` cite ``tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml``
 key names verified by direct read (line numbers in :data:`BOUND_KEYS`).
@@ -759,6 +764,100 @@ PROBES: dict[str, ProbeSpec] = {
             "(common.py::resolve_credentials docstring)",
         ),
         entrypoint="tools.broker_probes.probes_balance:probe_pbal",
+    ),
+    # ---- REAL-MONEY calibration pair. Also outside the ratified 12+4: `source`
+    # starts with neither "draft" nor "plan", so coverage_report()'s counts stay
+    # exactly as ratified.
+    #
+    # Deliberately TWO entries rather than one probe with a --stage flag. The
+    # preflight is REAL_READ_ONLY with emits_orders=False and the order stage is
+    # ORDER with emits_orders=True, so `--list` and
+    # coverage_report()["order_emitting"] tell the truth about which one can
+    # spend money. A single entry would have had to claim one or the other. ----
+    "P-R5-PRE": _S(
+        probe_id="P-R5-PRE",
+        title="REAL preflight for P-R5 — GET-only account/market/instrument gate",
+        source=(
+            "real-environment calibration of P-5 — wave-3b D-2 NOT-IN-SCOPE "
+            "(config/execution.yaml::futures_fill_check_timeout_seconds must be "
+            "calibrated against a REAL measurement, not fitted to the mock p50 "
+            "of 2632.9ms)"
+        ),
+        kind="REAL_READ_ONLY",
+        environment=ENV_REAL,
+        dimension="OPEN_ORDER_QUERY",
+        bounds_keys=(),
+        # Claims nothing about the profile. It establishes preconditions, and a
+        # precondition is not a capability observation — filing one here would
+        # inflate coverage with a gate check.
+        instance_fields=(),
+        statistic=(
+            "categorical verdict: READY_FOR_STAGE_2, or exactly one named "
+            "ABORT_* reason. No numeric bound. An abort is a result and still "
+            "writes an artifact."
+        ),
+        risk="MEDIUM",
+        duration="5 GET calls (~10 s at --pace-s)",
+        requires_confirm=True,
+        prerequisites=(
+            "REAL futures credential exported in a dedicated shell (§2.2)",
+            "--expect-account-fingerprint — the probe will not infer which "
+            "account it is allowed to trade",
+            "READ-ONLY by construction: the only transport is a GET gated on "
+            "probes_real_order.PREFLIGHT_ALLOWLIST, which contains no order "
+            "path and no order TR",
+            "futures day session, and deliberately no override flag",
+        ),
+        entrypoint="tools.broker_probes.probes_real_order:probe_real_preflight",
+    ),
+    "P-R5": _S(
+        probe_id="P-R5",
+        title="⚠ REAL-MONEY accept→visible latency (+ submit-class pacing, real page size)",
+        source=(
+            "real-environment calibration of P-5 — wave-3b D-2 NOT-IN-SCOPE "
+            "(a mock p50 of 2632.9ms against a 1.0s runtime fill-check timeout "
+            "cannot be resolved without a real-environment measurement)"
+        ),
+        kind="ORDER",
+        environment=ENV_REAL,
+        dimension="OPEN_ORDER_QUERY",
+        bounds_keys=("B_broker_query_consistency",),
+        instance_fields=(
+            "capabilities.open_order_query.eventual_consistency_bound_ms",
+            "capabilities.open_order_query.status",
+            "capabilities.open_order_query.pagination",
+            "capabilities.rate_limits.hard_limits",
+        ),
+        statistic=(
+            "hard maximum: ceil(max(t1-t0) x (1+margin)), measured exactly as "
+            "mock P-5 so the two are comparable — but on a SMALL n by design, "
+            "because every sample costs real exposure. The candidate is "
+            "therefore a small-sample one and the Bounds-Approver judges "
+            "adequacy. The submit-class pacing result is a BRACKET, never a "
+            "point estimate, and says nothing about the cancel class. REAL_PROD "
+            "values do not transfer to MOCK_VTS, nor MOCK_VTS values here."
+        ),
+        risk="HIGH",
+        duration="~5 min at --samples 3",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "⚠ REAL CAPITAL AT RISK — the only such probe in this register. "
+            "Runbook §5.7 is mandatory reading before it is run.",
+            "a fresh P-R5-PRE artifact whose preflight_verdict is "
+            "READY_FOR_STAGE_2, passed via --stage1-artifact; stage 2 re-takes "
+            "its assertions live rather than trusting the file",
+            "--i-understand-this-places-real-orders (no abbreviation accepted) "
+            "AND --confirm AND --expect-account-fingerprint AND "
+            "--max-notional-krw",
+            "live futures trading DISARMED — this probe sits outside the trading "
+            "runtime and therefore bypasses config/futures_live.yaml::enabled "
+            "and the Redis futures:live:suspended flag, so running it while live "
+            "is armed would put two order sources on one account",
+            "smallest registered contract only, asserted from "
+            "config/execution.yaml::futures_contract_spec and never assumed",
+        ),
+        entrypoint="tools.broker_probes.probes_real_order:probe_real_order",
     ),
 }
 

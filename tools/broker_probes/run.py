@@ -22,6 +22,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from tools.broker_probes.common import (  # noqa: E402
+    ENV_REAL,
     ProbeError,
     SafetyViolation,
     add_common_args,
@@ -35,6 +36,7 @@ _ARG_ADDERS = {
     "tools.broker_probes.probes_query": "add_query_args",
     "tools.broker_probes.probes_real": "add_real_args",
     "tools.broker_probes.probes_balance": "add_balance_args",
+    "tools.broker_probes.probes_real_order": "add_real_order_args",
 }
 
 
@@ -48,9 +50,19 @@ def _print_table() -> None:
             f"{spec.probe_id:<7} {spec.kind:<16} {spec.environment:<10} "
             f"{spec.risk:<7} {mark:<6} {'yes' if spec.requires_confirm else 'no':<8} {spec.title}"
         )
+    # These two lines were true of every probe until P-R5 existed. They are now
+    # stated with the exception spelled out rather than left as a comforting
+    # blanket claim: a reader who trusts the old wording would believe no probe
+    # here can touch a real account.
+    real_order_emitting = sorted(
+        spec.probe_id
+        for spec in PROBES.values()
+        if spec.emits_orders and spec.environment == ENV_REAL
+    )
     print(
-        "\nORDER=yes probes are 모의투자-only and refuse to run without --confirm.\n"
-        "REAL_PROD probes are read-only by construction (GET + allowlist)."
+        "\nORDER=yes probes are 모의투자-only and refuse to run without --confirm,\n"
+        f"EXCEPT {', '.join(real_order_emitting) or '(none)'} — REAL MONEY. "
+        "Every other REAL_PROD probe is\nread-only by construction (GET + allowlist)."
     )
 
 
