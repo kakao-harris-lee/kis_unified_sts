@@ -34,6 +34,7 @@ _ARG_ADDERS = {
     "tools.broker_probes.probes_auth": "add_auth_args",
     "tools.broker_probes.probes_query": "add_query_args",
     "tools.broker_probes.probes_real": "add_real_args",
+    "tools.broker_probes.probes_balance": "add_balance_args",
 }
 
 

@@ -708,6 +708,58 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         entrypoint="tools.broker_probes.probes_order:probe_nmpr_ab",
     ),
+    "P-BAL": _S(
+        probe_id="P-BAL",
+        title="BALANCE_PAGINATION — balance-query page size / continuation walk (GET-only)",
+        # Deliberately starts with neither "draft" nor "plan": like P-NMPR this is
+        # a follow-up, so coverage_report()'s canonical-12 / census-4 counts stay
+        # exactly as ratified.
+        source="wave-3b runtime trace H4 (stock-balance pagination, 2026-07-31)",
+        kind="REAL_READ_ONLY",
+        # The default target is REAL stock: the destructive consumer
+        # (services/trading/broker_verification.py:187-190) runs against live
+        # stock. The probe overrides the artifact's `environment` from `--env`,
+        # because §6.2 forbids citing a MOCK_VTS artifact in a REAL_PROD document.
+        environment=ENV_REAL,
+        dimension="POSITIONS_BALANCES_MARGIN",
+        # No latency bound. Page size is a count, and the truncation verdict is
+        # categorical; claiming B_broker_query_consistency here would file a
+        # completeness finding against a consistency-latency key.
+        bounds_keys=(),
+        # `position_balance_margin` carries NO `.completeness`/`.pagination` pair
+        # (unlike `open_order_query`, INSTANCE draft :3294,:3296), so the
+        # pagination finding has no dedicated slot. It files the same way N-16's
+        # schema capture does after the Patch-0057 remap — as evidence plus
+        # reachability — and the runbook flags the missing slot as a §9.1-class
+        # item rather than this file inventing a field name.
+        instance_fields=(
+            "capabilities.position_balance_margin.evidence_refs",
+            "capabilities.position_balance_margin.status",
+        ),
+        statistic=(
+            "categorical, three-valued: TRUNCATION_RISK_DEMONSTRATED / "
+            "NOT_DEMONSTRATED / UNESTABLISHED, plus an integer page size ONLY when "
+            "a second page was returned. One page of k rows establishes "
+            "page_size_lower_bound=k, never page_size=k. A total row count is "
+            "reported only when the BROKER signalled end-of-set — never when our "
+            "own --max-pages cap ended the walk."
+        ),
+        risk="LOW",
+        duration="~1 min (<= --max-pages GETs)",
+        requires_confirm=True,
+        prerequisites=(
+            "READ-ONLY, enforced by GET + allowlist; no order path exists in "
+            "tools/broker_probes/probes_balance.py and it imports none",
+            "operator approval for --env real (consumes a real credential)",
+            "an account that actually HOLDS positions — zero rows establishes "
+            "nothing about pagination",
+            "--asset futures --env mock SKIPS: the broker serves no futures "
+            "balance on 모의 (shared/kis/client.py:1026 NOTE, guard :1031-1033)",
+            "never cross-route stock/futures credentials "
+            "(common.py::resolve_credentials docstring)",
+        ),
+        entrypoint="tools.broker_probes.probes_balance:probe_pbal",
+    ),
 }
 
 

@@ -20,7 +20,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 그 측정을 **재현 가능하고 안전하게** 수행하는 절차다.
 
 **하는 것**: 모의투자(MOCK_VTS) 계좌에서 16건의 프로브를 실행해 JSON 증거
-아티팩트를 만든다. 실전(REAL_PROD)은 **조회 전용 2건**(N-16·N-18)뿐이다.
+아티팩트를 만든다. 실전(REAL_PROD)은 **조회 전용 3건**(N-16·N-18·P-BAL)뿐이다.
 
 **하지 않는 것**:
 
@@ -82,8 +82,13 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 | 7 | 토큰 캐시 격리 | `results/.token_cache` 기본값 | `--token-cache-dir`로 명시적 변경만 |
 | 8 | P-11 체결은 이중 확인 | `--confirm` **및** `--allow-fill` | — |
 
-강제 5의 allowlist는 `probes_real.py::ALLOWLIST` 3건이 전부다. 항목 추가는 상수
-편집 = 리뷰 대상 변경이다.
+강제 5의 allowlist는 **모듈별**이다: `probes_real.py::ALLOWLIST` 3건(N-16·N-18) +
+`probes_balance.py::ALLOWLIST` 3건(P-BAL — 잔고 조회 TR 3종뿐, `/order` 경로 0건).
+항목 추가는 상수 편집 = 리뷰 대상 변경이다. 두 모듈 모두 POST/PUT/PATCH/DELETE
+경로가 **존재하지 않으며**, `probes_balance.py`의 경우 그 부재가
+`tests/tools/test_broker_probes_balance.py`에서 **모듈 AST 대조로 강제**된다(주석이
+아니라 테스트). 같은 파일은 `probes_balance.py`가 `probes_order.py`를 임포트하지
+않음까지 확인한다 — 임포트하면 주문 경로가 그 모듈의 임포트 그래프에 들어온다.
 
 ### 2.4 결과 디렉터리
 
@@ -93,7 +98,7 @@ P0-2는 "broker-specific bounds는 **MEASURED, not guessed**"를 요구한다. �
 
 ---
 
-## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 1 = 17)
+## 3. 프로브 전수 표 (12 정본 + 4 census = 16, + 후속 2 = 18)
 
 공통 인자: `--asset {stock,futures}` · `--symbol` · `--quantity`(기본 1) ·
 `--price-offset-pct`(기본 10 — 미체결 유지용, **지정가 경로 전용**) · `--samples` ·
@@ -121,11 +126,19 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | **N-17** | MARKET_INSTRUMENT_CONSTRAINTS | SPEC_CROSSCHECK | NONE | (스크립트 아님 — **§7 체크리스트**) | ~1 h 데스크워크 | LOW | 아니오 |
 | **N-18** | MARKET_INSTRUMENT_CONSTRAINTS | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run N-18 --confirm` | 3 calls | MEDIUM | 아니오 |
 | **P-NMPR** | MARKET_INSTRUMENT_CONSTRAINTS | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-NMPR --confirm --asset futures` | ~2 min | HIGH | 예 |
+| **P-BAL** | POSITIONS_BALANCES_MARGIN | REAL_READ_ONLY | REAL_PROD / MOCK_VTS (`--env`) | `python -m tools.broker_probes.run P-BAL --asset stock --env real --confirm` | ~1 min | LOW | 아니오 |
 
-> **P-NMPR은 정본 16에 속하지 않는다.** N-17 대조에서 파생된 **후속 1건**이며,
-> `registry.py`의 `source`가 "draft"·"plan" 어느 쪽으로도 시작하지 않아
-> `--coverage`의 정본 12 / census 4 카운트를 **바꾸지 않는다**. 캠페인 집계에서
-> "17건 실행"을 "정본 전건 실행"으로 읽지 말 것.
+> **P-NMPR·P-BAL은 정본 16에 속하지 않는다.** 각각 N-17 대조와 wave-3b 런타임
+> 트레이스(H4)에서 파생된 **후속 2건**이며, `registry.py`의 `source`가
+> "draft"·"plan" 어느 쪽으로도 시작하지 않아 `--coverage`의 정본 12 / census 4
+> 카운트를 **바꾸지 않는다**. 캠페인 집계에서 "18건 실행"을 "정본 전건 실행"으로
+> 읽지 말 것.
+>
+> **P-BAL의 표상 `환경`은 두 값을 가질 수 있는 유일한 프로브다.** `registry.py`의
+> `environment`는 기본 대상인 `REAL_PROD`이지만, 아티팩트의 `environment`는
+> **`--env`가 실제로 접촉한 환경**으로 기록된다(§6.2가 MOCK_VTS 아티팩트의
+> REAL_PROD 문서 인용을 금지하므로 spec 값을 그대로 쓰면 안 된다). 인용 전 아티팩트
+> 필드를 직접 확인할 것.
 
 ### 3.1 프로브별 목적 (한 줄)
 
@@ -147,6 +160,7 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | N-16 | `CTFN6118R` 야간 잔고 응답 **스키마만** 포착 (`tr_ids.yaml` 편입은 별도 커밋) |
 | N-17 | 공식 명세 대조 — 주문 요청 필드·TIF·정정취소 값집합 (**§7**) |
 | N-18 | 실전 조회 3건: program-trade 행 상한 / SOX 표기 / 야간 코드 응답 |
+| P-BAL | 잔고 조회의 **페이지 크기**와 연속조회 키 거동, 그리고 truncation 위험의 **3값 판정**. 런타임은 잔고를 1페이지만 읽고(`client.py:931-932`·`:1055-1056`) 그 사실을 감지할 수단이 없다. 소비자 `services/trading/broker_verification.py`는 잔고에 없는 포지션을 `remove_position(reason="broker_absent")`로 **파괴**한다(`:187-190`) — 지금까지 그 인과는 **추론뿐**이었고 페이지 크기는 한 번도 측정되지 않았다. **1페이지 k행은 페이지 크기 k가 아니다** — `page_size_lower_bound`만 성립 |
 | P-NMPR | [필수] 2필드 빈 문자열 vs 명시 코드 A/B — 수락/거부와 등가성 직접 판정. B-arm(빈 값) 거부 = 수정 전 런타임이 계약 위반이었음을 확정 (N-17 소견 2). **수락 동수는 등가성이 아니다** — 조회면이 두 필드를 되돌려주지 않으면 "blank == 01/0"은 UNKNOWN으로 남는다 |
 
 ---
@@ -223,6 +237,7 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | N-17 | `capabilities.replace_semantics.value_set` | 존재 — **Patch-0057 신설** (`[]`) |
 | N-18 | `capabilities.market_and_instrument_constraints.instrument_coverage` | 존재 — **Patch-0057 신설** (`UNKNOWN`) |
 | P-NMPR | `capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics` (+ `.duplicate_unknown_and_omitted_field_behavior`) | 존재 — N-17 재매핑분과 **동일 기입면** (§9.1 #8) |
+| P-BAL | `capabilities.position_balance_margin.evidence_refs` (+ `.status`) | 존재 — **전용 슬롯 부재** (§9.4) |
 
 > P-NMPR은 N-17이 **문서로** 확정한 것(두 필드가 [필수]다)을 **실측으로** 보강한다
 > — 같은 기입면에 들어가되 근거 등급이 다르다(OFFICIAL-DOC vs 실측). 기입 시
@@ -232,6 +247,14 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 > `KRX_NMPR_CNDT_CD` ∈ {`0`(없음), 빈 값}만 보내고 `3`(IOC)·`4`(FOK)는 **전송하지
 > 않는다.** TIF 값집합 확정은 N-17(§7 항목 2) 소관이다 — §4.1의 "공급하지 못하는 키를
 > 커버한 것처럼 기록하지 말 것"이 여기에 그대로 적용된다.
+
+> **P-BAL은 전용 기입면이 없다 — 신설 여부는 이 런북의 권한이 아니다.**
+> `open_order_query`에는 `.completeness`/`.pagination` 2키가 있으나(INSTANCE 초안
+> `:3294`·`:3296`) `position_balance_margin`에는 **둘 다 없다**(`:1290-1305` /
+> `:3374-…`). 따라서 P-BAL 산출은 N-16의 Patch-0057 재매핑과 **같은 방식**으로
+> `evidence_refs`(+ `.status`)에 들어간다. 이는 임시 처분이며 §9.1과 **같은 결함
+> 클래스**다 — §9.4에 미처분 항목으로 등재했다. `registry.py`는 없는 필드명을
+> **발명하지 않는다**.
 
 ---
 
@@ -318,7 +341,7 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
 - **`--pace-s`를 낮추는 것**은 위 실패를 다시 여는 행위다. P-2에서 `--pace-s`보다 짧은
   gap을 시험해야 할 때만 의도적으로 내리고, 그 사실을 아티팩트 `note`에 남긴다.
 
-### 5.4 실전 조회 절차 (N-16 · N-18) — 분리 실행
+### 5.4 실전 조회 절차 (N-16 · N-18 · P-BAL) — 분리 실행
 
 1. **운영자 승인**을 먼저 받는다 (실전 자격증명 소비)
 2. **별도 셸**에서 실전 자격증명을 export한다 (§2.2 경고)
@@ -328,6 +351,8 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
    존재하지 않는다
 5. 실행 후 그 셸을 **종료**한다. 실전 자격증명이 남은 셸에서 모의 프로브를 돌리지 않는다
 6. N-16 결과에 따른 `config/kis/tr_ids.yaml` 편입은 **별도 커밋**이다
+7. **P-BAL(`--env real`)도 이 절차에 종속된다.** 야간 창 제약은 없고(주간 잔고 TR)
+   대상별 자격증명 배선과 계좌 지문 대조가 추가로 필요하다 — **§5.6**
 
 ### 5.5 사고 시 대응
 
@@ -383,6 +408,132 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
   기록할 것이 없다는 뜻이다 — 재시도하지 말고 **원인을 먼저 밝힌다**
 - **exit code**: 0 정상 / 2 미지 프로브 / 3 안전 위반 / 4 선행조건 미충족 /
   5 실행 실패(**아티팩트는 남는다** — 조용한 실패를 "미실행"으로 오인하지 않기 위함)
+
+### 5.6 P-BAL 실행 절차 (잔고 페이지네이션) — 대상 3종
+
+#### 목적
+
+측정 대상은 **잔고 조회의 페이지 경계**다. `shared/kis/client.py`는 잔고를
+1페이지만 읽는다 — 주식은 빈 `CTX_AREA_FK100`/`NK100`을 보내고(`:931-932`), 선물은
+빈 `CTX_AREA_FK200`/`NK200`을 보내며(`:1055-1056`), 어느 쪽도 응답의 연속조회 키를
+읽지 않고 `tr_cont` 응답 헤더를 보지 않고 행 수를 세지 않으며 성공 경로에 로그가
+없다. 올바른 walk는 **같은 파일에 이미 있다**(`:303-356` `fetch_invest_opinion`,
+`tr_cont != "M"`까지 루프 — `:354`).
+
+이것이 왜 위험한가: `services/trading/broker_verification.py`가 그 잔고를 소비하고
+(`:78` 주식 / `:80` 선물), `remove_redis_only`가 켜진 경우(`:105`, 게이트
+`:121-127`) 잔고에 없던 포지션을 `remove_position(reason="broker_absent")`로
+**트래킹에서 제거**한다(`:187-190`). 읽기가 절단됐다면 페이지 경계 밖의 실보유
+포지션은 "부재"와 구분되지 않는다. **이 인과는 현재 추론뿐이며 페이지 크기는 한 번도
+측정된 적이 없다.** P-BAL이 그 하나를 측정한다.
+
+#### 선행 조건
+
+- **조회 전용**이다. `probes_balance.py`에는 주문 경로가 없고 POST/PUT/PATCH/DELETE
+  리터럴조차 없다(§2.3 강제 5, AST 테스트로 강제). 그래도 `--confirm` 없이는 브로커에
+  접촉하지 않는다 — 이 하네스의 모든 네트워크 프로브와 동일 규율이다.
+- **`--env real`은 운영자 승인이 먼저다** (실전 자격증명 소비). §5.4의 분리-셸 규율이
+  그대로 적용된다: 실전 자격증명을 export한 셸에서 모의 프로브를 돌리지 않고, 실행 후
+  그 셸을 종료한다.
+- **포지션을 실제로 보유한 계좌**여야 한다. 0행은 "단일 페이지"도 "위험 없음"도
+  아니고 **아무것도 확립하지 않는다**(프로브가 명시 `skip`을 남긴다).
+- 페이퍼 워커 정지는 **불필요**하다. 주문을 내지 않고 호출이 `--max-pages`회(기본 10)
+  뿐이며 페이지 간 간격이 `--inter-page-s`(기본 1.1초, P-13 측정 clean 1.0 rps 바로
+  위)로 하한된다. 그래도 `EGW00201`이 보이면 §5.5대로 **재시도하지 말고 보고**한다.
+- **자산 교차 배선 금지.** `resolve_credentials`는 `KIS_STOCK_*` / `KIS_FUTURES_*`
+  접두를 자산별로 읽으므로 정상 배선에서는 교차가 구조적으로 불가능하다. **단
+  자산별 변수가 없고 legacy `KIS_APP_KEY`/`KIS_APP_SECRET`만 export된 셸에서는 폴백이
+  두 자산에 동일 키를 공급한다**(`common.py:297-304`) — P-BAL 실행 시에는 반드시
+  **자산별 변수를 export**하고 legacy 폴백에 의존하지 말 것.
+
+#### 대상별 명령과 자격증명 배선
+
+자격증명 census는 캠페인 README
+(`docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/README.md` §wave-3 배선
+검증 + 2026-07-31 세션)에서 확정된 것이다. **프로브는 자격증명 파일 경로를
+하드코딩하지 않는다** — 아래 파일을 소싱해 환경에 올리는 것은 운영자의 단계다.
+
+| # | 대상 | 명령 | 소싱할 파일 |
+|---|---|---|---|
+| 1 | **실전 주식** (중요한 대상) | `python -m tools.broker_probes.run P-BAL --asset stock --env real --confirm` | 호스트의 유일한 실전 자격증명 = **주식 앱키** (`KIS_STOCK_APP_KEY`/`_APP_SECRET`, `.env`; `.env`의 legacy `KIS_APP_KEY`는 이 값을 가리키는 `${...}` placeholder) |
+| 2 | 모의 주식 | `python -m tools.broker_probes.run P-BAL --asset stock --env mock --confirm` | 레포 밖 `/home/deploy/.config/kis-probes/p11-mock-stock.env` (권한 600, 계좌 `50187672-01`) |
+| 3 | 실전 선물 | `python -m tools.broker_probes.run P-BAL --asset futures --env real --confirm` | `.env.paper`의 `KIS_FUTURES_*` (2026-07-29 발급된 실전 키, 계좌 지문 `00bcc5b3a87b`) |
+| — | 모의 선물 | (실행해도 됨 — 자동 **SKIP**) | 없음. 브로커가 모의에서 선물 잔고를 서비스하지 않는다 (`client.py:1026` NOTE + 가드 `:1031-1033`). 오류가 아니라 스킵으로 남으며, **"위험 없음"으로 읽으면 안 된다** |
+
+> **⚠ 실행 전 반드시 확인 — 이 런북이 확정하지 못한 항목.** 캠페인 census가 확립한
+> 것은 "호스트의 실전 앱키는 **주식** 앱키다"까지다. **어느 파일이 실전 주식 계좌
+> 번호(`KIS_STOCK_ACCOUNT_NO`)를 담는지는 확립되지 않았다** — 모의 주식 계좌
+> `50187672-01`과 혼동될 여지가 있다. 대상 #1을 돌리기 전에 export된 계좌를 확인하고,
+> 실행 후 아티팩트의 `credentials.account_masked` / `account_fingerprint`가 의도한
+> 실전 주식 계좌인지 **대조**한다. 지문이 다르면 그 아티팩트는 다른 계좌의 관측이므로
+> 인용 금지다. (실전 도메인에 모의 앱키를 쓰면 trading 계열은 `EGW02004`로 거부되므로
+> 그 방향의 오배선은 시끄럽게 실패한다. 반대로 **맞는 앱키 + 다른 계좌**는 조용히
+> 성공하므로 지문 대조가 유일한 방어다.)
+
+선택 인자:
+
+- `--max-pages`(기본 10) — 상한. 여기서 멈추면 종료 원인이 **우리 캡**으로 기록되고
+  총 행수는 보고되지 않는다.
+- `--known-page-size` + `--known-page-size-source` — 이전 측정의 페이지 크기를
+  들여올 때만. **출처 없이는 `ProbeError`로 거부**되며, 이번 실행에서 측정된 값이
+  있으면 항상 측정값이 이긴다(불일치는 `page_size_disagreement`로 보고).
+- `--record-raw-continuation-keys` — 연속조회 커서 원문을 아티팩트에 넣는다. 기본
+  꺼짐(커서는 브로커 불투명 값이고 `redact()`는 그 필드명을 모른다). 기본 상태에서도
+  키별 **지문**이 기록되므로 "이 키가 전진했는가"는 답할 수 있다.
+
+#### 확립하는 것
+
+1. **페이지 1 행 수** — 원시 행 수와, 런타임이 실제로 보게 되는 행 수
+   (`hldg_qty > 0` 주식 `client.py:1002` / `cblc_qty > 0` 선물 `:1091`)를 **분리
+   기록**한다. 페이지네이션은 원시 행 단위이지만 파괴적 소비자는 필터된 행만 본다.
+2. **연속조회 거동** — 비어있지 않은 연속조회 키가 돌아왔는지, **어디서** 발견됐는지
+   (`body:ctx_area_fk100` 등 실제 스펠링·위치를 기록 — 런타임이 이 키를 읽지 않으므로
+   레포에 케이싱 증거가 없다), 그리고 `tr_cont` **응답 헤더** 값. 헤더는 이 모듈의
+   `_get()`이 트랜스포트에서 직접 읽는다 — `common.http_json`은 응답 헤더를 버리므로
+   그 헬퍼로는 이 질문에 답할 수 없다. `"M"`만 "더 있음"으로 해석하고(`client.py:354`
+   근거) 다른 값은 **축자 기록**한다.
+3. **walk** — 페이지별 행 수와 **키별** 전진 여부. 두 키를 **매 페이지 각각** 기록한다
+   — 이전 캠페인에서 두 키 중 **하나만** 움직인 사례가 있었고, boolean 하나로는 그것이
+   사라진다. 한쪽만 전진한 페이지는 `continuation_key_asymmetry`에 모인다.
+4. **종료 원인** — `BROKER_END_OF_SET` / `OUR_MAX_PAGES_CAP` / `ERROR` 중 하나로
+   **명시**. 이 구분이 프로브의 요점이다: P-5b는 우리 캡에서 멈춰 총 행수를 미확립으로
+   남겨야 했다. **캡으로 끝난 walk는 총 행수를 절대 보고하지 않는다** — 하한만 남는다.
+5. **truncation 위험 3값 판정** (`measurements.truncation_risk.verdict`):
+   `TRUNCATION_RISK_DEMONSTRATED`(관측 행수가 페이지 크기를 초과 — 인과가 추론에서
+   실증으로 이동) / `TRUNCATION_RISK_NOT_DEMONSTRATED`(페이지 크기가 알려져 있고
+   **브로커가** end-of-set을 알린 지점이 그 아래) / `TRUNCATION_RISK_UNESTABLISHED`.
+   판정은 관측에서 **계산**되며 자기신고가 아니다.
+
+#### 확립하지 **않는** 것
+
+- **소액 계좌에서는 페이지 크기를 확립할 수 없다.** 8행 1페이지는 페이지 크기 ≥ 8인
+  **모든** 값과 정합한다. 아티팩트는 이 경우 `page_size: null` ·
+  `page_size_lower_bound: 8` · `verdict: TRUNCATION_RISK_UNESTABLISHED`로 남는다.
+  이것을 "페이지 크기 = 8"이나 "절단 위험 없음"으로 옮겨 적는 것은 **§8.4 위반**이다.
+- **`NOT_DEMONSTRATED`는 코드의 속성이 아니다.** 그것은 *이 계좌의 현재 보유량*에 대한
+  경계이고 포지션이 하나 열리는 순간 만료된다. `client.py:931-932`의 결함은 그대로다.
+- **우리 캡에서 멈춘 walk는 총 보유량을 확립하지 않는다.** "지금까지 본 행수가 페이지
+  크기보다 적다"는 "보유량이 적다"의 증거가 **아니다** — 그 방향의 결론이 곧
+  fail-open이며 프로브는 그 조합을 `UNESTABLISHED`로 강제한다.
+- **파괴적 분기를 바꿀 근거가 되지 않는다.** `remove_redis_only`
+  (`broker_verification.py:105`·`:187-190`)는 이 아티팩트만으로 손대지 않는다.
+  `verdict: DEMONSTRATED`가 나왔다면 그것은 **수정 근거의 시작**이고, 수정 자체는
+  `client.py`의 continuation walk 부재를 고치는 별도 변경이다.
+- **MOCK 관측의 REAL 외삽 금지.** 모의 주식 페이지 크기는 실전 페이지 크기에 대해
+  아무것도 말하지 않는다(ADR-002-004 §13.14 / §6.2 마지막 항목).
+- **거부된 호출은 아무것도 확립하지 않는다.** `rt_cd != "0"`이면 종료 원인은 `ERROR`이고
+  판정은 `UNESTABLISHED`다.
+
+#### 아티팩트 처리
+
+- 경로·`artifact_id` 규칙과 `UNAPPROVED_CANDIDATE` 규율은 §6.1과 동일하다.
+- **인용 전 §6.2 체크리스트 전건**, 특히 `environment`가 `--env`와 일치하는지
+  (P-BAL은 spec 값 대신 실제 접촉 환경을 기록한다) 와 `credentials.account_fingerprint`
+  대조(위 ⚠ 항목).
+- `results/`는 gitignored이므로 §6.3대로 **승인 패키지로 복사**한 뒤 `evidence_refs`에
+  `artifact_id` + 보존 위치를 함께 적는다.
+- 기입면은 §4.3의 `capabilities.position_balance_margin.evidence_refs`(+ `.status`)이며
+  전용 pagination 슬롯은 **부재**다(§9.4). 값 승격은 자동이 아니다(§6.4).
 
 ---
 
@@ -600,6 +751,26 @@ P-1 오프라인 1건). 전부 gitignored이며 `NOT_MEASURED`(P-1 제외)라 §
 통과하지 못하지만, **캠페인 시작 전 비우는 것을 권고**한다 — 오래된 `repo_commit`을
 가진 아티팩트가 증거로 오인될 여지를 없애기 위함이다.
 
+### 9.4 P-BAL 전용 기입면 부재 — **미처분** (§9.1과 같은 결함 클래스)
+
+`position_balance_margin`에는 `open_order_query`가 가진
+`.completeness`/`.pagination` 쌍이 **없다**(INSTANCE 초안: `open_order_query`
+`:3294`·`:3296` 존재 / `position_balance_margin` `:1290-1305`에 둘 다 부재). 따라서
+P-BAL의 산출 — 페이지 크기·연속조회 거동·truncation 3값 판정 — 은 **전용 슬롯이
+없다.**
+
+임시 처분: N-16의 Patch-0057 재매핑(§9.1 #7)과 동일하게 `evidence_refs`(+ `.status`)에
+기입한다. 그 근거는 같다 — 아티팩트는 증거이며, 도달 가능성은 `status`가 담는다.
+
+**남은 판단(이 런북의 권한 밖)**: truncation 위험 3값 판정은 증거가 아니라 **속성**에
+가깝다(`open_order_query.completeness`가 정확히 그 성격의 키다). 신설이 옳은지
+`consistency_model`로 흡수하는 것이 옳은지는 `docs/broker-profiles/` 및 tos-spec
+템플릿 소관이며, §9.1이 세운 규율("한 사실에 이름 둘을 만들지 않는다" vs "표현 불가능한
+판단이 조용히 증발하게 하지 않는다")로 판정해야 한다. **판정 전까지 P-BAL의 판정값은
+`evidence_refs`가 가리키는 아티팩트 안에만 존재하고 INSTANCE 본문에는 올라가지
+않는다** — 그것이 조용한 증발을 막는 최소 조치다. `registry.py`는 없는 필드명을
+발명하지 않는다.
+
 ---
 
 ## 부록 A — 사전 점검 명령
@@ -616,6 +787,7 @@ python -m tools.broker_probes.run P-5 --help
 
 # 드라이런 (요청 형태만 출력, 소켓 미개방)
 python -m tools.broker_probes.run P-5 --symbol 101S6000
+python -m tools.broker_probes.run P-BAL --asset stock --env real
 ```
 
 ## 부록 B — 축약 인용 해소표
@@ -632,6 +804,7 @@ python -m tools.broker_probes.run P-5 --symbol 101S6000
 | `tr_ids.yaml` | `config/kis/tr_ids.yaml` |
 | `streaming.yaml` | `config/streaming.yaml` |
 | `common.py` · `registry.py` · `probes_*.py` · `run.py` | `tools/broker_probes/` |
+| `broker_verification.py` | `services/trading/broker_verification.py` |
 | `futures-legal-review.md` | `docs/runbooks/futures-legal-review.md` |
 
 ## 부록 C — 관련 문서
