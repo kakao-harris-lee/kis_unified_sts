@@ -182,14 +182,23 @@ def _install_recorder(
         if "quotations/inquire-price" in url:
             payload: dict[str, Any] = {"rt_cd": "0", "output1": {"futs_prpr": "340.00"}}
         elif "trading/order-rvsecncl" in url:
-            payload = {"rt_cd": "0", "output": {"ODNO": "CXL0001"}}
+            payload = {"rt_cd": "0", "output": {"ODNO": "0000000782"}}
         elif "trading/order" in url:
-            odno = f"ODNO{len(calls):04d}"
+            # Zero-padded, like the real accept response. A synthetic label such as
+            # "ODNO0002" is not an order number in any encoding the broker uses,
+            # and odno_key() refuses it rather than guess.
+            odno = f"{len(calls):010d}"
             payload = {"rt_cd": "0", "output": {"ODNO": odno}}
         elif "trading/inquire-ccnl" in url:
+            # Rows come back SPACE-padded with leading zeros dropped — the
+            # asymmetry observed live in P-5-20260731T002112Z. Echoing the accept
+            # format here would hide exactly the defect odno_key() exists for.
             payload = {
                 "rt_cd": "0",
-                "output1": [{"odno": o, "qty": "1"} for o in sorted(visible_odnos)],
+                "output1": [
+                    {"odno": str(int(o)).rjust(10), "qty": "1"}
+                    for o in sorted(visible_odnos)
+                ],
             }
         else:  # pragma: no cover - an unrecognised path is a test bug, not a pass
             raise AssertionError(f"unexpected probe URL: {url}")
@@ -302,8 +311,8 @@ def test_every_call_type_goes_through_the_pacer(
         client.futures_order_body("101S6000", 1, _tick_price(306.0), "BUY")
     )
     client.inquire_futures("101S6000")
-    client.cancel_futures("ODNO0002", 1)
-    client.replace_futures("ODNO0002", 1, _tick_price(305.0))
+    client.cancel_futures("0000000002", 1)
+    client.replace_futures("0000000002", 1, _tick_price(305.0))
 
     assert len(calls) == 5
     gaps = [
@@ -391,9 +400,10 @@ def test_p5_reports_the_effective_poll_granularity_and_an_uninflated_latency(
         "shared.kis.auth.KISAuthManager", lambda *a, **k: _StubAuth(), raising=True
     )
 
-    # The submit is call #2; the recorder names it ODNO0002. Make it visible so
-    # the first poll converges and the sample is a single poll interval.
-    visible.add("ODNO0002")
+    # The submit is call #2, so the recorder zero-pads it to 0000000002. Make it
+    # visible so the first poll converges and the sample is a single poll interval.
+    # The recorder serves it back space-padded, which the probe must canonicalize.
+    visible.add("0000000002")
 
     run = probes_order.probe_p5(_args(confirm=True, samples=1))
 

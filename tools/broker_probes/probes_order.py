@@ -24,6 +24,17 @@ Order shape and quantity discipline
 * Every probe cancels what it created in a ``finally`` block and shouts (with the
   ODNO) if a cancel fails, so an operator can clean up by hand.
 
+Order-number identity
+---------------------
+The accept response and the query row do not encode an ODNO the same way — the
+accept zero-pads (``"0000000762"``), the inquire-ccnl row space-pads without the
+leading zeros (``"        762"``). Every comparison between a submitted order and
+a query row therefore goes through :func:`odno_key` on BOTH sides, and every probe
+that sees both surfaces records the encodings it observed. A raw strip-and-compare
+never matches: artifact ``P-5-20260731T002112Z.json`` is one CENSORED trial and
+``n=0`` produced entirely by that comparison, while the run's own cleanup cancel of
+the same ODNO succeeded.
+
 Request bodies mirror ``shared/execution/executor.py`` (``:386-393`` stock order,
 ``:458-471`` futures order, ``:685-699`` cancel/replace, ``:623-636`` inquire) so
 that what is measured is what the runtime actually sends. TR ids come from
@@ -227,12 +238,165 @@ def effective_interval_ms(requested_ms: float, args: argparse.Namespace) -> floa
     return max(float(requested_ms), pace_interval_s(args) * 1000.0)
 
 
+# ---------------------------------------------------------------------------
+# Order-number identity — the two broker surfaces disagree on ODNO padding
+# ---------------------------------------------------------------------------
+
+#: Key returned for an absent ODNO (empty string or ``None``).
+#:
+#: Not a digit string, so it can never equal a canonical key: an order the broker
+#: declined to name cannot be "found" in a query row that is equally unnamed. Two
+#: absent values do collapse onto this one key, which is what set arithmetic over
+#: query rows needs (P-EXT) and is harmless — the guarantee is only that an absent
+#: ODNO never matches a REAL one.
+_ODNO_ABSENT = "absent:no-odno"
+
+#: ``measurements`` key carrying the observed submit-vs-query ODNO encodings.
+_ODNO_FORMAT_KEY = "odno_wire_format"
+
+
+def odno_key(raw: Any) -> str:
+    """Canonical comparison key for a KIS order number (ODNO).
+
+    The accept response and the query row encode the same order number
+    differently. Verbatim, from one 모의투자 order (artifact
+    ``P-5-20260731T002112Z``): ``output.ODNO`` of the futures order accept returned
+    ``"0000000762"``, while the ``odno`` field of the inquire-ccnl row for that
+    very order returned ``"        762"`` — space-padded, leading zeros dropped.
+    Comparing them with ``str(...).strip()`` on each side asks whether
+    ``"762" == "0000000762"``, which is False for every order that has ever
+    existed. That probe recorded a CENSORED trial and ``n=0`` while its own cleanup
+    cancel of the same ODNO succeeded: the query had been returning the order the
+    whole time, and only the comparison was broken.
+
+    Rule: strip surrounding whitespace, then strip leading zeros, keeping a single
+    ``"0"`` if every digit was a zero. BOTH sides of every comparison go through
+    this function — reformatting one side to look like the other would merely move
+    the assumption about which padding is canonical.
+
+    This mirrors the runtime's ``shared/execution/executor.py::_normalize_odno``
+    (``:132-136``), which already canonicalizes both sides of its futures
+    fill-status match. The probes deliberately resolve identity the way the runtime
+    resolves it.
+
+    Raises:
+        ProbeError: ``raw`` is non-empty and not ASCII digits. A non-numeric ODNO
+            is refused rather than coerced or quietly treated as a non-match,
+            because a silent non-match is exactly the failure this function exists
+            to remove — and it would censor every trial of a run rather than one
+            call. ``int()`` comparison is avoided for the same reason: it either
+            raises at an arbitrary call site or, wrapped in the usual
+            ``except ValueError``, converts an unexpected encoding back into a
+            silent non-match.
+    """
+    text = str(raw if raw is not None else "").strip()
+    if not text:
+        return _ODNO_ABSENT
+    # isascii() as well as isdigit(): isdigit() alone admits superscripts and other
+    # Unicode digit forms, which are not order numbers by any reading.
+    if not (text.isascii() and text.isdigit()):
+        raise ProbeError(
+            f"ODNO {text!r} is not numeric. This harness will not guess at an "
+            "identifier encoding: record the raw value and settle the format "
+            "before treating it as an order number."
+        )
+    return text.lstrip("0") or "0"
+
+
+def _odno_encoding(raw: str) -> dict[str, Any]:
+    """One verbatim ODNO plus the padding shape that makes it non-comparable."""
+    lead = raw[:1]
+    encoding: dict[str, Any] = {
+        "verbatim": raw,
+        "length": len(raw),
+        "leading_pad": ("space" if lead == " " else "zero" if lead == "0" else "none"),
+    }
+    try:
+        encoding["canonical_key"] = odno_key(raw)
+    except ProbeError as exc:
+        # A format record must never destroy the artifact it belongs to. An
+        # unparseable sample IS the observation worth keeping here.
+        encoding["canonical_key_error"] = str(exc)
+    return encoding
+
+
+def record_odno_wire_format(
+    run: ProbeRun, submitted: list[str], rows: list[dict[str, Any]]
+) -> None:
+    """Record how each broker surface encoded an ODNO in THIS run.
+
+    A wire-semantics observation, not a debug aid: the accept response and the
+    query row disagree on padding, and that asymmetry is a property of the broker
+    every client reconciling its own orders has to handle. Samples are kept
+    verbatim, padding intact, so a reviewer can see the disagreement without
+    re-running the probe.
+
+    Idempotent by design, so a probe can call it wherever it happens to hold rows:
+    the first *paired* observation (both surfaces sampled) is kept and never
+    overwritten, while a one-sided record may be upgraded by a later paired call.
+    """
+    existing = run.measurements.get(_ODNO_FORMAT_KEY)
+    if isinstance(existing, dict) and existing.get("paired"):
+        return
+    submit_samples = [str(o) for o in submitted if str(o).strip()]
+    row_samples = [
+        str(r.get("odno", "")) for r in rows if str(r.get("odno", "")).strip()
+    ]
+    record: dict[str, Any] = {
+        "paired": bool(submit_samples and row_samples),
+        "submit_response_field": "output.ODNO (order accept response)",
+        "query_row_field": "output1[].odno (inquire-ccnl row)",
+        "submit_response_samples": [_odno_encoding(s) for s in submit_samples[:3]],
+        "query_row_samples": [_odno_encoding(s) for s in row_samples[:3]],
+        "identity_matching": (
+            "The two surfaces disagree on padding, so matching a submitted order "
+            "against a query row must canonicalize BOTH sides (strip whitespace, "
+            "then strip leading zeros). A raw strip-and-compare evaluates "
+            "'762' == '0000000762' and never matches: artifact "
+            "P-5-20260731T002112Z reported 1 CENSORED trial and n=0 for exactly "
+            "that reason while the cleanup cancel of the same ODNO returned "
+            "rt_cd=0, proving the order existed and the query had returned it."
+        ),
+        "reported_identifiers": (
+            "Measurements that list ODNOs report canonical keys (leading zeros "
+            "stripped). The verbatim wire forms are the samples above."
+        ),
+        "scope": (
+            "One 모의투자 account, one session, mock environment. Recorded as the "
+            "encoding observed here — not as a general KIS guarantee, and not "
+            "extrapolated to 실전."
+        ),
+    }
+    if not record["paired"]:
+        record["incomplete"] = (
+            "only one surface produced an ODNO in this run, so the two encodings "
+            "were not observed side by side here. The paired sample is in artifact "
+            "P-5-20260731T002112Z. Recorded rather than omitted."
+        )
+    run.measure(_ODNO_FORMAT_KEY, record)
+
+
 @dataclass
 class Placed:
     odno: str
     #: Pacer release instant of the submit — post-sleep, immediately pre-wire.
     sent_at_monotonic: float
     body: dict[str, Any]
+
+    @property
+    def key(self) -> str:
+        """This order's canonical identity, for matching against a query row.
+
+        ``odno`` stays verbatim because that is what goes back on the wire as
+        ``ORGN_ODNO`` for a cancel or an amend; only comparisons use the key.
+
+        Computed on access rather than at construction so that a non-numeric ODNO
+        raises at the first comparison — by which point the caller has already
+        registered the order for :func:`_cleanup`. Validating inside
+        :meth:`MockTradingClient.submit_futures` would raise between the accept and
+        that registration and orphan a live resting order.
+        """
+        return odno_key(self.odno)
 
 
 # ---------------------------------------------------------------------------
@@ -942,6 +1106,10 @@ def _cleanup(
         if not odno:
             continue
         try:
+            # Verbatim ODNO, never odno_key(): this value goes back on the wire as
+            # ORGN_ODNO, and the accept response's zero-padded form is what the
+            # broker accepted a cancel for (P-5-20260731T002112Z cleanup, rt_cd=0).
+            # Canonicalization is for COMPARISON only and must not reach a body.
             result = client.cancel_futures(odno, qty)
             ok = result.get("rt_cd") == "0"
             run.observe(cleanup_cancel=odno, ok=ok, msg=result.get("msg1"))
@@ -1013,8 +1181,12 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
         rows = (
             listing.get("output1") if isinstance(listing.get("output1"), list) else []
         )
+        record_odno_wire_format(run, distinct, rows)
+        # Canonical keys on BOTH sides. The accept response zero-pads and the query
+        # row space-pads the same order number, so a raw intersection is empty for
+        # every order and would report NO_DEDUP-with-nothing-confirmed forever.
         observed = sorted(
-            {str(r.get("odno", "")).strip() for r in rows} & set(distinct)
+            {odno_key(r.get("odno")) for r in rows} & {odno_key(o) for o in distinct}
         )
 
         # The effective gap, not the requested one: the pacer floors the sleep
@@ -1107,7 +1279,11 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
                     if isinstance(listing.get("output1"), list)
                     else []
                 )
-                if any(str(r.get("odno", "")).strip() == placed.odno for r in rows):
+                record_odno_wire_format(run, [placed.odno], rows)
+                # Canonical keys on both sides — see odno_key(). This comparison is
+                # what P-5-20260731T002112Z got wrong: the row was present from the
+                # first poll and the raw string compare rejected it every time.
+                if any(odno_key(r.get("odno")) == placed.key for r in rows):
                     seen_at = time.monotonic()
                     break
                 time.sleep(args.poll_ms / 1000.0)
@@ -1199,6 +1375,9 @@ def probe_p5b(args: argparse.Namespace) -> ProbeRun:
                     "rt_cd": listing.get("rt_cd"),
                     "next_fk200_present": bool(next_fk),
                     "next_nk200_present": bool(next_nk),
+                    # Raw row values on purpose: P-5b submits nothing, so these are
+                    # page-boundary evidence rather than identity matches, and the
+                    # broker's own encoding is the thing worth recording.
                     "first_odno": str(rows[0].get("odno", "")).strip() if rows else "",
                     "last_odno": str(rows[-1].get("odno", "")).strip() if rows else "",
                 }
@@ -1304,12 +1483,17 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
                 if isinstance(listing.get("output1"), list)
                 else []
             )
+            record_odno_wire_format(run, [placed.odno, new_odno], rows)
+            # Canonical keys on both sides: a raw compare finds neither leg live and
+            # would report zero coexistence — i.e. claim an atomic replace the probe
+            # never observed, which is the fail-open direction for
+            # B_protective_request_complete.
             live = {
-                str(r.get("odno", "")).strip()
+                odno_key(r.get("odno"))
                 for r in rows
                 if int(float(r.get("qty") or 0)) > 0
             }
-            both = placed.odno in live and bool(new_odno) and new_odno in live
+            both = placed.key in live and bool(new_odno) and odno_key(new_odno) in live
             if both:
                 coexist_last = time.monotonic()
             elif coexist_last is not None:
@@ -1722,7 +1906,11 @@ def probe_pext(args: argparse.Namespace) -> ProbeRun:
         rows = (
             listing.get("output1") if isinstance(listing.get("output1"), list) else []
         )
-        known = {str(r.get("odno", "")).strip() for r in rows}
+        # Canonical keys even though both sides are query rows: if the broker ever
+        # returned the same order with different padding across two polls, a raw set
+        # difference would read it as a NEW external order — a false detection in the
+        # one measurement this probe exists to take.
+        known = {odno_key(r.get("odno")) for r in rows}
         run.observe(known_odno_count=len(known))
         print(
             "\n  >>> Place ONE order on HTS/MTS for this 모의 account now.\n"
@@ -1741,7 +1929,7 @@ def probe_pext(args: argparse.Namespace) -> ProbeRun:
                 if isinstance(snapshot.get("output1"), list)
                 else []
             )
-            new = {str(r.get("odno", "")).strip() for r in rows} - known
+            new = {odno_key(r.get("odno")) for r in rows} - known
             if new:
                 detected_at = time.monotonic()
                 run.observe(new_odno_count=len(new))
@@ -1843,9 +2031,11 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
                 if isinstance(listing.get("output1"), list)
                 else []
             )
-            row = next(
-                (r for r in rows if str(r.get("odno", "")).strip() == placed.odno), None
-            )
+            record_odno_wire_format(run, [placed.odno], rows)
+            # Canonical keys on both sides — a raw compare never finds the row, and
+            # a permanently absent row reads as "zero late changes", which is the
+            # honest-negative trap this probe's docstring warns about.
+            row = next((r for r in rows if odno_key(r.get("odno")) == placed.key), None)
             if row is not None:
                 filled = int(float(row.get("tot_ccld_qty") or 0))
                 remaining = int(float(row.get("qty") or 0))
@@ -2007,9 +2197,15 @@ def probe_nmpr_ab(args: argparse.Namespace) -> ProbeRun:
         rows = (
             listing.get("output1") if isinstance(listing.get("output1"), list) else []
         )
-        by_odno = {str(r.get("odno", "")).strip(): r for r in rows}
-        row_a = by_odno.get(placed_a.odno) if placed_a else None
-        row_b = by_odno.get(placed_b.odno) if placed_b else None
+        record_odno_wire_format(
+            run, [p.odno for p in (placed_a, placed_b) if p is not None], rows
+        )
+        # Canonical keys on both sides. A raw lookup leaves both rows None, which
+        # silently degrades every echo-based verdict below to ECHO_ABSENT — i.e. it
+        # answers "UNKNOWN" from a comparison bug rather than from the broker.
+        by_odno = {odno_key(r.get("odno")): r for r in rows}
+        row_a = by_odno.get(placed_a.key) if placed_a else None
+        row_b = by_odno.get(placed_b.key) if placed_b else None
         run.measure("arm_a_row", row_a)
         run.measure("arm_b_row", row_b)
 
