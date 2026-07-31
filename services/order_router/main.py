@@ -510,6 +510,23 @@ class OrderRouterDaemon(StreamStage):
             )
             return False  # leave pending (no XACK)
 
+        if result.is_error:
+            # The execution layer could not establish what executed. The
+            # broker may hold an unbracketed position for this order, so this
+            # must not be logged as an ordinary unfilled signal. It is still
+            # CONSUMED: re-delivering it would risk placing a second order on
+            # top of a position we already cannot account for.
+            logger.error(
+                "passive limit UNRESOLVED signal_id=%s order_id=%s reason=%s — "
+                "broker may hold an unbracketed position; reconcile before "
+                "trading %s again",
+                signal_id,
+                result.order_id,
+                result.reason,
+                signal.symbol,
+            )
+            return True  # final state, consumed, no bracket
+
         if not result.is_filled:
             logger.info(
                 "passive limit not filled signal_id=%s reason=%s",
@@ -518,13 +535,37 @@ class OrderRouterDaemon(StreamStage):
             )
             return True  # final state, consumed, no bracket
 
+        if result.unresolved:
+            # The fill is real but the executed TOTAL is a lower bound. Arm the
+            # bracket anyway — a lower-bound bracket beats none — but say so,
+            # because the broker may hold more than we are protecting.
+            logger.error(
+                "passive limit filled with an UNRESOLVED executed total "
+                "signal_id=%s order_id=%s bracket_qty=%s requested=%s — broker "
+                "may hold MORE than the bracket covers; reconcile %s",
+                signal_id,
+                result.order_id,
+                result.filled_quantity,
+                quantity,
+                signal.symbol,
+            )
+
         try:
             from shared.execution.passive_maker import Fill
 
+            # Size the bracket from what actually EXECUTED, not from what was
+            # requested. A 2-of-3 partial armed with 3 sells one contract more
+            # than we hold; futures accounts are net-position, so that does not
+            # clamp at flat — it flips to a short 1 with no bracket of its own.
+            bracket_quantity = (
+                result.filled_quantity
+                if result.filled_quantity is not None and result.filled_quantity > 0
+                else quantity
+            )
             fill = Fill(
                 order_id=result.order_id or "",
                 price=result.filled_price or 0.0,
-                quantity=quantity,
+                quantity=bracket_quantity,
                 filled_at_ms=0,
             )
             await self.pseudo_oco.register_bracket(
@@ -571,6 +612,92 @@ def _fill_stream_for(mode: str) -> str:
     return os.getenv("FUTURES_FILL_STREAM", base)
 
 
+def _assert_live_executor_can_authenticate(order_executor: Any) -> None:
+    """Refuse to start the LIVE router with an executor that cannot authenticate.
+
+    Without an ``auth_manager`` every order fails with "Failed to get auth
+    headers" — per order, at no log level above the response itself, with no
+    metric. A live router that silently places zero orders is worse than one
+    that refuses to start, so this fails closed at startup instead.
+    """
+    if getattr(order_executor, "auth_manager", None) is None:
+        raise RuntimeError(
+            "live order_router refused to start: OrderExecutor has no "
+            "auth_manager, so every futures order would fail with 'Failed to "
+            "get auth headers'. Check KIS_FUTURES_APP_KEY / "
+            "KIS_FUTURES_APP_SECRET."
+        )
+    credentials = getattr(order_executor.auth_manager, "config", None)
+    if not getattr(credentials, "app_key", "") or not getattr(
+        credentials, "app_secret", ""
+    ):
+        raise RuntimeError(
+            "live order_router refused to start: KIS futures credentials are "
+            "empty (KIS_FUTURES_APP_KEY / KIS_FUTURES_APP_SECRET). Every "
+            "futures order would fail authentication."
+        )
+
+
+def build_live_order_executor(
+    execution_section: dict,
+    *,
+    redis_url: str,
+    kis_auth: Any,
+) -> Any:
+    """Construct the LIVE futures ``OrderExecutor``, or refuse to build one.
+
+    An ``OrderExecutor`` without an ``auth_manager`` cannot build KIS headers,
+    so ``_send_kis_futures_order`` returns "Failed to get auth headers" for
+    every order — quietly, per order, with no metric. ``kis_auth`` is the same
+    real-host credential set the price feed already uses.
+
+    Construction and the fail-closed check live together here so the CHECK
+    ITSELF is on the tested path: with them inlined in ``_build_and_run`` the
+    assertion helper was pinned by tests while its call site was not, and
+    deleting the call broke nothing.
+    """
+    from shared.execution.executor import OrderExecutor
+    from shared.kis.auth import KISAuthManager
+
+    order_executor = OrderExecutor(
+        config=build_live_execution_config(execution_section, redis_url=redis_url),
+        auth_manager=KISAuthManager(kis_auth),
+    )
+    _assert_live_executor_can_authenticate(order_executor)
+    return order_executor
+
+
+def build_live_execution_config(execution_section: dict, *, redis_url: str):
+    """Build the LIVE futures ``ExecutionConfig`` from ``execution.yaml``.
+
+    ``redis_url`` is what makes ``OrderExecutor`` construct a rate limiter at
+    all; the section in ``execution.yaml`` carries none, so passing the section
+    through unchanged produced an unpaced live order path. ``rate_limit_key``
+    gives futures its own broker-budget bucket, matching the orchestrator.
+
+    ``trading_mode`` is FORCED to REAL rather than inherited from the section's
+    ``${TRADING_MODE:PAPER}``. This branch is selected by ``FUTURES_ORDER_ROUTER
+    =live``, a different switch from ``TRADING_MODE``; with TRADING_MODE unset
+    the section says PAPER, and :class:`KISFuturesAdapter` derives
+    ``is_mock = trading_mode != "REAL"`` — so the live router would have aimed
+    at the KIS mock host, which does not serve futures at all. One switch owns
+    this decision, and it is the router's own.
+
+    Extracted from ``_build_and_run`` so the wiring is reachable by a test
+    without standing up Redis, the WS feed and the daemon.
+    """
+    from shared.execution.config import ExecutionConfig
+
+    return ExecutionConfig(
+        **{
+            **execution_section,
+            "trading_mode": "REAL",
+            "redis_url": redis_url,
+            "rate_limit_key": "futures",
+        }
+    )
+
+
 async def _build_and_run() -> int:
     """Production entrypoint — wires KIS adapter + PassiveMaker + PseudoOCO.
 
@@ -587,12 +714,10 @@ async def _build_and_run() -> int:
     from services.kill_switch.config import KillSwitchConfig
     from services.order_router.config import Phase4ExecutionConfig
     from shared.config.loader import ConfigLoader
-    from shared.execution.config import ExecutionConfig
     from shared.execution.contract_spec import (
         ContractSpecRegistry,
         resolve_contract_spec,
     )
-    from shared.execution.executor import OrderExecutor
     from shared.execution.fill_logger import FillLogger
     from shared.execution.futures_instrument import resolve_futures_instrument_from_env
     from shared.execution.kis_futures_adapter import KISFuturesAdapter
@@ -667,7 +792,11 @@ async def _build_and_run() -> int:
         )
     else:  # live
         execution_section = ConfigLoader.load("execution.yaml").get("execution", {})
-        order_executor = OrderExecutor(ExecutionConfig(**execution_section))
+        order_executor = build_live_order_executor(
+            execution_section,
+            redis_url=redis_url,
+            kis_auth=kis_auth,
+        )
         await order_executor.initialize()
         kis_adapter = KISFuturesAdapter(
             order_executor=order_executor,

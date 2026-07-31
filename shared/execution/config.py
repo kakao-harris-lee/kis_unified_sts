@@ -1,10 +1,14 @@
 """Order execution configuration."""
 import re
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .tr_ids import tr_id
+
+#: Legacy ``config/execution.yaml`` spelling of ``requests_per_second``.
+_LEGACY_RPS_KEY = "orders_per_second"
 
 
 class TradingMode(StrEnum):
@@ -172,9 +176,23 @@ class ATSRoutingConfig(BaseModel):
 
 
 class ExecutionConfig(BaseModel):
-    """Order execution configuration."""
+    """Order execution configuration.
 
-    model_config = ConfigDict(use_enum_values=True)
+    ``extra="forbid"``: an unknown key is a silent-drop hazard, not a harmless
+    typo. ``config/execution.yaml::execution.orders_per_second`` was being
+    discarded by Pydantic's default ``extra='ignore'`` while reading like a
+    configured pacing limit, so the live futures path ran unpaced. Unknown keys
+    now fail loudly at construction; the one legacy spelling that predates this
+    model is folded in before validation (see
+    ``_fold_legacy_orders_per_second``) so that a documented, accepted key is
+    never reported as an unknown one.
+    """
+
+    model_config = ConfigDict(
+        use_enum_values=True,
+        extra="forbid",
+        populate_by_name=True,
+    )
 
     trading_mode: str = Field(
         default="PAPER",
@@ -214,6 +232,90 @@ class ExecutionConfig(BaseModel):
         default=True,
         description="Cancel unfilled futures order when timeout is reached"
     )
+    futures_cancel_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description=(
+            "Bounded attempts for the timeout cancel. A single failed cancel "
+            "leaves the order resting at the broker; only retryable failures "
+            "(throttle / 5xx / 429 / transport) consume an attempt."
+        ),
+    )
+    futures_cancel_retry_delay_seconds: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=10.0,
+        description=(
+            "Delay between cancel attempts for non-throttle retryable failures. "
+            "Throttle rejections use the throttle backoff instead."
+        ),
+    )
+    futures_fill_check_rate_limit_timeout_seconds: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=30.0,
+        description=(
+            "Rate-limit acquire timeout for the fill-status POLL specifically. "
+            "Shorter than rate_limit_timeout so a poll yields the bucket "
+            "instead of blocking on it; an exhausted acquire surfaces as "
+            "QUERY_FAILED, which the caller already treats as 'unknown', not "
+            "'unfilled'."
+        ),
+    )
+    cancel_rate_limit_suffix: str = Field(
+        default="-cancel",
+        min_length=1,
+        description=(
+            "Suffix appended to rate_limit_key for the cancel path's own "
+            "bucket, so a safety cancel is not starved by the fill polls of "
+            "the order it cancels."
+        ),
+    )
+    futures_inquire_page_size: int = Field(
+        default=15,
+        ge=1,
+        le=500,
+        description=(
+            "Observed page size of the futures inquire-ccnl response (KIS mock "
+            "measurement P-5b). Used only to flag a POSSIBLY truncated page — "
+            "the runtime query is a targeted single-order lookup and does not "
+            "walk continuations."
+        ),
+    )
+
+    # KIS throttle (EGW00201 "초당 거래건수를 초과하였습니다") backoff.
+    # Applied INSTEAD of ``retry_delay``: retrying a throttle at a delay tighter
+    # than the pacing that was already refused only deepens the throttle.
+    throttle_backoff_initial_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+        le=60.0,
+        description="First backoff after a broker throttle rejection (seconds)",
+    )
+    throttle_backoff_multiplier: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=10.0,
+        description="Multiplier applied per consecutive throttle rejection",
+    )
+    throttle_backoff_max_seconds: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=300.0,
+        description="Upper bound on the throttle backoff (seconds)",
+    )
+    throttle_storm_alert_threshold: int = Field(
+        default=10,
+        ge=1,
+        le=1000,
+        description=(
+            "Consecutive broker throttle responses that constitute a THROTTLE "
+            "STORM (a gateway refusing everything). Throttles are excluded "
+            "from api_error_rate_5min by design, so this count — not that "
+            "rate — is the signal for that state. A count, not a rate."
+        ),
+    )
 
     # Rate limiting (Redis-based distributed limiter)
     redis_url: str = Field(
@@ -226,7 +328,12 @@ class ExecutionConfig(BaseModel):
     )
     requests_per_second: float = Field(
         default=20.0,
-        description="Max API requests per second (KIS limit)"
+        description=(
+            "Max API requests per second (KIS limit). ``orders_per_second`` is "
+            "the legacy execution.yaml spelling and is folded in by "
+            "``_fold_legacy_orders_per_second`` — declared there so no call "
+            "site has to carry its own compat shim."
+        ),
     )
     rate_limit_timeout: float = Field(
         default=5.0,
@@ -277,6 +384,38 @@ class ExecutionConfig(BaseModel):
         le=300.0,
         description="Time to wait before attempting to close circuit (seconds)"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_orders_per_second(cls, data: Any) -> Any:
+        """Fold the legacy ``orders_per_second`` spelling into the real field.
+
+        Done before validation rather than via ``validation_alias`` so that
+        ``extra="forbid"`` never reports ``orders_per_second`` as an *unknown*
+        key — a documented, accepted key must not produce an error saying it is
+        not recognized. When both spellings are present they must agree;
+        otherwise the operator gets a purpose-written error naming both rather
+        than a silent pick.
+        """
+        if not isinstance(data, dict) or _LEGACY_RPS_KEY not in data:
+            return data
+
+        merged = dict(data)
+        legacy = merged.pop(_LEGACY_RPS_KEY)
+        if "requests_per_second" not in merged:
+            merged["requests_per_second"] = legacy
+            return merged
+
+        canonical = merged["requests_per_second"]
+        if canonical != legacy:
+            raise ValueError(
+                "execution config sets both 'requests_per_second'="
+                f"{canonical!r} and its legacy alias 'orders_per_second'="
+                f"{legacy!r}. They name the same setting and disagree — delete "
+                "the legacy 'orders_per_second' line and keep "
+                "'requests_per_second'."
+            )
+        return merged
 
     @field_validator("redis_url")
     @classmethod

@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from datetime import time as dt_time
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -22,6 +24,44 @@ if TYPE_CHECKING:
     from .rate_limiter import RedisRateLimiter
 
 logger = logging.getLogger(__name__)
+
+
+#: KIS gateway code for "초당 거래건수를 초과하였습니다" (per-second transaction
+#: count exceeded). Measured shape (broker-probe artifact P-13): HTTP 500 +
+#: ``rt_cd="1"`` + ``msg_cd="EGW00201"``. This is a SELF-INFLICTED pacing
+#: rejection — the broker is reachable and healthy — so it must not be retried
+#: at the ordinary retry delay and must not count as a KIS-side infra failure.
+KIS_THROTTLE_MSG_CD = "EGW00201"
+
+#: Anchored match for the throttle code inside a free-text message body.
+#: ``_request_json``'s non-JSON branch assigns the ENTIRE response body to
+#: ``msg1``, so a bare substring test would silently exclude any gateway error
+#: page that merely mentions the token (e.g. in a help link or a log echo).
+#: The boundary requires the code to stand alone as a KIS-style code.
+_THROTTLE_MSG_CD_RE = re.compile(rf"(?<![0-9A-Z]){KIS_THROTTLE_MSG_CD}(?![0-9A-Z])")
+
+#: Transport-level failures reaching the broker. These are NOT protocol
+#: answers: a call site that needs an outcome (fill status, cancel) must
+#: convert them into its own failure state instead of letting them unwind the
+#: caller, which would take the recovery path with them.
+_TRANSPORT_ERRORS = (aiohttp.ClientError, TimeoutError, OSError)
+
+
+def _broker_msg_cd(data: dict[str, Any]) -> str:
+    """Extract the broker's ``msg_cd`` from a parsed KIS response body."""
+    return str(data.get("msg_cd") or "").strip().upper()
+
+
+def _is_throttle_response(data: dict[str, Any]) -> bool:
+    """True when the broker refused the request for exceeding its rate.
+
+    Checks the structured ``msg_cd`` first and falls back to an ANCHORED match
+    on the message body, because some KIS gateway errors surface the code only
+    inside ``msg1``.
+    """
+    if _broker_msg_cd(data) == KIS_THROTTLE_MSG_CD:
+        return True
+    return bool(_THROTTLE_MSG_CD_RE.search(str(data.get("msg1") or "")))
 
 
 def _record_kis_api_outcome(*, is_error: bool) -> None:
@@ -115,11 +155,36 @@ _FUTURES_NMPR_CODES: dict[str, tuple[str, str]] = {
 }
 
 
+class FillQueryOutcome(StrEnum):
+    """Outcome of a futures fill-status query.
+
+    The three states are NOT interchangeable and must never collapse into one
+    another:
+
+    - ``FOUND``: the broker answered and the order row was present. The
+      quantities on the snapshot are a measurement.
+    - ``NOT_PRESENT``: the broker answered and the order row was absent. This
+      is authoritative evidence of "no fill visible yet".
+    - ``QUERY_FAILED``: we never got an answer (transport error, throttle,
+      ``rt_cd != "0"``, missing auth headers). Nothing at all is known about the
+      fill; reading ``filled_qty == 0`` off such a snapshot as "unfilled" is how
+      a filled position gets reported as a flat book.
+    """
+
+    FOUND = "FOUND"
+    NOT_PRESENT = "NOT_PRESENT"
+    QUERY_FAILED = "QUERY_FAILED"
+
+
 @dataclass
 class _FuturesFillStatus:
-    """Internal futures fill status snapshot."""
+    """Internal futures fill status snapshot.
 
-    found: bool = False
+    ``outcome`` is the single source of truth; ``found`` is derived from it so
+    the two can never disagree.
+    """
+
+    outcome: FillQueryOutcome = FillQueryOutcome.NOT_PRESENT
     order_no: str = ""
     order_qty: int = 0
     filled_qty: int = 0
@@ -127,6 +192,16 @@ class _FuturesFillStatus:
     avg_fill_price: float = 0.0
     rejected_qty: int = 0
     reject_reason: str = ""
+
+    @property
+    def found(self) -> bool:
+        """True only for ``FOUND`` — never for ``QUERY_FAILED``."""
+        return self.outcome is FillQueryOutcome.FOUND
+
+    @property
+    def query_failed(self) -> bool:
+        """True when the fill state could not be established at all."""
+        return self.outcome is FillQueryOutcome.QUERY_FAILED
 
 
 def _normalize_odno(value: str) -> str:
@@ -173,13 +248,37 @@ class OrderExecutor:
         self.session: aiohttp.ClientSession | None = None
         self._initialized = False
 
+        # Consecutive broker-throttle responses — the throttle-storm signal.
+        self._throttle_streak = 0
+
         # Rate limiter (optional, requires redis_url)
         self._rate_limiter: RedisRateLimiter | None = None
+        # Separate bucket for the timeout cancel. One futures order issues a
+        # submit plus several fill polls plus a re-query through the main
+        # bucket (see the per-order request budget documented in
+        # config/execution.yaml), so a cancel sharing that bucket can be
+        # starved by the very polls that decided the cancel was needed — the
+        # "order left resting at the broker" outcome D-5 exists to prevent.
+        # A cancel is a safety operation and is deliberately not queued behind
+        # them. Both buckets use the same configured requests_per_second; the
+        # broker-side aggregate ceiling is deferred to a measured bound.
+        self._cancel_rate_limiter: RedisRateLimiter | None = None
         if config.redis_url:
             from .rate_limiter import RedisRateLimiter
             self._rate_limiter = RedisRateLimiter(
                 redis_url=config.redis_url,
                 key_prefix=config.rate_limit_key,
+                requests_per_second=config.requests_per_second,
+                initial_retry_delay=config.rate_limit_initial_delay,
+                max_retry_delay=config.rate_limit_max_delay,
+                backoff_multiplier=config.rate_limit_backoff_multiplier,
+                metrics_cache_ttl=config.metrics_cache_ttl,
+                circuit_breaker_threshold=config.circuit_breaker_threshold,
+                circuit_breaker_timeout=config.circuit_breaker_timeout,
+            )
+            self._cancel_rate_limiter = RedisRateLimiter(
+                redis_url=config.redis_url,
+                key_prefix=f"{config.rate_limit_key}{config.cancel_rate_limit_suffix}",
                 requests_per_second=config.requests_per_second,
                 initial_retry_delay=config.rate_limit_initial_delay,
                 max_retry_delay=config.rate_limit_max_delay,
@@ -256,6 +355,8 @@ class OrderExecutor:
             self.session = None
         if self._rate_limiter:
             await self._rate_limiter.close()
+        if self._cancel_rate_limiter:
+            await self._cancel_rate_limiter.close()
         self._initialized = False
         logger.debug("OrderExecutor cleaned up")
 
@@ -278,6 +379,7 @@ class OrderExecutor:
                     message="Rate limit exceeded, try again later"
                 )
 
+        throttle_streak = 0
         for attempt in range(self.config.max_retries):
             try:
                 response = await self._send_order(order)
@@ -296,7 +398,23 @@ class OrderExecutor:
 
                 logger.warning(f"Order attempt {attempt + 1} failed: {response.message}")
                 if attempt < self.config.max_retries - 1:
-                    await asyncio.sleep(self.config.retry_delay)
+                    if response.broker_msg_cd == KIS_THROTTLE_MSG_CD:
+                        throttle_streak += 1
+                        delay = self._throttle_backoff_delay(throttle_streak)
+                        logger.warning(
+                            "KIS throttle (%s) on order attempt %d — backing off "
+                            "%.2fs instead of retry_delay=%.2fs (retrying at or "
+                            "below the pacing that was just refused would only "
+                            "deepen the throttle)",
+                            KIS_THROTTLE_MSG_CD,
+                            attempt + 1,
+                            delay,
+                            self.config.retry_delay,
+                        )
+                    else:
+                        throttle_streak = 0
+                        delay = self.config.retry_delay
+                    await asyncio.sleep(delay)
 
             except OrderExecutionError as e:
                 # Deterministic refusal (e.g. an order type outside the explicit
@@ -317,6 +435,31 @@ class OrderExecutor:
             success=False,
             message=f"Failed after {self.config.max_retries} retries"
         )
+
+    @staticmethod
+    def _reject_msg_cd(data: dict[str, Any]) -> str:
+        """Broker ``msg_cd`` for a rejected request, normalized for throttles.
+
+        A throttle that arrives with the code only in ``msg1`` is reported as
+        ``EGW00201`` too, so every caller can branch on one structured value
+        instead of substring-matching a human-readable message.
+        """
+        if _is_throttle_response(data):
+            return KIS_THROTTLE_MSG_CD
+        return _broker_msg_cd(data)
+
+    def _throttle_backoff_delay(self, streak: int) -> float:
+        """Backoff for the ``streak``-th consecutive broker throttle rejection.
+
+        Geometric growth from ``throttle_backoff_initial_seconds``, capped at
+        ``throttle_backoff_max_seconds``. All three parameters are config-driven
+        (``config/execution.yaml::execution``).
+        """
+        steps = max(int(streak), 1) - 1
+        delay = float(self.config.throttle_backoff_initial_seconds) * (
+            float(self.config.throttle_backoff_multiplier) ** steps
+        )
+        return min(delay, float(self.config.throttle_backoff_max_seconds))
 
     async def _send_order(self, order: OrderRequest) -> OrderResponse:
         """Send order based on trading mode."""
@@ -411,6 +554,7 @@ class OrderExecutor:
             success=False,
             message=f"[{data.get('rt_cd')}] {data.get('msg1', 'Unknown error')}",
             venue=venue,
+            broker_msg_cd=self._reject_msg_cd(data),
         )
 
     async def _send_kis_futures_order(
@@ -478,6 +622,7 @@ class OrderExecutor:
                 success=False,
                 message=f"[{data.get('rt_cd')}] {data.get('msg1', 'Unknown error')}",
                 venue=venue,
+                broker_msg_cd=self._reject_msg_cd(data),
             )
 
         output = data.get("output", {}) if isinstance(data.get("output"), dict) else {}
@@ -520,7 +665,14 @@ class OrderExecutor:
         timeout = float(self.config.futures_fill_check_timeout_seconds)
         deadline = datetime.now() + timedelta(seconds=timeout)
 
-        last_status = _FuturesFillStatus(found=False, order_no=order_no, order_qty=order.quantity)
+        last_status = _FuturesFillStatus(
+            outcome=FillQueryOutcome.NOT_PRESENT,
+            order_no=order_no,
+            order_qty=order.quantity,
+        )
+        # Outcome of the MOST RECENT poll. QUERY_FAILED here means the timeout
+        # below is being reached without evidence, not with evidence of no fill.
+        last_outcome = FillQueryOutcome.NOT_PRESENT
         while datetime.now() < deadline:
             status = await self._inquire_futures_fill_status(
                 order=order,
@@ -528,6 +680,7 @@ class OrderExecutor:
                 is_mock=is_mock,
                 is_night=is_night,
             )
+            last_outcome = status.outcome
             if status.found:
                 last_status = status
                 if status.rejected_qty > 0:
@@ -549,7 +702,19 @@ class OrderExecutor:
                         filled_price=status.avg_fill_price,
                         venue=venue,
                     )
+            # QUERY_FAILED keeps polling (the failure may be transient) but is
+            # deliberately NOT folded into `last_status` — an unanswered query
+            # must not overwrite the last measured snapshot.
             await asyncio.sleep(poll)
+
+        if last_outcome is FillQueryOutcome.QUERY_FAILED:
+            logger.warning(
+                "futures fill check timed out with an UNANSWERED status query "
+                "(order_no=%s code=%s qty=%s): fill state is unknown, not zero",
+                order_no,
+                order.code,
+                order.quantity,
+            )
 
         if not self.config.futures_auto_cancel_unfilled:
             return OrderResponse(
@@ -559,6 +724,7 @@ class OrderExecutor:
                 filled_qty=last_status.filled_qty,
                 filled_price=last_status.avg_fill_price,
                 venue=venue,
+                fill_state_unknown=last_outcome is FillQueryOutcome.QUERY_FAILED,
             )
 
         cancel_qty = last_status.remaining_qty if last_status.remaining_qty > 0 else max(
@@ -570,16 +736,11 @@ class OrderExecutor:
             is_mock=is_mock,
             is_night=is_night,
         )
-        if not cancel_resp.success:
-            return OrderResponse(
-                success=False,
-                order_no=order_no,
-                message=f"Futures fill timeout and cancel failed: {cancel_resp.message}",
-                filled_qty=last_status.filled_qty,
-                filled_price=last_status.avg_fill_price,
-                venue=venue,
-            )
 
+        # Re-query on BOTH cancel outcomes. The old code re-queried only after a
+        # successful cancel, so the one case where our "unfilled" belief is most
+        # likely wrong — the broker rejecting the cancel because the order had
+        # already filled — was the one case that reported filled_qty=0.
         refreshed = await self._inquire_futures_fill_status(
             order=order,
             order_no=order_no,
@@ -590,6 +751,44 @@ class OrderExecutor:
         filled_price = (
             refreshed.avg_fill_price if refreshed.found else last_status.avg_fill_price
         )
+
+        if not cancel_resp.success:
+            # The cancel was refused, so the broker's book disagrees with our
+            # "still resting, unfilled" belief. Only a FOUND re-query settles it.
+            fully_filled = refreshed.found and filled_qty >= order.quantity
+            unknown = not refreshed.found
+            if unknown:
+                logger.warning(
+                    "futures cancel rejected AND fill state unresolved "
+                    "(order_no=%s code=%s cancel_msg=%s requery=%s): order may "
+                    "be resting or filled at the broker",
+                    order_no,
+                    order.code,
+                    cancel_resp.message,
+                    refreshed.outcome.value,
+                )
+            elif filled_qty > 0:
+                logger.warning(
+                    "futures cancel rejected because the order had filled "
+                    "(order_no=%s code=%s filled_qty=%s): reporting the true "
+                    "fill instead of a flat book",
+                    order_no,
+                    order.code,
+                    filled_qty,
+                )
+            return OrderResponse(
+                success=fully_filled,
+                order_no=order_no,
+                message=(
+                    f"Futures fill timeout and cancel failed: {cancel_resp.message}"
+                ),
+                filled_qty=filled_qty,
+                filled_price=filled_price,
+                venue=venue,
+                broker_msg_cd=cancel_resp.broker_msg_cd,
+                fill_state_unknown=unknown,
+            )
+
         return OrderResponse(
             success=False,
             order_no=order_no,
@@ -597,6 +796,22 @@ class OrderExecutor:
             filled_qty=filled_qty,
             filled_price=filled_price,
             venue=venue,
+            # A successful cancel establishes only "not FULLY filled" — it does
+            # NOT establish "filled nothing". `cancel_qty` above is the full
+            # order quantity whenever no poll ever answered, so this cancel may
+            # have removed the remainder of a PARTIAL fill while `filled_qty`
+            # still reads the 0 we started with. Reporting that 0 as measured
+            # would be asserting more than the evidence supports, so the
+            # quantity is unknown whenever the confirming re-query failed, or
+            # whenever no poll ever measured a quantity and the re-query did
+            # not supply one either.
+            fill_state_unknown=(
+                refreshed.query_failed
+                or (
+                    last_outcome is FillQueryOutcome.QUERY_FAILED
+                    and not refreshed.found
+                )
+            ),
         )
 
     async def _inquire_futures_fill_status(
@@ -607,17 +822,35 @@ class OrderExecutor:
         is_mock: bool,
         is_night: bool,
     ) -> _FuturesFillStatus:
-        """Query futures order/fill status using KIS inquire-ccnl API."""
+        """Query futures order/fill status using KIS inquire-ccnl API.
+
+        Returns a three-state outcome. A query we could not complete is
+        reported as ``QUERY_FAILED``, never as an empty ``NOT_PRESENT``
+        snapshot: the caller must be able to tell "the broker says there is no
+        fill" apart from "the broker did not answer".
+        """
         tr_id, path = self._resolve_futures_inquire_tr_id_and_path(
             is_mock=is_mock, is_night=is_night
         )
         headers = await self._build_auth_headers(tr_id=tr_id)
         if headers is None:
-            return _FuturesFillStatus(found=False, order_no=order_no, order_qty=order.quantity)
+            logger.warning(
+                "futures fill status query FAILED (no auth headers): "
+                "order_no=%s code=%s tr_id=%s — fill state unknown",
+                order_no,
+                order.code,
+                tr_id,
+            )
+            return _FuturesFillStatus(
+                outcome=FillQueryOutcome.QUERY_FAILED,
+                order_no=order_no,
+                order_qty=order.quantity,
+            )
 
         today = datetime.now(KST).date()
         query_dates = [today, today - timedelta(days=1)]
         target_odno = _normalize_odno(order_no)
+        any_query_failed = False
 
         for order_date in query_dates:
             params: dict[str, str] = {
@@ -640,11 +873,55 @@ class OrderExecutor:
 
             base_url = self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
             url = f"{base_url}{path}"
-            data, status = await self._request_json("GET", url, headers=headers, params=params)
+            try:
+                data, status = await self._request_json(
+                    "GET",
+                    url,
+                    headers=headers,
+                    params=params,
+                    rate_limit_timeout=float(
+                        self.config.futures_fill_check_rate_limit_timeout_seconds
+                    ),
+                )
+            except _TRANSPORT_ERRORS as exc:
+                # A transport failure is definitionally an unanswered query, not
+                # an exception for the caller to handle. Letting it propagate
+                # unwound the whole fill/cancel path, taking the D-2 re-query
+                # and the "may still be resting" diagnostics with it.
+                any_query_failed = True
+                logger.warning(
+                    "futures fill status query FAILED (transport): order_no=%s "
+                    "code=%s date=%s err=%s — fill state unknown, NOT 'unfilled'",
+                    order_no,
+                    order.code,
+                    order_date.strftime("%Y%m%d"),
+                    exc,
+                )
+                continue
             if status != 200 or data.get("rt_cd") != "0":
+                any_query_failed = True
+                logger.warning(
+                    "futures fill status query FAILED: order_no=%s code=%s "
+                    "date=%s http=%s rt_cd=%s msg_cd=%s msg=%s — fill state "
+                    "unknown, NOT 'unfilled'",
+                    order_no,
+                    order.code,
+                    order_date.strftime("%Y%m%d"),
+                    status,
+                    data.get("rt_cd"),
+                    self._reject_msg_cd(data),
+                    str(data.get("msg1", ""))[:200],
+                )
                 continue
 
-            rows = data.get("output1") if isinstance(data.get("output1"), list) else []
+            raw_rows = data.get("output1")
+            rows: list[dict[str, Any]] = raw_rows if isinstance(raw_rows, list) else []
+            self._warn_if_page_may_be_truncated(
+                data=data,
+                row_count=len(rows),
+                order_no=order_no,
+                order_date=order_date.strftime("%Y%m%d"),
+            )
             for row in rows:
                 odno_raw = str(row.get("odno", "")).strip()
                 if _normalize_odno(odno_raw) != target_odno:
@@ -655,7 +932,7 @@ class OrderExecutor:
                 if order_qty <= 0:
                     order_qty = order.quantity
                 return _FuturesFillStatus(
-                    found=True,
+                    outcome=FillQueryOutcome.FOUND,
                     order_no=odno_raw or order_no,
                     order_qty=order_qty,
                     filled_qty=filled_qty,
@@ -665,7 +942,54 @@ class OrderExecutor:
                     reject_reason=str(row.get("ingr_trad_rjct_rson_name", "")).strip(),
                 )
 
-        return _FuturesFillStatus(found=False, order_no=order_no, order_qty=order.quantity)
+        # Fail-closed: if ANY leg of the walk went unanswered we did not see the
+        # whole picture, so the absence of the row is not evidence of no fill.
+        return _FuturesFillStatus(
+            outcome=(
+                FillQueryOutcome.QUERY_FAILED
+                if any_query_failed
+                else FillQueryOutcome.NOT_PRESENT
+            ),
+            order_no=order_no,
+            order_qty=order.quantity,
+        )
+
+    def _warn_if_page_may_be_truncated(
+        self,
+        *,
+        data: dict[str, Any],
+        row_count: int,
+        order_no: str,
+        order_date: str,
+    ) -> None:
+        """Flag a fill-status page that may have been cut off.
+
+        This call site is a TARGETED lookup (``STRT_ODNO`` + ``PDNO`` +
+        ``SORT_SQN=DS``) for the order just submitted, which is the highest
+        ODNO and therefore row 1 — truncation is not expected here. What was
+        missing is any way to NOTICE if that ever stopped holding, since the
+        request sends empty continuation keys and the response's keys were
+        never read. Detection only: a full continuation walk belongs at a
+        call site that actually needs every row (see
+        ``shared/kis/client.py::fetch_invest_opinion``).
+        """
+        continuation = str(
+            data.get("ctx_area_nk200") or data.get("CTX_AREA_NK200") or ""
+        ).strip()
+        if not continuation:
+            return
+        page_size = int(self.config.futures_inquire_page_size)
+        if row_count < page_size:
+            return
+        logger.warning(
+            "futures fill status page may be TRUNCATED: order_no=%s date=%s "
+            "rows=%d >= page_size=%d with a continuation key present — the "
+            "targeted lookup no longer fits on page 1",
+            order_no,
+            order_date,
+            row_count,
+            page_size,
+        )
 
     async def _cancel_futures_order(
         self,
@@ -675,7 +999,17 @@ class OrderExecutor:
         is_mock: bool,
         is_night: bool,
     ) -> OrderResponse:
-        """Cancel futures order using order-rvsecncl API."""
+        """Cancel futures order using order-rvsecncl API, with bounded retry.
+
+        A cancel that fails once leaves the order RESTING at the broker, so a
+        single attempt is not enough — the observed failure (broker-probe
+        artifact P-8) was a throttle rejection that left order 0000003144 live.
+        Retries are bounded by ``futures_cancel_max_attempts`` and are spent
+        only on failures where a retry can plausibly change the answer:
+        throttles, 5xx, 429 and transport errors. A deterministic business
+        reject (e.g. "정정/취소할 수량이 없습니다") returns immediately — the
+        caller re-queries the fill state instead of hammering the broker.
+        """
         tr_id = self._resolve_futures_cancel_tr_id(is_mock=is_mock, is_night=is_night)
         headers = await self._build_auth_headers(tr_id=tr_id)
         if headers is None:
@@ -700,17 +1034,92 @@ class OrderExecutor:
 
         base_url = self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
         url = f"{base_url}/uapi/domestic-futureoption/v1/trading/order-rvsecncl"
-        data, status = await self._request_json("POST", url, headers=headers, json=body)
-        if status == 200 and data.get("rt_cd") == "0":
-            return OrderResponse(
-                success=True,
-                order_no=data.get("output", {}).get("ODNO"),
-                message=data.get("msg1", "Cancel success"),
+
+        attempts = max(int(self.config.futures_cancel_max_attempts), 1)
+        throttle_streak = 0
+        made = 0
+        failure = OrderResponse(success=False, message="Cancel not attempted")
+        for attempt in range(attempts):
+            made = attempt + 1
+            try:
+                data, status = await self._request_json(
+                    "POST",
+                    url,
+                    headers=headers,
+                    json=body,
+                    rate_limiter=self._cancel_rate_limiter,
+                )
+            except _TRANSPORT_ERRORS as exc:
+                # A transport failure must never unwind this loop: doing so
+                # skipped the caller's re-query, left `fill_state_unknown`
+                # unset, and suppressed the "may still be resting" ERROR — D-5
+                # with its diagnostics removed. Treat it as a retryable failure.
+                failure = OrderResponse(
+                    success=False,
+                    message=f"[TRANSPORT] cancel request failed: {exc}",
+                )
+                logger.warning(
+                    "futures cancel attempt %d/%d failed (transport): "
+                    "order_no=%s err=%s retryable=True",
+                    attempt + 1,
+                    attempts,
+                    order_no,
+                    exc,
+                )
+                if attempt >= attempts - 1:
+                    break
+                throttle_streak = 0
+                await asyncio.sleep(
+                    float(self.config.futures_cancel_retry_delay_seconds)
+                )
+                continue
+
+            if status == 200 and data.get("rt_cd") == "0":
+                return OrderResponse(
+                    success=True,
+                    order_no=data.get("output", {}).get("ODNO"),
+                    message=data.get("msg1", "Cancel success"),
+                )
+
+            msg_cd = self._reject_msg_cd(data)
+            failure = OrderResponse(
+                success=False,
+                message=f"[{data.get('rt_cd')}] {data.get('msg1', 'Cancel failed')}",
+                broker_msg_cd=msg_cd,
             )
-        return OrderResponse(
-            success=False,
-            message=f"[{data.get('rt_cd')}] {data.get('msg1', 'Cancel failed')}",
+            throttled = msg_cd == KIS_THROTTLE_MSG_CD
+            retryable = throttled or status >= 500 or status == 429
+            logger.warning(
+                "futures cancel attempt %d/%d failed: order_no=%s http=%s "
+                "msg_cd=%s msg=%s retryable=%s",
+                attempt + 1,
+                attempts,
+                order_no,
+                status,
+                msg_cd or "-",
+                str(data.get("msg1", ""))[:200],
+                retryable,
+            )
+            if not retryable or attempt >= attempts - 1:
+                break
+
+            if throttled:
+                throttle_streak += 1
+                delay = self._throttle_backoff_delay(throttle_streak)
+            else:
+                throttle_streak = 0
+                delay = float(self.config.futures_cancel_retry_delay_seconds)
+            await asyncio.sleep(delay)
+
+        logger.error(
+            "futures cancel FAILED after %d/%d attempt(s): order_no=%s may still "
+            "be resting at the broker (%s)",
+            made,
+            attempts,
+            order_no,
+            failure.message,
         )
+        return failure
 
     async def _build_auth_headers(self, tr_id: str) -> dict[str, Any] | None:
         """Build KIS auth headers with TR_ID."""
@@ -751,11 +1160,27 @@ class OrderExecutor:
         headers: dict[str, Any],
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        rate_limiter: RedisRateLimiter | None = None,
+        rate_limit_timeout: float | None = None,
     ) -> tuple[dict[str, Any], int]:
-        """Execute HTTP request and parse JSON body."""
-        if self._rate_limiter:
+        """Execute HTTP request and parse JSON body.
+
+        Args:
+            rate_limiter: Bucket to acquire from. Defaults to the executor's
+                main bucket; the cancel path passes its own so a safety cancel
+                cannot queue behind the fill polls of the order it cancels.
+            rate_limit_timeout: Acquire timeout override. Defaults to
+                ``config.rate_limit_timeout``.
+        """
+        limiter = rate_limiter if rate_limiter is not None else self._rate_limiter
+        if limiter:
+            timeout = (
+                self.config.rate_limit_timeout
+                if rate_limit_timeout is None
+                else rate_limit_timeout
+            )
             try:
-                await self._rate_limiter.acquire(timeout=self.config.rate_limit_timeout)
+                await limiter.acquire(timeout=timeout)
             except RateLimitExceeded:
                 return {"rt_cd": "RATE_LIMIT", "msg1": "Rate limit exceeded"}, 429
 
@@ -802,8 +1227,58 @@ class OrderExecutor:
             logger.error(f"KIS request error ({method} {url}): {e}")
             raise
         # 5xx / 429 = KIS-side infra failure; any other response = KIS reachable.
-        _record_kis_api_outcome(is_error=status >= 500 or status == 429)
+        #
+        # EGW00201 is the one exception: KIS returns it as HTTP 500, but it is a
+        # business reject meaning "you paced yourself too fast" — the gateway
+        # answered us. Counting our own pacing against the kill switch's
+        # api_error_rate_5min signal would let a throttle burst force-flatten
+        # live positions (config/kill_switch.yaml). Excluded per this function's
+        # own contract: only KIS-side infra failures count.
+        throttled = _is_throttle_response(data)
+        self._record_throttle_outcome(throttled=throttled, method=method, url=url)
+        _record_kis_api_outcome(
+            is_error=(status >= 500 or status == 429) and not throttled
+        )
         return data, status
+
+    def _record_throttle_outcome(
+        self, *, throttled: bool, method: str, url: str
+    ) -> None:
+        """Track consecutive throttles so a throttle STORM is still visible.
+
+        Excluding EGW00201 from ``api_error_rate_5min`` is right for a single
+        throttle, but it fails open on a degraded gateway that answers
+        EGW00201 to everything: the api-error signal would stay at 0 forever
+        while no order — including a protective exit — can be placed. This
+        counter is the distinct signal for that state, with its own
+        config-driven threshold. It is a COUNT, not a rate.
+        """
+        if not throttled:
+            self._throttle_streak = 0
+            return
+
+        self._throttle_streak += 1
+        logger.warning(
+            "KIS throttle (%s) on %s %s — excluded from the api-error signal "
+            "(self-inflicted pacing, broker reachable); consecutive=%d",
+            KIS_THROTTLE_MSG_CD,
+            method,
+            url,
+            self._throttle_streak,
+        )
+        threshold = int(self.config.throttle_storm_alert_threshold)
+        if self._throttle_streak >= threshold:
+            logger.error(
+                "KIS THROTTLE STORM: %d consecutive %s responses (threshold=%d) "
+                "on %s — the gateway is refusing everything; order placement, "
+                "including protective exits, is effectively down. This state is "
+                "deliberately excluded from api_error_rate_5min, so THIS is the "
+                "signal to alert on.",
+                self._throttle_streak,
+                KIS_THROTTLE_MSG_CD,
+                threshold,
+                url,
+            )
 
     @staticmethod
     def _is_futures_code(code: str) -> bool:

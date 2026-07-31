@@ -23,6 +23,7 @@ class MockAccountMirror:
     async def initialize(self) -> bool:
         """Connect to the KIS mock server. Returns True on success."""
         try:
+            from shared.config.runtime_defaults import redis_url_from_env
             from shared.kis.auth import KISAuthConfig, KISAuthManager
 
             from .config import ExecutionConfig
@@ -50,9 +51,21 @@ class MockAccountMirror:
             )
             auth_manager = KISAuthManager(auth_config)
 
+            # redis_url is what makes OrderExecutor construct a rate limiter.
+            # Without it the mirror fired an unpaced KIS mock order for every
+            # paper entry/exit.
+            #
+            # The bucket is DISTINCT from the real path's. Mirrored orders go
+            # to 모의투자 (is_real=False above) on a different host with a
+            # different app key, so they do not consume the real account's
+            # broker allowance — sharing `kis:ratelimit:{asset_class}` would
+            # spend the REAL path's tokens on MOCK traffic and could starve a
+            # live order.
             exec_cfg = ExecutionConfig(
                 trading_mode="MOCK",
                 account_no=account_no,
+                redis_url=redis_url_from_env(),
+                rate_limit_key=f"{self.asset_class}-mock-mirror",
             )
 
             self._executor = OrderExecutor(config=exec_cfg, auth_manager=auth_manager)

@@ -56,3 +56,20 @@ class OrderResponse(BaseModel):
     filled_qty: int = Field(default=0, description="Filled quantity")
     filled_price: float = Field(default=0.0, description="Average fill price")
     venue: ExecutionVenue = Field(default=ExecutionVenue.KRX, description="Execution venue")
+    broker_msg_cd: str = Field(
+        default="",
+        description=(
+            "Broker message code (KIS ``msg_cd``) carried verbatim from a "
+            "rejected request. Empty when the broker returned none. Callers "
+            "branch on this instead of substring-matching ``message``."
+        ),
+    )
+    fill_state_unknown: bool = Field(
+        default=False,
+        description=(
+            "True when the executed quantity could NOT be established (the "
+            "fill-status query failed, or the broker's book contradicts our "
+            "belief). ``filled_qty`` is then a lower bound, not a measurement: "
+            "never read 0 as 'no fill' while this flag is set."
+        ),
+    )

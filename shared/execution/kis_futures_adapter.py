@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -36,6 +37,10 @@ from shared.execution.models import OrderRequest, OrderSide, OrderType
 from shared.execution.passive_maker import Fill
 
 logger = logging.getLogger(__name__)
+
+#: Prefix for locally-synthesized ids used when the broker accepted no order
+#: number. Purely internal to this adapter — never sent on the wire.
+_UNIDENTIFIED_ORDER_PREFIX = "NO-ODNO-"
 
 
 def _side_to_kis(side: str) -> OrderSide:
@@ -62,8 +67,12 @@ def _order_type_to_kis(order_type: str) -> OrderType:
 
 @dataclass
 class _StashedFill:
-    fill: Fill | None  # None when the order missed (timeout/cancel)
+    fill: Fill | None  # None when nothing executed (timeout/cancel/reject)
     placed_at_ms: int
+    #: True when the executed quantity could not be established. A stash with
+    #: ``fill=None`` AND this set is NOT a flat book — it is an unresolved
+    #: position. Read it through :meth:`KISFuturesAdapter.fill_state_unknown`.
+    fill_state_unknown: bool = False
 
 
 class KISFuturesAdapter:
@@ -127,22 +136,70 @@ class KISFuturesAdapter:
         response = await self.executor._send_kis_futures_order(
             request, is_mock=self.executor.config.trading_mode != "REAL"
         )
-        order_id = response.order_no or ""
+        # A rejected order carries no broker order number. Keying the stash on
+        # "" made every such order share one slot, so a second rejection
+        # overwrote the first and `await_fill` answered the wrong caller.
+        # Synthesize a unique local id instead — it is never sent to the broker,
+        # it only has to be unique within this adapter.
+        order_id = response.order_no or (
+            f"{_UNIDENTIFIED_ORDER_PREFIX}{uuid.uuid4().hex}"
+        )
 
-        if not response.success or response.filled_qty == 0:
-            # Either the order was rejected outright OR the auto-cancel path
-            # ran (timeout). PassiveMaker reads None from await_fill in both
-            # cases and reports OrderResult.missed.
-            self._fills[order_id] = _StashedFill(fill=None, placed_at_ms=placed_at_ms)
+        unknown = response.fill_state_unknown is True
+        if unknown:
+            # The executor could not establish what executed. This is NOT an
+            # ordinary miss: a position may be open at the broker right now.
+            # Reporting it as `missed` is exactly the D-2 failure — the caller
+            # would treat the book as flat and never arm a protective exit.
+            logger.error(
+                "fill state UNKNOWN for %s %s x%s (order_id=%s, broker=%s): the "
+                "broker may hold a position with no protective exit. Reconcile "
+                "against the broker before trading this symbol again.",
+                side,
+                symbol,
+                quantity,
+                order_id,
+                response.message,
+            )
+
+        filled_qty = int(response.filled_qty)
+        filled_price = float(response.filled_price)
+        if filled_qty > 0 and filled_price <= 0.0:
+            # A positive quantity with no price is not a measurement; building
+            # a Fill from it would seed slippage and the protective bracket
+            # with a fabricated 0. Escalate instead of inventing a price.
+            logger.error(
+                "fill reported qty=%s with non-positive price=%s (order_id=%s) "
+                "— treating fill state as unknown rather than fabricating a "
+                "price for the protective bracket",
+                filled_qty,
+                filled_price,
+                order_id,
+            )
+            unknown = True
+            filled_qty = 0
+
+        if filled_qty <= 0:
+            # No executed quantity: rejected outright, or the auto-cancel path
+            # ran and nothing filled. PassiveMaker reads None from await_fill.
+            # NOTE the guard is on QUANTITY, not on `success`: the executor
+            # reports success=False for a PARTIAL fill (the order did not
+            # complete), and a partial fill is still a live position that must
+            # reach PseudoOCO.
+            self._fills[order_id] = _StashedFill(
+                fill=None, placed_at_ms=placed_at_ms, fill_state_unknown=unknown
+            )
             return order_id
 
         fill = Fill(
             order_id=order_id,
-            price=float(response.filled_price),
-            quantity=int(response.filled_qty),
+            price=filled_price,
+            quantity=filled_qty,
             filled_at_ms=int(time.time() * 1000),
         )
-        self._fills[order_id] = _StashedFill(fill=fill, placed_at_ms=placed_at_ms)
+        self._fills[order_id] = _StashedFill(
+            fill=fill, placed_at_ms=placed_at_ms, fill_state_unknown=unknown
+        )
         return order_id
 
     async def await_fill(
@@ -160,6 +217,24 @@ class KISFuturesAdapter:
             return None
         return stash.fill
 
+    def fill_state_unknown(self, order_id: str) -> bool:
+        """True when this order's executed quantity could not be established.
+
+        ``await_fill`` returning ``None`` is ambiguous on its own: it means
+        either "nothing executed" or "we could not find out". Callers that
+        would otherwise treat ``None`` as a flat book MUST consult this before
+        doing so — an unresolved order may be an open position with no
+        protective exit.
+
+        Unknown ids answer ``False``: absence of a stash is not evidence of an
+        unresolved fill, and this must not manufacture alarm for an order this
+        adapter never placed.
+        """
+        stash = self._fills.get(order_id)
+        if stash is None:
+            return False
+        return stash.fill_state_unknown
+
     async def cancel_order(self, order_id: str) -> bool:
         """No-op when the executor already auto-cancelled on timeout.
 
@@ -169,6 +244,11 @@ class KISFuturesAdapter:
         the KIS API returns a "no such order" error which the executor
         already handles.
         """
+        if order_id.startswith(_UNIDENTIFIED_ORDER_PREFIX):
+            # Locally-synthesized id: the broker never accepted this order, so
+            # there is nothing to cancel and the id must not reach the wire.
+            logger.debug("cancel_order: no broker order number for %s", order_id)
+            return True
         try:
             await self.executor._cancel_futures_order(
                 order_no=order_id,

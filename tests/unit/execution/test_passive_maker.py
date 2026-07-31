@@ -173,6 +173,13 @@ async def test_limit_price_rounded_to_tick(kis, fill_logger):
 
 @pytest.mark.asyncio
 async def test_log_fill_passes_correct_payload(kis, fill_logger):
+    """The logged quantity is what EXECUTED, not what was requested.
+
+    This fixture is a 1-of-2 partial. The row it produces is not audit-only:
+    it flows to ``futures:monitor:positions`` and from there into
+    ``close_executor.flatten(quantity=...)`` — a real broker order. Recording
+    the requested 2 against a held 1 makes the force-close over-sell.
+    """
     kis.get_futures_orderbook.return_value = _orderbook(bid=331.20, ask=331.22)
     kis.await_fill.return_value = Fill(
         order_id="ORD-1", price=331.22, quantity=1, filled_at_ms=2000
@@ -182,7 +189,7 @@ async def test_log_fill_passes_correct_payload(kis, fill_logger):
     await pm.place_passive_limit_futures(
         signal=_signal("long"),
         signal_id="sig-99",
-        quantity=2,
+        quantity=2,  # requested
         spec=_spec(),
         timeout_seconds=30,
     )
@@ -197,7 +204,27 @@ async def test_log_fill_passes_correct_payload(kis, fill_logger):
     assert kwargs["filled_price"] == 331.22
     assert kwargs["tick_size_points"] == 0.02
     assert kwargs["slippage_ticks"] == pytest.approx(1.0)  # 1 tick
-    assert kwargs["quantity"] == 2
+    assert kwargs["quantity"] == 1  # executed, NOT the requested 2
     assert kwargs["filled_at_ms"] == 2000
     assert kwargs["venue"] == "KRX"
     assert kwargs["trade_role"] == "entry"
+
+
+@pytest.mark.asyncio
+async def test_full_fill_logs_the_same_quantity_it_requested(kis, fill_logger):
+    """Negative control: with nothing partial, requested == executed."""
+    kis.get_futures_orderbook.return_value = _orderbook(bid=331.20, ask=331.22)
+    kis.await_fill.return_value = Fill(
+        order_id="ORD-1", price=331.20, quantity=2, filled_at_ms=2000
+    )
+
+    pm = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
+    await pm.place_passive_limit_futures(
+        signal=_signal("long"),
+        signal_id="sig-full",
+        quantity=2,
+        spec=_spec(),
+        timeout_seconds=30,
+    )
+
+    assert fill_logger.log_fill.call_args.kwargs["quantity"] == 2

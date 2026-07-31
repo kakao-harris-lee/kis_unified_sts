@@ -76,7 +76,11 @@ async def test_futures_fill_timeout_triggers_cancel():
     from unittest.mock import AsyncMock
 
     from shared.execution.config import ExecutionConfig
-    from shared.execution.executor import OrderExecutor, _FuturesFillStatus
+    from shared.execution.executor import (
+        FillQueryOutcome,
+        OrderExecutor,
+        _FuturesFillStatus,
+    )
     from shared.execution.models import (
         OrderRequest,
         OrderResponse,
@@ -100,8 +104,20 @@ async def test_futures_fill_timeout_triggers_cancel():
         price=330.5,
     )
 
-    pending = _FuturesFillStatus(found=True, order_no="0000001234", order_qty=1, filled_qty=0, remaining_qty=1)
-    after_cancel = _FuturesFillStatus(found=True, order_no="0000001234", order_qty=1, filled_qty=0, remaining_qty=0)
+    pending = _FuturesFillStatus(
+        outcome=FillQueryOutcome.FOUND,
+        order_no="0000001234",
+        order_qty=1,
+        filled_qty=0,
+        remaining_qty=1,
+    )
+    after_cancel = _FuturesFillStatus(
+        outcome=FillQueryOutcome.FOUND,
+        order_no="0000001234",
+        order_qty=1,
+        filled_qty=0,
+        remaining_qty=0,
+    )
     executor._inquire_futures_fill_status = AsyncMock(side_effect=[pending, pending, after_cancel])
     executor._cancel_futures_order = AsyncMock(
         return_value=OrderResponse(success=True, message="cancel_ok")
