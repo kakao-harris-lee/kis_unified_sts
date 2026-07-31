@@ -509,18 +509,20 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
 
 | # | 대상 | 명령 | 소싱할 파일 |
 |---|---|---|---|
-| 1 | **실전 주식** (중요한 대상) | `python -m tools.broker_probes.run P-BAL --asset stock --env real --confirm` | 호스트의 유일한 실전 자격증명 = **주식 앱키** (`KIS_STOCK_APP_KEY`/`_APP_SECRET`, `.env`; `.env`의 legacy `KIS_APP_KEY`는 이 값을 가리키는 `${...}` placeholder) |
+| 1 | **실전 주식** (중요한 대상) | `python -m tools.broker_probes.run P-BAL --asset stock --env real --confirm` | **`.env.paper`** (wave-4 정정 — 아래 ⚠ 참조. `.env`도 같은 실전 주식 앱키를 담지만 그 `KIS_STOCK_ACCOUNT_NO`는 **모의 계좌번호**라 소싱 금지) |
 | 2 | 모의 주식 | `python -m tools.broker_probes.run P-BAL --asset stock --env mock --confirm` | 레포 밖 `/home/deploy/.config/kis-probes/p11-mock-stock.env` (권한 600, 계좌 `50187672-01`) |
 | 3 | 실전 선물 | `python -m tools.broker_probes.run P-BAL --asset futures --env real --confirm` | `.env.paper`의 `KIS_FUTURES_*` (2026-07-29 발급된 실전 키, 계좌 지문 `00bcc5b3a87b`) |
 | — | 모의 선물 | (실행해도 됨 — 자동 **SKIP**) | 없음. 브로커가 모의에서 선물 잔고를 서비스하지 않는다 (`client.py:1026` NOTE + 가드 `:1031-1033`). 오류가 아니라 스킵으로 남으며, **"위험 없음"으로 읽으면 안 된다** |
 
-> **⚠ 실행 전 반드시 확인 — 이 런북이 확정하지 못한 항목.** 캠페인 census가 확립한
-> 것은 "호스트의 실전 앱키는 **주식** 앱키다"까지다. **어느 파일이 실전 주식 계좌
-> 번호(`KIS_STOCK_ACCOUNT_NO`)를 담는지는 확립되지 않았다** — 모의 주식 계좌
-> `50187672-01`과 혼동될 여지가 있다. 대상 #1을 돌리기 전에 export된 계좌를 확인하고,
-> 실행 후 아티팩트의 `credentials.account_masked` / `account_fingerprint`가 의도한
-> 실전 주식 계좌인지 **대조**한다. 지문이 다르면 그 아티팩트는 다른 계좌의 관측이므로
-> 인용 금지다. (실전 도메인에 모의 앱키를 쓰면 trading 계열은 `EGW02004`로 거부되므로
+> **⚠ 실행 전 반드시 확인 — wave-4(2026-07-31)에서 부분 해소된 항목.** 지문 대조
+> 결과(캠페인 README §wave-4 census 갱신): **`.env`의 `KIS_STOCK_ACCOUNT_NO`는 모의
+> 주식 계좌번호(`50187672-01`, 지문 `54e7f8a5d841`)와 동일**하다 — 이 런북 초판이
+> 경고했던 혼동이 실재였다. 실전 주식 앱키 + 단일 파일 정합 계좌 쌍은
+> **`.env.paper`**(계좌 지문 `a43943c80cc3`, 마스킹 `47******01`)이며 wave-4가 이
+> 배선으로 실행했다. 단 **그 지문이 "의도한 실전 주식 계좌"인지는 운영자 확인
+> 대기**다 — 확인 전까지 해당 아티팩트는 계좌 귀속 조건부로 인용한다. 실행 후
+> 아티팩트의 `credentials.account_masked` / `account_fingerprint` 대조 의무는
+> 그대로다. (실전 도메인에 모의 앱키를 쓰면 trading 계열은 `EGW02004`로 거부되므로
 > 그 방향의 오배선은 시끄럽게 실패한다. 반대로 **맞는 앱키 + 다른 계좌**는 조용히
 > 성공하므로 지문 대조가 유일한 방어다.)
 
@@ -544,8 +546,12 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
    (`body:ctx_area_fk100` 등 실제 스펠링·위치를 기록 — 런타임이 이 키를 읽지 않으므로
    레포에 케이싱 증거가 없다), 그리고 `tr_cont` **응답 헤더** 값. 헤더는 이 모듈의
    `_get()`이 트랜스포트에서 직접 읽는다 — `common.http_json`은 응답 헤더를 버리므로
-   그 헬퍼로는 이 질문에 답할 수 없다. `"M"`만 "더 있음"으로 해석하고(`client.py:354`
-   근거) 다른 값은 **축자 기록**한다.
+   그 헬퍼로는 이 질문에 답할 수 없다. `"M"`/`"F"`를 "더 있음"으로 해석하고
+   (`client.py:354` + KIS 공식 `inquire_balance` 예제의 `tr_cont in ("M","F")` 재귀
+   근거), **비어있지 않은 그 외 값은 브로커의 종료 신호**로 존중해 즉시 걷기를
+   멈춘다(wave-4 실측: 실전·모의 주식 잔고가 마지막 페이지에서 `"D"` 반환 — 결함 #6,
+   `af00ad22`). 헤더 부재("")는 아무것도 확립하지 않으며 키 기반 판단으로 폴백한다.
+   모든 값은 여전히 페이지별 **축자 기록**된다.
 3. **walk** — 페이지별 행 수와 **키별** 전진 여부. 두 키를 **매 페이지 각각** 기록한다
    — 이전 캠페인에서 두 키 중 **하나만** 움직인 사례가 있었고, boolean 하나로는 그것이
    사라진다. 한쪽만 전진한 페이지는 `continuation_key_asymmetry`에 모인다.
