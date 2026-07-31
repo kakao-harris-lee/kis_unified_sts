@@ -13,6 +13,8 @@ __pycache__/
 .env.local
 .env.*.local
 # Stack secret env files (filled from .env.*.example, never committed).
+.env.real
+.env.mock
 # The *.example templates stay tracked; only the secret-filled copies are ignored.
 .env.paper
 .env.live

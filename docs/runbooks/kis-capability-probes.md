@@ -509,9 +509,9 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
 
 | # | 대상 | 명령 | 소싱할 파일 |
 |---|---|---|---|
-| 1 | **실전 주식** (중요한 대상) | `python -m tools.broker_probes.run P-BAL --asset stock --env real --confirm` | **`.env.paper`** (wave-4 정정 — 아래 ⚠ 참조. `.env`도 같은 실전 주식 앱키를 담지만 그 `KIS_STOCK_ACCOUNT_NO`는 **모의 계좌번호**라 소싱 금지) |
-| 2 | 모의 주식 | `python -m tools.broker_probes.run P-BAL --asset stock --env mock --confirm` | 레포 밖 `/home/deploy/.config/kis-probes/p11-mock-stock.env` (권한 600, 계좌 `50187672-01`) |
-| 3 | 실전 선물 | `python -m tools.broker_probes.run P-BAL --asset futures --env real --confirm` | `.env.paper`의 `KIS_FUTURES_*` (2026-07-29 발급된 실전 키, 계좌 지문 `00bcc5b3a87b`) |
+| 1 | **실전 주식** (중요한 대상) | `python -m tools.broker_probes.run P-BAL --asset stock --env real --confirm` | **`.env.real`** (Plan A, 2026-07-31 — 실전 주식 쌍 지문 `a43943c80cc3`, 운영자 확정. 종전 `.env.paper` 소싱은 런타임 파일과의 결합 때문에 폐기) |
+| 2 | 모의 주식 | `python -m tools.broker_probes.run P-BAL --asset stock --env mock --confirm` | **`.env.mock`** (Plan A — 모의 주식 쌍, 계좌 `50187672-01`. 레포 밖 p11 사본은 rotate 전까지 백업으로만 보존) |
+| 3 | 실전 선물 | `python -m tools.broker_probes.run P-BAL --asset futures --env real --confirm` | **`.env.real`**의 `KIS_FUTURES_*` (2026-07-29 발급된 실전 키, 계좌 지문 `00bcc5b3a87b`) |
 | — | 모의 선물 | (실행해도 됨 — 자동 **SKIP**) | 없음. 브로커가 모의에서 선물 잔고를 서비스하지 않는다 (`client.py:1026` NOTE + 가드 `:1031-1033`). 오류가 아니라 스킵으로 남으며, **"위험 없음"으로 읽으면 안 된다** |
 
 > **⚠ 실행 전 반드시 확인 — wave-4(2026-07-31)에서 해소된 항목.** 지문 대조
@@ -610,7 +610,7 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
 | # | 조건 | 확인 방법 |
 |---|---|---|
 | 1 | **실전 라이브 선물 매매가 무장 해제 상태** | `config/futures_live.yaml::enabled == false` **그리고** Redis `futures:live:suspended` 상태 확인. 아래 ⚠ 참조 |
-| 2 | **소싱할 env 파일 = `.env.paper`** (`KIS_FUTURES_*`가 실전 키) | §wave-3 census: 실전 선물 앱키는 `.env.paper`의 `KIS_FUTURES_*`에만 있다. `.env`의 선물 키는 **모의**다 — 모의 키로 실행하면 `EGW02004`로 거부되고 실주문은 나가지 않지만, 그것은 **운이지 설계가 아니다** |
+| 2 | **소싱할 env 파일 = `.env.real`** (`KIS_FUTURES_*`가 실전 키; Plan A 이전 문서는 `.env.paper`라 했으나 2026-07-31 분리됨) | §wave-3 census + Plan A: 실전 선물 앱키는 `.env.real`(원본은 `.env.paper`)의 `KIS_FUTURES_*`에 있다. `.env`/`.env.mock`의 선물 키는 **모의**다 — 모의 키로 실행하면 `EGW02004`로 거부되고 실주문은 나가지 않지만, 그것은 **운이지 설계가 아니다** |
 | 3 | **계좌 지문 `00bcc5b3a87b`** (신규 실전 선물 계좌) | `--expect-account-fingerprint 00bcc5b3a87b`. 지문은 프로브가 스스로 추론하지 않는다 — 플래그로 주지 않으면 거부한다 |
 | 4 | **계좌가 자금이 있고 완전히 비어 있다** | 1단계가 판정한다. 이 계좌의 유일한 기존 접촉은 빈 잔고를 돌려준 야간 GET 1회였다 |
 | 5 | **선물 정규장 08:45–15:45 KST, 종료까지 ≥30분** | 1단계가 판정한다. **강행 플래그는 없다**(§5.4의 `--ignore-session-window`는 조회 전용 개념이다) |
@@ -685,7 +685,7 @@ full (kospi200_full) 은 multiplier 250,000 = mini의 5배:
 
 ```bash
 # 실전 자격증명 전용 셸에서
-set -a; . ./.env.paper; set +a          # KIS_FUTURES_* = 실전 선물 키
+set -a; . ./.env.real; set +a           # KIS_FUTURES_* = 실전 선물 키 (Plan A, 2026-07-31)
 
 python -m tools.broker_probes.run P-R5-PRE \
   --symbol A05609 \
