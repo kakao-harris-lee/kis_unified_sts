@@ -14,16 +14,18 @@ the machine-editable source.
 
 ## Status Summary
 
-- Total evidence items: **98**
-- NOT_IMPLEMENTED: **98**
+- Total evidence items: **118**
+- NOT_IMPLEMENTED: **118**
 - PASS: **0**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
 
-Of the 98 items, 92 are 1:1 with the Part-3 ADR-DEV invariants (15 families,
+Of the 118 items, 92 are 1:1 with the Part-3 ADR-DEV invariants (15 families,
 `PFX-EV-0nn` ↔ `PFX-INV-0nn`), five are the Part-2 decision-boundary cluster
-(`DEC-EV-001` through `DEC-EV-005`), and one is the RFC-010 testing-boundary
-cluster (`TEST-EV-001`).
+(`DEC-EV-001` through `DEC-EV-005`), one is the RFC-010 testing-boundary cluster
+(`TEST-EV-001`), twelve are the Proposed RFC-006 economic-viability family
+(`ECO-EV-001` through `ECO-EV-012`), and eight are the Proposed investment
+operating-model family (`IOM-EV-001` through `IOM-EV-008`).
 
 ## Required Administrative Fields
 
@@ -147,6 +149,26 @@ widens any Part-1 authority, limit, or gate (RFC-000 §12).
 | DEC-EV-004 | Decision-Boundary Conformance | Risk-Model Boundary Reduces to RFC-002 §9.1 | RFC-006 | EV-L0 | NOT_IMPLEMENTED | TBD | TBD |
 | DEC-EV-005 | Decision-Boundary Conformance | Hedge-Model Boundary Reduces to RFC-002 §9.1 | RFC-007 | EV-L0 | NOT_IMPLEMENTED | TBD | TBD |
 | TEST-EV-001 | Testing-Boundary Conformance | Testing-Boundary Conformance and Non-Authority | RFC-010 | EV-L0 | NOT_IMPLEMENTED | TBD | TBD |
+| ECO-EV-001 | Economic Viability | Exact Pre-Registration and Evaluation Identity | RFC-006-PROPOSED-AMENDMENT | EV-L1 | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-002 | Economic Viability | Complete Total-Cost and Safety Opportunity-Loss Accounting | RFC-006-PROPOSED-AMENDMENT | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-003 | Economic Viability | Uncertainty Effective Sample and Estimation Error | RFC-006-PROPOSED-AMENDMENT | EV-L1/2 | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-004 | Economic Viability | Multiple-Testing and Selection-Bias Correction | RFC-006-PROPOSED-AMENDMENT | EV-L1/2 | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-005 | Economic Viability | Regime Dependence and Required-Scope Stability | RFC-006-PROPOSED-AMENDMENT | EV-L1/2 | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-006 | Economic Viability | Leakage-Controlled Out-of-Sample Generalization | RFC-006-PROPOSED-AMENDMENT | EV-L1/2 | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-007 | Economic Viability | Exact-Scope Restricted-Live Economic Observation | RFC-006-PROPOSED-AMENDMENT | EV-L3+Broker | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-008 | Economic Viability | Turnover Deployable Capacity and Capital Efficiency | RFC-006-PROPOSED-AMENDMENT | EV-L1/2/3+Broker | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-009 | Economic Viability | Drawdown Magnitude Duration Recovery and Path Behavior | RFC-006-PROPOSED-AMENDMENT | EV-L1/2/3 | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-010 | Economic Viability | Existing-Book Correlation Crowding and Marginal Contribution | RFC-006-PROPOSED-AMENDMENT | EV-L1/2/3 | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-011 | Economic Viability | Edge Decay Degradation Revalidation and Retirement | RFC-006-PROPOSED-AMENDMENT | EV-L1/2/3 | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| ECO-EV-012 | Economic Viability | Composite Verdict RLP Separation and Non-Authority Honesty | RFC-006-PROPOSED-AMENDMENT | Profile-dependent | NOT_IMPLEMENTED | TBD-economic-evidence-implementation-owner | TBD-independent-investment-reviewer |
+| IOM-EV-001 | Investment Operating Model | Exact Mandate Benchmark Ownership and Scope Binding | RFC-006-IOM-PROPOSED-AMENDMENT | EV-L0/1 | NOT_IMPLEMENTED | TBD-investment-operating-implementation-owner | TBD-independent-investment-operating-reviewer |
+| IOM-EV-002 | Investment Operating Model | Allocation versus Risk-Capacity Separation and Strategy Budgets | RFC-006-IOM-PROPOSED-AMENDMENT | EV-L1/2 | NOT_IMPLEMENTED | TBD-investment-operating-implementation-owner | TBD-independent-investment-operating-reviewer |
+| IOM-EV-003 | Investment Operating Model | Portfolio Attribution Capacity Efficiency Degradation and Retirement | RFC-006-IOM-PROPOSED-AMENDMENT | EV-L1/2/3 | NOT_IMPLEMENTED | TBD-investment-operating-implementation-owner | TBD-independent-investment-operating-reviewer |
+| IOM-EV-004 | Investment Operating Model | Market-Data Continuity Gap Backfill and Admission | RFC-006-IOM-PROPOSED-AMENDMENT | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD-investment-operating-implementation-owner | TBD-independent-investment-operating-reviewer |
+| IOM-EV-005 | Investment Operating Model | Account Broker Writer RCL and Aggregate Scope Isolation | RFC-006-IOM-PROPOSED-AMENDMENT | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD-investment-operating-implementation-owner | TBD-independent-investment-operating-reviewer |
+| IOM-EV-006 | Investment Operating Model | Concurrent Failure Fencing Reconciliation and Double-Trade Prevention | RFC-006-IOM-PROPOSED-AMENDMENT | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD-investment-operating-implementation-owner | TBD-independent-investment-operating-reviewer |
+| IOM-EV-007 | Investment Operating Model | End-to-End Safety Latency under Load and Fault | RFC-006-IOM-PROPOSED-AMENDMENT | EV-L2/3+Broker | NOT_IMPLEMENTED | TBD-investment-operating-implementation-owner | TBD-independent-investment-operating-reviewer |
+| IOM-EV-008 | Investment Operating Model | Joint Safety Economic Survivability and Non-Authority | RFC-006-IOM-PROPOSED-AMENDMENT | Profile-dependent | NOT_IMPLEMENTED | TBD-investment-operating-implementation-owner | TBD-independent-investment-operating-reviewer |
 
 ## Notes
 
@@ -164,3 +186,14 @@ widens any Part-1 authority, limit, or gate (RFC-000 §12).
 - BFA-EV-007 was added by the Wave-7 patch (CORPUS-REVIEW-0001 M-17; ADR-DEV-006 BFA-INV-007):
   total 97 → 98, BFA family 6 → 7, invariant cases 91 → 92. Registration creates no
   verification evidence, ADR-DEV acceptance, or live readiness; the item is `NOT_IMPLEMENTED`.
+- ECO-EV-001..012 were added by the 2026-08-02 CONST-003 semantic-chain
+  remediation as a Proposed RFC-006 amendment family: total 98 → 110. Every row
+  is `NOT_IMPLEMENTED` with pending accountable owner/reviewer roles. Registration
+  and the profile schema are not execution, expectancy proof, ADR acceptance,
+  restricted-live readiness, capital allocation, or production authority.
+- IOM-EV-001..008 were added by the 2026-08-02 G-02..G-05 remediation as a
+  Proposed coordinated Part-2 amendment family: total 110 → 118. Every row is
+  `NOT_IMPLEMENTED` with pending accountable owner/reviewer roles. Registration
+  does not approve an investment mandate, admit market data, authorize a second
+  account/broker, establish a latency budget, allocate capital or risk capacity,
+  or create restricted-live/production authority.

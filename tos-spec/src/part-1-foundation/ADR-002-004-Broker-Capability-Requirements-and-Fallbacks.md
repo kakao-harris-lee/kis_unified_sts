@@ -1383,6 +1383,18 @@ Unanswered questions result in `UNKNOWN` capability status.
 
 ---
 
+## 29.1 Requirements Traceability
+
+This table transcribes the existing RFC-001 requirement set in this ADR's
+`Depends On` header and its existing BC acceptance family. It introduces no new
+SAFE, HAZ, evidence ID, or requirement allocation.
+
+| Requirement | Existing claimed allocation | Registered evidence family |
+|---|---|---|
+| SAFE-020, SAFE-021, SAFE-024, SAFE-025, SAFE-033, SAFE-040, SAFE-043 | Existing `Depends On` requirement set for identity, at-most-one effect, reconciliation/fills, conformance, degraded protection, and exit-unavailable containment | BC-EV-001..022 (§25; VER-002-001 and EVIDENCE-REGISTER-002) |
+
+---
+
 ## 30. Approval Gate
 
 ADR-002-004 may move from **Proposed** to **Accepted** only when:

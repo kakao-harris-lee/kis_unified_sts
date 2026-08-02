@@ -1,10 +1,10 @@
 # TOS Safety Architecture Gate Status
 
-- **Date:** 2026-07-14
-- **Scope:** Consolidated RFC-002 v0.2 and ADR-002-001 through ADR-002-030
-- **Architecture Documentation:** Phase B and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion, safety-deviation/residual-risk, safety-incident/controlled-shutdown, safety-telemetry/continuous-monitoring, software-supply-chain/runtime-artifact-admission, and post-trade economic-obligation/finality decisions are authored; acceptance cases are registered; every ADR remains Proposed and execution evidence remains open
+- **Date:** 2026-08-02 current-state refresh; historical records retain their original dates
+- **Scope:** Ratified RFC-002 v0.6, all 13 Ratified RFC-class baselines, and ADR-002-001..030 plus ADR-DEV-001..015
+- **Architecture Documentation:** the RFC-class corpus is Ratified; all 45 ADRs remain Proposed; ratification is not ADR acceptance, evidence, restricted-live, or production authority
 - **Latest Architecture Review:** ADR-002-002 through ADR-002-030 PASS at document-review level; no independent review is pending; no status or live-readiness promotion
-- **Verification Execution:** Not started
+- **Verification Execution:** Part 1: 292 `NOT_IMPLEMENTED`, 79 `READY`, 1 `PASS`; development: 118 `NOT_IMPLEMENTED` (including 12 Proposed ECO and 8 Proposed IOM cases). A row state is not ADR acceptance or authority; see generated `../CURRENT-STATUS.md`
 - **Production Authorization:** NO
 
 ---
@@ -152,6 +152,13 @@ The current bundle decides:
 ---
 
 ## 3. Repository Merge Map
+
+> **Historical-record boundary.** Sections 3 and 9.7 preserve dated merge and ratification
+> records as written at the time of each act. Counts and phrases such as "current" or "every
+> registered item" inside those records are as-of statements, not the 2026-08-02 corpus state.
+> Current counts and authority axes come only from the header above and generated
+> `../CURRENT-STATUS.md`; later mechanical or Proposed-track work does not retroactively change a
+> ratification record.
 
 The review files were section-level amendments, not canonical-document diffs. Their normative content was consolidated into the canonical RFC and ADR sections as follows.
 
@@ -1048,35 +1055,66 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
 ### 4.5 Remaining Debt After Wave 4
 
 - **M-06 architectural existence.** Whether an out-of-band final-egress containment path independent of the egress enforcement point actually exists remains open. EGRESS-EV-013 registers the evidence obligation; SAFE-054 permits closing it via the accepted-residual-risk / reduced-scope branch. This is a separate Major finding, not part of CR-01. **Owner disposition (Wave 9, 2026-07-17):** the System Owner attested that an out-of-band broker-side containment path exists for the final egress enforcement point (credential revocation and account deactivation through broker-side channels), recorded in capability-class terms only; the concrete procedure belongs to a non-normative Broker Capability Profile instance on the implementation track. This closes the M-06 open question; EGRESS-EV-013 remains the acceptance-track evidence obligation (`NOT_IMPLEMENTED`).
-- **No execution.** All 372 Part-1 items (EVIDENCE-REGISTER-002) and all 98 Part-2/3 items (EVIDENCE-REGISTER-DEV) remain `NOT_IMPLEMENTED`; registration is not execution and confers no live readiness. (The Part-2/3 count rose 96 → 97 in Wave 5, §3.8; 97 → 98 in Wave 7, §3.10.)
-- **TRACEABILITY-MATRIX-002 §5.3 source gaps.** ADR-002-002 through ADR-002-006 lack a §2x Requirements Traceability table, so their families (RC, SA, BC, STATE, RECON) are not reachable through the SAFE→ADR bridge. This is deferred and scoped out of CR-01; no coverage is lost because those SAFEs are co-claimed by other realizing ADRs.
-- **Part-2/3 ratification pending.** RFC-003 through RFC-011, ADR-DEV-001 through ADR-DEV-015, and VER-DEV-001 remain `Proposed`.
+- **Current evidence state.** The Part-1 register contains 372 rows: 292
+  `NOT_IMPLEMENTED`, 79 `READY`, and 1 `PASS`; the development register contains
+  118 `NOT_IMPLEMENTED` rows, including 12 Proposed ECO and 8 Proposed IOM cases. The Wave-5/7 historical count transitions remain in
+  §3.8/§3.10. Registration, `READY`, and `PASS` confer no ADR acceptance or live
+  readiness; the CSVs and generated `../CURRENT-STATUS.md` are the current count
+  sources.
+- **TRACEABILITY-MATRIX-002 §5.3 source gaps — resolved 2026-08-02.**
+  ADR-002-002 through ADR-002-006 now carry direct tables transcribed from their
+  existing RFC-002 §9.1 / `Depends On` SAFE claims. RC, SA, BC, STATE, and RECON
+  are directly reachable; the deterministic consistency check reports 30/30
+  ADR tables. No requirement, evidence status, or authority changed.
+- **Part-2/3 split state.** RFC-003 through RFC-011 are Ratified. ADR-DEV-001
+  through ADR-DEV-015 and VER-DEV-001 remain Proposed. The 2026-08-02 G3/P2
+  audit records a separate ratification-record discrepancy and decision gate;
+  Ratified is not silently converted to Accepted or live-ready.
+- **CONST-003 semantic evidence-chain discrepancy.** RLP-EV-001..012 govern
+  restricted-live trial safety and promotion but do not establish economic
+  viability. The Proposed RFC-006 amendment registers ECO-EV-001..012, all
+  `NOT_IMPLEMENTED`, and an unapproved no-default profile schema. The machine
+  check proves hypothetical RLP PASS with incomplete ECO remains
+  `INCONCLUSIVE`. A coordinated GOV-001 G6 act is required before the corrected
+  chain becomes governing; no completion or authority is claimed.
+- **Current-to-target migration and complexity debt.** The non-authorizing
+  `../MIGRATION-CONFORMANCE-REGISTER.md` and canonical CSV enumerate five
+  configured legacy/project routes, all 37 TOS top-level packages and trust
+  seams, one unassigned consolidated operator-view owner, and Proposed removal
+  criteria for all eight Complexity Q6 mechanisms. No route or mechanism was
+  removed; Q5/Q6 remain OPEN pending human decision and evidence.
 
 ### 4.6 Scoped Future Specifications (G-02..G-05)
 
-These are architecture gaps identified in CORPUS-REVIEW-0001 that are out of the current
-corpus's scope. Each is registered here (not authored) with its basis, the trigger condition
-under which a specification becomes required, and an owner candidate. Registration authors no
-ADR, introduces no SAFE-xxx, and adds no evidence row.
+These architecture gaps were identified in CORPUS-REVIEW-0001. The 2026-08-02
+remediation now supplies one coordinated **Proposed**, non-governing RFC-006
+amendment, a no-default Investment Operating Profile schema, and IOM-EV-001..008,
+all `NOT_IMPLEMENTED`. They remain scope restrictions until a GOV-001 G6/G7 act,
+approved owners/bounds, governed execution, and independent review. Proposal and
+registration introduce no SAFE-xxx and create no authority.
 
 - **G-01 — resolved.** The single-operator live-governance gap is resolved via CR-02 option
   (c) / DR-0001 (§3.4).
 - **G-02 — Capital/portfolio allocation governance.** Basis: vision §8 (Long-Term Scope),
-  §10.4 (Economic Viability). Trigger: the first cross-strategy or cross-account capital
-  allocation beyond per-action RCL headroom. Owner candidate: Architecture Board (a new
-  ADR-002-0xx or an RFC-006 successor).
+  §10.4 (Economic Viability). Proposed home: RFC-006 coordinated amendment §2–3.
+  Trigger: before the first cross-strategy or cross-account capital allocation.
+  Investment Authority owns allocation; Risk Authority and the RCL separately own
+  risk-capacity authorization/mutation. RCL headroom is not allocation.
 - **G-03 — Market-data / context ingestion pipeline.** Basis: vision §6.8 (Evidence-Based
   State); ADR-002-018 governs Critical Inputs *after* arrival but not their ingestion.
-  Trigger: the first feed with continuity, gap, or backfill needs. Owner candidate: an RFC-004
-  successor or a new ADR.
+  Proposed home: coordinated RFC-004/ADR-002-018 contract in the amendment §4.
+  Trigger: before any feed requiring continuity, gap handling, recovery, or
+  backfill is admitted. Market Data and Data Operations owners remain unassigned.
 - **G-04 — Multi-account / multi-broker concurrent operating model.** Basis: aggregation
   exists (ADR-002-021) but the writer-epoch scope is open (ADR-002-002 §37); initial live is
-  single-account. Trigger: a second concurrent account or broker. Owner candidate: Architecture
-  Board.
+  single-account. Proposed home: amendment §5 coordinated with ADR-002-002/021.
+  Trigger: before a second concurrent account or broker. Architecture Board and
+  Risk Authority decisions remain required.
 - **G-05 — Performance / latency budget for the safety machinery.** Basis: philosophy §29
   (safety and expectancy must survive real conditions); all latency bounds currently defer to
-  the unapproved Verification Profile. Trigger: before restricted-live for a latency-sensitive
-  market. Owner candidate: the Verification Profile / an RFC-002 §29 successor.
+  an unapproved profile. Proposed home: amendment §6 plus its no-default profile.
+  Trigger: before latency-sensitive restricted-live. Safety and positive
+  expectancy must both survive; a gate may not be weakened to meet a budget.
 
 ---
 
@@ -1084,7 +1122,7 @@ ADR, introduces no SAFE-xxx, and adds no evidence row.
 
 | Artifact | Current state | Can implement? | Can accept? |
 |---|---|---:|---:|
-| RFC-002 v0.5 | Consolidated Review Draft | YES | after RFC review gates pass |
+| RFC-002 v0.6 | Ratified (RR-0004); ratification is non-authorizing | YES | ADR acceptance remains evidence-gated |
 | ADR-002-001 v0.7 | Proposed | YES | after protective evidence passes |
 | ADR-002-002 | Proposed | YES | NO |
 | ADR-002-003 | Proposed | YES | NO |
@@ -1133,8 +1171,8 @@ ADR, introduces no SAFE-xxx, and adds no evidence row.
 | Safety Monitoring Policy, Critical Telemetry and Monitor Coverage Manifests, Continuous Conformance Snapshot, Safety Monitoring Gap, Safety Alert Record, and Alert Escalation Record artifacts | Templates only; DRAFT/INCOMPLETE/UNKNOWN/SUSPECTED/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Software Release Policy, reviewed-source, dependency/toolchain-closure, build-provenance, artifact, admission, admitted-set, and runtime-attestation artifacts | Templates only; DRAFT/UNKNOWN/INVALID/DENY/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Post-Trade Finality Policy, Economic Obligation Record, Active Economic Obligation Set, Post-Trade Finality Proof, Post-Trade Break Record, and Statement Coverage Manifest artifacts | Templates only; DRAFT/UNKNOWN/UNPROVEN/OPEN/non-authorizing/non-mutating/fail-closed | YES | NO |
-| Verification evidence | 372 items registered, all `NOT_IMPLEMENTED` | NO claim of completion | NO |
-| Development-track verification evidence | 98 items registered (EVIDENCE-REGISTER-DEV), all `NOT_IMPLEMENTED` | NO claim of completion | NO |
+| Verification evidence | 372 items: 292 `NOT_IMPLEMENTED`, 79 `READY`, 1 `PASS` | only the one governed row records `PASS`; no aggregate completion claim | NO |
+| Development-track verification evidence | 118 items registered (EVIDENCE-REGISTER-DEV), all `NOT_IMPLEMENTED`; 12 ECO and 8 IOM rows are Proposed-amendment registrations | NO claim of completion | NO |
 
 ---
 
@@ -1159,7 +1197,7 @@ A written test case, mock output, or design review is not completed verification
 
 ```text
 1. Select and security-review conforming RCL, egress, canonical safety-configuration, human identity, effective-principal, human and automated approval, evidence/replay/recovery, Critical Input/context, venue constraint, Order Construction Policy, Aggregate Risk Policy, Action Flow Policy, Trading Approval Policy, Currentness Policy, Restricted-Live Trial Policy, Software Release Policy, reviewed-source/dependency/toolchain/build-provenance/signing/registry/admission/release-set/runtime-attestation mechanisms, plan/run/abort/promotion registry, evidence-coverage model, owner/dependency registry, Currentness Ordering Domain, restrictive ingress, local latch, per-send proof/claim, independent-validation/common-mode, single-use Intent and promotion consumption, adverse-scenario/state-cut/shared-scope/cause-amplification protocols, deterministic compiler/evaluator/verifier, numeric/unit/mapping/risk/flow/trial/release registry, canonicalization, serializer/SDK, actual-outbound comparison, generation fencing, signing, and independent Human HALT substrates.
-2. Assign implementation owners, evidence owners, and independent reviewers for all 372 items in EVIDENCE-REGISTER-002.csv, and for all 98 items in EVIDENCE-REGISTER-DEV.csv.
+2. Assign implementation owners, evidence owners, and independent reviewers for all 372 items in EVIDENCE-REGISTER-002.csv, and for all 118 items in EVIDENCE-REGISTER-DEV.csv.
 3. Approve numeric bounds in VERIFICATION-PROFILE-002.
 4. Implement capacity, authority, trustworthy-time, live-authorization, effective-principal, human and automated exact approval, single-use Intent consumption, Human HALT, Recovery Barrier, Critical Input/context, venue constraint/admissibility, canonical command, economic-effect, aggregate-risk projection/decision, action-flow decision/permit/reserve, conformance-proof, downstream-mutation, and invalidation state-machine models.
 5. Implement orthogonal state, reconciliation-confidence, failure-domain, replacement, and non-trade transition models.
@@ -1234,9 +1272,10 @@ directional baseline is adopted (BA-0001, §9.7). No further normative-RFC ratif
 exist; the ratification track for the corpus's normative RFCs is complete. VER-002-001 and
 VER-DEV-001 are not ratification targets and advance through their own approval gates (§383 and §8
 respectively, GOV-001 G2); the ADR corpus (ADR-002-001..030 and ADR-DEV-001..015, 45 documents)
-remains on the evidence-gated acceptance track. All 372 Part-1 and 98 development-track evidence
-items remain `NOT_IMPLEMENTED`; all ADRs remain Proposed; both Verification Evidence
-specifications remain Proposed.
+remains on the evidence-gated acceptance track. The current Part-1 register is 292
+`NOT_IMPLEMENTED`, 79 `READY`, and 1 `PASS`; all 118 development-track rows remain
+`NOT_IMPLEMENTED`, including 12 Proposed ECO and 8 Proposed IOM registrations. All ADRs and both
+Verification Evidence specifications remain Proposed.
 
 | Document | Class | Current rung | Ratification-Ready? | Blocking precondition |
 |---|---|---|---|---|
@@ -1245,7 +1284,7 @@ specifications remain Proposed.
 | RFC-000 | Normative RFC | **Ratified** (v0.16, 2026-07-17) | **YES** | — (record RR-0001, §9.7) |
 | RFC-001 | Normative RFC | **Ratified** (v0.8, 2026-07-17) | **YES** | — (record RR-0003, §9.7) |
 | RFC-002 | Normative RFC | **Ratified** (v0.6, 2026-07-18) | **YES** | — (record RR-0004, §9.7) |
-| ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track — Parent RFC-002 Ratified (RR-0004); evidence gate remains (all items `NOT_IMPLEMENTED`) |
+| ADR-002-001..030 | ADR | Proposed | n/a (no ratification ladder) | acceptance track — Parent RFC-002 Ratified (RR-0004); evidence gate remains; see current generated status |
 | VER-002-001 | Verification Evidence | Proposed | n/a (not ratified) | §383 approval gate |
 | RFC-003..007 | Normative RFC | **Ratified** (v0.4/v0.1/v0.1/v0.2/v0.1, 2026-07-18) | **YES** | — (records RR-0005..RR-0009, §9.7) |
 | RFC-008..011 | Normative RFC | **Ratified** (v0.2/v0.2/v0.3/v0.3, 2026-07-18) | **YES** | — (records RR-0010..RR-0013, §9.7) |
@@ -1263,10 +1302,10 @@ established is treated as unmet.
   - **RFC-000 — P1 satisfied (2026-07-17).** The external review returned FAIL on RFC-000 v0.15 (1 MAJOR + 1 MINOR); both findings were verified against source and applied in v0.16 (§3.13, patch 0048). The v0.16 delta re-review (GEMINI-EVL0-REQUEST-0002.md → GEMINI-EVL0-VERDICT-0002) returned **PASS with zero residual findings** on the external substrate (owner-captured app UI model "Gemini 3.1 Pro", vendor Google). With P2 (findings resolved, §9.5), P3 (vacuously satisfied — RFC-000 is governed by no higher document), P4, and P5 held, **RFC-000 v0.16 is Ratification-Ready**; the remaining step is the System Owner ratification act recorded per GOV-001 G5.
   - **RFC-001 — P1 satisfied (2026-07-17).** The first external-substrate EV-L0 review (GEMINI-EVL0-REQUEST-0003.md → GEMINI-EVL0-VERDICT-0003) returned **FAIL** on RFC-001 v0.7 with two MAJOR findings (SAFE-050 independent-approval linkage; §14 Hard Safety Envelope non-waiver) plus one flag-only MINOR (SAFE-053 → ADR-002-025 §5.11, unjudgeable from the package — deferred to the acceptance tier). Both MAJOR findings were verified against source and applied in v0.8 (§3.14). The v0.8 delta re-review (GEMINI-EVL0-REQUEST-0004.md → GEMINI-EVL0-VERDICT-0004) returned **PASS with zero residual findings** on the external substrate (owner-captured app UI model "Gemini 3.1 Pro", vendor Google), specifically confirming that the SAFE-050 correction preserves SAFE-053's two-satisfaction-path structure. With P2 (findings resolved, flag-only MINOR explicitly deferred), P3 (satisfied by RR-0001), P4, and P5 held, **RFC-001 v0.8 is Ratification-Ready**; the remaining step is the System Owner ratification act recorded per GOV-001 G5.
   - **RFC-002 — P1 satisfied (2026-07-18).** The first external-substrate EV-L0 review (GEMINI-EVL0-REQUEST-0005.md → GEMINI-EVL0-VERDICT-0005) returned **FAIL** on RFC-002 v0.5 with one CRITICAL finding — four legacy absolute prohibitions (§10.18; §20.1 Table B guard and owner; §20.1 Section C forbidden edge; §23.1) collapsed the SAFE-053 single-operator variant path, a partial-update inconsistency against the correctly-absorbed §9.1/§19.4 dual-path structure. The finding was verified against source and applied narrow-only in v0.6 (Patch 0052); the upstream root cause ADR-002-007 (§13, §14.1 item 3, REARM-AC-005 — a missed Wave-1 CR-02 propagation site) was corrected in ADR-002-007 v0.3 (Patch 0053). The v0.6 delta re-review (GEMINI-EVL0-REQUEST-0006.md → GEMINI-EVL0-VERDICT-0006) returned **PASS with zero residual findings** on the external substrate (owner-captured app UI model "Gemini 3.1 Pro", vendor Google), specifically confirming that the quorum path's dual control is unweakened, the variant exception is strictly bound to the ADR-002-015 §17.1 constraints, and no backdoor authority widening was introduced. The three VERDICT-0005 NON-FINDINGS (§10.8 SAFE-054 branch preservation; §27/§30 SAFE-001..054 traceability gate; §12.1 fail-closed UNKNOWN state) confirmed the v0.5 pre-fixes. With P2 (findings resolved), P3 (satisfied through RR-0001/RR-0003), P4, and P5 held, **RFC-002 v0.6 is Ratification-Ready**; the remaining step is the System Owner ratification act recorded per GOV-001 G5.
-  - **RFC-003..007 — P1 satisfied (2026-07-18, batch).** The Part-2 batch external review (GEMINI-EVL0-REQUEST-0007.md → GEMINI-EVL0-VERDICT-0007; Gemini app, owner-captured app UI model "Gemini 3.1 Pro") returned **PASS for all five documents with zero findings** — the first batch to clear the external review without a FAIL round-trip, following the three-lens pre-scan (§3.17). The NON-FINDINGS specifically exercised the recorded review debt: the RFC-003 §9.1 hold/flat outcome semantics and §10 LLM/stochastic Critical-Input proviso (waves 5–7 deltas), the RFC-006 §14 ↔ RFC-007 §13 overnight-gap coherence (mn-09 delta), and the companion models' non-authorizing boundary adherence. With P2 (pre-scan hygiene applied, zero external findings), P3 (satisfied through RR-0001/RR-0003/RR-0004), P4, and P5 held, **RFC-003 v0.4, RFC-004 v0.1, RFC-005 v0.1, RFC-006 v0.2, and RFC-007 v0.1 are Ratification-Ready**; the remaining step is the System Owner ratification acts recorded per GOV-001 G5.
+  - **RFC-003..007 — P1 satisfied (2026-07-18, batch); P2 now disputed.** The Part-2 batch external review (GEMINI-EVL0-REQUEST-0007.md → GEMINI-EVL0-VERDICT-0007; Gemini app, owner-captured app UI model "Gemini 3.1 Pro") returned **PASS for all five documents with zero findings** — the first batch to clear the external review without a FAIL round-trip, following the three-lens pre-scan (§3.17). The NON-FINDINGS specifically exercised the recorded review debt: the RFC-003 §9.1 hold/flat outcome semantics and §10 LLM/stochastic Critical-Input proviso (waves 5–7 deltas), the RFC-006 §14 ↔ RFC-007 §13 overnight-gap coherence (mn-09 delta), and the companion models' non-authorizing boundary adherence. RR-0005..RR-0009 recorded P2 as held and the System Owner subsequently ratified the documents. The 2026-08-02 line-by-line audit (§9.6.1) found that those records did not individually dispose 28 carried canonical open questions. Therefore the current ledger does **not** positively establish P2 for RFC-003..007; the Ratified headers remain unchanged only until the System Owner chooses the G6 or G7 package path.
   - **RFC-008..011 — P1 satisfied (2026-07-18).** The Part-3 batch external review (GEMINI-EVL0-REQUEST-0008.md → GEMINI-EVL0-VERDICT-0008; Gemini app, owner-captured app UI model "Gemini 3.1 Pro") returned **PASS with zero findings for RFC-008 v0.2, RFC-009 v0.2, and RFC-011 v0.3**, and **PASS-WITH-FINDINGS for RFC-010 v0.2** with one MAJOR — §9 attributed normative ownership of the exact-identity SHALL to Proposed ADR-DEV-002, an internal coherence defect against the document's own §14 posture. The finding was verified against source and applied in RFC-010 v0.3 (attribution moved to ADR-002-029, the architecture-tier admission owner; the reviewer's "ratified ADR-002-029" wording corrected — ADRs are never ratification targets, GOV-001 G2). The v0.3 delta re-review (GEMINI-EVL0-REQUEST-0009.md → GEMINI-EVL0-VERDICT-0009) returned **PASS with zero residual findings**, passing all four confirmation items, so **RFC-010's P1 is satisfied**. The NON-FINDINGS exercised the recorded review debt (M-22 reframing ×4; RFC-011 mn-17 role distinction; RFC-010 mn-16 ownership routing). With P2 (pre-scan hygiene applied, §3.19, and the owed RFC-009 M-22 and RFC-011 M-22/mn-17 deltas externally verified), P3 (satisfied through the RR-0001..RR-0009 upstream chain), P4, and P5 held, **RFC-008 v0.2, RFC-009 v0.2, RFC-010 v0.3, and RFC-011 v0.3 are all Ratified** (records RR-0010..RR-0013, §3.20).
   All other corpus documents remain **unmet, fail-closed** for P1 where no external review is recorded; discharging P1 requires an affirmatively decorrelated, human, or demonstrably independent-substrate reviewer.
-- **P2 — Findings resolved or explicitly deferred.** Corpus status: 5 of 6 CORPUS-REVIEW-0001 questions resolved in canonical text (§9.5); M-06 now recorded by owner disposition (§4.5); the RFC-002 §20.1 U1/U2/U3 mode-transition seams are resolved in Wave 8 (§3.11).
+- **P2 — Findings resolved or explicitly deferred.** Corpus status: 5 of 6 CORPUS-REVIEW-0001 questions resolved in canonical text (§9.5); M-06 now recorded by owner disposition (§4.5); the RFC-002 §20.1 U1/U2/U3 mode-transition seams are resolved in Wave 8 (§3.11). For RFC-003..007 specifically, P2 is **not positively established**: the 2026-08-02 census found 3 source-marked resolutions and 28 carried questions requiring the §9.6.1 G6/G7 owner decision package. A pre-scan or zero review findings does not dispose those canonical questions.
 - **P3 — Upstream documents Ratified.** Corpus status: **satisfied across the full normative RFC chain** — RFC-000 v0.16 (RR-0001), GOV-001 v0.1 (RR-0002), RFC-001 v0.8 (RR-0003), RFC-002 v0.6 (RR-0004), the Part-2 chain RFC-003 v0.4 / RFC-004 v0.1 / RFC-005 v0.1 / RFC-006 v0.2 / RFC-007 v0.1 (RR-0005..RR-0009), and the Part-3 chain RFC-008 v0.2 / RFC-009 v0.2 / RFC-010 v0.3 / RFC-011 v0.3 (RR-0010..RR-0013) are all Ratified. Every normative RFC's P3 is therefore satisfied and the normative-RFC ratification chain is complete. Documents on the acceptance track (the ADR-002 and ADR-DEV series and the VER specifications) are governed by their own acceptance and approval gates, not the ratification ladder (GOV-001 G2); the §9.2 ratification order is fully discharged for the normative RFCs.
 - **P4 — No dangling citation and no unresolved cross-document conflict** (CONSISTENCY-AUDIT-002 clean for the document).
 - **P5 — Version stable, not under active revision.**
@@ -1295,9 +1334,24 @@ ratification-blocking mode-transition seam remains.
 | §4.5 item | Classification | Blocks ratification? |
 |---|---|---|
 | M-06 out-of-band egress containment existence | Owner-decision-required (now recorded, §4.5) + acceptance-track (EGRESS-EV-013) | No — the owner disposition is the required residual-risk-acceptance input to RFC-001 ratification and is now recorded; EGRESS-EV-013 remains an acceptance-track obligation |
-| No execution (all 372 Part-1 / 98 development-track items `NOT_IMPLEMENTED`) | Acceptance/live-track only | No — the corpus can be fully ratified with zero evidence executed; ratification is evidence-independent (GOV-001 G1) |
-| TRACEABILITY-MATRIX-002 §5.3 source gaps (ADR-002-002..006) | Acceptance-track, explicitly deferred (no coverage lost) | No — but must be listed as a deferred item in RFC-002's ratification record (P2) |
-| Part-2/3 ratification pending | This is the plan (§9.2) | N/A |
+| Evidence incomplete (Part 1: 292 `NOT_IMPLEMENTED` / 79 `READY` / 1 `PASS`; development: 118 `NOT_IMPLEMENTED`) | Acceptance/live-track only | No — ratification is evidence-independent (GOV-001 G1); evidence does not imply acceptance or live authority |
+| TRACEABILITY-MATRIX-002 §5.3 direct-source gaps (ADR-002-002..006) | **Resolved 2026-08-02** by direct-table transcription and 30/30 consistency check | Historical RR-0004 deferral remains part of that record; no re-ratification or authority claim is inferred from the later mechanical repair |
+| Part-2/3 RFCs Ratified; ADR-DEV and VER-DEV remain Proposed; G3/P2 disposition audit open | Governance amendment/decision package | Ratification state is unchanged pending the System Owner decision gate |
+| CONST-003 RLP-only evidence chain | Proposed RFC-006 Economic Viability amendment; ECO-EV-001..012 all `NOT_IMPLEMENTED`; completion verdict `INCONCLUSIVE` | System Owner/Architecture Board G6 decision and human-owned Economic Viability Profile are required; RLP-only completion is prohibited by the conservative status check |
+
+#### 9.6.1 RFC-003..007 G3/P2 audit — human decision gate (2026-08-02)
+
+`../part-2-decision/P2-DISPOSITION-PACKAGE.md` and its CSV machine source census
+all 31 questions: three source-marked resolutions and 28 carried questions. The
+draft gives every question one disposition, named governing home, owner,
+rationale, trigger, and fail-closed scope restriction, then presents the G6
+amendment/re-ratification and G7 de-ratification options.
+
+**P2 is not established by this audit.** RR-0005..RR-0009 remain unmodified
+historical records and the Ratified headers remain current until the System
+Owner acts. The package is not a G5 record, independent review, ADR acceptance,
+evidence result, or authority. The deterministic corpus check requires 3
+resolved plus 28 carried rows and fails on a missing or duplicate disposition.
 
 ### 9.7 Ratification Records
 

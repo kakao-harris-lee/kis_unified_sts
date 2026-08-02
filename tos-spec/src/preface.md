@@ -8,9 +8,10 @@ normative document governs (RFC-000 §12).
 ## What this corpus is
 
 The corpus specifies a mission-critical trading operating system as a layered set
-of documents. It is an authoring track: every ADR is `Proposed`, every evidence
-item is `NOT_IMPLEMENTED`, and no document confers live readiness. Authoring or
-reviewing a document is never verification (philosophy §33).
+of documents. It is an authoring and governed-evidence track: every ADR remains
+`Proposed`, while the evidence registers contain a mixture of `NOT_IMPLEMENTED`,
+`READY`, and `PASS`. No document or evidence row by itself confers live readiness.
+Authoring or reviewing a document is never verification (philosophy §33).
 
 ## The four parts
 
@@ -19,7 +20,7 @@ reviewing a document is never verification (philosophy §33).
 | 0 — Introduction | Direction and stance (non-normative) | `vision.md`, `philosophy.md` | — |
 | 1 — Foundation | Constitution, safety case, architecture, safety-critical ADRs | RFC-000, RFC-001, RFC-002, ADR-002-001…030 | VER-002-001 + EVIDENCE-REGISTER-002 (372 items) |
 | 2 — Decision | Decision framework and companion models | RFC-003…007 | VER-DEV-001 + EVIDENCE-REGISTER-DEV |
-| 3 — Development | DSL, agent guide, testing, operations, dev ADRs | RFC-008…011, ADR-DEV-001…015 | VER-DEV-001 + EVIDENCE-REGISTER-DEV (97 items, Parts 2+3) |
+| 3 — Development | DSL, agent guide, testing, operations, dev ADRs | RFC-008…011, ADR-DEV-001…015 | VER-DEV-001 + EVIDENCE-REGISTER-DEV (118 items at this revision, Parts 2+3) |
 
 ## Two views of the same corpus
 
@@ -57,9 +58,11 @@ it** (RFC-000 §12). This is what makes the layering safe.
 * `patches/` and `reviews/` are **git-excluded working artifacts**, not canonical;
   a review is a report and a patch is provenance. The committed record of what a
   patch changed is the semantic merge map in `ARCHITECTURE-GATE-STATUS.md §3`.
-* **Status lives in two overlays:** Part 1 in `ARCHITECTURE-GATE-STATUS.md`
-  (approval state, evidence debt, merge map); Parts 2/3 in `VER-DEV-001` and
-  `EVIDENCE-REGISTER-DEV`. Everything is currently `Proposed` / `NOT_IMPLEMENTED`.
+* **Current status is generated:** `CURRENT-STATUS.md` reads canonical document
+  headers, both evidence-register CSVs, and `AUTHORITY-STATUS.csv`. It reports
+  ratification, ADR acceptance, evidence, restricted-live, and production as
+  independent axes. `ARCHITECTURE-GATE-STATUS.md` retains the governance and
+  semantic-merge history; generated status never substitutes for those acts.
 
 ## Conventions
 

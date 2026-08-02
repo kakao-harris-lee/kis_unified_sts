@@ -344,10 +344,16 @@ that shortens the design → backtest → paper → feedback loop.
 
 ### North Star
 
-The **LLM interprets market context** (veto / risk-mode / size / threshold), and
-an **indicator + rule strategy (Setup A/C/D) owns entry/exit timing**. Thresholds
-live in YAML; runtime state is Redis DB 1 + the SQLite ledger. RL/TFT prediction
-paths are removed and must not be reintroduced
+An **indicator + deterministic rule strategy (Setup A/C/D) owns entry/exit
+timing, direction, quantity, price constraints, exposure, and thresholds**. LLM
+output may supply soft context/rationale or a restrictive entry veto; it must
+not determine those Critical Input axes. The current Setup A/C tuning and
+`llm_adaptive` implementation still expose direction/threshold/size dependence,
+although the reverified monolithic quantity call does not pass LLM context to
+the sizer. The non-authorizing migration and operator gates are recorded in
+[plans/2026-08-02-futures-llm-determinism-migration-plan.md](plans/2026-08-02-futures-llm-determinism-migration-plan.md).
+Thresholds live in YAML; runtime state is Redis DB 1 + the SQLite ledger. RL/TFT
+prediction paths are removed and must not be reintroduced
 ([plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md](plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md)).
 
 ### Current operating state

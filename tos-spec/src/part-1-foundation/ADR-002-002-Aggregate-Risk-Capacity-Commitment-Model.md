@@ -1612,6 +1612,18 @@ Expansion is permitted only after:
 
 ---
 
+## 38.1 Requirements Traceability
+
+This table transcribes only RFC-002 §9.1's existing allocation and this ADR's
+existing RC acceptance family. It introduces no new SAFE, HAZ, evidence ID, or
+requirement allocation.
+
+| Requirement | Existing claimed allocation | Registered evidence family |
+|---|---|---|
+| SAFE-013, SAFE-015 | RFC-002 §9.1 assigns aggregate-risk authority and exclusive risk-capacity commitment to the ADR-002-002 mechanism; §§7–8 preserve the policy-authority / linearizable-ledger boundary | RC-EV-001..018 (§33; VER-002-001 and EVIDENCE-REGISTER-002) |
+
+---
+
 ## 39. Approval Gate
 
 ADR-002-002 may move from **Proposed** to **Accepted** only when:

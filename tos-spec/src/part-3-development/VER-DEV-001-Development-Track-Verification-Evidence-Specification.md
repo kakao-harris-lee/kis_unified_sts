@@ -25,8 +25,9 @@ normative content carried no requirement identity or evidence row. The
 requirement identity and an evidence obligation for the first time.
 
 This specification is independent of VER-002-001 and does not change the Part-1
-evidence count. Its companion register (`EVIDENCE-REGISTER-DEV`, 98 items) never
-enters the Part-1 count accounting.
+evidence count. Its companion register (`EVIDENCE-REGISTER-DEV`, 110 items) never
+enters the Part-1 count accounting. Twelve rows are the Proposed RFC-006
+economic-viability family; their registration does not enact that G6 amendment.
 
 ## 2. Result States and Evidence Strength Levels (by reference)
 
@@ -680,6 +681,140 @@ inspection.
 - **Probe:** Inspect RFC-010 §11's prohibitions against RFC-002 §9.1 and the pre-deployment/runtime-monitoring boundary.
 - **Expected:** Tests produce evidence toward acceptance and grant no authority; pre-deployment proofs do not substitute for runtime monitoring, and the boundary reduces to RFC-002 §9.1.
 
+### ECO-EV — Constitutional Economic Viability (Proposed RFC-006 amendment)
+
+These cases instantiate
+`PROPOSED-AMENDMENT-RFC-006-ECONOMIC-VIABILITY.md`. They remain registered
+`NOT_IMPLEMENTED`; neither registration nor a case implementation is evidence.
+Every run must bind the exact approved Economic Viability Profile version.
+
+#### ECO-EV-001 — Exact Pre-Registration and Evaluation Identity
+- **Minimum Level:** EV-L1
+- **Supports:** proposed CONST-003 completion rule §§2–3
+- **Injection:** Change the hypothesis, strategy version, population, benchmark, horizon, stop rule, analysis plan, or selection history after result observation while retaining the original evidence identity.
+- **Expected:** The package is invalid or receives a new identity; optional stopping and post-hoc scope change cannot yield PASS.
+
+#### ECO-EV-002 — Complete Total-Cost and Safety Opportunity-Loss Accounting
+- **Minimum Level:** EV-L2/3+Broker
+- **Supports:** proposed completion rule §4
+- **Injection:** Omit or assume zero for any applicable fee, tax, spread, slippage, impact, missed trade, rejection, partial fill, latency, financing, or safety-induced opportunity-loss component.
+- **Expected:** The result is INCONCLUSIVE; no omitted component silently improves net expectancy and no safety gate is weakened.
+
+#### ECO-EV-003 — Uncertainty, Effective Sample, and Estimation Error
+- **Minimum Level:** EV-L1/2
+- **Supports:** proposed completion rule §5
+- **Injection:** Present a point estimate without the approved interval, effective-sample discipline, dependency adjustment, or estimation-error report.
+- **Expected:** The result is INCONCLUSIVE even when the point estimate is favorable.
+
+#### ECO-EV-004 — Multiple-Testing and Selection-Bias Correction
+- **Minimum Level:** EV-L1/2
+- **Supports:** proposed completion rule §5
+- **Injection:** Select the best candidate, period, feature set, or regime from repeated trials while omitting the search universe, rejected candidates, data reuse, or approved correction.
+- **Expected:** Uncorrected selected performance cannot PASS and the complete negative/selection history is retained.
+
+#### ECO-EV-005 — Regime Dependence and Required-Scope Stability
+- **Minimum Level:** EV-L1/2
+- **Supports:** proposed completion rule §5
+- **Injection:** Pool regimes so that a favorable aggregate hides missing, unstable, contradictory, or disqualifying required-scope results.
+- **Expected:** Required regimes remain separately reported; missing or unstable required scope is INCONCLUSIVE or FAIL under the approved profile.
+
+#### ECO-EV-006 — Leakage-Controlled Out-of-Sample Generalization
+- **Minimum Level:** EV-L1/2
+- **Supports:** proposed completion rule §6
+- **Injection:** Reuse selection data, leak future information, tune on the holdout, or present only backtest/simulation results as demonstrated live edge.
+- **Expected:** The out-of-sample evidence is invalid; backtest remains evidence toward a hypothesis and cannot complete CONST-003.
+
+#### ECO-EV-007 — Exact-Scope Restricted-Live Economic Observation
+- **Minimum Level:** EV-L3+Broker
+- **Supports:** proposed completion rule §§2 and 6
+- **Injection:** Reuse an RLP trial from another strategy/version/scope or omit realized cost, latency, rejection, partial-fill, missed-opportunity, or safety-effect observations.
+- **Expected:** The economic case cannot PASS; exact RLP governance is necessary but is not itself expectancy evidence.
+
+#### ECO-EV-008 — Turnover, Deployable Capacity, and Capital Efficiency
+- **Minimum Level:** EV-L1/2/3+Broker
+- **Supports:** proposed completion rule §7
+- **Injection:** Extrapolate small-scale returns without turnover/cost sensitivity, market-impact capacity, or capital tied by pending and UNKNOWN effects.
+- **Expected:** Deployable capacity and capital efficiency remain unproven; gross or unconstrained returns cannot PASS.
+
+#### ECO-EV-009 — Drawdown Magnitude, Duration, Recovery, and Path Behavior
+- **Minimum Level:** EV-L1/2/3
+- **Supports:** proposed completion rule §7
+- **Injection:** Report terminal return while omitting drawdown magnitude, duration, recovery, path dependence, or censored non-recovered periods.
+- **Expected:** The result is INCONCLUSIVE or FAIL under the approved profile; a favorable terminal value cannot hide unacceptable path risk.
+
+#### ECO-EV-010 — Existing-Book Correlation, Crowding, and Marginal Contribution
+- **Minimum Level:** EV-L1/2/3
+- **Supports:** proposed completion rule §7
+- **Injection:** Claim diversification, hedge, netting, or marginal value from labels or in-sample correlation without the approved existing-book comparison and benefit proof.
+- **Expected:** Unproven benefit is zero; the strategy cannot PASS on a standalone metric that fails the approved portfolio comparison.
+
+#### ECO-EV-011 — Edge Decay, Degradation, Revalidation, and Retirement
+- **Minimum Level:** EV-L1/2/3
+- **Supports:** proposed completion rule §7
+- **Injection:** Continue a historical PASS after the approved decay horizon, degradation trigger, material strategy change, or required revalidation point.
+- **Expected:** The old result expires for completion purposes; no automatic revival or indefinite inheritance occurs.
+
+#### ECO-EV-012 — Composite Verdict, RLP Separation, and Non-Authority Honesty
+- **Minimum Level:** Profile-dependent
+- **Supports:** proposed completion rule §§2 and 8–10
+- **Injection:** Set RLP-EV-001..012 hypothetically to PASS while ECO is incomplete; separately attempt to convert ECO PASS into strategy admission, capital allocation, ADR acceptance, restricted-live, or production authority.
+- **Expected:** CONST-003 remains INCOMPLETE in the RLP-only case; an ECO verdict grants no authority in every case.
+
+### IOM-EV — Investment Operating Model (Proposed coordinated Part-2 amendment)
+
+These cases instantiate
+`PROPOSED-AMENDMENT-RFC-006-INVESTMENT-OPERATING-MODEL.md`. They remain
+`NOT_IMPLEMENTED`; schema or case authoring is not evidence. Every run must bind
+an exact approved Investment Operating Profile version and exact operating scope.
+
+#### IOM-EV-001 — Exact Mandate, Benchmark, Ownership, and Scope
+- **Minimum Level:** EV-L0/1
+- **Supports:** proposed amendment §§2–3
+- **Injection:** Omit or ambiguously combine the mandate owner, Investment Authority, benchmark/version, strategy/version, capital, account, broker, horizon, or prohibited scope.
+- **Expected:** Allocation is INCONCLUSIVE and no risk-capacity or live authority is inferred.
+
+#### IOM-EV-002 — Allocation versus Risk-Capacity Separation and Strategy Budgets
+- **Minimum Level:** EV-L1/2
+- **Supports:** proposed amendment §§2–3
+- **Injection:** Treat RCL headroom as an investment allocation, treat a strategy budget as committed capacity, or let an allocation bypass Aggregate Risk/RCL.
+- **Expected:** The operation is rejected; allocation and capacity remain separately owned and the smaller authorized scope controls.
+
+#### IOM-EV-003 — Portfolio Economics, Degradation, and Retirement
+- **Minimum Level:** EV-L1/2/3
+- **Supports:** proposed amendment §3
+- **Injection:** Allocate from gross standalone return while omitting benchmark-relative attribution, total costs, correlation/crowding, capital efficiency, deployable capacity, turnover, degradation, or retirement triggers.
+- **Expected:** No unproven benefit is credited; the allocation case is INCONCLUSIVE or FAIL under the approved profile.
+
+#### IOM-EV-004 — Market-Data Continuity, Gap, Backfill, and Admission
+- **Minimum Level:** EV-L2/3+Broker
+- **Supports:** proposed amendment §4
+- **Injection:** Introduce a missing, duplicate, reordered, stale, schema-conflicting, source-conflicting, or backfilled observation and offer it to ADR-002-018 without the approved continuity/recovery proof.
+- **Expected:** The value is quarantined or denied admission; dependent queued work is invalidated and a cache/process/dashboard cannot substitute for proof.
+
+#### IOM-EV-005 — Account/Broker/Writer/RCL/Aggregate Scope Isolation
+- **Minimum Level:** EV-L2/3+Broker
+- **Supports:** proposed amendment §5
+- **Injection:** Reuse another account or broker's writer epoch, sequence, capability, evidence, capacity, or authorization, or claim cross-scope benefit with incomplete aggregate visibility.
+- **Expected:** Scope borrowing and unproven benefit are rejected; affected new risk is blocked.
+
+#### IOM-EV-006 — Concurrent Failure, Reconciliation, and Double-Trade Prevention
+- **Minimum Level:** EV-L2/3+Broker
+- **Supports:** proposed amendment §5
+- **Injection:** Combine partial broker outage, delayed/ambiguous fill, split-brain writer, queued legacy/TOS work, retry, cancellation, replacement, and recovery.
+- **Expected:** At most one economic effect survives; stale queued work is invalidated, direct duplicate egress is fenced, and ambiguity cannot open a second path.
+
+#### IOM-EV-007 — End-to-End Safety Latency under Load and Fault
+- **Minimum Level:** EV-L2/3+Broker
+- **Supports:** proposed amendment §6
+- **Injection:** Apply approved representative load/fault conditions across acquisition through reconciliation and exceed, omit, or measure against the wrong clock/statistic for a stage or end-to-end bound.
+- **Expected:** The scoped case cannot PASS; timeout/backlog/batching/retry never bypasses a safety gate and all latency effects remain recorded.
+
+#### IOM-EV-008 — Joint Safety/Economic Survivability and Non-Authority
+- **Minimum Level:** Profile-dependent
+- **Supports:** proposed amendment §§6–9
+- **Injection:** Improve latency or measured expectancy by weakening/reordering a gate, or attempt to convert an IOM result into allocation, capacity, ADR acceptance, restricted-live, or production authority.
+- **Expected:** Gate weakening fails; safety and approved ECO obligations must both survive, and the IOM verdict grants no authority.
+
 ## 6. Approval Gates by ADR-DEV
 
 Each gate moves its owning ADR-DEV from `Proposed` toward acceptance only when
@@ -801,6 +936,13 @@ DEC-EV-005 and independent review (reviewer provenance recorded per ADR-DEV-005)
 Requires TEST-EV-001 and independent review (reviewer provenance recorded per
 ADR-DEV-005).
 
+### CONST-003 Economic Viability (ECO-EV; Proposed amendment gate)
+
+This gate is non-operative until the System Owner completes the coordinated G6
+amendment. Once governing, it requires ECO-EV-001..012, an exact approved profile
+binding, independent review, and all applicable RLP-EV-001..012. RLP alone and
+ECO alone are each insufficient.
+
 ## 7. Coverage Summary
 
 Invariant → evidence coverage is 92/92 (1:1). Part-2 decision RFCs and RFC-010
@@ -813,6 +955,7 @@ map to boundary clusters:
 | RFC-005 (Execution Model) | DEC-002 (§12) | DEC-EV-002 |
 | RFC-006 (Risk Model) | DEC-004 (§13) | DEC-EV-004 |
 | RFC-007 (Portfolio Hedge Model) | DEC-005 (§12) | DEC-EV-005 |
+| RFC-006 Proposed Economic Viability amendment | CONST-003 economic viability | ECO-EV-001..012 plus applicable RLP-EV-001..012 |
 | RFC-008 (Strategy DSL) | §11 boundary | owned by DCE family (ADR-DEV-001) |
 | RFC-009 (Agent Guide) | §11 boundary | owned by AIR/APA/BFA families (ADR-DEV-004/005/006) |
 | RFC-010 (Testing Strategy) | TEST-001 (§11) + testing discipline | TEST-EV-001 + BTE/TAB families |
@@ -840,5 +983,5 @@ VER-DEV-001 moves from **Proposed** to **Approved for Execution** when:
   this track.
 
 Approval for execution authorizes no live trading, creates no capacity, and
-admits no artifact. All 98 development-track items remain `NOT_IMPLEMENTED` until
+admits no artifact. All 110 development-track items remain `NOT_IMPLEMENTED` until
 executed and independently reviewed.

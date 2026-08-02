@@ -18,7 +18,7 @@ philosophy §24.
 **This document is non-normative.** It creates no requirement, no verification evidence, no
 acceptance, no admission, and no live readiness. It defines no invariant and no evidence ID,
 and it **adds nothing to either evidence count** (Part-1 remains 372; the development track
-remains 98). Where it appears to conflict with any normative document, the normative document
+now has 118 after separate ECO/IOM registrations). Where it appears to conflict with any normative document, the normative document
 governs (RFC-000 §12).
 
 **Invention is forbidden.** Every cell cites an existing hazard (HAZ), safety requirement
@@ -58,12 +58,14 @@ yet answer. None is resolved by this register.
   `NOT_IMPLEMENTED`; a defined test is not a passed test (philosophy §33). This register makes
   no claim that any mechanism's behaviour has been tested.
 - **Q5 — operator understanding of the *degraded* state: OPEN corpus-wide.** Per-mechanism
-  observability exists (ADR-DEV-014 OBS-INV-001..003), but no consolidated, cross-mechanism,
-  operator-facing safety-state view is owned by any ADR. Whether an operator can understand the
-  *combined* degraded state across these mechanisms is a review item (review M-25).
-- **Q6 — safe removability / decommission: OPEN for all eight rows.** The corpus specifies no
-  removal or decommission path for any of these mechanisms; AX-005's "can it be safely removed
-  later" is therefore unanswered corpus-wide.
+  observability exists (ADR-DEV-014 OBS-INV-001..003). The non-authorizing
+  Migration and Conformance Register now proposes one consolidated projection
+  owner, but the role is unassigned and OBS-EV remains `NOT_IMPLEMENTED`. A
+  dashboard/cache/healthy process is not the source authority.
+- **Q6 — safe removability / decommission: OPEN for all eight rows.** The corpus has no
+  accepted removal or decommission path for any mechanism. The non-authorizing
+  `../MIGRATION-CONFORMANCE-REGISTER.md` supplies Proposed criteria for owner
+  decision and evidence; those criteria do not close Q6 or authorize removal.
 - **Egress single point (row 5) carries the M-06 residual.** Whether an out-of-band
   final-egress containment path independent of the egress enforcement point actually exists is
   the open M-06 item; EGRESS-EV-013 registers the obligation and SAFE-054 permits closing it via
@@ -72,6 +74,6 @@ yet answer. None is resolved by this register.
 ## 5. Standing (restated)
 
 This register is non-normative and creates no verification evidence, no acceptance, and no live
-readiness. It adds nothing to either evidence count (Part-1 372; development track 98). It is an
+readiness. It adds nothing to either evidence count (Part-1 372; development track 118). It is an
 EV-L0 governance record; its cell citations and the OPEN findings are review items, with reviewer
 provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).

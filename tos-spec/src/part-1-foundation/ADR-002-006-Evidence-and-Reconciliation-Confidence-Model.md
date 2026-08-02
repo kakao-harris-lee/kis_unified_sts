@@ -187,6 +187,18 @@ Depends on ADR-002-005 (Knowledge dimension) and ADR-002-004 (Final Quantity Pro
 
 ---
 
+## 14.1 Requirements Traceability
+
+This table transcribes the existing RFC-001 requirement set in this ADR's
+`Depends On` header and its existing RECON acceptance family. It introduces no
+new SAFE, HAZ, evidence ID, or requirement allocation.
+
+| Requirement | Existing claimed allocation | Registered evidence family |
+|---|---|---|
+| SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-031, SAFE-034 | Existing `Depends On` requirement set for reconciliation, evidence-based state, external-state continuity, partial fills, trustworthy context/provenance, and independent approval inputs | RECON-EV-001..005 (§13; VER-002-001 and EVIDENCE-REGISTER-002) |
+
+---
+
 ## 15. Approval Gate
 
 ADR-002-006 may move from **Proposed** to **Accepted** only when:

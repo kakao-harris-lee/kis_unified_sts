@@ -1,6 +1,8 @@
 # Summary
 
 - [Preface](preface.md)
+- [Current TOS Status (generated)](CURRENT-STATUS.md)
+- [Migration and Conformance Register](MIGRATION-CONFORMANCE-REGISTER.md)
 - [Vision](part-0-introduction/vision.md)
 - [Philosophy](part-0-introduction/philosophy.md)
 
@@ -53,6 +55,9 @@
 - [RFC-005 — Execution Model](part-2-decision/RFC-005-Execution-Model.md)
 - [RFC-006 — Risk Model](part-2-decision/RFC-006-Risk-Model.md)
 - [RFC-007 — Portfolio Hedge Model](part-2-decision/RFC-007-Portfolio-Hedge-Model.md)
+- [P2 Disposition and Owner Decision Package](part-2-decision/P2-DISPOSITION-PACKAGE.md)
+- [Proposed RFC-006 Economic Viability Amendment](part-2-decision/PROPOSED-AMENDMENT-RFC-006-ECONOMIC-VIABILITY.md)
+- [Proposed RFC-006 Investment Operating Model Amendment](part-2-decision/PROPOSED-AMENDMENT-RFC-006-INVESTMENT-OPERATING-MODEL.md)
 
 # Development
 

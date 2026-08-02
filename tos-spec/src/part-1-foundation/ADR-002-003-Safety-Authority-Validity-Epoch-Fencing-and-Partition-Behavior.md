@@ -964,6 +964,18 @@ When a broker or runtime cannot meet the required fencing semantics, degraded or
 
 ---
 
+## 27.1 Requirements Traceability
+
+This table transcribes the existing RFC-001 requirement set in this ADR's
+`Depends On` header and its existing SA acceptance family. It introduces no new
+SAFE, HAZ, evidence ID, or requirement allocation.
+
+| Requirement | Existing claimed allocation | Registered evidence family |
+|---|---|---|
+| SAFE-011, SAFE-035, SAFE-041, SAFE-048 | Existing `Depends On` requirement set for non-bypassable limits, trustworthy time, independent authority, and partition-tolerant authority | SA-EV-001..015 (§23; VER-002-001 and EVIDENCE-REGISTER-002) |
+
+---
+
 ## 28. Approval Gate
 
 ADR-002-003 may move from **Proposed** to **Accepted** only when:

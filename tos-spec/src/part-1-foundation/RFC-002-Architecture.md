@@ -2005,7 +2005,16 @@ The following ADRs are initially required.
 | ADR-002-029 | Software Supply-Chain Integrity, Release-Artifact Admission, and Deployment Provenance Governance | Proposed |
 | ADR-002-030 | Post-Trade Economic Obligations, Settlement Finality, and Conservative Account-State Governance | Proposed |
 
-ADR-002-002 through ADR-002-030 are authored as co-located `Proposed` decisions. The Phase B design order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on RCL consensus, final-egress security, safety-configuration governance, human-authority governance, evidence-integrity, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live-promotion, safety-deviation, safety-incident, safety-monitoring, software-supply-chain, and post-trade-finality decisions ADR-002-012 → ADR-002-013 → ADR-002-014 → ADR-002-015 → ADR-002-016 → ADR-002-017 → ADR-002-018 → ADR-002-019 → ADR-002-020 → ADR-002-021 → ADR-002-022 → ADR-002-023 → ADR-002-024 → ADR-002-025 → ADR-002-026 → ADR-002-027 → ADR-002-028 → ADR-002-029 → ADR-002-030 are complete at authorship level only. VER-002-001 and the Evidence Register now cover ADR-002-001 through ADR-002-030, including one-to-one dedicated cases for ADR-002-005 through ADR-002-030. All 372 registered evidence items remain `NOT_IMPLEMENTED`; registration is not execution and does not change ADR or live-readiness status. The Wave-4 Part-2/3 register consolidation discharged the recorded evidence debt into the Evidence Register (now 372) and established the separate development-track register EVIDENCE-REGISTER-DEV (96 items).
+**Historical Wave-4 snapshot (not current status).** ADR-002-002 through
+ADR-002-030 were authored as co-located `Proposed` decisions. The Phase B design
+order ADR-002-009 → ADR-002-011 → ADR-002-010 and the follow-on decisions through
+ADR-002-030 were complete at authorship level only. VER-002-001 and the Evidence
+Register covered ADR-002-001 through ADR-002-030, including one-to-one dedicated
+cases for ADR-002-005 through ADR-002-030. At that Wave-4 checkpoint all 372
+registered Part-1 evidence items were `NOT_IMPLEMENTED`, and the separate
+development-track register was established with 96 items. Those numbers are
+historical merge-map facts; `../CURRENT-STATUS.md` is the generated current view.
+Registration is not execution and does not change ADR or live-readiness status.
 
 ---
 

@@ -65,22 +65,25 @@ Decision records (the `ADR-DEV` series, resolving Part-3 RFC open questions):
 
 ## Status
 
-- **Part 1 — Foundation.** The safety ADRs remain `Proposed`. Verification cases and
-  registers define required work but are not executed evidence. See
-  [Architecture Gate Status](src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md) for
-  the current authorization state.
-- **Part 2 — Decision Framework.** RFC-003 through RFC-007 are `0.1 Review Draft`.
-- **Part 3 — Development.** RFC-008 through RFC-011 are `0.1 Review Draft`; each has
-  completed an independent adversarial EV-L0 document review (`PASS-WITH-FIXES`, no
-  Critical finding). The `ADR-DEV` decision records resolve the RFCs' open questions;
-  the complete 15-record `ADR-DEV` series (ADR-DEV-001 through -015) is authored, each at
-  `0.1 Review Draft`, and **each has passed an independent adversarial EV-L0 review**
-  (`PASS-WITH-FIXES`; ADR-DEV-011 and -013 raised a Critical and a set of Majors
-  respectively that were resolved, ADR-DEV-011 additionally passing a confirming
-  re-review). The EV-L0 reviews confer no acceptance and no live-readiness.
+The deterministic [Current TOS Status](src/CURRENT-STATUS.md) is generated from
+canonical document headers, the two evidence-register CSVs, and
+`src/AUTHORITY-STATUS.csv`. It currently keeps these independent facts separate:
 
-A Review Draft — and any EV-L0 review it carries — confers no acceptance and no
-live-readiness; those are governed by RFC-001 and VER-002-001.
+- all 13 RFC-class baselines are `Ratified`;
+- all 45 ADRs remain `Proposed`;
+- Part 1 has 372 evidence rows: 292 `NOT_IMPLEMENTED`, 79 `READY`, and 1 `PASS`;
+- the development register has 118 `NOT_IMPLEMENTED` rows, including twelve
+  Proposed economic-viability and eight Proposed investment-operating cases;
+- restricted-live and production authorization are both `NOT_AUTHORIZED`.
+
+Ratification, document review, implementation, registration, unit tests, and an
+evidence `PASS` do not confer ADR acceptance or live readiness. See
+[Architecture Gate Status](src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md) for
+the governance record and open decision gates.
+
+The non-authorizing [Migration and Conformance Register](src/MIGRATION-CONFORMANCE-REGISTER.md)
+maps configured legacy broker routes, all TOS packages and trust seams, cutover/
+rollback/direct-egress criteria, and the still-Proposed Q5/Q6 debt.
 
 Verification assets are under `src/part-1-foundation/verification/`; source review
 patches remain under `src/part-1-foundation/patches/` for provenance and are not
