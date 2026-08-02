@@ -127,6 +127,32 @@ def test_generated_output_drift_fails_check(tmp_path, monkeypatch):
     assert status.main(["--check", "--root", str(tmp_path)]) == 1
 
 
+def test_document_census_ignores_noncanonical_working_artifacts(tmp_path):
+    source_root = tmp_path / "tos-spec/src"
+    source_root.mkdir(parents=True)
+    (source_root / "RFC-001-example.md").write_text(
+        "# RFC\n\n**Status:** Ratified\n", encoding="utf-8"
+    )
+    (source_root / "ADR-002-001-example.md").write_text(
+        "# ADR\n\n**Status:** Proposed\n", encoding="utf-8"
+    )
+    patch_dir = source_root / "part-1-foundation/patches"
+    patch_dir.mkdir(parents=True)
+    (patch_dir / "ADR-002-001-Patch-0043.md").write_text(
+        "# Non-canonical patch artifact without a status header\n", encoding="utf-8"
+    )
+    review_dir = source_root / "part-1-foundation/reviews"
+    review_dir.mkdir(parents=True)
+    (review_dir / "RFC-000-Review-0001.md").write_text(
+        "# Non-canonical review artifact without a status header\n", encoding="utf-8"
+    )
+
+    documents, adrs = status.load_document_states(source_root)
+
+    assert documents == {"RATIFIED": 1}
+    assert adrs == {"PROPOSED": 1}
+
+
 def test_traceability_table_rejects_undefined_safe_id(tmp_path):
     adr = tmp_path / "ADR-002-999-example.md"
     adr.write_text(

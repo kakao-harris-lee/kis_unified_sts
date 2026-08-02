@@ -123,6 +123,7 @@ _STATUS_HEADER = re.compile(
 _DOCUMENT_NAME = re.compile(r"^(?:RFC-\d{3}|GOV-\d{3})-")
 _ADR_NAME = re.compile(r"^ADR-(?:002|DEV)-\d{3}-")
 _PART1_ADR_NAME = re.compile(r"^(ADR-002-\d{3})-")
+_NON_CANONICAL_SOURCE_DIRS = frozenset({".omc", "patches", "reviews"})
 _TRACEABILITY_HEADING = re.compile(
     r"^##\s+\d+(?:\.\d+)?\.?\s+(?:Requirements\s+)?Traceability\s*$",
     re.MULTILINE,
@@ -354,6 +355,8 @@ def load_document_states(source_root: Path) -> tuple[Counter[str], Counter[str]]
     documents: Counter[str] = Counter()
     adrs: Counter[str] = Counter()
     for path in sorted(source_root.rglob("*.md")):
+        if _NON_CANONICAL_SOURCE_DIRS.intersection(path.relative_to(source_root).parts):
+            continue
         if _DOCUMENT_NAME.match(path.name):
             documents[_header_state(path, DOCUMENT_STATES)] += 1
         elif _ADR_NAME.match(path.name):
