@@ -619,8 +619,10 @@ def assert_order_available(deposit_output: Any, parsed: Any) -> dict[str, Any]:
         raise RealOrderAbort(
             ABORT_ORDER_AVAILABLE_ZERO,
             f"order-available amount is zero or unreadable ({record}). Stage 2 "
-            "cannot be authorised: fund the account or fix the wiring, then "
-            "re-run stage 1.",
+            "cannot be authorised. Per operator policy the real futures account "
+            "is deliberately never funded, so a true zero is a TERMINAL verdict "
+            "(not a fundable state). Only if the amount is UNREADABLE (not a "
+            "genuine zero) fix the wiring and re-run stage 1.",
         )
     record["order_available_krw"] = str(usable)
     return record
