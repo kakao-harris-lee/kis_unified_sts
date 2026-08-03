@@ -197,3 +197,38 @@ class TestFlattenAllAsync:
         kwargs = force_close.close_for_kill_switch.call_args.kwargs
         assert kwargs["reason"] == "custom_reason"
         assert kwargs["now_ms"] == 12345
+
+
+class TestBuildAndRunConstruction:
+    """Regression: KISClient is constructed config-only (no auth_manager kwarg).
+
+    Guards the crash where the script called
+    ``KISClient(config=..., auth_manager=...)`` against a constructor that takes
+    ``config`` only — an unconditional ``TypeError`` on every operator run with
+    zero test coverage. Exercises the dry-run path (``--confirm`` absent), which
+    constructs the REAL ``KISClient(config=...)`` and reads the balance, but
+    stops before wiring any executor / issuing any order. Only the network read
+    ``get_futures_balance`` is stubbed — no KIS network / live order is touched.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dry_run_constructs_client_and_reads_balance(
+        self, monkeypatch, capsys
+    ):
+        import shared.kis.client as kis_client_mod
+
+        raw = [{"code": "A05603", "side": "BUY", "quantity": 1, "avg_price": 331.2}]
+        balance_mock = AsyncMock(return_value=raw)
+        monkeypatch.setattr(
+            kis_client_mod.KISClient, "get_futures_balance", balance_mock
+        )
+
+        args = SimpleNamespace(confirm=False, reason="test")
+        rc = await _module._build_and_run(args)
+
+        # Dry-run returns 0 and lists the fetched position; no order issued.
+        assert rc == 0
+        assert balance_mock.await_count == 1
+        out = capsys.readouterr().out
+        assert "A05603" in out
+        assert "Re-run with --confirm" in out

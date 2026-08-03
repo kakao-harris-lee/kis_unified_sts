@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -136,6 +137,73 @@ async def test_get_futures_balance_normalizes_hyphenated_account(mock_auth_manag
         assert call_args[1]["headers"]["tr_id"] == "CTFO6118R"
         assert call_args[1]["params"]["CANO"] == "12345678"
         assert call_args[1]["params"]["ACNT_PRDT_CD"] == "01"
+
+
+@pytest.mark.asyncio
+async def test_get_futures_balance_sends_required_margin_params(
+    mock_auth_manager, caplog
+):
+    """CTFO6118R requires MGNA_DVSN + EXCC_STAT_CD; SORT_SQN is not a valid param.
+
+    Regression guard: KIS rejected the request with
+    ``증거금구분코드은(는) 필수입력 항목입니다.`` when MGNA_DVSN was omitted,
+    which silently returned []. This asserts the outgoing params carry the
+    required margin/settlement codes, drop the non-spec SORT_SQN, and that an
+    rt_cd="0" response with empty output1 yields [] cleanly (no error log).
+    """
+    config = KISAuthConfig(app_key="test", app_secret="test", is_real=True)
+    client = KISClient(config)
+
+    with (
+        patch("aiohttp.ClientSession.get") as mock_get,
+        patch.dict(os.environ, {"KIS_FUTURES_ACCOUNT_NO": "12345678-03"}, clear=False),
+        caplog.at_level(logging.ERROR, logger="shared.kis.client"),
+    ):
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json.return_value = {"rt_cd": "0", "output1": []}
+        mock_get.return_value.__aenter__.return_value = mock_resp_obj
+
+        client._session = MagicMock()
+        client._session.get = mock_get
+
+        positions = await client.get_futures_balance()
+        assert positions == []
+
+        params = mock_get.call_args[1]["params"]
+        # Required by the CTFO6118R spec (defaults: 개시증거금 / 정산).
+        assert params["MGNA_DVSN"] == "01"
+        assert params["EXCC_STAT_CD"] == "1"
+        # Non-spec param must not be sent.
+        assert "SORT_SQN" not in params
+        # Clean empty-balance path must not log an error.
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@pytest.mark.asyncio
+async def test_get_futures_balance_forwards_custom_margin_params(mock_auth_manager):
+    """Callers may override the margin/settlement codes via kwargs."""
+    config = KISAuthConfig(app_key="test", app_secret="test", is_real=True)
+    client = KISClient(config)
+
+    with (
+        patch("aiohttp.ClientSession.get") as mock_get,
+        patch.dict(os.environ, {"KIS_FUTURES_ACCOUNT_NO": "12345678-03"}, clear=False),
+    ):
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json.return_value = {"rt_cd": "0", "output1": []}
+        mock_get.return_value.__aenter__.return_value = mock_resp_obj
+
+        client._session = MagicMock()
+        client._session.get = mock_get
+
+        positions = await client.get_futures_balance(mgna_dvsn="02", excc_stat_cd="2")
+        assert positions == []
+
+        params = mock_get.call_args[1]["params"]
+        assert params["MGNA_DVSN"] == "02"
+        assert params["EXCC_STAT_CD"] == "2"
 
 
 @pytest.mark.asyncio

@@ -572,13 +572,6 @@ class UnifiedTradingAnalyzer(FuturesAnalysisMixin):
         """주식 분석 (다중 데이터 소스 활용)"""
         return await _stock_analysis.analyze_stocks(self, intraday=intraday)
 
-    @staticmethod
-    @staticmethod
-    @staticmethod
-    @staticmethod
-    @staticmethod
-    @staticmethod
-    @staticmethod
     async def _send_telegram_alerts(
         self,
         stock_plans: list[StockTradingPlan],

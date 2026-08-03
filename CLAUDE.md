@@ -33,6 +33,7 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
 - Stock swing exits are signal-driven. Do not add blanket EOD liquidation.
 - Futures must preserve long/short symmetry. Entry/exit direction follows
   `signal_direction`.
+- The real futures account is never funded with margin (operator directive): dev-stage mis-orders plus fast-compounding futures losses make real margin unacceptable. Never propose, script, or gate work on depositing margin. Real-money futures order paths — the P-R5 stage-2 probe and anything that emits real futures orders — are permanently blocked by policy; a zero-deposit preflight ABORT is a terminal verdict, not "pending funding". GET-only real reads are fine; measurements needing a real fill use the mock-derived bound.
 
 ## Current Runtime Architecture
 
@@ -92,6 +93,7 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
 - Decoupled futures services are available through Compose profiles
   `futures-ingest`, `futures-pipeline`, and `futures-killswitch`; perform cutover
   only via `docs/runbooks/futures-pipeline-cutover-f9.md`.
+- Real futures account is never funded — see Non-Negotiable Rules. Real-money order probes (P-R5 stage 2) are policy-blocked; paper stays VirtualBroker (real orders 0).
 
 ## Storage And Data
 

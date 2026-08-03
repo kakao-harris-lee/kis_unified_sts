@@ -149,7 +149,7 @@ async def _build_and_run(args: argparse.Namespace) -> int:
     from shared.execution.fill_logger import FillLogger
     from shared.execution.force_close import ForceCloseExecutor
     from shared.execution.kis_futures_adapter import KISFuturesAdapter
-    from shared.kis.auth import KISAuthConfig, KISAuthManager
+    from shared.kis.auth import KISAuthConfig
     from shared.kis.client import KISClient
     from shared.kis.futures_feed import KISFuturesPriceFeed
 
@@ -159,7 +159,9 @@ async def _build_and_run(args: argparse.Namespace) -> int:
         app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
         is_real=os.environ.get("KIS_FUTURES_MARKET", "real").lower() == "real",
     )
-    kis_client = KISClient(config=auth_config, auth_manager=KISAuthManager(auth_config))
+    # KISClient builds/reuses its own KISAuthManager singleton from config
+    # (KISAuthManager.get_instance(config)); it takes config only.
+    kis_client = KISClient(config=auth_config)
     try:
         broker_positions = await kis_client.get_futures_balance(
             account_no=os.environ.get("KIS_FUTURES_ACCOUNT_NO", "")

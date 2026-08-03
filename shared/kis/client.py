@@ -1020,10 +1020,25 @@ class KISClient(AsyncSessionMixin):
             KISApiErrorRateTracker.get_instance().record_error()
             return []
 
-    async def get_futures_balance(self, account_no: str = "") -> list[dict[str, Any]]:
+    async def get_futures_balance(
+        self,
+        account_no: str = "",
+        mgna_dvsn: str = "01",
+        excc_stat_cd: str = "1",
+    ) -> list[dict[str, Any]]:
         """선물옵션 잔고조회 (CTFO6118R).
 
         NOTE: 모의서버는 선물 잔고조회 미지원. is_real=True 필수.
+
+        Args:
+            account_no: 계좌번호(하이픈 허용). 미지정 시 환경설정에서 해석.
+            mgna_dvsn: 증거금 구분(필수). "01"=개시증거금, "02"=유지증거금.
+            excc_stat_cd: 정산상태코드(필수). "1"=정산, "2"=본정산.
+
+        Both ``mgna_dvsn`` and ``excc_stat_cd`` are required by the CTFO6118R
+        TR; omitting ``MGNA_DVSN`` makes KIS reject the request with
+        ``증거금구분코드은(는) 필수입력 항목입니다.`` and the call silently
+        returns []. Defaults match the KIS official wrapper example.
 
         Returns list of dicts with: code, name, side, quantity, avg_price,
         current_price, unrealized_pnl.
@@ -1051,7 +1066,8 @@ class KISClient(AsyncSessionMixin):
         params = {
             "CANO": account_no[:8],
             "ACNT_PRDT_CD": account_no[8:10],
-            "SORT_SQN": "DS",
+            "MGNA_DVSN": mgna_dvsn,
+            "EXCC_STAT_CD": excc_stat_cd,
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": "",
         }
