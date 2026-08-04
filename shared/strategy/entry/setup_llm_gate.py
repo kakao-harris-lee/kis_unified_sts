@@ -178,7 +178,18 @@ def apply_llm_tuning_setup_c(
         return None, "llm_short_blocked"
 
     adjusted_confidence = float(decision_signal.confidence)
-    if regime == tuning.bull_strong_regime and risk_mode == "RISK_ON":
+    # Deliberate asymmetry (long/short symmetry rule, CLAUDE.md).
+    # The bull-strong boost divides confidence by atr_loose_factor (< 1.0), so
+    # it LOOSENS admission. It is long-only by design: a bullish LLM read must
+    # never make a SHORT candidate easier to admit. There is intentionally NO
+    # symmetric bear-strong boost for shorts — adding one would be new trading
+    # behaviour. Net effect: no path in this helper loosens short admission;
+    # shorts can only be blocked (above) or pass through unchanged.
+    if (
+        direction == "long"
+        and regime == tuning.bull_strong_regime
+        and risk_mode == "RISK_ON"
+    ):
         boosted = adjusted_confidence / tuning.atr_loose_factor
         adjusted_confidence = min(boosted, 1.0)
         logger.debug(

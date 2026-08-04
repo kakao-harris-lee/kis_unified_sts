@@ -806,6 +806,45 @@ def _long_breakout_context(*, market_context: object | None = None) -> EntryCont
     )
 
 
+def _short_breakout_context(
+    *, market_context: object | None = None, event_id: str = "event_001"
+) -> EntryContext:
+    """Return a short-breakout EntryContext that produces a valid Setup C short signal.
+
+    Mirror image of :func:`_long_breakout_context`: price breaks *below*
+    ``last_15min_low`` by less than ``breakout_buffer_atr_mult × atr``
+    (349.0 - 348.8 = 0.2 < 0.5 × 0.8 = 0.4).
+    """
+    event = _make_event(event_id=event_id, impact_tier=1, scheduled_at=_kst(9, 20))
+    return EntryContext(
+        market_data=_market_data_for_event_breakout(
+            current_price=348.8,
+            last_15min_high=350.0,
+            last_15min_low=349.0,
+            atr=0.8,
+        ),
+        indicators={},
+        timestamp=_kst(9, 30),
+        market_context=market_context,
+        metadata={"scheduled_events": [event]},
+    )
+
+
+async def _setup_c_deterministic_confidence(
+    context_factory: object,
+) -> float:
+    """Return the no-LLM baseline confidence for a Setup C scenario.
+
+    ``context_factory`` is a zero-arg callable returning a fresh EntryContext
+    with ``market_context=None``. A fresh adapter is used so the setup's
+    in-memory ``EventTradeTracker`` does not deduplicate the run away.
+    """
+    raw_adapter = _setup_c_adapter_with_llm_tuning(enabled=False)
+    raw_result = await raw_adapter.generate(context_factory())
+    assert raw_result is not None, "deterministic baseline must emit a signal"
+    return float(raw_result.confidence)
+
+
 class TestSetupALLMTuning:
     """Phase 1.1-c: LLM-aware threshold tuning for Setup A."""
 
@@ -1132,6 +1171,154 @@ class TestSetupCLLMTuning:
         result = await adapter.generate(context)
         assert result is not None
         assert result.metadata["direction"] == "long"
+
+
+class TestSetupCLLMLongShortSymmetry:
+    """Long/short symmetry contract for the Setup C LLM confidence boost.
+
+    CLAUDE.md non-negotiable: "Futures must preserve long/short symmetry."
+    The BULL_STRONG + RISK_ON boost divides confidence by ``atr_loose_factor``
+    (< 1.0), i.e. it *loosens* admission. A bullish LLM read must never loosen
+    admission for a SHORT candidate.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bull_strong_risk_on_does_not_boost_short(self):
+        """SHORT + BULL_STRONG + RISK_ON → emitted confidence is EXACTLY the baseline.
+
+        Regression guard for the direction-blind boost: before the fix the
+        short's confidence was multiplied by 1 / 0.8 = 1.25, making a short
+        easier to admit under a strongly bullish LLM read.
+        """
+        baseline = await _setup_c_deterministic_confidence(
+            lambda: _short_breakout_context(market_context=None)
+        )
+
+        adapter = _setup_c_adapter_with_llm_tuning(
+            enabled=True,
+            bull_strong_regime="BULL_STRONG",
+            atr_loose_factor=0.8,
+        )
+        llm_ctx = _llm_context(
+            regime="BULL_STRONG",
+            risk_mode_name="RISK_ON",
+            risk_score=30.0,
+            confidence=0.9,
+        )
+        result = await adapter.generate(_short_breakout_context(market_context=llm_ctx))
+
+        assert result is not None
+        assert result.metadata["direction"] == "short"
+        assert result.confidence == pytest.approx(baseline, abs=1e-12), (
+            "a bullish LLM read must not change a SHORT candidate's confidence; "
+            f"got {result.confidence!r} vs deterministic baseline {baseline!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_bull_strong_risk_on_still_boosts_long(self):
+        """LONG + BULL_STRONG + RISK_ON → boost preserved (baseline / 0.8, capped at 1.0).
+
+        Guards against the fix silently deleting the intended long-side boost.
+        """
+        baseline = await _setup_c_deterministic_confidence(
+            lambda: _long_breakout_context(market_context=None)
+        )
+
+        adapter = _setup_c_adapter_with_llm_tuning(
+            enabled=True,
+            bull_strong_regime="BULL_STRONG",
+            atr_loose_factor=0.8,
+        )
+        llm_ctx = _llm_context(
+            regime="BULL_STRONG",
+            risk_mode_name="RISK_ON",
+            risk_score=30.0,
+            confidence=0.9,
+        )
+        result = await adapter.generate(_long_breakout_context(market_context=llm_ctx))
+
+        expected = min(baseline / 0.8, 1.0)
+        assert result is not None
+        assert result.metadata["direction"] == "long"
+        assert expected > baseline, "fixture must produce an observable boost"
+        assert result.confidence == pytest.approx(expected, abs=1e-12)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "regime",
+        [
+            "BULL_STRONG",
+            "BULL_MODERATE",
+            "NEUTRAL",
+            "BEAR_MODERATE",
+            "BEAR_STRONG",
+        ],
+    )
+    @pytest.mark.parametrize("risk_mode_name", ["RISK_ON", "NEUTRAL", "RISK_OFF"])
+    async def test_no_llm_context_makes_a_short_easier_to_admit(
+        self, regime: str, risk_mode_name: str
+    ):
+        """Property: for SHORT candidates, confidence_after_llm <= confidence_deterministic.
+
+        Stated as an inequality over the whole regime × risk_mode grid so it
+        keeps holding if another loosening branch is added later.
+        """
+        baseline = await _setup_c_deterministic_confidence(
+            lambda: _short_breakout_context(market_context=None)
+        )
+
+        adapter = _setup_c_adapter_with_llm_tuning(
+            enabled=True,
+            bull_strong_regime="BULL_STRONG",
+            atr_loose_factor=0.8,
+        )
+        llm_ctx = _llm_context(
+            regime=regime,
+            risk_mode_name=risk_mode_name,
+            risk_score=30.0,
+            confidence=0.9,
+        )
+        result = await adapter.generate(_short_breakout_context(market_context=llm_ctx))
+
+        if result is None:
+            return  # dropped entirely — strictly harder to admit
+        assert result.metadata["direction"] == "short"
+        assert result.confidence <= baseline + 1e-12, (
+            f"regime={regime} risk_mode={risk_mode_name} loosened SHORT admission: "
+            f"{result.confidence!r} > baseline {baseline!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_long_blocked_regime_still_blocks_long(self):
+        """The long_blocked_regimes gate is untouched by the boost fix."""
+        adapter = _setup_c_adapter_with_llm_tuning(
+            enabled=True,
+            long_blocked_regimes=["BEAR_STRONG"],
+        )
+        llm_ctx = _llm_context(
+            regime="BEAR_STRONG", risk_mode_name="RISK_ON", confidence=0.8
+        )
+        result = await adapter.generate(_long_breakout_context(market_context=llm_ctx))
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_short_blocked_regime_still_blocks_short(self):
+        """The short_blocked_regimes gate is untouched by the boost fix.
+
+        BULL_STRONG + RISK_ON is exactly the branch that used to boost shorts;
+        with BULL_STRONG configured as a short-blocked regime the short must be
+        dropped before any confidence adjustment is reached.
+        """
+        adapter = _setup_c_adapter_with_llm_tuning(
+            enabled=True,
+            bull_strong_regime="BULL_STRONG",
+            short_blocked_regimes=["BULL_STRONG"],
+        )
+        llm_ctx = _llm_context(
+            regime="BULL_STRONG", risk_mode_name="RISK_ON", confidence=0.8
+        )
+        result = await adapter.generate(_short_breakout_context(market_context=llm_ctx))
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
