@@ -33,7 +33,17 @@ class LLMTuningConfig(BaseModel):
             RISK_OFF regime triggers the confidence multiplier.
         risk_off_confidence_multiplier: Setup-A only.  Multiplier applied to
             the candidate signal's confidence under RISK_OFF + high risk_score.
-            Values > 1.0 raise the effective bar (fewer signals pass through).
+            The confidence is multiplied, so values < 1.0 lower it (penalty
+            mode: stricter) and values > 1.0 raise it.  A raised confidence
+            makes admission EASIER, not harder: downstream the signal is
+            admitted by ``confidence >= StrategyManagerConfig.min_confidence``
+            and entry contention is ordered by descending confidence, so a
+            larger multiplier both clears the floor more readily and wins
+            priority under ``max_positions``.
+            OPERATOR REVIEW PENDING: the live futures value is 1.3, which
+            loosens Setup-A admission under a RISK_OFF read.  Whether that is
+            intended is an operator decision; this docstring previously
+            asserted the opposite effect and may have informed that setting.
         bull_strong_regime: Setup-C only.  Regime label that triggers the ATR
             loose-factor boost (typically ``"BULL_STRONG"``).
         atr_loose_factor: Setup-C only.  Factor < 1.0 that loosens the
