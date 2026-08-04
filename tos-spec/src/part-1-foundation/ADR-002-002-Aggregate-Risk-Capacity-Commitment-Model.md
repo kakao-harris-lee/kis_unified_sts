@@ -1612,15 +1612,41 @@ Expansion is permitted only after:
 
 ---
 
-## 38.1 Requirements Traceability
+## 38.1 Requirements Traceability — Source Gap
 
-This table transcribes only RFC-002 §9.1's existing allocation and this ADR's
-existing RC acceptance family. It introduces no new SAFE, HAZ, evidence ID, or
-requirement allocation.
+**This ADR has no direct Requirements Traceability table because no source
+document allocates any RFC-001 SAFE requirement to ADR-002-002.**
 
-| Requirement | Existing claimed allocation | Registered evidence family |
+This section records the gap; it does not close it. Unlike ADR-002-003 through
+ADR-002-006, whose traceability tables transcribe their own `Depends On`
+headers character-for-character, ADR-002-002 declares no `Depends On` header,
+and the reverification below found no substitute source:
+
+| Candidate source | What it actually says | Why it is not an allocation to ADR-002-002 |
 |---|---|---|
-| SAFE-013, SAFE-015 | RFC-002 §9.1 assigns aggregate-risk authority and exclusive risk-capacity commitment to the ADR-002-002 mechanism; §§7–8 preserve the policy-authority / linearizable-ledger boundary | RC-EV-001..018 (§33; VER-002-001 and EVIDENCE-REGISTER-002) |
+| RFC-002 §5 Architecture Drivers | `Aggregate risk authority \| SAFE-013, SAFE-015` | Maps an architecture *driver* to its principal requirements. Names no ADR. |
+| RFC-002 §9.1 Authority Ownership | Action / policy-authority / state-transition matrix; cites ADR-002-002 for the protective-lease transition function | Contains **no SAFE identifier of any kind**. It allocates authority to components, not requirements to ADRs. |
+| RFC-002 §27 Requirements Traceability Matrix | SAFE-013 → Aggregate Risk State Snapshot, Aggregate Risk Authority, Risk Capacity Ledger, admitted risk-runtime artifacts; SAFE-015 → Risk Capacity Ledger, Action Flow Permit, ordered Egress Currentness Proof | Allocates each SAFE to **component names**, not to an ADR. A component named here is not thereby an ADR allocation. |
+| RFC-001 Safety Case | No occurrence of the string `ADR-002-002` | Allocates nothing to this ADR. |
+
+An earlier revision of this section asserted that RFC-002 §9.1 assigns
+SAFE-013 and SAFE-015 to the ADR-002-002 mechanism. That assertion was not
+supported by §9.1 or by any other source and has been reverted.
+
+**Closing this gap is an amendment, not a transcription.** Because SAFE
+requirements are defined by RFC-001 and allocated by RFC-002 — both Ratified —
+any future allocation of a SAFE requirement to ADR-002-002 SHALL proceed
+through the GOV-001 G6 amendment and re-ratification process against RFC-002
+(allocation) or RFC-001 (requirement), together with the G6 citation-integrity
+re-check. It SHALL NOT be introduced by adding a table to this ADR.
+
+Until such an amendment exists, the RC-EV-001..018 acceptance family (§33;
+VER-002-001 and EVIDENCE-REGISTER-002) remains registered and owned by this
+ADR, but is **not reachable through the SAFE→ADR bridge** of
+TRACEABILITY-MATRIX-002. That matrix lists ADR-002-002 as its one remaining
+direct-source gap (§5.3). This gap is a source-document defect, not an absence
+of evidence, and it changes no requirement, evidence ID, ADR status, or
+authority.
 
 ---
 

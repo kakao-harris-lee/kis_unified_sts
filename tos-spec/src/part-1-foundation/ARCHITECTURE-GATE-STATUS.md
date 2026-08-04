@@ -196,7 +196,7 @@ The review files were section-level amendments, not canonical-document diffs. Th
 - Patch-local section numbers are provenance only; canonical section numbers now govern.
 - ADR IDs remain ADR-002-001 through ADR-002-030; ADR-002-002 through ADR-002-030 remain Proposed.
 - Every `SAFE-xxx` identifier in the RFC-002 and ADR-002-001 traceability tables exists in RFC-001.
-- The Evidence Register contains 363 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, SCI, and PTF coverage for ADR-002-005 through ADR-002-030. Registration created no verification evidence or live authority.
+- At that wave the Evidence Register contained 363 `NOT_IMPLEMENTED` items, including one-to-one STATE, RECON, TIME, REARM, FD, PR, NT, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, SCI, and PTF coverage for ADR-002-005 through ADR-002-030. Registration created no verification evidence or live authority.
 
 ### 3.4 DR-0001 Single-Operator Live Governance (CR-02, option (c))
 
@@ -757,7 +757,9 @@ committed merge record.
 > These ratifications close the Part-3 authoring track and, with it, the ratification track for
 > the corpus's normative RFCs — RFC-000..011 plus GOV-001 v0.1 are all Ratified. They confer no
 > live authorization, no ADR acceptance, and no capacity (GOV-001 G1/G8): every registered item
-> remains `NOT_IMPLEMENTED` (372/98), all ADR-002-xxx and ADR-DEV-xxx remain Proposed, and the
+> was `NOT_IMPLEMENTED` at that point (372/98; the Part-1 register now reads
+> 292 `NOT_IMPLEMENTED`, 79 `READY`, and 1 `PASS`, and the development register now holds 118 rows), all
+> ADR-002-xxx and ADR-DEV-xxx remain Proposed, and the
 > DEC-EV / TEST-EV-001 / ADR-DEV evidence obligations stay on the acceptance track. No
 > normative-RFC ratification candidate remains; the remaining tracks are the ADR acceptance/
 > evidence gate (ADR-002-001..030 and ADR-DEV-001..015) and the VER-002-001 / VER-DEV-001 approval
@@ -815,8 +817,8 @@ ratification rules require every `value_ms` to be confirmed by the accountable o
 which those same rules list as a precondition of a future `APPROVED` transition rather than a
 consequence of one. Actual/template key sets remain identical at 257 keys (91 scope, 84 bounds,
 79 limits, 3 review). No SAFE-xxx requirement, no invariant, no acceptance criterion, and no EV ID
-is introduced; the Evidence Register count is unchanged (Part-1 372) and all 372 items remain
-`NOT_IMPLEMENTED`. A key with an approved value is not executed evidence: EV-L1 is a pure predicate
+is introduced; the Evidence Register count is unchanged (Part-1 372) and at that point all 372
+items were `NOT_IMPLEMENTED` (the register now reads 292 `NOT_IMPLEMENTED`, 79 `READY`, and 1 `PASS`). A key with an approved value is not executed evidence: EV-L1 is a pure predicate
 level that consumes no wall-clock threshold, so these values are ceilings the EV-L2/L3 harness will
 enforce, not measurements. Independent EV-L0 review of both acts is owed.
 
@@ -945,6 +947,44 @@ anywhere in the template. Independent EV-L0 review is owed.
 
 ---
 
+### 3.25 Post-ratification currency edit to RFC-002 §26 (commit `acd45c43`) — MATERIALITY DETERMINATION PENDING
+
+**RFC-002 is Ratified (v0.6).** On 2026-08-02, commit `acd45c43` edited RFC-002
+§26 (Architectural Decision Records) without an amendment record. This entry
+registers that fact; it does not classify the edit, ratify it, or re-ratify
+RFC-002.
+
+**What changed.** The closing paragraph of §26 carried a present-tense status
+claim — "All 372 registered evidence items remain `NOT_IMPLEMENTED`" and a
+development-track register of "96 items". Both had been overtaken by the
+register's own contents (Part-1 is now 292 `NOT_IMPLEMENTED` / 79 `READY` /
+1 `PASS`; the development register holds 118 rows). The edit relabelled the
+paragraph as a **historical Wave-4 snapshot**, converted its claims to past
+tense, and pointed readers to the generated `../CURRENT-STATUS.md` for current
+status. No SAFE-xxx requirement, invariant, ADR status, evidence ID, numeric
+bound, or authority was added, removed, or changed, and no count was restated
+as a new current figure.
+
+**Why it is registered rather than dispositioned.** GOV-001 G6 requires that
+any **material** change to a Ratified document proceed through the RFC-000 §18
+amendment process with re-ratification, and triggers a citation-integrity
+re-check where a change touches a clause named in another Ratified document's
+cited-version pins. Whether correcting a stale, self-falsifying status
+narration to an explicitly historical one is *material* — or is instead a
+non-material currency correction outside G6 — is a **System Owner
+determination, not an editorial one**. It is therefore recorded here as open.
+
+**Standing until determined.** RFC-002 remains Ratified at v0.6 and its
+cited-version pins are unchanged; this entry asserts no version increment. If
+the System Owner determines the edit was material, an RFC-000 §18 amendment
+and re-ratification (plus the G6 citation-integrity re-check) are owed
+retroactively. If non-material, this entry stands as the record. Either way the
+edit creates no evidence, acceptance, capacity, or live readiness. RFC-002's own
+Last Updated and Review History are maintained separately and are not restated
+here. Independent EV-L0 review of this determination is owed.
+
+---
+
 ## 4. Remaining Architecture and Acceptance Work
 
 ADR-002-005 through ADR-002-030 are authored as `Proposed`. Phase B and follow-on RCL-consensus, final-egress-security, safety-configuration-governance, human-authority-governance, evidence-integrity/replay, safe-start/recovery-barrier, Critical Input/decision-context, venue/session/tradability-constraint, Intent-to-order conformance, aggregate-risk evaluation, action-flow governance, independent proposal-approval, active-currentness, restricted-live/promotion-governance, safety-deviation/residual-risk-governance, safety-incident/controlled-shutdown-governance, safety-telemetry/continuous-monitoring-governance, software-supply-chain/runtime-artifact-admission, and post-trade economic-obligation/finality authorship are complete, but none of those decisions is accepted.
@@ -975,9 +1015,9 @@ The independent ADR-002-023 document review passed at EV-L0 with zero Critical, 
 
 The independent ADR-002-024 document review passed at EV-L0. No finding requiring disposition was supplied with that verdict. The review changes no ADR status: Currentness Policy, ordering domain, restrictive ingress, local latch, per-send proof, first-byte ordering, stale-generation fencing, security review, approved-bound, fault-injection, and executed CUR evidence gates remain open. At that review point all 291 registered items were `NOT_IMPLEMENTED`; no bound was approved, and the review created no currentness fact, capability, capacity, Accepted status, verification completion, or live readiness.
 
-The independent ADR-002-025 document review passed cleanly at EV-L0. No finding requiring disposition was supplied with that verdict. The review changes no ADR status: restricted-live trial policy, active-currentness, security-review, approved-bound, fault-injection, EV-L5, promotion, and executed RLP evidence gates remain open. All 303 registered items remain `NOT_IMPLEMENTED`, every new trial bound is unapproved, and the four new templates remain DRAFT/fail-closed/non-authorizing. The review creates no plan eligibility, restricted-live authorization, promotion eligibility, production authorization, Accepted status, verification completion, or live readiness.
+The independent ADR-002-025 document review passed cleanly at EV-L0. No finding requiring disposition was supplied with that verdict. The review changes no ADR status: restricted-live trial policy, active-currentness, security-review, approved-bound, fault-injection, EV-L5, promotion, and executed RLP evidence gates remain open. At that review point all 303 then-registered items were `NOT_IMPLEMENTED`, every new trial bound was unapproved, and the four new templates were DRAFT/fail-closed/non-authorizing. The review creates no plan eligibility, restricted-live authorization, promotion eligibility, production authorization, Accepted status, verification completion, or live readiness.
 
-The independent ADR-002-026 document, adversarial-sequence, integration, and traceability review passed cleanly at EV-L0 with zero Critical, Major, or Minor findings. WDR acceptance/evidence titles are exact 1:1 (WDR-AC-001..012 ↔ WDR-EV-001..012), the Non-Waivable Boundary is hard and non-erodable, a deviation is non-authorizing by itself and single-use/generation-fenced, self-approval and common-mode compensation are blocked, combined residual risk is conservatively aggregated at both request and activation, no executive/management-override carve-out exists, and expiry/revocation/recovery neither revive a deviation nor auto re-arm. Break-glass (ADR-002-015 §16) and configuration activation (ADR-002-014) relationships are non-circular. The review changes no ADR status: deviation-policy, effective-principal-quorum, compensating-control-evidence, Deviation Generation, currentness, security-review, approved-bound, fault-injection, and executed WDR evidence gates remain open. All 363 registered items remain `NOT_IMPLEMENTED`, Verification Profile `2.1-PROPOSED` remains unapproved, every deviation bound and limit is unapproved, and the five deviation templates remain DRAFT/fail-closed/non-authorizing. The review creates no approved deviation, residual-risk acceptance, compensating-control proof, configuration eligibility, evidence `PASS`, capacity, live authority, broker transmission, Accepted status, verification completion, or live readiness.
+The independent ADR-002-026 document, adversarial-sequence, integration, and traceability review passed cleanly at EV-L0 with zero Critical, Major, or Minor findings. WDR acceptance/evidence titles are exact 1:1 (WDR-AC-001..012 ↔ WDR-EV-001..012), the Non-Waivable Boundary is hard and non-erodable, a deviation is non-authorizing by itself and single-use/generation-fenced, self-approval and common-mode compensation are blocked, combined residual risk is conservatively aggregated at both request and activation, no executive/management-override carve-out exists, and expiry/revocation/recovery neither revive a deviation nor auto re-arm. Break-glass (ADR-002-015 §16) and configuration activation (ADR-002-014) relationships are non-circular. The review changes no ADR status: deviation-policy, effective-principal-quorum, compensating-control-evidence, Deviation Generation, currentness, security-review, approved-bound, fault-injection, and executed WDR evidence gates remain open. At that review point all 363 then-registered items were `NOT_IMPLEMENTED`, Verification Profile `2.1-PROPOSED` was unapproved, every deviation bound and limit was unapproved, and the five deviation templates were DRAFT/fail-closed/non-authorizing. The review creates no approved deviation, residual-risk acceptance, compensating-control proof, configuration eligibility, evidence `PASS`, capacity, live authority, broker transmission, Accepted status, verification completion, or live readiness.
 
 The independent ADR-002-027 document review passed at EV-L0. No finding requiring disposition was supplied with that verdict. The review changes no ADR status: incident policy, declaration, scope expansion, containment-plan, controlled-shutdown, recovery-handoff, closure, final-egress currentness, security-review, approved-bound, fault-injection, and executed SIR evidence gates remain open. At that review point, all 327 then-registered items were `NOT_IMPLEMENTED`, Verification Profile `1.8-PROPOSED` was unapproved, every new incident bound was unapproved, and the six new templates were DRAFT/fail-closed/non-authorizing. The review creates no incident restriction, containment-action authority, shutdown authorization, broker-finality proof, recovery readiness, administrative closure, scope restoration, capacity release, live authority, Accepted status, verification completion, or live readiness.
 
@@ -985,7 +1025,7 @@ The independent ADR-002-028 document review passed at EV-L0 with no unsafe path.
 
 The independent ADR-002-029 document and integration review passed cleanly at EV-L0 with zero Critical, Major, or Minor findings. SCI acceptance/evidence titles are exact 1:1, all 351 then-registered items remained `NOT_IMPLEMENTED`, and Profile `2.0-PROPOSED` remained unapproved. The review changes no ADR status: source/build/dependency/toolchain/signer/registry/admission/runtime-attestation implementation, security review, generation/currentness fencing, approved bounds, fault injection, and executed SCI evidence remain open.
 
-The independent ADR-002-030 document, adversarial-sequence, integration, and traceability review passed cleanly at EV-L0 with zero Critical, Major, or Minor findings. PTF acceptance/evidence titles are exact 1:1 (PTF-AC-001..012 ↔ PTF-EV-001..012), the non-authorizing/fail-closed/generation-fenced protocol keeps PTOL out of capacity, authority, external-egress, incident, scope, and re-arm ownership, statement common-mode is disclosed, corrections reopen field-specific finality, and status honesty holds with no premature Accepted/PASS claim. The upstream corpus (ADR-002-002/004/010/016/017/019/021 and RFC-002 §§9.1/10.32/23.1) already carries consistent bidirectional forward-references. The review changes no ADR status: obligation-compiler, PTOL, finality-recipe, statement-coverage, break/correction, RCL-coupling, currentness, security-review, approved-bound, fault-injection, and executed PTF evidence gates remain open. All 363 registered items remain `NOT_IMPLEMENTED`, Verification Profile `2.1-PROPOSED` remains unapproved, every new post-trade bound and limit is unapproved, and the six new templates remain DRAFT/fail-closed/non-authorizing. The review creates no obligation finality, statement completeness, settlement or cash availability, collateral eligibility, legal title, borrow discharge, capacity release, live authority, external transmission, Accepted status, verification completion, or live readiness.
+The independent ADR-002-030 document, adversarial-sequence, integration, and traceability review passed cleanly at EV-L0 with zero Critical, Major, or Minor findings. PTF acceptance/evidence titles are exact 1:1 (PTF-AC-001..012 ↔ PTF-EV-001..012), the non-authorizing/fail-closed/generation-fenced protocol keeps PTOL out of capacity, authority, external-egress, incident, scope, and re-arm ownership, statement common-mode is disclosed, corrections reopen field-specific finality, and status honesty holds with no premature Accepted/PASS claim. The upstream corpus (ADR-002-002/004/010/016/017/019/021 and RFC-002 §§9.1/10.32/23.1) already carries consistent bidirectional forward-references. The review changes no ADR status: obligation-compiler, PTOL, finality-recipe, statement-coverage, break/correction, RCL-coupling, currentness, security-review, approved-bound, fault-injection, and executed PTF evidence gates remain open. At that review point all 363 then-registered items were `NOT_IMPLEMENTED`, Verification Profile `2.1-PROPOSED` was unapproved, every new post-trade bound and limit was unapproved, and the six new templates were DRAFT/fail-closed/non-authorizing. The review creates no obligation finality, statement completeness, settlement or cash availability, collateral eligibility, legal title, borrow discharge, capacity release, live authority, external transmission, Accepted status, verification completion, or live readiness.
 
 ```text
 ADR-002-002 through ADR-002-018 status: Proposed; document review PASS
@@ -1013,7 +1053,7 @@ The Proposed status is preserved because the applicable approval gates, includin
 
 ### 4.2 Evidence Debt — DR-0001 / CR-02 (single-operator live governance)
 
-DR-0001 introduced one new Safety-Case requirement (RFC-001 SAFE-053) and five new ADR-002-015 invariants (HAG-INV-015 through HAG-INV-019) defining the Governed Single-Operator Re-Arm Variant. These carry verification-evidence obligations that are **deliberately not registered in EVIDENCE-REGISTER-002 in this wave**, to prevent evidence-count drift while the Part-2/3 register consolidation is pending. The register count remains 363 `NOT_IMPLEMENTED` items; no row was added or removed.
+DR-0001 introduced one new Safety-Case requirement (RFC-001 SAFE-053) and five new ADR-002-015 invariants (HAG-INV-015 through HAG-INV-019) defining the Governed Single-Operator Re-Arm Variant. These carry verification-evidence obligations that are **deliberately not registered in EVIDENCE-REGISTER-002 in this wave**, to prevent evidence-count drift while the Part-2/3 register consolidation is pending. At the time this debt was recorded the register count was 363 `NOT_IMPLEMENTED` items; no row was added or removed.
 
 Recorded evidence debt (to be discharged in the Part-2/3 register consolidation wave):
 
@@ -1026,7 +1066,7 @@ Acceptance criteria for the new invariants are stated in ADR-002-015 §17.1 and 
 
 ### 4.3 Evidence Debt — CORPUS-REVIEW-0001 Wave 2 (Theme A/B)
 
-Wave 2 (RFC-000-Patch-0009, RFC-001-Patch-0010) introduced one new constitutional requirement (CONST-015), two new Catastrophic hazards (HAZ-024, HAZ-025), and one new Critical safety requirement (SAFE-054). Consistent with §4.2, the associated verification-evidence obligations are **deliberately not registered in EVIDENCE-REGISTER-002 in this wave**, to prevent evidence-count drift while the Part-2/3 register consolidation is pending. The register count remains 363 `NOT_IMPLEMENTED` items; no row was added or removed.
+Wave 2 (RFC-000-Patch-0009, RFC-001-Patch-0010) introduced one new constitutional requirement (CONST-015), two new Catastrophic hazards (HAZ-024, HAZ-025), and one new Critical safety requirement (SAFE-054). Consistent with §4.2, the associated verification-evidence obligations are **deliberately not registered in EVIDENCE-REGISTER-002 in this wave**, to prevent evidence-count drift while the Part-2/3 register consolidation is pending. At the time this debt was recorded the register count was 363 `NOT_IMPLEMENTED` items; no row was added or removed.
 
 Recorded evidence debt (to be discharged in the Part-2/3 register consolidation wave):
 
@@ -1050,7 +1090,7 @@ Recorded evidence debt (to be discharged in the Part-2/3 register consolidation 
 
 Until this evidence is registered, passed, and independently reviewed, ADR-002-001 remains `Proposed` and criteria #1 and #11 confer no acceptance. This is an acceptance blocker, not a status promotion.
 
-**DISCHARGED (Wave 4):** registered as PRD-EV-001 (§21 criterion #1, protective-resource-domain enumeration completeness) and PRD-EV-002 (§21 criterion #11, per-resource guarantee-level assignment) under the new ADR-002-001-owned PRD family; see §3.7, ADR-002-001 v0.4 §21/§25, and VER-002-001 §§391–392. Register count 363 → 372. ADR-002-001 remains `Proposed`; both rows are `NOT_IMPLEMENTED`.
+**DISCHARGED (Wave 4):** registered as PRD-EV-001 (§21 criterion #1, protective-resource-domain enumeration completeness) and PRD-EV-002 (§21 criterion #11, per-resource guarantee-level assignment) under the new ADR-002-001-owned PRD family; see §3.7, ADR-002-001 v0.4 §21/§25, and VER-002-001 §§391–392. Register count 363 → 372. ADR-002-001 remains `Proposed`. Both rows were `NOT_IMPLEMENTED` at Wave-4 registration; as of the current CSV, `PRD-EV-001` is `NOT_IMPLEMENTED` and `PRD-EV-002` is `READY`. `READY` is a preparation state, not a passed test, and confers no ADR acceptance or live readiness.
 
 ### 4.5 Remaining Debt After Wave 4
 
@@ -1061,11 +1101,19 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
   §3.8/§3.10. Registration, `READY`, and `PASS` confer no ADR acceptance or live
   readiness; the CSVs and generated `../CURRENT-STATUS.md` are the current count
   sources.
-- **TRACEABILITY-MATRIX-002 §5.3 source gaps — resolved 2026-08-02.**
-  ADR-002-002 through ADR-002-006 now carry direct tables transcribed from their
-  existing RFC-002 §9.1 / `Depends On` SAFE claims. RC, SA, BC, STATE, and RECON
-  are directly reachable; the deterministic consistency check reports 30/30
-  ADR tables. No requirement, evidence status, or authority changed.
+- **TRACEABILITY-MATRIX-002 §5.3 source gaps — four resolved 2026-08-02, one
+  open.** ADR-002-003 through ADR-002-006 carry direct tables transcribed from
+  their own existing `Depends On` SAFE claims, so SA, BC, STATE, and RECON are
+  directly reachable. **ADR-002-002 remains an open source gap.** A table added
+  on 2026-08-02 claimed an RFC-002 §9.1 allocation of SAFE-013/SAFE-015 to
+  ADR-002-002; reverification found §9.1 contains no SAFE identifier, the only
+  RFC-002 occurrences (§5 drivers, §27 component allocations) name no ADR, and
+  RFC-001 never mentions ADR-002-002. The unsourced table was reverted, so RC-EV
+  is again unreachable through the SAFE→ADR bridge. Direct tables now stand at
+  **29/30 with 1 source gap**. Closing it requires a GOV-001 G6 amendment to
+  RFC-002 or RFC-001, not a transcription — this is a System Owner decision, not
+  an editorial one. No requirement, evidence status, or authority changed;
+  SAFE-013 and SAFE-015 remain COVERED through other realizing ADRs.
 - **Part-2/3 split state.** RFC-003 through RFC-011 are Ratified. ADR-DEV-001
   through ADR-DEV-015 and VER-DEV-001 remain Proposed. The 2026-08-02 G3/P2
   audit records a separate ratification-record discrepancy and decision gate;
@@ -1335,7 +1383,7 @@ ratification-blocking mode-transition seam remains.
 |---|---|---|
 | M-06 out-of-band egress containment existence | Owner-decision-required (now recorded, §4.5) + acceptance-track (EGRESS-EV-013) | No — the owner disposition is the required residual-risk-acceptance input to RFC-001 ratification and is now recorded; EGRESS-EV-013 remains an acceptance-track obligation |
 | Evidence incomplete (Part 1: 292 `NOT_IMPLEMENTED` / 79 `READY` / 1 `PASS`; development: 118 `NOT_IMPLEMENTED`) | Acceptance/live-track only | No — ratification is evidence-independent (GOV-001 G1); evidence does not imply acceptance or live authority |
-| TRACEABILITY-MATRIX-002 §5.3 direct-source gaps (ADR-002-002..006) | **Resolved 2026-08-02** by direct-table transcription and 30/30 consistency check | Historical RR-0004 deferral remains part of that record; no re-ratification or authority claim is inferred from the later mechanical repair |
+| TRACEABILITY-MATRIX-002 §5.3 direct-source gaps (ADR-002-002..006) | **Four resolved 2026-08-02** (ADR-002-003..006) by direct-table transcription; **ADR-002-002 remains an open source gap** — its 2026-08-02 table was unsourced and has been reverted, leaving 29/30 direct tables and 1 gap | Historical RR-0004 deferral remains part of that record; no re-ratification or authority claim is inferred from the later mechanical repair. Closing the ADR-002-002 gap requires a GOV-001 G6 amendment, not an editorial transcription |
 | Part-2/3 RFCs Ratified; ADR-DEV and VER-DEV remain Proposed; G3/P2 disposition audit open | Governance amendment/decision package | Ratification state is unchanged pending the System Owner decision gate |
 | CONST-003 RLP-only evidence chain | Proposed RFC-006 Economic Viability amendment; ECO-EV-001..012 all `NOT_IMPLEMENTED`; completion verdict `INCONCLUSIVE` | System Owner/Architecture Board G6 decision and human-owned Economic Viability Profile are required; RLP-only completion is prohibited by the conservative status check |
 

@@ -28,6 +28,18 @@ deployment/process state was not observed.
 | LEGACY-003 | `services/order_router/main.py` futures | dormant profile-gated path; live-capable | `PassiveMaker`/KIS adapter/`OrderExecutor` are project controls, not TOS authority |
 | LEGACY-004 | `services/stock_order_router/main.py` stock | paper/shadow `VirtualBroker` only | simulation/read-model route; no live authority |
 | LEGACY-005 | `shared/execution/executor.py` | common KIS stock/futures sender used by project callers | multiple construction callers remain until a single accepted gateway and route removal proof exist |
+| LEGACY-006 | `scripts/trading/flatten_all.py` | operator-invocable CLI; builds a real `KISClient` + `OrderExecutor` and issues per-position market-close orders; `KIS_FUTURES_MARKET` defaults to **real** when unset | direct project send outside TOS engine/IAP/RCL/egressgw; `--confirm` gates only the CLI, while the in-process `flatten_all_async()` seam has no confirm gate (and no wired producer today) |
+| LEGACY-007 | `scripts/trading/recover_positions.py` | operator-invocable CLI; builds a real `KISClient` and reads futures balance; **sends no order**; writes a divergence sentinel | reconciliation/resume verdict is a project control, not a TOS Recovery Coordinator or Reconciliation Service; **the sentinel has no consumer** — `services/order_router/main.py` honours only the separate kill-switch sentinel, and the documented `scripts/recover_positions_clear.sh` does not exist |
+
+**LEGACY-006 and LEGACY-007 were previously unregistered** — the F6 failure mode
+this register exists to prevent: operator-invocable paths that reach a real
+broker with no fence, cutover, rollback, or removal criterion on record.
+Registering them changes nothing about their safety. Neither row fences a route,
+authorizes an invocation, or claims a cutover or removal is done. Two facts are
+recorded because they were verified in code, not to imply they are acceptable:
+LEGACY-006 defaults to the **real** market when `KIS_FUTURES_MARKET` is unset,
+and LEGACY-007's startup barrier is **unconsumed**, so a divergent broker view
+does not in fact block resume and must not be relied on as a fence.
 
 `docker-compose.yml` explicitly requires the futures monolith to be disabled at
 F-9 cutover, but an environment switch alone is not sufficient proof. A cutover

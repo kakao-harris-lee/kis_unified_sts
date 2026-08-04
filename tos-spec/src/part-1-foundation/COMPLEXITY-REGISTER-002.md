@@ -24,8 +24,9 @@ governs (RFC-000 §12).
 **Invention is forbidden.** Every cell cites an existing hazard (HAZ), safety requirement
 (SAFE), ADR, or evidence family (EV). A question the corpus does not yet answer is recorded
 honestly as **OPEN**, not filled in. The `Q4` answers are uniformly "test defined, not
-demonstrated": all cited EV families are `NOT_IMPLEMENTED`, so a defined test is not a passed
-one (philosophy §33).
+demonstrated": no cited EV family contains a `PASS` row, so a defined — or even `READY` —
+test is not a passed one (philosophy §33). Several cited families now carry `READY` rows
+(see §3 and §4); `READY` records preparation, not demonstrated behaviour.
 
 ## 2. The Six Questions (adapted from philosophy §24, which offers them as "useful questions")
 
@@ -40,23 +41,26 @@ one (philosophy §33).
 
 | # | Mechanism (owner) | Q1 hazard / Q2 failure | Q3 simpler alternative rejected | Q4 testable? | Q5 operator understands degraded state? | Q6 safely removable? |
 |---|---|---|---|---|---|---|
-| 1 | Per-send fenced single-use currentness — Safety Currentness Vector (ADR-002-024; ADR-002-007 §9.1–§9.5) | Stale- or revoked-authority transmission race (SAFE-011, SAFE-015, SAFE-048) | Cache / TTL / heartbeat currentness rejected — a cached "recently valid" state is not per-send currentness (ADR-002-007 §9.3; gate-status §2) | Defined: CUR-EV-001..012 (`NOT_IMPLEMENTED`) | **OPEN** (see §4) | **OPEN** (see §4) |
-| 2 | RCL quorum consensus — 2f+1 deterministic Safety Commit Log (ADR-002-012 §1, §16) | Split-brain double-use of risk headroom / stale-writer capacity creation (SAFE-010, SAFE-013) | Single-leader / local-DB / lock rejected — none survives partition without creating capacity (ADR-002-012 §1) | Defined: RCLP-EV-001..012 (`NOT_IMPLEMENTED`) | **OPEN** (see §4) | **OPEN** (see §4) |
-| 3 | PTOL / post-trade finality (ADR-002-030) | Manufactured finality / headroom from unsettled obligations (SAFE-022, SAFE-023, SAFE-024, SAFE-025) | Fills / statements-as-finality rejected — an acknowledgement is not settlement (ADR-002-030 §18) | Defined: PTF-EV-001..012 (`NOT_IMPLEMENTED`) | **OPEN** (see §4) | **OPEN** (see §4) |
-| 4 | Supply-chain attestation & artifact admission (ADR-002-029) | Unreviewed / compromised runtime artifact reaching live (SAFE-045) | Signatures / CI / registry-tags-as-sufficient rejected — a tag is not content-addressed admission (ADR-002-029) | Defined: SCI-EV-001..012 (`NOT_IMPLEMENTED`) | **OPEN** (see §4) | **OPEN** (see §4) |
-| 5 | Single credential-confined Egress Gateway (ADR-002-013; ADR-002-009 §10.1; RFC-002 §10.8) | Broker-bypass path / uncontained egress defect (SAFE-010, SAFE-011, SAFE-033; HAZ-025) | Multiple / direct broker send paths rejected — every live order routes through one enforcement point (ADR-002-007 §16) | Defined: EGRESS-EV-001..013 (`NOT_IMPLEMENTED`) | **OPEN** (see §4) | **OPEN** — and the single point is itself a single-failure concern: out-of-band containment (SAFE-054) *existence* is the open **M-06** item (gate-status §4.5) |
-| 6 | Dual-control + Governed Single-Operator Re-Arm Variant (ADR-002-015; DR-0001; SAFE-053) | Single-actor self-authorized risk increase (HAZ-024; CONST-005, CONST-011, CONST-013, CONST-015) | Single-approver re-arm rejected; the governed variant is itself the *simpler* fail-closed reduced-scope path for the one-person reality (DR-0001; ADR-002-015 §17.1) | Defined: HAG-EV-001..018 (`NOT_IMPLEMENTED`) | Partial — per-mechanism observability exists (ADR-DEV-014) | **OPEN** (see §4) |
-| 7 | Recovery Barrier + monotonic Recovery Generation (ADR-002-017) | Optimistic resume / auto-re-arm after failure (SAFE-044; anti-pattern §39.8) | Health-equals-recovery / reconnect-equals-resume rejected — recovery is a new safety decision (ADR-002-017 §23; philosophy §23) | Defined: SBR-EV-001..012 (`NOT_IMPLEMENTED`) | **OPEN** (see §4) | **OPEN** (see §4) |
-| 8 | Generation-fencing across incident / deviation / monitoring domains (ADR-002-026, ADR-002-027, ADR-002-028) | Stale-generation reactivation of a closed restrictive state | Closure / quiet-time-as-permission rejected — administrative closure is non-permissive and recovery does not revive (SIR-INV-012, SIR-INV-015) | Defined: SIR-, WDR-, STM-EV families (`NOT_IMPLEMENTED`) | **OPEN** (see §4) | **OPEN** (see §4) |
+| 1 | Per-send fenced single-use currentness — Safety Currentness Vector (ADR-002-024; ADR-002-007 §9.1–§9.5) | Stale- or revoked-authority transmission race (SAFE-011, SAFE-015, SAFE-048) | Cache / TTL / heartbeat currentness rejected — a cached "recently valid" state is not per-send currentness (ADR-002-007 §9.3; gate-status §2) | Defined: CUR-EV-001..012 (1 `READY`, 11 `NOT_IMPLEMENTED`; 0 `PASS`) | **OPEN** (see §4) | **OPEN** (see §4) |
+| 2 | RCL quorum consensus — 2f+1 deterministic Safety Commit Log (ADR-002-012 §1, §16) | Split-brain double-use of risk headroom / stale-writer capacity creation (SAFE-010, SAFE-013) | Single-leader / local-DB / lock rejected — none survives partition without creating capacity (ADR-002-012 §1) | Defined: RCLP-EV-001..012 (3 `READY`, 9 `NOT_IMPLEMENTED`; 0 `PASS`) | **OPEN** (see §4) | **OPEN** (see §4) |
+| 3 | PTOL / post-trade finality (ADR-002-030) | Manufactured finality / headroom from unsettled obligations (SAFE-022, SAFE-023, SAFE-024, SAFE-025) | Fills / statements-as-finality rejected — an acknowledgement is not settlement (ADR-002-030 §18) | Defined: PTF-EV-001..012 (12 `NOT_IMPLEMENTED`; 0 `PASS`) | **OPEN** (see §4) | **OPEN** (see §4) |
+| 4 | Supply-chain attestation & artifact admission (ADR-002-029) | Unreviewed / compromised runtime artifact reaching live (SAFE-045) | Signatures / CI / registry-tags-as-sufficient rejected — a tag is not content-addressed admission (ADR-002-029) | Defined: SCI-EV-001..012 (4 `READY`, 8 `NOT_IMPLEMENTED`; 0 `PASS`) | **OPEN** (see §4) | **OPEN** (see §4) |
+| 5 | Single credential-confined Egress Gateway (ADR-002-013; ADR-002-009 §10.1; RFC-002 §10.8) | Broker-bypass path / uncontained egress defect (SAFE-010, SAFE-011, SAFE-033; HAZ-025) | Multiple / direct broker send paths rejected — every live order routes through one enforcement point (ADR-002-007 §16) | Defined: EGRESS-EV-001..013 (2 `READY`, 11 `NOT_IMPLEMENTED`; 0 `PASS`) | **OPEN** (see §4) | **OPEN** — and the single point is itself a single-failure concern: out-of-band containment (SAFE-054) *existence* is the open **M-06** item (gate-status §4.5) |
+| 6 | Dual-control + Governed Single-Operator Re-Arm Variant (ADR-002-015; DR-0001; SAFE-053) | Single-actor self-authorized risk increase (HAZ-024; CONST-005, CONST-011, CONST-013, CONST-015) | Single-approver re-arm rejected; the governed variant is itself the *simpler* fail-closed reduced-scope path for the one-person reality (DR-0001; ADR-002-015 §17.1) | Defined: HAG-EV-001..018 (8 `READY`, 10 `NOT_IMPLEMENTED`; 0 `PASS`) | Partial — per-mechanism observability exists (ADR-DEV-014) | **OPEN** (see §4) |
+| 7 | Recovery Barrier + monotonic Recovery Generation (ADR-002-017) | Optimistic resume / auto-re-arm after failure (SAFE-044; anti-pattern §39.8) | Health-equals-recovery / reconnect-equals-resume rejected — recovery is a new safety decision (ADR-002-017 §23; philosophy §23) | Defined: SBR-EV-001..012 (5 `READY`, 7 `NOT_IMPLEMENTED`; 0 `PASS`) | **OPEN** (see §4) | **OPEN** (see §4) |
+| 8 | Generation-fencing across incident / deviation / monitoring domains (ADR-002-026, ADR-002-027, ADR-002-028) | Stale-generation reactivation of a closed restrictive state | Closure / quiet-time-as-permission rejected — administrative closure is non-permissive and recovery does not revive (SIR-INV-012, SIR-INV-015) | Defined: SIR-EV (3 `READY`, 9 `NOT_IMPLEMENTED`), WDR-EV (4 `READY`, 8 `NOT_IMPLEMENTED`), STM-EV (2 `READY`, 10 `NOT_IMPLEMENTED`); 0 `PASS` | **OPEN** (see §4) | **OPEN** (see §4) |
 
 ## 4. Consolidated OPEN Findings
 
 These are recorded honestly, per AX-005 and philosophy §24, as questions the corpus does not
 yet answer. None is resolved by this register.
 
-- **Q4 — testability (all eight rows): defined, not demonstrated.** Every cited EV family is
-  `NOT_IMPLEMENTED`; a defined test is not a passed test (philosophy §33). This register makes
-  no claim that any mechanism's behaviour has been tested.
+- **Q4 — testability (all eight rows): defined, not demonstrated.** No cited EV family
+  contains a `PASS` row. Seven of the eight rows now cite families carrying some `READY`
+  rows (CUR, RCLP, SCI, EGRESS, HAG, SBR, and the SIR/WDR/STM group); only row 3 (PTF) is
+  wholly `NOT_IMPLEMENTED`. `READY` denotes a prepared, not an executed or passed, test
+  (philosophy §33). This register makes no claim that any mechanism's behaviour has been
+  demonstrated.
 - **Q5 — operator understanding of the *degraded* state: OPEN corpus-wide.** Per-mechanism
   observability exists (ADR-DEV-014 OBS-INV-001..003). The non-authorizing
   Migration and Conformance Register now proposes one consolidated projection

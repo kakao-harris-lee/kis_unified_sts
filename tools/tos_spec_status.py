@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import sys
 from collections import Counter
@@ -120,6 +121,33 @@ REQUIRED_MIGRATION_FIELDS = (
 _STATUS_HEADER = re.compile(
     r"^\s*(?:-\s*)?\*\*Status:?\*\*:?\s*(.+?)\s*$", re.MULTILINE
 )
+_PRODUCTION_AUTHORIZATION_HEADER = re.compile(
+    r"^\s*(?:[-*]\s*)?\*\*Production Authorization:?\*\*:?\s*(.+?)\s*$", re.MULTILINE
+)
+_PRODUCTION_AUTHORIZATION_STATES = {"NO": "NOT_AUTHORIZED", "YES": "AUTHORIZED"}
+# Documents that independently publish the corpus's production-authorization
+# honesty marker.  ``load_authorities`` requires them to exist, to carry the
+# marker, and to agree with each other and with ``AUTHORITY-STATUS.csv``.
+_PRODUCTION_HONESTY_SOURCES = (
+    "part-1-foundation/verification/EVIDENCE-REGISTER-002.md",
+    "part-3-development/verification/EVIDENCE-REGISTER-DEV.md",
+    "MIGRATION-CONFORMANCE-REGISTER.md",
+)
+_GOVERNING_SOURCE_PATH = re.compile(r"(?<![\w./-])([\w./-]+\.md)(?![\w./-])")
+_SUMMARY_LINE = re.compile(r"^- ([A-Za-z][A-Za-z0-9_ ]*): \*\*(\d+)\*\*$", re.MULTILINE)
+_TABLE_SEPARATOR_ROW = re.compile(r"\|(?:\s*:?-{3,}:?\s*\|)+")
+_REGISTER_HEADER_PREFIX = "| ID "
+_REGISTER_COLUMNS = (
+    "evidence_id",
+    "domain",
+    "title",
+    "primary_adr",
+    "minimum_evidence_level",
+    "status",
+    "implementation_owner",
+    "independent_reviewer",
+)
+_BLOCKQUOTE_PREFIX = re.compile(r"^[ \t]*>+[ \t]?", re.MULTILINE)
 _DOCUMENT_NAME = re.compile(r"^(?:RFC-\d{3}|GOV-\d{3})-")
 _ADR_NAME = re.compile(r"^ADR-(?:002|DEV)-\d{3}-")
 _PART1_ADR_NAME = re.compile(r"^(ADR-002-\d{3})-")
@@ -129,8 +157,60 @@ _TRACEABILITY_HEADING = re.compile(
     re.MULTILINE,
 )
 _SAFE_ID = re.compile(r"\bSAFE-\d{3}\b")
+# The four ADRs whose direct Traceability tables transcribe their own existing
+# ``Depends On`` SAFE set.  Each must survive the full forward/reverse matrix
+# cross-check below.
 _DIRECT_REPAIR_ADRS = frozenset(
-    {"ADR-002-002", "ADR-002-003", "ADR-002-004", "ADR-002-005", "ADR-002-006"}
+    {"ADR-002-003", "ADR-002-004", "ADR-002-005", "ADR-002-006"}
+)
+# ADR-002-002 is deliberately absent from ``_DIRECT_REPAIR_ADRS``: no source
+# document allocates any SAFE requirement to it, so a direct table there would
+# be unsourced.  Its exemption is not a hole -- it is a recorded gap, and
+# ``_validate_source_gap_traceability`` requires the record to stay published in
+# both the ADR and the matrix.  Recognition is explicit: ``_TRACEABILITY_HEADING``
+# does not match ``## 38.1 Requirements Traceability -- Source Gap`` (the heading
+# carries trailing text), and the tool must never treat that near-miss as if it
+# were a table.
+_SOURCE_GAP_ADRS = frozenset({"ADR-002-002"})
+_SOURCE_GAP_HEADING = re.compile(
+    r"^##\s+\d+(?:\.\d+)?\.?\s+Requirements\s+Traceability\s+—\s+Source\s+Gap\s*$",
+    re.MULTILINE,
+)
+_DEPENDS_ON_HEADER = re.compile(r"^\s*(?:[-*]\s*)?\*\*Depends On:?\*\*", re.MULTILINE)
+_MATRIX_SOURCE_GAP_SECTION = re.compile(
+    r"^###\s+5\.3\s+Direct-source gaps\b", re.MULTILINE
+)
+_DIRECT_TABLE_SUMMARY = (
+    "- ADRs with a direct Traceability table: 29/30; source gaps: 1 "
+    "(ADR-002-002 — see §5.3; unreachable family: RC-EV)."
+)
+# Reverse legacy-route census.  The forward check (a registered ``component``
+# still resolves to a real file) can only confirm routes somebody already wrote
+# down, so on its own it can never discover an unregistered one -- which is
+# exactly how ``scripts/trading/flatten_all.py`` and
+# ``scripts/trading/recover_positions.py`` stayed off the register.  A hardcoded
+# ``LEGACY-001..005`` range had the same blindness.
+_BROKER_CONSTRUCTION = re.compile(r"(?<![\w.])(?P<name>KISClient|OrderExecutor)\s*\(")
+# ``OrderExecutor`` is the project's direct broker order sender
+# (``shared/execution/executor.py``, LEGACY-005).  ``KISClient`` is also used for
+# pure market-data reads, so it cannot gate the fail-closed tier without false
+# positives; it is still reported by the warning tier.
+_ORDER_SENDER = "OrderExecutor"
+_ENTRYPOINT_GUARD = re.compile(
+    r"^if\s+__name__\s*==\s*[\"']__main__[\"']\s*:", re.MULTILINE
+)
+_REVERSE_SCAN_SKIPPED_DIRS = frozenset(
+    {
+        "tos",
+        "tos-spec",
+        "tests",
+        "node_modules",
+        "__pycache__",
+        "build",
+        "dist",
+        "venv",
+        "site-packages",
+    }
 )
 _EXPECTED_ECO_IDS = frozenset(f"ECO-EV-{number:03}" for number in range(1, 13))
 _EXPECTED_IOM_IDS = frozenset(f"IOM-EV-{number:03}" for number in range(1, 9))
@@ -173,9 +253,12 @@ class StatusSnapshot:
     development: EvidenceRegister
     authorities: Mapping[str, str]
     direct_traceability_count: int
+    direct_traceability_total: int
+    unregistered_broker_sites: tuple[str, ...]
     p2_carried_questions: int
     const003_result: str
     migration_rows: int
+    transcription_sites: int
 
 
 def _read_csv(path: Path, required_fields: Sequence[str]) -> list[dict[str, str]]:
@@ -259,36 +342,30 @@ def _markdown_register_rows(path: Path) -> list[dict[str, str]]:
     marker = "## Register"
     if marker not in text:
         raise StatusError(f"{path}: missing {marker!r}")
-    body = text.split(marker, 1)[1]
+    head, _, body = text.partition(marker)
+    marker_line_no = head.count("\n") + 1
     parsed: list[dict[str, str]] = []
-    for line in body.splitlines():
-        if (
-            not line.startswith("|")
-            or line.startswith("|---")
-            or line.startswith("| ID ")
-        ):
+    for offset, line in enumerate(body.splitlines()):
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            # Not a table row at all: prose, blank lines, headings.
             continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if len(cells) != 8:
+        if stripped.startswith(
+            _REGISTER_HEADER_PREFIX
+        ) or _TABLE_SEPARATOR_ROW.fullmatch(stripped):
+            # The column header and the GFM alignment separator.
             continue
-        parsed.append(
-            dict(
-                zip(
-                    (
-                        "evidence_id",
-                        "domain",
-                        "title",
-                        "primary_adr",
-                        "minimum_evidence_level",
-                        "status",
-                        "implementation_owner",
-                        "independent_reviewer",
-                    ),
-                    cells,
-                    strict=True,
-                )
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) != len(_REGISTER_COLUMNS):
+            # A malformed row is never dropped: GFM renders surplus cells
+            # invisibly, so a silent skip would publish a fabricated row.
+            raise StatusError(
+                f"{path}: line {marker_line_no + offset}: register table row has "
+                f"{len(cells)} cells, expected {len(_REGISTER_COLUMNS)}: {stripped}"
             )
-        )
+        parsed.append(dict(zip(_REGISTER_COLUMNS, cells, strict=True)))
+    if not parsed:
+        raise StatusError(f"{path}: register table contains no rows")
     return parsed
 
 
@@ -325,19 +402,51 @@ def validate_markdown_mirror(markdown_path: Path, register: EvidenceRegister) ->
             f"Markdown rows={len(parsed)}"
         )
 
+    _validate_summary_parity(markdown_path, register)
+
+
+def _validate_summary_parity(markdown_path: Path, register: EvidenceRegister) -> None:
+    """Reconcile the Markdown summary block against the CSV in both directions.
+
+    ``register.counts`` is a ``Counter``, so it has no key for a state that no
+    CSV row carries.  Iterating it alone therefore never inspects the Markdown
+    line for an absent state, which lets a fabricated ``- PASS: **7**`` (or a
+    wholly invented state) pass unread.  Every summary line in the Markdown is
+    parsed first, then reconciled.
+    """
     text = markdown_path.read_text(encoding="utf-8-sig")
-    summary = {"TOTAL": len(register.rows), **register.counts}
-    for state, count in summary.items():
-        label = "Total evidence items" if state == "TOTAL" else state
-        match = re.search(rf"^- {re.escape(label)}: \*\*(\d+)\*\*$", text, re.MULTILINE)
-        if match is None:
-            if count == 0 and state != "TOTAL":
-                continue
-            raise StatusError(f"{markdown_path}: missing summary count for {label}")
-        if int(match.group(1)) != count:
-            raise StatusError(
-                f"{markdown_path}: summary {label}={match.group(1)}, CSV={count}"
-            )
+    total_label = "Total evidence items"
+    known_labels = {total_label, *EVIDENCE_STATES}
+    errors: list[str] = []
+
+    declared: dict[str, int] = {}
+    for label, value in _SUMMARY_LINE.findall(text):
+        if label in declared:
+            errors.append(f"duplicate summary line for {label}")
+        declared[label] = int(value)
+
+    for label, value in declared.items():
+        if label not in known_labels:
+            errors.append(f"unknown summary state {label!r} (declared {value})")
+            continue
+        expected = (
+            len(register.rows)
+            if label == total_label
+            else register.counts.get(label, 0)
+        )
+        if value != expected:
+            errors.append(f"summary {label}={value}, CSV={expected}")
+
+    required = [
+        total_label,
+        *(state for state in EVIDENCE_STATES if register.counts.get(state, 0)),
+    ]
+    for label in required:
+        if label not in declared:
+            errors.append(f"missing summary count for {label}")
+
+    if errors:
+        raise StatusError(f"{markdown_path}: " + "; ".join(errors))
 
 
 def _header_state(path: Path, allowed: frozenset[str]) -> str:
@@ -368,10 +477,105 @@ def load_document_states(source_root: Path) -> tuple[Counter[str], Counter[str]]
     return documents, adrs
 
 
-def load_authorities(path: Path) -> dict[str, str]:
+def _resolve_governing_source(source_root: Path, axis: str, declared: str) -> Path:
+    """Dereference an axis's declared ``governing_source`` to a real document."""
+    match = _GOVERNING_SOURCE_PATH.search(declared)
+    if match is None:
+        raise StatusError(
+            f"{AUTHORITY_CSV}: {axis}: governing_source names no resolvable corpus "
+            f"document: {declared!r}"
+        )
+    relative = match.group(1)
+    candidate = source_root / relative
+    try:
+        candidate.resolve().relative_to(source_root.resolve())
+    except ValueError as exc:
+        raise StatusError(
+            f"{AUTHORITY_CSV}: {axis}: governing_source {relative!r} points "
+            f"outside the corpus source root {source_root}"
+        ) from exc
+    if not candidate.is_file():
+        raise StatusError(
+            f"{AUTHORITY_CSV}: {axis}: governing_source does not resolve to an "
+            f"existing corpus document: {relative} (searched under {source_root})"
+        )
+    return candidate
+
+
+def _governing_status_gate(path: Path) -> tuple[bool, str]:
+    """Return whether a governing document's own status can support AUTHORIZED."""
+    if _ADR_NAME.match(path.name):
+        state = _header_state(path, ADR_STATES)
+        return state == "ACCEPTED", f"ADR Status={state}"
+    if _DOCUMENT_NAME.match(path.name):
+        state = _header_state(path, DOCUMENT_STATES)
+        return state == "RATIFIED", f"Status={state}"
+    return True, "no document-status gate"
+
+
+def _production_authorization_header(path: Path) -> str | None:
+    match = _PRODUCTION_AUTHORIZATION_HEADER.search(
+        path.read_text(encoding="utf-8-sig")
+    )
+    if match is None:
+        return None
+    return match.group(1).strip().rstrip(".").upper()
+
+
+def _production_authority_errors(
+    source_root: Path, declared: str, governing: Path
+) -> list[str]:
+    """Derive the production axis from the corpus instead of trusting the CSV."""
+    observed: dict[Path, str] = {}
+    candidates = [
+        governing,
+        *(source_root / rel for rel in _PRODUCTION_HONESTY_SOURCES),
+    ]
+    for candidate in candidates:
+        if candidate in observed:
+            continue
+        if not candidate.is_file():
+            return [
+                f"production: required honesty source is missing: {candidate}",
+            ]
+        header = _production_authorization_header(candidate)
+        if header is None:
+            return [
+                f"production authority is declared against {candidate}, but that "
+                "document carries no '**Production Authorization:**' header",
+            ]
+        observed[candidate] = header
+
+    values = set(observed.values())
+    if len(values) > 1:
+        detail = "; ".join(
+            f"{path}='{value}'"
+            for path, value in sorted(observed.items(), key=lambda item: str(item[0]))
+        )
+        return [f"corpus production-authorization headers disagree: {detail}"]
+    header_value = values.pop()
+    derived = _PRODUCTION_AUTHORIZATION_STATES.get(header_value)
+    if derived is None:
+        return [
+            f"{governing}: unsupported '**Production Authorization:**' value "
+            f"{header_value!r}; expected one of "
+            f"{sorted(_PRODUCTION_AUTHORIZATION_STATES)!r}"
+        ]
+    if derived != declared:
+        return [
+            f"production={declared} contradicts its own declared governing source "
+            f"{governing}, which reads '**Production Authorization:** "
+            f"{header_value}' (derived {derived}); the authority register may not "
+            "self-attest"
+        ]
+    return []
+
+
+def load_authorities(path: Path, source_root: Path) -> dict[str, str]:
     rows = _read_csv(path, REQUIRED_AUTHORITY_FIELDS)
     required_axes = {"restricted_live", "production"}
     seen: dict[str, str] = {}
+    sources: dict[str, Path] = {}
     for line_no, row in enumerate(rows, start=2):
         axis = row["axis"]
         if axis in seen:
@@ -383,12 +587,221 @@ def load_authorities(path: Path) -> dict[str, str]:
         for field in ("governing_source", "change_authority", "notes"):
             if not row[field]:
                 raise StatusError(f"{path}: line {line_no}: empty {field}")
+        sources[axis] = _resolve_governing_source(
+            source_root, axis, row["governing_source"]
+        )
         seen[axis] = row["status"]
     if set(seen) != required_axes:
         raise StatusError(
             f"{path}: authority axes must be exactly {sorted(required_axes)!r}"
         )
+
+    errors: list[str] = []
+    for axis, state in seen.items():
+        permits, reason = _governing_status_gate(sources[axis])
+        if state == "AUTHORIZED" and not permits:
+            errors.append(
+                f"{axis}=AUTHORIZED is not supported by its declared governing "
+                f"source {sources[axis]} ({reason}); a governing document that is "
+                "not itself accepted confers no authority"
+            )
+    errors.extend(
+        _production_authority_errors(
+            source_root, seen["production"], sources["production"]
+        )
+    )
+    if errors:
+        raise StatusError(f"{path}: " + "; ".join(errors))
     return seen
+
+
+@dataclass(frozen=True)
+class _CountTranscription:
+    """One prose location that hand-transcribes a derived register count.
+
+    ``pattern`` is matched against whitespace-normalised, blockquote-stripped
+    text so a wrapped sentence still matches.  Each capture group is an integer
+    that must equal the derived value named by the matching ``derived_keys``
+    entry.  Anchors carry enough literal context to exclude the corpus's
+    wave-scoped historical snapshots, which quote counts that were correct at
+    their review point and must not be rewritten.
+    """
+
+    relative_path: str
+    label: str
+    pattern: re.Pattern[str]
+    derived_keys: tuple[str, ...]
+
+
+_GATE_STATUS_MD = "part-1-foundation/ARCHITECTURE-GATE-STATUS.md"
+_COMPLEXITY_REGISTER_MD = "part-1-foundation/COMPLEXITY-REGISTER-002.md"
+_IMPLEMENTATION_PLAN_MD = "part-1-foundation/verification/IMPLEMENTATION-PLAN-002.md"
+_PREFACE_MD = "preface.md"
+
+_PART1_STATE_KEYS = ("part1.NOT_IMPLEMENTED", "part1.READY", "part1.PASS")
+
+_COUNT_TRANSCRIPTIONS: tuple[_CountTranscription, ...] = (
+    _CountTranscription(
+        _GATE_STATUS_MD,
+        "header Verification Execution",
+        re.compile(
+            r"\*\*Verification Execution:\*\* Part 1: (\d+) `NOT_IMPLEMENTED`, "
+            r"(\d+) `READY`, (\d+) `PASS`; development: (\d+) `NOT_IMPLEMENTED`"
+        ),
+        (*_PART1_STATE_KEYS, "development.NOT_IMPLEMENTED"),
+    ),
+    _CountTranscription(
+        _GATE_STATUS_MD,
+        "current evidence state",
+        re.compile(
+            r"The Part-1 register contains (\d+) rows: (\d+) `NOT_IMPLEMENTED`, "
+            r"(\d+) `READY`, and (\d+) `PASS`; the development register contains "
+            r"(\d+) `NOT_IMPLEMENTED` rows"
+        ),
+        ("part1.TOTAL", *_PART1_STATE_KEYS, "development.NOT_IMPLEMENTED"),
+    ),
+    _CountTranscription(
+        _GATE_STATUS_MD,
+        "development-track evidence row",
+        re.compile(
+            r"\| Development-track verification evidence \| (\d+) items registered "
+            r"\(EVIDENCE-REGISTER-DEV\), all `NOT_IMPLEMENTED`"
+        ),
+        ("development.TOTAL",),
+    ),
+    _CountTranscription(
+        _GATE_STATUS_MD,
+        "ratification ladder preamble",
+        re.compile(
+            r"The current Part-1 register is (\d+) `NOT_IMPLEMENTED`, (\d+) `READY`, "
+            r"and (\d+) `PASS`; all (\d+) development-track rows remain "
+            r"`NOT_IMPLEMENTED`"
+        ),
+        (*_PART1_STATE_KEYS, "development.TOTAL"),
+    ),
+    _CountTranscription(
+        _GATE_STATUS_MD,
+        "evidence-incomplete disposition row",
+        re.compile(
+            r"Evidence incomplete \(Part 1: (\d+) `NOT_IMPLEMENTED` / (\d+) `READY` "
+            r"/ (\d+) `PASS`; development: (\d+) `NOT_IMPLEMENTED`\)"
+        ),
+        (*_PART1_STATE_KEYS, "development.NOT_IMPLEMENTED"),
+    ),
+    _CountTranscription(
+        _COMPLEXITY_REGISTER_MD,
+        "non-normative standing preamble",
+        re.compile(
+            r"\(Part-1 remains (\d+); the development track now has (\d+) after "
+            r"separate ECO/IOM registrations\)"
+        ),
+        ("part1.TOTAL", "development.TOTAL"),
+    ),
+    _CountTranscription(
+        _COMPLEXITY_REGISTER_MD,
+        "standing restated",
+        re.compile(
+            r"It adds nothing to either evidence count \(Part-1 (\d+); development "
+            r"track (\d+)\)\."
+        ),
+        ("part1.TOTAL", "development.TOTAL"),
+    ),
+    _CountTranscription(
+        _IMPLEMENTATION_PLAN_MD,
+        "register-count note (Part 1)",
+        re.compile(
+            r"The Part-1 Evidence Register holds (\d+) items: (\d+) "
+            r"`NOT_IMPLEMENTED`, (\d+) `READY`, and (\d+) `PASS`\."
+        ),
+        ("part1.TOTAL", *_PART1_STATE_KEYS),
+    ),
+    _CountTranscription(
+        _IMPLEMENTATION_PLAN_MD,
+        "register-count note (development)",
+        re.compile(r"EVIDENCE-REGISTER-DEV \((\d+) items, all `NOT_IMPLEMENTED`"),
+        ("development.TOTAL",),
+    ),
+    _CountTranscription(
+        _PREFACE_MD,
+        "part map (Part 1)",
+        re.compile(r"EVIDENCE-REGISTER-002 \((\d+) items\)"),
+        ("part1.TOTAL",),
+    ),
+    _CountTranscription(
+        _PREFACE_MD,
+        "part map (development)",
+        re.compile(r"EVIDENCE-REGISTER-DEV \((\d+) items at this revision"),
+        ("development.TOTAL",),
+    ),
+)
+
+
+def _normalized_prose(text: str) -> str:
+    """Flatten wrapping and blockquote markers so anchors match across lines."""
+    return re.sub(r"\s+", " ", _BLOCKQUOTE_PREFIX.sub("", text))
+
+
+def _derived_register_counts(
+    part1: EvidenceRegister, development: EvidenceRegister
+) -> dict[str, int]:
+    derived = {
+        "part1.TOTAL": len(part1.rows),
+        "development.TOTAL": len(development.rows),
+    }
+    for state in EVIDENCE_STATES:
+        derived[f"part1.{state}"] = part1.counts.get(state, 0)
+        derived[f"development.{state}"] = development.counts.get(state, 0)
+    return derived
+
+
+def validate_count_transcriptions(
+    source_root: Path, part1: EvidenceRegister, development: EvidenceRegister
+) -> int:
+    """Check every registered hand-transcribed register count against the CSVs.
+
+    The registered documents are required to exist: deleting one, deleting an
+    anchored sentence, or editing a transcribed number all fail.
+    """
+    derived = _derived_register_counts(part1, development)
+    errors: list[str] = []
+    checked = 0
+    texts: dict[str, str] = {}
+    for entry in _COUNT_TRANSCRIPTIONS:
+        if entry.relative_path not in texts:
+            path = source_root / entry.relative_path
+            if not path.is_file():
+                errors.append(
+                    f"{entry.relative_path}: required transcription source is missing"
+                )
+                texts[entry.relative_path] = ""
+                continue
+            texts[entry.relative_path] = _normalized_prose(
+                path.read_text(encoding="utf-8-sig")
+            )
+        text = texts[entry.relative_path]
+        if not text:
+            continue
+        matches = entry.pattern.findall(text)
+        if not matches:
+            errors.append(
+                f"{entry.relative_path} [{entry.label}]: transcription anchor not "
+                "found; the sentence was edited, moved, or deleted"
+            )
+            continue
+        for match in matches:
+            values = match if isinstance(match, tuple) else (match,)
+            for key, value in zip(entry.derived_keys, values, strict=True):
+                if int(value) != derived[key]:
+                    errors.append(
+                        f"{entry.relative_path} [{entry.label}]: transcribed "
+                        f"{key}={value} but the registers derive {derived[key]}"
+                    )
+        checked += 1
+    if errors:
+        raise StatusError(
+            "register count transcription check failed:\n  " + "\n  ".join(errors)
+        )
+    return checked
 
 
 def _traceability_safe_ids(path: Path, defined_safes: set[str]) -> set[str]:
@@ -410,9 +823,87 @@ def _traceability_safe_ids(path: Path, defined_safes: set[str]) -> set[str]:
     return safe_ids
 
 
+def _exact_primary_family(register: EvidenceRegister, adr: str) -> str:
+    exact_families = {
+        row["evidence_id"].rsplit("-", 1)[0]
+        for row in register.rows
+        if row["primary_adr"] == adr
+    }
+    if len(exact_families) != 1:
+        raise StatusError(
+            f"{adr}: expected one exact primary evidence family, got {sorted(exact_families)!r}"
+        )
+    return next(iter(exact_families))
+
+
+def _validate_source_gap_traceability(
+    adr: str,
+    adr_path: Path,
+    matrix_path: Path,
+    matrix: str,
+    register: EvidenceRegister,
+) -> None:
+    """Require a recorded direct-source gap to stay recorded, in both documents.
+
+    Exempting ``adr`` from the direct-table requirement is only honest while the
+    gap itself stays visible.  Re-adding an unsourced direct table, dropping the
+    ADR's gap section, dropping the matrix's open-gap row, or quietly filling in
+    a SAFE set must each fail loudly rather than register as coverage.
+    """
+    text = adr_path.read_text(encoding="utf-8-sig")
+    if _TRACEABILITY_HEADING.search(text) is not None:
+        raise StatusError(
+            f"{adr_path}: {adr} carries a direct Traceability table again, but no "
+            "source document allocates a SAFE requirement to it; closing this gap "
+            "is a GOV-001 G6 amendment, not a transcription"
+        )
+    if _SOURCE_GAP_HEADING.search(text) is None:
+        raise StatusError(
+            f"{adr_path}: {adr} no longer publishes its "
+            "'Requirements Traceability — Source Gap' section"
+        )
+    if _DEPENDS_ON_HEADER.search(text) is not None:
+        raise StatusError(
+            f"{adr_path}: {adr} now declares a Depends On header; the recorded gap "
+            "asserts it declares none, so the gap record is stale"
+        )
+
+    if _MATRIX_SOURCE_GAP_SECTION.search(matrix) is None:
+        raise StatusError(f"{matrix_path}: the §5.3 direct-source gap section is gone")
+    family = _exact_primary_family(register, adr)
+    gap_row = re.search(
+        rf"^\| {re.escape(adr)} \| {re.escape(family)} \| ([^|]*) \| ([^|]*) \|$",
+        matrix,
+        re.MULTILINE,
+    )
+    if gap_row is None:
+        raise StatusError(
+            f"{matrix_path}: §5.3 no longer records an open source gap for "
+            f"{adr}/{family}"
+        )
+    if _SAFE_ID.search(gap_row.group(1)):
+        raise StatusError(
+            f"{matrix_path}: {adr} gap row now lists a direct SAFE set "
+            f"({gap_row.group(1).strip()!r}); an allocation may not be introduced here"
+        )
+    if "OPEN source gap" not in gap_row.group(2):
+        raise StatusError(f"{matrix_path}: {adr} gap row no longer reads OPEN")
+    reverse_row = re.search(
+        rf"^\| {re.escape(family)} \| ([^|]+) \|$", matrix, re.MULTILINE
+    )
+    if reverse_row is None:
+        raise StatusError(f"{matrix_path}: missing reverse row for {family}")
+    reverse_cell = reverse_row.group(1)
+    if _SAFE_ID.search(reverse_cell) or "source gap" not in reverse_cell:
+        raise StatusError(
+            f"{matrix_path}: {family} must stay unreachable through the SAFE→ADR "
+            f"bridge and cite the source gap; got {reverse_cell.strip()!r}"
+        )
+
+
 def validate_direct_traceability(
     source_root: Path, register: EvidenceRegister, matrix_path: Path
-) -> int:
+) -> tuple[int, int]:
     safety_case = source_root / "part-1-foundation/RFC-001-Safety-Case.md"
     safety_text = safety_case.read_text(encoding="utf-8-sig")
     defined_safes = set(
@@ -431,9 +922,15 @@ def validate_direct_traceability(
             f"{source_root}: expected 30 ADR-002 source documents, found {len(adr_paths)}"
         )
 
+    unknown_gaps = sorted(_SOURCE_GAP_ADRS - set(adr_paths))
+    if unknown_gaps:
+        raise StatusError(
+            f"{source_root}: recorded source-gap ADRs do not exist: {unknown_gaps!r}"
+        )
     safe_sets = {
         adr: _traceability_safe_ids(path, defined_safes)
         for adr, path in adr_paths.items()
+        if adr not in _SOURCE_GAP_ADRS
     }
     primary_families: dict[str, set[str]] = {}
     for row in register.rows:
@@ -448,19 +945,14 @@ def validate_direct_traceability(
         )
 
     matrix = matrix_path.read_text(encoding="utf-8-sig")
-    if "ADRs with a direct Traceability table: 30/30; source gaps: 0." not in matrix:
+    if _DIRECT_TABLE_SUMMARY not in matrix:
         raise StatusError(f"{matrix_path}: direct-table coverage summary is stale")
+    for adr in sorted(_SOURCE_GAP_ADRS):
+        _validate_source_gap_traceability(
+            adr, adr_paths[adr], matrix_path, matrix, register
+        )
     for adr in sorted(_DIRECT_REPAIR_ADRS):
-        exact_families = {
-            row["evidence_id"].rsplit("-", 1)[0]
-            for row in register.rows
-            if row["primary_adr"] == adr
-        }
-        if len(exact_families) != 1:
-            raise StatusError(
-                f"{adr}: expected one exact primary evidence family, got {sorted(exact_families)!r}"
-            )
-        family = next(iter(exact_families))
+        family = _exact_primary_family(register, adr)
         reverse_match = re.search(
             rf"^\| {re.escape(family)} \| ([^|]+) \|$", matrix, re.MULTILINE
         )
@@ -492,7 +984,7 @@ def validate_direct_traceability(
                 raise StatusError(
                     f"{matrix_path}: {safe_id} does not directly reach {adr}/{family}"
                 )
-    return len(adr_paths)
+    return len(safe_sets), len(adr_paths)
 
 
 def validate_p2_dispositions(csv_path: Path, package_path: Path) -> int:
@@ -758,9 +1250,98 @@ def validate_investment_operating_model(
                 )
 
 
+@dataclass(frozen=True)
+class BrokerConstructionSite:
+    relative_path: str
+    classes: frozenset[str]
+    is_entrypoint: bool
+
+
+def scan_broker_construction_sites(
+    repo_root: Path,
+) -> tuple[BrokerConstructionSite, ...]:
+    """Find every non-TOS, non-test source file that constructs a broker client.
+
+    Directory pruning rather than an allowlist: a brand-new top-level package is
+    scanned automatically, so the scan cannot go blind the way a hardcoded route
+    range does.
+    """
+    sites: list[BrokerConstructionSite] = []
+    for dir_path, dir_names, file_names in os.walk(repo_root):
+        dir_names[:] = sorted(
+            name
+            for name in dir_names
+            if name not in _REVERSE_SCAN_SKIPPED_DIRS and not name.startswith(".")
+        )
+        for file_name in sorted(file_names):
+            if not file_name.endswith(".py"):
+                continue
+            if file_name.startswith("test_") or file_name in {"conftest.py"}:
+                continue
+            path = Path(dir_path) / file_name
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            found: set[str] = set()
+            for line in text.splitlines():
+                stripped = line.lstrip()
+                # A ``class KISClient(...)`` definition is not a construction.
+                if stripped.startswith(("#", "class ")):
+                    continue
+                found.update(
+                    match.group("name") for match in _BROKER_CONSTRUCTION.finditer(line)
+                )
+            if found:
+                sites.append(
+                    BrokerConstructionSite(
+                        path.relative_to(repo_root).as_posix(),
+                        frozenset(found),
+                        _ENTRYPOINT_GUARD.search(text) is not None,
+                    )
+                )
+    return tuple(sites)
+
+
+def validate_legacy_route_reverse_census(
+    repo_root: Path, csv_path: Path, registered_components: frozenset[str]
+) -> tuple[str, ...]:
+    """Look for broker-order routes that nobody registered.
+
+    Fail-closed tier: an *operator- or service-invocable* entrypoint that
+    constructs the direct broker order sender must be a registered
+    ``LEGACY_ROUTE`` component.  That is the F6 defect class verbatim --
+    MIGRATION-CONFORMANCE-REGISTER §2 scopes it to "operator-invocable paths
+    that reach a real broker" -- and it is exactly what ``flatten_all.py``
+    tripped.
+
+    Warning tier: every other unregistered ``KISClient``/``OrderExecutor``
+    construction is returned, not raised.  ``KISClient`` is equally the
+    market-data read client, and LEGACY-005 explicitly records that "multiple
+    construction callers remain" for the shared sender without enumerating them,
+    so failing on those would assert a completeness claim the register does not
+    make.  See the report accompanying this check for what that does not catch.
+    """
+    unregistered_senders: list[str] = []
+    unregistered: list[str] = []
+    for site in scan_broker_construction_sites(repo_root):
+        if site.relative_path in registered_components:
+            continue
+        unregistered.append(site.relative_path)
+        if site.is_entrypoint and _ORDER_SENDER in site.classes:
+            unregistered_senders.append(site.relative_path)
+    if unregistered_senders:
+        raise StatusError(
+            f"{csv_path}: unregistered broker-order route(s); every invocable "
+            f"{_ORDER_SENDER} construction site must be a registered LEGACY_ROUTE "
+            f"component: {unregistered_senders!r}"
+        )
+    return tuple(unregistered)
+
+
 def validate_migration_conformance(
     repo_root: Path, csv_path: Path, markdown_path: Path
-) -> int:
+) -> tuple[int, tuple[str, ...]]:
     """Validate package coverage and non-authorizing migration/Q6 honesty."""
     rows = _read_csv(csv_path, REQUIRED_MIGRATION_FIELDS)
     ids = [row["record_id"] for row in rows]
@@ -802,8 +1383,15 @@ def validate_migration_conformance(
     }
     if set(by_category) != expected_categories:
         raise StatusError(f"{csv_path}: migration category set is incomplete")
-    if by_category["LEGACY_ROUTE"] != {f"LEGACY-{number:03}" for number in range(1, 6)}:
-        raise StatusError(f"{csv_path}: legacy route census must be LEGACY-001..005")
+    legacy_ids = by_category["LEGACY_ROUTE"]
+    expected_legacy = {
+        f"LEGACY-{number:03}" for number in range(1, len(legacy_ids) + 1)
+    }
+    if legacy_ids != expected_legacy:
+        raise StatusError(
+            f"{csv_path}: legacy route census must be a contiguous "
+            f"LEGACY-001..LEGACY-{len(legacy_ids):03} block, got {sorted(legacy_ids)!r}"
+        )
     if by_category["OPERATOR_VIEW"] != {"OPERATOR-001"}:
         raise StatusError(
             f"{csv_path}: exactly one consolidated operator view is required"
@@ -831,12 +1419,18 @@ def validate_migration_conformance(
         )
 
     legacy_rows = [row for row in rows if row["category"] == "LEGACY_ROUTE"]
+    registered_components: set[str] = set()
     for row in legacy_rows:
-        source_path = repo_root / row["component"].split(maxsplit=1)[0]
-        if not source_path.is_file():
+        component = row["component"].split(maxsplit=1)[0]
+        if not (repo_root / component).is_file():
             raise StatusError(
-                f"{csv_path}: {row['record_id']} source path is missing: {source_path}"
+                f"{csv_path}: {row['record_id']} source path is missing: "
+                f"{repo_root / component}"
             )
+        registered_components.add(component)
+    unregistered_broker_sites = validate_legacy_route_reverse_census(
+        repo_root, csv_path, frozenset(registered_components)
+    )
 
     markdown = markdown_path.read_text(encoding="utf-8-sig")
     required_markers = (
@@ -857,7 +1451,7 @@ def validate_migration_conformance(
     }:
         if record_id not in markdown:
             raise StatusError(f"{markdown_path}: missing register row {record_id}")
-    return len(rows)
+    return len(rows), unregistered_broker_sites
 
 
 def collect_status(repo_root: Path) -> StatusSnapshot:
@@ -867,15 +1461,16 @@ def collect_status(repo_root: Path) -> StatusSnapshot:
     development = load_evidence_register(repo_root / DEV_CSV, "Parts 2/3 development")
     validate_markdown_mirror(repo_root / PART1_MD, part1)
     validate_markdown_mirror(repo_root / DEV_MD, development)
-    authorities = load_authorities(repo_root / AUTHORITY_CSV)
-    direct_traceability_count = validate_direct_traceability(
+    authorities = load_authorities(repo_root / AUTHORITY_CSV, source_root)
+    transcription_sites = validate_count_transcriptions(source_root, part1, development)
+    direct_traceability_count, direct_traceability_total = validate_direct_traceability(
         source_root, part1, repo_root / TRACEABILITY_MD
     )
     p2_carried_questions = validate_p2_dispositions(
         repo_root / P2_DISPOSITION_CSV, repo_root / P2_DISPOSITION_MD
     )
     validate_investment_operating_model(repo_root / IOM_PROFILE_SCHEMA, development)
-    migration_rows = validate_migration_conformance(
+    migration_rows, unregistered_broker_sites = validate_migration_conformance(
         repo_root, repo_root / MIGRATION_CSV, repo_root / MIGRATION_MD
     )
     const003_result = validate_economic_viability(
@@ -888,9 +1483,12 @@ def collect_status(repo_root: Path) -> StatusSnapshot:
         development,
         authorities,
         direct_traceability_count,
+        direct_traceability_total,
+        unregistered_broker_sites,
         p2_carried_questions,
         const003_result,
         migration_rows,
+        transcription_sites,
     )
 
 
@@ -943,13 +1541,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"ADRs={sum(snapshot.adrs.values())}, "
                 f"Part1={len(snapshot.part1.rows)}, "
                 f"DEV={len(snapshot.development.rows)}, "
-                f"direct_traceability={snapshot.direct_traceability_count}/30, "
+                f"direct_traceability={snapshot.direct_traceability_count}"
+                f"/{snapshot.direct_traceability_total}, "
+                f"source_gap_adrs={len(_SOURCE_GAP_ADRS)}, "
                 f"p2_carried={snapshot.p2_carried_questions}, "
                 f"CONST-003={snapshot.const003_result}, "
                 f"migration_rows={snapshot.migration_rows}, "
+                f"count_transcriptions={snapshot.transcription_sites}, "
                 f"restricted_live={snapshot.authorities['restricted_live']}, "
                 f"production={snapshot.authorities['production']}"
             )
+            if snapshot.unregistered_broker_sites:
+                print(
+                    "  reverse-scan WARNING (non-blocking): "
+                    f"{len(snapshot.unregistered_broker_sites)} broker-client "
+                    "construction site(s) outside tos/ and tests are not registered "
+                    "LEGACY_ROUTE components; none is an invocable "
+                    f"{_ORDER_SENDER} entrypoint: "
+                    + ", ".join(snapshot.unregistered_broker_sites)
+                )
     except (OSError, StatusError) as exc:
         print(f"TOS spec status FAIL: {exc}", file=sys.stderr)
         return 1

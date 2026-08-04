@@ -10,9 +10,12 @@
 ## 1. Evidence-Family Legend
 
 Each evidence family's dedicated acceptance rows are owned by one primary ADR
-(EVIDENCE-REGISTER-002 `primary_adr`). All 30 ADR source documents now carry a
-direct Traceability table; the 2026-08-02 consistency check validates every
-table against defined RFC-001 SAFE IDs and registered primary-ADR evidence.
+(EVIDENCE-REGISTER-002 `primary_adr`). 29 of the 30 ADR source documents carry a
+direct Traceability table; the consistency check validates every such table
+against defined RFC-001 SAFE IDs and registered primary-ADR evidence.
+ADR-002-002 remains a direct-source gap: no source document allocates any SAFE
+requirement to it, so its RC-EV family is not reachable through the SAFE→ADR
+bridge (§5.3).
 
 | Family | Domain | Primary ADR |
 |---|---|---|
@@ -63,9 +66,9 @@ ADR column shows the realizing ADR suffixes (ADR-002-0xx) whose Requirements Tra
 | SAFE-010 | Pre-Trade Safety Authorization | 012, 013, 014, 015, 016, 017, 018, 019, 020, 021, 022, 023, 024, 025, 026, 027, 028, 029, 030 | AFG, ARE, CII, CUR, EGRESS, ERI, HAG, IAP, IOC, PTF, RCLP, RLP, SBR, SCI, SIR, SPG, STM, VTG, WDR | COVERED |
 | SAFE-011 | Non-Bypassable Safety Limits | 001, 003, 007, 009, 010, 011, 012, 013, 014, 015, 016, 017, 018, 019, 020, 022, 023, 024, 025, 026, 027, 028, 029, 030 | AFG, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SA, SBR, SCI, SIR, SPG, STM, VTG, WDR | COVERED |
 | SAFE-012 | Bounded Single-Action Risk | 021, 022, 025, 026, 030 | AFG, ARE, PTF, RLP, WDR | COVERED |
-| SAFE-013 | Aggregate Risk Authority | 001, 002, 007, 009, 010, 011, 012, 014, 017, 018, 019, 020, 021, 022, 023, 024, 025, 027, 028, 029, 030 | AFG, ARE, CII, CUR, FD, IAP, IOC, NT, PR, PTF, RC, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG | COVERED |
+| SAFE-013 | Aggregate Risk Authority | 001, 007, 009, 010, 011, 012, 014, 017, 018, 019, 020, 021, 022, 023, 024, 025, 027, 028, 029, 030 | AFG, ARE, CII, CUR, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG | COVERED |
 | SAFE-014 | Bounded Action Rate | 001, 013, 021, 022, 027, 029, 030 | AFG, ARE, EGRESS, PTF, SCI, SIR | COVERED |
-| SAFE-015 | Exclusive Risk-Capacity Commitment | 001, 002, 007, 009, 010, 011, 012, 013, 017, 018, 019, 020, 021, 022, 023, 024, 025, 026, 028, 030 | AFG, ARE, CII, CUR, EGRESS, FD, IAP, IOC, NT, PR, PTF, RC, RCLP, REARM, RLP, SBR, STM, VTG, WDR | COVERED |
+| SAFE-015 | Exclusive Risk-Capacity Commitment | 001, 007, 009, 010, 011, 012, 013, 017, 018, 019, 020, 021, 022, 023, 024, 025, 026, 028, 030 | AFG, ARE, CII, CUR, EGRESS, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, STM, VTG, WDR | COVERED |
 | SAFE-020 | Immutable Intent Identity | 004, 005, 010, 011, 016, 017, 018, 019, 020, 021, 022, 023, 024, 030 | AFG, ARE, BC, CII, CUR, ERI, IAP, IOC, NT, PR, PTF, SBR, STATE, VTG | COVERED |
 | SAFE-021 | At-Most-One Exposure Effect | 001, 004, 005, 007, 009, 011, 012, 013, 016, 017, 018, 020, 021, 022, 023, 024, 025, 026, 027, 030 | AFG, ARE, BC, CII, CUR, EGRESS, ERI, FD, IAP, IOC, PR, PTF, RCLP, REARM, RLP, SBR, SIR, STATE, WDR | COVERED |
 | SAFE-022 | Reconciliation Before Exposure | 005, 006, 007, 009, 010, 011, 016, 017, 018, 024, 028, 030 | CII, CUR, ERI, FD, NT, PR, PTF, REARM, RECON, SBR, STATE, STM | COVERED |
@@ -101,8 +104,8 @@ SAFE control set from RFC-001 §9 Constitutional-basis / §10 Controlled-by. EV 
 
 | HAZ | Title | Controlling SAFE | EV families | Status |
 |---|---|---|---|---|
-| HAZ-001 | Permanent Capital Impairment | SAFE-010, SAFE-012, SAFE-013, SAFE-042 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RC, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG, WDR | COVERED |
-| HAZ-002 | Unbounded Loss or Exposure | SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RC, RCLP, REARM, RLP, SA, SBR, SCI, SIR, SPG, STM, VTG, WDR | COVERED |
+| HAZ-001 | Permanent Capital Impairment | SAFE-010, SAFE-012, SAFE-013, SAFE-042 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG, WDR | COVERED |
+| HAZ-002 | Unbounded Loss or Exposure | SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SA, SBR, SCI, SIR, SPG, STM, VTG, WDR | COVERED |
 | HAZ-003 | Limit-Breaching Action | SAFE-010, SAFE-011, SAFE-012 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SA, SBR, SCI, SIR, SPG, STM, VTG, WDR | COVERED |
 | HAZ-004 | Duplicate Exposure | SAFE-020, SAFE-021, SAFE-022 | AFG, ARE, BC, CII, CUR, EGRESS, ERI, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RECON, RLP, SBR, SIR, STATE, STM, VTG, WDR | COVERED |
 | HAZ-005 | Runaway Action Rate | SAFE-014, SAFE-042 | AFG, ARE, EGRESS, HAG, PTF, REARM, SBR, SCI, SIR, WDR | COVERED |
@@ -113,17 +116,17 @@ SAFE control set from RFC-001 §9 Constitutional-basis / §10 Controlled-by. EV 
 | HAZ-010 | Loss of Containment Authority | SAFE-041, SAFE-042, SAFE-050 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SA, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
 | HAZ-011 | Fail-Open Safety Configuration | SAFE-003, SAFE-011, SAFE-050 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SA, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
 | HAZ-012 | Live and Non-Live Crossover | SAFE-045, SAFE-046, SAFE-047 | AFG, CII, EGRESS, ERI, FD, HAG, IOC, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG, WDR | COVERED |
-| HAZ-013 | Aggregate Risk Accumulation | SAFE-013 | AFG, ARE, CII, CUR, FD, IAP, IOC, NT, PR, PTF, RC, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG | COVERED |
+| HAZ-013 | Aggregate Risk Accumulation | SAFE-013 | AFG, ARE, CII, CUR, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG | COVERED |
 | HAZ-014 | Intent-to-Order Corruption | SAFE-033, SAFE-034 | AFG, ARE, BC, CII, EGRESS, HAG, IAP, IOC, PTF, RECON, SCI, VTG, WDR | COVERED |
 | HAZ-015 | Audit Mistaken for Prevention | SAFE-010, SAFE-051, SAFE-052 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
 | HAZ-016 | Time-Source Corruption | SAFE-035, SAFE-030, SAFE-044, SAFE-046, SAFE-050 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PTF, REARM, RECON, RLP, SA, SBR, SCI, SIR, SPG, STATE, STM, TIME, VTG, WDR | COVERED |
 | HAZ-017 | Authoritative-State Corruption | SAFE-023, SAFE-022, SAFE-024, SAFE-025 | AFG, ARE, BC, CII, CUR, EGRESS, ERI, FD, IOC, NT, PR, PTF, RCLP, REARM, RECON, RLP, SBR, SIR, STATE, STM, VTG, WDR | COVERED |
 | HAZ-018 | Containment Isolation | SAFE-041, SAFE-048 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SA, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
-| HAZ-019 | Semantically Invalid Safety Profile | SAFE-003, SAFE-004, SAFE-012, SAFE-013, SAFE-050 | AFG, ARE, CII, CUR, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RC, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
-| HAZ-020 | Concurrent Risk-Capacity Oversubscription | SAFE-013, SAFE-015, SAFE-021 | AFG, ARE, BC, CII, CUR, EGRESS, ERI, FD, IAP, IOC, NT, PR, PTF, RC, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STATE, STM, VTG, WDR | COVERED |
+| HAZ-019 | Semantically Invalid Safety Profile | SAFE-003, SAFE-004, SAFE-012, SAFE-013, SAFE-050 | AFG, ARE, CII, CUR, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED |
+| HAZ-020 | Concurrent Risk-Capacity Oversubscription | SAFE-013, SAFE-015, SAFE-021 | AFG, ARE, BC, CII, CUR, EGRESS, ERI, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STATE, STM, VTG, WDR | COVERED |
 | HAZ-021 | Unattributed External Exposure | SAFE-023, SAFE-024, SAFE-044 | AFG, ARE, BC, CII, CUR, EGRESS, ERI, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RECON, RLP, SBR, SCI, SIR, STATE, STM, TIME, VTG, WDR | COVERED |
 | HAZ-022 | Partial-Fill State Corruption | SAFE-021, SAFE-022, SAFE-025, SAFE-043, SAFE-051 | AFG, ARE, BC, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RECON, RLP, SBR, SCI, SIR, SPG, STATE, STM, TIME, VTG, WDR | COVERED |
-| HAZ-023 | Trapped-Exposure Compounding | SAFE-013, SAFE-032, SAFE-043 | AFG, ARE, BC, CII, CUR, FD, IAP, IOC, NT, PR, PTF, RC, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG | COVERED |
+| HAZ-023 | Trapped-Exposure Compounding | SAFE-013, SAFE-032, SAFE-043 | AFG, ARE, BC, CII, CUR, FD, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SBR, SCI, SIR, SPG, STM, VTG | COVERED |
 | HAZ-024 | Operator/Human Configuration or Authorization Error | SAFE-042, SAFE-046, SAFE-050, SAFE-053 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PTF, REARM, RLP, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED (HAG-EV-018; §4.3 discharged Wave 4) |
 | HAZ-025 | Defect or Compromise of the Final Egress Enforcement Point | SAFE-041, SAFE-048, SAFE-054 | AFG, ARE, CII, CUR, EGRESS, ERI, FD, HAG, IAP, IOC, NT, PR, PTF, RCLP, REARM, RLP, SA, SBR, SCI, SIR, SPG, STM, TIME, VTG, WDR | COVERED (EGRESS-EV-013; §4.3 discharged Wave 4) |
 
@@ -150,7 +153,7 @@ Derived reverse of §2 (family appears for a SAFE when the family's primary ADR 
 | NT-EV | SAFE-002, SAFE-004, SAFE-011, SAFE-013, SAFE-015, SAFE-020, SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-032, SAFE-035, SAFE-040, SAFE-041, SAFE-044, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
 | PR-EV | SAFE-002, SAFE-004, SAFE-011, SAFE-013, SAFE-015, SAFE-020, SAFE-021, SAFE-022, SAFE-023, SAFE-025, SAFE-032, SAFE-040, SAFE-041, SAFE-043, SAFE-048, SAFE-051, SAFE-052 |
 | PTF-EV | SAFE-004, SAFE-010, SAFE-011, SAFE-012, SAFE-013, SAFE-014, SAFE-015, SAFE-020, SAFE-021, SAFE-022, SAFE-025, SAFE-030, SAFE-031, SAFE-032, SAFE-033, SAFE-034, SAFE-035, SAFE-040, SAFE-044, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
-| RC-EV | SAFE-013, SAFE-015 |
+| RC-EV | — (none via bridge; see §5.3 source gap) |
 | RCLP-EV | SAFE-010, SAFE-011, SAFE-013, SAFE-015, SAFE-021, SAFE-024, SAFE-041, SAFE-048, SAFE-051, SAFE-052 |
 | REARM-EV | SAFE-003, SAFE-004, SAFE-011, SAFE-013, SAFE-015, SAFE-021, SAFE-022, SAFE-024, SAFE-025, SAFE-035, SAFE-041, SAFE-042, SAFE-044, SAFE-045, SAFE-046, SAFE-047, SAFE-048, SAFE-050, SAFE-051, SAFE-052 |
 | RECON-EV | SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-031, SAFE-034 |
@@ -185,20 +188,36 @@ requirements; there are no remaining UNMAPPED SAFE requirements.
 
 HAZ-024 and HAZ-025 are now fully covered: HAZ-024's SAFE-053 control resolves to HAG-EV-018 and the HAG family, and HAZ-025's SAFE-054 control resolves to EGRESS-EV-013 and the EGRESS family. The Evidence Register count is now 372 after the Wave-4 consolidation. See ARCHITECTURE-GATE-STATUS §4.2 (SAFE-053 / HAG-EV-013..017) and §4.3 (HAZ-024 / HAG-EV-018; HAZ-025 / SAFE-054 / EGRESS-EV-013), all discharged.
 
-### 5.3 Direct-source gaps (resolved 2026-08-02)
+### 5.3 Direct-source gaps (four resolved 2026-08-02; one open)
 
-ADR-002-002 through ADR-002-006 now carry direct Traceability tables. The tables
-transcribe only their pre-existing RFC-002 §9.1 or `Depends On` SAFE claims and
-their existing RC, SA, BC, STATE, and RECON acceptance families. No SAFE, HAZ,
-evidence ID, status, or authority changed.
+ADR-002-003 through ADR-002-006 now carry direct Traceability tables. Each
+transcribes only that ADR's own pre-existing `Depends On` SAFE set and its
+existing SA, BC, STATE, or RECON acceptance family. No SAFE, HAZ, evidence ID,
+status, or authority changed.
 
-| ADR | Evidence family | Direct SAFE set | Resolution |
+**ADR-002-002 remains an open source gap.** A 2026-08-02 edit added a direct
+table to ADR-002-002 citing an RFC-002 §9.1 allocation of SAFE-013 and
+SAFE-015. Reverification found that §9.1 contains no SAFE identifier of any
+kind; the only RFC-002 occurrences of those two IDs are §5 Architecture Drivers
+(driver → requirement, naming no ADR) and §27 (SAFE → component names, naming
+no ADR), and RFC-001 does not mention ADR-002-002 at all. The allocation was
+therefore unsourced and has been reverted. Unlike its four siblings,
+ADR-002-002 declares no `Depends On` header, so no transcribable source exists.
+
+Closing this gap requires a **GOV-001 G6 amendment and re-ratification** of
+RFC-002 (allocation) or RFC-001 (requirement), plus the G6 citation-integrity
+re-check — not a table added to the ADR. Until then, RC-EV remains registered
+and owned by ADR-002-002 but unreachable through the SAFE→ADR bridge. This is a
+source-document gap, not an absence of evidence; SAFE-013 and SAFE-015 remain
+COVERED through other realizing ADRs that independently claim them.
+
+| ADR | Evidence family | Direct SAFE set | Status |
 |---|---|---|---|
-| ADR-002-002 | RC-EV | SAFE-013, SAFE-015 | ADR §38.1; RFC-002 §9.1 allocation transcribed |
-| ADR-002-003 | SA-EV | SAFE-011, SAFE-035, SAFE-041, SAFE-048 | ADR §27.1; existing `Depends On` set transcribed |
-| ADR-002-004 | BC-EV | SAFE-020, SAFE-021, SAFE-024, SAFE-025, SAFE-033, SAFE-040, SAFE-043 | ADR §29.1; existing `Depends On` set transcribed |
-| ADR-002-005 | STATE-EV | SAFE-020, SAFE-021, SAFE-022, SAFE-024, SAFE-025, SAFE-030 | ADR §18.1; existing `Depends On` set transcribed |
-| ADR-002-006 | RECON-EV | SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-031, SAFE-034 | ADR §14.1; existing `Depends On` set transcribed |
+| ADR-002-002 | RC-EV | — (none sourced) | **OPEN source gap** — no source document allocates a SAFE to this ADR; see ADR §38.1. Requires GOV-001 G6 amendment, not transcription. |
+| ADR-002-003 | SA-EV | SAFE-011, SAFE-035, SAFE-041, SAFE-048 | Resolved — ADR §27.1; existing `Depends On` set transcribed |
+| ADR-002-004 | BC-EV | SAFE-020, SAFE-021, SAFE-024, SAFE-025, SAFE-033, SAFE-040, SAFE-043 | Resolved — ADR §29.1; existing `Depends On` set transcribed |
+| ADR-002-005 | STATE-EV | SAFE-020, SAFE-021, SAFE-022, SAFE-024, SAFE-025, SAFE-030 | Resolved — ADR §18.1; existing `Depends On` set transcribed |
+| ADR-002-006 | RECON-EV | SAFE-022, SAFE-023, SAFE-024, SAFE-025, SAFE-030, SAFE-031, SAFE-034 | Resolved — ADR §14.1; existing `Depends On` set transcribed |
 
 ---
 
@@ -206,5 +225,5 @@ evidence ID, status, or authority changed.
 
 - Defined SAFE requirements: 36; COVERED via ADR bridge: 36; UNMAPPED (evidence debt): 0 (SAFE-053 and SAFE-054 resolved in Wave 4).
 - Defined hazards: 25; every hazard resolves to ≥1 evidence family.
-- ADRs with a direct Traceability table: 30/30; source gaps: 0.
+- ADRs with a direct Traceability table: 29/30; source gaps: 1 (ADR-002-002 — see §5.3; unreachable family: RC-EV).
 - This matrix is the instantiated bidirectional coverage matrix referenced by VER-002-001 §383. It changes no ADR status; the Wave-4 consolidation added nine rows to the Evidence Register (count now 372).
