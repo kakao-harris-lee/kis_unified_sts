@@ -412,8 +412,9 @@ RFC-004 introduces no SAFE-xxx requirement and no numeric bound.
 
 ## 15. Open Questions
 
-These are open while RFC-004 is a Review Draft and while the companion RFCs are
-unwritten. They SHALL NOT be resolved by informal market-model convention.
+These remain open notwithstanding RFC-004's `Ratified` status (2026-07-18 — GOV-001 G5
+record RR-0006), and while the companion RFCs are accepted only in part. They SHALL
+NOT be resolved by informal market-model convention.
 
 1. Is "market regime" formally defined by RFC-004 (for example as realized-
    volatility bands) or left to a downstream consumer's classification?
@@ -468,3 +469,20 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   aligns RFC-004 with RFC-007 §§3, 10, 12, which state that RFC-007 classifies
   nothing and supplies only the methodology the Controller evaluates. RFC-007
   retains ownership of the hedge methodology only.
+
+### Currency correction, 2026-08-04 — §15 status self-description (no version change; materiality determination pending)
+
+* **What changed.** RFC-004 has been `Ratified` since 2026-07-18 (GOV-001 G5 record RR-0006,
+  ARCHITECTURE-GATE-STATUS §9.7), but the §15 Open Questions preamble described the document as "a Review Draft" and the companion RFCs as "unwritten". All 13 RFC-class baselines are `Ratified`.
+  The preamble now states the ratified status and records that ratification closes no open
+  question. Nothing else in §15 changed.
+* **What did not change.** No open question is opened, closed, reworded, or renumbered. No
+  SAFE-xxx requirement, numeric bound, authority, traceability row, or evidence identity is
+  added or altered; the evidence-register counts are unchanged (Part-1 372; development-track
+  118). No evidence row is promoted and no ADR acceptance, restricted-live grant, or
+  production authorization is conferred.
+* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
+  `**Status:**` is deliberately unchanged. Whether this correction is *material* under
+  GOV-001 G6 is a System Owner determination that has not been made; this entry records the
+  change and its provenance and does not substitute for that determination, which remains
+  pending System Owner review.

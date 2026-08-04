@@ -461,9 +461,9 @@ RFC-007 introduces no SAFE-xxx requirement and no numeric bound.
 
 ## 16. Open Questions
 
-These are open while RFC-007 is a Review Draft and while the companion RFCs are
-accepted only in part. They SHALL NOT be resolved by informal hedge-model
-convention.
+These remain open notwithstanding RFC-007's `Ratified` status (2026-07-18 — GOV-001 G5
+record RR-0009), and while the companion RFCs are accepted only in part. They SHALL
+NOT be resolved by informal hedge-model convention.
 
 1. Is the hedge ratio static (beta-based), rolling/regression-estimated, or
    dynamically re-estimated, and over what estimation window given Korean regime
@@ -524,3 +524,20 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   blocked, and every ADR/CONST/SAFE/philosophy citation was verified verbatim
   against source text. The review is EV-L0 only and confers no acceptance or
   live-readiness.
+
+### Currency correction, 2026-08-04 — §16 status self-description (no version change; materiality determination pending)
+
+* **What changed.** RFC-007 has been `Ratified` since 2026-07-18 (GOV-001 G5 record RR-0009,
+  ARCHITECTURE-GATE-STATUS §9.7), but the §16 Open Questions preamble described the document as "a Review Draft". All 13 RFC-class baselines are `Ratified`.
+  The preamble now states the ratified status and records that ratification closes no open
+  question. Nothing else in §16 changed.
+* **What did not change.** No open question is opened, closed, reworded, or renumbered. No
+  SAFE-xxx requirement, numeric bound, authority, traceability row, or evidence identity is
+  added or altered; the evidence-register counts are unchanged (Part-1 372; development-track
+  118). No evidence row is promoted and no ADR acceptance, restricted-live grant, or
+  production authorization is conferred.
+* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
+  `**Status:**` is deliberately unchanged. Whether this correction is *material* under
+  GOV-001 G6 is a System Owner determination that has not been made; this entry records the
+  change and its provenance and does not substitute for that determination, which remains
+  pending System Owner review.

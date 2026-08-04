@@ -9,7 +9,7 @@
 **Safety Authority:** Constrained by RFC-001 — Safety Case
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-13
-**Last Updated:** 2026-07-18
+**Last Updated:** 2026-08-02
 
 ---
 
@@ -2269,3 +2269,33 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * The finding was verified against source (all four sites confirmed) and applied narrow-only: each residual absolute prohibition now carries a strict conditional exception — permitted **only** through the approved Governed Single-Operator Re-Arm Variant (ADR-002-015 §17.1) satisfying RFC-001 SAFE-053, with the variant's existing constraints (pre-declared exact scope, smallest approved scope delta binding, Hard Safety Envelope not expanded, Non-Waivable Boundary preserved — ADR-002-015 §17.1.5) carried in-clause or by adjacent reference. The §20.1 Table B owner cell — formerly a single-path quorum-only label — now reads "governed authority increase — two independent effective principals per RFC-001 SAFE-053 (quorum or ADR-002-015 §17.1 variant)". The quorum-path dual control is not weakened; the §23.1 clause additionally states that a service identity SHALL NOT use the variant, which is a human-authority path.
 * Upstream synchronization: the same partial-update pattern was found at the source ADR-002-007 (§13, §14.1 item 3, REARM-AC-005) — a Wave-1 CR-02 propagation site that had been missed while ADR-002-025/026/027 received the recognition clause — and is corrected in ADR-002-007 v0.3 (Patch 0053) with the identical exception wording. The three NON-FINDINGS in VERDICT-0005 (§10.8 SAFE-054 branch preservation; §27/§30 traceability-matrix gate over SAFE-001..054; §12.1 orthogonal fail-closed UNKNOWN state) confirm the v0.5 pre-fixes pass.
 * Narrow-only realignment to the Ratified RFC-001 v0.8; no RFC-000 v0.16, RFC-001 v0.8, or GOV-001 v0.1 (all Ratified), vision, or philosophy text is changed. SAFE-053's two-satisfaction-path structure is preserved and no absolute two-natural-person requirement is reintroduced (CR-02 / DR-0001); the variant's ADR-002-015 §17.1 constraints are preserved unchanged. No new SAFE-xxx, no numeric bound, no broker proper noun; the Evidence Register counts are held (Part-1 372; development-track 98). The v0.6 delta re-review is requested in the git-excluded reviews/GEMINI-EVL0-REQUEST-0006.md; reviewer provenance per VER-002-001 §5 (M-18).
+
+### Currency correction, 2026-08-02 — §26 Wave-4 snapshot marked historical (no version change; materiality determination pending)
+
+* **What changed.** Commit `acd45c43` (2026-08-02, "docs(tos): remediate whole-corpus
+  review findings") replaced the §26 paragraph that followed the ADR status table. The
+  former text asserted in the present tense that "VER-002-001 and the Evidence Register
+  **now** cover ADR-002-001 through ADR-002-030" and that "**All** 372 registered evidence
+  items **remain** `NOT_IMPLEMENTED`". Those present-tense claims had gone stale: the
+  Part-1 register now records 292 `NOT_IMPLEMENTED`, 79 `READY`, and 1 `PASS`
+  (`verification/EVIDENCE-REGISTER-002.csv`), and the development-track register has grown
+  from 96 to 118 rows (`../part-3-development/verification/EVIDENCE-REGISTER-DEV.csv`). The
+  replacement paragraph is time-anchored — labelled "Historical Wave-4 snapshot (not
+  current status)", scoped with "At that Wave-4 checkpoint", and explicitly redirected to
+  the generated `../CURRENT-STATUS.md` for the current view. The 372 and 96 figures are
+  retained unchanged as Wave-4 merge-map history.
+* **What did not change.** No SAFE-xxx requirement, numeric bound, authority, gate, mode
+  transition, traceability row, or evidence identity. No evidence row is promoted; no ADR
+  status, ratification, restricted-live grant, or production authorization is affected.
+  The edit converts a stale present-tense status assertion into an explicitly historical
+  one — a currency correction that carries no requirement change.
+* **Metadata repair (this entry, 2026-08-04).** Commit `acd45c43` recorded no §32 entry and
+  left `**Last Updated:**` at 2026-07-18; it is the only commit to touch this file after
+  the ratification commit `10d494c5`. `**Last Updated:**` is corrected to 2026-08-02, the
+  date of the body edit, and this entry supplies the missing Review History record.
+* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
+  `**Status:**` is deliberately unchanged. Whether the `acd45c43` §26 edit is a *material*
+  change under GOV-001 G6 — and therefore whether it requires a version increment and a
+  governed re-ratification path — is a System Owner determination that has not been made.
+  **This entry records the change and its provenance; it does not make, imply, or
+  substitute for that determination, which remains pending System Owner review.**

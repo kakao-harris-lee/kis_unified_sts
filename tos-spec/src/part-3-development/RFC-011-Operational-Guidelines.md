@@ -456,7 +456,8 @@ on the enforcement, authority, and containment points already defined upstream.
 
 ## 14. Open Questions
 
-These questions are open while RFC-011 is a Review Draft. Each is addressed by a proposed
+These questions remain open notwithstanding RFC-011's `Ratified` status (2026-07-18 —
+GOV-001 G5 record RR-0013); ratification closes no open question. Each is addressed by a proposed
 ADR-DEV as noted; because every such ADR-DEV is `Proposed` (unaccepted), a proposed ADR-DEV
 does not resolve its question — resolution follows acceptance. None SHALL be resolved by
 informal operational convention.
@@ -572,3 +573,20 @@ Unresolved questions reduce, and do not expand, the conforming operational postu
   implies the reconciliation. Narrow-only and additive; no SAFE-xxx, no numeric bound, no new
   EV (register counts unchanged). Independent EV-L0 review is owed, with reviewer provenance
   recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).
+
+### Currency correction, 2026-08-04 — §14 status self-description (no version change; materiality determination pending)
+
+* **What changed.** RFC-011 has been `Ratified` since 2026-07-18 (GOV-001 G5 record RR-0013,
+  ARCHITECTURE-GATE-STATUS §9.7), but the §14 Open Questions preamble described the document as "a Review Draft". All 13 RFC-class baselines are `Ratified`.
+  The preamble now states the ratified status and records that ratification closes no open
+  question. Nothing else in §14 changed.
+* **What did not change.** No open question is opened, closed, reworded, or renumbered. No
+  SAFE-xxx requirement, numeric bound, authority, traceability row, or evidence identity is
+  added or altered; the evidence-register counts are unchanged (Part-1 372; development-track
+  118). No evidence row is promoted and no ADR acceptance, restricted-live grant, or
+  production authorization is conferred.
+* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
+  `**Status:**` is deliberately unchanged. Whether this correction is *material* under
+  GOV-001 G6 is a System Owner determination that has not been made; this entry records the
+  change and its provenance and does not substitute for that determination, which remains
+  pending System Owner review.

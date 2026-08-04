@@ -553,7 +553,8 @@ ADR-002-025 restricted-live evidence (RFC-000 CONST-003 Traceability).
 
 ## 16. Open Questions
 
-These questions accompany RFC-003 as a Review Draft. Q1, Q3, and Q4 are resolved below
+These questions accompany RFC-003, which is `Ratified` (2026-07-18 — GOV-001 G5 record
+RR-0005); ratification closes no open question. Q1, Q3, and Q4 are resolved below
 through governed patch (CORPUS-REVIEW-0001 Wave 5), not by informal decision-layer convention;
 the remainder stay open while the companion models (RFC-004–007) are accepted only in part. An
 open question SHALL NOT be resolved by informal decision-layer convention.
@@ -670,3 +671,20 @@ Unresolved questions reduce, and do not expand, the conforming action set.
 * Narrow-only and additive; RFC-003 introduces no SAFE-xxx requirement, numeric bound, or
   authority, and no new EV (register counts unchanged). Independent EV-L0 review is owed, with
   reviewer provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).
+
+### Currency correction, 2026-08-04 — §16 status self-description (no version change; materiality determination pending)
+
+* **What changed.** RFC-003 has been `Ratified` since 2026-07-18 (GOV-001 G5 record RR-0005,
+  ARCHITECTURE-GATE-STATUS §9.7), but the §16 Open Questions preamble described the document as accompanying "RFC-003 as a Review Draft". All 13 RFC-class baselines are `Ratified`.
+  The preamble now states the ratified status and records that ratification closes no open
+  question. Nothing else in §16 changed.
+* **What did not change.** No open question is opened, closed, reworded, or renumbered. No
+  SAFE-xxx requirement, numeric bound, authority, traceability row, or evidence identity is
+  added or altered; the evidence-register counts are unchanged (Part-1 372; development-track
+  118). No evidence row is promoted and no ADR acceptance, restricted-live grant, or
+  production authorization is conferred.
+* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
+  `**Status:**` is deliberately unchanged. Whether this correction is *material* under
+  GOV-001 G6 is a System Owner determination that has not been made; this entry records the
+  change and its provenance and does not substitute for that determination, which remains
+  pending System Owner review.

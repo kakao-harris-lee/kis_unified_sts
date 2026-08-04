@@ -427,7 +427,8 @@ on the enforcement, acceptance, and admission points already defined upstream.
 
 ## 14. Open Questions
 
-These questions are open while RFC-010 is a Review Draft. Each is addressed by a proposed
+These questions remain open notwithstanding RFC-010's `Ratified` status (2026-07-18 —
+GOV-001 G5 record RR-0012); ratification closes no open question. Each is addressed by a proposed
 ADR-DEV as noted; because every such ADR-DEV is `Proposed` (unaccepted), a proposed ADR-DEV
 does not resolve its question — resolution follows acceptance. None SHALL be resolved by
 informal testing convention.
@@ -553,3 +554,20 @@ have demonstrated.
   remains Proposed on the evidence-gated acceptance track; the attribution stands because it
   names the architecture-tier mechanism owner, not because of ratification status.
 * Narrow-only, additive; no SAFE-xxx, no numeric bound, no new EV (registers unchanged).
+
+### Currency correction, 2026-08-04 — §14 status self-description (no version change; materiality determination pending)
+
+* **What changed.** RFC-010 has been `Ratified` since 2026-07-18 (GOV-001 G5 record RR-0012,
+  ARCHITECTURE-GATE-STATUS §9.7), but the §14 Open Questions preamble described the document as "a Review Draft". All 13 RFC-class baselines are `Ratified`.
+  The preamble now states the ratified status and records that ratification closes no open
+  question. Nothing else in §14 changed.
+* **What did not change.** No open question is opened, closed, reworded, or renumbered. No
+  SAFE-xxx requirement, numeric bound, authority, traceability row, or evidence identity is
+  added or altered; the evidence-register counts are unchanged (Part-1 372; development-track
+  118). No evidence row is promoted and no ADR acceptance, restricted-live grant, or
+  production authorization is conferred.
+* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
+  `**Status:**` is deliberately unchanged. Whether this correction is *material* under
+  GOV-001 G6 is a System Owner determination that has not been made; this entry records the
+  change and its provenance and does not substitute for that determination, which remains
+  pending System Owner review.

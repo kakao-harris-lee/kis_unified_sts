@@ -3,10 +3,11 @@
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
 - **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-030
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-030; implementation evidence has not been executed
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-030. Of the 372 registered items, 292 are `NOT_IMPLEMENTED`, 79 are `READY` (administrative fields assigned; not executed), and 1 is `PASS` (SPG-EV-002, EV-L1/EV-L2 minimum level, signed 2026-07-30). See §381; `READY` is not a `PASS`, and a `PASS` at a registered scope is not live readiness
 - **Extension State:** ADR-002-005 through ADR-002-030 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, SCI, and PTF evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 - **Last Updated:** 2026-07-17 — Wave 7 (CORPUS-REVIEW-0001): M-18 added the EV-L0 reviewer-provenance obligation (§5, §9.5), applying to the corpus's own specification reviews; M-24 added the §2.7 Coverage Argument for universally-quantified claims and a §374 pointer to it. Narrow-only and additive; no new evidence ID, no SAFE-xxx, no numeric bound, no broker proper noun; the Part-1 evidence count is unchanged (372).
+- **Currency Correction (2026-08-04):** the `Current Evidence State` header field and §381 were re-derived from `verification/EVIDENCE-REGISTER-002.csv`, which the previous 2026-07-14 text contradicted (it reported every family `NOT EXECUTED` and independent review `NOT STARTED`). Description-only: no evidence row is promoted, no requirement, evidence state, ADR status, or authorization is changed, and the Part-1 evidence count is unchanged (372).
 
 ---
 
@@ -3794,46 +3795,59 @@ Requires:
 
 ## 381. Current Evidence Readiness Assessment
 
-As of 2026-07-14:
+As of 2026-08-04, derived from `verification/EVIDENCE-REGISTER-002.csv` (the
+machine-editable source) and `../AUTHORITY-STATUS.csv`:
 
 ```text
-Evidence specification: REGISTERED; NOT EXECUTED
-Evidence register: CREATED
-Test harness: NOT ASSESSED
-Implementation instrumentation: NOT ASSESSED
-Aggregate capacity evidence: NOT EXECUTED
-Safety Authority evidence: NOT EXECUTED
-Broker capability evidence: NOT EXECUTED
-Cross-system evidence: NOT EXECUTED
-Trustworthy Time evidence: NOT EXECUTED
-Live Authorization and re-arm evidence: NOT EXECUTED
-Orthogonal trading state evidence: NOT EXECUTED
-Evidence and reconciliation confidence evidence: NOT EXECUTED
-Failure-domain isolation evidence: NOT EXECUTED
-Protective replacement evidence: NOT EXECUTED
-Corporate action and non-trade evidence: NOT EXECUTED
-RCL persistence, consensus, and writer-fencing evidence: NOT EXECUTED
-Egress credential, route, Commit-Proof, and hard-fence evidence: NOT EXECUTED
-Safety profile and Hard Safety Envelope governance evidence: NOT EXECUTED
-Human authority, dual-control, HALT, and break-glass governance evidence: NOT EXECUTED
-Evidence integrity, audit, gap, retention, and deterministic replay evidence: NOT EXECUTED
-Safe startup, Recovery Barrier, conservative inventory, and readiness evidence: NOT EXECUTED
-Critical Input integrity, provenance, independent approval, context binding, and invalidation evidence: NOT EXECUTED
-Venue, session, tradability, exact order constraint, and final-egress currentness evidence: NOT EXECUTED
-Intent-to-order conformance, canonical command, economic-effect, and actual-outbound evidence: NOT EXECUTED
-Aggregate risk projection, adverse-scenario, exact allocation-decision, and currentness evidence: NOT EXECUTED
-Action-flow budgeting, retry-storm containment, protective-reserve, and permit-currentness evidence: NOT EXECUTED
-Independent proposal approval, single-use Intent consumption, invalidation, and currentness evidence: NOT EXECUTED
-Active currentness, restrictive-fence, local-latch, per-send proof, and claim/send-ordering evidence: NOT EXECUTED
-Restricted-live trial, evidence coverage, abort, promotion, demotion, and production-authorization governance evidence: NOT EXECUTED
-Safety waiver, deviation, compensating-control, residual-risk, expiry, and currentness governance evidence: NOT EXECUTED
-Safety incident declaration, scope, containment, controlled-shutdown, recovery-handoff, closure, and currentness governance evidence: NOT EXECUTED
-Safety telemetry, monitor coverage, continuous-conformance, gap, suppression, alert-delivery, escalation, and currentness governance evidence: NOT EXECUTED
-Software supply-chain, build provenance, dependency/toolchain closure, release admission, deployment, runtime-attestation, and currentness evidence: NOT EXECUTED
-Post-trade economic-obligation, settlement, finality, statement-coverage, correction, capacity-coupling, and currentness evidence: NOT EXECUTED
-Independent review: NOT STARTED
+Evidence specification: REGISTERED (372 items) — 1 PASS, 79 READY, 292 NOT_IMPLEMENTED
+Evidence register: CREATED; ACTIVE
+Test harness: run packages recorded for 2 items (SPG-EV-002, STATE-EV-001); NOT ASSESSED corpus-wide
+Implementation instrumentation: NOT ASSESSED corpus-wide
+Aggregate capacity evidence (RC, 18): 0 PASS, 0 READY, 18 NOT_IMPLEMENTED
+Safety Authority evidence (SA, 15): 0 PASS, 0 READY, 15 NOT_IMPLEMENTED
+Broker capability evidence (BC, 22): 0 PASS, 0 READY, 22 NOT_IMPLEMENTED
+Cross-system evidence (X, 12): 0 PASS, 0 READY, 12 NOT_IMPLEMENTED
+Trustworthy Time evidence (TIME, 10): 0 PASS, 0 READY, 10 NOT_IMPLEMENTED
+Live Authorization and re-arm evidence (REARM, 12): 0 PASS, 0 READY, 12 NOT_IMPLEMENTED
+Orthogonal trading state evidence (STATE, 5): 0 PASS, 2 READY, 3 NOT_IMPLEMENTED
+Evidence and reconciliation confidence evidence (RECON, 5): 0 PASS, 0 READY, 5 NOT_IMPLEMENTED
+Failure-domain isolation evidence (FD, 12): 0 PASS, 0 READY, 12 NOT_IMPLEMENTED
+Protective replacement evidence (PR, 12): 0 PASS, 2 READY, 10 NOT_IMPLEMENTED
+Corporate action and non-trade evidence (NT, 12): 0 PASS, 2 READY, 10 NOT_IMPLEMENTED
+RCL persistence, consensus, and writer-fencing evidence (RCLP, 12): 0 PASS, 3 READY, 9 NOT_IMPLEMENTED
+Egress credential, route, Commit-Proof, and hard-fence evidence (EGRESS, 13): 0 PASS, 2 READY, 11 NOT_IMPLEMENTED
+Safety profile and Hard Safety Envelope governance evidence (SPG, 12): 1 PASS, 7 READY, 4 NOT_IMPLEMENTED
+Human authority, dual-control, HALT, and break-glass governance evidence (HAG, 18): 0 PASS, 8 READY, 10 NOT_IMPLEMENTED
+Evidence integrity, audit, gap, retention, and deterministic replay evidence (ERI, 12): 0 PASS, 5 READY, 7 NOT_IMPLEMENTED
+Safe startup, Recovery Barrier, conservative inventory, and readiness evidence (SBR, 12): 0 PASS, 5 READY, 7 NOT_IMPLEMENTED
+Critical Input integrity, provenance, independent approval, context binding, and invalidation evidence (CII, 12): 0 PASS, 8 READY, 4 NOT_IMPLEMENTED
+Venue, session, tradability, exact order constraint, and final-egress currentness evidence (VTG, 12): 0 PASS, 2 READY, 10 NOT_IMPLEMENTED
+Intent-to-order conformance, canonical command, economic-effect, and actual-outbound evidence (IOC, 12): 0 PASS, 3 READY, 9 NOT_IMPLEMENTED
+Aggregate risk projection, adverse-scenario, exact allocation-decision, and currentness evidence (ARE, 12): 0 PASS, 3 READY, 9 NOT_IMPLEMENTED
+Action-flow budgeting, retry-storm containment, protective-reserve, and permit-currentness evidence (AFG, 12): 0 PASS, 4 READY, 8 NOT_IMPLEMENTED
+Independent proposal approval, single-use Intent consumption, invalidation, and currentness evidence (IAP, 12): 0 PASS, 4 READY, 8 NOT_IMPLEMENTED
+Active currentness, restrictive-fence, local-latch, per-send proof, and claim/send-ordering evidence (CUR, 12): 0 PASS, 1 READY, 11 NOT_IMPLEMENTED
+Restricted-live trial, evidence coverage, abort, promotion, demotion, and production-authorization governance evidence (RLP, 12): 0 PASS, 4 READY, 8 NOT_IMPLEMENTED
+Safety waiver, deviation, compensating-control, residual-risk, expiry, and currentness governance evidence (WDR, 12): 0 PASS, 4 READY, 8 NOT_IMPLEMENTED
+Safety incident declaration, scope, containment, controlled-shutdown, recovery-handoff, closure, and currentness governance evidence (SIR, 12): 0 PASS, 3 READY, 9 NOT_IMPLEMENTED
+Safety telemetry, monitor coverage, continuous-conformance, gap, suppression, alert-delivery, escalation, and currentness governance evidence (STM, 12): 0 PASS, 2 READY, 10 NOT_IMPLEMENTED
+Software supply-chain, build provenance, dependency/toolchain closure, release admission, deployment, runtime-attestation, and currentness evidence (SCI, 12): 0 PASS, 4 READY, 8 NOT_IMPLEMENTED
+Post-trade economic-obligation, settlement, finality, statement-coverage, correction, capacity-coupling, and currentness evidence (PTF, 12): 0 PASS, 0 READY, 12 NOT_IMPLEMENTED
+Protective-resource-domain enumeration and guarantee-level evidence (PRD, 2): 0 PASS, 1 READY, 1 NOT_IMPLEMENTED
+Independent review: COMPLETE for 1 item (SPG-EV-002, signature chain closed 2026-07-30); NOT STARTED for the remaining 371
+Restricted-live authorization: NO
 Production authorization: NO
 ```
+
+Reading these states (§4). `NOT_IMPLEMENTED` and `READY` are both pre-execution
+states. `READY` records only that the Required Administrative Fields — implementation
+owner, evidence owner, independent reviewer, Verification Profile version, applicable
+Broker Capability Profile, and evidence storage location — are assigned; `READY` is not
+evidence, not a run, and not a `PASS`. An executed stage run is a stage record that
+neither closes its row nor covers the remaining stages its minimum level names. A `PASS`
+records only that one row's minimum evidence level was executed, independently reviewed,
+and signed at that row's registered scope; it is an evidence fact, not permission, and
+confers no live authorization, no broker or production scope, and no ADR acceptance.
 
 This status is intentionally strict. The documents define completion criteria; they do not replace execution.
 

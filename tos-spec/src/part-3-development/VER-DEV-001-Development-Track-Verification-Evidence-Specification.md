@@ -5,6 +5,7 @@
 - **Verification Scope:** Part 2 (RFC-003 through RFC-007) and Part 3 (RFC-008 through RFC-011, ADR-DEV-001 through ADR-DEV-015).
 - **Companion register:** verification/EVIDENCE-REGISTER-DEV.md (the machine-editable CSV is authoritative).
 - **Production Authorization:** NO
+- **Currency Correction (2026-08-04):** §1 and §8 stated a companion-register size of 110 items, a count the register never carried at this baseline; `verification/EVIDENCE-REGISTER-DEV.csv` holds 118 rows, all `NOT_IMPLEMENTED`, and the register's own changelog records the `110 → 118` growth (IOM-EV-001..008). Both sites now read 118. Description-only: no evidence row is promoted, no requirement, evidence state, ADR-DEV status, or authorization is changed, and the Part-1 evidence count (372) is untouched.
 
 ---
 
@@ -25,9 +26,10 @@ normative content carried no requirement identity or evidence row. The
 requirement identity and an evidence obligation for the first time.
 
 This specification is independent of VER-002-001 and does not change the Part-1
-evidence count. Its companion register (`EVIDENCE-REGISTER-DEV`, 110 items) never
+evidence count. Its companion register (`EVIDENCE-REGISTER-DEV`, 118 items) never
 enters the Part-1 count accounting. Twelve rows are the Proposed RFC-006
-economic-viability family; their registration does not enact that G6 amendment.
+economic-viability family and eight are the Proposed RFC-006 investment
+operating-model family; their registration does not enact either G6 amendment.
 
 ## 2. Result States and Evidence Strength Levels (by reference)
 
@@ -983,5 +985,5 @@ VER-DEV-001 moves from **Proposed** to **Approved for Execution** when:
   this track.
 
 Approval for execution authorizes no live trading, creates no capacity, and
-admits no artifact. All 110 development-track items remain `NOT_IMPLEMENTED` until
+admits no artifact. All 118 development-track items remain `NOT_IMPLEMENTED` until
 executed and independently reviewed.

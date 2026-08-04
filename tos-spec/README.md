@@ -85,6 +85,8 @@ The non-authorizing [Migration and Conformance Register](src/MIGRATION-CONFORMAN
 maps configured legacy broker routes, all TOS packages and trust seams, cutover/
 rollback/direct-egress criteria, and the still-Proposed Q5/Q6 debt.
 
-Verification assets are under `src/part-1-foundation/verification/`; source review
-patches remain under `src/part-1-foundation/patches/` for provenance and are not
-separately operative after consolidation.
+Verification assets are under `src/part-1-foundation/verification/`. The
+`patches/` and `reviews/` directories are **git-excluded working artifacts**
+(`tos-spec/.gitignore`), not tracked spec content and not separately operative
+after consolidation; the committed record of what a patch changed is the semantic
+merge map in [Architecture Gate Status](src/part-1-foundation/ARCHITECTURE-GATE-STATUS.md) §3.
