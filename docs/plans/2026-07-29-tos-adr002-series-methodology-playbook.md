@@ -306,6 +306,7 @@ def is_wildcard_value(s): return _norm(s) in {"*", "all", "any"}  # strip+casefo
 | **과대 주장 (authoring=acceptance)** | 저작을 acceptance로 오표현 | 전 시리즈 (SIR§11·STM§11) | — | "EV-L1-complete" 주장 | 닫는 EV 0·"EV-L1-complete 주장 금지" 명문 | register 실측 계수 |
 | **grep head 절단 카운트 오류** | naive grep head 절단으로 register 카운트 오류 | #12 spg (SIR§11·STM§11) | — | register 카운트가 grep head로 절단되어 오계수 | register 전수 파싱(csv line 직접)·naive grep 금지 | 계수 過0·不0 property |
 | **malformed-model construct 우회** | `model_construct`로 validator 우회 → incomplete가 positive claim과 공존 | #20 HAG (SIR§11·STM§11) | — | model_construct로 validator 건너뛴 incomplete 모델이 "ADMIT/CONFORMING" claim과 공존 | positive-claim + incomplete-scope validator + 술어 2층 | construct 우회 공존 시도 canary |
+| **전칭 부정 반례 미배제** | 거버넌스 판정문이 전칭 부정·완전성 주장을 하면서 실재 반례를 본문에서 배제하지 않음 | GOV-001 G6 materiality 판정 (RFC-002 §32 / ARCHITECTURE-GATE-STATUS §3.25, 2026-08-05) | 같은 판정 사이클 **6문서·9구절**(계수 술어: "반례/제외 대상을 이름으로 지목하고 술어 차이로 배제하는 구절" 1건 = 1구절, 공백 정규화 grep 실측) — RFC-002 §32(pin-test 배제·13-vs-9 배제 2) · ARCHITECTURE-GATE-STATUS §3.25(동 2) · RFC-004 §15(문구 배제 1) · RFC-005 §16(1) · RFC-006 §17(문구 배제 1 + 수치 한정 1 = 2) · RFC-007 §16(retained-phrase 1). **RFC-003은 해당 구절 0**(§16 편집이 문구 대체를 수반하지 않음)이므로 계수에서 빠진다 | 실측 3건 — ① "No other Ratified document's cited-version pins name RFC-002 §26"은 문언상 참이나 Ratified RFC-000 v0.16 §5(`RFC-000-Trading-Constitution.md:144`)가 "(see RFC-002 §26)"으로 그 절을 상호참조한다; ② `83987c7d` 판정이 9건인데 실측 터치는 13파일(README·VER-002-001·VER-DEV-001·RFC-002 자신); ③ RFC-006 "no numeric appears on any changed line"은 `All 13 RFC-class baselines`의 13·기재일·절 번호 3건이 반례 — **이 인용은 시정 전 문자열이며 현행 코퍼스에 존재하지 않는다(grep 0). 본문은 처방 (d)를 적용해 "no bound-bearing numeric appears anywhere in the diff"로 좁히고 비구속 numeral 3건을 열거한 상태**이므로, 이 셀의 문자열로 현행 본문을 찾으려 하면 팬텀 앵커가 된다 | 전칭 부정·완전성 주장마다 (a) 반례 후보를 **구조 파생 grep으로 전수 수집**(자기신고·기억 금지), (b) 각 반례를 판정 본문에서 **명시 배제**, (c) 배제 근거를 **술어 차이**로 진술 — "반례가 무해하다"가 아니라 "술어를 만족하지 않는다"(G6는 *cited-version pin*에 걸리고 RFC-000의 것은 버전 없는 상호참조라 pin이 아님 / VER 명세는 GOV-001 G2로 ratification ladder 밖이라 "Ratified document" 술어 미충족), (d) 과잉 열거 대신 실질 술어로 좁힘("no numeric" → "no bound-bearing numeric") | 전칭 부정 문장별 반례-grep 0·주장 대상 전수 계수 == 판정 건수 |
 
 **봉인 패턴 (형태)**:
 ```
@@ -319,7 +320,8 @@ def stm_predicate(..., dimension_floor_current: bool | None):   # cur이 소유�
 **리뷰어 사냥 순서**: (1) 형제가 소유한 개념(currentness·floor·policy·capacity)을 재저작했는지 §3.5
 분할표 대조, (2) rcl CapacityVector import가 실제 capacity 산술을 수반하는지(안 하면 edge 과잉), (3)
 predicate-only substrate가 "완결"로 과대 표현됐는지 — 닫는 EV 계수, (4) register 카운트가 전수 파싱인지
-naive grep head인지.
+naive grep head인지, (5) 판정문의 전칭 부정("~하는 다른 것은 없다")·완전성 주장마다 반례 후보를 역방향
+grep으로 사냥해 본문 명시 배제가 있는지 — 배제 근거가 술어 차이인지 무해성 판단인지 구별할 것.
 
 ### 2.G 사례 연구 — FD anti-phantom 사이클 (플래그십 결함 클래스의 발원·자기재발)
 
