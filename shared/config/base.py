@@ -48,9 +48,25 @@ except ImportError:
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from shared.config.loader import ConfigLoader, ConfigNotFoundError
+from shared.config.loader import ConfigError, ConfigLoader, ConfigNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+class ConfigSectionNotFoundError(ConfigError):
+    """A requested config section could not be resolved in the loaded document.
+
+    Deliberately **not** a subclass of :class:`ConfigNotFoundError`. A missing
+    config *file* is an opt-in to defaults across this codebase (many call sites
+    are written ``except ConfigNotFoundError: return cls()``). A missing
+    *section* inside a file that does exist is a configuration defect, and must
+    not inherit that escape hatch — otherwise the config silently loads as pure
+    Pydantic defaults, indistinguishable from a file that was read successfully.
+    """
+
+
+# Sentinel: distinguishes "section resolved to None" from "section unresolvable".
+_UNRESOLVED = object()
 
 
 class ServiceConfigBase(BaseModel):
@@ -100,10 +116,14 @@ class ServiceConfigBase(BaseModel):
         Args:
             path: YAML file path (relative to config directory).
                   If None, uses cls._default_config_file.
-            section: Section name to extract from YAML.
+            section: Section name to extract from YAML. May be a dotted path
+                     into nested mappings ("strategy.entry.params"); a literal
+                     top-level key of that name takes precedence.
                      If None, uses cls._default_section.
-                     If section is specified and exists, extracts that key.
-                     Otherwise, uses the entire YAML as config dict.
+                     If neither is set, the entire YAML is the config dict.
+                     A requested section that cannot be resolved raises
+                     ConfigSectionNotFoundError rather than silently falling
+                     back to defaults.
                      Mutually exclusive with sections.
             sections: Merge multiple top-level section keys into a single
                       dict (later sections override earlier ones). Useful when
@@ -120,6 +140,8 @@ class ServiceConfigBase(BaseModel):
         Raises:
             ValueError: If both section and sections are provided.
             ConfigNotFoundError: If config file not found
+            ConfigSectionNotFoundError: If the requested section (explicit or
+                from _default_section) does not resolve in the document.
             ConfigValidationError: If validation fails
 
         Example:
@@ -192,11 +214,20 @@ class ServiceConfigBase(BaseModel):
                 section_key = None
 
             if section_key is not None:
-                if isinstance(raw_data, dict) and section_key in raw_data:
-                    config_data = raw_data[section_key]
-                else:
-                    # Section not found or data is not a dict - use raw data
-                    config_data = raw_data
+                resolved = cls._resolve_section(raw_data, section_key)
+                if resolved is _UNRESOLVED:
+                    available = (
+                        sorted(raw_data)
+                        if isinstance(raw_data, dict)
+                        else "<not a mapping>"
+                    )
+                    raise ConfigSectionNotFoundError(
+                        f"{cls.__name__}: section {section_key!r} could not be "
+                        f"resolved in {path!r}. Available top-level keys: "
+                        f"{available}. Refusing to fall back to defaults — fix "
+                        f"the section name or the config file."
+                    )
+                config_data = resolved
             else:
                 config_data = raw_data
 
@@ -217,6 +248,38 @@ class ServiceConfigBase(BaseModel):
 
         # Create and validate config instance
         return cls(**config_data)
+
+    @classmethod
+    def _resolve_section(cls, raw_data: Any, section_key: str) -> Any:
+        """Resolve a section key against a loaded YAML document.
+
+        A literal top-level key always wins, so existing flat section names keep
+        their exact behaviour even if they happen to contain a dot. Otherwise a
+        dotted key is walked as a path into nested mappings, which is what
+        declarations like ``"strategy.entry.params"`` have always meant.
+
+        Args:
+            raw_data: The parsed YAML document.
+            section_key: Section name, optionally a dotted nested path.
+
+        Returns:
+            The resolved node, or the module-level ``_UNRESOLVED`` sentinel.
+            A section that exists but holds ``None`` resolves to ``None`` — that
+            is a declared-but-empty section, not an unresolvable one.
+        """
+        if not isinstance(raw_data, dict):
+            return _UNRESOLVED
+        if section_key in raw_data:
+            return raw_data[section_key]
+        if "." not in section_key:
+            return _UNRESOLVED
+
+        node: Any = raw_data
+        for part in section_key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return _UNRESOLVED
+            node = node[part]
+        return node
 
     @classmethod
     def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> Self:
