@@ -332,6 +332,7 @@ class StatusSnapshot:
     p2_carried_questions: int
     const003_result: str
     migration_rows: int
+    broker_site_rows: int
     transcription_sites: int
     order_sender_symbols: tuple[str, ...]
 
@@ -1681,6 +1682,8 @@ def validate_legacy_route_reverse_census(
     csv_path: Path,
     registered_components: frozenset[str],
     vocabulary: BrokerTransportVocabulary,
+    *,
+    warning_exempt_components: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
     """Look for broker-order routes that nobody registered.
 
@@ -1697,15 +1700,38 @@ def validate_legacy_route_reverse_census(
     construction callers remain" for the shared sender without enumerating them,
     so failing on those would assert a completeness claim the register does not
     make.  See the report accompanying this check for what that does not catch.
+
+    The two tiers take **different** exemption sets, and that asymmetry is the
+    point.  ``registered_components`` (LEGACY_ROUTE) exempts both tiers, because
+    a legacy order route is a known, registered way to reach a real broker.
+    ``warning_exempt_components`` (BROKER_READ_SITE and MOCK_CONFINED_ORDER_SITE)
+    exempts the warning tier only: those rows say "this site constructs no
+    invocable order sender today", and the fail-closed tier is precisely what
+    keeps that statement honest tomorrow.  Registering a read site therefore
+    documents it without disarming anything -- silencing a warning must never be
+    a way to buy immunity from the blocking check.
     """
     unregistered_senders: list[str] = []
     unregistered: list[str] = []
+    warning_exempt = registered_components | warning_exempt_components
     for site in scan_broker_construction_sites(repo_root, vocabulary):
-        if site.relative_path in registered_components:
-            continue
-        unregistered.append(site.relative_path)
-        if site.is_entrypoint and site.classes & vocabulary.order_senders:
+        # The fail-closed tier is evaluated *before* and independently of the
+        # warning exemption, and consults ``registered_components`` only.  An
+        # earlier shape tested it after a ``continue`` on the exemption set,
+        # which meant that registering a read site to silence its warning also
+        # bought it permanent immunity from the blocking tier -- the warning
+        # would go quiet and the guard would go with it.  A BROKER_READ_SITE or
+        # MOCK_CONFINED_ORDER_SITE row therefore silences the warning and
+        # nothing else: let one of those files grow an invocable entrypoint
+        # around an order sender and this still raises.
+        if (
+            site.is_entrypoint
+            and site.classes & vocabulary.order_senders
+            and site.relative_path not in registered_components
+        ):
             unregistered_senders.append(site.relative_path)
+        if site.relative_path not in warning_exempt:
+            unregistered.append(site.relative_path)
     if unregistered_senders:
         raise StatusError(
             f"{csv_path}: unregistered broker-order route(s); every invocable "
@@ -1720,8 +1746,11 @@ def validate_migration_conformance(
     csv_path: Path,
     markdown_path: Path,
     vocabulary: BrokerTransportVocabulary,
-) -> tuple[int, tuple[str, ...]]:
-    """Validate package coverage and non-authorizing migration/Q6 honesty."""
+) -> tuple[int, int, tuple[str, ...]]:
+    """Validate package coverage and non-authorizing migration/Q6 honesty.
+
+    Returns ``(migration_census, broker_site_census, unregistered_broker_sites)``.
+    """
     rows = _read_csv(csv_path, REQUIRED_MIGRATION_FIELDS)
     ids = [row["record_id"] for row in rows]
     if len(ids) != len(set(ids)):
@@ -1756,21 +1785,29 @@ def validate_migration_conformance(
         by_category.setdefault(row["category"], set()).add(row["record_id"])
     expected_categories = {
         "LEGACY_ROUTE",
+        "BROKER_READ_SITE",
+        "MOCK_CONFINED_ORDER_SITE",
         "OPERATOR_VIEW",
         "TOS_PACKAGE",
         "COMPLEXITY_DECOMMISSION",
     }
     if set(by_category) != expected_categories:
         raise StatusError(f"{csv_path}: migration category set is incomplete")
-    legacy_ids = by_category["LEGACY_ROUTE"]
-    expected_legacy = {
-        f"LEGACY-{number:03}" for number in range(1, len(legacy_ids) + 1)
-    }
-    if legacy_ids != expected_legacy:
-        raise StatusError(
-            f"{csv_path}: legacy route census must be a contiguous "
-            f"LEGACY-001..LEGACY-{len(legacy_ids):03} block, got {sorted(legacy_ids)!r}"
-        )
+    for category, prefix in (
+        ("LEGACY_ROUTE", "LEGACY"),
+        ("BROKER_READ_SITE", "READ"),
+        ("MOCK_CONFINED_ORDER_SITE", "MOCK"),
+    ):
+        observed = by_category[category]
+        expected_block = {
+            f"{prefix}-{number:03}" for number in range(1, len(observed) + 1)
+        }
+        if observed != expected_block:
+            raise StatusError(
+                f"{csv_path}: {category} census must be a contiguous "
+                f"{prefix}-001..{prefix}-{len(observed):03} block, "
+                f"got {sorted(observed)!r}"
+            )
     if by_category["OPERATOR_VIEW"] != {"OPERATOR-001"}:
         raise StatusError(
             f"{csv_path}: exactly one consolidated operator view is required"
@@ -1797,18 +1834,49 @@ def validate_migration_conformance(
             f"extra={sorted(registered_packages - actual_packages)!r}"
         )
 
-    legacy_rows = [row for row in rows if row["category"] == "LEGACY_ROUTE"]
-    registered_components: set[str] = set()
-    for row in legacy_rows:
-        component = row["component"].split(maxsplit=1)[0]
-        if not (repo_root / component).is_file():
-            raise StatusError(
-                f"{csv_path}: {row['record_id']} source path is missing: "
-                f"{repo_root / component}"
-            )
-        registered_components.add(component)
+    def _components(category: str) -> set[str]:
+        """Resolve one category's component paths, requiring each to exist."""
+        components: set[str] = set()
+        for row in (row for row in rows if row["category"] == category):
+            component = row["component"].split(maxsplit=1)[0]
+            if not (repo_root / component).is_file():
+                raise StatusError(
+                    f"{csv_path}: {row['record_id']} source path is missing: "
+                    f"{repo_root / component}"
+                )
+            components.add(component)
+        return components
+
+    registered_components = _components("LEGACY_ROUTE")
+    # Warning-tier only.  See validate_legacy_route_reverse_census for why these
+    # deliberately do not join the fail-closed exemption set.
+    read_site_components = _components("BROKER_READ_SITE")
+    mock_site_components = _components("MOCK_CONFINED_ORDER_SITE")
+    # The two warning-only categories are not interchangeable: a read site
+    # asserts it constructs no order sender at all, while a mock-confined site
+    # asserts it constructs one that is merely non-invocable.  Letting a path
+    # hold both rows would let the weaker READ description stand in for the
+    # MOCK one and quietly dilute the stricter record.
+    category_overlap = read_site_components & mock_site_components
+    if category_overlap:
+        raise StatusError(
+            f"{csv_path}: component(s) registered as both BROKER_READ_SITE and "
+            f"MOCK_CONFINED_ORDER_SITE: {sorted(category_overlap)!r}; a site "
+            "constructs an order sender or it does not"
+        )
+    warning_exempt_components = read_site_components | mock_site_components
+    overlap = registered_components & warning_exempt_components
+    if overlap:
+        raise StatusError(
+            f"{csv_path}: component(s) registered in both the fail-closed-exempt "
+            f"LEGACY_ROUTE census and a warning-only census: {sorted(overlap)!r}"
+        )
     unregistered_broker_sites = validate_legacy_route_reverse_census(
-        repo_root, csv_path, frozenset(registered_components), vocabulary
+        repo_root,
+        csv_path,
+        frozenset(registered_components),
+        vocabulary,
+        warning_exempt_components=frozenset(warning_exempt_components),
     )
 
     markdown = markdown_path.read_text(encoding="utf-8-sig")
@@ -1826,11 +1894,35 @@ def validate_migration_conformance(
             raise StatusError(f"{markdown_path}: missing TOS package row {package}")
     for record_id in {
         *by_category["LEGACY_ROUTE"],
+        *by_category["BROKER_READ_SITE"],
+        *by_category["MOCK_CONFINED_ORDER_SITE"],
         *by_category["COMPLEXITY_DECOMMISSION"],
     }:
         if record_id not in markdown:
             raise StatusError(f"{markdown_path}: missing register row {record_id}")
-    return len(rows), unregistered_broker_sites
+    # ``migration_rows`` counts the migration census proper -- the current-to-target
+    # records the register was created to hold.  BROKER_READ_SITE and
+    # MOCK_CONFINED_ORDER_SITE rows are a construction-site census sharing the same
+    # machine source: they migrate nothing and are reported separately, so this
+    # number stays comparable across the addition instead of silently jumping.
+    migration_census = sum(
+        len(by_category[category])
+        for category in (
+            "LEGACY_ROUTE",
+            "OPERATOR_VIEW",
+            "TOS_PACKAGE",
+            "COMPLEXITY_DECOMMISSION",
+        )
+    )
+    broker_site_census = len(by_category["BROKER_READ_SITE"]) + len(
+        by_category["MOCK_CONFINED_ORDER_SITE"]
+    )
+    if migration_census + broker_site_census != len(rows):
+        raise StatusError(
+            f"{csv_path}: census split does not account for every row "
+            f"({migration_census} + {broker_site_census} != {len(rows)})"
+        )
+    return migration_census, broker_site_census, unregistered_broker_sites
 
 
 def collect_status(repo_root: Path) -> StatusSnapshot:
@@ -1860,7 +1952,11 @@ def collect_status(repo_root: Path) -> StatusSnapshot:
     validate_broker_symbol_citations(
         source_root, repo_root / BROKER_SYMBOLS_CSV, broker_vocabulary
     )
-    migration_rows, unregistered_broker_sites = validate_migration_conformance(
+    (
+        migration_rows,
+        broker_site_rows,
+        unregistered_broker_sites,
+    ) = validate_migration_conformance(
         repo_root,
         repo_root / MIGRATION_CSV,
         repo_root / MIGRATION_MD,
@@ -1881,6 +1977,7 @@ def collect_status(repo_root: Path) -> StatusSnapshot:
         p2_carried_questions,
         const003_result,
         migration_rows,
+        broker_site_rows,
         transcription_sites,
         tuple(sorted(broker_vocabulary.order_senders)),
     )
@@ -1941,6 +2038,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"p2_carried={snapshot.p2_carried_questions}, "
                 f"CONST-003={snapshot.const003_result}, "
                 f"migration_rows={snapshot.migration_rows}, "
+                f"broker_sites={snapshot.broker_site_rows}, "
                 f"count_transcriptions={snapshot.transcription_sites}, "
                 f"restricted_live={snapshot.authorities['restricted_live']}, "
                 f"production={snapshot.authorities['production']}"
@@ -1949,8 +2047,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(
                     "  reverse-scan WARNING (non-blocking): "
                     f"{len(snapshot.unregistered_broker_sites)} broker-client "
-                    "construction site(s) outside tos/ and tests are not registered "
-                    "LEGACY_ROUTE components; none is an invocable "
+                    "construction site(s) outside tos/ and tests are in no "
+                    "migration-register census (LEGACY_ROUTE, BROKER_READ_SITE, "
+                    "MOCK_CONFINED_ORDER_SITE); none is an invocable "
                     f"{'/'.join(snapshot.order_sender_symbols)} entrypoint: "
                     + ", ".join(snapshot.unregistered_broker_sites)
                 )

@@ -458,7 +458,7 @@ def test_investment_operating_family_is_proposed_and_unexecuted():
 
 
 def test_migration_register_covers_code_packages_and_open_q6():
-    rows, unregistered = status.validate_migration_conformance(
+    rows, broker_sites, unregistered = status.validate_migration_conformance(
         _REPO_ROOT,
         _REPO_ROOT / status.MIGRATION_CSV,
         _REPO_ROOT / status.MIGRATION_MD,
@@ -466,7 +466,11 @@ def test_migration_register_covers_code_packages_and_open_q6():
     )
 
     assert rows == 53
-    assert isinstance(unregistered, tuple)
+    assert broker_sites == 9
+    # The live corpus registers every construction site the scan can see, so the
+    # warning tier is empty.  This is an assertion about the register, not about
+    # the scan: a new unregistered site must make it fail.
+    assert unregistered == ()
 
 
 # --------------------------------------------------------------------------
@@ -632,7 +636,7 @@ def test_legacy_census_is_derived_from_the_csv_not_a_hardcoded_range(tmp_path):
     # The corpus grew from LEGACY-001..005 to LEGACY-001..007 with no tool edit.
     csv_path, markdown_path = _migration_copy(tmp_path)
 
-    rows, _ = status.validate_migration_conformance(
+    rows, _, _ = status.validate_migration_conformance(
         _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
     )
 
@@ -718,6 +722,144 @@ def test_reverse_scan_reports_non_entrypoint_constructions_without_failing(tmp_p
     assert status.validate_legacy_route_reverse_census(
         repo, repo / "register.csv", frozenset(), _real_vocabulary()
     ) == ("shared/execution/mirror.py",)
+
+
+# --------------------------------------------------------------------------
+# Warning-only categories (BROKER_READ_SITE / MOCK_CONFINED_ORDER_SITE) must
+# silence the warning tier WITHOUT buying immunity from the fail-closed tier.
+#
+# The defect these guard against is concrete: an earlier shape of the census
+# tested the blocking tier *after* a ``continue`` on the exemption set, so
+# registering a read site to quiet its warning also disarmed the blocking check
+# for that path forever.  ``shared/execution/mock_mirror.py`` is the live case
+# that makes this more than theory -- it constructs a real OrderExecutor and is
+# kept out of the blocking tier only by having no ``__main__`` guard.
+# --------------------------------------------------------------------------
+
+
+def test_warning_only_registration_silences_the_warning_tier(tmp_path):
+    repo = _fake_repo(
+        tmp_path,
+        "services/market_ingest/main.py",
+        "def build():\n    return KISClient(auth)\n",
+    )
+
+    assert (
+        status.validate_legacy_route_reverse_census(
+            repo,
+            repo / "register.csv",
+            frozenset(),
+            _real_vocabulary(),
+            warning_exempt_components=frozenset({"services/market_ingest/main.py"}),
+        )
+        == ()
+    )
+
+
+def test_warning_only_registration_does_not_exempt_the_fail_closed_tier(tmp_path):
+    # HEADLINE.  A registered BROKER_READ_SITE that later grows an invocable
+    # entrypoint around an order sender must still fail closed.  If this test
+    # ever passes silently, registration has become a way to disarm the census.
+    repo = _fake_repo(tmp_path, "services/market_ingest/main.py", _SENDER_ENTRYPOINT)
+
+    with pytest.raises(status.StatusError) as excinfo:
+        status.validate_legacy_route_reverse_census(
+            repo,
+            repo / "register.csv",
+            frozenset(),
+            _real_vocabulary(),
+            warning_exempt_components=frozenset({"services/market_ingest/main.py"}),
+        )
+
+    assert "services/market_ingest/main.py" in str(excinfo.value)
+
+
+def test_mock_confined_site_still_fails_closed_once_it_gains_an_entrypoint(tmp_path):
+    # MOCK-001's real shape: an OrderExecutor construction that is currently
+    # non-invocable.  Registration records it; adding a ``__main__`` guard must
+    # still trip the blocking tier.
+    repo = _fake_repo(tmp_path, "shared/execution/mock_mirror.py", _SENDER_ENTRYPOINT)
+
+    with pytest.raises(status.StatusError) as excinfo:
+        status.validate_legacy_route_reverse_census(
+            repo,
+            repo / "register.csv",
+            frozenset(),
+            _real_vocabulary(),
+            warning_exempt_components=frozenset({"shared/execution/mock_mirror.py"}),
+        )
+
+    assert "shared/execution/mock_mirror.py" in str(excinfo.value)
+
+
+def test_legacy_route_registration_still_exempts_both_tiers(tmp_path):
+    # Invariant regression for the pre-existing behaviour: a LEGACY_ROUTE row is
+    # the one registration that does exempt the blocking tier.  LEGACY-001/002
+    # and LEGACY-006 depend on this, so the new asymmetry must not disturb it.
+    repo = _fake_repo(tmp_path, "scripts/trading/flatten_all.py", _SENDER_ENTRYPOINT)
+
+    assert (
+        status.validate_legacy_route_reverse_census(
+            repo,
+            repo / "register.csv",
+            frozenset({"scripts/trading/flatten_all.py"}),
+            _real_vocabulary(),
+        )
+        == ()
+    )
+
+
+def test_a_new_unregistered_read_site_is_still_reported(tmp_path):
+    # The exemption is per-path, not a blanket amnesty for the category.
+    repo = _fake_repo(
+        tmp_path,
+        "services/brand_new_collector/main.py",
+        "def build():\n    return KISClient(auth)\n",
+    )
+
+    assert status.validate_legacy_route_reverse_census(
+        repo,
+        repo / "register.csv",
+        frozenset(),
+        _real_vocabulary(),
+        warning_exempt_components=frozenset({"services/market_ingest/main.py"}),
+    ) == ("services/brand_new_collector/main.py",)
+
+
+def test_a_component_may_not_sit_in_both_the_blocking_and_warning_censuses(tmp_path):
+    csv_path, markdown_path = _migration_copy(
+        tmp_path,
+        (
+            "READ-007,BROKER_READ_SITE,services/trading/market_data_bootstrap.py",
+            "READ-007,BROKER_READ_SITE,scripts/trading/flatten_all.py",
+        ),
+    )
+
+    with pytest.raises(status.StatusError, match="registered in both"):
+        status.validate_migration_conformance(
+            _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
+        )
+
+
+def test_a_component_may_not_hold_both_warning_only_categories(tmp_path):
+    # MOCK-001 records an order-sender construction that is merely non-invocable;
+    # READ-xxx records that no order sender exists at all.  A path holding both
+    # would let the weaker description stand in for the stricter one.
+    csv_path, markdown_path = _migration_copy(
+        tmp_path,
+        (
+            "READ-007,BROKER_READ_SITE,services/trading/market_data_bootstrap.py",
+            "READ-007,BROKER_READ_SITE,shared/execution/mock_mirror.py",
+        ),
+    )
+
+    with pytest.raises(
+        status.StatusError,
+        match="both BROKER_READ_SITE and MOCK_CONFINED_ORDER_SITE",
+    ):
+        status.validate_migration_conformance(
+            _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
+        )
 
 
 # --------------------------------------------------------------------------

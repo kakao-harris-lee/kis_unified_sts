@@ -47,6 +47,46 @@ F-9 cutover, but an environment switch alone is not sufficient proof. A cutover
 must also fence credentials and network routes, bind a new generation, reconcile
 all old attempts, and prove no old queued consumer can send.
 
+### 2.1 Broker construction-site census (warning-tier registrations)
+
+These rows are **not** migration records and are counted separately: the checker
+reports `migration_rows` for the census above plus §3–§6, and `broker_sites` for
+this section. They exist so the §2 reverse scan can distinguish "nobody has
+looked at this construction site" from "this site was read and carries no order
+egress". Each was classified from its code, not from self-description.
+
+**`BROKER_READ_SITE` and `MOCK_CONFINED_ORDER_SITE` exempt the warning tier
+only.** A `LEGACY_ROUTE` registration exempts both tiers, because a legacy order
+route is a registered way to reach a real broker. These two categories do not:
+if any file below grows an invocable entrypoint around an `ORDER_SENDER`, the
+fail-closed tier fires on it exactly as if it were unregistered. Silencing a
+warning is not a way to buy immunity from the blocking check, and that asymmetry
+is the whole reason these are separate categories rather than more `LEGACY-xxx`
+rows.
+
+| ID | Repository path | Constructs | Invocation surface | Verified role |
+|---|---|---|---|---|
+| READ-001 | `scripts/backfill_market_structure.py` | `KISClient` | `__main__` guard (operator CLI) | Phase-0 historical backfill; `get_kospi200_futures`, KIS `FHPPG04600001` date ranges |
+| READ-002 | `scripts/analysis/phase0_kis_probes.py` | `KISClient` | `__main__` guard (operator CLI) | three residual REAL-token GET probes (`get_current_price`) |
+| READ-003 | `services/screener.py` | `KISClient` (only when trend confirm is enabled) | `__main__` guard (service) | ranking APIs + `get_minute_bars`; publishes a universe to Redis |
+| READ-004 | `services/market_ingest/main.py` | `KISClient` | `__main__` guard (service) | REST `get_current_price` beside the WebSocket feed; republishes ticks and nothing else |
+| READ-005 | `services/market_structure_collector/main.py` | `KISClient` | `__main__` guard (cron service) | KST-native one-shot snapshot reads (`get_current_price`, snapshot TRs) |
+| READ-006 | `services/stock_strategy/main.py` | `KISClient` | `__main__` guard (default-off daemon) | market reads inside a flag-gated daemon; order emission lives in the separate order-router |
+| READ-007 | `services/trading/market_data_bootstrap.py` | `KISClient` | **no** `__main__` guard (library helper) | seeds orchestrator market data; the orchestrator's own order routes are LEGACY-001/002 |
+| READ-008 | `shared/llm/unified_trading_analyzer.py` | `KISClient` | **no** `__main__` guard (library facade) | assembles analysis context with KRX/DART collectors |
+| MOCK-001 | `shared/execution/mock_mirror.py` | **`OrderExecutor`** | **no** `__main__` guard (in-process class) | mirrors paper fills to the KIS mock account, `trading_mode="MOCK"`, stock only |
+
+MOCK-001 is deliberately not grouped with the readers. It is the one site here
+that constructs an `ORDER_SENDER`: `shared/execution/mock_mirror.py:71` builds a
+real `OrderExecutor` with `trading_mode="MOCK"`, and the futures branch returns
+`False` before any construction, so the mirror is stock-only. It escapes the
+fail-closed tier today for exactly one structural reason — `MockAccountMirror` is
+invoked in-process and the file carries no `if __name__ == "__main__":` guard, so
+it is not an operator- or service-invocable entrypoint. **That property is
+load-bearing**: because this category grants no fail-closed exemption, adding
+such a guard makes the census fail closed rather than stay quiet. Registering
+MOCK-001 records the site; it fences nothing and authorizes nothing.
+
 ## 3. TOS package conformance inventory
 
 There are 37 top-level packages under `tos/src/tos` (excluding `__pycache__`).
