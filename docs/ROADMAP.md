@@ -366,10 +366,29 @@ prediction paths are removed and must not be reintroduced
   `futures-killswitch` exist with a double-trade guard, but the daemons are not
   registered in the running Compose stack.
 - **Enabled strategies (2026-06-28):** `setup_a_gap_reversion` (fires live
-  signals), `setup_c_event_reaction` (coded but ~0 signals — event scores need
-  real production/observation; bounded history is now retained for diagnostics),
-  and `setup_d_vwap_reversion` (paper rollout activated 2026-06-26; needs
+  signals), `setup_c_event_reaction` (see the note below), and
+  `setup_d_vwap_reversion` (paper rollout activated 2026-06-26; needs
   paper validation before any live consideration).
+- **`setup_c_event_reaction` — exactly zero signals since 2026-06-25 (corrected
+  2026-08-05).** Not "~0", and not the data-observation problem this line
+  previously claimed (that diagnosis predated the cause and was carried forward
+  after it went stale). Commit `81a10e53` inverted
+  `SetupCEntryAdapter._event_passes_filter` from the ratified fail-open
+  behaviour to fail-closed and wired it into `generate()` in the same commit,
+  while no caller ever passed a `forecast_client` — so the event score was
+  always `None` and every qualifying event was rejected as
+  `forecast_event_score_missing`. Addressed by setting
+  `forecast_integration.enabled: false` (restoring what the ratified plan
+  specified for a missing client), plus a construction-time raise if that flag
+  is re-enabled without a client wired.
+  **This does not resume Setup C trading today.** `config/scheduled_events.yaml`
+  holds 67 events, the last dated 2026-07-10, and none after 2026-08-05, so
+  every candidate still stops at `no_event_in_window`. That calendar is
+  refreshed manually each month (see its header) — **refreshing it is an
+  operator action**, and it is the only thing that changes live behaviour here.
+  F-9 note: the decoupled pipeline instantiates `SetupCEventReaction()` directly
+  (`services/decision_engine/main.py:432`) with no forecast gate at all, so a
+  cutover changes Setup C's behaviour relative to the monolith.
 - **Disabled / deprecated:** `williams_r_15m` (reference), `bb_reversion_15m`
   (disabled — triggered a stock BEAR_EXIT, #479), `macd_ema_crossover_15m`,
   `momentum_breakout_futures`, `trend_pullback_futures`,

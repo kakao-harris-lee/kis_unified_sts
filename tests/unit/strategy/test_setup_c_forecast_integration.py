@@ -26,6 +26,17 @@ class _FakeForecastClient:
         return self._event_score
 
 
+def _wired_client() -> _FakeForecastClient:
+    """A client that satisfies the wiring guard but publishes no score.
+
+    Tests below that exercise the threshold/filter arithmetic with
+    ``forecast_integration.enabled=True`` must pass *some* client: the adapter
+    now refuses to construct when the feature is on and nothing is wired (see
+    ``SetupCEntryAdapter._validate_config``).
+    """
+    return _FakeForecastClient(None)
+
+
 def _vf(forecast_atr_eq=3.0):
     return SimpleNamespace(
         asof=datetime.now(UTC),
@@ -63,7 +74,7 @@ def test_buffer_scales_with_forecast_when_enabled():
             enabled=True, buffer_vol_mult=0.5, target_vol_mult=2.5
         )
     )
-    adapter = SetupCEntryAdapter(cfg, forecast_client=None)
+    adapter = SetupCEntryAdapter(cfg, forecast_client=_wired_client())
     # When forecast_atr_eq = 6 (2x normal), buffer = 0.5 * 6 = 3
     buffer, target = adapter._derive_thresholds(
         forecast=_vf(forecast_atr_eq=6.0), atr=3.0
@@ -91,7 +102,7 @@ def test_buffer_falls_back_to_atr_when_forecast_stale():
             enabled=True, buffer_vol_mult=0.5, target_vol_mult=2.5
         )
     )
-    adapter = SetupCEntryAdapter(cfg, forecast_client=None)
+    adapter = SetupCEntryAdapter(cfg, forecast_client=_wired_client())
     # forecast=None simulates stale (client returned None)
     buffer, target = adapter._derive_thresholds(forecast=None, atr=3.0)
     assert buffer == pytest.approx(3.0 * 0.5)
@@ -104,7 +115,7 @@ def test_event_filter_uses_impact_score_when_enabled():
             enabled=True, min_event_impact_score=70
         )
     )
-    adapter = SetupCEntryAdapter(cfg, forecast_client=None)
+    adapter = SetupCEntryAdapter(cfg, forecast_client=_wired_client())
     weak = SimpleNamespace(
         asof=datetime.now(UTC),
         impact_score=50,
@@ -135,15 +146,162 @@ def test_event_filter_uses_tier_fallback_when_forecast_disabled():
     assert adapter._event_passes_filter(None) is True
 
 
-def test_event_filter_blocks_when_event_missing_but_forecast_enabled():
+def test_construction_raises_when_forecast_enabled_but_no_client_wired():
+    """Enabling the feature without wiring a client must fail loudly at startup.
+
+    Regression guard for the 2026-06-25..2026-08-05 silent outage: the shipped
+    config had forecast_integration.enabled=true while nothing ever passed a
+    forecast_client, so every qualifying event was rejected as
+    "forecast_event_score_missing" and Setup C emitted zero signals with no
+    error anywhere.
+    """
     cfg = SetupCEntryConfig(
         forecast_integration=SetupCForecastIntegrationConfig(
             enabled=True, min_event_impact_score=70
         )
     )
-    adapter = SetupCEntryAdapter(cfg, forecast_client=None)
-    # No event score → configured score constraint is unmet.
+
+    with pytest.raises(ValueError) as excinfo:
+        SetupCEntryAdapter(cfg, forecast_client=None)
+
+    message = str(excinfo.value)
+    # The operator must be able to act on the message without opening the source:
+    # it has to name the cause and both remedies.
+    assert "forecast_integration.enabled is true" in message
+    assert "no forecast client" in message
+    assert "forecast_event_score_missing" in message
+    assert "get_latest_event_score" in message  # remedy 1: wire a client
+    assert (
+        "config/strategies/futures/setup_c_event_reaction.yaml" in message
+    )  # remedy 2: turn the flag off
+
+
+def test_construction_succeeds_when_forecast_enabled_and_client_wired():
+    """The guard keys on the client, not on whether that client has a score yet."""
+    cfg = SetupCEntryConfig(
+        forecast_integration=SetupCForecastIntegrationConfig(
+            enabled=True, min_event_impact_score=70
+        )
+    )
+    adapter = SetupCEntryAdapter(cfg, forecast_client=_wired_client())
+    assert adapter._forecast_client is not None
+
+
+def test_event_filter_rejects_missing_score_when_client_is_wired():
+    """A wired client returning None currently vetoes — the OPEN DECISION branch.
+
+    This pins CURRENT behaviour, not endorsed behaviour. The ratified plan
+    (docs/superpowers/plans/archive/2026-05-13-forecast-aware-paradigm.md
+    :3147-3158) specifies fail-OPEN here ("event_score is None → let legacy tier
+    filter decide"); commit 81a10e53 inverted it to fail-closed. See the
+    _event_passes_filter docstring: the question must be settled before
+    forecast_integration.enabled is set true again. If it is settled in favour
+    of the plan, this test is expected to flip to `is True`.
+    """
+    cfg = SetupCEntryConfig(
+        forecast_integration=SetupCForecastIntegrationConfig(
+            enabled=True, min_event_impact_score=70
+        )
+    )
+    adapter = SetupCEntryAdapter(cfg, forecast_client=_wired_client())
     assert adapter._event_passes_filter(None) is False
+
+
+# ---------------------------------------------------------------------------
+# Shipped production config — pins the 2026-08-05 restoration end-to-end.
+#
+# NOTE: these go through StrategyFactory (the real runtime path:
+# ConfigLoader -> EntryRegistry.create). Do NOT substitute
+# SetupCEntryConfig.from_yaml(): its _default_section is the dotted string
+# "strategy.entry.params", which is never a literal key in the YAML, so it
+# silently falls back to pydantic defaults and would assert nothing about what
+# actually ships.
+# ---------------------------------------------------------------------------
+
+
+def _production_setup_c_adapter() -> SetupCEntryAdapter:
+    """Build the Setup C adapter exactly as the runtime factory builds it."""
+    from shared.strategy.builtin_components import register_builtin_components
+    from shared.strategy.factory import StrategyFactory
+
+    register_builtin_components()
+    strategy = StrategyFactory.create_from_file("futures", "setup_c_event_reaction")
+    entry = strategy.entry
+    assert isinstance(entry, SetupCEntryAdapter)
+    return entry
+
+
+def test_shipped_production_config_constructs_and_filter_is_fail_open():
+    """The shipped config must build (Change C guard) and not veto (Change B).
+
+    If someone flips forecast_integration.enabled back to true in the YAML
+    without wiring a client, construction raises here and this test fails loudly
+    instead of the strategy going quietly dead in paper.
+    """
+    adapter = _production_setup_c_adapter()
+
+    assert adapter.config.forecast_integration.enabled is False
+    assert adapter._forecast_client is None
+    # Flag off → short-circuit to True; the legacy min_impact_tier gate decides,
+    # which is what the ratified plan specified for a missing client.
+    assert adapter._event_passes_filter(None) is True
+
+
+@pytest.mark.asyncio
+async def test_production_config_emits_signal_for_qualifying_event(monkeypatch):
+    """Counterfactual: the shipped config now FIRES where it used to reject.
+
+    Phase 1 asserts the emitted signal under the shipped config. Phase 2 rebuilds
+    the same adapter with forecast_integration.enabled=true (the pre-2026-08-05
+    shipped state, with a client wired so construction is even possible) and
+    shows the identical context being rejected as forecast_event_score_missing.
+    The only difference between the two is the flag, so it is the flag that was
+    suppressing Setup C.
+    """
+    import shared.strategy.entry.setup_adapters as facade
+
+    evals: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        facade,
+        "_publish_setup_eval",
+        lambda name, outcome, reason: evals.append((name, outcome, reason)),
+    )
+
+    ts = datetime(2026, 4, 23, 9, 30, tzinfo=KST)
+    event = ScheduledEvent(
+        event_id="event_prod_001",
+        event_type="CPI",
+        scheduled_at=datetime(2026, 4, 23, 9, 20, tzinfo=KST),  # 10 min < window 15
+        impact_tier=1,  # passes min_impact_tier=2
+    )
+
+    # --- Phase 1: shipped config ------------------------------------------
+    adapter = _production_setup_c_adapter()
+    result = await adapter.generate(_event_context(ts, event))
+
+    assert result is not None, f"expected a signal, got none; evals={evals}"
+    assert result.strategy == "setup_c_event_reaction"
+    assert result.metadata["direction"] == "long"
+    assert result.signal_type.value == "entry"
+    assert ("setup_c_event_reaction", "fired", "long") in evals
+    assert not any(
+        reason == "forecast_event_score_missing" for _, _, reason in evals
+    ), f"forecast gate still suppressing under the shipped config: {evals}"
+
+    # --- Phase 2: the pre-fix flag state, same context ---------------------
+    evals.clear()
+    pre_fix_cfg = adapter.config.model_copy(
+        update={
+            "forecast_integration": SetupCForecastIntegrationConfig(
+                enabled=True, min_event_impact_score=60
+            )
+        }
+    )
+    pre_fix_adapter = SetupCEntryAdapter(pre_fix_cfg, forecast_client=_wired_client())
+    pre_fix_result = await pre_fix_adapter.generate(_event_context(ts, event))
+
+    assert pre_fix_result is None
+    assert ("setup_c_event_reaction", "reject", "forecast_event_score_missing") in evals
 
 
 @pytest.mark.asyncio
