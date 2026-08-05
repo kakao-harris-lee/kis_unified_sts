@@ -165,14 +165,13 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
     def _event_passes_filter(self, event_score: Any | None) -> bool:
         """Return True if event_score meets the configured impact threshold.
 
-        OPEN DECISION - DO NOT SET ``forecast_integration.enabled: true``
-        UNTIL THIS IS SETTLED.
+        SETTLED 2026-08-05 by operator judgment: a missing score is fail-OPEN.
 
-        The ``event_score is None -> False`` branch below CONTRADICTS the
-        ratified plan. ``docs/superpowers/plans/archive/
-        2026-05-13-forecast-aware-paradigm.md`` lines 3147-3158 specify this
-        method as fail-OPEN, and state the rationale in the method's own
-        docstring::
+        Decision: when a wired forecast client returns None (service down, score
+        stale, or nothing published yet), this method returns True and defers to
+        the legacy ``min_impact_tier`` gate - the behaviour the ratified plan
+        specified (``docs/superpowers/plans/archive/
+        2026-05-13-forecast-aware-paradigm.md`` lines 3147-3158)::
 
             Returns True when:
             - forecast_integration is disabled (legacy tier filter handles
@@ -180,38 +179,31 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
             - event_score is None (let legacy tier filter decide), OR
             - event_score.impact_score >= min_event_impact_score
 
-            if not fi.enabled or event_score is None:
-                return True
+        Rationale: fail-open here is not "unguarded". The legacy
+        ``min_impact_tier`` gate still runs and still rejects low-tier events,
+        so a forecast outage degrades Setup C to its pre-forecast selectivity
+        rather than opening it up. Weighed against that, letting a forecast-side
+        failure halt Setup C entirely is the worse outcome.
 
-        Commit ``81a10e53`` (2026-06-25, "Close workbench QA gap and advance
-        priority gates") inverted the predicate to fail-CLOSED, added
-        ``_latest_event_score``, and wired the filter into ``generate()`` for
-        the first time - all in one commit. Since no caller ever passed a
-        ``forecast_client``, the score was always None, so this branch rejected
-        every qualifying event and Setup C emitted exactly zero signals for the
-        next six weeks.
-
-        The SILENT path is now closed - ``_validate_config`` raises when the
-        feature is enabled with no client wired, and the shipped config sets
-        ``enabled: false``, which short-circuits above this branch. The branch
-        itself is deliberately left AS-IS, because it is not dead once a client
-        IS wired: it still decides the genuinely contested case where a wired
-        client returns None (forecast service down, score stale, or nothing
-        published yet).
-
-        Whether a missing score should veto an otherwise-valid entry (safety)
-        or defer to the legacy ``min_impact_tier`` gate (the plan's choice, and
-        availability) is a real design decision with live-trading consequences,
-        and it has not been made. Whoever re-enables
-        ``forecast_integration.enabled`` must settle it first and record the
-        outcome here.
+        History: the plan's fail-OPEN predicate was inverted to fail-CLOSED by
+        ``81a10e53`` (2026-06-25, "Close workbench QA gap and advance priority
+        gates"), which in the same commit added ``_latest_event_score`` and
+        wired the filter into ``generate()`` for the first time - without review
+        or ratification. No caller ever passed a ``forecast_client``, so the
+        score was always None and Setup C emitted exactly zero signals for the
+        next six weeks. ``4ac356f0`` (2026-08-05) closed the SILENT path -
+        ``_validate_config`` now raises when the feature is enabled with no
+        client wired, and the shipped config sets ``enabled: false`` - but left
+        the inverted predicate in place. This change restores the predicate
+        itself; the wiring guard and the shipped ``enabled: false`` stay.
         """
         fi = self.config.forecast_integration
         if not fi.enabled:
             return True
         if event_score is None:
-            # See OPEN DECISION above before changing this branch.
-            return False
+            # Fail-open by 2026-08-05 operator judgment: the legacy
+            # min_impact_tier gate still decides. See the docstring above.
+            return True
         return event_score.impact_score >= fi.min_event_impact_score
 
     async def _latest_event_score(self) -> Any | None:
@@ -253,20 +245,23 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                 "setup_c_event_reaction is misconfigured: "
                 "forecast_integration.enabled is true but no forecast client was "
                 "supplied to SetupCEntryAdapter. _latest_event_score() can then "
-                "only ever return None, and _event_passes_filter rejects a None "
-                "score, so EVERY qualifying event is rejected as "
-                "'forecast_event_score_missing' and Setup C emits zero signals. "
-                "This failed silently from 2026-06-25 (commit 81a10e53) until "
-                "2026-08-05. Two ways out: (1) construct the adapter with "
+                "only ever return None, so the forecast feature is inert while "
+                "the config claims it is on: thresholds silently fall back to "
+                "ATR and the score filter can never discriminate. From "
+                "2026-06-25 (commit 81a10e53) until 2026-08-05 this same "
+                "misconfiguration was actively lethal - _event_passes_filter "
+                "then rejected a None score, so EVERY qualifying event was "
+                "rejected as 'forecast_event_score_missing' and Setup C emitted "
+                "zero signals in silence. The predicate is fail-open again as of "
+                "the 2026-08-05 operator judgment, but an enabled-yet-unwired "
+                "feature is still a misconfiguration and still fails loudly "
+                "here. Two ways out: (1) construct the adapter with "
                 "forecast_client=<object exposing async get_latest_event_score()> "
                 "- note that the strategy factory path "
                 "(shared/strategy/factory.py -> EntryRegistry.create) does NOT "
                 "pass one today, so it must be wired first; or (2) set "
                 "strategy.entry.params.forecast_integration.enabled: false in "
-                "config/strategies/futures/setup_c_event_reaction.yaml. Before "
-                "choosing (1), settle the OPEN DECISION documented in the "
-                "_event_passes_filter docstring about whether a missing score "
-                "should veto an entry."
+                "config/strategies/futures/setup_c_event_reaction.yaml."
             )
 
     @property
@@ -296,6 +291,12 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         ):
             event_score = await self._latest_event_score()
             if not self._event_passes_filter(event_score):
+                # Unreachable while the predicate fails open on a missing score
+                # (it only returns False for a *published* below-threshold
+                # score).  Kept as the fail-safe label should the predicate
+                # ever be re-inverted; unreachability is pinned by
+                # test_production_config_emits_signal_for_qualifying_event
+                # (Phase 2).
                 reason = "forecast_event_score_missing"
                 if event_score is not None:
                     reason = (

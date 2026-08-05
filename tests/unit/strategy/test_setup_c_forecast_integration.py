@@ -187,16 +187,20 @@ def test_construction_succeeds_when_forecast_enabled_and_client_wired():
     assert adapter._forecast_client is not None
 
 
-def test_event_filter_rejects_missing_score_when_client_is_wired():
-    """A wired client returning None currently vetoes — the OPEN DECISION branch.
+def test_event_filter_fails_open_on_missing_score_when_client_is_wired():
+    """A wired client returning None must NOT veto — it defers to the tier gate.
 
-    This pins CURRENT behaviour, not endorsed behaviour. The ratified plan
-    (docs/superpowers/plans/archive/2026-05-13-forecast-aware-paradigm.md
-    :3147-3158) specifies fail-OPEN here ("event_score is None → let legacy tier
-    filter decide"); commit 81a10e53 inverted it to fail-closed. See the
-    _event_passes_filter docstring: the question must be settled before
-    forecast_integration.enabled is set true again. If it is settled in favour
-    of the plan, this test is expected to flip to `is True`.
+    This is the genuinely contested case: the feature is on, a client is wired,
+    and the forecast service is down / the score is stale / nothing has been
+    published yet. Settled 2026-08-05 by operator judgment in favour of the
+    ratified plan (docs/superpowers/plans/archive/
+    2026-05-13-forecast-aware-paradigm.md:3147-3158), which specifies fail-OPEN
+    here — commit 81a10e53 had inverted it to fail-closed without review, and
+    Setup C emitted zero signals for the following six weeks.
+
+    Fail-open is not unguarded: the legacy ``min_impact_tier`` gate still runs.
+    Paired with :func:`test_event_filter_uses_impact_score_when_enabled`, which
+    shows a PUBLISHED score is still enforced in both directions.
     """
     cfg = SetupCEntryConfig(
         forecast_integration=SetupCForecastIntegrationConfig(
@@ -204,7 +208,7 @@ def test_event_filter_rejects_missing_score_when_client_is_wired():
         )
     )
     adapter = SetupCEntryAdapter(cfg, forecast_client=_wired_client())
-    assert adapter._event_passes_filter(None) is False
+    assert adapter._event_passes_filter(None) is True
 
 
 # ---------------------------------------------------------------------------
@@ -249,14 +253,20 @@ def test_shipped_production_config_constructs_and_filter_is_fail_open():
 
 @pytest.mark.asyncio
 async def test_production_config_emits_signal_for_qualifying_event(monkeypatch):
-    """Counterfactual: the shipped config now FIRES where it used to reject.
+    """Counterfactual: the shipped config FIRES, and fail-open keeps it firing.
 
-    Phase 1 asserts the emitted signal under the shipped config. Phase 2 rebuilds
-    the same adapter with forecast_integration.enabled=true (the pre-2026-08-05
-    shipped state, with a client wired so construction is even possible) and
-    shows the identical context being rejected as forecast_event_score_missing.
-    The only difference between the two is the flag, so it is the flag that was
-    suppressing Setup C.
+    Phase 1 asserts the emitted signal under the shipped config
+    (forecast_integration disabled → the legacy min_impact_tier gate decides).
+
+    Phase 2 rebuilds the same adapter with forecast_integration.enabled=true and
+    a wired client that publishes no score — the exact case the 2026-08-05
+    judgment settled — and shows the identical context still firing instead of
+    being rejected as forecast_event_score_missing.
+
+    Phase 3 hands that same wired client a below-threshold score and shows the
+    filter still rejecting. Without it, Phase 2 could be satisfied by a gate
+    that had gone inert; together they say the gate discriminates on PUBLISHED
+    scores and only defers when there is nothing to discriminate on.
     """
     import shared.strategy.entry.setup_adapters as facade
 
@@ -288,20 +298,47 @@ async def test_production_config_emits_signal_for_qualifying_event(monkeypatch):
         reason == "forecast_event_score_missing" for _, _, reason in evals
     ), f"forecast gate still suppressing under the shipped config: {evals}"
 
-    # --- Phase 2: the pre-fix flag state, same context ---------------------
+    # --- Phase 2: feature on, wired client, NO score published -------------
     evals.clear()
-    pre_fix_cfg = adapter.config.model_copy(
+    forecast_on_cfg = adapter.config.model_copy(
         update={
             "forecast_integration": SetupCForecastIntegrationConfig(
                 enabled=True, min_event_impact_score=60
             )
         }
     )
-    pre_fix_adapter = SetupCEntryAdapter(pre_fix_cfg, forecast_client=_wired_client())
-    pre_fix_result = await pre_fix_adapter.generate(_event_context(ts, event))
+    unscored_adapter = SetupCEntryAdapter(
+        forecast_on_cfg, forecast_client=_wired_client()
+    )
+    unscored_result = await unscored_adapter.generate(_event_context(ts, event))
 
-    assert pre_fix_result is None
-    assert ("setup_c_event_reaction", "reject", "forecast_event_score_missing") in evals
+    assert unscored_result is not None, (
+        "fail-open regression: a wired client with no score must defer to the "
+        f"legacy min_impact_tier gate, not veto; evals={evals}"
+    )
+    assert not any(
+        reason == "forecast_event_score_missing" for _, _, reason in evals
+    ), f"the missing-score veto is back: {evals}"
+
+    # --- Phase 3: same wired client, but a below-threshold score -----------
+    evals.clear()
+    weak_score = SimpleNamespace(
+        asof=datetime.now(UTC),
+        impact_score=50,  # < min_event_impact_score=60
+        event_type="CPI",
+        source="rule",
+        raw_text=None,
+        ttl_minutes=30,
+    )
+    scored_adapter = SetupCEntryAdapter(
+        forecast_on_cfg, forecast_client=_FakeForecastClient(weak_score)
+    )
+    scored_result = await scored_adapter.generate(_event_context(ts, event))
+
+    assert scored_result is None
+    assert any(
+        reason.startswith("forecast_event_score_below_min") for _, _, reason in evals
+    ), f"a published-but-weak score must still be gated; evals={evals}"
 
 
 @pytest.mark.asyncio

@@ -102,13 +102,17 @@ strategy:
       # With this flag false the filter short-circuits to True and the legacy
       # min_impact_tier gate decides — the plan's specified behaviour.
       #
-      # BEFORE SETTING THIS BACK TO true: (a) wire a forecast client into the
-      # adapter — it now raises at construction if you do not, see
-      # shared/strategy/entry/setup_c_adapter.py::_validate_config — and
-      # (b) settle the OPEN DECISION recorded in that same file's
-      # _event_passes_filter docstring about whether a wired client returning
-      # None should veto an entry. Every other key below is left intact so
-      # re-enabling is a one-line change.
+      # The missing-score question is SETTLED (operator judgment 2026-08-05):
+      # a wired client returning None is FAIL-OPEN — the legacy min_impact_tier
+      # gate still decides, so a forecast outage degrades Setup C's selectivity
+      # instead of halting it. The predicate in
+      # shared/strategy/entry/setup_c_adapter.py::_event_passes_filter was
+      # restored to the plan's original accordingly.
+      #
+      # BEFORE SETTING THIS BACK TO true: wire a forecast client into the
+      # adapter — it raises at construction if you do not, see
+      # shared/strategy/entry/setup_c_adapter.py::_validate_config. Every other
+      # key below is left intact so re-enabling is a one-line change.
       forecast_integration:
         enabled: false                       # feature flag — see note above
         buffer_vol_mult: 0.5
