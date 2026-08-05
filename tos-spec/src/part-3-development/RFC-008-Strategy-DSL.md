@@ -10,7 +10,7 @@
 **Decision Authority:** Constrained by RFC-003 — Decision Framework
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-17
+**Last Updated:** 2026-08-05
 
 ---
 
@@ -590,7 +590,7 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   adversarial EV-L0 review of this Wave-6 change is owed; this patch confers no acceptance
   or live-readiness.
 
-### Currency correction, 2026-08-04 — §14 status self-description (no version change; materiality determination pending)
+### Currency correction, 2026-08-04 — §14 status self-description (no version change; determined non-material under GOV-001 G6 on 2026-08-05)
 
 * **What changed.** RFC-008 has been `Ratified` since 2026-07-18 (GOV-001 G5 record RR-0010,
   ARCHITECTURE-GATE-STATUS §9.7), but the §14 Open Questions preamble described the document as "a Review Draft". All 13 RFC-class baselines are `Ratified`.
@@ -601,8 +601,34 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   added or altered; the evidence-register counts are unchanged (Part-1 372; development-track
   118). No evidence row is promoted and no ADR acceptance, restricted-live grant, or
   production authorization is conferred.
-* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
-  `**Status:**` is deliberately unchanged. Whether this correction is *material* under
-  GOV-001 G6 is a System Owner determination that has not been made; this entry records the
-  change and its provenance and does not substitute for that determination, which remains
-  pending System Owner review.
+* **Materiality was undetermined when this entry was first recorded (2026-08-04).**
+  `**Version:**` was deliberately not bumped and `**Status:**` deliberately unchanged.
+  Whether this correction was *material* under GOV-001 G6 was a System Owner determination
+  that had not then been made; this entry recorded the change and its provenance and did not
+  substitute for that determination. **That determination has since been made and is recorded
+  in the bullet below; this bullet is retained as the provenance of the interval in which the
+  question stood open.**
+* **System Owner materiality determination, 2026-08-05 — NON-MATERIAL under GOV-001 G6.**
+  This is the RFC-008 application of a batch determination of that date covering every
+  post-ratification currency correction then outstanding; it was applied only after the
+  RFC-008 diff was read on its own terms. **Verified grounds (from the `83987c7d` diff of
+  this file).** The commit touches RFC-008 in exactly two places: the §14 preamble and the
+  appended Review History entry. One sentence — "These questions are open while RFC-008 is a
+  Review Draft" — is replaced by the actual `Ratified` status (RR-0010) with the explicit
+  rider "ratification closes no open question". The acceptance-track machinery of the
+  preamble is preserved verbatim: that each question is addressed by a *proposed* ADR-DEV,
+  that "because every such ADR-DEV is `Proposed` (unaccepted), a proposed ADR-DEV does not
+  resolve its question — resolution follows acceptance", and that "None SHALL be resolved by
+  informal authoring-surface convention". The correction therefore cannot be read as
+  converting ratification into acceptance, which is the one confusion that would have made it
+  material here (GOV-001 G1 keeps the two acts distinct). Nothing in the DSL's prohibited-
+  effect surface is touched, and the diff carries no SAFE-xxx requirement, numeric bound,
+  authority, gate, mode transition, traceability row, or evidence identifier. **Consequence:**
+  GOV-001 G6 is not engaged — no RFC-000 §18 amendment and no re-ratification of RFC-008 are
+  owed, retroactively or prospectively; `**Version:** 0.2` and `**Status:** Ratified`
+  (RR-0010) stand unchanged, and the cited-version pins are unchanged. **Metadata.**
+  `83987c7d` left `**Last Updated:**` at 2026-07-17 while editing the §14 body; the field is
+  set to 2026-08-05, the date of this determination. **Scope and limits:** this determination
+  covers the `83987c7d` RFC-008 §14 edit alone, creates no verification evidence, and grants
+  no live authorization, no ADR acceptance, and no capacity (GOV-001 G1, G8). Independent
+  EV-L0 review of this determination is owed.

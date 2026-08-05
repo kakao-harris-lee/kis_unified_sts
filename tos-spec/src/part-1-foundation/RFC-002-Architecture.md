@@ -9,7 +9,7 @@
 **Safety Authority:** Constrained by RFC-001 — Safety Case
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-13
-**Last Updated:** 2026-08-02
+**Last Updated:** 2026-08-05
 
 ---
 
@@ -2270,7 +2270,7 @@ RFC-002 SHALL NOT progress to Release Candidate until:
 * Upstream synchronization: the same partial-update pattern was found at the source ADR-002-007 (§13, §14.1 item 3, REARM-AC-005) — a Wave-1 CR-02 propagation site that had been missed while ADR-002-025/026/027 received the recognition clause — and is corrected in ADR-002-007 v0.3 (Patch 0053) with the identical exception wording. The three NON-FINDINGS in VERDICT-0005 (§10.8 SAFE-054 branch preservation; §27/§30 traceability-matrix gate over SAFE-001..054; §12.1 orthogonal fail-closed UNKNOWN state) confirm the v0.5 pre-fixes pass.
 * Narrow-only realignment to the Ratified RFC-001 v0.8; no RFC-000 v0.16, RFC-001 v0.8, or GOV-001 v0.1 (all Ratified), vision, or philosophy text is changed. SAFE-053's two-satisfaction-path structure is preserved and no absolute two-natural-person requirement is reintroduced (CR-02 / DR-0001); the variant's ADR-002-015 §17.1 constraints are preserved unchanged. No new SAFE-xxx, no numeric bound, no broker proper noun; the Evidence Register counts are held (Part-1 372; development-track 98). The v0.6 delta re-review is requested in the git-excluded reviews/GEMINI-EVL0-REQUEST-0006.md; reviewer provenance per VER-002-001 §5 (M-18).
 
-### Currency correction, 2026-08-02 — §26 Wave-4 snapshot marked historical (no version change; materiality determination pending)
+### Currency correction, 2026-08-02 — §26 Wave-4 snapshot marked historical (no version change; determined non-material under GOV-001 G6 on 2026-08-05)
 
 * **What changed.** Commit `acd45c43` (2026-08-02, "docs(tos): remediate whole-corpus
   review findings") replaced the §26 paragraph that followed the ADR status table. The
@@ -2290,12 +2290,62 @@ RFC-002 SHALL NOT progress to Release Candidate until:
   The edit converts a stale present-tense status assertion into an explicitly historical
   one — a currency correction that carries no requirement change.
 * **Metadata repair (this entry, 2026-08-04).** Commit `acd45c43` recorded no §32 entry and
-  left `**Last Updated:**` at 2026-07-18; it is the only commit to touch this file after
-  the ratification commit `10d494c5`. `**Last Updated:**` is corrected to 2026-08-02, the
-  date of the body edit, and this entry supplies the missing Review History record.
-* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
-  `**Status:**` is deliberately unchanged. Whether the `acd45c43` §26 edit is a *material*
-  change under GOV-001 G6 — and therefore whether it requires a version increment and a
-  governed re-ratification path — is a System Owner determination that has not been made.
-  **This entry records the change and its provenance; it does not make, imply, or
-  substitute for that determination, which remains pending System Owner review.**
+  left `**Last Updated:**` at 2026-07-18; it was then the only commit to touch this file
+  after the ratification commit `10d494c5`. `**Last Updated:**` was corrected to 2026-08-02,
+  the date of the body edit, and this entry supplied the missing Review History record. The
+  field now reads 2026-08-05, the date of the determination recorded below.
+* **Materiality was undetermined when this entry was first recorded (2026-08-04).**
+  `**Version:**` was deliberately not bumped and `**Status:**` deliberately unchanged.
+  Whether the `acd45c43` §26 edit was a *material* change under GOV-001 G6 — and therefore
+  whether it required a version increment and a governed re-ratification path — was a System
+  Owner determination that had not then been made. This entry recorded the change and its
+  provenance; it did not make, imply, or substitute for that determination. **That
+  determination has since been made and is recorded in the bullet below; this bullet is
+  retained as the provenance of the interval in which the question stood open.**
+* **System Owner materiality determination, 2026-08-05 — NON-MATERIAL under GOV-001 G6.**
+  The System Owner (the GOV-001 G4 ratifying authority; the classification is System
+  Owner-owned and not editorial — ARCHITECTURE-GATE-STATUS §3.25) determines that the
+  `acd45c43` §26 edit is **not a material change** to this Ratified document. **Grounds:**
+  the edit alters no normative content — no SAFE-xxx requirement, numeric bound, authority,
+  gate, operating-mode transition, traceability row, or evidence identity — promotes no
+  evidence row, and confers no ADR acceptance, restricted-live grant, or production
+  authorization (see "What changed" and "What did not change" above). It re-anchors a stale
+  present-tense status narration as the historical Wave-4 snapshot it always described; a
+  currency correction carrying no requirement change is not a material change.
+  **Consequence:** GOV-001 G6 is not engaged. No RFC-000 §18 amendment and no
+  re-ratification of RFC-002 are owed, retroactively or prospectively. `**Version:** 0.6`
+  and `**Status:** Ratified` (2026-07-18 — GOV-001 G5 record RR-0004) stand unchanged by
+  this determination, and the v0.6 cited-version pins are unchanged. No other Ratified
+  document's cited-version pins name RFC-002 §26 — the citing ratification records pin
+  RFC-002 at document version v0.6 — so the G6 citation-integrity re-check is likewise not
+  triggered. **The one candidate counterexample to that universal negative is excluded
+  explicitly.** The Ratified RFC-000 v0.16 does cross-reference this very clause: its §5
+  reserved-`ARCH-xxx`-namespace bullet says those requirements are "currently discharged
+  through the `ADR-002-xxx` decision series (see RFC-002 §26)". That is a bare cross-reference
+  carrying no version, and G6 triggers the re-check on a clause named in a *cited-version
+  pin*, not on any citation whatever; RFC-000's own cited-version pins (record RR-0001) name
+  GOV-001 v0.1 §13 and §18 and no RFC-002 clause at all. The exclusion therefore rests on the
+  citation not being a pin, not on the citation being harmless — and it is noted here because
+  a governance determination that asserts a universal negative must name and dispose of its
+  counterexamples rather than leave them for a later reader to find. **Scope and limits:** this determination covers the `acd45c43` §26 edit alone,
+  creates no verification evidence, and grants no live authorization, no ADR acceptance, and
+  no capacity (GOV-001 G1, G8). As recorded when it was made, it reached no other
+  post-ratification edit; a **separate System Owner determination of the same date**
+  (2026-08-05) has since extended the same non-material classification, edit by edit and each
+  on its own verified diff, to the nine `83987c7d` currency corrections in RFC-003 §16,
+  RFC-004 §15, RFC-005 §16, RFC-006 §17, RFC-007 §16, and RFC-008/009/010/011 §14, each
+  recorded in that document's own Review History. No post-ratification edit outside those ten
+  is covered by either determination. **The gap between the thirteen files `83987c7d` touched
+  and the nine it determined is closed explicitly, not left to inference.** `tos-spec/README.md`
+  carries no `**Version:**` and no `**Status:**` field, sits outside `src/`, and does not
+  appear in the book's `SUMMARY.md`; it is repository navigation, not a Ratified document, and
+  its edit corrected a claim about git-excluded `patches/`/`reviews/` directories.
+  VER-002-001 and VER-DEV-001 are Verification Evidence specifications, which GOV-001 G2 keeps
+  off the ratification ladder outright — "A Verification Evidence specification SHALL NOT be
+  ratified" — and both stand at `Proposed — Ready for Test Implementation`, so G6, which
+  governs a material change *to a Ratified document*, cannot attach to either. The thirteenth
+  file is RFC-002 itself: its `83987c7d` hunks are exactly the `**Last Updated:**` header line
+  and the appended §32 entry — this entry's own creation and metadata, dispositioned by the
+  determination it records rather than needing one of its own. The companion registration carrying this document's
+  determination is ARCHITECTURE-GATE-STATUS §3.25. Independent EV-L0 review of this
+  determination is owed.

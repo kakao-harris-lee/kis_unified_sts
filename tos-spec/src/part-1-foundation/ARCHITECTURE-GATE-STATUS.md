@@ -947,12 +947,14 @@ anywhere in the template. Independent EV-L0 review is owed.
 
 ---
 
-### 3.25 Post-ratification currency edit to RFC-002 §26 (commit `acd45c43`) — MATERIALITY DETERMINATION PENDING
+### 3.25 Post-ratification currency edit to RFC-002 §26 (commit `acd45c43`) — DETERMINED NON-MATERIAL (System Owner, 2026-08-05)
 
 **RFC-002 is Ratified (v0.6).** On 2026-08-02, commit `acd45c43` edited RFC-002
-§26 (Architectural Decision Records) without an amendment record. This entry
-registers that fact; it does not classify the edit, ratify it, or re-ratify
-RFC-002.
+§26 (Architectural Decision Records) without an amendment record. This entry as
+first written (2026-08-04) registered that fact and deliberately did not classify
+the edit; the classification was supplied by the System Owner determination
+recorded at the end of this entry (2026-08-05). Neither the registration nor the
+determination ratifies or re-ratifies RFC-002.
 
 **What changed.** The closing paragraph of §26 carried a present-tense status
 claim — "All 372 registered evidence items remain `NOT_IMPLEMENTED`" and a
@@ -965,23 +967,72 @@ status. No SAFE-xxx requirement, invariant, ADR status, evidence ID, numeric
 bound, or authority was added, removed, or changed, and no count was restated
 as a new current figure.
 
-**Why it is registered rather than dispositioned.** GOV-001 G6 requires that
-any **material** change to a Ratified document proceed through the RFC-000 §18
-amendment process with re-ratification, and triggers a citation-integrity
-re-check where a change touches a clause named in another Ratified document's
-cited-version pins. Whether correcting a stale, self-falsifying status
-narration to an explicitly historical one is *material* — or is instead a
-non-material currency correction outside G6 — is a **System Owner
-determination, not an editorial one**. It is therefore recorded here as open.
+**Why it was registered rather than dispositioned when written (2026-08-04).**
+GOV-001 G6 requires that any **material** change to a Ratified document proceed
+through the RFC-000 §18 amendment process with re-ratification, and triggers a
+citation-integrity re-check where a change touches a clause named in another
+Ratified document's cited-version pins. Whether correcting a stale,
+self-falsifying status narration to an explicitly historical one is *material* —
+or is instead a non-material currency correction outside G6 — is a **System Owner
+determination, not an editorial one**. It was therefore recorded here as open,
+and stood open from 2026-08-04 until the determination below.
 
-**Standing until determined.** RFC-002 remains Ratified at v0.6 and its
-cited-version pins are unchanged; this entry asserts no version increment. If
-the System Owner determines the edit was material, an RFC-000 §18 amendment
-and re-ratification (plus the G6 citation-integrity re-check) are owed
-retroactively. If non-material, this entry stands as the record. Either way the
-edit creates no evidence, acceptance, capacity, or live readiness. RFC-002's own
-Last Updated and Review History are maintained separately and are not restated
-here. Independent EV-L0 review of this determination is owed.
+**Standing while the question was open.** RFC-002 remained Ratified at v0.6 with
+its cited-version pins unchanged; this entry asserted no version increment. The
+recorded branches were that a material determination would owe an RFC-000 §18
+amendment and re-ratification (plus the G6 citation-integrity re-check)
+retroactively, and that a non-material determination would leave this entry
+standing as the record. Either way the edit creates no evidence, acceptance,
+capacity, or live readiness. RFC-002's own Last Updated and Review History are
+maintained separately and are not restated here.
+
+**System Owner determination, 2026-08-05 — NON-MATERIAL under GOV-001 G6.** The
+System Owner (the GOV-001 G4 ratifying authority; the classification is System
+Owner-owned, not editorial, per the paragraph above) determines that the
+`acd45c43` §26 edit is **not a material change** to a Ratified document. The
+grounds are that it alters no normative content — no SAFE-xxx requirement,
+numeric bound, invariant, ADR status, evidence identity, authority, gate, or
+operating-mode transition was added, removed, or changed, and no count was
+restated as a new current figure — so the edit is a currency correction carrying
+no requirement change. GOV-001 G6 is therefore not engaged: no RFC-000 §18
+amendment and no re-ratification of RFC-002 are owed, retroactively or
+prospectively, and the second branch above is the one that holds — this entry
+stands as the record. No other Ratified document's cited-version pins name
+RFC-002 §26 (the citing ratification records in §9.7 pin RFC-002 at document
+version v0.6), so the G6 citation-integrity re-check is not triggered either.
+**That universal negative has one candidate counterexample, excluded here
+explicitly rather than left unstated.** The Ratified RFC-000 v0.16 cross-references
+this clause by name — its §5 reserved-`ARCH-xxx`-namespace bullet routes those
+requirements "through the `ADR-002-xxx` decision series (see RFC-002 §26)". The
+exclusion is that G6 triggers the re-check on a clause named in a *cited-version
+pin*, and RFC-000's reference carries no version, so it is a cross-reference and
+not a pin; RFC-000's own cited-version pins (RR-0001, §9.7) name GOV-001 v0.1 §13
+and §18 and no RFC-002 clause. The re-check trigger is therefore unmet on the
+pin test, not waived on a judgment that the citation is harmless.
+**RFC-002 stays Ratified at Version 0.6 (record RR-0004) with its cited-version
+pins unchanged**; this determination increments no version and re-opens no
+ratification. It covers the `acd45c43` §26 edit alone and confers no evidence,
+ADR acceptance, capacity, restricted-live grant, production authorization, or
+live readiness (GOV-001 G1, G8). As recorded when made it reached no other
+post-ratification edit; a separate System Owner determination of the same date
+has since extended the same non-material classification, edit by edit on each
+document's own verified diff, to the nine `83987c7d` Open-Questions currency
+corrections in RFC-003 §16, RFC-004 §15, RFC-005 §16, RFC-006 §17, RFC-007 §16,
+and RFC-008/009/010/011 §14. Those nine are recorded in their own documents'
+Review History and are not registered in this section, which `83987c7d` never
+touched; no post-ratification edit outside those ten is covered by either
+determination. **The gap between the thirteen files that commit touched and the
+nine it determined is closed explicitly.** `tos-spec/README.md` carries no
+`**Version:**` or `**Status:**` field, sits outside `src/`, and is absent from
+`SUMMARY.md` — repository navigation, not a Ratified document. VER-002-001 and
+VER-DEV-001 are Verification Evidence specifications, which GOV-001 G2 keeps off
+the ratification ladder outright ("A Verification Evidence specification SHALL
+NOT be ratified"); both stand at `Proposed — Ready for Test Implementation`, so
+G6's subject — a material change to a *Ratified* document — is absent. The
+thirteenth file is RFC-002, whose hunks in that commit are only the
+`**Last Updated:**` line and the appended §32 entry, i.e. the self-registration
+and metadata of the record this section already disposes of. RFC-002 §32 carries the companion Review History record of the
+same determination. Independent EV-L0 review of this determination is owed.
 
 ---
 

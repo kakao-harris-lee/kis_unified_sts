@@ -9,7 +9,7 @@
 **Safety Authority:** Constrained by RFC-001 — Safety Case and RFC-002 — Architecture
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-17
+**Last Updated:** 2026-08-05
 
 ---
 
@@ -519,7 +519,7 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   aligns RFC-005 with RFC-007 §§3, 10, 12, under which RFC-007 classifies nothing.
   RFC-007 retains ownership of hedge sizing only.
 
-### Currency correction, 2026-08-04 — §16 status self-description (no version change; materiality determination pending)
+### Currency correction, 2026-08-04 — §16 status self-description (no version change; determined non-material under GOV-001 G6 on 2026-08-05)
 
 * **What changed.** RFC-005 has been `Ratified` since 2026-07-18 (GOV-001 G5 record RR-0007,
   ARCHITECTURE-GATE-STATUS §9.7), but the §16 Open Questions preamble described the document as "a Review Draft" and the companion RFCs as "unwritten". All 13 RFC-class baselines are `Ratified`.
@@ -530,8 +530,48 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   added or altered; the evidence-register counts are unchanged (Part-1 372; development-track
   118). No evidence row is promoted and no ADR acceptance, restricted-live grant, or
   production authorization is conferred.
-* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
-  `**Status:**` is deliberately unchanged. Whether this correction is *material* under
-  GOV-001 G6 is a System Owner determination that has not been made; this entry records the
-  change and its provenance and does not substitute for that determination, which remains
-  pending System Owner review.
+* **Materiality was undetermined when this entry was first recorded (2026-08-04).**
+  `**Version:**` was deliberately not bumped and `**Status:**` deliberately unchanged.
+  Whether this correction was *material* under GOV-001 G6 was a System Owner determination
+  that had not then been made; this entry recorded the change and its provenance and did not
+  substitute for that determination. **That determination has since been made and is recorded
+  in the bullet below; this bullet is retained as the provenance of the interval in which the
+  question stood open.**
+* **System Owner materiality determination, 2026-08-05 — NON-MATERIAL under GOV-001 G6.**
+  This is the RFC-005 application of a batch determination of that date covering every
+  post-ratification currency correction then outstanding; it was applied only after the
+  RFC-005 diff was read on its own terms. **Verified grounds (from the `83987c7d` diff of
+  this file).** The commit touches RFC-005 in exactly two places: the §16 preamble and the
+  appended Review History entry. The preamble carried the same two false descriptions found
+  in RFC-004 and RFC-006 — that RFC-005 "is a Review Draft" and that "the companion RFCs are
+  unwritten" — and both are replaced by the actual `Ratified` status (RR-0007) and "accepted
+  only in part". The replacement is openness-preserving: the questions now "remain open
+  notwithstanding RFC-005's `Ratified` status", so no question can be read as closed by
+  ratification. The sentence "They SHALL NOT be resolved by informal execution-model
+  convention" survives with identical wording (it appears as a changed line only because the
+  paragraph was re-wrapped), and the numbered questions — including the Almgren–Chriss
+  cost/risk trade-off question that immediately follows the edited preamble — are untouched.
+  No SAFE-xxx requirement, numeric bound, authority, gate, mode transition, traceability row,
+  or evidence identifier appears anywhere in the diff. **On the substituted phrase.**
+  "Accepted only in part" is not language invented for this edit: it propagates the wording
+  RFC-003 and RFC-007 already carried, and `83987c7d` recorded its own reservation about it —
+  "correct if read as ADR acceptance and stale if read as RFC disposition" — reusing the
+  existing phrase rather than inventing status language. On the ADR-acceptance reading it does
+  not over-claim: all 45 ADRs stand `Proposed`, so nothing this execution model rests on is
+  accepted beyond part. Either way the phrase describes why questions stay open; it is not a
+  requirement, permission, or gate, so materiality does not turn on which reading prevails.
+  **Nor can the edit be read as converting ratification into acceptance** — the one confusion
+  that would make a status correction material, because GOV-001 G1 holds ratification, ADR
+  acceptance, and live authorization to be distinct acts, and an execution model read as
+  "accepted" would appear to sanction order-path behaviour no accepted decision covers.
+  RFC-005 lacks the "resolution follows acceptance" rider that carries this point explicitly
+  in RFC-008–011, so the evidence is structural: only the *ratification* self-description was
+  replaced, and the *acceptance* condition was left standing in the same sentence. **Consequence:** GOV-001 G6 is not
+  engaged — no RFC-000 §18 amendment and no re-ratification of RFC-005 are owed,
+  retroactively or prospectively; `**Version:** 0.1` and `**Status:** Ratified` (RR-0007)
+  stand unchanged, and the cited-version pins are unchanged. **Metadata.** `83987c7d` left
+  `**Last Updated:**` at 2026-07-17 while editing the §16 body; the field is set to
+  2026-08-05, the date of this determination. **Scope and limits:** this determination covers
+  the `83987c7d` RFC-005 §16 edit alone, creates no verification evidence, and grants no live
+  authorization, no ADR acceptance, and no capacity (GOV-001 G1, G8). Independent EV-L0
+  review of this determination is owed.

@@ -9,7 +9,7 @@
 **Safety Authority:** Constrained by RFC-001 — Safety Case and RFC-002 — Architecture
 **Owner:** Trading Operating System Architecture Board
 **Created:** 2026-07-15
-**Last Updated:** 2026-07-17
+**Last Updated:** 2026-08-05
 
 ---
 
@@ -672,7 +672,7 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   authority, and no new EV (register counts unchanged). Independent EV-L0 review is owed, with
   reviewer provenance recorded per ADR-DEV-005 §7 / VER-002-001 §5 (M-18).
 
-### Currency correction, 2026-08-04 — §16 status self-description (no version change; materiality determination pending)
+### Currency correction, 2026-08-04 — §16 status self-description (no version change; determined non-material under GOV-001 G6 on 2026-08-05)
 
 * **What changed.** RFC-003 has been `Ratified` since 2026-07-18 (GOV-001 G5 record RR-0005,
   ARCHITECTURE-GATE-STATUS §9.7), but the §16 Open Questions preamble described the document as accompanying "RFC-003 as a Review Draft". All 13 RFC-class baselines are `Ratified`.
@@ -683,8 +683,32 @@ Unresolved questions reduce, and do not expand, the conforming action set.
   added or altered; the evidence-register counts are unchanged (Part-1 372; development-track
   118). No evidence row is promoted and no ADR acceptance, restricted-live grant, or
   production authorization is conferred.
-* **Materiality is undetermined.** `**Version:**` is deliberately not bumped and
-  `**Status:**` is deliberately unchanged. Whether this correction is *material* under
-  GOV-001 G6 is a System Owner determination that has not been made; this entry records the
-  change and its provenance and does not substitute for that determination, which remains
-  pending System Owner review.
+* **Materiality was undetermined when this entry was first recorded (2026-08-04).**
+  `**Version:**` was deliberately not bumped and `**Status:**` deliberately unchanged.
+  Whether this correction was *material* under GOV-001 G6 was a System Owner determination
+  that had not then been made; this entry recorded the change and its provenance and did not
+  substitute for that determination. **That determination has since been made and is recorded
+  in the bullet below; this bullet is retained as the provenance of the interval in which the
+  question stood open.**
+* **System Owner materiality determination, 2026-08-05 — NON-MATERIAL under GOV-001 G6.**
+  This is the RFC-003 application of a batch determination of that date covering every
+  post-ratification currency correction then outstanding; it was applied only after the
+  RFC-003 diff was read on its own terms. **Verified grounds (from the `83987c7d` diff of
+  this file).** The commit touches RFC-003 in exactly two places: the §16 preamble and the
+  appended Review History entry. In the preamble a single self-description — "These questions
+  accompany RFC-003 as a Review Draft" — is replaced by the document's actual `Ratified`
+  status (RR-0005) plus "ratification closes no open question". The clause recording that the
+  remaining questions "stay open while the companion models (RFC-004–007) are accepted only
+  in part" and the sentence "An open question SHALL NOT be resolved by informal
+  decision-layer convention" survive verbatim, as does the Wave-5 provenance for Q1/Q3/Q4.
+  No question is added, removed, renumbered, opened, or closed, and no SAFE-xxx requirement,
+  numeric bound, authority, gate, mode transition, traceability row, or evidence identifier
+  appears anywhere in the diff. The edit therefore corrects a description of state, never
+  state itself. **Consequence:** GOV-001 G6 is not engaged — no RFC-000 §18 amendment and no
+  re-ratification of RFC-003 are owed, retroactively or prospectively; `**Version:** 0.4` and
+  `**Status:** Ratified` (RR-0005) stand unchanged, and the cited-version pins are unchanged.
+  **Metadata.** `83987c7d` left `**Last Updated:**` at 2026-07-17 while editing the §16 body;
+  the field is set to 2026-08-05, the date of this determination. **Scope and limits:** this
+  determination covers the `83987c7d` RFC-003 §16 edit alone, creates no verification
+  evidence, and grants no live authorization, no ADR acceptance, and no capacity (GOV-001 G1,
+  G8). Independent EV-L0 review of this determination is owed.
