@@ -20,8 +20,11 @@ land in both durable surfaces that record ``position.metadata`` verbatim:
 
 The absence-vs-``False`` pair is asserted in both directions on purpose: a
 forwarding rule that collapses "the helper ran and declined" into "the helper
-never ran" destroys exactly the evidence an operator needs to judge the live
-``1.3`` multiplier.
+never ran" destroys exactly the evidence an operator needs to judge the
+multiplier. That evidence is now the ONLY tell: the 2026-08-05 judgment
+neutralised the shipped multiplier to ``1.0``, so a fired RISK_OFF branch is
+otherwise indistinguishable from one that never ran, and these keys are what a
+future re-tuning would have to be argued from.
 """
 
 from __future__ import annotations
@@ -176,7 +179,8 @@ async def test_risk_off_telemetry_reaches_persisted_position_metadata(tmp_path):
 
     # Durable surface 3: RuntimeLedger trades.payload_json, on close. This is
     # the surface an operator actually joins against realised PnL when judging
-    # whether the live 1.3 multiplier earns its keep.
+    # whether a non-neutral multiplier would earn its keep (the shipped value is
+    # 1.0 since the 2026-08-05 judgment; this fixture pins an explicit boost).
     closed = tracker.close_position(position.id, 335.0, "take_profit")
     assert closed is not None
     assert await tracker.save_futures_trade_to_db(closed, "futures") is True

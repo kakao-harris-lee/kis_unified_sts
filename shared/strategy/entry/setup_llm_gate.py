@@ -98,8 +98,11 @@ def apply_llm_tuning_setup_a(
     ``telemetry`` carries the RISK_OFF-boost evidence that the 1.0 cap would
     otherwise erase. Before the cap, a persisted ``confidence > 1.0`` was itself
     an unambiguous fingerprint that the multiplier had fired; capping removes
-    that fingerprint exactly when the OPERATOR REVIEW PENDING note on
-    ``risk_off_confidence_multiplier`` asks the operator to judge the 1.3 value.
+    that fingerprint. The operator review of the old 1.3 default was SETTLED on
+    2026-08-05 by neutralising it to 1.0 — which makes these keys the only
+    fingerprint left at all, since at 1.0 the emitted confidence is identical to
+    an unadjusted one. They are also the evidence base for any future,
+    deliberate re-tuning away from neutral.
     Keys (present only when the direction gates below did not drop the signal):
 
     ``llm_risk_off_boost_applied``
@@ -150,7 +153,8 @@ def apply_llm_tuning_setup_a(
     if risk_score > tuning.risk_off_threshold and risk_mode == "RISK_OFF":
         # Cap at the documented Signal.confidence ceiling, mirroring the Setup C
         # branch below. shared/models/signal.py documents 확신도 (0.0 ~ 1.0) but
-        # has no validator, so an uncapped multiplier (live value 1.3) emitted
+        # has no validator, so an uncapped multiplier above 1.0 (the shipped
+        # value was 1.3 until the 2026-08-05 neutralisation) emitted
         # out-of-range values for any base above 1/1.3 ≈ 0.769. Setup A's base
         # is in [0.5, 1.0] by construction; under the LIVE gate
         # (min_sp500_gap_pct: 0.30) it is the narrower [0.70, 1.00], so the
@@ -160,9 +164,11 @@ def apply_llm_tuning_setup_a(
         # admission (confidence >= min_confidence) nor promote a signal in the
         # descending-confidence entry contention.
         #
-        # It can, however, DEMOTE — and that consequence is benign only by
-        # accident today. The cap collapses the whole previously-ordered band
-        # [1.0, 1.3] onto the single value 1.0, so resolution falls through to
+        # It can, however, DEMOTE once an operator tunes the multiplier above
+        # 1.0 (at the shipped neutral 1.0 the cap never bites), and that
+        # consequence is benign only by accident. The cap collapses the whole
+        # previously-ordered band [1.0, multiplier] onto the single value 1.0,
+        # so resolution falls through to
         # the next key of services/trading/entry_runtime.py::
         # entry_signal_priority, which is (priority, -confidence, strategy,
         # code). Setup A carries no ``entry_priority``, so a tie resolves by

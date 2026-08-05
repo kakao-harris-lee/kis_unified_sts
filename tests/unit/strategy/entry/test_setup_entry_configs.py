@@ -22,7 +22,7 @@ def test_llm_tuning_defaults_and_validation_bounds():
         "enabled": False,
         "min_context_confidence": 0.3,
         "risk_off_threshold": 75.0,
-        "risk_off_confidence_multiplier": 1.3,
+        "risk_off_confidence_multiplier": 1.0,
         "bull_strong_regime": "BULL_STRONG",
         "atr_loose_factor": 0.8,
         "long_blocked_regimes": ["BEAR_STRONG", "BEAR_MODERATE"],
@@ -39,6 +39,36 @@ def test_llm_tuning_defaults_and_validation_bounds():
 
     with pytest.raises(ValidationError):
         LLMTuningConfig(veto_min_confidence=-0.1)
+
+
+def test_risk_off_confidence_multiplier_default_is_neutral():
+    """The shipped default must be 1.0 — no boost, no penalty, out of the box.
+
+    Regression guard for the 2026-08-05 operator judgment. The previous default
+    1.3 landed in 274d55a7 / PR #167 (2026-05-07) with an inverted rationale
+    ("values > 1.0 raise the effective bar" — it is a boost) and was never
+    supported by evidence; its only live effect was the ``-confidence``
+    tie-break in entry contention under ``max_positions``. Re-introducing a
+    boost or a penalty is a legitimate but *deliberate* operator choice, so an
+    accidental drift back to a non-neutral default must fail here.
+
+    The multiplier machinery itself is unchanged: a tuned value still scales,
+    and the product is still capped at 1.0 (see
+    ``tests/unit/strategy/test_setup_adapters.py::TestSetupAConfidenceCap``).
+    """
+    assert LLMTuningConfig().risk_off_confidence_multiplier == pytest.approx(1.0)
+
+    # Neutral means the multiplication is an exact no-op, not merely "close to
+    # the base": 1.0 is the multiplicative identity for every float.
+    assert 0.96 * LLMTuningConfig().risk_off_confidence_multiplier == 0.96
+
+    # The shipped futures YAML must agree with the model default — the config
+    # is the surface an operator actually reads.
+    from shared.config.loader import ConfigLoader
+
+    shipped = ConfigLoader.load("strategies/futures/setup_a_gap_reversion.yaml")
+    params = shipped["strategy"]["entry"]["params"]
+    assert params["llm_tuning"]["risk_off_confidence_multiplier"] == pytest.approx(1.0)
 
 
 def test_forecast_integration_defaults_and_validation_bounds():

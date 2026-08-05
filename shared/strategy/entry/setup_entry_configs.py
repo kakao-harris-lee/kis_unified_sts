@@ -34,7 +34,12 @@ class LLMTuningConfig(BaseModel):
         risk_off_confidence_multiplier: Setup-A only.  Applied as a
             multiplication on the candidate signal's confidence under RISK_OFF +
             high risk_score, so values < 1.0 penalise (lower) it and values
-            > 1.0 raise it.  The product is capped at 1.0 to honour the
+            > 1.0 raise it.  The default 1.0 is NEUTRAL: the RISK_OFF branch
+            still runs and still records the ``llm_risk_off_*`` telemetry, but
+            the emitted confidence equals the base, so an operator opts into a
+            boost (> 1.0) or a penalty (< 1.0) explicitly.  The notes below
+            describe what moving off 1.0 buys.
+            The product is capped at 1.0 to honour the
             documented ``Signal.confidence`` range — ``shared/models/signal.py``
             documents ``확신도 (0.0 ~ 1.0)`` but declares a plain dataclass field
             with no validator, so nothing downstream would reject an
@@ -57,12 +62,13 @@ class LLMTuningConfig(BaseModel):
             ``StrategyManagerConfig.min_confidence`` is 0.3 and
             ``min_signal_confidence`` below is 0.0, so the base clears both
             floors with or without the multiplier.
-            What the multiplier does change is PRIORITY ORDERING: entry
+            What a value above 1.0 does change is PRIORITY ORDERING: entry
             contention is ranked by descending confidence under
             ``max_positions``, so a boosted Setup-A candidate can displace a
             competing signal.
-            ORDERING CONSEQUENCE OF THE 1.0 CAP: capping collapses the whole
-            previously-ordered band [1.0, 1.3] onto the single value 1.0, so
+            ORDERING CONSEQUENCE OF THE 1.0 CAP (reachable only when tuned
+            above 1.0): capping collapses the whole previously-ordered band
+            [1.0, multiplier] onto the single value 1.0, so
             ties fall through to the next key of
             ``services/trading/entry_runtime.py::entry_signal_priority`` —
             ``(priority, -confidence, strategy, code)``.  Setup A sets no
@@ -76,17 +82,24 @@ class LLMTuningConfig(BaseModel):
             uncapped Setup A won outright.  Set an explicit ``entry_priority``
             if that ordering must be guaranteed rather than inherited from
             alphabetical luck.
-            OPERATOR REVIEW PENDING: the live futures value is 1.3.  Whether a
-            RISK_OFF read should raise Setup A's priority at all is unresolved
-            and still needs an operator decision.
+            OPERATOR JUDGMENT 2026-08-05 (SETTLED): the default and the live
+            futures value are both 1.0.  Whether a RISK_OFF read should raise
+            Setup A's priority at all was decided in the negative FOR NOW — not
+            because a boost is wrong in principle, but because no evidence ever
+            supported one.  A future re-introduction is legitimate once the
+            ``llm_risk_off_*`` telemetry (commit ``d0ae81cb``) has accumulated
+            enough RISK_OFF firings to argue from; it must be a deliberate
+            operator choice, not an inherited value.
             History: the 1.3 default landed in ``274d55a7`` / PR #167
             (2026-05-07) alongside an inverted rationale ("values > 1.0 raise
             the effective bar"); the same-day review ``d2caddb4`` correctly
             identified 1.3 as a boost and wired ``min_signal_confidence``, but
             left both the value and the false docstring in place.  The false
             docstring stood until ``21550f4b`` (2026-08-05) corrected it and
-            raised the operator flag above; this cap is the follow-up to that
-            commit.  (The PR-branch-local hash ``6a66df1e`` names the same work
+            raised the operator flag; the cap is the follow-up to that
+            commit, and the 2026-08-05 judgment above retired the flag by
+            neutralising the value.  (The PR-branch-local hash ``6a66df1e``
+            names the same work
             but is reachable only from ``origin/feat/phase-1-1-setup-llm-tuning``
             — cite the mainline ``274d55a7`` so the reference survives branch
             pruning.)
@@ -111,9 +124,12 @@ class LLMTuningConfig(BaseModel):
         description="risk_score above which RISK_OFF triggers confidence scaling",
     )
     risk_off_confidence_multiplier: float = Field(
-        default=1.3,
+        default=1.0,
         ge=0.0,
-        description="Confidence multiplier applied under RISK_OFF + high risk_score",
+        description=(
+            "Confidence multiplier applied under RISK_OFF + high risk_score. "
+            "Default 1.0 is neutral (no-op); > 1.0 boosts, < 1.0 penalises."
+        ),
     )
     # Setup C fields
     bull_strong_regime: str = Field(
@@ -134,10 +150,11 @@ class LLMTuningConfig(BaseModel):
         description="Regime labels where short signals are dropped",
     )
     # Shared confidence floor — applied AFTER any RISK_OFF scaling.  With the
-    # default risk_off_confidence_multiplier=1.3 (boost), a non-zero floor only
-    # rejects already-low base confidences.  If operators tune the multiplier
-    # below 1.0 (penalty mode), this floor enforces a hard drop threshold so
-    # the multiplied value cannot collapse signals silently.  Default 0.0
+    # neutral default risk_off_confidence_multiplier=1.0 the scaling is a no-op,
+    # so a non-zero floor here rejects purely on the base confidence; the same
+    # holds for any boost (> 1.0), which only ever raises it.  If operators tune
+    # the multiplier below 1.0 (penalty mode), this floor enforces a hard drop
+    # threshold so the multiplied value cannot collapse signals silently.  Default 0.0
     # means "no floor" — below Setup A's theoretical [0.5, 1.0] base range, and
     # so also below its live [0.70, 1.00] range under min_sp500_gap_pct: 0.30.
     min_signal_confidence: float = Field(

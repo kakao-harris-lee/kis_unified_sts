@@ -71,20 +71,26 @@ strategy:
         min_context_confidence: 0.3              # below this, skip LLM adjustment
         risk_off_threshold: 75
         # Applied as a multiplication: < 1.0 penalises confidence (penalty mode,
-        # stricter), > 1.0 raises it.  Bounded ge=0.0 (min(scaled, 1.0) guards only the
-        # ceiling; a negative value would emit a negative confidence).  The product is
-        # capped at 1.0 — Signal.confidence is documented 0.0-1.0 and has no validator.
+        # stricter), > 1.0 raises it, 1.0 is a no-op.  Bounded ge=0.0 (min(scaled, 1.0)
+        # guards only the ceiling; a negative value would emit a negative confidence).
+        # The product is capped at 1.0 — Signal.confidence is documented 0.0-1.0 and has
+        # no validator.
+        # AT THE SHIPPED NEUTRAL VALUE 1.0 the RISK_OFF branch still fires and still
+        # records the llm_risk_off_* telemetry, but the emitted confidence equals the
+        # base, so the multiplier changes neither admission nor priority ordering.  The
+        # paragraphs below describe what an operator would be buying by moving off 1.0.
         # Raising confidence eases admission in general, but NOT at this configuration:
         # Setup A's base confidence is [0.5, 1.0] by construction (0.5 + gap_strength
         # <=0.3 + retrace_centrality <=0.2) — that is the THEORETICAL range.  With the
         # LIVE min_sp500_gap_pct: 0.30 above, gap_strength >= 0.30/1.5 = 0.20, so the
         # LIVE base range is the narrower [0.70, 1.00].  Either way the downstream floor
         # (StrategyManagerConfig.min_confidence) is 0.3, so the base clears it either
-        # way, and min_signal_confidence below is 0.0.  What 1.3 does change is
-        # PRIORITY ORDERING — entries contend by descending confidence under
+        # way, and min_signal_confidence below is 0.0.  What a value above 1.0 would
+        # change is PRIORITY ORDERING — entries contend by descending confidence under
         # max_positions, so a boosted Setup A can displace a competing candidate.
-        # ORDERING CONSEQUENCE OF THE CAP: capping collapses the ordered band
-        # [1.0, 1.3] onto the single value 1.0, so ties fall through to the next key of
+        # ORDERING CONSEQUENCE OF THE CAP (reachable only above 1.0): capping collapses
+        # the ordered band [1.0, multiplier] onto the single value 1.0, so ties fall
+        # through to the next key of
         # services/trading/entry_runtime.py::entry_signal_priority — (priority,
         # -confidence, strategy, code).  Setup A sets no entry_priority, so ties resolve
         # by STRATEGY NAME.  "setup_a_gap_reversion" happens to sort before
@@ -94,11 +100,17 @@ strategy:
         # momentum_breakout_futures — all currently enabled: false) would hand priority
         # to it where the uncapped Setup A won outright.  Set an explicit entry_priority
         # if that ordering must be guaranteed rather than inherited from name order.
-        # OPERATOR REVIEW PENDING: 1.3 boosts Setup A under a RISK_OFF read.  It landed
-        # in 274d55a7 / PR #167 (2026-05-07) with an inverted rationale; the same-day
-        # review d2caddb4 identified the inversion but left the value; 21550f4b
-        # (2026-08-05) corrected the docstring and raised this flag.  Still unresolved.
-        risk_off_confidence_multiplier: 1.3
+        # OPERATOR JUDGMENT 2026-08-05 (SETTLED): neutralised 1.3 -> 1.0.  The 1.3 landed
+        # in 274d55a7 / PR #167 (2026-05-07) with an inverted rationale ("values > 1.0
+        # raise the effective bar" — it is a boost, not a bar); the same-day review
+        # d2caddb4 identified the inversion but left the value; 21550f4b (2026-08-05)
+        # corrected the docstring and raised the review flag.  No evidence ever backed
+        # 1.3, and its only live effect was the -confidence tie-break under
+        # max_positions, so the neutral value is what ships.  Re-introducing a boost or a
+        # penalty is allowed but must be a deliberate, evidence-backed choice: collect
+        # the llm_risk_off_* telemetry (commit d0ae81cb) first.  The multiplier logic,
+        # the 1.0 cap (f032080c) and the telemetry all stay in place.
+        risk_off_confidence_multiplier: 1.0
         # Hard floor on adjusted confidence — drop signals below this even
         # after scaling.  Default 0.0 = no floor.  Useful when operators
         # tune risk_off_confidence_multiplier < 1.0 (penalty mode).

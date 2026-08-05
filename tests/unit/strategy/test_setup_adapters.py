@@ -718,13 +718,20 @@ def _setup_a_adapter_with_llm_tuning(
     enabled: bool = True,
     min_context_confidence: float = 0.3,
     risk_off_threshold: float = 75.0,
-    risk_off_confidence_multiplier: float = 1.3,
+    risk_off_confidence_multiplier: float = 1.0,
     min_signal_confidence: float = 0.0,
     long_blocked_regimes: list[str] | None = None,
     short_blocked_regimes: list[str] | None = None,
     min_sp500_gap_pct: float = 0.5,
 ) -> SetupAEntryAdapter:
     """Return a SetupAEntryAdapter with an explicit LLMTuningConfig.
+
+    ``risk_off_confidence_multiplier`` mirrors the shipped neutral default
+    (1.0, per the 2026-08-05 operator judgment), so a test that does not name it
+    exercises the out-of-the-box no-op. Tests about the boost/penalty arithmetic
+    and the 1.0 cap pass a non-neutral value explicitly — that is deliberate:
+    the cap logic is unchanged by the default neutralisation and must stay
+    covered.
 
     ``min_sp500_gap_pct`` mirrors the :class:`SetupAEntryConfig` default (0.5),
     which is NOT the live value — ``setup_a_gap_reversion.yaml`` ships 0.30. It
@@ -1157,8 +1164,14 @@ class TestSetupAConfidenceCap:
     ``shared/models/signal.py`` documents ``confidence: 확신도 (0.0 ~ 1.0)`` but
     declares a plain dataclass field with no validator, so nothing downstream
     rejects an out-of-range value. Setup C's sibling branch already caps at 1.0;
-    Setup A's did not, and with the live ``risk_off_confidence_multiplier: 1.3``
-    a base confidence above 1/1.3 ≈ 0.769 emitted a value above the ceiling.
+    Setup A's did not, and under the then-shipped
+    ``risk_off_confidence_multiplier: 1.3`` a base confidence above 1/1.3 ≈
+    0.769 emitted a value above the ceiling.
+
+    The shipped multiplier is 1.0 as of the 2026-08-05 operator judgment, so the
+    cap is inert at the default and these tests pass a boost explicitly. That is
+    the point: the cap guards whatever an operator configures, and neutralising
+    the default must not quietly retire the guard.
 
     The cap can only ever lower an emitted value, never raise one, so it cannot
     loosen admission (``confidence >= min_confidence``) nor promote a signal in
@@ -1191,12 +1204,17 @@ class TestSetupAConfidenceCap:
         with pytest.raises(ValidationError):
             LLMTuningConfig(risk_off_confidence_multiplier=-0.1)
 
-        # 0.0 is a legal (fully-suppressing) penalty value, and the live default
-        # 1.3 must remain accepted — the bound is a floor, not a re-tuning.
+        # 0.0 is a legal (fully-suppressing) penalty value, and a boost such as
+        # the retired 1.3 default must remain accepted — the bound is a floor,
+        # not a re-tuning. The 2026-08-05 judgment neutralised the DEFAULT to
+        # 1.0; it did not narrow the range an operator may configure.
         assert LLMTuningConfig(
             risk_off_confidence_multiplier=0.0
         ).risk_off_confidence_multiplier == pytest.approx(0.0)
-        assert LLMTuningConfig().risk_off_confidence_multiplier == pytest.approx(1.3)
+        assert LLMTuningConfig(
+            risk_off_confidence_multiplier=1.3
+        ).risk_off_confidence_multiplier == pytest.approx(1.3)
+        assert LLMTuningConfig().risk_off_confidence_multiplier == pytest.approx(1.0)
 
     @pytest.mark.asyncio
     async def test_risk_off_boost_is_capped_at_one(self):
@@ -1377,8 +1395,11 @@ class TestSetupARiskOffBoostEvidence:
     """The cap must not erase the evidence that the RISK_OFF boost fired.
 
     Pre-cap, a persisted ``confidence > 1.0`` was an unambiguous fingerprint of
-    the multiplier. Capping removes it precisely when the OPERATOR REVIEW
-    PENDING note asks the operator to judge whether 1.3 is right, and the
+    the multiplier. Capping removes it, and the 2026-08-05 neutralisation to
+    1.0 removes even the boosted value as a tell — at the shipped default the
+    emission is identical to an unadjusted one, so these keys are the only
+    remaining evidence that the RISK_OFF branch fired, and the only basis on
+    which a future re-tuning could be argued. The
     pre-boost base is recoverable from no other surface: the orchestrator's
     ``_persist_setup_signal_row`` is a no-op, ``publish_signal`` serialises a
     fixed key set that never reads ``metadata``, and the position path copies
