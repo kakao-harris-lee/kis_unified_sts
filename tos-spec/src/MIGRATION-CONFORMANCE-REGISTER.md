@@ -3,6 +3,7 @@
 - **Status:** Non-authorizing current-to-target register
 - **Date:** 2026-08-02
 - **Machine source:** `MIGRATION-CONFORMANCE-REGISTER.csv`
+- **Reverse-census vocabulary:** `docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv` — non-normative deployment binding record, held outside this corpus because it names concrete broker symbols (ADR-002-004:798), listing the transport symbols the §2 census scans for
 - **Production Authorization:** NO
 
 ## 1. Standing and scope

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -187,6 +188,90 @@ def _real_registers() -> tuple[object, object]:
     return part1, development
 
 
+# --------------------------------------------------------------------------
+# Broker transport vocabulary: a governed corpus input, never a tool literal.
+# --------------------------------------------------------------------------
+
+_BROKER_MIRROR_HEADER = "| " + " | ".join(status._BROKER_SYMBOLS_HEADER_CELLS) + " |"
+
+# The real registry's symbols, named here as an explicit floor.  A test may name
+# a broker class; the tool may not.  See the reverse canary below.
+_REAL_BROKER_SYMBOLS = frozenset({"OrderExecutor", "KISClient"})
+
+
+def _symbol_row(symbol: str, kind: str, **overrides: str) -> dict[str, str]:
+    row = {
+        "symbol": symbol,
+        "kind": kind,
+        "transport_role": "fixture-transport-role",
+        "capability_reference": "ADR-002-004 §8",
+        "binding_rationale": "fixture deployment binding row",
+        "authority_state": "NON_AUTHORIZING_OPEN",
+    }
+    row.update(overrides)
+    return row
+
+
+def _write_broker_registry(
+    corpus: Path,
+    rows: list[dict[str, str]],
+    *,
+    markdown_rows: list[str] | None = None,
+    standing: list[str] | None = None,
+    write_markdown: bool = True,
+) -> tuple[Path, Path]:
+    corpus.mkdir(parents=True, exist_ok=True)
+    csv_path = corpus / "BROKER-TRANSPORT-SYMBOLS.csv"
+    markdown_path = corpus / "BROKER-TRANSPORT-SYMBOLS.md"
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=status.REQUIRED_BROKER_SYMBOL_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    if write_markdown:
+        table = (
+            markdown_rows
+            if markdown_rows is not None
+            else [
+                "| "
+                + " | ".join(
+                    row[field] for field in status.REQUIRED_BROKER_SYMBOL_FIELDS
+                )
+                + " |"
+                for row in rows
+            ]
+        )
+        lines = [
+            "# Fixture broker transport registry",
+            "",
+            *(
+                standing
+                if standing is not None
+                else list(status._BROKER_SYMBOLS_STANDING_MARKERS)
+            ),
+            "",
+            status._BROKER_SYMBOLS_MARKER,
+            "",
+            _BROKER_MIRROR_HEADER,
+            "|---|---|---|---|---|---|",
+            *table,
+            "",
+        ]
+        markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return csv_path, markdown_path
+
+
+def _vocabulary(corpus: Path, rows: list[dict[str, str]], **kwargs):
+    csv_path, markdown_path = _write_broker_registry(corpus, rows, **kwargs)
+    return status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def _real_vocabulary():
+    return status.load_broker_transport_symbols(
+        _REPO_ROOT / status.BROKER_SYMBOLS_CSV,
+        _REPO_ROOT / status.BROKER_SYMBOLS_MD,
+    )
+
+
 def test_current_corpus_is_consistent_and_axes_are_separate():
     snapshot = status.collect_status(_REPO_ROOT)
     rendered = status.render_status(snapshot)
@@ -214,6 +299,9 @@ def test_current_corpus_is_consistent_and_axes_are_separate():
     # The warning tier is advisory; the fail-closed tier already proved no
     # unregistered site is an invocable order-sending entrypoint.
     assert "shared/execution/executor.py" not in snapshot.unregistered_broker_sites
+    # Monotone, not exact: registering a legitimate second broker's order sender
+    # must not red CI, while dropping or substituting this one must.
+    assert "OrderExecutor" in snapshot.order_sender_symbols
     assert "| Document ratification |" in rendered
     assert "| ADR acceptance |" in rendered
     assert "| Evidence |" in rendered
@@ -374,6 +462,7 @@ def test_migration_register_covers_code_packages_and_open_q6():
         _REPO_ROOT,
         _REPO_ROOT / status.MIGRATION_CSV,
         _REPO_ROOT / status.MIGRATION_MD,
+        _real_vocabulary(),
     )
 
     assert rows == 53
@@ -543,7 +632,9 @@ def test_legacy_census_is_derived_from_the_csv_not_a_hardcoded_range(tmp_path):
     # The corpus grew from LEGACY-001..005 to LEGACY-001..007 with no tool edit.
     csv_path, markdown_path = _migration_copy(tmp_path)
 
-    rows, _ = status.validate_migration_conformance(_REPO_ROOT, csv_path, markdown_path)
+    rows, _ = status.validate_migration_conformance(
+        _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
+    )
 
     assert rows == 53
 
@@ -552,7 +643,9 @@ def test_legacy_census_rejects_a_gap_in_the_route_numbering(tmp_path):
     csv_path, markdown_path = _migration_copy(tmp_path, ("LEGACY-007", "LEGACY-009"))
 
     with pytest.raises(status.StatusError, match="contiguous LEGACY-001..LEGACY-007"):
-        status.validate_migration_conformance(_REPO_ROOT, csv_path, markdown_path)
+        status.validate_migration_conformance(
+            _REPO_ROOT, csv_path, markdown_path, _real_vocabulary()
+        )
 
 
 def _fake_repo(tmp_path: Path, relative: str, body: str) -> Path:
@@ -576,7 +669,7 @@ def test_unregistered_order_sending_entrypoint_fails_and_names_the_file(tmp_path
 
     with pytest.raises(status.StatusError) as excinfo:
         status.validate_legacy_route_reverse_census(
-            repo, repo / "register.csv", frozenset()
+            repo, repo / "register.csv", frozenset(), _real_vocabulary()
         )
 
     assert "scripts/trading/flatten_everything.py" in str(excinfo.value)
@@ -592,6 +685,7 @@ def test_registered_order_sending_entrypoint_passes(tmp_path):
             repo,
             repo / "register.csv",
             frozenset({"scripts/trading/flatten_everything.py"}),
+            _real_vocabulary(),
         )
         == ()
     )
@@ -601,7 +695,7 @@ def test_reverse_scan_ignores_tos_and_test_sources(tmp_path):
     repo = _fake_repo(tmp_path, "tos/src/tos/egressgw/send.py", _SENDER_ENTRYPOINT)
     _fake_repo(tmp_path, "tests/unit/test_sender.py", _SENDER_ENTRYPOINT)
 
-    assert status.scan_broker_construction_sites(repo) == ()
+    assert status.scan_broker_construction_sites(repo, _real_vocabulary()) == ()
 
 
 def test_reverse_scan_does_not_mistake_a_class_definition_for_a_construction(tmp_path):
@@ -611,7 +705,7 @@ def test_reverse_scan_does_not_mistake_a_class_definition_for_a_construction(tmp
         "class KISClient(AsyncSessionMixin):\n    pass\n",
     )
 
-    assert status.scan_broker_construction_sites(repo) == ()
+    assert status.scan_broker_construction_sites(repo, _real_vocabulary()) == ()
 
 
 def test_reverse_scan_reports_non_entrypoint_constructions_without_failing(tmp_path):
@@ -622,8 +716,418 @@ def test_reverse_scan_reports_non_entrypoint_constructions_without_failing(tmp_p
     )
 
     assert status.validate_legacy_route_reverse_census(
-        repo, repo / "register.csv", frozenset()
+        repo, repo / "register.csv", frozenset(), _real_vocabulary()
     ) == ("shared/execution/mirror.py",)
+
+
+# --------------------------------------------------------------------------
+# FAIL-OPEN F6b: a hardcoded *vocabulary* can never discover a second broker.
+# --------------------------------------------------------------------------
+
+_ACME = "AcmeBrokerClient"
+_ACME_SENDER = "AcmeOrderGateway"
+
+
+def test_a_second_brokers_client_is_scanned_after_a_registry_edit_alone(tmp_path):
+    # The deliverable: registering a fabricated second broker's client is a
+    # corpus edit.  If this test ever needs an edit to tools/tos_spec_status.py
+    # to pass, the broker-specific coupling has come back.
+    vocabulary = _vocabulary(
+        tmp_path / "corpus",
+        [
+            _symbol_row("OrderExecutor", "ORDER_SENDER"),
+            _symbol_row("KISClient", "BROKER_CLIENT_READ"),
+            _symbol_row(_ACME, "BROKER_CLIENT_READ"),
+        ],
+    )
+    repo = _fake_repo(
+        tmp_path / "repo",
+        "services/acme_gateway/main.py",
+        f"def build():\n    return {_ACME}(config)\n",
+    )
+
+    sites = status.scan_broker_construction_sites(repo, vocabulary)
+
+    assert [site.relative_path for site in sites] == ["services/acme_gateway/main.py"]
+    assert sites[0].classes == frozenset({_ACME})
+    # NOT the decoupling canary.  ``_ACME`` is fabricated, so the tool never
+    # contained it and this line cannot regress; it only records that the
+    # *fixture* name was not smuggled into the tool to make this test pass.  The
+    # canary that can actually fail is the reverse one below, over the symbols the
+    # tool really did hardcode.
+    assert _ACME not in _MODULE_PATH.read_text(encoding="utf-8")
+
+
+def test_a_second_brokers_order_sender_reaches_the_blocking_tier(tmp_path):
+    # The blocking tier is selected by the ``kind`` column, not by a class name.
+    vocabulary = _vocabulary(
+        tmp_path / "corpus",
+        [_symbol_row(_ACME_SENDER, "ORDER_SENDER")],
+    )
+    repo = _fake_repo(
+        tmp_path / "repo",
+        "scripts/trading/acme_flatten.py",
+        f"def main():\n    return {_ACME_SENDER}(config)\n\n\n"
+        'if __name__ == "__main__":\n    main()\n',
+    )
+
+    with pytest.raises(status.StatusError) as excinfo:
+        status.validate_legacy_route_reverse_census(
+            repo, repo / "register.csv", frozenset(), vocabulary
+        )
+
+    assert "scripts/trading/acme_flatten.py" in str(excinfo.value)
+    assert _ACME_SENDER in str(excinfo.value)
+
+
+def test_deregistering_a_symbol_blinds_the_scan_to_it(tmp_path):
+    # The mirror image, and the actual proof of decoupling: the checker retains
+    # no private knowledge of any broker symbol, so a symbol absent from the
+    # registry is not scanned for -- even one it used to hardcode.
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("OrderExecutor", "ORDER_SENDER")]
+    )
+    repo = _fake_repo(
+        tmp_path / "repo",
+        "services/reader/main.py",
+        "def build():\n    return KISClient(config)\n",
+    )
+
+    assert status.scan_broker_construction_sites(repo, vocabulary) == ()
+
+
+def test_registry_still_seeds_the_vocabulary_the_tool_used_to_hardcode():
+    # Monotone, deliberately.  The register claims adding a broker "does not
+    # require an edit to the checker"; an exact-equality pin here would have made
+    # that claim false end-to-end, because a legitimate second broker would red
+    # CI on this assertion.  Additions are free; removal or substitution of a
+    # registered symbol still fails, which is the property worth keeping -- and
+    # the structural anchor below is what now catches a decoy, so this pin no
+    # longer has to do that job.
+    vocabulary = _real_vocabulary()
+
+    assert set(vocabulary.symbols) >= _REAL_BROKER_SYMBOLS
+    assert "OrderExecutor" in vocabulary.order_senders
+
+
+def test_no_broker_symbol_appears_anywhere_in_the_checker_source():
+    # THE reverse canary.  The forward canary above uses a fabricated name and so
+    # can never regress; this one names the symbols the tool actually did
+    # hardcode, so re-introducing any of them fails here.
+    #
+    # The forbidden set is derived from the registry, so it *follows* the registry
+    # rather than restating a literal -- register a third broker and the tool is
+    # forbidden that name too, with no edit here.  Derivation alone would be
+    # weakenable by deleting a registry row, so the explicit floor is asserted
+    # first: a test may name a broker class, the tool may not.
+    forbidden = set(_real_vocabulary().symbols)
+    assert forbidden >= _REAL_BROKER_SYMBOLS
+
+    source = _MODULE_PATH.read_text(encoding="utf-8")
+    present = sorted(symbol for symbol in forbidden if symbol in source)
+
+    assert present == [], (
+        f"tools/tos_spec_status.py names broker symbol(s) {present!r}; the scan "
+        "vocabulary must come only from the registry"
+    )
+
+
+def test_a_registered_symbol_that_defines_nothing_is_rejected(tmp_path):
+    # MAJOR-1: the decoy.  Every other guard on the registry validates syntax --
+    # non-empty, mirrored, known ``kind``, bare identifier, pinned
+    # ``authority_state`` -- and a name that exists nowhere satisfies all of them.
+    # Counting rows is not the same as resolving referents.
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("NoSuchSender", "ORDER_SENDER")]
+    )
+    repo = _fake_repo(
+        tmp_path / "repo",
+        "services/real/main.py",
+        "class OrderExecutor:\n    pass\n",
+    )
+
+    with pytest.raises(status.StatusError) as excinfo:
+        status.validate_broker_symbols_are_grounded(
+            repo, repo / "register.csv", vocabulary
+        )
+
+    assert "NoSuchSender" in str(excinfo.value)
+    assert "no class definition" in str(excinfo.value)
+
+
+def test_the_real_registry_symbols_resolve_to_real_class_definitions():
+    definitions = status.validate_broker_symbols_are_grounded(
+        _REPO_ROOT, _REPO_ROOT / status.BROKER_SYMBOLS_CSV, _real_vocabulary()
+    )
+
+    assert definitions["OrderExecutor"] == ("shared/execution/executor.py",)
+    assert definitions["KISClient"] == ("shared/kis/client.py",)
+
+
+def test_a_symbol_defined_only_in_a_test_is_not_grounded(tmp_path):
+    # The anchor tree is deliberately the tree the census scans.  A test file
+    # would otherwise be a trivial place to plant an anchor for a decoy.
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("TestOnlySender", "ORDER_SENDER")]
+    )
+    repo = _fake_repo(
+        tmp_path / "repo",
+        "tests/unit/test_planted.py",
+        "class TestOnlySender:\n    pass\n",
+    )
+    _fake_repo(
+        tmp_path / "repo",
+        "tos/src/tos/egressgw/planted.py",
+        "class TestOnlySender:\n    pass\n",
+    )
+
+    with pytest.raises(status.StatusError, match="TestOnlySender"):
+        status.validate_broker_symbols_are_grounded(
+            repo, repo / "register.csv", vocabulary
+        )
+
+
+def test_a_symbol_defined_in_two_places_is_accepted(tmp_path):
+    # Chosen behaviour: multiplicity is not evidence of absence, and rejecting it
+    # would assert a uniqueness claim the registry never makes.  Both sites are
+    # returned so a caller can say what was found.
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("TwiceDefined", "ORDER_SENDER")]
+    )
+    repo = _fake_repo(
+        tmp_path / "repo", "shared/a/one.py", "class TwiceDefined:\n    pass\n"
+    )
+    _fake_repo(
+        tmp_path / "repo", "shared/b/two.py", "class TwiceDefined(Base):\n    x=1\n"
+    )
+
+    definitions = status.validate_broker_symbols_are_grounded(
+        repo, repo / "register.csv", vocabulary
+    )
+
+    assert definitions["TwiceDefined"] == ("shared/a/one.py", "shared/b/two.py")
+
+
+def test_a_nested_class_is_not_a_grounding_definition(tmp_path):
+    vocabulary = _vocabulary(
+        tmp_path / "corpus", [_symbol_row("NestedOnly", "ORDER_SENDER")]
+    )
+    repo = _fake_repo(
+        tmp_path / "repo",
+        "shared/a/one.py",
+        "class Outer:\n    class NestedOnly:\n        pass\n",
+    )
+
+    with pytest.raises(status.StatusError, match="NestedOnly"):
+        status.validate_broker_symbols_are_grounded(
+            repo, repo / "register.csv", vocabulary
+        )
+
+
+def test_capability_reference_must_cite_a_decision_that_exists(tmp_path):
+    vocabulary = _vocabulary(
+        tmp_path / "corpus",
+        [
+            _symbol_row(
+                "OrderExecutor", "ORDER_SENDER", capability_reference="ADR-999-999 §1"
+            )
+        ],
+    )
+
+    with pytest.raises(status.StatusError, match="ADR-999-999"):
+        status.validate_broker_symbol_citations(
+            _REPO_ROOT / "tos-spec/src", tmp_path / "register.csv", vocabulary
+        )
+
+
+def test_capability_reference_without_any_decision_identifier_is_rejected(tmp_path):
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus",
+        [
+            _symbol_row(
+                "OrderExecutor", "ORDER_SENDER", capability_reference="see the ADR"
+            )
+        ],
+    )
+
+    with pytest.raises(status.StatusError, match="cites no ADR-nnn-nnn"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_vocabulary_type_rejects_an_inert_construction_pattern():
+    # MINOR-4: validation lived only in the loader, so the type could be built
+    # empty -- and an empty vocabulary makes every scan return green.
+    with pytest.raises(status.StatusError, match="has no symbols"):
+        status.BrokerTransportVocabulary(
+            symbols=(),
+            order_senders=frozenset(),
+            construction=re.compile(r"(?!)"),
+        )
+
+
+def test_vocabulary_type_rejects_a_pattern_not_derived_from_its_symbols():
+    with pytest.raises(status.StatusError, match="not derived from symbols"):
+        status.BrokerTransportVocabulary(
+            symbols=("OrderExecutor",),
+            order_senders=frozenset({"OrderExecutor"}),
+            construction=re.compile(r"(?<![\w.])(?P<name>SomethingElse)\s*\("),
+        )
+
+
+def test_vocabulary_type_rejects_an_order_sender_that_is_not_a_symbol():
+    with pytest.raises(status.StatusError, match="not registered symbols"):
+        status.BrokerTransportVocabulary(
+            symbols=("KISClient",),
+            order_senders=frozenset({"OrderExecutor"}),
+            construction=status._compile_broker_construction(("KISClient",)),
+        )
+
+
+def test_a_later_markdown_section_table_is_not_absorbed(tmp_path):
+    # NIT-3: the table scan stops at the next ``##`` instead of running to EOF.
+    rows = [_symbol_row("OrderExecutor", "ORDER_SENDER")]
+    csv_path, markdown_path = _write_broker_registry(tmp_path / "corpus", rows)
+    markdown_path.write_text(
+        markdown_path.read_text(encoding="utf-8")
+        + "\n## 5. Something else\n\n| A | B |\n|---|---|\n| one | two |\n",
+        encoding="utf-8",
+    )
+
+    vocabulary = status.load_broker_transport_symbols(csv_path, markdown_path)
+
+    assert vocabulary.symbols == ("OrderExecutor",)
+
+
+def test_a_symbol_named_symbol_does_not_skip_its_own_row(tmp_path):
+    # NIT-4: the header was matched by a ``| Symbol `` prefix, so a symbol
+    # literally named ``Symbol`` skipped its own mirror row.
+    rows = [_symbol_row("Symbol", "ORDER_SENDER")]
+    csv_path, markdown_path = _write_broker_registry(tmp_path / "corpus", rows)
+
+    vocabulary = status.load_broker_transport_symbols(csv_path, markdown_path)
+
+    assert vocabulary.symbols == ("Symbol",)
+
+
+def test_missing_broker_registry_fails_closed(tmp_path):
+    with pytest.raises(status.StatusError, match="missing canonical input"):
+        status.load_broker_transport_symbols(
+            tmp_path / "absent.csv", tmp_path / "absent.md"
+        )
+
+
+def test_missing_broker_registry_mirror_fails_closed(tmp_path):
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus",
+        [_symbol_row("OrderExecutor", "ORDER_SENDER")],
+        write_markdown=False,
+    )
+
+    with pytest.raises(status.StatusError, match="missing canonical input"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_empty_broker_registry_fails_closed(tmp_path):
+    csv_path, markdown_path = _write_broker_registry(tmp_path / "corpus", [])
+
+    with pytest.raises(status.StatusError, match="registry is empty"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_unknown_broker_symbol_kind_fails_closed(tmp_path):
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus", [_symbol_row("OrderExecutor", "PROBABLY_FINE")]
+    )
+
+    with pytest.raises(status.StatusError, match="unknown kind 'PROBABLY_FINE'"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_registry_without_an_order_sender_fails_closed(tmp_path):
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus", [_symbol_row("KISClient", "BROKER_CLIENT_READ")]
+    )
+
+    with pytest.raises(status.StatusError, match="no ORDER_SENDER symbol"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_empty_broker_registry_cell_fails_closed(tmp_path):
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus",
+        [_symbol_row("OrderExecutor", "ORDER_SENDER", binding_rationale="")],
+    )
+
+    with pytest.raises(status.StatusError, match="empty binding_rationale"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_authorizing_broker_registry_row_is_rejected(tmp_path):
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus",
+        [_symbol_row("OrderExecutor", "ORDER_SENDER", authority_state="AUTHORIZED")],
+    )
+
+    with pytest.raises(status.StatusError, match="authority_state must be"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_regex_metacharacter_symbol_is_rejected_not_compiled(tmp_path):
+    # Rejected explicitly rather than merely escaped: a symbol that is not a bare
+    # Python identifier can never be a construction the scan should look for.
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus", [_symbol_row("Order.*Executor", "ORDER_SENDER")]
+    )
+
+    with pytest.raises(status.StatusError, match="not a bare Python identifier"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_broker_registry_csv_markdown_drift_fails_closed(tmp_path):
+    rows = [_symbol_row("OrderExecutor", "ORDER_SENDER")]
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus",
+        rows,
+        markdown_rows=[
+            "| "
+            + " | ".join(
+                _symbol_row("OrderExecutor", "BROKER_CLIENT_READ")[field]
+                for field in status.REQUIRED_BROKER_SYMBOL_FIELDS
+            )
+            + " |"
+        ],
+    )
+
+    with pytest.raises(status.StatusError, match="CSV/Markdown broker symbol mismatch"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_broker_registry_markdown_row_with_surplus_cells_is_rejected(tmp_path):
+    rows = [_symbol_row("OrderExecutor", "ORDER_SENDER")]
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus",
+        rows,
+        markdown_rows=[
+            "| "
+            + " | ".join(row[field] for field in status.REQUIRED_BROKER_SYMBOL_FIELDS)
+            + " | surplus |"
+            for row in rows
+        ],
+    )
+
+    with pytest.raises(status.StatusError, match="has 7 cells, expected 6"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
+
+
+def test_broker_registry_dropping_its_standing_statement_fails_closed(tmp_path):
+    csv_path, markdown_path = _write_broker_registry(
+        tmp_path / "corpus",
+        [_symbol_row("OrderExecutor", "ORDER_SENDER")],
+        standing=["A registry that no longer says what it is."],
+    )
+
+    with pytest.raises(status.StatusError, match="missing standing marker"):
+        status.load_broker_transport_symbols(csv_path, markdown_path)
 
 
 # --------------------------------------------------------------------------

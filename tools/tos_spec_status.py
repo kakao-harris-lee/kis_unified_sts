@@ -19,7 +19,7 @@ import os
 import re
 import sys
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,6 +62,18 @@ IOM_PROFILE_SCHEMA = Path(
 )
 MIGRATION_CSV = Path("tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv")
 MIGRATION_MD = Path("tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.md")
+# The corpus is broker-agnostic, so the concrete class names that constitute this
+# deployment's broker transport binding live in a governed registry instead of in
+# this file.  See the reverse-census block below for why that separation is not
+# cosmetic.
+#
+# The registry lives *outside* tos-spec/ because it names concrete broker
+# symbols: ADR-002-004:798 puts facts about a specific broker in a non-normative
+# instance produced on the implementation track, and
+# BROKER-CAPABILITY-PROFILE-template.yaml:20-24 states the placement rule
+# directly.  ``docs/broker-profiles/`` is the existing home for exactly that.
+BROKER_SYMBOLS_CSV = Path("docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.csv")
+BROKER_SYMBOLS_MD = Path("docs/broker-profiles/BROKER-TRANSPORT-SYMBOLS.md")
 
 REQUIRED_EVIDENCE_FIELDS = (
     "evidence_id",
@@ -116,6 +128,18 @@ REQUIRED_MIGRATION_FIELDS = (
     "queued_work_direct_egress",
     "operator_state_owner",
     "decommission_criteria",
+    "authority_state",
+)
+REQUIRED_BROKER_SYMBOL_FIELDS = (
+    "symbol",
+    "kind",
+    # ``transport_role``, not ``capability_class``: the corpus already spends
+    # "capability class" twice -- ADR-002-004 §10 Broker Conformance Classes
+    # (CLASS-A..D) and ARCHITECTURE-GATE-STATUS.md:314's §13.15 composed class --
+    # and this column is neither of them.
+    "transport_role",
+    "capability_reference",
+    "binding_rationale",
     "authority_state",
 )
 _STATUS_HEADER = re.compile(
@@ -190,12 +214,62 @@ _DIRECT_TABLE_SUMMARY = (
 # exactly how ``scripts/trading/flatten_all.py`` and
 # ``scripts/trading/recover_positions.py`` stayed off the register.  A hardcoded
 # ``LEGACY-001..005`` range had the same blindness.
-_BROKER_CONSTRUCTION = re.compile(r"(?<![\w.])(?P<name>KISClient|OrderExecutor)\s*\(")
-# ``OrderExecutor`` is the project's direct broker order sender
-# (``shared/execution/executor.py``, LEGACY-005).  ``KISClient`` is also used for
-# pure market-data reads, so it cannot gate the fail-closed tier without false
-# positives; it is still reported by the warning tier.
-_ORDER_SENDER = "OrderExecutor"
+#
+# The same blindness applies to the *vocabulary* the census scans for.  A broker
+# class name compiled into this file would mean a second broker adapter is missed
+# silently -- a hardcoded census can never discover a new item, whether the item
+# is a route or the symbol that identifies one.  The vocabulary is therefore a
+# governed corpus input (``BROKER-TRANSPORT-SYMBOLS.csv``) that this file derives
+# from and never restates.  Only the *kind* vocabulary below is the tool's own:
+# it selects an enforcement tier, it is not a broker fact.
+_BROKER_SYMBOL_ORDER_SENDER = "ORDER_SENDER"
+_BROKER_SYMBOL_KINDS = frozenset({_BROKER_SYMBOL_ORDER_SENDER, "BROKER_CLIENT_READ"})
+# Recording a transport symbol is an observation; no value of this column may
+# turn it into an authorization.
+_BROKER_SYMBOL_AUTHORITY_STATE = "NON_AUTHORIZING_OPEN"
+# Registered symbols are rejected unless they are bare Python identifiers, so a
+# regex metacharacter can never reach the compiled pattern.  ``re.escape`` below
+# is the second, independent guard.
+_BROKER_SYMBOL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Every registered symbol must cite the normative treatment it is bound to, and
+# the cited decision must resolve to a real document.  Prose is not validated --
+# only that the identifier exists -- because a checker that graded prose would be
+# asserting a judgement it cannot make.
+_BROKER_SYMBOL_DECISION = re.compile(r"\bADR-\d{3}-\d{3}\b")
+_BROKER_SYMBOLS_MARKER = "## 4. Registered symbols"
+# NIT-4: matching the header by an exact cell tuple rather than a ``| Symbol ``
+# prefix, so a symbol literally named ``Symbol`` does not skip its own row.
+_BROKER_SYMBOLS_HEADER_CELLS = (
+    "Symbol",
+    "Kind",
+    "Transport role",
+    "Capability reference",
+    "Binding rationale",
+    "Authority state",
+)
+# NIT-3: the table ends at the next Markdown section, so a later section's table
+# cannot be absorbed into this one.
+_BROKER_SYMBOLS_SECTION_END = re.compile(r"^##\s", re.MULTILINE)
+_BROKER_SYMBOLS_MIRROR_COLUMNS = REQUIRED_BROKER_SYMBOL_FIELDS
+# The registry must keep saying what it is.  A deployment binding record that
+# quietly starts reading as specification text would reintroduce broker specifics
+# into the normative layer by the back door.
+_BROKER_SYMBOLS_STANDING_MARKERS = (
+    "This registry is non-normative.",
+    "It confers no ADR acceptance, evidence result, or authorization.",
+    "It is a deployment binding record, not a specification.",
+    "The normative treatment of brokers is the capability-class model in "
+    "ADR-002-004",
+    "Adding a broker requires editing this registry, which is a governed, "
+    "reviewable act",
+    # Why it is not in tos-spec/.  Losing this sentence is how a broker-naming
+    # file drifts back into the published corpus.
+    "This registry names concrete broker classes, so it may not live in the "
+    "published corpus.",
+    # The coverage claim must stay honest: the scan does not see dotted or
+    # indirect construction, and must never be read as if it did.
+    "The scan is **not** complete, and this register does not claim it is.",
+)
 _ENTRYPOINT_GUARD = re.compile(
     r"^if\s+__name__\s*==\s*[\"']__main__[\"']\s*:", re.MULTILINE
 )
@@ -259,6 +333,7 @@ class StatusSnapshot:
     const003_result: str
     migration_rows: int
     transcription_sites: int
+    order_sender_symbols: tuple[str, ...]
 
 
 def _read_csv(path: Path, required_fields: Sequence[str]) -> list[dict[str, str]]:
@@ -1250,6 +1325,211 @@ def validate_investment_operating_model(
                 )
 
 
+def _broker_symbol_alternation(symbols: Sequence[str]) -> str:
+    # Longest first so a registered prefix cannot shadow a longer registered name.
+    return "|".join(
+        re.escape(symbol) for symbol in sorted(symbols, key=len, reverse=True)
+    )
+
+
+def _compile_broker_construction(symbols: Sequence[str]) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?<![\w.])(?P<name>{_broker_symbol_alternation(symbols)})\s*\("
+    )
+
+
+def _compile_broker_definition(symbols: Sequence[str]) -> re.Pattern[str]:
+    """Match a module-level ``class <RegisteredSymbol>`` -- the structural anchor.
+
+    Anchored at column zero: a nested or locally defined class is not a
+    module-level transport binding, and accepting one would widen the anchor to
+    places a decoy is cheap to hide.
+    """
+    return re.compile(
+        rf"^class\s+(?P<name>{_broker_symbol_alternation(symbols)})\s*[(:]",
+        re.MULTILINE,
+    )
+
+
+@dataclass(frozen=True)
+class BrokerTransportVocabulary:
+    """The registered broker transport symbols, derived from the corpus.
+
+    Nothing here is a literal in this file.  ``construction`` is compiled from
+    ``symbols`` and ``order_senders`` is selected by the registry's ``kind``
+    column, so registering a second broker's client is a corpus edit and never a
+    tool edit.
+
+    The invariants live here rather than only in the loader: a vocabulary that
+    scans for nothing, or whose pattern has drifted from its own symbol list,
+    makes every downstream scan return a confident green.  A type that can be
+    constructed into that state is a fail-open waiting for a second caller.
+    """
+
+    symbols: tuple[str, ...]
+    order_senders: frozenset[str]
+    construction: re.Pattern[str]
+    cited_decisions: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        if not self.symbols:
+            raise StatusError(
+                "broker transport vocabulary has no symbols; the reverse census "
+                "would scan for nothing"
+            )
+        unknown = self.order_senders - set(self.symbols)
+        if unknown:
+            raise StatusError(
+                "broker transport vocabulary order_senders are not registered "
+                f"symbols: {sorted(unknown)!r}"
+            )
+        if not self.order_senders:
+            raise StatusError(
+                "broker transport vocabulary registers no "
+                f"{_BROKER_SYMBOL_ORDER_SENDER}; the fail-closed census tier "
+                "would have nothing to enforce"
+            )
+        expected = _compile_broker_construction(self.symbols)
+        if self.construction.pattern != expected.pattern:
+            raise StatusError(
+                "broker transport construction pattern is not derived from "
+                f"symbols {list(self.symbols)!r}"
+            )
+
+
+def _broker_symbols_markdown_rows(path: Path, text: str) -> list[dict[str, str]]:
+    if _BROKER_SYMBOLS_MARKER not in text:
+        raise StatusError(f"{path}: missing {_BROKER_SYMBOLS_MARKER!r}")
+    head, _, body = text.partition(_BROKER_SYMBOLS_MARKER)
+    marker_line_no = head.count("\n") + 1
+    # NIT-3: stop at the next section rather than running to EOF, so a table added
+    # under a later heading is not silently absorbed into this registry.
+    section_end = _BROKER_SYMBOLS_SECTION_END.search(body)
+    if section_end is not None:
+        body = body[: section_end.start()]
+    parsed: list[dict[str, str]] = []
+    for offset, line in enumerate(body.splitlines()):
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if (
+            tuple(cells) == _BROKER_SYMBOLS_HEADER_CELLS
+            or _TABLE_SEPARATOR_ROW.fullmatch(stripped) is not None
+        ):
+            continue
+        if len(cells) != len(_BROKER_SYMBOLS_MIRROR_COLUMNS):
+            # Same discipline as the evidence mirrors: a malformed row is never
+            # dropped, because GFM renders surplus cells invisibly.
+            raise StatusError(
+                f"{path}: line {marker_line_no + offset}: broker symbol table row "
+                f"has {len(cells)} cells, expected "
+                f"{len(_BROKER_SYMBOLS_MIRROR_COLUMNS)}: {stripped}"
+            )
+        parsed.append(dict(zip(_BROKER_SYMBOLS_MIRROR_COLUMNS, cells, strict=True)))
+    if not parsed:
+        raise StatusError(f"{path}: broker symbol table contains no rows")
+    return parsed
+
+
+def _validate_broker_symbols_mirror(
+    markdown_path: Path, rows: Sequence[Mapping[str, str]]
+) -> None:
+    """Check CSV/Markdown parity rather than assuming it, as the other registers do."""
+    try:
+        text = markdown_path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError as exc:
+        raise StatusError(f"missing canonical input: {markdown_path}") from exc
+    prose = _normalized_prose(text)
+    for marker in _BROKER_SYMBOLS_STANDING_MARKERS:
+        if _normalized_prose(marker) not in prose:
+            raise StatusError(f"{markdown_path}: missing standing marker {marker!r}")
+    parsed = _broker_symbols_markdown_rows(markdown_path, text)
+    expected = [
+        {field: row[field] for field in _BROKER_SYMBOLS_MIRROR_COLUMNS} for row in rows
+    ]
+    if parsed != expected:
+        raise StatusError(
+            f"{markdown_path}: CSV/Markdown broker symbol mismatch; "
+            f"markdown={parsed!r}, csv={expected!r}"
+        )
+
+
+def load_broker_transport_symbols(
+    csv_path: Path, markdown_path: Path
+) -> BrokerTransportVocabulary:
+    """Derive the reverse-census vocabulary from its governed corpus registry.
+
+    Fail-closed throughout: a missing file, an empty registry, a malformed row,
+    an unknown ``kind``, a non-identifier symbol, a Markdown mirror that has
+    drifted, or a registry that registers no order sender all raise.  The scan
+    must never quietly degrade into looking for nothing.
+    """
+    rows = _read_csv(csv_path, REQUIRED_BROKER_SYMBOL_FIELDS)
+    if not rows:
+        raise StatusError(
+            f"{csv_path}: broker transport registry is empty; the reverse census "
+            "would scan for nothing"
+        )
+    errors: list[str] = []
+    seen: set[str] = set()
+    for line_no, row in enumerate(rows, start=2):
+        symbol = row["symbol"]
+        label = symbol or "<unnamed>"
+        for field in REQUIRED_BROKER_SYMBOL_FIELDS:
+            if not row[field]:
+                errors.append(f"line {line_no} {label}: empty {field}")
+        if symbol and not _BROKER_SYMBOL_NAME.fullmatch(symbol):
+            errors.append(
+                f"line {line_no}: symbol {symbol!r} is not a bare Python identifier"
+            )
+        if symbol in seen:
+            errors.append(f"line {line_no}: duplicate symbol {symbol!r}")
+        seen.add(symbol)
+        if row["kind"] not in _BROKER_SYMBOL_KINDS:
+            errors.append(
+                f"line {line_no} {label}: unknown kind {row['kind']!r}; expected one "
+                f"of {sorted(_BROKER_SYMBOL_KINDS)!r}"
+            )
+        if row["authority_state"] != _BROKER_SYMBOL_AUTHORITY_STATE:
+            errors.append(
+                f"line {line_no} {label}: authority_state must be "
+                f"{_BROKER_SYMBOL_AUTHORITY_STATE}"
+            )
+        if row["capability_reference"] and not _BROKER_SYMBOL_DECISION.search(
+            row["capability_reference"]
+        ):
+            errors.append(
+                f"line {line_no} {label}: capability_reference cites no ADR-nnn-nnn "
+                f"identifier: {row['capability_reference']!r}"
+            )
+    if errors:
+        raise StatusError(f"{csv_path}:\n  " + "\n  ".join(errors))
+
+    order_senders = frozenset(
+        row["symbol"] for row in rows if row["kind"] == _BROKER_SYMBOL_ORDER_SENDER
+    )
+    if not order_senders:
+        raise StatusError(
+            f"{csv_path}: no {_BROKER_SYMBOL_ORDER_SENDER} symbol is registered; the "
+            "fail-closed census tier would have nothing to enforce"
+        )
+    _validate_broker_symbols_mirror(markdown_path, rows)
+    symbols = tuple(row["symbol"] for row in rows)
+    return BrokerTransportVocabulary(
+        symbols=symbols,
+        order_senders=order_senders,
+        construction=_compile_broker_construction(symbols),
+        cited_decisions=frozenset(
+            identifier
+            for row in rows
+            for identifier in _BROKER_SYMBOL_DECISION.findall(
+                row["capability_reference"]
+            )
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class BrokerConstructionSite:
     relative_path: str
@@ -1257,16 +1537,15 @@ class BrokerConstructionSite:
     is_entrypoint: bool
 
 
-def scan_broker_construction_sites(
-    repo_root: Path,
-) -> tuple[BrokerConstructionSite, ...]:
-    """Find every non-TOS, non-test source file that constructs a broker client.
+def _iter_reverse_scan_sources(repo_root: Path) -> Iterator[tuple[str, str]]:
+    """Yield ``(relative_path, text)`` for every file the reverse census covers.
 
     Directory pruning rather than an allowlist: a brand-new top-level package is
     scanned automatically, so the scan cannot go blind the way a hardcoded route
-    range does.
+    range does.  Both the construction scan and the definition anchor below walk
+    exactly this set, which is what makes the anchor meaningful -- a symbol is
+    grounded in the same tree the census is able to observe.
     """
-    sites: list[BrokerConstructionSite] = []
     for dir_path, dir_names, file_names in os.walk(repo_root):
         dir_names[:] = sorted(
             name
@@ -1283,40 +1562,137 @@ def scan_broker_construction_sites(
                 text = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue
-            found: set[str] = set()
-            for line in text.splitlines():
-                stripped = line.lstrip()
-                # A ``class KISClient(...)`` definition is not a construction.
-                if stripped.startswith(("#", "class ")):
-                    continue
-                found.update(
-                    match.group("name") for match in _BROKER_CONSTRUCTION.finditer(line)
+            yield path.relative_to(repo_root).as_posix(), text
+
+
+def scan_broker_construction_sites(
+    repo_root: Path, vocabulary: BrokerTransportVocabulary
+) -> tuple[BrokerConstructionSite, ...]:
+    """Find every non-TOS, non-test source file that constructs a broker client.
+
+    ``vocabulary`` comes from the corpus registry, so a brand-new broker symbol
+    is scanned for without touching this file.
+
+    Known blind spot: only a bare ``Symbol(`` construction is matched.  Dotted or
+    indirect construction (``module.Symbol(cfg)``, an aliased import, a factory
+    that returns one) is not seen, by the same ``(?<![\\w.])`` guard that keeps
+    attribute access from producing false positives.  The register documents this
+    rather than implying the scan is complete.
+    """
+    sites: list[BrokerConstructionSite] = []
+    for relative_path, text in _iter_reverse_scan_sources(repo_root):
+        found: set[str] = set()
+        for line in text.splitlines():
+            stripped = line.lstrip()
+            # A ``class <RegisteredSymbol>(...)`` definition is not a
+            # construction.
+            if stripped.startswith(("#", "class ")):
+                continue
+            found.update(
+                match.group("name") for match in vocabulary.construction.finditer(line)
+            )
+        if found:
+            sites.append(
+                BrokerConstructionSite(
+                    relative_path,
+                    frozenset(found),
+                    _ENTRYPOINT_GUARD.search(text) is not None,
                 )
-            if found:
-                sites.append(
-                    BrokerConstructionSite(
-                        path.relative_to(repo_root).as_posix(),
-                        frozenset(found),
-                        _ENTRYPOINT_GUARD.search(text) is not None,
-                    )
-                )
+            )
     return tuple(sites)
 
 
+def scan_broker_symbol_definitions(
+    repo_root: Path, vocabulary: BrokerTransportVocabulary
+) -> dict[str, tuple[str, ...]]:
+    """Map each registered symbol to the files that actually define it as a class."""
+    definition = _compile_broker_definition(vocabulary.symbols)
+    found: dict[str, list[str]] = {symbol: [] for symbol in vocabulary.symbols}
+    for relative_path, text in _iter_reverse_scan_sources(repo_root):
+        for match in definition.finditer(text):
+            sites = found[match.group("name")]
+            if relative_path not in sites:
+                sites.append(relative_path)
+    return {symbol: tuple(sites) for symbol, sites in found.items()}
+
+
+def validate_broker_symbols_are_grounded(
+    repo_root: Path, csv_path: Path, vocabulary: BrokerTransportVocabulary
+) -> dict[str, tuple[str, ...]]:
+    """Require every registered symbol to resolve to a real class definition.
+
+    Without this the registry is self-attesting -- the same defect class as an
+    ``AUTHORITY-STATUS.csv`` row that declares its own authority.  Every other
+    guard on the registry validates its *syntax*: non-empty, mirrored, well-known
+    ``kind``, bare identifier, pinned ``authority_state``.  None of them looks at
+    whether the name denotes anything, so a decoy symbol that exists nowhere in
+    the repo satisfies all of them and the blocking tier then enforces a rule
+    about a class that does not exist -- reporting a confident green.  The
+    standing rule is structure-derived over self-reported.
+
+    Two deliberate choices:
+
+    * A symbol defined in **more than one** file passes.  Multiplicity is not
+      evidence of absence, and failing on it would assert a uniqueness claim the
+      registry never makes; the defining files are returned so a caller can say
+      what was found.
+    * A symbol defined **only under a test or under** ``tos/`` **fails**, because
+      the anchor tree is deliberately the same tree the census scans.  A symbol
+      the census could never observe in deployed code is not a transport binding
+      of this deployment, and a test file would otherwise be a trivial place to
+      plant an anchor for a decoy.
+    """
+    definitions = scan_broker_symbol_definitions(repo_root, vocabulary)
+    undefined = sorted(symbol for symbol, sites in definitions.items() if not sites)
+    if undefined:
+        raise StatusError(
+            f"{csv_path}: registered broker transport symbol(s) resolve to no class "
+            f"definition outside tos/ and tests: {undefined!r}; a registry entry "
+            "that denotes nothing would make the census enforce a rule about a "
+            "class that does not exist"
+        )
+    return definitions
+
+
+def validate_broker_symbol_citations(
+    source_root: Path, csv_path: Path, vocabulary: BrokerTransportVocabulary
+) -> None:
+    """Require each cited decision identifier to resolve to a real document.
+
+    Only the identifier is checked.  ``capability_reference`` prose -- which
+    section, and whether the section says what the row claims -- is not
+    machine-checkable, and a checker that pretended otherwise would be
+    manufacturing an assurance it cannot supply.
+    """
+    missing = sorted(
+        identifier
+        for identifier in vocabulary.cited_decisions
+        if not any(source_root.rglob(f"{identifier}-*.md"))
+    )
+    if missing:
+        raise StatusError(
+            f"{csv_path}: capability_reference cites decision document(s) that do "
+            f"not exist: {missing!r}"
+        )
+
+
 def validate_legacy_route_reverse_census(
-    repo_root: Path, csv_path: Path, registered_components: frozenset[str]
+    repo_root: Path,
+    csv_path: Path,
+    registered_components: frozenset[str],
+    vocabulary: BrokerTransportVocabulary,
 ) -> tuple[str, ...]:
     """Look for broker-order routes that nobody registered.
 
     Fail-closed tier: an *operator- or service-invocable* entrypoint that
-    constructs the direct broker order sender must be a registered
+    constructs a registered ``ORDER_SENDER`` symbol must be a registered
     ``LEGACY_ROUTE`` component.  That is the F6 defect class verbatim --
     MIGRATION-CONFORMANCE-REGISTER §2 scopes it to "operator-invocable paths
     that reach a real broker" -- and it is exactly what ``flatten_all.py``
     tripped.
 
-    Warning tier: every other unregistered ``KISClient``/``OrderExecutor``
-    construction is returned, not raised.  ``KISClient`` is equally the
+    Warning tier: every other unregistered construction of a registered symbol is
+    returned, not raised.  A ``BROKER_CLIENT_READ`` symbol is equally the
     market-data read client, and LEGACY-005 explicitly records that "multiple
     construction callers remain" for the shared sender without enumerating them,
     so failing on those would assert a completeness claim the register does not
@@ -1324,23 +1700,26 @@ def validate_legacy_route_reverse_census(
     """
     unregistered_senders: list[str] = []
     unregistered: list[str] = []
-    for site in scan_broker_construction_sites(repo_root):
+    for site in scan_broker_construction_sites(repo_root, vocabulary):
         if site.relative_path in registered_components:
             continue
         unregistered.append(site.relative_path)
-        if site.is_entrypoint and _ORDER_SENDER in site.classes:
+        if site.is_entrypoint and site.classes & vocabulary.order_senders:
             unregistered_senders.append(site.relative_path)
     if unregistered_senders:
         raise StatusError(
             f"{csv_path}: unregistered broker-order route(s); every invocable "
-            f"{_ORDER_SENDER} construction site must be a registered LEGACY_ROUTE "
-            f"component: {unregistered_senders!r}"
+            f"{'/'.join(sorted(vocabulary.order_senders))} construction site must "
+            f"be a registered LEGACY_ROUTE component: {unregistered_senders!r}"
         )
     return tuple(unregistered)
 
 
 def validate_migration_conformance(
-    repo_root: Path, csv_path: Path, markdown_path: Path
+    repo_root: Path,
+    csv_path: Path,
+    markdown_path: Path,
+    vocabulary: BrokerTransportVocabulary,
 ) -> tuple[int, tuple[str, ...]]:
     """Validate package coverage and non-authorizing migration/Q6 honesty."""
     rows = _read_csv(csv_path, REQUIRED_MIGRATION_FIELDS)
@@ -1429,7 +1808,7 @@ def validate_migration_conformance(
             )
         registered_components.add(component)
     unregistered_broker_sites = validate_legacy_route_reverse_census(
-        repo_root, csv_path, frozenset(registered_components)
+        repo_root, csv_path, frozenset(registered_components), vocabulary
     )
 
     markdown = markdown_path.read_text(encoding="utf-8-sig")
@@ -1470,8 +1849,22 @@ def collect_status(repo_root: Path) -> StatusSnapshot:
         repo_root / P2_DISPOSITION_CSV, repo_root / P2_DISPOSITION_MD
     )
     validate_investment_operating_model(repo_root / IOM_PROFILE_SCHEMA, development)
+    broker_vocabulary = load_broker_transport_symbols(
+        repo_root / BROKER_SYMBOLS_CSV, repo_root / BROKER_SYMBOLS_MD
+    )
+    # The registry's syntax is validated above; these two validate its referents.
+    # Without them the registry is self-attesting and a decoy symbol passes green.
+    validate_broker_symbols_are_grounded(
+        repo_root, repo_root / BROKER_SYMBOLS_CSV, broker_vocabulary
+    )
+    validate_broker_symbol_citations(
+        source_root, repo_root / BROKER_SYMBOLS_CSV, broker_vocabulary
+    )
     migration_rows, unregistered_broker_sites = validate_migration_conformance(
-        repo_root, repo_root / MIGRATION_CSV, repo_root / MIGRATION_MD
+        repo_root,
+        repo_root / MIGRATION_CSV,
+        repo_root / MIGRATION_MD,
+        broker_vocabulary,
     )
     const003_result = validate_economic_viability(
         repo_root / ECO_PROFILE_SCHEMA, part1, development
@@ -1489,6 +1882,7 @@ def collect_status(repo_root: Path) -> StatusSnapshot:
         const003_result,
         migration_rows,
         transcription_sites,
+        tuple(sorted(broker_vocabulary.order_senders)),
     )
 
 
@@ -1557,7 +1951,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{len(snapshot.unregistered_broker_sites)} broker-client "
                     "construction site(s) outside tos/ and tests are not registered "
                     "LEGACY_ROUTE components; none is an invocable "
-                    f"{_ORDER_SENDER} entrypoint: "
+                    f"{'/'.join(snapshot.order_sender_symbols)} entrypoint: "
                     + ", ".join(snapshot.unregistered_broker_sites)
                 )
     except (OSError, StatusError) as exc:
