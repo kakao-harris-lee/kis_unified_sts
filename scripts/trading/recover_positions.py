@@ -1,24 +1,48 @@
 #!/usr/bin/env python
-"""Position recovery / reconciliation — Phase 5 Task 3.
+"""Futures position reconciliation report — operator-invoked, advisory only.
 
-On every order_router cold start, compare the live KIS broker's open
-futures positions against the Redis snapshot at
-``trading:futures:positions``. On any divergence, write a sentinel file
-that ``services.order_router.main`` checks at startup and refuses to
-operate until an operator clears it (parallels the kill-switch sentinel).
+Compares the live KIS broker's open futures positions against the Redis
+snapshot at ``trading:futures:positions`` and records the divergence
+verdict for an operator to read and act on.
 
-This is **mandatory** before live deployment: VirtualBroker is in-memory
-and was always coherent with Redis by construction; the live KIS broker
-maintains its own state and can drift (process kill mid-fill, manual KIS
-order, partial cancel, etc.) — without reconciliation the daemon would
-silently double-trade or trade against a stale view.
+**This is not a barrier. It blocks nothing.**
 
-Sentinel file: ``/var/run/kis_position_recovery.tripped`` (configurable
-via ``--sentinel-path``). Falls back to a project-local path when the
-default isn't writable (phase-1 log-path lesson, commit 41b5e3c).
+Nothing in this repository reads the sentinel file this script writes, and
+no process consults its exit code. ``services.order_router.main`` honours
+only the separate kill-switch sentinel
+(``config/kill_switch.yaml::kill_switch.sentinel_path``, a different file
+at a different path). A divergent broker view therefore does **not**
+prevent the order router — or anything else — from starting or resuming.
+Do not rely on this script as a fence, and do not cite it as one in a
+readiness or go-live review.
 
-Operator clears via ``scripts/recover_positions_clear.sh`` after manual
-reconciliation review.
+The reconciliation itself is still worth running: VirtualBroker is
+in-memory and was coherent with Redis by construction, whereas the live
+KIS broker keeps its own state and can drift (process kill mid-fill,
+manual KIS order, partial cancel). Detecting that drift before an operator
+resumes live trading has real value — but every consequence of the finding
+is manual, carried out by the operator reading this output.
+
+Outputs, all advisory:
+
+- exit code 0 — broker and Redis agree.
+- exit code 3 — divergence found; sentinel written; Telegram alert sent.
+- exit code 4 — broker query failed; no verdict reached.
+- sentinel file ``/var/run/kis_position_recovery.tripped`` (override with
+  ``--sentinel-path``), holding a JSON divergence record. Falls back to a
+  project-local path when the default isn't writable (phase-1 log-path
+  lesson, commit 41b5e3c).
+
+Clearing: because the sentinel has no consumer there is no lock to
+release — delete the file when the review is done (``rm <sentinel-path>``).
+There is no ``scripts/recover_positions_clear.sh``; earlier revisions of
+this docstring pointed at one that was never written.
+
+Registered as LEGACY-007 in
+``tos-spec/src/MIGRATION-CONFORMANCE-REGISTER.csv``. Turning this into an
+actual barrier is an operator decision: it needs a named consumer that
+reads the sentinel at a defined point in startup and a declared fail
+polarity. Until that exists, keep these messages honest.
 """
 
 from __future__ import annotations
@@ -155,8 +179,8 @@ def write_sentinel(
     }
     sentinel_path.write_text(json.dumps(payload, indent=2))
     logger.critical(
-        "Recovery sentinel written to %s — order_router will refuse to start "
-        "until cleared",
+        "Divergence recorded to %s — ADVISORY ONLY: no process reads this file, "
+        "nothing is blocked, and resume is not prevented. Operator action required.",
         sentinel_path,
     )
 
@@ -208,13 +232,13 @@ async def _build_and_run(args: argparse.Namespace) -> int:
     try:
         broker_positions = await _fetch_broker_positions()
     except Exception:
-        logger.exception("Broker query failed — refusing to start without confirmation")
+        logger.exception("Broker query failed — no reconciliation verdict reached")
         return 4
     logger.info("Broker reports %d open futures positions", len(broker_positions))
 
     broker_only, redis_only, mismatched = reconcile(redis_positions, broker_positions)
     if not broker_only and not redis_only and not mismatched:
-        logger.info("Position state coherent — order_router may start.")
+        logger.info("Position state coherent — broker and Redis agree.")
         return 0
 
     sentinel_path = _resolve_sentinel_path(args.sentinel_path)
@@ -225,7 +249,10 @@ async def _build_and_run(args: argparse.Namespace) -> int:
         mismatched=mismatched,
     )
 
-    summary_parts = ["POSITION RECOVERY: divergence detected — order_router blocked."]
+    summary_parts = [
+        "POSITION RECOVERY: broker/Redis divergence detected. "
+        "ADVISORY ONLY — nothing is blocked; operator action required."
+    ]
     if broker_only:
         summary_parts.append(f"  broker-only: {len(broker_only)} positions")
         for p in broker_only:

@@ -3892,10 +3892,13 @@ class TradingOrchestrator:
                 # open — creating a tracker-vs-broker mismatch ("phantom").
                 # This is a deliberate trade-off: in an emergency we prefer a
                 # clean tracker over a dangling local entry, on the assumption
-                # that the operator will reconcile via the daily Edge Review
-                # script (`scripts/analysis/recover_positions.py`) and the
-                # critical-level alert below. If you're in this branch on
-                # live, MANUALLY VERIFY the broker side immediately.
+                # that the operator will reconcile via
+                # `scripts/trading/recover_positions.py` and the critical-level
+                # alert below. That script is ADVISORY ONLY — it reports a
+                # broker-vs-local divergence and writes a sentinel, but no
+                # process reads either, so it blocks nothing and resume is not
+                # fenced. If you're in this branch on live, MANUALLY VERIFY the
+                # broker side immediately.
                 is_filled, fill_price = True, exit_price
 
             if is_filled:
