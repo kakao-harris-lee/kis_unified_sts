@@ -93,11 +93,19 @@
 
 ### 0.3 ②(b)와의 경계선 + (b)-미밀수 증거의 정정 (MAJOR-3·구속)
 
-**②(b) env-주입 재검증은 이번 아크에서 착수하지 않는다**(서베이 판정 1·`:457-458`). 근거:
-`build_environment`/`evaluate_resolved`가 발행된 `ContextValueView`의 값⟺digest를 재검증하는 계약
-(#32 §2.3 :314-320·§9-6 :660)인데, 재검증에 필요한 `scheme`/검증자를 진입점에 실으면 **K7 정확-집합
-잠금**(evaluate 5-param·evaluate_resolved 정확 +1·ambient 배제·`test_dsl_context_value.py:316-368`)을
-깨거나 ambient smuggle이 된다. ⇒ (b)는 **K7 정합 선행 판정이 필요한 별개 이연**으로 잔존(§10-1).
+**②(b) env-주입 재검증은 이번 아크에서 착수하지 않는다**(서베이 판정 1·`:457-458`).
+
+> **[에라타 v1.4, 2026-08-06 — §0.3 근거 정정·판정 노트가 실측 적발]** 원문 근거("재검증에 필요한
+> `scheme`/검증자를 진입점에 실으면 K7 정확-집합 잠금을 깨거나 ambient smuggle이 된다")는
+> `evaluate_resolved`에 대해 **부분 오류**다 — `evaluate`(:319)와 `evaluate_resolved`(:362)는 **이미
+> `scheme`을 keyword-only로 보유**하며(`determinism.py:324/:367`) K7 잠금 집합 자체가 scheme을
+> 포함한다(`test_dsl_context_value.py:316-368`). 검증자 반입이 K7 위반이라는 절반과
+> `build_environment` 쪽 시그니처 확대 판정은 유지된다. **실제 차단자**는 (i) dsl→marketfeed
+> import edge(F1 방화벽 — 재계산 함수 `context_value_view_digest`가 marketfeed 소유·`value.py:408`)와
+> (ii) **payload preimage의 구조적 부재**(carrier 5-필드 잠금·관측 본문 미도달)다. 결론(이연)은
+> 불변·강화. 이 오류는 두 라운드 적대적 비평이 통과시킨 것으로, 판정 노트
+> (`2026-08-06-tos-env-reverification-k7-alignment-judgment.md`)가 적발했다. ⇒ (b)는 §10-1 판정
+> 대상으로 잔존했고, **그 판정은 2026-08-06 완료되어 (b)가 misnomer로 종결**되었다(§10-1 참조).
 
 **⚠ v1.1 정정(MAJOR-3 — K1의 (b)-무감도)**: v1.0은 "K1 GREEN = (b) 밀수 0 증거"라 주장했으나 이는
 **거짓**이다. K1(`test_marketfeed_distinctness.py:236-247`)은 발행 게이트에 두 관측을 직접 먹여
@@ -506,6 +514,12 @@ WIDEN 0.**
    반영)**: (b) 착수 전, **오케스트레이터가** "재검증을 시그니처 확대 없이 K7·K8·K15와 정합시킬
    경로가 있는가"를 판정하고, 그 판정을 **서베이-형식 스코핑 노트 또는 (b) 계약 §0 判定 아티팩트**로
    기록한다 — 그 아티팩트 부재 시 (b) 저작 착수 금지.
+   **[종결, 2026-08-06 — 에라타 v1.4]** 판정 완료: 아티팩트 =
+   `2026-08-06-tos-env-reverification-k7-alignment-judgment.md`(독립 검증 SOUND·커밋 `e4db5a5f`).
+   판정 결과 **경로 부재** — (b)가 명명한 위협(값⟺digest 불일치 producer)은 이 seam에 입력이
+   구조적으로 존재하지 않는다(preimage·관측 본문 부재). **재처분 I 채택: (b) 라인은 misnomer로
+   종결**, 집행 의무는 본 §10 item 2(상류 CIS)와 D-E3 replay에 흡수. 재처분 II(seam 방어심층
+   canary)는 검토 후 기각(근-공허·F1 소유권 역전·과잉 봉합). **계약 #39는 열지 않는다.**
 2. **실 CIS 런타임**(수집·조립·발행) — 방화벽상 tos/ 안팎 불가(§0.1)·상류 소관.
 3. **capsule 모델 변경** — #32 §0.2-1·발명금지 (a).
 4. **`TimeCoordinateProjection`(시간 권위)** — 포트 아님(§2.3).
