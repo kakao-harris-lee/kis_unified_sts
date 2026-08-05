@@ -197,7 +197,33 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         return ["atr", "prev_close", "vwap"]
 
     async def generate(self, context: EntryContext) -> OrchestratorSignal | None:
-        """Generate an entry signal by delegating to SetupAGapReversion."""
+        """Generate an entry signal by delegating to SetupAGapReversion.
+
+        OBSERVABILITY REACH (verified 2026-08-05, not assumed). The RISK_OFF
+        boost telemetry threaded onto ``Signal.metadata`` below reaches NO
+        durable store on the futures orchestrator path as wired today:
+
+        - ``services/trading/orchestrator.py::_persist_setup_signal_row`` is an
+          explicit no-op — the ``kospi.signals_all`` write was removed, so
+          ``signals_all_runtime.build_signals_all_row`` (which hardcodes
+          ``reason_tags`` to ``[]``) is never reached.
+        - ``TradingStatePublisher.publish_signal`` serialises a fixed key set
+          (id/symbol/side/strategy/price/confidence/timestamp/...) into the
+          ``trading:{asset}:signals`` Redis LIST. It never reads ``metadata``.
+        - The position path copies only an allowlist out of ``signal.metadata``
+          (``stop_loss``, ``take_profit``, ``entry_atr``, ``exit_*``) into
+          ``pos_metadata``, and both the RuntimeLedger position snapshot and
+          ``trade_outcomes.jsonl`` record that post-allowlist dict.
+
+        So the metadata below is available at the seam but is not yet queryable.
+        Closing that needs ONE change outside this package: adding
+        ``"llm_risk_off_boost_applied"``, ``"llm_risk_off_base_confidence"`` and
+        ``"llm_risk_off_raw_confidence"`` to the forwarding tuple in
+        ``services/trading/orchestrator.py`` (the ``for key in (...)`` block
+        just after ``pos_metadata`` is built). Until then the ``logger.info``
+        in ``apply_llm_tuning_setup_a`` is the only surface that observes the
+        boost at the shipped ``LOG_LEVEL=INFO``.
+        """
         mc = _build_market_context(context)
         if mc is None:
             logger.debug("SetupAEntryAdapter: unable to build MarketContext - skipping")
@@ -216,6 +242,10 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
             ts = datetime.now(UTC)
 
         confidence_override: float | None = None
+        # RISK_OFF-boost evidence forwarded onto Signal.metadata. See the
+        # ``apply_llm_tuning_setup_a`` docstring for the key contract, and the
+        # OBSERVABILITY REACH note on this method for what can actually read it.
+        llm_metadata: dict[str, Any] | None = None
         tuning = self.config.llm_tuning
 
         if not tuning.enabled:
@@ -233,7 +263,11 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     tuning.min_context_confidence,
                 )
             else:
-                adjusted_confidence, skip_reason = _apply_llm_tuning_setup_a(
+                (
+                    adjusted_confidence,
+                    skip_reason,
+                    llm_telemetry,
+                ) = _apply_llm_tuning_setup_a(
                     decision_signal=decision_signal,
                     llm_ctx=llm_ctx,
                     tuning=tuning,
@@ -245,6 +279,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     )
                     return None
                 confidence_override = adjusted_confidence
+                llm_metadata = llm_telemetry or None
 
                 symbol = str(
                     (context.market_data or {}).get(
@@ -310,4 +345,5 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
             timestamp=ts,
             confidence_override=confidence_override,
             entry_atr=atr_14,
+            extra_metadata=llm_metadata,
         )

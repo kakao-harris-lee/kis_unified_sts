@@ -722,8 +722,18 @@ def _setup_a_adapter_with_llm_tuning(
     min_signal_confidence: float = 0.0,
     long_blocked_regimes: list[str] | None = None,
     short_blocked_regimes: list[str] | None = None,
+    min_sp500_gap_pct: float = 0.5,
 ) -> SetupAEntryAdapter:
-    """Return a SetupAEntryAdapter with an explicit LLMTuningConfig."""
+    """Return a SetupAEntryAdapter with an explicit LLMTuningConfig.
+
+    ``min_sp500_gap_pct`` mirrors the :class:`SetupAEntryConfig` default (0.5),
+    which is NOT the live value — ``setup_a_gap_reversion.yaml`` ships 0.30. It
+    is exposed so tests can admit a weaker overnight gap and therefore reach the
+    lower end of Setup A's THEORETICAL [0.5, 1.0] base-confidence range
+    (``gap_strength`` saturates at +0.3 once ``abs(sp500_pct) >= 0.45``). Under
+    the live gate the reachable base range is only [0.70, 1.00], because the
+    gate itself forces ``gap_strength >= 0.30 / 1.5 = 0.20``.
+    """
     from shared.strategy.entry.setup_adapters import LLMTuningConfig
 
     if long_blocked_regimes is None:
@@ -740,7 +750,11 @@ def _setup_a_adapter_with_llm_tuning(
         long_blocked_regimes=long_blocked_regimes,
         short_blocked_regimes=short_blocked_regimes,
     )
-    cfg = SetupAEntryConfig(llm_tuning=tuning, daily_bias_filter_enabled=False)
+    cfg = SetupAEntryConfig(
+        llm_tuning=tuning,
+        daily_bias_filter_enabled=False,
+        min_sp500_gap_pct=min_sp500_gap_pct,
+    )
     return SetupAEntryAdapter(cfg)
 
 
@@ -773,11 +787,24 @@ def _setup_c_adapter_with_llm_tuning(
     return SetupCEntryAdapter(cfg)
 
 
-def _gap_down_context(*, market_context: object | None = None) -> EntryContext:
-    """Return a gap-DOWN EntryContext that produces a valid Setup A short signal."""
+def _gap_down_context(
+    *,
+    market_context: object | None = None,
+    current_price: float = 348.8,
+    sp500_pct: float = -0.8,
+) -> EntryContext:
+    """Return a gap-DOWN EntryContext that produces a valid Setup A short signal.
+
+    ``current_price`` and ``sp500_pct`` are exposed so tests can dial the Setup A
+    base confidence across its theoretical [0.5, 1.0] range (the live gate,
+    ``min_sp500_gap_pct: 0.30``, narrows it to [0.70, 1.00]). With the fixed gap
+    (prev_close=350.0, today_open=348.0 → gap_magnitude 2.0) the retrace is
+    ``(current_price - 348.0) / 2.0``, and confidence is
+    ``0.5 + min(abs(sp500_pct) / 1.5, 0.3) + retrace_centrality``.
+    """
     return EntryContext(
         market_data=_market_data_for_gap_reversion(
-            current_price=348.8,
+            current_price=current_price,
             prev_close=350.0,
             today_open=348.0,
             atr=1.0,
@@ -785,7 +812,7 @@ def _gap_down_context(*, market_context: object | None = None) -> EntryContext:
         indicators={},
         timestamp=_kst(9, 30),
         market_context=market_context,
-        metadata={"macro_overnight": _macro(sp500_pct=-0.8)},
+        metadata={"macro_overnight": _macro(sp500_pct=sp500_pct)},
     )
 
 
@@ -828,6 +855,24 @@ def _short_breakout_context(
         market_context=market_context,
         metadata={"scheduled_events": [event]},
     )
+
+
+async def _setup_a_deterministic_confidence(
+    context_factory: object,
+    *,
+    min_sp500_gap_pct: float = 0.5,
+) -> float:
+    """Return the no-LLM baseline confidence for a Setup A scenario.
+
+    ``context_factory`` is a zero-arg callable returning a fresh EntryContext
+    with ``market_context=None``. Mirrors :func:`_setup_c_deterministic_confidence`.
+    """
+    raw_adapter = _setup_a_adapter_with_llm_tuning(
+        enabled=False, min_sp500_gap_pct=min_sp500_gap_pct
+    )
+    raw_result = await raw_adapter.generate(context_factory())
+    assert raw_result is not None, "deterministic baseline must emit a signal"
+    return float(raw_result.confidence)
 
 
 async def _setup_c_deterministic_confidence(
@@ -940,13 +985,23 @@ class TestSetupALLMTuning:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_risk_off_high_score_scales_confidence(self):
-        """RISK_OFF + risk_score=80 > 75 → confidence multiplied by 1.3.
+    async def test_risk_off_high_score_emits_capped_boosted_confidence(self):
+        """RISK_OFF + risk_score=80 > 75 → boost fires and the product is capped.
 
-        Gap-DOWN → short signal with original confidence ≈ 0.5 (Setup A default).
-        Multiplied: 0.5 * 1.3 = 0.65.  Since 0.65 > 0 (no min-confidence gate
-        in adapter itself), the signal passes through with adjusted confidence.
+        Real fixture numbers (the earlier "base ≈ 0.5 → 0.65" docstring was
+        wrong): ``_gap_down_context`` uses sp500_pct=-0.8 and current_price=348.8,
+        giving base = 0.5 + min(0.8/1.5, 0.3) + 0.16 = 0.96. Uncapped that
+        emitted 0.96 × 1.3 = 1.248; with the cap it emits exactly 1.0.
+
+        Paired with :meth:`test_risk_off_low_score_does_not_scale` (boost does
+        not fire). The cap property itself is covered by
+        :class:`TestSetupAConfidenceCap`.
         """
+        baseline = await _setup_a_deterministic_confidence(
+            lambda: _gap_down_context(market_context=None)
+        )
+        assert baseline == pytest.approx(0.96, abs=1e-12)
+
         adapter = _setup_a_adapter_with_llm_tuning(
             enabled=True,
             risk_off_threshold=75.0,
@@ -961,10 +1016,11 @@ class TestSetupALLMTuning:
         context = _gap_down_context(market_context=llm_ctx)
         result = await adapter.generate(context)
         assert result is not None
-        # Original confidence * 1.3 should be higher than the raw signal confidence
-        # (the setup's base confidence is typically ~0.5 for a clean setup).
-        # We just verify the signal returned and confidence is non-zero.
-        assert result.confidence > 0.0
+        assert result.confidence == pytest.approx(1.0, abs=1e-12)
+        assert result.metadata["llm_risk_off_boost_applied"] is True
+        assert result.metadata["llm_risk_off_raw_confidence"] == pytest.approx(
+            baseline * 1.3, abs=1e-12
+        )
 
     @pytest.mark.asyncio
     async def test_risk_off_low_score_does_not_scale(self):
@@ -1065,6 +1121,350 @@ class TestSetupALLMTuning:
         from shared.models.signal import Signal as OrchestratorSignal
 
         assert result is None or isinstance(result, OrchestratorSignal)
+
+
+# Setup A base-confidence sweep for the cap property.
+#
+# Each row is (min_sp500_gap_pct, sp500_pct, current_price, expected_base).
+# ``expected_base`` is asserted, not assumed, so a change to the Setup A
+# confidence formula fails here loudly instead of silently re-scoping the sweep.
+# The rows straddle the cap crossover: base > 1/1.3 ≈ 0.7692 breaches uncapped.
+#
+# Two ranges are in play and must not be conflated:
+#   THEORETICAL base range [0.50, 1.00] — 0.5 + gap_strength(<=0.3) +
+#     retrace_centrality(<=0.2), reachable only by moving min_sp500_gap_pct off
+#     its live value (which the rows below deliberately do).
+#   LIVE base range [0.70, 1.00] — under the shipped min_sp500_gap_pct: 0.30 the
+#     gate itself forces gap_strength >= 0.30/1.5 = 0.20. The live
+#     below-crossover band is therefore only [0.70, 0.7692), and the row marked
+#     LIVE BAND is the one that exercises it at the shipped gate value.
+_SETUP_A_BASE_SWEEP = [
+    (0.0, -0.01, 348.6, 0.5066666666666667),  # theoretical floor
+    (0.1, -0.15, 348.6, 0.6),  # below crossover — boost fits under the cap
+    # LIVE BAND: shipped min_sp500_gap_pct, base 0.7333 ∈ [0.70, 0.7692) →
+    # product 0.9533 < 1.0, so the cap is inert at the live gate's lower half.
+    (0.30, -0.35, 348.6, 0.7333333333333333),
+    (0.1, -0.30, 348.7, 0.78),  # just above crossover
+    (0.1, -0.45, 348.6, 0.8),
+    (0.5, -0.80, 348.8, 0.96),  # the live-shaped fixture
+    (0.1, -0.45, 348.85, 1.0),  # ceiling of the range
+]
+
+
+class TestSetupAConfidenceCap:
+    """Setup A's RISK_OFF multiplier must respect the documented [0.0, 1.0] range.
+
+    ``shared/models/signal.py`` documents ``confidence: 확신도 (0.0 ~ 1.0)`` but
+    declares a plain dataclass field with no validator, so nothing downstream
+    rejects an out-of-range value. Setup C's sibling branch already caps at 1.0;
+    Setup A's did not, and with the live ``risk_off_confidence_multiplier: 1.3``
+    a base confidence above 1/1.3 ≈ 0.769 emitted a value above the ceiling.
+
+    The cap can only ever lower an emitted value, never raise one, so it cannot
+    loosen admission (``confidence >= min_confidence``) nor promote a signal in
+    the descending-confidence entry contention ordering.
+    """
+
+    @staticmethod
+    def _risk_off_ctx() -> object:
+        """RISK_OFF LLM context above the default risk_off_threshold of 75."""
+        return _llm_context(
+            regime="NEUTRAL",
+            risk_mode_name="RISK_OFF",
+            risk_score=80.0,
+            confidence=0.8,
+        )
+
+    def test_negative_multiplier_is_rejected_by_the_config(self):
+        """``min(scaled, 1.0)`` guards only the ceiling — the floor is the field.
+
+        Without ``ge=0.0`` a negative operator value passes the cap untouched
+        and emits a negative confidence, still outside the documented [0.0, 1.0]
+        range. No ``le=`` is asserted: the runtime cap already bounds what is
+        emitted, so an upper bound would restrict operator experimentation
+        without buying any range safety.
+        """
+        from pydantic import ValidationError
+
+        from shared.strategy.entry.setup_adapters import LLMTuningConfig
+
+        with pytest.raises(ValidationError):
+            LLMTuningConfig(risk_off_confidence_multiplier=-0.1)
+
+        # 0.0 is a legal (fully-suppressing) penalty value, and the live default
+        # 1.3 must remain accepted — the bound is a floor, not a re-tuning.
+        assert LLMTuningConfig(
+            risk_off_confidence_multiplier=0.0
+        ).risk_off_confidence_multiplier == pytest.approx(0.0)
+        assert LLMTuningConfig().risk_off_confidence_multiplier == pytest.approx(1.3)
+
+    @pytest.mark.asyncio
+    async def test_risk_off_boost_is_capped_at_one(self):
+        """Base 0.96 × 1.3 = 1.248 uncapped → emitted confidence must be <= 1.0.
+
+        Regression guard for the unbounded multiplication. Asserted on the
+        emitted ``Signal``, not the helper return, because the value reaches the
+        runtime through ``confidence_override`` → ``setup_signal_mapper`` →
+        ``Signal.confidence``.
+        """
+        baseline = await _setup_a_deterministic_confidence(
+            lambda: _gap_down_context(market_context=None)
+        )
+        assert baseline * 1.3 > 1.0, (
+            "fixture must breach the ceiling when uncapped; "
+            f"base={baseline!r} × 1.3 = {baseline * 1.3!r}"
+        )
+
+        adapter = _setup_a_adapter_with_llm_tuning(
+            enabled=True,
+            risk_off_threshold=75.0,
+            risk_off_confidence_multiplier=1.3,
+        )
+        result = await adapter.generate(
+            _gap_down_context(market_context=self._risk_off_ctx())
+        )
+
+        assert result is not None
+        assert result.metadata["direction"] == "short"
+        assert result.confidence <= 1.0, (
+            "Setup A must not emit a confidence above the documented ceiling; "
+            f"got {result.confidence!r} from base {baseline!r} × 1.3"
+        )
+        assert result.confidence == pytest.approx(1.0, abs=1e-12)
+
+    @pytest.mark.asyncio
+    async def test_boost_below_cap_still_applies_exactly(self):
+        """Base 0.6 × 1.3 = 0.78 < 1.0 → multiplied exactly, cap is inert.
+
+        Guards against the cap silently disabling the adjustment.
+        """
+        factory = lambda: _gap_down_context(  # noqa: E731
+            market_context=None, current_price=348.6, sp500_pct=-0.15
+        )
+        baseline = await _setup_a_deterministic_confidence(
+            factory, min_sp500_gap_pct=0.1
+        )
+        assert baseline == pytest.approx(0.6, abs=1e-12)
+        assert baseline * 1.3 < 1.0, "fixture must stay under the cap"
+
+        adapter = _setup_a_adapter_with_llm_tuning(
+            enabled=True,
+            risk_off_threshold=75.0,
+            risk_off_confidence_multiplier=1.3,
+            min_sp500_gap_pct=0.1,
+        )
+        result = await adapter.generate(
+            _gap_down_context(
+                market_context=self._risk_off_ctx(),
+                current_price=348.6,
+                sp500_pct=-0.15,
+            )
+        )
+
+        assert result is not None
+        assert result.confidence == pytest.approx(baseline * 1.3, abs=1e-12)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("min_sp500_gap_pct", "sp500_pct", "current_price", "expected_base"),
+        _SETUP_A_BASE_SWEEP,
+    )
+    async def test_emitted_confidence_stays_in_unit_range(
+        self,
+        min_sp500_gap_pct: float,
+        sp500_pct: float,
+        current_price: float,
+        expected_base: float,
+    ):
+        """Property: across the whole Setup A base range the emission is in [0.0, 1.0].
+
+        Also pins the exact adjustment (``min(base × 1.3, 1.0)``) so the cap
+        cannot be satisfied by clamping the boost away entirely.
+        """
+        factory = lambda: _gap_down_context(  # noqa: E731
+            market_context=None,
+            current_price=current_price,
+            sp500_pct=sp500_pct,
+        )
+        baseline = await _setup_a_deterministic_confidence(
+            factory, min_sp500_gap_pct=min_sp500_gap_pct
+        )
+        assert baseline == pytest.approx(expected_base, abs=1e-12), (
+            "sweep row no longer matches the Setup A confidence formula; "
+            f"expected {expected_base!r}, got {baseline!r}"
+        )
+
+        adapter = _setup_a_adapter_with_llm_tuning(
+            enabled=True,
+            risk_off_threshold=75.0,
+            risk_off_confidence_multiplier=1.3,
+            min_sp500_gap_pct=min_sp500_gap_pct,
+        )
+        result = await adapter.generate(
+            _gap_down_context(
+                market_context=self._risk_off_ctx(),
+                current_price=current_price,
+                sp500_pct=sp500_pct,
+            )
+        )
+
+        assert result is not None
+        assert 0.0 <= result.confidence <= 1.0, (
+            f"base={baseline!r} produced out-of-range confidence "
+            f"{result.confidence!r}"
+        )
+        assert result.confidence == pytest.approx(min(baseline * 1.3, 1.0), abs=1e-12)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("min_sp500_gap_pct", "sp500_pct", "current_price", "expected_base"),
+        _SETUP_A_BASE_SWEEP,
+    )
+    async def test_multiplier_does_not_change_admission_at_current_floor(
+        self,
+        min_sp500_gap_pct: float,
+        sp500_pct: float,
+        current_price: float,
+        expected_base: float,
+    ):
+        """The RISK_OFF multiplier changes priority, not admission, as configured today.
+
+        Setup A's base confidence is always >= 0.5 and the downstream floor
+        (``StrategyManagerConfig.min_confidence``) is 0.3, so every signal the
+        boost admits was already admitted without it. Pinned here — and read
+        from the real config default rather than hardcoded — so that raising the
+        floor above the base range fails loudly instead of silently turning the
+        multiplier into an admission lever.
+        """
+        from services.trading.strategy_manager import StrategyManagerConfig
+
+        floor = StrategyManagerConfig().min_confidence
+
+        factory = lambda: _gap_down_context(  # noqa: E731
+            market_context=None,
+            current_price=current_price,
+            sp500_pct=sp500_pct,
+        )
+        baseline = await _setup_a_deterministic_confidence(
+            factory, min_sp500_gap_pct=min_sp500_gap_pct
+        )
+
+        adapter = _setup_a_adapter_with_llm_tuning(
+            enabled=True,
+            risk_off_threshold=75.0,
+            risk_off_confidence_multiplier=1.3,
+            min_sp500_gap_pct=min_sp500_gap_pct,
+        )
+        result = await adapter.generate(
+            _gap_down_context(
+                market_context=self._risk_off_ctx(),
+                current_price=current_price,
+                sp500_pct=sp500_pct,
+            )
+        )
+
+        assert result is not None
+        admitted_with_boost = result.confidence >= floor
+        admitted_without_boost = baseline >= floor
+        assert admitted_with_boost is True
+        assert admitted_without_boost == admitted_with_boost, (
+            "the RISK_OFF multiplier changed the admission decision: "
+            f"base={baseline!r} boosted={result.confidence!r} floor={floor!r}"
+        )
+
+
+class TestSetupARiskOffBoostEvidence:
+    """The cap must not erase the evidence that the RISK_OFF boost fired.
+
+    Pre-cap, a persisted ``confidence > 1.0`` was an unambiguous fingerprint of
+    the multiplier. Capping removes it precisely when the OPERATOR REVIEW
+    PENDING note asks the operator to judge whether 1.3 is right, and the
+    pre-boost base is recoverable from no other surface: the orchestrator's
+    ``_persist_setup_signal_row`` is a no-op, ``publish_signal`` serialises a
+    fixed key set that never reads ``metadata``, and the position path copies
+    only a ``stop_loss``/``take_profit``/``entry_atr``/``exit_*`` allowlist.
+
+    These tests pin the seam that restores it — the raw pre-cap product and an
+    explicit boolean on ``Signal.metadata``. They assert what the adapter emits;
+    they do NOT claim a durable store reads it (see the OBSERVABILITY REACH note
+    on ``SetupAEntryAdapter.generate``).
+    """
+
+    @pytest.mark.asyncio
+    async def test_capped_signal_still_carries_the_uncapped_product(self):
+        """base 0.96 → emitted 1.0, but metadata retains base and raw 1.248."""
+        baseline = await _setup_a_deterministic_confidence(
+            lambda: _gap_down_context(market_context=None)
+        )
+        adapter = _setup_a_adapter_with_llm_tuning(
+            enabled=True,
+            risk_off_threshold=75.0,
+            risk_off_confidence_multiplier=1.3,
+        )
+        result = await adapter.generate(
+            _gap_down_context(
+                market_context=_llm_context(
+                    regime="NEUTRAL",
+                    risk_mode_name="RISK_OFF",
+                    risk_score=80.0,
+                    confidence=0.8,
+                )
+            )
+        )
+
+        assert result is not None
+        # The emitted value alone can no longer distinguish "boosted then
+        # capped" from "base was already 1.0" — which is exactly the evidence
+        # the cap destroys and this metadata restores.
+        assert result.confidence == pytest.approx(1.0, abs=1e-12)
+        assert result.metadata["llm_risk_off_boost_applied"] is True
+        assert result.metadata["llm_risk_off_base_confidence"] == pytest.approx(
+            baseline, abs=1e-12
+        )
+        assert result.metadata["llm_risk_off_raw_confidence"] == pytest.approx(
+            baseline * 1.3, abs=1e-12
+        )
+        assert result.metadata["llm_risk_off_raw_confidence"] > 1.0, (
+            "the fixture must be one the cap actually bit on, otherwise this "
+            "test does not exercise the erased-evidence case"
+        )
+
+    @pytest.mark.asyncio
+    async def test_boost_not_fired_is_explicit_false_not_a_missing_key(self):
+        """risk_score below threshold → applied=False, no base/raw keys.
+
+        ``False`` (helper ran, boost did not fire) must stay distinguishable
+        from an absent key (helper never ran at all).
+        """
+        adapter = _setup_a_adapter_with_llm_tuning(
+            enabled=True,
+            risk_off_threshold=75.0,
+            risk_off_confidence_multiplier=1.3,
+        )
+        result = await adapter.generate(
+            _gap_down_context(
+                market_context=_llm_context(
+                    regime="NEUTRAL",
+                    risk_mode_name="RISK_OFF",
+                    risk_score=60.0,
+                    confidence=0.8,
+                )
+            )
+        )
+
+        assert result is not None
+        assert result.metadata["llm_risk_off_boost_applied"] is False
+        assert "llm_risk_off_base_confidence" not in result.metadata
+        assert "llm_risk_off_raw_confidence" not in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_llm_tuning_disabled_emits_no_boost_keys_at_all(self):
+        """Tuning off → the helper never runs, so no ``llm_risk_off_*`` key appears."""
+        adapter = _setup_a_adapter_with_llm_tuning(enabled=False)
+        result = await adapter.generate(_gap_down_context(market_context=None))
+
+        assert result is not None
+        assert not [k for k in result.metadata if k.startswith("llm_risk_off_")]
 
 
 class TestSetupCLLMTuning:

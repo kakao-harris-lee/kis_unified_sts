@@ -31,19 +31,65 @@ class LLMTuningConfig(BaseModel):
             treated as unavailable (same as ``market_context=None``).
         risk_off_threshold: Setup-A only.  ``risk_score`` value above which
             RISK_OFF regime triggers the confidence multiplier.
-        risk_off_confidence_multiplier: Setup-A only.  Multiplier applied to
-            the candidate signal's confidence under RISK_OFF + high risk_score.
-            The confidence is multiplied, so values < 1.0 lower it (penalty
-            mode: stricter) and values > 1.0 raise it.  A raised confidence
-            makes admission EASIER, not harder: downstream the signal is
-            admitted by ``confidence >= StrategyManagerConfig.min_confidence``
-            and entry contention is ordered by descending confidence, so a
-            larger multiplier both clears the floor more readily and wins
-            priority under ``max_positions``.
-            OPERATOR REVIEW PENDING: the live futures value is 1.3, which
-            loosens Setup-A admission under a RISK_OFF read.  Whether that is
-            intended is an operator decision; this docstring previously
-            asserted the opposite effect and may have informed that setting.
+        risk_off_confidence_multiplier: Setup-A only.  Applied as a
+            multiplication on the candidate signal's confidence under RISK_OFF +
+            high risk_score, so values < 1.0 penalise (lower) it and values
+            > 1.0 raise it.  The product is capped at 1.0 to honour the
+            documented ``Signal.confidence`` range — ``shared/models/signal.py``
+            documents ``확신도 (0.0 ~ 1.0)`` but declares a plain dataclass field
+            with no validator, so nothing downstream would reject an
+            out-of-range value.
+            The field is bounded ``ge=0.0`` because ``min(scaled, 1.0)`` guards
+            only the ceiling: a negative operator value would otherwise emit a
+            negative confidence, still outside the documented range.  No ``le=``
+            is imposed — the runtime cap already bounds what is emitted, so an
+            upper bound would only restrict operator experimentation without
+            buying any range safety.
+            Raising confidence makes admission easier IN GENERAL, but at the
+            current configuration it does not change whether a Setup-A signal is
+            admitted.  Setup A's base confidence is in [0.5, 1.0] by
+            construction (:mod:`shared.decision.setups.gap_reversion`: ``0.5 +
+            gap_strength(<=0.3) + retrace_centrality(<=0.2)``) — that is the
+            THEORETICAL range.  Under the LIVE gate
+            (``min_sp500_gap_pct: 0.30``) ``gap_strength`` is at least
+            ``0.30 / 1.5 = 0.20``, so the LIVE base range is the narrower
+            [0.70, 1.00].  Either way the downstream floor
+            ``StrategyManagerConfig.min_confidence`` is 0.3 and
+            ``min_signal_confidence`` below is 0.0, so the base clears both
+            floors with or without the multiplier.
+            What the multiplier does change is PRIORITY ORDERING: entry
+            contention is ranked by descending confidence under
+            ``max_positions``, so a boosted Setup-A candidate can displace a
+            competing signal.
+            ORDERING CONSEQUENCE OF THE 1.0 CAP: capping collapses the whole
+            previously-ordered band [1.0, 1.3] onto the single value 1.0, so
+            ties fall through to the next key of
+            ``services/trading/entry_runtime.py::entry_signal_priority`` —
+            ``(priority, -confidence, strategy, code)``.  Setup A sets no
+            ``entry_priority``, so a tie resolves by STRATEGY NAME.  Today
+            ``"setup_a_gap_reversion"`` sorts before ``setup_c_event_reaction``
+            and ``setup_d_vwap_reversion``, so nothing changes — accidentally.
+            Enabling a futures strategy whose registry name sorts earlier
+            (``bb_reversion_15m``, ``llm_directed_indicator``,
+            ``macd_ema_crossover_15m``, ``momentum_breakout_futures`` — all
+            currently ``enabled: false``) would hand priority to it where the
+            uncapped Setup A won outright.  Set an explicit ``entry_priority``
+            if that ordering must be guaranteed rather than inherited from
+            alphabetical luck.
+            OPERATOR REVIEW PENDING: the live futures value is 1.3.  Whether a
+            RISK_OFF read should raise Setup A's priority at all is unresolved
+            and still needs an operator decision.
+            History: the 1.3 default landed in ``274d55a7`` / PR #167
+            (2026-05-07) alongside an inverted rationale ("values > 1.0 raise
+            the effective bar"); the same-day review ``d2caddb4`` correctly
+            identified 1.3 as a boost and wired ``min_signal_confidence``, but
+            left both the value and the false docstring in place.  The false
+            docstring stood until ``21550f4b`` (2026-08-05) corrected it and
+            raised the operator flag above; this cap is the follow-up to that
+            commit.  (The PR-branch-local hash ``6a66df1e`` names the same work
+            but is reachable only from ``origin/feat/phase-1-1-setup-llm-tuning``
+            — cite the mainline ``274d55a7`` so the reference survives branch
+            pruning.)
         bull_strong_regime: Setup-C only.  Regime label that triggers the ATR
             loose-factor boost (typically ``"BULL_STRONG"``).
         atr_loose_factor: Setup-C only.  Factor < 1.0 that loosens the
@@ -66,6 +112,7 @@ class LLMTuningConfig(BaseModel):
     )
     risk_off_confidence_multiplier: float = Field(
         default=1.3,
+        ge=0.0,
         description="Confidence multiplier applied under RISK_OFF + high risk_score",
     )
     # Setup C fields
@@ -91,7 +138,8 @@ class LLMTuningConfig(BaseModel):
     # rejects already-low base confidences.  If operators tune the multiplier
     # below 1.0 (penalty mode), this floor enforces a hard drop threshold so
     # the multiplied value cannot collapse signals silently.  Default 0.0
-    # means "no floor" (matches Setup A's own [0.5, 1.0] confidence range).
+    # means "no floor" — below Setup A's theoretical [0.5, 1.0] base range, and
+    # so also below its live [0.70, 1.00] range under min_sp500_gap_pct: 0.30.
     min_signal_confidence: float = Field(
         default=0.0,
         ge=0.0,

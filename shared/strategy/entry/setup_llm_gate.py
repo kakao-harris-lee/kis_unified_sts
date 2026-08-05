@@ -89,11 +89,37 @@ def apply_llm_tuning_setup_a(
     llm_ctx: Any,
     tuning: LLMTuningConfig,
     min_signal_confidence: float = 0.0,
-) -> tuple[float | None, str | None]:
+) -> tuple[float | None, str | None, dict[str, Any]]:
     """Apply LLM threshold adjustments for Setup A.
 
-    Returns ``(adjusted_confidence, skip_reason)``. When ``skip_reason`` is not
-    ``None``, the caller must drop the signal.
+    Returns ``(adjusted_confidence, skip_reason, telemetry)``. When
+    ``skip_reason`` is not ``None``, the caller must drop the signal.
+
+    ``telemetry`` carries the RISK_OFF-boost evidence that the 1.0 cap would
+    otherwise erase. Before the cap, a persisted ``confidence > 1.0`` was itself
+    an unambiguous fingerprint that the multiplier had fired; capping removes
+    that fingerprint exactly when the OPERATOR REVIEW PENDING note on
+    ``risk_off_confidence_multiplier`` asks the operator to judge the 1.3 value.
+    Keys (present only when the direction gates below did not drop the signal):
+
+    ``llm_risk_off_boost_applied``
+        ``True`` when the RISK_OFF branch ran, ``False`` when it did not. An
+        absent key means this helper never ran at all (LLM tuning disabled, no
+        LLM context, or context confidence below ``min_context_confidence``) —
+        so absence and ``False`` stay distinguishable.
+    ``llm_risk_off_base_confidence``
+        The pre-boost Setup A confidence. Not recoverable from any other
+        surface once the product is capped.
+    ``llm_risk_off_raw_confidence``
+        The uncapped product ``base * risk_off_confidence_multiplier``. The cap
+        bit iff this exceeds 1.0.
+
+    Reach: the caller threads this onto ``Signal.metadata``. That dict is
+    in-memory only for the futures orchestrator path — see the OBSERVABILITY
+    REACH note on ``SetupAEntryAdapter.generate`` for the enumerated surfaces
+    and the one ``services/`` change that would make it queryable — so the
+    ``logger.info`` below is currently the only surface that observes the event
+    at the shipped ``LOG_LEVEL=INFO``.
     """
     regime: str = str(llm_ctx.regime)
     direction: str = str(decision_signal.direction)
@@ -109,7 +135,7 @@ def apply_llm_tuning_setup_a(
             "long_blocked_regimes",
             regime,
         )
-        return None, "llm_long_blocked"
+        return None, "llm_long_blocked", {}
 
     if direction == "short" and regime in tuning.short_blocked_regimes:
         logger.debug(
@@ -117,18 +143,58 @@ def apply_llm_tuning_setup_a(
             "short_blocked_regimes",
             regime,
         )
-        return None, "llm_short_blocked"
+        return None, "llm_short_blocked", {}
 
     adjusted_confidence = float(decision_signal.confidence)
+    telemetry: dict[str, Any] = {"llm_risk_off_boost_applied": False}
     if risk_score > tuning.risk_off_threshold and risk_mode == "RISK_OFF":
-        adjusted_confidence = (
-            adjusted_confidence * tuning.risk_off_confidence_multiplier
-        )
-        logger.debug(
-            "SetupA LLM tuning: confidence scaled %.3f to %.3f "
-            "(risk_score=%.1f > %.1f, RISK_OFF)",
-            decision_signal.confidence,
+        # Cap at the documented Signal.confidence ceiling, mirroring the Setup C
+        # branch below. shared/models/signal.py documents 확신도 (0.0 ~ 1.0) but
+        # has no validator, so an uncapped multiplier (live value 1.3) emitted
+        # out-of-range values for any base above 1/1.3 ≈ 0.769. Setup A's base
+        # is in [0.5, 1.0] by construction; under the LIVE gate
+        # (min_sp500_gap_pct: 0.30) it is the narrower [0.70, 1.00], so the
+        # live below-crossover band is only [0.70, 0.7692).
+        #
+        # Capping only ever lowers the emitted value, so it cannot loosen
+        # admission (confidence >= min_confidence) nor promote a signal in the
+        # descending-confidence entry contention.
+        #
+        # It can, however, DEMOTE — and that consequence is benign only by
+        # accident today. The cap collapses the whole previously-ordered band
+        # [1.0, 1.3] onto the single value 1.0, so resolution falls through to
+        # the next key of services/trading/entry_runtime.py::
+        # entry_signal_priority, which is (priority, -confidence, strategy,
+        # code). Setup A carries no ``entry_priority``, so a tie resolves by
+        # STRATEGY NAME. "setup_a_gap_reversion" happens to sort before
+        # "setup_c_event_reaction" and "setup_d_vwap_reversion", so no outcome
+        # changes right now. Enabling any futures strategy whose registry name
+        # sorts earlier — bb_reversion_15m, llm_directed_indicator,
+        # macd_ema_crossover_15m, momentum_breakout_futures (all currently
+        # enabled: false) — would hand priority to it in cases where pre-cap
+        # Setup A won outright. That is a naming coincidence, not a design:
+        # give Setup A an explicit ``entry_priority`` if the ordering must be
+        # guaranteed rather than inherited from alphabetical luck.
+        base_confidence = adjusted_confidence
+        scaled = base_confidence * tuning.risk_off_confidence_multiplier
+        adjusted_confidence = min(scaled, 1.0)
+        telemetry = {
+            "llm_risk_off_boost_applied": True,
+            "llm_risk_off_base_confidence": base_confidence,
+            "llm_risk_off_raw_confidence": scaled,
+        }
+        # INFO, not DEBUG: .env.example ships LOG_LEVEL=INFO, and once the
+        # product is capped this line is the only surface at the shipped level
+        # that records the boost fired at all (see the telemetry note above).
+        logger.info(
+            "SetupA LLM tuning: RISK_OFF confidence boost applied; "
+            "base=%.6f multiplier=%.3f raw=%.6f emitted=%.6f capped=%s "
+            "(risk_score=%.1f > %.1f)",
+            base_confidence,
+            tuning.risk_off_confidence_multiplier,
+            scaled,
             adjusted_confidence,
+            scaled > 1.0,
             risk_score,
             tuning.risk_off_threshold,
         )
@@ -139,9 +205,9 @@ def apply_llm_tuning_setup_a(
                 adjusted_confidence,
                 min_signal_confidence,
             )
-            return None, "llm_threshold_unmet"
+            return None, "llm_threshold_unmet", telemetry
 
-    return adjusted_confidence, None
+    return adjusted_confidence, None, telemetry
 
 
 def apply_llm_tuning_setup_c(
