@@ -326,6 +326,55 @@ def _build_leverage_provider(
         return None
 
 
+def _build_volatility_reference_provider(
+    config: StockRiskConfig, sync_redis: Any
+) -> Callable[[str], Any] | None:
+    """Build the VolatilityFilter reference reader for the stock chain.
+
+    Reads ``risk:volatility:reference:stock``, the per-symbol hash published by
+    ``services/stock_strategy`` (the only stock service that owns an indicator
+    engine, hence the only one that can produce ATR). Each field carries the
+    current ATR *and* its percentile threshold together, so this daemon cannot
+    arm half of the comparison — see
+    :mod:`shared.risk.volatility_reference` for why that matters.
+
+    Gated on the same ``volatility.enabled`` flag that starts the publisher, so
+    one operator flip moves both sides. Default ``false`` ⇒ returns ``None`` ⇒
+    the filter is built with no provider and passes every signal, exactly as
+    the stock chain behaves today. Any wiring failure also returns ``None``
+    (fail-open ⇒ inert filter), never a rejection.
+
+    Read-only: it reuses the daemon's existing sync client and writes nothing.
+    """
+    settings = getattr(config, "volatility", None)
+    if settings is None or not settings.enabled:
+        return None
+    try:
+        from shared.risk.volatility_reference import (
+            build_volatility_reference_provider,
+        )
+
+        provider = build_volatility_reference_provider(
+            asset_class="stock",
+            settings=settings,
+            redis_client=sync_redis,
+        )
+        logger.info(
+            "Stock VolatilityFilter provider wired (percentile=%.1f, "
+            "window=%d, min_samples=%d) — publisher: services/stock_strategy",
+            settings.percentile,
+            settings.window_samples,
+            settings.min_samples,
+        )
+        return provider
+    except Exception:
+        logger.exception(
+            "stock volatility reference provider wiring failed; "
+            "VolatilityFilter left inert (fail-open)"
+        )
+        return None
+
+
 async def _build_and_run() -> int:
     """Flag-gated production entrypoint.
 
@@ -372,11 +421,13 @@ async def _build_and_run() -> int:
             return True  # fail-closed: block re-entry on uncertainty
 
     leverage_provider = _build_leverage_provider(config, sync_redis, positions_key)
+    volatility_provider = _build_volatility_reference_provider(config, sync_redis)
     layer = RiskFilterLayer.from_config(
         config=config,
         trading_windows=windows,
         has_open_position_provider=_has_open_position,
         leverage_snapshot_provider=leverage_provider,
+        volatility_reference_provider=volatility_provider,
     )
     runtime_state = RuntimeRiskState(redis=redis_client, asset_class="stock")
     # Loaded once at startup (not on the hot path) — inert by default

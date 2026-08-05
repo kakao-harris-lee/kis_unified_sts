@@ -47,6 +47,7 @@ from shared.models.signal import Signal
 from shared.risk.market_risk_gate import (
     MarketRiskGateConfig,
 )
+from shared.risk.volatility_reference import VolatilityReferenceSettings
 from shared.strategy.symbol_strength import compute_strong_symbols
 from shared.streaming.audit import decode_stream_id, format_audit_kv
 from shared.streaming.stock_bear_override import (
@@ -164,6 +165,7 @@ class StockStrategyDaemon(
         market_risk_gate_config: MarketRiskGateConfig | None = None,
         market_risk_gate_redis: Any | None = None,
         market_risk_wiring: MarketRiskGateWiringConfig | None = None,
+        volatility_settings: VolatilityReferenceSettings | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -214,7 +216,78 @@ class StockStrategyDaemon(
         self._llm_cooldown_key = "stock:daemon:llm_cooldown"
         self._llm_last_published_cache: dict[str, float] = {}
         self._llm_skip_log_cache: dict[tuple[str, str], float] = {}
+        # Per-symbol volatility reference publisher (shared/risk/
+        # volatility_reference.py). This daemon owns the only stock
+        # StreamingIndicatorEngine, so it is the only place that can supply the
+        # downstream stock_risk_filter's VolatilityFilter with BOTH the current
+        # ATR and its percentile threshold. Gated on the SAME
+        # ``volatility.enabled`` flag that wires the reader over there, so the
+        # two sides of the comparison can only ever be armed together — a live
+        # ATR against an absent threshold would reject every entry. Default
+        # (settings None / disabled) => no publisher => no Redis writes and no
+        # behaviour change on this live production path.
+        self._volatility_publisher: Any | None = None
+        if volatility_settings is not None and volatility_settings.enabled:
+            from shared.risk.volatility_reference import (
+                VolatilityReferencePublisher,
+            )
+
+            self._volatility_publisher = VolatilityReferencePublisher(
+                redis=redis,
+                asset_class="stock",
+                settings=volatility_settings,
+                atr_provider=self._atr_readings,
+            )
+            logger.info(
+                "Stock volatility reference publisher wired (percentile=%.1f, "
+                "window=%d, min_samples=%d, interval=%.0fs)",
+                volatility_settings.percentile,
+                volatility_settings.window_samples,
+                volatility_settings.min_samples,
+                volatility_settings.publish_interval_seconds,
+            )
         self._stop = asyncio.Event()
+
+    def _atr_readings(self) -> dict[str, float]:
+        """Current ATR per universe symbol, skipping unwarm/absent readings.
+
+        Uses ``engine.get_indicators(code)["atr"]`` — the RAW ATR in absolute
+        price units, the same accessor the entry strategies read, NOT
+        ``get_indicator_features`` whose ``"atr"`` is normalised by close. The
+        distinction is load-bearing: the published percentile threshold and the
+        published current ATR must be the same quantity, and a ratio compared
+        against an absolute-unit threshold would silently never fire.
+
+        A symbol whose engine is not warm reports 0.0; it is dropped rather
+        than sampled, so a cold start cannot depress the percentile with zeros.
+        """
+        readings: dict[str, float] = {}
+        for symbol in list(self._universe):
+            try:
+                atr = float(
+                    (self.engine.get_indicators(symbol) or {}).get("atr", 0.0) or 0.0
+                )
+            except Exception:
+                logger.exception("ATR read failed for %s; skipping this sample", symbol)
+                continue
+            if atr > 0.0:
+                readings[symbol] = atr
+        return readings
+
+    async def _publish_volatility_reference(self) -> None:
+        """Best-effort volatility-reference publish; never breaks the loop.
+
+        The publisher throttles itself to ``publish_interval_seconds``, so this
+        is safe to call unconditionally on every evaluation cycle.
+        """
+        if self._volatility_publisher is None:
+            return
+        try:
+            await self._volatility_publisher.maybe_publish()
+        except Exception:
+            logger.exception(
+                "volatility reference publish failed; continuing evaluation loop"
+            )
 
     async def _apply_watchlist(self, raw: Any) -> None:
         codes = parse_watchlist_codes(raw, max_symbols=self._max_symbols)
@@ -455,6 +528,7 @@ class StockStrategyDaemon(
         refresh_task = asyncio.create_task(self._refresh_loop())
         try:
             while not self._stop.is_set():
+                await self._publish_volatility_reference()
                 await self.evaluate_once()
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(

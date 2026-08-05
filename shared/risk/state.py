@@ -23,7 +23,6 @@ class RiskStateSnapshot:
         weekly_pnl_krw: KST calendar-week P&L in KRW (resets Monday 00:00 KST).
         consecutive_losses: Number of consecutive losing trades.
         daily_trade_count: Number of trades executed today.
-        atr_90th_percentile: 90th-percentile ATR value (used by VolatilityFilter).
         monthly_pnl_krw: KST calendar-month P&L in KRW (resets on the 1st,
             00:00 KST).  Not persisted in this HASH — populated by
             ``RuntimeRiskState.snapshot()`` from the sibling ``:period`` HASH
@@ -40,7 +39,6 @@ class RiskStateSnapshot:
     weekly_pnl_krw: float = 0.0
     consecutive_losses: int = 0
     daily_trade_count: int = 0
-    atr_90th_percentile: float = 0.0
     monthly_pnl_krw: float = 0.0
     size_reduce_until_kst: str = ""
 
@@ -50,12 +48,22 @@ class RiskStateSnapshot:
 # absent — they live in the ``risk:state:{asset_class}:period`` sibling HASH
 # (owned by RuntimeRiskState) because this HASH's 24 h TTL cannot cover
 # calendar-week/month windows.
+#
+# ``atr_90th_percentile`` used to live here.  It was removed rather than left
+# dormant: it had no production writer, defaulted to ``0.0``, and was read by
+# ``VolatilityFilter`` — the combination that made "just wire the ATR provider"
+# a one-line change capable of rejecting every entry.  The volatility threshold
+# is now per-symbol and lives in ``risk:volatility:reference:{asset_class}``
+# (see :mod:`shared.risk.volatility_reference`), which is a per-asset-class
+# scalar's only correct replacement: ATR is in absolute price units, so one
+# number cannot gate a multi-symbol universe.  A pre-existing hash may still
+# carry the stale field; ``load()`` ignores unknown fields, so it decays with
+# the key's own TTL.
 _FIELD_MAP: dict[str, type] = {
     "daily_pnl_krw": float,
     "weekly_pnl_krw": float,
     "consecutive_losses": int,
     "daily_trade_count": int,
-    "atr_90th_percentile": float,
 }
 
 

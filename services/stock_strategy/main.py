@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from shared.config.runtime_defaults import redis_url_from_env
+from shared.risk.volatility_reference import VolatilityReferenceSettings
 from shared.streaming.candle_warmup import StockPrewarmConfig, warmup_engine
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,26 @@ def _candidate_stream_for(mode: str) -> str:
         if mode == "shadow"
         else "signal.candidate.stock"
     )
+
+
+def _load_volatility_settings() -> VolatilityReferenceSettings | None:
+    """Load ``risk_stock.volatility``, or ``None`` when it cannot be read.
+
+    A config failure must not take down this live production daemon, and it
+    must not silently half-arm the volatility gate either: returning ``None``
+    leaves the publisher unbuilt, which the downstream filter observes as "no
+    reference" and resolves by skipping with a warning — never by rejecting.
+    """
+    try:
+        from shared.risk.config import StockRiskConfig
+
+        return StockRiskConfig.from_yaml().volatility
+    except Exception:
+        logger.exception(
+            "risk_stock.volatility load failed; volatility reference publisher "
+            "not built (downstream VolatilityFilter stays inert)"
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +277,13 @@ async def _build_and_run() -> int:
     market_risk_gate_config = MarketRiskGateConfig.load_or_default()
     market_risk_wiring = MarketRiskGateWiringConfig.load()
 
+    # Per-symbol volatility reference (config/risk.yaml::risk_stock.volatility).
+    # Loaded ONCE at startup. The SAME ``enabled`` flag wires the reader in
+    # services/stock_risk_filter, so the current ATR and its percentile
+    # threshold are armed together or not at all — arming only the ATR side is
+    # what would reject every entry. Default false ⇒ publisher not built.
+    volatility_settings = _load_volatility_settings()
+
     daemon = StockStrategyDaemon(
         redis=redis_client,
         feed=feed,
@@ -277,6 +305,7 @@ async def _build_and_run() -> int:
         market_risk_wiring=market_risk_wiring,
         prewarm_fn=prewarm_fn,
         max_prewarm_per_cycle=prewarm_cfg.max_prewarm_per_cycle,
+        volatility_settings=volatility_settings,
     )
 
     loop = asyncio.get_running_loop()

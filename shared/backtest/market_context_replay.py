@@ -43,6 +43,7 @@ from shared.indicators.engine import (
 )
 from shared.instruments.contract_spec import ContractSpec
 from shared.macro.base import MacroSnapshot
+from shared.risk.atr_percentile import DEFAULT_ATR_PERCENTILE, atr_percentile
 
 # Number of leading bars reserved for warmup (ATR, VWAP, etc.). Sourced from the
 # determinism commons so replay and any other harness share one warmup baseline.
@@ -197,8 +198,13 @@ class MarketContextReplay:
             )
             .series["value"]
         )
-        # 90th percentile over the entire series (as a fixed reference)
-        self._atr_90th = float(np.nanpercentile(self._atr_series, 90))
+        # 90th percentile over the entire series (as a fixed reference).
+        # Delegated to shared.risk.atr_percentile so the replay reference and
+        # the live per-symbol publisher share ONE percentile implementation.
+        # ``or 0.0`` restores this call site's historical contract: the shared
+        # helper returns None for an undefined/non-positive percentile, while
+        # ``MarketContext.atr_90th_percentile`` is a non-optional float.
+        self._atr_90th = atr_percentile(self._atr_series, DEFAULT_ATR_PERCENTILE) or 0.0
 
     # ------------------------------------------------------------------
     # Iterator

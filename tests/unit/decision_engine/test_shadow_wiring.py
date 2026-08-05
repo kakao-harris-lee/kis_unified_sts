@@ -29,9 +29,12 @@ def test_is_producing_mode():
 
 @pytest.mark.asyncio
 async def test_resolve_context_provider_off_is_inert_stub():
-    cp, feed, sync = await dem._resolve_context_provider("off", object())
+    cp, feed, sync, atr_readings = await dem._resolve_context_provider("off", object())
     assert feed is None
     assert sync is None
+    # No engine exists in off mode, so there is nothing to sample for the
+    # volatility reference either — the publisher must not be buildable.
+    assert atr_readings is None
     assert await cp() is None  # stub emits nothing
 
 
@@ -41,20 +44,23 @@ async def test_resolve_context_provider_live_builds_real(monkeypatch):
 
     async def _fake_builder(redis_client):
         called["redis"] = redis_client
-        return ("PROVIDER", "FEED", "SYNC")
+        return ("PROVIDER", "FEED", "SYNC", "ATR")
 
     monkeypatch.setattr(dem, "_build_context_provider", _fake_builder)
     sentinel = object()
-    cp, feed, sync = await dem._resolve_context_provider("live", sentinel)
+    cp, feed, sync, atr_readings = await dem._resolve_context_provider("live", sentinel)
     assert called["redis"] is sentinel  # real builder invoked for live
-    assert (cp, feed, sync) == ("PROVIDER", "FEED", "SYNC")
+    assert (cp, feed, sync, atr_readings) == ("PROVIDER", "FEED", "SYNC", "ATR")
 
 
 @pytest.mark.asyncio
 async def test_resolve_context_provider_shadow_builds_real(monkeypatch):
     async def _fake_builder(redis_client):
-        return ("PROVIDER", "FEED", "SYNC")
+        return ("PROVIDER", "FEED", "SYNC", "ATR")
 
     monkeypatch.setattr(dem, "_build_context_provider", _fake_builder)
-    cp, feed, sync = await dem._resolve_context_provider("shadow", object())
+    cp, feed, sync, atr_readings = await dem._resolve_context_provider(
+        "shadow", object()
+    )
     assert cp == "PROVIDER"
+    assert atr_readings == "ATR"

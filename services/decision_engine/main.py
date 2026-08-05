@@ -64,6 +64,7 @@ class DecisionEngineDaemon:
         shadow_gate_log_interval_seconds: float = 300.0,
         futures_context_redis: Any | None = None,
         futures_context_key: str = "futures:context:latest",
+        volatility_publisher: Any | None = None,
     ) -> None:
         self.redis = redis
         self.setups = setups
@@ -87,10 +88,36 @@ class DecisionEngineDaemon:
         self.market_risk_redis = market_risk_redis
         self.shadow_gate_log_interval_seconds = shadow_gate_log_interval_seconds
         self._last_shadow_gate_log_monotonic: float | None = None
+        # Per-symbol volatility reference publisher (shared/risk/
+        # volatility_reference.py). This daemon owns the only futures
+        # StreamingIndicatorEngine, so it is the only place that can supply the
+        # downstream risk_filter's VolatilityFilter with BOTH the current ATR
+        # and its percentile threshold. None => unwired (config default) =>
+        # nothing is published and the filter stays inert, i.e. no behaviour
+        # change. Publishing is read-only w.r.t. this daemon's own output: it
+        # never gates or sizes a candidate here.
+        self.volatility_publisher = volatility_publisher
         self._stop = asyncio.Event()
+
+    async def _publish_volatility_reference(self) -> None:
+        """Best-effort volatility-reference publish; never breaks the loop.
+
+        The publisher throttles itself to ``publish_interval_seconds``, so this
+        is safe to call unconditionally on every iteration regardless of the
+        daemon's own tick cadence.
+        """
+        if self.volatility_publisher is None:
+            return
+        try:
+            await self.volatility_publisher.maybe_publish()
+        except Exception:
+            logger.exception(
+                "volatility reference publish failed; continuing decision loop"
+            )
 
     async def run(self) -> None:
         while not self._stop.is_set():
+            await self._publish_volatility_reference()
             try:
                 ctx = await self.context_provider()
             except Exception:
@@ -310,14 +337,53 @@ def _is_producing_mode(mode: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def build_atr_readings(engine: Any, symbol: str) -> Callable[[], dict[str, float]]:
+    """Build the ``{symbol: current_atr}`` reader for the volatility publisher.
+
+    Reads ``engine.get_indicators(symbol)["atr"]`` — the RAW ATR in absolute
+    price units, the same accessor and same fallback
+    ``FuturesContextProvider.__call__`` uses, so the published reading cannot
+    drift from the one Setup A/C act on.
+
+    The accessor choice is load-bearing, not incidental. The engine also exposes
+    ``get_indicator_features``, whose ``"atr"`` lives under the same flat key but
+    is NORMALISED by close (a ratio, ~0.001-0.05). Swapping the two would leave
+    the gate working — the fused reference keeps both operands on one scale, so
+    it would not fail open — but the quantity being gated would silently change
+    from "absolute price movement" to "movement as a fraction of price". Pinned
+    by ``tests/unit/risk/test_provider_wiring.py``.
+
+    An unwarm engine reports 0.0; the symbol is omitted rather than sampled,
+    since a floor of zeros would depress the percentile.
+
+    Module-level (not a closure inside ``_build_context_provider``) so the
+    accessor contract is reachable by a test without standing up a KIS feed.
+    """
+
+    def _atr_readings() -> dict[str, float]:
+        atr = float((engine.get_indicators(symbol) or {}).get("atr", 0.0) or 0.0)
+        return {symbol: atr} if atr > 0.0 else {}
+
+    return _atr_readings
+
+
 async def _build_context_provider(
     redis_client: Any,
-) -> tuple[Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any]:
     """Wire indicator engine + StreamConsumerFeed(raw_data) + FuturesContextProvider.
 
     Mode-agnostic: used for both shadow and live producing modes. Returns
-    ``(context_provider, feed, sync_redis)``.  The caller is responsible for
-    calling ``await feed.stop()`` and ``sync_redis.close()`` on shutdown.
+    ``(context_provider, feed, sync_redis, atr_readings)``.  The caller is
+    responsible for calling ``await feed.stop()`` and ``sync_redis.close()`` on
+    shutdown.
+
+    ``atr_readings`` is a zero-arg ``{symbol: current_atr}`` reader over the
+    same ``engine.get_indicators(symbol)["atr"]`` accessor the context provider
+    uses.  It exists because this daemon owns the only ``StreamingIndicatorEngine``
+    in the futures pipeline, so it is the only place that can publish the
+    volatility reference the downstream ``risk_filter`` consumes — and because
+    sharing the accessor guarantees the published ATR is the identical value
+    Setup A/C see, not a second ATR from another backend.
     """
     import os
     from datetime import UTC, datetime
@@ -384,17 +450,19 @@ async def _build_context_provider(
         events_provider=_events_provider,
         now_fn=lambda: datetime.now(UTC),
     )
-    return provider, feed, sync_redis
+
+    return provider, feed, sync_redis, build_atr_readings(engine, symbol)
 
 
 async def _resolve_context_provider(
     mode: str, redis_client: Any
-) -> tuple[Any, Any, Any]:
-    """Return (context_provider, feed, sync_redis) for the mode.
+) -> tuple[Any, Any, Any, Any]:
+    """Return (context_provider, feed, sync_redis, atr_readings) for the mode.
 
     Producing modes (shadow|live) → real FuturesContextProvider (+ feed +
-    sync_redis to close on shutdown). Otherwise an inert stub returning None,
-    with feed=sync_redis=None.
+    sync_redis to close on shutdown + the ATR reader that feeds the volatility
+    reference publisher). Otherwise an inert stub returning None, with
+    feed=sync_redis=atr_readings=None (no engine exists to sample).
     """
     if _is_producing_mode(mode):
         return await _build_context_provider(redis_client)
@@ -402,7 +470,52 @@ async def _resolve_context_provider(
     async def _stub_context_provider() -> None:
         return None
 
-    return _stub_context_provider, None, None
+    return _stub_context_provider, None, None, None
+
+
+def _build_volatility_publisher(redis_client: Any, atr_readings: Any) -> Any | None:
+    """Build the futures per-symbol volatility reference publisher, or ``None``.
+
+    Gated on ``config/risk.yaml`` ``risk.volatility.enabled`` — the SAME flag
+    that wires the reader in ``services/risk_filter``. That single flag is what
+    makes the two sides of the ``VolatilityFilter`` comparison land together:
+    an operator cannot arm a live ATR against an absent threshold, which is the
+    configuration that would reject every entry and halt all futures trading.
+
+    Returns ``None`` (nothing published, filter stays inert) when the flag is
+    off, when no engine exists to sample (``off`` mode), or on any wiring
+    failure. Publishing is additive and best-effort; it never touches the
+    candidate path.
+    """
+    if atr_readings is None:
+        return None
+    try:
+        from shared.risk.config import FuturesRiskConfig
+        from shared.risk.volatility_reference import VolatilityReferencePublisher
+
+        settings = FuturesRiskConfig.from_yaml().volatility
+        if not settings.enabled:
+            return None
+        logger.info(
+            "Futures volatility reference publisher wired (percentile=%.1f, "
+            "window=%d, min_samples=%d, interval=%.0fs)",
+            settings.percentile,
+            settings.window_samples,
+            settings.min_samples,
+            settings.publish_interval_seconds,
+        )
+        return VolatilityReferencePublisher(
+            redis=redis_client,
+            asset_class="futures",
+            settings=settings,
+            atr_provider=atr_readings,
+        )
+    except Exception:
+        logger.exception(
+            "futures volatility reference publisher wiring failed; "
+            "no reference will be published (VolatilityFilter stays inert)"
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -433,9 +546,10 @@ async def _build_and_run() -> int:
     mode = _resolve_mode()
     candidate_stream = _candidate_stream_for(mode)
 
-    context_provider, feed, sync_redis = await _resolve_context_provider(
+    context_provider, feed, sync_redis, atr_readings = await _resolve_context_provider(
         mode, redis_client
     )
+    volatility_publisher = _build_volatility_publisher(redis_client, atr_readings)
 
     # Market-risk ENTRY gate (roadmap §5.2 track C): config loaded ONCE at
     # startup — the hot path never reparses YAML. The shared evaluator reads
@@ -458,6 +572,7 @@ async def _build_and_run() -> int:
         # Phase C structured-context trace: reuse the sync client that reads
         # market:risk:latest — it reads futures:context:latest the same way.
         futures_context_redis=market_risk_redis,
+        volatility_publisher=volatility_publisher,
     )
 
     loop = asyncio.get_running_loop()

@@ -328,11 +328,14 @@ def test_from_config_default_providers_never_reject() -> None:
 
 def test_from_config_custom_providers_propagate() -> None:
     cfg = _cfg()
-    calls: dict[str, int] = {"atr": 0, "spread": 0, "position": 0}
+    calls: dict[str, int] = {"volatility": 0, "spread": 0, "position": 0}
 
-    def atr() -> float:
-        calls["atr"] += 1
-        return 0.5
+    def volatility(_symbol: str) -> None:
+        # Both operands of the volatility comparison travel in ONE object, so
+        # there is no ATR-only provider to inject here; returning None is the
+        # "no published reference" case, which makes the filter skip.
+        calls["volatility"] += 1
+        return None
 
     def spread() -> float:
         calls["spread"] += 1
@@ -345,13 +348,13 @@ def test_from_config_custom_providers_propagate() -> None:
     layer = RiskFilterLayer.from_config(
         cfg,
         trading_windows=["00:00-23:59"],
-        current_atr_provider=atr,
+        volatility_reference_provider=volatility,
         current_spread_provider=spread,
         has_open_position_provider=has_pos,
     )
-    # VolatilityFilter should have the injected provider, not the stub.
+    # VolatilityFilter should have the injected provider, not None.
     vol = layer._filters[5]
-    assert vol._current_atr_provider is atr
+    assert vol._reference_provider is volatility
     spr = layer._filters[6]
     assert spr._current_spread_provider is spread
     op = layer._filters[7]

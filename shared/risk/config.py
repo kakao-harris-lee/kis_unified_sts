@@ -554,6 +554,9 @@ from shared.config.base import ServiceConfigBase  # noqa: E402
 from shared.risk.futures_margin import (  # noqa: E402 — publish-side SoT constant
     MARGIN_RISK_LATEST_KEY,
 )
+from shared.risk.volatility_reference import (  # noqa: E402 — writer/reader SoT
+    VolatilityReferenceSettings,
+)
 
 
 class PortfolioMddFilterSettings(BaseModel):
@@ -906,6 +909,16 @@ class FuturesRiskConfig(ServiceConfigBase):
             "Gross notional / equity leverage cap (Phase 4-g) — both assets; "
             "asset-specific cap. Structurally inert (enabled=false / shadow / no "
             "provider wired) until a follow-up wires a snapshot provider + flip"
+        ),
+    )
+    volatility: VolatilityReferenceSettings = Field(
+        default_factory=VolatilityReferenceSettings,
+        description=(
+            "Per-symbol ATR percentile reference for the VolatilityFilter — "
+            "both assets. ONE 'enabled' flag drives BOTH the publisher (in the "
+            "service that owns the indicator engine) and the filter's provider "
+            "wiring, so the current ATR and its threshold can only ever be "
+            "armed together. Default false ⇒ writer dormant + filter inert"
         ),
     )
 
