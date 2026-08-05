@@ -26,6 +26,7 @@ from tos.egressgw import (
     DEFERRED_ITEMS,
     SEND_VERIFY_ITEMS,
     BrokerApplicability,
+    SendVerifyItem,
     VerifyDisposition,
     VerifyOutcome,
 )
@@ -43,6 +44,7 @@ from tos.marketfeed import ValueViewDisposition, view_digest_matches
 from tos.rcl import CapacityState
 
 from ._slice_fixtures import (
+    BAND_PROFILE,
     CROSSING_BAR_INDEX,
     DENIED_BAR_INDEX,
     FLAT_BAR_INDEX,
@@ -245,6 +247,68 @@ def test_c_the_seventeen_item_verify_list_admitted_with_a_positive_synthetic_na(
     )
     assert kinds.index("POTENTIALLY_LIVE_OBSERVED") > kinds.index("SEND_STARTED")
     assert kinds.index("EGRESS_RESULT_RECORDED") > kinds.index("POTENTIALLY_LIVE_OBSERVED")
+
+
+def test_the_venue_shape_price_is_value_sourced_and_converged() -> None:
+    """(design #36 §7.3) The shape venue admits carries the number the strategy decided on.
+
+    Slice #1's last internal inconsistency, as design #35 §4.4 recorded it: venue admitted a
+    4,200-shape while the command carried the value-surface 4,499,000, and no verify path
+    compared the two — harmless, and *only* harmless because nothing looked. Both halves close
+    here. The shape price is re-sourced from the same admitted value the command was priced on,
+    and the item-11 context reads the **same object** step 3 folded rather than rebuilding a
+    look-alike, so the two can no longer disagree without something failing loudly.
+
+    The convergence is over the price-comparison pair only — the shape and the constraints
+    ``order_shape_admissible`` compares. The snapshot / policy / decision inputs are still built
+    twice; they are deterministic and carry no runtime value, and folding them in would reach
+    past this seam (design #36 §2.2).
+    """
+    sliced = run_slice()
+    crossing_close = sliced.book.context_for(CROSSING_BAR_INDEX).close
+    (bound,) = sliced.resolver.contexts
+
+    # ★ value-sourced: the shape price is the crossing close, not the injected stand-in.
+    assert bound.order_shape is not None
+    assert bound.order_shape.price == crossing_close
+    assert bound.order_shape.price != 4200
+
+    # ★ one source: the item-11 context reads step 3's retained pair, object-identically.
+    #   The constraints are fixed for the run, so their identity is readable at the end of it.
+    assert bound.venue_shape_constraints is sliced.venue_stage.shape_constraints
+    #   The shape is not: ``resolved_shape`` is **single-retention**, inherited from
+    #   ``OrderConstructionStage.construction`` (design #36 §10-4 — per-attempt keying is #37's),
+    #   so after a multi-bar run it holds the *last* fold, which is the flat bar's close and not
+    #   the crossing's. That is a real property of the retention model, so it is asserted rather
+    #   than worked around — and the shape identity is then read where it is live, below.
+    assert sliced.venue_stage.resolved_shape is not None
+    assert sliced.venue_stage.resolved_shape.price == sliced.book.context_for(
+        FLAT_BAR_INDEX
+    ).close
+
+    # ★ …so the object identity is taken on a run that ends at the crossing: same shipped wiring,
+    #   one fold, and the context the resolver produced carries **that object**, not a rebuild.
+    at_crossing = run_slice(profile=BAND_PROFILE[: CROSSING_BAR_INDEX + 1])
+    (bound_at_crossing,) = at_crossing.resolver.contexts
+    assert bound_at_crossing.order_shape is at_crossing.venue_stage.resolved_shape
+    assert bound_at_crossing.venue_shape_constraints is (
+        at_crossing.venue_stage.shape_constraints
+    )
+    assert bound_at_crossing.order_shape is not None
+    assert bound_at_crossing.order_shape.price == crossing_close
+
+    # ★ the inconsistency this closes: the admitted shape and the command now agree.
+    assert bound.construction is not None
+    assert bound.order_shape.price == int(bound.construction.derivation.price)
+
+    # ★ …and item 11 is still SATISFIED — the re-sourced price is venue-admissible.
+    verification = sliced.gateway.verifications[0]
+    item11 = next(
+        verdict
+        for verdict in verification.verdicts
+        if verdict.item is SendVerifyItem.VENUE_SNAPSHOT_AND_ADMISSIBILITY_DECISION
+    )
+    assert item11.outcome is VerifyOutcome.SATISFIED
 
 
 def test_the_synthetic_transport_was_called_exactly_once_with_the_bound_scalars() -> None:

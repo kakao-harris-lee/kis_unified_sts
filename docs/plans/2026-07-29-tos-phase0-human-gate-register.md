@@ -230,6 +230,19 @@ brokercap INSTANCE bound family(brokercap:1176–1181) · protective reserve mat
 1303–1315) · posttrade brokercap dimension 신설 여부(posttrade:1784–1785) · fd `B_rate_limit_recovery` 충분성
 (failuredomain:696–697).
 
+**병기 — brokercap INSTANCE bound family(brokercap:1176–1181) 군 (설계 #36 구현 커밋에서 등재, 2026-08-06)**
+
+| 항목 | 내용 |
+|---|---|
+| 키 | brokercap venue shape constraint bound — band/tick per scope (`price_min`/`price_max`/`tick_size`) |
+| 현상 | 슬라이스 provisional stand-in(`tos/tests/slice/_slice_fixtures.py::venue_shape_constraints` = 1000 / 9,000,000 / 500). 값이 아니라 **충족 조건만** 승인됨: `price_min ≤ V ≤ price_max` ∧ `(V − price_min) mod tick_size == 0`, 여기서 `V` = step 3에 도달하는 모든 값-표면 shape 가격 |
+| 소유 | **P0-2 Broker Capability Profile INSTANCE** (설계 #34 §9 broker-specific bound 행) |
+| cross-ref | KIS 초안 dimension 17 `MARKET_INSTRUMENT_CONSTRAINTS`(broker-capability-profile-kis-draft:88 · status **UNKNOWN** · 근거 = 로컬 설정, broker 조회 코드 없음) · 동 문서 §7 item 3/4 게이트(`:273–274` — INSTANCE bound family 값·키 승인 / capability 값·conformance class 할당) |
+| 교체 트리거 | 슬라이스 scope의 Broker Capability Profile INSTANCE가 **측정된** venue shape 제약으로 승인되어 dimension 17이 UNKNOWN→VERIFIED로 승격되는 관측 시(PASS 규율 `:60` "bounds were measured" + 독립 리뷰어 서명, `broker_specific`=MEASURED `:97`) → 슬라이스 fixture stand-in을 프로파일-유도 값으로 교체 |
+| VERIFICATION-PROFILE 영향 | **신규 키 0건.** venue #19 §8.0 비준 판정(venue-tradability-design:1001 — tick/lot/band는 `VenueConstraintPolicy` policy content 주입이지 코드 상수 아님)과 정합하므로 §8-1(VP·P0-1 Bounds-Approver 트랙)에는 행을 추가하지 않는다 |
+| 전방 입력 (미해소) | 이 제약의 진짜 상류가 P0-2(broker INSTANCE)가 아니라 **policy 아티팩트 거버넌스**(`VenueConstraintPolicy` policy-content · spg §27 q1)일 가능성 — 소관 재정밀화를 후속 계약 입력물로 남긴다 |
+| provenance | 오케스트레이터 판정 2026-08-06. **정본 = 설계 #36 §10-2**(`docs/plans/2026-08-05-tos-venue-shape-value-surface-design.md`) 비준 기록 자체이며 외부 커밋 아티팩트 인용이 아니다 |
+
 ### 8-3. 승인 대기 — 키 실재·값 null/TBD (~150키, Bounds-Approver 값 승인 대상)
 
 문서별 소유 키 목록은 추출 실측대로: Time 5 · #4 5 · #5 11 · #6 6 · #7 5(§25 12 bound 실재) · #8 1 · #10 5 ·

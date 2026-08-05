@@ -41,7 +41,7 @@ from __future__ import annotations
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 
 from tos.canonical import CanonicalizationScheme
-from tos.dsl import FLAT_QUANTITY_BASIS, ContextValueView
+from tos.dsl import FLAT_QUANTITY_BASIS, ContextValue, ContextValueView
 from tos.egressgw._base import ArtifactIntegrityError
 from tos.egressgw.records import (
     AdmittedPriceObservation,
@@ -103,6 +103,7 @@ __all__ = [
     "OrderConstructionStage",
     "VenueConstraintStage",
     "admitted_price_from_view",
+    "admitted_shape_price_from_view",
     "build_order_conformance_proof",
     "candidate_command_verdict",
     "construct_candidate_command",
@@ -146,6 +147,50 @@ def _denied(reason: str) -> QuantityDerivation:
     return QuantityDerivation(outcome=DerivationOutcome.DENIED, denial_reason=reason)
 
 
+def _exact_admitted_int_value(
+    view: ContextValueView, *, field_key: str
+) -> tuple[int | None, ContextValue | None]:
+    """The single #32 §2.5 exact-integer admission predicate both projections share.
+
+    Returns ``(magnitude, ContextValue)`` when exactly one value carries ``field_key`` and its
+    value is an exact ``int``; otherwise ``(None, None)``. This is the sole definition of "an
+    exact-integer admitted value", so :func:`admitted_price_from_view` and
+    :func:`admitted_shape_price_from_view` cannot drift in what they admit (design #36 §3.2) —
+    a future relaxation of the rule reaches both projections or neither.
+
+    ★ the bool≠1 contract (its home moved here from ``admitted_price_from_view``'s docstring when
+    the check was shared — design #36 §3.2): ``ScalarValue`` is ``bool | int | float | str``
+    (``dsl/vocabulary.py:93``), so a ``bool``-valued :class:`~tos.dsl.ContextValue` is
+    **reachable**, not hypothetical, and ``bool`` is an ``int`` subclass in Python. It is refused
+    by the **exact** ``type(magnitude) is not int`` check below, never by an ``isinstance`` that
+    would silently admit ``True`` as ``1`` (design #32 §2.5 excludes bool from order comparison).
+    A fractional magnitude stays fail-closed until the deterministic-float projection rule is
+    ratified. This is the exact line the bool canary in ``test_egressgw_construction.py``
+    mutates, for both projections.
+
+    Args:
+        view: The resolved :class:`~tos.dsl.ContextValueView` for this decision.
+        field_key: The governed field key to project (injected, never hardcoded).
+
+    Returns:
+        The exact integer magnitude and the :class:`~tos.dsl.ContextValue` it came from, or
+        ``(None, None)`` when nothing is admissible under the rule above.
+    """
+    if not view.values:
+        return (None, None)
+    matched = [value for value in view.values if value.field_key == field_key]
+    if len(matched) != 1:
+        # ``ContextValueView`` already rejects duplicate field keys, so the only reachable
+        # non-unique case is zero matches; the positive ``== 1`` membership keeps a future
+        # relaxation from falling open here.
+        return (None, None)
+    admitted = matched[0]
+    magnitude = admitted.value
+    if type(magnitude) is not int:
+        return (None, None)
+    return (magnitude, admitted)
+
+
 def admitted_price_from_view(
     view: ContextValueView, *, field_key: str
 ) -> AdmittedPriceObservation:
@@ -179,11 +224,9 @@ def admitted_price_from_view(
       "no positive finite value". An unknown price is a no-send, never a last-known default
       (mirroring ``derive_order_size``'s own rule).
 
-    Only an exact integer magnitude is projected. D-E2 admits the exposed numeric form as integer
-    minor / tick units precisely because a fractional magnitude is fail-closed until the
-    deterministic-float projection rule is ratified (design #32 §2.5), and ``bool`` — an ``int``
-    subclass in Python — is refused by an exact type check rather than by an ``isinstance`` that
-    would silently admit ``True`` as ``1``.
+    Only an exact integer magnitude is projected, and that rule — including why ``bool`` is
+    refused by an exact type check rather than by an ``isinstance`` — lives once in
+    :func:`_exact_admitted_int_value`, shared with the venue-shape projection (design #36 §3.2).
 
     Args:
         view: The resolved :class:`~tos.dsl.ContextValueView` for this decision.
@@ -200,15 +243,8 @@ def admitted_price_from_view(
         source=CAPSULE_CONTEXT_SOURCE,
         snapshot_digest=view.snapshot_canonical_digest,
     )
-    matched = [value for value in view.values if value.field_key == field_key]
-    if len(matched) != 1:
-        # ``ContextValueView`` already rejects duplicate field keys, so the only reachable
-        # non-unique case is zero matches; the positive ``== 1`` membership keeps a future
-        # relaxation from falling open here.
-        return lineage
-    admitted = matched[0]
-    magnitude = admitted.value
-    if type(magnitude) is not int:
+    magnitude, admitted = _exact_admitted_int_value(view, field_key=field_key)
+    if magnitude is None or admitted is None:
         return lineage
     return AdmittedPriceObservation(
         source=CAPSULE_CONTEXT_SOURCE,
@@ -216,6 +252,37 @@ def admitted_price_from_view(
         snapshot_digest=view.snapshot_canonical_digest,
         value_payload_digest=admitted.payload_digest,
     )
+
+
+def admitted_shape_price_from_view(view: ContextValueView, *, field_key: str) -> int | None:
+    """Project one admitted Critical Input value onto an integer venue-shape price (design #36 §4).
+
+    :attr:`~tos.venue.OrderShapeFields.price` is ``int`` and D-E2 exposes numeric
+    order-comparison values as integer minor / tick units (design #32 §2.5), so this is an exact
+    int→int projection — no Decimal round-trip, no rounding, no normalization. Venue's own
+    ``order_shape_admissible`` contract forbids permissive rounding, so a projection that
+    adjusted a magnitude to fit the grid would manufacture a *new* broker-request shape.
+
+    An absent / non-unique / non-integer value yields ``None``: an unknown shape price is a
+    structural ``UNKNOWN`` at ``order_shape_admissible``, never a last-known injected default.
+    The exact-int / bool≠1 admission rule lives once in :func:`_exact_admitted_int_value`
+    (design #36 §3.2), so this projection cannot drift from the price projection's.
+
+    Unlike :func:`admitted_price_from_view`, the two absences are **not** distinguished here: a
+    shape price is a raw ``int`` with no lineage fields to record an explicit-empty view in, and
+    venue folds both absences to the same ``UNKNOWN``. Inventing a distinction the consumer
+    cannot act on would be the over-claim, not the honesty.
+
+    Args:
+        view: The resolved :class:`~tos.dsl.ContextValueView` for this decision.
+        field_key: The governed field key the venue shape is priced on (injected, never
+            hardcoded — the same key the sizing policy names).
+
+    Returns:
+        The exact integer shape price, or ``None`` when the value surface carries none.
+    """
+    magnitude, _admitted = _exact_admitted_int_value(view, field_key=field_key)
+    return magnitude
 
 
 def derive_order_size(
@@ -954,8 +1021,14 @@ class VenueConstraintStage:
         shape: OrderShapeFields | None,
         constraints: VenueShapeConstraints | None,
         decision: OrderAdmissibilityDecision | None = None,
+        shape_price_field_key: str | None = None,
     ) -> None:
-        """Configure the stage with its injected venue facts."""
+        """Configure the stage with its injected venue facts.
+
+        ``shape_price_field_key`` names the governed Critical Input field the venue shape is
+        priced on (design #36 §3.3). Left ``None``, the injected shape is folded exactly as
+        before — the value-surface seam is off.
+        """
         self._observed_session_phase = observed_session_phase
         self._action_class = action_class
         self._snapshot = snapshot
@@ -963,15 +1036,54 @@ class VenueConstraintStage:
         self._shape = shape
         self._constraints = constraints
         self._decision = decision
+        self._shape_price_field_key = shape_price_field_key
+        #: The shape this stage actually folded, retained so the send-boundary context reads the
+        #: *same* object instead of rebuilding a look-alike (design #36 §3.3). ``None`` before
+        #: step 3 has run — fail-closed, never a stand-in.
+        self.resolved_shape: OrderShapeFields | None = None
+
+    @property
+    def shape_constraints(self) -> VenueShapeConstraints | None:
+        """The injected constraints, exposed so the item-11 context reads the same object the
+        step-3 fold used (design #36 §3.3 convergence)."""
+        return self._constraints
+
+    def _shape_for(self, request: StageRequest) -> OrderShapeFields | None:
+        """The shape this step folds and the item-11 context reuses (design #36 §3.3).
+
+        The value surface wins when both a governed ``shape_price_field_key`` and a published
+        view are present — that is the number the decision was actually priced on. A tick that
+        carried no view is *value-free*, not "no price": the injected shape stands in unchanged.
+        When the field is governed but the value is unprojectable, the price becomes ``None``
+        (fail-closed) — an unknown shape price is a structural ``UNKNOWN`` at
+        ``order_shape_admissible``, not the stale injected stand-in.
+
+        ⚠ Under the slice's provisional constraints (design #36 §3.4) the injected fallback
+        price is itself ``INADMISSIBLE`` — it is off the provisional tick grid — so a value-free
+        tick reaching step 3 fails admissibility rather than silently passing. The slice's
+        crossing tick always carries a view, so this fallback path is unexercised on the happy
+        path; the mutation target in design #36 §9-4 relies on exactly that.
+        """
+        view = request.value_view
+        if self._shape_price_field_key is None or view is None:
+            return self._shape
+        if self._shape is None:
+            return None
+        projected = admitted_shape_price_from_view(
+            view, field_key=self._shape_price_field_key
+        )
+        return self._shape.model_copy(update={"price": projected})
 
     def __call__(self, request: StageRequest) -> StageVerdict:
         """Produce the non-authorizing venue verdict for step 3."""
+        resolved_shape = self._shape_for(request)
+        self.resolved_shape = resolved_shape
         result = fold_venue_admissibility(
             observed_session_phase=self._observed_session_phase,
             action_class=self._action_class,
             snapshot=self._snapshot,
             policy=self._policy,
-            shape=self._shape,
+            shape=resolved_shape,
             constraints=self._constraints,
         )
         return venue_admissibility_verdict(result, self._decision, step=request.step)

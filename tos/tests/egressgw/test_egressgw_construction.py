@@ -28,6 +28,7 @@ from tos.egressgw import (
     ProposedConstructionEnvelope,
     VenueConstraintStage,
     admitted_price_from_view,
+    admitted_shape_price_from_view,
     candidate_command_verdict,
     derive_economic_effect_envelope,
     derive_order_size,
@@ -747,9 +748,11 @@ def test_a_bool_valued_context_value_is_never_projected_as_a_price(flag: bool) -
     ``ScalarValue`` is ``bool | int | float | str`` (``dsl/vocabulary.py:93``), so a
     ``bool``-valued :class:`~tos.dsl.ContextValue` is **reachable**, not hypothetical — and
     ``bool`` is an ``int`` subclass in Python. :func:`admitted_price_from_view` therefore admits a
-    magnitude by **exact type** (``type(magnitude) is not int``, ``construction.py:211``) rather
-    than by ``isinstance``; the docstring at ``construction.py:184-186`` states that claim
-    explicitly, and this is the canary that makes the claim load-bearing.
+    magnitude by **exact type** rather than by ``isinstance`` — and since design #36 §3.2 shared
+    that one check, the line is ``type(magnitude) is not int`` inside ``_exact_admitted_int_value``
+    (``construction.py:189``) and it now governs **both** projections; the docstring at
+    ``construction.py:164-166`` states the claim explicitly, and this is the canary that makes it
+    load-bearing.
 
     Regressing that one check to ``isinstance`` would let ``True`` become ``Decimal(1)`` and be
     sized against as a price, silently. The review's mutation of exactly that line survived the
@@ -785,3 +788,157 @@ def test_a_bool_valued_context_value_is_never_projected_as_a_price(flag: bool) -
     admitted = admitted_price_from_view(_single_value_view(1), field_key="close")
     assert admitted.value == Decimal(1)
     assert admitted.value_payload_digest == "payload-digest-projection"
+
+
+# ---------------------------------------------------------------------------
+# design #36 §7.2 — the venue-shape price projection and the step-3 value surface
+# ---------------------------------------------------------------------------
+
+
+#: Every ``ScalarValue`` inhabitant, with the two forms ``FrozenModel``'s
+#: ``allow_inf_nan=False`` pin makes unconstructable held out (``canonical/_base.py:87``).
+_SCALAR_VALUES = (
+    st.booleans()
+    | st.integers()
+    | st.floats(allow_nan=False, allow_infinity=False)
+    | st.text()
+)
+
+
+def _venue_stage(**overrides: object) -> VenueConstraintStage:
+    """The step-3 stage over the suite's baseline venue facts, with single overrides."""
+    kwargs: dict[str, object] = {
+        "observed_session_phase": SESSION_PHASE,
+        "action_class": ActionClass.NEW_LONG,
+        "snapshot": venue_snapshot(),
+        "policy": venue_policy(),
+        "shape": venue_shape(),
+        "constraints": venue_shape_constraints(),
+        "decision": venue_decision(),
+    }
+    kwargs.update(overrides)
+    return VenueConstraintStage(**kwargs)  # type: ignore[arg-type]
+
+
+def test_admitted_shape_price_from_view_projects_an_exact_integer() -> None:
+    """(design #36 §4) The shape price is an exact int→int projection, not a Decimal.
+
+    ``OrderShapeFields.price`` is ``int`` (``venue/records.py:153``) and D-E2 exposes numeric
+    order-comparison values as integer minor / tick units (design #32 §2.5), so this projection
+    stays in int space: no Decimal round-trip, and therefore no truncation to invent.
+    """
+    projected = admitted_shape_price_from_view(
+        _single_value_view(4_499_000), field_key="close"
+    )
+
+    assert projected == 4_499_000
+    assert type(projected) is int
+    # …and it is *not* the number the fixture injects, which is the whole point of the seam.
+    assert projected != 4200
+
+
+@settings(max_examples=50, deadline=None)
+@given(value=st.booleans() | st.floats(allow_nan=False, allow_infinity=False))
+def test_admitted_shape_price_from_view_refuses_a_bool_or_float(value: object) -> None:
+    """(design #36 §4; #32 §2.5) ``True`` is not the shape price ``1``, and no float projects.
+
+    The polarity that matters is ``True``: ``bool`` is an ``int`` subclass, so an ``isinstance``
+    admission would silently price a shape at ``1``. ``False`` would project to ``0`` and be
+    caught downstream, but ``True`` would sail through — refusing the *type* closes both. Floats
+    stay fail-closed until the deterministic-float projection rule is ratified.
+    """
+    projected = admitted_shape_price_from_view(
+        _single_value_view(value), field_key="close"  # type: ignore[arg-type]
+    )
+
+    assert projected is None
+
+
+@settings(max_examples=100, deadline=None)
+@given(value=_SCALAR_VALUES)
+def test_the_two_projections_admit_and_refuse_the_same_values(value: ScalarValue) -> None:
+    """(design #36 §3.2) One shared core, so the two projections cannot drift in what they admit.
+
+    The alternative the design rejected (P1) re-implemented the match + exact-int rule beside the
+    price projection, which would let a future relaxation reach one projection and not the other.
+    This is the canary that makes the shared core load-bearing rather than merely tidy.
+    """
+    view = _single_value_view(value)
+
+    shape_admits = admitted_shape_price_from_view(view, field_key="close") is not None
+    price_admits = admitted_price_from_view(view, field_key="close").value is not None
+
+    assert shape_admits is price_admits
+
+
+def test_the_step3_stage_prefers_the_value_surface_price() -> None:
+    """(design #36 §3.3) The shape step 3 folds carries the number the decision was priced on."""
+    stage = _venue_stage(shape_price_field_key="close")
+
+    stage(
+        _Request(
+            CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
+            value_view=_single_value_view(4_499_000),
+        )
+    )
+
+    assert stage.resolved_shape is not None
+    assert stage.resolved_shape.price == 4_499_000
+    assert stage.resolved_shape.price != 4200
+    # only the price is re-sourced; every other injected field survives untouched.
+    injected = venue_shape()
+    assert stage.resolved_shape.quantity == injected.quantity
+    assert stage.resolved_shape.order_type == injected.order_type
+    assert stage.resolved_shape.silently_rounded is False
+
+
+def test_the_step3_stage_falls_back_to_the_injected_shape_without_a_field_key() -> None:
+    """(design #36 §3.3) A value-free tick is *missing*, not "no price": the injection stands in.
+
+    Two ways to be value-free, both the injected shape unchanged — the same object, not a copy:
+    the stage was never wired to a governed field key, or the tick published no view.
+    """
+    injected = venue_shape()
+
+    ungoverned = _venue_stage(shape=injected)
+    ungoverned(
+        _Request(
+            CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
+            value_view=_single_value_view(4_499_000),
+        )
+    )
+    assert ungoverned.resolved_shape is injected
+
+    value_free = _venue_stage(shape=injected, shape_price_field_key="close")
+    value_free(_Request(CommitmentStep.VENUE_ADMISSIBILITY_DECISION))
+    assert value_free.resolved_shape is injected
+
+
+def test_the_step3_stage_is_fail_closed_when_the_shape_price_is_unprojectable() -> None:
+    """(design #36 §4/§8) An unknown shape price is a structural UNKNOWN, never the stale 4,200.
+
+    Governed-but-unprojectable is the case that separates this seam from a default: the injected
+    price is *not* reinstated, so venue's own ``order_shape_admissible`` reaches its missing-bound
+    rule and the verdict is restrictive.
+    """
+    non_integer = _venue_stage(shape_price_field_key="close")
+    verdict = non_integer(
+        _Request(
+            CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
+            value_view=_single_value_view("4499000"),
+        )
+    )
+    assert non_integer.resolved_shape is not None
+    assert non_integer.resolved_shape.price is None
+    assert verdict.outcome is StageOutcome.UNKNOWN
+
+    not_carried = _venue_stage(shape_price_field_key="a-field-this-view-does-not-carry")
+    verdict = not_carried(
+        _Request(
+            CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
+            value_view=_single_value_view(4_499_000),
+        )
+    )
+    assert not_carried.resolved_shape is not None
+    assert not_carried.resolved_shape.price is None
+    assert verdict.outcome is StageOutcome.UNKNOWN

@@ -738,11 +738,27 @@ def venue_shape() -> OrderShapeFields:
 
 
 def venue_shape_constraints() -> VenueShapeConstraints:
-    """Injected venue shape constraints admitting the slice's shape."""
+    """Injected venue shape constraints admitting the slice's shape.
+
+    The price band and tick moved when the shape price became value-sourced (design #36 §3.4):
+    the shape now carries a band close, so the old band would have refused it. The design fixes
+    only the *condition* a stand-in must satisfy — ``price_min ≤ V ≤ price_max`` and
+    ``(V − price_min) mod tick_size == 0`` — never the approved numbers, which are not this
+    slice's to choose. The quantity band is untouched: quantity is not value-sourced.
+
+    ``V`` is every close that reaches step 3, not only the realized crossing: 4,499,000
+    (realized), 4,498,500 (denied at the capacity stage) and 4,521,000 (the flat). Their pairwise
+    differences bound the tick at 500, which is why the tick is 500 and not the coarser 1000 —
+    a 1000 tick would refuse 4,498,500 at step 3 and move that bar's recorded halt off the
+    capacity seal, i.e. re-source the price and silently rewrite a different lane's evidence.
+    The injected 4,200 stand-in is off this grid on purpose (design #36 §8): a value-free tick
+    reaching step 3 fails admissibility instead of passing quietly.
+    """
     return VenueShapeConstraints(
+        # ⚠ provisional (P0-2·register §8-2 candidate·#36 §10-2)
         price_min=1000,
-        price_max=9000,
-        tick_size=25,
+        price_max=9_000_000,
+        tick_size=500,
         lot_size=2,
         min_quantity=2,
         max_quantity=100,
@@ -896,6 +912,8 @@ def bind_send_boundary_context(
     construction: CandidateConstruction,
     proof: Any,
     reference: OrderingEvent,
+    order_shape: OrderShapeFields | None,
+    venue_shape_constraints: VenueShapeConstraints | None,
 ) -> SendBoundaryContext:
     """Partially apply the **shipped** ``send_boundary_context`` factory (design #35 §3.1).
 
@@ -906,6 +924,10 @@ def bind_send_boundary_context(
     just built and the artifacts the step-2 / step-11 stages just produced. That is what keeps
     verify item 2 (reservation identity match) and item 13 (order construction) load-bearing
     instead of self-confirming: no look-alike is rebuilt from the same inputs here.
+
+    ``order_shape`` / ``venue_shape_constraints`` are passed in for the same reason (design #36
+    §3.3): the pair ``order_shape_admissible`` compares is step 3's, read off the stage that
+    folded it, so item 11's re-fold cannot be handed a second shape that quietly disagrees.
     """
     return send_boundary_context(
         attempt=attempt,
@@ -937,8 +959,8 @@ def bind_send_boundary_context(
         venue_decision=venue_decision(),
         observed_session_phase=SESSION_PHASE,
         action_class=ActionClass.NEW_LONG,
-        order_shape=venue_shape(),
-        venue_shape_constraints=venue_shape_constraints(),
+        order_shape=order_shape,
+        venue_shape_constraints=venue_shape_constraints,
         approval_consumed_for_this_intent=True,
         action_flow_permit_identity=PERMIT_IDENTITY,
         action_flow_commitment_current=True,
@@ -954,7 +976,12 @@ def bind_send_boundary_context(
 
 def construction_stages(
     book: BandBarBook,
-) -> tuple[dict[CommitmentStep, Stage], OrderConstructionStage, ConformanceProofStage]:
+) -> tuple[
+    dict[CommitmentStep, Stage],
+    OrderConstructionStage,
+    VenueConstraintStage,
+    ConformanceProofStage,
+]:
     """D-E4's four Order Construction stages for steps 2 / 3 / 5 / 11 (design #34 §3.2)."""
     step2 = OrderConstructionStage(
         envelope=proposed_envelope(),
@@ -979,6 +1006,7 @@ def construction_stages(
         shape=venue_shape(),
         constraints=venue_shape_constraints(),
         decision=venue_decision(),
+        shape_price_field_key=PRICE_FIELD_KEY,
     )
     step5 = EconomicEffectStage(construction_stage=step2)
     step11 = ConformanceProofStage(
@@ -1000,7 +1028,7 @@ def construction_stages(
             CommitmentStep.ORDER_CONFORMANCE_PROOF: step11,
         }
     )
-    return stages, step2, step11
+    return stages, step2, step3, step11
 
 
 # ===========================================================================
@@ -1029,10 +1057,12 @@ class RecordingContextResolver:
         *,
         construction_stage: OrderConstructionStage,
         proof_stage: ConformanceProofStage,
+        venue_stage: VenueConstraintStage,
     ) -> None:
-        """Bind the resolver to the two live construction stages."""
+        """Bind the resolver to the three live construction stages."""
         self._construction_stage = construction_stage
         self._proof_stage = proof_stage
+        self._venue_stage = venue_stage
         self.attempts: tuple[AttemptRequest, ...] = ()
         self.contexts: tuple[SendBoundaryContext, ...] = ()
 
@@ -1052,6 +1082,8 @@ class RecordingContextResolver:
                 source_continuity_id=CONTINUITY_ID,
                 source_native_sequence=len(self.attempts),
             ),
+            order_shape=self._venue_stage.resolved_shape,
+            venue_shape_constraints=self._venue_stage.shape_constraints,
         )
         self.contexts += (context,)
         return context
@@ -1071,6 +1103,7 @@ class SliceRun:
     core: EngineCore
     strategy: AuthoredStrategy
     resolver: RecordingContextResolver
+    venue_stage: VenueConstraintStage
     reinjector: GatewayResultReinjector
     gateway: BrokerEgressGateway
     transport: SyntheticPaperTransport
@@ -1109,14 +1142,14 @@ def run_slice(
     """
     book = BandBarBook(profile)
     registry, strategy = registry_with_band_strategy()
-    stages, step2, step11 = construction_stages(book)
+    stages, step2, step3, step11 = construction_stages(book)
 
     gateway_sink = RecordingGatewayEvidenceSink()
     transport = SyntheticPaperTransport(
         SyntheticFillPolicy(fill_numerator=1, fill_denominator=1, lot_size=LOT_SIZE)
     )
     context_resolver = RecordingContextResolver(
-        construction_stage=step2, proof_stage=step11
+        construction_stage=step2, proof_stage=step11, venue_stage=step3
     )
     gateway = BrokerEgressGateway(
         contexts=context_resolver, transport=transport, sink=gateway_sink
@@ -1143,6 +1176,7 @@ def run_slice(
         core=core,
         strategy=strategy,
         resolver=context_resolver,
+        venue_stage=step3,
         reinjector=reinjector,
         gateway=gateway,
         transport=transport,
