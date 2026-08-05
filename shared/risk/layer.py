@@ -175,9 +175,13 @@ class RiskFilterLayer:
             the default mtime-reloading ledger loader and lazy sync-Redis
             positions reader (tests / backtests).
 
-        The stubs let the backtest run the layer in a reproducible way
-        without wiring real position / ATR / LOB sources; Phase 4 overrides
-        them with live providers.
+        The stubs let the backtest run the layer in a reproducible way without
+        wiring real position / ATR / LOB sources.  Each substitution is logged
+        at WARNING, so a *production* caller that forgets one is visible rather
+        than silent; ``tests/unit/risk/test_provider_wiring.py`` additionally
+        pins that both risk-filter daemons pass a real
+        ``has_open_position_provider``.  Wiring ``current_atr_provider`` is NOT
+        safe on its own — see that warning's text for the reason.
         """
         from shared.risk.filters.consecutive_loss import ConsecutiveLossFilter
         from shared.risk.filters.daily_mdd import DailyMDDFilter
@@ -188,17 +192,43 @@ class RiskFilterLayer:
         from shared.risk.filters.volatility import VolatilityFilter
         from shared.risk.filters.weekly_mdd import WeeklyMDDFilter
 
+        # Observability: each of the three stubs below is a silent fail-open
+        # no-op. Log once at build time so operators can tell 'inert because
+        # unwired' apart from 'active and passing' — same convention the
+        # ConcurrentPositionsFilter / LeverageFilter blocks further down use.
         if current_atr_provider is None:
+            logger.warning(
+                "VolatilityFilter has no ATR provider wired — filter is inert "
+                "(fail-open pass on every signal). DO NOT wire "
+                "current_atr_provider alone: the other side of the "
+                "comparison, RiskStateSnapshot.atr_90th_percentile, defaults to "
+                "0.0 and has NO production writer, so a live ATR would make "
+                "every signal satisfy 'atr > 0.0', reject every entry and halt "
+                "ALL trading. Any wiring must land a production writer for "
+                "atr_90th_percentile in the same change."
+            )
 
             def current_atr_provider() -> float:
                 return 0.0
 
         if current_spread_provider is None:
+            logger.warning(
+                "SpreadFilter has no spread provider wired — filter is inert "
+                "(fail-open pass on every signal)"
+            )
 
             def current_spread_provider() -> float:
                 return 0.0
 
         if has_open_position_provider is None:
+            logger.warning(
+                "OpenPositionFilter has no open-position provider wired — "
+                "filter is inert, and fail-DANGEROUS rather than merely "
+                "fail-open: the stub reports 'no position held' for every "
+                "symbol, so the duplicate-entry guard never fires. Wire "
+                "has_open_position_provider to the chain's positions hash (see "
+                "services/risk_filter and services/stock_risk_filter)."
+            )
 
             def has_open_position_provider(_symbol: str) -> bool:
                 return False

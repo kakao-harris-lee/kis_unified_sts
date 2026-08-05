@@ -13,9 +13,22 @@ However the open-position state is maintained by ``PositionTracker``, not
 callable at construction time.
 
 The callable receives a *symbol* string and returns ``True`` if an open position
-exists for that symbol.  In production (Task 13's ``RiskFilterLayer``) this will
-be wired to ``PositionTracker.has_open_position()``.  In tests a simple
-``lambda symbol: False`` suffices.
+exists for that symbol.  In production both risk-filter daemons wire it to a
+sync-Redis ``HEXISTS`` against their chain's open-position hash:
+
+* futures — ``futures:monitor:positions``, field = contract symbol, written by
+  ``services/futures_monitor`` (HSET on an entry fill, HDEL on an exit fill);
+* stock — ``stock:daemon:positions``, field = stock code, written by
+  ``services/stock_order_router`` and ``services/stock_exit``.
+
+Both resolve a Redis error to ``True`` — fail-closed, blocking re-entry on
+uncertainty.  In tests a simple ``lambda symbol: False`` suffices.
+
+When no provider is supplied, :meth:`RiskFilterLayer.from_config` substitutes a
+stub that returns ``False`` for every symbol and logs a warning.  That stub does
+not merely leave a filter inert: it reports "no position held" unconditionally,
+which *disables* the duplicate-entry guard.  Callers that hold positions must
+pass a real provider.
 
 Configuration example (YAML):
 
@@ -43,13 +56,16 @@ class OpenPositionFilter(RiskFilter):
     Args:
         has_open_position_provider: A callable that accepts a *symbol* string
             and returns ``True`` if an open position exists for that symbol.
-            In production this should be wired to ``PositionTracker``; in tests
-            a ``lambda symbol: True/False`` is sufficient.
+            In production this is wired to a ``HEXISTS`` against the chain's
+            open-position hash (see the module docstring); in tests a
+            ``lambda symbol: True/False`` is sufficient.
 
     Example::
 
         f = OpenPositionFilter(
-            has_open_position_provider=position_tracker.has_open_position,
+            has_open_position_provider=lambda symbol: bool(
+                redis.hexists("futures:monitor:positions", symbol)
+            ),
         )
     """
 

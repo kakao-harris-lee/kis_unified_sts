@@ -9,10 +9,18 @@ equity 10M vs pattern_pullback 25M/pos sizing would freeze the whole stock book
 on a single fill), so an over-cap stock book is only observed, never blocked.
 
 These complement the config-load pins in ``test_risk_config`` /
-``test_stock_risk_config`` (which assert the YAML values) by exercising the
-fully-wired :class:`RiskFilterLayer` built from the **shipped** config with
+``test_stock_risk_config`` (which assert the YAML values) by exercising a
+:class:`RiskFilterLayer` built from the **shipped** config with margin/leverage
 snapshot providers injected in place of live Redis — so the assertions are on the
 real filter chain, not a synthetic config.
+
+Scope note: the layer built here is *not* fully wired.  ``current_atr_provider``,
+``current_spread_provider`` and ``has_open_position_provider`` are all omitted,
+so ``from_config`` substitutes its no-op stubs for filters #6/#7/#8.  That is
+deliberate — those three are irrelevant to the margin/leverage flip under test,
+and the stubs keep them from short-circuiting the chain before it reaches the
+gate being asserted.  Production wiring of ``has_open_position_provider`` is
+pinned separately in ``test_provider_wiring.py``.
 
 Time-robustness: the layer is built with a 24h ``trading_windows`` so the
 ``TradingHoursFilter`` never short-circuits (avoiding the afternoon-red trap,

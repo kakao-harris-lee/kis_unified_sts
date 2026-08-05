@@ -12,16 +12,24 @@ risk-state field.  To avoid polluting ``RiskStateSnapshot`` with a live
 indicator (out of scope for Task 11), this filter accepts a
 ``current_atr_provider`` callable at construction time.
 
-The callable receives no arguments and returns a ``float``.  In production
-(Task 13's ``RiskFilterLayer``) this will be wired to
-``IndicatorEngine.get_atr14()``.  In tests a simple ``lambda: value``
-suffices.
+The callable receives no arguments and returns a ``float``.  In tests a simple
+``lambda: value`` suffices.
 
-.. note::
+.. warning::
 
-    Phase 4 will wire ``current_atr_provider`` to a live real-time ATR
-    source (e.g. ``IndicatorEngine``).  For now the caller is responsible
-    for supplying a callable that returns the most recent 14-period ATR.
+    **This filter is unwired and inert in production.**  No production caller
+    supplies ``current_atr_provider``; :meth:`RiskFilterLayer.from_config`
+    substitutes a stub returning ``0.0`` (and logs a warning), so the
+    comparison is ``0.0 > 0.0`` and every signal passes.
+
+    Wiring the ATR provider **alone would halt all trading**.  The other side
+    of the comparison, :attr:`RiskStateSnapshot.atr_90th_percentile`, defaults
+    to ``0.0`` and has no production writer — only backtest replay and tests
+    populate it.  A live ATR against a ``0.0`` threshold makes ``atr > 0.0``
+    true for every signal, rejecting every entry.
+
+    Safe wiring therefore requires **both** sides in the same change: a live
+    ATR source *and* a production writer for ``atr_90th_percentile``.
 
 Configuration example (YAML):
 
@@ -54,9 +62,9 @@ class VolatilityFilter(RiskFilter):
     Args:
         current_atr_provider: A zero-argument callable that returns the
             current ATR-14 value as a ``float``.  Must be supplied at
-            construction time.  In production this should be wired to a
-            live indicator engine; in tests a ``lambda: value`` is
-            sufficient.
+            construction time.  No production caller supplies one today — see
+            the module docstring for why wiring it alone is unsafe.  In tests
+            a ``lambda: value`` is sufficient.
 
     Example::
 
