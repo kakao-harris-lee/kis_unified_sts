@@ -20,6 +20,12 @@ What it does is resolve, verify, and refuse — it **invents nothing**:
   engine's all-``None`` :class:`~tos.engine.TimeAdmissionInputs`, which denies admission
   (``pipeline.time_admits``). Absence is restrictive, never permissive.
 
+The first two of those surfaces are jointly the **admitted-snapshot injection port** (design #38):
+the D-E2 consumption boundary for whatever upstream Context Integrity Service issued the snapshot,
+and the only way a snapshot body or a candidate value reaches **this resolver** — both are required
+at construction, and neither has a default. The time projection is deliberately **not** part of that
+port: it carries a deployment's time authority, not admitted snapshot content (design #38 §2.3).
+
 ⚠ **Honest limits.** A refused binding yields ``value_view=None``, so every value operand resolves
 to ``UNKNOWN`` and the decision narrows — the resolver never falls back to a "last known good" view
 (ADR-002-018 §14:367). And the value ⟺ digest verification happens at publication, not again at
@@ -62,6 +68,9 @@ class SnapshotStore(Protocol):
 
     Returning ``None`` is a first-class answer ("this store has no such snapshot") and is handled
     fail-closed; a store must never substitute a different snapshot for a missing one.
+
+    This is one half of the admitted-snapshot injection port (design #38); the other half is
+    :class:`ValueCandidateSource`.
     """
 
     def __call__(
@@ -78,6 +87,9 @@ class ValueCandidateSource(Protocol):
     Candidates are *claims* — "the value under this key in the payload behind this observation" —
     which the publication gate then verifies against the snapshot. The source therefore cannot
     admit anything by supplying it; the most a dishonest source achieves is a rejection record.
+
+    This is one half of the admitted-snapshot injection port (design #38); the other half is
+    :class:`SnapshotStore`.
     """
 
     def __call__(

@@ -54,7 +54,9 @@ canonicalization is unresolved — every digest here rides ``ev-l1-provisional-0
 bounds approval and independent-reviewer designation are incomplete; (c) this is a *model plus
 properties*, not the Context Integrity Service runtime that collects, assembles, and issues
 snapshots — that runtime is explicitly out of scope (design #2 §0.2), and this package only
-**consumes** its output. The property tests are authoring evidence, not acceptance.
+**consumes** its output — **through the admitted-snapshot injection port** (``SnapshotStore`` +
+``ValueCandidateSource``), the D-E2 consumption boundary of that upstream output (design #38). The
+property tests are authoring evidence, not acceptance.
 
 ⚠ **Trust seams, named** (design #32 §2.3/§4.3/§5.4). The value ⟺ digest check runs at publication;
 the environment-injection point does not repeat it. Look-ahead is checked against what the lineage
