@@ -19,6 +19,8 @@ single-run backtest is an ADR-DEV-010 §8:191-192 disqualifier. This demonstrate
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from tos.backtest import trace_digest, trace_document
 from tos.dsl import FLAT_QUANTITY_BASIS
 from tos.egressgw import (
@@ -298,8 +300,14 @@ def test_the_venue_shape_price_is_value_sourced_and_converged() -> None:
     assert bound_at_crossing.order_shape.price == crossing_close
 
     # ★ the inconsistency this closes: the admitted shape and the command now agree.
+    #   Compared **exactly**, not through ``int(...)``: the venue shape price is an ``int``
+    #   (``venue/records.py:153``) while the derivation carries a ``CanonicalDecimal``, so
+    #   truncating the derivation would let a future fractional price (e.g. ``100`` vs
+    #   ``100.5``) pass this agreement check while the two really disagree. Widening the int to
+    #   ``Decimal`` compares the values themselves and keeps the assertion honest under a price
+    #   grid finer than 1.
     assert bound.construction is not None
-    assert bound.order_shape.price == int(bound.construction.derivation.price)
+    assert Decimal(bound.order_shape.price) == bound.construction.derivation.price
 
     # ★ …and item 11 is still SATISFIED — the re-sourced price is venue-admissible.
     verification = sliced.gateway.verifications[0]
