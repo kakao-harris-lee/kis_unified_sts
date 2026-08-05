@@ -198,7 +198,7 @@ class SettledFill:
 
 
 class _SettledEgressResult(Protocol):
-    """The minimal shape the driver reads off one settled item (``driver.py:234``).
+    """The minimal shape the driver reads off one settled item (``driver.py:429``).
 
     Deliberately narrow: the driver takes ``settled.payload`` and nothing else, so widening this
     to the whole :class:`SettledFill` would demand a D-E3-local fill record from a source that
@@ -229,12 +229,18 @@ class EgressResultSource(Protocol):
 
     Exactly five members, because exactly five are consumed:
 
-    1. :meth:`bind_settlement_context` — ``driver.py:225``, before each tick is yielded;
-    2. :meth:`settle_due` — ``driver.py:233``, the re-injection origin;
-    3. :attr:`records` — ``driver.py:309``;
-    4. :meth:`unsettled_records` — ``driver.py:310``;
-    5. :attr:`handoffs` — ``driver.py:311``, where **only** ``len(...)`` is taken, so a sized
+    1. :meth:`bind_settlement_context` — ``driver.py:222``, before each tick is yielded;
+    2. :meth:`settle_due` — ``driver.py:428``, the re-injection origin;
+    3. :attr:`records` — ``driver.py:477``;
+    4. :meth:`unsettled_records` — ``driver.py:478``;
+    5. :attr:`handoffs` — ``driver.py:479``, where **only** ``len(...)`` is taken, so a sized
        iterable is all this port may require (design #35 §2.1 NIT-2).
+
+    ⚠ **Single-symbol port.** The N-lane driver's lanes are :class:`DeterministicFillModel`
+    specifically, not this port: it reads ``settled.record`` at settlement to build the run-level
+    fill-record order, and a :class:`GatewayResultReinjector` has no D-E3-local record to give.
+    Draining a send boundary's retained results would also collapse symbol attribution, so its
+    multi-symbol use is explicitly out of scope (design #37 §3.2/§7-8).
     """
 
     def bind_settlement_context(self, bar: Bar) -> None:

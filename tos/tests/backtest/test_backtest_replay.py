@@ -22,7 +22,13 @@ from __future__ import annotations
 
 from tos.backtest import (
     MANDATED_SCENARIOS,
+    FillMode,
+    FillParameters,
+    FillSide,
     ScenarioId,
+    SettlementPolicy,
+    multi_symbol_trace_digest,
+    multi_symbol_trace_document,
     reference_bars,
     scenario_for,
     trace_digest,
@@ -57,6 +63,101 @@ def test_the_fill_records_are_reproducible_too() -> None:
     assert [record.model_dump(mode="json") for record in first.fill_records] == [
         record.model_dump(mode="json") for record in second.fill_records
     ]
+
+
+def _multi_symbol_run():  # noqa: ANN202 - a local runner
+    """One N-lane run of the interleaved two-lane shape (design #37 §5-T5)."""
+    from ._backtest_fixtures import (
+        INSTRUMENT,
+        INSTRUMENT_B,
+        build_core,
+        build_multi_symbol_driver,
+        instrument_key,
+        lane_strategy,
+        offset_bars,
+        registry_with_all,
+    )
+
+    def _parameters(settlement: SettlementPolicy) -> FillParameters:
+        return FillParameters(
+            mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY, settlement=settlement
+        )
+
+    driver, _converters, _models = build_multi_symbol_driver(
+        [
+            (INSTRUMENT, _parameters(SettlementPolicy.NEXT_BAR)),
+            (INSTRUMENT_B, _parameters(SettlementPolicy.SAME_BAR)),
+        ]
+    )
+    core, _sink = build_core(
+        registry=registry_with_all(lane_strategy(INSTRUMENT), lane_strategy(INSTRUMENT_B)),
+        transmit=driver,
+    )
+    return driver.run(
+        core,
+        {
+            instrument_key(instrument=INSTRUMENT): offset_bars(2, coordinate_offset=0),
+            instrument_key(instrument=INSTRUMENT_B): offset_bars(2, coordinate_offset=30),
+        },
+    )
+
+
+def test_two_multi_symbol_runs_produce_an_identical_trace_and_fill_records() -> None:
+    """(§5.2 / design #37 §1.6, M19 EXTEND) N lanes reproduce byte-identically too.
+
+    Multi-symbol adds one new way for reproducibility to break that a single-symbol run does not
+    have: the interleave. If two symbols sharing a ``timestamp_coordinate`` were ordered by mapping
+    iteration rather than by the contracted ``(account, instrument)`` tie-break, two runs of the
+    same input could differ — so the digest **and** the fill-record tuple are both pinned here
+    (design #37 §3.3).
+    """
+    first = _multi_symbol_run()
+    second = _multi_symbol_run()
+
+    assert multi_symbol_trace_document(first) == multi_symbol_trace_document(second)
+    assert multi_symbol_trace_digest(first, scheme=SCHEME) == multi_symbol_trace_digest(
+        second, scheme=SCHEME
+    )
+    assert [record.model_dump(mode="json") for record in first.fill_records] == [
+        record.model_dump(mode="json") for record in second.fill_records
+    ]
+    assert len(first.fill_records) == 2, "both lanes really settled — the claim is not vacuous"
+
+
+def test_the_multi_symbol_digest_is_not_a_constant() -> None:
+    """(§5.2) The N-lane digest discriminates — a different lane set really is a different run."""
+    from ._backtest_fixtures import (
+        INSTRUMENT,
+        build_core,
+        build_multi_symbol_driver,
+        instrument_key,
+        lane_strategy,
+        offset_bars,
+        registry_with_all,
+    )
+
+    driver, _converters, _models = build_multi_symbol_driver(
+        [(INSTRUMENT, FillParameters(mode=FillMode.ACKNOWLEDGE, side=FillSide.BUY))]
+    )
+    core, _sink = build_core(
+        registry=registry_with_all(lane_strategy(INSTRUMENT)), transmit=driver
+    )
+    single_lane = driver.run(
+        core, {instrument_key(instrument=INSTRUMENT): offset_bars(2, coordinate_offset=0)}
+    )
+    assert multi_symbol_trace_digest(single_lane, scheme=SCHEME) != multi_symbol_trace_digest(
+        _multi_symbol_run(), scheme=SCHEME
+    )
+
+
+def test_the_multi_symbol_trace_document_is_json_native_too() -> None:
+    """(§6.1) The N-lane oracle artifact is a plain mapping — no file I/O, no custom encoder."""
+    import json
+
+    document = multi_symbol_trace_document(_multi_symbol_run())
+    assert json.loads(json.dumps(document)) == document
+    assert document["artifact_type"] == "tos.backtest.multi_symbol_wiring_trace"
+    assert document["closes_no_ev"] is True
 
 
 def test_a_different_bar_stream_changes_the_trace() -> None:

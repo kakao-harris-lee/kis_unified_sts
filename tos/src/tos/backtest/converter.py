@@ -79,7 +79,9 @@ class CausalBarConverter:
         """Wire the converter.
 
         Args:
-            instrument_key: The single dispatch scope this slice replays.
+            instrument_key: The single dispatch scope **this converter** replays. It stays one
+                scope under multi-symbol too: N symbols are N converters, one per lane, and the
+                per-instrument premise is unchanged (design #37 §1.5/§3.2).
             resolver: The injected D-E2 value-surface plug (provisional in slice #1, §3.5).
             capsule_source: The injected per-bar Decision Context Capsule source.
             time_projection: The injected bar → time-coordinate projection (§3.3).

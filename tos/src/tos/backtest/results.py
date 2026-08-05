@@ -46,7 +46,14 @@ from tos.backtest.records import (
 from tos.backtest.vocabulary import ScenarioId
 from tos.engine import EventResult, InstrumentKey
 
-__all__ = ["BacktestRun", "trace_digest", "trace_document"]
+__all__ = [
+    "BacktestRun",
+    "MultiSymbolBacktestRun",
+    "multi_symbol_trace_digest",
+    "multi_symbol_trace_document",
+    "trace_digest",
+    "trace_document",
+]
 
 
 @dataclass(frozen=True)
@@ -87,6 +94,69 @@ class BacktestRun:
         docstring: non-production canonicalization, incomplete Phase-0 bounds approval, and
         authority runtimes that exist only as ``NON_AUTHORITATIVE_PROVISIONAL`` stand-ins — plus,
         for D-E3 specifically, the ADR-DEV-010 §8:191-192 single-run disqualifier.
+        """
+        return True
+
+
+@dataclass(frozen=True)
+class MultiSymbolBacktestRun:
+    """Everything one **N-lane** D-E3 run produced (design #37 §3.5) — and nothing more.
+
+    A frozen dataclass rather than a pydantic model, and that is a judgement rather than a habit:
+    the suite's ``_SEALED_MODELS`` canary locks the set of shipped ``FrozenModel`` subclasses, so a
+    pydantic run type would have widened a canary the run has no business touching. Mirroring
+    :class:`BacktestRun`'s own dataclass shape keeps the seal where it already is — the
+    ``__post_init__`` performance-surface check — and adds a *new* detector instead: the suite's
+    dataclass-family drift canary, because ``_SEALED_MODELS`` watches pydantic models only and the
+    dataclass family had no drift detector at all (design #37 §3.5).
+
+    The field set is :class:`BacktestRun`'s, disposed field by field (design #37 §3.5):
+
+    * ``instrument_keys`` is the pluralisation of the single-symbol ``instrument_key`` — the lane
+      scopes in declaration order. It is a *new type*, so this is not a rename of anything.
+      Declaration order is kept **here** because it records how the run was wired, and is
+      deliberately *not* what :func:`multi_symbol_trace_document` emits: an order the caller chose
+      must not reach a digest (design #37 §1.6);
+    * ``bars_consumed`` / ``events_yielded`` / ``handoff_count`` aggregate across lanes;
+    * ``event_results`` / ``trace`` / ``halts`` / ``fill_records`` are already in **global**
+      processing order and stay that way — the driver appends each fill record at its settlement,
+      because ``LocalFillRecord`` carries no global order field and ``settlement_bar_index`` is
+      lane-local, so concatenating per-lane records afterwards could not reconstruct it
+      (design #37 §3.3, ``records.py:87-109``);
+    * ``unsettled_fill_records`` has no settlement moment to be ordered by, so its order is the
+      separately-declared one: lanes in ``(account, instrument)`` order, each lane's pending fills
+      in staging order;
+    * ``scenario_id`` stays **run-level**. A multi-symbol scenario vocabulary does not exist and no
+      consumer asks for a per-lane one; inventing the decomposition here would be the phantom
+      (design #37 §7-9);
+    * ``closes_no_ev`` is carried unchanged — ``True``, and not a parameter.
+    """
+
+    instrument_keys: tuple[InstrumentKey, ...]
+    scenario_id: ScenarioId | None
+    bars_consumed: int
+    events_yielded: int
+    event_results: tuple[EventResult, ...]
+    trace: WiringTrace
+    halts: tuple[HaltRecord, ...]
+    fill_records: tuple[LocalFillRecord, ...]
+    unsettled_fill_records: tuple[LocalFillRecord, ...]
+    handoff_count: int
+    label: str = DEMONSTRATION_LABEL
+
+    def __post_init__(self) -> None:
+        """Seal the performance / admissibility surface structurally (design #33 §1.2 B1)."""
+        seal_performance_surface(
+            type(self).__name__, tuple(field.name for field in fields(self))
+        )
+
+    @property
+    def closes_no_ev(self) -> bool:
+        """Always ``True`` — N lanes is still a mechanism / parity demonstration (design #33 §1.1).
+
+        Widening the replay from one instrument to N changes nothing about the four reasons on the
+        package docstring, and ADR-DEV-010 §8:191-192's single-run disqualifier is untouched by
+        running more symbols in the same single run.
         """
         return True
 
@@ -141,3 +211,67 @@ def trace_digest(run: BacktestRun, *, scheme: CanonicalizationScheme) -> str:
         The hex digest of the canonicalized trace document.
     """
     return scheme.compute_digest(trace_document(run))
+
+
+def multi_symbol_trace_document(run: MultiSymbolBacktestRun) -> dict[str, Any]:
+    """Serialise an N-lane run's wiring trace into a pure JSON-native mapping (design #37 §3.5).
+
+    A **new function** rather than a widening of :func:`trace_document`: the single-symbol document
+    and its ``instrument_key`` key are what the out-of-tree comparator already reads, and the
+    existing shape canary pins them. The multi-symbol artifact says ``instrument_keys`` instead,
+    and is otherwise the same document with the same narrow scope — structural wiring agreement
+    only, numerics still gated on D-E2's value surface.
+
+    ``instrument_keys`` is emitted in ``(account, instrument)`` order, **not** in the run's lane
+    declaration order. The run object keeps declaration order because that is how the lanes were
+    wired; the *artifact* must not, because it is hashed. Leaking declaration order into the digest
+    would give two runs that are byte-identical in behaviour two different oracle identities purely
+    because the caller built its mapping in the other order — the same reasoning that already
+    orders ``unsettled_fill_records`` by key (design #37 §1.6/§3.5).
+
+    Args:
+        run: The completed multi-symbol run.
+
+    Returns:
+        A JSON-native mapping. Fill magnitudes and prices are excluded here for exactly the reason
+        they are excluded from the single-symbol artifact (design #33 §6.2).
+    """
+    return {
+        "artifact_type": "tos.backtest.multi_symbol_wiring_trace",
+        "label": DEMONSTRATION_LABEL,
+        "closes_no_ev": run.closes_no_ev,
+        "oracle_scope": "STRUCTURAL_WIRING_AGREEMENT_ONLY",
+        "numeric_decision_agreement": "DEFERRED_PENDING_D_E2_VALUE_SURFACE",
+        "instrument_keys": [
+            key.model_dump(mode="json")
+            for key in sorted(
+                run.instrument_keys, key=lambda item: (item.account, item.instrument)
+            )
+        ],
+        "scenario_id": None if run.scenario_id is None else run.scenario_id.value,
+        "bars_consumed": run.bars_consumed,
+        "events_yielded": run.events_yielded,
+        "trace": run.trace.model_dump(mode="json"),
+        "halts": [halt.model_dump(mode="json") for halt in run.halts],
+    }
+
+
+def multi_symbol_trace_digest(
+    run: MultiSymbolBacktestRun, *, scheme: CanonicalizationScheme
+) -> str:
+    """The canonical digest of an N-lane run's trace document (design #37 §1.6).
+
+    The signature deliberately mirrors :func:`trace_digest`'s ``(run, *, scheme)`` so the two carry
+    the same injected-scheme discipline. Its honest scope is the same too: **reproducibility**, not
+    distinctness. What multi-symbol adds is that the reproducibility now also depends on the merge
+    being a total order — a non-deterministic tie-break between two symbols sharing a coordinate
+    would surface exactly here (design #37 §3.3/§5-T5).
+
+    Args:
+        run: The completed multi-symbol run.
+        scheme: The injected canonicalization scheme.
+
+    Returns:
+        The hex digest of the canonicalized multi-symbol trace document.
+    """
+    return scheme.compute_digest(multi_symbol_trace_document(run))

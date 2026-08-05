@@ -31,6 +31,7 @@ from tos.backtest import (
     FillMode,
     FillParameters,
     FillSide,
+    MultiSymbolBacktestDriver,
     reference_bars,
 )
 from tos.engine import HaltReason
@@ -141,13 +142,50 @@ def test_the_package_constructs_no_engine_core_anywhere() -> None:
 
 
 def test_the_driver_exposes_no_core_replacement_path() -> None:
-    """(§2.4) There is no setter, no rebind, no reset — the seal cannot be undone from outside."""
+    """(§2.4) There is no setter, no rebind, no reset — the seal cannot be undone from outside.
+
+    The census covers **every** shipped driver, not the first one written: an N-lane driver that
+    forgot the seal would reset one ledger for N scopes at once, so the multi-symbol driver is
+    swept here rather than trusted to have inherited the discipline (design #37 §4 M17).
+    """
     fill_model = _ack_model()
-    driver = build_driver(fill_model)
-    for forbidden in ("set_core", "rebind", "reset", "reset_core", "new_core", "rebuild"):
-        assert not hasattr(driver, forbidden), (
-            f"BacktestDriver exposes {forbidden!r} — a re-instantiation path defeats the seal"
-        )
+    drivers = {
+        "BacktestDriver": build_driver(fill_model),
+        "MultiSymbolBacktestDriver": MultiSymbolBacktestDriver(
+            converters={}, fill_models={}, continuity_id="single-core-canary"
+        ),
+    }
+    for name, driver in drivers.items():
+        for forbidden in ("set_core", "rebind", "reset", "reset_core", "new_core", "rebuild"):
+            assert not hasattr(driver, forbidden), (
+                f"{name} exposes {forbidden!r} — a re-instantiation path defeats the seal"
+            )
+
+
+def test_every_shipped_driver_is_covered_by_the_replacement_canary() -> None:
+    """(anti-phantom §0.5) The swept driver list is the shipped one — no stale subset.
+
+    The existence direction: it is not enough that the two listed drivers are clean, the list must
+    *be* the set of drivers the package exports. A third driver landing without its seal shows up
+    here (design #37 §4 M17).
+
+    Membership is **structural**, mirroring the run-result family's ``is_dataclass`` ∧
+    ``closes_no_ev`` predicate: a driver is what carries ``bound_core`` — the §2.4 binding that is
+    the seal's whole subject. A name-based test (``endswith("Driver")``) would let a
+    ``LaneReplayHarness`` bind a core and escape the sweep in silence, which is the naming-versus-
+    structure defect this suite refuses everywhere else.
+    """
+    import tos.backtest as package
+
+    exported_drivers = {
+        name
+        for name, value in vars(package).items()
+        if isinstance(value, type) and hasattr(value, "bound_core")
+    }
+    assert exported_drivers == {"BacktestDriver", "MultiSymbolBacktestDriver"}, (
+        "the shipped driver set and this suite's swept list have drifted: "
+        f"exported={sorted(exported_drivers)}"
+    )
 
 
 def test_the_ledger_survives_the_whole_multi_bar_run() -> None:

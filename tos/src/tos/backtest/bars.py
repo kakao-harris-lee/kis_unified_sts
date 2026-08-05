@@ -17,13 +17,28 @@ empty run — zero ticks, zero fills, no failure — whereas a missing stream (`
 Collapsing the two in either direction is the defect: over-rejecting an explicit empty is as wrong
 as vacuously admitting a missing one.
 
+**Multi-symbol input lives here too** (design #37 §3.1/§3.3). A ``Bar`` carries no instrument, so a
+multi-symbol replay is a **mapping** ``InstrumentKey -> bar stream`` and the symbol attribution is
+the mapping key. :func:`validate_bar_stream_mapping` lifts the ∅-both-ways judgement to the mapping
+layer, and :func:`merge_bar_streams` interleaves the validated lanes on the total order
+``(timestamp_coordinate, account, instrument)``. That merge is **in-tree on purpose**: its
+determinism is what makes a multi-symbol replay byte-identical, and pushing it out to the caller
+would move that guarantee from ``tos.backtest`` to caller discipline (design #37 §3.3).
+
+What the merge can and cannot enforce is stated honestly (design #37 §3.6/§9). It enforces (i)
+per-lane strictly-increasing coordinates — reused verbatim from :func:`validate_bar_stream` — and
+(ii) a non-decreasing coordinate across the merged output. It cannot enforce that two symbols'
+``timestamp_coordinate`` values are **comparable at all**: the coordinate is an opaque injected
+integer with no structural predicate to test, so a single cross-symbol time coordinate system is
+**caller discipline** and a detection-free residual risk (design #37 §7-7).
+
 Firewall: ``pydantic`` + stdlib + ``tos.*`` only (design #33 §0.3). No clock, no RNG, no numpy or
 pandas anywhere in this package.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from pydantic import model_validator
 
@@ -33,8 +48,16 @@ from tos.backtest._base import (
     FrozenModel,
     seal_performance_surface,
 )
+from tos.engine import InstrumentKey
 
-__all__ = ["Bar", "BarStream", "settlement_price", "validate_bar_stream"]
+__all__ = [
+    "Bar",
+    "BarStream",
+    "merge_bar_streams",
+    "settlement_price",
+    "validate_bar_stream",
+    "validate_bar_stream_mapping",
+]
 
 #: An ordered, validated bar stream. A plain tuple: the harness never mutates it, and holding it as
 #: a tuple is what lets the causal converter prove it consumes a **prefix** (design #33 §3.6).
@@ -146,6 +169,135 @@ def validate_bar_stream(bars: Sequence[Bar] | None) -> BarStream:
                 )
         previous = bar
     return stream
+
+
+def validate_bar_stream_mapping(
+    streams: Mapping[InstrumentKey, Sequence[Bar] | None] | None,
+) -> tuple[tuple[InstrumentKey, BarStream], ...]:
+    """Validate a multi-symbol ``InstrumentKey -> bar stream`` mapping (design #37 §3.6).
+
+    The single-symbol ∅ judgement (``None`` fail-closed, ``()`` a defined empty run) is lifted to
+    the mapping layer **in both directions**: a missing *mapping* is fail-closed, an explicitly
+    empty mapping is a defined zero-lane run, a missing *lane stream* is fail-closed, and an
+    explicitly empty lane stream is a defined empty lane. Each lane is validated by
+    :func:`validate_bar_stream` itself, so the per-lane strictly-increasing rule is reused rather
+    than restated.
+
+    Args:
+        streams: The injected per-lane bar streams. ``None`` is a **missing** mapping; ``{}`` is an
+            explicitly empty one.
+
+    Returns:
+        The validated lanes as ``(key, stream)`` pairs **in the mapping's own iteration order**.
+
+    Raises:
+        BacktestIntegrityError: If the mapping is missing, if a lane stream is missing, or if any
+            lane stream is not causally ordered.
+    """
+    if streams is None:
+        raise BacktestIntegrityError(
+            "a multi-symbol bar stream mapping is missing — MISSING is fail-closed, materially "
+            "different from an explicitly empty mapping, which is a defined zero-lane run "
+            "(design #37 §3.6; the #17/#26 ∅ 양방향 discipline)"
+        )
+    lanes: list[tuple[InstrumentKey, BarStream]] = []
+    for key, stream in streams.items():
+        if stream is None:
+            raise BacktestIntegrityError(
+                f"the bar stream for lane {(key.account, key.instrument)} is missing — a declared "
+                "lane with no stream is fail-closed, materially different from a lane declared "
+                "with an explicitly empty stream (design #37 §3.6)"
+            )
+        lanes.append((key, validate_bar_stream(stream)))
+    return tuple(lanes)
+
+
+def _assert_merged_non_decreasing(merged: Sequence[tuple[InstrumentKey, Bar]]) -> None:
+    """Fail closed unless the merged coordinate sequence is non-decreasing (design #37 §3.3).
+
+    The one global ordering claim the merge is allowed to make. It is deliberately
+    **non-decreasing** rather than strictly increasing: two symbols may legitimately carry the same
+    ``timestamp_coordinate``, and the tie is broken by ``(account, instrument)`` — a strict check
+    would refuse a well-formed input.
+
+    Args:
+        merged: The merged ``(key, bar)`` sequence.
+
+    Raises:
+        BacktestIntegrityError: If a later item carries an earlier coordinate — a merge that
+            reorders time is not a merge, and admitting one would hand the engine a stream whose
+            order the input never had.
+    """
+    previous: int | None = None
+    for _key, bar in merged:
+        if previous is not None and bar.timestamp_coordinate < previous:
+            raise BacktestIntegrityError(
+                "the merged multi-symbol stream is not non-decreasing in timestamp_coordinate "
+                f"({previous} -> {bar.timestamp_coordinate}) — the merge preserves the injected "
+                "time order and never fabricates one (design #37 §3.3)"
+            )
+        previous = bar.timestamp_coordinate
+
+
+def merge_bar_streams(
+    lanes: Sequence[tuple[InstrumentKey, BarStream]],
+) -> tuple[tuple[InstrumentKey, Bar], ...]:
+    """Deterministically interleave validated lanes into one replay order (design #37 §3.3).
+
+    The merge is a **pure function of its inputs** on the total order
+    ``(bar.timestamp_coordinate, key.account, key.instrument)``. The tie-break is what makes it a
+    total order and therefore what makes a multi-symbol replay byte-identical: two symbols sharing a
+    coordinate are ordered by their instrument key, never by mapping insertion or dict iteration
+    (design #37 §1.6).
+
+    **Not look-ahead** (design #37 §3.3, ADR-DEV-010 BTE-INV-004). The frontier holds at most one
+    pending bar *per lane* and compares only their ordering metadata; no future bar enters any
+    decision, and each lane's converter still sees only its own current bar.
+
+    Args:
+        lanes: The validated ``(key, stream)`` pairs — normally
+            :func:`validate_bar_stream_mapping`'s output.
+
+    Returns:
+        The merged ``(key, bar)`` pairs. Lane-internal order is preserved exactly; the merge never
+        reorders within a stream.
+
+    Raises:
+        BacktestIntegrityError: If a lane key repeats — a repeated key makes the tie-break
+            non-total and the merge non-deterministic — or if the merged coordinate sequence is not
+            non-decreasing.
+    """
+    keys = [key for key, _stream in lanes]
+    if len(set(keys)) != len(keys):
+        raise BacktestIntegrityError(
+            "the lanes handed to merge_bar_streams repeat an instrument key — the merge order "
+            "(timestamp_coordinate, account, instrument) is only a total order when the keys are "
+            "distinct, and a repeated key would make the interleave non-deterministic "
+            "(design #37 §3.3)"
+        )
+    cursors = [0] * len(lanes)
+    merged: list[tuple[InstrumentKey, Bar]] = []
+    remaining = sum(len(stream) for _key, stream in lanes)
+    for _step in range(remaining):
+        chosen: int | None = None
+        chosen_order: tuple[int, str, str] | None = None
+        for index, (key, stream) in enumerate(lanes):
+            cursor = cursors[index]
+            if cursor >= len(stream):
+                continue
+            order = (stream[cursor].timestamp_coordinate, key.account, key.instrument)
+            if chosen_order is None or order < chosen_order:
+                chosen, chosen_order = index, order
+        if chosen is None:  # pragma: no cover - the loop runs exactly `remaining` times
+            raise BacktestIntegrityError(
+                "the multi-symbol merge exhausted its lanes early — the frontier and the bar count "
+                "disagree (design #37 §3.3)"
+            )
+        key, stream = lanes[chosen]
+        merged.append((key, stream[cursors[chosen]]))
+        cursors[chosen] += 1
+    _assert_merged_non_decreasing(merged)
+    return tuple(merged)
 
 
 def settlement_price(bar: Bar, *, use_open: bool) -> CanonicalDecimal:

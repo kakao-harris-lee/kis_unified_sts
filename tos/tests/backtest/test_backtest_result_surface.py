@@ -34,6 +34,7 @@ from tos.backtest import (
     FillParameters,
     HaltRecord,
     LocalFillRecord,
+    MultiSymbolBacktestRun,
     ScenarioId,
     ScenarioSpec,
     TraceEntry,
@@ -67,9 +68,21 @@ def test_no_shipped_record_type_carries_a_performance_field() -> None:
         assert offenders == (), f"{model.__name__} carries {offenders}"
 
 
-def test_the_run_result_itself_carries_no_performance_field() -> None:
-    """(§1.2 B1) ``BacktestRun`` — the top-level product — has no Sharpe / return / verdict field."""
-    names = tuple(field.name for field in fields(BacktestRun))
+#: Every run-result dataclass the package ships. Listed explicitly and cross-checked against the
+#: module namespace below, exactly as ``_SEALED_MODELS`` is for the pydantic side — an N-lane run is
+#: still a run, and a run type that escaped the seal would escape the whole §1.2 B1 judgement
+#: (design #37 §3.5/§4 M16).
+_RUN_RESULTS = (BacktestRun, MultiSymbolBacktestRun)
+
+
+@pytest.mark.parametrize("run_type", _RUN_RESULTS, ids=lambda item: item.__name__)
+def test_the_run_result_itself_carries_no_performance_field(run_type: type) -> None:
+    """(§1.2 B1) The top-level products have no Sharpe / return / verdict field — every one of them.
+
+    ``instrument_keys`` is a scope list, not a performance name, and the token-wise detector says so
+    rather than the reader (design #37 §4 M16).
+    """
+    names = tuple(field.name for field in fields(run_type))
     assert performance_surface_offenders(names) == ()
     for forbidden in (
         "sharpe",
@@ -84,9 +97,36 @@ def test_the_run_result_itself_carries_no_performance_field() -> None:
         "admissibility_verdict",
     ):
         assert forbidden not in names, (
-            f"BacktestRun declares {forbidden!r} — a single-run slice backtest is disqualified by "
-            "ADR-DEV-010 §8:191-192, so the structure must have nowhere to record such a claim"
+            f"{run_type.__name__} declares {forbidden!r} — a single-run slice backtest is "
+            "disqualified by ADR-DEV-010 §8:191-192, so the structure must have nowhere to record "
+            "such a claim"
         )
+
+
+def test_every_run_result_dataclass_is_actually_covered_by_this_test() -> None:
+    """(anti-phantom §0.5) The run-result *dataclass* family has its own drift detector.
+
+    ``_SEALED_MODELS`` watches pydantic ``FrozenModel`` subclasses only, so the run results — frozen
+    **dataclasses** — had no set-drift canary at all while there was just one of them. There are now
+    two, and a third landing without its ``__post_init__`` seal would be exactly the silent escape
+    the #27 FD lesson names. The membership predicate is structural (``is_dataclass`` ∧ carries
+    ``closes_no_ev``), never a hardcoded census of what someone remembered to add.
+    """
+    import dataclasses
+
+    import tos.backtest as package
+
+    exported_runs = {
+        value
+        for value in vars(package).values()
+        if isinstance(value, type)
+        and dataclasses.is_dataclass(value)
+        and hasattr(value, "closes_no_ev")
+    }
+    assert exported_runs == set(_RUN_RESULTS), (
+        "the shipped run-result dataclasses and this suite's list have drifted: "
+        f"exported={sorted(run.__name__ for run in exported_runs)}"
+    )
 
 
 def test_every_sealed_model_is_actually_covered_by_this_test() -> None:
@@ -110,11 +150,20 @@ def test_every_sealed_model_is_actually_covered_by_this_test() -> None:
 
 
 def test_a_run_reports_that_it_closes_no_ev_and_cannot_say_otherwise() -> None:
-    """(§1.1) ``closes_no_ev`` is a property, not a constructor argument — nobody can flip it."""
+    """(§1.1) ``closes_no_ev`` is a property, not a constructor argument — nobody can flip it.
+
+    Asserted for every shipped run type: replaying N symbols instead of one changes nothing about
+    the four converging reasons, so an N-lane run that could claim otherwise would be a hole in the
+    same seal (design #37 §3.5).
+    """
     run, _core, _fill_model, _sink = run_scenario(scenario_for(ScenarioId.ENTRY_ACK))
     assert run.closes_no_ev is True
-    assert "closes_no_ev" not in {field.name for field in fields(BacktestRun)}
     assert run.label == "MECHANISM_PARITY_DEMONSTRATION_CLOSES_NO_EV"
+    for run_type in _RUN_RESULTS:
+        assert "closes_no_ev" not in {field.name for field in fields(run_type)}, (
+            f"{run_type.__name__} takes closes_no_ev as a parameter — it must be a property no "
+            "caller can flip (design #33 §1.1)"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -76,15 +76,19 @@ verified by the canaries in ``tos/tests/backtest``.
 Public surface groups by module:
 
 * :mod:`tos.backtest.vocabulary` — the closed harness vocabulary (fill modes, settlement, scenarios).
-* :mod:`tos.backtest.bars` — the pure ``Bar`` model + ∅-both-ways stream validation.
+* :mod:`tos.backtest.bars` — the pure ``Bar`` model, ∅-both-ways stream validation, and the
+  deterministic multi-symbol lane-mapping validation / merge (design #37 §3.3/§3.6).
 * :mod:`tos.backtest.resolver` — the D-E2 resolver slot + the bar → time-coordinate projection.
 * :mod:`tos.backtest.converter` — the causal, prefix-bounded bar → ``DECISION_TICK`` converter.
 * :mod:`tos.backtest.fills` — the deterministic synthetic ``Transmit`` band (stage + settle), the
   ``EgressResultSource`` re-injection port the driver drains, and the ``GatewayResultReinjector``
   that presents a send boundary's retained results on it (design #35 §2).
 * :mod:`tos.backtest.records` — the D-E3-local fill / halt / trace records.
-* :mod:`tos.backtest.driver` — the yield-order counter + the interleaving re-injection driver.
-* :mod:`tos.backtest.results` — the run result (performance-surface-sealed) + the trace artifact.
+* :mod:`tos.backtest.driver` — the yield-order counter, the interleaving re-injection driver, and
+  the N-lane multi-symbol driver that occupies the core's single ``Transmit`` slot and
+  demultiplexes each hand-off onto the lane being processed (design #37 §3.2).
+* :mod:`tos.backtest.results` — the run result (performance-surface-sealed) + the trace artifact,
+  in a single-symbol and an N-lane form (design #37 §3.5).
 * :mod:`tos.backtest.scenarios` — the mandated §5.1 scenario contract + a synthetic bar profile.
 """
 
@@ -96,11 +100,19 @@ from tos.backtest._base import (
     performance_surface_offenders,
     seal_performance_surface,
 )
-from tos.backtest.bars import Bar, BarStream, settlement_price, validate_bar_stream
+from tos.backtest.bars import (
+    Bar,
+    BarStream,
+    merge_bar_streams,
+    settlement_price,
+    validate_bar_stream,
+    validate_bar_stream_mapping,
+)
 from tos.backtest.converter import CausalBarConverter, ConvertedTick
 from tos.backtest.driver import (
     BacktestDriver,
     CoreReinstantiationError,
+    MultiSymbolBacktestDriver,
     YieldOrderCounter,
 )
 from tos.backtest.fills import (
@@ -124,7 +136,14 @@ from tos.backtest.resolver import (
     ProvisionalContextResolver,
     resolved_value_surface_absent,
 )
-from tos.backtest.results import BacktestRun, trace_digest, trace_document
+from tos.backtest.results import (
+    BacktestRun,
+    MultiSymbolBacktestRun,
+    multi_symbol_trace_digest,
+    multi_symbol_trace_document,
+    trace_digest,
+    trace_document,
+)
 from tos.backtest.scenarios import (
     MANDATED_SCENARIOS,
     REFERENCE_BASE_PRICE,
@@ -161,11 +180,13 @@ __all__ = [
     "SettlementPolicy",
     "SettlementStatus",
     "settleable_result_kinds",
-    # bars (§3.1)
+    # bars (§3.1) + the multi-symbol lane mapping / merge (design #37 §3.3/§3.6)
     "Bar",
     "BarStream",
+    "merge_bar_streams",
     "settlement_price",
     "validate_bar_stream",
+    "validate_bar_stream_mapping",
     # the D-E2 slot + the bar → time projection (§3.3/§3.5)
     "BarTimeProjection",
     "ProvisionalContextResolver",
@@ -188,12 +209,16 @@ __all__ = [
     "LocalFillRecord",
     "TraceEntry",
     "WiringTrace",
-    # the driver (§3.4/§4.1) + the §2.4 seal
+    # the driver (§3.4/§4.1) + the §2.4 seal + the N-lane driver (design #37 §3.2)
     "BacktestDriver",
     "CoreReinstantiationError",
+    "MultiSymbolBacktestDriver",
     "YieldOrderCounter",
-    # the run result + the out-of-tree oracle artifact (§1.2/§6.1)
+    # the run result + the out-of-tree oracle artifact (§1.2/§6.1) + its N-lane form (#37 §3.5)
     "BacktestRun",
+    "MultiSymbolBacktestRun",
+    "multi_symbol_trace_digest",
+    "multi_symbol_trace_document",
     "trace_digest",
     "trace_document",
     # the mandated scenario contract (§5.1)
