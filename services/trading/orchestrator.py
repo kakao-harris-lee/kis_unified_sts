@@ -5981,6 +5981,20 @@ class TradingOrchestrator:
         ):
             if key in signal_meta:
                 pos_metadata[key] = signal_meta[key]
+        # Forward Setup A RISK_OFF boost telemetry from signal.metadata. This is
+        # *entry* evidence, not an exit override, hence the separate block: it
+        # is the durable fingerprint that the LLM confidence boost fired, which
+        # the 1.0 confidence cap otherwise erases. The conditional copy is
+        # load-bearing — ``llm_risk_off_boost_applied`` is explicitly False when
+        # the helper ran and declined, and absent when it never ran at all, and
+        # those two states must stay distinguishable in the persisted record.
+        for key in (
+            "llm_risk_off_boost_applied",
+            "llm_risk_off_base_confidence",
+            "llm_risk_off_raw_confidence",
+        ):
+            if key in signal_meta:
+                pos_metadata[key] = signal_meta[key]
         # Extract execution venue from execution metadata
         execution_venue = exec_meta.get("venue", "KRX")
         # Persist an initial hard-stop when the signal carries an absolute stop

@@ -200,29 +200,36 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         """Generate an entry signal by delegating to SetupAGapReversion.
 
         OBSERVABILITY REACH (verified 2026-08-05, not assumed). The RISK_OFF
-        boost telemetry threaded onto ``Signal.metadata`` below reaches NO
-        durable store on the futures orchestrator path as wired today:
+        boost telemetry threaded onto ``Signal.metadata`` below is queryable
+        only when an entry actually fills. Where it lands:
 
-        - ``services/trading/orchestrator.py::_persist_setup_signal_row`` is an
-          explicit no-op — the ``kospi.signals_all`` write was removed, so
+        REACHED (on fill). ``_process_filled_entry`` in
+        ``services/trading/orchestrator.py`` forwards the three keys into
+        ``pos_metadata`` (a dedicated block, separate from the exit-override
+        allowlist), and ``position.metadata`` is then recorded verbatim by:
+
+        - the RuntimeLedger ``position_snapshots.payload_json`` column, via
+          ``_position_snapshot_payload`` -> ``record_position_snapshot``;
+        - the RuntimeLedger ``trades.payload_json`` column on close, via
+          ``_trade_payload``;
+        - ``trade_outcomes.jsonl``, via ``_record_entry_telemetry``.
+
+        The copy is conditional (``if key in signal_meta``), so an explicit
+        ``False`` persists as ``False`` and a never-ran helper persists no key —
+        those two states stay distinguishable downstream.
+
+        NOT REACHED. Rejected and unfilled signals still leave no durable trace:
+
+        - ``_persist_setup_signal_row`` is an explicit no-op — the
+          ``kospi.signals_all`` write was removed, so
           ``signals_all_runtime.build_signals_all_row`` (which hardcodes
           ``reason_tags`` to ``[]``) is never reached.
         - ``TradingStatePublisher.publish_signal`` serialises a fixed key set
           (id/symbol/side/strategy/price/confidence/timestamp/...) into the
           ``trading:{asset}:signals`` Redis LIST. It never reads ``metadata``.
-        - The position path copies only an allowlist out of ``signal.metadata``
-          (``stop_loss``, ``take_profit``, ``entry_atr``, ``exit_*``) into
-          ``pos_metadata``, and both the RuntimeLedger position snapshot and
-          ``trade_outcomes.jsonl`` record that post-allowlist dict.
 
-        So the metadata below is available at the seam but is not yet queryable.
-        Closing that needs ONE change outside this package: adding
-        ``"llm_risk_off_boost_applied"``, ``"llm_risk_off_base_confidence"`` and
-        ``"llm_risk_off_raw_confidence"`` to the forwarding tuple in
-        ``services/trading/orchestrator.py`` (the ``for key in (...)`` block
-        just after ``pos_metadata`` is built). Until then the ``logger.info``
-        in ``apply_llm_tuning_setup_a`` is the only surface that observes the
-        boost at the shipped ``LOG_LEVEL=INFO``.
+        For those the ``logger.info`` in ``apply_llm_tuning_setup_a`` remains the
+        only surface that observes the boost at the shipped ``LOG_LEVEL=INFO``.
         """
         mc = _build_market_context(context)
         if mc is None:
