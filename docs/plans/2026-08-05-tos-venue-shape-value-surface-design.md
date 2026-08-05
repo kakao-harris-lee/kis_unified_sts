@@ -448,10 +448,15 @@ bypass copy가 안전. `silently_rounded`(주입 `False`·`records.py:161`)는 o
 `venue_shape_constraints()`(`_slice_fixtures.py:740-753`)의 `price_min/price_max/tick_size`는
 **provisional stand-in**으로 이동하며, 계약은 실값이 아니라 **충족 조건**만 정의한다:
 
-> 값-표면 shape 가격 `V`(슬라이스에서 crossing close = 4,499,000)에 대해 provisional (price_min,
-> price_max, tick_size)를 다음을 만족하도록 선택: `price_min ≤ V ≤ price_max` **且** `(V − price_min)
-> mod tick_size == 0`. 한 admissible stand-in: `(1000, 9_000_000, 1000)` — `(4,499,000−1000) mod 1000
-> = 0`. 실 (price_min, price_max, tick_size)는 **P0-2 Broker Capability Profile INSTANCE 소관**
+> **[에라타 v1.3, 2026-08-06 — 구현이 더 충실하면 에라타가 정답]** 값-표면 shape 가격 `V`는 단수가
+> 아니다 — step 3 `VenueConstraintStage`는 **도달하는 모든 tick**에 fold되므로, 충족 조건은 step 3에
+> 도달하는 **모든** 값-표면 close에 대해 성립해야 한다. 슬라이스에서 그 집합 = {4,499,000(crossing) ·
+> 4,498,500(bar 2·capacity 봉인 대상) · 4,521,000(bar 4·flat)}. 원문의 stand-in `(1000, 9_000_000,
+> 1000)`은 bar 2를 `(4,498,500−1000) mod 1000 = 500 ≠ 0`으로 INADMISSIBLE로 만들어 **다른 bar의 halt
+> 증거(`AT_MOST_ONE_EXPOSURE_HELD` → `STAGE_DENIED`)를 재작성**한다 — 구현 뮤테이션 A가 비준 테스트
+> 2건의 loud FAIL로 실증. 정정 stand-in: **`(1000, 9_000_000, 500)`**(쌍별 차 gcd = 500; 3개 V 전부
+> on-grid·주입 4,200은 `(4200−1000) mod 500 = 200`으로 여전히 off-grid ⇒ §9-4 이중 실패·§9-7 kill
+> 보존). 실 (price_min, price_max, tick_size)는 **P0-2 Broker Capability Profile INSTANCE 소관**
 > (#34 §9 broker-specific bound 행)이며 §10-2 미결 등재.
 
 **quantity band 불변**: `lot_size=2, min_quantity=2, max_quantity=100`(`:746-748`) 무변경 —
@@ -830,6 +835,12 @@ admissibility는 e2e 관심사)에 배치하고, `test_slice_gaps.py`는 **무�
 ---
 
 ## 14. 개정 로그
+
+- **v1.3 에라타 (2026-08-06, 구현 후·오케스트레이터 소관)**: §3.4 stand-in 정정 `(1000, 9_000_000,
+  1000)` → `(1000, 9_000_000, 500)` + "V 단수" 서술을 "step 3에 도달하는 모든 값-표면 close"로 일반화.
+  근거: 구현이 step 3의 전-tick fold 실측 하에서 원문 tick이 bar 2의 halt 증거를 재작성함을 뮤테이션
+  A(비준 테스트 2건 loud FAIL)로 실증 — 구현 리뷰 ACCEPT-WITH-MINOR의 MINOR-1, 이탈 (a) JUSTIFIED
+  판정. 쌍별 차 gcd = 500. 설계 판단 무변경·에라타 범위는 이 블록과 본 로그 행뿐.
 
 - **v1.2 (2026-08-06)**: 델타 재검증 REVISE(신규 MAJOR-N1·MINOR 3) 반영 — §10-2 register 목적지 정정으로
   비준 승급(M1-M4·MINOR 7·WM 4는 전건 해소 실측 확인). finding별:
