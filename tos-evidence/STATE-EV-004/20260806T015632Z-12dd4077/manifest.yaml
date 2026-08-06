@@ -1,0 +1,270 @@
+schema: tos-evidence/manifest/v3
+run_id: 20260806T015632Z-12dd4077
+evidence_id: STATE-EV-004
+primary_adr: ADR-002-005
+design_document: docs/plans/2026-08-06-tos-ev-l3-pilot-design.md
+evidence_level_stage: EV-L3
+discipline_tag: EV-L3 stage execution record only; not a row PASS; restart coverage argument + network/identity
+  residuals + independent review remain as stated in claim/coverage_argument blocks.
+claim:
+  closes_evidence_item: false
+  register_status_moved_by_this_run: false
+  register_status_at_run_time: NOT_IMPLEMENTED
+  minimum_evidence_level: EV-L3
+  independent_review: NOT_SIGNED (VER §9.5)
+  p0_1_bounds_approval: OPEN
+  verification_profile_version: 2.1 (PROPOSED — P0-1 open)
+  target_integrity: STABLE_DURING_RUN
+  mutated_during_run: []
+  note: This document records that named tests executed at the recorded baseline. It asserts no acceptance,
+    no PASS, and no coverage of the higher stages the row's minimum level names.
+  ev_l3_stage_gates_unmet: []
+  stages_executed:
+  - EV-L1
+  - EV-L2
+  - EV-L3
+  stages_executed_note: EV-L1 and EV-L2 are executed as their own run packages and bound here by prior_stage_runs;
+    this package is the EV-L3 stage.
+  covered_axis: 'STATE-EV-004: persistence + process + reconstruction ONLY (NOT real network, NOT credential
+    identity — both modeled/deferred with residual refs in integration_boundary.modeled_axes). Serves
+    the STATE-EV-001 R-1 durable axis as its evidence limb (substrate-class: ACID-durability class exercised
+    via stdlib sqlite3 WAL; the ADR-002-005 §4 project persistence decision remains OPEN — OQ-1 operator
+    adjudication; the R-1 register transition is a conditional dual-record made outside this run). NOT
+    PASS-eligible for STATE-EV-004 from this pilot (design #39 §9).'
+prior_stage_runs:
+- evidence_id: STATE-EV-001
+  run_id: 20260806T015629Z-12dd4077
+  stage: EV-L1
+  sha256sums_digest: e03f10df1cebc4403333d44e9f5665582e68f85ab171e2e07364c0be26f53c53
+  artifacts_reverified:
+  - baseline.yaml
+  - junit.xml
+  - manifest.yaml
+  - run.log
+  - traceability.csv
+  baseline_commit_sha: 12dd40778b0237ea6992a3b0a9ecadb10f865f0f
+  baseline_matches_this_run: true
+  outcome: ALL_SELECTED_TESTS_GREEN
+  reconcile_note: 'STATE-EV-001 EV-L1 stage at THIS baseline — prior binding for the STATE-EV-001 durable-limb
+    staged continuity (design #39 §6.2 gate 4: the L1∧L2 prior requirement is STATE-EV-001 continuity,
+    not a STATE-EV-004 minimum-level claim; STATE-EV-004 is EV-L3-only).'
+- evidence_id: STATE-EV-001
+  run_id: 20260806T015630Z-12dd4077
+  stage: EV-L2
+  sha256sums_digest: 73b2a08753d7709bd9fb1043a00caad31c6ddf0486e1131cc917aba7aeecd59f
+  artifacts_reverified:
+  - baseline.yaml
+  - fault-timeline.jsonl
+  - junit.xml
+  - manifest.yaml
+  - run.log
+  - traceability.csv
+  baseline_commit_sha: 12dd40778b0237ea6992a3b0a9ecadb10f865f0f
+  baseline_matches_this_run: true
+  outcome: ALL_SELECTED_TESTS_GREEN
+  reconcile_note: 'STATE-EV-001 EV-L2 stage at THIS baseline — same continuity basis as the L1 prior (design
+    #39 §6.2 gate 4).'
+supersedes_run_id: []
+supersedes_note: Superseded packages are retained unmodified (VER §2.2); this field is the forward pointer,
+  not a deletion record.
+integration_boundary:
+  persistence:
+    technology: stdlib sqlite3 WAL, synchronous=FULL (PILOT-SCOPE; NOT the ADR-002-005 §4 line 61 project
+      persistence-technology decision, which remains an open gate)
+    real_on_disk: true
+    substrate_source: tos/src/tos/staterestore/store.py
+    substrate_check: &id002
+      met: true
+      path: tos/src/tos/staterestore/store.py
+      sha256: c4e70f4692d9a4e7b418c1af61ae03827122cc6ee76a1f89de00d84cf3ef4e3f
+      measured_from: structural analysis of the executed source's syntax tree; pragmas are read out of
+        real execute(...) arguments, so a docstring or comment mentioning one cannot satisfy the check;
+        the harness never imports tos (TOS-FW-R)
+      measured:
+        connect_call_sites: 1
+        literal_connection_targets: []
+        in_memory_tokens_present: []
+        executed_pragmas:
+          journal_mode: WAL
+          synchronous: FULL
+        pragmas_present:
+        - journal_mode=WAL
+        - synchronous=FULL
+        pragmas_missing: []
+        pragmas_required:
+        - journal_mode=WAL
+        - synchronous=FULL
+    measured_store_bytes:
+    - 12288
+  process_boundary:
+    writer_pids:
+    - 16911
+    - 16913
+    - 16915
+    - 16918
+    - 16920
+    - 16922
+    - 16924
+    - 16926
+    reader_pids:
+    - 16912
+    - 16914
+    - 16916
+    - 16919
+    - 16921
+    - 16923
+    - 16925
+    - 16928
+    distinct_per_scenario: true
+    crash_mechanism: deterministic os._exit at a parametrized crash point (not a racy externally delivered
+      SIGKILL)
+    observed_crash_exit_statuses:
+    - 137
+    crash_points: &id001
+    - AFTER_COMPLETE_DURABLE_COMMIT
+    - AFTER_DURABLE_SEND_STARTED_BEFORE_BROKER
+    - AFTER_MODELLED_NETWORK_TRANSMISSION
+    - AFTER_STALE_OPTIMISTIC_CACHE
+    - AFTER_TERMINAL_FILL_WITH_POSITIVE_KNOWLEDGE
+    - AT_NON_TERMINAL_BROKER_ORDER_BOUNDARY
+    - BEFORE_EVIDENCE_PERSISTENCE
+    - BETWEEN_DIMENSION_TRANSACTIONS_INCOMPLETE_STORE
+  modeled_axes:
+  - axis: network
+    disposition: MODELED
+    residual_ref: 'design #39 §2.4 R-N (PROPOSED_NOT_YET_REGISTERED; carrier ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml)'
+    note: VirtualBroker capability-class marker; real broker network deferred to EV-L4/+Broker; real-futures
+      real-order path policy-blocked (zero real order bytes)
+  - axis: credential_identity
+    disposition: DEFERRED
+    residual_ref: 'design #39 §2.4 R-I (PROPOSED_NOT_YET_REGISTERED; carrier ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml)'
+    note: logical identity re-derivation executed; real credential/cross-host auth deferred to STATE-EV-005
+      (+Security)
+  modeled_axis_residual_declared: true
+  modeled_axes_note: An axis listed here was NOT exercised as a real boundary by this stage; each carries
+    the §378 residual that holds it. VER §5 line 151-153 defines EV-L3 by real persistence, identity and
+    network boundaries — this run realizes persistence, the process boundary and logical identity re-derivation
+    only.
+crash_injection:
+  catalog_ref: docs/plans/2026-08-06-tos-ev-l3-pilot-design.md#4
+  seed: 0
+  seed_pinned: true
+  schedule_artifact: crash-timeline.jsonl
+  crash_scenario_count: 8
+  expected_crash_scenario_count: 8
+  crash_scenario_count_matches_catalog: true
+  scenario_ids:
+  - L3-01
+  - L3-02
+  - L3-03
+  - L3-04
+  - L3-05
+  - L3-06
+  - L3-07
+  - L3-08
+  duplicate_scenario_ids: []
+  foreign_evidence_id_rows: []
+  deviation_scenarios: []
+  misreported_outcome_scenarios: []
+  expected_undefined_scenarios: []
+  unobserved_reconstruction_scenarios: []
+  shared_process_scenarios: []
+  non_durable_store_scenarios: []
+  crash_points: *id001
+  process_boundary_real: true
+  persistence_real_measured: true
+  all_crash_scenarios_met: true
+  all_crash_scenarios_met_basis: every row's outcome RE-DERIVED from observed vs expected reconstruction
+    plus the row's own structural boundary measurements (the row's outcome field is cross-checked, never
+    trusted); withheld on an empty schedule (0 injected != 0 violations), any deviation or misreport,
+    any undefined Expected or unobserved reconstruction, a writer/reader pid that is not a real distinct
+    pair, a store that was not a non-empty on-disk file, a duplicated scenario id, a row from another
+    evidence id, or a recount that disagrees with the catalog size
+  persistence_real: true
+  persistence_substrate_check: *id002
+coverage_argument:
+  specification: tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+    §2.7 (line 76-78) — a finite set of executed evidence cases does not by itself discharge a universally-quantified
+    safety claim. Both this row's Expected clauses are universally quantified, so the coverage argument
+    is mandatory.
+  boundary_values: per crash-point x composite boundary combinations, deterministically enumerated (seed-fixed);
+    the restart axis only
+  adverse_scenario_set: ADR-002-021 PROPOSED (unapproved) — adversarial-combination leg UNMET; applicability
+    to non-risk row = OQ; residual per §378
+  unexercised_residual_ref:
+  - 'R-N — STATE-EV-004 real-network-boundary axis unexercised: transmission is a modeled (capability-class
+    VirtualBroker) marker, zero real order bytes; real broker network is EV-L4/+Broker and the real-futures
+    real-order path is policy-blocked (design #39 §2.4). PROPOSED_NOT_YET_REGISTERED — carried by ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml;
+    registration follows per design #39 §11 step 3 (operator gate).'
+  - 'R-I — STATE-EV-004 credential/service-identity axis unexercised: logical identity re-derivation executed;
+    real credential/cross-host auth deferred to STATE-EV-005 (+Security) (design #39 §2.4). PROPOSED_NOT_YET_REGISTERED
+    — carried by ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml.'
+  - 'R-D — power-loss/torn-sector durability unexercised: os._exit models application crash, not kernel
+    page-cache loss; synchronous=FULL is unfalsifiable under the process-crash model (equivalent-mutant
+    E, design #39 §2.4 errata v1.2 addendum) and is pinned structurally instead. PROPOSED (candidate)
+    — carried by ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml.'
+  unexercised_residual_note: 'The §378 Residual Risk Register INSTANCE is absent (measured: verification/
+    holds only RESIDUAL-RISK-ACCEPTANCE-RECORD-template.yaml; tos-evidence/ holds zero residual artifacts)
+    — creating it is prerequisite work. Each entry SHALL carry all twelve VER:3293-3306 fields (risk identity;
+    affected requirement/ADR; scope; credible failure sequence; maximum economic effect; existing controls;
+    detection/containment bound; owner; approver; expiration/review date; required scope reduction; evidence
+    references), and owner/approver come through the P0-3 role system (D1). The refs above are pointers,
+    not a union: separate residual risks SHALL NOT be unioned at a consumer (VER:3308) — each is registered
+    independently.'
+  discharged: false
+  discharged_note: The adversarial-combination leg cannot be discharged while ADR-002-021 is PROPOSED,
+    and an unresolved applicability question defaults to APPLICABLE (VER §2.4 line 64-66; VER:173 'Missing
+    resolution is a blocker and SHALL NOT default to the lowest level'). This run therefore records the
+    argument's state; it does not claim to have made it.
+execution:
+  command:
+  - /Users/harris/Development/private/kis_unified_sts/.venv/bin/python
+  - -m
+  - pytest
+  - tests/tos_l3/test_state_ev_004_crash_restart.py
+  - -q
+  - --junitxml=/Users/harris/Development/private/kis_unified_sts/tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/junit.xml
+  - --hypothesis-seed=0
+  - --l3-crash-timeline=/Users/harris/Development/private/kis_unified_sts/tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/crash-timeline.jsonl
+  cwd: /Users/harris/Development/private/kis_unified_sts
+  env_overrides:
+    PYTHONPATH: tos/src
+    PYTHONHASHSEED: '0'
+  started_utc: '2026-08-06T01:56:32.140349+00:00'
+  finished_utc: '2026-08-06T01:56:35.152801+00:00'
+  monotonic_duration_s: 3.01241
+  return_code: 0
+  outcome: ALL_SELECTED_TESTS_GREEN
+  junit_summary:
+    tests: 13
+    failures: 0
+    errors: 0
+    skipped: 0
+    time_s: '2.282'
+  stage_gate_outcome: EV_L3_STAGE_GATES_MET
+test_nodes:
+- tests/tos_l3/test_state_ev_004_crash_restart.py
+baseline:
+  file: baseline.yaml
+  sha256: eced9b729b62ee51cb4b5feb470efd42431cfb3937d4f61f11630ca02d5f41f7
+  completeness: NOT complete (VER §3 line 109 has no 'as applicable' clause). VER §3 fields without an
+    existing artifact are NOT_APPLICABLE_MODELED_TRANSPORT_L3; the unmet set is enumerated in baseline.yaml::ver_002_001_section_3_unmet_fields.
+  ver3_unmet_field_count: 16
+artifacts:
+- name: baseline.yaml
+  sha256: eced9b729b62ee51cb4b5feb470efd42431cfb3937d4f61f11630ca02d5f41f7
+  bytes: 31690
+- name: crash-timeline.jsonl
+  sha256: bda362559afc9f3d1e21dec93d50acc8cb32ab6684e04ca4be12444211c0472a
+  bytes: 5270
+- name: junit.xml
+  sha256: cf4f8f309de963f5f36982d86d311488e350181c84fb03fe2136949e83cd69b5
+  bytes: 2250
+- name: run.log
+  sha256: 8b04062ddad3daa45eca1efccaf65047f88990ba557144c9c3cdcff71f7febac
+  bytes: 588
+- name: traceability.csv
+  sha256: 2fb60c7fe999f5dfca04aba86cd62ee10088eb401db3d8b1743b93d648071d01
+  bytes: 736
+artifact_closure_note: manifest.yaml cannot contain its own digest; sha256sums.txt is written last and
+  closes over every retained file including this manifest (VER §9.2).
