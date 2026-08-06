@@ -11,7 +11,7 @@
 |---|---|---|
 | Document ratification | 13 `RATIFIED` | Ratification governs specification text only; it is not ADR acceptance or runtime authority. |
 | ADR acceptance | 45 `PROPOSED` | A Proposed or even future Accepted ADR is not evidence or live authorization. |
-| Evidence | 490 total: 409 `NOT_IMPLEMENTED`, 80 `READY`, 1 `PASS` | Unit tests and document reviews do not move these rows; governed execution and review do. |
+| Evidence | 490 total: 409 `NOT_IMPLEMENTED`, 79 `READY`, 2 `PASS` | Unit tests and document reviews do not move these rows; governed execution and review do. |
 | Restricted-live | `NOT_AUTHORIZED` | Only the authority named in `AUTHORITY-STATUS.csv` may change this axis. |
 | Production authorization | `NOT_AUTHORIZED` | Evidence `PASS` does not imply production authorization. |
 
@@ -19,7 +19,7 @@
 
 | Register | Total | NOT_IMPLEMENTED | READY | PASS | FAIL | INCONCLUSIVE | Other |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Part 1 | 372 | 291 | 80 | 1 | 0 | 0 | 0 |
+| Part 1 | 372 | 291 | 79 | 2 | 0 | 0 | 0 |
 | Parts 2/3 development | 118 | 118 | 0 | 0 | 0 | 0 | 0 |
 
 ## Interpretation guardrails

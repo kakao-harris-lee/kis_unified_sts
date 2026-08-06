@@ -2277,8 +2277,10 @@ RFC-002 SHALL NOT progress to Release Candidate until:
   former text asserted in the present tense that "VER-002-001 and the Evidence Register
   **now** cover ADR-002-001 through ADR-002-030" and that "**All** 372 registered evidence
   items **remain** `NOT_IMPLEMENTED`". Those present-tense claims had gone stale: the
-  Part-1 register now records 291 `NOT_IMPLEMENTED`, 80 `READY`, and 1 `PASS`
-  (`verification/EVIDENCE-REGISTER-002.csv`), and the development-track register has grown
+  Part-1 register now records 291 `NOT_IMPLEMENTED`, 79 `READY`, and 2 `PASS`
+  (`verification/EVIDENCE-REGISTER-002.csv`; the split was 291/80/1 when this correction was
+  first written and moved again on 2026-08-06 when STATE-EV-001 reached `PASS`), and the
+  development-track register has grown
   from 96 to 118 rows (`../part-3-development/verification/EVIDENCE-REGISTER-DEV.csv`). The
   replacement paragraph is time-anchored — labelled "Historical Wave-4 snapshot (not
   current status)", scoped with "At that Wave-4 checkpoint", and explicitly redirected to

@@ -1,6 +1,6 @@
 # EVIDENCE-REGISTER-002 — Safety Architecture Evidence Register
 
-- **Status:** Active Register — **1 item `PASS` — SPG-EV-002** (EV-L1/EV-L2 minimum level, signed 2026-07-30); 80 items `READY`; EV-L1 stage runs executed for 2 items, and the first EV-L3 stage run was executed 2026-08-06 for STATE-EV-004 (`READY`, not a `PASS`). A `PASS` is an evidence fact, not authority.
+- **Status:** Active Register — **2 items `PASS`**: SPG-EV-002 (EV-L1/EV-L2 minimum level, signed 2026-07-30) and STATE-EV-001 (EV-L1/EV-L2 minimum level, signed 2026-08-06 — the second `PASS` in this register's history); 79 items `READY`; EV-L1 stage runs executed for 2 items, and the first EV-L3 stage run was executed 2026-08-06 for STATE-EV-004 (`READY`, not a `PASS`). A `PASS` is an evidence fact, not authority.
 - **Date:** 2026-07-14
 - **Specification:** VER-002-001
 - **Production Authorization:** NO
@@ -9,14 +9,14 @@ This register tracks execution evidence. The initial state is intentionally `NOT
 
 An executed EV-L1 run is a stage record, not an accepting state: a run neither closes an item nor covers the `/2`, `/3`, `+Security`, or `+Broker` stages a row's minimum level names, and a `PASS` remains incomplete until independent review signs the evidence manifest (VER-002-001 §9.5). Run packages live under `tos-evidence/<evidence-id>/<run-id>/`; the CSV-only `latest_run_id` / `latest_result_date` / `evidence_location` columns carry the binding.
 
-A `PASS` records only that a row's minimum evidence level was executed, independently reviewed, and signed. It is an evidence fact, not permission: it confers no live authorization, no broker or production scope, and no ADR acceptance — accepting an ADR requires all of its evidence rows plus Architecture Gate action. The single `PASS` (SPG-EV-002) covers the EV-L1/EV-L2 stages at baseline `d4160fd0`; its signature chain is `ai-review(decorrelated)` attempt 3 plus operator countersign 2026-07-30, retained under `tos-evidence/SPG-EV-002/review/`.
+A `PASS` records only that a row's minimum evidence level was executed, independently reviewed, and signed. It is an evidence fact, not permission: it confers no live authorization, no broker or production scope, and no ADR acceptance — accepting an ADR requires all of its evidence rows plus Architecture Gate action. Both `PASS` rows cover EV-L1/EV-L2 stages only. SPG-EV-002 covers the EV-L1/EV-L2 stages at baseline `d4160fd0`; its signature chain is `ai-review(decorrelated)` attempt 3 plus operator countersign 2026-07-30, retained under `tos-evidence/SPG-EV-002/review/`. STATE-EV-001 covers the EV-L1/EV-L2 stages at baseline `12dd4077` and was signed 2026-08-06; its signature chain is two `ai-review` legs (attempt 1 same-model-family, attempt 2 a different model family) plus the operator countersign, retained under `tos-evidence/STATE-EV-004/review/`, and the durable limb of its Expected is evidenced by citation of the STATE-EV-004 EV-L3 run rather than by its own stages (§378 residual R-1, evidence limb discharged 2026-08-06, substrate-class).
 
 ## Status Summary
 
 - Total evidence items: **372**
 - NOT_IMPLEMENTED: **291**
-- READY: **80**
-- PASS: **1**
+- READY: **79**
+- PASS: **2**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
 
@@ -119,7 +119,7 @@ Mirror column mapping: the `Owner` column below mirrors the CSV `implementation_
 | REARM-EV-010 | Live Authorization and Re-arm | Final Egress Authorization Currentness | ADR-002-007 | EV-L3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | REARM-EV-011 | Live Authorization and Re-arm | HALT Restrictive Precedence | ADR-002-007 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | REARM-EV-012 | Live Authorization and Re-arm | Authorization Evidence Replay | ADR-002-007 | EV-L2 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
-| STATE-EV-001 | Orthogonal State | Orthogonal Composite Persistence | ADR-002-005 | EV-L1/2 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STATE-EV-001 | Orthogonal State | Orthogonal Composite Persistence | ADR-002-005 | EV-L1/2 | PASS | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | STATE-EV-002 | Orthogonal State | Conservative Direction | ADR-002-005 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | STATE-EV-003 | Orthogonal State | Cross-Dimension Coupling | ADR-002-005 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | STATE-EV-004 | Orthogonal State | Conservative Restart Reconstruction | ADR-002-005 | EV-L3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |

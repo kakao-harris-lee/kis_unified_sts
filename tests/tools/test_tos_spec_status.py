@@ -278,10 +278,14 @@ def test_current_corpus_is_consistent_and_axes_are_separate():
 
     assert snapshot.documents == {"RATIFIED": 13}
     assert snapshot.adrs == {"PROPOSED": 45}
+    # 2026-08-06: STATE-EV-001 moved READY -> PASS on the closed VER 9.5
+    # signature chain for the 12dd4077 generation, so READY 80 -> 79 and
+    # PASS 1 -> 2.  Two rows now record PASS: SPG-EV-002 (2026-07-30) and
+    # STATE-EV-001 (2026-08-06).  NOT_IMPLEMENTED is unchanged.
     assert snapshot.part1.counts == {
         "NOT_IMPLEMENTED": 291,
-        "READY": 80,
-        "PASS": 1,
+        "READY": 79,
+        "PASS": 2,
     }
     assert snapshot.development.counts == {"NOT_IMPLEMENTED": 118}
     assert snapshot.authorities == {

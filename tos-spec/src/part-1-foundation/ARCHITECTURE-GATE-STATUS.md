@@ -4,7 +4,7 @@
 - **Scope:** Ratified RFC-002 v0.6, all 13 Ratified RFC-class baselines, and ADR-002-001..030 plus ADR-DEV-001..015
 - **Architecture Documentation:** the RFC-class corpus is Ratified; all 45 ADRs remain Proposed; ratification is not ADR acceptance, evidence, restricted-live, or production authority
 - **Latest Architecture Review:** ADR-002-002 through ADR-002-030 PASS at document-review level; no independent review is pending; no status or live-readiness promotion
-- **Verification Execution:** Part 1: 291 `NOT_IMPLEMENTED`, 80 `READY`, 1 `PASS`; development: 118 `NOT_IMPLEMENTED` (including 12 Proposed ECO and 8 Proposed IOM cases). STATE-EV-004 EV-L3 stage executed 2026-08-06 (first EV-L3 execution; `READY`, not a `PASS`). A row state is not ADR acceptance or authority; see generated `../CURRENT-STATUS.md`
+- **Verification Execution:** Part 1: 291 `NOT_IMPLEMENTED`, 79 `READY`, 2 `PASS`; development: 118 `NOT_IMPLEMENTED` (including 12 Proposed ECO and 8 Proposed IOM cases). STATE-EV-004 EV-L3 stage executed 2026-08-06 (first EV-L3 execution; `READY`, not a `PASS`). STATE-EV-001 moved `READY` → `PASS` on 2026-08-06 — the second `PASS` in register history. A row state is not ADR acceptance or authority; see generated `../CURRENT-STATUS.md`
 - **Production Authorization:** NO
 
 ---
@@ -758,7 +758,7 @@ committed merge record.
 > the corpus's normative RFCs — RFC-000..011 plus GOV-001 v0.1 are all Ratified. They confer no
 > live authorization, no ADR acceptance, and no capacity (GOV-001 G1/G8): every registered item
 > was `NOT_IMPLEMENTED` at that point (372/98; the Part-1 register now reads
-> 291 `NOT_IMPLEMENTED`, 80 `READY`, and 1 `PASS`, and the development register now holds 118 rows), all
+> 291 `NOT_IMPLEMENTED`, 79 `READY`, and 2 `PASS`, and the development register now holds 118 rows), all
 > ADR-002-xxx and ADR-DEV-xxx remain Proposed, and the
 > DEC-EV / TEST-EV-001 / ADR-DEV evidence obligations stay on the acceptance track. No
 > normative-RFC ratification candidate remains; the remaining tracks are the ADR acceptance/
@@ -818,7 +818,7 @@ which those same rules list as a precondition of a future `APPROVED` transition 
 consequence of one. Actual/template key sets remain identical at 257 keys (91 scope, 84 bounds,
 79 limits, 3 review). No SAFE-xxx requirement, no invariant, no acceptance criterion, and no EV ID
 is introduced; the Evidence Register count is unchanged (Part-1 372) and at that point all 372
-items were `NOT_IMPLEMENTED` (the register now reads 291 `NOT_IMPLEMENTED`, 80 `READY`, and 1 `PASS`). A key with an approved value is not executed evidence: EV-L1 is a pure predicate
+items were `NOT_IMPLEMENTED` (the register now reads 291 `NOT_IMPLEMENTED`, 79 `READY`, and 2 `PASS`). A key with an approved value is not executed evidence: EV-L1 is a pure predicate
 level that consumes no wall-clock threshold, so these values are ceilings the EV-L2/L3 harness will
 enforce, not measurements. Independent EV-L0 review of both acts is owed.
 
@@ -959,8 +959,8 @@ determination ratifies or re-ratifies RFC-002.
 **What changed.** The closing paragraph of §26 carried a present-tense status
 claim — "All 372 registered evidence items remain `NOT_IMPLEMENTED`" and a
 development-track register of "96 items". Both had been overtaken by the
-register's own contents (Part-1 is now 291 `NOT_IMPLEMENTED` / 80 `READY` /
-1 `PASS`; the development register holds 118 rows). The edit relabelled the
+register's own contents (Part-1 is now 291 `NOT_IMPLEMENTED` / 79 `READY` /
+2 `PASS`; the development register holds 118 rows). The edit relabelled the
 paragraph as a **historical Wave-4 snapshot**, converted its claims to past
 tense, and pointed readers to the generated `../CURRENT-STATUS.md` for current
 status. No SAFE-xxx requirement, invariant, ADR status, evidence ID, numeric
@@ -1147,10 +1147,15 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
 
 - **M-06 architectural existence.** Whether an out-of-band final-egress containment path independent of the egress enforcement point actually exists remains open. EGRESS-EV-013 registers the evidence obligation; SAFE-054 permits closing it via the accepted-residual-risk / reduced-scope branch. This is a separate Major finding, not part of CR-01. **Owner disposition (Wave 9, 2026-07-17):** the System Owner attested that an out-of-band broker-side containment path exists for the final egress enforcement point (credential revocation and account deactivation through broker-side channels), recorded in capability-class terms only; the concrete procedure belongs to a non-normative Broker Capability Profile instance on the implementation track. This closes the M-06 open question; EGRESS-EV-013 remains the acceptance-track evidence obligation (`NOT_IMPLEMENTED`).
 - **Current evidence state.** The Part-1 register contains 372 rows: 291
-  `NOT_IMPLEMENTED`, 80 `READY`, and 1 `PASS`; the development register contains
-  118 `NOT_IMPLEMENTED` rows, including 12 Proposed ECO and 8 Proposed IOM cases. The transition to
-  80 `READY` is STATE-EV-004, whose EV-L3 stage was executed 2026-08-06 — the first EV-L3
-  execution in this register's history; it is `READY`, not a `PASS`. The Wave-5/7 historical count transitions remain in
+  `NOT_IMPLEMENTED`, 79 `READY`, and 2 `PASS`; the development register contains
+  118 `NOT_IMPLEMENTED` rows, including 12 Proposed ECO and 8 Proposed IOM cases. Two 2026-08-06
+  transitions produced this split, in order. First, STATE-EV-004 moved `NOT_IMPLEMENTED` →
+  `READY` on its executed EV-L3 stage — the first EV-L3 execution in this register's history;
+  it is `READY`, not a `PASS`, and its own `PASS` stays blocked by the now-registered residuals
+  R-N and R-I. Second, STATE-EV-001 moved `READY` → `PASS` on its EV-L1/EV-L2 stages at baseline
+  `12dd4077` once the VER §9.5 signature chain closed (two `ai-review` legs plus the operator
+  countersign) — the second `PASS` in register history, and the reason `READY` reads 79 rather
+  than 80. The Wave-5/7 historical count transitions remain in
   §3.8/§3.10. Registration, `READY`, and `PASS` confer no ADR acceptance or live
   readiness; the CSVs and generated `../CURRENT-STATUS.md` are the current count
   sources.
@@ -1171,6 +1176,13 @@ Until this evidence is registered, passed, and independently reviewed, ADR-002-0
   countersign (VER §9.5), the OQ-1 adjudication of the STATE-EV-001 R-1 conditional
   dual-record, approval of ADVERSE-SCENARIO-SET-002-EVL3-PILOT (PROPOSED), and registration
   of residuals R-N, R-I, and R-D.
+  **Superseded in part, later the same day — see the next entry.** This record was made
+  before the operator countersign. Its two time-sensitive claims have since moved: "SPG-EV-002
+  remains the single `PASS`" and "four human gates remain open". Both were accurate when
+  recorded and are retained as that record. Its durable conclusions are unchanged and were not
+  disturbed by the countersign: ADR-002-005 and ADR-002-014 remain **Proposed**, the §8 Gate
+  Verdict is unchanged, and no acceptance, restricted-live, or production authority was created.
+- **All four `12dd4077` human gates disposed — recorded 2026-08-06 (row transition; §8 verdict unchanged).** The operator countersigned the ladder ("STATE-EV-004 EV-L3 + STATE-EV-001/SPG-EV-002 EV-L1/L2 stage evidence at baseline 12dd4077 countersigned — operator, 2026-08-06", `tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md`) and disposed of all four gates listed in the entry above: (1) the VER §9.5 signature chain closed on two `ai-review` legs — attempt 1 same-model-family, attempt 2 a different model family — plus the countersign; (2) OQ-1 adjudicated (A), discharging R-1's evidence limb substrate-class by run `20260806T015632Z-12dd4077` while the ADR-002-005 §4 project persistence decision continues on its own architecture track; (3) residuals R-N, R-I, and R-D registered in `verification/RESIDUAL-RISK-REGISTER-002.yaml` (register_version 1.0 → 1.1, twelve VER §378 SHALL items each, non-union preserved); (4) `verification/ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml` PROPOSED → APPROVED. **Effect:** STATE-EV-001 moved `READY` → `PASS` — the second `PASS` in register history — putting Part 1 at 291/79/2. STATE-EV-004 remains `READY`; its own `PASS` is blocked by R-N and R-I, both Critical and unwaivable. SPG-EV-002 remains `PASS` on its unchanged signed `d4160fd0` basis. **Not changed by any of this:** the §8 Gate Verdict, ADR-002-005 and ADR-002-014 (both still Proposed — acceptance needs all of an ADR's evidence rows plus an Architecture Gate act), restricted-live and production authorization (both `NOT_AUTHORIZED`), and the VER §3 complete-baseline limitation, which remains structurally unmet above the EV-L1 subset and is stated in-band in every `baseline.yaml` of the generation.
 - **TRACEABILITY-MATRIX-002 §5.3 source gaps — four resolved 2026-08-02, one
   open.** ADR-002-003 through ADR-002-006 carry direct tables transcribed from
   their own existing `Depends On` SAFE claims, so SA, BC, STATE, and RECON are
@@ -1289,7 +1301,7 @@ registration introduce no SAFE-xxx and create no authority.
 | Safety Monitoring Policy, Critical Telemetry and Monitor Coverage Manifests, Continuous Conformance Snapshot, Safety Monitoring Gap, Safety Alert Record, and Alert Escalation Record artifacts | Templates only; DRAFT/INCOMPLETE/UNKNOWN/SUSPECTED/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Software Release Policy, reviewed-source, dependency/toolchain-closure, build-provenance, artifact, admission, admitted-set, and runtime-attestation artifacts | Templates only; DRAFT/UNKNOWN/INVALID/DENY/non-authorizing/non-mutating/fail-closed | YES | NO |
 | Post-Trade Finality Policy, Economic Obligation Record, Active Economic Obligation Set, Post-Trade Finality Proof, Post-Trade Break Record, and Statement Coverage Manifest artifacts | Templates only; DRAFT/UNKNOWN/UNPROVEN/OPEN/non-authorizing/non-mutating/fail-closed | YES | NO |
-| Verification evidence | 372 items: 291 `NOT_IMPLEMENTED`, 80 `READY`, 1 `PASS` | only the one governed row records `PASS`; no aggregate completion claim; the 2026-08-06 first EV-L3 stage run (STATE-EV-004) is a stage record at `READY` | NO |
+| Verification evidence | 372 items: 291 `NOT_IMPLEMENTED`, 79 `READY`, 2 `PASS` | only the two governed rows record `PASS` (SPG-EV-002 2026-07-30; STATE-EV-001 2026-08-06), each at its own EV-L1/EV-L2 minimum level; no aggregate completion claim; the 2026-08-06 first EV-L3 stage run (STATE-EV-004) is a stage record at `READY` | NO |
 | Development-track verification evidence | 118 items registered (EVIDENCE-REGISTER-DEV), all `NOT_IMPLEMENTED`; 12 ECO and 8 IOM rows are Proposed-amendment registrations | NO claim of completion | NO |
 
 ---
@@ -1391,9 +1403,11 @@ exist; the ratification track for the corpus's normative RFCs is complete. VER-0
 VER-DEV-001 are not ratification targets and advance through their own approval gates (§383 and §8
 respectively, GOV-001 G2); the ADR corpus (ADR-002-001..030 and ADR-DEV-001..015, 45 documents)
 remains on the evidence-gated acceptance track. The current Part-1 register is 291
-`NOT_IMPLEMENTED`, 80 `READY`, and 1 `PASS`; all 118 development-track rows remain
+`NOT_IMPLEMENTED`, 79 `READY`, and 2 `PASS`; all 118 development-track rows remain
 `NOT_IMPLEMENTED`, including 12 Proposed ECO and 8 Proposed IOM registrations. All ADRs and both
-Verification Evidence specifications remain Proposed.
+Verification Evidence specifications remain Proposed — the second `PASS` (STATE-EV-001,
+2026-08-06) changes no ADR status, because acceptance requires all of an ADR's evidence rows plus
+an Architecture Gate act.
 
 | Document | Class | Current rung | Ratification-Ready? | Blocking precondition |
 |---|---|---|---|---|
@@ -1452,7 +1466,7 @@ ratification-blocking mode-transition seam remains.
 | §4.5 item | Classification | Blocks ratification? |
 |---|---|---|
 | M-06 out-of-band egress containment existence | Owner-decision-required (now recorded, §4.5) + acceptance-track (EGRESS-EV-013) | No — the owner disposition is the required residual-risk-acceptance input to RFC-001 ratification and is now recorded; EGRESS-EV-013 remains an acceptance-track obligation |
-| Evidence incomplete (Part 1: 291 `NOT_IMPLEMENTED` / 80 `READY` / 1 `PASS`; development: 118 `NOT_IMPLEMENTED`) | Acceptance/live-track only | No — ratification is evidence-independent (GOV-001 G1); evidence does not imply acceptance or live authority |
+| Evidence incomplete (Part 1: 291 `NOT_IMPLEMENTED` / 79 `READY` / 2 `PASS`; development: 118 `NOT_IMPLEMENTED`) | Acceptance/live-track only | No — ratification is evidence-independent (GOV-001 G1); evidence does not imply acceptance or live authority |
 | TRACEABILITY-MATRIX-002 §5.3 direct-source gaps (ADR-002-002..006) | **Four resolved 2026-08-02** (ADR-002-003..006) by direct-table transcription; **ADR-002-002 remains an open source gap** — its 2026-08-02 table was unsourced and has been reverted, leaving 29/30 direct tables and 1 gap | Historical RR-0004 deferral remains part of that record; no re-ratification or authority claim is inferred from the later mechanical repair. Closing the ADR-002-002 gap requires a GOV-001 G6 amendment, not an editorial transcription |
 | Part-2/3 RFCs Ratified; ADR-DEV and VER-DEV remain Proposed; G3/P2 disposition audit open | Governance amendment/decision package | Ratification state is unchanged pending the System Owner decision gate |
 | CONST-003 RLP-only evidence chain | Proposed RFC-006 Economic Viability amendment; ECO-EV-001..012 all `NOT_IMPLEMENTED`; completion verdict `INCONCLUSIVE` | System Owner/Architecture Board G6 decision and human-owned Economic Viability Profile are required; RLP-only completion is prohibited by the conservative status check |
