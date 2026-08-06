@@ -1,6 +1,6 @@
 # EVIDENCE-REGISTER-002 — Safety Architecture Evidence Register
 
-- **Status:** Active Register — **1 item `PASS` — SPG-EV-002** (EV-L1/EV-L2 minimum level, signed 2026-07-30); 79 items `READY`; EV-L1 stage runs executed for 2 items. A `PASS` is an evidence fact, not authority.
+- **Status:** Active Register — **1 item `PASS` — SPG-EV-002** (EV-L1/EV-L2 minimum level, signed 2026-07-30); 80 items `READY`; EV-L1 stage runs executed for 2 items, and the first EV-L3 stage run was executed 2026-08-06 for STATE-EV-004 (`READY`, not a `PASS`). A `PASS` is an evidence fact, not authority.
 - **Date:** 2026-07-14
 - **Specification:** VER-002-001
 - **Production Authorization:** NO
@@ -14,8 +14,8 @@ A `PASS` records only that a row's minimum evidence level was executed, independ
 ## Status Summary
 
 - Total evidence items: **372**
-- NOT_IMPLEMENTED: **292**
-- READY: **79**
+- NOT_IMPLEMENTED: **291**
+- READY: **80**
 - PASS: **1**
 - FAIL: **0**
 - INCONCLUSIVE: **0**
@@ -122,7 +122,7 @@ Mirror column mapping: the `Owner` column below mirrors the CSV `implementation_
 | STATE-EV-001 | Orthogonal State | Orthogonal Composite Persistence | ADR-002-005 | EV-L1/2 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | STATE-EV-002 | Orthogonal State | Conservative Direction | ADR-002-005 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | STATE-EV-003 | Orthogonal State | Cross-Dimension Coupling | ADR-002-005 | EV-L1/3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
-| STATE-EV-004 | Orthogonal State | Conservative Restart Reconstruction | ADR-002-005 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
+| STATE-EV-004 | Orthogonal State | Conservative Restart Reconstruction | ADR-002-005 | EV-L3 | READY | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | STATE-EV-005 | Orthogonal State | Dimension Transition Ownership | ADR-002-005 | EV-L2/3+Security | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | RECON-EV-001 | Reconciliation Confidence | Single Evidence-Path Corruption | ADR-002-006 | EV-L2/3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |
 | RECON-EV-002 | Reconciliation Confidence | Query Omission and Negative Evidence | ADR-002-006 | EV-L3 | NOT_IMPLEMENTED | ai-impl(claude-orchestrated) | ai-review(decorrelated)+operator-countersign |

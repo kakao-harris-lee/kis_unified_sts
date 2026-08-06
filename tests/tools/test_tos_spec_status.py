@@ -279,8 +279,8 @@ def test_current_corpus_is_consistent_and_axes_are_separate():
     assert snapshot.documents == {"RATIFIED": 13}
     assert snapshot.adrs == {"PROPOSED": 45}
     assert snapshot.part1.counts == {
-        "NOT_IMPLEMENTED": 292,
-        "READY": 79,
+        "NOT_IMPLEMENTED": 291,
+        "READY": 80,
         "PASS": 1,
     }
     assert snapshot.development.counts == {"NOT_IMPLEMENTED": 118}

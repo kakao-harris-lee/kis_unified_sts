@@ -39,8 +39,8 @@ I will not fabricate any of these. I can *draft candidates* (done for bounds; ro
 
 > **P0-4 cross-reference (non-normative).** The project workflow to which P0-4 is delegated recorded an operator ratification on 2026-07-20 in `docs/plans/2026-07-20-tos-boundary-and-import-firewall-design.md` — confirming the §2 boundary on the project side and authorizing non-transmitting Phase-1 work — a project-side record outside this corpus which states that bounds approval (P0-1) and independent-reviewer assignment (P0-3) remain separate gates that it neither closes nor substitutes for.
 
-> **Register-count note.** The Part-1 Evidence Register holds 372 items: 292
-> `NOT_IMPLEMENTED`, 79 `READY`, and 1 `PASS`. Wave 4 consolidated the
+> **Register-count note.** The Part-1 Evidence Register holds 372 items: 291
+> `NOT_IMPLEMENTED`, 80 `READY`, and 1 `PASS`. Wave 4 consolidated the
 > §4.2/§4.3/§4.4 evidence debt into that register (nine new rows, count 363 →
 > 372). Part-2/3 evidence is registered separately in EVIDENCE-REGISTER-DEV (118
 > items, all `NOT_IMPLEMENTED`, including twelve Proposed ECO cases) and never enters the Part-1 count. Current counts

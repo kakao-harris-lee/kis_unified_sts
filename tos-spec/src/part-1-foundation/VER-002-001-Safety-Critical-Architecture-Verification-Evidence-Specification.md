@@ -3,11 +3,12 @@
 - **Status:** Proposed — Ready for Test Implementation
 - **Date:** 2026-07-14
 - **Verification Scope:** Consolidated RFC-002 v0.2; consolidated ADR-002-001 v0.2; ADR-002-002 through ADR-002-030
-- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-030. Of the 372 registered items, 292 are `NOT_IMPLEMENTED`, 79 are `READY` (administrative fields assigned; not executed), and 1 is `PASS` (SPG-EV-002, EV-L1/EV-L2 minimum level, signed 2026-07-30). See §381; `READY` is not a `PASS`, and a `PASS` at a registered scope is not live readiness
+- **Current Evidence State:** Dedicated acceptance-case evidence specifications are registered for ADR-002-005 through ADR-002-030. Of the 372 registered items, 291 are `NOT_IMPLEMENTED`, 80 are `READY` (administrative fields assigned; not executed), and 1 is `PASS` (SPG-EV-002, EV-L1/EV-L2 minimum level, signed 2026-07-30). STATE-EV-004 EV-L3 stage executed 2026-08-06 (first EV-L3 execution; `READY`, not a `PASS`). See §381; `READY` is not a `PASS`, and a `PASS` at a registered scope is not live readiness
 - **Extension State:** ADR-002-005 through ADR-002-030 map one-to-one to their dedicated STATE, RECON, REARM, TIME, FD, NT, PR, RCLP, EGRESS, SPG, HAG, ERI, SBR, CII, VTG, IOC, ARE, AFG, IAP, CUR, RLP, WDR, SIR, STM, SCI, and PTF evidence families. Registration is not completed evidence
 - **Production Authorization:** Prohibited until the applicable evidence gates are passed
 - **Last Updated:** 2026-07-17 — Wave 7 (CORPUS-REVIEW-0001): M-18 added the EV-L0 reviewer-provenance obligation (§5, §9.5), applying to the corpus's own specification reviews; M-24 added the §2.7 Coverage Argument for universally-quantified claims and a §374 pointer to it. Narrow-only and additive; no new evidence ID, no SAFE-xxx, no numeric bound, no broker proper noun; the Part-1 evidence count is unchanged (372).
 - **Currency Correction (2026-08-04):** the `Current Evidence State` header field and §381 were re-derived from `verification/EVIDENCE-REGISTER-002.csv`, which the previous 2026-07-14 text contradicted (it reported every family `NOT EXECUTED` and independent review `NOT STARTED`). Description-only: no evidence row is promoted, no requirement, evidence state, ADR status, or authorization is changed, and the Part-1 evidence count is unchanged (372).
+- **Currency Correction (2026-08-06):** the same two sites were re-derived after the `12dd4077` evidence ladder was recorded — STATE-EV-004 moved `NOT_IMPLEMENTED` → `READY` on its executed EV-L3 stage, so the state split is now 291/80/1. Description-only: the row transition is recorded in the CSV by the run that produced it; no requirement, ADR status, coverage argument, signature chain, or authorization is changed, and the Part-1 evidence count is unchanged (372).
 
 ---
 
@@ -3795,13 +3796,14 @@ Requires:
 
 ## 381. Current Evidence Readiness Assessment
 
-As of 2026-08-04, derived from `verification/EVIDENCE-REGISTER-002.csv` (the
+As of 2026-08-06, derived from `verification/EVIDENCE-REGISTER-002.csv` (the
 machine-editable source) and `../AUTHORITY-STATUS.csv`:
 
 ```text
-Evidence specification: REGISTERED (372 items) — 1 PASS, 79 READY, 292 NOT_IMPLEMENTED
+Evidence specification: REGISTERED (372 items) — 1 PASS, 80 READY, 291 NOT_IMPLEMENTED
 Evidence register: CREATED; ACTIVE
-Test harness: run packages recorded for 2 items (SPG-EV-002, STATE-EV-001); NOT ASSESSED corpus-wide
+Test harness: run packages recorded for 3 items (SPG-EV-002, STATE-EV-001, STATE-EV-004); NOT ASSESSED corpus-wide
+Highest stage executed: EV-L3 (STATE-EV-004, 2026-08-06, first EV-L3 execution; a stage record at READY, not a PASS)
 Implementation instrumentation: NOT ASSESSED corpus-wide
 Aggregate capacity evidence (RC, 18): 0 PASS, 0 READY, 18 NOT_IMPLEMENTED
 Safety Authority evidence (SA, 15): 0 PASS, 0 READY, 15 NOT_IMPLEMENTED
@@ -3809,7 +3811,7 @@ Broker capability evidence (BC, 22): 0 PASS, 0 READY, 22 NOT_IMPLEMENTED
 Cross-system evidence (X, 12): 0 PASS, 0 READY, 12 NOT_IMPLEMENTED
 Trustworthy Time evidence (TIME, 10): 0 PASS, 0 READY, 10 NOT_IMPLEMENTED
 Live Authorization and re-arm evidence (REARM, 12): 0 PASS, 0 READY, 12 NOT_IMPLEMENTED
-Orthogonal trading state evidence (STATE, 5): 0 PASS, 2 READY, 3 NOT_IMPLEMENTED
+Orthogonal trading state evidence (STATE, 5): 0 PASS, 3 READY, 2 NOT_IMPLEMENTED
 Evidence and reconciliation confidence evidence (RECON, 5): 0 PASS, 0 READY, 5 NOT_IMPLEMENTED
 Failure-domain isolation evidence (FD, 12): 0 PASS, 0 READY, 12 NOT_IMPLEMENTED
 Protective replacement evidence (PR, 12): 0 PASS, 2 READY, 10 NOT_IMPLEMENTED
@@ -3834,7 +3836,7 @@ Safety telemetry, monitor coverage, continuous-conformance, gap, suppression, al
 Software supply-chain, build provenance, dependency/toolchain closure, release admission, deployment, runtime-attestation, and currentness evidence (SCI, 12): 0 PASS, 4 READY, 8 NOT_IMPLEMENTED
 Post-trade economic-obligation, settlement, finality, statement-coverage, correction, capacity-coupling, and currentness evidence (PTF, 12): 0 PASS, 0 READY, 12 NOT_IMPLEMENTED
 Protective-resource-domain enumeration and guarantee-level evidence (PRD, 2): 0 PASS, 1 READY, 1 NOT_IMPLEMENTED
-Independent review: COMPLETE for 1 item (SPG-EV-002, signature chain closed 2026-07-30); NOT STARTED for the remaining 371
+Independent review: COMPLETE for 1 item (SPG-EV-002, signature chain closed 2026-07-30); ai-review leg recorded 2026-08-06 over the 12dd4077 ladder covering STATE-EV-001, SPG-EV-002, and STATE-EV-004 (SIGN-OFF RECOMMENDED, same-model-family limitation declared; operator countersign open, so no chain is closed by it); NOT STARTED for the remaining 369
 Restricted-live authorization: NO
 Production authorization: NO
 ```

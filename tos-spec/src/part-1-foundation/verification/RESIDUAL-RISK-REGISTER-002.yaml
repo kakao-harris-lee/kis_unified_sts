@@ -175,6 +175,11 @@ entries:
       - "No live scope, restricted-live trial, or production authorization may cite STATE-EV-001 as evidence of durability."
       - "Any consumer needing the durable limb SHALL cite STATE-EV-004 at EV-L3 with a real persistence substrate, not this row."
       - "Resolution prerequisite: the persistence technology decision deferred by ADR-002-005 §4 (line 61) must be made first; an EV-L3 crash/restart fault run then discharges the limb."
+    # DATED FACT NOTE — 2026-08-06: design #39 §7.1 conditional dual-record — evidence
+    # limb executed (substrate-class); the §4 project-persistence decision gate and
+    # substrate-class caveat remain OPEN pending OQ-1 operator adjudication; entry status
+    # and required_scope_reduction unchanged (transitions on this operator-approved
+    # register are the operator's act).
     evidence_references:
       - "tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/manifest.yaml (run_id 20260729T120613Z-eb92ea46; coverage_argument.unexercised_residual_ref[0]; claim.covered_axis)"
       - "tos-evidence/STATE-EV-001/20260729T120613Z-eb92ea46/fault-timeline.jsonl (11 faults, all MET, none durable)"
@@ -182,6 +187,9 @@ entries:
       - "baseline commit eb92ea467cb55d923b5c9eb4307b65491b14fe26; evidence commit 9611142d"
       - "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md §2.3, §9 gate 3, §10 (ratified at commit fdb74324)"
       - "VER-002-001 lines 1021, 1024, 1042, 130; ADR-002-005 lines 61, 197, 237"
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/manifest.yaml (EV-L3 integrated crash-restart run; durable limb executed on a real substrate — pilot-scope sqlite3 WAL, substrate-class)"
+      - "tos-evidence/STATE-EV-004/20260806T015632Z-12dd4077/crash-timeline.jsonl (8 scenarios MET incl. the L3-08 durability cell)"
+      - "tos-evidence/STATE-EV-004/review/20260806-independent-review-attempt-1-SIGNOFF-RECOMMENDED.md (ai-review leg; decorrelation limitation recorded)"
 
   - risk_identity: >-
       R-2 — the overflow/underflow limb of Safety-Profile semantic validation is

@@ -71,7 +71,7 @@ canonical document headers, the two evidence-register CSVs, and
 
 - all 13 RFC-class baselines are `Ratified`;
 - all 45 ADRs remain `Proposed`;
-- Part 1 has 372 evidence rows: 292 `NOT_IMPLEMENTED`, 79 `READY`, and 1 `PASS`;
+- Part 1 has 372 evidence rows: 291 `NOT_IMPLEMENTED`, 80 `READY`, and 1 `PASS`;
 - the development register has 118 `NOT_IMPLEMENTED` rows, including twelve
   Proposed economic-viability and eight Proposed investment-operating cases;
 - restricted-live and production authorization are both `NOT_AUTHORIZED`.
