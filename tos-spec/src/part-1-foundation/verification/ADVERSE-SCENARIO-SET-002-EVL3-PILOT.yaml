@@ -1,4 +1,12 @@
-# ADVERSE-SCENARIO-SET-002-EVL3-PILOT — PROPOSED (pre-execution; operator approval pending)
+# ADVERSE-SCENARIO-SET-002-EVL3-PILOT — APPROVED 2026-08-06 (scope-limited)
+#
+# HEADER LINE AS AUTHORED, RETAINED
+#   Until 2026-08-06 this line read, verbatim:
+#     "ADVERSE-SCENARIO-SET-002-EVL3-PILOT — PROPOSED (pre-execution; operator
+#      approval pending)"
+#   That was the accurate state at authoring time and is kept here rather than
+#   erased. The approval that changed it is recorded under APPROVAL RECORD
+#   (GRANTED) below.
 #
 # WHAT THIS IS
 #   An Adverse Scenario Set INSTANCE created for exactly one purpose: the
@@ -61,6 +69,22 @@
 #     EV-L3 pilot design (independent review signature, VER §3 complete baseline,
 #     R-N/R-I residuals, OQ-1 §4-persistence adjudication) remain open
 #     independently of this file.
+#     DATED UPDATE 2026-08-06: the first sentence is UNCHANGED and still true —
+#     approving this file still moves no row. The row states quoted in the second
+#     sentence have since been overtaken by acts recorded elsewhere, and are kept
+#     as the state at authoring: STATE-EV-004 moved NOT_IMPLEMENTED → READY on
+#     its executed EV-L3 stage (recorded in EVIDENCE-REGISTER-002.csv by the run
+#     that produced it), and STATE-EV-001 moved READY → PASS on 2026-08-06 (its
+#     own EV-L1/EV-L2 stages at baseline 12dd4077 plus the completed VER §9.5
+#     signature chain plus the R-1 durable-limb citation). Neither transition is
+#     an effect of this file. Of the four §9 gates listed, three have since been
+#     disposed of by operator act on 2026-08-06 — the independent review
+#     signature (two ai-review legs plus the operator countersign), the
+#     R-N/R-I residuals (registered, RESIDUAL-RISK-REGISTER-002 v1.1), and the
+#     OQ-1 adjudication ("OQ-1: (A) 채택") — while VER §3 complete-baseline
+#     remains structurally unmet above the EV-L1 subset and is stated in-band in
+#     every baseline.yaml. STATE-EV-004's own PASS remains blocked by R-N and
+#     R-I, which are Critical and unwaivable.
 #
 # SHAPE DEVIATIONS FROM ADVERSE-SCENARIO-SET-template.yaml (declared, additive)
 #   1. `result` carries `PROPOSED_PENDING_EXECUTION_AND_APPROVAL`. The template
@@ -80,8 +104,12 @@
 #   4. `approved_by: []` and `effective_from`/`review_due: null`: this instance is
 #      PROPOSED, not APPROVED. Operator approval is a human gate (see APPROVAL
 #      RECORD).
+#      DATED UPDATE 2026-08-06: superseded by the approval below. The three
+#      fields now carry `["operator"]`, `"2026-08-06"`, and `"2027-01-25"`
+#      respectively, matching the EV-L2 sibling's shape exactly. Deviation 4 is
+#      retained as the record of why they were empty at authoring.
 #
-# APPROVAL RECORD (PENDING — human gate)
+# APPROVAL RECORD (PENDING — human gate)  [state until 2026-08-06; retained]
 #   Status PROPOSED. approved_by is empty. The ADR-002 series delegated
 #   auto-ratification (operator 2026-07-25, extended 2026-07-29) applies to the
 #   DESIGN CONTRACT ratification only (design #39, commit 2b455dd9). Approval of
@@ -93,6 +121,56 @@
 #   tested mechanism and did not approve the relevant residual-risk exception"):
 #   the approving identity SHALL NOT be the independent reviewer of the pilot
 #   evidence, and SHALL NOT also arm live trading (Live-Armer unassigned).
+#
+# APPROVAL RECORD (GRANTED — 2026-08-06)
+#   Operator directive, verbatim: "ASS-EVL3-PILOT 승인". Recorded in
+#   `tos-evidence/STATE-EV-004/review/20260806-operator-countersign.md`
+#   (companion-directives section), which states the effect the operator
+#   attached to it: "ADVERSE-SCENARIO-SET-002-EVL3-PILOT.yaml transitions
+#   PROPOSED → APPROVED (restart-axis adversarial coverage leg discharged at the
+#   review layer; the harness keeps `coverage_argument.discharged: false`
+#   mechanically, by design)".
+#   Status PROPOSED → APPROVED. `approved_by: ["operator"]`,
+#   `effective_from: "2026-08-06"`, `review_due: "2027-01-25"`.
+#   Approver identity `operator` = the D1 role scheme System owner /
+#   Bounds-Approver (docs/plans/2026-07-29-tos-phase0-role-scheme-and-
+#   disposition.md lines 15-16), the same identity that approved the EV-L2
+#   sibling on 2026-07-29 and RESIDUAL-RISK-REGISTER-002.
+#   SEPARATION OF DUTIES — re-measured at approval, not merely restated. VER
+#   §2.6 requires Critical evidence to be reviewed by a principal who did not
+#   implement the tested mechanism and did not approve the relevant
+#   residual-risk exception. (a) The approving identity is NOT either
+#   independent reviewer of the pilot evidence: both legs for the 12dd4077
+#   generation are AI reviewers — attempt 1 (same model family, packet-only
+#   channel) and attempt 2 (different model family) — recorded under
+#   `tos-evidence/STATE-EV-004/review/`. (b) The approving identity is NOT the
+#   implementer: implementation owner is `ai-impl(claude-orchestrated)` on the
+#   EVIDENCE-REGISTER-002 row. (c) The approving identity is NOT the Live-Armer,
+#   which remains deliberately unassigned and fail-closed. The operator's
+#   countersign is a distinct signature act under VER §9.5, not the independent
+#   review leg, and the D1 scheme names both explicitly as
+#   `ai-review(decorrelated)+operator-countersign`.
+#   WHAT THE APPROVAL DOES NOT DO — unchanged from `authorization_notice`: it
+#   does not accept ADR-002-021, does not make this set policy-bound, does not
+#   establish a maximum credible effect, does not supply the seven empty §11
+#   groups, does not cover the real broker-network sub-axis (R-N), and moves no
+#   evidence-register row by itself.
+#
+# WHAT THE APPROVAL DELIBERATELY DID NOT TOUCH (2026-08-06)
+#   `result` still reads PROPOSED_PENDING_EXECUTION_AND_APPROVAL, and every
+#   scenario still carries `outcome: PENDING_EXECUTION` with
+#   `observed: <runtime-observed — run not yet executed>`. This is intentional
+#   and is NOT an oversight. The operator directive approved the SET; it did not
+#   re-derive the SET'S OBSERVATIONS. Converting nine `PENDING_EXECUTION`
+#   outcomes to observed dispositions is an evidence act, not an approval act:
+#   `counts.all_outcomes_met_basis` requires each outcome to be re-derived by
+#   comparing the reader worker's emitted reconstruction against the
+#   hand-derived hardcoded anchor, never trusting a self-reported flag. That
+#   re-derivation is a separate, reviewable act against the executed run package
+#   `20260806T015632Z-12dd4077`, and recording it is deliberately left undone
+#   here rather than performed as a side effect of an approval. Until it is
+#   done, this file remains what it says it is: the specified adverse set, not
+#   evidence that the scenarios passed (see ASS-CM-05).
 
 artifact_type: ADVERSE_SCENARIO_SET
 schema_version: "1.0-DRAFT"
@@ -100,8 +178,14 @@ scenario_set_id: ADVERSE-SCENARIO-SET-002-EVL3-PILOT
 scenario_set_version: "1.0"
 aggregate_risk_generation: null      # no Aggregate Risk Generation exists
 canonical_digest: null               # no approved canonicalization scheme for spec-layer YAML
-status: PROPOSED
+status: APPROVED                     # PROPOSED -> APPROVED 2026-08-06, operator directive "ASS-EVL3-PILOT 승인"
 result: PROPOSED_PENDING_EXECUTION_AND_APPROVAL
+# `result` is deliberately NOT edited by the approval. It is a statement about
+# the scenarios' observed dispositions, which remain PENDING_EXECUTION because
+# re-deriving them from the executed run package is a separate evidence act, not
+# an approval act. See "WHAT THE APPROVAL DELIBERATELY DID NOT TOUCH" in the
+# header. `status` (the governance axis) and `result` (the observation axis) are
+# independent here, exactly as they are in the EV-L2 sibling.
 aggregate_risk_policy_id: null       # no Aggregate Risk Policy exists (ADR-002-021 §28 Q1, line 698, open)
 
 scope:
@@ -514,7 +598,15 @@ unbounded_credible_effects:
       §11 line 303, an unbounded credible effect is DENY or UNKNOWN, never a
       convenient finite value.
     present_effect: "None. The pilot emits zero real broker orders; no economic effect can be produced today."
-    registered_as: "RESIDUAL-RISK-REGISTER-002.yaml entry R-N (see residual_risk_references — NOT YET registered)"
+    registered_as: "RESIDUAL-RISK-REGISTER-002.yaml entry R-N — REGISTERED 2026-08-06 (v1.1). Authored as: 'entry R-N (see residual_risk_references — NOT YET registered)'."
+    measured_correction_2026_08_06: >-
+      The statement above cites `broker_capability_profile_version = TBD` on the
+      STATE-EV-004 row of EVIDENCE-REGISTER-002.csv. Re-measured 2026-08-06, that
+      field's value is `N/A`, not `TBD`. The conclusion is unaffected — neither
+      value is an approved Broker Capability Profile bound, so the credible
+      effect remains unbounded-by-record — but the cited token was wrong and is
+      corrected here rather than left to be discovered. Registered entry R-N
+      carries the measured value.
 
 common_mode_dependencies:
   - id: ASS-CM-01
@@ -577,26 +669,78 @@ residual_risk_references:
         discharge depends on (design §7.1). The discharge is CONDITIONAL on the
         OQ-1 operator adjudication (§4-persistence decision) and is recorded
         substrate-class (design §7.1, §9, MINOR-4).
+        DATED UPDATE 2026-08-06: the condition is met. Operator directive
+        "OQ-1: (A) 채택" adjudicated the pilot-scope persistence decision
+        sufficient for R-1's "decision first" prerequisite, and the R-1 entry now
+        carries a `dated_disposition_2026_08_06` block recording the evidence
+        limb as DISCHARGED (substrate-class) by run
+        `20260806T015632Z-12dd4077`. R-1 itself is NOT closed: the requirement is
+        Critical and unwaivable, and the ADR-002-005 §4 project
+        persistence-technology decision continues on a separate architecture
+        track. The substrate-class caveat stands as written.
     - id: R-N
       subject: "STATE-EV-004 real-network-boundary axis (modeled transmission)"
-      status: PROPOSED_NOT_YET_REGISTERED
+      status: "REGISTERED 2026-08-06 (RESIDUAL-RISK-REGISTER-002 v1.1)"
+      status_as_authored: PROPOSED_NOT_YET_REGISTERED
       location: >-
-        Proposed by the EV-L3 pilot design §2.4. MEASURED ABSENT from
-        RESIDUAL-RISK-REGISTER-002.yaml (the register holds R-1, R-2, R-3 only;
-        negative-grep). Registration is prerequisite work on the STATE-EV-004 PASS
-        track and is an open operator gate.
+        REGISTERED 2026-08-06 in RESIDUAL-RISK-REGISTER-002.yaml as entry R-N
+        (register_version 1.0 -> 1.1), on operator directive "R-N/R-I/R-D 등재
+        승인". The entry carries all twelve VER §378 SHALL items, owner and
+        approver `operator`, review_date 2027-01-25, and a `blocking_effect`
+        field stating that it blocks STATE-EV-004's OWN PASS only.
+        HISTORICAL, RETAINED AS AUTHORED: "Proposed by the EV-L3 pilot design
+        §2.4. MEASURED ABSENT from RESIDUAL-RISK-REGISTER-002.yaml (the register
+        holds R-1, R-2, R-3 only; negative-grep). Registration is prerequisite
+        work on the STATE-EV-004 PASS track and is an open operator gate." That
+        negative-grep was correct when made; the registration is what changed,
+        not the measurement.
     - id: R-I
       subject: "STATE-EV-004 credential/service-identity axis (logical identity re-derivation executed; real auth deferred)"
-      status: PROPOSED_NOT_YET_REGISTERED
-      location: "Proposed by the EV-L3 pilot design §2.4; absent from the register (negative-grep). Referent: STATE-EV-005 (EV-L2/3 plus security, VER:1050)."
+      status: "REGISTERED 2026-08-06 (RESIDUAL-RISK-REGISTER-002 v1.1)"
+      status_as_authored: PROPOSED_NOT_YET_REGISTERED
+      location: >-
+        REGISTERED 2026-08-06 in RESIDUAL-RISK-REGISTER-002.yaml as entry R-I,
+        on the same operator directive; twelve SHALL items complete, review_date
+        2027-01-25, blocks STATE-EV-004's OWN PASS only. Referent for closure is
+        unchanged: STATE-EV-005, Minimum Level "EV-L2/EV-L3 plus security
+        assessment" (VER-002-001 line 1051, re-measured 2026-08-06; the citation
+        VER:1050 below reflects the revision current at authoring).
+        HISTORICAL, RETAINED AS AUTHORED: "Proposed by the EV-L3 pilot design
+        §2.4; absent from the register (negative-grep). Referent: STATE-EV-005
+        (EV-L2/3 plus security, VER:1050)."
     - id: R-D
       subject: "power-loss / torn-sector durability (os._exit models process crash, not power loss)"
-      status: CANDIDATE_NOT_YET_REGISTERED
-      location: "Candidate in the EV-L3 pilot design §2.4; absent from the register (negative-grep). Needs filesystem fault injection."
+      status: "REGISTERED 2026-08-06 (RESIDUAL-RISK-REGISTER-002 v1.1)"
+      status_as_authored: CANDIDATE_NOT_YET_REGISTERED
+      location: >-
+        REGISTERED 2026-08-06 in RESIDUAL-RISK-REGISTER-002.yaml as entry R-D,
+        on the same operator directive — which is the operator decision the
+        design reserved for it ("추가 이연 (candidate residual, 운영자 결정)").
+        Twelve SHALL items complete, review_date 2027-01-25. Its
+        `blocking_effect` is the narrowest in that register: it blocks a
+        power-loss / host-loss / torn-sector durability CLAIM only, and blocks
+        neither the process-crash durability this pilot executed nor any
+        register row. Closure needs FS-fault-injection-class extension, as
+        stated here.
+        HISTORICAL, RETAINED AS AUTHORED: "Candidate in the EV-L3 pilot design
+        §2.4; absent from the register (negative-grep). Needs filesystem fault
+        injection."
 
-approved_by: []                        # PROPOSED — operator approval is a pending human gate
-effective_from: null                   # set on approval
-review_due: null                       # set on approval; MAX_residual_risk_review_interval_ms bound then applies
+approved_by: ["operator"]              # 2026-08-06, operator directive "ASS-EVL3-PILOT 승인" (was: [] while PROPOSED)
+effective_from: "2026-08-06"           # (was: null)
+review_due: "2027-01-25"               # (was: null)
+# review_due rationale — homomorphic with the EV-L2 sibling and with
+# RESIDUAL-RISK-REGISTER-002, and derived rather than copied. Three candidate
+# dates: (a) 2027-02-02 = MAX_residual_risk_review_interval_ms 15552000000 ms =
+# 180 days from effective_from 2026-08-06 (VERIFICATION-PROFILE-002.yaml line
+# 949); (b) 2027-01-29 = the profile's own review_due (line 56); (c) 2027-01-25
+# = the date the EV-L2 sibling and all six residual-register entries carry,
+# itself 180 days from 2026-07-29. The earliest, 2027-01-25, is adopted: it
+# cannot breach the approved MAX interval, it places this review before the
+# profile review rather than after it, and it keeps this instance on one review
+# cycle with its sibling and with the residuals it defers to (R-N, R-I, R-D),
+# which is the point of a review date on a set whose coverage argument depends
+# on those residuals.
 
 authority:
   grants_risk_allocation: false
@@ -610,6 +754,32 @@ authority:
   permits_rearm: false
   permits_automatic_rearm: false
 
+# authorization_notice — DATED UPDATE 2026-08-06. The notice below is retained
+# verbatim as authored, including its opening words "This PROPOSED instance
+# grants nothing and is not yet approved". Two clauses in it have been overtaken
+# by acts recorded elsewhere and are corrected here without deleting them:
+#   (1) "PROPOSED ... not yet approved" -> APPROVED 2026-08-06 by operator
+#       directive "ASS-EVL3-PILOT 승인". The approval changes nothing else in
+#       the notice: this instance still grants nothing, is still not policy-bound,
+#       still establishes no maximum credible effect, still has seven of nine
+#       ADR-002-021 §11 groups empty with the other two carrying the
+#       restart-reconstruction sub-axis only, still defers the real
+#       broker-network / partition sub-axis to R-N, still has a null
+#       `canonical_digest` that a digest-requiring consumer SHALL treat as
+#       unbound, and still does not accept ADR-002-021 (which remains Proposed).
+#   (2) The closing clause "does not move any evidence row to PASS:
+#       STATE-EV-004 stays NOT_IMPLEMENTED, STATE-EV-001 stays READY, and the
+#       pilot's remaining gates ... are untouched by this file". The PRINCIPLE is
+#       unchanged and still binding — this file moves no row, and approving it
+#       moved none. The ROW STATES are overtaken: STATE-EV-004 is READY (its
+#       EV-L3 stage executed) and STATE-EV-001 is PASS as of 2026-08-06, both by
+#       acts recorded in EVIDENCE-REGISTER-002.csv and in the countersign record,
+#       not by this file. Of the four gates listed, the independent review
+#       signature, the R-N/R-I residual registration, and the OQ-1 adjudication
+#       were disposed of by operator act on 2026-08-06; VER §3 complete-baseline
+#       remains structurally unmet above the EV-L1 subset. STATE-EV-004's own
+#       PASS remains blocked by R-N and R-I.
+# Nothing in this dated update authorises anything.
 authorization_notice: >-
   This PROPOSED instance grants nothing and is not yet approved. It specifies the
   adversarial-combination leg of the VER-002-001 §2.7 coverage argument for the
