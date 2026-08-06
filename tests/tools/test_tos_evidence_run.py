@@ -399,11 +399,349 @@ def test_seed_field_is_partial_with_fault_schedule_deferred(baseline: dict) -> N
     assert entry["value"]["seed"]["hypothesis_seed"] == 1234
 
 
-def test_verification_profile_is_recorded_as_proposed(baseline: dict) -> None:
+def test_verification_profile_state_is_derived_from_the_artifact(
+    baseline: dict,
+) -> None:
+    """The recorded approval state must be a re-derivation of the profile on disk.
+
+    The pin is deliberately NOT a literal: a literal is exactly what went stale when
+    P0-1 closed on 2026-07-29 and the harness kept writing "PROPOSED — P0-1 open".
+    What is locked instead is that every recorded field equals what an independent
+    parse of ``VERIFICATION-PROFILE-002.yaml`` yields, and that the digest recorded
+    beside them covers those same bytes.
+    """
     entry = baseline["ver_002_001_section_3_baseline"]["verification_profile_version"]
     assert entry["status"] == ev.RECORDED
-    assert entry["value"]["version"] == "2.1 (PROPOSED — P0-1 open)"
-    assert "P0-1" in entry["value"]["approval_state"]
+    value = entry["value"]
+
+    profile_path = _REPO_ROOT / ev.PROFILE_YAML_PATH
+    doc = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+    assert value["profile_status"] == doc["status"]
+    assert value["profile_version"] == doc["version"]
+    assert value["approved_by"] == doc["approved_by"]
+    assert value["effective_from"] == doc["effective_from"]
+    assert (
+        value["artifact"]["sha256"]
+        == hashlib.sha256(profile_path.read_bytes()).hexdigest()
+    )
+
+    # the null-key census is a count of the artifact, not a number the harness knows
+    expected_nulls = sorted(
+        [k for k, v in doc["bounds"].items() if v.get("value_ms") is None]
+        + [k for k, v in doc["limits"].items() if v is None]
+    )
+    assert value["unapproved_null_key_names"] == expected_nulls
+    assert value["unapproved_null_keys"] == len(expected_nulls)
+    assert value["numeric_keys_total"] == len(doc["bounds"]) + len(doc["limits"])
+
+    # the human-readable label must be built from those same parsed parts
+    assert value["profile_version"] in value["version"]
+    assert value["profile_status"] in value["approval_state"]
+    assert str(value["unapproved_null_keys"]) in value["approval_state"]
+
+
+def test_verification_profile_version_is_not_the_register_column(
+    baseline: dict,
+) -> None:
+    """Two independent sources, not one copied twice.
+
+    The injected hermetic register pins ``2.1-PROPOSED`` in its column while the repo
+    profile derives ``2.1``; if the harness ever started echoing the register column
+    as the profile's version, these would collapse into one value.
+    """
+    value = baseline["ver_002_001_section_3_baseline"]["verification_profile_version"][
+        "value"
+    ]
+    assert value["register_column_value"] == "2.1-PROPOSED"
+    # atom against atom: ``version`` is a built sentence and would differ from the
+    # column even if the harness DID echo it, so the comparison that actually
+    # discriminates is the parsed version field against the copied column.
+    assert value["profile_version"] != value["register_column_value"]
+    assert value["version"] != value["register_column_value"]
+
+
+# --------------------------------------------------------------------------
+# Verification Profile approval — fail-closed derivation
+#
+# Negative coverage for ``read_profile_approval``. The happy path above proves the
+# harness re-derives the repo's real state; what matters at least as much is that a
+# profile it CANNOT read never yields an approved-looking record. Every case below
+# builds a throwaway repo root, so none of them touches the real corpus.
+# --------------------------------------------------------------------------
+
+
+def _profile_repo(tmp_path: Path, text: str | None) -> Path:
+    """A repo root carrying only a profile at the harness's expected relative path.
+
+    ``text is None`` leaves the file absent (the FILE_ABSENT branch).
+    """
+    target = tmp_path / ev.PROFILE_YAML_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if text is not None:
+        target.write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+def _assert_fail_closed(approval: dict) -> None:
+    """Every unknown record must be unknown in EVERY limb, and approved in none."""
+    assert approval["status"] == ev.PROFILE_APPROVAL_UNKNOWN
+    assert approval["version"] == ev.PROFILE_APPROVAL_UNKNOWN
+    assert approval["version_label"] == ev.PROFILE_APPROVAL_UNKNOWN
+    assert approval["approval_state"] == ev.PROFILE_APPROVAL_UNKNOWN
+    assert approval["p0_1_bounds_approval"] == ev.PROFILE_APPROVAL_UNKNOWN
+    assert approval["approved_by"] == []
+    assert approval["effective_from"] == ""
+    assert approval["unreadable_reason"], "an UNKNOWN without a reason is unexplained"
+    # The load-bearing polarity: no CLAIM-bearing field may read as an approval. The
+    # diagnostic ``unreadable_reason`` is excluded on purpose — it quotes what was
+    # found (which may itself be the word APPROVED) and asserts nothing.
+    claims = {k: v for k, v in approval.items() if k != "unreadable_reason"}
+    assert "APPROVED" not in yaml.safe_dump(claims, allow_unicode=True)
+    assert "CLOSED" not in yaml.safe_dump(claims, allow_unicode=True).replace(
+        "fail-closed", ""
+    )
+
+
+_APPROVED_PROFILE = """
+profile_id: VERIFICATION-PROFILE-002
+version: "9.9"
+status: APPROVED
+approved_by: ["test-approver"]
+effective_from: "2030-01-02"
+review_due: "2031-01-02"
+bounds:
+  B_ok: {value_ms: 100}
+  B_null: {value_ms: null}
+limits:
+  MAX_ok: 5
+  MIN_null: null
+"""
+
+
+def test_profile_approval_derives_an_approved_profile(tmp_path: Path) -> None:
+    approval = ev.read_profile_approval(_profile_repo(tmp_path, _APPROVED_PROFILE))
+    assert approval["status"] == "APPROVED"
+    assert approval["version"] == "9.9"
+    assert approval["approved_by"] == ["test-approver"]
+    assert approval["effective_from"] == "2030-01-02"
+    assert approval["numeric_keys_total"] == 4
+    assert approval["unapproved_null_keys"] == 2
+    assert approval["unapproved_null_key_names"] == ["B_null", "MIN_null"]
+    assert approval["p0_1_bounds_approval"].startswith("CLOSED 2030-01-02")
+    # scope-limitation is never dropped: the residual null keys are stated in the
+    # same sentence that reports the approval
+    assert "2 of 4" in approval["version_label"]
+    assert "2 of 4" in approval["approval_state"]
+
+
+def test_profile_approval_keeps_the_open_wording_while_status_is_proposed(
+    tmp_path: Path,
+) -> None:
+    """The pre-P0-1 wording is a *derived* branch, not a deleted one — a profile that
+    reverts to PROPOSED re-produces the historical claim byte for byte."""
+    text = _APPROVED_PROFILE.replace("status: APPROVED", "status: PROPOSED")
+    approval = ev.read_profile_approval(_profile_repo(tmp_path, text))
+    assert approval["status"] == "PROPOSED"
+    assert approval["version_label"] == "9.9 (PROPOSED — P0-1 open)"
+    assert approval["approval_state"] == "PROPOSED — P0-1 (bounds approval) OPEN"
+    assert approval["p0_1_bounds_approval"] == "OPEN"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param(None, id="file-absent"),
+        pytest.param("bounds: [unclosed\n  - :\n\t bad", id="yaml-parse-error"),
+        pytest.param("- just\n- a\n- list\n", id="not-a-mapping"),
+        pytest.param(
+            _APPROVED_PROFILE.replace("status: APPROVED", "status: RATIFIED"),
+            id="status-outside-vocabulary",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace("status: APPROVED", "status: null"),
+            id="status-absent",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace('version: "9.9"', "version: null"),
+            id="version-unusable",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace('approved_by: ["test-approver"]', "approved_by:"),
+            id="approved-without-approver",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace(
+                'effective_from: "2030-01-02"', "effective_from:"
+            ),
+            id="approved-without-effective-from",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace("  B_ok: {value_ms: 100}", "  B_ok: 100"),
+            id="bounds-entry-not-a-mapping",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace(
+                "  B_ok: {value_ms: 100}", "  B_ok: {semantics: hard_maximum}"
+            ),
+            id="bounds-entry-without-value-ms",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace("  MAX_ok: 5", "  MAX_ok: {nested: 1}"),
+            id="limits-entry-is-a-mapping",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace("  MAX_ok: 5", "  MAX_ok: true"),
+            id="limits-entry-is-a-bool",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace(
+                "bounds:\n  B_ok: {value_ms: 100}\n  B_null: {value_ms: null}\n",
+                "bounds: {}\n",
+            ),
+            id="empty-bounds-census",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace(
+                "limits:\n  MAX_ok: 5\n  MIN_null: null\n", "limits: {}\n"
+            ),
+            id="empty-limits-census",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE + "status: PROPOSED\n",
+            id="duplicate-status-key",
+        ),
+        pytest.param(
+            _APPROVED_PROFILE.replace("bounds:", "bounds: []").replace(
+                "  B_ok: {value_ms: 100}\n  B_null: {value_ms: null}\n", ""
+            ),
+            id="bounds-section-not-a-mapping",
+        ),
+    ],
+)
+def test_profile_approval_fails_closed_to_unknown(
+    tmp_path: Path, mutation: str | None
+) -> None:
+    _assert_fail_closed(ev.read_profile_approval(_profile_repo(tmp_path, mutation)))
+
+
+def test_unreadable_profile_still_records_the_digest_it_could_compute(
+    tmp_path: Path,
+) -> None:
+    """UNKNOWN suppresses the CLAIM, never the evidence: an unparseable file is still
+    digested, so a reviewer can identify the exact bytes that defeated the parse."""
+    bad = "bounds: [unclosed\n  - :\n\t bad"
+    approval = ev.read_profile_approval(_profile_repo(tmp_path, bad))
+    assert (
+        approval["digest"]["sha256"] == hashlib.sha256(bad.encode("utf-8")).hexdigest()
+    )
+    absent = ev.read_profile_approval(_profile_repo(tmp_path / "empty", None))
+    assert absent["digest"]["sha256"] == "FILE_ABSENT"
+
+
+def test_unreadable_profile_reason_reaches_the_recorded_baseline_reason() -> None:
+    """The UNKNOWN branch must explain itself in the field a reader actually reads."""
+    unknown = ev._profile_unknown({"path": "p", "sha256": "x"}, "synthetic failure")
+    reason = ev.profile_version_reason(unknown)
+    assert "UNKNOWN" in reason and "synthetic failure" in reason
+    assert "approved" not in reason.replace("No approval is implied", "")
+
+
+def test_profile_bytes_are_read_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The digest and the parse MUST come from one buffer (concurrent-writer sim).
+
+    A two-read implementation (digest the file, then reopen it to parse) can record a
+    sha256 of bytes it never parsed. Here the byte source mutates on every access, so
+    a second read would be observable: the recorded digest would cover the APPROVED
+    payload while the recorded status came from the PROPOSED one — a package whose own
+    digest does not cover its own approval claim.
+    """
+    repo = _profile_repo(tmp_path, _APPROVED_PROFILE)
+    second = _APPROVED_PROFILE.replace("status: APPROVED", "status: PROPOSED").replace(
+        'version: "9.9"', 'version: "0.0"'
+    )
+    payloads = [_APPROVED_PROFILE.encode("utf-8"), second.encode("utf-8")]
+    reads: list[int] = []
+    real_read_bytes = Path.read_bytes
+
+    def mutating_read_bytes(self: Path) -> bytes:
+        if self == repo / ev.PROFILE_YAML_PATH:
+            reads.append(1)
+            # every access hands back the NEXT payload; a single-read impl sees only
+            # payloads[0], a two-read impl sees payloads[1] on its second access
+            return payloads[min(len(reads) - 1, len(payloads) - 1)]
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", mutating_read_bytes)
+    # a reintroduced ``sha256_file(path)`` would reopen the file behind our back, so
+    # the helper is made explosive for the duration of the call
+    monkeypatch.setattr(
+        ev,
+        "sha256_file",
+        lambda *a, **k: pytest.fail("read_profile_approval must not re-open the file"),
+    )
+    approval = ev.read_profile_approval(repo)
+
+    assert len(reads) == 1, f"profile bytes were read {len(reads)} times, must be 1"
+    assert approval["digest"]["sha256"] == hashlib.sha256(payloads[0]).hexdigest()
+    # the decisive cross-check: digest and parse describe the SAME payload
+    assert approval["status"] == "APPROVED"
+    assert approval["version"] == "9.9"
+
+
+def test_discipline_tags_cannot_contradict_the_derived_state(manifest: dict) -> None:
+    """MAJOR-1: one artifact may not refute itself.
+
+    The tag used to hardcode "P0-1 (bounds approval) closes" while the claim block
+    carries a profile-derived ``p0_1_bounds_approval``. Once P0-1 closed those two
+    stated opposite things inside a single manifest.
+    """
+    for name in ("DISCIPLINE_TAG", "DISCIPLINE_TAG_L2", "DISCIPLINE_TAG_L3"):
+        tag = getattr(ev, name)
+        assert "P0-1" not in tag, f"{name} re-asserts a gate the claim block derives"
+    tag = manifest["discipline_tag"]
+    claim = manifest["claim"]
+    assert "P0-1" not in tag
+    # the tag must POINT at the derived fields rather than restate them
+    assert "p0_1_bounds_approval" in tag
+    assert claim["p0_1_bounds_approval"]
+    assert (
+        claim["verification_profile_status"]
+        == ev.read_profile_approval(_REPO_ROOT)["status"]
+    )
+
+
+def test_l2_discipline_tag_matches_the_design_errata_verbatim() -> None:
+    """The EV-L2 tag is design-owned text; the harness copy must equal the errata.
+
+    The errata (EV-L2 pilot design §12, v1.3) quotes the replacement string. If either
+    side is edited alone they drift, which is how design-owned strings rot.
+    """
+    design = (
+        _REPO_ROOT / "docs" / "plans" / "2026-07-29-tos-ev-l2-pilot-design.md"
+    ).read_text(encoding="utf-8")
+    flat = " ".join(design.replace(">", " ").split())
+    assert (
+        " ".join(ev.DISCIPLINE_TAG_L2.split()) in flat
+    ), "DISCIPLINE_TAG_L2 is not quoted verbatim by its design errata"
+    # the errata is ADDITIVE: the superseded wording stays in the document as record
+    assert "coverage argument + P0-1 + independent review" in flat
+
+
+def test_harness_hardcodes_no_verification_profile_version() -> None:
+    """Anti-phantom, both directions: the self-reported constant is gone (not merely
+    unused), and no profile version literal survives anywhere in the harness."""
+    assert not hasattr(ev, "VERIFICATION_PROFILE_VERSION")
+    source = _MODULE_PATH.read_text(encoding="utf-8")
+    assert "VERIFICATION_PROFILE_VERSION" not in source
+    profile_version = yaml.safe_load(
+        (_REPO_ROOT / ev.PROFILE_YAML_PATH).read_text(encoding="utf-8")
+    )["version"]
+    assert profile_version not in source, (
+        f"the harness hardcodes the profile version {profile_version!r}; "
+        "it must be derived at run time"
+    )
 
 
 def test_baseline_declares_its_own_ev_l1_only_completeness(baseline: dict) -> None:
@@ -1001,7 +1339,8 @@ def test_l2_manifest_is_v2_and_a_strict_superset_of_v1(
     assert set(manifest["claim"]) <= set(l2["claim"]), "a v1 claim field was dropped"
     # the v1 fields the design names explicitly (N8) are present with real values
     assert (
-        l2["claim"]["verification_profile_version"] == ev.VERIFICATION_PROFILE_VERSION
+        l2["claim"]["verification_profile_version"]
+        == ev.read_profile_approval(_REPO_ROOT)["version_label"]
     )
     # copied through from the INJECTED register (see ``_hermetic_register``), so a
     # real row moving READY -> PASS cannot break this expectation
@@ -2107,7 +2446,10 @@ def test_l3_claims_no_pass_and_no_closure(l3_package: dict) -> None:
     assert claim["register_status_moved_by_this_run"] is False
     assert claim["register_status_at_run_time"] == _HERMETIC_REGISTER_STATUS
     assert "PASS" not in claim["covered_axis"]
-    assert claim["p0_1_bounds_approval"] == "OPEN"
+    assert (
+        claim["p0_1_bounds_approval"]
+        == ev.read_profile_approval(_REPO_ROOT)["p0_1_bounds_approval"]
+    )
     dumped = yaml.safe_dump(l3_package["manifest"], allow_unicode=True)
     assert "register_status_moved_by_this_run: false" in dumped
 

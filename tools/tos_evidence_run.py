@@ -148,20 +148,31 @@ import yaml
 # ============================================================================
 
 #: Attached to every manifest. Prevents a stage record from being read as a row
-#: PASS (VER §9.5 independent sign-off; VER:171 staged-level rule; P0-1 open).
+#: PASS (VER §9.5 independent sign-off; VER:171 staged-level rule).
+#:
+#: This tag is harness-authored (no design document carries it verbatim), so it is
+#: corrected in place. It no longer *states* the bounds-approval gate: a fixed string
+#: saying "P0-1 open" sat in the same manifest as the profile-derived
+#: ``p0_1_bounds_approval`` field and contradicted it once P0-1 closed on 2026-07-29
+#: (``53980b64``). The tag now REFERS to the recorded state instead of re-asserting
+#: it — the same discipline the EV-L2/L3 tags already followed.
 DISCIPLINE_TAG = (
     "EV-L1 stage execution record only; not a row PASS; incomplete until "
-    "independent review signs (VER §9.5) and P0-1 (bounds approval) closes; "
-    "staged rows require higher stages before acceptance (VER:171)."
+    "independent review signs (VER §9.5), with the approved-bounds precondition as "
+    "recorded in this run's verification_profile_version / "
+    "verification_profile_status / p0_1_bounds_approval fields; staged rows require "
+    "higher stages before acceptance (VER:171)."
 )
 
-#: The EV-L2 counterpart (EV-L2 pilot design §6.2 N8, verbatim). It names the four
-#: outstanding gates by the manifest blocks that carry their state, so a reader never
-#: has to trust the tag alone.
+#: The EV-L2 counterpart (EV-L2 pilot design §6.2 N8 — **errata v1.3, 2026-08-07**).
+#: It names the outstanding gates by the manifest blocks that carry their state, so a
+#: reader never has to trust the tag alone. The errata replaced the literal "P0-1"
+#: with a reference to the recorded state for the reason above; the design document's
+#: §12 carries the errata and the tag is quoted there verbatim.
 DISCIPLINE_TAG_L2 = (
     "EV-L2 stage execution record only; not a row PASS; L1 hardening prereq + "
-    "coverage argument + P0-1 + independent review remain as stated in "
-    "claim/coverage_argument blocks."
+    "coverage argument + the recorded bounds-approval state + independent review "
+    "remain as stated in claim/coverage_argument blocks."
 )
 
 #: The EV-L3 counterpart (EV-L3 pilot design §6.2, verbatim). Like its EV-L2 sibling it
@@ -178,9 +189,15 @@ STAGE_L2 = "EV-L2"
 STAGE_L3 = "EV-L3"
 STAGES = (STAGE_L1, STAGE_L2, STAGE_L3)
 
-#: The Verification Profile is PROPOSED, not approved — P0-1 is open. Recorded
-#: verbatim so no downstream reader can mistake it for an approved profile.
-VERIFICATION_PROFILE_VERSION = "2.1 (PROPOSED — P0-1 open)"
+#: The Verification Profile's approval state is **derived from the artifact at run
+#: time**, never asserted here (see :func:`read_profile_approval`). A hardcoded claim
+#: is a self-report: it was correct only until the operator acted on it, and between
+#: P0-1's closure (2026-07-29, commit ``53980b64``) and this change the harness kept
+#: writing "PROPOSED — P0-1 open" into manifests that a reader would take as fact.
+#: The closed status vocabulary below is the fail-closed gate: anything outside it —
+#: including a parse failure or an absent field — records UNKNOWN, never APPROVED.
+PROFILE_STATUS_VOCABULARY = ("PROPOSED", "APPROVED")
+PROFILE_APPROVAL_UNKNOWN = "UNKNOWN (fail-closed)"
 
 NOT_APPLICABLE = "NOT_APPLICABLE_EV_L1"
 #: The EV-L2 N/A token (design §6.2 M2). The baseline note is *updated*, never deleted:
@@ -1505,6 +1522,253 @@ def unmet_ver3_fields(ver3: dict) -> list[str]:
     return sorted(name for name, entry in ver3.items() if entry["status"] != RECORDED)
 
 
+class _NoDuplicateKeySafeLoader(yaml.SafeLoader):
+    """A SafeLoader that REFUSES duplicate mapping keys instead of resolving them.
+
+    PyYAML's default is last-wins, so a profile carrying two ``status:`` lines parses
+    to whichever came last while a human auditing the file top-down reads the first.
+    The digest cannot catch that — both lines are inside the digested bytes — so the
+    ambiguity itself is rejected rather than silently resolved in either direction.
+    """
+
+    def construct_mapping(self, node, deep: bool = False):  # type: ignore[no-untyped-def]
+        seen: set = set()
+        for key_node, _value in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"duplicate key {key!r}",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _profile_unknown(digest: dict, reason: str) -> dict:
+    """The fail-closed approval record. Every caller path that cannot *prove* an
+    approval state lands here, and it never carries an approved-looking value."""
+    return {
+        "digest": digest,
+        "version": PROFILE_APPROVAL_UNKNOWN,
+        "status": PROFILE_APPROVAL_UNKNOWN,
+        "approved_by": [],
+        "effective_from": "",
+        "review_due": "",
+        "numeric_keys_total": None,
+        "unapproved_null_keys": None,
+        "unapproved_null_key_names": [],
+        "version_label": PROFILE_APPROVAL_UNKNOWN,
+        "approval_state": PROFILE_APPROVAL_UNKNOWN,
+        "p0_1_bounds_approval": PROFILE_APPROVAL_UNKNOWN,
+        "unreadable_reason": reason,
+    }
+
+
+def _is_bound_value(value: object) -> bool:
+    """A numeric ceiling. ``bool`` is excluded: ``True`` is not a millisecond."""
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _profile_null_key_census(doc: dict) -> tuple[int, list[str]] | None:
+    """``(total numeric keys, sorted names of the keys still carrying no value)``.
+
+    A ``bounds`` entry is unapproved-null when its ``value_ms`` is ``null``; a
+    ``limits`` entry is a scalar, so the entry itself being ``null`` is the same
+    condition.
+
+    Returns ``None`` — which the caller turns into UNKNOWN — for **any** shape the
+    census cannot honestly count. Under-counting is the fail-open direction here: a
+    key the census fails to recognise as null silently joins the approved population,
+    so every unrecognised shape must abort the whole census rather than skip a key.
+    Both sections are therefore validated **symmetrically**:
+
+    * neither section may be empty — "0 of 0 unapproved" would read as a fully
+      approved profile, which is the strongest claim this function can make and the
+      last one an empty file should produce;
+    * every ``bounds`` entry is a mapping that *has* a ``value_ms`` which is ``null``
+      or numeric (an absent key is a different shape, not a null value);
+    * every ``limits`` entry is ``null`` or numeric — a mapping or list here would
+      mean the section's shape changed, and plain ``is None`` would then count the
+      changed entry as carrying an approved value.
+    """
+    bounds = doc.get("bounds")
+    limits = doc.get("limits")
+    if not isinstance(bounds, dict) or not isinstance(limits, dict):
+        return None
+    if not bounds or not limits:
+        return None
+    null_names: list[str] = []
+    for name, entry in bounds.items():
+        if not isinstance(entry, dict) or "value_ms" not in entry:
+            return None
+        value = entry["value_ms"]
+        if value is None:
+            null_names.append(str(name))
+        elif not _is_bound_value(value):
+            return None
+    for name, value in limits.items():
+        if value is None:
+            null_names.append(str(name))
+        elif not _is_bound_value(value):
+            return None
+    return len(bounds) + len(limits), sorted(null_names)
+
+
+def read_profile_approval(repo_root: Path) -> dict:
+    """Derive the Verification Profile's approval state from the profile itself.
+
+    Structure derived, not self-reported: ``version`` / ``status`` / ``approved_by``
+    / ``effective_from`` and the unapproved-null key census are read out of the very
+    artifact whose sha256 the package records. No wall clock, no randomness, no
+    network: the same bytes yield the same record on every run.
+
+    **The bytes are read exactly once.** Digesting the file and then re-opening it to
+    parse leaves a window in which a concurrent writer makes the recorded sha256 and
+    the recorded claim describe *different* bytes — the package would then carry a
+    digest that does not cover its own approval statement, which is precisely the
+    property this function exists to guarantee. So one ``read_bytes`` fills one
+    buffer, and both the digest and the parse are taken from that buffer.
+
+    **Fail-closed in every direction.** An unreadable file, a YAML parse error, a
+    duplicate mapping key, a non-mapping document, a ``status`` outside
+    :data:`PROFILE_STATUS_VOCABULARY`, an unusable ``version``, an uncountable or
+    empty bounds/limits census, or — for a claimed ``APPROVED`` — a missing
+    ``approved_by`` / ``effective_from`` (the profile's own ratification rules require
+    both) all record :data:`PROFILE_APPROVAL_UNKNOWN`. Nothing here can promote an
+    unreadable profile to APPROVED, and the only literal approval word this function
+    can emit comes from the file's own ``status`` field.
+
+    ``review_due`` is recorded but **not enforced**: deciding whether a review is
+    overdue needs a wall clock, which this harness deliberately excludes to stay
+    deterministic. Profile currency is an operator/reviewer duty, not a harness gate.
+    """
+    path = repo_root / PROFILE_YAML_PATH
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        # Covers absent, unreadable and not-a-file alike. No prior ``is_file()``
+        # probe: that would be one more observation of a thing that can change.
+        return _profile_unknown(
+            {"path": PROFILE_YAML_PATH, "sha256": "FILE_ABSENT"},
+            f"{PROFILE_YAML_PATH} could not be read: {type(exc).__name__}",
+        )
+    digest = {"path": PROFILE_YAML_PATH, "sha256": hashlib.sha256(raw).hexdigest()}
+    try:
+        doc = yaml.load(raw.decode("utf-8"), Loader=_NoDuplicateKeySafeLoader)
+    except Exception as exc:  # noqa: BLE001 - any failure is the same verdict
+        return _profile_unknown(digest, f"YAML did not parse: {type(exc).__name__}")
+    if not isinstance(doc, dict):
+        return _profile_unknown(digest, "profile document is not a mapping")
+
+    status = doc.get("status")
+    if not isinstance(status, str) or status not in PROFILE_STATUS_VOCABULARY:
+        return _profile_unknown(
+            digest, f"status {status!r} is outside {list(PROFILE_STATUS_VOCABULARY)}"
+        )
+    version = doc.get("version")
+    if not isinstance(version, str) or not version.strip():
+        return _profile_unknown(digest, f"version {version!r} is not a usable string")
+    census = _profile_null_key_census(doc)
+    if census is None:
+        return _profile_unknown(
+            digest, "bounds/limits census is empty or has an uncountable shape"
+        )
+    total, null_names = census
+
+    approved_by = doc.get("approved_by") or []
+    if not isinstance(approved_by, list) or not all(
+        isinstance(name, str) and name.strip() for name in approved_by
+    ):
+        return _profile_unknown(digest, "approved_by is not a list of identities")
+    effective_from = doc.get("effective_from")
+    effective_from = effective_from if isinstance(effective_from, str) else ""
+    review_due = doc.get("review_due")
+    review_due = review_due if isinstance(review_due, str) else ""
+    nulls = len(null_names)
+
+    if status == "APPROVED":
+        # The profile's own ratification rules (file header) require the accountable
+        # authority and the effective date before APPROVED means anything. A status
+        # word without them is an unsigned claim, so it is not honoured.
+        if not approved_by or not effective_from.strip():
+            return _profile_unknown(
+                digest,
+                "status APPROVED without approved_by and effective_from "
+                "(the profile's own ratification rules require both)",
+            )
+        version_label = (
+            f"{version} (APPROVED {effective_from}, profile-level scope-limited; "
+            f"{nulls} of {total} numeric keys unapproved-null and fail-closed)"
+        )
+        approval_state = (
+            f"APPROVED — profile-level, scope-limited. approved_by="
+            f"{','.join(approved_by)}; effective_from={effective_from}; "
+            f"{nulls} of {total} numeric keys remain null, key-level UNAPPROVED "
+            f"and fail-closed."
+        )
+        p0_1 = (
+            f"CLOSED {effective_from} (profile-level, scope-limited; {nulls} of "
+            f"{total} numeric keys remain key-level unapproved-null and fail-closed)"
+        )
+    else:
+        version_label = f"{version} (PROPOSED — P0-1 open)"
+        approval_state = "PROPOSED — P0-1 (bounds approval) OPEN"
+        p0_1 = "OPEN"
+
+    return {
+        "digest": digest,
+        "version": version,
+        "status": status,
+        "approved_by": list(approved_by),
+        "effective_from": effective_from,
+        "review_due": review_due,
+        "numeric_keys_total": total,
+        "unapproved_null_keys": nulls,
+        "unapproved_null_key_names": null_names,
+        "version_label": version_label,
+        "approval_state": approval_state,
+        "p0_1_bounds_approval": p0_1,
+    }
+
+
+def profile_version_reason(approval: dict) -> str:
+    """Why the ``verification_profile_version`` field reads the way it does.
+
+    Kept beside the derivation so the sentence cannot outlive the state it describes
+    — which is exactly how the previous hardcoded wording became false.
+    """
+    unreadable = approval.get("unreadable_reason")
+    if unreadable:
+        return (
+            "The Verification Profile could not be read as an approval artifact "
+            f"({unreadable}), so its state is recorded UNKNOWN and fail-closed. No "
+            "approval is implied, and no bound value is consumed by this run."
+        )
+    common = (
+        "Derived from the digested artifact at run time, not asserted by the "
+        "harness: the file is read ONCE and both the sha256 above and every field "
+        "here come from that single buffer, so the recorded digest provably covers "
+        "the bytes this claim was derived from. The harness inspects approval "
+        "METADATA and key NULLITY only — no bound value is consumed or recorded by "
+        "this run; nullity is inspected solely for the census. The packages under "
+        "test bind no profile key: every bound a test exercises is injected by that "
+        "test. review_due is recorded but NOT enforced — judging it needs a wall "
+        "clock, which this harness excludes for determinism, so profile currency "
+        "stays an operator/reviewer duty rather than a harness gate."
+    )
+    if approval["status"] == "APPROVED":
+        return (
+            f"Recorded, and approved at profile level on "
+            f"{approval['effective_from']} — but SCOPE-LIMITED: "
+            f"{approval['unapproved_null_keys']} of "
+            f"{approval['numeric_keys_total']} numeric keys are still null, "
+            f"key-level unapproved and fail-closed. " + common
+        )
+    return "Recorded, not approved. VER §6 numeric bounds remain unapproved. " + common
+
+
 def build_ver3_baseline(
     *,
     commit_sha: str,
@@ -1513,7 +1777,7 @@ def build_ver3_baseline(
     harness: dict,
     seed_policy: dict,
     register_row: dict,
-    profile_digest: dict,
+    profile_approval: dict,
     stage: str = STAGE_L1,
     fault_schedule: dict | None = None,
 ) -> dict:
@@ -1618,18 +1882,26 @@ def build_ver3_baseline(
         "verification_profile_version": _field(
             RECORDED,
             {
-                "version": VERIFICATION_PROFILE_VERSION,
+                "version": profile_approval["version_label"],
                 "register_column_value": register_row.get(
                     "verification_profile_version", ""
                 ),
-                "artifact": profile_digest,
-                "approval_state": "PROPOSED — P0-1 (bounds approval) OPEN",
+                "artifact": profile_approval["digest"],
+                "approval_state": profile_approval["approval_state"],
+                # The parsed fields, beside the sentence built from them, so a reader
+                # can re-derive the label instead of trusting it.
+                "profile_status": profile_approval["status"],
+                "profile_version": profile_approval["version"],
+                "approved_by": profile_approval["approved_by"],
+                "effective_from": profile_approval["effective_from"],
+                "review_due": profile_approval["review_due"],
+                "numeric_keys_total": profile_approval["numeric_keys_total"],
+                "unapproved_null_keys": profile_approval["unapproved_null_keys"],
+                "unapproved_null_key_names": profile_approval[
+                    "unapproved_null_key_names"
+                ],
             },
-            reason=(
-                "Recorded, not approved. VER §6 numeric bounds remain unapproved; "
-                "no bound value is consumed by this run (bounds are hypothesis-"
-                "injected, not hardcoded)."
-            ),
+            reason=profile_version_reason(profile_approval),
         ),
         "database_schema_migration_version": _field(
             na,
@@ -1690,6 +1962,7 @@ def build_baseline(
     harness: dict,
     seed_policy: dict,
     config_artifacts: list[dict],
+    profile_approval: dict,
     stage: str = STAGE_L1,
     fault_schedule: dict | None = None,
 ) -> dict:
@@ -1724,12 +1997,6 @@ def build_baseline(
         "platform": platform.platform(),
         "python_implementation": probe["python"]["implementation"],
     }
-    profile_path = repo_root / PROFILE_YAML_PATH
-    profile_digest = (
-        {"path": PROFILE_YAML_PATH, "sha256": sha256_file(profile_path)}
-        if profile_path.is_file()
-        else {"path": PROFILE_YAML_PATH, "sha256": "FILE_ABSENT"}
-    )
     ver3 = build_ver3_baseline(
         commit_sha=commit_sha,
         doc_digests=doc_digests,
@@ -1737,7 +2004,7 @@ def build_baseline(
         harness=harness,
         seed_policy=seed_policy,
         register_row=register_row,
-        profile_digest=profile_digest,
+        profile_approval=profile_approval,
         stage=stage,
         fault_schedule=fault_schedule,
     )
@@ -1749,8 +2016,9 @@ def build_baseline(
             "EV-L3 integrated crash/restart. VER §3 requires 22 baseline fields and "
             "states that 'A run without a complete baseline is invalid' (line 109) — a "
             "clause carrying no 'as applicable' qualifier, unlike §7 line 258, so it "
-            "stands beside P0-1 and the independent signature as a gate, not a "
-            "waivable formality. The unmet-field list and every reason are retained "
+            "stands beside the recorded bounds-approval state and the independent "
+            "signature as a gate, not a waivable formality. The unmet-field list and "
+            "every reason are retained "
             f"with the stage attribution updated ({NOT_APPLICABLE} -> "
             f"{NOT_APPLICABLE_L3}); the enumerated list is "
             "ver_002_001_section_3_unmet_fields below. This stage DOES bring a real "
@@ -1778,8 +2046,9 @@ def build_baseline(
             "EV-L2 component-fault. VER §3 requires 22 baseline fields and states "
             "that 'A run without a complete baseline is invalid' (line 109) — a "
             "clause carrying no 'as applicable' qualifier, unlike §7 line 258, so "
-            "it stands beside P0-1 and the independent signature as a gate, not a "
-            "waivable formality. The unmet-field list and every reason are retained "
+            "it stands beside the recorded bounds-approval state and the independent "
+            "signature as a gate, not a waivable formality. The unmet-field list and "
+            "every reason are retained "
             f"from EV-L1 with the stage attribution updated ({NOT_APPLICABLE} -> "
             f"{NOT_APPLICABLE_L2}); the enumerated list is "
             "ver_002_001_section_3_unmet_fields below. The absent artifacts are the "
@@ -2669,6 +2938,12 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             }
 
+        # Read ONCE, here, and thread the same record into both the baseline and the
+        # manifest: two independent reads could disagree if the profile changed
+        # mid-run, and the package would then carry two different approval claims
+        # over one digest.
+        profile_approval = read_profile_approval(repo_root)
+
         baseline = build_baseline(
             args=args,
             repo_root=repo_root,
@@ -2685,6 +2960,7 @@ def main(argv: list[str] | None = None) -> int:
             harness=harness,
             seed_policy=seed_policy,
             config_artifacts=config_artifacts,
+            profile_approval=profile_approval,
             stage=stage,
             # VER §3's ``fault_injection_schedule_and_seed`` is one field for the whole
             # notion of injected faults; at EV-L3 the injection is a crash schedule, so
@@ -2802,8 +3078,13 @@ def main(argv: list[str] | None = None) -> int:
                     "minimum_evidence_level", ""
                 ),
                 "independent_review": "NOT_SIGNED (VER §9.5)",
-                "p0_1_bounds_approval": "OPEN",
-                "verification_profile_version": VERIFICATION_PROFILE_VERSION,
+                # ``p0_1_bounds_approval`` is the harness's ONE interpretive step:
+                # it maps the profile's ``status`` onto this project's gate name.
+                # The parsed status is emitted beside it so a reader can invert that
+                # step instead of having to trust it.
+                "p0_1_bounds_approval": profile_approval["p0_1_bounds_approval"],
+                "verification_profile_status": profile_approval["status"],
+                "verification_profile_version": profile_approval["version_label"],
                 "target_integrity": (
                     "STABLE_DURING_RUN" if not mutated else "MUTATED_DURING_RUN"
                 ),

@@ -458,6 +458,32 @@ OQ-5(manifest 소유자)·STATE durable residual 해소 경로(persistence 기�
 
 ## 12. 개정 로그
 
+- **에라타 v1.3 (2026-08-07, post-P0-1 currency — 적대적 코드 리뷰 MAJOR-1 반영)** — **본문 재작성 아님.
+  §6.2 N8(:268)의 `DISCIPLINE_TAG_L2` 문안 한 곳만 교체하고 기존 텍스트는 전부 보존한다.**
+  - **사유**: P0-1(Verification Profile profile-level 승인)이 **2026-07-29 커밋 `53980b64`로 닫혔다**
+    (`status: APPROVED`·scope-limited·`approved_by: ["operator"]`·`effective_from: 2026-07-29`; 163개
+    수치 키 중 17키만 key-level 미승인·fail-closed 잔존). 하네스가 프로파일 승인 상태를 **아티팩트에서
+    파생**하도록 바뀌면서(`p0_1_bounds_approval`·`verification_profile_status`·
+    `verification_profile_version` 필드), 태그가 문자열로 고정한 "P0-1"이 **같은 manifest 안에서 파생
+    필드와 상호 반박**하게 되었다. 한 아티팩트가 자기 자신을 반박하는 상태는 증거로서 결함이다.
+  - **참조**: 이번 적대적 코드 리뷰 **MAJOR-1**, P0-1 폐쇄 커밋 `53980b64`, 이행 기록
+    `docs/plans/2026-08-06-tos-post-p01-currency-harness-register.md`.
+  - **효력**: `DISCIPLINE_TAG_L2` 문자열을 아래 에라타 문안으로 교체한다. 원칙은 §6.2 N8이 원래 세운
+    것과 동일하다 — **태그는 게이트의 상태를 재단언(re-assert)하지 않고 그 상태를 담은 블록을 참조**한다.
+    P0-1이라는 **고정 문자열**을 파생 필드 **참조**로 바꾸는 것이 그 원칙의 복원이지 이탈이 아니다.
+
+    > "EV-L2 stage execution record only; not a row PASS; L1 hardening prereq + coverage argument +
+    > the recorded bounds-approval state + independent review remain as stated in
+    > claim/coverage_argument blocks."
+
+  - **시효 구분(중요)**: 이 에라타는 기존 증거를 무효화하지 **않는다**. 각 런 패키지가 스스로 기록한
+    프로파일 digest 기준으로, **15개 패키지는 PROPOSED 바이트를 보고 실행되어 당시 태그가 참**이었고,
+    **11개 패키지는 이미 APPROVED 바이트를 보고도 "P0-1 열림"을 기록**해 stale이다. 후자의 오차는
+    **승인을 과소보고하는 보수 방향**이므로(태그가 부과하는 잔여 게이트가 실제보다 많음) 어떤 런도
+    통과시키지 않았다. `tos-evidence/**`는 불변이며 이 에라타로 수정되지 않는다.
+  - **범위 밖(실측)**: `DISCIPLINE_TAG_L3`(EV-L3 설계 §6.2 유래)은 **"P0-1"을 포함하지 않는다** —
+    "restart coverage argument + network/identity residuals + independent review"만 명명하므로 stale이
+    아니고, 따라서 EV-L3 설계 문서에는 에라타가 **불요**하다(불필요한 에라타 자체가 잡음).
 - **v1.2 (2026-07-29)** — 델타 재검증 **REVISE**(CRITICAL 0·신규 MAJOR 4[N1~N4]·MINOR 5[N5~N9] — 전부
   기계적 정정) 반영, **오케스트레이터 직접 적용**(리뷰어 명시 권고·#20 HAG/#23 CUR 선례): N1 SPG fault
   카운트 11→**12**(신규4·인접8)·총 22→**23**(신규9·인접14) 전 사이트 정정 + manifest `fault_count` per-row
