@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EV-L1 / EV-L2 evidence run harness — design #1 §5.1 run-manifest contract (7 items).
+"""EV-L1 / EV-L2 / EV-L3 evidence run harness — design #1 §5.1 run-manifest contract.
 
 Ratified sources (this file mechanizes them; it does not own them):
 
@@ -59,6 +59,43 @@ Four EV-L2-only gates can withhold GREEN, and none of them is a self-report:
   * ``fault_injection.seed`` — an EV-L2 stage must be seed-reproducible
     (VER §9.1), so an unpinned seed policy withholds GREEN.
 
+EV-L3 stage (manifest v3)
+-------------------------
+``--evidence-level-stage EV-L3`` produces a **superset of v2**: every earlier
+field is retained and two field groups are added (EV-L3 pilot design
+``docs/plans/2026-08-06-tos-ev-l3-pilot-design.md`` §6.1) — ``integration_boundary``
+(the persistence substrate, the process boundary with its measured pids and crash
+mechanism, and the ``modeled_axes`` this stage did NOT exercise as real
+boundaries) and ``crash_injection`` (catalog ref, the append-only crash schedule,
+seed, and the **re-counted** per-row scenario totals). ``fault_injection`` is an
+EV-L2 block and is not emitted at EV-L3: the two schedules have different row
+shapes and different gates.
+
+Six EV-L3-only gates can withhold GREEN, and none of them is a self-report:
+
+  * ``crash_injection.all_crash_scenarios_met`` — every row's outcome is
+    **re-derived** from its observed vs expected reconstruction (the row's own
+    ``outcome`` is cross-checked, never believed). The expected reconstruction is
+    a hand-derived anchor produced outside ``tos/``, where the firewall's reverse
+    rule makes calling ``reconstruct_conservative`` impossible — so the oracle
+    cannot be the implementation. Zero rows withholds it.
+  * ``crash_injection.process_boundary_real`` — ``writer_pid != reader_pid``,
+    both positive, on every row. An in-process fallback would forge exactly the
+    "real … boundaries" EV-L3 is defined by (VER §5 line 151-153).
+  * ``crash_injection.persistence_real`` — the conjunction of a run-time
+    measurement (a non-empty store file observed after its writer died) and a
+    **source property** (:func:`check_persistence_substrate`: one connection, no
+    literal target, no ``:memory:``, both pragmas). Either alone is satisfiable
+    by something that is not really durable.
+  * ``prior_stage_runs[*]`` — STATE-EV-001's EV-L1 **AND** EV-L2 must both be
+    bound at THIS baseline. Not this row's own staging requirement: it is the
+    durable-limb continuity that lets L3 evidence attach to a non-stale model
+    base (design §6.2 gate 4).
+  * ``integration_boundary.modeled_axes[*].residual_ref`` — an axis this stage
+    modelled or deferred must name the §378 residual carrying it, so a modelled
+    boundary can never be recorded as a real one.
+  * ``crash_injection.seed`` — as at EV-L2 (VER §9.1).
+
 Layout produced (VER §8-equivalent, run-scoped)::
 
     tos-evidence/<EVIDENCE-ID>/<run-id>/
@@ -68,6 +105,7 @@ Layout produced (VER §8-equivalent, run-scoped)::
         junit.xml           pytest --junitxml output
         run.log             captured stdout+stderr of the pytest invocation
         fault-timeline.jsonl  EV-L2 only: the append-only VER §9.1 fault schedule
+        crash-timeline.jsonl  EV-L3 only: the append-only VER §9.1 crash schedule
         sha256sums.txt      sha256 of every retained file (written last)
 
 ``run-id`` is ``<UTC timestamp>-<git short sha>``. The run directory is created
@@ -126,9 +164,19 @@ DISCIPLINE_TAG_L2 = (
     "claim/coverage_argument blocks."
 )
 
+#: The EV-L3 counterpart (EV-L3 pilot design §6.2, verbatim). Like its EV-L2 sibling it
+#: names the outstanding gates by the manifest blocks that carry their state, so a
+#: reader never has to trust the tag alone.
+DISCIPLINE_TAG_L3 = (
+    "EV-L3 stage execution record only; not a row PASS; restart coverage argument + "
+    "network/identity residuals + independent review remain as stated in "
+    "claim/coverage_argument blocks."
+)
+
 STAGE_L1 = "EV-L1"
 STAGE_L2 = "EV-L2"
-STAGES = (STAGE_L1, STAGE_L2)
+STAGE_L3 = "EV-L3"
+STAGES = (STAGE_L1, STAGE_L2, STAGE_L3)
 
 #: The Verification Profile is PROPOSED, not approved — P0-1 is open. Recorded
 #: verbatim so no downstream reader can mistake it for an approved profile.
@@ -139,6 +187,12 @@ NOT_APPLICABLE = "NOT_APPLICABLE_EV_L1"
 #: the VER §3 unmet-field list and every reason survive the stage change, they are just
 #: attributed to the pure-model L2 stage instead of to EV-L1.
 NOT_APPLICABLE_L2 = "NOT_APPLICABLE_PURE_MODEL_L2"
+#: The EV-L3 N/A token (EV-L3 pilot design §6.3). The stage integrates real persistence
+#: and a real process boundary, so "pure model" would be a false attribution; what is
+#: still absent is the **transport** (the send boundary is a modelled marker, zero real
+#: bytes) and everything that hangs off it. Same M2 discipline: the field, its N/A status
+#: and its reason are retained — only the stage attribution changes.
+NOT_APPLICABLE_L3 = "NOT_APPLICABLE_MODELED_TRANSPORT_L3"
 RECORDED = "RECORDED"
 PARTIAL = "PARTIAL_EV_L1"
 
@@ -173,6 +227,11 @@ TRACEABILITY_NAME = "traceability.csv"
 JUNIT_NAME = "junit.xml"
 RUNLOG_NAME = "run.log"
 FAULT_TIMELINE_NAME = "fault-timeline.jsonl"
+#: The EV-L3 append-only crash schedule (EV-L3 pilot design §6.1). A separate artifact
+#: from the EV-L2 fault timeline: the two schedules have different row shapes and
+#: different gates, and merging them would let one stage's rows satisfy the other's
+#: recount.
+CRASH_TIMELINE_NAME = "crash-timeline.jsonl"
 SHA256SUMS_NAME = "sha256sums.txt"
 INCOMPLETE_MARKER_NAME = "INCOMPLETE_RUN.txt"
 
@@ -181,6 +240,20 @@ INCOMPLETE_MARKER_NAME = "INCOMPLETE_RUN.txt"
 # ---------------------------------------------------------------------------
 
 EVL2_DESIGN_PATH = "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md"
+EVL3_DESIGN_PATH = "docs/plans/2026-08-06-tos-ev-l3-pilot-design.md"
+
+#: EV-L3 pilot design §6.2 gate 4. The prior-stage binding an EV-L3 crash/restart run
+#: requires is **this row's** continuity, and the row is named: STATE-EV-001 is where the
+#: durable limb (R-1) lives, and its EV-L1 ∧ EV-L2 stages are what the L3 durable
+#: evidence attaches to. The id is checked structurally because STATE-EV-003 is also
+#: registered at ``EV-L1/3`` and could otherwise satisfy the gate with the wrong row's
+#: stages (design §6.2 MINOR-2).
+L3_PRIOR_STAGE_EVIDENCE_ID = "STATE-EV-001"
+
+#: The stages that binding must cover, both of them, at THIS baseline. Named "AND", not
+#: "OR": one stale stage is one stage whose model no longer describes the code the crash
+#: run executed (design §6.2 NIT-2).
+L3_REQUIRED_PRIOR_STAGES = (STAGE_L1, STAGE_L2)
 
 #: The design §5 L1 hardening prerequisites. Confirming the hardening by reading the
 #: executed code, rather than by trusting a ``--hardening-done`` flag, is the whole point:
@@ -334,6 +407,13 @@ L1_HARDENING_PREREQUISITES: tuple[
 #: ``adverse_scenario_set`` are corpus-level facts, so they are stated here once;
 #: ``unexercised_residual_ref`` is row-specific and comes from ``--residual-ref``.
 COVERAGE_BOUNDARY_VALUES = "per-dimension boundary combinations exercised (seed-fixed)"
+#: The EV-L3 restart axis (EV-L3 pilot design §6.1). Same leg, different quantifier: the
+#: boundary values are crash points crossed with composite boundary combinations, and
+#: the enumeration is deterministic rather than sampled.
+COVERAGE_BOUNDARY_VALUES_L3 = (
+    "per crash-point x composite boundary combinations, deterministically enumerated "
+    "(seed-fixed); the restart axis only"
+)
 COVERAGE_ADVERSE_SCENARIO_SET = (
     "ADR-002-021 PROPOSED (unapproved) — adversarial-combination leg UNMET; "
     "applicability to non-risk row = OQ; residual per §378"
@@ -886,6 +966,334 @@ def summarise_fault_schedule(
     }
 
 
+def read_crash_timeline(path: Path) -> list[dict]:
+    """Parse the append-only EV-L3 crash schedule (one JSON object per line).
+
+    Same refusal as its EV-L2 sibling: a malformed line is a ``HarnessError`` rather
+    than a skipped row, because a schedule the harness cannot fully read must not be
+    summarised as if it had been.
+    """
+    if not path.is_file():
+        return []
+    rows: list[dict] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise HarnessError(
+                f"{CRASH_TIMELINE_NAME} line {number} is not valid JSON: {exc}"
+            ) from exc
+        if not isinstance(row, dict):
+            raise HarnessError(
+                f"{CRASH_TIMELINE_NAME} line {number} is not a JSON object"
+            )
+        rows.append(row)
+    return rows
+
+
+def summarise_crash_schedule(
+    rows: list[dict],
+    *,
+    expected_scenario_count: int | None = None,
+    evidence_id: str | None = None,
+) -> dict:
+    """Re-derive the crash schedule's three EV-L3 verdicts (design §6.2 gates 1-3).
+
+    Nothing here is believed. ``crash_scenario_count`` is **recounted from the
+    artifact**; every row's ``outcome`` is **re-derived** from its observed vs expected
+    reconstruction and the row's own ``outcome`` is then cross-checked against that
+    re-derivation; and the two boundary facts are **structural properties of the row's
+    own measurements**, not flags the suite set:
+
+      * ``process_boundary_real`` — ``writer_pid`` and ``reader_pid`` are both positive
+        and different. An in-process fallback (or a suite that recorded one pid twice)
+        would forge exactly the "real … boundaries" EV-L3 is defined by (VER §5 line
+        151-153).
+      * ``persistence_real`` — the store the reader read was a real file with a non-zero
+        size *after* its writer died. The EV-L2 pilot's C1 finding was a durable claim
+        satisfied in memory; recording a byte count observed on the filesystem is what
+        makes the recurrence detectable.
+
+    ``all_crash_scenarios_met`` is withheld when any of the following holds:
+
+      * the schedule is **empty** — "0 crashes injected" is not "no violations found"
+        (design §0.5-2 ∅-seal, both directions);
+      * a row's observed reconstruction differs from its expected one, or its
+        self-reported ``outcome`` disagrees with that re-derivation;
+      * a row's ``expected_reconstruction`` is missing or empty — an Expected that is
+        not stated cannot be falsified (§0.5-4);
+      * a row's process boundary or persistence measurement does not hold;
+      * a ``scenario_id`` is duplicated (it would inflate the recount);
+      * the recount disagrees with ``expected_scenario_count`` (the catalog size), or a
+        row belongs to a different ``evidence_id``.
+    """
+
+    def _sid(row: dict) -> str:
+        return str(row.get("scenario_id", "<unnamed>"))
+
+    def _boundary_real(row: dict) -> bool:
+        writer, reader = row.get("writer_pid"), row.get("reader_pid")
+        if not isinstance(writer, int) or not isinstance(reader, int):
+            return False
+        return writer > 0 and reader > 0 and writer != reader
+
+    def _persistence_real(row: dict) -> bool:
+        on_disk = row.get("store_real_on_disk")
+        size = row.get("store_bytes")
+        return on_disk is True and isinstance(size, int) and size > 0
+
+    def _derived_outcome(row: dict) -> str:
+        expected = str(row.get("expected_reconstruction") or "").strip()
+        observed = str(row.get("observed_reconstruction") or "").strip()
+        if not expected or not observed:
+            return OUTCOME_DEVIATION
+        if observed != expected:
+            return OUTCOME_DEVIATION
+        if not _boundary_real(row) or not _persistence_real(row):
+            return OUTCOME_DEVIATION
+        return OUTCOME_MET
+
+    scenario_ids = [_sid(row) for row in rows]
+    deviations = sorted(
+        _sid(row) for row in rows if _derived_outcome(row) != OUTCOME_MET
+    )
+    misreported = sorted(
+        _sid(row) for row in rows if row.get("outcome") != _derived_outcome(row)
+    )
+    undefined_expected = sorted(
+        _sid(row)
+        for row in rows
+        if not str(row.get("expected_reconstruction") or "").strip()
+    )
+    unobserved = sorted(
+        _sid(row)
+        for row in rows
+        if not str(row.get("observed_reconstruction") or "").strip()
+    )
+    shared_pid = sorted(_sid(row) for row in rows if not _boundary_real(row))
+    not_on_disk = sorted(_sid(row) for row in rows if not _persistence_real(row))
+    duplicates = sorted({sid for sid in scenario_ids if scenario_ids.count(sid) > 1})
+    foreign = sorted(
+        {
+            f"{_sid(row)}@{row.get('evidence_id')}"
+            for row in rows
+            if evidence_id is not None and row.get("evidence_id") != evidence_id
+        }
+    )
+    count_matches = (
+        expected_scenario_count is None or len(rows) == expected_scenario_count
+    )
+    return {
+        "schedule_artifact": CRASH_TIMELINE_NAME,
+        "crash_scenario_count": len(rows),
+        "expected_crash_scenario_count": expected_scenario_count,
+        "crash_scenario_count_matches_catalog": count_matches,
+        "scenario_ids": scenario_ids,
+        "duplicate_scenario_ids": duplicates,
+        "foreign_evidence_id_rows": foreign,
+        "deviation_scenarios": deviations,
+        "misreported_outcome_scenarios": misreported,
+        "expected_undefined_scenarios": undefined_expected,
+        "unobserved_reconstruction_scenarios": unobserved,
+        "shared_process_scenarios": shared_pid,
+        "non_durable_store_scenarios": not_on_disk,
+        "crash_points": sorted({str(row.get("crash_point", "")) for row in rows}),
+        "process_boundary_real": bool(rows) and not shared_pid,
+        "persistence_real_measured": bool(rows) and not not_on_disk,
+        "all_crash_scenarios_met": (
+            bool(rows)
+            and not deviations
+            and not misreported
+            and not undefined_expected
+            and not unobserved
+            and not shared_pid
+            and not not_on_disk
+            and not duplicates
+            and not foreign
+            and count_matches
+        ),
+        "all_crash_scenarios_met_basis": (
+            "every row's outcome RE-DERIVED from observed vs expected reconstruction "
+            "plus the row's own structural boundary measurements (the row's outcome "
+            "field is cross-checked, never trusted); withheld on an empty schedule "
+            "(0 injected != 0 violations), any deviation or misreport, any undefined "
+            "Expected or unobserved reconstruction, a writer/reader pid that is not a "
+            "real distinct pair, a store that was not a non-empty on-disk file, a "
+            "duplicated scenario id, a row from another evidence id, or a recount that "
+            "disagrees with the catalog size"
+        ),
+    }
+
+
+#: The EV-L3 persistence substrate, checked **structurally** (design §6.2 gate 3). The
+#: run-time rows say the store file existed; this says the component cannot be anything
+#: other than a real on-disk sqlite database in the first place. Both are needed: a row
+#: measurement proves what one execution did, a source property proves what any
+#: execution can do. Verified by parsing the source, never by importing it (TOS-FW-R).
+PERSISTENCE_SUBSTRATE_PATH = "tos/src/tos/staterestore/store.py"
+
+#: The pragmas the pilot substrate decision (design §3.2 candidate A) names. Each must be
+#: bound in a real ``execute(...)`` call argument — see :func:`_executed_pragmas`.
+PERSISTENCE_REQUIRED_PRAGMAS = ("journal_mode=WAL", "synchronous=FULL")
+
+#: Matches one ``PRAGMA <name>=<value>`` statement, normalised for whitespace and case.
+_PRAGMA_RE = re.compile(r"^\s*PRAGMA\s+(\w+)\s*=\s*(\w+)\s*$", re.IGNORECASE)
+
+
+def _executed_pragmas(tree: ast.AST) -> dict[str, str]:
+    """The ``PRAGMA name=value`` settings really passed to an ``execute(...)`` call.
+
+    Read out of the syntax tree, and **only** from a string literal sitting in the
+    argument position of a call named ``execute``. A file-wide substring scan is
+    satisfied by the token appearing anywhere — including in the very docstring that
+    documents the pragma — so under a substring test the store's real
+    ``PRAGMA synchronous=FULL`` could be changed to ``OFF`` while the module docstring
+    kept the gate green (measured: that is exactly what happened before this function
+    existed). This is the same discipline :func:`check_h1` already applies to the H-1
+    pin, applied to the substrate pragmas.
+
+    Returns:
+        ``{pragma_name_lowercased: value_uppercased}``. A later ``execute`` of the same
+        pragma wins, matching what sqlite would actually end up with.
+    """
+    executed: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "execute"
+        ):
+            continue
+        for arg in node.args:
+            if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+                continue
+            match = _PRAGMA_RE.match(arg.value)
+            if match:
+                executed[match.group(1).lower()] = match.group(2).upper()
+    return executed
+
+
+def check_persistence_substrate(repo_root: Path) -> dict:
+    """Confirm the store is a real on-disk sqlite substrate, from its syntax tree.
+
+    Three structural facts, each falsifiable:
+
+      * the module opens exactly one connection, and its target is **not a string
+        literal** — so no ``":memory:"`` (or any other hardcoded target) can be what a
+        run actually exercised;
+      * neither ``:memory:`` nor ``mode=memory`` appears anywhere in the module, so the
+        in-memory redefinition is unreachable rather than merely unused;
+      * both design §3.2 pragmas are **executed** — bound as a string literal in a real
+        ``execute(...)`` argument, not merely mentioned somewhere in the file.
+
+    An absent or unparseable file is unmet — treating a parse failure as "nothing found"
+    would be the same ∅-fail-open the schedule summary refuses.
+
+    Returns:
+        ``{"met": bool, "path": str, "measured": {...}}`` — the measurements are
+        recorded either way, so an unmet run says exactly what was seen.
+    """
+    path = repo_root / PERSISTENCE_SUBSTRATE_PATH
+    if not path.is_file():
+        return {
+            "met": False,
+            "path": PERSISTENCE_SUBSTRATE_PATH,
+            "reason": "FILE_ABSENT",
+        }
+    source = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except SyntaxError as exc:
+        return {
+            "met": False,
+            "path": PERSISTENCE_SUBSTRATE_PATH,
+            "reason": f"SOURCE_DOES_NOT_PARSE: {exc}",
+        }
+    connects = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "connect"
+    ]
+    literal_targets = sorted(
+        {
+            arg.value
+            for call in connects
+            for arg in call.args
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+        }
+    )
+    executed_pragmas = _executed_pragmas(tree)
+    pragmas_present: list[str] = []
+    pragmas_missing: list[str] = []
+    for pragma in PERSISTENCE_REQUIRED_PRAGMAS:
+        name, _, value = pragma.partition("=")
+        if executed_pragmas.get(name.lower()) == value.upper():
+            pragmas_present.append(pragma)
+        else:
+            pragmas_missing.append(pragma)
+    in_memory_tokens = sorted(
+        token for token in (":memory:", "mode=memory") if token in source
+    )
+    met = (
+        len(connects) == 1
+        and not literal_targets
+        and not in_memory_tokens
+        and not pragmas_missing
+    )
+    return {
+        "met": met,
+        "path": PERSISTENCE_SUBSTRATE_PATH,
+        "sha256": sha256_file(path),
+        "measured_from": (
+            "structural analysis of the executed source's syntax tree; pragmas are read "
+            "out of real execute(...) arguments, so a docstring or comment mentioning "
+            "one cannot satisfy the check; the harness never imports tos (TOS-FW-R)"
+        ),
+        "measured": {
+            "connect_call_sites": len(connects),
+            "literal_connection_targets": literal_targets,
+            "in_memory_tokens_present": in_memory_tokens,
+            "executed_pragmas": dict(sorted(executed_pragmas.items())),
+            "pragmas_present": sorted(pragmas_present),
+            "pragmas_missing": sorted(pragmas_missing),
+            "pragmas_required": list(PERSISTENCE_REQUIRED_PRAGMAS),
+        },
+    }
+
+
+def parse_modeled_axis_spec(spec: str) -> dict:
+    """``"<axis> | <disposition> | <residual-ref> | <note>"`` -> the manifest entry.
+
+    An axis this stage did not really exercise must name the residual that carries it
+    (design §6.2 gate 5). Parsing it as a required positional field — rather than as an
+    optional key — is what makes an over-claim impossible to express: there is no way to
+    declare a modelled axis and leave its residual blank.
+    """
+    parts = [part.strip() for part in spec.split("|")]
+    if len(parts) < 3:
+        raise HarnessError(
+            "--modeled-axis expects '<axis> | <disposition> | <residual-ref> "
+            f"[| <note>]', got {spec!r}"
+        )
+    axis, disposition, residual_ref = parts[0], parts[1], parts[2]
+    note = " | ".join(parts[3:]).strip()
+    if not axis or not disposition or not residual_ref:
+        raise HarnessError(
+            f"--modeled-axis has an empty axis / disposition / residual_ref in {spec!r}"
+        )
+    return {
+        "axis": axis,
+        "disposition": disposition,
+        "residual_ref": residual_ref,
+        "note": note or "UNSPECIFIED",
+    }
+
+
 def parse_prior_stage_spec(spec: str) -> tuple[str, str, str]:
     """``"<EVIDENCE-ID>/<run-id> | <reconcile note>"`` -> ``(evidence_id, run_id, note)``."""
     ref, _, note = spec.partition("|")
@@ -1064,9 +1472,25 @@ _NA_TEMPLATE_ONLY_L2 = (
 )
 
 
+_NA_TEMPLATE_ONLY_L3 = (
+    "No instance artifact exists in the corpus (template only under "
+    "tos-spec/src/part-1-foundation/verification/); an EV-L3 crash/restart run "
+    "on a real local persistence substrate and a real process boundary consumes "
+    "none — its send boundary is a MODELLED marker (zero real bytes, zero real "
+    "orders), so no broker, authority/human, network or recovery instance is "
+    "brought into existence. Recorded N/A per design #1 §5.1 read forward to "
+    "EV-L3 (EV-L3 pilot design §6.3): the field, its N/A status and its reason "
+    "are retained, only the stage attribution changes."
+)
+
+
 def na_status_for(stage: str) -> str:
     """The N/A token for ``stage`` (design §6.2 M2 — the note is updated, not deleted)."""
-    return NOT_APPLICABLE if stage == STAGE_L1 else NOT_APPLICABLE_L2
+    if stage == STAGE_L1:
+        return NOT_APPLICABLE
+    if stage == STAGE_L3:
+        return NOT_APPLICABLE_L3
+    return NOT_APPLICABLE_L2
 
 
 def unmet_ver3_fields(ver3: dict) -> list[str]:
@@ -1105,7 +1529,11 @@ def build_ver3_baseline(
     schedule at EV-L1 — is completed with the real schedule summary.
     """
     na = na_status_for(stage)
-    template_only = _NA_TEMPLATE_ONLY if stage == STAGE_L1 else _NA_TEMPLATE_ONLY_L2
+    template_only = {
+        STAGE_L1: _NA_TEMPLATE_ONLY,
+        STAGE_L2: _NA_TEMPLATE_ONLY_L2,
+        STAGE_L3: _NA_TEMPLATE_ONLY_L3,
+    }[stage]
     if fault_schedule is None:
         fault_field = _field(
             PARTIAL,
@@ -1125,9 +1553,11 @@ def build_ver3_baseline(
             RECORDED,
             {"fault_schedule": fault_schedule, "seed": seed_policy},
             reason=(
-                "EV-L2: the VER §9.1 append-only fault schedule and the seed are both "
-                "recorded. This field is no longer PARTIAL — it is the one VER §3 field "
-                "the EV-L2 stage completes relative to EV-L1."
+                f"{stage}: the VER §9.1 append-only "
+                + ("crash schedule" if stage == STAGE_L3 else "fault schedule")
+                + " and the seed are both recorded. This field is no longer PARTIAL — "
+                f"it is the one VER §3 field the {stage} stage completes relative to "
+                "EV-L1."
             ),
         )
     return {
@@ -1204,8 +1634,23 @@ def build_ver3_baseline(
         "database_schema_migration_version": _field(
             na,
             reason=(
-                "EV-L1 model/property verification exercises no persistence "
-                "substrate; durable persistence is the deferred /2 stage."
+                # At EV-L3 the earlier reason would be false: a persistence substrate
+                # IS exercised. The field stays N/A for a different, stated reason —
+                # the pilot store is a fixed single-table schema created on open, with
+                # no migration history and no versioned schema artifact, and it is
+                # explicitly NOT the ADR-002-005 §4 line 61 project persistence
+                # decision (EV-L3 pilot design §3.3, still an open gate).
+                "The EV-L3 pilot exercises a real local persistence substrate "
+                "(stdlib sqlite3, WAL, synchronous=FULL) whose schema is a single "
+                "fixed table created on open: there is no migration history and no "
+                "versioned schema artifact to record. This substrate is a "
+                "PILOT-SCOPE choice, NOT the ADR-002-005 §4 line 61 project "
+                "persistence-technology decision, which remains open."
+                if stage == STAGE_L3
+                else (
+                    "EV-L1 model/property verification exercises no persistence "
+                    "substrate; durable persistence is the deferred /2 stage."
+                )
             ),
         ),
         "deployment_manifest_digest": _field(
@@ -1296,7 +1741,27 @@ def build_baseline(
         stage=stage,
         fault_schedule=fault_schedule,
     )
-    if stage == STAGE_L1:
+    if stage == STAGE_L3:
+        # Same M2 discipline as EV-L2: the note is UPDATED, not deleted. What changes
+        # at EV-L3 is only which absences remain — persistence and the process boundary
+        # are now real, so they are no longer among them.
+        completeness = (
+            "EV-L3 integrated crash/restart. VER §3 requires 22 baseline fields and "
+            "states that 'A run without a complete baseline is invalid' (line 109) — a "
+            "clause carrying no 'as applicable' qualifier, unlike §7 line 258, so it "
+            "stands beside P0-1 and the independent signature as a gate, not a "
+            "waivable formality. The unmet-field list and every reason are retained "
+            f"with the stage attribution updated ({NOT_APPLICABLE} -> "
+            f"{NOT_APPLICABLE_L3}); the enumerated list is "
+            "ver_002_001_section_3_unmet_fields below. This stage DOES bring a real "
+            "local persistence substrate and a real OS process boundary into "
+            "existence; what remains absent is the transport and everything hanging "
+            "off it — the broker, authority/human, network and recovery instances — "
+            "because the send boundary is a MODELLED marker emitting zero real bytes "
+            "and zero real orders (residuals R-N / R-I). Under VER §3's full standard "
+            "this baseline is NOT complete."
+        )
+    elif stage == STAGE_L1:
         completeness = (
             "EV-L1 subset. VER §3 requires 22 baseline fields and states that "
             "'A run without a complete baseline is invalid'; design #1 §5.1 "
@@ -1323,8 +1788,9 @@ def build_baseline(
             "non-transmitting fault run brings into existence. Under VER §3's full "
             "standard this baseline is NOT complete."
         )
+    baseline_schema_version = {STAGE_L1: "v1", STAGE_L2: "v2", STAGE_L3: "v3"}[stage]
     return {
-        "schema": f"tos-evidence/baseline/{'v2' if stage == STAGE_L2 else 'v1'}",
+        "schema": f"tos-evidence/baseline/{baseline_schema_version}",
         "run_id": run_id,
         "evidence_id": args.evidence_id,
         "evidence_level_stage": stage,
@@ -1823,15 +2289,30 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "the stage this run executes. EV-L2 emits the manifest/v2 superset "
             "(prior_stage_runs + fault_injection + coverage_argument) and passes the "
-            "append-only fault-schedule sink to pytest"
+            "append-only fault-schedule sink to pytest; EV-L3 emits the manifest/v3 "
+            "superset (adds integration_boundary + crash_injection) and passes the "
+            "append-only crash-schedule sink instead"
         ),
     )
     parser.add_argument(
         "--fault-catalog-ref",
         default="",
         help=(
-            "the ratified fault catalog this run executes, e.g. "
-            f"'{EVL2_DESIGN_PATH}#3' (EV-L2 only; required for EV-L2)"
+            "the ratified catalog this run executes, e.g. "
+            f"'{EVL2_DESIGN_PATH}#3' at EV-L2 or '{EVL3_DESIGN_PATH}#4' at EV-L3 "
+            "(required for both staged levels)"
+        ),
+    )
+    parser.add_argument(
+        "--modeled-axis",
+        action="append",
+        default=[],
+        metavar="'axis | disposition | residual-ref | note'",
+        help=(
+            "an EV-L3 axis this stage MODELS or DEFERS rather than exercises "
+            "(EV-L3 only; repeatable). The residual ref is mandatory: an axis "
+            "declared without one withholds GREEN, so a modelled boundary can never "
+            "be recorded as a real one"
         ),
     )
     parser.add_argument(
@@ -1849,9 +2330,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=(
-            "the number of faults the ratified catalog defines for this row (EV-L2 "
-            "only; required for EV-L2). The schedule is recounted and must match, so "
-            "deselecting a fault cannot shrink the evidence unnoticed"
+            "the number of catalog entries the ratified catalog defines for this row "
+            "(faults at EV-L2, crash scenarios at EV-L3; required for both). The "
+            "schedule is recounted and must match, so deselecting one cannot shrink "
+            "the evidence unnoticed"
         ),
     )
     parser.add_argument(
@@ -1900,6 +2382,10 @@ def main(argv: list[str] | None = None) -> int:
 
     stage = args.evidence_level_stage
     is_l2 = stage == STAGE_L2
+    is_l3 = stage == STAGE_L3
+    #: The staged levels share the "this claim is not measurable, state it" argument
+    #: surface (catalog ref, covered axis, prior stage, catalog size).
+    is_staged = is_l2 or is_l3
 
     try:
         nodes = [parse_node_spec(spec) for spec in args.node]
@@ -1912,32 +2398,32 @@ def main(argv: list[str] | None = None) -> int:
         # which catalog is being executed, which axis is covered, which prior stage this
         # builds on — so it is required as an explicit argument rather than defaulted.
         # The measurable parts (fault counts, hardening, baseline identity) are measured.
-        if is_l2:
+        if is_staged:
             if not args.fault_catalog_ref.strip():
                 raise HarnessError(
-                    "--fault-catalog-ref is required for an EV-L2 stage run: an "
-                    "unattributed fault schedule cannot be checked against a catalog"
+                    f"--fault-catalog-ref is required for an {stage} stage run: an "
+                    "unattributed schedule cannot be checked against a catalog"
                 )
             if not args.covered_axis.strip():
                 raise HarnessError(
-                    "--covered-axis is required for an EV-L2 stage run: the harness "
-                    "never infers what a stage covers"
+                    f"--covered-axis is required for an {stage} stage run: the "
+                    "harness never infers what a stage covers"
                 )
             if not args.prior_stage_run:
                 raise HarnessError(
-                    "--prior-stage-run is required for an EV-L2 stage run: a staged "
-                    "row (VER:171) needs its EV-L1 stage bound, not assumed"
+                    f"--prior-stage-run is required for an {stage} stage run: a "
+                    "staged row (VER:171) needs its prior stage(s) bound, not assumed"
                 )
             if args.expected_fault_count is None:
                 raise HarnessError(
-                    "--expected-fault-count is required for an EV-L2 stage run: "
-                    "without the catalog size, a deselected fault shrinks the "
+                    f"--expected-fault-count is required for an {stage} stage run: "
+                    "without the catalog size, a deselected entry shrinks the "
                     "schedule while every remaining row still reads MET"
                 )
             if args.expected_fault_count <= 0:
                 raise HarnessError(
                     "--expected-fault-count must be positive: a catalog of zero "
-                    "faults cannot evidence anything (design §0.5-2)"
+                    "entries cannot evidence anything (design §0.5-2)"
                 )
         else:
             for flag, value in (
@@ -1950,9 +2436,26 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 if value:
                     raise HarnessError(
-                        f"{flag} is an EV-L2 option; this run is "
+                        f"{flag} is a staged-level option; this run is "
                         f"--evidence-level-stage {stage}"
                     )
+        if is_l3:
+            # The modelled/deferred axes are a claim about what this stage did NOT
+            # exercise. Requiring them explicitly is what keeps an EV-L3 record from
+            # reading as if all three of VER §5's boundaries had been real.
+            if not args.modeled_axis:
+                raise HarnessError(
+                    "--modeled-axis is required for an EV-L3 stage run: VER §5 line "
+                    "151-153 defines EV-L3 by real persistence, identity AND network "
+                    "boundaries, so every axis this pilot models or defers must be "
+                    "declared with the residual that carries it"
+                )
+        elif args.modeled_axis:
+            raise HarnessError(
+                "--modeled-axis is an EV-L3 option; this run is "
+                f"--evidence-level-stage {stage}"
+            )
+        modeled_axes = [parse_modeled_axis_spec(spec) for spec in args.modeled_axis]
 
         for node, _ in nodes:
             if not (repo_root / node_file(node)).is_file():
@@ -2036,9 +2539,12 @@ def main(argv: list[str] | None = None) -> int:
         create_run_directory(run_dir, evidence_root)
 
         fault_timeline_path = run_dir / FAULT_TIMELINE_NAME
+        crash_timeline_path = run_dir / CRASH_TIMELINE_NAME
         extra_flags = list(seed_flags)
         if is_l2:
             extra_flags.append(f"--l2-fault-timeline={fault_timeline_path}")
+        if is_l3:
+            extra_flags.append(f"--l3-crash-timeline={crash_timeline_path}")
 
         try:
             execution = run_pytest(
@@ -2089,6 +2595,80 @@ def main(argv: list[str] | None = None) -> int:
                 "l1_hardening_prereq": hardening,
             }
 
+        crash_injection: dict | None = None
+        integration_boundary: dict | None = None
+        if is_l3:
+            crash_rows = read_crash_timeline(crash_timeline_path)
+            substrate = check_persistence_substrate(repo_root)
+            schedule = summarise_crash_schedule(
+                crash_rows,
+                expected_scenario_count=args.expected_fault_count,
+                evidence_id=args.evidence_id,
+            )
+            # persistence_real is the CONJUNCTION of a run-time measurement and a
+            # source property: what one execution observed on the filesystem, AND that
+            # the component cannot be an in-memory database in the first place. Either
+            # alone is satisfiable by an implementation that is not really durable.
+            persistence_real = bool(
+                schedule["persistence_real_measured"] and substrate["met"]
+            )
+            crash_injection = {
+                "catalog_ref": args.fault_catalog_ref,
+                "seed": seed_policy.get("hypothesis_seed"),
+                "seed_pinned": seed_policy.get("policy") == "fixed",
+                **schedule,
+                "persistence_real": persistence_real,
+                "persistence_substrate_check": substrate,
+            }
+            integration_boundary = {
+                "persistence": {
+                    "technology": (
+                        "stdlib sqlite3 WAL, synchronous=FULL (PILOT-SCOPE; NOT the "
+                        "ADR-002-005 §4 line 61 project persistence-technology "
+                        "decision, which remains an open gate)"
+                    ),
+                    "real_on_disk": persistence_real,
+                    "substrate_source": substrate.get("path"),
+                    "substrate_check": substrate,
+                    "measured_store_bytes": sorted(
+                        {
+                            row.get("store_bytes")
+                            for row in crash_rows
+                            if isinstance(row.get("store_bytes"), int)
+                        }
+                    ),
+                },
+                "process_boundary": {
+                    "writer_pids": [row.get("writer_pid") for row in crash_rows],
+                    "reader_pids": [row.get("reader_pid") for row in crash_rows],
+                    "distinct_per_scenario": schedule["process_boundary_real"],
+                    "crash_mechanism": (
+                        "deterministic os._exit at a parametrized crash point (not a "
+                        "racy externally delivered SIGKILL)"
+                    ),
+                    "observed_crash_exit_statuses": sorted(
+                        {
+                            row.get("crash_exit_status")
+                            for row in crash_rows
+                            if row.get("crash_exit_status") is not None
+                        }
+                    ),
+                    "crash_points": schedule["crash_points"],
+                },
+                "modeled_axes": modeled_axes,
+                # design §6.2 gate 5, as a directly readable boolean beside the list it
+                # summarises — a reader should not have to re-derive the gate's input.
+                "modeled_axis_residual_declared": bool(modeled_axes)
+                and all(axis["residual_ref"] for axis in modeled_axes),
+                "modeled_axes_note": (
+                    "An axis listed here was NOT exercised as a real boundary by this "
+                    "stage; each carries the §378 residual that holds it. VER §5 line "
+                    "151-153 defines EV-L3 by real persistence, identity and network "
+                    "boundaries — this run realizes persistence, the process boundary "
+                    "and logical identity re-derivation only."
+                ),
+            }
+
         baseline = build_baseline(
             args=args,
             repo_root=repo_root,
@@ -2106,7 +2686,11 @@ def main(argv: list[str] | None = None) -> int:
             seed_policy=seed_policy,
             config_artifacts=config_artifacts,
             stage=stage,
-            fault_schedule=fault_injection,
+            # VER §3's ``fault_injection_schedule_and_seed`` is one field for the whole
+            # notion of injected faults; at EV-L3 the injection is a crash schedule, so
+            # that is what completes it. Emitting the field as PARTIAL while a real
+            # schedule existed would understate the baseline.
+            fault_schedule=crash_injection if is_l3 else fault_injection,
         )
         write_exclusive(run_dir / BASELINE_NAME, dump_yaml(baseline))
         write_traceability(
@@ -2148,6 +2732,39 @@ def main(argv: list[str] | None = None) -> int:
             if stage_gates:
                 green = False
 
+        # ---- EV-L3 stage gates (EV-L3 pilot design §6.2, six of them) --------
+        if is_l3:
+            assert crash_injection is not None
+            if not crash_injection["all_crash_scenarios_met"]:
+                stage_gates.append("CRASH_SCHEDULE_NOT_ALL_MET")
+            if not crash_injection["process_boundary_real"]:
+                # A writer and reader sharing a pid is an in-process fallback wearing
+                # EV-L3's name; VER §5 line 151-153 is about real boundaries.
+                stage_gates.append("PROCESS_BOUNDARY_NOT_REAL")
+            if not crash_injection["persistence_real"]:
+                # The EV-L2 pilot's C1 finding was a durable claim satisfied in memory.
+                stage_gates.append("PERSISTENCE_NOT_REAL")
+            if not crash_injection["seed_pinned"]:
+                stage_gates.append("SEED_NOT_PINNED")
+            bound_stages = {
+                prior["stage"]
+                for prior in prior_stage_runs
+                if prior["evidence_id"] == L3_PRIOR_STAGE_EVIDENCE_ID
+                and prior["baseline_matches_this_run"]
+            }
+            if not set(L3_REQUIRED_PRIOR_STAGES) <= bound_stages:
+                # design §6.2 gate 4 (NIT-2 naming): BOTH prior stages of
+                # STATE-EV-001 must be bound at THIS baseline. This is not
+                # STATE-EV-004's own staging requirement — its minimum level is
+                # EV-L3 alone — it is the durable-limb continuity that lets the L3
+                # evidence discharge STATE-EV-001's R-1 against a non-stale model base.
+                stage_gates.append("PRIOR_EV_L1_AND_L2_NOT_BOTH_BOUND_AT_THIS_BASELINE")
+            assert integration_boundary is not None
+            if not integration_boundary["modeled_axis_residual_declared"]:
+                stage_gates.append("MODELED_AXIS_RESIDUAL_NOT_DECLARED")
+            if stage_gates:
+                green = False
+
         artifacts = [
             {
                 "name": p.name,
@@ -2157,11 +2774,20 @@ def main(argv: list[str] | None = None) -> int:
             for p in sorted(run_dir.iterdir())
             if p.is_file()
         ]
-        discipline_tag = DISCIPLINE_TAG_L2 if is_l2 else DISCIPLINE_TAG
-        # v2 is a strict SUPERSET of v1 (design §6.2 N8): every v1 field below is
-        # retained unchanged at EV-L2; the v2 field groups are added around them.
+        discipline_tag = {
+            STAGE_L1: DISCIPLINE_TAG,
+            STAGE_L2: DISCIPLINE_TAG_L2,
+            STAGE_L3: DISCIPLINE_TAG_L3,
+        }[stage]
+        manifest_schema_version = {STAGE_L1: "v1", STAGE_L2: "v2", STAGE_L3: "v3"}[
+            stage
+        ]
+        _stage_token = stage.upper().replace("-", "_")
+        # v2 is a strict SUPERSET of v1 and v3 a strict superset of v2 (design §6.2 N8 /
+        # EV-L3 §6.1): every earlier field below is retained unchanged at the higher
+        # stage; the newer field groups are added around them.
         manifest = {
-            "schema": f"tos-evidence/manifest/{'v2' if is_l2 else 'v1'}",
+            "schema": f"tos-evidence/manifest/{manifest_schema_version}",
             "run_id": run_id,
             "evidence_id": args.evidence_id,
             "primary_adr": args.primary_adr or register_row.get("primary_adr", ""),
@@ -2193,30 +2819,45 @@ def main(argv: list[str] | None = None) -> int:
                 # unmet gate denies. The withheld claim is named instead.
                 **(
                     {
-                        "ev_l2_stage_gates_unmet": stage_gates,
+                        # ev_l2_stage_gates_unmet / ev_l3_stage_gates_unmet — the block
+                        # is named for the stage that owns it, so a v3 manifest never
+                        # reports its gates under the v2 field name.
+                        f"{_stage_token.lower()}_stage_gates_unmet": stage_gates,
                         **(
                             {
-                                "stages_executed": [STAGE_L1, STAGE_L2],
+                                "stages_executed": (
+                                    [STAGE_L1, STAGE_L2]
+                                    if is_l2
+                                    else [STAGE_L1, STAGE_L2, STAGE_L3]
+                                ),
                                 "stages_executed_note": (
                                     "EV-L1 is executed as its own run package and "
                                     "bound here by prior_stage_runs; this package is "
                                     "the EV-L2 stage."
+                                    if is_l2
+                                    else (
+                                        "EV-L1 and EV-L2 are executed as their own run "
+                                        "packages and bound here by prior_stage_runs; "
+                                        "this package is the EV-L3 stage."
+                                    )
                                 ),
                                 "covered_axis": args.covered_axis,
                             }
                             if not stage_gates
                             else {
-                                "stages_executed": "WITHHELD (EV-L2 stage gate unmet)",
+                                "stages_executed": (
+                                    f"WITHHELD ({stage} stage gate unmet)"
+                                ),
                                 "covered_axis": (
-                                    "WITHHELD (EV-L2 stage gate unmet) — the axis this "
-                                    "run was invoked for is recorded in "
+                                    f"WITHHELD ({stage} stage gate unmet) — the axis "
+                                    "this run was invoked for is recorded in "
                                     "invoked_covered_axis; it is NOT claimed as covered."
                                 ),
                                 "invoked_covered_axis": args.covered_axis,
                             }
                         ),
                     }
-                    if is_l2
+                    if is_staged
                     else {}
                 ),
             },
@@ -2232,7 +2873,15 @@ def main(argv: list[str] | None = None) -> int:
                         "Superseded packages are retained unmodified (VER §2.2); this "
                         "field is the forward pointer, not a deletion record."
                     ),
-                    "fault_injection": fault_injection,
+                    **({"fault_injection": fault_injection} if is_l2 else {}),
+                    **(
+                        {
+                            "integration_boundary": integration_boundary,
+                            "crash_injection": crash_injection,
+                        }
+                        if is_l3
+                        else {}
+                    ),
                     "coverage_argument": {
                         "specification": (
                             f"{VER_SPEC_PATH} §2.7 (line 76-78) — a finite set of "
@@ -2241,7 +2890,11 @@ def main(argv: list[str] | None = None) -> int:
                             "Expected clauses are universally quantified, so the "
                             "coverage argument is mandatory."
                         ),
-                        "boundary_values": COVERAGE_BOUNDARY_VALUES,
+                        "boundary_values": (
+                            COVERAGE_BOUNDARY_VALUES_L3
+                            if is_l3
+                            else COVERAGE_BOUNDARY_VALUES
+                        ),
                         "adverse_scenario_set": COVERAGE_ADVERSE_SCENARIO_SET,
                         "unexercised_residual_ref": list(args.residual_ref),
                         "unexercised_residual_note": COVERAGE_RESIDUAL_NOTE,
@@ -2257,7 +2910,7 @@ def main(argv: list[str] | None = None) -> int:
                         ),
                     },
                 }
-                if is_l2
+                if is_staged
                 else {}
             ),
             "execution": {
@@ -2269,12 +2922,12 @@ def main(argv: list[str] | None = None) -> int:
                 **(
                     {
                         "stage_gate_outcome": (
-                            f"EV_L2_STAGE_GATE_UNMET[{','.join(stage_gates)}]"
+                            f"{_stage_token}_STAGE_GATE_UNMET[{','.join(stage_gates)}]"
                             if stage_gates
-                            else "EV_L2_STAGE_GATES_MET"
+                            else f"{_stage_token}_STAGE_GATES_MET"
                         )
                     }
-                    if is_l2
+                    if is_staged
                     else {}
                 ),
             },
@@ -2285,11 +2938,11 @@ def main(argv: list[str] | None = None) -> int:
                 "completeness": (
                     f"EV-L1 subset (design #1 §5.1); VER §3 fields without an "
                     f"existing artifact are {NOT_APPLICABLE}."
-                    if not is_l2
+                    if not is_staged
                     else (
                         "NOT complete (VER §3 line 109 has no 'as applicable' "
                         f"clause). VER §3 fields without an existing artifact are "
-                        f"{NOT_APPLICABLE_L2}; the unmet set is enumerated in "
+                        f"{na_status_for(stage)}; the unmet set is enumerated in "
                         "baseline.yaml::ver_002_001_section_3_unmet_fields."
                     )
                 ),
@@ -2322,8 +2975,15 @@ def main(argv: list[str] | None = None) -> int:
             f"all_faults_met={fault_injection['all_faults_met']} "
             f"l1_hardening={fault_injection['l1_hardening_prereq_met']}"
         )
-        if stage_gates:
-            print(f"  EV-L2 stage gates UNMET: {stage_gates}", file=sys.stderr)
+    if is_l3 and crash_injection is not None:
+        print(
+            f"  stage={stage} crashes={crash_injection['crash_scenario_count']} "
+            f"all_crash_scenarios_met={crash_injection['all_crash_scenarios_met']} "
+            f"process_boundary_real={crash_injection['process_boundary_real']} "
+            f"persistence_real={crash_injection['persistence_real']}"
+        )
+    if is_staged and stage_gates:
+        print(f"  {stage} stage gates UNMET: {stage_gates}", file=sys.stderr)
     print(f"  {manifest['discipline_tag']}")
     if mutated:
         print(

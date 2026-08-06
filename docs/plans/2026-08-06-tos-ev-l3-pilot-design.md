@@ -1,9 +1,11 @@
 # 작업 메모 — tos-spec EV-L3 (Integrated System Fault Test) 파일럿 설계 (2026-08-06)
 
-> **상태: 비준(RATIFIED) 2026-08-06** — 독립 비평 REVISE(CRITICAL 0·MAJOR 2·MINOR 4·NIT 3) → v1.1 전건
-> 반영(반론 0) → 동일 리뷰어 델타 재검증 **RATIFY-READY**(전건 해소·신규 phantom 0·부작용 0·비차단 관찰
-> 1건은 §4 CPL 확인 의무로 반영). 비준 주체: 오케스트레이터, ADR-002 시리즈 자동비준 위임(2026-07-25,
-> Part-2/3 연장 2026-07-29) — 독립 비평 통과 검증 후 기록. ADR acceptance/live authorization은 별개 게이트.
+> **상태: 비준(RATIFIED) 2026-08-06 · 에라타 v1.2 적용** — 독립 비평 REVISE(CRITICAL 0·MAJOR 2·MINOR 4·
+> NIT 3) → v1.1 전건 반영(반론 0) → 동일 리뷰어 델타 재검증 **RATIFY-READY**(전건 해소·신규 phantom 0·
+> 부작용 0·비차단 관찰 1건은 §4 CPL 확인 의무로 반영). 비준 주체: 오케스트레이터, ADR-002 시리즈 자동비준
+> 위임(2026-07-25, Part-2/3 연장 2026-07-29) — 독립 비평 통과 검증 후 기록. ADR acceptance/live
+> authorization은 별개 게이트. **에라타 v1.2**(구현 사이클): §4 CPL 절 사실오류 정정(expected CPL set pin)·
+> CPL-6 조건 sanction·§2.4 R-D 부기 — 적대적 코드 리뷰 ACCEPT-WITH-MINOR·이탈 전건 JUSTIFIED(§12).
 >
 > **v1.1** (독립 비평 REVISE 반영 — CRITICAL 0·MAJOR 2·MINOR 4·NIT 3; 개정 로그 §12). 전 finding을
 > **1차 소스 재실측 후 반영**(리뷰어 실측 그대로 신뢰 금지 — 재측정 결과 리뷰어와 불일치 0). 핵심 방향
@@ -191,7 +193,11 @@ owner/approver=D1 operator, 비-union). **R-1과 별개** — R-1은 닫히고 R
 **추가 이연 (candidate residual, 운영자 결정)**: **R-D — power-loss/torn-sector durability**: os._exit는
 애플리케이션 크래시(프로세스 사망)를 충실히 모델하나 커널 page-cache·전원상실·torn-sector는 모델하지 못한다
 (FS fault injection 필요). 파일럿은 **프로세스-크래시 durability**(§13 "crash, restart")를 방전하고 전원상실
-durability는 이연(§4에서 inter-transaction incomplete-store로 대체 커버되는 범위 명시).
+durability는 이연(§4에서 inter-transaction incomplete-store로 대체 커버되는 범위 명시). **(에라타 v1.2 부기)**:
+`synchronous=FULL` pragma 자체는 프로세스-크래시 모델에서 **반증 불가**다 — os._exit는 OS page-cache를 죽이지
+않으므로 synchronous=OFF는 등가 뮤턴트(구현 시 실측·mutant E)이며, 실행 증거가 주장하는 것은 **프로세스-크래시
+durability뿐**이다(전원상실 durability = R-D). pragma의 실재는 별도 구조 검사(AST 기반 `execute()` 인자 검사 +
+`PRAGMA synchronous` 반환값 단언)로 고정한다 — 도크스트링 토큰이 검사를 충족시킬 수 없게(리뷰 MINOR-1 하드닝).
 
 ---
 
@@ -295,11 +301,20 @@ argument(§9 게이트 2)에 종속**한다. 즉 "L3-08이 R-1을 직접 방전"
 **카탈로그 제외/이연**: power-loss/torn-sector(R-D, FS fault injection 필요)·Recovery Barrier/재-arm(§13:200,
 ADR-002-017 별개 통합)·실 network(R-N)·실 credential(R-I).
 
-**커밋 composite CPL 합법성 (델타 재검증 관찰 반영)**: L3-01~06의 pin된 커밋 composite는 §14 예시에 미열거된
-조합을 포함하므로, 구현 시 각 셀의 커밋 composite를 `CompositeState`로 구성하는 시점에
-`coupling_violations() == ∅`를 확인한다(CPL-위반 조합은 구성 시 시끄럽게 실패 — silent 결함 불가).
-`reconstruct_conservative`는 전(total) 사상이라 앵커 결정론성은 이와 무관하나, 커밋 상태의 합법성 자체를
-구현-시 검증 의무로 못 박는다.
+**커밋 composite CPL 정합성 (에라타 v1.2 — "구현이 더 충실하면 에라타가 정답")**: v1.1의
+`coupling_violations() == ∅` 요구는 **사실오류**였다 — Broker=UNKNOWN을 pin한 셀(L3-01/02/03/05/08)은
+CPL-5를 구조적으로 발화하며(`predicates.py:184-186` — CPL-5는 Broker=UNKNOWN에 Capacity=QUARANTINED_UNKNOWN
+정확 요구), 이는 §14 "Composite Examples (all valid)"의 **representable ≠ CPL-clean** 구분과 정합한다(기존
+선례 `tos/tests/orthostate/_orthostate_strategies.py:147,167` "representable BUT coupling-negative
+(Broker=UNKNOWN fires CPL-5)"). v1.1의 "§14 예시에 미열거된 조합" 표현도 정정한다 — L3-07(§14:211)·
+L3-08(§14:208)은 §14에 **열거된** 조합이다. **정정된 의무**: 각 셀은 **expected CPL set을 pin**
+(L3-01/02/03/05/08 = {CPL-5}, L3-04/06/07 = ∅)하고, worker가 커밋 composite 구성 시점에 실측
+`coupling_violations()`와 대조해 **불일치 시 시끄럽게 abort**(exit 70)한다 — "silent 결함 불가" 의도는
+보존된다. 아울러 v1.1이 미명세한 **CPL-6 부작동 조건**을 명시 sanction한다: 전 셀의 Attempt가
+≥SEND_STARTED이므로 `authority_epoch_current`가 None이면 CPL-6이 전 셀 발화한다 — 구현의 모델링 결정
+(**`authority_epoch_current=True`(authorized-send 모델)·나머지 side-condition flag 전부 None(fail-closed)**)
+을 채택한다. CPL 체크는 pre-commit sanity 게이트이며 `reconstruct_conservative`에는 투입되지 않는다
+(앵커 결정론성과 무관). 적대적 코드 리뷰 판정: 이탈 (1)·(2) JUSTIFIED(§12 로그).
 
 ---
 
@@ -669,6 +684,19 @@ gate-clean 실측). (c) spawn 배치 = **선택**(MAJOR-1 정정) — inside mp-
 
 ## 12. 개정 로그
 
+- **에라타 v1.2 (2026-08-06, 구현 사이클 — 적대적 코드 리뷰 ACCEPT-WITH-MINOR 반영)** — 구현이 계약의
+  사실오류 2건을 적발("구현이 더 충실하면 에라타가 정답"·#36 v1.3 선례):
+  - **§4 CPL 절 정정**: `coupling_violations()==∅`는 Broker=UNKNOWN 셀(L3-01/02/03/05/08)에서 구조적 달성
+    불가(CPL-5 발화·`predicates.py:184-186`·선례 `_orthostate_strategies.py:147,167`) → **expected CPL set
+    pin(5셀={CPL-5}·3셀=∅) + 불일치 시 exit 70 abort**로 대체(의도 보존). "§14 미열거" 표현 정정(L3-07=
+    §14:211·L3-08=§14:208은 열거됨 — "all valid"=representable≠CPL-clean).
+  - **CPL-6 부작동 조건 sanction**: v1.1 미명세 — `authority_epoch_current=True`(authorized-send 모델)·
+    나머지 flag None(fail-closed) 채택.
+  - **§2.4 R-D 부기**: synchronous=OFF는 프로세스-크래시 모델에서 등가 뮤턴트(mutant E 실측) — 실행 증거
+    주장은 프로세스-크래시 durability뿐·pragma 실재는 구조 검사로 고정(리뷰 MINOR-1 하드닝 지시).
+  - 리뷰 판정 기록: 이탈 후보 5건 **전건 JUSTIFIED**(VIOLATION 0)·출하 fail-open 0·뮤턴트 A/D 독립 재현
+    KILLED·D는 "하류 보수 투영이 상류 fail-open을 가림" 결함 클래스 실증(`expect_fill_values`가 load-bearing).
+    이탈 (3)(4)(5)는 에라타 불요 판정(계약 위임 범위 내 완결).
 - **v1.1 (2026-08-06)** — 독립 비평 **REVISE**(CRITICAL 0·MAJOR 2·MINOR 4·NIT 3; phantom 0·핵심 아키텍처
   건전 판정) 반영. **전 finding 1차 소스 재실측 후 반영 — 재측정 결과 리뷰어 실측과 불일치 0**(반론 없음).
   - **MAJOR-1 (§5.2/§5.3)**: v1.0 전제 오류 정정 — outside 배치는 subprocess 금지 **강제가 아님**. `multiprocessing`

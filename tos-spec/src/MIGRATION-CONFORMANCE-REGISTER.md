@@ -89,7 +89,7 @@ MOCK-001 records the site; it fences nothing and authorizes nothing.
 
 ## 3. TOS package conformance inventory
 
-There are 37 top-level packages under `tos/src/tos` (excluding `__pycache__`).
+There are 38 top-level packages under `tos/src/tos` (excluding `__pycache__`).
 No package row below is production authority. `READY` and `PASS` are exact
 register states at their recorded scope—not package acceptance or live readiness.
 
@@ -128,6 +128,7 @@ register states at their recorded scope—not package acceptance or live readine
 | `sci` | ADR-002-029 | L1 pure predicate substrate | SCI: 4 READY / 8 NOT_IMPLEMENTED | no build signer/registry/deployment admission runtime |
 | `sir` | ADR-002-027 | L1 pure predicate substrate | SIR: 3 READY / 9 NOT_IMPLEMENTED | no incident classifier/containment/finality runtime |
 | `spg` | ADR-002-014 | L1 pure predicate substrate | SPG: 7 READY / 1 PASS / 4 NOT_IMPLEMENTED | scoped PASS is not activation; profile service absent |
+| `staterestore` | ADR-002-005 §13 / EV-L3 pilot design #39 | pilot local durable store | STATE: 2 READY / 3 NOT_IMPLEMENTED | pilot-scope substrate, not the §4 project decision; no owning state service or failover |
 | `stm` | ADR-002-028 | L1 pure predicate substrate | STM: 2 READY / 10 NOT_IMPLEMENTED | no collector/evaluator/complete source ownership |
 | `time` | ADR-002-008 | L1 pure predicate substrate | TIME: 10 NOT_IMPLEMENTED | no trusted clock/synchronization/uncertainty service |
 | `venue` | ADR-002-019 | L1 pure predicate substrate | VTG: 2 READY / 10 NOT_IMPLEMENTED | no Venue Authority/calendar/halt/capability runtime |

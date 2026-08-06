@@ -98,6 +98,37 @@ _REGISTER_ROWS = (
         "broker_capability_profile_version": "N/A",
     },
     {
+        "evidence_id": "STATE-EV-004",
+        "domain": "Orthogonal State",
+        "title": "Conservative Restart Reconstruction",
+        "primary_adr": "ADR-002-005",
+        "criticality": "Critical",
+        "minimum_evidence_level": "EV-L3",
+        "status": "READY",
+        "implementation_owner": "ai-impl(claude-orchestrated)",
+        "evidence_owner": "operator",
+        "independent_reviewer": "ai-review(decorrelated)+operator-countersign",
+        "verification_profile_version": "2.1-PROPOSED",
+        "broker_capability_profile_version": "TBD",
+    },
+    {
+        # present so the EV-L3 continuity gate can be exercised against a REAL package
+        # filed under the wrong row (design §6.2 MINOR-2) — STATE-EV-003 is registered
+        # at EV-L1/3 in the repo register too.
+        "evidence_id": "STATE-EV-003",
+        "domain": "Orthogonal State",
+        "title": "Cross-Dimension Coupling",
+        "primary_adr": "ADR-002-005",
+        "criticality": "Critical",
+        "minimum_evidence_level": "EV-L1/3",
+        "status": "READY",
+        "implementation_owner": "ai-impl(claude-orchestrated)",
+        "evidence_owner": "operator",
+        "independent_reviewer": "ai-review(decorrelated)+operator-countersign",
+        "verification_profile_version": "2.1-PROPOSED",
+        "broker_capability_profile_version": "N/A",
+    },
+    {
         "evidence_id": "SPG-EV-002",
         "domain": "Safety Profile Governance",
         "title": "Semantic Units, Numeric, and Cross-Field Validation",
@@ -1742,3 +1773,814 @@ def test_the_evidence_the_register_points_at_has_resolving_bases() -> None:
         ), f"{evidence_id}/{run_id}"
         checked += 1
     print(f"in-force evidence packages checked: {checked}")
+
+
+# ==========================================================================
+# EV-L3 stage (manifest v3) — EV-L3 pilot design §6.1 / §6.2 / §6.4
+# ==========================================================================
+
+#: The real outside crash-orchestration node. It records one append-only crash-timeline
+#: row per catalog scenario, which is what makes the schedule summary a measurement.
+_L3_NODE = "tests/tos_l3/test_state_ev_004_crash_restart.py"
+_L3_CATALOG_REF = "docs/plans/2026-08-06-tos-ev-l3-pilot-design.md#4"
+#: The design §4 table size — the harness recounts the schedule against it.
+_L3_CATALOG_SIZE = 8
+#: A real EV-L2 fault node for STATE-EV-001 (design §3 catalog: ST-01..09, 11, 12).
+_L2_STATE_NODE = "tos/tests/orthostate/test_orthostate_l2_fault.py"
+_L2_STATE_CATALOG_SIZE = 11
+
+_L3_MODELED_AXES = (
+    "network | MODELED | RESIDUAL-RISK-REGISTER-002 R-N | VirtualBroker-class marker; "
+    "zero real bytes; real broker network deferred to EV-L4/+Broker",
+    "credential_identity | DEFERRED | RESIDUAL-RISK-REGISTER-002 R-I | logical identity "
+    "re-derivation executed; real auth deferred to STATE-EV-005 (+Security)",
+)
+
+
+def _l3_argv(evidence_root: Path, *, priors: list[str], **overrides) -> list[str]:
+    argv = [
+        "--register-csv",
+        str(_hermetic_register(evidence_root)),
+        "--evidence-id",
+        "STATE-EV-004",
+        "--node",
+        f"{_L3_NODE} | EV-L3 §4 crash catalog (harness self-test)",
+        "--primary-adr",
+        "ADR-002-005",
+        "--seed-policy",
+        overrides.get("seed_policy", "fixed:0"),
+        "--evidence-level-stage",
+        "EV-L3",
+        "--fault-catalog-ref",
+        overrides.get("catalog_ref", _L3_CATALOG_REF),
+        "--expected-fault-count",
+        str(overrides.get("expected_scenario_count", _L3_CATALOG_SIZE)),
+        "--covered-axis",
+        "STATE-EV-004: persistence + process + reconstruction ONLY",
+        "--residual-ref",
+        "R-N network; R-I credential-identity; R-D power-loss durability",
+        "--evidence-root",
+        str(evidence_root),
+        # the L3 suite is new work in this branch, so its bytes may be uncommitted;
+        # the dirt is then recorded in-band rather than hiding the run.
+        "--allow-dirty-targets",
+    ]
+    for prior in priors:
+        argv += ["--prior-stage-run", prior]
+    for axis in overrides.get("modeled_axes", _L3_MODELED_AXES):
+        argv += ["--modeled-axis", axis]
+    return argv
+
+
+@pytest.fixture(scope="module")
+def l3_package(tmp_path_factory, module_monkeypatch):
+    """STATE-EV-001 EV-L1 -> EV-L2, then STATE-EV-004 EV-L3 binding both.
+
+    The real staged shape design §6.2 gate 4 requires: the crash run's durable evidence
+    attaches to a **non-stale** STATE-EV-001 model base, so both of that row's earlier
+    stages are executed at this same baseline and bound here.
+    """
+    root = tmp_path_factory.mktemp("evidence-l3")
+    clock = {"now": datetime(2026, 8, 6, 6, 0, 0, tzinfo=UTC)}
+
+    def _now():
+        return clock["now"]
+
+    def advance(seconds: int = 1):
+        clock["now"] = clock["now"] + timedelta(seconds=seconds)
+        return clock["now"]
+
+    module_monkeypatch.setattr(ev, "_utc_now", _now)
+
+    rc_l1 = ev.main(
+        [
+            "--register-csv",
+            str(_hermetic_register(root)),
+            "--evidence-id",
+            "STATE-EV-001",
+            "--node",
+            f"{_SMOKE_NODE} | EV-L1 stage (harness self-test)",
+            "--primary-adr",
+            "ADR-002-005",
+            "--seed-policy",
+            "fixed:0",
+            "--evidence-root",
+            str(root),
+        ]
+    )
+    assert rc_l1 == 0
+    l1_run = next((root / "STATE-EV-001").iterdir())
+
+    advance()
+    rc_l2 = ev.main(
+        [
+            "--register-csv",
+            str(_hermetic_register(root)),
+            "--evidence-id",
+            "STATE-EV-001",
+            "--node",
+            f"{_L2_STATE_NODE} | EV-L2 §3 fault catalog (harness self-test)",
+            "--primary-adr",
+            "ADR-002-005",
+            "--seed-policy",
+            "fixed:0",
+            "--evidence-level-stage",
+            "EV-L2",
+            "--fault-catalog-ref",
+            "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md#3",
+            "--expected-fault-count",
+            str(_L2_STATE_CATALOG_SIZE),
+            "--covered-axis",
+            "storage-independent representability (durable limb NOT covered)",
+            "--residual-ref",
+            "R-1 durable limb",
+            "--prior-stage-run",
+            f"STATE-EV-001/{l1_run.name} | L1 traceability",
+            "--evidence-root",
+            str(root),
+            "--allow-dirty-targets",
+        ]
+    )
+    assert rc_l2 == 0, "the EV-L2 prior stage must be green for the L3 binding"
+    l2_run = next(p for p in (root / "STATE-EV-001").iterdir() if p != l1_run)
+
+    advance()
+    priors = [
+        f"STATE-EV-001/{l1_run.name} | L1 model base",
+        f"STATE-EV-001/{l2_run.name} | L2 component-fault base",
+    ]
+    rc_l3 = ev.main(_l3_argv(root, priors=priors))
+    l3_run = next(iter((root / "STATE-EV-004").iterdir()))
+    manifest = yaml.safe_load((l3_run / "manifest.yaml").read_text(encoding="utf-8"))
+    baseline = yaml.safe_load((l3_run / "baseline.yaml").read_text(encoding="utf-8"))
+    return {
+        "root": root,
+        "l1_run": l1_run,
+        "l2_run": l2_run,
+        "priors": priors,
+        "run": l3_run,
+        "rc": rc_l3,
+        "manifest": manifest,
+        "baseline": baseline,
+        "advance": advance,
+    }
+
+
+def test_l3_manifest_is_v3_and_a_strict_superset_of_v2(
+    l3_package: dict, l2_package: dict, manifest: dict
+) -> None:
+    """design §6.1 — v3 ADDS field groups; it drops no v1 or v2 field."""
+    l3 = l3_package["manifest"]
+    assert l3["schema"] == "tos-evidence/manifest/v3"
+    assert l3["evidence_level_stage"] == "EV-L3"
+    assert set(manifest) <= set(l3), "a v1 top-level field was dropped by v3"
+    v2_carried = set(l2_package["manifest"]) - {"fault_injection"}
+    assert v2_carried <= set(l3), "a v2 top-level field was dropped by v3"
+    assert set(manifest["claim"]) <= set(l3["claim"])
+    assert l3["claim"]["closes_evidence_item"] is False
+    assert l3["claim"]["register_status_moved_by_this_run"] is False
+    assert l3["claim"]["independent_review"] == "NOT_SIGNED (VER §9.5)"
+    # fault_injection is an EV-L2 block: the two schedules have different row shapes
+    # and different gates, so v3 carries crash_injection instead of renaming it.
+    assert "fault_injection" not in l3
+    assert l3["baseline"]["file"] == "baseline.yaml"
+    assert l3_package["baseline"]["schema"] == "tos-evidence/baseline/v3"
+
+
+def test_l3_discipline_tag_is_the_l3_wording(l3_package: dict) -> None:
+    tag = l3_package["manifest"]["discipline_tag"]
+    assert tag == ev.DISCIPLINE_TAG_L3
+    assert "not a row PASS" in tag
+    assert "restart coverage argument" in tag
+    assert "network/identity residuals" in tag
+    assert "independent review" in tag
+
+
+def test_l3_crash_injection_group_recounts_the_schedule(l3_package: dict) -> None:
+    """crash_scenario_count is recounted from the artifact, never taken from the catalog."""
+    run = l3_package["run"]
+    crash = l3_package["manifest"]["crash_injection"]
+    lines = [
+        line
+        for line in (run / "crash-timeline.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert crash["crash_scenario_count"] == len(lines) == _L3_CATALOG_SIZE
+    assert crash["schedule_artifact"] == "crash-timeline.jsonl"
+    assert crash["seed"] == 0
+    assert crash["catalog_ref"] == _L3_CATALOG_REF
+    assert crash["all_crash_scenarios_met"] is True
+    assert crash["deviation_scenarios"] == []
+    assert crash["expected_undefined_scenarios"] == []
+    assert crash["duplicate_scenario_ids"] == []
+    assert crash["crash_scenario_count_matches_catalog"] is True
+
+
+def test_l3_crash_timeline_rows_carry_every_section_6_1_field(l3_package: dict) -> None:
+    """design §6.1 — the exact row shape, incl. MEASURED pids and store bytes."""
+    run = l3_package["run"]
+    rows = [
+        json.loads(line)
+        for line in (run / "crash-timeline.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == _L3_CATALOG_SIZE
+    for row in rows:
+        assert list(row) == [
+            "scenario_id",
+            "evidence_id",
+            "target_component",
+            "crash_point",
+            "crash_exit_status",
+            "seed",
+            "writer_pid",
+            "reader_pid",
+            "store_real_on_disk",
+            "store_bytes",
+            "expected_reconstruction",
+            "observed_reconstruction",
+            "outcome",
+        ]
+        assert row["seed"] == 0
+        assert row["outcome"] == "MET"
+        assert row["evidence_id"] == "STATE-EV-004"
+        assert row["writer_pid"] != row["reader_pid"]
+        assert row["store_real_on_disk"] is True and row["store_bytes"] > 0
+        assert row["expected_reconstruction"] == row["observed_reconstruction"]
+    assert len({row["scenario_id"] for row in rows}) == _L3_CATALOG_SIZE
+
+
+def test_l3_crash_timeline_is_covered_by_the_sums_file(l3_package: dict) -> None:
+    """The schedule is part of the artifact closure (VER §9.1 + §9.2)."""
+    run = l3_package["run"]
+    sums = (run / "sha256sums.txt").read_text(encoding="utf-8")
+    assert "crash-timeline.jsonl" in sums
+    names = {entry["name"] for entry in l3_package["manifest"]["artifacts"]}
+    assert "crash-timeline.jsonl" in names
+    assert "fault-timeline.jsonl" not in names
+
+
+def test_l3_integration_boundary_records_persistence_and_the_process_boundary(
+    l3_package: dict,
+) -> None:
+    """design §6.1 — the v3 field group, with both boundary facts measured."""
+    boundary = l3_package["manifest"]["integration_boundary"]
+    persistence = boundary["persistence"]
+    assert "sqlite3" in persistence["technology"]
+    assert "PILOT-SCOPE" in persistence["technology"]
+    # the over-claim guard: the pilot-scope substrate is NOT the ADR §4 decision
+    assert "NOT the ADR-002-005 §4" in persistence["technology"]
+    assert persistence["real_on_disk"] is True
+    assert persistence["substrate_check"]["met"] is True
+    assert all(size > 0 for size in persistence["measured_store_bytes"])
+
+    process = boundary["process_boundary"]
+    assert len(process["writer_pids"]) == _L3_CATALOG_SIZE
+    assert set(process["writer_pids"]).isdisjoint(set(process["reader_pids"]))
+    assert process["distinct_per_scenario"] is True
+    assert "os._exit" in process["crash_mechanism"]
+    assert process["observed_crash_exit_statuses"] == [137]
+    assert len(process["crash_points"]) == _L3_CATALOG_SIZE
+
+
+def test_l3_modeled_axes_each_name_the_residual_that_carries_them(
+    l3_package: dict,
+) -> None:
+    """design §6.2 gate 5 — an axis cannot be declared modelled without a residual."""
+    boundary = l3_package["manifest"]["integration_boundary"]
+    assert boundary["modeled_axis_residual_declared"] is True
+    axes = boundary["modeled_axes"]
+    assert {axis["axis"] for axis in axes} == {"network", "credential_identity"}
+    for axis in axes:
+        assert axis[
+            "residual_ref"
+        ], "a modelled axis without a residual is an over-claim"
+        assert axis["disposition"] in {"MODELED", "DEFERRED"}
+        assert axis["note"] != "UNSPECIFIED"
+    network = next(axis for axis in axes if axis["axis"] == "network")
+    assert "R-N" in network["residual_ref"]
+    assert "zero real bytes" in network["note"]
+
+
+def test_l3_prior_stage_runs_bind_both_earlier_stages_of_state_ev_001(
+    l3_package: dict,
+) -> None:
+    """design §6.2 gate 4 — L1 AND L2, same evidence id, same baseline."""
+    priors = l3_package["manifest"]["prior_stage_runs"]
+    assert len(priors) == 2
+    assert {p["stage"] for p in priors} == {"EV-L1", "EV-L2"}
+    for prior in priors:
+        assert prior["evidence_id"] == ev.L3_PRIOR_STAGE_EVIDENCE_ID == "STATE-EV-001"
+        assert prior["baseline_matches_this_run"] is True
+        assert len(prior["baseline_commit_sha"]) == 40
+        assert prior["outcome"] == "ALL_SELECTED_TESTS_GREEN"
+    l1 = next(p for p in priors if p["stage"] == "EV-L1")
+    expected_digest = hashlib.sha256(
+        (l3_package["l1_run"] / "sha256sums.txt").read_bytes()
+    ).hexdigest()
+    assert l1["sha256sums_digest"] == expected_digest
+
+
+def test_l3_run_is_green_when_every_stage_gate_is_met(l3_package: dict) -> None:
+    assert l3_package["manifest"]["claim"]["ev_l3_stage_gates_unmet"] == []
+    assert l3_package["manifest"]["execution"]["outcome"] == "ALL_SELECTED_TESTS_GREEN"
+    assert l3_package["manifest"]["execution"]["stage_gate_outcome"] == (
+        "EV_L3_STAGE_GATES_MET"
+    )
+    assert l3_package["rc"] == 0
+    assert l3_package["manifest"]["claim"]["stages_executed"] == [
+        "EV-L1",
+        "EV-L2",
+        "EV-L3",
+    ]
+    assert l3_package["manifest"]["claim"]["covered_axis"]
+
+
+def test_l3_claims_no_pass_and_no_closure(l3_package: dict) -> None:
+    """The invariant the whole harness exists for, re-asserted at the new stage."""
+    claim = l3_package["manifest"]["claim"]
+    assert claim["closes_evidence_item"] is False
+    assert claim["register_status_moved_by_this_run"] is False
+    assert claim["register_status_at_run_time"] == _HERMETIC_REGISTER_STATUS
+    assert "PASS" not in claim["covered_axis"]
+    assert claim["p0_1_bounds_approval"] == "OPEN"
+    dumped = yaml.safe_dump(l3_package["manifest"], allow_unicode=True)
+    assert "register_status_moved_by_this_run: false" in dumped
+
+
+def test_l3_coverage_argument_states_the_restart_axis_and_is_not_discharged(
+    l3_package: dict,
+) -> None:
+    """VER §2.7 — the restart-axis legs are stated, and NOT claimed discharged."""
+    coverage = l3_package["manifest"]["coverage_argument"]
+    assert coverage["boundary_values"] == ev.COVERAGE_BOUNDARY_VALUES_L3
+    assert "crash-point" in coverage["boundary_values"]
+    assert "ADR-002-021" in coverage["adverse_scenario_set"]
+    assert coverage["unexercised_residual_ref"], "residual pointers must be recorded"
+    assert coverage["discharged"] is False
+
+
+def test_l3_baseline_keeps_the_ver3_gap_with_the_l3_attribution(
+    l3_package: dict,
+) -> None:
+    """design §6.3 — M2 inherited: the note is updated, the gap is retained."""
+    baseline = l3_package["baseline"]
+    ver3 = baseline["ver_002_001_section_3_baseline"]
+    assert list(ver3) == _VER3_FIELDS, "all 22 fields survive the stage change"
+    for field in _MUST_BE_NOT_APPLICABLE:
+        entry = ver3[field]
+        assert entry["status"] == ev.NOT_APPLICABLE_L3
+        assert entry["reason"], "the reason is retained, not dropped"
+        assert "value" not in entry
+    assert ev.NOT_APPLICABLE_L3 == "NOT_APPLICABLE_MODELED_TRANSPORT_L3"
+    assert ev.NOT_APPLICABLE_L3 in baseline["contract"]["completeness"]
+    assert "NOT complete" in baseline["contract"]["completeness"]
+    unmet = baseline["ver_002_001_section_3_unmet_fields"]
+    assert unmet == sorted(
+        name for name, entry in ver3.items() if entry["status"] != ev.RECORDED
+    )
+    assert set(_MUST_BE_NOT_APPLICABLE) <= set(unmet)
+
+
+def test_l3_baseline_restates_the_schema_field_honestly(l3_package: dict) -> None:
+    """The one reason EV-L1's wording would have made false at EV-L3.
+
+    "exercises no persistence substrate" is not true of a stage whose whole subject is a
+    durable store. The field stays N/A — there is no migration history to record — but
+    for the reason that actually applies, and it repeats that the substrate is
+    pilot-scope rather than the ADR §4 project decision.
+    """
+    entry = l3_package["baseline"]["ver_002_001_section_3_baseline"][
+        "database_schema_migration_version"
+    ]
+    assert entry["status"] == ev.NOT_APPLICABLE_L3
+    assert "exercises no persistence substrate" not in entry["reason"]
+    assert "PILOT-SCOPE" in entry["reason"]
+    assert "§4 line 61" in entry["reason"]
+
+
+def test_l3_baseline_completes_the_fault_schedule_field(l3_package: dict) -> None:
+    """VER §3 ``fault_injection_schedule_and_seed`` carries the crash schedule at L3."""
+    entry = l3_package["baseline"]["ver_002_001_section_3_baseline"][
+        "fault_injection_schedule_and_seed"
+    ]
+    assert entry["status"] == ev.RECORDED
+    assert entry["value"]["fault_schedule"]["crash_scenario_count"] == _L3_CATALOG_SIZE
+    assert entry["value"]["seed"]["hypothesis_seed"] == 0
+    assert "crash schedule" in entry["reason"]
+
+
+# ---- the six EV-L3 gates, both ways ---------------------------------------
+
+
+def _crash_row(scenario_id: str, **overrides) -> dict:
+    """A well-formed crash row (observed == expected, real boundary, real store)."""
+    row = {
+        "scenario_id": scenario_id,
+        "evidence_id": "STATE-EV-004",
+        "crash_point": "AFTER_COMPLETE_DURABLE_COMMIT",
+        "crash_exit_status": 137,
+        "writer_pid": 1001,
+        "reader_pid": 1002,
+        "store_real_on_disk": True,
+        "store_bytes": 4096,
+        "expected_reconstruction": "INTENT=ACTIVE|KNOWLEDGE=UNOBSERVED",
+        "observed_reconstruction": "INTENT=ACTIVE|KNOWLEDGE=UNOBSERVED",
+        "outcome": "MET",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_a_well_formed_crash_schedule_is_met() -> None:
+    summary = ev.summarise_crash_schedule(
+        [_crash_row("L3-01"), _crash_row("L3-02")],
+        expected_scenario_count=2,
+        evidence_id="STATE-EV-004",
+    )
+    assert summary["all_crash_scenarios_met"] is True
+    assert summary["process_boundary_real"] is True
+    assert summary["persistence_real_measured"] is True
+
+
+@pytest.mark.parametrize(
+    "rows,reason",
+    [
+        ([], "an empty schedule is not 'no violations found'"),
+        (
+            [_crash_row("L3-01", observed_reconstruction="INTENT=CLOSED")],
+            "observed != expected",
+        ),
+        (
+            [_crash_row("L3-01", expected_reconstruction="")],
+            "an unstated Expected cannot be falsified",
+        ),
+        (
+            [_crash_row("L3-01", observed_reconstruction="")],
+            "an unobserved reconstruction proves nothing",
+        ),
+        (
+            [_crash_row("L3-01", writer_pid=1001, reader_pid=1001)],
+            "a shared pid is an in-process fallback wearing EV-L3's name",
+        ),
+        (
+            [_crash_row("L3-01", writer_pid=0)],
+            "a non-positive pid is not a real process",
+        ),
+        (
+            [_crash_row("L3-01", store_real_on_disk=False)],
+            "an in-memory store is the EV-L2 C1 defect recurring",
+        ),
+        (
+            [_crash_row("L3-01", store_bytes=0)],
+            "an empty store file evidences nothing",
+        ),
+        (
+            [_crash_row("L3-01"), _crash_row("L3-01")],
+            "a duplicated scenario id inflates the recount",
+        ),
+        (
+            [_crash_row("L3-01", evidence_id="STATE-EV-003")],
+            "a row from another evidence id",
+        ),
+    ],
+)
+def test_all_crash_scenarios_met_is_withheld_on_every_defective_schedule(
+    rows: list[dict], reason: str
+) -> None:
+    summary = ev.summarise_crash_schedule(rows, evidence_id="STATE-EV-004")
+    assert summary["all_crash_scenarios_met"] is False, reason
+
+
+def test_a_crash_row_that_misreports_its_own_outcome_is_caught() -> None:
+    """The row's ``outcome`` is cross-checked against the re-derivation, never believed."""
+    lying = _crash_row("L3-01", observed_reconstruction="INTENT=CLOSED", outcome="MET")
+    summary = ev.summarise_crash_schedule([lying], evidence_id="STATE-EV-004")
+    assert summary["misreported_outcome_scenarios"] == ["L3-01"]
+    assert summary["deviation_scenarios"] == ["L3-01"]
+    assert summary["all_crash_scenarios_met"] is False
+
+
+def test_a_recount_that_disagrees_with_the_crash_catalog_withholds_green() -> None:
+    """Deselecting one scenario must not shrink the evidence silently."""
+    summary = ev.summarise_crash_schedule(
+        [_crash_row("L3-01")],
+        expected_scenario_count=8,
+        evidence_id="STATE-EV-004",
+    )
+    assert summary["crash_scenario_count"] == 1
+    assert summary["crash_scenario_count_matches_catalog"] is False
+    assert summary["all_crash_scenarios_met"] is False
+
+
+def test_a_malformed_crash_schedule_line_is_refused_not_skipped(tmp_path) -> None:
+    path = tmp_path / "crash-timeline.jsonl"
+    path.write_text('{"scenario_id": "L3-01"}\nnot json\n', encoding="utf-8")
+    with pytest.raises(ev.HarnessError, match="not valid JSON"):
+        ev.read_crash_timeline(path)
+
+
+def test_an_absent_crash_schedule_reads_as_empty_and_withholds_green(tmp_path) -> None:
+    rows = ev.read_crash_timeline(tmp_path / "nothing.jsonl")
+    assert rows == []
+    assert (
+        ev.summarise_crash_schedule(rows, evidence_id="STATE-EV-004")[
+            "all_crash_scenarios_met"
+        ]
+        is False
+    )
+
+
+def test_the_persistence_substrate_is_measured_from_the_executed_source() -> None:
+    """gate 3's source half — measured against the real repository."""
+    result = ev.check_persistence_substrate(_REPO_ROOT)
+    assert result["met"] is True, result
+    assert result["measured"]["connect_call_sites"] == 1
+    assert result["measured"]["literal_connection_targets"] == []
+    assert result["measured"]["in_memory_tokens_present"] == []
+    assert result["measured"]["pragmas_present"] == sorted(
+        ev.PERSISTENCE_REQUIRED_PRAGMAS
+    )
+
+
+def test_the_persistence_substrate_check_catches_an_in_memory_store(tmp_path) -> None:
+    """The other way: a store that opened ``:memory:`` is unmet, not ignored."""
+    rel = ev.PERSISTENCE_SUBSTRATE_PATH
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_text(
+        "import sqlite3\n"
+        "def open_store():\n"
+        '    return sqlite3.connect(":memory:")\n',
+        encoding="utf-8",
+    )
+    result = ev.check_persistence_substrate(tmp_path)
+    assert result["met"] is False
+    assert result["measured"]["literal_connection_targets"] == [":memory:"]
+    assert result["measured"]["in_memory_tokens_present"] == [":memory:"]
+
+
+def test_the_persistence_substrate_check_requires_both_pragmas(tmp_path) -> None:
+    rel = ev.PERSISTENCE_SUBSTRATE_PATH
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_text(
+        "import sqlite3\n"
+        "def open_store(path):\n"
+        "    conn = sqlite3.connect(str(path))\n"
+        '    conn.execute("PRAGMA journal_mode=WAL")\n'
+        "    return conn\n",
+        encoding="utf-8",
+    )
+    result = ev.check_persistence_substrate(tmp_path)
+    assert result["met"] is False
+    assert result["measured"]["pragmas_present"] == ["journal_mode=WAL"]
+    assert result["measured"]["pragmas_missing"] == ["synchronous=FULL"]
+
+
+def test_a_docstring_that_names_the_pragma_cannot_satisfy_the_check(tmp_path) -> None:
+    """The deceptive fixture: documented ``FULL``, executed ``OFF``.
+
+    This is not hypothetical. The real store module documents its substrate decision in
+    its module docstring and in ``__init__``'s docstring, and while this check scanned
+    the file for the token, lowering the actual ``PRAGMA synchronous=FULL`` to ``OFF``
+    left the gate green — the docstrings satisfied it (measured). The earlier fixture
+    could not expose that, because it carried no docstring for the token to hide in.
+
+    A substrate whose durability setting is a sentence rather than a statement is the
+    exact ``persistence_real`` over-claim gate 3 exists to prevent.
+    """
+    rel = ev.PERSISTENCE_SUBSTRATE_PATH
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_text(
+        '"""Durable store using journal_mode=WAL and synchronous=FULL (design §3.2)."""\n'
+        "import sqlite3\n"
+        "def open_store(path):\n"
+        '    """Open at journal_mode=WAL / synchronous=FULL."""\n'
+        "    conn = sqlite3.connect(str(path))\n"
+        "    # synchronous=FULL is the ratified pilot substrate decision\n"
+        '    conn.execute("PRAGMA journal_mode=WAL")\n'
+        '    conn.execute("PRAGMA synchronous=OFF")\n'
+        "    return conn\n",
+        encoding="utf-8",
+    )
+    result = ev.check_persistence_substrate(tmp_path)
+    assert (
+        result["met"] is False
+    ), "a documented-but-not-executed pragma satisfied gate 3"
+    assert result["measured"]["pragmas_missing"] == ["synchronous=FULL"]
+    # what is really executed is reported, so the manifest names the actual setting
+    assert result["measured"]["executed_pragmas"] == {
+        "journal_mode": "WAL",
+        "synchronous": "OFF",
+    }
+
+
+def test_the_substrate_check_reads_pragmas_only_from_execute_arguments(
+    tmp_path,
+) -> None:
+    """Both ways: the same tokens in real ``execute`` arguments DO satisfy it.
+
+    Paired with the deceptive fixture above, this pins the discrimination itself — the
+    check distinguishes *executed* from *mentioned*, rather than rejecting everything.
+    """
+    rel = ev.PERSISTENCE_SUBSTRATE_PATH
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_text(
+        '"""A store module with no pragma tokens in its prose at all."""\n'
+        "import sqlite3\n"
+        "def open_store(path):\n"
+        "    conn = sqlite3.connect(str(path))\n"
+        '    conn.execute("PRAGMA journal_mode=WAL")\n'
+        '    conn.execute("PRAGMA synchronous=FULL")\n'
+        "    return conn\n",
+        encoding="utf-8",
+    )
+    result = ev.check_persistence_substrate(tmp_path)
+    assert result["met"] is True, result
+    assert result["measured"]["pragmas_missing"] == []
+    assert result["measured"]["executed_pragmas"] == {
+        "journal_mode": "WAL",
+        "synchronous": "FULL",
+    }
+
+
+def test_an_absent_or_unparseable_substrate_is_unmet_not_ignored(tmp_path) -> None:
+    assert ev.check_persistence_substrate(tmp_path)["met"] is False
+    rel = ev.PERSISTENCE_SUBSTRATE_PATH
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_text("def broken(:\n", encoding="utf-8")
+    result = ev.check_persistence_substrate(tmp_path)
+    assert result["met"] is False
+    assert "SOURCE_DOES_NOT_PARSE" in result["reason"]
+
+
+def test_a_modeled_axis_without_a_residual_is_refused() -> None:
+    with pytest.raises(ev.HarnessError, match="empty axis / disposition / residual"):
+        ev.parse_modeled_axis_spec("network | MODELED |  | note")
+    with pytest.raises(ev.HarnessError, match="expects"):
+        ev.parse_modeled_axis_spec("network | MODELED")
+
+
+def test_parse_modeled_axis_spec_keeps_a_note_containing_separators() -> None:
+    axis = ev.parse_modeled_axis_spec("network | MODELED | R-N | zero bytes | policy")
+    assert axis == {
+        "axis": "network",
+        "disposition": "MODELED",
+        "residual_ref": "R-N",
+        "note": "zero bytes | policy",
+    }
+
+
+def test_ev_l3_requires_its_unmeasurable_claims_to_be_stated(tmp_path) -> None:
+    """Each EV-L3 claim the harness cannot measure must be supplied, not defaulted."""
+    root = tmp_path / "evidence"
+    base = _l3_argv(root, priors=["STATE-EV-001/whatever | note"])
+    for flag in ("--covered-axis", "--fault-catalog-ref"):
+        argv = list(base)
+        argv[argv.index(flag) + 1] = ""
+        assert ev.main(argv) == 2
+    # and the EV-L3-only one: a stage with no declared modelled axis would read as if
+    # all three VER §5 boundaries had been real
+    no_axes = _l3_argv(root, priors=["STATE-EV-001/whatever | note"], modeled_axes=())
+    assert ev.main(no_axes) == 2
+
+
+def test_modeled_axis_is_refused_on_a_non_l3_run(tmp_path) -> None:
+    root = tmp_path / "evidence"
+    argv = _argv(root) + ["--modeled-axis", "network | MODELED | R-N | note"]
+    assert ev.main(argv) == 2
+
+
+def test_l3_gate_fires_end_to_end_when_a_prior_stage_is_missing(
+    l3_package: dict,
+) -> None:
+    """gate 4 both ways: binding only EV-L1 withholds GREEN and the claims with it."""
+    root = l3_package["root"]
+    l3_package["advance"](60)
+    rc = ev.main(
+        _l3_argv(
+            root,
+            priors=[f"STATE-EV-001/{l3_package['l1_run'].name} | L1 only"],
+        )
+    )
+    assert rc == 1, "a run missing the EV-L2 prior stage must not be green"
+    run = max((root / "STATE-EV-004").iterdir(), key=lambda p: p.name)
+    manifest = yaml.safe_load((run / "manifest.yaml").read_text(encoding="utf-8"))
+    gates = manifest["claim"]["ev_l3_stage_gates_unmet"]
+    assert "PRIOR_EV_L1_AND_L2_NOT_BOTH_BOUND_AT_THIS_BASELINE" in gates
+    # the withheld claim is NAMED, not silently emitted
+    assert manifest["claim"]["stages_executed"] == "WITHHELD (EV-L3 stage gate unmet)"
+    assert "WITHHELD" in manifest["claim"]["covered_axis"]
+    assert manifest["claim"]["invoked_covered_axis"]
+    assert "EV_L3_STAGE_GATE_UNMET" in manifest["execution"]["stage_gate_outcome"]
+    # the tests themselves still passed — that fact is preserved verbatim
+    assert manifest["execution"]["outcome"] == "ALL_SELECTED_TESTS_GREEN"
+
+
+def test_l3_gate_fires_when_the_bound_priors_belong_to_another_evidence_row(
+    l3_package: dict,
+) -> None:
+    """design §6.2 MINOR-2 — the prior stages must be STATE-EV-001's, not any row's.
+
+    STATE-EV-003 is also registered at ``EV-L1/3``, so without the evidence-id check two
+    perfectly valid stages of a completely unrelated row would satisfy the durable-limb
+    continuity gate. Run end to end against real packages rather than by re-stating the
+    predicate: a test that recomputes the condition it is checking proves only that the
+    test can compute it.
+    """
+    root = l3_package["root"]
+    advance = l3_package["advance"]
+
+    advance(300)
+    assert (
+        ev.main(
+            [
+                "--register-csv",
+                str(_hermetic_register(root)),
+                "--evidence-id",
+                "STATE-EV-003",
+                "--node",
+                f"{_SMOKE_NODE} | EV-L1 stage of the WRONG row",
+                "--primary-adr",
+                "ADR-002-005",
+                "--seed-policy",
+                "fixed:0",
+                "--evidence-root",
+                str(root),
+            ]
+        )
+        == 0
+    )
+    wrong_l1 = next(iter((root / "STATE-EV-003").iterdir()))
+
+    advance()
+    assert (
+        ev.main(
+            [
+                "--register-csv",
+                str(_hermetic_register(root)),
+                "--evidence-id",
+                "STATE-EV-003",
+                "--node",
+                f"{_L2_STATE_NODE} | EV-L2 stage of the WRONG row",
+                "--primary-adr",
+                "ADR-002-005",
+                "--seed-policy",
+                "fixed:0",
+                "--evidence-level-stage",
+                "EV-L2",
+                "--fault-catalog-ref",
+                "docs/plans/2026-07-29-tos-ev-l2-pilot-design.md#3",
+                "--expected-fault-count",
+                str(_L2_STATE_CATALOG_SIZE),
+                "--covered-axis",
+                "the wrong row's axis",
+                "--prior-stage-run",
+                f"STATE-EV-003/{wrong_l1.name} | wrong row L1",
+                "--evidence-root",
+                str(root),
+                "--allow-dirty-targets",
+            ]
+        )
+        # this run's own fault rows carry evidence_id STATE-EV-001, so its schedule
+        # gate is unmet — irrelevant here: what matters is that a CLOSED, tests-green
+        # package exists to be bound.
+        in (0, 1)
+    )
+    wrong_l2 = next(p for p in (root / "STATE-EV-003").iterdir() if p != wrong_l1)
+
+    advance()
+    rc = ev.main(
+        _l3_argv(
+            root,
+            priors=[
+                f"STATE-EV-003/{wrong_l1.name} | wrong row L1",
+                f"STATE-EV-003/{wrong_l2.name} | wrong row L2",
+            ],
+        )
+    )
+    assert rc == 1, "another row's L1 ∧ L2 must not satisfy the continuity gate"
+    run = max((root / "STATE-EV-004").iterdir(), key=lambda p: p.name)
+    manifest = yaml.safe_load((run / "manifest.yaml").read_text(encoding="utf-8"))
+    assert "PRIOR_EV_L1_AND_L2_NOT_BOTH_BOUND_AT_THIS_BASELINE" in (
+        manifest["claim"]["ev_l3_stage_gates_unmet"]
+    )
+    # both stages WERE bound and both ARE at this baseline — only the row differs
+    priors = manifest["prior_stage_runs"]
+    assert {p["stage"] for p in priors} == {"EV-L1", "EV-L2"}
+    assert all(p["baseline_matches_this_run"] is True for p in priors)
+    assert {p["evidence_id"] for p in priors} == {"STATE-EV-003"}
+
+
+def test_an_unpinned_seed_withholds_green_on_an_ev_l3_run(l3_package: dict) -> None:
+    """VER §9.1 — an unreproducible crash schedule is not evidence."""
+    root = l3_package["root"]
+    l3_package["advance"](120)
+    rc = ev.main(_l3_argv(root, priors=l3_package["priors"], seed_policy="default"))
+    assert rc == 1
+    run = max((root / "STATE-EV-004").iterdir(), key=lambda p: p.name)
+    manifest = yaml.safe_load((run / "manifest.yaml").read_text(encoding="utf-8"))
+    assert "SEED_NOT_PINNED" in manifest["claim"]["ev_l3_stage_gates_unmet"]
