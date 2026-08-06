@@ -1,0 +1,633 @@
+# ADVERSE-SCENARIO-SET-002-EVL3-PILOT — PROPOSED (pre-execution; operator approval pending)
+#
+# WHAT THIS IS
+#   An Adverse Scenario Set INSTANCE created for exactly one purpose: the
+#   VER-002-001 §2.7 (line 79) coverage argument's ADVERSARIAL-COMBINATION leg
+#   for the RESTART axis of the EV-L3 pilot (STATE-EV-004 "Conservative Restart
+#   Reconstruction"). §2.7 requires, at minimum, "the boundary values of each
+#   governed dimension and the adversarial combinations of the approved Adverse
+#   Scenario Set (ADR-002-021)". This file supplies that second leg for the
+#   restart axis and nothing else. It is the sibling of
+#   ADVERSE-SCENARIO-SET-002-EVL2-PILOT.yaml and inherits its structure
+#   homomorphically (§11 groups, SoD, self_referentiality_caveat, consumer rows,
+#   empty-with-declared-reason pattern).
+#
+# WHAT IS DIFFERENT FROM THE EV-L2 SIBLING (two structural differences)
+#   1. PRE-EXECUTION. The EV-L2 instance was authored AFTER its faults executed,
+#      so its scenarios carried `outcome: MET` and pointed to landed run
+#      packages. This EV-L3 instance is authored from the RATIFIED DESIGN CATALOG
+#      (docs/plans/2026-08-06-tos-ev-l3-pilot-design.md §4, design #39, ratified
+#      commit 2b455dd9) BEFORE the STATE-EV-004 EV-L3 run executes. Every
+#      scenario therefore carries `outcome: PENDING_EXECUTION` and
+#      `observed: <runtime-observed — run not yet executed>`. It SPECIFIES the
+#      adverse set the run must cover; it records no observation it does not have
+#      (VER §2.2 negative-results discipline; no fabricated observation).
+#   2. TWO §11 GROUPS ARE POPULATED (restart-reconstruction contact only). The
+#      EV-L2 instance kept all nine ADR-002-021 §11 trading-scenario groups empty
+#      (pure model, no execution path). At EV-L3 the restart pilot genuinely
+#      reaches two of them — `execution_path_scenarios` (§11 lines 293-294:
+#      missing acknowledgement, receipt ambiguity, position-effect) and
+#      `venue_broker_partition_and_recovery_scenarios` (§11 line 299: recovery
+#      uncertainty). Those two are POPULATED with pointer entries bound 1:1 to the
+#      §4 catalogue's eight crash cells. The other seven groups stay empty with a
+#      declared reason. See OQ-6 disposition below.
+#
+# OQ-6 DISPOSITION (ratified SOUND; design §11 OQ-6; over-claim forbidden)
+#   The two populated groups carry ONLY the restart-reconstruction sub-axis, not
+#   full trading-scenario coverage. Each populated entry declares
+#   `full_trading_scenario_coverage: NOT_CLAIMED`, `modeled_transmission: true`
+#   (the crash-point transmission is a capability-class VirtualBroker marker, not
+#   a real broker send — design §0, §2.4), and `real_network_sub_axis:
+#   DEFERRED_R_N`. The real broker-network / real partition sub-axis is a
+#   declared residual (R-N), never silently covered.
+#     `adr_002_021_section_11_full_coverage: NOT_MET` (seven empty + two
+#     restart-reconstruction-only).
+#
+# WHAT THIS IS NOT
+#   - It is NOT an ADR-002-021 §5.4 (line 127) Adverse Scenario Set in the full
+#     sense. §5.4 defines a "policy-bound set ... used to establish maximum
+#     credible effects"; no Aggregate Risk Policy exists (ADR-002-021 §28
+#     question 1, line 698, is open), so `aggregate_risk_policy_id` is null and
+#     this set is NOT policy-bound. It establishes no maximum credible economic
+#     effect and SHALL NOT be consumed by any aggregate-risk evaluation.
+#   - It does NOT satisfy ADR-002-021 §11 (lines 289-299) full coverage: seven of
+#     the nine mandated groups are empty and the two populated ones carry the
+#     restart-reconstruction sub-axis only.
+#   - Approving this instance does NOT accept ADR-002-021. That ADR stays
+#     `Proposed` (ADR-002-021 §29 line 719) and its §29 Approval Gate
+#     (lines 717-735) is untouched. An instance approval is not an ADR acceptance.
+#   - It moves no EVIDENCE-REGISTER-002 row to PASS. STATE-EV-004 stays
+#     NOT_IMPLEMENTED and STATE-EV-001 stays READY; the other §9 gates of the
+#     EV-L3 pilot design (independent review signature, VER §3 complete baseline,
+#     R-N/R-I residuals, OQ-1 §4-persistence adjudication) remain open
+#     independently of this file.
+#
+# SHAPE DEVIATIONS FROM ADVERSE-SCENARIO-SET-template.yaml (declared, additive)
+#   1. `result` carries `PROPOSED_PENDING_EXECUTION_AND_APPROVAL`. The template
+#      ships `result: INVALID` beside `status: DRAFT`. Plain `INVALID` would not
+#      convey that the set is ratified-design-derived and awaiting a run; the
+#      extended value states both facts (proposed, and pending execution +
+#      operator approval).
+#   2. Additive fields mirroring the EV-L2 sibling plus EV-L3-specific ones:
+#      `adr_002_021_section_11_full_coverage`, `unpopulated_trading_scenario_groups`,
+#      `ev_l3_pilot_coverage_scenarios`, `authorization_notice`, and the per-entry
+#      `restart_reconstruction_sub_axis` / `modeled_transmission` /
+#      `real_network_sub_axis` / `full_trading_scenario_coverage` /
+#      `outcome: PENDING_EXECUTION` fields.
+#   3. `canonical_digest`, `aggregate_risk_policy_id`, `aggregate_risk_generation`
+#      are null rather than `TBD`: the referents do not exist. A null digest is
+#      not a digest — see `authorization_notice`.
+#   4. `approved_by: []` and `effective_from`/`review_due: null`: this instance is
+#      PROPOSED, not APPROVED. Operator approval is a human gate (see APPROVAL
+#      RECORD).
+#
+# APPROVAL RECORD (PENDING — human gate)
+#   Status PROPOSED. approved_by is empty. The ADR-002 series delegated
+#   auto-ratification (operator 2026-07-25, extended 2026-07-29) applies to the
+#   DESIGN CONTRACT ratification only (design #39, commit 2b455dd9). Approval of
+#   THIS scenario-set instance is a SEPARATE operator human gate, deliberately
+#   left unsigned. When approved, the approver identity `operator` = the D1 role
+#   scheme System owner / Bounds-Approver (docs/plans/2026-07-29-tos-phase0-role-
+#   scheme-and-disposition.md §1). Separation of duties (VER-002-001 §2.6 line 75:
+#   Critical evidence "SHALL be reviewed by a principal who did not implement the
+#   tested mechanism and did not approve the relevant residual-risk exception"):
+#   the approving identity SHALL NOT be the independent reviewer of the pilot
+#   evidence, and SHALL NOT also arm live trading (Live-Armer unassigned).
+
+artifact_type: ADVERSE_SCENARIO_SET
+schema_version: "1.0-DRAFT"
+scenario_set_id: ADVERSE-SCENARIO-SET-002-EVL3-PILOT
+scenario_set_version: "1.0"
+aggregate_risk_generation: null      # no Aggregate Risk Generation exists
+canonical_digest: null               # no approved canonicalization scheme for spec-layer YAML
+status: PROPOSED
+result: PROPOSED_PENDING_EXECUTION_AND_APPROVAL
+aggregate_risk_policy_id: null       # no Aggregate Risk Policy exists (ADR-002-021 §28 Q1, line 698, open)
+
+scope:
+  - kind: consumer
+    value: "VER-002-001 §2.7 (line 79) coverage argument, adversarial-combination leg, RESTART axis"
+    detail: >-
+      Consumable by exactly two evidence rows. PRIMARY consumer: STATE-EV-004
+      (Conservative Restart Reconstruction, minimum level EV-L3, VER:1043;
+      Supports ADR-002-005 AC-005-4, VER:1044). SECONDARY consumer: STATE-EV-001
+      (Orthogonal Composite Persistence, minimum level EV-L1/EV-L2, VER:1022) for
+      the R-1 durable-limb discharge only — the crash-restart run's durability
+      property (design §7.1, §9). Any other consumer is out of scope.
+  - kind: environment
+    value: non-live-test
+    detail: >-
+      No real broker session, no account, no instrument, no live authorization,
+      and ZERO real broker orders. The "after network transmission" crash point
+      (STATE-EV-004 Injection, VER:1045) is realized by a modeled capability-class
+      VirtualBroker marker (design §0, §2.4). Real persistence (on-disk sqlite3
+      WAL) and a real OS process boundary ARE used (design §2, §3). Consistent
+      with VERIFICATION-PROFILE-002.yaml scope.environment (line 59), which
+      declares these EV-L1..L3 harness ceilings non-live-test.
+  - kind: evidence_baseline
+    value: "PENDING — STATE-EV-004 EV-L3 run not yet executed"
+    detail: >-
+      This instance is authored from the ratified design catalogue (docs/plans/
+      2026-08-06-tos-ev-l3-pilot-design.md §4, design #39, ratified commit
+      2b455dd9) BEFORE the run. Each scenario's evidence baseline is the future
+      STATE-EV-004 EV-L3 run's baseline; it does not exist yet. `outcome` is
+      PENDING_EXECUTION for every scenario and no observation is recorded that was
+      not made (VER §2.2).
+  - kind: exclusion
+    value: aggregate-risk evaluation
+    detail: >-
+      SHALL NOT be used as the Adverse Scenario Set of an Aggregate Risk Decision,
+      a Projected Aggregate State, or an Adverse Increment Vector (ADR-002-021 §1
+      line 15, §12 lines 309-330). It proves no maximum credible effect for any
+      trading action.
+
+# --- ADR-002-021 §11 (lines 289-299) mandated trading-scenario groups ----------
+# Template shape preserved (each stays a list). TWO groups are populated with
+# restart-reconstruction pointer entries (bound 1:1 to the design §4 catalogue's
+# eight crash cells); the other seven stay empty. Full scenario detail lives in
+# `ev_l3_pilot_coverage_scenarios`; these pointers carry the ADR-group binding and
+# the over-claim guards (sub-axis, modeled transmission, R-N deferral).
+
+execution_path_scenarios:
+  # ADR-002-021 §11 lines 293-294 (missing acknowledgement, broker receipt
+  # ambiguity, zero crossing, reversal, reduce-only failure, position-effect
+  # mismatch). Restart-reconstruction contact only.
+  - coverage_scenario_ref: ASS-EVL3-B-01
+    design_cell: "L3-01"
+    ad_002_021_facet: "broker receipt ambiguity (§11 line 293)"
+    restart_reconstruction_sub_axis: "crash after durable SEND_STARTED, before broker receipt"
+    modeled_transmission: true
+    real_network_sub_axis: DEFERRED_R_N
+    full_trading_scenario_coverage: NOT_CLAIMED
+  - coverage_scenario_ref: ASS-EVL3-B-02
+    design_cell: "L3-02"
+    ad_002_021_facet: "broker receipt ambiguity (§11 line 293)"
+    restart_reconstruction_sub_axis: "crash after modeled network transmission (SENT_UNCONFIRMED)"
+    modeled_transmission: true
+    real_network_sub_axis: DEFERRED_R_N
+    full_trading_scenario_coverage: NOT_CLAIMED
+  - coverage_scenario_ref: ASS-EVL3-C-01
+    design_cell: "L3-03"
+    ad_002_021_facet: "missing acknowledgement (§11 line 293)"
+    restart_reconstruction_sub_axis: "crash before evidence persistence; in-memory positive knowledge lost"
+    modeled_transmission: true
+    real_network_sub_axis: DEFERRED_R_N
+    full_trading_scenario_coverage: NOT_CLAIMED
+  - coverage_scenario_ref: ASS-EVL3-B-03
+    design_cell: "L3-04"
+    ad_002_021_facet: "position-effect mismatch / order-state ambiguity (§11 line 294)"
+    restart_reconstruction_sub_axis: "crash at non-terminal broker-order boundary (reconstruct broker as UNKNOWN)"
+    modeled_transmission: true
+    real_network_sub_axis: DEFERRED_R_N
+    full_trading_scenario_coverage: NOT_CLAIMED
+  - coverage_scenario_ref: ASS-EVL3-C-04
+    design_cell: "L3-07"
+    ad_002_021_facet: "position-effect known, knowledge must re-derive (§11 line 294)"
+    restart_reconstruction_sub_axis: "terminal broker FILLED preserved; positive Knowledge downgraded on restart"
+    modeled_transmission: true
+    real_network_sub_axis: DEFERRED_R_N
+    full_trading_scenario_coverage: NOT_CLAIMED
+
+partial_fill_and_ordering_scenarios: []
+cancel_amend_replace_retry_and_overlap_scenarios: []
+price_slippage_gap_volatility_and_liquidity_scenarios: []
+correlation_basis_and_hedge_failure_scenarios: []
+margin_collateral_borrow_and_currency_scenarios: []
+exercise_assignment_delivery_and_settlement_scenarios: []
+external_trapped_non_trade_and_concurrent_scenarios: []
+
+venue_broker_partition_and_recovery_scenarios:
+  # ADR-002-021 §11 line 299 (unavailable exit/protection, rate-limit saturation,
+  # broker/session restriction, partition, and RECOVERY uncertainty). Only the
+  # recovery (restart-reconstruction) sub-axis; real partition is DEFERRED_R_N.
+  - coverage_scenario_ref: ASS-EVL3-C-02
+    design_cell: "L3-05"
+    ad_002_021_facet: "recovery uncertainty (§11 line 299)"
+    restart_reconstruction_sub_axis: "recovery from an incomplete store (inter-transaction crash; partial dimensions)"
+    modeled_transmission: true
+    real_network_sub_axis: DEFERRED_R_N
+    full_trading_scenario_coverage: NOT_CLAIMED
+  - coverage_scenario_ref: ASS-EVL3-C-03
+    design_cell: "L3-06"
+    ad_002_021_facet: "recovery uncertainty (§11 line 299)"
+    restart_reconstruction_sub_axis: "recovery discarding a stale optimistic cache; re-derive from store"
+    modeled_transmission: true
+    real_network_sub_axis: DEFERRED_R_N
+    full_trading_scenario_coverage: NOT_CLAIMED
+  - coverage_scenario_ref: ASS-EVL3-B-04
+    design_cell: "L3-08"
+    ad_002_021_facet: "recovery reload fidelity / durability (§11 line 299)"
+    restart_reconstruction_sub_axis: "durability positive canary: commit -> crash -> lossless reload"
+    modeled_transmission: false
+    real_network_sub_axis: NOT_APPLICABLE
+    full_trading_scenario_coverage: NOT_CLAIMED
+
+adr_002_021_section_11_full_coverage: NOT_MET
+
+unpopulated_trading_scenario_groups:
+  common_reason: >-
+    The declared scope has no fill, no cancel/amend, no price/slippage, no
+    correlation/hedge, no margin/settlement, and no external trade activity: the
+    restart pilot crashes a persisted state and reconstructs it conservatively;
+    it executes no trade. Populating these groups would require inventing
+    scenarios with no executed referent, which the pilot design forbids (design
+    §0.5-4). Emptiness here is a declared scope limitation, NOT a dominance proof
+    and NOT a claim the omitted paths are harmless (ADR-002-021 §11 line 301:
+    "Scenario reduction or pruning SHALL be policy-governed and prove dominance").
+  populated_groups_caveat: >-
+    execution_path_scenarios and venue_broker_partition_and_recovery_scenarios are
+    populated with the restart-reconstruction sub-axis ONLY. They do NOT establish
+    full ADR-002-021 §11 coverage of those groups: the real broker-network / real
+    partition sub-axis is deferred (R-N), and no fill/price/margin facet is
+    exercised. `full_trading_scenario_coverage: NOT_CLAIMED` on every populated
+    entry.
+  groups:
+    - group: partial_fill_and_ordering_scenarios
+      adr_anchor: "ADR-002-021 §11 line 291 (fill prefixes, out-of-order fill sequence)"
+      disposition: NOT_APPLICABLE_AT_THIS_SCOPE
+    - group: cancel_amend_replace_retry_and_overlap_scenarios
+      adr_anchor: "ADR-002-021 §11 line 292 (original, cancel, amend, replace, split-child, retry overlap)"
+      disposition: NOT_APPLICABLE_AT_THIS_SCOPE
+    - group: price_slippage_gap_volatility_and_liquidity_scenarios
+      adr_anchor: "ADR-002-021 §11 line 295"
+      disposition: NOT_APPLICABLE_AT_THIS_SCOPE
+    - group: correlation_basis_and_hedge_failure_scenarios
+      adr_anchor: "ADR-002-021 §11 line 296"
+      disposition: NOT_APPLICABLE_AT_THIS_SCOPE
+    - group: margin_collateral_borrow_and_currency_scenarios
+      adr_anchor: "ADR-002-021 §11 line 297"
+      disposition: NOT_APPLICABLE_AT_THIS_SCOPE
+    - group: exercise_assignment_delivery_and_settlement_scenarios
+      adr_anchor: "ADR-002-021 §11 line 297"
+      disposition: NOT_APPLICABLE_AT_THIS_SCOPE
+    - group: external_trapped_non_trade_and_concurrent_scenarios
+      adr_anchor: "ADR-002-021 §11 line 298"
+      disposition: NOT_APPLICABLE_AT_THIS_SCOPE
+  partially_populated_groups:
+    - group: execution_path_scenarios
+      adr_anchor: "ADR-002-021 §11 lines 293-294"
+      disposition: PARTIALLY_POPULATED_RESTART_RECONSTRUCTION_ONLY
+      deferred_sub_axis: "real broker-network receipt (R-N)"
+    - group: venue_broker_partition_and_recovery_scenarios
+      adr_anchor: "ADR-002-021 §11 line 299"
+      disposition: PARTIALLY_POPULATED_RECOVERY_SUB_AXIS_ONLY
+      deferred_sub_axis: "real broker/session partition (R-N)"
+
+# --- The scenarios this set actually carries -----------------------------------
+# Derivation rule: every entry below corresponds 1:1 to a crash cell in the
+# ratified design §4 catalogue (docs/plans/2026-08-06-tos-ev-l3-pilot-design.md).
+# No entry is hypothetical, and no entry is observed: the run has not executed.
+# Classification rule: an entry is an ADVERSARIAL COMBINATION when the crash holds
+# two or more factors simultaneously; otherwise it is a single-factor BOUNDARY
+# VALUE of one governed dimension's crash boundary.
+ev_l3_pilot_coverage_scenarios:
+  self_referentiality_caveat: >-
+    This set is derived from the ratified design catalogue, so by construction it
+    cannot reveal a crash scenario the catalogue missed. It argues coverage of the
+    declared restart axis only. It is authored PRE-EXECUTION: it specifies the
+    adverse set the STATE-EV-004 EV-L3 run must cover and records no observed
+    disposition (all `outcome: PENDING_EXECUTION`). Axes outside it are recorded
+    under `dominance_and_pruning_proofs`, `unbounded_credible_effects`, or the
+    residual references — never as silently covered.
+
+  oracle_independence_note: >-
+    The design places the Expected reconstruction as a hand-derived hardcoded
+    anchor in an outside test that structurally cannot `import tos` (firewall
+    reverse rule; design §5.3, O-3). So unlike the EV-L2 sibling's ASS-CM-04
+    ("guards under test are also the oracles"), each Expected here is NOT the
+    implementation's own `reconstruct_conservative` output. This structurally
+    offsets — it does not fully remove — the guard-is-oracle common mode (see
+    common_mode_dependencies ASS-CM-04).
+
+  committed_composite_cpl_legality: >-
+    The pinned committed composites for L3-01..L3-06 are not all in ADR-002-005
+    §14's enumerated examples. Per the ratified design §4 "committed composite CPL
+    legality" clause (delta-review observation), the run SHALL confirm
+    coupling_violations() == empty on each pinned committed composite before the
+    crash, so a CPL-illegal committed state fails loudly at construction rather
+    than silently seeding a defect.
+
+  governed_dimensions:
+    referent: "tos.orthostate.records.CompositeState (tos/src/tos/orthostate/records.py:39-102); projection tos.orthostate.predicates.reconstruct_conservative (predicates.py:688-742)"
+    dimensions:
+      - name: intent_state
+        directly_exercised: false
+        disposition: "preserved across restart (intent_identity carried, predicates.py:735); structural-identity argument, not a mutated dimension (see ASS-DOM-05)"
+      - name: transmission_attempt_state
+        directly_exercised: true
+        cells: ["L3-01 (SEND_STARTED)", "L3-02 (SENT_UNCONFIRMED)", "L3-07 (ACK_OBSERVED)"]
+      - name: broker_order_state
+        directly_exercised: true
+        cells: ["L3-04 (non-terminal -> UNKNOWN)", "L3-07 (FILLED preserved)"]
+      - name: knowledge_state
+        directly_exercised: true
+        cells: ["L3-03 (UNOBSERVED preserved)", "L3-06 (stale RECONCILED ignored)", "L3-07 (RECONCILED/CONSISTENT -> CONFLICTED)"]
+      - name: capacity_state
+        directly_exercised: true
+        cells: ["L3-01 / L3-02 (raised to at least POTENTIALLY_LIVE via CPL-1, predicates.py:714-719)"]
+    directly_exercised_ratio: "4 of the 5 ADR-002-005 §14 dimensions (intent_state via preservation argument)"
+
+  boundary_value_scenarios:
+    - scenario_id: ASS-EVL3-B-01
+      row: STATE-EV-004
+      design_cell: L3-01
+      governed_dimension: transmission_attempt_state
+      committed_5tuple: "Intent=ACTIVE Attempt=SEND_STARTED Broker=UNKNOWN Knowledge=UNOBSERVED Capacity=POTENTIALLY_LIVE"
+      crash_boundary: "after durable SEND_STARTED, before broker receipt"
+      expected: "Attempt=SEND_STARTED; Broker=UNKNOWN; Knowledge=UNOBSERVED (preserved, not in downgrade set); Capacity>=POTENTIALLY_LIVE"
+      two_layer_invariant: "Knowledge NOT IN {RECONCILED, CONSISTENT} AND Capacity at-least-as-conservative-as POTENTIALLY_LIVE AND Broker=UNKNOWN"
+      observed: "<runtime-observed — STATE-EV-004 EV-L3 run not yet executed>"
+      outcome: PENDING_EXECUTION
+      normative_anchor: "ADR-002-005 §13 line 198; predicates.py:659-668, 715-719, 731-732"
+      evidence_ref: "docs/plans/2026-08-06-tos-ev-l3-pilot-design.md §4 row L3-01; run package <pending>"
+    - scenario_id: ASS-EVL3-B-02
+      row: STATE-EV-004
+      design_cell: L3-02
+      governed_dimension: transmission_attempt_state
+      committed_5tuple: "Intent=ACTIVE Attempt=SENT_UNCONFIRMED Broker=UNKNOWN Knowledge=UNOBSERVED Capacity=POTENTIALLY_LIVE"
+      crash_boundary: "after modeled network transmission (VirtualBroker marker)"
+      expected: "Attempt=SENT_UNCONFIRMED; Broker=UNKNOWN; Knowledge=UNOBSERVED (preserved); Capacity>=POTENTIALLY_LIVE"
+      two_layer_invariant: "Knowledge NOT IN {RECONCILED, CONSISTENT} AND Capacity>=POTENTIALLY_LIVE AND Broker=UNKNOWN"
+      observed: "<runtime-observed — run not yet executed>"
+      outcome: PENDING_EXECUTION
+      normative_anchor: "ADR-002-005 §13 line 198; STATE-EV-004 Injection VER:1045 'after network transmission'"
+      evidence_ref: "design §4 row L3-02; run package <pending>"
+    - scenario_id: ASS-EVL3-B-03
+      row: STATE-EV-004
+      design_cell: L3-04
+      governed_dimension: broker_order_state
+      committed_5tuple: "Intent=ACTIVE Attempt=SENT_UNCONFIRMED Broker=<non-terminal member, implementation enum pin> Knowledge=UNOBSERVED Capacity=POTENTIALLY_LIVE"
+      crash_boundary: "crash at a non-terminal broker-order boundary"
+      expected: "Broker -> UNKNOWN (non-terminal reconstructed); Knowledge=UNOBSERVED (preserved)"
+      two_layer_invariant: "Broker=UNKNOWN (for the non-terminal committed state) AND Capacity>=POTENTIALLY_LIVE"
+      observed: "<runtime-observed — run not yet executed>"
+      outcome: PENDING_EXECUTION
+      normative_anchor: "ADR-002-005 §13 line 198; predicates.py:672-679 (_BROKER_STRUCTURALLY_TERMINAL)"
+      evidence_ref: "design §4 row L3-04; run package <pending>"
+    - scenario_id: ASS-EVL3-B-04
+      row: STATE-EV-001
+      design_cell: L3-08
+      governed_dimension: "durability round-trip (all five dimensions)"
+      committed_5tuple: "Intent=ACTIVE Attempt=SENT_UNCONFIRMED Broker=UNKNOWN Knowledge=CONFLICTED Capacity=POTENTIALLY_LIVE (ADR-002-005 §14 line 208; already conservative => reconstruct is identity)"
+      crash_boundary: "normal complete commit -> crash -> reload"
+      expected: "reloaded 5-tuple == committed 5-tuple (lossless durable round-trip)"
+      two_layer_invariant: "reload(store) == committed (field-identical)"
+      observed: "<runtime-observed — run not yet executed>"
+      outcome: PENDING_EXECUTION
+      normative_anchor: "ADR-002-005 §13 line 197 'durable and reconstructable'; AC-005-1 line 237 'representable and persisted'; §14 line 208"
+      evidence_ref: "design §4 row L3-08; run package <pending>"
+      note: >-
+        This is the R-1 durable-limb boundary cell (consumer STATE-EV-001). Per
+        design §4 point (4) and §7.1, L3-08 is a durability MECHANISM cell; the
+        R-1 discharge is the durability property over the enumerated §14 composite
+        + boundary set (VER §2.7 coverage), not this single cell.
+
+  adversarial_combination_scenarios:
+    - scenario_id: ASS-EVL3-C-01
+      row: STATE-EV-004
+      design_cell: L3-03
+      sub_case_count: 1
+      factors:
+        - "the attempt reached SEND_STARTED and an ACK was observed in memory"
+        - "the crash occurred before that evidence was durably persisted, so the durable store holds only the pre-ACK state"
+      governed_dimension: knowledge_state
+      committed_5tuple: "Intent=ACTIVE Attempt=SEND_STARTED Broker=UNKNOWN Knowledge=UNOBSERVED Capacity=POTENTIALLY_LIVE (durable = pre-ACK)"
+      expected: "the lost ACK does NOT resurrect as RECONCILED; Knowledge=UNOBSERVED (preserved); Broker=UNKNOWN"
+      two_layer_invariant: "Knowledge NOT IN {RECONCILED, CONSISTENT}  (load-bearing; VER:1046 'never ... RECONCILED')"
+      observed: "<runtime-observed — run not yet executed>"
+      outcome: PENDING_EXECUTION
+      normative_anchor: "ADR-002-005 §13 line 199; STATE-EV-004 Expected VER:1046"
+      evidence_ref: "design §4 row L3-03; run package <pending>"
+    - scenario_id: ASS-EVL3-C-02
+      row: STATE-EV-004
+      design_cell: L3-05
+      sub_case_count: 1
+      factors:
+        - "one dimension (Attempt=SEND_STARTED) is durably committed"
+        - "a neighbouring dimension is uncommitted/absent (inter-transaction crash) — an incomplete store"
+      governed_dimension: "reconstruction from incomplete store"
+      committed_5tuple: "Attempt=SEND_STARTED committed; Broker and Knowledge absent (not committed)"
+      expected: "S-2 conservative fill: absent Knowledge -> UNOBSERVED, absent Broker -> UNKNOWN; no optimistic fill"
+      two_layer_invariant: "absent dimensions NOT filled with an optimistic value AND Knowledge NOT IN {RECONCILED, CONSISTENT}"
+      observed: "<runtime-observed — run not yet executed>"
+      outcome: PENDING_EXECUTION
+      normative_anchor: "STATE-EV-004 Injection VER:1045 'incomplete stores'; design §5.1 S-2"
+      evidence_ref: "design §4 row L3-05; run package <pending>"
+    - scenario_id: ASS-EVL3-C-03
+      row: STATE-EV-004
+      design_cell: L3-06
+      sub_case_count: 1
+      factors:
+        - "the authoritative store holds a conservative Knowledge=UNOBSERVED"
+        - "a separate stale cache file holds an optimistic Knowledge=RECONCILED, present simultaneously at restart"
+      governed_dimension: knowledge_state
+      committed_5tuple: "store: Knowledge=UNOBSERVED (authoritative); cache: Knowledge=RECONCILED (stale, optimistic)"
+      expected: "reader ignores the stale cache and re-derives from the store -> Knowledge=UNOBSERVED"
+      two_layer_invariant: "Knowledge NOT IN {RECONCILED, CONSISTENT}  (the cache's RECONCILED does not leak in)"
+      observed: "<runtime-observed — run not yet executed>"
+      outcome: PENDING_EXECUTION
+      normative_anchor: "STATE-EV-004 Injection VER:1045 'stale caches'; ADR-002-005 §13 line 199 're-derived'"
+      evidence_ref: "design §4 row L3-06; run package <pending>"
+    - scenario_id: ASS-EVL3-C-04
+      row: STATE-EV-004
+      design_cell: L3-07
+      sub_case_count: 2
+      polarity: positive_canary_both_ways
+      factors:
+        - "the broker order is structurally terminal (FILLED) and MUST be preserved across restart"
+        - "positive Knowledge (RECONCILED; sub-case CONSISTENT) MUST be downgraded on restart"
+      governed_dimension: "broker_order_state (preserve) and knowledge_state (downgrade)"
+      committed_5tuple: "Intent=ACTIVE Attempt=ACK_OBSERVED Broker=FILLED Knowledge=RECONCILED Capacity=POSITION_CONSUMED (ADR-002-005 §14 line 211)"
+      sub_cases:
+        - "Knowledge=RECONCILED -> CONFLICTED (in _KNOWLEDGE_DOWNGRADE_ON_RESTART)"
+        - "Knowledge=CONSISTENT -> CONFLICTED (the other downgrade member)"
+      expected: "Broker=FILLED preserved (terminal); Knowledge -> CONFLICTED (downgraded); Capacity via rcl comparator (preserve if >= POTENTIALLY_LIVE, else raise — implementation-measured)"
+      two_layer_invariant: "Broker=FILLED (preserved) AND Knowledge=CONFLICTED AND Knowledge NOT IN {RECONCILED, CONSISTENT}"
+      observed: "<runtime-observed — run not yet executed>"
+      outcome: PENDING_EXECUTION
+      normative_anchor: "ADR-002-005 §13 line 199; predicates.py:729-732, 683-685; §14 line 211"
+      evidence_ref: "design §4 row L3-07; run package <pending>"
+
+  counts:
+    catalogue_cells_total: 8
+    boundary_value_scenarios: 4        # L3-01, L3-02, L3-04, L3-08
+    adversarial_combination_scenarios: 4   # L3-03, L3-05, L3-06, L3-07
+    adversarial_combination_sub_cases: 5   # C-04 expands to 2 (RECONCILED, CONSISTENT)
+    planned_disposition_observations: 9
+    reconciliation: "4 boundary + 4 combination = 8 catalogue cells; sub-case expansion (C-04 -> 2) yields 9 planned dispositions"
+    all_outcomes_met: PENDING_EXECUTION
+    all_outcomes_met_basis: >-
+      NOT ASSERTED. The run has not executed. When it does, each outcome SHALL be
+      re-derived by comparing the reader worker's emitted reconstruction against
+      the hand-derived hardcoded anchor above (design §5.3), never trusting a
+      self-reported flag (design §6.2 all_crash_scenarios_met gate).
+
+dominance_and_pruning_proofs:
+  - id: ASS-DOM-01
+    subject: "the seven empty ADR-002-021 §11 trading-scenario groups"
+    pruning_basis: SCOPE_DECLARATION_NOT_DOMINANCE
+    argument: >-
+      See unpopulated_trading_scenario_groups. No dominance is claimed; the groups
+      (fill, cancel/amend, price/slippage, correlation, margin, settlement,
+      external) have no referent at a restart-reconstruction, non-live-test scope.
+  - id: ASS-DOM-02
+    subject: "real broker-network / real partition sub-axis of the two populated groups"
+    pruning_basis: DEFERRED_TO_RESIDUAL_NOT_DOMINANCE
+    argument: >-
+      The crash-point transmission is a modeled VirtualBroker marker and the
+      pilot emits zero real broker orders (design §0). Real receipt ambiguity and
+      real partition are not pruned by dominance; they are a declared residual
+      (R-N). ADR-002-021 §11 line 301 forbids pruning without a dominance proof,
+      and none is offered here.
+  - id: ASS-DOM-03
+    subject: "power-loss / torn-sector durability"
+    pruning_basis: NOT_PRUNED_UNRESOLVED
+    argument: >-
+      os._exit models an application process crash faithfully (design §2.4,
+      §4), but not kernel page-cache loss, power loss, or torn-sector writes,
+      which need filesystem fault injection. Carried as residual R-D. The
+      "incomplete stores" facet (VER:1045) IS exercised via an inter-transaction
+      crash (L3-05); intra-transaction torn sectors are the R-D residual.
+  - id: ASS-DOM-04
+    subject: "intent_state and capacity_state as directly mutated inputs"
+    pruning_basis: STRUCTURAL_IDENTITY_ARGUED_NOT_EXECUTED
+    argument: >-
+      intent_state is carried unchanged across restart (intent_identity,
+      predicates.py:735) and capacity_state is exercised only through the CPL-1
+      raise, not as an independently mutated crash input. The argument that these
+      behave correctly across the full input space is structural, NOT a separately
+      executed crash mutation. A future run that varies them directly would
+      discharge it.
+    honesty_flag: >-
+      ADR-002-021 §11 line 301 requires pruning to be policy-governed and prove
+      dominance. No Aggregate Risk Policy exists to govern this, so this entry is
+      an argument on the record, not a discharged proof.
+
+unbounded_credible_effects:
+  - id: ASS-UNB-01
+    subject: "real broker-network receipt and partition (the R-N deferred sub-axis)"
+    statement: >-
+      The economic effect of a real broker transmission cannot be bounded at this
+      scope because no real transmission occurs (zero real orders) and no approved
+      Broker Capability Profile bound exists (STATE-EV-004 broker_capability_
+      profile_version = TBD in EVIDENCE-REGISTER-002.csv line 94). Per ADR-002-021
+      §11 line 303, an unbounded credible effect is DENY or UNKNOWN, never a
+      convenient finite value.
+    present_effect: "None. The pilot emits zero real broker orders; no economic effect can be produced today."
+    registered_as: "RESIDUAL-RISK-REGISTER-002.yaml entry R-N (see residual_risk_references — NOT YET registered)"
+
+common_mode_dependencies:
+  - id: ASS-CM-01
+    dependency: "single evaluator"
+    detail: >-
+      The planned run will execute under one harness (tools/tos_evidence_run.py
+      EV-L3 stage), one interpreter, and one baseline commit. ADR-002-021 §22
+      requires independent reproduction and parser/model/library differential
+      results; none is planned in this pilot.
+  - id: ASS-CM-02
+    dependency: "single seed / deterministic crash schedule"
+    detail: >-
+      seed=0 with PYTHONHASHSEED=0 for the pure reconstruction property, and
+      parametrized deterministic os._exit crash points for the integration matrix
+      (design §4, O-2). Determinism is established by construction; input-space
+      diversity is not.
+  - id: ASS-CM-03
+    dependency: "single authoring lane"
+    detail: >-
+      The design catalogue, the implementation (in progress), this scenario set,
+      and the forthcoming evidence were/are produced in the same AI-orchestrated
+      authoring lane. VER-002-001 §2.6 (line 75) independent review is NOT_SIGNED,
+      so no independent principal has yet reviewed these scenarios or their
+      sufficiency.
+  - id: ASS-CM-04
+    dependency: "the guards under test are also the oracles — STRUCTURALLY OFFSET at EV-L3"
+    detail: >-
+      In the EV-L2 sibling each Expected was the validator's own verdict, an
+      unmitigated common mode. At EV-L3 the design places each Expected as a
+      hand-derived hardcoded anchor in an outside test that cannot import tos
+      (firewall reverse rule; design §5.3, O-3), so a defect shared between the
+      reconstruction guard and the expectation would be caught. This structurally
+      OFFSETS the common mode; it does not fully remove it (the hand-derived
+      anchors and the §13 norm share a human author). The mutation-canary
+      discipline (design §8.3, mutants A-E KILLED) further offsets it.
+  - id: ASS-CM-05
+    dependency: "pre-execution authoring (temporal)"
+    detail: >-
+      This instance is authored BEFORE the run. Every outcome is
+      PENDING_EXECUTION. A scenario whose Expected proves unreachable or wrong at
+      run time SHALL be corrected and the correction traced (VER §2.2); this
+      instance is not evidence that the scenarios passed, only that they are the
+      specified adverse set.
+
+residual_risk_references:
+  # VER-002-001 §378 line 3309 non-union rule: separate residual risks SHALL NOT
+  # be unioned at a consumer. Each is cited individually below.
+  non_union_statement: >-
+    R-1, R-N, R-I, and R-D are four independent residuals. A consumer SHALL cite
+    them individually and SHALL NOT summarise them as one aggregate residual
+    (VER-002-001 §378 line 3309).
+  entries:
+    - id: R-1
+      subject: "STATE-EV-001 durable/persisted limb"
+      status: REGISTERED
+      location: "RESIDUAL-RISK-REGISTER-002.yaml (entry R-1, risk_identity line 89-90)"
+      relation_to_this_set: >-
+        This set's boundary cell ASS-EVL3-B-04 (design L3-08) and the durability
+        property over the §14 composite set are the coverage argument the R-1
+        discharge depends on (design §7.1). The discharge is CONDITIONAL on the
+        OQ-1 operator adjudication (§4-persistence decision) and is recorded
+        substrate-class (design §7.1, §9, MINOR-4).
+    - id: R-N
+      subject: "STATE-EV-004 real-network-boundary axis (modeled transmission)"
+      status: PROPOSED_NOT_YET_REGISTERED
+      location: >-
+        Proposed by the EV-L3 pilot design §2.4. MEASURED ABSENT from
+        RESIDUAL-RISK-REGISTER-002.yaml (the register holds R-1, R-2, R-3 only;
+        negative-grep). Registration is prerequisite work on the STATE-EV-004 PASS
+        track and is an open operator gate.
+    - id: R-I
+      subject: "STATE-EV-004 credential/service-identity axis (logical identity re-derivation executed; real auth deferred)"
+      status: PROPOSED_NOT_YET_REGISTERED
+      location: "Proposed by the EV-L3 pilot design §2.4; absent from the register (negative-grep). Referent: STATE-EV-005 (EV-L2/3 plus security, VER:1050)."
+    - id: R-D
+      subject: "power-loss / torn-sector durability (os._exit models process crash, not power loss)"
+      status: CANDIDATE_NOT_YET_REGISTERED
+      location: "Candidate in the EV-L3 pilot design §2.4; absent from the register (negative-grep). Needs filesystem fault injection."
+
+approved_by: []                        # PROPOSED — operator approval is a pending human gate
+effective_from: null                   # set on approval
+review_due: null                       # set on approval; MAX_residual_risk_review_interval_ms bound then applies
+
+authority:
+  grants_risk_allocation: false
+  creates_capacity: false
+  releases_capacity: false
+  creates_live_authorization: false
+  creates_protective_classification: false
+  creates_transmission_capability: false
+  permits_broker_transmission: false
+  clears_halt: false
+  permits_rearm: false
+  permits_automatic_rearm: false
+
+authorization_notice: >-
+  This PROPOSED instance grants nothing and is not yet approved. It specifies the
+  adversarial-combination leg of the VER-002-001 §2.7 coverage argument for the
+  RESTART axis of exactly two evidence rows (STATE-EV-004 primary; STATE-EV-001
+  R-1 durable limb) at a non-live-test scope that emits zero real broker orders.
+  Seven of the nine ADR-002-021 §11 trading-scenario groups are empty and the two
+  populated groups carry the restart-reconstruction sub-axis only, with the real
+  broker-network / partition sub-axis deferred to residual R-N. It is not
+  policy-bound (`aggregate_risk_policy_id` is null), so it establishes no maximum
+  credible effect and SHALL NOT be consumed by any aggregate-risk evaluation. Its
+  `canonical_digest` is null because no approved canonicalization scheme exists for
+  spec-layer YAML instances (ADR-002-021 §28 question 1, line 698, is open); a null
+  digest is not a digest, and a consumer that requires digest binding SHALL treat
+  this set as unbound. It is authored PRE-EXECUTION: every scenario outcome is
+  PENDING_EXECUTION and this file is not evidence that any scenario passed.
+  Approving this instance does not accept ADR-002-021, which remains `Proposed`
+  (§29 line 719), and does not move any evidence row to PASS: STATE-EV-004 stays
+  NOT_IMPLEMENTED, STATE-EV-001 stays READY, and the pilot's remaining gates
+  (independent review signature per VER §9.5 and §2.6, VER §3 complete baseline,
+  residuals R-N/R-I/R-D registration, and the OQ-1 §4-persistence adjudication for
+  R-1) are untouched by this file.
