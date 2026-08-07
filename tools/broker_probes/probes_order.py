@@ -82,6 +82,7 @@ from tools.broker_probes.common import (
     build_auth_config,
     dry_run_banner,
     http_json,
+    is_rate_limited,
     probe_token_cache_dir,
     redact,
     require_account,
@@ -969,6 +970,19 @@ class MockTradingClient:
 
     def cancel_futures(self, odno: str, qty: int) -> dict[str, Any]:
         """Cancel — ``RVSE_CNCL_DVSN_CD='02'`` (executor.py:689)."""
+        return self._rvsecncl(odno, qty, dvsn="02", price=None)[1]
+
+    def cancel_futures_verbose(
+        self, odno: str, qty: int
+    ) -> tuple[int, dict[str, Any], str]:
+        """Cancel, keeping the HTTP status and raw body.
+
+        :func:`is_rate_limited` reads all three — the status carries HTTP 429 and
+        the raw text carries ``EGW00201`` when the parsed body does not surface it
+        as ``msg_cd``. Handing it only the parsed dict throws away two of the three
+        signals it was written to check, and a throttle read as an ordinary
+        rejection is the difference between retrying a live order and abandoning it.
+        """
         return self._rvsecncl(odno, qty, dvsn="02", price=None)
 
     def replace_futures(self, odno: str, qty: int, price: TickPrice) -> dict[str, Any]:
@@ -979,11 +993,11 @@ class MockTradingClient:
         off-tick amend is rejected exactly like an off-tick submit, and a rejected
         amend makes P-8 report replace semantics it never observed.
         """
-        return self._rvsecncl(odno, qty, dvsn="01", price=price)
+        return self._rvsecncl(odno, qty, dvsn="01", price=price)[1]
 
     def _rvsecncl(
         self, odno: str, qty: int, *, dvsn: str, price: TickPrice | None
-    ) -> dict[str, Any]:
+    ) -> tuple[int, dict[str, Any], str]:
         if dvsn == "01" and price is None:
             raise ProbeError(
                 "an amend (RVSE_CNCL_DVSN_CD='01') needs a tick-snapped price"
@@ -1004,10 +1018,10 @@ class MockTradingClient:
             "FUOP_ITEM_DVSN_CD": "",
             "ORD_DVSN_CD": "01",
         }
-        _status, parsed, _ms, _text = self.trading_call(
+        status, parsed, _ms, text = self.trading_call(
             "POST", _FUT_CANCEL_PATH, tr_id, body=body
         )
-        return parsed
+        return status, parsed, text
 
     def inquire_futures(
         self,
@@ -1190,29 +1204,281 @@ def _resting_price(
     return snap_to_tick(price, tick, side=side, marketable=False), side
 
 
-def _cleanup(
-    client: MockTradingClient | None, run: ProbeRun, odnos: list[str], qty: int
-) -> None:
-    if client is None:
-        return
-    for odno in odnos:
-        if not odno:
-            continue
+#: How one cleanup cancel ended. Derived from the open-order surface, never from
+#: the broker's rejection sentence — see :func:`_cleanup`.
+_CLEANUP_CANCELLED = "CANCELLED"
+_CLEANUP_NOTHING_TO_CANCEL = "NOTHING_TO_CANCEL_NO_LIVE_ROW"
+_CLEANUP_STILL_LIVE = "REJECTED_AND_STILL_LIVE"
+_CLEANUP_LIVENESS_UNKNOWN = "REJECTED_LIVENESS_UNDETERMINED"
+_CLEANUP_THROTTLED = "REJECTED_THROTTLE_NOT_CLEARED"
+_CLEANUP_EXCEPTION = "CANCEL_CALL_RAISED"
+
+#: How the liveness lookup behaves for the CLEANUP consumer, as opposed to the
+#: coexistence consumer — see :data:`_P8_COEXISTENCE_LIVENESS_NOTE`.
+#:
+#: The two consumers read the same ``qty>0`` predicate with OPPOSITE safety
+#: polarity, and conflating them is what let a one-page, ``rt_cd``-blind lookup
+#: look acceptable. For ``coexistence_ms``, failing to see a live row understates
+#: the overlap hazard's absence — it can only over-report the hazard, which is
+#: safe. For cleanup it is the reverse: failing to see a live row DOWNGRADES an
+#: error and tells the operator nothing about an order still on the book.
+_CLEANUP_LIVENESS_NOTE = (
+    "Cleanup consumes the qty>0 liveness predicate with the OPPOSITE polarity to "
+    "coexistence_ms. Here a missing live row silences an error, so a surface that "
+    "under-reports liveness is fail-OPEN, and the 2026-08-01 'the bias is the safe "
+    "one' argument does NOT carry over. That is why this lookup requires rt_cd=0, "
+    "walks the continuation keys to the end of the book (P-5b measured this same "
+    "surface at 15 rows/page with continuation), refuses to answer on a truncated "
+    "or unreadable walk, and is never consulted at all for a throttled cancel."
+)
+
+#: Cancel attempts per order before a live order is declared un-cleaned.
+#:
+#: A throttle rejection never reached the matching engine, so the order IS still
+#: resting and the right answer is to try again rather than hand the operator a
+#: manual-cancel instruction for an order the harness could have cancelled itself.
+#: Observed verbatim in ``P-8-20260731T015220Z``: the second cleanup cancel of that
+#: run came back ``초당 거래건수를 초과하였습니다`` and the order was left on the book.
+_CLEANUP_ATTEMPTS = 3
+
+#: Gap between cancel attempts. The client's own pacer already spaces calls; this
+#: is the extra settle time a per-second throttle needs to drain.
+_CLEANUP_RETRY_S = 1.5
+
+
+def _live_odno_keys(
+    client: MockTradingClient, symbol: str, max_pages: int
+) -> tuple[set[str] | None, dict[str, Any]]:
+    """Canonical keys of every order the open-order surface shows with ``qty > 0``.
+
+    Returns:
+        ``(keys, evidence)``. ``keys`` is ``None`` — never an empty set — whenever
+        the surface did not positively answer for the WHOLE book. ``evidence``
+        records how the walk ended and goes into the artifact, so a lookup that
+        established nothing cannot do so silently.
+
+    ``None`` and ``set()`` are opposite findings and must never collapse. An empty
+    set is the broker saying "nothing of yours is live"; ``None`` is "we do not
+    know". Cleanup reads the first as license to downgrade an error and the second
+    as a reason to keep trying, so every way of not knowing has to arrive as
+    ``None``:
+
+    * **``rt_cd != "0"``.** This broker signals an empty result set with a
+      REJECTION shape, not an empty list: ``P-BAL-20260731T114344Z`` recorded
+      ``rt_cd='7'`` + ``msg_cd='KIOK0560'`` ("조회할 내용이 없습니다") on the sibling
+      balance surface, and ``shared/kis/client.py`` guards ``rt_cd != "0"`` in ten
+      places. So a failure response carrying ``output1: []`` — a shape this
+      function used to accept — would have read as "nothing is live" and cleared a
+      resting order's error.
+    * **Truncation.** ``P-5b-20260731T014917Z`` measured THIS surface at
+      ``page_size_observed: 15`` with ``continuation_supported: true``, and its own
+      walk exhausted ten pages still holding a continuation key. A single-page read
+      therefore misses order 16 onward, and "not on page 1" is not "not live". The
+      walk follows the continuation keys exactly as ``probe_p5b`` does and reports
+      ``None`` if it runs out of page budget with keys still advancing.
+    * **Unreadable rows and non-advancing keys.** A row we cannot identify might BE
+      the order under cleanup, and keys that stop advancing mean the walk is not
+      progressing through the book. Both poison the whole answer rather than being
+      skipped.
+    """
+    live: set[str] = set()
+    evidence: dict[str, Any] = {"pages_walked": 0, "rows_seen": 0}
+    fk200 = nk200 = ""
+    for page in range(max(int(max_pages), 1)):
         try:
-            # Verbatim ODNO, never odno_key(): this value goes back on the wire as
-            # ORGN_ODNO, and the accept response's zero-padded form is what the
-            # broker accepted a cancel for (P-5-20260731T002112Z cleanup, rt_cd=0).
-            # Canonicalization is for COMPARISON only and must not reach a body.
-            result = client.cancel_futures(odno, qty)
-            ok = result.get("rt_cd") == "0"
-            run.observe(cleanup_cancel=odno, ok=ok, msg=result.get("msg1"))
-            if not ok:
-                run.error(
-                    f"CLEANUP FAILED — order {odno} may still be resting. "
-                    f"Cancel it manually: {result.get('msg1')}"
-                )
+            listing = client.inquire_futures(symbol, fk200=fk200, nk200=nk200)
+        except Exception as exc:  # noqa: BLE001 - a transport failure is not an answer
+            evidence["outcome"] = f"QUERY_RAISED: {type(exc).__name__}"
+            return None, evidence
+        if not isinstance(listing, dict):
+            evidence["outcome"] = "MALFORMED_RESPONSE"
+            return None, evidence
+        evidence["pages_walked"] = page + 1
+        rt_cd = str(listing.get("rt_cd") or "")
+        if rt_cd != "0":
+            # Includes the broker's own empty-set notation. "No rows" and "no
+            # answer" are not the same claim and only rt_cd=0 licenses the first.
+            evidence["outcome"] = "NOT_A_POSITIVE_ANSWER"
+            evidence["rt_cd"] = rt_cd
+            evidence["msg_cd"] = listing.get("msg_cd")
+            evidence["msg1"] = listing.get("msg1")
+            return None, evidence
+        rows = listing.get("output1")
+        if not isinstance(rows, list):
+            evidence["outcome"] = "OUTPUT1_NOT_A_LIST"
+            return None, evidence
+        for row in rows:
+            if not isinstance(row, dict):
+                evidence["outcome"] = "UNREADABLE_ROW"
+                return None, evidence
+            try:
+                key = odno_key(row.get("odno"))
+                qty = int(float(row.get("qty") or 0))
+            except (ProbeError, TypeError, ValueError):
+                evidence["outcome"] = "UNREADABLE_ROW"
+                return None, evidence
+            if qty > 0:
+                live.add(key)
+        evidence["rows_seen"] += len(rows)
+        next_fk = str(listing.get("ctx_area_fk200") or "").strip()
+        next_nk = str(listing.get("ctx_area_nk200") or "").strip()
+        if not next_fk and not next_nk:
+            evidence["outcome"] = "COMPLETE_WALK"
+            return live, evidence
+        if not rows:
+            # The broker says "more follows" while handing back an empty page.
+            # That shape has never been observed on this surface (P-5b walked
+            # ten full pages), and a row-count heuristic must not override the
+            # broker's own more-follows signal: not knowing is not knowing.
+            evidence["outcome"] = "EMPTY_PAGE_WITH_CONTINUATION_KEY"
+            return None, evidence
+        if (next_fk, next_nk) == (fk200, nk200):
+            evidence["outcome"] = "CONTINUATION_KEYS_DID_NOT_ADVANCE"
+            return None, evidence
+        fk200, nk200 = next_fk, next_nk
+    evidence["outcome"] = "PAGE_BUDGET_EXHAUSTED_BOOK_INCOMPLETE"
+    return None, evidence
+
+
+def _cancel_one(
+    client: MockTradingClient,
+    run: ProbeRun,
+    odno: str,
+    qty: int,
+    symbol: str | None,
+    max_pages: int,
+) -> str:
+    """Cancel one probe-created order and return its ``_CLEANUP_*`` disposition."""
+    try:
+        # Verbatim ODNO, never odno_key(): this value goes back on the wire as
+        # ORGN_ODNO, and the accept response's zero-padded form is what the
+        # broker accepted a cancel for (P-5-20260731T002112Z cleanup, rt_cd=0).
+        # Canonicalization is for COMPARISON only and must not reach a body.
+        key: str | None = odno_key(odno)
+    except ProbeError:
+        key = None
+    live_keys: set[str] | None = None
+    liveness: dict[str, Any] = {}
+    throttled = False
+    result: dict[str, Any] = {}
+    for attempt in range(1, _CLEANUP_ATTEMPTS + 1):
+        try:
+            status, result, text = client.cancel_futures_verbose(odno, qty)
         except Exception as exc:  # noqa: BLE001 - cleanup must never mask results
             run.error(f"CLEANUP EXCEPTION for {odno}: {type(exc).__name__}: {exc}")
+            return _CLEANUP_EXCEPTION
+        if result.get("rt_cd") == "0":
+            run.observe(
+                cleanup_cancel=odno,
+                ok=True,
+                msg=result.get("msg1"),
+                disposition=_CLEANUP_CANCELLED,
+                attempt=attempt,
+            )
+            return _CLEANUP_CANCELLED
+        throttled = is_rate_limited(status, result, text)
+        if not throttled:
+            live_keys, liveness = (
+                _live_odno_keys(client, symbol, max_pages)
+                if symbol
+                else (None, {"outcome": "NO_SYMBOL_TO_QUERY"})
+            )
+            if live_keys is not None and key is not None and key not in live_keys:
+                run.observe(
+                    cleanup_cancel=odno,
+                    ok=False,
+                    msg=result.get("msg1"),
+                    disposition=_CLEANUP_NOTHING_TO_CANCEL,
+                    attempt=attempt,
+                    liveness_evidence=liveness,
+                    liveness_source=(
+                        "inquire-ccnl answered rt_cd=0 for the whole book and showed "
+                        "no row with qty>0 for this ODNO — nothing was left to cancel"
+                    ),
+                )
+                return _CLEANUP_NOTHING_TO_CANCEL
+        # A throttled cancel never reached the matching engine, so the order is
+        # still resting BY CONSTRUCTION and its liveness is not in question. Asking
+        # the open-order surface here would be asking the wrong question and could
+        # answer it wrongly — the same UNDETERMINED-not-REJECTED polarity N-15's
+        # held-token sampling uses for a throttled read.
+        if attempt < _CLEANUP_ATTEMPTS:
+            time.sleep(_CLEANUP_RETRY_S * attempt)
+            continue
+        if throttled:
+            disposition = _CLEANUP_THROTTLED
+        elif live_keys is not None:
+            disposition = _CLEANUP_STILL_LIVE
+        else:
+            disposition = _CLEANUP_LIVENESS_UNKNOWN
+        run.observe(
+            cleanup_cancel=odno,
+            ok=False,
+            msg=result.get("msg1"),
+            disposition=disposition,
+            attempt=attempt,
+            liveness_evidence=liveness or {"outcome": "NOT_CONSULTED_THROTTLED"},
+        )
+        run.error(
+            f"CLEANUP FAILED — order {odno} may still be resting. "
+            f"Cancel it manually: {result.get('msg1')}"
+        )
+        return disposition
+    return _CLEANUP_LIVENESS_UNKNOWN  # pragma: no cover - loop always returns
+
+
+def _cleanup(
+    client: MockTradingClient | None,
+    run: ProbeRun,
+    odnos: list[str],
+    qty: int,
+    *,
+    symbol: str | None = None,
+    max_pages: int = 10,
+) -> dict[str, str]:
+    """Cancel every order the probe created and classify each outcome.
+
+    Returns:
+        Verbatim ODNO -> ``_CLEANUP_*`` disposition, so a probe can measure its own
+        cleanup. Empty when there was nothing to clean. Duplicate ODNOs are
+        cancelled once: an amend that rests under the SAME number appends it twice,
+        and cancelling twice would both send a pointless second request and let the
+        second outcome overwrite the first in this mapping.
+
+    A rejected cancel is not automatically a failure, and treating it as one cost
+    this campaign its whole P-8 result. An amend that issues a new ODNO consumes
+    the original order's remaining quantity, so the cleanup cancel of the ORIGINAL
+    is rejected — ``모의투자 정정/취소할 수량이 없습니다`` — exactly when the replace
+    worked. All five trials (``P-8-20260731T015220Z`` … ``P-8-20260731T020121Z``)
+    measured the replace and all five were demoted to ``NOT_MEASURED``, because
+    ``ProbeRun.to_dict`` classes any run with a non-empty ``errors`` list as not
+    measured. The probe's success condition was wired to void the probe.
+
+    The disposition comes from the open-order surface, never from the rejection
+    text. Matching on the 문언 would accept the same sentence from an order that
+    really is still resting — the operator would be told nothing while a live order
+    stayed on the book. So liveness that cannot be established counts as live, and
+    only a listing that positively answers *and* omits the order downgrades a
+    rejection from an error to an observation.
+    """
+    dispositions: dict[str, str] = {}
+    if client is None:
+        return dispositions
+    seen: list[str] = []
+    for odno in odnos:
+        if odno and odno not in seen:
+            seen.append(odno)
+    if len(seen) < len([o for o in odnos if o]):
+        run.observe(
+            cleanup_duplicate_odnos_collapsed=len([o for o in odnos if o]) - len(seen),
+            reading="the probe recorded one ODNO more than once — an amend that "
+            "rests under the same number does this — and it is cancelled once",
+        )
+    for odno in seen:
+        dispositions[odno] = _cancel_one(client, run, odno, qty, symbol, max_pages)
+    if dispositions:
+        run.measure("cleanup_liveness_note", _CLEANUP_LIVENESS_NOTE)
+    return dispositions
 
 
 def _require_symbol(args: argparse.Namespace) -> None:
@@ -1314,7 +1580,7 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
             "deduping gap is a lower bound, the smallest non-deduping gap an upper bound.",
         )
     finally:
-        _cleanup(client, run, odnos, args.quantity)
+        _cleanup(client, run, odnos, args.quantity, symbol=args.symbol)
         client.close()
     return run
 
@@ -1420,7 +1686,7 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
             "censored_trials", len([o for o in run.observations if o.get("censored")])
         )
     finally:
-        _cleanup(client, run, odnos, args.quantity)
+        _cleanup(client, run, odnos, args.quantity, symbol=args.symbol)
         client.close()
     return run
 
@@ -1513,6 +1779,76 @@ def probe_p5b(args: argparse.Namespace) -> ProbeRun:
 # ---------------------------------------------------------------------------
 
 
+#: The standing interpretation of the ``qty>0`` predicate for the COEXISTENCE
+#: consumer, written into every artifact from here on.
+#:
+#: The 2026-08-01 review (campaign README §"P-8 liveness 술어 검토") kept the
+#: predicate and fixed its reading instead, on the ground that its bias is the safe
+#: one: mistaking a dead row for a live one OVER-states coexistence, which reads as
+#: "two protective orders can be on the book at once" and defends against double
+#: exposure. That review left one instruction — record the reading in the artifact
+#: the next time the P-8 harness changes. This is that record.
+#:
+#: The argument is scoped to THIS consumer and does not transfer. Cleanup reads the
+#: same predicate with inverted polarity; see :data:`_CLEANUP_LIVENESS_NOTE`.
+_P8_COEXISTENCE_LIVENESS_NOTE = (
+    "'live' here means visible on the inquire-ccnl surface with qty>0. That is "
+    "survival ON THE QUERY SURFACE and an UPPER approximation of real survival, so "
+    "coexistence_ms is quoted as an UPPER BOUND only. For this consumer the bias is "
+    "fail-closed: over-stating coexistence over-states the protection-overlap "
+    "hazard that B_protective_request_complete defends. The dangerous direction — "
+    "missing a live leg and declaring atomicity — came from ODNO normalization and "
+    "was fixed in 55c3d162. This argument is SCOPED TO coexistence_ms: cleanup "
+    "consumes the same predicate with the opposite polarity and needs its own "
+    "guards, which is what cleanup_liveness_note records."
+)
+
+#: Why the amend-consumption reading is a reading and not a measurement.
+_P8_CONSUMPTION_NOTE = (
+    "A fill produces the SAME observation — an original that is not live and "
+    "cannot be cancelled — and P-8 does not query the execution surface, so this "
+    "field states the STRUCTURAL fact only and names no cause. The amend taking "
+    "the quantity is the leading reading because the order is placed "
+    "--price-offset-pct away from the touch specifically to avoid filling, but "
+    "'unlikely to fill' is not 'did not fill'. To attribute the cause, add the "
+    "execution inquiry P-11 already calls (_FILL_EVIDENCE_SOURCE)."
+)
+
+
+def _original_not_cancellable(
+    odnos: list[str],
+    dispositions: dict[str, str],
+    *,
+    amend_accepted: bool,
+    new_odno: str,
+) -> bool | None:
+    """Was the original order un-cancellable after the amend, on verified evidence?
+
+    ``True`` / ``False`` / ``None`` for undetermined — never a bare bool, because
+    "the cleanup could not tell" and "the original survived" are opposite findings
+    for ``B_protective_request_complete`` and collapsing them would invent one.
+
+    ``True`` requires all four of: the amend was accepted, a new ODNO exists, the
+    original's cancel was rejected, and a VERIFIED open-order surface showed the
+    original not live. The last is what ``_CLEANUP_NOTHING_TO_CANCEL`` now means —
+    an ``rt_cd=0`` walk of the whole book, not a single unchecked page.
+
+    This is stronger evidence than ``coexistence_ms``, whose poll loop can only
+    resolve intervals longer than ``poll_granularity_ms`` (1100 ms in the
+    2026-07-31 trials). It still proves neither atomicity nor causation: a
+    coexistence window shorter than the poll granularity remains unobserved
+    (runbook §8.4), and :data:`_P8_CONSUMPTION_NOTE` names the fill confound.
+    """
+    if not amend_accepted or not new_odno or len(odnos) < 2:
+        return None
+    disposition = dispositions.get(odnos[0])
+    if disposition == _CLEANUP_NOTHING_TO_CANCEL:
+        return True
+    if disposition == _CLEANUP_CANCELLED:
+        return False
+    return None
+
+
 def probe_p8(args: argparse.Namespace) -> ProbeRun:
     """P-8 REPLACE_OR_AMEND — ``RVSE_CNCL_DVSN_CD='01'`` semantics.
 
@@ -1537,6 +1873,11 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
         )
         return run
     odnos: list[str] = []
+    # Read by the cleanup measurement in ``finally``, so they must exist even on the
+    # early-return path — an undefined name there would replace a real result with a
+    # NameError raised out of the finally block.
+    amend_accepted = False
+    new_odno_seen = ""
     try:
         price, side = _resting_price(client, args)
         body = client.futures_order_body(args.symbol, args.quantity, price, side)
@@ -1555,6 +1896,9 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
         # pacing sleep before the amend is not counted into coexistence_ms.
         amended_at = client.last_send_instant()
         new_odno = str((amend.get("output") or {}).get("ODNO") or "").strip()
+        # Mirrored into function scope for the cleanup measurement in ``finally``.
+        amend_accepted = amend.get("rt_cd") == "0"
+        new_odno_seen = new_odno
         run.observe(
             original_odno=placed.odno,
             amend_rt_cd=amend.get("rt_cd"),
@@ -1600,6 +1944,7 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             round((coexist_last - amended_at) * 1000.0, 2) if coexist_last else 0.0,
         )
         run.measure("poll_granularity_ms", effective_interval_ms(args.poll_ms, args))
+        run.measure("liveness_predicate_note", _P8_COEXISTENCE_LIVENESS_NOTE)
         run.measure(
             "mode_determination",
             "Map to ReplaceSemantics only after N>=5 trials agree. A single trial "
@@ -1608,7 +1953,26 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             "interval max(--poll-ms, --pace-s) and not the requested --poll-ms.",
         )
     finally:
-        _cleanup(client, run, odnos, args.quantity)
+        dispositions = _cleanup(
+            client,
+            run,
+            odnos,
+            args.quantity,
+            symbol=args.symbol,
+            max_pages=args.max_pages,
+        )
+        if dispositions:
+            run.measure("cleanup_dispositions", dispositions)
+            run.measure(
+                "original_not_cancellable_after_amend",
+                _original_not_cancellable(
+                    odnos,
+                    dispositions,
+                    amend_accepted=amend_accepted,
+                    new_odno=new_odno_seen,
+                ),
+            )
+            run.measure("amend_consumption_note", _P8_CONSUMPTION_NOTE)
         client.close()
     return run
 
@@ -2566,7 +2930,7 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
             ],
         )
     finally:
-        _cleanup(client, run, odnos, args.quantity)
+        _cleanup(client, run, odnos, args.quantity, symbol=args.symbol)
         client.close()
     return run
 
@@ -2717,7 +3081,7 @@ def probe_nmpr_ab(args: argparse.Namespace) -> ProbeRun:
             "write path, so this result must not be extrapolated to REAL night.",
         )
     finally:
-        _cleanup(client, run, odnos, args.quantity)
+        _cleanup(client, run, odnos, args.quantity, symbol=args.symbol)
         client.close()
     return run
 

@@ -489,6 +489,138 @@ def probe_p15(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
+#: Why the token this process ALREADY holds is checked during the blackout.
+#:
+#: The four 2026-07-29 attempts all measured the wrong thing. ``B_egress_hard_fence``
+#: is about a principal being unable to obtain a USABLE credential, and
+#: ``KISAuthManager.invalidate()`` only unlinks a local cache file — it does not
+#: revoke anything at the broker. So a reissue refusal does not by itself mean the
+#: fleet is credential-less: if the previously issued token still authorizes calls,
+#: there is no egress blackout at all, only a reissue cooldown. The two are
+#: separate quantities and the probe now reports both.
+_N15_HELD_TOKEN_NOTE = (
+    "reissue_refusal_window and held_token_usable are DIFFERENT measurements. "
+    "invalidate() unlinks a local cache file (shared/kis/auth.py:396-405); it does "
+    "not revoke the token at the broker. A process that kept the token string in "
+    "memory may keep transacting through the whole refusal window. Only the window "
+    "in which NO usable credential exists feeds B_egress_hard_fence."
+)
+
+#: Dispositions for the held-token usability sample.
+_HELD_OK = "ACCEPTED"
+_HELD_REJECTED = "REJECTED"
+_HELD_UNKNOWN = "UNDETERMINED"
+
+#: What ``_HELD_REJECTED`` requires, and why it may never be observed at all.
+#:
+#: KIS signals plenty of failures as HTTP 200 with ``rt_cd != "0"``, so an
+#: authorization rejection may well arrive in that shape rather than as 401/403.
+#: This probe does NOT map 200+``rt_cd!=0`` to REJECTED, because no artifact in
+#: this campaign has yet recorded the token-rejection code on this surface and
+#: inventing the mapping would let an ordinary business rejection — a bad symbol, a
+#: closed session — read as a credential failure and manufacture an egress
+#: blackout. The honest consequence is stated rather than hidden: REJECTED may be
+#: structurally unreachable here, and a tally of all-UNDETERMINED is therefore NOT
+#: evidence that the held token kept working.
+_N15_REJECTION_REACHABILITY_NOTE = (
+    "REJECTED is asserted only on HTTP 401/403. KIS also signals failures as "
+    "200+rt_cd!=0, and if a token rejection arrives in THAT shape this probe "
+    "records UNDETERMINED, not REJECTED — the mapping is unmeasured and inventing "
+    "it would let a business rejection masquerade as a credential failure. So "
+    "REJECTED may be unreachable on this surface. An all-UNDETERMINED tally means "
+    "the question was not answered; it does NOT mean the held token kept working, "
+    "and nothing may be written into B_egress_hard_fence from it. To make REJECTED "
+    "reachable, first measure the rejection code by presenting a known-bad token."
+)
+
+
+def _held_token_usable(
+    session: Any, creds: Any, token: str, args: argparse.Namespace
+) -> tuple[str, dict[str, Any]]:
+    """Is the token this process already holds still accepted by the broker?
+
+    Uses the cheapest authenticated read there is — the same 시세 endpoint P-13
+    ramps — and consumes the QUERY quota, not the token quota, so it does not
+    lengthen the very window it is sampling.
+
+    Returns:
+        ``(_HELD_*, evidence)``. ``_HELD_UNKNOWN`` whenever the call did not
+        produce an authorization verdict, including a throttle: a throttled call
+        never reached the authorization check, and reading it as "rejected" would
+        manufacture a blackout out of a rate limit.
+    """
+    is_futures = args.asset == "futures"
+    path = _FUT_PRICE_PATH if is_futures else _STOCK_PRICE_PATH
+    url = f"{MOCK_BASE_URL}{path}"
+    assert_mock_host(url)
+    headers = {
+        "content-type": "application/json",
+        "authorization": f"Bearer {token}",
+        "appkey": creds.app_key,
+        "appsecret": creds.app_secret,
+        "tr_id": "FHMIF10000000" if is_futures else "FHKST01010100",
+        "custtype": "P",
+    }
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "F" if is_futures else "J",
+        "FID_INPUT_ISCD": args.symbol,
+    }
+    try:
+        status, parsed, _ms, text = http_json(
+            session, "GET", url, headers=headers, params=params, timeout=10.0
+        )
+    except Exception as exc:  # noqa: BLE001 - a transport failure is not a verdict
+        return _HELD_UNKNOWN, {"transport_error": f"{type(exc).__name__}: {exc}"}
+    evidence = {
+        "http_status": status,
+        "rt_cd": parsed.get("rt_cd"),
+        "msg_cd": parsed.get("msg_cd"),
+        "msg1": parsed.get("msg1"),
+        "raw_excerpt": text[:160],
+    }
+    if is_rate_limited(status, parsed, text):
+        return _HELD_UNKNOWN, evidence
+    if status == 200 and parsed.get("rt_cd") == "0":
+        return _HELD_OK, evidence
+    if status in (401, 403):
+        return _HELD_REJECTED, evidence
+    # Everything else — notably HTTP 200 with rt_cd != "0" — stays UNDETERMINED.
+    # See _N15_REJECTION_REACHABILITY_NOTE: the token-rejection code on this
+    # surface is unmeasured, and guessing it would turn a business rejection into a
+    # fabricated credential failure.
+    return _HELD_UNKNOWN, evidence
+
+
+def _backoff_schedule(args: argparse.Namespace) -> list[float]:
+    """Sleep before each reissue retry, in order.
+
+    Exponential, floored at ``--reissue-poll-s`` and capped at
+    ``--blackout-backoff-max-s``. Two reasons the old fixed 5 s poll had to go:
+
+    * **Budget.** 36 token calls in 180 s on an app key the whole fleet shares,
+      against a window since measured at ≥ 8.8 min, is a lot of quota spent to
+      learn nothing. The defaults spend 12 calls to reach 1065 s ≈ 17.8 min:
+      gaps 15, 30, 60, then 120 × 8, so the twelfth attempt lands at t=1065 s.
+      ``--blackout-timeout-s`` defaults to 1200 s so the schedule runs to its end
+      instead of being truncated mid-way — at the previous 900 s ceiling the run
+      stopped after attempt 10 at t=825 s, and the "12 calls / ~18 min" claim in
+      the runbook was arithmetic the code did not honour.
+    * **Confounding.** If the broker restarts its cooldown on every REJECTED
+      attempt, dense polling makes the window unbounded and the probe measures its
+      own poll rate. Widening gaps discriminate the two models directly — a refusal
+      observed after a gap far larger than the documented minute refutes the
+      restart model at that gap, and ``reissue_refusal_survived_gap_s`` reports it.
+
+    ``--blackout-backoff-factor 1.0`` reproduces the old fixed-interval poll.
+    """
+    delays: list[float] = []
+    delay = max(float(args.reissue_poll_s), 0.0)
+    for _ in range(max(int(args.blackout_max_attempts) - 1, 0)):
+        delays.append(min(delay, float(args.blackout_backoff_max_s)))
+        delay *= max(float(args.blackout_backoff_factor), 1.0)
+    return delays
+
+
 def probe_n15(args: argparse.Namespace) -> ProbeRun:
     """N-15 token blackout — 1-minute reissue limit x invalidate→retry interaction.
 
@@ -507,20 +639,42 @@ def probe_n15(args: argparse.Namespace) -> ProbeRun:
       1. obtain a token,
       2. call ``KISAuthManager.invalidate()`` to force a reissue, exactly as the
          runtime retry path does,
-      3. immediately attempt reissue, and keep attempting on a spaced schedule
-         until one succeeds,
-      4. blackout = (first success) - (invalidate).
+      3. attempt reissue on an exponentially widening schedule until one succeeds,
+         sampling at each step whether the token the process ALREADY holds is
+         still accepted,
+      4. refusal window = (first success) - (invalidate).
 
-    Report the maximum over trials. A blackout shorter than 60s means the
-    documented per-minute limit was not the binding constraint on this attempt —
-    say that, do not average it away.
+    Report the maximum over trials. A window shorter than 60s means the documented
+    per-minute limit was not the binding constraint on this attempt — say that, do
+    not average it away.
+
+    Three defects of the 2026-07-29 attempts are closed here, each demonstrated by
+    artifacts ``N-15-20260729T063312Z`` … ``064922Z`` — four runs, every one of
+    them ``duration_s = 0.0`` with ``measurements: {}``:
+
+    * **The probe could not start.** Step 1 called ``auth.get_token()``, which
+      raises when the broker refuses, and ``run.py:135-150`` then rebuilt a blank
+      ProbeRun — discarding even the observations already recorded. But a refusal
+      at step 1 IS the phenomenon under study: a blackout was already in progress.
+      It is now recorded and the observation phase proceeds from it.
+    * **The window could not fit.** ``--blackout-timeout-s`` defaulted to 180 s
+      against a refusal since observed to persist ≥ 8.8 min (06:40:35Z → 06:49:22Z
+      with one intervening attempt), so every run was structurally censored.
+    * **The wrong quantity.** See :data:`_N15_HELD_TOKEN_NOTE`.
+
+    What those four artifacts already refute, and what the widening schedule keeps
+    testing: the refusals at 06:40:35Z and 06:49:22Z came 265 s and 527 s after the
+    previous attempt. Both are far beyond the documented minute, so neither the
+    literal "1분당 1회" reading NOR the "every rejected attempt restarts the
+    cooldown" reading accounts for them.
     """
     spec = get("N-15")
     run, creds = _setup(spec, args)
     if not args.confirm:
         dry_run_banner(spec)
         run.observe(
-            would_do="issue -> invalidate -> spaced reissue attempts until success"
+            would_do="issue -> invalidate -> widening reissue attempts until "
+            "success, sampling held-token usability at each step"
         )
         return run
     import requests
@@ -531,48 +685,108 @@ def probe_n15(args: argparse.Namespace) -> ProbeRun:
     cfg = build_auth_config(creds, cache_dir)
     auth = KISAuthManager(cfg, use_singleton=False)
     session = requests.Session()
+    schedule = _backoff_schedule(args)
     run.observe(
         private_token_cache=str(cache_dir),
         safety_note="invalidate() unlinks the cache file (shared/kis/auth.py:402-405); "
         "the probe uses its own directory so runtime workers are unaffected.",
+        token_calls_budget_per_trial=int(args.blackout_max_attempts),
+        backoff_schedule_s=[round(d, 1) for d in schedule],
     )
+    if not args.symbol:
+        run.skip(
+            "held-token usability",
+            "--symbol not given, so no authenticated read was available to ask "
+            "whether the token already held still authorizes. The reissue window "
+            "below is therefore NOT a usable-credential window and must not be "
+            "read as one.",
+        )
+    # Split by origin, never pooled. A PRE_EXISTING_REFUSAL trial starts the clock
+    # when the PROBE noticed the blackout, not when the blackout began, so its
+    # elapsed time UNDER-states the window. Summarising it together with a clean
+    # invalidate→reissue sample would push the candidate down — the fail-open
+    # direction for B_egress_hard_fence, which is a hard maximum.
     blackouts: list[float] = []
+    pre_existing_bounds: list[float] = []
+    censored_trials = 0
+    max_refused_gap_s = 0.0
+    held_samples: list[str] = []
+    token_calls = 0
     try:
         for trial in range(args.trials):
-            auth.get_token()  # ensure we start holding a valid token
-            invalidated_at = time.monotonic()
-            auth.invalidate()
+            held_token = ""
+            origin = "POST_INVALIDATE"
+            try:
+                held_token = auth.get_token()
+            except Exception as exc:  # noqa: BLE001 - a refusal here IS the observation
+                origin = "PRE_EXISTING_REFUSAL"
+                run.observe(
+                    trial=trial,
+                    initial_token="REFUSED",
+                    detail=f"{type(exc).__name__}: {exc}",
+                    reading="a blackout was already in progress when this trial "
+                    "started, so the window recorded below is a LOWER bound on it "
+                    "— its start is unobserved",
+                )
+            started_at = time.monotonic()
+            if origin == "POST_INVALIDATE" and not args.blackout_observe_only:
+                auth.invalidate()
             attempts = 0
             first_success: float | None = None
             rejections: list[dict[str, Any]] = []
-            deadline = invalidated_at + args.blackout_timeout_s
-            while time.monotonic() < deadline:
+            last_attempt_at = started_at
+            for step in range(int(args.blackout_max_attempts)):
+                if time.monotonic() - started_at > args.blackout_timeout_s:
+                    break
                 attempts += 1
+                token_calls += 1
+                now = time.monotonic()
+                gap_s = now - last_attempt_at
+                last_attempt_at = now
                 status, data, _ms, text = _issue_token_raw(session, creds)
                 if "access_token" in data:
                     first_success = time.monotonic()
                     break
+                max_refused_gap_s = max(max_refused_gap_s, gap_s)
+                held_state, held_evidence = (
+                    _held_token_usable(session, creds, held_token, args)
+                    if (held_token and args.symbol)
+                    else (_HELD_UNKNOWN, {"reason": "no held token or no --symbol"})
+                )
+                held_samples.append(held_state)
                 rejections.append(
                     {
                         "attempt": attempts,
-                        "at_ms": round((time.monotonic() - invalidated_at) * 1000.0, 1),
+                        "at_ms": round((time.monotonic() - started_at) * 1000.0, 1),
+                        "gap_since_prev_attempt_s": round(gap_s, 1),
                         "http_status": status,
                         "msg_cd": data.get("msg_cd"),
                         "msg1": data.get("msg1"),
                         "raw_excerpt": text[:160],
+                        "held_token": held_state,
+                        "held_token_evidence": held_evidence,
                     }
                 )
-                time.sleep(args.reissue_poll_s)
+                if step < len(schedule):
+                    time.sleep(schedule[step])
             if first_success is None:
+                censored_trials += 1
                 run.error(
                     f"trial {trial}: no successful reissue within "
-                    f"{args.blackout_timeout_s}s — CENSORED; the blackout is at "
-                    "least this long"
+                    f"{round(time.monotonic() - started_at, 1)}s over {attempts} "
+                    "attempts — CENSORED; the refusal window is at least this long"
                 )
+            elif origin == "PRE_EXISTING_REFUSAL":
+                pre_existing_bounds.append((first_success - started_at) * 1000.0)
             else:
-                blackout_ms = (first_success - invalidated_at) * 1000.0
-                blackouts.append(blackout_ms)
-            run.observe(trial=trial, attempts=attempts, rejections=rejections)
+                blackouts.append((first_success - started_at) * 1000.0)
+            run.observe(
+                trial=trial,
+                origin=origin,
+                observe_only=bool(args.blackout_observe_only),
+                attempts=attempts,
+                rejections=rejections,
+            )
             time.sleep(args.inter_trial_s)
 
         run.measure(
@@ -581,14 +795,52 @@ def probe_n15(args: argparse.Namespace) -> ProbeRun:
                 blackouts, margin_pct=args.margin_pct, label="invalidate_to_reissue_ms"
             ),
         )
-        run.measure("reissue_poll_granularity_s", args.reissue_poll_s)
+        run.measure(
+            "token_blackout_window_candidate_origin",
+            "POST_INVALIDATE trials only — PRE_EXISTING_REFUSAL samples are "
+            "reported separately under pre_existing_refusal_lower_bound_ms and are "
+            "NOT summarised here, because their start instant is unobserved and "
+            "pooling them would understate a hard-maximum bound.",
+        )
+        run.measure(
+            "pre_existing_refusal_lower_bound_ms",
+            (
+                {
+                    "samples": [round(v, 1) for v in pre_existing_bounds],
+                    "max": (
+                        round(max(pre_existing_bounds), 1)
+                        if pre_existing_bounds
+                        else None
+                    ),
+                    "provenance": "CENSORED_LOWER_BOUND — the blackout was already "
+                    "under way when the trial started, so each sample is a LOWER bound "
+                    "on that trial's true window and none of them may be summarised as "
+                    "a measured value",
+                }
+                if pre_existing_bounds
+                else None
+            ),
+        )
+        run.measure(
+            "reissue_refusal_lower_bound",
+            _refusal_lower_bound(censored_trials, blackouts, pre_existing_bounds),
+        )
+        run.measure("reissue_refusal_survived_gap_s", round(max_refused_gap_s, 1))
+        run.measure("token_endpoint_calls_made", token_calls)
+        run.measure("held_token_usability_samples", _tally(held_samples))
+        run.measure("held_token_note", _N15_HELD_TOKEN_NOTE)
+        run.measure(
+            "held_token_rejection_reachability", _N15_REJECTION_REACHABILITY_NOTE
+        )
+        run.measure("reissue_poll_schedule_s", [round(d, 1) for d in schedule])
         run.measure(
             "interaction_verdict",
-            "A blackout > 0 confirms the plan §2:68 interaction risk: the "
-            "invalidate-and-retry path (auth.py:64-104) can leave the process "
-            "without a usable token while the 1-per-minute reissue limit holds. "
-            "A blackout ~= 0 means the limit did not bind on this attempt — it "
-            "does NOT prove the limit is absent.",
+            "A refusal window > 0 confirms the plan §2:68 interaction risk ONLY "
+            "when held_token_usability_samples shows the previously issued token "
+            "was also rejected. A refusal window with the held token still "
+            "ACCEPTED is a reissue cooldown, not an egress blackout, and must not "
+            "be written into B_egress_hard_fence as one. A window ~= 0 means the "
+            "limit did not bind on this attempt — it does NOT prove it is absent.",
         )
         run.measure(
             "shared_app_key_scope",
@@ -599,6 +851,53 @@ def probe_n15(args: argparse.Namespace) -> ProbeRun:
     finally:
         session.close()
     return run
+
+
+def _tally(samples: list[str]) -> dict[str, int]:
+    """Count each held-token disposition, keeping every state visible at zero.
+
+    Zeros are kept rather than omitted: ``REJECTED: 0`` tells a reader the question
+    was asked and answered, whereas a missing key is indistinguishable from a probe
+    that never sampled at all.
+    """
+    return {
+        state: samples.count(state)
+        for state in (_HELD_OK, _HELD_REJECTED, _HELD_UNKNOWN)
+    }
+
+
+def _refusal_lower_bound(
+    censored_trials: int,
+    blackouts: list[float],
+    pre_existing_bounds: list[float],
+) -> dict[str, Any] | None:
+    """The censored-trial bound, so a timed-out run still carries its evidence.
+
+    ``None`` when no trial was censored.
+
+    ``censored_trials`` is counted at the censoring site rather than recovered by
+    scanning ``run.errors`` for the substring ``"CENSORED"``. The scan was
+    coincidence-prone in both directions: any unrelated error mentioning the word —
+    an operator ``--note``, a broker message quoted verbatim — would have inflated
+    the count, and a reworded censoring message would have silently zeroed it.
+
+    The provenance rule is deliberately left alone: ``run.error`` has already been
+    called for a censored trial, so the artifact stays ``NOT_MEASURED``. What
+    changes is that it now carries the bound and the reason instead of the empty
+    ``measurements`` object the four 2026-07-29 artifacts shipped. A lower bound
+    cited together with its censoring reason is usable evidence; silence is not.
+    """
+    if censored_trials <= 0:
+        return None
+    return {
+        "censored_trials": censored_trials,
+        "completed_trials": len(blackouts),
+        "pre_existing_origin_trials": len(pre_existing_bounds),
+        "reading": "the reissue refusal lasted AT LEAST the elapsed time named in "
+        "each CENSORED error; this run puts no upper bound on the true window",
+        "provenance": "CENSORED_LOWER_BOUND — the artifact is NOT_MEASURED and this "
+        "value may be cited only together with that fact",
+    }
 
 
 def add_auth_args(parser: argparse.ArgumentParser) -> None:
@@ -620,8 +919,46 @@ def add_auth_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-sessions", type=int, default=5)
     parser.add_argument("--max-subscriptions", type=int, default=45)
     parser.add_argument("--reissue-gap-s", type=float, default=5.0)
-    parser.add_argument("--reissue-poll-s", type=float, default=5.0)
-    parser.add_argument("--blackout-timeout-s", type=float, default=180.0)
+    parser.add_argument(
+        "--reissue-poll-s",
+        type=float,
+        default=15.0,
+        help="First gap between N-15 reissue attempts; the base of the backoff, "
+        "not the whole schedule. Was 5.0 — that spent 36 token calls per 180 s "
+        "on a shared app key and learned nothing.",
+    )
+    parser.add_argument(
+        "--blackout-backoff-factor",
+        type=float,
+        default=2.0,
+        help="Multiplier applied to the N-15 reissue gap after each refusal. "
+        "1.0 reproduces the old fixed-interval poll.",
+    )
+    parser.add_argument("--blackout-backoff-max-s", type=float, default=120.0)
+    parser.add_argument(
+        "--blackout-max-attempts",
+        type=int,
+        default=12,
+        help="Token-endpoint calls N-15 may make per trial. This is the quota "
+        "budget the rest of the campaign has to live with — P-13 shares it.",
+    )
+    parser.add_argument(
+        "--blackout-observe-only",
+        action="store_true",
+        help="N-15: never call invalidate(); only observe when reissue becomes "
+        "available again. Use when a blackout is already in progress, or when the "
+        "probe's own cache must not be disturbed.",
+    )
+    parser.add_argument(
+        "--blackout-timeout-s",
+        type=float,
+        default=1200.0,
+        help="Wall-clock ceiling for one N-15 trial. Was 180 s, which is shorter "
+        "than the ≥8.8 min refusal observed on 2026-07-29 and therefore censored "
+        "every run by construction. 1200 s is chosen to exceed the default backoff "
+        "schedule's own span (1065 s to the 12th attempt) so the ceiling does not "
+        "silently truncate the budget it is paired with.",
+    )
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--inter-trial-s", type=float, default=1.0)
 

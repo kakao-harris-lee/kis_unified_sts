@@ -143,14 +143,14 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | **P-16** | BROKER_TIME | QUERY | MOCK_VTS | `python -m tools.broker_probes.run P-16 --confirm` | ~5 min | LOW | 아니오 |
 | **P-EXT** | POSITIONS_BALANCES_MARGIN | MANUAL | MOCK_VTS | `python -m tools.broker_probes.run P-EXT --confirm` | ~15 min/trial (운영자 개입) | MEDIUM | 아니오 |
 | **P-FQP** | CANCELLATION | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-FQP --confirm` | ~20 min | HIGH | 예 |
-| **N-15** | CREDENTIALS_AUTHORIZATION | AUTH | MOCK_VTS | `python -m tools.broker_probes.run N-15 --confirm` | ~5 min/trial (매 trial ≥60s 대기) | HIGH | 아니오 |
+| **N-15** | CREDENTIALS_AUTHORIZATION | AUTH | MOCK_VTS | `python -m tools.broker_probes.run N-15 --symbol A05608 --trials 1 --confirm` | ~18 min/trial (지수 백오프 12콜 = 15·30·60·120×8s, 12번째 시도 t=1065s; `--blackout-timeout-s` 기본 1200s가 이를 자르지 않도록 맞춰져 있다) | HIGH | 아니오 |
 | **N-16** | POSITIONS_BALANCES_MARGIN | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run N-16 --confirm` | 1 call | MEDIUM | 아니오 |
 | **N-17** | MARKET_INSTRUMENT_CONSTRAINTS | SPEC_CROSSCHECK | NONE | (스크립트 아님 — **§7 체크리스트**) | ~1 h 데스크워크 | LOW | 아니오 |
 | **N-18** | MARKET_INSTRUMENT_CONSTRAINTS | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run N-18 --confirm` | 3 calls | MEDIUM | 아니오 |
 | **P-NMPR** | MARKET_INSTRUMENT_CONSTRAINTS | ORDER | MOCK_VTS | `python -m tools.broker_probes.run P-NMPR --confirm --asset futures` | ~2 min | HIGH | 예 |
 | **P-BAL** | POSITIONS_BALANCES_MARGIN | REAL_READ_ONLY | REAL_PROD / MOCK_VTS (`--env`) | `python -m tools.broker_probes.run P-BAL --asset stock --env real --confirm` | ~1 min | LOW | 아니오 |
 | **P-R5-PRE** | OPEN_ORDER_QUERY | REAL_READ_ONLY | REAL_PROD | `python -m tools.broker_probes.run P-R5-PRE --symbol <mini> --expect-account-fingerprint <hex> --confirm` | 5 GET (~10 s) | MEDIUM | 아니오 |
-| **P-R5** | OPEN_ORDER_QUERY | ORDER | REAL_PROD | **§5.6 전용 절차** (`--i-understand-this-places-real-orders`) | ~5 min at N=3 | **HIGH — 실자금** | **예 (실전)** |
+| **P-R5** | OPEN_ORDER_QUERY | ORDER | REAL_PROD | **§5.7 전용 절차** (`--i-understand-this-places-real-orders`) | ~5 min at N=3 | **HIGH — 실자금** | **예 (실전)** |
 
 > **P-NMPR·P-BAL·P-R5-PRE·P-R5는 정본 16에 속하지 않는다.** 각각 N-17 대조,
 > wave-3b 런타임 트레이스(H4), 그리고 wave-3b D-2의 NOT-IN-SCOPE 항목에서 파생된
@@ -160,8 +160,8 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 >
 > **⚠ `P-R5`는 이 표에서 유일하게 실전 계좌에 주문을 내는 프로브다.** 다른 모든
 > `주문 발생 = 예` 행은 **모의투자 전용**이며 `assert_mock_host()`로 구조적으로
-> 강제된다. `P-R5`만 그 규칙 밖에 있으므로, 실행 전 **§5.6을 전부** 읽는다.
-> 절대 `--confirm`만으로 실행되지 않는다(§5.6.2의 5중 게이트).
+> 강제된다. `P-R5`만 그 규칙 밖에 있으므로, 실행 전 **§5.7**을 전부 읽는다.
+> 절대 `--confirm`만으로 실행되지 않는다(**§5.7.2**의 5중 게이트).
 >
 > **P-BAL의 표상 `환경`은 두 값을 가질 수 있는 유일한 프로브다.** `registry.py`의
 > `environment`는 기본 대상인 `REAL_PROD`이지만, 아티팩트의 `environment`는
@@ -177,7 +177,7 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | P-2 | 동일 본문 2회 전송 → ODNO 2개면 dedup 없음. 1개면 창 길이를 **구간**으로 브래킷 |
 | P-5 | 주문 수락(t0) → 조회 가시(t1) 수렴 지연. `B_broker_query_consistency`의 유일한 원천 |
 | P-5b | 연속조회 키가 실제로 전진하는가 (Q-OOQ-1 — 런타임은 항상 1페이지만 읽는다) |
-| P-8 | `RVSE_CNCL_DVSN_CD="01"` 정정의 신/구 ODNO 관계와 **중첩 구간**(비원자성 = 보호 중첩 위험) |
+| P-8 | `RVSE_CNCL_DVSN_CD="01"` 정정의 신/구 ODNO 관계와 **중첩 구간**(비원자성 = 보호 중첩 위험). 정리 단계에서 **원주문 취소가 `정정/취소할 수량이 없습니다`로 거부되는 것은 실패가 아니라 관측이다** — 정정이 원주문 잔량을 가져갔다는 뜻이며, 폴 해상도(`poll_granularity_ms`)보다 강한 replace 증거로 `original_quantity_consumed_by_amend`에 기록된다. 단, 이 격하의 인가 조건은 **문언이 아니라 구조**이며 3중이다: (i) 조회면이 **`rt_cd=0`으로 긍정 응답** — 이 브로커는 빈 결과를 `rt_cd='7'`+`KIOK0560`으로 표기하므로(`P-BAL-20260731T114344Z`) `output1`만 보면 거부를 "없음"으로 오독한다, (ii) **연속조회 키를 끝까지 걸어 책 전체를 확인** — 같은 면이 `P-5b-20260731T014917Z`에서 15행/page·continuation=true로 실측됐으므로 1페이지 읽기는 16번째 주문을 구조적으로 못 본다(`liveness_evidence.outcome`·`pages_walked` 기록), (iii) **스로틀 거부는 liveness를 조회하지 않고 재시도** — 엔진에 도달하지 않았으므로 주문은 정의상 살아 있다. 셋 중 하나라도 불충족이면 종전대로 `errors`에 남아 `NOT_MEASURED`가 된다. 또한 `original_not_cancellable_after_amend`는 **구조적 사실만** 진술하며 원인을 지목하지 않는다 — 체결도 동일 관측을 만들고 P-8은 체결면을 조회하지 않는다(`amend_consumption_note`) |
 | P-11 | 체결 → 잔고 반영 지연. **주식 전용**(모의는 선물 잔고 미제공 — `client.py:1026` NOTE + 가드 `:1031-1033`). **기본 시장가**(`--stock-order-type market`, `ORD_DVSN=01`) — 지정가는 모의에서 체결되지 않았다(§5.2 주석). 잔고 baseline은 **제출 전**에 읽는다(시장가는 ms 내 체결 → 제출 후 baseline은 자기 체결을 이미 포함, §5.5). 체결 여부는 잔고와 **독립**으로 읽기전용 주식일별주문체결조회(`VTTC0081R`)가 확정하며 `fill_case`는 4상태다. 폴 간격이 `--pace-s`로 하한되므로 산출은 "반영 ≤ 실효 폴 1간격"의 **상한**이지 점추정이 아니다(§8.3) |
 | P-13 | 최초 스로틀 지점과 회복 시간. repo의 5/20 rps는 **자가 상한**이지 broker 한도가 아니다 |
 | P-14 | 동시 세션 수·구독 상한. `streaming.yaml:50`의 "KIS 제한: 41" 주석을 사실화하거나 반증 |
@@ -185,7 +185,7 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 | P-16 | broker 시각 대 로컬 KST 편차. 시각 미노출이면 그 자체가 결론(BROKER_TIME=UNKNOWN) |
 | P-EXT | HTS/MTS 수동 주문의 탐지 지연. push 구독 0건이므로 **폴링 간격이 하한** |
 | P-FQP | 취소 직후 late-event 창. 관측 0건은 `0`이 **아니라** "미확립" |
-| N-15 | invalidate→재발급 사이 **토큰 공백 창** (계획 §2:68 상호작용 리스크 실측) |
+| N-15 | invalidate→재발급 사이 **토큰 공백 창** (계획 §2:68 상호작용 리스크 실측). **두 값을 분리해 측정한다**: ① 재발급 거부 창, ② 그 동안 **이미 보유한 토큰이 계속 인증되는가**(`held_token_usability_samples`). `invalidate()`는 로컬 캐시 파일만 지우고 broker 측 revoke가 아니므로, ①만 크고 ②가 `ACCEPTED`면 그것은 재발급 쿨다운이지 egress blackout이 아니다 — `B_egress_hard_fence`에 기입 금지. ②를 얻으려면 **`--symbol` 필수**(없으면 아티팩트에 명시적 skip이 남는다). **기입 경계 3건**: (i) ②의 `UNDETERMINED`는 "질문에 답하지 못함"이지 "토큰이 살아 있었음"이 **아니다** — `REJECTED`는 401/403에서만 성립하고 KIS는 `200+rt_cd≠0`으로도 실패를 신호하므로 **구조적으로 도달 불가일 수 있다**(`held_token_rejection_reachability`). 전건 `UNDETERMINED`면 기입 금지. (ii) `PRE_EXISTING_REFUSAL` origin trial은 시작 시점이 미관측이라 **전부 UNDETERMINED**가 되고, 그 창 값은 `pre_existing_refusal_lower_bound_ms`(하한·CENSORED)로만 인용한다 — `token_blackout_window_candidate`에는 **clean origin만** 집계된다. (iii) censored trial이 있으면 아티팩트는 `NOT_MEASURED`이며 `reissue_refusal_lower_bound`는 그 사실과 함께만 인용 |
 | N-16 | `CTFN6118R` 야간 잔고 응답 **스키마만** 포착 (`tr_ids.yaml` 편입은 별도 커밋) |
 | N-17 | 공식 명세 대조 — 주문 요청 필드·TIF·정정취소 값집합 (**§7**) |
 | N-18 | 실전 조회 3건: program-trade 행 상한 / SOX 표기 / 야간 코드 응답 |
@@ -203,6 +203,30 @@ P-11 전용 인자 2건: `--stock-order-type {market,limit}`(기본 **market**) 
 `B_external_activity_detect`/`_contain`이 한 bullet을 공유하므로 10 bullet = 11키다.
 현재값·semantics·failure_response·measurement_source는 VERIFICATION-PROFILE-002.yaml
 직독(행번호 표기).
+
+> **⚠ "broker bounds 10키"는 판본이 둘이고 두 집합은 서로 다르다 — 혼용 인용 금지.**
+>
+> - **판본 ①(본 절)** = 설계 #10 10-bullet 유래 = 아래 표의 **distinct 11키**.
+> - **판본 ②** = VERIFICATION-PROFILE-002 측 `value_ms: null` **브로커 10키**
+>   (`docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md:60-71`).
+>
+> 두 집합의 **교집합은 6키뿐**이다:
+>
+> | 구분 | 키 | 비고 |
+> |---|---|---|
+> | **공통 6** | `B_external_activity_detect` · `B_broker_query_consistency` · `B_final_quantity_proof` · `B_late_fill_observation` · `B_rate_limit_recovery` · `B_protective_request_complete` | 양 판본에 모두 존재 — 이 캠페인이 실제로 채우는 대상 |
+> | **판본 ① 전용 5** | `B_external_activity_contain` · `B_startup_reconciliation` · `B_capability_claim_to_send` · `B_egress_hard_fence` · `B_venue_constraint_loss_detect` | 전부 our-side이고 값이 **이미 APPROVED(비-null)** ⇒ 판본 ②(null 집합)에 구조적으로 들어갈 수 없다 |
+> | **판본 ② 전용 4** | `B_protection_gap` · `B_protection_overlap` · `B_non_trade_event_detect` · `B_non_trade_reconcile` | 본 런북에서는 §4.2 **인접 키**로 분리 등재된 것들 |
+>
+> ⇒ **"10키를 커버했다"는 문장은 어느 10인지 명시하지 않으면 커버리지 주장이
+> 어긋난다.** 판본 ①의 11키 중 프로브가 공급하는 것은 broker 소유 6키뿐이고, 판본
+> ②의 10키 중 4키(위 마지막 행)는 이 런북에 **정의된 프로브 자체가 없다**.
+>
+> **코드 정본**: `tools/broker_probes/registry.py`의 `BOUND_KEYS`(:58-172, 11키 =
+> 판본 ①)와 `ADJACENT_BOUND_KEYS`(:176-228, 5키 = 판본 ② 전용 4키 +
+> `B_post_trade_effect_to_obligation_commit`). `--coverage`의
+> `bound_keys_not_touched`는 **`BOUND_KEYS`(판본 ①)만** 대상으로 계산한다
+> (`registry.py:885`) — 이 출력을 판본 ② 커버리지로 읽지 말 것.
 
 | bound key | VP-002 행 | 현재값 | semantics | failure_response | measurement_source | 소유 | 공급 프로브 |
 |---|---|---|---|---|---|---|---|
@@ -605,6 +629,29 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
 > GET + allowlist로 조회에만 묶여 있다. **P-R5는 둘 다 아니다.**
 > 읽지 않고 실행하지 말 것.
 
+> **⚠⚠ 미해소 불일치 — 실전 선물 계좌 지문. P-R5-PRE 실행 전 운영자 확인 필수.**
+>
+> 이 계좌의 지문에 대해 리포 안에 **서로 다른 두 값이 살아 있고, 문서만으로는 어느
+> 쪽이 옳은지 판정할 수 없다.** 해소는 운영자의 실계좌 확인 사항이다.
+>
+> | 값 | 좌표 | 어떤 종류의 표면에서 왔는가 |
+> |---|---|---|
+> | `00bcc5b3a87b` | 본 런북 5곳(`:538` §5.6 소싱표 · `:655` 아래 조건 3 · `:733`/`:774` 커맨드 예시 · `:751` 아티팩트 필드) + 실행 아티팩트(`N-16-20260729T132547Z.json:40` 등) + INSTANCE draft(`KIS-BROKER-CAPABILITY-PROFILE-draft.yaml` — REAL_PROD 문서의 N-16 아티팩트 등재 `account_fingerprint` 2곳; 이 파일은 행번호 드리프트가 잦아 필드명으로 인용한다) + 캠페인 README 2026-07-31 Plan A census 4지문(`README.md:475`) | **프로브 실행 산출**(아티팩트 `credentials.account_fingerprint`)과 그 전재 |
+> | `8304d859b87f` | 캠페인 README `:575`(2026-08-04 운영자 결정 기록, "`.env.real` 배선 일치 2026-08-04 재검증") | **운영자 문언**의 전재 |
+>
+> **출현 빈도는 정확성의 근거가 아니다** — 위 표는 어느 값이 옳은지 말하지 않는다.
+> 참고로 as-of 실측: HEAD `670aef6a` 기준 `8304d859b87f`는 리포 전역 **1회**(README `:575`)였고,
+> 현재 워킹트리에는 병렬 레인이 추가한 **양기록**이 더 있다(draft YAML `fingerprint_note` — 두 지문을
+> 나란히 적고 "**두 지문의 계좌 동일성은 판정하지 않는다**"고 명시 · README `:724` 동일 취지).
+> **이 카운트는 커밋 시점마다 달라진다. 인용 전 직접 재실측할 것** — 위 숫자를 census로 굳히지 말 것.
+>
+> **규율**: 위 5곳의 `00bcc5b3a87b` 본문은 *당시-기록*이므로 재작성하지 않는다.
+> `P-R5-PRE`를 실행할 때 `--expect-account-fingerprint`에 넣을 값은 **런북 예시를
+> 복사하지 말고 운영자가 그날 확인한 값**을 쓴다. 불일치하면 프로브가
+> `ABORT_ACCOUNT_FINGERPRINT_MISMATCH`(`tools/broker_probes/probes_real_order.py:321`)로
+> 스스로 중단하며, **그 중단은 오류가 아니라 이 불일치가 아직 살아 있다는 신호다** —
+> 플래그 값을 바꿔가며 재시도하지 말고 운영자에게 되돌린다.
+
 #### 5.7.0 절대 선행 조건 (하나라도 미충족 → 실행 금지)
 
 | # | 조건 | 확인 방법 |
@@ -612,7 +659,7 @@ P-13이 측정한 구간(clean 하한 **1.0 rps** / 스로틀 상한 **2.0 rps**
 | 1 | **실전 라이브 선물 매매가 무장 해제 상태** | `config/futures_live.yaml::enabled == false` **그리고** Redis `futures:live:suspended` 상태 확인. 아래 ⚠ 참조 |
 | 2 | **소싱할 env 파일 = `.env.real`** (`KIS_FUTURES_*`가 실전 키; Plan A 이전 문서는 `.env.paper`라 했으나 2026-07-31 분리됨) | §wave-3 census + Plan A: 실전 선물 앱키는 `.env.real`(원본은 `.env.paper`)의 `KIS_FUTURES_*`에 있다. `.env`/`.env.mock`의 선물 키는 **모의**다 — 모의 키로 실행하면 `EGW02004`로 거부되고 실주문은 나가지 않지만, 그것은 **운이지 설계가 아니다** |
 | 3 | **계좌 지문 `00bcc5b3a87b`** (신규 실전 선물 계좌) | `--expect-account-fingerprint 00bcc5b3a87b`. 지문은 프로브가 스스로 추론하지 않는다 — 플래그로 주지 않으면 거부한다 |
-| 4 | **계좌가 자금이 있고 완전히 비어 있다** | 1단계가 판정한다. 이 계좌의 유일한 기존 접촉은 빈 잔고를 돌려준 야간 GET 1회였다 |
+| 4 | **포지션이 완전히 비어 있다** — 단 **"자금이 있다"는 정책상 충족 불가**(2026-08-03 갱신) | **비어 있음**: 1단계가 라이브로 판정한다(`assert_flat_account`). 이 계좌의 초기 접촉은 빈 잔고를 돌려준 야간 GET 1회였다. **자금**: 무증거금 운영자 지시(`CLAUDE.md:36`)로 이 실전 선물 계좌에는 증거금을 **의도적으로 넣지 않는다.** 1단계는 주문가능금액이 0이면 `ABORT_ORDER_AVAILABLE_ZERO_OR_UNREADABLE`을 내고 코드가 그것을 **terminal verdict**로 명시한다(`tools/broker_probes/probes_real_order.py:324` 상수 정의 · `:616-626` 발화부, 커밋 `7389f727`) — "입금 대기" 상태가 아니다. ⇒ **이 조건은 실행 전제가 아니라, 2단계(실주문)가 정책상 영구 도달 불가임의 근거다.** 금액이 *판독 불가*(genuine zero가 아님)일 때만 배선을 고쳐 1단계를 재실행한다 |
 | 5 | **선물 정규장 08:45–15:45 KST, 종료까지 ≥30분** | 1단계가 판정한다. **강행 플래그는 없다**(§5.4의 `--ignore-session-window`는 조회 전용 개념이다) |
 | 6 | **1단계 아티팩트를 사람이 읽고 승인** | §5.7.3 |
 
@@ -879,8 +926,18 @@ python -m tools.broker_probes.run P-R5 \
 N-17은 스크립트가 아니라 **문서 대조**다. 모의서버가 필요 없고, 측정으로는 답이
 나오지 않는다 (필드의 *부재*는 요청을 보내서 확인할 수 없다).
 
-**수단**: `kis-code-assistant-mcp` (과거 실적 있는 경로). 재가동 불가 시 공식 문서
-수동 대조 — 이는 실행 계획 §1 T3의 **결정 D6**에 종속된다.
+**수단**: `kis-code-assistant-mcp` (조회 전용 — 주문 발생 없음). **실행 계획 §1 T3의
+D6 조건문은 해소됐다** — 2026-07-29 **운영자가 MCP 재가동 완료를 직접 보고**했고
+(대화 수준의 행위이며 **리포 안에 사본은 없다**), 그것이 "재가동 가능 여부"라는
+조건문을 해소했다. 아래 16항목은 그 수단으로 실제 대조돼
+`docs/plans/2026-07-29-tos-p02-n17-spec-collation.md`(커밋 `239b175a`)에 산출됐다:
+**확정 5 · 부분 6 · 미확인 5**. 따라서 "재가동 불가 시 공식 문서 수동 대조"라는
+조건부 대체 경로는 **발동되지 않았고 더 이상 미결이 아니다**. 처분 기록과 귀속
+근거의 정직 표기는 `docs/plans/2026-08-07-tos-p02-d5-d6-decision-record.md` §2.
+
+> 아래 표의 **"현재 상태" 열은 repo 측 상태**(런북이 실측한 `file:line`)이며, 산출
+> 문서가 이를 그대로 전재했다. **KIS 명세 측 대조 판정(확정/부분/미확인)은 산출
+> 문서가 정본**이고 이 표에는 반영돼 있지 않다 — 두 문서를 함께 읽을 것.
 
 **원전**: KIS 공식 API 포털 / `github.com/koreainvestment/open-trading-api`.
 pykis·mojito 등 2차 커뮤니티 원천은 **값 확정 근거로 쓰지 않는다**.

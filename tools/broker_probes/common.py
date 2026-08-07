@@ -60,7 +60,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
@@ -542,6 +542,44 @@ class ProbeRun:
     errors: list[str] = field(default_factory=list)
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     _t0: float = field(default_factory=time.monotonic, repr=False)
+
+    #: The most recently constructed run, so ``run.py`` can salvage one whose probe
+    #: raised before returning it.
+    #:
+    #: ``run.py:136-137`` states the intent — "a probe that could not complete must
+    #: leave a trace, otherwise a silent failure looks like 'not yet run'" — but it
+    #: implemented that by building a BLANK ProbeRun, which drops the credentials,
+    #: observations and measurements the probe had already collected. The four
+    #: ``N-15-20260729T06*`` artifacts are what that costs: ``credentials: {}``,
+    #: ``observations: []``, ``measurements: {}``, and one exception string
+    #: standing in for a session that had already recorded which token cache it was
+    #: using and why. A trace that keeps nothing is barely better than none.
+    _last: ClassVar[ProbeRun | None] = None
+
+    def __post_init__(self) -> None:
+        type(self)._last = self
+
+    @classmethod
+    def reset_salvage(cls) -> None:
+        """Forget any earlier run, so only one built after this call is salvageable.
+
+        ``run.py`` calls this immediately before invoking the probe. Without it
+        ``_last`` is "the most recent run anywhere in the process", and a run built
+        by an earlier probe — or, in the test suite, by an earlier test — could be
+        written out as this probe's evidence. Scoping the window to the probe call
+        makes a salvaged run provably one this invocation created.
+        """
+        cls._last = None
+
+    @classmethod
+    def salvage(cls, probe_id: str) -> ProbeRun | None:
+        """The partially populated run for ``probe_id``, if one was built.
+
+        Matched on ``probe_id`` as well, so even within the window a run for a
+        different probe can never be written out under this probe's name.
+        """
+        last = cls._last
+        return last if last is not None and last.probe_id == probe_id else None
 
     def observe(self, **fields: Any) -> None:
         self.observations.append(redact(fields))

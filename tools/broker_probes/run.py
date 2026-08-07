@@ -122,6 +122,12 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     func = getattr(module, func_name)
+    # Bound the salvage window to this call, so a run recovered on the failure path
+    # below is provably one this probe built rather than a leftover from anything
+    # earlier in the process.
+    from tools.broker_probes.common import ProbeRun
+
+    ProbeRun.reset_salvage()
     try:
         run = func(args)
     except SafetyViolation as exc:
@@ -135,9 +141,13 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001
         # A failed run is still evidence — a probe that could not complete must
         # leave a trace, otherwise a silent failure looks like "not yet run".
-        from tools.broker_probes.common import ProbeRun
-
-        failed = ProbeRun(
+        #
+        # The trace has to be the run the probe was actually building. Rebuilding a
+        # blank one drops the credentials, observations and measurements already
+        # collected, which is how the four N-15-20260729T06* artifacts ended up as
+        # an exception string and nothing else — no account fingerprint, no record
+        # of which token cache was in use, no partial timeline.
+        failed = ProbeRun.salvage(spec.probe_id) or ProbeRun(
             probe_id=spec.probe_id,
             title=spec.title,
             mode="live" if getattr(args, "confirm", False) else "dry-run",
