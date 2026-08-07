@@ -584,3 +584,144 @@ next=`A05609`(9월물)**. 인수인계와 런북 §5.7.3 예시의 `A05609`는 *
 4. **paper 컨테이너 재배포(#635 반영) 보류(운영자 결정).** 기존 kis_unified_sts
    런타임 개발은 중단 상태이고 현재 작업은 Trading Operating System 구축이므로
    재배포 실익 없음(paper에서 해당 결함은 dormant).
+
+## 2026-08-06 INSTANCE 편입 (T4-β3) — 캠페인 잔여 증거 fold
+
+이 README에만 존재하던 증거가 INSTANCE 초안
+(`docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`)에 편입됐다.
+직전 편입은 T4-β2(`1665ecdb`, 2026-07-31)였고 그 이후 축적분이 대상이다.
+
+### 편입 항목
+
+| 증거 | 대상 문서 | 기입면 | status 이동 |
+|---|---|---|---|
+| `P-BAL-20260731T084238Z` (모의 주식, MEASURED) | doc 1 (MOCK_VTS) | `position_balance_margin.evidence_refs` + `_kis.balance_pagination_probe_2026_07_31` | **없음** — `DOCUMENTED_NOT_VERIFIED` 유지 |
+| `P-BAL-20260731T084147Z` (실전 주식, MEASURED) | doc 2 (REAL_PROD) | `position_balance_margin.evidence_refs` + `_kis.balance_pagination_probe_wave4_2026_07_31.stock_leg` | **없음** — `UNKNOWN` 유지 |
+| `P-BAL-20260731T114344Z` (실전 선물, MEASURED) | doc 2 | 동상 `.futures_leg` | **없음** — `UNKNOWN` 유지 |
+| `P-BAL` `081805Z`·`083102Z`·`084304Z`·`114054Z` (전부 NOT_MEASURED, 전부 REAL_PROD) | doc 2 | `_kis` 관측면 **only**(`citation_eligibility` 명시) — `evidence_refs` 배제 | 해당 없음 |
+| 2026-08-01 P-8 liveness 술어 판정 (`a62d72a1`) | doc 1 | `replace_semantics._kis.replace_probe_2026_07_31.liveness_predicate_review_2026_08_01` + `residual_risks[RR-9]._disposition_2026_08_01` | 해당 없음 |
+| 2026-08-01 토큰 캐시 자산 분리 (`74db1638`) | doc 1 | `verification._kis.campaign_status_2026_08_04.maintenance_2026_08_01` | 해당 없음 |
+| 2026-08-04 운영자 결정 1·3·4 (`fa145b5a`) | doc 1 | `verification._kis.campaign_status_2026_08_04.operator_decisions_2026_08_04` | 해당 없음 |
+| 2026-08-04 운영자 결정 2 (실전 선물 빈-계좌 종결) | doc 2 | `position_balance_margin._kis.real_futures_account_is_empty_by_design_2026_08_04` + `residual_risks[RR-REAL-2]._limitation_2026_08_04` | 해당 없음 |
+| 공식 예제 페이지 크기 (문서值) | doc 1 = 모의 주식 20 / doc 2 = 실전 주식 50 · 선물옵션 20 | 각 문서 `_kis.documentary_page_sizes_2026_07_31` | 해당 없음 (`do_not_promote` 명시) |
+
+**신설**: doc 2 `residual_risks[RR-REAL-4]` — 실전 선물 잔고 조회에서 "조회 실패"와
+"포지션 없음"이 `[]`로 같아지는 구조. **두 겹으로 분리해 기입**했다(아래 §fold가
+발견한 것 2 참조): 겹 1(필수 파라미터 누락)은 **수리됨**, 겹 2(`rt_cd != "0"` →
+`[]` 접기)는 **존속**. 도달 가능성은 양쪽 다 **미실증**으로 명시.
+
+**이미 편입돼 있어 재작업하지 않은 것**: N-16 정본 `132749Z`(doc 2
+`evidence_refs`, T4-β1에서 편입) · N-18 정본 `105609Z`(doc 2
+`market_and_instrument_constraints.evidence_refs`, T4-α에서 편입). 초안 실측으로
+확인 후 제외했다.
+
+### 편입 규율
+
+- **§6.2 적격만 `evidence_refs`.** MEASURED 3건만 등재. NOT_MEASURED 4건은
+  `_kis`에 `citation_eligibility`와 함께 축자 보존 — T4-α의 N-15, T4-β1의 07-30
+  P-5 4건, T4-β2의 P-8 5건과 동일 처분.
+- **§13.14 / BC-INV-009 문서 분리.** 모의 1런은 doc 1에만, 실전 6런은 doc 2에만.
+  교차 오염 0(지문·TR·아티팩트 id 전수 grep 검증). doc 2의 모의 아티팩트 id
+  1회 언급은 "이 문서에 오지 않는다"는 **명시적 배제 선언**이다.
+- **status 승급 0 · `VERIFIED` 0.** MEASURED 3건 전부
+  `TRUNCATION_RISK_UNESTABLISHED` · `page_size: null`이다 — 빈 계좌 2와 1행 계좌
+  1은 **어떤 페이지 크기와도 정합**한다. doc 2의 `UNKNOWN → DOCUMENTED_NOT_VERIFIED`
+  승급은 **검토 후 기각**했다(행 스키마 미확립 · `consistency_model` 측정 0건 ·
+  실전 체결→잔고 지연 0건 — 이 세션이 셋 중 무엇도 바꾸지 않았다).
+- **§9.4 처분 = 신설도 흡수도 하지 않음.** 아래 별도 절.
+- **불변식 유지**: `status: DRAFT` · `approvers: []` · digest 3필드 `TBD` ·
+  YAML 2문서 · `VERIFICATION-PROFILE-002.yaml` 무접촉.
+- **정책 게이트**: 편입 문안 어디에서도 입금·실주문을 제안·전제하지 않는다.
+  실전 선물 빈-계좌는 **설계 상태**로 기록했고, 그 결과 실전 선물 페이지 크기와
+  야간 행 스키마는 `PENDING`이 아니라 **`NOT_AVAILABLE`**(정직한 영구 공백)로
+  기입했다.
+
+### 런북 §9.4 처분 — **신설 금지**, spec-patch 후보로만 기록
+
+§9.4는 `position_balance_margin`에 `.completeness`/`.pagination`이 없다는 갭을
+**미처분**으로 남기고 두 갈래를 제시했다((a) 신설 / (b) `consistency_model`
+흡수). 템플릿 실측 결과 **둘 다 채택하지 않았다** — 근거 4중:
+
+1. **템플릿 실측**: `BROKER-CAPABILITY-PROFILE-template.yaml:272-280`의
+   `position_balance_margin`은 8키뿐이고 두 키가 **모두 없다**.
+2. **차등 부재**: 같은 템플릿의 `open_order_query`(:208-218)는 `completeness`·
+   `pagination`을 **가지고**, `order_history_query`(:219-228)는 `pagination`을
+   가진다 — 전면 누락이 아니라 **차원별 차등**이다.
+3. **규범 원전**: ADR-002-004 §8.10:408-417이 이 차원에 요구하는 8진술에
+   페이지네이션·완전성·절단이 **없다**. 반면 §8.5:348-357은 open-order query에
+   대해 "completeness; pagination behavior; … maximum result size and truncation
+   behavior"를 **명시 요구**한다. 템플릿 형상은 이 차이를 정확히 반영한다.
+4. **모델**: `tos/src/tos/brokercap/records.py:103-110`의
+   `CapabilityDeclaration`에는 **어떤 차원에 대해서도** 해당 필드가 없다.
+
+(b) 흡수도 기각했다: `consistency_model`은 §8.10의 '일관성·신선도' 진술이고
+절단 위험은 **질의 표면의 완전성**으로 다른 사실이다. 흡수하면 이 캠페인이
+**하지 않은** 일관성 측정을 한 것처럼 보인다.
+
+따라서 P-BAL 판정값(page_size · page_size_lower_bound · truncation_verdict ·
+연속조회 형상)은 `_kis` 관측면에 축자 보존됐고, 열린 질문은
+`position_balance_margin._kis.writing_surface_gap_2026_08_06.spec_patch_candidate`에
+**tos-spec 트랙 입력물**로 기록됐다. 본 fold는 스키마를 바꾸지 않는다.
+
+### 이 fold가 발견한 것 1 — 아티팩트 `repo_commit`이 실행 코드를 가리키지 않는다
+
+⚠ **P-BAL 7런 전부 `repo_commit: 381a5650`을 기록하지만, 수정-후 런은 그 트리로
+실행되지 않았다.** `repo_commit`은 `_git_commit()` = HEAD이고
+(`tools/broker_probes/common.py:571`), 하네스 결함 #6/#7/#8 수정은 실행 시점에
+**작업 트리에만** 있었다. git 실측 타임라인(KST):
+
+- `381a5650` 커밋 **17:05:15**
+- 7런: 17:18:05 · 17:31:02 · 17:41:47 · 17:42:38 · 17:43:04 · 20:40:54 · 20:43:44
+- `af00ad22` 커밋 **20:46:54** (`381a5650`의 첫 자식 — 마지막 런보다 **3분 뒤**)
+
+7런이 전부 두 커밋 **사이**에 있다. 따라서 아티팩트→코드 대조의 정본은
+`af00ad22`이며, 어느 런이 정확히 어느 중간 트리였는지는 아티팩트만으로 복원되지
+않는다. 위 wave-4 표의 "`af00ad22` 후"라는 서술은 **코드로서는 맞고** 아티팩트
+필드가 그것을 못 가리키는 것이다 — T4-β1의 `readme_commit_discrepancy`(로컬
+해시 대 origin 해시)와는 다른 종류다. T4-β2의 중간편집 트리 앵커 규율과 같은
+결함 계열이며, INSTANCE 양 문서의 `repo_commit_hazard` 키에 기록됐다.
+
+### 이 fold가 발견한 것 2 — D-F는 **이미 수리됐다** (관측은 유효, 코드 명제는 무효)
+
+wave-4가 실측한 `APMP0001` 런타임 결함(D-F)을 residual risk로 기입하려던 중,
+현행 코드를 실측한 결과 **이미 수리돼 있었다.** 실측(HEAD `670aef6a`,
+`git show <commit>:<path>`):
+
+- 커밋 **`0b2d3962`** "fix(kis): add required MGNA_DVSN/EXCC_STAT_CD to futures
+  balance inquiry (CTFO6118R) (#635)" — 2026-08-03 14:59 KST, HEAD의 조상.
+- `shared/kis/client.py:1069-1070`이 두 필드를 **실제로 전송**하고,
+  :1038-1041 docstring이 누락 시 APMP0001 거부와 조용한 `[]` 반환을 명문화한다.
+
+따라서 §2026-08-04 운영자 결정 4의 "#635 반영 보류"는 **수정이 아니라 배포의
+보류**다 — 07-31 야간 결정의 "D-F 런타임 수정은 P-R5 이후 착수"는 08-03에
+이행됐다(P-R5-PRE와 같은 날).
+
+**그럼에도 관측은 취소되지 않는다.** 2026-07-31의 broker 응답은 그대로 사실이고,
+"두 필드가 필수"라는 **broker 사실**도 그대로다 — 오히려 그것이 수리의 근거다.
+바뀐 것은 "런타임 미러가 거부된다"는 **코드 명제**뿐이다.
+
+**그리고 절반은 수리되지 않았다.** `client.py:1097-1101`은 여전히
+`rt_cd != "0"`이면 로그만 남기고 `[]`를 반환한다. wave-4가 확립한 의미론상
+정상 빈-결과조차 선물에서는 `rt_cd: "7"` + `KIOK0560`이므로, 이 접기는 **정상
+빈-셋과 진짜 오류를 양방향으로 뭉갠다.** `0b2d3962`는 이 구조를 바꾸지 않았다.
+
+그래서 RR-REAL-4는 **한 덩어리가 아니라 두 겹으로** 쓰였다. 하나로 썼다면
+저작된 당일에 이미 낡은 주장이 됐을 것이다.
+
+### 잔여 (이 fold가 닫지 않은 것)
+
+- **페이지 크기 3대상 전부 미확립.** 모의 주식은 08-05 예약분의 산출물이 증거
+  패키지에 들어와야 §6.2 판정이 가능하다 — 2026-08-06 시점 디렉터리 실측 결과
+  `20260804`·`20260805` 아티팩트 **0건**이다. 실전 주식은 실전 주문 없이 실측
+  불가이고 **그런 주문을 인가한 프로브는 없다**. 실전 선물은 무증거금 설계로
+  **영구 불가**.
+- **08-04 dry-run 아티팩트 2건**(`P-11-20260804T134708Z`·
+  `P-BAL-20260804T134715Z`)은 이 증거 패키지에 **보존되지 않았다**(실측). DRY-RUN
+  이라 브로커 접촉도 없다 — INSTANCE는 README를 2차 사실로만 인용했고
+  `evidence_refs`에 넣지 않았다.
+- **RR-9 런타임 레그**(행 `qty`를 잔여수량으로 읽는 독해)는 하네스 술어 검토로
+  닫히지 않았다. 열린 채로 유지.
+- **계좌 지문 양기록**: 운영자 결정 2의 `8304d859b87f`와 측정된 `114344Z`의
+  `00bcc5b3a87b`가 다르다. 결정문의 `03`이 다른 하위 계좌로 읽히나 **동일성은
+  판정하지 않고** 양쪽을 기록했다.
+- **P-EXT**(운영자 동석) · **P-13 주문 클래스 전용 실행** — 변동 없음.
