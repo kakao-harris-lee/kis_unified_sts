@@ -1,11 +1,13 @@
-# VERIFICATION-PROFILE-002 — APPROVED (scope-limited; 17 null keys remain
+# VERIFICATION-PROFILE-002 — APPROVED (scope-limited; 16 null keys remain
 # key-level UNAPPROVED and fail-closed)
 #
 # STATUS: APPROVED at profile level (operator, 2026-07-29) for the 146 keys
-# carrying approved values. Per VER-002-001 §6 the key-level rule is unchanged:
-# an unapproved or placeholder bound is not an approved bound — the 17 null
-# keys (10 broker bounds pending P0-2 measurement, 6 instance/architecture
-# limits, MIN_evidence_retention_ms) remain unapproved and fail-closed.
+# carrying approved values at that date; MIN_evidence_retention_ms was approved
+# separately on 2026-08-07 (see the 2026-08-07 record below), so 147 of the 163
+# numeric keys now carry approved values. Per VER-002-001 §6 the key-level rule
+# is unchanged: an unapproved or placeholder bound is not an approved bound —
+# the 16 null keys (10 broker bounds pending P0-2 measurement, 6 instance/
+# architecture limits) remain unapproved and fail-closed.
 #
 # Rules for ratification (all required before status -> APPROVED):
 #   - each `value_ms` is confirmed or replaced by the accountable owner;
@@ -47,6 +49,39 @@
 #     consume; broker rows remain blocked on P0-2. No live calibration implied
 #     (scope.environment stays non-live-test). Approving bounds does not arm
 #     live trading (separation of duties preserved; Live-Armer unassigned).
+#
+# 2026-08-07 Bounds-Approver decision (operator; project record
+# `docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md`).
+# Cite that record in two parts, because one part did not exist at the commit
+# that carries the other: its recommendation and derivation (package §4.1) are
+# at commit 7368e7c3, whereas its §6 approval record is an EMPTY FORM at that
+# commit and is filled in by the same change that adds this header block — for
+# the approval entry cite that change, not 7368e7c3. The operator, as
+# Bounds-Approver, APPROVES that residual-17-key disposition package.
+# Operator response, verbatim:
+#   "1. a, 2. 승인. 3. 선물 계좌는 추후 모의 운영 서버에서 실행."
+# (item 2 is this package; items 1 and 3 are separate matters recorded elsewhere.)
+#   - Effect on this file: MIN_evidence_retention_ms carries an approved value
+#     (15552000000 ms = 180 days), derived per ADR-002-016 §17 "the longest
+#     applicable" rule from the already-approved review horizons in this profile
+#     (MAX_residual_risk_review_interval_ms, MAX_envelope_review_interval_ms).
+#     It is a floor, not a ceiling: the open-economic-effect and legal-hold
+#     record classes are state predicates owned by the Evidence Integrity Policy
+#     and are not truncated by it.
+#   - 147 of the 163 numeric keys now carry approved values; 16 keys stay null —
+#     10 broker bounds awaiting P0-2 measurement from an approved Broker
+#     Capability Profile, and 6 instance/architecture limits whose
+#     trigger-bound deferrals are RATIFIED by this same decision.
+#   - A RATIFIED DEFERRAL IS NOT A VALUE APPROVAL. Those 6 keys remain
+#     key-level unapproved and fail-closed; each trigger is defined in package
+#     §4 (which is authoritative for them). In particular
+#     MIN_capacity_domain_voter_quorum receives NO value: this key's own
+#     approval condition requires the Capacity Domain boundary and
+#     fault-tolerance model, which this decision does not supply.
+#   - status, approved_by, effective_from, and review_due are unchanged; this is
+#     a key-level act, not a profile re-approval. scope.environment stays
+#     non-live-test, Live-Armer stays unassigned, and no acceptance,
+#     restricted-live, or live authority follows.
 
 profile_id: VERIFICATION-PROFILE-002
 version: "2.1"
@@ -920,7 +955,7 @@ limits:
   MAX_human_approval_age_ms: 60000                     # APPROVE per approval type; stale or unknown age denies authority increase -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1h range minute-session, conservative 1 minute] owner=operator; review_date=2027-01-29
   MAX_human_session_age_ms: 3600000                    # APPROVE per human authority direction; unknown age denies the command -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1h range session, conservative 1 hour] owner=operator; review_date=2027-01-29
   MAX_human_delegation_age_ms: 60000                   # APPROVE per delegation policy; expiry never transfers or revives approval -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1h range minute-session, conservative 1 minute] owner=operator; review_date=2027-01-29
-  MIN_evidence_retention_ms: null                      # APPROVE per record class; economic-effect and verification horizons dominate -- [DEFERRED 2026-07-29: instance/architecture decision; value stays null, owner TBD]
+  MIN_evidence_retention_ms: 15552000000               # APPROVE per record class; economic-effect and verification horizons dominate -- [APPROVED 2026-08-07 operator (Bounds-Approver); derivation = disposition package §4.1 at commit 7368e7c3, approval entry = that package's §6 filled by this change (empty at 7368e7c3); floor = longest applicable approved horizon, a floor not a ceiling] owner=operator; review_date=2027-01-29
   MAX_replay_start_delay_ms: 30000                     # APPROVE incident/review target; exceeding it never relaxes isolation or completeness -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L3] owner=operator; review_date=2027-01-29
   MAX_recovery_readiness_age_ms: 1000                  # APPROVE per recovery scope; expiry or unknown age denies later authority issuance -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29
   MAX_critical_input_snapshot_age_ms: 1000             # APPROVE per source/input/decision scope; unknown age denies dependent new risk -- [APPROVED 2026-07-29 operator (Bounds-Approver); draft d6babce9 §6-L1] owner=operator; review_date=2027-01-29

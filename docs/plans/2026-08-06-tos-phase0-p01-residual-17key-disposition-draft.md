@@ -12,6 +12,26 @@
 > HEAD `209295b2`; 본 개정 시점 현 HEAD `65cb94df`로 재확인했다 — 그 사이 커밋이 `VERIFICATION-PROFILE-002.yaml`을
 > 건드리지 않았음을 검증(`git log 209295b2..HEAD -- <VP>` = 공백)했고, 17키의 행번호·값·상태를 3자 재실측해 동일함을 확인했다.
 
+> ---
+>
+> **[2026-08-07 — 승인됨. 위 성격 선언은 저작 시점(2026-08-06) 정확했고 재작성하지 않는다.]**
+>
+> 위 문단의 "비준 대상이 아니며, 아무것도 승인하지 않고, 어떤 승인 효력도 없다"는 **본 문서 자신의 성격**에
+> 대한 진술로서 여전히 옳다 — 승인 효력은 문서가 아니라 **§6에 기입된 운영자 행위**에서 나온다. 그 행위가
+> **2026-08-07에 발생**했다: 운영자(Bounds-Approver) 응답 축자 **"1. a, 2. 승인. 3. 선물 계좌는 추후 모의
+> 운영 서버에서 실행."** 중 **2번이 본 패키지 승인**이다. 따라서 본 문서의 현재 지위는 **"승인 대기 초안"이
+> 아니라 "승인 기입이 완료된 검토 준비물 + 승인 기록면(§6)"**이다. **§1–§5·§7·부록 본문은 승인 시점 그대로
+> 보존**한다(권고가 무엇이었는지가 승인의 대상이므로 사후 재작성은 승인 내용을 흐린다).
+>
+> **stale 자기서술 2건(정직 관측, 해소하지 않고 표기만)**: (1) 위 "**커밋하지 않는다**"와 §7의 "커밋 없음"은
+> **저작 시점 작업 규율**이며, 본 문서는 이후 **`7368e7c3`으로 실제 커밋**됐다. (2) 위 "**YAML 무변경**"도
+> 저작 시점 사실이다 — 승인 결과로 `MIN_evidence_retention_ms` 1키의 값 기입이 **별도 편집 작업**으로
+> 수행됐다(§6 "프로파일 반영 여부" 참조). 두 진술 모두 **저작 시점 규율의 기록**으로 남긴다.
+>
+> **승인 후 현재 상태 요약**: **147/163 승인 · null 16키 잔존**(브로커 10 = P0-2 측정 대기 + 인스턴스/
+> 아키텍처 6 = 트리거-결부 이연 **비준**). **이연 비준은 값 승인이 아니다** — 6키는 key-level unapproved·
+> fail-closed 그대로이며, 각 트리거는 §4가 정본이다.
+
 ---
 
 ## 0. 이 문서가 무엇인가 — 환경 스코프·실측 규율
@@ -466,24 +486,91 @@ account/session·cross-cell 공유 common-mode 확정 시 MAX 천장이 측정·
 
 ---
 
-## 6. 승인 기록 (Bounds-Approver 기입란 — 현재 공란)
+## 6. 승인 기록 (Bounds-Approver 기입란 — **2026-08-07 기입 완료**)
 
-> 본 절은 **빈 틀**이다. 운영자(Bounds-Approver)가 검토 후 직접 기입한다. 기입 전까지 어떤 키도 승인되지 않는다.
-> YAML 갱신은 별도 편집 작업이며(선례 §12:556–572 절차 준수), 본 문서는 절차만 기술한다.
+> 본 절은 저작 시점 **빈 틀**이었다. 운영자(Bounds-Approver)가 검토 후 기입한다는 규약은 불변이며,
+> **2026-08-07에 기입됐다.** YAML 갱신은 별도 편집 작업이고(선례 §12:556–572 절차 준수), 본 문서는 절차
+> 기술 + 이 기록면이다. **§1–§5는 승인 대상이 된 권고 원문이므로 재작성하지 않는다.**
 
-- 결정 일자: `____`
-- Bounds-Approver(실체): `____` (SoD: Live-Armer와 상이해야 함 — role-scheme §1:28–29; :20은 Live-Armer 행)
-- **브로커 10키 처분:** ☐ 전부 P0-2 이연 유지(값 null·owner TBD) — 프로브 실행/INSTANCE 착지 후 재상정
+### 6.0 운영자 응답 — 축자 전문 (2026-08-07, harris.lee)
+
+> **"1. a, 2. 승인. 3. 선물 계좌는 추후 모의 운영 서버에서 실행."**
+
+**본 패키지에 해당하는 항 = 2번("승인")뿐**이다. 나머지 2항은 같은 응답 안의 별건이다:
+
+| 응답 항 | 대상 | 본 문서와의 관계 |
+|---|---|---|
+| "1. a" | D5 귀속 확인 게이트(`docs/plans/2026-08-07-tos-p02-d5-d6-decision-record.md` §3-1) | **별건.** 그 문서 §3-1-A가 기록면 |
+| **"2. 승인"** | **본 패키지(17키 처분 권고) 전건** | **본 절이 기록하는 승인.** 아래 §6.1 |
+| "3. 선물 계좌는 추후 모의 운영 서버에서 실행" | 선물 계좌 관련 실행(P-R5-PRE 지문 확인·선물 프로브 재실행) | **별건·지금 처분 없음(기록만).** 브로커 10키(§3)의 값 원천은 여전히 **mock-유래**이고 실선물 무증거금 정책(CLAUDE.md:36,96)은 불변 |
+
+**"승인"의 범위 해석(정직)**: 응답이 키별로 열거하지 않고 패키지를 통째로 승인했으므로, 그 내용은
+**패키지가 권고한 바 그대로**다 — §4.8 요약표·§5 재량표(R-1~R-10)가 곧 승인된 처분이다. 패키지가 **값을
+제안하지 않은 키에 대해서는 승인도 값을 만들지 않는다**(특히 §4.6 quorum — 아래 6.1 참조).
+
+### 6.1 기입 (패키지 권고 그대로)
+
+> **⚠ 본 절의 YAML 행번호는 §1–§5와 좌표계가 다르다.** §1–§5는 **저작 시점(2026-08-06, HEAD `65cb94df`)**
+> 좌표이고 무접촉으로 보존한다. 본 §6은 **2026-08-07 신규 저작**이므로, 같은 변경이 프로파일 헤더에 dated
+> 레코드를 추가해 아래쪽 키가 밀린 뒤의 **편집-후 좌표로 재측정**해 기입했다(`MAX_residual_risk_review_interval_ms`
+> 949→**984** · `MAX_envelope_review_interval_ms` 993→**1028** · `MIN_capacity_domain_voter_quorum` 988→**1023**).
+> 값·상태는 불변이고 행만 이동했다 — **같은 커밋에서 src를 편집하면 자기 인용을 재측정한다**는 규율의 적용이다.
+
+- **결정 일자: `2026-08-07`**
+- **Bounds-Approver(실체): `operator` (harris.lee)** — SoD 충족: **Live-Armer는 미지정**이며 본 승인은 arming이
+  아니다(role-scheme §1:28–29; :20은 Live-Armer 행). 프로파일 `approved_by: ["operator"]` 불변.
+- **브로커 10키 처분:** ☑ **전부 P0-2 이연 유지(값 null·owner TBD)** — 프로브 실행/INSTANCE 착지 후 재상정.
+  **값 승인 0건**(§3 "값 제안 절대 금지" 준수). §3.6 3분류(측정가능 6 · P-8 부분 2 · 프로브 부재 2) 그대로.
 - **비-브로커 처분(키별):**
-  - `MIN_evidence_retention_ms`: ☐ 후보 15552000000 채택 / ☐ null 유지(EIP 대기) → `____`
-  - `MAX_trial_authorized_economic_effect`: ☐ 이연 유지 / 트리거: `____`
-  - `MAX_trial_concurrent_potential_effect`: ☐ 이연 유지 / 트리거: `____`
-  - `MAX_trial_action_count`: ☐ 이연 유지 / 트리거: `____`
-  - `MIN_reserved_protective_capacity`: ☐ 수치 이연 유지(구조규칙 인정) / `____`
-  - `MIN_capacity_domain_voter_quorum`: ☐ 이연 유지(Phase B) / ☐ f=0 posture 명시 / `____`
-  - `MAX_safety_cell_blast_radius`: ☐ 이연 유지(Matrix INSTANCE 게이트) / `____`
-- 재량 지점(§5) 검토 서명: `____`
-- 프로파일 반영 여부: ☐ 반영함(별도 편집·GOV-001 change process) / ☐ 반영 없음(전부 이연)
+  - `MIN_evidence_retention_ms`: ☑ **후보 15552000000 채택**(180일 floor) → **R-1·R-2 권고 채택.**
+    근거 = ADR-002-016 §17:432/:437 "longest applicable" 규칙 + 승인된 리뷰 지평(YAML:984/1028)에서 파생·
+    프로파일 163키 전체 최댓값. **잔여 이연 3항(§4.1)은 그대로 유지**(경제효과/legal-hold 상태 술어 ·
+    per-record-class taxonomy · 내구성 메커니즘 선정) — floor는 **ceiling이 아니다.**
+  - `MAX_trial_authorized_economic_effect`: ☑ **이연 유지** / 트리거: `첫 RESTRICTED-LIVE-TRIAL-PLAN INSTANCE가
+    exact·complete scope로 저작될 때(§4.2–4.4 트리거 문안 정본) · ADR-002-025 §11 pre-trial · G4 · G7 게이트 하.
+    선물 trial은 현 정책상 발화 불가(N/A·구조적 도달 불가)`
+  - `MAX_trial_concurrent_potential_effect`: ☑ **이연 유지** / 트리거: `동상(§4.2–4.4) — per shared capacity scope`
+  - `MAX_trial_action_count`: ☑ **이연 유지** / 트리거: `동상(§4.2–4.4) — per exact plan`
+  - `MIN_reserved_protective_capacity`: ☑ **수치 이연 유지(구조규칙 인정)** / `R-5·R-6 권고 채택 — 구조 rule-form은
+    ADR-002-001 §11.4:501에 이미 존재("more-conservative-of {worst-credible overlap, Protection Gap}, per
+    scope/dimension, non-borrowable, §12.5 동적 충분성")하고 정본은 Safety Profile이다. 스칼라는 벡터를 표현할 수
+    없으므로 프로파일 값은 null 유지. 트리거 = §4.5 (a)(b)(c) 3조건 착지`
+  - `MIN_capacity_domain_voter_quorum`: ☑ **이연 유지(Phase B)** / ☐ f=0 posture 명시 **(미채택)** /
+    **`값 기입 없음 — R-7 준수.`** YAML:1023 자신이 "APPROVE **together with** the Capacity Domain boundary and
+    fault-tolerance model"을 승인 조건으로 명시하므로 **그 아키텍처 결정 전 어떤 값(1 포함) 기입도 키 자체의
+    승인 조건 위반**이다. 본 승인은 그 조건을 충족시키지 않으며 **어떤 quorum 수치도 만들지 않는다.**
+    방향 라벨 주의(§4.6·R-7): 안전은 **관계적**(strict majority f+1 of 2f+1)이고 상한이 존재하므로 다른 MIN floor와
+    동일 취급 금지. R-8(단일-writer posture 명시)도 **권고대로 미채택**.
+  - `MAX_safety_cell_blast_radius`: ☑ **이연 유지(Matrix INSTANCE 게이트)** / `R-9 권고 채택 — Failure-Domain
+    Allocation Matrix INSTANCE + 배포 프로파일 승인(ADR-002-009 §22-1) 전 값 확정 시도 금지. R-10(non-live 단일-cell
+    실blast 0)은 값 근거가 아니라 무의미성 방증으로만 기록`
+- **재량 지점(§5) 검토 서명:** `R-1 ~ R-10 전 10건, 패키지 권고 그대로 채택 — operator (Bounds-Approver),
+  2026-08-07.` 권고와 다른 처분을 택한 항목 **0건**.
+- **프로파일 반영 여부:** ☑ **반영함**(별도 편집 · GOV-001 change process) — **반영 범위는 `MIN_evidence_retention_ms`
+  1키의 값 기입뿐**이다. 나머지 16키는 값·`owner: TBD`·fail-closed 그대로이므로 프로파일에 값 변경이 없고,
+  이연 비준 사실은 프로파일 헤더의 2026-08-07 dated 레코드와 gate-status 기록 절이 담당한다.
+
+### 6.2 이 승인의 효과 — 그리고 명시적 비효과
+
+**효과(정확히 이것뿐)**:
+
+1. `MIN_evidence_retention_ms` = **15552000000**이 승인값이 되어 **147/163 numeric key가 승인값을 가진다**(146 → 147).
+2. null·key-level unapproved 키가 **17 → 16**으로 준다(브로커 10 + 인스턴스/아키텍처 6).
+3. 비-브로커 6키의 **트리거-결부 이연이 비준**됐다 — 즉 "지금 값을 넣지 않는 것"이 운영자 판단으로 확정됐다.
+
+**비효과 — 반드시 혼동하지 말 것**:
+
+1. **이연 비준 ≠ 값 승인.** 6키는 여전히 **key-level unapproved·fail-closed**이며, 각 트리거가 발화하고 값이
+   측정·승인될 때까지 의존 scope는 봉쇄된 채다(§4 각 절의 fail-closed 문단이 정본).
+2. **브로커 10키에 대한 값 승인 0건.** P0-2 측정 트랙 불변, register `pending-P0-2` **64행** 불변.
+3. **프로파일 `status`/`approved_by`/`effective_from`/`review_due` 불변** — 이 승인은 **key-level** 행위이고
+   프로파일 재승인이 아니다(§7 "프로파일 승인 아님" 그대로).
+4. **`scope.environment: non-live-test` 불변 · live 무관.** Live-Armer 미지정 유지. arming·acceptance·
+   restricted-live 어느 것도 열리지 않는다(§7 "live 무관").
+5. **ADR acceptance 무관.** 관련 ADR(-009/-012/-016/-025 등) 전부 **Proposed** 유지. gate-status **§8 Gate
+   Verdict 불변**.
+6. **런타임 보존 구현 아님.** 180일 floor는 **EV 하네스/EIP 임계 선언**이며 현 Redis TTL 24h/48h 런타임을
+   바꾸지 않는다(§4.1 "프로젝트 관행 대조" 그대로 — 두 regime은 다르다).
 
 ---
 

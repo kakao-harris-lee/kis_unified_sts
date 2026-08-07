@@ -1045,6 +1045,81 @@ thirteenth file is RFC-002, whose hunks in that commit are only the
 and metadata of the record this section already disposes of. RFC-002 §32 carries the companion Review History record of the
 same determination. Independent EV-L0 review of this determination is owed.
 
+### 3.26 Residual-key disposition — the 2026-08-07 Bounds-Approver decision (17 → 16 null keys) — APPLIED
+
+**What was decided.** The operator, as Bounds-Approver, approved the project-side
+residual-key disposition package
+(`docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md`).
+That record is cited in two parts, because one part did not exist at the commit
+carrying the other: its recommendation and derivation (package §4.1) are at
+commit `7368e7c3`, while its §6 approval record is an **empty form** at that
+commit and is filled in by the same change that adds this section — for the
+approval entry cite that change, not `7368e7c3`. That package took the 17 keys left
+key-level unapproved by the 2026-07-29 P0-1 profile-level approval (§3.22) and
+recommended, key by key, either a value or an explicit trigger-bound deferral.
+The approval adopts the package's recommendations as written; no key was
+dispositioned differently from the recommendation.
+
+**Provenance of the package.** It was authored against the evidence baseline
+`209295b2` and re-verified at `65cb94df` (the profile blob was untouched in
+between), then passed **two rounds of independent critique**: the first returned
+**REVISE** (2 MAJOR, 9 MINOR, 5 NIT), the revision addressed every finding, and
+the delta re-verification returned **RATIFY-READY** with 0 MAJOR and no
+revision-introduced error, plus four closing items applied. The operator response
+that approved it reads, verbatim: **"1. a, 2. 승인. 3. 선물 계좌는 추후 모의 운영
+서버에서 실행."** — item 2 is this approval; items 1 and 3 are separate matters
+(the D5 attribution gate and a deferred futures-account execution note) recorded
+in the project-side records that own them, not here.
+
+**Effect on the profile.** `MIN_evidence_retention_ms` now carries an approved
+value of **15552000000 ms (180 days)**, so **147 of the 163 numeric keys carry
+approved values** and **16 remain null and fail-closed** — 10 broker bounds
+awaiting P0-2 measurement from an approved Broker Capability Profile, and 6
+instance/architecture limits. The value is not invented: ADR-002-016 §17 defines
+retention as the longest applicable horizon, and the longest time-bounded horizon
+already approved in this profile is the 6-month review cadence carried by
+`MAX_residual_risk_review_interval_ms` and `MAX_envelope_review_interval_ms`,
+which is also the maximum of all 163 numeric values. It is a **floor, not a
+ceiling**: the open-order, potentially-live, UNKNOWN-state, open-position,
+unreleased-capacity, and legal-hold record classes are state predicates owned by
+the Evidence Integrity Policy, and a floor does not truncate them.
+
+**Ratified deferrals are not value approvals.** The same decision ratifies the
+trigger-bound deferral of the remaining 6 limits —
+`MAX_trial_authorized_economic_effect`, `MAX_trial_concurrent_potential_effect`,
+`MAX_trial_action_count` (trigger: the first `RESTRICTED-LIVE-TRIAL-PLAN`
+INSTANCE authored at exact, complete scope), `MIN_reserved_protective_capacity`
+(structural rule already stated in ADR-002-001 §11.4; the scalar cannot express a
+per-scope, per-dimension vector, so the profile value stays null),
+`MIN_capacity_domain_voter_quorum` (Capacity Domain boundary plus
+fault-tolerance model), and `MAX_safety_cell_blast_radius` (approved deployment
+profile plus Failure-Domain Allocation Matrix INSTANCE). Ratifying *why* a key
+stays null approves no number: all six remain **key-level unapproved and
+fail-closed**, keeping every scope that depends on them contained, and package §4
+is authoritative for each trigger. `MIN_capacity_domain_voter_quorum` is the
+sharpest case — its own inline approval condition requires the Capacity Domain
+boundary and fault-tolerance model, which this decision does not supply, so **no
+quorum value was written**; writing one (including `1`) would have violated the
+key's stated approval condition, and its safety direction is relational (a strict
+majority, `f+1` of `2f+1`) rather than the monotone "larger is safer" of the other
+MIN floors.
+
+**What did not change.** The profile's `status: APPROVED`, `approved_by:
+["operator"]`, `version: "2.1"`, `effective_from: 2026-07-29`, and `review_due:
+2027-01-29` are all unchanged: this is a **key-level** act, not a profile
+re-approval. `scope.environment: non-live-test` is unchanged and Live-Armer stays
+unassigned, so separation of duties holds and nothing is armed. No broker bound
+received a value, so the P0-2 measurement track and the register's 64
+`pending-P0-2` rows are untouched. No SAFE-xxx requirement, invariant, acceptance
+criterion, or EV ID is introduced, and the Evidence Register counts are unchanged
+(Part-1 372: 291 `NOT_IMPLEMENTED`, 79 `READY`, 2 `PASS`). Every related ADR
+(-009, -012, -016, -025 among them) stays **Proposed**, **§8 Gate Verdict is
+unchanged**, and no acceptance, restricted-live, or production authority follows.
+An approved value is a harness ceiling awaiting EV-L2/L3 execution, not executed
+evidence. The D5 attribution gate closed by item 1 of the same operator response
+is a separate project-side record and moves nothing in this document.
+Independent EV-L0 review of this decision is owed.
+
 ---
 
 ## 4. Remaining Architecture and Acceptance Work
@@ -1055,7 +1130,7 @@ ADR-002-007 selects the single-use capability currentness model, ADR-002-012 sel
 
 Dedicated VER-002-001 and Evidence Register entries now exist for ADR-002-005 through ADR-002-030, but all remain `NOT_IMPLEMENTED`. Verification Profile `2.1-PROPOSED` has matching actual/template key sets with 91 scope keys, 84 bounds, and 79 limits (Patch-0054, §3.21, added 26 null placeholder keys from the project-side design-cycle census; Patch-0055, §3.22, then completed the per-bound shape with `applicable_scope` and `review_date`). Of the 163 numeric keys, **146 values were approved by the accountable owner on 2026-07-29** (74 bounds, 72 limits, each carrying `owner: operator` where the shape has an owner field, a per-key approval-provenance marker, and `review_date: 2027-01-29`); **17 remain null and fail-closed** — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — and therefore keep every scope depending on them contained. Because those 17 are unresolved, **the profile itself stays `2.1-PROPOSED` with `approved_by: []`**: per-key value approval is not profile approval, and the review-disposition records above that describe bounds as unapproved remain accurate as records of their review dates. It additionally binds the proposed Post-Trade Finality Policy, Post-Trade Obligation Generation, complete Active Economic Obligation Set, Statement Coverage Manifest, and their effect-to-obligation, change-detection, break-to-restriction, egress-denial, generation-fence, statement-gap, obligation/finality/statement/break/transfer age quantities — all of which are now among the 146 owner-approved values, while the broker-dependent quantities they rely on stay null. The profile remains unapproved with `approved_by: []`; an approved value is a harness ceiling awaiting EV-L2/L3 execution, not evidence, and the still-unresolved values keep the affected scope contained and live operation prohibited.
 
-**Currency note (2026-08-06).** The statements in the paragraph above that the profile "stays `2.1-PROPOSED` with `approved_by: []`" were accurate when recorded and were superseded on 2026-07-29 by the P0-1 profile-level approval (operator as Bounds-Approver, commit `53980b64`, recorded in-header in `verification/VERIFICATION-PROFILE-002.yaml`): the profile now reads `version: "2.1"`, `status: APPROVED` (scope-limited to the 146 keys carrying approved values), `approved_by: ["operator"]`, `effective_from: 2026-07-29`, `review_due: 2027-01-29`. The 17 null keys — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — remain key-level unapproved and fail-closed per the profile's own rules, and `scope.environment: non-live-test` is unchanged. Approving bounds arms nothing: separation of duties is preserved (Live-Armer unassigned), and no acceptance, restricted-live, or production authority follows. §3.22 carries the companion record of the two same-day acts.
+**Currency note (2026-08-06).** The statements in the paragraph above that the profile "stays `2.1-PROPOSED` with `approved_by: []`" were accurate when recorded and were superseded on 2026-07-29 by the P0-1 profile-level approval (operator as Bounds-Approver, commit `53980b64`, recorded in-header in `verification/VERIFICATION-PROFILE-002.yaml`): the profile now reads `version: "2.1"`, `status: APPROVED` (scope-limited to the 146 keys carrying approved values), `approved_by: ["operator"]`, `effective_from: 2026-07-29`, `review_due: 2027-01-29`. The 17 null keys — 10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, and `MIN_evidence_retention_ms` — remain key-level unapproved and fail-closed per the profile's own rules, and `scope.environment: non-live-test` is unchanged. Approving bounds arms nothing: separation of duties is preserved (Live-Armer unassigned), and no acceptance, restricted-live, or production authority follows. §3.22 carries the companion record of the two same-day acts. **[2026-08-07]** The 17 above has since moved to 147/163 approved with 16 null keys (§3.26; §5 reflects the current state).
 
 ### 4.1 Latest Review Disposition
 
@@ -1297,7 +1372,7 @@ registration introduce no SAFE-xxx and create no authority.
 | ADR-002-029 | Proposed | YES | NO |
 | ADR-002-030 | Proposed | YES | NO |
 | VER-002-001 | Proposed, ready for test implementation | YES | after evidence workflow review |
-| Verification Profile 2.1 | `APPROVED` at profile level, scope-limited (operator as Bounds-Approver, 2026-07-29, commit `53980b64`); 146/163 numeric keys carry approved values; 17 keys (10 broker bounds pending P0-2 measurement, 6 instance/architecture limits, `MIN_evidence_retention_ms`) remain key-level unapproved and fail-closed | YES | NO |
+| Verification Profile 2.1 | `APPROVED` at profile level, scope-limited (operator as Bounds-Approver, 2026-07-29, commit `53980b64`); 147/163 numeric keys carry approved values (`MIN_evidence_retention_ms` approved 2026-08-07, §3.26); 16 keys (10 broker bounds pending P0-2 measurement, 6 instance/architecture limits under ratified trigger-bound deferrals) remain key-level unapproved and fail-closed | YES | NO |
 | Broker-specific Capability Profile | Template only in tos-spec (schema-complete against ADR-002-004 §21 after Patch-0056, §3.23; all values `TBD`/`null`/`UNKNOWN`, `conformance_class: CLASS_D_NON_LIVE`). One non-normative project-side INSTANCE candidate exists (`docs/broker-profiles/…-draft.yaml`, `status: DRAFT`, `approvers: []`, 0 executed capability evidence), which authorizes nothing and does not close P0-2 | YES | NO |
 | Human authority artifacts | Templates only, all non-authorizing | YES | NO |
 | Evidence integrity and replay artifacts | Templates only, all DRAFT/unverified/non-authorizing | YES | NO |
