@@ -638,9 +638,15 @@ PROBES: dict[str, ProbeSpec] = {
         supported=False,
         skip_reason=(
             "N-17 is a documentary cross-check, not a script. The instrument "
-            "(kis-code-assistant-mcp vs manual official-doc reading) is operator "
-            "decision D6 (plan §1 T3:49-50). Use the checklist in "
-            "docs/runbooks/kis-capability-probes.md §7."
+            "question (kis-code-assistant-mcp vs manual official-doc reading) "
+            "is RESOLVED, not open: the operator reported the MCP back online "
+            "on 2026-07-29 -- a conversation-level act with no copy in this "
+            "repo -- which discharged the plan §1 T3 D6 conditional, and the "
+            "cross-check then ran on that instrument, producing "
+            "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md (5 confirmed / "
+            "6 partial / 5 unknown). Disposition record: "
+            "docs/plans/2026-08-07-tos-p02-d5-d6-decision-record.md §2. Use the "
+            "checklist in docs/runbooks/kis-capability-probes.md §7."
         ),
         entrypoint="",
     ),
