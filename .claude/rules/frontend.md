@@ -4,7 +4,9 @@ globs: ["**/*.{js,jsx,ts,tsx,vue,svelte}"]
 
 # Frontend Rules
 
-> Loaded automatically when Claude opens any frontend source file. Each rule has a "why" so you can override it intentionally.
+> **Loading**: this file is loaded in full as a project instruction at session start, regardless of which files are open — observed directly. The `globs` frontmatter above *declares* the intended scope but is not enforced as a load filter in this harness (it stays so that a harness which does honour it works as intended). Because the loader does not filter, the reader must: **apply these rules only to frontend source (`js`/`jsx`/`ts`/`tsx`/`vue`/`svelte`), and ignore them when the work is not frontend.**
+>
+> Each rule has a "why" so you can override it intentionally.
 
 ## Components
 - Functional components only (no class components) — *hooks API is the supported path since React 16.8 (2019); class lifecycle methods are not first-class with Suspense / concurrent rendering*

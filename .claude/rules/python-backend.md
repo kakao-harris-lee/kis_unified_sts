@@ -4,7 +4,9 @@ globs: ["**/*.py"]
 
 # Python Backend Rules
 
-> Loaded automatically when Claude opens any `*.py` file. Each rule has a "why" so you can override it intentionally rather than blindly.
+> **Loading**: this file is loaded in full as a project instruction at session start, regardless of which files are open — observed directly. The `globs` frontmatter above *declares* the intended scope but is not enforced as a load filter in this harness (it stays so that a harness which does honour it works as intended). Because the loader does not filter, the reader must: **apply these rules only to Python code, and ignore them when the work is not Python.**
+>
+> Each rule has a "why" so you can override it intentionally rather than blindly.
 
 ## Code Style
 - Type hints on ALL function signatures (parameters and return types) — *enables `mypy --strict` and IDE autocomplete; required by FastAPI/Pydantic v2 for response_model inference*

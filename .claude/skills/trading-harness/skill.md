@@ -282,8 +282,17 @@ Phase 4: approve → 실행 착수
 5. REMOVED/DEPRECATED 전략(`rl_mppo`, `llm_directed_indicator`) 미사용
 
 코드 변경 완료 시:
-- **`codex-reviewer`(= Codex)가 낸 `verdict: approve`만 이 게이트를 통과시킨다**
-  (또는 needs-attention 항목이 전부 해소되었거나 기각 사유가 기록됨)
+- **`codex-reviewer`(= Codex)가 낸 새 `verdict: approve`만 이 게이트를 통과시킨다. 예외 없다.**
+  - **needs-attention을 받았으면 수정 → 재심 → Codex의 새 `approve`.** "해소했으니 통과"는 없다 —
+    해소되었는지 회피되었는지(테스트 무력화·조건 완화·문구만 추가)를 판정하는 것도 심판의 몫이다
+    (`codex-gate` "수정 위임 (needs-attention 이후)" 절: "수정 완료 후 반드시 재심한다.
+    수정만 하고 통과시키면 게이트가 아니다").
+  - **기각(수용검사)은 게이트를 여는 장치가 아니다.** 기각의 용도는 둘뿐이다 —
+    (a) 해당 finding이 다음 재심에서 되살아나지 않게 사유와 함께 기록하고,
+    (b) 재심에 들어갈 때 Codex에게 기각 사유를 함께 제시한다.
+    **finding을 전부 기각해도 게이트는 여전히 Codex의 `approve`로만 열린다.**
+    피심판자가 자기 판단으로 finding을 지우고 통과할 수 있으면 심판자를 둔 의미가 소멸한다 —
+    그것이 정확히 이 레인이 막으려는 자기 승인이다.
   - **판정 경로는 `adversarial-review`다.** verdict 계약을 내는 유일한 경로이므로 이 조건과 짝이 맞는다
     (`codex-companion.mjs:409-417` = 스키마 부착 / `:370-407` 네이티브 `review` = verdict 없음).
     `review` 출력에는 `verdict`가 없으므로 이 게이트를 만족시킬 수 없다
@@ -297,9 +306,18 @@ Phase 4: approve → 실행 착수
 실행 착수 전:
 - 계획이 있는 작업은 `codex-plan-reviewer` 심판 통과
 
-**수용검사 규칙**: Codex verdict는 무조건 수용하지 않는다. CLAUDE.md 비협상 규칙(선물 long/short 대칭, 실계좌 증거금 미투입,
-EOD 일괄청산 금지, ClickHouse 신규 사용 금지, RL/TFT 경로 부활 금지)과 배치되는 권고는 기각하고 사유를 기록한다.
-Codex는 심판이지 이 repo의 비협상 규칙 위에 있지 않다.
+**수용검사 규칙**: Codex verdict는 무조건 수용하지 않는다. 다만 **기각 가능 사유는 셋뿐이다**:
+
+1. **팬텀 `file:line`** — 인용한 파일·라인이 실측상 부재
+2. **이미 의도적으로 silenced된 항목** — lint ignore, 안전 주석, 테스트 픽스처
+3. **CLAUDE.md 비협상 규칙과 배치되는 권고** — 선물 long/short 대칭, 실계좌 증거금 미투입,
+   EOD 일괄청산 금지, ClickHouse 신규 사용 금지, RL/TFT 경로 부활 금지 등
+   (전체 대조 목록은 `codex-gate` "비협상 규칙 대조 목록" 절)
+
+**그 외 사유로는 기각할 수 없다** — "동의하지 않음", "우선순위 낮음", "나중에"는 기각이 아니라 **미해결**이다.
+기각한 finding은 사유와 함께 기록하고 재심 때 Codex에 함께 제시한다.
+Codex는 심판이지 이 repo의 비협상 규칙 위에 있지 않다. 그러나 **기각은 게이트를 열지 않는다**
+(위 "코드 변경 완료 시" 절 — 게이트는 Codex의 새 `approve`로만 열린다).
 
 전략 Paper→Live 승격 시:
 1. 종합 승격 판정 PASS (model-evaluator)
