@@ -301,10 +301,17 @@ Phase 4: approve → 실행 착수
     폴백에 통과 권한을 주면 그것이 자기 승인 우회로가 되고, 심판 레인의 존재 이유가 소멸한다.
     폴백은 애초에 `approve`를 내지 않으며(`review-synthesizer` 계약), 낸다 해도 게이트는 열리지 않는다.
   - **판정 불능도 통과가 아니다 (fail-closed).** `verdict` 필드 부재·"Parse error"는 실패로 취급한다.
-  - 게이트 통과 조건을 한 줄로: **`adjudicator: codex` + `verdict: approve`.**
+  - **승인은 코드 상태에 대한 진술이다 — 리비전에 결속되지 않은 `approve`는 통과가 아니다.**
+    `verdict.md`에 `reviewed_at_head`(= `git rev-parse HEAD`)와 `reviewed_scope_digest`(심사 범위 내용 지문,
+    **미추적 파일 내용 포함**)를 기록하고, **게이트 통과 시점에 digest를 재계산해 대조**한다.
+    **승인 이후의 어떤 변경이든 `approve`를 무효화하며 재심 대상이다** — 변경이 사소한지는
+    피심판자가 판단할 사항이 아니다. 기록 없음·계산 불가·불일치는 전부 **통과 아님**(fail-closed).
+    계산법과 근거는 `codex-gate` "리비전 결속" 절.
+  - 게이트 통과 조건을 한 줄로:
+    **`adjudicator: codex` + `verdict: approve` + `reviewed_scope_digest == 현재 digest`.**
 
 실행 착수 전:
-- 계획이 있는 작업은 `codex-plan-reviewer` 심판 통과
+- 계획이 있는 작업은 `codex-plan-reviewer` 심판 통과 — approve는 **심사한 계획 문서에 결속**되므로(`reviewed_at_head` + `reviewed_plan_paths` + `reviewed_scope_digest`) 착수 직전에 `plan_scope_digest`를 재계산해 대조하고, 기록 없음·계산 불가·경로 소실·불일치는 전부 **착수 불가**(fail-closed → 재심). 계산법은 `codex-gate` "리비전 결속" 절
 
 **수용검사 규칙**: Codex verdict는 무조건 수용하지 않는다. 다만 **기각 가능 사유는 셋뿐이다**:
 

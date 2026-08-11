@@ -60,6 +60,19 @@ command mkdir ".omc/review/$STAMP/evidence"
 echo "$STAMP"
 ```
 
+**Codex를 디스패치하기 직전에 심사 대상 리비전을 포착한다** (아래 "리비전 결속" 절):
+
+```bash
+git rev-parse HEAD                    # → verdict.md 의 reviewed_at_head (두 레인 공통)
+review_scope_digest                   # 레인 A(코드): 작업 트리 전체
+plan_scope_digest <계획 문서 경로들>   # 레인 B(계획): 그 문서들만 + reviewed_plan_paths 기록
+```
+
+**레인에 따라 결속 범위가 다르다** — 함수 정의와 방향 선택 근거는 아래 "리비전 결속" 절 한 곳에 있다.
+
+포착 시점은 **Codex가 트리(레인 B는 계획 문서)를 읽는 시점과 같아야 한다.** 먼저 계산해두고
+그 사이에 편집이 들어가면 digest는 심판이 실제로 본 상태가 아닌 것을 가리킨다 — 결속이 거짓이 된다.
+
 `command` 를 붙이는 이유: 대화형 셸에 `alias mkdir='mkdir -pv'` 같은 별칭이 있으면
 `-p`가 몰래 붙어 **충돌해도 실패하지 않는다** — 그 순간 이 가드가 통째로 무력화된다
 (이 환경에서 실제로 그 별칭이 관측됐다). 별칭을 우회해야 "실패하면 새 스탬프" 계약이 성립한다.
@@ -85,6 +98,9 @@ echo "$STAMP"
 │   ├── performance.md
 │   └── style.md
 └── verdict.md         ← Codex 심판 결과 (verbatim + 수용검사 기록). evidence/ 밖
+                       필수 필드: adjudicator / reviewed_at_head / reviewed_scope_digest
+                       (레인 B는 + reviewed_plan_paths)
+                       ("리비전 결속" 절 — 이것들이 없으면 통과 판정 불가)
 ```
 
 **증거와 판정은 물리적으로 분리한다.** focus text가 지목하는 것은 항상
@@ -168,12 +184,22 @@ finding별로 담당을 배정한다 — **오케스트레이터가 직접 고�
 Claude 측이 계획 저작 (기존 경로 — strategy-lab / frontend-lab / devx-harness / planner / architect)
     ↓
 codex-plan-reviewer 심판
+    ↓ (디스패치 직전 리비전 포착: reviewed_at_head / reviewed_plan_paths / reviewed_scope_digest)
+    ↓ → .omc/review/{stamp}/verdict.md
     ↓ needs-attention → 저작자가 계획 개정 → 재심 (저작자 ≠ 심판 유지)
     ↓ approve
+    ↓ 실행 착수 직전 plan_scope_digest 재계산·대조
+    ↓   불일치 = 승인 후 계획이 개정됨 → approve 무효, 재심 (Phase 0 복귀)
+    ↓   기록 없음 · 계산 불가 · 경로 소실 = 착수 불가 (fail-closed)
 실행 착수
 ```
 
 **개정은 저작자가 한다.** 심판이 계획을 고치면 심판이 저자가 되고, 다음 심사는 자기 승인이 된다.
+
+**레인 B도 리비전에 결속된다.** 결속하지 않으면 레인 A와 같은 결함 클래스가 남는다 —
+계획이 approve를 받은 뒤 개정되면 **그 개정본이 심사를 우회한다.** 필드명·판정 어휘는 레인 A와
+동일하고 **결속 범위만 계획 문서로 좁다.** 규칙은 아래 "리비전 결속" 절 **한 곳**에 두 레인이
+나란히 적혀 있다 (여기서 되풀이하지 않는다 — 중복 저작은 드리프트를 만든다).
 
 ### 계획 심사 기준 (`codex-plan-reviewer`에 전부 주입)
 
@@ -299,6 +325,147 @@ cancel [job-id] [--json]
 이유: 하류가 **산문이 아니라 구조로** 심판자를 구별할 수 있어야 한다.
 "[FALLBACK] 이 판정은 잠정" 같은 배너 문구는 기계적 구별자가 아니다.
 
+## 리비전 결속 — approve는 심사한 그 내용에 대한 진술이다 (레인 A·B 공통)
+
+**승인은 시각에 대한 진술이 아니라 심사한 내용에 대한 진술이다** (레인 A = 코드 상태,
+레인 B = 계획 내용). Codex가 승인한 것은 "이 repo"나 "그 문서"가 아니라
+**심사 시점의 그 내용**이다. 내용이 바뀌면 진술의 대상이 사라지고,
+남은 `approve`는 더 이상 아무것도 승인하지 않는다.
+
+이 결속이 없으면 게이트에 다음 우회로가 열린다:
+
+```
+Codex가 상태 X를 승인 → Claude가 계속 수정 → 상태 Y가 "승인됨"으로 통과
+```
+
+**승인 이후의 편집이 심사를 통째로 우회한다.** 게이트를 아무리 단일 조건으로 좁혀도
+이 구멍이 있으면 나머지 규칙 전부가 무의미해진다 — 자기 승인을 막아도
+"심사받지 않은 코드의 통과"는 그대로 남기 때문이다.
+
+**이 규율은 이 repo에 이미 있다.** 증거 하네스의 `harness_at_commit`(= git blob id),
+EV 실행의 baseline staleness 게이트(`NO_PRIOR_EV_L1_RUN_AT_THIS_BASELINE`), lineage digest 결속 —
+전부 "이 산출물이 **어떤 상태를** 측정한 것인가"를 구조로 못박는다.
+**심판 레인만 이 규율이 빠져 있었다.** 같은 규율을 여기에 적용한다.
+
+### `verdict.md` 필수 필드 (레인 A 3종 / 레인 B 4종)
+
+| 필드 | 값 | 용도 |
+|------|-----|------|
+| `adjudicator` | `codex` \| `fallback-claude` | 심판자 식별 (위 절) |
+| `reviewed_at_head` | `git rev-parse HEAD` 출력 | 심사 시점의 커밋 (두 레인 공통) |
+| `reviewed_scope_digest` | 아래 스니펫 출력 (64자 hex) | 심사한 **내용**의 지문 (레인별 범위 다름) |
+| `reviewed_plan_paths` | 심사한 계획 문서 경로 목록 | **레인 B 전용** — 결속 범위 자체의 명시 기록 |
+
+`reviewed_at_head`만으로는 부족하다 — 이 게이트는 대부분 **미커밋 작업 트리**(레인 B는 방금 쓰여
+아직 커밋되지 않은 계획 문서)를 심사하므로 HEAD가 그대로여도 내용은 얼마든지 바뀐다.
+커밋 해시는 필요조건이지 충분조건이 아니다.
+
+### 범위 digest 계산 (레인 A — 코드 작업 트리)
+
+```bash
+review_scope_digest() {
+  set -o pipefail
+  {
+    git rev-parse HEAD                                  || return 1
+    git diff HEAD                                       || return 1  # 추적 파일 내용 (staged+unstaged)
+    git status --porcelain=v1 --untracked-files=all     || return 1  # 파일 단위 상태 (미추적 이름 포함)
+    git ls-files --others --exclude-standard -z \
+      | sort -z | xargs -0 -r shasum -a 256             || return 1  # 미추적 파일 *내용*
+  } | shasum -a 256 | cut -d' ' -f1
+}
+```
+
+**네 번째 줄이 핵심이다.** `git diff HEAD`는 추적 파일만 덮고, `git status --porcelain`은
+미추적 파일의 **이름만** 싣는다. 그 둘만 쓰면 신규 파일을 만들어 심사받은 뒤
+**같은 이름으로 내용을 갈아끼워도 digest가 변하지 않는다** — 신규 파일이 심사를 우회하는 경로가
+그대로 남는다. `git ls-files --others`로 미추적 파일의 **내용**까지 넣어야 그 구멍이 닫힌다
+(`sort -z`는 디렉토리 순회 순서에 따른 digest 흔들림을 막는다).
+
+**`.omc/`는 digest에 들어가지 않는다** — `.gitignore` 처리되어 있어 `--exclude-standard`와
+`--porcelain`이 둘 다 제외한다. 이것은 우연이 아니라 **요구되는 성질**이다:
+`verdict.md`를 쓰는 행위가 digest를 바꾸면 **기록하는 순간 자기 자신을 무효화한다.**
+측정이 스스로를 무효화해서는 안 된다.
+
+### 레인 B — 계획 문서로 좁혀 결속한다
+
+**필드명·판정 어휘는 레인 A와 같다. 다른 것은 결속 범위 하나뿐이다.**
+
+| 필드 | 레인 A (코드) | 레인 B (계획) |
+|------|--------------|--------------|
+| `adjudicator` | `codex` \| `fallback-claude` | 동일 |
+| `reviewed_at_head` | `git rev-parse HEAD` | 동일 |
+| `reviewed_plan_paths` | — | **심사한 계획 문서 경로 목록** (repo 루트 기준 상대경로) |
+| `reviewed_scope_digest` | `review_scope_digest` (작업 트리 전체) | `plan_scope_digest <경로들>` (그 문서들만) |
+
+```bash
+plan_scope_digest() {                                  # 인자: 심사한 계획 문서 경로들
+  set -o pipefail
+  [ "$#" -gt 0 ] || return 1                           # 대상 0건 = 범위 미확정 → 실패
+  for p in "$@"; do [ -f "$p" ] || return 1; done      # 경로 소실 → 실패 (fail-closed)
+  {
+    git rev-parse HEAD                          || return 1
+    printf '%s\0' "$@" | LC_ALL=C sort -z -u \
+      | xargs -0 -r shasum -a 256               || return 1   # 경로 + 워킹트리 실제 내용
+  } | shasum -a 256 | cut -d' ' -f1
+}
+```
+
+**워킹트리 내용을 해싱한다.** 계획 문서는 커밋된 것·미커밋인 것·커밋 후 수정중인 것이 섞인다.
+커밋본만 다루면 `git hash-object <path>`(blob id)로 충분하지만 그것은 **커밋 상태만** 가리켜
+커밋 후 편집을 놓친다. 워킹트리 해싱은 세 경우를 **한 방식으로** 덮으므로 분기 자체가 없어진다.
+
+**경로도 digest에 들어간다** — `shasum` 출력이 `<hash>  <경로>` 형태라 경로가 입력에 그대로 실린다.
+**파일 목록이 바뀌는 것도 범위 변경이다**: 문서를 추가·제거·개명하면 digest가 달라져야 한다.
+`sort -z -u`는 인자 순서 차이로 인한 **거짓 불일치**를 막는다 (같은 집합이면 같은 digest).
+경로는 **repo 루트 기준 상대경로로 통일**한다 — 같은 파일이라도 표기가 바뀌면 digest가 달라진다.
+
+#### 과잉 무효화 방향 — 레인 B는 반대로 좁힌다 (명시적 선택)
+
+레인 A는 작업 트리 전체를 결속해 **과잉 무효화 쪽**으로 붙였다 (아래 절). 레인 B는 계획 문서만
+결속하므로 **무관한 코드 변경이 계획 approve를 무효화하지 않는다.** 전체 트리 digest를 쓰면
+계획과 무관한 코드 한 줄 수정마다 계획 재심이 걸려 게이트가 실효를 잃기 때문이다.
+
+**대가**: 계획이 전제한 코드가 바뀌어도 계획 approve는 살아남는다 —
+**그 경우 재심을 요청할 책임은 저작자에게 있다.**
+
+방향이 갈리는 근거: 레인 A가 막는 것은 "심사받지 않은 **코드**의 통과"이고, 레인 B가 막는 것은
+"심사받지 않은 **계획**의 착수"다. 각 레인은 자기 심사 대상에 결속한다. 계획 문서 자체의 변경에
+대해서는 레인 B도 레인 A와 똑같이 기계적이다 — **digest가 다르면 무효.**
+
+### 게이트 통과 시점에 재계산·대조 (필수)
+
+승인을 인용하는 시점 — 레인 A는 머지·승격 인용 시점, **레인 B는 실행 착수 시점** — 에
+digest를 **다시 계산해서** `verdict.md`에 기록된 값과 대조한다.
+레인 A는 `review_scope_digest`, 레인 B는 `plan_scope_digest`에 기록된 `reviewed_plan_paths`를
+**그대로** 넣어 재계산한다 (경로 목록을 임의로 바꾸면 대조 자체가 다른 범위를 재는 것이 된다).
+
+| 관측 | 판정 |
+|------|------|
+| 재계산 digest == 기록된 `reviewed_scope_digest` | 리비전 결속 성립 — 나머지 게이트 조건 평가로 진행 |
+| 재계산 digest != 기록된 값 | **approve 무효.** 승인 이후 코드(레인 B는 계획)가 바뀌었다 → **재심 대상** (Phase 0 복귀) |
+| `verdict.md`에 `reviewed_scope_digest` 없음 (레인 B는 `reviewed_plan_paths`도) | **통과 아님 (fail-closed)** — 무엇을 승인한 것인지 알 수 없다 |
+| digest 계산 실패 (git 실패 · 빈 출력 · 64자 hex 아님 · **레인 B: 계획 경로 소실 · 대상 0건**) | **통과 아님 (fail-closed)** — 대조 불능은 일치가 아니다 |
+
+**승인 이후의 어떤 변경이든 `approve`를 무효화한다.** 변경이 사소한지, 무관한 파일인지,
+"지적과 상관없는 오타 수정"인지는 **피심판자가 판단할 사항이 아니다** — 그 판단을 허용하는 순간
+피심판자가 심사 범위를 스스로 정하게 되고, 그것이 정확히 이 레인이 막으려는 자기 승인이다.
+무효화 판정은 기계적이다: **digest가 다르면 무효.**
+
+**레인 A의 digest는 repo 전체 범위이므로 과잉 무효화가 일어난다** (심사 범위 밖 파일을 고쳐도 무효).
+이것은 결함이 아니라 **선택된 방향**이다 — 과잉 무효화의 비용은 재심 1회이고,
+과소 무효화의 비용은 **심사받지 않은 코드의 통과**다. fail-closed 쪽으로 붙인다.
+**레인 B는 반대 방향을 선택했고 그 대가까지 위 절에 명기되어 있다** — 조용히 좁힌 것이 아니다.
+
+### 게이트 통과 조건 (최종형)
+
+```
+레인 A: adjudicator: codex + verdict: approve + reviewed_scope_digest == 현재 review_scope_digest
+레인 B: adjudicator: codex + verdict: approve + reviewed_scope_digest == 현재 plan_scope_digest(reviewed_plan_paths)
+```
+
+세 조건은 **AND**다. 어느 하나라도 불성립·확인 불능이면 통과가 아니다.
+레인 B에서 "통과 아님"은 **실행 착수 불가**를 뜻한다.
+
 ## Stop 리뷰 게이트와의 구분
 
 `/codex:setup --enable-review-gate`로 **Stop 훅**이 활성화되어 있다.
@@ -330,6 +497,8 @@ Stop 훅이 ALLOW를 냈다는 것이 이 게이트를 통과했다는 뜻이 �
 | "변경 없음" 판정 | 범위 지정 실수 우선 의심 → `--scope working-tree`로 재시도 |
 | verdict가 스키마를 벗어남 | 원문 그대로 보존 + 스키마 이탈 사실 명기 |
 | **출력에 `verdict`가 없음 / "Parse error"로 떨어짐** | **그 자체를 게이트 실패로 취급 (fail-closed)**. approve로 넘기지 않는다 |
+| **digest 계산 실패 / `reviewed_scope_digest` 기록 없음** (레인 B: `reviewed_plan_paths` 없음 · **계획 경로 소실** · 대상 0건) | **게이트 실패 (fail-closed)**. 대조 불능은 일치가 아니다 ("리비전 결속" 절). 레인 B는 **착수 불가** |
+| **재계산 digest가 기록값과 불일치** | approve **무효** — 승인 후 편집됨(레인 B는 계획이 개정됨). 재심 (Phase 0 복귀) |
 
 **판정 불능 = 실패이지 통과가 아니다 (fail-closed).** `verdict` 필드가 없거나
 `renderReviewResult`가 "Parse error + Raw final message"로 떨어졌다면 심판은 **판정을 내지 못한 것**이다.
@@ -362,9 +531,10 @@ Codex가 복구되면 **폴백 판정은 잠정이며 재심 대상**임을 명�
 Claude가 Claude의 작업을 승인한 결과물이 정상 통과와 **구별 불가능한 형태로** 나온다.
 배너 문구는 산문일 뿐 기계적 구별자가 아니므로, 값 자체를 막는다.
 
-**품질 게이트 통과는 `adjudicator: "codex"` + `verdict: approve`의 조합에서만 성립한다.**
+**품질 게이트 통과는 `adjudicator: "codex"` + `verdict: approve` + `reviewed_scope_digest == 현재 digest`의
+조합에서만 성립한다** (아래 "리비전 결속" 절).
 폴백 산출물(`adjudicator: "fallback-claude"`)은 어떤 값이든 게이트를 통과시키지 못한다
-(위 fail-closed 규칙과 같은 성질이다 — 판정 불능도, 비독립 판정도 통과가 아니다).
+(위 fail-closed 규칙과 같은 성질이다 — 판정 불능도, 비독립 판정도, 리비전 미결속 판정도 통과가 아니다).
 
 ## 다른 하네스와의 경계
 
@@ -394,11 +564,25 @@ Claude가 Claude의 작업을 승인한 결과물이 정상 통과와 **구별 �
 5. status → result 회수 → verdict: needs-attention, findings 3건
 6. 수용검사: finding#2가 "EOD 일괄청산 추가" 권고 → 비협상 규칙 배치 → 기각, 사유 기록
    finding#1, #3은 file:line 실재 확인 → 채택
-7. verdict.md 기록 — adjudicator: "codex" + verbatim 원문 + 수용검사 섹션
+7. verdict.md 기록 — adjudicator: "codex" + reviewed_at_head + reviewed_scope_digest
+   + verbatim 원문 + 수용검사 섹션
    (evidence/ 밖에 쓴다 — 다음 심판의 입력 표면에 들어가지 않게)
 8. finding#1 → execution-specialist, #3 → test-engineer 위임
 9. 수정 완료 → Phase 0 복귀 (재심: 새 스탬프 + 직전 .omc/review/20260811-143052/verdict.md 파일 1건 지목)
 기대: 채택 2건 해소 확인 + 기각 1건이 재심에서 되살아나지 않음
+```
+
+### 시나리오 4 — 승인 후 편집 (리비전 결속이 잡아내는 경우)
+
+```
+1. 재심에서 Codex가 verdict: approve 반환
+2. verdict.md 기록 — adjudicator: codex, reviewed_at_head: d4c6485f...,
+   reviewed_scope_digest: a91f...(64자 hex)
+3. 그 뒤 "사소한 오타 하나만" 수정이 들어옴 (심사 지적과 무관한 파일)
+4. 게이트 통과를 인용하려는 시점에 review_scope_digest 재계산 → 7c02... (불일치)
+5. approve 무효 판정 → Phase 0 복귀, 재심
+기대: "무관한 사소 변경"이라는 피심판자의 자기 판단이 게이트를 열지 못한다.
+      무효화는 기계적(digest 불일치)이며 변경의 성격을 논하지 않는다.
 ```
 
 ### 시나리오 2 — 에러 흐름 (Codex 인증 만료)
@@ -434,6 +618,10 @@ Claude가 Claude의 작업을 승인한 결과물이 정상 통과와 **구별 �
 - verdict 원문은 **verbatim 보존**. 수용검사는 별도 섹션으로 덧붙임
 - 기각한 finding은 **기각 사유를 반드시 기록** (조용히 버리지 않는다) — 기각 사유는 **3가지로 한정**되고, **기각은 게이트를 열지 않는다**
 - `verdict.md`에 **`adjudicator`(`codex` | `fallback-claude`) 기록** — 하류가 구조로 심판자를 식별
+- `verdict.md`에 **`reviewed_at_head` + `reviewed_scope_digest` 기록** (**레인 B는 + `reviewed_plan_paths`**),
+  게이트 통과 시점(레인 B = **실행 착수 시점**)에 **digest 재계산·대조** — 기록 없음·계산 불가·경로 소실·불일치는
+  전부 **통과 아님**(fail-closed). 승인 이후의 어떤 변경이든 `approve`를 무효화한다
+  (레인 A는 작업 트리 전체, 레인 B는 심사한 계획 문서만 결속 — 방향 선택과 대가는 "리비전 결속" 절)
 - 폴백 시 `[FALLBACK: 비독립 심판 — 동일 모델 계열]` **최상단 명시** + **`approve` 금지**
 - 렌즈 산출물은 `evidence/` 안, `verdict.md`는 `evidence/` **밖** — focus 지목은 `evidence/`만
 - needs-attention 후 수정했으면 **반드시 재심** — 수정만으로 통과시키지 않는다
