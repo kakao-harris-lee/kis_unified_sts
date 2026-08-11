@@ -1,5 +1,5 @@
 ---
-globs: ["**/*.py"]
+globs: ["**/*.py", "*.py"]
 ---
 
 # Python Backend Rules
@@ -7,6 +7,10 @@ globs: ["**/*.py"]
 > **Loading**: the `globs` frontmatter above **is enforced**. The OMC `rules-injector` hook supports `globs` (`src/hooks/rules-injector/types.ts:18`) and injects this file as `[Rule: …][Match: …]` when a matching path is read/written/edited (`constants.ts:45` `TRACKED_TOOLS`). Scope is structural, not advisory.
 >
 > This file previously lived at `.claude/rules/`, where scope was defeated — not by `globs`, but by the **location**: Claude Code loads `.claude/rules/*.md` in full into the system prompt at session start regardless of which files are open (observed directly; `.github/` has no such unconditional load). It was moved here so the declared scope is the actual scope. `.github/instructions/` requires the `.instructions.md` suffix (`finder.ts:36-41`).
+>
+> **`*.py` is not a redundant duplicate of `**/*.py` — do not delete it.** `matchGlob` (`matcher.ts:17-28`) turns `**/*.py` into `^.*/[^/]*\.py$`, whose literal `/` excludes files sitting **directly at the repo root** (`setup.py`, `conftest.py`). The bare `*.py` form covers them. Paths are matched relative to the project root (`matcher.ts:52-57`).
+>
+> **This file stays at the repo root because `shared/`, `services/`, `tests/` carry no project marker of their own** — `findProjectRoot` (`finder.ts:57-63`) therefore walks them up to the repo root's `.git`/`pyproject.toml` (`constants.ts:17-24`). Any directory that grows its own `pyproject.toml` / `.venv` becomes a separate project root and stops seeing this file; it would need its own `.github/instructions/` (this is exactly why the frontend rules live under `strategy-builder-ui/`).
 >
 > Each rule has a "why" so you can override it intentionally rather than blindly.
 
