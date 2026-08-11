@@ -54,6 +54,11 @@ logs/
 /.cache/*
 !/.cache/.gitkeep
 
+# Vendored KIS open-trading-api reference SDK (~496MB, 19k files).
+# Untracked it would otherwise be swept into working-tree code reviews and
+# every `git status --untracked-files=all` scope.
+open-trading-api/
+
 # Local artifacts
 .venv/
 output/

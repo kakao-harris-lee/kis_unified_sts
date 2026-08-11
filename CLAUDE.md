@@ -138,6 +138,35 @@ npm run build
 npm run lint
 ```
 
+## Harness: Trading Platform Agent Team
+
+**Goal:** Route platform work to specialist agents, and keep adjudication (code and
+plan review) in an independent model lane.
+
+**Triggers:**
+
+- Platform work (strategy, ops, frontend, DevX, data, execution) → use the
+  `trading-harness` skill.
+- Any review, merge-gate, blocking verdict, or plan critique → use the `codex-gate`
+  skill. Codex is the reviewer of record; Claude agents produce evidence, not
+  verdicts.
+- Plan *authoring* is unchanged and stays on the existing Claude path. Only plan
+  *adjudication* moved to Codex.
+- Simple questions can be answered directly without the harness.
+
+**Adjudication override:** A Codex verdict never overrides the Non-Negotiable Rules
+above. Reject any finding that would violate them and record the reason.
+
+Agent roster, skill list, directory layout, and execution detail live under
+`.claude/` — not here.
+
+### Harness Change Log
+
+| Date | Change | Scope | Reason |
+| --- | --- | --- | --- |
+| 2026-03-12 | Initial harness setup (commit `531ec227`) | all | - |
+| 2026-08-11 | Adjudication moved to Codex — added `codex-reviewer` / `codex-plan-reviewer` / `codex-gate`; demoted `code-reviewer` and `review-synthesizer` to fallback-only; replaced the `code-audit` fan-in | `agents/`, `skills/` | Prevent self-approval and secure cross-model independent adjudication |
+
 ## Documentation Map
 
 - Project snapshot: `docs/PROJECT_STATUS.md`
