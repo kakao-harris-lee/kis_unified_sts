@@ -4,7 +4,9 @@ globs: ["**/*.py"]
 
 # Python Backend Rules
 
-> **Loading**: this file is loaded in full as a project instruction at session start, regardless of which files are open — observed directly. The `globs` frontmatter above *declares* the intended scope but is not enforced as a load filter in this harness (it stays so that a harness which does honour it works as intended). Because the loader does not filter, the reader must: **apply these rules only to Python code, and ignore them when the work is not Python.**
+> **Loading**: the `globs` frontmatter above **is enforced**. The OMC `rules-injector` hook supports `globs` (`src/hooks/rules-injector/types.ts:18`) and injects this file as `[Rule: …][Match: …]` when a matching path is read/written/edited (`constants.ts:45` `TRACKED_TOOLS`). Scope is structural, not advisory.
+>
+> This file previously lived at `.claude/rules/`, where scope was defeated — not by `globs`, but by the **location**: Claude Code loads `.claude/rules/*.md` in full into the system prompt at session start regardless of which files are open (observed directly; `.github/` has no such unconditional load). It was moved here so the declared scope is the actual scope. `.github/instructions/` requires the `.instructions.md` suffix (`finder.ts:36-41`).
 >
 > Each rule has a "why" so you can override it intentionally rather than blindly.
 

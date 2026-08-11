@@ -1,10 +1,14 @@
 ---
-globs: ["**/*.{js,jsx,ts,tsx,vue,svelte}"]
+globs: ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.vue", "**/*.svelte"]
 ---
 
 # Frontend Rules
 
-> **Loading**: this file is loaded in full as a project instruction at session start, regardless of which files are open — observed directly. The `globs` frontmatter above *declares* the intended scope but is not enforced as a load filter in this harness (it stays so that a harness which does honour it works as intended). Because the loader does not filter, the reader must: **apply these rules only to frontend source (`js`/`jsx`/`ts`/`tsx`/`vue`/`svelte`), and ignore them when the work is not frontend.**
+> **Loading**: the `globs` frontmatter above **is enforced**. The OMC `rules-injector` hook supports `globs` (`src/hooks/rules-injector/types.ts:18`) and injects this file as `[Rule: …][Match: …]` when a matching path is read/written/edited (`constants.ts:45` `TRACKED_TOOLS`). Scope is structural, not advisory.
+>
+> This file previously lived at `.claude/rules/`, where scope was defeated — not by `globs`, but by the **location**: Claude Code loads `.claude/rules/*.md` in full into the system prompt at session start regardless of which files are open (observed directly; `.github/` has no such unconditional load). It was moved here so the declared scope is the actual scope. `.github/instructions/` requires the `.instructions.md` suffix (`finder.ts:36-41`).
+>
+> **One pattern per entry — no brace expansion.** `matchGlob` (`matcher.ts:17-28`) rewrites only `.`, `**`, `*`, and `?` into a regex; `{a,b}` survives as literal text, so a pattern like `**/*.{ts,tsx}` matches no real file. That form was silently dead here while `.claude/rules/` was still force-loading the file, which masked it. List each extension separately, as above.
 >
 > Each rule has a "why" so you can override it intentionally.
 
