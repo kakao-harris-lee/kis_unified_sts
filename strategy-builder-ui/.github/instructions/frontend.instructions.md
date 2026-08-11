@@ -1,5 +1,5 @@
 ---
-globs: ["**/*.js", "*.js", "**/*.jsx", "*.jsx", "**/*.ts", "*.ts", "**/*.tsx", "*.tsx", "**/*.vue", "*.vue", "**/*.svelte", "*.svelte"]
+globs: ["**/*.js", "*.js", "**/*.mjs", "*.mjs", "**/*.cjs", "*.cjs", "**/*.jsx", "*.jsx", "**/*.ts", "*.ts", "**/*.tsx", "*.tsx", "**/*.vue", "*.vue", "**/*.svelte", "*.svelte"]
 ---
 
 # Frontend Rules
