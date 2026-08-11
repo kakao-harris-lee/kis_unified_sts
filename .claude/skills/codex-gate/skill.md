@@ -45,14 +45,30 @@ git status --short --untracked-files=all
 | 관측 | 판별 | 행동 |
 |------|------|------|
 | `.omc/review/` 없음 | **초기 실행** | 새 스탬프 생성 후 전체 레인 실행 |
-| 직전 스탬프 있음 + 그 이후 코드/계획 수정됨 | **부분 재실행 (재심)** | 새 스탬프 생성 + **직전 verdict를 Codex에 지목**해 해소 여부부터 심사 |
+| 직전 스탬프 있음 + 그 이후 코드/계획 수정됨 | **부분 재실행 (재심)** | 새 스탬프 생성 + **직전 `verdict.md` 파일 1건의 명시 경로**를 Codex에 지목해 해소 여부부터 심사 |
 | 직전 스탬프 있음 + 범위가 완전히 다름 | **새 실행** | 새 스탬프, 직전 verdict 미지목 |
 
 스탬프 생성:
 
 ```bash
-STAMP="$(date +%Y%m%d-%H%M)"; mkdir -p ".omc/review/$STAMP"; echo "$STAMP"
+command mkdir -p .omc/review                                 # 컨테이너만 -p (스탬프 아님)
+STAMP="$(date +%Y%m%d-%H%M%S)"
+until command mkdir ".omc/review/$STAMP" 2>/dev/null; do     # -p 아님 — 이미 있으면 실패한다
+  STAMP="$(date +%Y%m%d-%H%M%S)-$RANDOM"
+done
+command mkdir ".omc/review/$STAMP/evidence"
+echo "$STAMP"
 ```
+
+`command` 를 붙이는 이유: 대화형 셸에 `alias mkdir='mkdir -pv'` 같은 별칭이 있으면
+`-p`가 몰래 붙어 **충돌해도 실패하지 않는다** — 그 순간 이 가드가 통째로 무력화된다
+(이 환경에서 실제로 그 별칭이 관측됐다). 별칭을 우회해야 "실패하면 새 스탬프" 계약이 성립한다.
+
+**스탬프 디렉토리를 `mkdir -p`로 만들지 마라.** `-p`는 기존 디렉토리를 **조용히 재사용**한다.
+재심은 지적 수정 직후에 일어나므로 1분 내 재실행이 드물지 않고, 분 단위 스탬프 + `-p`면
+같은 디렉토리에 들어간다. 새 렌즈가 일부만 덮어쓰면 **이전 실행 증거와 이번 증거가 한 디렉토리에 섞인다.**
+그래서 초 단위로 올리고, **충돌하면 실패하는 `mkdir`** 로 새 디렉토리임을 보장한다
+(같은 초에 충돌하면 `-$RANDOM` 접미사로 재시도).
 
 `.omc/`는 이미 `.gitignore` 처리되어 있다 — 산출물이 커밋을 오염시키지 않는다.
 
@@ -62,16 +78,25 @@ STAMP="$(date +%Y%m%d-%H%M)"; mkdir -p ".omc/review/$STAMP"; echo "$STAMP"
 ## 워크스페이스 프로토콜
 
 ```
-.omc/review/{YYYYMMDD-HHMM}/
-├── architecture.md    ← Claude 렌즈 산출물
-├── security.md
-├── performance.md
-├── style.md
-└── verdict.md         ← Codex 심판 결과 (verbatim + 수용검사 기록)
+.omc/review/{YYYYMMDD-HHMMSS}/
+├── evidence/          ← 렌즈 산출물만. Codex focus는 여기만 지목한다
+│   ├── architecture.md
+│   ├── security.md
+│   ├── performance.md
+│   └── style.md
+└── verdict.md         ← Codex 심판 결과 (verbatim + 수용검사 기록). evidence/ 밖
 ```
 
+**증거와 판정은 물리적으로 분리한다.** focus text가 지목하는 것은 항상
+**`.omc/review/{stamp}/evidence/`** 이고, `verdict.md`는 그 밖에 둔다.
+
+이유: 심판자가 읽는 표면에 **심판자의 이전 출력이 절대 들어가지 않아야** 자기 되먹임이
+구조적으로 불가능해진다. 스탬프 디렉토리를 통째로 지목하면 재실행·부분 재실행에서
+Codex가 자기 이전 `verdict.md`를 "렌즈 증거"로 읽는다 — 자기 출력을 입력으로 되먹이는 오염이고,
+독립 심판의 전제가 깨진다. **산문 규칙이 아니라 경로 구조로 막는 것이 요점이다.**
+
 **렌즈 결과 본문을 Codex 커맨드라인 인자로 통째로 넘기지 마라.**
-Codex는 repo-aware CLI다 — focus text로 `.omc/review/{stamp}/` 경로를 지목하면 직접 읽는다.
+Codex는 repo-aware CLI다 — focus text로 `.omc/review/{stamp}/evidence/` 경로를 지목하면 직접 읽는다.
 본문을 붙이면 인자 길이가 폭발하고 잘린다.
 
 ## 레인 A — 코드 심판
@@ -80,12 +105,12 @@ Codex는 repo-aware CLI다 — focus text로 `.omc/review/{stamp}/` 경로를 �
 범위 결정 (diff / PR #N / 경로)
     ↓ fan-out (Claude 4렌즈 병렬 — 한 메시지에서 동시 dispatch)
 architecture-auditor + security-auditor + performance-auditor + style-auditor
-    ↓ 각 렌즈가 .omc/review/{stamp}/{lens}.md 로 산출
+    ↓ 각 렌즈가 .omc/review/{stamp}/evidence/{lens}.md 로 산출
     ↓ fan-in
-codex-reviewer  (adversarial-review, focus = .omc/review/{stamp}/)
+codex-reviewer  (adversarial-review, focus = .omc/review/{stamp}/evidence/)
     ↓
 verdict(approve | needs-attention) + findings + next_steps
-    ↓ → .omc/review/{stamp}/verdict.md
+    ↓ → .omc/review/{stamp}/verdict.md  (evidence/ 밖 — 심판 입력 표면에서 제외)
     ↓ 수용검사 (오케스트레이터 = Claude)
     ↓ needs-attention → 담당 에이전트로 수정 위임 → 재심 (Phase 0으로 복귀)
     ↓ approve → 게이트 통과
@@ -246,6 +271,21 @@ cancel [job-id] [--json]
   next_steps: [string] }
 ```
 
+### 심판자 식별 필드 (`adjudicator`) — 오케스트레이터가 부여
+
+`verdict.md`에 기록할 때 **최상위에 `adjudicator` 필드를 반드시 넣는다.**
+
+| 값 | 언제 |
+|----|------|
+| `"codex"` | Codex `adversarial-review`가 낸 판정 |
+| `"fallback-claude"` | 폴백(`review-synthesizer` / `code-reviewer` / `critic`)이 낸 판정 |
+
+**이 필드는 오케스트레이터가 부여한다.** Codex의 JSON 스키마 자체는 플러그인 소유라 바꿀 수 없다 —
+따라서 Codex 출력 본문은 verbatim으로 두고, `verdict.md`로 기록하는 시점에 이 필드를 덧붙인다.
+
+이유: 하류가 **산문이 아니라 구조로** 심판자를 구별할 수 있어야 한다.
+"[FALLBACK] 이 판정은 잠정" 같은 배너 문구는 기계적 구별자가 아니다.
+
 ## Stop 리뷰 게이트와의 구분
 
 `/codex:setup --enable-review-gate`로 **Stop 훅**이 활성화되어 있다.
@@ -299,6 +339,20 @@ verdict가 없으면 1회 재시도 후 실패로 보고한다.
 중대하게 취급한다 — 표시 없는 폴백은 비독립 심판을 독립 심판으로 위장시킨다.
 Codex가 복구되면 **폴백 판정은 잠정이며 재심 대상**임을 명기한다.
 
+#### 폴백은 `approve`를 낼 수 없다
+
+**발견이 0건이어도 폴백 판정은 `needs-attention`이다.** `next_steps`에
+"Codex 복구 후 `codex-reviewer` 재심 필수"를 넣고, `verdict.md`에 `adjudicator: "fallback-claude"`를 기록한다.
+
+이유: 폴백이 낼 수 있는 **가장 강한 주장은 "내가 본 범위에선 차단 사유를 못 찾았다"이지 "통과"가 아니다.**
+비독립 심판자에게 통과 권한을 주면 폴백이 게이트 우회로가 된다 — Codex를 잠깐 못 쓰는 것만으로
+Claude가 Claude의 작업을 승인한 결과물이 정상 통과와 **구별 불가능한 형태로** 나온다.
+배너 문구는 산문일 뿐 기계적 구별자가 아니므로, 값 자체를 막는다.
+
+**품질 게이트 통과는 `adjudicator: "codex"` + `verdict: approve`의 조합에서만 성립한다.**
+폴백 산출물(`adjudicator: "fallback-claude"`)은 어떤 값이든 게이트를 통과시키지 못한다
+(위 fail-closed 규칙과 같은 성질이다 — 판정 불능도, 비독립 판정도 통과가 아니다).
+
 ## 다른 하네스와의 경계
 
 | 하네스 | 역할 | 관계 |
@@ -316,19 +370,21 @@ Codex가 복구되면 **폴백 판정은 잠정이며 재심 대상**임을 명�
 
 ```
 입력: "shared/execution 변경 리뷰해줘"
-1. Phase 0: .omc/review/ 없음 → 초기 실행. STAMP=20260811-1430 생성
+1. Phase 0: .omc/review/ 없음 → 초기 실행. STAMP=20260811-143052 생성 (충돌 시 실패하는 mkdir)
 2. git status --untracked-files=all → 변경 6파일 + 신규 2 (untracked) 확인
-3. fan-out: 4렌즈 병렬 dispatch → .omc/review/20260811-1430/{architecture,security,performance,style}.md
+3. fan-out: 4렌즈 병렬 dispatch
+   → .omc/review/20260811-143052/evidence/{architecture,security,performance,style}.md
 4. fan-in: codex-reviewer 호출
    node "$CODEX" adversarial-review --background --scope working-tree \
-     "4렌즈 증거가 .omc/review/20260811-1430/ 에 있다. 먼저 읽고 독립 검증하라. CLAUDE.md도 읽어라."
+     "4렌즈 증거가 .omc/review/20260811-143052/evidence/ 에 있다. 먼저 읽고 독립 검증하라. CLAUDE.md도 읽어라."
    → job-id 반환
 5. status → result 회수 → verdict: needs-attention, findings 3건
 6. 수용검사: finding#2가 "EOD 일괄청산 추가" 권고 → 비협상 규칙 배치 → 기각, 사유 기록
    finding#1, #3은 file:line 실재 확인 → 채택
-7. verdict.md 기록 (verbatim 원문 + 수용검사 섹션)
+7. verdict.md 기록 — adjudicator: "codex" + verbatim 원문 + 수용검사 섹션
+   (evidence/ 밖에 쓴다 — 다음 심판의 입력 표면에 들어가지 않게)
 8. finding#1 → execution-specialist, #3 → test-engineer 위임
-9. 수정 완료 → Phase 0 복귀 (재심: 직전 verdict.md 지목)
+9. 수정 완료 → Phase 0 복귀 (재심: 새 스탬프 + 직전 .omc/review/20260811-143052/verdict.md 파일 1건 지목)
 기대: 채택 2건 해소 확인 + 기각 1건이 재심에서 되살아나지 않음
 ```
 
@@ -342,8 +398,10 @@ Codex가 복구되면 **폴백 판정은 잠정이며 재심 대상**임을 명�
 3. 1회 재시도 (범위 축소) → 동일 실패
 4. 폴백 강등: code-reviewer + review-synthesizer 호출
 5. 리포트 최상단에 [FALLBACK: 비독립 심판 — 동일 모델 계열] 명시
-6. verdict.md에 폴백 사유 + "Codex 복구 후 재심 필요" 기록
-기대: 폴백 표시 누락 없음. 이 판정으로 승격 게이트를 통과시키지 않음
+6. 폴백은 차단 항목 0건이어도 verdict: needs-attention (approve 불가)
+7. verdict.md에 adjudicator: "fallback-claude" + 폴백 사유 + next_steps "Codex 복구 후 재심 필수" 기록
+기대: 폴백 표시 누락 없음. adjudicator 필드만으로 하류가 비독립 판정임을 구조로 식별.
+      이 판정으로 승격 게이트를 통과시키지 않음
 ```
 
 ### 시나리오 3 — 에러 흐름 (백그라운드 잡 매달림)
@@ -362,5 +420,7 @@ Codex가 복구되면 **폴백 판정은 잠정이며 재심 대상**임을 명�
 - 모든 finding에 `파일:라인` 인용 — **실재 여부는 오케스트레이터가 검증**
 - verdict 원문은 **verbatim 보존**. 수용검사는 별도 섹션으로 덧붙임
 - 기각한 finding은 **기각 사유를 반드시 기록** (조용히 버리지 않는다)
-- 폴백 시 `[FALLBACK: 비독립 심판 — 동일 모델 계열]` **최상단 명시**
+- `verdict.md`에 **`adjudicator`(`codex` | `fallback-claude`) 기록** — 하류가 구조로 심판자를 식별
+- 폴백 시 `[FALLBACK: 비독립 심판 — 동일 모델 계열]` **최상단 명시** + **`approve` 금지**
+- 렌즈 산출물은 `evidence/` 안, `verdict.md`는 `evidence/` **밖** — focus 지목은 `evidence/`만
 - needs-attention 후 수정했으면 **반드시 재심** — 수정만으로 통과시키지 않는다

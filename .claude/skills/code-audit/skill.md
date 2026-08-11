@@ -37,25 +37,31 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
 ```
                         ┌─ architecture-auditor ─┐
 [code-audit]            ├─ security-auditor ──────┤   각 렌즈가 파일로 기록
-  범위 결정  ──fan-out──┤                          ├──→ .omc/review/{stamp}/{lens}.md
+  범위 결정  ──fan-out──┤                          ├──→ .omc/review/{stamp}/evidence/{lens}.md
  (diff/PR/경로)         ├─ performance-auditor ───┤        (architecture|security|
-  stamp=YYYYMMDD-HHMM   └─ style-auditor ─────────┘         performance|style)
+  stamp=YYYYMMDD-HHMMSS └─ style-auditor ─────────┘         performance|style)
                     (4개 병렬, 서로 독립 / 같은 범위 입력)
                                                                     │
-                                          focus text로 디렉토리 지목 │ (Codex가 직접 읽음)
+                                     focus text로 evidence/ 만 지목 │ (Codex가 직접 읽음)
                                                                     ▼
                                         codex-reviewer (adversarial-review, 별도 프로세스)
                                                                     │
                                                                     ▼
-                                            .omc/review/{stamp}/verdict.md
-                                        {verdict, summary, findings[], next_steps[]}
+                                     .omc/review/{stamp}/verdict.md  ← evidence/ 밖
+                                {adjudicator, verdict, summary, findings[], next_steps[]}
                                                                     │
                                                                     ▼
                                               Claude 오케스트레이터 수용검사
 ```
 
 ### Phase 0: 워크스페이스 준비
-- `stamp = YYYYMMDD-HHMM`을 정하고 `.omc/review/{stamp}/`를 만든다.
+- `stamp = YYYYMMDD-HHMMSS`(초 단위)를 정하고 `.omc/review/{stamp}/`와 `.omc/review/{stamp}/evidence/`를 만든다.
+- **스탬프 디렉토리는 `mkdir -p`로 만들지 마라** — `-p`는 기존 디렉토리를 조용히 재사용해서
+  이전 실행 증거와 이번 증거를 한 디렉토리에 섞는다. **충돌하면 실패하는 `mkdir`** 을 쓴다
+  (생성 절차는 `codex-gate` 스킬 Phase 0이 소유).
+- **렌즈 산출물은 `evidence/` 안, 심판 결과 `verdict.md`는 `evidence/` 밖**이다.
+  Codex focus는 `evidence/`만 지목한다 — 심판자가 자기 이전 verdict를 증거로 되읽는 오염을
+  경로 구조로 차단한다 (Phase 3 참조).
 - `.omc/`는 이미 gitignore 처리되어 있으므로 산출물이 커밋을 오염시키지 않는다.
 
 ### Phase 1: 범위 결정
@@ -69,7 +75,7 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
 - 자기 렌즈에만 집중 (렌즈 간 침범 금지)
 - 변경 범위 우선, 기존 부채는 pre-existing으로 표기
 - 구조화 발견 목록 생성: `{severity, dimension, location, finding, recommendation, confidence}`
-- **반환만 하지 말고 `.omc/review/{stamp}/{lens}.md`에 파일로 기록한다**
+- **반환만 하지 말고 `.omc/review/{stamp}/evidence/{lens}.md`에 파일로 기록한다**
   (lens = `architecture` | `security` | `performance` | `style`)
 
 > **왜 파일인가**: Codex는 별도 프로세스라 Claude 서브에이전트의 **반환값을 볼 수 없다.**
@@ -87,12 +93,18 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
   `adversarial-review`만 `outputSchema: readOutputSchema(REVIEW_SCHEMA)` 부착).
   이 팬인 단계는 focus 지목과 단일 verdict **둘 다** 필요하므로 네이티브 경로로는 성립하지 않는다.
   플러그인 업그레이드 시 위 두 지점을 재확인한다.
-- focus text로 **`.omc/review/{stamp}/`** 디렉토리를 지목한다.
+- focus text로 **`.omc/review/{stamp}/evidence/`** 디렉토리를 지목한다. **스탬프 디렉토리를 통째로 지목하지 마라.**
   Codex는 repo-aware CLI이므로 focus text로 경로를 주면 렌즈 산출물과 대상 코드를 직접 읽는다.
+  스탬프 디렉토리를 통째로 주면 재실행·부분 재실행에서 **Codex가 자기 이전 `verdict.md`를 렌즈 증거로 읽는다** —
+  자기 출력을 입력으로 되먹이는 오염이며 독립 심판의 전제가 깨진다.
+  그래서 `verdict.md`를 `evidence/` 밖에 두고 focus는 `evidence/`만 지목한다 —
+  **산문 규칙이 아니라 경로 구조로 막는 것이 요점이다.**
   **렌즈 결과를 커맨드라인 인자로 통째로 넘기지 마라.**
 - 출력은 Codex verdict 스키마:
   `{verdict: approve|needs-attention, summary, findings[{severity, title, body, file, line_start, line_end, confidence, recommendation}], next_steps[]}`
-- 결과를 `.omc/review/{stamp}/verdict.md`에 저장한다.
+- 결과를 `.omc/review/{stamp}/verdict.md`에 저장하며, **최상위에 `adjudicator: "codex"`를 덧붙인다.**
+  Codex의 JSON 스키마 자체는 플러그인 소유라 바꿀 수 없으므로 **이 필드는 오케스트레이터가
+  기록 시점에 부여한다** (Codex 출력 본문은 verbatim 유지).
 - **Codex stdout은 verbatim 보존한다. 요약하지 마라.**
   이유: 피심판자(Claude)가 심판 결과를 요약하면 그 순간 독립성이 훼손된다.
   압축·의역·"핵심만 정리"는 전부 금지. 인용은 원문 그대로.
@@ -118,15 +130,25 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
 
 ## 폴백 (Codex 미가용)
 1. Codex 호출 실패 시 **1회 재시도**한다 (auth 만료·네트워크·rate limit 대부분은 일시적).
-2. 재실패하면 `review-synthesizer`로 **강등**해 팬인을 수행한다 (`.omc/review/{stamp}/{lens}.md` 4개를 직접 읽음).
+2. 재실패하면 `review-synthesizer`로 **강등**해 팬인을 수행한다
+   (`.omc/review/{stamp}/evidence/{lens}.md` 4개를 직접 읽음).
 3. 리포트 **최상단에 아래 한 줄을 명시**한다. 조용한 폴백은 결함이다.
 
    ```
    [FALLBACK: 비독립 심판 — 동일 모델 계열]
    ```
 4. 출력 스키마는 Codex verdict와 동일하게 유지한다 — 하류 소비 표면이 분기 없이 같아야 한다.
-5. 폴백 판정은 **잠정**이다. Codex 회복 후 재심 대상으로 남긴다.
-6. **판정 불능은 실패이지 통과가 아니다 (fail-closed).** Codex가 응답했더라도 출력에 `verdict`가 없거나
+   단 `verdict.md`에는 **`adjudicator: "fallback-claude"`** 를 기록한다 (Codex 경로는 `"codex"`).
+   이 필드는 오케스트레이터가 부여하며, 하류가 **산문이 아니라 구조로** 심판자를 구별하게 한다.
+5. **폴백은 `approve`를 절대 내지 않는다.** 차단 항목이 0건이어도 `needs-attention`으로 내고,
+   `next_steps`에 "Codex 복구 후 `codex-reviewer` 재심 필수"를 넣는다.
+   이유: 폴백이 낼 수 있는 가장 강한 주장은 **"내가 본 범위에선 차단 사유를 못 찾았다"이지 "통과"가 아니다.**
+   비독립 심판자에게 통과 권한을 주면 폴백이 게이트 우회로가 되고, Claude가 Claude의 작업을 승인한
+   결과물이 정상 통과와 구별 불가능해진다. 배너 문구는 산문일 뿐 기계적 구별자가 아니므로 값 자체를 막는다.
+6. 폴백 판정은 **잠정**이다. Codex 회복 후 재심 대상으로 남긴다.
+   **품질 게이트 통과는 `adjudicator: "codex"` + `verdict: approve`에서만 성립한다** —
+   폴백 산출물은 어떤 값이든 게이트를 통과시키지 못한다.
+7. **판정 불능은 실패이지 통과가 아니다 (fail-closed).** Codex가 응답했더라도 출력에 `verdict`가 없거나
    `renderReviewResult`가 "Parse error + Raw final message"로 떨어졌다면 심판은 판정을 내지 못한 것이다.
    **approve로 넘기지 마라** — 판정 불능을 통과로 읽으면 게이트가 무의미해지고, 자기 승인 방지라는
    존재 이유가 소멸한다. 먼저 서브커맨드가 `adversarial-review`였는지 확인하고
@@ -149,7 +171,9 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
 - CRITICAL/HIGH는 영향 + 권장 조치 필수, 담당 제안은 Claude 후속 배정에서 채운다
 - 차단 판정(`needs-attention`)에 명확한 사유
 - 리포트는 간결하게 (군더더기 없는 실행 가능 항목) — 단, **Codex 원문은 압축 대상이 아니다**
-- 렌즈 파일과 verdict 파일이 `.omc/review/{stamp}/`에 전부 남아 재현 가능해야 한다
+- 렌즈 파일(`.omc/review/{stamp}/evidence/{lens}.md`)과 verdict 파일(`.omc/review/{stamp}/verdict.md`)이
+  전부 남아 재현 가능해야 한다 — verdict는 `evidence/` 밖이라는 배치를 지킨다
+- `verdict.md`에 `adjudicator`(`codex` | `fallback-claude`)가 기록되어 있어야 한다
 
 ## 다른 하네스와의 경계
 - **`code-audit` (이 스킬)**: **렌즈 팬아웃(증거 생성)**을 제공한다. 판정은 하지 않는다

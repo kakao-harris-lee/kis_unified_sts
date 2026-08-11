@@ -13,7 +13,8 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 다른 모델 계열의 독립 심판을 확보하기 위해, 코드 심판과 계획 심판은 `codex-reviewer` / `codex-plan-reviewer`가 소유한다.
 Claude 4렌즈 감사관은 **증거 생성**을 담당하며, 심각도 정규화·차단 판정·최종 리포트는 Codex가 낸다.
 계획 *저작*은 기존 Claude 경로 그대로다 — 달라지는 건 완성된 계획이 심판 게이트를 통과해야 실행에 착수한다는 점뿐이다.
-리뷰 산출물은 `.omc/review/{YYYYMMDD-HHMM}/`에 남긴다 (렌즈 `{lens}.md`, 심판 결과 `verdict.md`).
+리뷰 산출물은 `.omc/review/{YYYYMMDD-HHMMSS}/`에 남긴다
+(렌즈 증거 `evidence/{lens}.md`, 심판 결과 `verdict.md` — verdict는 `evidence/` 밖이며 심판 focus는 `evidence/`만 지목한다).
 
 ## 전문가 풀 (29명 — 심판 2명은 전역 `~/.claude/agents/` 소속)
 
@@ -78,8 +79,9 @@ Claude 4렌즈 감사관은 **증거 생성**을 담당하며, 심각도 정규�
 | `style-auditor` | 코드 스타일 감사 (렌즈) | 스타일, 타입힌트, docstring, 네이밍, 매직넘버 |
 | `review-synthesizer` | [FALLBACK] 4개 감사 결과 통합 (fan-in) | (평시 미사용 — Codex 미가용 시 강등 경로) |
 
-> 4렌즈 감사관은 `.omc/review/{stamp}/{lens}.md`에 **증거**만 남긴다. 팬인 심판(중복제거·심각도 정규화·우선순위·차단 판정·최종 `verdict.md`)은
-> `codex-reviewer`가 소유한다. `review-synthesizer`는 Codex 미가용 시에만 폴백으로 쓰고 `[FALLBACK: 비독립 심판 — 동일 모델 계열]`을 명시한다.
+> 4렌즈 감사관은 `.omc/review/{stamp}/evidence/{lens}.md`에 **증거**만 남긴다. 팬인 심판(중복제거·심각도 정규화·우선순위·차단 판정·최종 `verdict.md`)은
+> `codex-reviewer`가 소유한다. `review-synthesizer`는 Codex 미가용 시에만 폴백으로 쓰고 `[FALLBACK: 비독립 심판 — 동일 모델 계열]`을 명시하며,
+> **폴백은 `approve`를 내지 못한다**(`adjudicator: fallback-claude` — 품질 게이트 통과 불가).
 
 ### 프론트엔드 팀 (Next.js 단일 앱)
 | 에이전트 | 전문 영역 | 트리거 키워드 |
@@ -231,9 +233,10 @@ Phase 4: ops-monitor → 복구 후 재검증
 범위 결정 (diff / PR #N / 경로)
     ↓ fan-out (4개 병렬, 동일 범위) — 렌즈 = 증거 생성
 architecture-auditor + security-auditor + performance-auditor + style-auditor
-    ↓ 각 렌즈 산출물을 .omc/review/{stamp}/{lens}.md 로 기록
+    ↓ 각 렌즈 산출물을 .omc/review/{stamp}/evidence/{lens}.md 로 기록
     ↓ fan-in (독립 심판)
-codex-reviewer → 중복제거·심각도정규화·우선순위·차단판정 → .omc/review/{stamp}/verdict.md
+codex-reviewer (focus = .omc/review/{stamp}/evidence/) → 중복제거·심각도정규화·우선순위·차단판정
+    ↓ → .omc/review/{stamp}/verdict.md  (evidence/ 밖, adjudicator: codex)
     ↓ (선택)
 차단 항목 → refactorer / execution-specialist / data-engineer 등으로 수정 위임 → codex-gate 재심
 ```
@@ -279,10 +282,17 @@ Phase 4: approve → 실행 착수
 5. REMOVED/DEPRECATED 전략(`rl_mppo`, `llm_directed_indicator`) 미사용
 
 코드 변경 완료 시:
-- `codex-reviewer` 심판 `verdict: approve` (또는 needs-attention 항목이 전부 해소되었거나 기각 사유가 기록됨)
+- **`codex-reviewer`(= Codex)가 낸 `verdict: approve`만 이 게이트를 통과시킨다**
+  (또는 needs-attention 항목이 전부 해소되었거나 기각 사유가 기록됨)
   - **판정 경로는 `adversarial-review`다.** verdict 계약을 내는 유일한 경로이므로 이 조건과 짝이 맞는다
     (`codex-companion.mjs:409-417` = 스키마 부착 / `:370-407` 네이티브 `review` = verdict 없음).
     `review` 출력에는 `verdict`가 없으므로 이 게이트를 만족시킬 수 없다
+  - **폴백 산출물(`adjudicator: fallback-claude`)은 어떤 값이든 이 게이트를 통과시키지 못한다.**
+    Codex 미가용 시의 강등 경로는 비독립 심판(동일 모델 계열)이라 통과 권한이 없다 —
+    폴백에 통과 권한을 주면 그것이 자기 승인 우회로가 되고, 심판 레인의 존재 이유가 소멸한다.
+    폴백은 애초에 `approve`를 내지 않으며(`review-synthesizer` 계약), 낸다 해도 게이트는 열리지 않는다.
+  - **판정 불능도 통과가 아니다 (fail-closed).** `verdict` 필드 부재·"Parse error"는 실패로 취급한다.
+  - 게이트 통과 조건을 한 줄로: **`adjudicator: codex` + `verdict: approve`.**
 
 실행 착수 전:
 - 계획이 있는 작업은 `codex-plan-reviewer` 심판 통과
