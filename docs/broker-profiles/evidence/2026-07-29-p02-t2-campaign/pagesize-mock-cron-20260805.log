@@ -1,0 +1,304 @@
+=== [09:05:01] P-11 000660
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000501Z.json
+=== [09:05:26] P-11 475150
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000526Z.json
+=== [09:05:38] P-11 035420
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000538Z.json
+=== [09:05:42] P-11 005935
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000542Z.json
+=== [09:05:46] P-11 017670
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000546Z.json
+=== [09:05:56] P-11 006340
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000556Z.json
+=== [09:06:00] P-11 119850
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000600Z.json
+=== [09:06:10] P-11 034020
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000610Z.json
+=== [09:06:23] P-11 006360
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000623Z.json
+=== [09:06:28] P-11 047040
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000628Z.json
+=== [09:06:33] P-11 028050
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000633Z.json
+=== [09:06:46] P-11 439960
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000646Z.json
+=== [09:06:49] P-11 010170
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000650Z.json
+=== [09:06:53] P-11 009830
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000653Z.json
+=== [09:07:02] P-11 413630
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000702Z.json
+=== [09:07:15] P-11 035720
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000715Z.json
+=== [09:07:30] P-11 010140
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000730Z.json
+=== [09:07:45] P-11 347700
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000745Z.json
+=== [09:07:49] P-11 030530
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000749Z.json
+=== [09:07:53] P-11 073240
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000753Z.json
+=== [09:07:57] P-11 058610
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000757Z.json
+=== [09:08:02] P-11 098460
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000802Z.json
+=== [09:08:15] P-11 319400
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000815Z.json
+=== [09:08:22] P-11 032820
+
+=== P-11 — POSITIONS_BALANCES_MARGIN — fill→balance reflection lag
+    source     : draft §5:236
+    environment: MOCK_VTS    risk: HIGH    emits_orders: True
+    feeds bounds: B_broker_query_consistency, B_startup_reconciliation
+    INSTANCE    : capabilities.position_balance_margin.consistency_model
+    prereq     : an intentional FILL is required — pass --allow-fill explicitly
+    prereq     : STOCK asset only on mock: futures balance is unsupported on 모의 (shared/kis/client.py:1030-1032)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-11-20260805T000822Z.json
+=== [09:08:27] P-11 accumulation done — failures=0/24
+=== [09:08:27] P-BAL mock stock
+
+=== P-BAL — BALANCE_PAGINATION — balance-query page size / continuation walk (GET-only)
+    source     : wave-3b runtime trace H4 (stock-balance pagination, 2026-07-31)
+    environment: REAL_PROD    risk: LOW    emits_orders: False
+    INSTANCE    : capabilities.position_balance_margin.evidence_refs, capabilities.position_balance_margin.status
+    prereq     : READ-ONLY, enforced by GET + allowlist; no order path exists in tools/broker_probes/probes_balance.py and it imports none
+    prereq     : operator approval for --env real (consumes a real credential)
+    prereq     : an account that actually HOLDS positions — zero rows establishes nothing about pagination
+    prereq     : --asset futures --env mock SKIPS: the broker serves no futures balance on 모의 (shared/kis/client.py:1026 NOTE, guard :1031-1033)
+    prereq     : never cross-route stock/futures credentials (common.py::resolve_credentials docstring)
+
+
+  artifact: /home/deploy/project/kis_unified_sts/tools/broker_probes/results/P-BAL-20260805T000827Z.json
+=== [09:08:30] runner complete
