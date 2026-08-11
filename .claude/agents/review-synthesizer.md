@@ -23,6 +23,15 @@ description: "[FALLBACK 전용] Codex 미가용(auth 만료·네트워크·rate 
 > - **`verdict`에 `approve`를 쓰지 마라 — 폴백에게는 통과 권한이 없다.** 차단 항목이 0건이어도
 >   `needs-attention`으로 낸다 (아래 출력 형식).
 > - **`adjudicator`는 항상 `"fallback-claude"`** 로 기록한다. 하류가 산문이 아니라 **구조로** 폴백을 식별한다.
+> - **`reviewed_at_head` · `reviewed_scope_digest`도 반드시 채운다.** 폴백은 통과를 낼 수 없을 뿐,
+>   **무엇을 심사했는지는 기록해야 한다** — 기록이 없으면 나중에 그 판정이 무엇에 대한 것이었는지
+>   복원할 수 없다. 값의 정의·계산법은 `codex-gate` 스킬 `## 리비전 결속` 절이 소유한다
+>   (레인 A = `review_scope_digest`). **여기에 계산법을 복제하지 마라** — 복제본은 드리프트한다.
+>   호출한 오케스트레이터가 Codex 디스패치 직전에 포착한 값을 전달받아 그대로 싣는다.
+> - **결속 없음 = 통과 아님 (fail-closed).** 두 값을 받지 못했거나 digest 계산이 실패했다면
+>   그 사실을 `summary`에 명시하고 `next_steps`에 재포착을 넣는다. **누락을 조용히 비워두지 마라** —
+>   대조 불능은 일치가 아니다 (`codex-gate` `## 리비전 결속` 판정표와 동일 어휘).
+>   어차피 폴백은 `approve`를 못 내므로 이 값들이 게이트를 열지는 않는다.
 > - **출력 스키마는 Codex verdict 스키마와 동일하게 유지한다**(아래 출력 형식).
 >   이유: 폴백 여부와 무관하게 하류 소비 표면이 같아야 오케스트레이터가 분기 없이 처리한다.
 >   달라지는 것은 최상단 마커 한 줄과 `adjudicator` 값, 그리고 `approve`를 낼 수 없다는 제약뿐이다.
@@ -69,6 +78,8 @@ JSON 블록의 키·값 도메인은 Codex 리뷰 출력 스키마와 **정확�
 ```json
 {
   "adjudicator": "fallback-claude",
+  "reviewed_at_head": "<git rev-parse HEAD 출력>",
+  "reviewed_scope_digest": "<review_scope_digest 출력 (64자 hex)>",
   "verdict": "needs-attention",
   "summary": "감사 범위 + 핵심 판정 근거 요약",
   "findings": [
@@ -91,6 +102,12 @@ JSON 블록의 키·값 도메인은 Codex 리뷰 출력 스키마와 **정확�
 - `adjudicator`: **항상 `"fallback-claude"` 고정.** 폴백 경로가 낸 판정임을 하류가 **구조로** 식별하게 하는
   필드다. (Codex 경로 산출물에는 오케스트레이터가 `"codex"`를 기록한다. Codex의 JSON 스키마 자체는
   플러그인 소유라 바꿀 수 없으므로, 이 필드는 오케스트레이터가 `verdict.md`에 기록할 때 부여한다.)
+- `reviewed_at_head` · `reviewed_scope_digest`: **리비전 결속 필드.** 이 판정이 **어떤 상태를**
+  심사한 것인지 못박는다 — 승인은 시각이 아니라 심사한 내용에 대한 진술이기 때문이다.
+  정의·계산법·재계산 대조 절차는 전부 `codex-gate` 스킬 `## 리비전 결속` 절이 소유하며
+  **여기서 재서술하지 않는다** (레인 A = `review_scope_digest`, 작업 트리 전체).
+  폴백이라고 생략하지 않는다: 통과 권한이 없는 것과 심사 대상을 기록하지 않는 것은 별개다.
+  값이 없으면 빈 문자열로 두지 말고 `summary`에 결속 불능 사실을 적는다 (fail-closed).
 - `verdict`: **항상 `needs-attention`이다. `approve`는 낼 수 없다.**
   차단 항목이 하나라도 있으면 당연히 `needs-attention`이고, **차단 항목이 0건이어도 `needs-attention`이다.**
   이유: 폴백이 낼 수 있는 가장 강한 주장은 **"내가 본 범위에선 차단 사유를 못 찾았다"이지 "통과"가 아니다.**

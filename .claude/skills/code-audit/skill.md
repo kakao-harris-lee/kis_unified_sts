@@ -48,7 +48,8 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
                                                                     │
                                                                     ▼
                                      .omc/review/{stamp}/verdict.md  ← evidence/ 밖
-                                {adjudicator, verdict, summary, findings[], next_steps[]}
+                     {adjudicator, reviewed_at_head, reviewed_scope_digest,
+                      verdict, summary, findings[], next_steps[]}
                                                                     │
                                                                     ▼
                                               Claude 오케스트레이터 수용검사
@@ -63,6 +64,13 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
   Codex focus는 `evidence/`만 지목한다 — 심판자가 자기 이전 verdict를 증거로 되읽는 오염을
   경로 구조로 차단한다 (Phase 3 참조).
 - `.omc/`는 이미 gitignore 처리되어 있으므로 산출물이 커밋을 오염시키지 않는다.
+- **리비전 포착**: 심사 대상 리비전을 포착해 둔다 (`reviewed_at_head` = `git rev-parse HEAD`,
+  `reviewed_scope_digest` = `review_scope_digest`). **이 스킬은 레인 A(코드)다.**
+  **함수 정의·계산법·판정표는 `codex-gate` 스킬의 `## 리비전 결속` 절이 단일 소유자다** —
+  여기에 복제하지 마라. 복제본은 원본과 드리프트하고, 그 순간 두 진입점이 서로 다른 것을 결속한다.
+- **포착 시점은 Phase 3의 Codex 디스패치 직전**이다. Phase 0에서 미리 계산해두고 Phase 2 감사 중에
+  트리가 바뀌면 digest는 심판이 실제로 본 상태를 가리키지 않는다 — 결속이 거짓이 된다.
+  (Phase 0에서는 "포착한다"는 사실만 계약으로 두고, 실제 실행은 Phase 3 직전이다.)
 
 ### Phase 1: 범위 결정
 - **diff 모드**: `git diff`(working tree) 또는 staged — 진행 중 작업
@@ -86,6 +94,9 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
 
 ### Phase 3: 독립 심판 (fan-in)
 `codex-reviewer`를 호출한다.
+- **호출 직전에 리비전을 포착한다** (Phase 0 계약의 실행 지점):
+  `reviewed_at_head` = `git rev-parse HEAD`, `reviewed_scope_digest` = `review_scope_digest`
+  (레인 A). **함수 정의와 근거는 `codex-gate` 스킬 `## 리비전 결속` 절 — 복제 금지.**
 - 모드: **`adversarial-review`**
 - **왜 `review`가 아닌가**: 네이티브 `review`는 내장 리뷰어 직결이라 플러그인이 프롬프트도 스키마도
   주입하지 못한다 — focus text 주입 불가이고 **verdict 필드도 없다**
@@ -102,9 +113,24 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
   **렌즈 결과를 커맨드라인 인자로 통째로 넘기지 마라.**
 - 출력은 Codex verdict 스키마:
   `{verdict: approve|needs-attention, summary, findings[{severity, title, body, file, line_start, line_end, confidence, recommendation}], next_steps[]}`
-- 결과를 `.omc/review/{stamp}/verdict.md`에 저장하며, **최상위에 `adjudicator: "codex"`를 덧붙인다.**
-  Codex의 JSON 스키마 자체는 플러그인 소유라 바꿀 수 없으므로 **이 필드는 오케스트레이터가
+- 결과를 `.omc/review/{stamp}/verdict.md`에 저장하며, **최상위에 아래 3필드를 덧붙인다.**
+  Codex의 JSON 스키마 자체는 플러그인 소유라 바꿀 수 없으므로 **이 필드들은 오케스트레이터가
   기록 시점에 부여한다** (Codex 출력 본문은 verbatim 유지).
+
+  | 필드 | 값 |
+  |------|-----|
+  | `adjudicator` | `"codex"` (폴백 경로는 `"fallback-claude"`) |
+  | `reviewed_at_head` | 디스패치 직전 `git rev-parse HEAD` 출력 |
+  | `reviewed_scope_digest` | 디스패치 직전 `review_scope_digest` 출력 (64자 hex) |
+
+  **`reviewed_at_head` / `reviewed_scope_digest`의 정의·계산법·재계산 대조 절차는
+  `codex-gate` 스킬 `## 리비전 결속` 절이 소유한다** — 이 스킬은 참조만 하고 복제하지 않는다.
+  이 진입점이 자기 계산법을 따로 쓰면 두 진입점이 같은 이름으로 다른 것을 결속하게 된다.
+- **결속 없는 verdict는 통과가 아니다 (fail-closed).** `verdict.md`에
+  `reviewed_scope_digest`가 없거나 digest 계산이 실패했으면 **무엇을 승인한 것인지 알 수 없으므로**
+  approve로 읽지 않는다. 대조 불능은 일치가 아니다 (`codex-gate` `## 리비전 결속`의 판정표와 동일 어휘).
+  게이트 통과는 `adjudicator: "codex"` + `verdict: approve` + `reviewed_scope_digest == 현재
+  review_scope_digest`의 **AND**에서만 성립한다.
 - **Codex stdout은 verbatim 보존한다. 요약하지 마라.**
   이유: 피심판자(Claude)가 심판 결과를 요약하면 그 순간 독립성이 훼손된다.
   압축·의역·"핵심만 정리"는 전부 금지. 인용은 원문 그대로.
@@ -140,14 +166,18 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
 4. 출력 스키마는 Codex verdict와 동일하게 유지한다 — 하류 소비 표면이 분기 없이 같아야 한다.
    단 `verdict.md`에는 **`adjudicator: "fallback-claude"`** 를 기록한다 (Codex 경로는 `"codex"`).
    이 필드는 오케스트레이터가 부여하며, 하류가 **산문이 아니라 구조로** 심판자를 구별하게 한다.
+   **`reviewed_at_head` / `reviewed_scope_digest`도 Codex 경로와 동일하게 기록한다.**
+   폴백은 통과를 못 낼 뿐, **무엇을 심사했는지는 남겨야 한다** — 기록이 없으면 나중에 그 판정이
+   무엇에 대한 것이었는지 복원할 수 없다.
 5. **폴백은 `approve`를 절대 내지 않는다.** 차단 항목이 0건이어도 `needs-attention`으로 내고,
    `next_steps`에 "Codex 복구 후 `codex-reviewer` 재심 필수"를 넣는다.
    이유: 폴백이 낼 수 있는 가장 강한 주장은 **"내가 본 범위에선 차단 사유를 못 찾았다"이지 "통과"가 아니다.**
    비독립 심판자에게 통과 권한을 주면 폴백이 게이트 우회로가 되고, Claude가 Claude의 작업을 승인한
    결과물이 정상 통과와 구별 불가능해진다. 배너 문구는 산문일 뿐 기계적 구별자가 아니므로 값 자체를 막는다.
 6. 폴백 판정은 **잠정**이다. Codex 회복 후 재심 대상으로 남긴다.
-   **품질 게이트 통과는 `adjudicator: "codex"` + `verdict: approve`에서만 성립한다** —
-   폴백 산출물은 어떤 값이든 게이트를 통과시키지 못한다.
+   **품질 게이트 통과는 `adjudicator: "codex"` + `verdict: approve` +
+   `reviewed_scope_digest == 현재 review_scope_digest`의 AND에서만 성립한다** (`codex-gate`
+   `## 리비전 결속`) — 폴백 산출물은 어떤 값이든 게이트를 통과시키지 못한다.
 7. **판정 불능은 실패이지 통과가 아니다 (fail-closed).** Codex가 응답했더라도 출력에 `verdict`가 없거나
    `renderReviewResult`가 "Parse error + Raw final message"로 떨어졌다면 심판은 판정을 내지 못한 것이다.
    **approve로 넘기지 마라** — 판정 불능을 통과로 읽으면 게이트가 무의미해지고, 자기 승인 방지라는
@@ -173,7 +203,9 @@ description: "종합 코드 감사 오케스트레이터 (fan-out/fan-in). 아�
 - 리포트는 간결하게 (군더더기 없는 실행 가능 항목) — 단, **Codex 원문은 압축 대상이 아니다**
 - 렌즈 파일(`.omc/review/{stamp}/evidence/{lens}.md`)과 verdict 파일(`.omc/review/{stamp}/verdict.md`)이
   전부 남아 재현 가능해야 한다 — verdict는 `evidence/` 밖이라는 배치를 지킨다
-- `verdict.md`에 `adjudicator`(`codex` | `fallback-claude`)가 기록되어 있어야 한다
+- `verdict.md`에 `adjudicator`(`codex` | `fallback-claude`) + `reviewed_at_head` +
+  `reviewed_scope_digest`가 기록되어 있어야 한다 — **세 필드 중 하나라도 없으면 통과 판정 불가**
+  (`codex-gate` `## 리비전 결속`)
 
 ## 다른 하네스와의 경계
 - **`code-audit` (이 스킬)**: **렌즈 팬아웃(증거 생성)**을 제공한다. 판정은 하지 않는다
