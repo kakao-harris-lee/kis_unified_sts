@@ -7,16 +7,16 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: ac8d74ba18380ba41a63e1e86a5abf46796f4e8a05aa7a1adfe6f85256419c66
+bound_set_digest: 328713aa20532b80aaaf9b1fdbdf5f6ca352036f20a135f0dc36e95c61b7d6f6
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
-requesting_plan_version: v2.4
+requesting_plan_version: v2.6
 contract: 해당 계획 §12.3.1 (6e 산출 계약)
 authority: 운영자 (this repository's corpus owner)
 
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
-decided_at_head: 2b7b2a209aefb9bd7186949f405f6418fd4902cd
+decided_at_head: c8373de2669c2f4cdc1f2d428ece625cf336b6e3
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -78,6 +78,26 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > 결속은 **"무엇에 대한 주장인가"와 정확히 같은 범위**여야 한다 — 넓으면 무의미하게
 > 만료되고 좁으면 우회가 열린다.
 >
+> **재결속 기록 (6e′ — 2026-08-13)**: 레인 B v2.5 판정 finding #1 이 "계획 v2.5
+> 편집으로 위 결속이 무효화됐다"를 적발했다(정본
+> `docs/reviews/phase0-completion-contract/20260813-205553/verdict.md`). 계획은
+> §12.3.2 순서 규칙(개정 → 동결 → 재결속 → 심사)대로 v2.6 을 저작하고
+> `c8373de2` 로 동결했으며, 이 재결속은 그 **동결된 내용**에 대해 수행됐다 —
+> 대상 확정 후 결속(3회차 교훈 준수).
+>
+> 매핑 내용(①②③)은 **무변경**이다 — 재결속은 같은 승인된 해석을 동결된
+> v2.6 내용에 결속하는 행위이지 새 해석의 승인이 아니다. 이전 결속값은 이
+> 문단이 역사로 보존한다:
+> `bound_set_digest ac8d74ba18380ba41a63e1e86a5abf46796f4e8a05aa7a1adfe6f85256419c66`
+> · `requesting_plan_version v2.4` ·
+> `decided_at_head 2b7b2a209aefb9bd7186949f405f6418fd4902cd`.
+>
+> **권위 기록 (정직 표기 — D5 선례, `2026-08-07-tos-p02-d5-d6-decision-record.md`)**:
+> 이 재결속은 운영자 지시로 수행됐다 — 세션이 동결 보고에 결속값 `328713aa…` 와
+> 재결속 절차(갱신 필드 3종)를 명시했고, 운영자가 "진행"으로 승인했다(2026-08-13).
+> **귀속은 대화 수준이며 리포-단독 재검증 불가**다. 운영자 countersign 은 이
+> 파일에 대한 후속 기입으로 가능하며, 미행사는 거부가 아니다.
+
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
 > **고정점이 없다** — 적는 행위가 값을 바꾸므로 갱신할 때마다 다시 틀린다.
