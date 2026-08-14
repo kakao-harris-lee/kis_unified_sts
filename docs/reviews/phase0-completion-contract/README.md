@@ -22,8 +22,12 @@
   보존**으로 교정했다. 두 사본은 byte-동일하며, 검증은:
 
   ```bash
-  diff -r --exclude=README.md .omc/review docs/reviews/phase0-completion-contract
+  diff -r --exclude=README.md --exclude=U15-ENTRY-CHECK.md \
+    .omc/review docs/reviews/phase0-completion-contract
   ```
+
+  (`U15-ENTRY-CHECK.md` 는 **추적 전용 실행 증거**라 운영 원본이 없다 — 아래
+  "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
 
@@ -60,6 +64,25 @@
 - `20260814-110807` — 레인 B v2.7 재심 (`needs-attention`·`NOT_PASSED`,
   직전 3건 전건 부분해소·"문구-only 아님" 명시, 잔여 우회 high 3 전건 채택 —
   부트스트랩 순환·merge DAG 비유일성·승인-내용 미결속. 다음 개정의 입력)
+
+## 실행 증거 아티팩트 (추적 전용 — 스탬프 내 sibling)
+
+계약 문서 §12.3.4 가 규정한 실행 증거(`U15-ENTRY-CHECK.md` 등)는 **그 증거가
+소비한 verdict 의 스탬프 디렉터리 안에**(이 추적 디렉터리 쪽) verdict.md 의
+sibling 으로 둔다 — 계약의 `<ts>/U15-ENTRY-CHECK.md` 경로 그대로이며, verdict.md
+는 불변이고 sibling 추가만 허용된다.
+
+**`.omc/review/` 쪽에는 미러하지 않는다 — `.omc` 스탬프는 불가침이다.**
+codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉터리에의
+사후 쓰기는 탐색 순서 자료를 오염시킨다(옛 스탬프에 쓰면 그것이 "직전 판정"으로
+승격된다). 이 규칙은 stop-time 심판 2회 적발(경로 이탈 → 미러 오염)의 산출물이며,
+연대기는 transcript 말미 관측에 있다. 따라서 diff 불변식은 증거 파일명을
+명명 제외한다(위 검증 명령).
+
+- `20260814-110807/U15-ENTRY-CHECK.md` — U-15 «진입 점검 레시피» 실행 증거
+  (v2.7 재심 next_steps "실제 진입을 거부하는 실행 증거"의 이행 —
+  FREEZE_VIOLATED·T-81-① 양성/음성 쌍·REBINDING_REQUIRED 3-run transcript.
+  RH 를 이 스탬프의 verdict 에서 소비했으므로 여기에 귀속)
 
 ## 향후 관행
 
