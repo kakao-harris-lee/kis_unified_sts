@@ -7,16 +7,16 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 328713aa20532b80aaaf9b1fdbdf5f6ca352036f20a135f0dc36e95c61b7d6f6
+bound_set_digest: ac515d85d29bd31ea354f8440bd49b324b7ffb5a2c9d1928acb1b5974e47f43e
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
-requesting_plan_version: v2.6
+requesting_plan_version: v2.7
 contract: 해당 계획 §12.3.1 (6e 산출 계약)
 authority: 운영자 (this repository's corpus owner)
 
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
-decided_at_head: c8373de2669c2f4cdc1f2d428ece625cf336b6e3
+decided_at_head: c645f7c6d338aa24ad2a600f68f8ecd663640713
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -97,6 +97,25 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > 재결속 절차(갱신 필드 3종)를 명시했고, 운영자가 "진행"으로 승인했다(2026-08-13).
 > **귀속은 대화 수준이며 리포-단독 재검증 불가**다. 운영자 countersign 은 이
 > 파일에 대한 후속 기입으로 가능하며, 미행사는 거부가 아니다.
+
+> **재결속 기록 (6e″ — 2026-08-14)**: 6e′ 로 v2.6 내용에 재결속된 승인은 레인 B
+> v2.6 재심(`needs-attention`·신규 high 3, 정본
+> `docs/reviews/phase0-completion-contract/20260813-233530/verdict.md`)의 3건을
+> 반영한 **v2.7 개정으로 다시 만료**됐다 — 계획 §12.3.2 O-6 이 성문화한 대로,
+> bound_paths 를 편집하는 모든 단계가 결속을 만료시키는 **정상 거동**이다.
+> 계획은 같은 순서(개정 → 동결 `c645f7c6` → 재결속 → 심사)를 반복했고,
+> 이 재결속은 그 **동결된 v2.7 내용**에 대해 수행됐다.
+>
+> 매핑 내용(①②③)은 이번에도 **무변경**이다. 이전 결속값은 이 문단이 역사로
+> 보존한다:
+> `bound_set_digest 328713aa20532b80aaaf9b1fdbdf5f6ca352036f20a135f0dc36e95c61b7d6f6`
+> · `requesting_plan_version v2.6` ·
+> `decided_at_head 843ecd02355271d17e21b535c962086c9367a9ea`.
+>
+> **권위 기록 (정직 표기 — 6e′ 과 동일 형식)**: 세션이 동결 보고에 결속값
+> `ac515d85…` 와 갱신 필드 3종을 명시했고, 운영자가 "진행"으로 승인했다
+> (2026-08-14). **귀속은 대화 수준이며 리포-단독 재검증 불가**다. countersign
+> 미행사는 거부가 아니다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
