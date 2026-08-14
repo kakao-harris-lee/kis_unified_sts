@@ -87,7 +87,15 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
 - `20260814-110807/U15-ENTRY-CHECK.md` — U-15 «진입 점검 레시피» 실행 증거
   (v2.7 재심 next_steps "실제 진입을 거부하는 실행 증거"의 이행 —
   FREEZE_VIOLATED·T-81-① 양성/음성 쌍·REBINDING_REQUIRED 3-run transcript.
-  RH 를 이 스탬프의 verdict 에서 소비했으므로 여기에 귀속)
+  RH 를 이 스탬프의 verdict 에서 소비했으므로 여기에 귀속.
+  **상태값은 사람 해석·exit 0** — v2.8 재심이 이를 결함으로 적발했고
+  다음 항이 그 교정의 증거다)
+- `20260814-160239/U15-ENTRY-CHECK.md` — v2.9 **판정 하니스** 실행 증거
+  (v2.8 재심 Recommendation "비정상 종료로 진입을 차단한 실행 결과"의 이행 —
+  3-run 전부 **프로그램 산출 상태값 + rc=1**: 양성 REBINDING_REQUIRED ·
+  음성-1 변이 후 REBINDING_REQUIRED[우선순위 차폐] · 음성-2 전제 충족 모의
+  후 **APPROVAL_STALE**[R-7 비-사코드 실측]. 하니스 실행본 == 동결본
+  `a6d928c5` diff 무차이 결속)
 
 ## 향후 관행
 
