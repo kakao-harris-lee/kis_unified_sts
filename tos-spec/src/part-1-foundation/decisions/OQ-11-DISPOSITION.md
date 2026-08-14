@@ -244,11 +244,29 @@ floor(e) = ⋃ { mapping(l) | l ∈ levels(e) }
 | `EV-L3` | `RUNTIME` | `:152` — "**Integrated System Fault Test**" (real persistence/identity/network) |
 | `EV-L4` | `RUNTIME` | Broker Sandbox — 실행 표면이 L3 와 같은 종류다 |
 | `EV-L5` | `RUNTIME` | Restricted Production — 동일 |
+| `EV-L6` | `RUNTIME` | **[2026-08-15 확장]** `:166` — "Runtime monitoring continuously detects drift from verified assumptions" (Continuous Production Conformance, `:164`). 검증 표면이 **운영 중인 실 시스템**이므로 L3~L5 와 같은 종류다. 앵커는 확장 시점 실측(ANCHOR DRIFT 규율 — 기존 행의 앵커는 v2.4 저작 시점 기준이며 재작성하지 않는다) |
 
 **접미 `+Broker` · `+Security` 는 kind 를 추가하지 않는다.** `VER-002-001` §5
 Composite Notation(`:168`)이 "`+X` never replaces or lowers `EV-Ln`" 이라 규정하므로
 접미는 **레벨을 수식**하지 kind 를 정하지 않는다. 접미가 부과하는 별도 의무는
 요청 계획의 `UNCHK-016`(`+Security`)·`UNCHK-017`(`+Broker`)이 등재해 운반한다.
+
+> **매핑 개정 기록 (2026-08-15 — EV-L6 행 추가)**: stop-time 심판이 "이 매핑이
+> 인용 도출 범위(`VER-002-001` §5) 안에 정의된 **EV-L6** 을 누락한 채 현행
+> 승인이 됐다"를 적발했다. 실측: EV-L6 은 §5 `:164`(Continuous Production
+> Conformance)에 실재하고, 두 evidence register 의 `minimum_evidence_level`
+> 사용은 **0건**(잠재 결함 — 현재 어떤 행의 floor 도 바뀌지 않는다), T-76 이
+> 원시값 우주를 앵커하므로 미도입 상태가 고정돼 있었다.
+>
+> **권위**: 매핑 내용은 6e 이래 ①②③ 무변경 불변식으로 지켜온 운영자 승인
+> 해석이며, 이 확장은 **운영자 지시**("운영자 소관: 매핑표 자체의 확장(EV-L6
+> 행 추가)", 2026-08-15)로 수행됐다. **귀속은 대화 수준이며 리포-단독 재검증
+> 불가**다(D5 선례 정직 표기). 행의 kind 도출(`RUNTIME`)은 표의 다른 행과 같은
+> 방식으로 §5 원문에서 파생했고 근거를 인용했다 — 반증 가능하다.
+>
+> **이 확장이 바꾸지 않는 것**: 어떤 evidence 행의 상태·floor 도 이동하지
+> 않는다(사용 0건 실측). ADR acceptance·live authorization 불변. 매핑 도메인이
+> §5 레벨 우주(L0~L6)에 대해 **전역(total)이 됐다**는 것이 유일한 변화다.
 
 **`Profile-dependent`** 는 이 매핑의 대상이 아니다. `VER-002-001` §5 가
 "Missing resolution **is a blocker** and SHALL NOT default to the lowest level" 이라
