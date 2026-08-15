@@ -117,6 +117,15 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   규칙 첫 적용(현 상태 R-2 미충족 실측 → 1-커밋 최소 전제 불성립 → 2-커밋
   정정 구성) 기록. 하니스 == 동결본 `e582c01a` byte-동일 결속)
 
+- `20260815-092111/U15-ENTRY-CHECK.md` — **v2.12 실제-행위(D0A-FIRST) 억제**
+  실행 증거 (v2.11 재심 Recommendation "실제 D0-A 최초 실행 표면에서의 억제
+  증거"의 이행 — 우변이 대리(`touch`)가 아니라 **`config/tos_completion.yaml`
+  도입 커밋 그 자체**: G-음성 차단 상태에서 `guard_rc=1`·파일 및 `--diff-filter=A`
+  도입 커밋 **양쪽 부재**(`+ eval` 미도달) / G-양성 post-freeze 2-커밋 모의 후
+  `ENTRY_OK`·`guard_rc=0`·실제 도입 커밋 생성[worktree 한정·무참조].
+  «전제 차이» 동결-상대화 표의 post-freeze 예측 첫 검증. 하니스 == 동결본
+  `cf9b0295` byte-동일 결속. 본 저장소 D0-A 미착수 불변 확인 포함)
+
 ## 향후 관행
 
 판정은 종전대로 `.omc/review/` 에 기록되고(digest 범위 밖 기록 원리·재심 체인
