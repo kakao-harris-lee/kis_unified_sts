@@ -7,18 +7,18 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 06cd99c1fac2b63d97bb26b33a66f25e7a2badbb8f326d906a97de17c420d4f2
+bound_set_digest: 934516a67b52a9f8724c2516e8bfbccbb6da1a986674e2b540c08ca71853a03f
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
-requesting_plan_version: v2.11
+requesting_plan_version: v2.12
 contract: 해당 계획 §12.3.1 (6e 산출 계약)
 authority: 운영자 (this repository's corpus owner)
 
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: c9b6dc0d280f64ec8cb66a89346f6dc0b4f207f7
+decided_at_head: 69d280025d06318e0b5008adde3ba8a3b6c6eef9
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -198,6 +198,28 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측 HEAD(`c9b6dc0d…`)다.
 > **귀속은 대화 수준이며 리포-단독 재검증 불가**다. countersign 미행사는
 > 거부가 아니다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-15, v2.12 내용)**: 직전 재결속(v2.11
+> 내용, `3a53edb6`)의 승인은 레인 B v2.11 재심(신규 high 2·medium 1 — 대리
+> 행위 억제·단수 본체 병존·K-14 대조군 부재, 정본
+> `docs/reviews/phase0-completion-contract/20260815-092111/verdict.md`)을
+> 반영한 **v2.12 개정으로 만료**됐다(O-6 정상 거동). 이 재결속은 동결된
+> **v2.12 내용**(`cf9b0295`)에 대해 수행됐다. 실제-행위(D0A-FIRST) 억제 실행
+> 증거는 `docs/reviews/phase0-completion-contract/20260815-092111/
+> U15-ENTRY-CHECK.md`(커밋 `69d28002`)에 있다. **이번 재결속 전에 운영자가
+> 재결속의 의미를 질의했고 세션이 설명했다** — 승인은 그 설명 후의 "진행"이다.
+>
+> 매핑 내용(①②③, EV-L6 확장분 포함)은 **무변경**이다. 이전 결속값은 이 문단이
+> 역사로 보존한다:
+> `bound_set_digest 06cd99c1fac2b63d97bb26b33a66f25e7a2badbb8f326d906a97de17c420d4f2`
+> · `requesting_plan_version v2.11` ·
+> `decided_at_head c9b6dc0d280f64ec8cb66a89346f6dc0b4f207f7`.
+>
+> **권위 기록 (정직 표기 — 동일 형식)**: 세션이 동결 보고에 결속값 `934516a6…`
+> 와 갱신 필드 3종을 명시했고, 운영자가 재결속의 의미 설명을 받은 뒤 "진행"으로
+> 승인했다(2026-08-15). `decided_at_head` 는 기입 규칙대로 재결속 편집 직전
+> 실측 HEAD(`69d28002…`)다. **귀속은 대화 수준이며 리포-단독 재검증 불가**다.
+> countersign 미행사는 거부가 아니다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
