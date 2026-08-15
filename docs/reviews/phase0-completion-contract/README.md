@@ -137,6 +137,15 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   «전제 차이» 동결-상대화 표의 post-freeze 예측 첫 검증. 하니스 == 동결본
   `cf9b0295` byte-동일 결속. 본 저장소 D0-A 미착수 불변 확인 포함)
 
+- `20260815-144959/U15-ENTRY-CHECK.md` — **v2.13 T-81 ⑬⑭⑮** 실행 증거
+  (v2.12 재심 next_steps "비가드·HEAD 변경 억제를 실제 소비자 대조군으로"의
+  이행 — **⑬** 하니스 ENTRY_OK 후 HEAD 이동 → `parent(d) ≠ R-0 head` =
+  PARENT_MISMATCH 기계 관측 / **⑭** 비가드 착수 → CORR(d) 공집합 =
+  **TRANSCRIPT_MISSING 실제 도달**(초안 반증 ① 봉합) / **⑮** 전진-머지 우회
+  재현 → 기존 transcript의 기록 상태가 REBINDING_REQUIRED라 조건 (3) 불충족 =
+  **차단**(초안이라면 ENTRY_PROVENANCE_CLEAR 통과였을 구성 — 반증 ② 봉합).
+  CORR 손 실행 전문·하니스 == 동결본 `8a25c3c0` byte-동일 결속)
+
 ## 향후 관행
 
 판정은 종전대로 `.omc/review/` 에 기록되고(digest 범위 밖 기록 원리·재심 체인
