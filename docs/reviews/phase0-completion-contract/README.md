@@ -25,11 +25,12 @@
   diff -r --exclude=README.md --exclude=U15-ENTRY-CHECK.md \
     --exclude=U16-LEDGER-CHECK.md --exclude=U15-ENTRY-CHECK-ADDENDUM.md \
     --exclude=U17-PREVENTION-CHECK.md --exclude=U15-ENTRY-CHECK-V216.md \
+    --exclude=U17-PREVENTION-CHECK-V217.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
   (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md`·
-  `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md` 는
+  `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -233,6 +234,19 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   ⑲gg MULTIPLE_INTRODUCTIONS(구조 D). 하니스 == `eb2805a9` :4504-4604 byte-동일
   `957bf49d…`. (4c-2) 10 run 각 상태 1. 본 저장소 NOT_STARTED/0·PREVENTION_ABSENT/1·
   REBINDING_REQUIRED/1·모의 커밋 unreachable 0/5)
+- `20260819-002145/U17-PREVENTION-CHECK-V217.md` — **v2.17 T-84 ①~⑥** 실행 기록
+  (비규범 부속. u17-verify v2.17: owner_repo=`git remote get-url origin` 파생·target=
+  `.default_branch` 파생·선언값 대조 → `PREVENTION_TARGET_MISMATCH`(8값/8단)·(b) app.id
+  15368·head_sha·check_suite 귀속·(α) 룰셋 시각 관측. **① live** 선언=파생 → INSUFFICIENT /
+  **⑤ live** 비-default 브랜치 선언·타 repo 선언 → **TARGET_MISMATCH(D=∅ 에서도)**·seam ACTIVE
+  여도 MISMATCH / ② seam ACTIVE·INSUFFICIENT·UNVERIFIABLE(500·무응답→`@UNRESOLVED`) /
+  ③ live 병기(422·[]·PR#636 head 5건 app.id 15368·suite 귀속·tos-gate 없음)·mixed 422
+  UNVERIFIABLE·seam (b) 양성 ACTIVE / **⑥ seam app.id=99999 위조 → UNVERIFIED_REVISION**
+  (이름만 보는 구현은 PASS 대조 병기)·head_sha 불일치·suite 귀속 불일치 red / ④ 시퀀스
+  ACTIVE→ABSENT→INSUFFICIENT→live INSUFFICIENT · LATE·UNSIGNED·본 저장소 ABSENT.
+  **결함 후보**: §8 T-84 ① 의 «작업 브랜치 → ABSENT» 는 파생 target 하에서 실행기로 재현
+  불가(⑤ 와 같은 구성 = TARGET_MISMATCH) — 문언 미전파(S-22). U-15 3단 가드는 델타 0
+  (V216 유효). GET-only·서버 설정 무변경 재조회·worktree 미사용)
 
 ## 향후 관행
 
