@@ -25,12 +25,13 @@
   diff -r --exclude=README.md --exclude=U15-ENTRY-CHECK.md \
     --exclude=U16-LEDGER-CHECK.md --exclude=U15-ENTRY-CHECK-ADDENDUM.md \
     --exclude=U17-PREVENTION-CHECK.md --exclude=U15-ENTRY-CHECK-V216.md \
-    --exclude=U17-PREVENTION-CHECK-V217.md \
+    --exclude=U17-PREVENTION-CHECK-V217.md --exclude=U17-PREVENTION-CHECK-V218.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
   (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md`·
-  `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md` 는
+  `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md`·
+  `U17-PREVENTION-CHECK-V218.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -247,6 +248,25 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   **결함 후보**: §8 T-84 ① 의 «작업 브랜치 → ABSENT» 는 파생 target 하에서 실행기로 재현
   불가(⑤ 와 같은 구성 = TARGET_MISMATCH) — 문언 미전파(S-22). U-15 3단 가드는 델타 0
   (V216 유효). GET-only·서버 설정 무변경 재조회·worktree 미사용)
+- `20260819-002145/U17-PREVENTION-CHECK-V218.md` — **v2.18 T-84 ①~⑩** 실행 기록
+  (비규범 부속 · **S-24: 최종 동결 `5f4b7cfd` 결속** — 워킹트리 계약 blob == 5f4b7cfd·후속
+  계약 커밋 0·하니스 `957bf49d…` byte-동일 수록. u17-verify v2.18: 계약 핀
+  `github.com/kakao-harris-lee/kis_unified_sts`·host 보존 정규화·`git remote -v` 일치
+  «존재» 대조·target=핀 repo default_branch·Actions app id `apps/github-actions` 서버
+  파생·(a) `checks[tos-gate].app_id`·(b) suite.head_sha + `actions/runs?check_suite_id`
+  path==`.github/workflows/tos-gate.yml` + 로컬 `git show <head>:tos-gate.yml` 두 리터럴
+  grep·P_first/P_last(LATE/ARTIFACT_MUTATED 분리)·9값/9단·수집 후 전순서 최소 방출.
+  **① live** INSUFFICIENT / **⑤ live** 비-default·타 repo 선언 → TARGET_MISMATCH(D=∅) /
+  **⑩ live** gitlab.com 동일 경로·타 owner 원격 → TARGET_MISMATCH(host-drop 이면 통과 대조)·
+  핀 원격 공존 시 통과 / ② seam ACTIVE·INSUFFICIENT·UNVERIFIABLE / **⑦ seam**
+  checks[tos-gate].app_id=99999 → INSUFFICIENT(D=∅·name-only 는 prot_ok 대조) / ③ live
+  병기(422·[]·PR#636 head 5 run app 15368·actions/runs path=test.yml·로컬 head 미보유) +
+  mixed 422 UNVERIFIABLE + seam (b) 양성 ACTIVE(픽스처 W 에 tos-gate.yml 두 리터럴) /
+  ⑥ app 99999 · **⑧ path=test.yml → UNVERIFIED_REVISION**(app-id-only 는 PASS 대조) ·
+  R2 blob 부재/리터럴 부재 red / **⑨ 아티팩트 편집·편집 후 원복 → ARTIFACT_MUTATED**
+  (P_first-only 는 ACTIVE 대조)·P_first⋠d → LATE / ④ 시퀀스 · UNSIGNED · 본 저장소 ABSENT.
+  GET-only·서버 설정 무변경·worktree 미사용. 정밀화 후보: 선언 키 필수 여부(C3 «선언하지
+  않는다» vs ⑤)·비-핀 원격 공존·R2 의 «PR head 로컬 보유» 전제)
 
 ## 향후 관행
 
