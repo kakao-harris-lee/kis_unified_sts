@@ -24,10 +24,12 @@
   ```bash
   diff -r --exclude=README.md --exclude=U15-ENTRY-CHECK.md \
     --exclude=U16-LEDGER-CHECK.md --exclude=U15-ENTRY-CHECK-ADDENDUM.md \
+    --exclude=U17-PREVENTION-CHECK.md --exclude=U15-ENTRY-CHECK-V216.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
-  (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md` 는
+  (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md`·
+  `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -208,6 +210,29 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   결과 불변(APPROVAL_UNBOUND = 정정된 기대). 하니스 == `837c35ef` byte-동일(`957bf49d…`).
   본 저장소 NOT_STARTED/0 · PREVENTION_ABSENT/1 · REBINDING_REQUIRED/1 · 모의 커밋
   unreachable 0/10(+본 실행 14건 bash 재검 0/14). 신규 결함 후보 없음)
+- `20260819-002145/U17-PREVENTION-CHECK.md` — **v2.16 T-84 ①②③④** 실행 기록
+  (비규범 부속 — 계약이 U-17 증거 경로를 규정하지 않아 sibling. `u17-verify` 실행기:
+  4 엔드포인트 verbatim 캡처+UTC·술어→7값/전순서 7단·`responder` seam(`gh`/`file:`/`mixed:`)·
+  단일 성공 경로·trap EXIT. **① live 음성(인증 gh)**: `main` → PREVENTION_INSUFFICIENT
+  (contexts [test]·strict false·enforce_admins false·PR reviews 부재) · 작업 브랜치 → 404
+  PREVENTION_ABSENT · 룰셋 protect_main enforcement disabled / **② seam SIMULATED**:
+  ACTIVE(0)·INSUFFICIENT·UNVERIFIABLE(500·무응답) — 양성은 운영자가 보호를 설정하기 전엔
+  실측 불가 정직 표기 / **③ 리비전**: live 병기(미푸시 HEAD 422·푸시 무-PR []·origin/main
+  PR#636 head 7656259d check-runs 5건 tos-gate 없음)·mixed (a)seam+(b)live 422 →
+  UNVERIFIABLE·seam (b) 양성 ACTIVE·check 부재/PR 부재/open → UNVERIFIED_REVISION / **④
+  stub 시퀀스** ACTIVE → 해제 ABSENT → 약화 INSUFFICIENT → live INSUFFICIENT + 부속 LATE·
+  UNSIGNED·본 저장소 ABSENT. **결함 후보**: E3 countersign 형식 리터럴이 v2.16 본문에서
+  소실 · «머지 커밋 check-runs 0건» 은 origin/main 11e382fc 에서 15건(push 트리거) —
+  근거 교체 필요(결론은 유지). GET-only·서버 설정 무변경 사후 재조회)
+- `20260819-002145/U15-ENTRY-CHECK-V216.md` — **v2.16 U-15-f-1 3단 가드** 실행 transcript
+  (비규범 부속·기존 transcript 는 (4d) 불변. `bash 하니스 && bash u17-verify && D0A-FIRST`:
+  **G-음성-1** 하니스 차단 → u17 미실행(`U17-0 target=` 부재)·산물 부재 / **G-음성-2 live**
+  전제 모의 ENTRY_OK + u17 인증 live INSUFFICIENT → `+ eval` 미도달·`config/tos_completion.yaml`
+  미생성 — 두 번째 억제 지점 실증 / **T-81 ⑫ 양성** u17 seam ACTIVE(SIMULATED) →
+  ENTRY_PROVENANCE_CLEAR/0(G-부모 일치) / ⑬ PARENT_MISMATCH · ⑯ TRAILER_MALFORMED ·
+  ⑲gg MULTIPLE_INTRODUCTIONS(구조 D). 하니스 == `eb2805a9` :4504-4604 byte-동일
+  `957bf49d…`. (4c-2) 10 run 각 상태 1. 본 저장소 NOT_STARTED/0·PREVENTION_ABSENT/1·
+  REBINDING_REQUIRED/1·모의 커밋 unreachable 0/5)
 
 ## 향후 관행
 
