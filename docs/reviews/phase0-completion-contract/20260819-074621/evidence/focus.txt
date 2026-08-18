@@ -1,0 +1,30 @@
+먼저 `CLAUDE.md` 를 읽어라 (비협상 규칙 :21-36, 85-87, 104-107 등). 이것은 **재심**이다 (레인 B · 계획 심판).
+
+심사 대상 (계획 문서 2건만 — 코드 아님):
+- `docs/plans/2026-08-12-tos-phase0-completion-contract-design.md` (v2.18, 6,998행)
+- `docs/plans/2026-08-11-tos-completion-development-plan.md` (568행)
+
+직전 판정 (v2.14 재심): `.omc/review/20260819-002145/verdict.md` — needs-attention, findings 5 (high 3 / medium 2): 직전 #1 부분해소(CORR 정직 경계≠해소) · 직전 #2 부분해소(C_R digest 선배치) · 직전 #3 **회피**(아크 최초 — 부분 표면 실행기 green) · 신규 high(복수 D0A-FIRST 카디널리티) · 신규 medium(row_ref c_APP 비단수). 아크 누적 해소 4건. 채택 5/기각 0.
+
+**1순위 지시**: 직전 findings 5건이 v2.15~v2.18 에서 **실제로 해소**되었는지 vs **회피**(조건 완화·문구만 추가·대조군 무력화·부분 표면 실행기·산문 주장으로 대체)되었는지 finding 별로 "해소됨 / 부분해소 / 미해소 / 회피" 판정 + 근거 file:line. 특히 §12.3.3 (B) 처분표(:4318-4333)는 저작자 **주장**이며 "어느 것도 «해소»로 세지 않는다"고 스스로 적었다 — 심판이 계수하라.
+
+경위 (저작자 주장이지 사실 아님 — 심판이 검증할 것): v2.14 재심 후 v2.15 저작 → 동결 `11a56d3e` → 증거 `b453b4e5` → 에라타 재동결 `837c35ef` → 보충 증거 `bf117a8e`. **v2.15 는 재결속 전이라 승인 표면을 가진 적이 없다.** 그 뒤 세션 종료 시 **stop-time Codex 심판**이 BLOCK 을 세 번 냈고(재결속 전 판에 대해) 각각 v2.16(`eb2805a9`→증거 `434448b2`→에라타 `b12a2572`)·v2.17(`a3c95b4f`→`6bad7c23`→`75474351`)·v2.18(`5f4b7cfd`→증거 `7a146466`→에라타 `feb91d60`→S-24 addendum `540ff0e3`)으로 반영됐다. 재결속은 **v2.18 에라타 재동결 내용에 대해 1회** 수행됐다(`81d532ff`, bound_set_digest `c037e48c…`, `OQ-11-DISPOSITION.md:10`). stop-time BLOCK 처분은 §12.3.3 표에 싣지 않고 «변경 이력»(:193-196)이 유일 소스라고 계약이 선언한다(:4296-4299).
+
+v2.15 가 v2.14 5건에 대해 주장하는 처분 (변경 이력 :196, (B) 표 :4324-4330):
+1. **F1 (high, CORR 정직 경계 ≠ 해소)**: `U-17` 신설 — UNCHK-008 「진입 표면 거부」를 Phase 1 종료조건에서 **D0-A 착수 선행 조건**으로 승격, `prevention_control_state` 를 §11 완료 조건·§12.3 7c/8·§12.3.4-G 가드(3단)에 결속. v2.16 이후 U-17 의 **진실 원천은 저장소 아티팩트가 아니라 판정 소비자 자신의 live 서버 조회**(gh 인증·GET-only 4+ 엔드포인트: branch protection / rulesets / apps/github-actions / PR head check-runs·suite / contents?ref=). v2.17: 대상 자기선언 폐지(owner_repo·target_branch 파생·`PREVENTION_TARGET_MISMATCH`). v2.18: 정본 대상을 **계약 자체에 핀**(`github.com/kakao-harris-lee/kis_unified_sts`, `bound_paths` 안 → 변경 시 O-6)·host 보존 정규화·`git remote` 는 «핀과 일치하는 원격 존재» 대조(remote_name 폐지)·(a) `required_status_checks.checks[].app_id`(룰셋 integration_id) == **Actions app id 서버 파생**(`apps/github-actions .id`, gate_app_id 폐지)·(b) 워크플로 정체성 3중(check-run app ∧ suite.head_sha==PR head ∧ run path==`.github/workflows/tos-gate.yml` ∧ PR head 시점 워크플로 blob[에라타: 서버 `contents?ref=` 조회]에 하니스 경로·sha256 리터럴 2개)·정직 경계 «3중은 위조 비용을 올리지 닫지 않는다»·(c) `P_first/P_last` 분리 — ACTIVE = ∀d∈D: P_last ⊰ d ∧ 소비 blob == P_last 시점 blob, 위반=`PREVENTION_ARTIFACT_MUTATED`·상태 9값/전순서 9단·T-84 10종. CORR 은 검출 표면으로 잔존, «닫힌다» 주장 0 유지. **심판 판단 요청**: U-17 이 F1 을 무엇으로 만드는가 — 예방이 착수 선행조건이 됐으므로 «세탁 후 완료 표시»가 막히는지, 아니면 여전히 열린 창(3중 결속의 정직 경계·live 조회 시점·D=∅ 취급·PR 미존재 등)이 F1 을 부분해소로 남기는지.
+2. **F2 (high, 복수 D0A-FIRST)**: 판정 우주를 도입 커밋 **집합 D** 로, |D|≥2 → `MULTIPLE_INTRODUCTIONS`(전순서 2, CORR 평가 이전 차단)·8값/차단 6. 에라타 E1: `D` 를 리터럴 `git log --diff-filter=A` 로 둔 것이 이력 단순화로 byte-동일 병렬 추가+머지 시 |D|=1 → CLEAR 우회(증거가 적발) → **D 를 구조 정의로**(C_R 과 동형 — 머지 도입 포함·플래그 무관). T-81 ⑲ gg/gu/uu.
+3. **F3 (high, digest 선배치)**: `C_R` 을 «`approved_at_head` 시점 blob 의 도입 지점»(U-16-h 와 정합)으로 재정의, ∃ 양화 유지. T-82 ⑲. 에라타 E2: ⑰ⓑ 기대 APPROVAL_UNBOUND(h 가 g6 앞).
+4. **F4 (medium, 회피)**: `supersedes` 폐기 + `edge_seq` 소비자 파생(기재값은 대조 대상) — 복구 자체가 불요, U-16-c 조상성은 원 승인 행에만 → 위반이 발생 자체를 안 함. **S-23** 신설(전 규칙 실행 아니면 green 주장 금지). T-82 ⑱ 은 전 규칙 실행기로만.
+5. **F5 (medium, row_ref 비단수)**: F4 로 원인째 소멸(row_ref·tombstone-graph 소멸).
+
+실행 증거 (전부 스탬프 `docs/reviews/phase0-completion-contract/20260819-002145/` sibling · 비규범 부속 · 계약이 U-17/U-16 증거 경로를 규정하지 않음): `U15-ENTRY-CHECK.md`(v2.15 `b453b4e5` — T-81/T-84 4종/T-82 전 규칙 실행기 rules_executed 11)·`U15-ENTRY-CHECK-ADDENDUM.md`(에라타 `837c35ef` 후 T-81 ⑫·⑲ gg/gu/uu·countersign 형식)·`U16-LEDGER-CHECK.md`(v2.15 T-82 ⑱ 전규칙·⑯⑰ⓐⓑⓒ·⑲·⑮ — S-23 rules_executed 방출)·`U15-ENTRY-CHECK-V216.md`(3단 가드 G-음성-1/G-음성-2 live/⑫ SIMULATED)·`U17-PREVENTION-CHECK.md`(v2.16 T-84 ①~④ live 음성+seam)·`U17-PREVENTION-CHECK-V217.md`(T-84 ①~⑥ live TARGET_MISMATCH·app_id 위조 seam)·`U17-PREVENTION-CHECK-V218.md`(T-84 ①~⑩ — 동결 `5f4b7cfd` 결속·live ⑤⑩ TARGET_MISMATCH·⑦ 타 앱 고정·⑧ same-app wrong-workflow·⑨ ARTIFACT_MUTATED)·`U17-PREVENTION-CHECK-V218-ADDENDUM.md`(S-24: `git diff 5f4b7cfd..feb91d60` 절 범위 diff 공집합 기계 증명 + 영향 변이 재실행). 하니스 §12.3.4-R 블록은 v2.10~v2.18 byte-identical(`957bf49d…`). **주의**: 실제 소비자(`tools/tos_completion_status.py --check`)는 D0-A 이후이므로 U-16 증거는 손 실행기(전 규칙 방출)다 — 이것을 어떻게 계수할지는 심판 몫.
+
+신규 결함도 찾아라 — 특히: (a) U-17 live 술어의 결정성·정직 경계 — 「3중 결속은 닫지 않는다」가 진입 승인 조건으로 충분한지, D=∅(PR 미존재/워크플로 미도입) 취급, `default_branch` 파생 vs 계약 핀의 충돌, apps/github-actions 비인증 파생값 신뢰, live 조회 시점(진입 시점 vs 완료 판정 시점)의 창 (b) 계약이 자기 `bound_paths` 안에 정본 대상(host+owner/repo)을 핀한 것의 함의 — repo 이전/포크 시 O-6, 현재 작업 브랜치≠main 인데 양성 실측 전제(main 보호+tos-gate.yml)는 D0-A/운영자 소관으로 미충족 — 착수 조건이 «오늘 실행 가능»한가 (c) P_first/P_last 분리 후 상태 신설이 기존 상태와 기계 조건 겹침(사코드) 없는지·9값 전순서 결정성 (d) D·C_R 구조 정의의 동형 여부와 다른 «플래그 의존» 정의 잔존 (e) S-24 이행이 addendum 형식으로 충분한지 — 절 범위 diff 증명의 «닿지 않는 절» 판정이 저작자 자기신고인지 (f) **S-20/S-22 클래스 재발** — 카운트·상태 어휘·산문 미전파: 예컨대 (B) 처분표의 «실행 증거» 열(:4324-4330)이 v2.15 저작 시점 문구(«없음/미실행»)를 유지한 채 이후 증거 커밋이 반영되지 않았을 가능성, §11·§12.3 7c/8·§0 요약·T-84 행 종수 등을 대조하라 (g) 정직 경계 서술 자체의 정합(어디선가 여전히 «닫힌다/봉합»을 주장하는가) (h) 개발계획(`2026-08-11-…development-plan.md`)이 Phase 1→D0-A 선행 승격을 아직 반영하지 않은 것(계약 측이 별도 사이클·운영자 소관으로 정직 표기)이 두 문서 간 모순인지.
+
+계획 심사 기준 7종 전부 적용: (1) 단계 순서·의존성 실성립 (2) 숨은 가정 (3) 검증 가능성 (4) 실패·롤백 (5) 범위 이탈·과잉 설계 (6) CLAUDE.md 비협상 규칙 충돌 (7) 누락.
+
+비협상 대조 목록(배치 권고는 오케스트레이터가 기각): 선물 long/short 대칭·실계좌 증거금/실물 선물 주문 경로 전제·주식 EOD 일괄청산·ClickHouse 신규·RL/TFT 부활·하드코딩·Redis DB 1 이탈/TTL 없는 키·비KST 세션 로직.
+
+리비전 결속: 오케스트레이터 포착 HEAD `81d532ff` · plan_scope_digest `ec8324e2af4fc4110be4cf6051179263c0bc2ba162aeb4b136cb016149ae7585` · bound_set_digest `c037e48c8a8f85d486261fc270b81c1c1708ea52a31c583cb369418f212c5814`(`OQ-11-DISPOSITION.md:10` 일치 확인 · requesting_plan_version v2.18 · decided_at_head 47bb7966). 커밋 순서 `5f4b7cfd`(동결)→`7a146466`(증거)→`feb91d60`(에라타 재동결)→`540ff0e3`(S-24 addendum)→`47bb7966`(INDEX)→`81d532ff`(재결속) 확인.
+
+계획을 다시 쓰지 마라. 개정안을 제시하지 말고 결함과 근거만 지적하라. 침묵은 통과가 아니다 — 7 기준 각각 «해당 없음»이면 그렇게 명시하라.
