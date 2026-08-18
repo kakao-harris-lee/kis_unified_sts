@@ -23,11 +23,12 @@
 
   ```bash
   diff -r --exclude=README.md --exclude=U15-ENTRY-CHECK.md \
+    --exclude=U16-LEDGER-CHECK.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
-  (`U15-ENTRY-CHECK.md` 는 **추적 전용 실행 증거**라 운영 원본이 없다 — 아래
-  "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
+  (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md` 는 **추적 전용 실행 증거**라 운영
+  원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
 
@@ -153,6 +154,23 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   재현 → 기존 transcript의 기록 상태가 REBINDING_REQUIRED라 조건 (3) 불충족 =
   **차단**(초안이라면 ENTRY_PROVENANCE_CLEAR 통과였을 구성 — 반증 ② 봉합).
   CORR 손 실행 전문·하니스 == 동결본 `8a25c3c0` byte-동일 결속)
+
+- `20260818-224729/U15-ENTRY-CHECK.md` — **v2.14 T-81 ⑫⑬⑭⑮⑯⑰⑱** 실행 증거
+  (v2.13 재심 소비 스탬프 귀속. U-15-g-4b 사양 손 실행기 — 7값 프로그램 방출·rc
+  극성·trap EXIT·(4c)(4c-2) 형식 검증·(파일,run) 쌍 — 로 **⑫ 양성** 트레일러 3줄
+  포함 D0A-FIRST → `ENTRY_PROVENANCE_CLEAR`/0 실제 도달 / **⑬** PARENT_MISMATCH /
+  **⑯⑰ⓐⓑⓒ** ENTRY_TRAILER_MALFORMED / **⑱** TRANSCRIPT_NOT_ENTRY_OK / H6 경계 2종
+  TRANSCRIPT_MISSING / ⑭⑮ v2.14 회귀 = ENTRY_TRAILER_MALFORMED[§8 ⑭ 행 리터럴
+  `TRANSCRIPT_MISSING` 과의 불일치 보고 수록]. 하니스 == 동결본 `db19a0e8`
+  byte-동일(`957bf49d…`). 본 저장소 손 실행기 적용 `NOT_STARTED`/0)
+- `20260818-224729/U16-LEDGER-CHECK.md` — **v2.14 T-82 ⑮·⑰ⓐⓑⓒ·⑱ + (iii)(v)(H5-②)**
+  손 실행 기록 (**비규범 부속** — 계약이 U-16 증거 아티팩트 경로를 규정하지 않아
+  같은 스탬프에 sibling 으로 둠. g6 구조 `C_R(c)`+존재 증인 실행기: ⑰ⓐ `C_R={B}` red ·
+  ⑰ⓑ 머지 해소 도입 `C_R={M}` red · ⑰ⓒ 양성 `C_R={B1,B2}` 증인 B1 green · ⑮ 회귀 red /
+  tombstone-graph 원장 실행기: ⑱ 병렬 seq=1 MALFORMED → Z1/Z2 supersedes append →
+  NO_ROWS_CLEAR·구 행 잔존·g5 동일 · (v) 경쟁 재부여 MALFORMED → Zc 재-supersede 복구 ·
+  (iii) 순환 시도 → 부재 행 지목 MALFORMED · H5-② 비단사 MALFORMED. 픽스처는 scratchpad
+  독립 git 저장소)
 
 ## 향후 관행
 
