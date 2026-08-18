@@ -7,18 +7,18 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 796ca1e0a5b7ff8499e38b5322ff579b63dc643b6af6ec9cf3483dbeacaf6919
+bound_set_digest: 99118a9078f449de100139b2bce097c6fefdd5ad18bf55a1af1fc7972e4fe2ab
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
-requesting_plan_version: v2.13
+requesting_plan_version: v2.14
 contract: 해당 계획 §12.3.1 (6e 산출 계약)
 authority: 운영자 (this repository's corpus owner)
 
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 3134a87b6a44626f2dd5d79443e3f6de55de6b69
+decided_at_head: be98f075715521a46c4ae074150cbec2746e7384
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -241,6 +241,31 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > **권위 기록 (정직 표기 — 동일 형식)**: 세션이 동결 보고에 결속값 `796ca1e0…`
 > 와 갱신 필드 3종을 명시했고, 운영자가 "진행"으로 승인했다(2026-08-18).
 > `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측 HEAD(`3134a87b…`)다.
+> **귀속은 대화 수준이며 리포-단독 재검증 불가**다. countersign 미행사는
+> 거부가 아니다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-19, v2.14 내용)**: 직전 재결속(v2.13
+> 내용, `b259669c`)의 승인은 레인 B v2.13 재심(직전 3건 전건 부분해소 — CORR
+> 사후 세탁·g6 `c_R` 경로≠내용·edge_seq 병렬 복구 모순, 정본
+> `docs/reviews/phase0-completion-contract/20260818-224729/verdict.md`)을 반영한
+> **v2.14 개정으로 만료**됐다(O-6 정상 거동). 이 재결속은 v2.14 의 **에라타
+> 재동결 내용**(`e9cc3ba4` — 최초 동결 `db19a0e8` 후 증거 실행 `c5359c74` 가
+> §8 T-81 ⑭ 행의 stale 리터럴을 적발해 재동결; 재결속 없는 중간 판은 승인 표면을
+> 가진 적이 없다)에 대해 수행됐다. 실행 증거는
+> `docs/reviews/phase0-completion-contract/20260818-224729/U15-ENTRY-CHECK.md`
+> (T-81 ⑫ 양성 ENTRY_PROVENANCE_CLEAR 실도달·⑬⑯⑰⑱ 차단)와 비규범 부속
+> `U16-LEDGER-CHECK.md`(T-82 ⑰ⓐⓑⓒ·⑱)에 있다. v2.14 는 CORR 이 근면한 사후
+> 세탁을 닫지 못한다는 **정직 경계**(예방 = UNCHK-008)를 명시한다.
+>
+> 매핑 내용(①②③, EV-L6 확장분 포함)은 **무변경**이다. 이전 결속값은 이 문단이
+> 역사로 보존한다:
+> `bound_set_digest 796ca1e0a5b7ff8499e38b5322ff579b63dc643b6af6ec9cf3483dbeacaf6919`
+> · `requesting_plan_version v2.13` ·
+> `decided_at_head 3134a87b6a44626f2dd5d79443e3f6de55de6b69`.
+>
+> **권위 기록 (정직 표기 — 동일 형식)**: 세션이 동결 보고에 결속값 `99118a90…`
+> 와 갱신 필드 3종을 명시했고, 운영자가 "진행"으로 승인했다(2026-08-19).
+> `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측 HEAD(`be98f075…`)다.
 > **귀속은 대화 수준이며 리포-단독 재검증 불가**다. countersign 미행사는
 > 거부가 아니다.
 
