@@ -26,12 +26,13 @@
     --exclude=U16-LEDGER-CHECK.md --exclude=U15-ENTRY-CHECK-ADDENDUM.md \
     --exclude=U17-PREVENTION-CHECK.md --exclude=U15-ENTRY-CHECK-V216.md \
     --exclude=U17-PREVENTION-CHECK-V217.md --exclude=U17-PREVENTION-CHECK-V218.md \
+    --exclude=U17-PREVENTION-CHECK-V218-ADDENDUM.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
   (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md`·
   `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md`·
-  `U17-PREVENTION-CHECK-V218.md` 는
+  `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -267,6 +268,20 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   (P_first-only 는 ACTIVE 대조)·P_first⋠d → LATE / ④ 시퀀스 · UNSIGNED · 본 저장소 ABSENT.
   GET-only·서버 설정 무변경·worktree 미사용. 정밀화 후보: 선언 키 필수 여부(C3 «선언하지
   않는다» vs ⑤)·비-핀 원격 공존·R2 의 «PR head 로컬 보유» 전제)
+- `20260819-002145/U17-PREVENTION-CHECK-V218-ADDENDUM.md` — **v2.18 에라타 `feb91d60` S-24
+  addendum** (비규범 부속. ① `git diff 5f4b7cfd..feb91d60` 전문 + 절 범위 diff 기계 증명 —
+  닿는 절 = 변경 이력 :193·E2 선언 키 선택(+7)·E3 원격 공존(+4)·E1 R2 ③ 서버 blob
+  (5237-5239→5248-5261); 닿지 않는 절 ∅ = 하니스 블록 4528-4628(`957bf49d…`)·§8 T-84 행·(a)
+  술어·(c) P_first/P_last·U-17-c 상태표/전순서 등 행 범위 명시 → ①②④⑥⑦⑨·UNSIGNED·ABSENT 는
+  `7a146466` 증거 그대로 결속 선언 ② 영향 변이 재실행(`u17-verify-v218e.sh`: R2 ③ 을
+  `contents/…?ref=<PR head>` 서버 조회·base64 decode·404/HTTP → UNVERIFIED_REVISION·네트워크
+  → UNVERIFIABLE·로컬 git show 는 보조 기록만): **E1 live 병기** PR#636 head 로컬 미보유인데
+  `contents/test.yml?ref=` 200·`tos-gate.yml?ref=` 404 / ③-b seam 양성 ACTIVE(contents 200
+  base64 두 리터럴) · R2-a 404 · R2-b 리터럴 부재 · R2-c 네트워크 UNVERIFIABLE · ⑧ path 불일치 ·
+  **R2-d PR head 미보유 판정 저장소에서 서버 blob 만으로 ACTIVE**(E1 동기 실증) / **E2 live**:
+  선언 키 부재 → ① INSUFFICIENT(핀 유일 소스)·gitlab 원격 → 원격 축 TARGET_MISMATCH·선언 있음
+  비-default → MISMATCH 불변 / 본 저장소 ABSENT. 하니스 == feb91d60 byte-동일·GET-only·서버
+  설정 무변경. 신규 결함 후보 없음(contents >1MB `content` 부재 처리 독해 1건))
 
 ## 향후 관행
 
