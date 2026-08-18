@@ -23,12 +23,12 @@
 
   ```bash
   diff -r --exclude=README.md --exclude=U15-ENTRY-CHECK.md \
-    --exclude=U16-LEDGER-CHECK.md \
+    --exclude=U16-LEDGER-CHECK.md --exclude=U15-ENTRY-CHECK-ADDENDUM.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
-  (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md` 는 **추적 전용 실행 증거**라 운영
-  원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
+  (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md` 는
+  **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
 
@@ -199,6 +199,15 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   잔존, 보고) · ⑰ⓒ green · ⑲ 선배치 blob `C_R={B}` ORDER_INVALID(v2.14 토큰 대조 = 우회
   통과였음) · ⑮ red · 자인 잔여 단일 행 두 간선 덮음 NO_ROWS_CLEAR(계약 정직 표기 정합).
   픽스처는 scratchpad 독립 git 저장소)
+- `20260819-002145/U15-ENTRY-CHECK-ADDENDUM.md` — **v2.15 에라타 `837c35ef` 후 재실행**
+  보충 증거 (비규범 부속 — 본 transcript 는 (4d) 불변이라 별도 파일. E1 **구조 정의 D**
+  실행기로 T-81 **⑲ gg → MULTIPLE_INTRODUCTIONS/1 로 red 전환**(리터럴 `--diff-filter=A`
+  1건 병기) · gu/uu 불변 · ⑫ 양성 CLEAR/0 회귀 / E3 `operator_countersign: "<식별> <ISO-8601
+  UTC>"` 형식 반영 U-17 실행기로 T-84 ① ABSENT · ②(i 부재·ii 비인용/비ISO·iii 날짜만·iv 키
+  2회) UNSIGNED · ③ ACTIVE/0 · ④ LATE + 부속(D=∅ ACTIVE · |D|=2 LATE) / E2 ⑰ⓑ 는 실행
+  결과 불변(APPROVAL_UNBOUND = 정정된 기대). 하니스 == `837c35ef` byte-동일(`957bf49d…`).
+  본 저장소 NOT_STARTED/0 · PREVENTION_ABSENT/1 · REBINDING_REQUIRED/1 · 모의 커밋
+  unreachable 0/10(+본 실행 14건 bash 재검 0/14). 신규 결함 후보 없음)
 
 ## 향후 관행
 
