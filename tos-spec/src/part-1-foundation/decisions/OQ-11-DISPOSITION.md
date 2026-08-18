@@ -7,18 +7,18 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 99118a9078f449de100139b2bce097c6fefdd5ad18bf55a1af1fc7972e4fe2ab
+bound_set_digest: c037e48c8a8f85d486261fc270b81c1c1708ea52a31c583cb369418f212c5814
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
-requesting_plan_version: v2.14
+requesting_plan_version: v2.18
 contract: 해당 계획 §12.3.1 (6e 산출 계약)
 authority: 운영자 (this repository's corpus owner)
 
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: be98f075715521a46c4ae074150cbec2746e7384
+decided_at_head: 47bb796651d5bf166df1eb622b78f96884963863
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -268,6 +268,40 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측 HEAD(`be98f075…`)다.
 > **귀속은 대화 수준이며 리포-단독 재검증 불가**다. countersign 미행사는
 > 거부가 아니다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-19, v2.18 내용)**: 직전 재결속(v2.14
+> 내용, `79d9cb07`)의 승인은 레인 B v2.14 재심(high 3/medium 2 — 직전 #1·#2
+> 부분해소·#3 **회피**[아크 최초]·신규 high 1[복수 D0A-FIRST 카디널리티]·신규
+> medium 1[`row_ref` c_APP 비단수], 정본
+> `docs/reviews/phase0-completion-contract/20260819-002145/verdict.md`)을 반영한
+> **v2.15 개정으로 만료**됐다(O-6 정상 거동). 이후 v2.15→v2.16→v2.17→v2.18 은
+> 재결속 없이 이어진 판이라 승인 표면을 가진 적이 없다 — v2.16/v2.17/v2.18 은
+> 각각 세션 종료 시 stop-time 심판(Codex) BLOCK #1/#2/#3 을 반영한 개정이다. 이
+> 재결속은 v2.18 의 **에라타 재동결 내용**(`feb91d60` — 최초 동결 `5f4b7cfd` 후
+> 증거 실행 `7a146466` 이 PR head 시점 워크플로 blob 을 로컬 git 이 아니라 서버
+> `contents?ref=` 로 조회해야 함[squash 착지 시 로컬 미보유]을 적발해 재동결;
+> S-24 addendum `540ff0e3` 이 절 범위 diff 공집합 증명으로 증거를 재동결에
+> 결속)에 대해 수행됐다. 실행 증거는
+> `docs/reviews/phase0-completion-contract/20260819-002145/U17-PREVENTION-CHECK-V218.md`
+> (T-84 ①~⑩ — 서버 파생 Actions app id·계약 핀 대상·워크플로 정체성 3중·
+> P_first/P_last·ARTIFACT_MUTATED; live ⑤⑩ TARGET_MISMATCH)와 addendum
+> `U17-PREVENTION-CHECK-V218-ADDENDUM.md`, 그리고 같은 스탬프의 v2.15~v2.17 증거
+> (`U15-ENTRY-CHECK-ADDENDUM.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK.md`·
+> `U17-PREVENTION-CHECK-V217.md`)에 있다. v2.18 은 정본 대상
+> (`github.com/kakao-harris-lee/kis_unified_sts`·default branch)을 계약 자신의
+> `bound_paths` 안에 핀하므로 대상 변경은 O-6 을 돈다.
+>
+> 매핑 내용(①②③, EV-L6 확장분 포함)은 **무변경**이다. 이전 결속값은 이 문단이
+> 역사로 보존한다:
+> `bound_set_digest 99118a9078f449de100139b2bce097c6fefdd5ad18bf55a1af1fc7972e4fe2ab`
+> · `requesting_plan_version v2.14` ·
+> `decided_at_head be98f075715521a46c4ae074150cbec2746e7384`.
+>
+> **권위 기록 (정직 표기 — 동일 형식)**: 직전 세션이 종료 보고에 결속값 `c037e48c…`
+> 와 갱신 필드 3종을 명시했고, 운영자가 후속 세션 착수 지시 "확인하고 계속 진행"으로
+> 승인했다(2026-08-19). `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측
+> HEAD(`47bb7966…`)다. **귀속은 대화 수준이며 리포-단독 재검증 불가**다.
+> countersign 미행사는 거부가 아니다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
