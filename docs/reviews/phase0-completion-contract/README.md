@@ -180,6 +180,26 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   (iii) 순환 시도 → 부재 행 지목 MALFORMED · H5-② 비단사 MALFORMED. 픽스처는 scratchpad
   독립 git 저장소)
 
+- `20260819-002145/U15-ENTRY-CHECK.md` — **v2.15 T-81 ⑫⑬⑭⑮⑯⑰⑱⑲ + T-84 ①②③④** 실행 증거
+  (v2.14 재심 소비 스탬프 귀속. U-15-g-4b **8값·전순서 7단** 손 실행기 — 판정 우주 = 집합
+  `D`·`|D|>1 → MULTIPLE_INTRODUCTIONS` CORR 이전 방출 — 로 **⑲ gu/uu** 병렬 도입 머지 →
+  `MULTIPLE_INTRODUCTIONS`/1 · **⑫ 양성** CLEAR/0 · ⑬ PARENT_MISMATCH · ⑭⑮⑯⑰ⓐⓑⓒ
+  ENTRY_TRAILER_MALFORMED · ⑱ TRANSCRIPT_NOT_ENTRY_OK · H6 2종 TRANSCRIPT_MISSING /
+  **U-17 실행기**(4값·`∀d∈D: P ⊰ d`·D=∅ 명시 통과) T-84 ① ABSENT · ②(i·ii) UNSIGNED ·
+  ③ ACTIVE/0 · ④ LATE + 부속(D=∅ ACTIVE · |D|=2 한쪽만 앞섬 LATE). **관측 보고**: ⑲ gg
+  (guarded∥guarded·byte-동일 내용) 는 `--diff-filter=A` 이력 단순화가 `|D|=1` 로 접어
+  **CLEAR/0** — `--full-history` 대조 2건 → U-15-g-1 `D` 우주의 플래그 의존 = 계약 결함
+  후보(고치지 않고 보고). 하니스 == 동결본 `11a56d3e` byte-동일(`957bf49d…`). 본 저장소
+  NOT_STARTED/0 · PREVENTION_ABSENT/1 · 현행 하니스 REBINDING_REQUIRED/1)
+- `20260819-002145/U16-LEDGER-CHECK.md` — **v2.15 T-82 ⑱(전 규칙)·⑯·⑰ⓐⓑⓒ·⑲·⑮ + 자인 잔여**
+  손 실행 기록 (**비규범 부속** — sibling. **S-23 전 규칙 실행기**: `rules_executed=` 11 규칙
+  방출·차집합 비면 green 금지 잠금. ⑱ edge_seq 필드 없이 X∥Y → **NO_ROWS_CLEAR**/0(append 0·
+  v2.14 «회피» 자리 재실증) · ⑯ green · ⑰ⓐ blob `C_R={B}` ORDER_INVALID · ⑰ⓑ **h 선발화
+  APPROVAL_UNBOUND**(g6 단독 뷰 `C_R={M}` ORDER_INVALID — 행 서술 `C_R={M}` 은 토큰 정의
+  잔존, 보고) · ⑰ⓒ green · ⑲ 선배치 blob `C_R={B}` ORDER_INVALID(v2.14 토큰 대조 = 우회
+  통과였음) · ⑮ red · 자인 잔여 단일 행 두 간선 덮음 NO_ROWS_CLEAR(계약 정직 표기 정합).
+  픽스처는 scratchpad 독립 git 저장소)
+
 ## 향후 관행
 
 판정은 종전대로 `.omc/review/` 에 기록되고(digest 범위 밖 기록 원리·재심 체인
