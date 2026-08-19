@@ -7,6 +7,8 @@
 > **현재 권한**: `restricted_live=NOT_AUTHORIZED`, `production=NOT_AUTHORIZED` 유지.  
 > **후속 관계**: 이 계획의 TOS 완료 게이트를 통과하기 전에는 root 런타임을 TOS에
 > 의존시키지 않는다. 완료 후 root 전체 리팩터링은 별도 실행 계획으로 착수한다.
+> **개정**: 2026-08-19 — 운영자 지시로 Phase 0/1 선행관계 개정(tos-gate 도입 →
+> Phase 0 D0-A 착수 선행조건으로 이관; 계약 §12.3.3 (D) 참조).
 
 ## 0. 결정 요약
 
@@ -265,6 +267,12 @@ runtime shell은 적어도 다음을 소유한다.
    count와 authority 축을 하나의 checker로 검증한다.
 5. 오래된 package docstring의 P0-1/P0-3 표현을 현재 profile 상태와 맞춘다.
 
+선행 조건 (D0-A 착수 전):
+
+- **예방 통제 활성**: tos-gate required check(룰셋 — `required_status_checks.checks[].app_id`
+  == Actions app id)·`.github/workflows/tos-gate.yml`(하니스 `tools/tos_entry_harness.sh`
+  경로·sha256 검증 스텝 포함) 도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
+
 종료 조건:
 
 - source traceability 30/30
@@ -288,13 +296,16 @@ runtime shell은 적어도 다음을 소유한다.
    순서·만료일이 있는 예외 register로 관리한다.
 7. CI required job에 firewall, import-linter, TOS tests, tool tests, L3 tests, Ruff,
    Black, mypy, status checker, mdBook을 포함한다.
+   (tos-gate required check[룰셋]·`.github/workflows/tos-gate.yml` 도입은 Phase 0
+    D0-A 착수 선행조건으로 이관 — 계약 §12.3.4 `U-17`.  이 작업 7 은 나머지 잡만 관장한다.)
 
 종료 조건:
 
 - focused regression + 전체 `tos/tests` green
 - Ruff/Black/mypy 0
 - 미등록 budget exception 0
-- GitHub branch protection에서 TOS gate required 상태 증거 보존
+- U-17 예방 통제 «연속성» 유지 — Phase 1 완료 판정 시점의 `PREVENTION_ACTIVE` 재확인
+  (도입은 Phase 0 선행조건, 계약 §12.3.4 `U-17-c` 연속성 소비자)
 
 ### Phase 2 — runtime shell과 권위 기반 구현
 
