@@ -7,18 +7,18 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 9cf4ec7430d064043bf8db8d30728b01942bd018fd5ca117de82b82f014b1f7d
+bound_set_digest: 0752d016ff2579901717cab82df981c96786f25d33c3eb0004b3b630e89feda4
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
-requesting_plan_version: v2.20
+requesting_plan_version: v2.21
 contract: 해당 계획 §12.3.1 (6e 산출 계약)
 authority: 운영자 (this repository's corpus owner)
 
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 522b5fbd056a56ed7b281ff2148cc903e16bdc79
+decided_at_head: 85070bb34ebb1107a25c165bb1cee318219c8998
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -361,6 +361,41 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측 HEAD(`522b5fbd…`)다.
 > **귀속은 대화 수준이며 리포-단독 재검증 불가**다. countersign 미행사는
 > 거부가 아니다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-20, v2.21 내용)**: 직전 재결속(v2.20
+> 내용, `c00d808e`)의 승인은 레인 B v2.20 재심(high 1/medium 1 — **#1 회피**·
+> **#2 a2 g6·#3 격리 스냅샷·#4 ⑯ 해소[아크 누적 11]**·#5/#6 부분해소, 정본
+> `docs/reviews/phase0-completion-contract/20260819-193235/verdict.md`)을 반영한
+> **v2.21 개정으로 만료**됐다(O-6 정상 거동). 이 재결속도 **두 결속 문서 모두의
+> 내용**에 대해 수행됐다 — 계약은 v2.21 **에라타 3차 재동결 내용**(`c4d97118`):
+> 최초 동결 `0528a919`(#1 → «정본 대조» 재설계 — 운영자 «바퀴 재발명 금지» 지침
+> 적용해 YAML 파서 + byte 대조로 닫힌 세계 구성 · #5/#6 → UNCHK-008 `owner_track`
+> `Phase 1`→`Phase 0`·U-17 하니스 «pre-D0-A 실체화») 후 증거 `3e0f2429` 와
+> addendum 3편이 문언 3건을 적발해 3회 재동결 — 에라타 #1 `65cf2635`(정본 `run:`
+> 은 YAML literal block scalar `|` 전제 — folded `>` 과잉 차단) · 에라타 #2
+> `7adc1246`(**stop-time Codex BLOCK #7** — 정본 대조를 «잡 템플릿» 닫힌 세계로
+> 확장, `defaults.run.shell: "true {0}"` 우회 폐쇄) · 에라타 #3 `c4d97118`
+> (**R-1 fail-open** — `actions/checkout` 을 계약 리터럴 SHA `3d3c42e5…`(v7.0.1)로
+> 핀, 형식만 검사하던 임의 포크 SHA 통과 폐쇄; 잡 `name` 허용); S-24 addendum
+> `83f12afd`·`5954b22d`·`b5afa6f6`. 개발계획은 **Phase 0 선행 조건에 하니스 파일
+> `tools/tos_entry_harness.sh` 실체화(계약 §12.3.4-R 블록 결속값 sha `957bf49d…`)를
+> 병기한 개정 내용**(`0528a919` — 579→580행)이다. 재결속 없는 중간 판은 승인
+> 표면을 가진 적이 없다. 실행 증거는 같은 스탬프(`20260819-193235`)의
+> `U17-PREVENTION-CHECK-V221.md`·`-V221-ADDENDUM.md`·`-V221-ADDENDUM-2.md`·
+> `-V221-ADDENDUM-3.md` 에 있다.
+>
+> 매핑 내용(①②③, EV-L6 확장분 포함)은 **무변경**이다. 이전 결속값은 이 문단이
+> 역사로 보존한다:
+> `bound_set_digest 9cf4ec7430d064043bf8db8d30728b01942bd018fd5ca117de82b82f014b1f7d`
+> · `requesting_plan_version v2.20` ·
+> `decided_at_head 522b5fbd056a56ed7b281ff2148cc903e16bdc79`.
+>
+> **권위 기록 (정직 표기 — 동일 형식)**: 세션이 직전 종료 보고에 결속값
+> `0752d016…` 를 명시했고, 운영자가 "레인 B v2.21 재심(prior
+> `.omc/review/20260819-193235/verdict.md`)까지 집행 진행"(2026-08-20)으로
+> 승인했다. `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측
+> HEAD(`85070bb3…`)다. **귀속은 대화 수준이며 리포-단독 재검증 불가**다.
+> countersign 미행사는 거부가 아니다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
