@@ -6,17 +6,23 @@
 > **문서 성격**: 비규범 설계 문서. RFC/ADR 비준, ADR acceptance, Evidence `PASS`,
 > restricted-live/production authorization을 부여하지 않는다.
 > **권한 상태**: `restricted_live=NOT_AUTHORIZED`, `production=NOT_AUTHORIZED` 불변.
-> **버전**: v2.18 (2026-08-19) — 이 필드가 현행 버전의 **유일 소스**다.
+> **버전**: v2.19 (2026-08-19) — 이 필드가 현행 버전의 **유일 소스**다.
 > **미래 지향 필드**(재심 대상·다음 착수 전제·절차표 "현재 위치")는 리터럴 대신
 > "현행 버전"으로 참조하고, **완료·이력 기록**(아래 심사 이력 표·변경 이력·
 > 판정 기록)은 리터럴로 고정한다(S-11·S-12).
-> **심사 상태**: 직전 판(v2.14)의 레인 B 판정은 **`needs-attention` · `NOT_PASSED`**
+> **심사 상태**: 직전 판(v2.18)의 레인 B 재심 판정은 **`needs-attention` · `NOT_PASSED`**
+> (findings 6 — **high 3 / medium 3**, 전건 채택·기각 0). 직전 5건 처분은
+> **F1 부분해소 · F2 부분해소 · F3 해소됨(계약 수준) · F4 부분해소 · F5 «회피»** —
+> **아크 누적 해소 5**(F3 = 다섯 번째, 계약 수준). 신규 2건은 **정본 host 미결속**
+> (모든 `gh api` 조회가 host 없이 나가 `GH_HOST` override 로 타 host 응답이
+> `PREVENTION_ACTIVE` 를 만들 수 있다·high)과 **두 결속 계획 Phase 0/1 선행관계
+> 충돌**(운영자 게이트·medium)이다.
+> 정본 `docs/reviews/phase0-completion-contract/20260819-074621/verdict.md`.
+> (참고 — 직전 판정 이력) v2.14 재심은
 > (findings 5 — **high 3 / medium 2**, 전건 채택·기각 0). 직전 3건 처분은
-> **#1 부분해소 · #2 부분해소 · #3 «회피»(아크 최초)**.
-> **회피 판정이 처음 나왔다** — `T-82 ⑱` 의 손 실행 부속이 **tombstone-graph 만
-> 실행하고 `U-16-c` 조상성을 뺀 채** 양성을 주장했고, **전체 계약에서는 green 이
-> 불가능**했다(→ **S-23** 신설). 신규 2건은 **복수 D0A-FIRST**(F2)와
-> **`row_ref` 의 `c_APP` 비단수**(F5)다.
+> **#1·#2 부분해소 · #3 «회피»(아크 최초)**, 신규 2(복수 D0A-FIRST·`row_ref` 비단수).
+> **수렴 기록**: findings **6 → 3 → 3 → 2 → 2 → 3 → 3 → 3 → 5 → 6**,
+> **해소 누적 5**, **새 결함 클래스 0**, **비협상 충돌 0 이 11판 연속**.
 > 정본 `docs/reviews/phase0-completion-contract/20260819-002145/verdict.md`.
 > (참고 — 직전 판정 이력) v2.13 재심은
 > (findings 3 — **high 2 / medium 1**, 전건 채택·기각 0). 직전 3건 처분은
@@ -107,7 +113,9 @@
 > | **v2.12** | **`needs-attention` · `NOT_PASSED`** — findings 3 (**high 2 / medium 1**), **전건 채택, 기각 0**. 직전 3건 처분: **#2 해소됨 · #3 해소됨 / #1 부분해소** — **누적 해소 4건**. `CLAUDE.md` 비협상 직접 충돌 **없음**(**8판 연속**). 신규 3건: **#1 비가드 착수 상존 + HEAD 동시성 미고정**(두 갈래 — (a) 동시성은 저작 가능 (b) 진입 표면 거부는 `UNCHK-008` 정면 접촉) · **#2 reviewer→승인 조상 순서 미강제**(병렬 `R∥A` merge fail-open) · **#3 원장 스키마의 간선 결정성 부재**(medium — 반복 이력). **판정 불능 후 재개**: 크레딧 소진으로 1차 시도가 판정 미산출로 끝났고 충전 후 재실행해 완주했다. `docs/reviews/phase0-completion-contract/20260815-144959/verdict.md` |
 > | **v2.13** | **`needs-attention` · `NOT_PASSED`** — findings 3 (**high 2 / medium 1**), **전건 채택, 기각 0**. 직전 3건 처분: **전건 부분해소 · 해소 0 · 회피 0 · 신규 결함 클래스 0**. `CLAUDE.md` 비협상 직접 충돌 **없음**(**9판 연속**). 잔여 3건: **#1 `CORR(d)` 사후 세탁**(t 의 생성 순서·d 동일성 미검사 + 부수 4건 — 실행 증거의 산문 판정·손 실행기의 파일당 접기·**§11 의 `ENTRY_OK` 미전파(S-22 재발)**·"유일 비차단" 자기모순) · **#2 `c_R` 이 «경로 도입»이라 기존-경로 `B∥A` 우회** · **#3 `edge_seq` 병렬 충돌 복구 불능**(append 로 중복 키가 안 사라져 영구 차단 — 계약 내 자기모순). `docs/reviews/phase0-completion-contract/20260818-224729/verdict.md` |
 > | **v2.14** | **`needs-attention` · `NOT_PASSED`** — findings 5 (**high 3 / medium 2**), **전건 채택, 기각 0**. 직전 3건 처분: **#1 부분해소 / #2 부분해소 / #3 «회피» — 아크 최초의 회피 판정**. 잔여·신규 5건: **F1 정직 경계는 과장 철회일 뿐 해소 아님**(§11 이 `CLEAR` 를 완료 허용값으로 소비하는데 예방은 `Phase 1`) + **처분표 (B) 가 마감 전 초안 문구 그대로**(S-22 «7회차») · **F2 복수 D0A-FIRST**(카디널리티 가정) · **F3 digest 선배치**(토큰 도입만 추적) · **F4 «회피»**(append 복구가 조상성에 걸려 전체 계약에서 green 불가·부분 표면 실행기) · **F5 `row_ref` 의 `c_APP` 비단수**. 동결 `db19a0e8` → 증거 `c5359c74` → 에라타 후 재동결 `af61a40e`. `docs/reviews/phase0-completion-contract/20260819-002145/verdict.md` |
-> | **v2.15** | **재심 미착수.** v2.14 판정 5건을 반영한 판이며, **동결 후 운영자 재결속(OQ-11 — 현행 사이클)** 을 기다린다. 재결속 전에는 심사를 요청하지 않는다(§12.3.2) |
+> | **v2.15** | **재심 미도달 — 동결 후 stop-time BLOCK 3회로 재개정.** v2.14 판정 5건을 반영해 `11a56d3e` 로 동결·`b453b4e5` 로 실행 증거까지 기록했으나, **재결속 전에 stop-time 심판이 세 번 BLOCK** 을 내 v2.16(`eb2805a9`)→v2.17(`a3c95b4f`)→v2.18(`5f4b7cfd`)로 재개정됐다. **v2.15~v2.17 은 재결속 전이라 승인 표면을 가진 적이 없다**(v2.9→v2.10 선례). 재결속·레인 B 재심은 **v2.18 에서** 이뤄졌다 |
+> | **v2.18** | **`needs-attention` · `NOT_PASSED`** — findings 6 (**high 3 / medium 3**), **전건 채택, 기각 0**. 직전 5건 처분: **F1 부분해소 / F2 부분해소 / F3 해소됨(계약 수준) / F4 부분해소 / F5 «회피»** — **아크 누적 해소 5**(F3 = 다섯 번째). 신규 2건: **정본 host 미결속**(host 없는 `gh api` 조회 — `GH_HOST` override 로 타 host 응답이 `PREVENTION_ACTIVE` 가능·high) · **두 결속 계획 Phase 0/1 선행관계 충돌**(운영자 게이트·medium). 잔여 F1 은 «보호 off→머지→재활성» 창을 어느 술어도 소비 안 함 + 처분표 (B) 가 «완료 가능성 자체를 막는다»로 과대주장 · F2 는 D0A-FIRST 절이 `diff-filter=A` 규범 잔존 · F4 는 `T-82 ⑱` 입력이 폐지된 `edge_seq` 기재 · F5 는 `c_APP` 단수 정의 잔존. 동결 `5f4b7cfd` → 증거 `7a146466` → 에라타 재동결 `feb91d60` → S-24 addendum `540ff0e3` → 재결속 `81d532ff`. `docs/reviews/phase0-completion-contract/20260819-074621/verdict.md` |
+> | **v2.19** | **재심 미착수.** v2.18 판정 6건을 반영한 판이며, **동결 후 운영자 재결속(현행 사이클)** 을 기다린다. 재결속 전에는 심사를 요청하지 않는다(§12.3.2) |
 >
 > **[v2.7 갱신 — 6e 는 "고쳐졌다가 다시 만료되는" 축이다]** 아래 v2.1·v2.4 서술은
 > **당시 상태의 기록**이며 현행 상태가 아니다. **6e 를 "완료/미완료"의 1회성 축으로
@@ -190,6 +198,7 @@
 | v1.1 | §3.0 신설 — 해당 작업이 `acd45c43`에서 수행돼 `15d48f72`에서 팬텀 할당으로 revert된 이력 확인 |
 | v1.2 | 심판 10건 반영. §3.0 인용에 사실 오류(F-1), §6.3이 선행 구현 누락(F-5), §4.2가 없는 열 참조(F-3) |
 | v1.3 | 재심 8건 + **운영자 결정 2건** 반영. **F-2를 "회피"로 판정받아 30/30을 거버넌스 트랙으로 정식 이관**. Phase 0 범위를 기계 검사 가능 축으로 축소하고 **불가 축을 §13 레지스터로 명시 노출**. T-3c 공집합 결함 수정 |
+| **v2.19** | **v2.18 심판 판정 6건(high 3 / medium 3) 전건 반영. 직전 처분은 «F1·F2·F4 부분해소 · F3 해소됨(계약 수준) · F5 회피» 이고 신규 2는 host 미결속·두 결속 계획 충돌이다.** ① **#1 F1 (high) — 보호 해제 창**: 진입·완료 두 live 조회 사이 [보호 off→체크 통과→머지→재활성] 창을 **어느 술어도 소비 안 했고**, (B) 표가 «완료 가능성 자체를 막는다»고 **과대주장**했다. **과대주장 철회** + **연속성 소비자 신설**(완료 판정 시점 — 적용 룰셋 `created_at`/`updated_at` > `t_land`[= D 착지 PR 의 서버 `merged_at` 최소]이면 `PREVENTION_CONTINUITY_UNVERIFIABLE`·운영자 재심사 · classic-only[타임스탬프 부재]도 판정 불가로 차단 · 삭제-재생성은 새 id·created_at 로 검출). **극성**: 관측만 하고 통과시키면 창이 정상 완료로 세탁되고 무조건 영구 차단하면 정당한 강화를 막는다 — **판정 불가를 «판정 불가»로 보고**하는 것이 fail-closed(F2 동형). **서버 시간만 소비**(커밋 시각 불신). **정직 경계**: «룰셋 미변경» 우회(연속 bypass_actors·admin override)는 감사 로그 소관이라 **못 닫는다** — «부분해소»이지 «닫힌다»가 아니다. T-84 ⑪(off→merge→on 은 서버 설정 변경 요구 → SIMULATED seam·live 는 현행 음성만) ② **#2 host 미결속 (high, 신규)**: 모든 `gh api repos/{owner}/{repo}/…` 가 host 없이 나가 `GH_HOST` 를 바꾸면 **타 host `/api/v3` 응답으로 `PREVENTION_ACTIVE` 위조** 가능(심판 실측 프로브). **host 를 계약 핀에서 파생해 «명령에 명시»**(`gh api --hostname <핀 host>`) + **소비자 자기 환경 `GH_HOST` 재핀**(플래그·환경 이중 결속 — 우선순위 의존 안 함) + `gh auth status --hostname <핀 host>` 전제. **극성**: 도달 불가 = `PREVENTION_UNVERIFIABLE`(타 host 폴백 없음). 아티팩트 선언 아님(C3 규율). T-84 ⑫(GET-only·live) ③ **#3 F2 (high) — D0A-FIRST 규범 잔존**: 앞선 D0A-FIRST 절이 «모호 없이 한 커밋»·`git log --diff-filter=A` 를 **판정 규범**으로 유지해(S-22) 구조 `D`(U-15-g-1)와 병존했다. **판정 소비 자리를 구조 `D` 참조로 전환**하고 «다중 후보 문제가 여기서 발생 안 함» 단정을 **철회**(gg/gu/uu 로 `D` 크기>1). **편의 표기(∅ 확인·단일 픽스처)와 판정 소비를 구별해 명시** — §12.3.4-G 의 `diff-filter=A` 는 편의 표기로만. 재기술→참조로 stale 클래스 제거(S-14) ④ **#4 F4 (medium) — T-82 ⑱ 입력 stale + 계약 밖 규칙**: ⑱ 이 **폐지된 `edge_seq` 기재**(«각각 seq=1 부여»)를 지시했고 손 실행기가 «사전순 최소·상태 우선순위»를 **자체 선언**했다(`U16-LEDGER-CHECK.md:34-48`). **⑱ 을 현행 스키마로 재기술**(edge_seq 미기재·소비자 표시용 파생) + **U-16-d 상태 전순서·규칙 평가 순서를 계약 리터럴로 고정**(전순서 12단·«전부 평가 후 최소» 의미 — 자체 선언 흡수) ⑤ **#5 F5 (medium, 회피) — 단수 `c_APP`**: `row_ref` 만 없앴고 같은 비단수 `c_APP` 가 U-16-c·g5·g6 에 단수로 잔존했다(형제 동일 행 독립 도입 시 선택 재량). **`c_APP` 를 구조 집합 정의**(`D`·`C_R` 동형: `{x⊑HEAD : a∈rows(x:LEDGER) ∧ ∀p∈parents(x): a∉rows(p:LEDGER)}`)·`c_APP` 크기 0→`PROVENANCE_UNVERIFIABLE`·크기>1→`APPROVAL_MALFORMED`·크기 1→유일 원소·세 소비처 일관. **극성**: 동일 승인 행 병렬 도입은 «언제 승인»이 유일하지 않아 차단(U-15-g-2 동형)·«사전순 최소»는 판정 불가를 답한 척한다. T-82 ⑳(형제 동일 행→MALFORMED)·⑱(서로 다른 행→green) 상호 배타 ⑥ **#6 두 결속 계획 충돌 (medium, 운영자 게이트)**: 개발계획 Phase 1 작업 7·종료조건(required CI·branch protection 증거) vs 계약 U-17 D0-A 착수 선행조건. **계약이 «함께 착수 불가» 정직 표기** + §12.3.3 (D) 에 **적용 준비된 개정안 문안**(tos-gate 도입을 Phase 0 로 이관·Phase 1 종료조건은 «U-17 연속성 유지»로 — verbatim diff). **개발계획 자체는 무편집** — 정식 개정은 운영자 소관(`bound_paths`·O-6 재결속 시 함께 심사). **종수 전파(S-20)**: T-84 10→**12종**(⑪·⑫) · T-82 19→**20종**(⑳) · T-81 19 불변 · U-17-c 9값→**10값/차단 9/전순서 10단** · U-16-d **전순서 12단 신설**. **§12.3.3 (A)=v2.18 판정 5건 처분·(B)=v2.19 6건 주장(«어느 것도 해소 아님»)·(B) 실행 증거 열 현행화**(직전 `20260819-002145` 증거 명시·신규는 «동결 후 실행»). **S-22 스윕**: 처분표 (A)(B)·§0 요약·심사 이력·변경 이력·§11·D0A-FIRST 절 전파. **[독립 검증 마감(실행 픽스처) 3건]**: (i) **S-22 재발 1건 정정** — U-16-b 의 v2.15 산문 «[F5 소멸] `c_APP` 비단수도 함께 소멸»이 v2.19 구조 정의(단수 잔존→처분)와 모순 → `row_ref`·tombstone 축만 소멸로 정정 (ii) **U-16-d 규칙 평가 순서 동치 주장 정정** — 「전 규칙 상태번호 비감소」는 거짓(구조 상태 2 `c_APP` 크기 0 < 3 MALFORMED)이라 **구조 선-검사 1·2·4 를 g-규칙 앞 필수 단계로 재배치**하고 동치는 g-단락 5~11 로 한정 · **T-82 ⑳ⓑ**(발산 corner·종수 불변) 신설 (iii) **target_branch 파생의 host 없는 `gh api` 잔재 → C6 참조 전환**(S-14). **하니스 byte-identical(`957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d`)·`bound_paths` 편집이므로 O-6 재결속 필요.** **심사 미판정 — 동결 후 재결속 대기.** 구현 착수 금지 불변 |
 | **v2.18** | **stop-time Codex BLOCK #3 5건 반영 — «v2.17 은 여전히 wrong-target·forged-gate 를 ACTIVE 로 승인한다».** ① **C1 (a) 가 required check «정체성»을 안 봤다** — `contexts` 의 **이름만** 검사해 **`tos-gate` 를 제3자 앱에 고정하면 (a) 통과**했고 `D=∅` 이면 (b) 가 생략돼 그대로 진입 승인(심판이 실행기 술어로 `prot_ok=True` 재현). → **`required_status_checks.checks[]` 의 그 컨텍스트 `app_id` == Actions app id**(룰셋은 `integration_id`) ② **C2 `app.id` 는 정본 워크플로를 식별하지 않는다** — **모든 Actions 잡이 같은 app id 를 갖고 한 suite 를 공유**한다(실측 PR #636 head 5 run 전부 동일). → **`gate_app_id` 파라미터 «폐지»**하고 `gh api apps/github-actions .id` 로 **서버 파생**(전역 상수를 아티팩트가 선언하면 그것이 위조 표면) + **워크플로 정체성 3중 결속**(run `path` == 계약 리터럴 `.github/workflows/tos-gate.yml` ∧ run `head_sha` == PR head ∧ **그 시점 워크플로 blob 이 하니스 호출·sha256 검증 스텝 포함**). **한계 정직 표기**: 3중은 **위조 비용을 올리지 «닫지» 않는다** — «서버가 그 파일 내용을 그대로 실행했다»는 공개 REST 로 증명 불가 ③ **C3 대상 결속 자기선택** — `remote_name` 을 **같은 아티팩트가 골랐고** 정규화가 **host 를 버려** 비-GitHub 동일 경로가 같은 값이 됐다. → **정본 host+owner/repo 를 계약 자체에 핀**(`github.com/kakao-harris-lee/kis_unified_sts` — `bound_paths` 안이라 **리뷰·재결속으로 보호**되고 **아티팩트는 선언하지 않는다**) · 정규화 **host 보존** · `git remote` 는 파생이 아니라 **«핀과 일치하는 원격이 존재하는가»의 대조**(원격 «이름»은 묻지 않는다) ⇒ **`remote_name` 폐지** ④ **C4 아티팩트 사후 편집** — 파라미터·countersign 은 HEAD 에서 읽으면서 순서는 **«최초 도입 P»** 만 봐 **P → 착수 → 편집**이 통과했다. → **`P_last`**(마지막 변경 커밋·구조 파생)로 바꾸고 `∀d∈D: P_last ⊰ d` ∧ 소비 blob == `P_last` 시점 blob. 위반 = **`PREVENTION_ARTIFACT_MUTATED`**(신설). **`LATE` 로 접지 않는 근거**: «순서가 늦다»는 순서를 고치면 되고 «착수 후 고쳤다»는 **그 편집이 무엇을 바꿨는지 재심사**해야 한다 ⑤ **C5 증거 결속** — v2.17 증거가 동결 `a3c95b4f` 에 결속됐는데 에라타 `75474351` 이 계약을 바꿔 **증거가 «이전 계약»을 검증한 상태**로 남았다. → **`S-24` 신설**(에라타 후 **재실행** 또는 **`git diff <freeze>..<errata>` 가 해당 절 범위에서 공집합임을 기계 증명**). **이번 판의 증거는 v2.18 «최종 동결 후»에 만든다**. **[v2.18 에라타 (동결 `5f4b7cfd` 후 증거 실행 `7a146466` 적발 — T-84 ①~⑩ 전건 기대 일치·S-24 결속 수록)]** ⓐ **E1 (실질)** — (b) ③ 의 워크플로 blob 검증이 **로컬 `git show <PR head>:…`** 를 전제해, squash·rebase 착지에서 **판정 저장소가 PR head 커밋을 보유하지 않으면**(실측: PR #636 head `7656259d` 로컬 미보유) **정직한 착지도 항상 red** 였다 → **`gh api repos/{pin}/contents/…?ref=<PR head.sha>`(서버 조회·base64 decode 후 두 리터럴 grep)** 로 전환, 404/HTTP → `UNVERIFIED_REVISION` · 네트워크/인증 → `UNVERIFIABLE`. **진실 원천이 서버라는 U-17 원칙과 정합**하며 로컬 `git show` 는 **보조 대조(선택)** ⓑ **E2 (문언 충돌)** — «아티팩트는 `canonical_target` 을 선언하지 않는다»(C3)와 §8 ⑤ 의 «선언 불일치 = MISMATCH» 가 충돌해 보였다 → **아티팩트의 `owner_repo`·`target_branch` 키는 «선택»**(있으면 대조·불일치 = MISMATCH / 없으면 핀·`default_branch` 가 유일 소스)으로 고정. **극성 서술**: 선택으로 둬도 약해지지 않는다 — 두 경우 모두 조회 대상은 핀이고 선언은 **추가 대조**일 뿐 대상을 «고를» 수 없다 ⓒ **E3** — 핀 일치 원격 «존재» 대조가 **비-핀 원격 공존을 허용**함은 **의도**임을 명시(«원격 이름·개수는 묻지 않는다 — 조회 대상은 핀이지 원격이 아니다»·포크/미러를 두는 정상 작업을 막지 않는다). **상태 8값 → 9값 / 차단 8 / 전순서 9단 · T-84 6종 → 10종**(⑦ 타 앱 고정 · ⑧ same-app wrong-workflow · ⑨ 아티팩트 사후 편집 · ⑩ 타 원격·타 호스트). **하니스 byte-identical·`bound_paths` 편집이므로 O-6 재결속 필요.** **심사 미판정 — 동결 후 재결속 대기.** 구현 착수 금지 불변 |
 | **v2.17** | **stop-time Codex BLOCK 3건 반영 — «U-17 이 잘못된 보호 대상과 비강제 체크를 ACTIVE 로 승인할 수 있다».** v2.16 은 **재결속 전이라 승인 표면을 가진 적이 없다.** ① **B1 — 대상 미결속**: `owner_repo`·`target_branch` 를 **아티팩트 선언값 그대로** 쓰고 실행기가 **형식만** 검사해, 실제 `origin`·정본 착지 브랜치와 결속되지 않았고 **`D = ∅` 이면 «임의 대상의 보호»만으로 진입 승인**됐다. 교정: `owner_repo` 는 **`git remote get-url origin` 파생**(원격 이름은 파라미터·기본 `origin`), `target_branch` 는 **`gh api repos/{o}/{r}` 의 `.default_branch`** 파생 — **선언값은 «대조 대상»으로 강등**하고 불일치 = **`PREVENTION_TARGET_MISMATCH`**(신설). `D ≠ ∅` 이면 **(b) 의 PR `base` == target 과 3중 일치**. **새 상태값인 근거**: `INSUFFICIENT` 로 접으면 «맞는 대상인데 약하다»와 «엉뚱한 대상을 봤다»가 같은 값이 되고 **운영자가 할 일이 완전히 다르다** ② **B2 — 논증 철회**: v2.16 의 «보호 꺼진 창의 커밋에는 흔적이 없다»는 **불성립이며 철회**한다 — **PR 체크는 보호 설정과 독립 실행**되므로 보호를 끄고 체크를 통과시켜 머지한 뒤 재활성하면 **정상 흔적이 남는다**. 그리고 **`app.id` 미검증**이라 제3자 앱이 `tos-gate` success 를 **위조 게시**할 수 있었다. 교정: check-run 검증에 **`app.id`(기본 `15368` = GitHub Actions·오늘 `main` 실측값)·`head_sha`·`check_suite` 귀속** 추가. **(b) 의 정확한 진술로 재저작**: 증명하는 것은 «그 리비전에서 서버가 게이트를 실행해 통과했다»이고, «머지 «시점»에 보호가 강제 중이었다»는 **공개 REST 로 사후 증명 불가**(감사 로그는 org/enterprise 소관)다. 잡는 것(체크 실패·부재 / 직접 push / 위조 success)을 열거하고 **남는 것 = «보호 off 상태에서 체크는 통과한 리비전 착지»** 를 **닫지 못함으로 명시**. **완화 2종**: (α) 룰셋 `created_at ≤ merged_at(min D)` 요구 + `updated_at > merged_at` 은 **차단이 아니라 관측 기록**(정당한 정책 개선까지 막는 과잉 차단 방지) (β) **예방 주체는 서버 자체**·`UNCHK-008` 잔존·**강제 «연속성» 증명은 감사 로그 확보 시 승격**. **«흔적 없음» 류 문장 전수 제거** ③ **B3 — S-22**: §8 `T-84` 행이 **에라타 E2 이후에도** `rulesets=[]`·«머지 커밋 check-runs 0»·«pulls 공집합»을 유지해 **같은 턴 실측과 충돌**했다(E2 가 #5 근거만 고치고 이 행을 안 봤다) → **행 전체 재작성** + **⑤ target 불일치**·**⑥ `app_id` 위조** 신설 ⇒ **T-84 4종 → 6종**. **상태 7값 → 8값 / 차단 7 / 전순서 8단.** **[v2.17 에라타 (동결 `a3c95b4f` 후 증거 실행 `6bad7c23` 적발 — 재결속 전 정정)]** ⓐ **E1 (S-22)** — §8 `T-84` ① 이 «작업 브랜치 → 404 → `PREVENTION_ABSENT`» 를 유지했으나, **v2.17 에서 `target_branch` 가 `default_branch` 로 «파생»되므로 그 구성은 ⑤(`TARGET_MISMATCH`)** 이고 **실행기로 재현되지 않는다**. **B1 의 파생 전환이 이 행에 미전파**된 것이며, ① 은 «선언 == 파생(`main`) → `INSUFFICIENT`» 로만 두고 404 는 **«raw probe 관측»으로 강등**했다 ⓑ **E2 (리터럴 고정 3건)** — 원격 URL **정규화 규칙**(https/ssh/scp 형식 → `<owner>/<repo>`·`.git` 제거·형식 밖 = 차단) · **`check_suite` «귀속 일치»의 구체**(check-run 의 `check_suite.id` 가 가리키는 suite 의 `head_sha` == PR `head.sha` — 산문으로 두면 구현마다 다르게 읽는다) · 아티팩트 키 이름 **`remote_name`**(기본 `origin`)·**`gate_app_id`**(기본 `15368`). **증거 실행 결과**: ⑤ **live `TARGET_MISMATCH`(`D=∅`)** · ⑥ `app.id` 위조 red · ① `main` `INSUFFICIENT` · ③ live — **전건 기대 일치**. **하니스 byte-identical·`bound_paths` 편집이므로 O-6 재결속 필요.** **심사 미판정 — 동결 후 재결속 대기.** 구현 착수 금지 불변 |
 | **v2.16** | **stop-time Codex 심판 BLOCK 2건 반영. 중심은 «U-17 의 진실 원천을 저장소에서 서버로 옮긴 것».** v2.15 는 **재결속 전이라 승인 표면을 가진 적이 없다**(v2.9→v2.10 선례). ① **BLOCK ① — S-22 미전파**: `U-17` 이 7c/8 결속을 **주장**했으나 **§12.3 실행 착수 절차 텍스트는 여전히 `U-15` 만 요구**하고 `prevention_control_state` 를 언급하지 않았다. 7c·8 텍스트에 **live `PREVENTION_ACTIVE`** 를 명시 소비로 추가하고 진입 조건을 **논리곱 셋**으로 확정 ② **BLOCK ② — 자기신고 검증**: `PREVENTION_ACTIVE` 가 **비인증 저장소 내 자기신고 + 커밋 조상성**만 봐 **실제·현재 브랜치 보호를 보지 않았고**, **양성 테스트가 모의 문자열을 스스로 쓰고 ACTIVE 를 냈다** ⇒ **거짓 주장·countersign 후 보호 해제가 green**. 교정: **진실 원천을 서버로** — 별도 실행기 **`u17-verify`** 가 **인증 API 로 live 조회**(`branches/{t}/protection` + 룰셋)하고 raw 응답을 transcript 에 verbatim 수록, 술어(**TOS 게이트 체크 ∈ contexts ∧ strict ∧ enforce_admins ∧ force-push/deletion 불허 ∧ PR 필수**)를 캡처된 응답 위에서 결정적으로 평가. **상태 4값 → 7값**(`PREVENTION_UNVERIFIABLE`·`PREVENTION_INSUFFICIENT`·`PREVENTION_UNVERIFIED_REVISION` 신설, 차단 6, 전순서 7단). **(b) 리비전 특정** — `∀d∈D` 에 대해 **check-run success + merged PR** 실조회. **«countersign 후 보호 해제»가 닫히는 논증**: (a) 를 **진입 시점과 완료 판정 시점 둘 다 live** 로 평가하고 (b) 가 **리비전마다 서버 실행 흔적**을 요구한다 — **어느 하나만으로는 닫히지 않는다**. 아티팩트·countersign 은 **진실 원천이 아니라 파라미터 선언 + 기록 순서**(owner/repo·대상 브랜치·체크 이름을 **선언**하고 **서버가 검증** — 하드코딩 금지)로 강등. **가드 체인 3단화**(`하니스 && u17-verify && D0A-FIRST`) — **하니스는 오프라인·결정적이어야 하고 byte-identical 회귀 기준선을 가지므로 네트워크를 넣지 않는다**(층 분리). **T-84 재저작**: **음성은 실측·양성은 seam** — 이 저장소 실조회로 `main` → **`PREVENTION_INSUFFICIENT`**(contexts `["test"]`·strict false), 작업 브랜치 → **`PREVENTION_ABSENT`**(404), rulesets `[]`. **인증된 진짜 음성 증거가 지금 존재한다.** 양성은 `responder` 주입 seam(기본 `gh api`·transcript 에 명시)으로 모의하되 **`SIMULATED` 표기**하고 **운영자가 보호를 설정하기 전엔 실측 불가**임을 정직 표기 — **seam 이 정당한 근거는 응답 파서와 판정 함수가 동일 코드 경로**라 주입이 **입력만** 바꾼다는 것이다. **[v2.16 마감 (검증 FAIL 반영 — live 실측은 계약대로였고 차단 3·medium 3)]** ⓐ **#1 (BLOCK ① 클래스 재발)** — §12.3.4-G 의 **G-음성·G-양성 가드가 여전히 2단**이라 **T-81 ⑫ 양성이 폐기된 형태를 탔다**. **3단으로 교정**하고 **`G-음성-2`(하니스 통과 + u17 차단)를 신설** — **현 실측(`INSUFFICIENT`/`ABSENT`)으로 «두 번째 억제 지점»을 live 로 실행할 수 있다** ⓑ **#2** — §8 `T-84` 행이 «4종» 선언 아래 **6항·③ 중복·v2.15 자기신고 기준 잔존**으로 (a) 정의와 **정면 충돌**했다 → 행 전체 재작성 ⓒ **#3 (자기신고 잔여)** — «transcript 에 responder 명시»는 **자기신고**이고 «파서·판정 동일 경로»는 **다른 명제**다. **구조로 닫는다**: 진입자의 `u17-verify` 는 **가드**일 뿐이고 **판정 소비자는 transcript 를 신뢰하지 않고 스스로 live 조회**한다 ⇒ **진실 원천 = 판정 소비자 자신의 조회**. **responder 위조는 진입자 transcript 만 오염**시킨다. 남는 것(**판정 소비자 자신의 환경 위조**·**예방 주체는 서버 자체**)은 **정직 경계 절**로 명시 ⓓ **#4** — 술어에 `required_pull_request_reviews` **부재 = 불충족** · `restrictions`/apps 우회 없음 · 룰셋 **필드 수준**(`enforcement=active`·`bypass_actors=[]`·`required_status_checks`·`pull_request`·`non_fast_forward`·`deletion`) 추가. **TOS 게이트 체크 기본 이름 `tos-gate`** 를 계약이 정하되 **파라미터 기본값**이고 **CI 잡 이름과 일치해야** 하며 **현재 CI 에 부재 → 오늘 `main` 이 `INSUFFICIENT` 인 것이 맞다** ⓔ **#5** — (b) 조회 SHA 를 **PR `head.sha`** 로 못박음(**squash/merge 착지에서 check-run 은 머지 커밋이 아니라 PR head 에 붙는다** — 실측: 머지 커밋 check-runs 0·pulls 공집합·미푸시 422). `d` 직접 조회는 **정직한 착지도 항상 red** 로 만든다 ⓕ **#6** — `T-84 ③` 의 타 축 값(`NOT_STARTED`) 제거하고 **`D = ∅` 처리**를 U-17 에 명시: (a) live 술어는 **`D` 와 무관**(착수 «전»에도 ACTIVE 가능해야 착수한다) · (b)(c) 는 «검증 대상 없음» — **공허참에 기대지 않는다**. **[v2.16 에라타 (동결 `eb2805a9` 후 증거 실행 `434448b2` 적발 — 재결속 전 정정)]** ⓐ **E1 문언 소실** — v2.15 에라타 E3 가 고정한 `operator_countersign: "<식별> <ISO-8601 UTC>"` **리터럴이 U-17 재작성에서 사라져** «형식 위반»이 **재-미정의**됐다 → `(c-0)` 로 복원 ⓑ **E2 사실 정정** — #5 근거의 «머지 커밋 check-runs 0건·pulls 공집합»은 **거짓**이었다(live 재측정: `11e382fc` check-runs **15건**·`pulls` = PR #636 merged 1건). **결론(조회 SHA = PR head.sha)은 유지하고 근거를 교체**한다: 그 15건은 **push 트리거 워크플로**이지 **PR 게이트가 아니며**, 게이트 결과는 **PR head SHA 에 귀속**된다(PR head `7656259d` check-runs 5건에 `tos-gate` 없음). `d` 직접 조회는 **게이트 아닌 실행을 게이트로 오인**하게 만든다 ⓒ **E3 fail-closed 리터럴 고정** — `allow_force_pushes`·`allow_deletions` **키 부재 = 불충족**(없는 것을 «허용 안 함»으로 읽지 않는다) · `restrictions` 실재 시 **`apps == []`**(users/teams 는 push 제한이라 우회 아님) · `rulesets/{id}` 의 **`bypass_actors` 키 부재도 불충족**(조회 못 한 것을 «없음»으로 읽지 않는다) ⓓ **성능 주** — 구조 `D`·`P` 판정은 `git rev-list --full-history` 로 **후보를 축소**해도 되며(2,149 커밋 ~36s → <1s), **완전성 근거**(술어 만족 `x` 는 모든 부모와 tree 가 달라 후보에 포함)와 함께 **«축소는 최적화·판정은 구조 평가»** 임을 명시했다. **증거 실행 결과**: G-음성-2 **live 성립** · T-84 live 음성(`main` INSUFFICIENT·브랜치 ABSENT) · seam 양성 · 3단 가드 ⑫ CLEAR. **하니스 byte-identical·`bound_paths` 편집이므로 O-6 재결속 필요.** **심사 미판정 — 동결 후 재결속 대기.** 구현 착수 금지 불변 |
@@ -2865,7 +2874,7 @@ RUNTIME/FAULT/REVIEWER 존재성·REV2·A-1/A-2·D0-5에 테스트가 없었다.
 | T-45 | S-8 리터럴 census | P0-1/P0-3 대상 census를 리터럴 grep으로 되돌림 → 7곳이 아닌 4곳을 보고하면 실패 |
 | T-46 | K-2 하한 (§5.2.8) | `EV-L3` 행의 `required_kinds`를 `{PACKAGE}`로 → 하한 미포함이 오류가 아니면 실패 |
 | T-47 | 하한 파싱 정규화 | `EV-L0/1`과 `EV-L0/L1`을 서로 다른 값으로 세는 변형 → 통과하면 실패 |
-| **T-84** | **U-17 예방 통제 활성 증거** (§12.3.4) | **v2.15 신설 / v2.16 재작성 / [v2.17 재작성 — stop-time BLOCK B3]** — 파라미터화 **10종**. **v2.16 에라타 E2 가 #5 근거만 고치고 이 행을 보지 않아**(S-22) `rulesets=[]`·«머지 커밋 check-runs 0»·«pulls 공집합»이 **같은 턴 실측과 충돌**한 채 남아 있었다 — 행 전체를 재작성한다. ① **live 서버 음성(실측)** — 아티팩트 선언 == 구조 파생(`main`)인 정상 구성에서 `responder=gh` 실조회: `required_status_checks {strict:false, contexts:["test"]}` 이므로 **`PREVENTION_INSUFFICIENT`** · `/rules/branches/main` → `[]`(적용 규칙 0) · `/rulesets` → `[{name:"protect_main", enforcement:"disabled"}]` ⇒ **룰셋은 실재하나 disabled 라 동등물 없음**. **인증된 진짜 음성이며 모의가 아니다**. **[E1 — v2.17 에라타]** 초안은 여기에 «작업 브랜치 → 404 → `PREVENTION_ABSENT`» 를 함께 적었으나, **v2.17 에서 `target_branch` 는 `default_branch` 로 «파생»되므로 그 구성은 ⑤(`TARGET_MISMATCH`)이지 `ABSENT` 가 아니고 실행기로 재현되지 않는다**(증거 실행 적발 — S-22: B1 의 파생 전환이 이 행에 미전파). **«비-default 브랜치 protection → 404»는 «raw probe 관측»으로만 병기**하며 상태값 기대가 아니다 ② **seam 주입(`SIMULATED`)** — `responder` 주입으로 `PREVENTION_ACTIVE`·`INSUFFICIENT`·`UNVERIFIABLE` 모의. **기본 responder 는 `gh api`**. **양성은 운영자가 보호를 설정하기 전까지 실측 불가**임을 숨기지 않는다. **진정성은 §12.3.4 «진실 원천» 절이 «판정 소비자 자신의 조회»로 닫는다** ③ **리비전 검증(실측)** — `/commits/{d}/pulls` → 착지 PR → PR `head.sha` check-runs. 실측: `origin/main` 착지 `11e382fc` 의 check-runs **15건**(push 트리거 워크플로)·`pulls` = PR #636(merged·base main), PR head `7656259d` check-runs 5건에 **`tos-gate` 없음** ⇒ **`PREVENTION_UNVERIFIED_REVISION`**. 미푸시 커밋 → 422 ⇒ `PREVENTION_UNVERIFIABLE` · 푸시됐으나 PR 없는 `be98f075` → `pulls` `[]` ⇒ UNVERIFIED_REVISION ④ **보호 해제 후(stub)** — «countersign 시 ACTIVE → 이후 해제» 후 완료 판정 재조회가 `ABSENT`/`INSUFFICIENT` ⑤ **[v2.17 신설] target 불일치** — 아티팩트가 **다른 저장소/브랜치**를 선언(예: 보호가 걸린 타 repo, 또는 default 아닌 브랜치) → **`PREVENTION_TARGET_MISMATCH`** + 비-0. **`D = ∅` 에서도 red 여야 한다** — v2.16 은 이 구성에서 **임의 대상의 보호만으로 ACTIVE** 를 냈다 ⑥ **[v2.17 신설] `app_id` 위조** — `tos-gate` 라는 이름에 `conclusion: success` 이지만 **`app.id` 가 게이트 앱(기본 `15368`)이 아닌** check-run 을 seam 으로 주입 → **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **이름만 보는 구현은 통과시키므로 실패한다** ⑦ **[v2.18] 타 앱 고정 required check** — 보호는 있고 `contexts` 에 `tos-gate` 도 있으나 `required_status_checks.checks[]` 의 그 컨텍스트 `app_id` 가 **Actions 가 아닌 앱**(예 99999) → **`PREVENTION_INSUFFICIENT`** + 비-0. **v2.17 은 이름만 봐서 `prot_ok` 를 냈고 `D=∅` 이면 그대로 진입 승인**됐다(심판이 실행기 술어로 재현) ⑧ **[v2.18] same-app wrong-workflow** — **같은 Actions app id** 로 **다른 워크플로**의 잡을 `tos-gate` 로 이름 지어 success 게시 → workflow run 의 `path` 가 `.github/workflows/tos-gate.yml` 이 아니므로 **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **app id 만 보는 구현은 통과시킨다**(실측: PR #636 head 의 5 run 이 전부 동일 app id) ⑨ **[v2.18] 아티팩트 사후 편집** — `P` → D0-A 착수 → 아티팩트 편집 → **`PREVENTION_ARTIFACT_MUTATED`** + 비-0. **`P_last` 를 쓰지 않고 «최초 도입 P» 만 보는 구현은 통과시킨다** ⑩ **[v2.18] 타 원격·타 호스트** — 아티팩트/원격이 **계약 핀**(`github.com/kakao-harris-lee/kis_unified_sts`)과 다른 host 또는 owner/repo 를 가리킴(비-GitHub 호스트의 동일 경로 포함) → **`PREVENTION_TARGET_MISMATCH`** + 비-0. **host 를 버리는 정규화는 통과시킨다** |
+| **T-84** | **U-17 예방 통제 활성 증거** (§12.3.4) | **v2.15 신설 / v2.16 재작성 / [v2.17 재작성 — stop-time BLOCK B3 / v2.19 확장]** — 파라미터화 **12종**. **v2.16 에라타 E2 가 #5 근거만 고치고 이 행을 보지 않아**(S-22) `rulesets=[]`·«머지 커밋 check-runs 0»·«pulls 공집합»이 **같은 턴 실측과 충돌**한 채 남아 있었다 — 행 전체를 재작성한다. ① **live 서버 음성(실측)** — 아티팩트 선언 == 구조 파생(`main`)인 정상 구성에서 `responder=gh` 실조회: `required_status_checks {strict:false, contexts:["test"]}` 이므로 **`PREVENTION_INSUFFICIENT`** · `/rules/branches/main` → `[]`(적용 규칙 0) · `/rulesets` → `[{name:"protect_main", enforcement:"disabled"}]` ⇒ **룰셋은 실재하나 disabled 라 동등물 없음**. **인증된 진짜 음성이며 모의가 아니다**. **[E1 — v2.17 에라타]** 초안은 여기에 «작업 브랜치 → 404 → `PREVENTION_ABSENT`» 를 함께 적었으나, **v2.17 에서 `target_branch` 는 `default_branch` 로 «파생»되므로 그 구성은 ⑤(`TARGET_MISMATCH`)이지 `ABSENT` 가 아니고 실행기로 재현되지 않는다**(증거 실행 적발 — S-22: B1 의 파생 전환이 이 행에 미전파). **«비-default 브랜치 protection → 404»는 «raw probe 관측»으로만 병기**하며 상태값 기대가 아니다 ② **seam 주입(`SIMULATED`)** — `responder` 주입으로 `PREVENTION_ACTIVE`·`INSUFFICIENT`·`UNVERIFIABLE` 모의. **기본 responder 는 `gh api`**. **양성은 운영자가 보호를 설정하기 전까지 실측 불가**임을 숨기지 않는다. **진정성은 §12.3.4 «진실 원천» 절이 «판정 소비자 자신의 조회»로 닫는다** ③ **리비전 검증(실측)** — `/commits/{d}/pulls` → 착지 PR → PR `head.sha` check-runs. 실측: `origin/main` 착지 `11e382fc` 의 check-runs **15건**(push 트리거 워크플로)·`pulls` = PR #636(merged·base main), PR head `7656259d` check-runs 5건에 **`tos-gate` 없음** ⇒ **`PREVENTION_UNVERIFIED_REVISION`**. 미푸시 커밋 → 422 ⇒ `PREVENTION_UNVERIFIABLE` · 푸시됐으나 PR 없는 `be98f075` → `pulls` `[]` ⇒ UNVERIFIED_REVISION ④ **보호 해제 후(stub)** — «countersign 시 ACTIVE → 이후 해제» 후 완료 판정 재조회가 `ABSENT`/`INSUFFICIENT` ⑤ **[v2.17 신설] target 불일치** — 아티팩트가 **다른 저장소/브랜치**를 선언(예: 보호가 걸린 타 repo, 또는 default 아닌 브랜치) → **`PREVENTION_TARGET_MISMATCH`** + 비-0. **`D = ∅` 에서도 red 여야 한다** — v2.16 은 이 구성에서 **임의 대상의 보호만으로 ACTIVE** 를 냈다 ⑥ **[v2.17 신설] `app_id` 위조** — `tos-gate` 라는 이름에 `conclusion: success` 이지만 **`app.id` 가 게이트 앱(기본 `15368`)이 아닌** check-run 을 seam 으로 주입 → **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **이름만 보는 구현은 통과시키므로 실패한다** ⑦ **[v2.18] 타 앱 고정 required check** — 보호는 있고 `contexts` 에 `tos-gate` 도 있으나 `required_status_checks.checks[]` 의 그 컨텍스트 `app_id` 가 **Actions 가 아닌 앱**(예 99999) → **`PREVENTION_INSUFFICIENT`** + 비-0. **v2.17 은 이름만 봐서 `prot_ok` 를 냈고 `D=∅` 이면 그대로 진입 승인**됐다(심판이 실행기 술어로 재현) ⑧ **[v2.18] same-app wrong-workflow** — **같은 Actions app id** 로 **다른 워크플로**의 잡을 `tos-gate` 로 이름 지어 success 게시 → workflow run 의 `path` 가 `.github/workflows/tos-gate.yml` 이 아니므로 **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **app id 만 보는 구현은 통과시킨다**(실측: PR #636 head 의 5 run 이 전부 동일 app id) ⑨ **[v2.18] 아티팩트 사후 편집** — `P` → D0-A 착수 → 아티팩트 편집 → **`PREVENTION_ARTIFACT_MUTATED`** + 비-0. **`P_last` 를 쓰지 않고 «최초 도입 P» 만 보는 구현은 통과시킨다** ⑩ **[v2.18] 타 원격·타 호스트** — 아티팩트/원격이 **계약 핀**(`github.com/kakao-harris-lee/kis_unified_sts`)과 다른 host 또는 owner/repo 를 가리킴(비-GitHub 호스트의 동일 경로 포함) → **`PREVENTION_TARGET_MISMATCH`** + 비-0. **host 를 버리는 정규화는 통과시킨다** ⑪ **[v2.19 신설 — 심판 F1] 보호 해제 창(off→merge→on) — 연속성** — **live 로 실행하지 않는다**(실측 픽스처가 서버 보호 설정 변경을 요구하므로): v2.16 (a) 방식의 **«캡처된 응답 위 결정적 술어» seam** 으로 SIMULATED 구성한다. 룰셋 응답에 `updated_at` 이 **최초 착지 `merged_at` 보다 늦은** 캡처를 주입 → **`PREVENTION_CONTINUITY_UNVERIFIABLE` + 비-0**(U-17-c). **classic branch protection 만인 캡처**(`updated_at`·`created_at` 부재) → 같은 값(연속성 판정 불가). **`updated_at`·`created_at` ≤ `merged_at` 캡처** → 그 축 통과(다른 축이 성립하면 `PREVENTION_ACTIVE`). **판별력**: 「진입·완료 두 조회가 둘 다 ACTIVE 면 통과」로 접는 구현은 이 SIMULATED 를 통과시켜 실패한다. **live 는 현행 상태 음성만**(오늘 `main` 은 룰셋 `disabled` 라 애초에 `PREVENTION_INSUFFICIENT`). **소비 시각은 «서버 시간»만**(응답의 `updated_at`·`created_at`·PR `merged_at`) — 커밋 author/committer date 는 클라이언트 공급이라 쓰지 않는다. **정직 표기**: 감사 로그 없이 «머지 시점 강제»의 완전 증명은 불가하므로 이 대조군은 **설정 변경의 관측**만 fail-closed 로 승격한다 ⑫ **[v2.19 신설 — 심판 신규 high] `GH_HOST` override — 정본 host 결속** — **live 실행 가능**(GET-only·환경변수만). 소비자는 계약 핀에서 host 를 파생해 **모든 `gh api` 에 `--hostname <핀 host>` 명시 + 자기 환경 `GH_HOST` 를 핀 host 로 설정**한다. 대조군은 `GH_HOST=<타 host>`(+`GH_ENTERPRISE_TOKEN=dummy`) 주입 후 실행 → **상태값이 override 유무와 «불변»**(조회가 핀 host 에 결속)이거나, 핀 host 도달·인증 불가면 **`PREVENTION_UNVERIFIABLE`**(fail-closed). **override 가 상태값을 바꾸면(특히 타 host 응답으로 `PREVENTION_ACTIVE`) 실패** = host 를 `gh` 환경에 위임하는 구현. **심판 실측 프로브**(`GH_HOST=example.invalid … gh api repos/a/b`, exit 1)가 host 없는 명령의 결함을 재현한 그 클래스이며, T-84 ⑩(remote URL 대조만)은 이 축을 잡지 못한다 |
 | **T-83** | **K-14 매핑-부재 레벨** (§5.2.8) | **v2.12 신설 (심판 #3 — medium)** — 파라미터화 **2종**(음성 1 · 양성 1) — **문법상 유효하되 승인 매핑 도메인 밖**인 레벨(예: `EV-L7`)을 `minimum_evidence_level` 에 주입 → **floor 도출 불가 = 차단**이어야 한다. **빈 floor 로 접거나 최저 레벨 기본값으로 처리하거나 UNCHK 로 우회하면 실패.** **T-48 과 합치지 않는 근거(S-16)**: T-48 의 뮤테이션은 **문법 밖 값**이고 실패 축이 *파싱 불가*다. K-14 의 축은 *파싱은 되는데 매핑이 없다* — **다른 술어**를 건드린다. 합치면 **"문법 검사만 있고 매핑 검사는 없는 구현"이 T-48 을 통과하면서 K-14 를 비운다.** **양성 대조도 함께**: 매핑 안의 레벨(`EV-L6` — 도메인 전역화 후)은 **정상 도출**돼야 한다. 안 되면 K-14 가 과잉 차단이다 |
 | T-48 | 하한 미해석 fail-closed | `minimum_evidence_level`에 문법 밖 값 주입 → 하한이 조용히 비면 실패 (`Profile-dependent` 3행은 명시 선언 경로) |
 | T-49 | 하한→쌍 생성 | `FAULT`를 하한에 포함시켰을 때 쌍이 생성돼 `UNVERIFIABLE`로 §13에 계수되는가 → 계수 안 되면 실패 |
@@ -2915,7 +2924,7 @@ RUNTIME/FAULT/REVIEWER 존재성·REV2·A-1/A-2·D0-5에 테스트가 없었다.
 |---|---|---|
 | **T-78** | **U-12 제기·무응답 상태** (§12.3.1) | **v2.6 신설 / v2.7 확장 5→7종 / v2.8 확장 7→8종 (심판 #2 — merge DAG)** — 파라미터화 **8종**, 각각 고유 뮤테이션: ① **raised_at 누락** — `oq11_rebinding_required=True` 로 만들고 원장에 열린 에피소드를 두지 않는다 → `RAISE_MISSING` 이 아니거나 `--check` 가 green 이면 실패 ② **미만료** — 열린 에피소드 + `elapsed ≤ deadline` → `PENDING_WITHIN` 이 아니거나 **완료가 주장되면** 실패(미만료도 차단이다) ③ **만료** — `elapsed > deadline` → `NO_RESPONSE` 전이가 없거나 `REFUSED` 와 다른 처분이 나오면 실패 ④ **재생성·시계 리셋** — (a) `TOS-COMPLETION-STATUS` 를 재생성했을 때 `raised_at_effective` 가 바뀌면 실패 (b) 원장 기재 `raised_at` 을 **도입 커밋 이후로** 밀었을 때 `min` 파생이 그것을 무효화하지 않으면 실패 ⑤ **deadline 미정** — `oq11_response_deadline` 키를 비운다 → `DEADLINE_UNSET` 이 아니거나, 미정을 **무한대 기한으로 접어 통과**시키면 실패. **[v2.7 신설 — 심판 #2]** ⑥ **지연 도입 — 경과 보존** (이번 개정의 본체): 트리거 커밋 `T`(= `oq11_rebinding_required` 가 `False`→`True` 로 뒤집힌 커밋) 이후 **Δ 만큼 지난 커밋에서 원장 행을 도입**하고 `raised_at` 도 그 시각으로 적는다. `deadline < Δ` 로 둔다 → **`raised_at_effective` 가 `T` 의 author date 여야 하고 상태는 `NO_RESPONSE`.** `min` 이 2항(기재값·도입 커밋)뿐인 구현은 `PENDING_WITHIN` 을 내므로 **실패한다** — **이 대조군이 2항 구현과 3항 구현을 판별하는 유일한 지점**이다 ⑦ **`trigger_at_head` 위조** — 원장의 `trigger_at_head` 를 재파생값과 다른 커밋 id 로 적는다 → `RAISE_MALFORMED` 로 차단되지 않으면 실패. **그리고 기산점이 기재값을 따라 움직이면 실패**(기산점은 재파생값만 쓴다). **S-16 준수**: 계약이 `trigger_at_head` 를 소비한다고 선언했으므로 대조군이 **그 필드를 직접 뮤테이션**해야 한다 — ⑥만으로는 그 필드를 건드리지 않는다. **[v2.8 신설 — 심판 #2]** ⑧ **2-parent 위상** — 부모 간 술어값이 갈리는 DAG 를 픽스처로 만든다: 기저 `G`(술어 False) → 브랜치 `X`(술어 True, **이른** author date) · 브랜치 `Y`(술어 False) → merge `M`(술어 True, **늦은** author date). 경계 집합은 `{X, M}` 이다 (**기저를 `G` 로 쓰는 이유**: 유일화 규칙 §12.3.1 ①-b 가 경계 집합을 `B` 로 표기하므로 픽스처 커밋명과 충돌한다 — 같은 문서에서 한 기호가 두 대상을 가리키면 대조군 기술이 계약과 어긋나 읽힌다, S-16 계열) → **`trigger_commit` 이 `X` 로 유일하게 결정**되지 않으면 실패. **판별력**: `--first-parent` 한정 구현은 `M` 을 고르므로 **실패한다**(기산점이 늦어져 deadline 이 연장되는 fail-open 방향 — 그것이 기각 근거다). 그리고 **지연 방향 조작 무효화**: `M` 의 author date 를 더 늦게 밀어도 파생값이 움직이면 실패. 추가로 **동초 타이 케이스** — `X` 와 또 다른 경계 커밋의 author date 가 같을 때 **commit id 사전순**으로 유일값이 나오지 않으면 실패(2단 정렬을 검사한다). **여덟 중 하나라도 green 이면 U-12 는 산문이다** |
 | **T-81** | **U-15 P-0 후 재진입** (§12.3.4) | **v2.7 신설 / v2.8 재결속 (심판 #1 — 부트스트랩 순환)** — **강제 지점이 2단이 되면서 이 대조군은 `pre-D0-A` 에 실행 가능하다**: 1단 «진입 점검 레시피»(§12.3.4-R)로 돌리고, ①의 실행 절차 전문은 **§12.3.4-T**(일회용 분리-HEAD worktree 에서 상위 계획을 편집해 레시피가 거부하는 transcript 를 양성·음성 쌍으로 남긴다)에 있다. **D0-A 이후에는 이 대조군 전체가 검사기로 승계된다**(종수는 아래 파라미터화 값이 유일 소스 — S-20). 파라미터화 **19종** = v2.7 6종 + v2.8 1종(⑦) + v2.9 2종(⑧⑨) + v2.10 1종(⑩) + v2.11 2종(⑪⑫) + v2.13 3종(⑬⑭⑮) + v2.14 3종(⑯⑰⑱) + **v2.15 1종**(⑲ 병렬 도입 머지). **차단값 8개를 전수 덮으며 `HARNESS_ABORTED` 에만 2종이 대응**한다(1:1 이 아니라 **전수 피복**이다 — S-19: 주장을 문자 그대로 검산한다) — **내역 병기, S-20**. **[v2.9] 각 변이의 기대가 바뀌었다**: v2.8 까지는 "상태값이 나와야 한다"였고, 이제는 **"§12.3.4-R 하니스가 비-0 으로 종료하고 stdout 에 해당 `d0a_entry_state` 를 출력해야 한다"** 이다 — 심판이 `recipe_rc=0` 을 실측한 것이 이 변경의 근거다(S-19 — 초안은 5종이라 `APPROVAL_ABSENT` 가 대조군 없이 남았고, 저작자 자체 스윕이 "전 상태값 1:1"이라는 **과대주장**을 적발해 케이스를 추가했다. **선언한 커버리지를 선언한 규칙으로 재계산한 것**이며 S-15 의 형태다): ① **심판이 요구한 변이 그 자체** — `verdict: approve` 를 받은 뒤 **P-0 를 실행해 상위 계획을 개정**하고, 그 상태에서 **이전 승인으로 D0-A 에 진입**시킨다 → **차단 상태값 + 비-0 종료**가 아니면 실패. **[v2.9 마감 — 기대 2단화]** 이 변이는 `bound_paths` 내용을 바꾸므로 **R-2(우선순위 3)가 R-7(8)보다 먼저 발화**해 실측값이 `REBINDING_REQUIRED` 다(독립 검증자). **`APPROVAL_STALE` 을 특정 관측하려면 `verdict: approve` 전제를 만들어야 하고**, 그 3-커밋 모의 절차가 **§12.3.4-T 의 T-81-①-e** 다 — 그 절차로 `APPROVAL_STALE`/rc=1 이 실측됐다(**R-7 은 死코드가 아니다**). **v2.9 초안은 이 행에 "`verdict: approve` 를 받은 뒤"라는 전제를 적어 놓고 실행 블록에 그 전제를 만드는 단계를 두지 않았다** — 계약문의 전제가 절차에 미전파된 형태(S-9) ② **결속 만료 축** — `bound_set_digest` 불일치 상태에서 진입 → `REBINDING_REQUIRED` 가 아니면 실패 ③ **범위 축소** — verdict 의 `reviewed_plan_paths` 에서 상위 계획을 뺀 뒤 진입 → `APPROVAL_SCOPE_MISMATCH` 가 아니면 실패(**좁힌 승인은 덮지 않는 내용을 만든다**) ④ **판정 어휘·심판 계열** — `verdict: needs-attention` 또는 `adjudicator` 가 codex 아님 → `APPROVAL_NOT_APPROVE` 가 아니면 실패 ⑤ **이력 파생 불가** — 얕은 클론(`fetch-depth: 1`)에서 실행 → `APPROVAL_PROVENANCE_UNVERIFIABLE` **차단**이 아니라 green 이면 실패. **부재를 "해당 없음"으로 접는 구현을 이 대조군이 잡는다** ⑥ **verdict 부재** — 추적 경로에 verdict 아티팩트가 하나도 없는 상태에서 진입 → `APPROVAL_ABSENT` **차단**이 아니면 실패. **"승인 기록이 없으면 검사할 것도 없다"로 접는 구현**(공집합 통과 — T-3c 와 같은 클래스)을 이 대조군이 잡는다. **[v2.8 마감] ⑦ 동결 위반** — `bound_paths` 에 미커밋 변경을 둔 채 레시피를 실행 → `FREEZE_VIOLATED` **차단**이 아니면 실패. **독립 검증자가 v2.8 레시피 실행에서 실제로 밟은 조건**이며, 대조군 없이 상태값만 두면 v2.7 이 T-81 에서 겪은 형태(`APPROVAL_ABSENT` 무대조군)가 재발한다. **[v2.9 신설] ⑧ 하니스 이상 종료** — 입력 하나를 지우거나(`OQ-11-DISPOSITION.md` 부재) `git` 을 `PATH` 에서 제거한 환경에서 실행 → **`HARNESS_ABORTED` 출력 + 비-0** 이 아니면 실패. **"판정 없이 rc=0 으로 끝나는 경로"가 남아 있는지를 이 변이가 본다** — v2.8 의 결함 형태 그 자체이고, `trap ... EXIT` 가 그것을 폐쇄했음을 증명한다. **[v2.9 마감 신설] ⑨ `awk` 부재** — `awk` 없는 `PATH` 로 실행 → **`HARNESS_ABORTED`** 여야 한다. **초안은 `REBINDING_REQUIRED`("bound_paths 집합 불일치")를 냈다** — 극성은 유지되지만 **판정 불가가 결속 만료로 오귀속**됐고(독립 검증자 실측), 그러면 운영자가 없는 문제를 고치러 간다. 교정: `yaml_list`·`yaml_scalar` 호출 6곳을 전부 `\|\| emit HARNESS_ABORTED` 로 감쌌다. **⑧과 분리하는 이유**: ⑧은 *입력 부재*, ⑨는 *도구 부재*라 **오귀속 축이 다르다**(S-16 — 대조군은 계약이 지목한 것을 건드려야 한다) **[v2.10 신설 — stop-time 적발] ⑩ 미커밋 권위 위조** — **커밋하지 않은 채로** ⓐ 아티팩트의 `bound_set_digest` 를 현행 재계산값으로 편집하고 ⓑ 가짜 최신 스탬프(`adjudicator: codex`/`verdict: approve`/경로 정확/`reviewed_at_head=HEAD`)를 만든 상태에서 실행 → **`ENTRY_OK` 가 아니어야 하고 rc≠0** 이어야 한다. **v2.9 하니스는 이 변이에서 `ENTRY_OK`/rc=0 을 냈다**(저작자 재현 실측 — 위조 성공). **발화 상태값은 우선순위가 정한다**: 커밋-전용 읽기(층 1)만으로도 위조물이 불가시라 **`REBINDING_REQUIRED`** 로 막히고, R-0 확장(층 2)이 함께 있으면 **우선순위 2 가 3 을 앞서 `FREEZE_VIOLATED`** 가 난다. **둘 중 어느 것이든 통과이나 `ENTRY_OK`·rc=0 이면 실패**. **[v2.11 신설 — 심판 #1] 착수 억제 양방향 2종**: ⑪ **차단 상태 억제(음성)** — 현행(차단) 상태에서 `bash <하니스> && <D0A-FIRST>` 실행 → **`config/tos_completion.yaml` 부재이고 도입 커밋도 부재**여야 한다(`git log --diff-filter=A` 출력 없음). 있으면 실패 = 차단 상태에서 **실제 착수**가 개시된다. **[v2.12] 우변이 대리(`touch`)에서 §12.1 이 명명한 실제 행위로 교체됐다**(심판 #1) ⑫ **`ENTRY_OK` 모의 도달(양성)** — 전제 충족 모의로 `ENTRY_OK` 를 만든 뒤 같은 가드 실행 → **도입 커밋 1건이 존재**해야 한다. **[v2.13 신설 — 심판 #1] 2종**: ⑬ **HEAD 이동(부모 불일치)** — 하니스를 통과시킨 뒤 **가드 우변 실행 전에 무관한 커밋을 하나 올려 HEAD 를 옮기고** D0A-FIRST 를 커밋한다 → `git log --format=%P -1 <도입 커밋>` 이 **transcript 의 `R-0 head=` 와 달라야 하고** `PARENT_MISMATCH` 로 차단돼야 한다(U-15-f-4·U-15-g). **판정 대상과 착수 대상이 다른 커밋이 되는 창**을 이 변이가 연다 ⑭ **비가드 도입 커밋** — 하니스를 **아예 돌리지 않고** `config/tos_completion.yaml` 을 커밋한다 → **`ENTRY_TRAILER_MALFORMED` + rc≠0** 이어야 한다. **[v2.14 에라타 — 증거 실행 적발]** 이 자리의 리터럴은 `TRANSCRIPT_MISSING` 이었다. 그것은 **v2.13 CORR 정의 하의 값**이고, v2.14 가 **조건 (4) 트레일러와 전순서**를 도입하면서 **«트레일러 0줄 = `ENTRY_TRAILER_MALFORMED`»(전순서 3)가 `TRANSCRIPT_MISSING`(6)을 앞선다** — 증거 실행이 실측으로 잡았다. **H1 에서 ⑯ 을 정정하며 «상태를 쪼개면 각 변이의 기대값을 우선순위로 다시 계산해야 한다»고 적어 놓고 «같은 트레일러-없음 시나리오»인 이 행에 적용하지 않았다**(S-16 오귀속 · S-22 전파 누락). **[v2.13 마감 기대 교정]** 초안은 «transcript 부재»로 기대를 적었으나 **추적 경로에 기존 transcript 가 이미 여럿 있어 그 조건에 도달할 수 없었다**(실행 반증) — 기대를 **교정된 `CORR` 술어 기준**(HEAD 일치 **AND** `ENTRY_OK` 기록)으로 재기술한다. **[v2.13 마감 신설] ⑮ 전진-머지 우회** — **독립 검증자가 실제로 만든 구성**을 변이로 승격한다: 기존 transcript 가 기록한 HEAD(`R-0 head`)를 **부모로 삼아** D0A-FIRST 를 커밋하고 전진 머지한다 → 초안 술어에서는 `R-0 head == parent(d)` 가 **리터럴 일치**해 `ENTRY_PROVENANCE_CLEAR` 로 **통과했다**(하니스 미실행·그 transcript 의 기록 상태는 차단이었는데도). **교정된 술어에서는 red** 여야 한다(v2.13 근거는 «`ENTRY_OK` 미기록으로 `CORR` 제외»였고, **v2.14 에서는 그 `d` 에 트레일러가 없어 `ENTRY_TRAILER_MALFORMED` 가 먼저 발화**한다 — 증거 실행 실측. **이 행은 특정 상태값을 계약하지 않고 «red» 만 계약하므로 그대로 유효하다**). **통과하면 U-15-g 는 여전히 통행증을 발급한다.** **[v2.14 / 마감 재저작] 3종**: ⑯ **트레일러 없는 착수** — ⓐ 하니스 없이 `d` 커밋 ⓑ `parent(d)` 에서 하니스 재실행 → `ENTRY_OK` transcript `t′` 와 별도 `d′`. **`d` 에 트레일러가 없으므로 `ENTRY_TRAILER_MALFORMED` + 비-0** 이어야 한다. **[H1 — v2.14 마감 기대 정정]** 초안은 이 자리에 `TRANSCRIPT_MISSING` 을 적었으나 **`U-15-f-5` 가 «3줄 각각 정확히 1회» 를 요구하므로 0회는 `ENTRY_TRAILER_MALFORMED`** 이고 **전순서 3 이 6 을 앞선다**(실측 확인). **`G13` 이 고친 S-16 오귀속 클래스가 «신설 상태값의 변이표»에서 재발한 것** — 상태를 쪼개면 **각 변이의 기대값을 우선순위로 다시 계산**해야 한다. **[마감 정직 표기]** 같은 시나리오에서 **`git commit --amend` 로 `d` 에 트레일러를 붙이면 통과한다**(독립 검증 실측: amend 는 부모 보존·`fsck` clean·관측 흔적 0). **그것은 이 대조군의 실패가 아니라 CORR 의 «경계»** 이며 §12.3.4 «정직 경계» 절이 명시한다 — **예방은 `UNCHK-008` 서버측 required check** 다. 초안이 이 변이를 «사후 세탁을 닫는다»로 적은 것은 **과장이었고 철회**한다 ⑰ **트레일러 이상** — ⓐ `Entry-Transcript*` 3줄 중 하나 누락 ⓑ 같은 줄 2회 ⓒ `SHA256` 을 실제 내용과 다르게 → 셋 다 **`ENTRY_TRAILER_MALFORMED` + 비-0**. **[마감 재저작]** 초안 ⑰ 은 «동일 파일 복수 매치 → `CORR` 크기 2» 를 기대했으나 **트레일러의 `Run:` 이 스칼라라 `CORR` 크기 ≤ 1 이 항상 참**이어서 **산술적으로 도달 불가**였다(독립 검증 실측). 유일성이 **계수가 아니라 구조**로 오므로 위험 축을 **트레일러 이상**으로 옮겼다 ⑱ **인용 run 의 상태 ≠ `ENTRY_OK`** — 트레일러 정상·`R-0 head` 일치인데 그 run 이 **차단 상태를 기록**한 경우 → **`TRANSCRIPT_NOT_ENTRY_OK` + 비-0**. **⑬(부모 불일치)·⑯(트레일러 없음)과 축이 다르며**, 우선순위 **3(`ENTRY_TRAILER_MALFORMED`)·4(`PARENT_MISMATCH`)·5(`TRANSCRIPT_NOT_ENTRY_OK`)** 가 서로 다른 값을 내는지를 이 셋이 함께 고정한다. **[v2.15 신설 — 심판 F2] ⑲ 병렬 도입 머지** — 세 변형: **gu**(한쪽 트레일러 有·한쪽 無) · **uu**(둘 다 無) · **[v2.15 에라타 추가] gg**(**둘 다 트레일러 有 · byte-동일 내용**) → **셋 다 `MULTIPLE_INTRODUCTIONS` + rc≠0**. **gg 가 핵심이다**: 리터럴 `--diff-filter=A` 구현은 **이력 단순화로 도입 커밋을 1건만 반환**해 `D` 크기 1 → `ENTRY_PROVENANCE_CLEAR` rc=0 을 냈다(증거 실행 실측). **구조 정의 `D` 를 쓰지 않는 구현을 gg 가 판별한다.** **guarded `d1` 을 골라 `CLEAR` 를 내는 구현은 실패**한다 — v2.14 는 «있으면 1건»으로 카디널리티를 가정해 **임의 선택이 가능**했다. **⑪~⑲ 는 `U-15-f`·`U-15-g` 의 억제·사후 관측을 본다** ⇒ **T-81 은 19종** |
-| **T-82** | **U-16 `closable=NO` 전이 provenance** (§13.6.5) | **v2.7 신설 / v2.8 7→11 / v2.9 11→13 / v2.11 13→14종 (심판 #3·#2)** — 파라미터화 **19종** = v2.7 7 + v2.8 4 + v2.9 2 + v2.11 1(⑭) + v2.13 2(⑮⑯) + v2.14 2(⑰⑱) + **v2.15 1**(⑲ digest 선배치) (**내역 병기 — S-20**): ① **단일 커밋 우회** (핵심) — v2.3 심판 독립 뮤테이션을 그대로 재현한다: `closable=YES`→`NO` + `owner_track` 비움 + 무관한 실재 절 인용 + **앵커 동시 갱신**, 여기에 **승인 행까지 같은 커밋에 넣는다** → `APPROVAL_SAME_COMMIT` 차단이 아니면 실패. **`closable_no_rows` 앵커가 침묵해도 이 대조군은 red 여야 한다** — 그것이 §8.3 canary 한계를 이 축에서 깨는 증거다 ② **승인 없는 전이** → `APPROVAL_MISSING` 아니면 실패 ③ **역순** — 전이 커밋 뒤에 승인 행을 추가 → `APPROVAL_AFTER` 아니면 실패 ④ **출생-`NO`** — 신규 행을 승인 없이 `closable=NO` 로 도입 → 차단되지 않으면 실패. **전이만 검사하는 구현을 판별하는 지점**(S-2 스윕분) ⑤ **삭제 후 재도입·`id` 개명** — `YES` 행을 지우고 같은/다른 `id` 로 `NO` 재도입 → `ABSENT → NO` 로 포섭되지 않으면 실패 ⑥ **고아 `row_id`** — 원장에 레지스터에 없는 `row_id` 승인 행 → `APPROVAL_MALFORMED` 아니면 실패 ⑦ **이력 파생 불가** — 얕은 클론에서 실행 → `PROVENANCE_UNVERIFIABLE` **차단**이 아니라 green 이면 실패. **`CONSUMER_ABSENT` 전용 케이스는 없고, 그것이 결함이 아니다** — 검사기·레지스터·원장의 **부재는 검사기 자신이 검사할 수 없다**(부재하면 실행되지 않으므로 뮤테이션을 심을 자리가 없다). 그 값의 관측은 **상위 완료 평가 소관**이며 §11 결속(`closable_no_provenance_state = NO_ROWS_CLEAR`)이 그 자리다 — U-14 의 "config 부재 = red"·U-15 의 "검사기 부재 = red" 와 같은 형태다. **T-82 는 1:1 커버리지를 주장하지 않는다**. **[v2.8 신설 — 심판 #3] 승인-내용 결속 4종 추가**: ⑧ **무관·stale `reviewer_ref`** — 실재하는 **기존 리뷰 아티팩트**(예: 지난 판정 사본)를 가리키는 승인 행을 선커밋한 뒤 전이 → `APPROVAL_UNBOUND` 차단이 아니면 실패. **이것이 심판이 지목한 2커밋 우회 그 자체이며 v2.7 은 이 변이를 갖지 않았다** ⑨ **`approved_at_head` 위조** — (a) **판정 중인 간선의 커밋**의 조상이 아닌 커밋으로 기입(**[v2.12 마감] 단수 `c_NO(r)` 표기를 간선 항으로 교체**) (b) 조상이지만 **그 시점에 `reviewer_ref` 가 존재하지 않는** 커밋으로 기입 → 둘 다 `APPROVAL_HEAD_INVALID` 가 아니면 실패 ⑩ **승인 후 전이 내용 변경** — 내용 `A` 로 승인·전이한 뒤 `owner_track` 을 비우거나 `reason` 을 바꾼다 → 재계산 digest 불일치가 `APPROVAL_CONTENT_DRIFT` 로 잡히지 않으면 실패. **U-9a 앵커가 침묵해도 이 대조군은 red 여야 한다** ⑪ **`transition` 명세 불일치** — 원장에 `YES->NO` 라 적고 실제 파생 간선은 `ABSENT->NO` → MALFORMED 차단이 아니면 실패. **[v2.9 신설 — 심판 #3] 사후변조 2종 추가**: ⑫ **`c_NO` 이후 reviewer 아티팩트 편집** — H0(digest 없는 무관 리뷰 존재) → H1(승인 행 선커밋) → H2(`NO` 전이) → **H3(기존 리뷰에 digest 사후 삽입)** 순서를 그대로 재현한다 → `approved_at_head` 시점 blob 을 읽지 않는 구현은 **통과시키므로 실패**한다. **심판이 든 시나리오 그 자체이며 v2.8 은 이 변이를 갖지 않았다** ⑬ **승인 원장 행 사후 편집** — 도입 후 `reviewer_ref` 나 `row_content_digest` 를 갈아끼운다 → `APPROVAL_ROW_MUTATED` 차단이 아니면 실패. **append-only 를 선언만 하고 소비하지 않는 구현을 판별한다.** **[v2.11 신설 — 심판 #2] ⑭ 2-parent 위상** — 심판 예시를 픽스처로 그대로 만든다: 기저 `G`(행이 `YES`) → 브랜치 `X` 에서 **승인 없이** `NO` 전이 · 다른 브랜치에서 **승인 행 `A` 도입** → merge `M`. `EDGES(r)` 은 `X` 의 간선과 `M` 의 YES-부모 간선을 **둘 다** 담는다 → **`X` 간선의 무승인 때문에 전칭이 깨져 차단**되어야 한다. **판별력**: `c_NO` 를 **단수로 고르는 구현**(특히 `M` 을 고르는 구현)은 **통과시키므로 실패**한다. **[v2.12] U-16-c 본체까지 전칭으로 재작성**됐으므로 이 대조군은 이제 **본체·a2·d·§11 네 곳이 같은 전칭을 소비하는지**를 함께 검사한다 — v2.11 은 a2 만 전칭이고 나머지가 단수라 **병존**했다(심판 #2). 그리고 **`c_APP` 병렬 도입** 변종도 함께 검사한다 — 승인 행이 한 브랜치에만 있고 다른 간선의 조상이 아니면 차단. **[v2.13 신설 — 심판 #2·#3] 2종**: ⑮ **병렬 `R∥A` merge** — reviewer 아티팩트 `R` 과 승인 행 `A` 를 **서로 다른 브랜치**에 두고 merge 한다(**`R` 이 `A` 의 조상이 아닌 구성**). 둘 다 전이 커밋의 조상이므로 **g3 만으로는 통과**한다 → **`g6` 이 `APPROVAL_ORDER_INVALID` 로 차단하지 않으면 실패**. **"리뷰를 보고 승인했다"가 산문이 아니라 소비되는지를 이 변이가 본다** ⑯ **반복 이력 양성** — `ABSENT→NO→YES→NO` 를 만들고 **두 간선 각각에 `edge_seq` 1·2 승인 행**을 둔다 → **어떤 간선도 무시되지 않고 결정적으로 `NO_ROWS_CLEAR`** 에 도달해야 한다. **양성이 필요한 이유**: `edge_seq` 도입이 **정상 반복 이력을 막아버리면 과잉 차단**이고, 음성만으로는 그것을 구별할 수 없다(T-70·U-15-f-3 과 같은 형태). **[v2.14 신설 — 심판 #2·#3] 2종**: ⑰ **기존-경로 `B∥A` + 머지-도입 + 양성** 3변종 — ⓐ 공통 조상 `H0` 에 빈/무관 reviewer 경로 → `B`(digest 삽입) ∥ `A`(`approved_at_head=B` 승인) → `M`(NO 전이) merge: **`C_R={B}` · `B ⋠ A` → 증인 없음 → `APPROVAL_ORDER_INVALID` + red** ⓑ **머지 해소에서 digest 도입**(독립 검증이 pickaxe 를 뚫은 구성): **전 규칙 실행기 기대값은 `APPROVAL_UNBOUND` + red** 다 — **[E2 — v2.15 에라타]** v2.15 blob 정의에서는 `approved_at_head = B` 시점 blob 에 **digest 가 없어 `h` 가 `g6` 보다 «먼저» 발화**한다(증거 실행 실측). **g6 단독 뷰로 보면 `C_R={M}` · `M ⋠ A` → `APPROVAL_ORDER_INVALID`** 이며 **극성(red)은 동일**하다. 초안이 적은 `C_R={M} → ORDER_INVALID` 는 **g6 단독 뷰의 값**이었다. **초안의 `-S` 정의에서는 `C_R = ∅` 이라 g6 이 공허참으로 통과했다** ⓒ **양성** — `B1`·`B2` 가 같은 digest 를 독립 삽입하고 `A` 가 `B1` 의 자손: **`B1 ⊰ A` 증인이 있으므로 green**. **ⓒ 가 없으면 «존재» 양화자가 전칭으로 퇴행해도 알 수 없다**(전칭이면 ⓒ 가 영구 red = 무탈출 과잉 차단). **⑮ 는 신규 아티팩트 `R∥A` 만 덮어 ⓐⓑ 를 잡지 못한다** ⑱ **병렬 `edge_seq` 충돌 복구(양성)** — 두 브랜치가 각각 `seq=1` 을 부여한 상태로 merge 해 **`MALFORMED` 를 만든 뒤**, **append 없이** 소비자가 `(author date, commit id)` 전순서로 `edge_seq` 를 **파생**한다(**[v2.15 재저작 — 심판 F4 «회피»]** v2.13/v2.14 의 append 기반 복구는 **재부여 행이 과거 간선 커밋의 조상이 될 수 없어 `U-16-c`·`APPROVAL_AFTER` 에 걸려 전체 계약에서 green 이 불가능**했고, 손 실행 부속이 **tombstone-graph 만 실행하고 조상성을 뺀 채** 양성을 주장했다 — **부분 표면 실행기의 green**, S-23). **이 대조군은 `g1`~`g6`·`h`·`U-16-c` 를 «전부» 실행하는 실행기로만 양성을 주장할 수 있다** → **기존 승인 행의 삭제·변조·이력 재작성 없이 `NO_ROWS_CLEAR` 로 복구**돼야 한다. **복구되지 않으면 정상 병렬 작업이 영구 차단된다**(v2.13 의 실패·롤백 결함). **양성 대조군이므로 red 가 아니라 green 이 기대값**이고, 동시에 **구 행이 그대로 남아 있음**(g5 불변)을 함께 확인한다. **[v2.15 신설 — 심판 F3] ⑲ digest 선배치** — `H0` 에 **digest 만 담은 빈 운반자**를 두고 `B` 에서 **실제 리뷰 내용을 작성**하되 digest 를 유지 ∥ `A`(`approved_at_head=B`) → `M` merge → v2.14 토큰 기반 정의에서는 `B ∉ C_R`(부모 `H0` 에 토큰 존재)이고 `C_R={H0} ⊰ A` 라 **g6 이 통과**했다. **blob 동일성 정의에서는 `C_R={B}`(빈 운반자는 blob 이 다르다) · `B ⋠ A` → `APPROVAL_ORDER_INVALID` + red** 여야 한다. **열아홉 중 하나라도 기대와 다르면 U-16 의 "실제 provenance 소비자" 주장은 성립하지 않는다** |
+| **T-82** | **U-16 `closable=NO` 전이 provenance** (§13.6.5) | **v2.7 신설 / v2.8 7→11 / v2.9 11→13 / v2.11 13→14종 (심판 #3·#2)** — 파라미터화 **20종** = v2.7 7 + v2.8 4 + v2.9 2 + v2.11 1(⑭) + v2.13 2(⑮⑯) + v2.14 2(⑰⑱) + v2.15 1(⑲ digest 선배치) + **v2.19 1**(⑳ 동일 승인 행 형제 도입) (**내역 병기 — S-20**): ① **단일 커밋 우회** (핵심) — v2.3 심판 독립 뮤테이션을 그대로 재현한다: `closable=YES`→`NO` + `owner_track` 비움 + 무관한 실재 절 인용 + **앵커 동시 갱신**, 여기에 **승인 행까지 같은 커밋에 넣는다** → `APPROVAL_SAME_COMMIT` 차단이 아니면 실패. **`closable_no_rows` 앵커가 침묵해도 이 대조군은 red 여야 한다** — 그것이 §8.3 canary 한계를 이 축에서 깨는 증거다 ② **승인 없는 전이** → `APPROVAL_MISSING` 아니면 실패 ③ **역순** — 전이 커밋 뒤에 승인 행을 추가 → `APPROVAL_AFTER` 아니면 실패 ④ **출생-`NO`** — 신규 행을 승인 없이 `closable=NO` 로 도입 → 차단되지 않으면 실패. **전이만 검사하는 구현을 판별하는 지점**(S-2 스윕분) ⑤ **삭제 후 재도입·`id` 개명** — `YES` 행을 지우고 같은/다른 `id` 로 `NO` 재도입 → `ABSENT → NO` 로 포섭되지 않으면 실패 ⑥ **고아 `row_id`** — 원장에 레지스터에 없는 `row_id` 승인 행 → `APPROVAL_MALFORMED` 아니면 실패 ⑦ **이력 파생 불가** — 얕은 클론에서 실행 → `PROVENANCE_UNVERIFIABLE` **차단**이 아니라 green 이면 실패. **`CONSUMER_ABSENT` 전용 케이스는 없고, 그것이 결함이 아니다** — 검사기·레지스터·원장의 **부재는 검사기 자신이 검사할 수 없다**(부재하면 실행되지 않으므로 뮤테이션을 심을 자리가 없다). 그 값의 관측은 **상위 완료 평가 소관**이며 §11 결속(`closable_no_provenance_state = NO_ROWS_CLEAR`)이 그 자리다 — U-14 의 "config 부재 = red"·U-15 의 "검사기 부재 = red" 와 같은 형태다. **T-82 는 1:1 커버리지를 주장하지 않는다**. **[v2.8 신설 — 심판 #3] 승인-내용 결속 4종 추가**: ⑧ **무관·stale `reviewer_ref`** — 실재하는 **기존 리뷰 아티팩트**(예: 지난 판정 사본)를 가리키는 승인 행을 선커밋한 뒤 전이 → `APPROVAL_UNBOUND` 차단이 아니면 실패. **이것이 심판이 지목한 2커밋 우회 그 자체이며 v2.7 은 이 변이를 갖지 않았다** ⑨ **`approved_at_head` 위조** — (a) **판정 중인 간선의 커밋**의 조상이 아닌 커밋으로 기입(**[v2.12 마감] 단수 `c_NO(r)` 표기를 간선 항으로 교체**) (b) 조상이지만 **그 시점에 `reviewer_ref` 가 존재하지 않는** 커밋으로 기입 → 둘 다 `APPROVAL_HEAD_INVALID` 가 아니면 실패 ⑩ **승인 후 전이 내용 변경** — 내용 `A` 로 승인·전이한 뒤 `owner_track` 을 비우거나 `reason` 을 바꾼다 → 재계산 digest 불일치가 `APPROVAL_CONTENT_DRIFT` 로 잡히지 않으면 실패. **U-9a 앵커가 침묵해도 이 대조군은 red 여야 한다** ⑪ **`transition` 명세 불일치** — 원장에 `YES->NO` 라 적고 실제 파생 간선은 `ABSENT->NO` → MALFORMED 차단이 아니면 실패. **[v2.9 신설 — 심판 #3] 사후변조 2종 추가**: ⑫ **`c_NO` 이후 reviewer 아티팩트 편집** — H0(digest 없는 무관 리뷰 존재) → H1(승인 행 선커밋) → H2(`NO` 전이) → **H3(기존 리뷰에 digest 사후 삽입)** 순서를 그대로 재현한다 → `approved_at_head` 시점 blob 을 읽지 않는 구현은 **통과시키므로 실패**한다. **심판이 든 시나리오 그 자체이며 v2.8 은 이 변이를 갖지 않았다** ⑬ **승인 원장 행 사후 편집** — 도입 후 `reviewer_ref` 나 `row_content_digest` 를 갈아끼운다 → `APPROVAL_ROW_MUTATED` 차단이 아니면 실패. **append-only 를 선언만 하고 소비하지 않는 구현을 판별한다.** **[v2.11 신설 — 심판 #2] ⑭ 2-parent 위상** — 심판 예시를 픽스처로 그대로 만든다: 기저 `G`(행이 `YES`) → 브랜치 `X` 에서 **승인 없이** `NO` 전이 · 다른 브랜치에서 **승인 행 `A` 도입** → merge `M`. `EDGES(r)` 은 `X` 의 간선과 `M` 의 YES-부모 간선을 **둘 다** 담는다 → **`X` 간선의 무승인 때문에 전칭이 깨져 차단**되어야 한다. **판별력**: `c_NO` 를 **단수로 고르는 구현**(특히 `M` 을 고르는 구현)은 **통과시키므로 실패**한다. **[v2.12] U-16-c 본체까지 전칭으로 재작성**됐으므로 이 대조군은 이제 **본체·a2·d·§11 네 곳이 같은 전칭을 소비하는지**를 함께 검사한다 — v2.11 은 a2 만 전칭이고 나머지가 단수라 **병존**했다(심판 #2). 그리고 **`c_APP` 병렬 도입** 변종도 함께 검사한다 — 승인 행이 한 브랜치에만 있고 다른 간선의 조상이 아니면 차단. **[v2.13 신설 — 심판 #2·#3] 2종**: ⑮ **병렬 `R∥A` merge** — reviewer 아티팩트 `R` 과 승인 행 `A` 를 **서로 다른 브랜치**에 두고 merge 한다(**`R` 이 `A` 의 조상이 아닌 구성**). 둘 다 전이 커밋의 조상이므로 **g3 만으로는 통과**한다 → **`g6` 이 `APPROVAL_ORDER_INVALID` 로 차단하지 않으면 실패**. **"리뷰를 보고 승인했다"가 산문이 아니라 소비되는지를 이 변이가 본다** ⑯ **반복 이력 양성** — `ABSENT→NO→YES→NO` 를 만들고 **두 간선 각각에 `edge_seq` 1·2 승인 행**을 둔다 → **어떤 간선도 무시되지 않고 결정적으로 `NO_ROWS_CLEAR`** 에 도달해야 한다. **양성이 필요한 이유**: `edge_seq` 도입이 **정상 반복 이력을 막아버리면 과잉 차단**이고, 음성만으로는 그것을 구별할 수 없다(T-70·U-15-f-3 과 같은 형태). **[v2.14 신설 — 심판 #2·#3] 2종**: ⑰ **기존-경로 `B∥A` + 머지-도입 + 양성** 3변종 — ⓐ 공통 조상 `H0` 에 빈/무관 reviewer 경로 → `B`(digest 삽입) ∥ `A`(`approved_at_head=B` 승인) → `M`(NO 전이) merge: **`C_R={B}` · `B ⋠ A` → 증인 없음 → `APPROVAL_ORDER_INVALID` + red** ⓑ **머지 해소에서 digest 도입**(독립 검증이 pickaxe 를 뚫은 구성): **전 규칙 실행기 기대값은 `APPROVAL_UNBOUND` + red** 다 — **[E2 — v2.15 에라타]** v2.15 blob 정의에서는 `approved_at_head = B` 시점 blob 에 **digest 가 없어 `h` 가 `g6` 보다 «먼저» 발화**한다(증거 실행 실측). **g6 단독 뷰로 보면 `C_R={M}` · `M ⋠ A` → `APPROVAL_ORDER_INVALID`** 이며 **극성(red)은 동일**하다. 초안이 적은 `C_R={M} → ORDER_INVALID` 는 **g6 단독 뷰의 값**이었다. **초안의 `-S` 정의에서는 `C_R = ∅` 이라 g6 이 공허참으로 통과했다** ⓒ **양성** — `B1`·`B2` 가 같은 digest 를 독립 삽입하고 `A` 가 `B1` 의 자손: **`B1 ⊰ A` 증인이 있으므로 green**. **ⓒ 가 없으면 «존재» 양화자가 전칭으로 퇴행해도 알 수 없다**(전칭이면 ⓒ 가 영구 red = 무탈출 과잉 차단). **⑮ 는 신규 아티팩트 `R∥A` 만 덮어 ⓐⓑ 를 잡지 못한다** ⑱ **병렬 반복 이력(양성) — 현행 스키마** — **[v2.19 재기술 — 심판 F4 부분해소]** v2.15~v2.18 의 이 행은 **폐지된 `edge_seq` 기재 필드**(«두 브랜치가 각각 `seq=1` 을 부여»)를 입력으로 지시했다 — **`U-16-b` #2 마감이 스키마에서 그 필드를 제거**했으므로 픽스처가 폐지 필드를 전제하면 현행 소비자와 갈린다(심판 F4: 입력 의미가 규범에 결속되지 않는다). **현행 픽스처**: `ABSENT→NO→YES→NO` 반복 이력에서 **두 `→NO` 간선을 «서로 다른» 승인 행**(별개 `row_id`·내용)이 각각 덮고, 두 도입이 형제 브랜치에 있다가 merge 된다 — **`edge_seq` 를 «기재하지 않는다».** 소비자는 `edge_seq` 를 **표시용으로만** `(author date, commit id)` 전순서로 파생(`U-16-b`)하고 **판정 입력에는 쓰지 않는다.** **기대: `NO_ROWS_CLEAR` + rc=0.** **판별력**: 폐지 필드를 여전히 «기재값 ≠ 파생값 = MALFORMED» 로 소비하는 구현은 정상 병렬 작업을 **영구 차단**해 실패한다(v2.13 실패·롤백 결함). **각 승인 행의 `c_APP` 는 단수**(서로 다른 행)이고, **`U-16-c` 집합 정의·`U-16-d` 전순서를 그대로 소비하는 실행기로만** — 즉 «사전순 최소·상태 우선순위» 같은 **계약 밖 자체 선언 없이**(심판 F4 지적) `g1`~`g6`·`h`·`U-16-c` 를 «전부» 실행하는 실행기로만(S-23) 양성 주장 가능. **구 승인 행 불변**(g5)을 함께 확인. **⑳ 과 상호 배타**: ⑱ 은 «서로 다른 행»이라 `c_APP` 크기 1 로 green, ⑳ 은 «동일 행»이라 `c_APP` 크기 2 로 red. **[v2.15 신설 — 심판 F3] ⑲ digest 선배치** — `H0` 에 **digest 만 담은 빈 운반자**를 두고 `B` 에서 **실제 리뷰 내용을 작성**하되 digest 를 유지 ∥ `A`(`approved_at_head=B`) → `M` merge → v2.14 토큰 기반 정의에서는 `B ∉ C_R`(부모 `H0` 에 토큰 존재)이고 `C_R={H0} ⊰ A` 라 **g6 이 통과**했다. **blob 동일성 정의에서는 `C_R={B}`(빈 운반자는 blob 이 다르다) · `B ⋠ A` → `APPROVAL_ORDER_INVALID` + red** 여야 한다. **[v2.19 신설 — 심판 F5 «회피»] ⑳ 동일 승인 행 형제 도입·선-검사 순서 (2 하위 케이스 — 종수 불변)** — **ⓐ** **같은** 승인 행(같은 `row_id`·byte-동일 내용)을 **형제 브랜치 둘이 각각 독립 도입**한 뒤 merge 한다 — 한 도입은 판정 중 간선의 진 조상이고 다른 도입은 형제다(심판이 든 DAG). **`c_APP(a)` 구조 집합의 크기가 2**(`U-16-c` 집합 정의) → **`APPROVAL_MALFORMED` + rc≠0**. **판별력**: `c_APP` 를 «복수면 사전순 최소»로 임의 보충하는 구현(증거 실행기 `U16-LEDGER-CHECK.md:37`)은 **조상인 도입을 골라 통과**시켜 실패한다 — v2.18 까지 `c_APP` 가 **단수 «도입한 커밋»** 이라 선택이 관측자 재량이었다. **극성**: 동일 승인 행의 병렬 독립 도입은 «누가·언제 승인했는가»의 유일 도입 지점을 무너뜨린 상태이므로 **판정 불가 = 차단**(F2 `MULTIPLE_INTRODUCTIONS`·D 카디널리티와 동형 논증). **ⓑ 선-검사 순서(발산 corner — [v2.19 독립 검증])** — 위 형제 동일 행 도입을 **얕은 클론**에서 실행해 `c_APP` 크기 0(이력 파생 불가) ∧ g1(transition) 위배가 «동시에» 성립하도록 구성 → **`PROVENANCE_UNVERIFIABLE`(전순서 2) + rc≠0**. **판별력**: 규칙 단락을 «g1·g4 먼저»로 문자 구현하면 `APPROVAL_MALFORMED`(3)를 내 실패한다 — 전순서 최소(권위)는 2 이며, 이것이 U-16-d 가 **구조 선-검사(1·2·4)를 g-규칙 앞에 재배치**한 근거다. **ⓐ 는 «구조 3 vs g-단락 5~11», ⓑ 는 «선-검사 2 vs 구조 3» 순서를 본다.** **⑱(서로 다른 행·green)과 상호 배타.** **스물 중 하나라도 기대와 다르면 U-16 의 "실제 provenance 소비자" 주장은 성립하지 않는다** |
 | **T-79** | **U-13 `deferred_scope` 스키마** (§12.3.1) | **v2.6 신설 (심판 F#3 — F5 잔여)** — 파라미터화 **4종**: ① **범위 필드 누락** — `disposition: DEFERRED_WITH_SCOPE` + `deferred_scope` 부재 → 형식 오류로 차단되지 않으면 실패. **역방향도 검사**: 다른 어휘에 `deferred_scope` 를 붙였을 때 거부되지 않으면 실패(U-13-a 는 양방향이다) ② **고아 ID** — `rows` 에 canonical 집합 밖 `evidence_id`(예: 실재하지 않는 도메인 코드) 주입 → 차단되지 않으면 실패 ③ **전역 오분류** — `kind: ROW_SUBSET` + `remainder_mapping_approved` 부재/`false` → `GLOBAL` 과 동일 차단이 되지 않으면 실패. 그리고 `kind: GLOBAL` + `rows` 병기 → 형식 오류가 아니면 실패 ④ **stale 제외 목록** — 생성물의 `fwd_a_excluded_rows` 를 손으로 바꾼 뒤 재실행 → 파생값과의 불일치가 red 가 아니면 실패(제외 목록은 **매 실행 재파생**이므로 이 대조군은 "커밋값을 신뢰하지 않는다"를 고정한다) |
 | **T-80** | **U-14 앵커 정합** (§12.1.2) | **v2.6 신설 (심판 F#5 — F4 잔여)** — 파라미터화 **5종**, 전부 `--check` red 를 요구: ① **스냅샷 단독 변경** — config 앵커 값 하나를 바꾸고 재파생 소스(register CSV 등)는 그대로 → red 가 아니면 실패 ② **역방향 불일치** — 재파생 소스의 값 하나를 바꾸고 config 앵커는 그대로 → red 가 아니면 실패. **①②를 함께 두는 이유**: 한 방향만 검사하면 "검사기가 config 를 아예 읽지 않는 구현"이 통과한다(U-8a 가 v1.8 에서 겪은 형태, S-16) ③ **config 파일 부재** — 파일을 지운다 → **기본값으로 진행하면 실패**(그것이 하드코딩 재도입이다, §12.2) ④ **키 누락** — 앵커 키 하나를 지운다 → "해당 없음"으로 접고 통과하면 실패 ⑤ **형 오류** — 표 자리에 스칼라, 정수 자리에 문자열 → 파싱 실패가 fail-closed 오류로 올라오지 않으면 실패. **강도 주**: ③번 앵커(T-71)는 재파생 소스가 저작물이라 ①②가 **사본 대 사본**이다 — 이 한계는 §12.1.2 가 명시하며 대조군이 그것을 바꾸지 못한다 |
 
@@ -3536,7 +3545,7 @@ D0A-FIRST  ≡  `config/tos_completion.yaml` 을 **도입하는 커밋**
 |---|---|
 | **선행 제약 0** | D0-A 산출물 중 **어떤 계약도 이 파일 앞에 무언가를 요구하지 않는다.** 반면 승인 원장은 **`U-16-c` + `g6`** 가 레지스터보다 앞서게 하고(⓪⊰①⊰②), 레지스터는 그 뒤이며, 검사기는 config 를 읽는다 |
 | **후행이 전부 의존** | `U-14` 가 config 를 **정본 앵커**로 고정하므로 다른 산출물의 대조 대상이 이것이다. `§12.2`: **부재 시 fail-closed 오류**(기본값 진행 금지) — 검사기가 성립하려면 먼저 있어야 한다 |
-| **관측 명확성** | **단일 파일의 최초 도입**이라 git 이력에서 **모호 없이 한 커밋**으로 관측된다(`U-16` 이 `EDGES` 전칭을 필요로 했던 다중 후보 문제가 여기서는 발생하지 않는다) |
+| **관측 명확성** | **단일 파일의 최초 도입**이라 정상 작업에서는 도입 지점이 하나다. **판정 우주는 «모호 없이 한 커밋»이 아니라 `U-15-g-1` 의 구조 집합 `D`** 이며 여기서 재기술하지 않는다(S-14 — 유일 소스는 U-15-g-1). **[v2.19 — 심판 F2 부분해소]** v2.12~v2.18 이 «`EDGES` 다중 후보 문제가 여기서는 발생하지 않는다»고 단정한 것은 **거짓이었고 철회**한다 — `D` 크기 > 1(byte-동일 병렬 추가·머지)이면 `MULTIPLE_INTRODUCTIONS` 로 차단된다(U-15-g-2). `EDGES` 전칭이 아니라 **`D` 카디널리티**로 그 문제를 소비하는 것이 차이다 |
 | **정책값뿐** | 내용이 임계값·앵커·`named-TBD` 뿐이라 **다른 산출물의 내용에 의존하지 않는다** |
 
 **비가드 착수의 관측면 — 명명이 바꾼 것**
@@ -3546,7 +3555,10 @@ v2.11 까지   "가드를 안 쓰고 착수" = 절차 위반.  **관측면이 �
 v2.12        D0A-FIRST 가 명명됐으므로 위반이 **구체적 관측**이 된다:
                `config/tos_completion.yaml` 이 **U-15-e transcript 없이**
                이력에 나타나면 **그 출현 자체가 위반 증거**다
-             파일 도입 커밋은 `git log --diff-filter=A -- <path>` 로 파생되고
+             파일 도입 커밋(들)의 **판정 우주는 `U-15-g-1` 의 구조 집합 `D`** 다
+             (`git log --diff-filter=A` 리터럴은 **이력 단순화로 도입 커밋을 누락**하므로
+              판정에 쓰지 않는다 — U-15-g-1 E1 에라타·`C_R` 과 동형).  `|D|=0` 미착수·
+              `|D|=1` 그 커밋·`|D|>1` `MULTIPLE_INTRODUCTIONS`.  transcript 부재 판정도 이 `D` 위에서 하고
              transcript 는 추적 경로에 있으므로 **양쪽 다 기계 관측 가능**하다
 ```
 
@@ -4298,39 +4310,45 @@ v2.4·v2.5 를 무효화한 행위다. **상태 표기의 currency 와 결속의
 > 소스**다 — 두 레인은 **판정 주체·주기·형식이 다르고**, 섞으면 «직전 N 건»의
 > 계수가 어느 레인 것인지 모호해진다(이 문서가 S-13 에서 배운 계수 오염과 같은 형태).
 
-#### (A) 확정 — v2.14 판정이 내린 직전 3건의 처분
+#### (A) 확정 — v2.18 판정이 내린 직전 5건의 처분
 
 | 항목 | 판정 | 잔여가 어디로 갔는가 |
 |---|---|---|
-| #1 `CORR` 사후 세탁 | **부분해소** | 정직 경계는 **과장 철회일 뿐** — 예방이 `Phase 1` 이라 완료 주장이 가능했다 → **F1** |
-| #2 `C_R` 내용 도입 | **부분해소** | digest **토큰**만 추적 → 선배치 우회 → **F3** |
-| #3 `edge_seq` 병렬 복구 | **«회피» — 아크 최초** | append 복구가 조상성에 걸려 **전체 계약에서 green 불가**인데 **부분 표면 실행기**로 양성 주장 → **F4** |
+| F1 `CORR` 사후 세탁 · 예방 착수 선행 | **부분해소** | 정직 경계·U-17 은 섰으나 «보호 off→머지→재활성» 창을 어느 술어도 소비 안 함 + (B) 표가 «완료 가능성 자체를 막는다» 과대주장 → v2.19 #1 |
+| F2 복수 D0A-FIRST | **부분해소** | U-15-g 는 구조 `D` 이나 **D0A-FIRST 절이 `diff-filter=A` 규범 잔존**(S-22) → v2.19 #3 |
+| F3 `C_R` digest 선배치 | **해소됨 (계약 수준)** | `C_R` 을 `approved_at_head` blob 도입 지점으로 정의 — **아크 5번째 해소**. 실제 소비자 실행 증거는 D0-A 이후 |
+| F4 T-82 ⑱ 입력 · 계약 밖 규칙 | **부분해소** | ⑱ 이 폐지된 `edge_seq` 기재 지시 + 손 실행기가 사전순 최소·상태 우선순위 자체 선언 → v2.19 #4 |
+| F5 단수 `c_APP` (회피) | **«회피»** | `row_ref` 만 없앴고 같은 비단수 `c_APP` 가 U-16-c/g5/g6 에 단수로 잔존 → v2.19 #5 |
 
-**부분해소 2 / 회피 1 / 해소 0.** 신규 **F2**(복수 D0A-FIRST)·**F5**(`row_ref` 비단수).
-`CLAUDE.md` 비협상 규칙 직접 충돌 **없음**.
+**부분해소 3 / 회피 1 / 해소 1.** 신규 2: **정본 host 미결속**(high)·**두 결속 계획 Phase 0/1 선행관계 충돌**(medium, 운영자 게이트).
+`CLAUDE.md` 비협상 규칙 직접 충돌 **없음**(11판 연속).
 
-> **회피 판정이 처음 나왔다.** 이 아크에서 «회피»는 v1.x 이후 없던 판정이며,
-> 원인은 **저작이 아니라 증거**였다 — 계약은 tombstone-graph 를 요구했는데
-> **실행기가 그중 일부만 돌리고 green 을 주장**했다. **S-23 이 그 자리를 막는다.**
-> 그리고 F4 의 처분이 **F5 를 원인째 소거**했다 — **v2.14 가 도입한 기제(`supersedes`)
-> 자체가 두 결함의 공통 원인**이었고, 기제를 빼는 것이 고치는 것보다 옳았다.
+> **F3 = 아크 5번째 «해소됨»**(계약 수준) — `C_R` 을 `approved_at_head` blob 도입 지점으로
+> 정의한 것이 인정됐다.  **실제 소비자 실행 증거는 여전히 D0-A 이후**이므로 «계약 수준»으로
+> 한정한다.  나머지 넷은 **소비 규칙의 정밀도(D0A-FIRST 규범·⑱ 입력·`c_APP` 단수)와
+> 창(연속성)**에 대한 잔여이며, 신규 둘은 **인증 결속(host)**과 **두 문서의 단계 소유자
+> 불일치**다.
 
-#### (B) 미확정 — v2.15 가 v2.14 판정 5건에 대해 **주장**하는 처분
+#### (B) 미확정 — v2.19 가 v2.18 판정 6건에 대해 **주장**하는 처분
 
-**[S-22 «7회차» 정정]** 이 표는 v2.14 마감·증거 실행·에라타 **어느 단계도 전파되지
-않아 초안 문구를 유지**하고 있었다(심판 부수 지적). **원인은 sweep 대상에 «개정
-처분표»가 없었던 것**이며 S-22 에 명시 추가했다. 아래는 **현행 상태로 재작성**한 것이다.
+**[S-24 — 증거 결속]** 아래 «실행 증거» 열은 **현행 상태**다.  v2.15~v2.18 저작 시점의 «없음/
+미실행» 문구는 stale 이었다 — 직전 사이클의 U-17·구조 `D`·⑱ 증거가 스탬프
+`docs/reviews/phase0-completion-contract/20260819-002145/` 에 실재한다.  그 «직전 층» 증거와
+**이번 판(v2.19) 신규 델타**(연속성·host·규범 참조 전환·⑱ 현행 스키마·`c_APP` 집합)를 구분해
+적는다.  **이번 판 신규 증거는 동결 후에 만든다**(S-24).
 
-| 판정 finding | 심판 지적 | v2.15 의 변경 | 왜 회피가 아닌가 | 실행 증거 |
+| v2.18 finding | 심판 지적 | v2.19 의 변경 | 왜 회피가 아닌가 | 실행 증거 |
 |---|---|---|---|---|
-| **F1** 정직 경계 ≠ 해소 (high) | 예방이 `Phase 1` 이라 세탁 후 완료 표시 가능 | **`U-17` 신설** — `UNCHK-008` 항목을 **D0-A 착수 선행 조건**으로 승격 · 커밋 아티팩트 + countersign 3상태 · §11·§12.3 7c/8 결속 | **완료 가능성 자체를 막는다** — 경계 서술에 그치지 않고 `PREVENTION_ACTIVE` 를 종료조건에 걸었다 | **없음 (미실행)** — T-84 |
-| **F2** 복수 D0A-FIRST (high) | 카디널리티 가정 → 임의 선택 `CLEAR` | 판정 우주를 **집합 `D`** 로 · **`MULTIPLE_INTRODUCTIONS`** 신설(전순서 **2**) · 상태 **8값/차단 6** | «∀d 최악값»으로 답한 척하지 않고 **판정 불가를 차단**으로 뒀다 | **없음** — T-81 ⑲ |
-| **F3** digest 선배치 (high) | 토큰 도입만 추적 | `C_R` 을 **`approved_at_head` blob 의 도입 지점**으로(h 와 정합) | 정의를 좁힌 것이 아니라 **h 가 이미 고정한 대상에 맞췄다**. ∃ 양화자는 유지 | **없음** — T-82 ⑲ |
-| **F4** «회피» (medium) | 부분 표면 실행기의 green | **`supersedes` 폐기 + `edge_seq` 소비자 파생** · **S-23** 신설 | **회피를 정면 인정**하고 기제를 **소거**했다 — 조상성 위반이 **발생 자체를 하지 않는다** | **없음** — T-82 ⑱ 은 **전 규칙 실행기** 필요 |
-| **F5** `row_ref` 비단수 (medium) | 도입 지점 둘·선택 규칙 부재 | **F4 로 원인째 소멸**(`supersedes` 폐기) | 별도 규칙을 덧대지 않고 **원인을 뺐다** | 해당 없음 |
+| **#1 F1** 보호 해제 창 (high) | 진입·완료 두 조회 사이 off→머지→재활성 창을 어느 술어도 소비 안 함 + (B) «완료 가능성 자체를 막는다» 과대주장 | **과대주장 철회** + **연속성 소비자 신설**(완료 판정 시점 룰셋 `created_at`/`updated_at` > `t_land` → `PREVENTION_CONTINUITY_UNVERIFIABLE`, 운영자 재심사) · U-17-c **10값** | 과대주장 대신 «위조 비용을 올리지 닫지 않는다» 정직 표기 · **설정 변경을 fail-closed 로 «관측→차단»** 승격(관측만이 아님) · 룰셋 미변경 우회는 감사 로그 경계로 명시 | 직전 U-17 = `20260819-002145/U17-PREVENTION-CHECK-V218.md`(T-84 ①~⑩) · **v2.19 ⑪ = 없음 (미실행) — 동결 후 실행** |
+| **#2 host 미결속** (high) | 모든 `gh api` 가 host 없이 나가 `GH_HOST` override 로 타 host 응답이 ACTIVE 가능 | host 를 계약 핀에서 파생해 **`--hostname` 명시 + 소비자 `GH_HOST` 재핀 + `gh auth status` 전제**(C6) | 조회 대상 host 가 핀에 이중 결속 · 도달 불가 = `UNVERIFIABLE`(타 host 폴백 없음) · 자기환경 위조는 정직 경계 | **v2.19 ⑫ = 없음 (미실행) — 동결 후 실행**(GET-only·live 가능) |
+| **#3 F2** D0A-FIRST 규범 잔존 (high) | 앞선 D0A-FIRST 절이 «모호 없이 한 커밋»·`diff-filter=A` 규범 유지 | 판정 소비 자리를 **`U-15-g-1` 구조 `D` 참조로 전환** · 편의 표기(∅ 확인)와 판정 소비 구별 명시 | 재기술을 참조로 바꿔 stale 클래스 제거(S-22·S-14) · 구조 `D` 는 이미 gg/gu/uu 를 차단(T-81 ⑲) | 구조 `D` = `20260819-002145/U15-ENTRY-CHECK-ADDENDUM.md`(T-81 ⑲ gg/gu/uu) · **v2.19 규범 참조 전환 = 문서 정합(코드 무관)** |
+| **#4 F4** T-82 ⑱ 입력 stale (medium) | ⑱ 이 폐지된 `edge_seq` 기재 지시 + 손 실행기 계약 밖 규칙 자체 선언 | **⑱ 을 현행 스키마로 재기술**(edge_seq 미기재·소비자 표시용 파생) + **U-16-d 전순서·규칙 평가 순서를 계약 리터럴로 고정**(자체 선언 흡수) | 입력 의미가 현행 스키마에 결속 · «사전순 최소·상태 우선순위» 자체 선언이 **계약 리터럴**이 됨 | 직전 ⑱ = `20260819-002145/U16-LEDGER-CHECK.md`(폐지 스키마 실행) · **v2.19 ⑱ 현행 스키마 재실행 = 없음 (미실행) — 동결 후 실행** |
+| **#5 F5** 단수 `c_APP` (medium) | `row_ref` 만 없앴고 같은 비단수 `c_APP` 가 U-16-c/g5/g6 에 단수 잔존 | **`c_APP` 를 구조 집합 정의**(D·C_R 동형) · `c_APP` 크기>1 → `APPROVAL_MALFORMED` · 세 소비처 일관 | 표면 이동이 아니라 **동형 정의로 원인 축(단수 선택 재량) 소거** · 극성 = 판정 불가 차단 | **v2.19 ⑳ = 없음 (미실행) — 동결 후 실행** |
+| **#6 두 결속 계획 충돌** (medium) | 개발계획 Phase 1 작업 7·종료조건 vs 계약 D0-A 착수 선행조건 | **운영자 게이트** — 계약이 «함께 착수 불가»를 정직 표기 + (D) 절에 **적용 준비된 개정안 문안** 수록(개발계획 무편집) | 저작자는 계약 측 선언만 가능 · 정식 개정은 운영자 소관(`bound_paths`·O-6) | **해당 없음** — 실행 증거 아님(운영자 결정) |
 
-**어느 것도 «해소»로 세지 않는다.** **v2.15 가 주장할 수 있는 것은 «5건 전건에
-대해 요구된 저작을 수행했다»이지 «5건이 해소됐다»가 아니다.**
+**어느 것도 «해소»로 세지 않는다.** **v2.19 가 주장할 수 있는 것은 «6건 전건에 대해 요구된
+저작을 수행했다»이지 «6건이 해소됐다»가 아니다.**  특히 **#1·#2·#5 는 실행 증거가 동결 후**
+이므로 부분해소 이하이고, **#3 은 문서 정합(참조 전환)**, **#6 은 운영자 게이트**다.
 
 #### (B2) 레인 밖 — stop-time EV-L6 에피소드
 
@@ -4359,6 +4377,49 @@ v2.4·v2.5 를 무효화한 행위다. **상태 표기의 currency 와 결속의
 소유자 의무를 면제받는 경로가 Phase 0 완료 시점에 열려 있음을 수용한다"*.
 **차단 해제는 U-16 을 삭제하지 않는다** — 계약은 서 있고 종료조건 결속만 빠진다
 (§13.6 이 세 회차에 걸쳐 확정한 "등재는 차단이 아니다"의 역방향 적용).
+
+#### (D) 두 결속 계획의 Phase 0/1 선행관계 충돌 — **운영자 게이트** (v2.19 — 심판 신규 medium)
+
+**심판 판정**: 개발계획(`2026-08-11-…-development-plan.md`)은 **Phase 1 작업 7**에서 required CI
+job(TOS tests 등)을 추가하고 **Phase 1 종료조건**에 «branch protection TOS gate required 증거
+보존»을 둔다.  그런데 이 계약의 `U-17` 은 **같은 조건을 «D0-A 착수 전» `PREVENTION_ACTIVE`
+선행조건**으로 승격했다(오늘 `main` 에 tos-gate job 이 없어 `INSUFFICIENT`).  **두 문서를 함께
+실행하면 한 문서가 Phase 1 산출물로 둔 조건을 다른 문서가 Phase 0 착수 조건으로 소비**하므로,
+현재 계획 집합은 **그대로 착수 가능하지 않다.**  **정확하다.**
+
+**저작자 권한 경계**: 개발계획은 이 사이클의 `bound_paths` 안이지만(재결속·O-6 로 함께 심사됨),
+그 **정식 개정은 운영자 소관**이다 — 저작자는 계약 측에서 «불일치»를 선언하고 **적용 준비된
+개정안 문안**만 제시한다(개발계획 자체는 이 저작으로 편집하지 않는다).  **별도 술어는 불요**하다:
+개발계획도 `bound_paths` 라 **재결속이 두 문서를 함께 심사**하므로, 개정이 반영됐는지는 다음
+재결속 시점의 `plan_scope_digest` 로 관측된다.
+
+**적용 준비된 개정안 (개발계획 — 운영자가 적용·verbatim)**
+
+① **Phase 1 작업 7** — required CI job 목록에서 **tos-gate 도입을 분리**해 Phase 0 로 이관:
+```diff
+-7. CI required job에 firewall, import-linter, TOS tests, tool tests, L3 tests, Ruff,
+-   Black, mypy, status checker, mdBook을 포함한다.
++7. CI required job에 firewall, import-linter, TOS tests, tool tests, L3 tests, Ruff,
++   Black, mypy, status checker, mdBook을 포함한다.
++   (tos-gate required check[룰셋]·`.github/workflows/tos-gate.yml` 도입은 Phase 0
++    D0-A 착수 선행조건으로 이관 — 계약 §12.3.4 `U-17`.  이 작업 7 은 나머지 잡만 관장한다.)
+```
+② **Phase 0(§6) 종료/선행조건에 추가** — D0-A 착수 전에 성립해야 하는 예방 통제:
+```diff
++- **예방 통제 활성**: tos-gate required check(룰셋 — `required_status_checks.checks[].app_id`
++  == Actions app id)·`.github/workflows/tos-gate.yml`(하니스 `tools/tos_entry_harness.sh`
++  경로·sha256 검증 스텝 포함) 도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
+```
+③ **Phase 1 종료조건** — «도입» 증거는 Phase 0 로 갔으므로 «연속성 유지»로 교체:
+```diff
+-- GitHub branch protection에서 TOS gate required 상태 증거 보존
++- U-17 예방 통제 «연속성» 유지 — Phase 1 완료 판정 시점의 `PREVENTION_ACTIVE` 재확인
++  (도입은 Phase 0 선행조건, 계약 §12.3.4 `U-17-c` 연속성 소비자)
+```
+
+**이 문안은 계약이 «주장»하는 처분이며 판정이 아니다**(§12.3.3 머리와 같은 층 구분).  운영자가
+개발계획에 적용하고 두 문서를 함께 재결속해야 «착수 가능»이 성립한다 — 그전까지 **레인 B 는
+NOT_PASSED 이고 D0-A 착수 불가**다.
 
 ---
 
@@ -5090,7 +5151,7 @@ git remote   **파생이 아니라 «대조»** — `git remote -v` 중 **계약
              아니며**, 원격 대조는 «이 작업 트리가 핀 저장소의 클론인가»만
              확인한다.  포크·미러를 추가로 두는 정상 작업을 막지 않는다
              ⇒ **`remote_name` 파라미터 폐지**
-target       계약 핀 repo 의 `gh api repos/{pin}` `.default_branch`
+target       계약 핀 repo 의 `gh api --hostname <핀 host> repos/{pin}` `.default_branch`  (host 결속 참조)
 ```
 
 owner_repo    (**폐지된 v2.17 서술**) `git remote get-url <remote_name>` 정규화
@@ -5101,7 +5162,9 @@ owner_repo    (**폐지된 v2.17 서술**) `git remote get-url <remote_name>` �
                                      형식 밖 URL = **차단**(조용히 넘기지 않는다)
               아티팩트 키 **`remote_name`** (기본 **`origin`**)
               아티팩트 선언값과 **불일치 = 차단**
-target_branch **파생** = `gh api repos/{o}/{r}` 의 `.default_branch`
+target_branch **파생** = 정본 대상의 `.default_branch` — **조회 명령·host 는 «host 결속»(C6)이
+              «유일 소스»**(host 없는 `gh api repos/{o}/{r}` 리터럴은 폐지된 v2.17 서술의 잔재라
+              여기서 재기술하지 않는다 · S-14 · 현행 명령은 위 «target 계약 핀» 줄이 정본)
               **근거**: «D0-A 는 정본 브랜치에 착지한다»가 이 계약의 명제다 —
               **다른 브랜치를 target 으로 선언하면 그 보호는 무의미**하다
               아티팩트 선언값과 **불일치 = 차단**
@@ -5120,15 +5183,38 @@ D ≠ ∅ 이면    위 둘 + **(b) 의 PR `base` == target** 이 **3중 일치*
 **(a) 진입 시점 — live 서버 조회** (7c·8·가드 체인)
 
 ```text
-조회   gh api repos/{owner}/{repo}/branches/{target}/protection
-       gh api repos/{owner}/{repo}/rules/branches/{target}    (그 브랜치에 **적용된** 규칙 배열)
-       gh api repos/{owner}/{repo}/rulesets                    (룰셋 목록 — `enforcement` 가 여기 있다)
-       gh api repos/{owner}/{repo}/rulesets/{id}               (**`bypass_actors` 는 여기에만 있다**)
+조회   gh api --hostname <핀 host> repos/{pin owner}/{pin repo}/branches/{target}/protection
+       gh api --hostname <핀 host> repos/{pin owner}/{pin repo}/rules/branches/{target}   (적용된 규칙 배열)
+       gh api --hostname <핀 host> repos/{pin owner}/{pin repo}/rulesets                  (룰셋 목록 — `enforcement`)
+       gh api --hostname <핀 host> repos/{pin owner}/{pin repo}/rulesets/{id}             (**`bypass_actors` 는 여기만**)
+       **[C6 — v2.19 host 결속] host·owner/repo 는 «계약 핀에서 파생»한다** — 아래 «host 결속» 블록이 유일 소스
        **[R1 — v2.16 마감]** 초안은 앞의 둘만 조회하면서 술어로 `enforcement == "active"`
        ∧ `bypass_actors == []` 를 요구했다 — **두 필드가 그 응답에 없다**(실측:
        `/rules/branches/main` → `[]`, `/rulesets` → `[{id, name, target, enforcement, …}]`).
        **룰셋 disjunct 를 탈 때는 이 넷의 캡처 위에서 평가**하며, 그래야
        «캡처된 응답 위에서 결정적»이 성립한다
+
+       **[C6 — v2.19 — 심판 신규 high] host 결속 — 조회 host 를 계약 핀에서 파생한다 (유일 소스)**
+       v2.18 까지 모든 `gh api repos/{owner}/{repo}/…` 는 **host 를 명시하지 않아** `gh` 환경
+       (`GH_HOST`)에 위임했다.  `github.com` 원격이 존재해도 **`GH_HOST` 를 바꾸면 같은 명령이
+       지정된 다른 host 의 `/api/v3` 를 호출**해(심판 실측 프로브 `GH_HOST=example.invalid … gh api
+       repos/a/b`, exit 1), drift 한 CI·래퍼가 **타 GitHub Enterprise/mock host 의 보호·앱 응답으로
+       `PREVENTION_ACTIVE` 를 위조**할 수 있다(인증·trust-boundary 결함).  T-84 ⑩(remote URL 대조)은
+       이 축을 잡지 못한다.  **처분 — 소비자가 host 를 핀에서 파생해 «명령에 명시»한다**(아티팩트
+       선언 아님 — 「선언하지 않으면 고를 수 없다」·C3 와 같은 규율):
+```text
+핀 host    = canonical_target 의 host 성분 (github.com — `bound_paths`·O-6 로 보호)
+전제       gh auth status --hostname <핀 host>   실패(핀 host 인증 부재) → PREVENTION_UNVERIFIABLE
+모든 조회  gh api --hostname <핀 host> repos/{pin owner}/{pin repo}/…
+          **+ 소비자 자기 환경 `GH_HOST=<핀 host>` 로 설정** — 플래그·환경 «둘 다» 핀에 맞춰
+            `--hostname` 이 `GH_HOST` 를 이기는지에 «의존하지 않는» 이중 결속(fail-closed)
+응답 관측  `X-GitHub-Request-Id` 등 응답 헤더를 transcript 에 병기(가능 시 — 보조 대조)
+적용 범위  (a)·(b)·(c)·target `default_branch` 파생의 **모든 `gh api`** (각 절에서 재기술 안 함, S-14)
+```
+       **극성**: 조회 대상 host 는 «핀»이고 `GH_HOST` override 는 소비자 재핀으로 무효화된다.
+       핀 host 도달·인증 불가면 **`PREVENTION_UNVERIFIABLE`**(fail-closed) — **타 host 로 폴백하지
+       않는다.**  대조군 **T-84 ⑫**.  **정직 경계**: 소비자가 곧 운영자/리뷰어라 «자기 환경을
+       스스로 위조»하면 계약 안에 남는 방어가 없다(§ 아래 정직 경계와 같은 축)
        **raw 응답을 transcript run 에 verbatim 수록**(UTC 타임스탬프 병기)
 
 술어 (캡처된 응답 위에서 결정적)
@@ -5192,7 +5278,11 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
 닫는다      · 저장소 내 자기신고만으로 ACTIVE 를 주장하는 경로 (v2.15 의 결함)
             · 진입자의 responder 위조 (판정이 그 응답을 안 읽는다)
             · countersign 후 **보호가 해제된 «현재» 상태** (진입·완료 «둘 다» live)
-              — **단 «해제됐던 과거 창»은 닫지 못한다**(위 B2 철회 절)
+            · **[v2.19] `GH_HOST` 로 타 host 응답을 먹여 ACTIVE 위조** (host 결속·C6)
+            · **[v2.19] «해제됐던 과거 창»의 «설정 변경» 관측** — 연속성 소비자가 룰셋
+              `created_at`/`updated_at` > `t_land` 를 `PREVENTION_CONTINUITY_UNVERIFIABLE` 로
+              차단(완료 판정 시점).  **단 «룰셋을 바꾸지 않은» 우회(연속 bypass_actors·admin
+              override)는 여전히 못 닫는다** — 감사 로그 소관(아래 연속성 소비자 (β))
 닫지 못한다 · **워크플로가 «실제로 그 파일대로 실행됐는가»** — ③ 은 `head_sha`
               시점의 **워크플로 파일 blob이 하니스를 호출한다**는 것을 **in-repo 로**
               검증하고, ①② 는 **서버가 그 `path` 의 run 을 그 `head_sha` 에서
@@ -5218,16 +5308,16 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
 
 ```text
 ∀ d ∈ D:
-   ① gh api repos/{o}/{r}/commits/{d}/pulls  로 **착지 PR 을 해석**
+   ① gh api --hostname <핀 host> repos/{o}/{r}/commits/{d}/pulls  로 **착지 PR 을 해석**  (host 결속·C6)
         · PR 부재 · merged 아님 · base 가 target 이 아님  → UNVERIFIED_REVISION
    ② 그 PR 의 **`head.sha`** 에 대해 check-runs 조회
-        gh api repos/{o}/{r}/commits/{PR.head.sha}/check-runs
+        gh api --hostname <핀 host> repos/{o}/{r}/commits/{PR.head.sha}/check-runs
         에 다음을 **전부** 만족하는 run 이 실재
           · name == <TOS 게이트 체크>
           · conclusion == "success"
           · **`app.id` == <Actions app id>**  — **[C2 — v2.18] `gate_app_id`
             아티팩트 파라미터를 «폐지»하고 실행 시 서버에서 파생**한다:
-            `gh api apps/github-actions` 의 `.id`.
+            `gh api --hostname <핀 host> apps/github-actions` 의 `.id`.
             **전역 상수를 아티팩트가 «선언»하면 그것이 위조 표면**이 된다 —
             서버에서 읽으면 선언할 자리가 없다
           · **`head_sha` == PR `head.sha`**
@@ -5239,7 +5329,7 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
             잡이 같은 app id 를 갖고 한 suite 를 공유**한다(실측: PR #636 head 의
             5 run 이 전부 동일 app id). 따라서 **다른 워크플로의 잡을 `tos-gate`
             로 이름 짓기만 해도** 통과했다. 셋을 함께 요구한다:
-              ① check-run → `check_suite.id` → `gh api …/actions/runs?check_suite_id=`
+              ① check-run → `check_suite.id` → `gh api --hostname <핀 host> …/actions/runs?check_suite_id=`
                  (또는 check-run 의 `details_url`/`html_url` 에서 run id)
                  → 그 **workflow run 의 `path` == `.github/workflows/tos-gate.yml`**
                     (**계약 리터럴**이며 아티팩트 파라미터가 아니다)
@@ -5247,7 +5337,7 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
               ③ **그 `head_sha` 시점의 워크플로 파일 blob**  [R2 — v2.18 마감]
                  **[E1 — v2.18 에라타] blob 은 «서버»에서 읽는다.**
                  ```
-                 gh api repos/{pin}/contents/.github/workflows/tos-gate.yml?ref=<PR head.sha>
+                 gh api --hostname <핀 host> repos/{pin}/contents/.github/workflows/tos-gate.yml?ref=<PR head.sha>
                  → base64 decode 후 아래 두 리터럴 grep
                  ```
                  · **404·기타 HTTP 오류 → `PREVENTION_UNVERIFIED_REVISION`**
@@ -5321,21 +5411,53 @@ v2.16 은 «보호가 꺼진 창에서 착지한 커밋은 그 흔적이 없다�
 직접 push(PR 없음)          → /commits/{d}/pulls 공집합 → UNVERIFIED_REVISION
 위조 success                → app.id 불일치 → UNVERIFIED_REVISION      [v2.17]
 남는 것 ⇒ **보호 off 상태에서 «체크는 통과한» 리비전 착지**
-           — 서버 «검증»은 됐으나 서버 «강제»는 아니었던 창.  **닫지 못한다**
+           — 서버 «검증»은 됐으나 서버 «강제»는 아니었던 창.
+           **[v2.19 — 심판 F1] 이 창을 완료 판정 시점의 «연속성 소비자»가 부분 소비한다**
+           (아래 절): 룰셋 설정 변경(created_at/updated_at > t_land)·classic-only 는
+           `PREVENTION_CONTINUITY_UNVERIFIABLE` 로 **차단**된다.  **여전히 닫지 못하는 것**은
+           «룰셋을 바꾸지 않은» 우회(감사 로그 소관) — 완전 차단이 아니라 **부분해소**다
 ```
 
-**완화 2종 (닫지 못하는 것을 완화로만 적는다)**
+##### 연속성 소비자 — 완료 판정 시점 [v2.19 — 심판 F1 부분해소]
+
+**심판 판정**: 진입(7c/8)·완료(§11) 두 live 조회는 각각 «그 시점» ACTIVE 만 본다.  그 «사이»에
+[보호 off → 체크 통과 → 머지 → 재활성] 창을 만들면 **두 조회 다 ACTIVE 이고 (b) 리비전 검증도
+성립**해 완료가 승인된다 — **어느 술어도 그 창을 소비하지 않았다.**  v2.16~v2.18 의 완화 (α)는
+`updated_at` 을 **«관측 기록»으로만** 남기고 «과잉 차단 우려»로 **차단하지 않았다** — 그래서 창이
+정상 완료로 세탁됐다.  **처분: 완료 판정 시점에 «연속성»을 소비하는 술어를 신설하고 fail-closed 로
+차단한다.**  상태값 **`PREVENTION_CONTINUITY_UNVERIFIABLE`**(U-17-c 신설).
+
 ```text
-(α) 룰셋 경로일 때 rulesets/{id} 의 created_at·updated_at 을 캡처하고
-      created_at ≤ merged_at(min D)          → 룰셋이 «착수 전»에 존재했다
-      updated_at > merged_at(min D)          → «착수 후 변경됨»을 **관측 기록**으로
-                                                남긴다.  **UNVERIFIABLE 로 차단하지
-                                                않는다** — 정당한 정책 개선까지
-                                                막는 과잉 차단이 되기 때문이다
-(β) **예방 주체는 서버 자체**이고 `UNCHK-008` 은 잔존한다.
-      **강제 «연속성» 증명은 감사 로그 확보 시(운영자 소관) 승격**한다 —
-      계약이 지금 할 수 있는 것은 «검증»이고 «연속성»이 아니다
+(α) 연속성 술어 — 룰셋 «서버 타임스탬프»만 소비한다 (커밋 author/committer date 불신)
+    입력우주  · target 에 «적용된» 룰셋 s : rules/branches/{target} → rulesets/{id}
+              · t_land = min{ merged_at(pr) :  d ∈ D,  pr = d 를 착지시킨 PR }
+                         (PR 객체의 «서버 부여» merged_at 만 쓴다 — D≠∅ 이고 (b) 통과 시 실재)
+    판정 (∀ 적용 룰셋 s):
+      created_at ≤ t_land  ∧  updated_at ≤ t_land  → 연속성 성립 (그 축 통과)
+      created_at > t_land                           → 룰셋이 «착지 후»에 생김 = 그 착지는
+                                                       비보호였다   → CONTINUITY_UNVERIFIABLE
+      updated_at > t_land                           → 착지 후 «설정 변경»이 있었다.  off→on
+                                                       토글도 updated_at 을 올린다(단조).
+                                                       benign(강화)·malign(창) 구별 불가
+                                                       → CONTINUITY_UNVERIFIABLE
+    classic branch protection 만(룰셋 부재)          → protection 응답에 created_at·updated_at 이
+                                                       «없다» → 연속성 판정 불가
+                                                       → CONTINUITY_UNVERIFIABLE
+    삭제-재생성                                       → 새 id·새 created_at(>t_land) 로 검출
+    D = ∅                                            → 착지 대상 없음 = 연속성 vacuous((b) 와 동일)
+    **차단이되 «운영자 재심사 경로»** — 영구 차단이 아니다.  정당한 정책 강화는 운영자가 감사
+    로그로 확인해 해제(재심사)한다.  이것이 v2.16 의 «과잉 차단» 우려에 대한 답이다: 관측만 하고
+    통과시키면 창이 정상 완료로 세탁되고, 무조건 영구 차단하면 강화를 막는다 — **판정 불가를
+    «판정 불가»로 보고**하는 것이 fail-closed 다(F2 극성 논증과 동형)
+(β) **닫지 못하는 것 (정직 경계)** — 연속성 소비자는 «설정 변경의 관측»을 차단으로 승격할 뿐,
+    **«머지 시점에 강제가 실제로 활성이었나»의 완전 증명은 아니다**: 룰셋을 «바꾸지 않고» 우회하는
+    경로(연속 존재한 `bypass_actors`·admin override)는 updated_at 을 올리지 않아 남는다
+    (`bypass_actors == []` 술어가 완료 시점 값만 보는 것과 같은 한계).  그 완전 증명은 **감사 로그
+    (org/enterprise 소관)**이며 공개 REST 로 닫히지 않는다 — `UNCHK-008` 이 잔존하는 이유다.
+    **«위조 비용을 올리지 닫지 않는다»**(C2 정직 표기와 같은 형식)
 ```
+**대조군 T-84 ⑪** — off→merge→on 은 서버 보호 설정 변경을 요구하므로 **live 실행하지 않고**,
+v2.16 (a) 방식의 «캡처된 응답 위 결정적 술어» seam 으로 SIMULATED 실증한다(live 는 현행 음성만).
 
 **(c-0) `operator_countersign` 형식 — v2.15 에라타 E3 의 리터럴을 복원한다** [E1]
 
@@ -5379,7 +5501,7 @@ P_last   = HEAD 조상 중 아티팩트 경로를 **«마지막으로 변경»**
 
 ```text
 U-17-c  상태  prevention_control_state   (1급 노출)
-          PREVENTION_ACTIVE            (a) 술어 충족 ∧ (b) 전 리비전 검증
+          PREVENTION_ACTIVE            (a) 술어 충족 ∧ (b) 전 리비전 검증 ∧ **연속성 성립**
                                        ∧ countersign 유효 ∧ **∀d∈D: P_last ⊰ d**  (통과)
           PREVENTION_UNVERIFIABLE      조회 실패(HTTP·네트워크·인증)     → 차단  [v2.16]
           PREVENTION_ABSENT            아티팩트 부재 · 404 미보호        → 차단
@@ -5391,7 +5513,10 @@ U-17-c  상태  prevention_control_state   (1급 노출)
           PREVENTION_INSUFFICIENT      보호는 있으나 술어 불충족          → 차단  [v2.16]
           PREVENTION_LATE              `∃d: P_first ⋠ d` — 기록이 착수보다 늦다 → 차단
           PREVENTION_UNVERIFIED_REVISION  (b) 불충족                      → 차단  [v2.16]
-        **아홉 값 중 «여덟이 차단»이고 비차단은 `PREVENTION_ACTIVE` 하나다.**
+          PREVENTION_CONTINUITY_UNVERIFIABLE  착지 후 룰셋 설정 변경 관측 · classic-only
+                                       (타임스탬프 부재) — 연속성 판정 불가 → 차단  [v2.19]
+                                       («운영자 재심사 경로» — 영구 차단 아님, 위 연속성 소비자)
+        **열 값 중 «아홉이 차단»이고 비차단은 `PREVENTION_ACTIVE` 하나다.**
         **전순서** (전제 붕괴 순서):
           1 PREVENTION_UNVERIFIABLE     조회를 못 하면 아무것도 못 묻는다
           2 PREVENTION_ABSENT           아티팩트·보호가 없으면 내용을 못 묻는다
@@ -5401,11 +5526,14 @@ U-17-c  상태  prevention_control_state   (1급 노출)
           6 PREVENTION_LATE             기록이 착수보다 늦다
           7 PREVENTION_ARTIFACT_MUTATED  기록이 착수 «후»에 바뀌었다
           8 PREVENTION_UNVERIFIED_REVISION  리비전 서버 검증이 성립하지 않는다
-          9 PREVENTION_ACTIVE           위 여덟이 전부 불성립할 때만
+          9 PREVENTION_CONTINUITY_UNVERIFIABLE  리비전은 검증됐으나 «강제의 연속성»을 못 묻는다
+         10 PREVENTION_ACTIVE           위 아홉이 전부 불성립할 때만
 
 U-17-d  강제 지점  §12.3 단계 **7c**·**8**(진입) 과 **§11**(완료 판정) — **둘 다 live**
-        종료조건   §11 — (a) `PREVENTION_ACTIVE` **AND** (b) 전 리비전 검증
-        대조군     T-84 (§8) — 10종
+        종료조건   §11 — `PREVENTION_ACTIVE`.  이 값이 이미 (a) 술어 ∧ (b) 전 리비전 검증
+                   ∧ **연속성 성립**(완료 판정 시점) ∧ countersign ∧ `∀d∈D: P_last ⊰ d` 를
+                   논리곱으로 담으므로(U-17-c), §11 은 **상태값만 소비**하고 재기술하지 않는다(S-14)
+        대조군     T-84 (§8) — **12종** [v2.19: ⑪ 연속성 · ⑫ GH_HOST]
 ```
 
 **(d) 가드 체인이 3단이 된다** — `U-15-f-1` 형태 갱신:
@@ -5527,12 +5655,16 @@ echo "guard_rc=$?"
 #   **양성이 성립하려면 예방 통제가 실제로 활성**이어야 하므로, 운영자가 보호를
 #   설정하기 전에는 이 흐름의 양성도 **seam 주입(SIMULATED)** 으로만 구성된다
 git -C "$WT" log --oneline --diff-filter=A -- config/tos_completion.yaml
-                                                 # 기대: **도입 커밋 1건**
+                                                 # 기대: **도입 커밋 1건** — [편의 표기]
+#   이 양성 픽스처는 도입이 «정확히 1건»이라 리터럴로 충분하다.  판정 우주 `D` 는
+#   U-15-g-1 «구조 정의»이며(카디널리티 판정은 구조 D 로), 여기서는 fixture 관측일 뿐이다
 #   기대: guard_rc=0 · config/tos_completion.yaml **생성·커밋됨**
 
 # G-부모  [v2.13 신설 — U-15-f-4]  판정 대상 == 착수 대상인가
-D=$(git -C "$WT" log --format=%H --diff-filter=A -1 -- config/tos_completion.yaml)
-git -C "$WT" log --format=%P -1 "$D"             # 도입 커밋의 부모
+#   [편의 표기 — 이 양성 픽스처는 «단일 도입»]  판정 우주 `D` 는 U-15-g-1 구조 정의이며,
+#   여기서는 도입 1건이라 리터럴 `-1` 로 그 커밋을 집는다(변수명도 `D` 와 구분한다)
+D0A_C=$(git -C "$WT" log --format=%H --diff-filter=A -1 -- config/tos_completion.yaml)
+git -C "$WT" log --format=%P -1 "$D0A_C"         # 도입 커밋의 부모
 #   기대: **하니스가 출력한 `R-0 head=` 값과 동일**
 #   다르면 하니스 통과와 착수 사이에 HEAD 가 움직인 것이다 → PARENT_MISMATCH
 #   도달하지 않으면 가드가 **항상 막는** 것이므로 음성 증거가 무의미해진다
@@ -5571,7 +5703,8 @@ git -C "$REPO" worktree remove --force "$WT"
 ```text
 증거 보존   U15-ENTRY-CHECK.md 의 «가드» 절에 U-15-e 결속으로 기록한다:
               가드 명령 원문 · guard_rc · **`D0A-FIRST` 산물의 존재/부재 실측**
-              (파일 **및** `--diff-filter=A` 도입 커밋 양쪽)
+              (파일 **및** 도입 커밋 존재/부재 — `--diff-filter=A` 는 **편의 표기**로
+               ∅/1 관측에만 쓴다.  카디널리티 판정 우주는 U-15-g-1 구조 `D`)
             **양성·음성 둘 다 없으면 "억제된다"가 아니라 "억제된다고 적었다"이다**
 ```
 
@@ -6623,9 +6756,13 @@ x ⋡ e_b · y ⋡ e_a (형제 브랜치)  ⇒ **각 행이 자기 간선만 덮
                    **원 승인 행에만 걸리므로** 재부여로 인한 조상성 위반이
                    **발생 자체를 하지 않는다** — **F4 를 우회가 아니라 소거로 닫는다.**
 
-                   **[F5 소멸]** `supersedes` 가 사라지므로 `row_ref`·tombstone-graph·
-                   `c_APP` 비단수 문제(F5)도 **함께 소멸**한다. **한 결정이 두 건을
-                   닫는다** — v2.14 가 만든 기제 자체가 원인이었다는 뜻이다
+                   **[F5 — v2.19 정정 · S-22 재발]** `supersedes` 가 사라지므로
+                   `row_ref`·tombstone-graph 는 **소멸**한다.  **그러나 v2.15 초안이
+                   여기에 «`c_APP` 비단수 문제(F5)도 함께 소멸»이라 적은 것은 거짓이었다**
+                   — `c_APP` 는 U-16-c·g5·g6 에 **단수 정의로 잔존**했고(심판 F5 «회피»),
+                   `supersedes` 폐기가 닫은 것은 `row_ref`·tombstone 축뿐이다.
+                   `c_APP` 비단수는 **v2.19 가 `c_APP` 를 구조 집합 정의**(위 U-16-c)로
+                   처분했다 — 앞선 활성 절 산문형 잔존(S-22)을 정정한다
 
         **중복의 의미** — **[v2.15 마감]** 위 «#2» 블록이 유일 소스다:
                    **같은 간선을 덮는 행이 둘 이상** 또는 **어떤 간선도 덮지 않는
@@ -6715,7 +6852,7 @@ C_R(c) = { x ⊑ c :  blob(x:<reviewer_ref>) == blob(approved_at_head:<reviewer_
 ```
              **요구 (양화자 = 존재)**:
 ```text
-∃ x ∈ C_R(c) :  x 가 c_APP 의 **진(strict) 조상**
+∃ x ∈ C_R(c) :  x 가 c_APP «유일 원소»의 **진(strict) 조상**  (c_APP 는 U-16-c 구조 집합·|c_APP|=1 전제)
 ```
              위반(증인 없음) = `APPROVAL_ORDER_INVALID` → 차단.
              `C_R(c) = ∅` 이면 **`PROVENANCE_UNVERIFIABLE`** — **면제하지 않는다.**
@@ -6774,14 +6911,40 @@ U-16-h  **승인 산출물이 그 내용을 인용해야 한다 — "무관한 �
         (D-1 이 "키가 docstring 본문에 리터럴로 등장"을 요구한 것과 같은 형태:
          **재량을 리뷰 가능한 표면으로 옮긴다**)
 
-U-16-c  **순서 제약 — 간선별로 적용된다**  **[v2.12 재작성 — 심판 #2]**
-          c_APP(a) = 승인 행 a 를 **도입한 커밋**
-          **단수 `c_NO(r)` 정의는 폐기한다** — v2.11 이 `EDGES(r)` 전칭(a2)을
-          신설하면서 **이 본체를 재작성하지 않아 단수 규범이 병존**했다.
-        요구:  **∀ (p→c) ∈ EDGES(r)** 에 대해
-                 그 간선을 덮는 승인 행 a 의 **c_APP(a) 가 «그 c» 의 진 조상**이다.
-        **같은 커밋이면 거부한다** — 이것이 §8.3 canary 클래스를 깨는 지점이며,
-        **간선마다 독립으로 판정**되므로 merge 위상에서 유리한 커밋을 고를 수 없다
+U-16-c  **순서 제약 — 간선별로 적용된다**  **[v2.12 재작성 — 심판 #2 / v2.19 재작성 — 심판 F5 «회피»]**
+          **`c_APP(a)` = 승인 행 `a` 의 도입 지점 — «구조 집합»**(`D`·`C_R` 과 동형·유일 소스):
+```text
+c_APP(a) = { x ⊑ HEAD :  a ∈ rows(x:LEDGER)  ∧  ∀ p ∈ parents(x): a ∉ rows(p:LEDGER) }
+           rows(y:LEDGER) = 커밋 y 시점 승인 원장 blob 의 «정규형» 행 집합
+                            (자기신고 순번·표시용 파생 필드 제외 — U-16-b).  `a` 는 그 정규형 행.
+           머지 해소에서 처음 나타나면 **머지 자체가 원소**.  루트(부모 없음)는 둘째 항이
+           공허참이라 자동 포함.  부모에 원장 경로 부재는 `a ∉ rows(p)` 로 읽는다([H4] 동형).
+```
+          **[v2.19 — 심판 F5] v2.11~v2.18 은 `c_APP(a)` 를 단수 «도입한 커밋»으로 두어**,
+          동일 raw 승인 행이 형제 브랜치에서 독립 도입되면 도입 지점이 둘인데 `U-16-c`·g5·g6 세
+          소비처가 **단수로 소비**했다 — 한 도입은 간선의 조상, 다른 도입은 형제이면 «어느 것을
+          고르느냐»로 `NO_ROWS_CLEAR` 와 `APPROVAL_AFTER`/`APPROVAL_ORDER_INVALID` 가 갈렸고, 증거
+          실행기가 **«복수면 사전순 최소»로 임의 보충**했다(`U16-LEDGER-CHECK.md:37`).  **단수 정의 폐기.**
+          **카디널리티 처분(fail-closed)**:
+```text
+|c_APP(a)| = 0  →  a 가 HEAD 원장에 있는데 도입 지점이 ∅ = 이력 파생 실패
+                   →  PROVENANCE_UNVERIFIABLE  (면제하지 않는다)
+|c_APP(a)| > 1  →  동일 승인 행의 «병렬 독립 도입» = APPROVAL_MALFORMED
+|c_APP(a)| = 1  →  그 «유일 원소»를 세 소비처(U-16-c 조상성·g5·g6)가 쓴다
+```
+          **극성 논증 — 왜 «사전순 최소»가 아니라 `|c_APP|>1 → MALFORMED` 인가**:
+          승인 행은 «누가·언제 승인했는가»의 권위 기록이고 도입 지점이 그 «언제»다.  같은 행이 두
+          지점에서 독립 도입되면 **«언제»가 유일하지 않다** — `D0A-FIRST` 도입 커밋이 둘이면
+          `MULTIPLE_INTRODUCTIONS` 로 «최초»를 판정 불가로 본 것(U-15-g-2)과 **동형**이다.
+          «사전순 최소»는 그 질문을 **답한 척**하고 공격자에게 유리한 도입을 고를 여지를 남긴다.
+          **판정할 수 없는 상태를 판정하지 않는 것이 fail-closed** 다.  **단수 `c_NO(r)` 정의도
+          이미 폐기**했다(v2.11 — `EDGES(r)` 전칭 a2).
+        요구:  **∀ (p→c) ∈ EDGES(r)** 에 대해  그 간선을 덮는 승인 행 `a` 의
+                 **`c_APP(a)` 의 «유일 원소»가 «그 c» 의 진 조상**이다(`|c_APP(a)|=1` 전제 —
+                 아니면 위 카디널리티 처분이 먼저 발화·전순서 U-16-d).
+        **같은 커밋이면 거부한다**(`APPROVAL_SAME_COMMIT`) — §8.3 canary 클래스를 깨는 지점이며,
+        **간선마다 독립으로 판정**되므로 merge 위상에서 유리한 커밋을 고를 수 없다.  세 소비처가 같은
+        집합 정의를 쓰므로 «플래그 의존/단수 가정» 클래스가 동형 정의마다 재발하지 않는다(S-22 동형 규율)
 
 U-16-d  상태  closable_no_provenance_state  (TOS-COMPLETION-STATUS 에 1급 노출)
           NO_ROWS_CLEAR            **모든 r 의 모든 간선**이 U-16-a2 충족  (유일 통과)
@@ -6798,6 +6961,8 @@ U-16-d  상태  closable_no_provenance_state  (TOS-COMPLETION-STATUS 에 1급 �
           APPROVAL_MALFORMED       스키마 위반 · **같은 간선을 덮는 승인 행이
                                    둘 이상** · **어떤 간선도 덮지 않는 고아 행**
                                    · 고아 row_id · transition 불일치 (g1·g4)
+                                   · **동일 승인 행의 병렬 독립 도입(`|c_APP(a)| > 1`,
+                                     U-16-c) — [v2.19 심판 F5]**
                                    → 차단
                                    **[v2.15 마감 — 이 표 S-22 «3회차»]** v2.15 초안까지
                                    **`edge_seq` 키 기반 구정의**가 남아 있었다.
@@ -6822,12 +6987,53 @@ U-16-d  상태  closable_no_provenance_state  (TOS-COMPLETION-STATUS 에 1급 �
           CONSUMER_ABSENT          레지스터·원장·검사기 부재          → 차단
         **열두 값 중 열하나가 차단이고 중립·비차단 값이 없다** — U-12 ③ 과 같은 규율
 
+        **전순서 (전제 붕괴 순서 — 계약이 리터럴로 고정, U-16-d 가 «유일 소스»)**
+        **[v2.19 신설 — 심판 F4]**  v2.18 까지 이 블록은 상태를 «열거»만 하고 **전순서를
+        두지 않아**, 손 실행기가 우선순위를 **자체 선언**했다(`U16-LEDGER-CHECK.md:43-45`
+        — 계약 밖 규칙).  한 행/간선이 여러 규칙에 걸릴 때 «어느 상태를 보고하는가»가
+        규범이 아니면 소비자마다 갈린다.  아래로 고정한다 — **한 행/간선이 여러 상태를
+        위반하면 전순서 «번호가 작은(전제가 더 먼저 붕괴한)» 값을 그 행/간선 상태로 하고,
+        전역 상태는 모든 행·모든 간선 상태의 전순서 최소**다(∅ 위반이면 NO_ROWS_CLEAR):
+```text
+  1  CONSUMER_ABSENT           검사기·원장·레지스터가 없으면 아무것도 못 묻는다
+                               (상위 완료 평가 소관 — T-82 ⑦ 주)
+  2  PROVENANCE_UNVERIFIABLE   이력 파생 불가(얕은 클론 · |c_APP|=0 · C_R=∅)면 판정 불가
+  3  APPROVAL_MALFORMED        스키마·구조 위반(고아 · 이중 덮음 · |c_APP|>1)이면 내용을 못 묻는다
+  4  APPROVAL_MISSING          승인 행이 없으면 순서를 못 묻는다
+  5  APPROVAL_SAME_COMMIT      c_APP 유일 원소 == 간선 커밋 (단일 커밋 우회)
+  6  APPROVAL_AFTER            c_APP 유일 원소가 간선 커밋의 조상 아님
+  7  APPROVAL_CONTENT_DRIFT    현재 행 ≠ 승인 내용 (g2)
+  8  APPROVAL_HEAD_INVALID     approved_at_head 비조상 · 그 시점 blob 소비 불가 (g3)
+  9  APPROVAL_ROW_MUTATED      승인 행이 도입 후 편집됨 (g5)
+ 10  APPROVAL_UNBOUND          reviewer_ref 가 digest 미인용 (h)
+ 11  APPROVAL_ORDER_INVALID    C_R 에 c_APP 유일 원소의 진 조상 증인 없음 (g6)
+ 12  NO_ROWS_CLEAR             위 열하나가 전부 불성립할 때만 (유일 통과)
+```
+        **규칙 평가 순서 — 전순서와 정합하는 «선-검사 + g-단락»** **[v2.19 정정 — 독립 검증 적발]**
+        (같은 근원 — 손 실행기가 자체 선언한 자리; **전순서가 유일 권위**이고 이 순서는 그것을
+         구현하는 정합 절차다):
+        ① **선-검사(전역·구조 — g-규칙 «앞»에 필수로 온다)**:
+             1 `CONSUMER_ABSENT` · 2 `PROVENANCE_UNVERIFIABLE`(얕은 클론·`c_APP` 크기 0·`C_R=∅`)
+             · 3 `APPROVAL_MALFORMED`(g1·g4 transition·`c_APP` 크기>1·고아·이중 덮음)
+             · 4 `APPROVAL_MISSING`(덮는 행 부재)
+        ② **g-단락 — 선-검사를 통과한 «단일 유효 덮는 행(`c_APP` 크기 1)»에 대해서만**:
+             U-16-c 조상성(5 `SAME_COMMIT`·6 `AFTER`) → g2(7) → g3(8) → g5(9) → h(10) → g6(11)
+             — **이 부분집합에서만 상태 번호가 비감소**이므로 «첫 미충족 = 전순서 최소»가 성립한다
+        **[정정 사유 — 독립 검증(order_d.py)]** 초안은 «g1·g4 를 단락 «앞»에 두고 전 순서가 비감소»라
+        적었으나, 구조 상태 2(`c_APP` 크기 0)가 3(MALFORMED)보다 «작으면서» g1/g4 뒤에 놓이면
+        «(g1 위배) ∧ (`c_APP` 크기 0)» 행에서 단락 문자 구현은 3 을, 전순서 최소(권위)는 2 를 내
+        **발산**한다.  **선-검사(1~4)를 g-규칙 앞의 필수 단계로 재배치**해 발산을 없앤다 —
+        「각 규칙 상태번호 비감소 ⇒ 동치」는 **g-단락(5~11)에만** 한정되고, 구조 상태(1·2·3·4)는
+        단락 밖 선-검사다.  전역 상태는 여전히 **모든 행·간선의 전순서 최소**다.
+        예: `h`(10)가 `g6`(11)보다 먼저 평가되고 번호도 h<g6 이라 둘 다 미충족 행은 `APPROVAL_UNBOUND`
+        (T-82 ⑰ⓑ 근거).  발산 corner 는 **T-82 ⑳ⓑ** 가 고정한다.  **자체 선언이 아니라 계약이다.**
+
 U-16-e  강제 지점   tools/tos_completion_status.py --check  → 레지스트리 **등록**
         종료조건    §11 — `closable_no_provenance_state = NO_ROWS_CLEAR`
-        대조군      T-82 (§8) — **19종** = v2.7 7종 + v2.8 4종 + v2.9 2종
+        대조군      T-82 (§8) — **20종** = v2.7 7종 + v2.8 4종 + v2.9 2종
                     + v2.11 1종(⑭ 2-parent 위상) + v2.13 2종(⑮ `R∥A` · ⑯ 반복 양성)
-                    + v2.14 2종(⑰ 기존-경로 `B∥A` · ⑱ 병렬 seq 양성)
-                    + **v2.15 1종**(⑲ digest 선배치).  **내역 병기 — S-20**
+                    + v2.14 2종(⑰ 기존-경로 `B∥A` · ⑱ 병렬 반복 이력 양성[v2.19 현행 스키마])
+                    + v2.15 1종(⑲ digest 선배치) + **v2.19 1종**(⑳ 동일 승인 행 형제 도입).  **내역 병기 — S-20**
 ```
 
 ##### 왜 «유일화» 가 아니라 «전칭» 인가 (v2.11 — U-12 와 다른 형태를 고르는 근거)
