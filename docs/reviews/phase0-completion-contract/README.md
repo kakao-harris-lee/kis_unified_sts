@@ -33,7 +33,7 @@
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-5.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-6.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-7.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-8.md \
     --exclude=U17-PREVENTION-CHECK-V220.md --exclude=U16-LEDGER-CHECK-V220.md \
-    --exclude=U17-PREVENTION-CHECK-V220-ADDENDUM.md \
+    --exclude=U17-PREVENTION-CHECK-V220-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -45,7 +45,7 @@
   `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`·
-  `U17-PREVENTION-CHECK-V220-ADDENDUM.md` 는
+  `U17-PREVENTION-CHECK-V220-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -516,6 +516,21 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   정밀화 — 유효 오염은 ㉠가 독립 검출하므로 종단 fail-open 은 ㉡ 유일 검출자 케이스(㉠-불가시)에서만 · A-2
   `--git-path` 는 `git -C <절대>` 에서도 상대 반환(ⓑ 문언이 둘 다 덮음). **fail-open/차단·문언 신규 0.**
   GET 1회(`x-github-request-id` 병기)·서버 쓰기 0)
+- `20260819-193235/U17-PREVENTION-CHECK-V221.md` — **v2.21 T-84 ⑬(정본 불일치 클래스 a~g + 양성 + 정규화
+  대조군)·⑭ + 회귀 ⑤⑨⑩⑪⑫ + #2 실측**(v2.20 재심 스탬프 sibling·비규범 부속·**S-24 결속 동결 `0528a919`**
+  [계약·개발계획 blob==동결·후속 커밋 0·하니스 :4664-4764 `957bf49d…`]. 실행기 `u17-verify-v221.sh` `5410519e…`
+  (v2.20 대비 술어 교체 1건)·`wfcanon-v221.py` `a5430e1a…` — **YAML 파싱=`yq`·대조=byte 비교뿐(자작 토크나이저
+  폐기·운영자 지침 이행)**. 정본 A/B 는 계약 코드펜스에서 리터럴 앵커 추출 == 술어 상수 byte 동일. blob 22종
+  기대 불일치 0: 양성·정규화 대조군 5(주석+빈 줄·trailing·CRLF·folded `>`·BOM) BLOB_OK / ⑬a~⑬g(echo·trailing
+  주석·`|| true`·`false && …`·continue-on-error/if: always()/추가 메타 키·set +e/trap·**exit 0/exec true/가드
+  exit**) 전부 UNVERIFIED_REVISION / NBSP red(ASCII 핀) / inline `;`·`env bash`·shell-no-set red. e2e: 양성
+  ACTIVE/0 · **⑬g·⑬c UNVERIFIED_REVISION/1 ↔ 같은 seam v2.20 실행기 ACTIVE/0(심판 «회피» 자리 실증)** ·
+  ⑭ UR/1 · 서버 mock 5종 일치 · 정본 B 런타임 OK/0·FAILED/1(두 칸 공백) · 회귀 전건. #2: UNCHK-008 owner_track
+  `Phase 0`(:6228)·산문 2곳·U-17 «pre-D0-A 실체화»(:5480)·개발계획 :270-275 하니스 실체화 원문 병기 · 본 저장소
+  실물(아티팩트·tos-gate.yml·하니스 파일·config) 전부 부재 · SIMULATED 순서 실증(하니스→아티팩트→워크플로+룰셋
+  캡처 → D=∅ PREVENTION_ACTIVE/0 — 순서 무모순만). **관측(에라타 후보)**: P-2 정규화 규칙이 YAML 스칼라 표기
+  (`|`/`>`)를 미언급 — 스텝 B(파이프라인 한 줄)를 folded 로 쓰면 정직 워크플로도 red(과잉 차단·fail-closed) →
+  «정본은 literal block `|` 전제» 한 줄 제안. fail-open 신규 0. 본 저장소 PREVENTION_ABSENT. 서버 쓰기 0)
 
 ## 향후 관행
 
