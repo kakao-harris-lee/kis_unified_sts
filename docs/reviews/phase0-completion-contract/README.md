@@ -30,6 +30,7 @@
     --exclude=U17-PREVENTION-CHECK-V219.md --exclude=U16-LEDGER-CHECK-V219.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-2.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-4.md \
+    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-5.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -38,7 +39,7 @@
   `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md`·
   `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md`·
-  `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md` 는
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -404,6 +405,17 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   결합)을 적지 않아 저장소 밖 cwd 에서 `[ -f ]` 거짓 ABSENT → ㉡ 통과**(실행기는 cd/gitpath 결합으로 회피)
   · L-2 K-4 잔여를 완화하는 유일 항이 ㉡ 인데 L-1 로 새면 곱해짐 · L-3 하니스 예외 조항 덮는 것 0건 ·
   L-5 `U17-PU㉢`/`U17-PU㉠` 분리 방출로 절차 감사 가능. 서버 쓰기 0·본 저장소 ㉠㉡㉢ 통과)
+- `20260819-074621/U17-PREVENTION-CHECK-V219-ADDENDUM-5.md` — **v2.19 에라타 5차·최종 `eddbd241` S-24
+  addendum**(§0 결속 HEAD==`eddbd241`·하니스 :4625-4725 `957bf49d…`==`db6ce918`:4620-4720 — 5판 연속
+  byte-동일 · §1 `s24-proof-5.sh`: hunk 4개 사이 ∅ / 명명 절 닿지 않음 ∅ 23건 / 닿음 4건([E14]
+  [PARENTS-UNTRUSTED] 블록·(B)·이력) · §4: 파생·결합 프로브(`--git-path info/grafts` 상대 반환·저장소 밖
+  cwd 거짓 ABSENT·루트 결합 present = L-1 재현) · **[E14] 저장소 밖 cwd+grafts: 대조군 PREVENTION_ACTIVE/0·
+  NO_ROWS_CLEAR/0(fail-open) vs 판정기 PREVENTION_UNVERIFIABLE/PROVENANCE_UNVERIFIABLE(차단)** ·
+  `--separate-git-dir`(파생 절대) 이중 결합 없이 정확 · 정상 회귀 cwd 밖/루트 불변 · 본 저장소 live
+  PREVENTION_ABSENT. **[fail-open/차단] 신규 0건 — 에라타 아크 종결.** 관측: N-1 결합 대상은 «저장소
+  루트(`--show-toplevel`)»뿐(`--absolute-git-dir` 에 `.git/info/grafts` 를 붙이면 이중 — 극성은 fail-closed·
+  문언 한 줄로 오독 제거 가능, 다음 사이클 입력) · N-3 최종 상태 본 저장소 [PARENTS-UNTRUSTED] 통과.
+  서버 쓰기 0)
 
 ## 향후 관행
 
