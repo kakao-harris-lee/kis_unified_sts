@@ -30,7 +30,7 @@
     --exclude=U17-PREVENTION-CHECK-V219.md --exclude=U16-LEDGER-CHECK-V219.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-2.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-4.md \
-    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-5.md \
+    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-5.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-6.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -39,7 +39,8 @@
   `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md`·
   `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md`·
-  `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md` 는
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md`·
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -416,6 +417,18 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   루트(`--show-toplevel`)»뿐(`--absolute-git-dir` 에 `.git/info/grafts` 를 붙이면 이중 — 극성은 fail-closed·
   문언 한 줄로 오독 제거 가능, 다음 사이클 입력) · N-3 최종 상태 본 저장소 [PARENTS-UNTRUSTED] 통과.
   서버 쓰기 0)
+- `20260819-074621/U17-PREVENTION-CHECK-V219-ADDENDUM-6.md` — **v2.19 에라타 6차 `359f5bc5` S-24
+  addendum — stop-time Codex BLOCK #4 대응**(E14 가 허용한 «상대 `--git-path` + `--absolute-git-dir` 결합»
+  = `<root>/.git/.git/info/grafts` → 거짓 ABSENT → ㉡ 통과 = **fail-open** — addendum-5 N-1 이 «fail-closed»
+  로 오분류한 것을 M-0 으로 자기 정정). §0 결속 HEAD==`359f5bc5`·하니스 :4631-4731 `957bf49d…`(6판
+  연속) · §1 `s24-proof-6.sh`: hunk 4개 ∅ / 명명 절 닿지 않음 ∅ 23건 / 닿음 4건([E15] 블록·(B)·이력) ·
+  §4 **옛 허용 분기 뮤테이션(Codex 요구)**: 경로 원문 `AGD+상대 = <root>/.git/.git/info/grafts → ABSENT(거짓)`
+  vs `--show-toplevel 결합 = <root>/.git/info/grafts → present` — 대조군 PREVENTION_ACTIVE/0·NO_ROWS_CLEAR/0
+  (fail-open 재현) vs E15 PREVENTION_UNVERIFIABLE/PROVENANCE_UNVERIFIABLE(차단)·동등 대안(cwd=루트) 동일 차단 ·
+  separate-git-dir 절대 그대로 차단 · **linked worktree: `--git-path` 는 common-dir 기준 절대 → 공유 grafts
+  정확 지시(결함 아님)** · 정상 회귀 cwd 무관 · 부재 판정 극성 감사표(«부재→차단» 6항 / «부재→통과» 3항 —
+  ㉡ replace -l·㉡ grafts·㉢ shallow 목록 — 만 거짓 부재가 fail-open = E15 대상 정확). **[fail-open/차단]
+  신규 0건.** 서버 쓰기 0)
 
 ## 향후 관행
 
