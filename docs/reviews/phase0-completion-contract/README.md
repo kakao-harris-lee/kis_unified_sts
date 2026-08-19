@@ -34,6 +34,7 @@
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-7.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-8.md \
     --exclude=U17-PREVENTION-CHECK-V220.md --exclude=U16-LEDGER-CHECK-V220.md \
     --exclude=U17-PREVENTION-CHECK-V220-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221.md \
+    --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -45,7 +46,8 @@
   `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`·
-  `U17-PREVENTION-CHECK-V220-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221.md` 는
+  `U17-PREVENTION-CHECK-V220-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221.md`·
+  `U17-PREVENTION-CHECK-V221-ADDENDUM.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -531,6 +533,15 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   캡처 → D=∅ PREVENTION_ACTIVE/0 — 순서 무모순만). **관측(에라타 후보)**: P-2 정규화 규칙이 YAML 스칼라 표기
   (`|`/`>`)를 미언급 — 스텝 B(파이프라인 한 줄)를 folded 로 쓰면 정직 워크플로도 red(과잉 차단·fail-closed) →
   «정본은 literal block `|` 전제» 한 줄 제안. fail-open 신규 0. 본 저장소 PREVENTION_ABSENT. 서버 쓰기 0)
+- `20260819-193235/U17-PREVENTION-CHECK-V221-ADDENDUM.md` — **v2.21 에라타 `65cf2635` S-24 addendum**(§0 결속
+  HEAD==`65cf2635`·계약 blob==65cf2635·개발계획 blob==0528a919 무변경·하니스 :4664-4764 `957bf49d…` · §1
+  `s24-proof-e1.py`: hunk 5개(+5/-5) 여집합 6구간 sha ∅ / 명명 절 닿음 5[정규화 규칙 :5497·⑬ 행·심사/변경
+  이력·(B) 주] / 닿지 않음 14[정본 대조 도입 문장·서버 스텝·하니스·T-82/T-81·U-17-c·(a)(α)·c_APP·스냅샷 단일
+  방법·UNCHK-008 Phase 0·pre-D0-A 실체화] · 정본 A/B 코드펜스 byte 동일 → 비영향 변이 `3e0f2429` 그대로 · §2:
+  A `|`/folded+빈 줄 BLOB_OK(우연 일치 문언대로) · B `|` BLOB_OK · **B folded `>` → 접힘(`set -euo pipefail
+  printf …` 한 줄) → UNVERIFIED_REVISION(계약 E1 대로 red)** · B folded+빈 줄 → 개행 보존 우연 일치 BLOB_OK(Q-1
+  관측 — fail-open 아님: 관측량은 정본 byte) · B 인라인 `;` red · e2e ACTIVE/0·UR/1·UR/1 · 회귀 7종+⑬g 불변.
+  판정 실행기·술어 sha 는 V221 과 동일(변경 0). **fail-open/문언 신규 0.** GET 1회·서버 쓰기 0)
 
 ## 향후 관행
 
