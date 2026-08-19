@@ -28,13 +28,14 @@
     --exclude=U17-PREVENTION-CHECK-V217.md --exclude=U17-PREVENTION-CHECK-V218.md \
     --exclude=U17-PREVENTION-CHECK-V218-ADDENDUM.md \
     --exclude=U17-PREVENTION-CHECK-V219.md --exclude=U16-LEDGER-CHECK-V219.md \
+    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
   (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md`·
   `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md`·
   `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md`·
-  `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md` 는
+  `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -329,6 +330,27 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   D-3 선-검사 2 «얕은 클론»을 전역 단축으로 읽으면 ⑳ⓑ 대조군이 둘 다 2 → 구별력 상실(두 읽기
   미구별) · D-4/5 한 간선 다수 후보 상태 귀속·«고아» 구조 정의 미정의. 픽스처 = scratchpad 독립
   git 저장소 20개·push/fetch 0)
+- `20260819-074621/U17-PREVENTION-CHECK-V219-ADDENDUM.md` — **v2.19 에라타 `e3ed4e78` S-24
+  addendum**(U-17·U-16 양축 한 파일. §0 결속: HEAD==`e3ed4e78`·워킹트리 blob==에라타 blob·하니스
+  :4598-4698 `957bf49d…`==`d5a8302a`:4589-4689 byte-동일 · §1 `s24-proof.sh` 2층 증명 — ① `git diff
+  -U0 d5a8302a..e3ed4e78` hunk 20개 사이 전 무변경 구간 자동 sha 대조 ∅ ② 리터럴 grep 파생 명명 절
+  대조: 닿지 않음 ∅ 12건[하니스·T-84 행·T-81 행·(b) 전문·(α) 판정 본체·(c) 기계 조건·U-17-c
+  상태표/10단/U-17-d·c_APP 수식·U-16-d 12단·g-단락·a2·h] / 닿음 13건[E1 (a)·E3 C6·E2 (α) 입력우주·
+  [SHALLOW] 4곳·E6 선-검사·E7 U-16-b·E4 T-82 행·심사/변경 이력·(B)] → 비영향 변이는 `90a5ce7d` 그대로
+  결속 · §4 영향 변이 재실행: [E1] 룰셋 양성 ACTIVE/0·classic-only D=∅ ACTIVE/0·**classic-only D≠∅
+  CONTINUITY_UNVERIFIABLE = fail-closed terminal(死분기 아님)** · [E4] ⑱ 정정 문언 NO_ROWS_CLEAR/0 ·
+  [SHALLOW] depth-1 경계에서 D/P_first/P_last→PREVENTION_UNVERIFIABLE·c_APP→PROVENANCE_UNVERIFIABLE(2,
+  대조군 3)·**C_R→PROVENANCE_UNVERIFIABLE(직전 실행기는 NO_ROWS_CLEAR/0 = 신설 축)**·판별 3수단
+  (`--is-shallow-repository`·`.git/shallow`·부모 객체 조회 실패) 기록 · [E3] host 키 일치 불변/불일치
+  **TARGET_MISMATCH**(직전 실행기는 무시)/부재 핀 유일·GET-only 경계 재확인 · [E6] 얕지만 후보 우주 밖
+  → 접지 않음(ACTIVE/NO_ROWS_CLEAR) · [E7] 고아 구조 정의(g6 단독 탈락 → ORDER_INVALID·고아 0)·
+  다수 후보 → 전순서 최소(HEAD_INVALID 8 vs 10 중 8). 전 run rules_missing=∅. **신규 결함 후보**:
+  **N-1 `git replace --graft` 가 [SHALLOW] 판별 3수단을 전부 통과**(`--is-shallow-repository`=false·
+  `.git/shallow` 부재·부모 객체 present)하면서 `%P` 는 가짜 부모 반환 → 같은 seam 에서 LATE(6)→
+  ACTIVE(10) 뒤집힘 = fail-open(제안: `git replace -l` 공집합 또는 `--no-replace-objects` 고정) ·
+  **N-2 `P_last` 다부모 의미(∧/∨) 미규정** — 2-부모 graft 구성에서 ARTIFACT_MUTATED(7) vs ACTIVE(10)
+  극성 갈림(c_APP·C_R·D 는 ∀-부모 명시·P_last 만 비대칭) · N-3~5 관측(전순서 최소 3층 미명시 등).
+  서버 쓰기 0(사후 재조회 동일)·본 저장소 replace ref 0·shallow=false)
 
 ## 향후 관행
 
