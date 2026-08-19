@@ -29,6 +29,7 @@
     --exclude=U17-PREVENTION-CHECK-V218-ADDENDUM.md \
     --exclude=U17-PREVENTION-CHECK-V219.md --exclude=U16-LEDGER-CHECK-V219.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-2.md \
+    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-3.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -36,7 +37,7 @@
   `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md`·
   `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md`·
   `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md`·
-  `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md` 는
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -370,6 +371,23 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   M-4 graft 는 새 커밋 객체(약한 관측) · **M-5 `P_first` 카디널리티 처분 부재**(|P_first|=2 실측·=0 이면
   ∀ 공허참으로 LATE — fail-closed 이나 문언 자리 없음). 서버 쓰기 0(U-16 축 GitHub 조회 0)·본 저장소
   replace 0/grafts 부재/shallow=false)
+- `20260819-074621/U17-PREVENTION-CHECK-V219-ADDENDUM-3.md` — **v2.19 에라타 3차 `f6493d23` S-24
+  addendum**(§0 결속 HEAD==`f6493d23`·하니스 :4614-4714 `957bf49d…`==`ad5be1a3`:4608-4708 · §1
+  `s24-proof-3.sh`: hunk 5개 사이 무변경 구간 ∅ / 명명 절 닿지 않음 ∅ 22건(하니스·T-84/T-82/T-81 행·
+  (a)(b)(α)·C6·U-17-c 전순서/상태표/(c)·U-17-d·D/C_R 참조 자리·c_APP 수식·U-16-d 12단/선-검사/g-단락·
+  a2·h·U-16-b·CORR) / 닿음 5건([E10] [PARENTS-UNTRUSTED] 유일 소스·[E11] P 카디널리티·(B)·이력) · §4:
+  ㉠ 원시 프로브 5구성(평시 일치 / replace·grafts·`GIT_REPLACE_REF_BASE`·`--separate-git-dir` 불일치 —
+  grafts 는 커밋 객체 미변경이라 `cat-file`=진짜·`%P`=가짜 실측) · [E10] replace/grafts/제3 표면
+  REF_BASE 전부 ㉠ 불일치 → UNVERIFIABLE · **separate-git-dir+grafts: v2.19-3 UNVERIFIABLE vs ㉡ 리터럴
+  대조군 PREVENTION_ACTIVE/0·NO_ROWS_CLEAR/0 = 샌다(㉠ 주 판별 실증)** · ⑳ⓑ 후보 우주 안 2/대조군 3 ·
+  얕지만 후보 밖 NO_ROWS_CLEAR/0(「얕음=전역」 대조군 2 = 실패) · 회귀 불변 · [E11] |P_first|=0 부재
+  ABSENT(본 저장소 live)/존재 UNVERIFIABLE · |P_first|=2 ACTIVE·LATE 양방향 결정적 · 상보성 4종.
+  **신규 결함 후보**: **K-1 ㉠(전역)/㉢(국소) 관할 미명시** — 얕은 경계에서도 ㉠ 불일치(재파생 [parent] vs
+  %P []) 성립 → 문자대로 전역 적용하면 E6 국소화·⑳ⓑ 판별력이 다른 경로로 재발(실행기는 «얕은 경계 유래
+  불일치는 ㉢ 소관»으로 읽음) · **K-2 ㉡ «`.git/info/grafts` 부재» 리터럴이 `--separate-git-dir` 에서
+  항상 통과(fail-open)** → `git rev-parse --absolute-git-dir` 파생 필요 · K-3 REF_BASE 실재(㉠ 환경
+  무관·㉡ 은 같은 env 만) · K-4 ㉠ 은 후보 우주에만(후보 밖 grafts 는 무력화로 안 꺼져 잔여 실재 — 정직
+  경계). 서버 쓰기 0·본 저장소 ㉠㉡㉢ 전부 통과)
 
 ## 향후 관행
 
