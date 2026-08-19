@@ -35,6 +35,7 @@
     --exclude=U17-PREVENTION-CHECK-V220.md --exclude=U16-LEDGER-CHECK-V220.md \
     --exclude=U17-PREVENTION-CHECK-V220-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221.md \
     --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-2.md \
+    --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-3.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -47,7 +48,8 @@
   `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`·
   `U17-PREVENTION-CHECK-V220-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221.md`·
-  `U17-PREVENTION-CHECK-V221-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221-ADDENDUM-2.md` 는
+  `U17-PREVENTION-CHECK-V221-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221-ADDENDUM-2.md`·
+  `U17-PREVENTION-CHECK-V221-ADDENDUM-3.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -555,6 +557,14 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   재현)** · 회귀 7종·⑭ mock 불변. **신규 결함 후보 R-1 [fail-open 표면]**: 계약 :5482 «checkout@<40-hex SHA 핀 —
   계약 리터럴»인데 본문에 값 부재 → 형식만 검사 = 임의 포크 커밋 통과 → 에라타 3차 대상 · R-3 잡 키 집합이
   `name` 배제(과잉 차단 방향). 서버 쓰기 0)
+- `20260819-193235/U17-PREVENTION-CHECK-V221-ADDENDUM-3.md` — **v2.21 에라타 3차 `c4d97118` S-24 addendum**
+  (R-1 checkout SHA 핀). §0 결속 HEAD==`c4d97118`·하니스 `957bf49d…` · §1 hunk 6개 무변경 ∅ / 닿음 6[잡 허용 키·
+  템플릿 step ①·⑬ 행·이력·(B)] / 닿지 않음 16 · 정본 A/B 펜스 byte 동일 → 비영향 그대로 · `wfcanon-v221c.py`
+  (`CHECKOUT_SHA_OK={3d3c42e5…}`·`name` 허용) — **핀 SHA 양성 BLOB_OK·e2e ACTIVE/0 · 비-핀 40-hex(임의 포크 형식
+  유효) UR ↔ v221b 대조군 BLOB_OK·e2e ACTIVE/0(R-1 fail-open 실증→닫힘)** · `@v7`/`@main` UR · 잡 `name:` 양성
+  (R-3) · **핀 SHA live 재검증 GET 1회: `repos/actions/checkout/git/ref/tags/v7.0.1` → commit `3d3c42e5…` 계약
+  리터럴과 직접 일치** · 회귀(2차 배터리 18·이식 7·⑭ 5) 불변. 관측 T-3 핀 1원소 = checkout 갱신 시 계약 개정·
+  O-6(의도된 비용). **fail-open/문언 신규 0.** 서버 쓰기 0)
 
 ## 향후 관행
 
