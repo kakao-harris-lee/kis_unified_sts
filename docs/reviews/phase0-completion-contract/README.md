@@ -28,14 +28,15 @@
     --exclude=U17-PREVENTION-CHECK-V217.md --exclude=U17-PREVENTION-CHECK-V218.md \
     --exclude=U17-PREVENTION-CHECK-V218-ADDENDUM.md \
     --exclude=U17-PREVENTION-CHECK-V219.md --exclude=U16-LEDGER-CHECK-V219.md \
-    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md \
+    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-2.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
   (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md`·
   `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md`·
   `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md`·
-  `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md` 는
+  `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md`·
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -351,6 +352,24 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   **N-2 `P_last` 다부모 의미(∧/∨) 미규정** — 2-부모 graft 구성에서 ARTIFACT_MUTATED(7) vs ACTIVE(10)
   극성 갈림(c_APP·C_R·D 는 ∀-부모 명시·P_last 만 비대칭) · N-3~5 관측(전순서 최소 3층 미명시 등).
   서버 쓰기 0(사후 재조회 동일)·본 저장소 replace ref 0·shallow=false)
+- `20260819-074621/U17-PREVENTION-CHECK-V219-ADDENDUM-2.md` — **v2.19 에라타 2차 `ad5be1a3` S-24
+  addendum**(§0 결속 HEAD==`ad5be1a3`·하니스 :4608-4708 `957bf49d…`==`e3ed4e78`:4598-4698 · §1
+  `s24-proof-2.sh` 2층 증명: hunk 14개 사이 무변경 구간 ∅ / 명명 절 닿지 않음 ∅ 17건[하니스·T-84/T-82/
+  T-81 행·(a)(b)(α) 전문·C6·U-17-c 전순서 10단·U-17-d·c_APP 수식·U-16-d 12단·g-단락·a2·h·U-16-b·CORR] /
+  닿음 10건[[E8] [PARENTS-UNTRUSTED] 유일 소스·참조 4곳(D·C_R·P·선-검사)·[E9] U-17-c 상태표 조건·U-16-d
+  머리·(B)·이력] → 비영향 변이는 `90a5ce7d`·`197f4fe4` 그대로 결속 · §4 영향 변이: **[E8] graft** —
+  직전 실행기 ACTIVE/0(fail-open 재현) / CTRL(②무력화만) LATE 유지 / v2.19-2(①+②) UNVERIFIABLE ·
+  `.git/info/grafts` 는 `--no-replace-objects` 로 안 꺼짐 실측 → ① 관측(부재 요구)이 잡음 · U-16 c_APP/
+  C_R(증인 위조) 각각 진실/직전/CTRL/v2.19-2 4뷰 전건 일치 · 정상 회귀 불변(⑳ⓑ 2 vs 3 발산 유지) ·
+  **[E9]** 머지 blob==한 부모 → ∀ ACTIVE vs 직전 ∨ ARTIFACT_MUTATED(극성 차이 실증) · 둘 다 다름 → 머지
+  도입 |P_last|=1 · 형제 동일 blob → |P_last|=2 MUTATED · 2-부모 graft 재실행 결정적(MUTATED→LATE→
+  UNVERIFIABLE) · T-84 ⑨ 유지 · 상보성 4종 정확히 하나. **신규 결함 후보**: **M-1 E8 ① «얕은 클론
+  아님» 항(전역)이 E6 국소 판정과 문언 충돌** — 문자대로면 ⑳ⓑ 판별력·«얕지만 후보 밖» 대조 붕괴(실행기는
+  replace/grafts 전역·얕음 국소로 읽어 회귀 유지) · M-2 ②가 ①을 가리지 않음(무간섭) · M-3 [PARENTS-
+  UNTRUSTED] 판별이 열거형(열린-세계) — 부모 집합 독립 재파생(커밋 객체 parent 헤더 vs %P)이면 닫힘 ·
+  M-4 graft 는 새 커밋 객체(약한 관측) · **M-5 `P_first` 카디널리티 처분 부재**(|P_first|=2 실측·=0 이면
+  ∀ 공허참으로 LATE — fail-closed 이나 문언 자리 없음). 서버 쓰기 0(U-16 축 GitHub 조회 0)·본 저장소
+  replace 0/grafts 부재/shallow=false)
 
 ## 향후 관행
 
