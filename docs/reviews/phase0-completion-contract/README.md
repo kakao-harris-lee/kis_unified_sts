@@ -29,7 +29,7 @@
     --exclude=U17-PREVENTION-CHECK-V218-ADDENDUM.md \
     --exclude=U17-PREVENTION-CHECK-V219.md --exclude=U16-LEDGER-CHECK-V219.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-2.md \
-    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-3.md \
+    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-4.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -37,7 +37,8 @@
   `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md`·
   `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md`·
   `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md`·
-  `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md` 는
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md`·
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -388,6 +389,21 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   항상 통과(fail-open)** → `git rev-parse --absolute-git-dir` 파생 필요 · K-3 REF_BASE 실재(㉠ 환경
   무관·㉡ 은 같은 env 만) · K-4 ㉠ 은 후보 우주에만(후보 밖 grafts 는 무력화로 안 꺼져 잔여 실재 — 정직
   경계). 서버 쓰기 0·본 저장소 ㉠㉡㉢ 전부 통과)
+- `20260819-074621/U17-PREVENTION-CHECK-V219-ADDENDUM-4.md` — **v2.19 에라타 4차 `db6ce918` S-24
+  addendum**(§0 결속 HEAD==`db6ce918`·하니스 :4620-4720 `957bf49d…`==`f6493d23`:4614-4714 · §1
+  `s24-proof-4.sh`: hunk 6개 사이 ∅ / 명명 절 닿지 않음 ∅ 23건(하니스·T 행·(a)(b)(α)·C6·U-17-c·[E11] P·
+  U-17-d·D/C_R 참조·c_APP 수식·U-16-d 12단/선-검사/g-단락·a2·h·U-16-b·CORR) / 닿음 4건([E12·E13]
+  [PARENTS-UNTRUSTED] 블록·(B)·이력) — 4차는 판별 «절차»만 · §4: E13 자기점검 `.git/` 리터럴 u17/u16/
+  하니스 0건 · 파생 프로브 3배치(일반 상대·separate-git-dir 절대·얕은 클론 `--git-path shallow`==HEAD) ·
+  **[E13] separate-git-dir+grafts: 파생 UNVERIFIABLE vs 리터럴 대조군 ACTIVE/0·NO_ROWS_CLEAR/0(샘)** ·
+  [E12] depth-1 ㉢ 3건·전역 0건 → UNVERIFIABLE · 얕은 경계∧replace 병리 = 미검사 창 없음(㉢ 배제→
+  |P_first|=0 fail-closed + ㉡ 독립 전역, 두 겹) · ⑳ⓑ 안 2/대조군 3·밖 NO_ROWS_CLEAR/0(「전역」 대조군 2)
+  · [K-4] `merge-base --is-ancestor` 는 grafts 를 기본·`--no-replace-objects`·env 3종 모두 따름(잔여
+  확증)·replace 는 꺼짐 · 정상 회귀 불변. **신규 결함 후보**: **L-1 [fail-open 잔존] `git rev-parse
+  --git-path` 는 일반 배치에서 상대 경로 반환 — E13 이 결합 기준(cwd=저장소 루트 또는 `--absolute-git-dir`
+  결합)을 적지 않아 저장소 밖 cwd 에서 `[ -f ]` 거짓 ABSENT → ㉡ 통과**(실행기는 cd/gitpath 결합으로 회피)
+  · L-2 K-4 잔여를 완화하는 유일 항이 ㉡ 인데 L-1 로 새면 곱해짐 · L-3 하니스 예외 조항 덮는 것 0건 ·
+  L-5 `U17-PU㉢`/`U17-PU㉠` 분리 방출로 절차 감사 가능. 서버 쓰기 0·본 저장소 ㉠㉡㉢ 통과)
 
 ## 향후 관행
 
