@@ -31,7 +31,7 @@
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-2.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-4.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-5.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-6.md \
-    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-7.md \
+    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-7.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-8.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -41,7 +41,8 @@
   `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md`·
-  `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md` 는
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md`·
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -441,7 +442,24 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   ACTIVE/0 · NO_ROWS_CLEAR/0(도달 가능한 fail-open 실증)** → grafts+E15 판정기 PREVENTION_UNVERIFIABLE/
   PROVENANCE_UNVERIFIABLE(차단) · 조상성 뒤집힘 실측(`merge-base --is-ancestor` rc 1→0·`--no-replace-
   objects` 하에서도 0 = K-4 잔여). §0 에서 addendum-6 §4 «fail-open reproduced»·§5 «신규 0건/arc closed»
-  철회 명시(addendum-6 은 (4d) 불변). 이 파일은 «아크 종결·신규 0» 을 주장하지 않는다. 서버 쓰기 0)
+  철회 명시(addendum-6 은 (4d) 불변). 이 파일은 «아크 종결·신규 0» 을 주장하지 않는다. **⚠ U-16 축 ㉠ 침묵
+  증명이 graft «전» 후보 집합(`C_R=[]`)을 기록 — stop-time BLOCK #6 → addendum-8 이 graft «후» 실행기 실호출
+  추적으로 대체(6de2472 포함 전건 일치·결론 유지).** 서버 쓰기 0)
+- `20260819-074621/U17-PREVENTION-CHECK-V219-ADDENDUM-8.md` — **addendum-7 ㉠ 침묵 증명 대체 — graft «후»
+  실행기 실호출 추적(stop-time Codex BLOCK #6 채택)**. 계약 무변경(`359f5bc5`·하니스 :4631-4731 `957bf49d…`).
+  addendum-7 U-16 축이 후보 집합을 graft «전» 에 드라이버 독립 재계산으로 기록(`C_R=[]`)했으나 실제 뮤턴트는
+  `C_R={6de2472…}` 를 소비 — 결함 시인·철회. 대체: PATH shim 으로 실행기가 실제 호출한 `git cat-file commit
+  <x>` 를 추적(addendum-7 픽스처 사본 `fx82k/silent`·HEAD 동일·grafts 원문 동일) → U-16 뮤턴트 graft 후 고유
+  x 4(`6de2472` R 리뷰어 도입·`76f2cad9` CN·`cc9f2dbb` A·`f05cb2b0` M) **cat-file 부모 == %P 전건 일치** ·
+  U-17 도 같은 결함이라 재실행(3건 전건 일치) · 신규 픽스처 재실행 graft 전==후 집합·전건 일치. `6de2472`
+  경위: C_R 은 간선별이라 정직 이력에서도 edge#2(M)는 이미 `C_R={6de2472}` — addendum-7 의 `[]` 는 graft
+  효과가 아니라 드라이버 `rev-list CN` 단일 열거 범위 오류. 상태값(정직/뮤턴트/판정기): U-16 PROVENANCE_
+  UNVERIFIABLE/1 → **NO_ROWS_CLEAR/0(fail-open)** → PROVENANCE_UNVERIFIABLE/1 · U-17 LATE/1 → **ACTIVE/0** →
+  UNVERIFIABLE/1(a7 사본·신규 픽스처 양쪽). **결론 (a): ㉠ 자연 침묵 성립 → 뮤턴트 green 은 결합 base 한 줄
+  단일 변수 효과 — R-1(옛 결합 = 도달 가능한 fail-open) 유지·존재 증명이며 전칭 아님·«아크 종결» 주장 없음.**
+  부수: grafts 는 ㉠ 대상 집합을 바꾸지 않고 조상성만 뒤집음(K-4/L-2 직접 실측) · git 2.38 `info/grafts` 폐기
+  예고(향후 `replace --convert-graft-file`) · 교훈 «실행기가 소비한 집합 주장은 실행기 관측으로 — 검증자
+  독립 재계산은 대조군이지 근거 아님». live 조회 0·서버 쓰기 0)
 
 ## 향후 관행
 
