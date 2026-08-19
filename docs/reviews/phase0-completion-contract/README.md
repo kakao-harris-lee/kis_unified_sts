@@ -32,6 +32,7 @@
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-4.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-5.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-6.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-7.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-8.md \
+    --exclude=U17-PREVENTION-CHECK-V220.md --exclude=U16-LEDGER-CHECK-V220.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -42,7 +43,7 @@
   `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md`·
-  `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md` 는
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -470,6 +471,28 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   부수: grafts 는 ㉠ 대상 집합을 바꾸지 않고 조상성만 뒤집음(K-4/L-2 직접 실측) · git 2.38 `info/grafts` 폐기
   예고(향후 `replace --convert-graft-file`) · 교훈 «실행기가 소비한 집합 주장은 실행기 관측으로 — 검증자
   독립 재계산은 대조군이지 근거 아님». live 조회 0·서버 쓰기 0)
+- `20260819-135916/U17-PREVENTION-CHECK-V220.md` — **v2.20 T-84 ⑬abc·⑭ + (b)③ 구조 파싱 8픽스처 + 서버
+  steps[] mock 5종 + 회귀 ⑤⑨⑩⑪⑫** 실행 기록(v2.19 재심 스탬프 sibling·비규범 부속·**S-24 결속 동결
+  `3d17ea66`**[계약·개발계획 blob==동결·후속 커밋 0·하니스 :4654-4754 `957bf49d…`]. 실행기 `u17-verify-v220.sh`
+  `67d636ce…`+`wfstruct-v220.py` `792aaa1e…`(YAML→steps[].run→셸 토크나이즈→명령 위치/대조 피연산자·서버
+  `actions/runs/{run_id}/jobs` steps[] 이름·conclusion). ⑬ 기준선 ACTIVE/0 · **⑬a echo 인자·⑬b trailing 주석
+  → UNVERIFIED_REVISION(v2.19 실행기는 ACTIVE/0 = 닫은 자리)** · ⑬c `|| true` 미검출=ACTIVE(계약 정직 경계
+  대로) · ⑭ 서버 verify 스텝 부재/failure/잡 failure → UNVERIFIED_REVISION(v2.19 는 ACTIVE/0) · (b)③ 8/8·
+  mock 5/5 · 회귀 전건 일치 · 본 저장소 live PREVENTION_ABSENT(아티팩트 부재). **관측(에라타 후보)**: M-3
+  «명령 위치(첫 단어)» 문언이 관용 `bash tools/tos_entry_harness.sh` 를 배제 → 정상 워크플로 과잉 차단(문언·
+  fail-closed 극성) · M-1 스냅샷 진입 후 «캐시된 결합 base» 재사용 = 거짓 ABSENT(실행기 계보 — 계약 :7115-7119
+  에 «스냅샷 안 재파생» 명시 제안) · M-5 스텝 «이름» 층은 name 위조에 열림(계약 자인). 서버 쓰기 0)
+- `20260819-135916/U16-LEDGER-CHECK-V220.md` — **v2.20 격리 스냅샷 기층 위 전 규칙 실행기 — T-82 ⑮⑯⑱⑳ⓐⓑⓒ +
+  회귀 ⑰ⓐⓑⓒ⑲⑪ + U-17 축 스냅샷** 손 실행 기록(비규범 부속·S-24 결속 `3d17ea66`. `u16-full-exec-v220.py`
+  `b90920bd…`: `git clone --no-local --no-hardlinks`+GIT_NO_REPLACE_OBJECTS=1·청정성 canary(refs/replace ∅·grafts
+  부재·㉠ 일치) 방출·rules_missing=∅. **⑮ R∥A ORDER_INVALID / g6 생략 대조군 NO_ROWS_CLEAR·0(실패 실증)** ·
+  ⑯ 선형·⑱ 병렬 NO_ROWS_CLEAR/0(edge_seq 소비 대조군 MALFORMED 영구 차단) · ⑳ⓐ MALFORMED(v2.15 사전순 최소
+  대조군 통과) · ⑳ⓑ PROVENANCE_UNVERIFIABLE(g1-first 대조군 3) · **⑳ⓒ TOCTOU: 스냅샷 없음 NO_ROWS_CLEAR·0
+  (fail-open 재현) / 스냅샷 PROVENANCE_UNVERIFIABLE·1 = 정직 기준선 동일** · 정직 경계 (a) grafts orphan → clone
+  rc=128 → UNVERIFIABLE · U-17 축 원본 graft `P⋠d` rc 1→0(--no-replace-objects 로도 0) vs 스냅샷 rc=1 유지·
+  canary 청정 · 회귀 5/5. **관측**: N-1 :7124-7125 «㉠==%P 항상 성립 canary» vs E12(얕은 원본은 스냅샷도
+  얕음 상속 → 문자 구현 대조군이 참 사유 |c_APP|=0 을 «기층 오염»으로 덮음 — 양쪽 fail-closed) · M-2 스냅샷
+  비용 본 저장소 151초(.git 89M·2,228커밋). 계약 문언 fail-open 신규 0. 서버 쓰기 0)
 
 ## 향후 관행
 
