@@ -31,6 +31,7 @@
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-2.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-4.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-5.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-6.md \
+    --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-7.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -40,7 +41,7 @@
   `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md`·
-  `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md` 는
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -427,8 +428,20 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   (fail-open 재현) vs E15 PREVENTION_UNVERIFIABLE/PROVENANCE_UNVERIFIABLE(차단)·동등 대안(cwd=루트) 동일 차단 ·
   separate-git-dir 절대 그대로 차단 · **linked worktree: `--git-path` 는 common-dir 기준 절대 → 공유 grafts
   정확 지시(결함 아님)** · 정상 회귀 cwd 무관 · 부재 판정 극성 감사표(«부재→차단» 6항 / «부재→통과» 3항 —
-  ㉡ replace -l·㉡ grafts·㉢ shallow 목록 — 만 거짓 부재가 fail-open = E15 대상 정확). **[fail-open/차단]
-  신규 0건.** 서버 쓰기 0)
+  ㉡ replace -l·㉡ grafts·㉢ shallow 목록 — 만 거짓 부재가 fail-open = E15 대상 정확). **⚠ §4 «fail-open
+  재현»·§5 «신규 0건/아크 종결» 은 stop-time Codex BLOCK #5 로 철회** — 뮤테이션이 2변수(나쁜 결합 + ㉠ 실패
+  제거)라 나쁜 결합 «만으로» green 이 실증되지 않았음(자체 픽스처가 ㉠ 불일치 보고). 재실증은 addendum-7.
+  서버 쓰기 0)
+- `20260819-074621/U17-PREVENTION-CHECK-V219-ADDENDUM-7.md` — **addendum-6 §4 대체 — 단일 변수 뮤턴트
+  (stop-time Codex BLOCK #5 채택)**. 계약 무변경(`359f5bc5` 결속 유지·하니스 :4631-4731 `957bf49d…`).
+  **㉠ 자연 침묵 픽스처**: grafts 로 후보 우주 «밖» 커밋(U-17 워크플로만 있는 `W`·U-16 리뷰어/원장 없는
+  `H0`)의 부모만 재작성 → ㉠ 대상 집합 원문(cat-file 부모 == %P 전건 일치·«남는» 전역 불일치 0) → ㉡ 이
+  유일 가드(K-4/L-2 자리) · **단일 변수 diff 1행**(`--show-toplevel` → `--absolute-git-dir` 결합 base 만) ·
+  **결과**: 정직 이력 U-17 LATE(6)/U-16 PROVENANCE_UNVERIFIABLE(2, C_R=∅) → grafts+뮤턴트 **PREVENTION_
+  ACTIVE/0 · NO_ROWS_CLEAR/0(도달 가능한 fail-open 실증)** → grafts+E15 판정기 PREVENTION_UNVERIFIABLE/
+  PROVENANCE_UNVERIFIABLE(차단) · 조상성 뒤집힘 실측(`merge-base --is-ancestor` rc 1→0·`--no-replace-
+  objects` 하에서도 0 = K-4 잔여). §0 에서 addendum-6 §4 «fail-open reproduced»·§5 «신규 0건/arc closed»
+  철회 명시(addendum-6 은 (4d) 불변). 이 파일은 «아크 종결·신규 0» 을 주장하지 않는다. 서버 쓰기 0)
 
 ## 향후 관행
 
