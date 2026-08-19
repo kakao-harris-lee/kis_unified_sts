@@ -33,6 +33,7 @@
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-5.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-6.md \
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-7.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-8.md \
     --exclude=U17-PREVENTION-CHECK-V220.md --exclude=U16-LEDGER-CHECK-V220.md \
+    --exclude=U17-PREVENTION-CHECK-V220-ADDENDUM.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -43,7 +44,8 @@
   `U17-PREVENTION-CHECK-V219-ADDENDUM-2.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-3.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-4.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-5.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md`·
-  `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md` 는
+  `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`·
+  `U17-PREVENTION-CHECK-V220-ADDENDUM.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -493,6 +495,19 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   canary 청정 · 회귀 5/5. **관측**: N-1 :7124-7125 «㉠==%P 항상 성립 canary» vs E12(얕은 원본은 스냅샷도
   얕음 상속 → 문자 구현 대조군이 참 사유 |c_APP|=0 을 «기층 오염»으로 덮음 — 양쪽 fail-closed) · M-2 스냅샷
   비용 본 저장소 151초(.git 89M·2,228커밋). 계약 문언 fail-open 신규 0. 서버 쓰기 0)
+- `20260819-135916/U17-PREVENTION-CHECK-V220-ADDENDUM.md` — **v2.20 에라타 `ae842cce` S-24 addendum**(§0
+  결속 HEAD==`ae842cce`·계약 blob==ae842cce·개발계획 blob==3d17ea66 무변경·하니스 :4654-4754 `957bf49d…` · §1
+  `s24-proof-ae.py`: hunk 7개(+7/-7 인라인) 여집합 8구간 자동 sha 대조 ∅ / 명명 절 닿음 7[(b)③ 실행 위치·⑬
+  행·스냅샷 정직 경계 (b)·canary ㉢·심사/변경 이력·(B) 주] / 닿지 않음 13[하니스·T-82/T-81 종수·U-17-c·(a)·
+  c_APP 수식·스냅샷 단일 방법·서버 스텝 대조·㉠ 주 판별·E12·U-16-d·⑬c] → 비영향 변이 `d101eb63` 그대로 ·
+  §2: **ⓐ** `bash tools/…`·`./tools/…`·`env bash`·`/bin/bash`·`sh -e` 전부 BLOB_OK·e2e PREVENTION_ACTIVE/0 /
+  echo·printf·cat 인자 red(⑬a) / `python tools/…`(집합 밖) red · **ⓑ** 스냅샷 안에만 grafts 심는 shim — 캐시
+  base 는 canary `no`(거짓 ABSENT)·㉠-불가시 오염에서 LATE(정직값·오염 신호 상실) vs 재파생 판정기 canary `yes`
+  → UNVERIFIABLE(㉡ 단독 발화) — U-17/U-16 동형 · **ⓒ** 얕은 원본→스냅샷에서 ㉠ 불일치 ㉢ 국소 귀속(사유
+  |c_APP|=0) vs 문자 구현 «기층 오염» 오귀속 실증 · 회귀 ⑬a·⑭·⑮·⑯ 불변. **관측**: A-1 M-1 «fail-open»
+  정밀화 — 유효 오염은 ㉠가 독립 검출하므로 종단 fail-open 은 ㉡ 유일 검출자 케이스(㉠-불가시)에서만 · A-2
+  `--git-path` 는 `git -C <절대>` 에서도 상대 반환(ⓑ 문언이 둘 다 덮음). **fail-open/차단·문언 신규 0.**
+  GET 1회(`x-github-request-id` 병기)·서버 쓰기 0)
 
 ## 향후 관행
 
