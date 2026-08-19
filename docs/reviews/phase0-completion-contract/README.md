@@ -27,12 +27,14 @@
     --exclude=U17-PREVENTION-CHECK.md --exclude=U15-ENTRY-CHECK-V216.md \
     --exclude=U17-PREVENTION-CHECK-V217.md --exclude=U17-PREVENTION-CHECK-V218.md \
     --exclude=U17-PREVENTION-CHECK-V218-ADDENDUM.md \
+    --exclude=U17-PREVENTION-CHECK-V219.md --exclude=U16-LEDGER-CHECK-V219.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
   (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md`·
   `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md`·
-  `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md` 는
+  `U17-PREVENTION-CHECK-V218.md`·`U17-PREVENTION-CHECK-V218-ADDENDUM.md`·
+  `U17-PREVENTION-CHECK-V219.md`·`U16-LEDGER-CHECK-V219.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -293,6 +295,40 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   선언 키 부재 → ① INSUFFICIENT(핀 유일 소스)·gitlab 원격 → 원격 축 TARGET_MISMATCH·선언 있음
   비-default → MISMATCH 불변 / 본 저장소 ABSENT. 하니스 == feb91d60 byte-동일·GET-only·서버
   설정 무변경. 신규 결함 후보 없음(contents >1MB `content` 부재 처리 독해 1건))
+- `20260819-074621/U17-PREVENTION-CHECK-V219.md` — **v2.19 T-84 ⑪·⑫ + 연속성 소비자 (a)~(f)
+  + 회귀 ③⑤⑨⑩** 실행 기록 (비규범 부속 — v2.18 재심 스탬프 sibling. **S-24 결속: 동결
+  `d5a8302a`**[워킹트리 blob == 동결 blob·계약 후속 커밋 0·하니스 :4589-4689 `957bf49d…`].
+  실행기 `u17-verify-v219.sh` = v2.18e 파생: 모든 `gh api` 에 `--hostname github.com`(핀 파생)
+  + `GH_HOST` 재핀 + `gh auth status --hostname` 사전 확인 · 연속성 소비자(룰셋 created/updated_at
+  vs `t_land`=min merged_at·classic-only·삭제-재생성) · U-17-c 10값/10단. **⑫ live**:
+  `GH_HOST=example.invalid` 전체 실행 → 상태 문자열까지 기준선과 동일 `PREVENTION_INSUFFICIENT`,
+  GH_DEBUG 요청 host 6/6 `api.github.com` / 대조군(`--hostname` 제거·diff 4행) → `example.invalid`
+  `/api/v3/…` → `PREVENTION_UNVERIFIABLE`. **⑪ SIMULATED**(캡처 seam): (a) 정상 ACTIVE/0 ·
+  (b) off→merge→on CONTINUITY_UNVERIFIABLE[직전 판 실행기는 ACTIVE 통과 = 닫힌 자리] ·
+  (c) 삭제-재생성 · (d) classic-only[직전 판 통과] · (e) direct-push UNVERIFIED_REVISION 선발화 ·
+  (f) committer-date 무시. 회귀 ③ ACTIVE seam·⑤/⑩ live TARGET_MISMATCH ×4·⑨ ARTIFACT_MUTATED
+  전건 일치. 본 저장소 live `PREVENTION_ABSENT`/1(±override 동일). **관측 보고(에라타 후보)**:
+  D-1 classic 보호를 룰셋과 동등 disjunct 로 둔 :5220-5236 이 :5443(classic-only 판정 불가)+
+  :5504(ACTIVE 논리곱)와 충돌 → `D≠∅` 이면 classic 경로 ACTIVE 도달 불가(死분기 — v2.18 ③-b
+  classic 양성이 red 로 뒤집힘) · D-2 `t_land` 가 (b) 실패 시 미정의 · D-3 본 저장소 룰셋 1건
+  disabled = 적용 0 · D-4 타 host ACTIVE 위조는 GET-only 라 직접 실증 불가 · D-5~7 gh 2.93.0
+  에서 `--hostname` 이 `GH_HOST` 를 이김(이중 결속 구별 불가)·`responder=file:` auth 전제·아티팩트
+  `host` 키 처분 미규정. 서버 쓰기 0(사후 재조회 동일))
+- `20260819-074621/U16-LEDGER-CHECK-V219.md` — **v2.19 T-82 ⑱(현행 스키마)·⑳ⓐⓑ + 회귀
+  ⑯⑰ⓐⓑⓒ⑲⑮⑪·자인 잔여** 손 실행 기록 (비규범 부속 — S-24 결속 동결 `d5a8302a`. **S-23 전 규칙
+  실행기** `u16-full-exec-v219.py`: U-16-d 12단 전순서 + 선-검사 1~4 → g-단락 5~11 문자 구현 ·
+  `rules_executed=` 13 규칙 전 run `rules_missing=∅` · c_APP 구조 집합(capp) 실행. ⑱-1 현행
+  스키마(같은 row_id·다른 승인 행·형제 도입→merge) NO_ROWS_CLEAR/0·두 행 |c_APP|=1 · **⑱-2 계약
+  :2927 리터럴 «별개 row_id» 픽스처는 APPROVAL_MALFORMED/1 — 기대와 정반대(에라타 후보 D-1)** ·
+  ⑳ⓐ 형제 동일 행 |c_APP|=2 → APPROVAL_MALFORMED / 대조군(v2.15 «사전순 최소») NO_ROWS_CLEAR
+  = 통과=실패 실증 · ⑳ⓑ 얕은 클론 |c_APP|=0∧g1 위배 → PROVENANCE_UNVERIFIABLE(2) / 대조군
+  («g1 먼저»·diff 1행) APPROVAL_MALFORMED(3) = 2 vs 3 발산 실증 · 회귀 전건 동일(⑰ⓑ UNBOUND=E2).
+  **관측 보고(에라타 후보)**: D-2 :6917-6920 «루트(부모 없음) 공허참 자동 포함»이 얕은 클론
+  경계와 진짜 루트를 구별하지 않아 리터럴 파생에서 `--depth 1` 이 |c_APP|=1 → ⑳ⓑ 전제 불성립
+  (경계=«부모 미상»으로 읽어야 0; **동형 정의 C_R·D·P_first/P_last 전부 같은 단서 필요**) ·
+  D-3 선-검사 2 «얕은 클론»을 전역 단축으로 읽으면 ⑳ⓑ 대조군이 둘 다 2 → 구별력 상실(두 읽기
+  미구별) · D-4/5 한 간선 다수 후보 상태 귀속·«고아» 구조 정의 미정의. 픽스처 = scratchpad 독립
+  git 저장소 20개·push/fetch 0)
 
 ## 향후 관행
 
