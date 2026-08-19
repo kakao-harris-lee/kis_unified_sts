@@ -117,6 +117,19 @@ strategy config -> backtest -> tracking/optimization -> paper/live validation ->
   3. Registry wiring and focused unit tests.
   4. Backtest or paper validation artifacts when behavior changes materially.
 
+## Development Discipline (operator directive, 2026-08-19)
+
+- **Research first, then plan, then implement.** Before building any feature:
+  1. Survey libraries, frameworks, and standard tools that already solve the
+     problem (official docs first — `document-specialist` / Context7).
+  2. Check what this repo already implements (`shared/`, `tos/`, `tools/`,
+     `services/`) — reuse or extend before writing new surfaces.
+  3. Write the plan (reuse targets, rejected alternatives with a one-line
+     reason, minimal new surface), get it adjudicated (`codex-gate`), then
+     implement.
+- **Do not reinvent the wheel.** A bespoke parser/tokenizer/checker is the
+  last resort, not the first move; prefer proven tooling and existing modules.
+
 ## Development Commands
 
 ```bash
