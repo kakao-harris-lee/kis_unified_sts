@@ -7,18 +7,18 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: c037e48c8a8f85d486261fc270b81c1c1708ea52a31c583cb369418f212c5814
+bound_set_digest: 6817421ae6c07bcc69b5a609cb54fa65866ede72c32dbde4cdae5494f00f13ef
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
-requesting_plan_version: v2.18
+requesting_plan_version: v2.19
 contract: 해당 계획 §12.3.1 (6e 산출 계약)
 authority: 운영자 (this repository's corpus owner)
 
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 47bb796651d5bf166df1eb622b78f96884963863
+decided_at_head: fc1395c168885d0503f70e0766069120080980f3
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -302,6 +302,36 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > 승인했다(2026-08-19). `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측
 > HEAD(`47bb7966…`)다. **귀속은 대화 수준이며 리포-단독 재검증 불가**다.
 > countersign 미행사는 거부가 아니다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-19, v2.19 내용)**: 직전 재결속(v2.18
+> 내용, `81d532ff`)의 승인은 레인 B v2.18 재심(high 3/medium 3 — F1·F2·F4
+> 부분해소·F3 해소(계약 수준)·F5 회피·신규 GH_HOST host 미결속·두 결속 계획
+> 충돌, 정본
+> `docs/reviews/phase0-completion-contract/20260819-074621/verdict.md`)을 반영한
+> **v2.19 개정으로 만료**됐다(O-6 정상 거동). 이 재결속은 v2.19 의 **6차 에라타
+> 재동결 내용**(`359f5bc5` — 최초 동결 `d5a8302a` 후 증거 `90a5ce7d` 와 S-24
+> addendum 들이 매 판 계약 결함을 적발해 에라타 `e3ed4e78`→`ad5be1a3`→
+> `f6493d23`→`db6ce918`→`eddbd241`→`359f5bc5` 로 재동결; 마지막 판은
+> stop-time Codex BLOCK #4(E14 `--absolute-git-dir` 결합 = 거짓 ABSENT 로 ㉡ 통과
+> = fail-open)를, 그 뒤 addendum-7/8 은 증거의 2변수 뮤테이션·graft-전 후보 집합
+> 결함(BLOCK #5/#6)을 반영; 재결속 없는 중간 판은 승인 표면을 가진 적이 없다)에
+> 대해 수행됐다. 실행 증거는 같은 스탬프의 `U17-PREVENTION-CHECK-V219.md`·
+> `U16-LEDGER-CHECK-V219.md` 와 S-24 addendum 1~8
+> (`U17-PREVENTION-CHECK-V219-ADDENDUM{,-2,…,-8}.md` — 마지막 `a54676db`)에
+> 있다. v2.19 는 개발계획 개정안을 §12.3.3 (D) 에 verbatim 으로 수록만 하고
+> 개발계획 자체는 편집하지 않았다(운영자 게이트).
+>
+> 매핑 내용(①②③, EV-L6 확장분 포함)은 **무변경**이다. 이전 결속값은 이 문단이
+> 역사로 보존한다:
+> `bound_set_digest c037e48c8a8f85d486261fc270b81c1c1708ea52a31c583cb369418f212c5814`
+> · `requesting_plan_version v2.18` ·
+> `decided_at_head 47bb796651d5bf166df1eb622b78f96884963863`.
+>
+> **권위 기록 (정직 표기 — 동일 형식)**: 세션이 종료 보고에 결속값 `6817421a…`
+> 와 갱신 필드 3종을 명시했고, 운영자가 "진행"으로 승인했다(2026-08-19).
+> `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측 HEAD(`fc1395c1…`)다.
+> **귀속은 대화 수준이며 리포-단독 재검증 불가**다. countersign 미행사는
+> 거부가 아니다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
