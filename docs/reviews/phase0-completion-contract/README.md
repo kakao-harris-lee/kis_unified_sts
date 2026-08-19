@@ -34,7 +34,7 @@
     --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-7.md --exclude=U17-PREVENTION-CHECK-V219-ADDENDUM-8.md \
     --exclude=U17-PREVENTION-CHECK-V220.md --exclude=U16-LEDGER-CHECK-V220.md \
     --exclude=U17-PREVENTION-CHECK-V220-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221.md \
-    --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM.md \
+    --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-2.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -47,7 +47,7 @@
   `U17-PREVENTION-CHECK-V219-ADDENDUM-6.md`·`U17-PREVENTION-CHECK-V219-ADDENDUM-7.md`·
   `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`·
   `U17-PREVENTION-CHECK-V220-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221.md`·
-  `U17-PREVENTION-CHECK-V221-ADDENDUM.md` 는
+  `U17-PREVENTION-CHECK-V221-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221-ADDENDUM-2.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -542,6 +542,19 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   printf …` 한 줄) → UNVERIFIED_REVISION(계약 E1 대로 red)** · B folded+빈 줄 → 개행 보존 우연 일치 BLOB_OK(Q-1
   관측 — fail-open 아님: 관측량은 정본 byte) · B 인라인 `;` red · e2e ACTIVE/0·UR/1·UR/1 · 회귀 7종+⑬g 불변.
   판정 실행기·술어 sha 는 V221 과 동일(변경 0). **fail-open/문언 신규 0.** GET 1회·서버 쓰기 0)
+- `20260819-193235/U17-PREVENTION-CHECK-V221-ADDENDUM-2.md` — **v2.21 에라타 2차 `7adc1246` S-24 addendum —
+  stop-time Codex BLOCK #7 대응**(«스텝만 정본 대조 → `defaults.run.shell: "true {0}"` 가 정본 스텝 보존·미실행·
+  success; V221 실행기가 defaults 미검사»). §0 결속 HEAD==`7adc1246`·하니스 `957bf49d…` · §1 hunk 5개 무변경
+  ∅ / 닿음 6[(b)③ 잡 템플릿·정직 경계·⑬ 행·이력·(B)] / 닿지 않음 15 · 정본 A/B 펜스 byte 동일 → 비영향
+  `3e0f2429`·`83f12afd` 그대로 · **실행기 `u17-verify-v221b.sh`/`wfcanon-v221b.py` — `job_template()` 신설**
+  (ALLOWED_JOB_KEYS {runs-on, steps}·RUNS_ON_OK·ON_OK {pull_request, push}·PERM_OK {contents: read}·워크플로
+  defaults/env 부재·steps 정확히 3·checkout 40-hex) · blob 18종 0 불일치: **⑬h defaults.run.shell 워크플로/잡/
+  working-directory → UR ×3(V221 스텝만 술어는 BLOB_OK ×3)** · ⑬i 선행 GITHUB_PATH 스텝·후행 스텝·순서·checkout
+  @v4·checkout 누락 → UR ×5 · ⑬j container/self-hosted/잡 env/워크플로 env/matrix/잡 uses/permissions write-all/
+  on workflow_dispatch → UR ×8 · **e2e: ⑬h v221b UR/1 ↔ 같은 seam V221 실행기 PREVENTION_ACTIVE/0(BLOCK 실행
+  재현)** · 회귀 7종·⑭ mock 불변. **신규 결함 후보 R-1 [fail-open 표면]**: 계약 :5482 «checkout@<40-hex SHA 핀 —
+  계약 리터럴»인데 본문에 값 부재 → 형식만 검사 = 임의 포크 커밋 통과 → 에라타 3차 대상 · R-3 잡 키 집합이
+  `name` 배제(과잉 차단 방향). 서버 쓰기 0)
 
 ## 향후 관행
 
