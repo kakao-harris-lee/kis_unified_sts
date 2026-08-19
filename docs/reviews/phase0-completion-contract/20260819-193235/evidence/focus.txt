@@ -1,0 +1,30 @@
+먼저 `CLAUDE.md` 를 읽어라 (비협상 규칙 :21-36, 85-87, 104-107 등). 이것은 **재심**이다 (레인 B · 계획 심판).
+
+심사 대상 (계획 문서 2건 — 코드 아님 · **이번 판은 두 문서 모두 개정됨**):
+- `docs/plans/2026-08-12-tos-phase0-completion-contract-design.md` (v2.20 에라타 재동결 `ae842cce`, 7,494행)
+- `docs/plans/2026-08-11-tos-completion-development-plan.md` (운영자 지시로 계약 §12.3.3 (D) ①②③ verbatim 적용 `3d17ea66`, 579행 — Phase 0 «선행 조건(D0-A 착수 전): 예방 통제 활성» 신설·Phase 1 작업 7 tos-gate 분리·Phase 1 종료조건 «U-17 연속성 유지»·헤더 개정 주석)
+
+직전 판정 (v2.19 재심): `.omc/review/20260819-135916/verdict.md` — needs-attention, findings 5 (high 3 / medium 2), 채택 5/기각 0: #1 U-17 (b)③ 두 리터럴 grep = 문자열 존재 인증(high) · #2 U-16-a2 «(g1~g5)» 닫힌 열거가 g6 제외(high) · #3 [PARENTS-UNTRUSTED] ㉡ 1회 관측 vs 조상성 소비 TOCTOU(high) · #4 F4 부분 — T-82 ⑯ 폐지 edge_seq 입력(medium) · #5 #6 미해소 — 개발계획 Phase 1 작업 7/종료조건 vs 계약 D0-A 선행조건(medium · 운영자 게이트). 직전 처분 집계: host·F2·F5 해소(아크 누적 8)·F1·F4 부분·회피 0.
+
+**1순위 지시**: 직전 findings 5건이 v2.20 에서 **실제로 해소**되었는지 vs **회피**(조건 완화·문구만·대조군 무력화·부분 표면 실행기·산문 주장 대체)되었는지 finding 별로 "해소됨 / 부분해소 / 미해소 / 회피" 판정 + 근거 file:line. 특히 **#5(#6)** 는 이번에 처음으로 «두 결속 문서가 같은 선행관계를 규정한 상태»에서 심사된다 — 개발계획 :255-300 과 계약 U-17/(D) :4437~ 를 함께 읽고 순환 의존이 실제로 해소됐는지 판정하라. §12.3.3 (A) :4321 = v2.19 판정 리터럴, (B) :4342 = v2.20 «주장»(«어느 것도 해소로 세지 않는다»), (D) :4437 = 적용됨.
+
+경위 (저작자 주장 — 심판이 검증할 것): 재결속 `be0cbc95` → v2.19 재심 `e71827d1` → v2.20 저작 → 운영자 지시(2026-08-19 "개발계획 개정안을 적용 진행") → 독립 검증(실행 픽스처 A~H: 구조 파싱 8픽스처·서버 steps[] mock·g6 생략 소비자·격리 스냅샷 6축+TOCTOU·⑯/⑱ 한 실행기·개발계획 diff↔(D) byte 대조 — 차단 FAIL 0·회피 0; by1/by2b/by3 우회 재현→(b)③ 문언 정직화) → 마감 4건 → 동결 `3d17ea66`(계약+개발계획) → 증거 `d101eb63`(`docs/reviews/phase0-completion-contract/20260819-135916/U17-PREVENTION-CHECK-V220.md` 3,280행·`U16-LEDGER-CHECK-V220.md` 2,077행 — ⑬a/b·⑭ 가 v2.19 실행기에선 ACTIVE/0 였던 자리 차단·⑳ⓒ 스냅샷 없음 fail-open 재현/스냅샷 정직·g6 생략 대조군 오승인·본 저장소 PREVENTION_ABSENT) → 에라타 `ae842cce`(ⓐ 실행 위치에 인터프리터 리터럴 집합의 첫 비-옵션 인자 허용[`bash tools/…` 과잉 차단 정정]·ⓑ 스냅샷 안 재파생·ⓒ canary ㉢ 선-제외) → S-24 addendum `29baafcc`(절 범위 2층 증명·영향 변이 전건 일치·신규 0) → INDEX `522b5fbd` → 재결속 `c00d808e`. 하니스 §12.3.4-R byte-identical(`957bf49d…`, :4654-4754)·T-81 19/T-82 20/T-84 14·U-17-c 10값·U-16-d 12단.
+
+v2.20 이 5건에 대해 주장하는 처분 (변경 이력 :208, (B) :4342-):
+1. **#1 (b)③ (high)**: :5440~5480 — 두 리터럴 grep → **구조 검증**: YAML 파서로 `jobs.*.steps[].run` 만 추출 → 셸 토크나이즈(full-line/trailing 주석 제거·`bash -n`) → 하니스 경로 `tools/tos_entry_harness.sh` 가 «실행 위치»(단순 명령 첫 단어 ∪ 계약 고정 인터프리터 집합 bash/sh/zsh/dash/ksh/절대경로/env 의 첫 비-옵션 인자; echo/printf/cat 인자 배제) · sha256 리터럴이 «대조 피연산자»(grep/`[[ == ]]`) + **서버 잡 `steps[]` 대조**(`actions/runs/{run_id}/jobs` — 계약 리터럴 스텝 이름 `tos-gate: run harness`·`tos-gate: verify harness sha256` × `conclusion==success`). 정직 경계 :5382~5391/:5470~5477: 서버 기록은 이름·결론만·`|| true`/`set +e` 런타임 무효화 미검출·스텝 이름 위조 열림 — «위조 비용 올리되 닫지 못한다». T-84 ⑬(a echo 인자·b trailing 주석 = 검출 / c `|| true` = 미검출 정직 경계)·⑭(서버 스텝 부재/실패 → UNVERIFIED_REVISION). 12→14종.
+2. **#2 a2 (high)**: :6812~ «(g1~g5)» 제거 → «U-16-g 전 항» 전칭 + g6 명시 + T-82 ⑮ «g6 생략 소비자 = red». 활성 닫힌 열거 잔존 0 주장.
+3. **#3 TOCTOU (high)**: :7099~7200 — **격리 스냅샷 기층**: 조상성·부모·원장 blob 을 소비하는 모든 판정은 `git clone --no-local --no-hardlinks <원본> <스냅샷>` + `GIT_NO_REPLACE_OBJECTS=1` 위에서(진입 시점 HEAD·대상 브랜치 ref 핀; `git bundle` 은 대안 아님 — `--all` 이 refs/replace/* 유출) — grafts/replace 는 직렬화되지 않고 커밋 객체는 내용주소라 스냅샷에 거짓 조상성 없음·grafts 가 참 부모를 고아화하면 clone 실패(fail-closed)·스냅샷 청정성 canary(refs/replace ∅·grafts 부재·㉢ 국소 귀속 후 ㉠==%P)·스냅샷 안 재파생(에라타) · ㉡ 은 «원 저장소 관측»으로 격하 · K-4 재작성: «닫힘»이 아니라 잔여 종류가 바뀜(후보 우주 사각 → 전송 충실도·스냅샷 생성 실패는 fail-closed·판정 소비자 자기 환경 위조는 계약 밖). T-82 ⑳ⓒ(interleaving 불변)·T-84 ⑨ 확장.
+4. **#4 ⑯ (medium)**: T-82 ⑯ 현행 스키마(edge_seq 미기재·소비자 표시용 파생·선형 NO_ROWS_CLEAR·⑱ 병렬과 상보).
+5. **#5/#6 (medium)**: 개발계획에 (D) ①②③ 적용(운영자 지시) — (D) :4437 «적용됨»·(B) 는 «해소 계수 아님·주장».
+
+실행 증거: 위 `…/20260819-135916/U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`·`U17-PREVENTION-CHECK-V220-ADDENDUM.md`(에라타 S-24: 절 범위 증명 + ⓐⓑⓒ 재실행; 관측 A-1 «M-1 fail-open 은 ㉡ 유일 검출자 케이스만 종단 fail-open»). 실제 소비자(`--check`)는 D0-A 이후 — 손 실행기 증거.
+
+신규 결함도 찾아라 — 특히: (a) (b)③ 구조 술어의 남은 우회(토크나이저 정의의 결정성 — 어떤 토크나이저? heredoc·문자열 내 `#`·멀티라인·YAML 앵커/표현식 `${{ }}`·composite action/reusable workflow 로 하니스 호출을 다른 파일에 두는 경우·matrix/`if:` 로 스텝 skip[conclusion=skipped]·스텝 이름 중복) (b) 서버 steps[] 대조의 식별(어느 run/job? run_id 파생 경로·재실행(re-run) 시 최신 attempt 선택 규칙·`conclusion` 어휘) (c) 격리 스냅샷 문언의 결정성(`--no-local` 이 없으면? 원본이 bare/worktree/shallow 면? 스냅샷 경로·수명·재사용 금지·`GIT_NO_REPLACE_OBJECTS` 가 clone 자체에도 적용되는지·clone 이 `refs/replace/*` 를 기본 fetch 하지 않는다는 git 버전 의존 가정과 canary 의 관계) (d) U-17 연속성 소비자·(a)(α) 등 v2.19 이전 술어와 스냅샷 기층의 상호작용(live 조회는 스냅샷 밖 — 경계 명시?) (e) 두 결속 문서의 선행관계가 이제 일치하는지 — 개발계획 Phase 0 «선행 조건» 이 계약 U-17 의 구체 술어와 동일 대상(룰셋·app_id·tos-gate.yml·스텝 이름)을 가리키는지·개발계획의 다른 절(§3 G1·§6 Phase 6 등)에 남은 모순 (f) S-20/S-22(종수·§0 요약·심사 이력·변경 이력·(A)(B)(D)·§8·§11·같은 셀 형제 항목 ⑬abc/⑭·⑮⑯⑱⑳) (g) 정직 경계 서술 정합(«닫힌다/봉합/구조로 닫는다» 표현이 잔여 경계와 충돌하는 자리).
+
+계획 심사 기준 7종 전부 적용: (1) 단계 순서·의존성 (2) 숨은 가정 (3) 검증 가능성 (4) 실패·롤백 (5) 범위 이탈·과잉 설계 (6) CLAUDE.md 비협상 규칙 충돌 (7) 누락.
+
+비협상 대조 목록(배치 권고는 오케스트레이터가 기각): 선물 long/short 대칭·실계좌 증거금/실물 선물 주문 경로 전제·주식 EOD 일괄청산·ClickHouse 신규·RL/TFT 부활·하드코딩·Redis DB 1 이탈/TTL 없는 키·비KST 세션 로직.
+
+리비전 결속: 오케스트레이터 포착 HEAD `c00d808e` · plan_scope_digest `f64d9fb23d5ee08f0527e72992bda4b719a13fa1c83e68530e91a8a05f4524c6` · bound_set_digest `9cf4ec7430d064043bf8db8d30728b01942bd018fd5ca117de82b82f014b1f7d`(`OQ-11-DISPOSITION.md:10` 일치 · requesting_plan_version v2.20 · decided_at_head 522b5fbd). 커밋 순서 `3d17ea66`(동결·두 문서)→`d101eb63`(증거)→`ae842cce`(에라타 재동결·계약만)→`29baafcc`(addendum)→`522b5fbd`(INDEX)→`c00d808e`(재결속) 확인.
+
+계획을 다시 쓰지 마라. 개정안을 제시하지 말고 결함과 근거만 지적하라. 침묵은 통과가 아니다 — 7 기준 각각 «해당 없음»이면 그렇게 명시하라.
