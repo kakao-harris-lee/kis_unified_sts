@@ -35,7 +35,7 @@
     --exclude=U17-PREVENTION-CHECK-V220.md --exclude=U16-LEDGER-CHECK-V220.md \
     --exclude=U17-PREVENTION-CHECK-V220-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221.md \
     --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-2.md \
-    --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-3.md \
+    --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V222.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
@@ -49,7 +49,7 @@
   `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`·
   `U17-PREVENTION-CHECK-V220-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221.md`·
   `U17-PREVENTION-CHECK-V221-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221-ADDENDUM-2.md`·
-  `U17-PREVENTION-CHECK-V221-ADDENDUM-3.md` 는
+  `U17-PREVENTION-CHECK-V221-ADDENDUM-3.md`·`U17-PREVENTION-CHECK-V222.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
 
 ## 두 위치의 역할
@@ -584,6 +584,20 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   (R-3) · **핀 SHA live 재검증 GET 1회: `repos/actions/checkout/git/ref/tags/v7.0.1` → commit `3d3c42e5…` 계약
   리터럴과 직접 일치** · 회귀(2차 배터리 18·이식 7·⑭ 5) 불변. 관측 T-3 핀 1원소 = checkout 갱신 시 계약 개정·
   O-6(의도된 비용). **fail-open/문언 신규 0.** 서버 쓰기 0)
+- `20260820-184748/U17-PREVENTION-CHECK-V222.md` — **v2.22 동결 `8ec22754` T-84 실행 증거**(5,214행).
+  S-24 결속 실측(두 blob == 동결·후속 커밋 ∅·하니스 `957bf49d…`) · **추출 충실성 4/4 첫 시도 일치**
+  (선행 판 §11 펜스 → v2.21 네 스크립트 sha 동일 = 이 판 «v2.21 대조군» 주장의 근거) · **blob 배터리 83
+  픽스처 기대(사전 기입)≠실측 0건**(양성 12·차단 71 · v2.21 이 `BLOB_OK` 를 내던 자리 55 · v2.22 신규
+  폐쇄 43 · ⑬a~g·NBSP·inline 회귀 0) · 9항 전건 실행: per-d 결속 반례·진입 `D=∅` 비-vacuity 음양쌍·
+  C-1 두 순서/시퀀스 내부/정직 워크플로 발산 0(`construct` 대조군은 오검출)·F#1 3축 + **자기수복 하니스
+  런타임 반사실(부작용 관측)**·anchor·`<<`·파서 버전·값 핀 3종·**동명 decoy 3케이스 = 케이스 ② 를
+  `PREVENTION_ACTIVE` 로 «잔여» 실증(닫힘 표기 0)** · **역방향 fail-open 사냥 뮤테이션 25종 → 뒤집힘 19/
+  불변 7(전건 이중·삼중 무력화로 벨트 귀속) = 죽은 검사 0·신규 fail-open 0** · T-84 **14종 불변**
+  (`4+2+4+2+2` · 이번 대조군은 전부 ⑬⑭ 하위) · 잔여 15건 등재 · **에라타 후보 12건(high 4: EC-1 `if:`
+  허용 분기가 닫힌 키 집합과 충돌해 도달 불가[v2.14 `G4` 사코드 분기 클래스] · EC-7 정직한
+  `on: [pull_request, push]` 이 (b)② «정확히 1» 과 충돌해 과잉 차단 · EC-8 «정본 잡 템플릿» 에 코드펜스
+  부재 = 비교 피연산자가 재-파생 · EC-9 순환 alias 순회에 종료 보장·«미종료» 상태값 부재[방문집합 없는
+  순회 12초 미종료 실측·`yq` 자신 stack overflow·v2.21 은 우연한 fail-closed])** · GET-only·서버 쓰기 0)
 
 ## 향후 관행
 
