@@ -6,17 +6,26 @@
 > **문서 성격**: 비규범 설계 문서. RFC/ADR 비준, ADR acceptance, Evidence `PASS`,
 > restricted-live/production authorization을 부여하지 않는다.
 > **권한 상태**: `restricted_live=NOT_AUTHORIZED`, `production=NOT_AUTHORIZED` 불변.
-> **버전**: v2.21 (2026-08-19) — 이 필드가 현행 버전의 **유일 소스**다.
+> **버전**: v2.22 (2026-08-20) — 이 필드가 현행 버전의 **유일 소스**다.
 > **미래 지향 필드**(재심 대상·다음 착수 전제·절차표 "현재 위치")는 리터럴 대신
 > "현행 버전"으로 참조하고, **완료·이력 기록**(아래 심사 이력 표·변경 이력·
 > 판정 기록)은 리터럴로 고정한다(S-11·S-12).
-> **심사 상태**: 직전 판(v2.20)의 레인 B 재심 판정은 **`needs-attention` · `NOT_PASSED`**
+> **심사 상태**: 직전 판(v2.21)의 레인 B 재심 판정은 **`needs-attention` · `NOT_PASSED`**
+> (findings 4 — **high 2 / medium 2**, 전건 채택·기각 0). 직전 2건 처분은
+> **#1 회피(2연속) · #2(#5/#6) 부분해소(3연속)** — **신규 해소 0 · 아크 누적 해소 11 «불변»**.
+> `CLAUDE.md` 비협상 직접 충돌 **없음**(14판 연속). **S-20 종수 14 일관 확인.**
+> 신규 2건: **① F#2 (high·신규 결함 클래스) — 검증의 두 층이 서로 다른 객체를 식별한다**(blob = 잡 id ·
+> 서버 = 표시 이름; **직전 에라타 3차의 R-3 완화가 잡 `name` 을 자유 문자열로 열어 분리 가능해졌다**) ·
+> **② F#4 (medium·R-1 재발 클래스) — «닫힌 집합»·«핀»이라 적고 값을 두지 않은 자리**(`permissions`·
+> `runs-on`·checkout `with`·YAML 파서). 그리고 **#1 은 «순서» 결함**이다 — 정본이 [체크아웃 → 하니스
+> 실행 → sha256 검증] 이라 **자기수복 하니스가 잡 «안»에서 ACTIVE 를 만든다**(결정적 반례).
+> 정본 `docs/reviews/phase0-completion-contract/20260820-082830/verdict.md`.
+> **v2.22 저작은 독립 비평 레인에서 `REVISE`(CRITICAL 1 · MAJOR 8 · MINOR 5 · 전건 채택)를 받아
+> 5라운드 델타 재검증을 거쳤다**(회피 0 연속 5라운드). 그 반증 기록은 §12.3.3 (A)/(B) 에 있다.
+> (참고 — 직전 판정 이력) v2.20 재심은
 > (findings 2 — **high 1 / medium 1**, 전건 채택·기각 0). 직전 5건 처분은
 > **#1 회피 · #2 a2 해소 · #3 격리 스냅샷 해소 · #4 ⑯ 해소 · #5/#6 부분해소** —
 > **아크 누적 해소 11**(a2 g6·격리 스냅샷·⑯ = 9·10·11 번째). **회피 1**(#1). 신규 결함 클래스 0.
-> 신규 2건: **① #1 회피 — 구조 파서+서버 스텝이 «토큰 존재·이름/conclusion»만 인증**(`|| true`·`set +e`·
-> `false && bash tools/…` 도달 불가 호출도 `PREVENTION_ACTIVE`·high) · **② #5/#6 부분 — 활성 UNCHK-008
-> `owner_track` 이 여전히 `Phase 1`·U-17 하니스 «D0-A 산출물» 표기라 비순환 생산 순서 부재**(medium).
 > 정본 `docs/reviews/phase0-completion-contract/20260819-193235/verdict.md`.
 > (참고 — 직전 판정 이력) v2.19 재심은
 > (findings 5 — **high 3 / medium 2**, 전건 채택·기각 0). 직전 6건 처분은
@@ -31,8 +40,9 @@
 > (참고 — 직전 판정 이력) v2.14 재심은
 > (findings 5 — **high 3 / medium 2**, 전건 채택·기각 0). 직전 3건 처분은
 > **#1·#2 부분해소 · #3 «회피»(아크 최초)**, 신규 2(복수 D0A-FIRST·`row_ref` 비단수).
-> **수렴 기록**: findings **6 → 3 → 3 → 2 → 2 → 3 → 3 → 3 → 5 → 6 → 5 → 2**,
-> **해소 누적 11**, **새 결함 클래스 0**, **비협상 충돌 0 이 13판 연속**.
+> **수렴 기록**: findings **6 → 3 → 3 → 2 → 2 → 3 → 3 → 3 → 5 → 6 → 5 → 2 → 4**,
+> **해소 누적 11**, **새 결함 클래스 1**(v2.21 재심 F#2 — 두 층이 다른 객체를 식별),
+> **비협상 충돌 0 이 14판 연속**.
 > 정본 `docs/reviews/phase0-completion-contract/20260819-002145/verdict.md`.
 > (참고 — 직전 판정 이력) v2.13 재심은
 > (findings 3 — **high 2 / medium 1**, 전건 채택·기각 0). 직전 3건 처분은
@@ -127,7 +137,8 @@
 > | **v2.18** | **`needs-attention` · `NOT_PASSED`** — findings 6 (**high 3 / medium 3**), **전건 채택, 기각 0**. 직전 5건 처분: **F1 부분해소 / F2 부분해소 / F3 해소됨(계약 수준) / F4 부분해소 / F5 «회피»** — **아크 누적 해소 5**(F3 = 다섯 번째). 신규 2건: **정본 host 미결속**(host 없는 `gh api` 조회 — `GH_HOST` override 로 타 host 응답이 `PREVENTION_ACTIVE` 가능·high) · **두 결속 계획 Phase 0/1 선행관계 충돌**(운영자 게이트·medium). 잔여 F1 은 «보호 off→머지→재활성» 창을 어느 술어도 소비 안 함 + 처분표 (B) 가 «완료 가능성 자체를 막는다»로 과대주장 · F2 는 D0A-FIRST 절이 `diff-filter=A` 규범 잔존 · F4 는 `T-82 ⑱` 입력이 폐지된 `edge_seq` 기재 · F5 는 `c_APP` 단수 정의 잔존. 동결 `5f4b7cfd` → 증거 `7a146466` → 에라타 재동결 `feb91d60` → S-24 addendum `540ff0e3` → 재결속 `81d532ff`. `docs/reviews/phase0-completion-contract/20260819-074621/verdict.md` |
 > | **v2.19** | **`needs-attention` · `NOT_PASSED`** — findings 5 (**high 3 / medium 2**), **전건 채택, 기각 0**. 직전 6건 처분: **F1 부분해소 / #2 host 해소됨 / F2 해소됨 / F4 부분해소 / F5 해소됨(계약 수준) / #6 미해소** — **아크 누적 해소 8**(host·F2·F5 = 6·7·8 번째·회피 0). `CLAUDE.md` 비협상 직접 충돌 **없음**(12판 연속). 신규 high 3(의미 정합 실패): **① U-17 (b)③ 워크플로 blob 두 리터럴 grep**(주석/미사용 값에 심어도 통과) · **② U-16-a2 폐쇄 «(g1~g5)» 가 현행 g6 제외** · **③ [PARENTS-UNTRUSTED] ㉡ TOCTOU**(graft 부재 관측이 조상성 소비와 미결속). medium 2: **④ F4 부분(T-82 ⑯ 폐지 `edge_seq` 잔존)** · **⑤ #6 미해소(운영자 게이트)**. 동결 `d5a8302a` → 증거 `90a5ce7d` → 에라타 6회(최종 `359f5bc5`) → S-24 addendum 8회(최종 `a54676db`) → 재결속 `be0cbc95`. `docs/reviews/phase0-completion-contract/20260819-135916/verdict.md` |
 > | **v2.20** | **`needs-attention` · `NOT_PASSED`** — findings 2 (**high 1 / medium 1**), **전건 채택, 기각 0**. 직전 5건 처분: **#1 회피 / #2 a2 해소 / #3 격리 스냅샷 해소 / #4 ⑯ 해소 / #5/#6 부분해소** — **아크 누적 해소 11**(a2 g6·격리 스냅샷·⑯ = 9·10·11 번째·회피 1). `CLAUDE.md` 비협상 직접 충돌 **없음**(13판 연속). 신규 결함 클래스 0·S-20 종수 불일치 0. 신규 2: **① #1 회피 — 구조 파서+서버 스텝이 «토큰 존재·이름/conclusion»만 인증**(`|| true`·`set +e`·도달 불가 호출도 ACTIVE) · **② #5/#6 부분 — UNCHK-008 owner_track `Phase 1`·U-17 하니스 «D0-A 산출물» 비순환 순서 부재**. 동결 `3d17ea66` → 증거 `d101eb63` → 에라타 `ae842cce` → addendum `29baafcc` → 재결속 `c00d808e`. `docs/reviews/phase0-completion-contract/20260819-193235/verdict.md` |
-> | **v2.21** | **재심 미착수.** v2.20 판정 2건(#1 U-17 (b)③ 회피 — «정본 대조» 재설계[1차 (iii) AST 는 독립 검증 C FAIL] · #2 #5/#6 비순환 생산 순서)을 반영한 판이며, **개발계획에 하니스 파일 실체화 한 줄 추가**(운영자 승인 (D) 개정의 연장). **동결(`0528a919`) → 증거(`3e0f2429` — 정본 대조 22픽스처 0 불일치·문언 에라타 ⓐ 적발) → 에라타 재동결 → **stop-time BLOCK(`65cf2635` — ⓑ 잡 수준 실행 무력화)** → 에라타 2차(정본 «잡 템플릿» 확장) → **addendum-2(`5954b22d` — ⓒ 체크아웃 SHA fail-open R-1)** → 에라타 3차(`actions/checkout` SHA 리터럴 핀) → 운영자 재결속(현행 사이클)** 대기다. 재결속 전에는 심사를 요청하지 않는다(§12.3.2) |
+> | **v2.21** | **`needs-attention` · `NOT_PASSED`** — findings 4 (**high 2 / medium 2**), **전건 채택, 기각 0**. 직전 2건 처분: **#1 회피(2연속) / #2(#5/#6) 부분해소(3연속)** — **신규 해소 0 · 아크 누적 해소 11 «불변»**. `CLAUDE.md` 비협상 직접 충돌 **없음**(14판 연속). **S-20 종수 14 일관**(심판·오케스트레이터 독립 실측 일치). 신규 2: **① F#2 (high) 신규 결함 클래스 — blob 층은 잡 id·서버 층은 표시 이름으로 골라 «두 층이 다른 객체를 식별»**(직전 에라타 3차의 R-3 완화가 연 자리) · **② F#4 (medium) R-1 재발 클래스 — «닫힌 집합»·«핀»이라 적고 값 부재**(`permissions`·`runs-on`·checkout `with`·YAML 파서 4자리). 그리고 **#1 은 «순서» 결함**(체크아웃 → 실행 → 검증이라 자기수복 하니스가 잡 «안»에서 ACTIVE). 동결 `0528a919` → 증거 `3e0f2429` → 에라타 `65cf2635`/`7adc1246`/`c4d97118` → addendum `83f12afd`/`5954b22d`/`b5afa6f6` → 재결속 `93522c09`. **디스패치 기록**: 채택 잡 이전 3회 시도가 환경 결함으로 실패했고 그중 2회차가 `Turn interrupted` 부분 산출로 «findings 0» 모양을 냈다 — **«판정 불능 = 실패이지 통과가 아니다»가 실제 회피 경로임이 이번 실행에서 실증**됐다. `docs/reviews/phase0-completion-contract/20260820-082830/verdict.md` |
+> | **v2.22** | **재심 미착수.** v2.21 판정 4건(#1 회피 2연속 — 정본 스텝 «순서 반전» · #2 부분해소 3연속 — `u17-verify` pre-D0-A 소유 + 진입 비-vacuity · F#2 신규 high — 두 층 객체 결속 · F#4 medium — 값 전수 핀)을 **전건 반영**한 판이며, **개발계획 §6 선행조건에 `u17-verify` 실체화 + 도입 순서 추가**(운영자 승인 (D) 개정의 «연장» — (D) ②″·①′). 저작 전 **독립 비평 레인 `REVISE`**(CRITICAL 1 · MAJOR 8 · MINOR 5 · 전건 채택 · 5라운드 델타 재검증 · 회피 0) 반영. **동결 → 증거(F#1 순서 반전 3축·C-1 두 순서·진입 `D = ∅` 비-vacuity·per-d 결속 반례) → 에라타 → addendum → O-6 재결속 → 레인 B 재심** 대기다. 재결속 전에는 심사를 요청하지 않는다(§12.3.2). **재결속 전 D0/P-0 착수 금지** |
 >
 > **[v2.7 갱신 — 6e 는 "고쳐졌다가 다시 만료되는" 축이다]** 아래 v2.1·v2.4 서술은
 > **당시 상태의 기록**이며 현행 상태가 아니다. **6e 를 "완료/미완료"의 1회성 축으로
@@ -210,6 +221,7 @@
 | v1.1 | §3.0 신설 — 해당 작업이 `acd45c43`에서 수행돼 `15d48f72`에서 팬텀 할당으로 revert된 이력 확인 |
 | v1.2 | 심판 10건 반영. §3.0 인용에 사실 오류(F-1), §6.3이 선행 구현 누락(F-5), §4.2가 없는 열 참조(F-3) |
 | v1.3 | 재심 8건 + **운영자 결정 2건** 반영. **F-2를 "회피"로 판정받아 30/30을 거버넌스 트랙으로 정식 이관**. Phase 0 범위를 기계 검사 가능 축으로 축소하고 **불가 축을 §13 레지스터로 명시 노출**. T-3c 공집합 결함 수정 |
+| **v2.22** | **v2.21 재심 판정 4건(high 2 / medium 2) 전건 반영. 직전 처분은 «#1 회피(2연속) · #2(#5/#6) 부분해소(3연속) · 신규 2(F#2·F#4)» 이고 신규 해소 0·아크 누적 해소 11 불변이다.** 저작 전 **독립 비평 레인 `REVISE`**(CRITICAL 1 · MAJOR 8 · MINOR 5)를 전건 채택하고 **5라운드 델타 재검증**(회피 0 연속 5라운드)을 거쳤다. ① **#1 (high, 회피 2연속) — 정본 스텝 «순서 반전»**: `steps` = [① 체크아웃 · ② **정본 B(sha256 검증)** · ③ **정본 A(하니스 실행)**]. 쓰기 가능한 체크아웃에서 **비승인 하니스가 실행 후 자기 파일을 정본 바이트로 복원하고 exit 0** 하면 v2.21 순서로는 두 스텝 success·blob 정본 유지 → `PREVENTION_ACTIVE`(승인 바이트 미실행·**잡 «안»** 결정적 반례라 v2.21 정직 경계 미포섭). 검증이 앞이면 `set -euo pipefail` 하에서 ② 비-0 → ③ 미도달이라 «검증된 바이트 == 실행된 바이트»가 **순서로** 성립한다. **정본 A/B 코드펜스의 내용·스텝 이름 리터럴은 byte 불변**(바뀐 것은 순서뿐이고 «A/B»는 식별 라벨이다). 닫힘은 **순서 + 3축 + C-1 의 «합»**: (축 1) 전 스텝 `if:` 부재/`success()` 계열 — 명시 `if:` 는 **암묵 `success()` 게이트를 대체**한다(실측 반례: 실패 스텝 뒤 스텝이 실행된 run 실재) (축 2) 전 스텝 `continue-on-error` **키 부재** (축 3) `SHELL_OK` 리터럴 3값. ② **C-1 (비평 CRITICAL·동결 차단) — 문서 «전 노드» 중복 키 검출**: 잡 «안»에 `steps:` 를 두 번 두면 `jobs` 개수·`keys\|unique`·`json.loads` last-wins 가 **전부 통과**해 `BLOB_OK`(판정 #1·#2 동시 재개방·잡-안·blob-안). PyYAML `yaml.compose()` 노드 순회로 **모든 매핑 노드**(최상위·중첩·**시퀀스 원소 `steps[i]`**)를 재귀 검사하고 하나라도 중복이면 `PREVENTION_UNVERIFIED_REVISION`. **키 대조는 compose 키 노드의 `.value`(원시 스칼라) 위에서만·태그/construct 미참조·예외 없음**(`construct`/`safe_load` 비교는 YAML 1.1 키-bool화로 정직한 워크플로를 전부 오검출). 층 분리 = **판정 yq · 중복 검출 compose 보조 통과**이고, **중복 검출 통과 «후»에만** 비교 경로가 진행되므로 `json.loads` 붕괴가 무해하다. GitHub 실제 중복 처리(first/last/error) **미확인에 무의존**(어느 쪽이든 거부 = fail-open→fail-closed). ③ **F#2 (신규 high) — 두 층 객체 결속**: **게이트 체크 이름을 아티팩트 파라미터에서 «계약 리터럴 `tos-gate`»로 이동**(파라미터 선언 3항→2항·핀 규율에 편입·선례 `gate_app_id` 폐지) · **(i-b) 잡 `name` 존재 강제 + 값-핀**(v2.21 에라타 3차 R-3 «자유 문자열»의 **정밀화**이지 되돌림이 아니다; 근거는 «`jobs.<job_id>.name` = UI 표시 이름» **문서확인**이고, `name` 의 형식·유일성 제약은 **문서에 없으며**[«금지 규정 부재»의 확인] `name:` 미지정 fallback 은 **문서 미규정**이라 얹지 않는다) · **(ii) `jobs` 정확히 1개 ∧ 잡 id == `tos-gate`** · **양층 `hit` 유일성**(서버 `len(hit)!=1` → UNVERIFIED). **(iii) check-run↔job 완전 매핑은 «가능하나 불요»**(`check_run_url` 은 jobs 응답의 필수 필드라 정방향 매핑이 가능하다 — v2.21 초안의 «불가능» 근거를 교체한다; 미규정 `job.id == check_run.id` 에는 얹지 않는다). ④ **F#4 (medium, R-1 재발) — 값 전수 핀 5자리 + 파서 + allowlist**: `permissions` **존재 강제 + 정확히 `{contents: read}`**(선언은 닫는 연산이나 **부재 = 리포/조직 기본값**이라 blob 밖·정적 결정 불가) · `runs-on` **허용 리터럴 정확히 2개**(«등» 제거; 라벨 집합 자체는 **열린·이동 집합**이고 `ubuntu-latest` 는 값 고정·환경 이동 — 잔여 등재) · 체크아웃 `with` **정확히 `{fetch-depth: 0, persist-credentials: false}`**(`action.yml` 원본 기본값 `fetch-depth: 1`·`persist-credentials: true` — «생략 = 얕은 클론 + 토큰 잔류»; checkout fetch 는 credential 제거 «전»에 끝나고 하니스는 오프라인·로컬 git 이라 안전) · 파서 **`yq (mikefarah) v4.48.x` 리터럴 + `yq --version` 대조**(불일치 = `PREVENTION_UNVERIFIABLE`) + **`<<` merge key 금지 리터럴** + `on:` 대조군 · **`SHELL_OK` 리터럴 3값**(`{bash, bash -euo pipefail {0}, bash -eo pipefail {0}}` — 생략부호 제거·F#1 축 3 결속 자리) + `timeout-minutes` ≠ 0 + `if:` 허용 집합 · **워크플로 최상위 allowlist `{name, run-name, on, permissions, jobs}`** + `env`/`defaults`/`concurrency` 부재(`name`·`run-name` 은 **최상위 정본 키 집합에 실재**하므로 넣는다; **allowlist 는 anchor 방어가 아니고** anchor 는 yq 확장 + `jobs`=1 이 닫는다). ⑤ **#2 (medium, 부분해소 3연속) — pre-D0-A 소유자 + 진입 비-vacuity**: 개발계획 §6 선행조건에 **`u17-verify` 실행기 실체화**를 넷째로 추가하고 **도입 순서**(`tos-gate.yml`·하니스·`u17-verify` **먼저**, 룰셋 **마지막** — 룰셋 선행 시 워크플로 도입 PR 이 pending 이 되고 유일 탈출구가 «보호 해제 창»이 된다)를 명시((D) ②″·①′ verbatim, **도입 순서의 유일 소스는 그 diff**·S-14). 계약 측은 소비자 정의·가드 체인 절·`UNCHK-008` 도입 집합 4종·예방 산문 2곳·u17-verify 존재 6자리에 **소유자 문언 형제 정합**. 그리고 **[M-7] (b)③ blob 층«에» `D` 무관 무조건 항 `(b-blob)@target` 을 «추가»**(선례 = target 대조의 무조건 항) — **기존 D-지표 사지 `(b-blob)@d`(`?ref=<PR head.sha>`)를 «유지»하며 «대체»하지 않는다**(대체 시 `d` 비정본 착지 후 target 정본 복원 경로가 열려 리비전 무결속·회귀). `(b-blob)@target` 은 `branches/<target_branch>` → `.commit.sha` 를 해석해 **transcript 에 verbatim 수록(필수)** 한 뒤 `?ref=<target HEAD sha>` 로 조회하고, **blob 부재·404 는 기존 `PREVENTION_UNVERIFIED_REVISION` 리터럴을 «승계»**한다(`PREVENTION_ABSENT` 로 접지 않는다 — 그 축은 «보호 부재»이고 전순서 2 vs 8 이 갈린다). ⑥ **M-3 (격하) — (a) 예방 층은 동명 decoy 를 구별하지 못한다**: (a) 술어는 이름·`app_id` 뿐이고 blob 무독이며, 계약 자신이 «다른 워크플로 잡을 `tos-gate` 로 이름 지으면 통과»를 자인한다. ⑧ 3중 결속은 **(b) 사후 탐지**이지 (a) 예방이 아니다 — 3케이스 중 «정본+decoy 둘 다 success» 는 **잔여**다. (b)②에 **path-aware check-run 전수 열거**를 더해 «evil 단독»·«정본 fail + decoy success» 두 케이스는 red 로 만든다. ⑦ **M-1 (격하) — 스킵은 v2.22 의 신규 축이 아니다**: 잡 `if:`/`needs:` 스킵은 **v2.21 잡 허용 키 닫힌 집합이 이미 닫고 있고**, `on` 하위 필터 스킵은 **pending = 차단(fail-closed)** 이라 애초에 열려 있지 않다(→ 초안의 «on bare-only» 핀 **삭제**·근거 소멸). 남는 것은 **blob «밖» 3벡터**(워크플로 API 비활성화·fork PR 승인 게이트·merge queue `merge_group`)이며 **잔여 등재**다. ⑧ **서버 층 하드닝**: 잡 `conclusion` 은 리터럴 `"success"` 만 통과(`skipped`/`neutral`/`cancelled`/`null` 배제 — required-check 계산과 달리 U-17 은 «머지 허용»이 아니라 «게이트 실행»을 묻는다) · **«`steps` = 정확히 3개»는 blob 전용 술어**(서버는 `Set up job`·`Post *`·`Complete job` 자동 삽입이라 blob 3 vs 서버 N). ⑨ **T-84 종수 14 불변 · 내역 병기**(= v2.15/16 4종 ①~④ + v2.17 2종 ⑤⑥ + v2.18 4종 ⑦~⑩ + v2.19 2종 ⑪⑫ + v2.20 2종 ⑬⑭ = **4+2+4+2+2**; S-20 «내역 병기» 규율 이행 — v2.21 까지 합계만 적었다). 신규 대조군은 전부 ⑬·⑭ **하위**: ⑬k 자기수복/역순(반사실 포함) · **⑬l 잡 «내부» 중복 `steps:`(신설)** · ⑬m anchor·allowlist·`<<`·파서 버전 · **⑬n 전 노드 중복 키(신설)** · ⑬i/⑬j 값 검사 엄격화 · ⑭ 확장(`hit` 유일·잡 conclusion·path-aware). **U-17-c 10값·전순서 10단 불변**(전부 기존 `PREVENTION_UNVERIFIED_REVISION` 으로 접힘 — 신규 상태값 0)·§11 불변. ⑩ **부수**: `U-17-d` 대조군 줄의 ⑬ 명명을 v2.20 어휘 «비활성 리터럴»에서 v2.21 재편 «정본 불일치 클래스»로 정정(잔여 S-22 1자리 — 심판 미지적·오케스트레이터 실측). **잔여(격하·정직 등재)**: (a) 동명 decoy · 진입 D-지표 사지 미평가 · blob 밖 스킵 3벡터 · 파서 go-yaml v3 `UNMAINTAINED` 선언 의존 · `fetch-depth` 하니스 정확 필요치(0 vs N·보수적 상위집합) · `persist-credentials: false` 대칭 잔여 · `u17-verify` 자체 sha 미핀(온라인 조회기) · GitHub 내부 실행·「실패 스텝 skip」·「파일대로 실행」·중복 키 실제 처리 신뢰. **재심 절차**: v2.22 동결 → 증거 → 에라타 → addendum → O-6 재결속 → 레인 B 재심. **재결속 전 D0/P-0 착수 금지** |
 | **v2.21** | **v2.20 심판 판정 2건(high 1 / medium 1) 전건 반영. 직전 처분은 «#1 회피 · #2·#3·#4 해소(아크 누적 11) · #5/#6 부분» 이다.** ① **#1 U-17 (b)③ (high, 회피) — 정본 대조 재설계**: v2.20 구조 파서+서버 스텝이 «토큰 존재·이름/conclusion»만 인증해 `|| true`·`set +e`·`false && bash tools/…`·`exit 0; bash tools/…`(선행 종결자) 도달 불가 호출이 전부 `PREVENTION_ACTIVE`. **1차 (iii) 셸 AST 요건은 독립 검증 C FAIL**(B10 `set -euo pipefail; exit 0; bash …`·B11 `exec true`·B12 `[ ] && exit 0` — «선행 종결자»를 「`&&` 피연산자」 규칙이 미포섭·런타임 미실행 실증) → 폐기. **운영자 «바퀴 재발명 금지» 지침(CLAUDE.md Development Discipline) 적용해 «정본 대조»로 재설계**: 게이트 두 스텝 `run:` 을 정규화(CRLF→LF·trailing 공백·빈 줄·full-line 주석 제거) 후 계약 «정본»(정본 A `set -euo pipefail` + `bash tools/tos_entry_harness.sh` / 정본 B `set -euo pipefail` + `printf %s…\n <sha> | shasum -a 256 -c -`)과 byte 대조 — 다르면 UNVERIFIED_REVISION. 정본 대조는 «정본과 다르면 전부»라 exit/exec/가드/서브셸/heredoc/eval/무효화/선행 종결자 전 구문 우회를 «열거 없이» 닫는다(열린→닫힌 세계·S-6). YAML 파싱+byte 대조 = 기존 도구·자작 파서/도달성 분석기 불요. 스텝 메타(shell·continue-on-error·if·timeout)는 닫힌 키 집합. 정본 B 는 sha 불일치 시 `shasum -c` 비-0→`set -euo pipefail` 스텝 실패로 실패 전파 보장(실측 정상 OK/0·변조 FAILED/1). **T-84 ⑬ 재편 = «정본 불일치 클래스»**(⑬a echo·⑬b trailing 주석·⑬c `|| true`·⑬d 도달 불가 호출·⑬e continue-on-error/if·⑬f set +e/trap·**⑬g 선행 종결자**·전부 정본 불일치→UNVERIFIED_REVISION·종수 불변) + 양성(정본 일치) + 정규화 대조군(주석/공백만 다르면 일치). **정직 경계**: 정본 일치 ≠ 런타임 실제 실행(선행 스텝 `PATH`/`env` 조작·GitHub 내부·스텝 이름 위조 — 위조 비용↑·닫지 못함). ② **#2 #5/#6 부분 (medium) — 비순환 생산 순서**: 활성 UNCHK-008 owner_track 이 `Phase 1`·U-17 하니스 경로가 «D0-A 산출물»이라 Phase 0 가 PREVENTION_ACTIVE 를 소비하기 전에 그 축·하니스를 누가 산출·폐쇄하는지 단일 비순환 순서 부재((D) verbatim 적용이 활성 형제 소비처 미전파·S-22). **UNCHK-008 owner_track `Phase 1`→`Phase 0`**(D0-A 착수 전 선행조건·운영자/인프라·U-17 live 검증·문법 n∈0..7 유효·imprecise_owner_track 불변[단일 phase])·산문 2곳(:4975·:5102) 전파 · **U-17 하니스 «D0-A 산출물»→«pre-D0-A 실체화»**(§12.3.4-R 결속값 sha 957bf49d… 파일 실체화·D0-A 착수 «전» 운영자/인프라가 둔다) · **개발계획 Phase 0 선행조건 불릿에 하니스 파일 실체화 한 줄 추가**(운영자 승인 (D) 개정의 «연장»·같은 대상·같은 pre-D0-A 주체·(D) ②′ verbatim 재기록). **S-22 전수**: «D0-A 산출물» 표기 중 하니스 파일(:5462)만 정정(U15-ENTRY-CHECK·config·원장·계약텍스트는 유지)·UNCHK-023(브랜치 보호 계열이나 git 이력 신뢰 별개 축이라 `Phase 1` 유지)·형제 UNCHK 행 재독. **종수 전파(S-20)**: T-84 14 불변(⑬c 검출 전환·⑬d/e/f 는 ⑬ 하위 케이스)·T-82 20·T-81 19·U-17-c 10값·U-16-d 12단 불변. **§12.3.3**: (A)=v2.20 판정 5건 리터럴(회피 1·해소 3·부분 1)·(B)=v2.21 2건 주장(«어느 것도 해소 아님»·#1 실행 증거 동결 후·#2 형제 전파+개발계획 연장)·(D) 갱신(②′ 연장). **하니스 byte-identical(`957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d`·현행 :4664-4764)·`bound_paths` 2건(계약+개발계획) 편집이므로 O-6 재결속 필요.** **[v2.21 에라타 (동결 `0528a919` 후 증거 실행 `3e0f2429` 적발 — 재결속 전이므로 정정 후 재동결·문언·과잉 차단 방향·fail-open 0)]** 증거(`U17-PREVENTION-CHECK-V221.md`)가 정본 대조 22픽스처 기대 불일치 0(⑬a~⑬g·⑬g B10/B11/B12 사멸·정본 B 런타임 OK/FAILED 전파·#2 순서)이되 문언 결함 후보 1건을 적발했다: **ⓐ E1(P-2·문언·과잉 차단)** 정규화 규칙이 YAML 스칼라 «표기»를 미언급 — 스텝 A(2줄)는 folded `>`+빈 줄이면 우연히 일치하나 **스텝 B(단일 파이프라인)를 `>` folded 로 쓰면 두 줄이 접혀 정본 불일치** → 정직한 워크플로도 red. → 정규화 규칙에 «정본 `run:` 은 literal block scalar(`|`) 표기 전제·`>` folded·인라인은 불일치=fail-closed·작성자는 `|` 사용» 명시(극성: 과잉 차단은 «표기 지정»으로 해소·S-15)·T-84 ⑬ 정규화 대조군을 «`|` 표기 + 주석/빈 줄 차이만»으로 정정(folded 는 A 에만 성립·B 불일치 명시). **종수 불변**(문언). **하니스 byte-identical(`957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d`·:4664-4764)·개발계획 무편집·`bound_paths`(계약만) 재동결.** **증거 결속(S-24)**: 이 에라타 재동결도 addendum 으로 이행(절 범위 `git diff` 공집합 + 영향 변이 재실행 — 스텝 A/B `|` 양성·`>` folded→B 불일치(계약대로 red)·A folded+빈 줄 일치 문언 정합). **[v2.21 에라타 2차 (ⓐ 재동결 후 stop-time Codex 심판 BLOCK `65cf2635` 적발 — 재결속 전이므로 정정 후 재동결)]** 심판이 ⓐ 재동결본의 실질 우회를 적발했다: **ⓑ (fail-open — 잡 수준 실행 무력화)** 계약이 `defaults.run.shell` 약화 금지를 «요구»하나 검증 실행기는 `jobs.tos-gate.steps` 만 읽고 defaults 를 검사 안 함 — GitHub 은 워크플로/잡 커스텀 셸 템플릿을 지원하므로 **`defaults.run.shell: "true {0}"` 는 정본 스텝 byte·이름을 보존하며 두 스크립트를 실행하지 않고 success 보고**(공식 문서). → **정본 대조 대상을 «두 스텝 run:»에서 «게이트 잡 객체 전체»(정본 잡 템플릿)로 확장**: 워크플로 `defaults`/`env` 부재·`permissions` 최소·`on` 닫힌 집합 / 게이트 잡 허용 키 닫힌 집합 `{runs-on, steps}`(`container`·`services`·`defaults`·`env`·`strategy`·`uses`·`with`·`secrets` 부재·`runs-on` 닫힌 리터럴) / `steps` 정확히 3(체크아웃 `actions/checkout@<40-hex SHA 핀·태그 금지>`·정본 A·정본 B·순서 고정·추가/선행 스텝 부재). **리서치 우선(운영자 지침)**: `run:` 실행을 바꾸는 정적 in-blob 키 전수(워크플로/잡 `defaults`·잡 `container`·`env`·`runs-on`·`strategy`·`uses`·스텝 `shell`/`env`/`with`/`uses`/`continue-on-error`/`if`/`timeout-minutes`)를 열거하는 대신 «허용 키 닫힌 집합 밖=불일치»로 열거 없이 닫음(S-6·열린→닫힌; 문서 `docs.github.com/…/workflow-syntax`·2026-08-19·D0-A 재실측). **기각 대안**: «defaults 만 추가 검사»(열거형·다음 키 통과·S-6)·«스텝 run 만 정본»(이 BLOCK). **정직 경계 이동**: 정적 in-blob 우회(선행 스텝 PATH/env·defaults·container·composite)는 정본 잡 템플릿이 «구조로» 닫고, 잔여=«잡 밖»(다른 잡 아티팩트/캐시·GitHub 내부·런타임·스텝 이름 위조·checkout 신뢰[SHA 핀]). **T-84 ⑬h**(defaults.run.shell 무력화)·**⑬i**(추가/선행 스텝 PATH 조작)·**⑬j**(container/self-hosted/env) 하위 케이스·양성=정본 잡 템플릿 정확·**종수 14 불변**. **하니스 byte-identical(`957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d`·:4664-4764)·개발계획 무편집·`bound_paths`(계약만) 재동결.** **증거 결속(S-24)**: addendum 으로 이행(절 범위 `git diff` + 영향 변이 — ⑬h/i/j·양성·⑬a~g 회귀). **[v2.21 에라타 3차 (ⓑ 재동결 `7adc1246` 후 addendum-2 `5954b22d`[실행기 잡 템플릿 대조·⑬h V221 대조군 ACTIVE/0 BLOCK 재현·18픽스처 0 불일치] 적발 — 재결속 전이므로 정정 후 재동결)]** addendum-2 가 **R-1 [fail-open 표면]**을 적발했다: **ⓒ E3(R-1)** 정본 잡 템플릿 step ① 을 «`actions/checkout@<40-hex SHA 핀 — 계약 리터럴>`»으로 적었으나 **계약 본문에 그 40-hex 값이 없어** 술어가 «형식(40-hex)만» 검사 = **임의 포크 커밋 SHA 통과**(fail-open — 악성 checkout 액션으로 하니스/파일 오염 가능). → 체크아웃 SHA 를 **계약 리터럴로 핀**: `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1`(**v7.0.1**·허용 SHA 집합 = 이 1개 닫힌 집합·태그/브랜치/다른 SHA 금지·갱신 = 계약 개정·O-6 재결속). **리서치 근거(GET-only 실측 2026-08-19·gh api 재검증 OK)**: `repos/actions/checkout/git/ref/tags/v7.0.1` → `3d3c42e5aac5ba805825da76410c181273ba90b1`(2026-07-17 «prep v7.0.1 release (#2531)»); 참고 v4.2.2=`11bd71901bbe5b1630ceea73d27597364c9af683`·v5.0.0=`08c6903cd8c0fde910a37f88322edcfb5dd907a8`; D0-A 재실측. **극성**: 형식 검사만으로는 임의 포크 커밋이 통과 — 리터럴 핀이 «닫힌 세계»로 닫는다. **R-3(선택·채택)**: 게이트 잡 허용 키에 `name` 포함 → `{name, runs-on, steps}`(문자열 메타·실행 무영향·과잉 차단 완화·⑬j 목록과 정합). **T-84 ⑬i 확장**(비-핀 40-hex/태그/브랜치 → 핀 SHA 불일치·양성 = 핀 SHA). **종수 14 불변**(문언·핀). **하니스 byte-identical(`957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d`·:4664-4764)·개발계획 무편집·`bound_paths`(계약만) 재동결.** **증거 결속(S-24)**: addendum-3 으로 이행(핀 SHA 양성·비-핀 40-hex red·태그 red·`name` 허용 양성). **심사 미판정 — 동결 후 재결속 대기.** 구현 착수 금지 불변 |
 | **v2.20** | **v2.19 심판 판정 5건(high 3 / medium 2) 전건 반영 + 운영자 지시(2026-08-19)로 개발계획 개정 적용. 직전 처분은 «F1·F4 부분해소 · #2 host·F2·F5 해소(아크 누적 8) · #6 미해소» 이고 신규 3 high 는 전부 «의미 정합 실패»다.** ① **#1 U-17 (b)③ (high) — 워크플로 blob 두 리터럴 grep**: v2.19 는 blob 텍스트에 하니스 경로·sha256 두 리터럴이 «존재»하면 검증 스텝 «존재»로 간주해, 주석·미사용 값에 심고 잡은 `true` 만 돌려도 통과했다(심판 메모리 픽스처). **«문자열 존재» → «실행 스텝 구조»로 교체**: (1) blob 을 YAML 파서로 구조 파싱(주석·비-`run` 필드·셸 주석 배제)해 `run harness` 스텝의 `run:` 이 하니스를 «실행 인자»로 호출하고 `verify sha256` 스텝의 `run:` 이 sha256 을 «대조 대상»으로 비교하는지 · (2) 서버 잡 `steps[]`(`actions/runs/{run_id}/jobs`)에 계약 리터럴 스텝 이름(`tos-gate: run harness`·`tos-gate: verify harness sha256`)이 `conclusion==success` 로 실재하는지 대조 — «그 이름의 스텝이 서버에서 실행됐다»는 서버 기록. **정직 경계**: 스텝 이름·결론은 서버 기록이지 «run 내용을 바이트 그대로 실행했다»의 증명이 아니다(GitHub 내부) — 위조 비용을 «올리되 닫지 못한다». T-84 **12→14종**(⑬ 비활성 리터럴 변이·⑭ 서버 스텝 부재/실패) ② **#2 U-16-a2 g6 (high)** — a2 전칭이 «U-16-g 전 항(g1~g5)» 으로 닫힌 열거라 v2.13 신설 `g6` 을 제외해 인접 S-6 전칭 규율과 자기모순(S-22: g6 신설 시 이 괄호에 미전파)했다. **«(g1~g5)» 제거 → «U-16-g 전 항» 전칭**·6822 에 g6 명시 + «g6 생략 소비자는 `R∥A` 승인으로 `APPROVAL_ORDER_INVALID` 우회 → T-82 ⑮ red» 대조·모든 규범 표면 단일 해석(6877 은 이미 g6 포함). 종수 불변 ③ **#3 [PARENTS-UNTRUSTED] TOCTOU (high)** — ㉡ 의 grafts/replace 부재 관측이 «한 시점»이고 이후 조상성 소비(`%P`·`merge-base`)와 «같은 불변 스냅샷»에 미결속이라, 동시 프로세스가 ㉡ 관측 후·조상성 조회 전에 후보 밖 graft 설치·조회 후 제거하면 `LATE`/`ORDER_INVALID` 를 `ACTIVE`/`NO_ROWS_CLEAR` 로 뒤집었다. **극성 논증 후 (ii) 격리 스냅샷 채택**((i) 2회 관측은 «창 좁힘»이지 «닫음» 아님·K-4 도 못 닫음): 조상성·부모·원장 blob 소비 전부를 진입 시점 HEAD 의 «격리 스냅샷»(`git clone --no-local --no-hardlinks` 단일 방법·`GIT_NO_REPLACE_OBJECTS=1`·bundle 대안 아님[`--all`=refs/replace 유출])에서만 수행 — grafts 는 직렬화 안 돼 전송 미전파·replace 는 기본 refspec 미포함·커밋 객체 내용주소라 스냅샷 조상성=참 그래프 → 「관측 후 삽입」 창 «구조적 부재». **K-4(후보 밖 재작성) 포섭**·**㉡ 은 «원 저장소 관측(리뷰 보조)»으로 격하**·스냅샷 안 ㉡ 은 canary. **정직 경계(«닫힌다» 아님)**: 원본 graft 는 스냅샷을 «실패»시킬 뿐 거짓 통과시키지 못함(연결성 검사)·판정 소비자 자신의 환경 위조는 계약 밖 — 잔여의 «종류»가 후보-우주 사각→전송 충실도로 이동. T-82 ⑳ⓒ(interleaving SIMULATED·격리 클론 픽스처)·T-84 ⑨ 확장·종수 불변 ④ **#4 T-82 ⑯ (medium)** — 같은 셀 ⑱ 만 v2.19 가 현행 스키마로 고치고 형제 항 ⑯ 이 «두 간선 각각 `edge_seq` 1·2» 폐지 필드 잔존(S-22 재발·같은 셀). **⑯ 을 현행 스키마로 재기술**(선형 반복 이력·edge_seq 미기재·소비자 `(author date, commit id)` 표시용 파생·`NO_ROWS_CLEAR`·폐지 필드 소비 구현은 정상 반복 이력 영구 차단으로 red)·같은 셀 ⑮~⑳ 전건 재독·⑱ 상보. 종수 불변 ⑤ **#5 #6 두 결속 계획 충돌 (medium, 운영자 게이트 — 적용됨)** — v2.19 까지 계약 verbatim 제안만 수록(개발계획 무편집)이라 결속 문서 미변경 = 미해소였다. **운영자 지시(2026-08-19)로 개발계획을 이 판에서 함께 편집**: Phase 1 작업 7 tos-gate 분리(D)①·Phase 0 «선행 조건(D0-A 착수 전): 예방 통제 활성» 신설(D)②·Phase 1 종료조건 «연속성 유지»(D)③·헤더 개정 주석. 계약 (D) 를 «적용됨»으로 갱신하고 실제 삽입 위치·문안을 (D) 에 재기록(verbatim 사실 일치). **해소 계수 아님**(주장·재결속·재심 전) — 두 문서 재동결→재결속으로 함께 심사. **종수 전파(S-20)**: T-84 12→**14종**(⑬⑭) · T-82 20 불변(⑮ 절·⑯ 재기술·⑳ⓒ 는 종수 불변) · T-81 19 불변 · U-17-c 10값 불변(⑬⑭ 는 기존 `PREVENTION_UNVERIFIED_REVISION` 로 접힘). **§12.3.3**: (A)=v2.19 판정 6건 리터럴 처분(#6 미해소 포함)·(B)=v2.20 5건 주장(«어느 것도 해소 아님»·#6 은 개발계획 개정 적용 주장)·(D)=운영자 게이트 «적용됨». **S-22 스윕**: §0 심사 상태·수렴 기록(해소 8·12판 연속·→5)·심사 이력 v2.19 실판정+v2.20 미착수·(A)(B)(D)·«개발계획 무편집/운영자 소관» 활성 표현 갱신. **하니스 byte-identical(`957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d`)·`bound_paths` 2건(계약+개발계획) 편집이므로 O-6 재결속 필요.** **[v2.20 에라타 (동결 `3d17ea66` 후 증거 실행 `d101eb63` 적발 — 재결속 전이므로 정정 후 재동결·전부 문언·과잉 차단/정합 방향·fail-open 0)]** 증거(`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`)가 기대 전건 일치하되 계약 문언 결함 후보 3건을 적발했다: **ⓐ M-3(문언·과잉 차단)** :5461 «명령 위치(첫 단어)»가 관용 표기 `bash tools/tos_entry_harness.sh`(인터프리터+스크립트 인자)를 배제해 정상 워크플로 red(WF-P6x 대조) → «실행 위치 = 명령 위치 ∪ 인터프리터[`bash`·`sh`·`zsh`·`dash`·`ksh`·절대경로·`env`] 첫 비-옵션 인자»로 정정·`echo` 등 출력 명령 인자는 배제 유지(⑬a)·T-84 ⑬ 기준선 양성(`bash tools/…`) 병기·극성=과잉 차단은 fail-closed 결함(S-15) **ⓑ M-1(실행기 계보→계약 문언 보강)** 격리 스냅샷 진입 후 «캐시된 결합 base»가 원 저장소 경로 검사→«거짓 ABSENT»=E15 재발(증거 실행기는 D-γ 로 수정) → 정직 경계 (b)에 «스냅샷 진입 후 파생 경로(`--git-path`·`--show-toplevel`·grafts/replace canary) 전부 스냅샷 안 재파생·진입 전 값 재사용 금지» 명시 **ⓒ N-1(문언 정합)** :7128 «㉠==%P 항상 성립 canary»가 E12(얕은 경계 국소)와 충돌 — 얕은 원본은 스냅샷도 얕음 상속이라 문자 구현이 참 사유(`|c_APP|=0`)를 «기층 오염»으로 덮음 → canary 에 «㉢ 얕은 경계 귀속분 먼저 제외» 명시(양쪽 fail-closed·사유만 상이). **관측(비차단)**: M-2 스냅샷 비용(본 저장소 151초·`.git` 89M)·M-4 ⑬c 미검출 예고대로(정직 경계 확인)·M-5 스텝 «이름» 위조 자인 유지·N-2 ⑳ⓒ fail-open 은 «㉠ 교차검사 회피» 창 한정. **종수 불변**(ⓐ~ⓒ 문언·⑬ 기준선 하위 케이스). **하니스 byte-identical(`957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d`·:4654-4754)·개발계획 무편집(적용분 유지)·`bound_paths`(계약만) 재동결.** **증거 결속(S-24)**: 이 에라타 재동결도 addendum 으로 이행(절 범위 `git diff` 공집합 + 영향 변이 재실행 — `bash tools/…` 양성·스냅샷 안 재파생·얕음 상속 canary 귀속). **심사 미판정 — 동결 후 재결속 대기.** 구현 착수 금지 불변 |
 | **v2.19** | **v2.18 심판 판정 6건(high 3 / medium 3) 전건 반영. 직전 처분은 «F1·F2·F4 부분해소 · F3 해소됨(계약 수준) · F5 회피» 이고 신규 2는 host 미결속·두 결속 계획 충돌이다.** ① **#1 F1 (high) — 보호 해제 창**: 진입·완료 두 live 조회 사이 [보호 off→체크 통과→머지→재활성] 창을 **어느 술어도 소비 안 했고**, (B) 표가 «완료 가능성 자체를 막는다»고 **과대주장**했다. **과대주장 철회** + **연속성 소비자 신설**(완료 판정 시점 — 적용 룰셋 `created_at`/`updated_at` > `t_land`[= D 착지 PR 의 서버 `merged_at` 최소]이면 `PREVENTION_CONTINUITY_UNVERIFIABLE`·운영자 재심사 · classic-only[타임스탬프 부재]도 판정 불가로 차단 · 삭제-재생성은 새 id·created_at 로 검출). **극성**: 관측만 하고 통과시키면 창이 정상 완료로 세탁되고 무조건 영구 차단하면 정당한 강화를 막는다 — **판정 불가를 «판정 불가»로 보고**하는 것이 fail-closed(F2 동형). **서버 시간만 소비**(커밋 시각 불신). **정직 경계**: «룰셋 미변경» 우회(연속 bypass_actors·admin override)는 감사 로그 소관이라 **못 닫는다** — «부분해소»이지 «닫힌다»가 아니다. T-84 ⑪(off→merge→on 은 서버 설정 변경 요구 → SIMULATED seam·live 는 현행 음성만) ② **#2 host 미결속 (high, 신규)**: 모든 `gh api repos/{owner}/{repo}/…` 가 host 없이 나가 `GH_HOST` 를 바꾸면 **타 host `/api/v3` 응답으로 `PREVENTION_ACTIVE` 위조** 가능(심판 실측 프로브). **host 를 계약 핀에서 파생해 «명령에 명시»**(`gh api --hostname <핀 host>`) + **소비자 자기 환경 `GH_HOST` 재핀**(플래그·환경 이중 결속 — 우선순위 의존 안 함) + `gh auth status --hostname <핀 host>` 전제. **극성**: 도달 불가 = `PREVENTION_UNVERIFIABLE`(타 host 폴백 없음). 아티팩트 선언 아님(C3 규율). T-84 ⑫(GET-only·live) ③ **#3 F2 (high) — D0A-FIRST 규범 잔존**: 앞선 D0A-FIRST 절이 «모호 없이 한 커밋»·`git log --diff-filter=A` 를 **판정 규범**으로 유지해(S-22) 구조 `D`(U-15-g-1)와 병존했다. **판정 소비 자리를 구조 `D` 참조로 전환**하고 «다중 후보 문제가 여기서 발생 안 함» 단정을 **철회**(gg/gu/uu 로 `D` 크기>1). **편의 표기(∅ 확인·단일 픽스처)와 판정 소비를 구별해 명시** — §12.3.4-G 의 `diff-filter=A` 는 편의 표기로만. 재기술→참조로 stale 클래스 제거(S-14) ④ **#4 F4 (medium) — T-82 ⑱ 입력 stale + 계약 밖 규칙**: ⑱ 이 **폐지된 `edge_seq` 기재**(«각각 seq=1 부여»)를 지시했고 손 실행기가 «사전순 최소·상태 우선순위»를 **자체 선언**했다(`U16-LEDGER-CHECK.md:34-48`). **⑱ 을 현행 스키마로 재기술**(edge_seq 미기재·소비자 표시용 파생) + **U-16-d 상태 전순서·규칙 평가 순서를 계약 리터럴로 고정**(전순서 12단·«전부 평가 후 최소» 의미 — 자체 선언 흡수) ⑤ **#5 F5 (medium, 회피) — 단수 `c_APP`**: `row_ref` 만 없앴고 같은 비단수 `c_APP` 가 U-16-c·g5·g6 에 단수로 잔존했다(형제 동일 행 독립 도입 시 선택 재량). **`c_APP` 를 구조 집합 정의**(`D`·`C_R` 동형: `{x⊑HEAD : a∈rows(x:LEDGER) ∧ ∀p∈parents(x): a∉rows(p:LEDGER)}`)·`c_APP` 크기 0→`PROVENANCE_UNVERIFIABLE`·크기>1→`APPROVAL_MALFORMED`·크기 1→유일 원소·세 소비처 일관. **극성**: 동일 승인 행 병렬 도입은 «언제 승인»이 유일하지 않아 차단(U-15-g-2 동형)·«사전순 최소»는 판정 불가를 답한 척한다. T-82 ⑳(형제 동일 행→MALFORMED)·⑱(서로 다른 행→green) 상호 배타 ⑥ **#6 두 결속 계획 충돌 (medium, 운영자 게이트)**: 개발계획 Phase 1 작업 7·종료조건(required CI·branch protection 증거) vs 계약 U-17 D0-A 착수 선행조건. **계약이 «함께 착수 불가» 정직 표기** + §12.3.3 (D) 에 **적용 준비된 개정안 문안**(tos-gate 도입을 Phase 0 로 이관·Phase 1 종료조건은 «U-17 연속성 유지»로 — verbatim diff). **개발계획 자체는 무편집** — 정식 개정은 운영자 소관(`bound_paths`·O-6 재결속 시 함께 심사). **종수 전파(S-20)**: T-84 10→**12종**(⑪·⑫) · T-82 19→**20종**(⑳) · T-81 19 불변 · U-17-c 9값→**10값/차단 9/전순서 10단** · U-16-d **전순서 12단 신설**. **§12.3.3 (A)=v2.18 판정 5건 처분·(B)=v2.19 6건 주장(«어느 것도 해소 아님»)·(B) 실행 증거 열 현행화**(직전 `20260819-002145` 증거 명시·신규는 «동결 후 실행»). **S-22 스윕**: 처분표 (A)(B)·§0 요약·심사 이력·변경 이력·§11·D0A-FIRST 절 전파. **[독립 검증 마감(실행 픽스처) 3건]**: (i) **S-22 재발 1건 정정** — U-16-b 의 v2.15 산문 «[F5 소멸] `c_APP` 비단수도 함께 소멸»이 v2.19 구조 정의(단수 잔존→처분)와 모순 → `row_ref`·tombstone 축만 소멸로 정정 (ii) **U-16-d 규칙 평가 순서 동치 주장 정정** — 「전 규칙 상태번호 비감소」는 거짓(구조 상태 2 `c_APP` 크기 0 < 3 MALFORMED)이라 **구조 선-검사 1·2·4 를 g-규칙 앞 필수 단계로 재배치**하고 동치는 g-단락 5~11 로 한정 · **T-82 ⑳ⓑ**(발산 corner·종수 불변) 신설 (iii) **target_branch 파생의 host 없는 `gh api` 잔재 → C6 참조 전환**(S-14). **[v2.19 에라타 (동결 `d5a8302a` 후 증거 실행 `90a5ce7d` 적발 — 재결속 전이므로 정정 후 재동결·v2.15/v2.18 선례)]** 증거가 계약 결함 후보 7건을 적발했다(실행기는 계약대로 발화했으나 계약 «문언»이 死분기·공백·실행기 독해와 갈린 자리): **ⓐ E1 (U-17 실질)** classic disjunct 死분기 — `D≠∅` 이면 classic-only 는 (a) 통과해도 연속성(룰셋 타임스탬프 의존)이 항상 9 발화 → «classic 은 진입 가능·완료 불가, 완료 인정 경로는 룰셋»을 (a) 옆에 정직 명시(disjunct 철회 아님·fail-closed terminal)·양성 대조군 룰셋 기반 · **ⓑ E2 (U-17 공백)** `t_land` 파생 불가 시 (α) 처분 미정의 → `CONTINUITY_UNVERIFIABLE`(fail-closed·(b) 8 이 전순서상 이겨 방출 불변이나 정의는 닫음)·타임스탬프 파싱 불가도 명시 · **ⓒ E3 (U-17 관측/문언)** gh 2.93.0 실측 `--hostname` 이 `GH_HOST` 를 이김 → 「의존하지 않는 이중결속」을 「플래그 우선 실측·재핀은 방어적 중복」으로 정정 · `responder=file:` auth 전제 «기록만» · 아티팩트 `host` 키 «선택»(v2.18 E2 동형) · 타 host ACTIVE 위조는 GET-only 라 직접 실증 불가 = ⑫ 는 「상태 불변+nohost→UNVERIFIABLE」로만 검증(정직 경계) · **ⓓ E4 (U-16 실질)** T-82 ⑱ 리터럴 «별개 `row_id`» 가 g2·간선 대응과 충돌(리터럴 픽스처는 MALFORMED/1 = 정반대) → «같은 `row_id`, 서로 다른 승인 행(transition·근거 다름)»으로 정정(S-22: 정정을 적는 것과 전파는 별개) · **ⓔ E5 (U-16 실질)** `c_APP` 정의가 «진짜 루트»와 «얕은 클론 경계(부모 미상)»를 미구별 → 리터럴 파생에서 경계커밋이 루트로 읽혀 `c_APP` 크기 1(fail-open) → **[PARENTS-UNTRUSTED] 단서 신설**(1차 신설명 [SHALLOW]; 경계 = 부모 미상 → 도입 지점 확정 안 함 → `PROVENANCE_UNVERIFIABLE`)·**동형 정의 전수 적용**(`C_R`·`D`·`P_first`/`P_last` 가 [PARENTS-UNTRUSTED] 참조·플래그 의존 클래스 동형 규율) · **ⓕ E6 (U-16 공백)** 선-검사 2 「얕은 클론」을 전역 단축으로 읽으면 ⑳ⓑ 대조군 구별력 상실 → 「경계 커밋이 해당 행/간선 도입 후보 우주에 있어 크기 0일 때」로 국소화 · **ⓖ E7 (U-16 공백)** 한 간선 다수 후보 상태 귀속(=대응 후보 전순서 최소·D-4)·「고아」 구조 정의(=같은 row_id∧g1 일치 간선 0·규칙 탈락 행은 그 규칙 상태 귀속·D-5, `ORDER_INVALID`→`MALFORMED` 오귀속 방지) 고정. **증거 결속(S-24)**: 이 에라타 재동결에 대해 **addendum 으로 이행**(절 범위 `git diff` 공집합 증명 + 영향 변이 재실행 — §5 산출 목록). **종수 불변**(E1~E7 은 문언 정정·⑳ⓑ 는 기존 하위 케이스). **[v2.19 에라타 2차 (재동결 `e3ed4e78` 후 S-24 addendum `197f4fe4` 적발 — 재결속 전이므로 정정 후 재동결)]** addendum 이 [SHALLOW] 자체의 결함 2건을 적발했다: **ⓗ E8 (U-16 실질·fail-open)** `git replace --graft`(및 `.git/info/grafts`)가 [SHALLOW] 리터럴 3판별(`--is-shallow-repository=false`·`.git/shallow` 부재·부모 객체 present)을 **전부 통과**하면서 `git log --format=%P`·`rev-list`·`merge-base` 등 replace 를 따르는 명령이 «가짜» 부모를 반환 → 같은 seam 에서 `PREVENTION_LATE`(6)→`PREVENTION_ACTIVE`(10) 극성 전환 실측(`GIT_NO_REPLACE_OBJECTS=1` 에서는 진짜 부모). [SHALLOW] 가 닫으려던 클래스는 «부모 집합 신뢰 불가»이고 얕은 클론은 한 사례 → **[SHALLOW]→[PARENTS-UNTRUSTED] 일반화·개명**(부모 «재작성» 축 추가) + **이중 판별**(① 관측: `git replace -l` 공집합 ∧ `.git/info/grafts` 부재 ∧ 얕은 클론 아님 → 위반 시 `PROVENANCE_UNVERIFIABLE`/`PREVENTION_UNVERIFIABLE` · ② 무력화: 조상·부모 파생 `git` 전부 `--no-replace-objects` 고정) · 극성 = «부모 신뢰 불가면 도입 지점 확정 불가 → 판정 불가를 판정 불가로»(E5 동형·fail-closed) · 유일 소스(U-16-c)에서만 고치고 동형 4곳(`D`·`C_R`·`c_APP`·`P_first`/`P_last`)은 참조(재기술 금지). **개명 스윕(S-22)**: 활성 태그 8곳 개명·역사 참조 2곳(정의 헤더 «구 [SHALLOW]»·ⓔ «1차 신설명 [SHALLOW]») 보존 · **ⓘ E9 (U-17 문언 공백·극성)** `P_last`(및 `P_first`) 의 다부모 의미 미규정 — 실행기가 ∨(«어느 한 부모와라도 다름»)로 읽어 2-부모 graft 에서 `ARTIFACT_MUTATED`(7)↔`ACTIVE`(10) 극성 분기. `c_APP`·`C_R`·`D` 는 ∀-부모인데 P 만 비대칭(S-22 계열) → **P_first/P_last 를 D·C_R·c_APP 와 ∀-부모 «동형 구조 정의»로 고정**(도입지점(b) = ∀부모에 blob≠b 인 x · P_last = 현행 blob 도입 집합 · P_last 크기 0→UNVERIFIABLE·>1→ARTIFACT_MUTATED[c_APP 크기>1 동형·보수]·1→유일 원소) · 머지는 «∀부모 다름»일 때만 도입(한 부모와 같으면 도입 아님) · 상태 조건(LATE/MUTATED/ACTIVE)을 집합 위에서 결정적으로 재정의(ACTIVE·MUTATED 는 ¬LATE 하 상보·`T-84 ⑨` 도달 유지). **N-3~5(관측·비차단)**: «전순서 최소»가 규칙 간·후보 간·전역 3층에서 같은 규칙임을 U-16-d 에 한 줄 명시. **증거 결속(S-24)**: 이 2차 에라타 재동결도 **addendum 2차로 이행**(절 범위 `git diff` 공집합 + 영향 변이 재실행). **종수 불변**(E8~E9 은 문언 정정·개명·동형화). **[v2.19 에라타 3차 (재동결 `ad5be1a3` 후 S-24 addendum 2차 `c83e44db` 적발 — 재결속 전이므로 정정 후 재동결·국소 문언)]** addendum 2차가 문언 결함 2건 + 강력 권고 1건을 냈다: **ⓙ E10 (M-1 문언 충돌·판별력 직결) + M-3 채택** — E8① 관측의 «얕은 클론 아님»(전역)이 E6 «국소 판정»과 충돌해 문자대로면 `T-82 ⑳ⓑ` 2 vs 3 판별력이 붕괴(얕은 클론이 후보 우주 무관 무조건 차단). **M-3(부모 집합 독립 재파생)을 채택해 함께 처분**: [PARENTS-UNTRUSTED] 판별을 **㉠ 주 판별 = 구조 재파생**(`git --no-replace-objects cat-file commit <x>` 의 `parent` 줄 직접 파싱 ↔ `%P`/rev-list 대조·불일치 → UNVERIFIABLE — 열거의 열린-세계[N-1 클래스]를 구조로 닫음·«구조 파생 > 열거» S-6) · **㉡ 전역 관측**(replace -l 공집합 ∧ grafts 부재 — per-commit 특정 불가라 전역·M-2 무간섭 실측) · **㉢ 국소 축**(cat-file 부모 객체 조회 실패 = 얕은 경계·`.git/shallow` 로 특정 → «그 후보만» 국소 차단)로 재작성. **전역/국소 분할 근거**: per-commit 판별 가능성(얕음은 `.git/shallow` 로 특정 가능=국소, replace/grafts 는 불가=전역)이 «판정 불가를 판정 불가로»와 «과잉 차단 회피»를 동시에 만족 · **ⓚ E11 (M-5 공백)** E9 로 `P_first` 가 집합이 됐는데 카디널리티 처분 부재(P_first 크기 0 → `∀x∈∅` 공허참 → LATE 발화이나 문언 자리 없음·크기 2 실측) → **P_first 카디널리티 명시**(D 동형): P_first 크기 0 → 아티팩트 부재면 `PREVENTION_ABSENT`(전순서 2·live 실측)/현행 존재하나 도입 지점 ∅ 이면 `[PARENTS-UNTRUSTED]`→`UNVERIFIABLE` · `>1` → LATE 술어를 `∀x∈P_first` 로 그대로(∃-증인이라 다중 결정적·신규 상태 불요) · `=1` 정상 · 전순서상 ABSENT(2)/UNVERIFIABLE(1)가 LATE(6)보다 먼저라 상보성 유지. **M-2/M-4 는 관측(결함 아님)** — M-2(두 limb 무간섭)는 ㉡ 에 한 줄 반영, M-4(graft 새 객체 --all 가시)는 약한 표면이라 미채택. **증거 결속(S-24)**: 이 3차 에라타도 addendum 3차로 이행. **종수 불변**(E10~E11 은 국소 문언·M-3 은 판별 재구조화). **[v2.19 에라타 4차 (3차 재동결 `f6493d23` 후 S-24 addendum 3차 `d988bd0f` 적발 — 재결속 전이므로 정정 후 재동결·국소 문언)]** addendum 3차가 방금 쓴 [PARENTS-UNTRUSTED] 블록의 문언 결함 2건을 냈다(㉠ 재파생은 replace·grafts·`GIT_REPLACE_REF_BASE`·separate-git-dir 네 표면을 전부 잡음이 실증됨): **ⓛ E12 (K-1 문언 공백·판별력 직결)** ㉠ 재파생 대조가 «얕은 경계»에서도 불일치(`cat-file` 부모 有 vs `%P` ∅)를 내므로 ㉠(전역)·㉢(국소) 관할 미규정 시 얕은 클론이 항상 전역 차단 → E6 국소화·`T-82 ⑳ⓑ` 판별력이 M-1 과 다른 경로로 재발. → ㉠ 에 **관할 규정**(불일치 원인 커밋이 ㉢ 얕은 경계[`--git-path shallow` 목록·부모 객체 조회 실패]면 전역 승격 없이 ㉢ 관할·**절차 순서 ㉢ 먼저→남는 ㉠ 불일치만 전역**·결정적) · **ⓜ E13 (K-2 리터럴 경로 클래스·fail-open 실증)** ㉡ «`.git/info/grafts` 부재» 리터럴이 `--separate-git-dir`(`.git` 이 파일)에서 항상 통과 → 대조군 `ACTIVE`/0·`NO_ROWS_CLEAR`/0(완전 fail-open) → **저장소 내부 경로 전부 `git rev-parse --git-path <x>`/`--absolute-git-dir` 파생으로** 정정하고 **`.git/` 리터럴 전수 스윕**(def 블록 6곳 파생 전환·(B) 1곳; 변경 이력 ⓗⓙ 의 `.git/` 는 2·3차 원문 기록이라 유지; 하니스 블록 §12.3.4-R 은 byte-identical 예외·리터럴 저장소 경로 0 실측; D/C_R/c_APP/P 참조·U-15/16/17 실행 절차엔 `.git/` 리터럴 0). 극성: 리터럴은 배치(worktree·separate-git-dir·bare)에 따라 «부재»가 거짓 통과라 fail-open — 파생만 허용. **K-3(㉠ 환경 무관·㉡ 은 같은 env 만 — ㉠ 이 주 지지)·K-4(㉠ 은 후보 우주에만·후보 밖 grafts 는 `--no-replace-objects` 로 안 꺼짐 → 잔여 실재)** 를 한 줄씩 반영(K-4 는 «닫지 못하는 것»·비차단 정직 표기).  **M-2/M-4/K-5 는 관측(결함 아님)**. **증거 결속(S-24)**: 이 4차 에라타도 addendum 4차로 이행. **종수 불변**(E12~E13 은 국소 문언·경로 파생·관할 명시). **[v2.19 에라타 5차·최종 (4차 재동결 `db6ce918` 후 S-24 addendum 4차 `4f102c73` 적발 — 재결속 전이므로 정정 후 재동결·국소 문언)]** addendum 4차가 마지막 결함 1건을 냈다: **ⓝ E14 (L-1 fail-open 잔존)** `git rev-parse --git-path <x>` 는 일반 배치에서 «상대 경로»(`.git/info/grafts`)를 반환하므로(실측), 소비자가 «저장소 밖 cwd»에서 그 출력을 그대로 `[ -f ]` 하면 «거짓 ABSENT» → ㉡ 통과 = E13 이 «파생만»이라 적고 «결합 기준»을 안 적어 같은 fail-open 이 파생을 썼는데도 재발. → 유일 소스에 **«파생 경로가 상대이면 저장소 루트(`git rev-parse --show-toplevel`)와 결합**한 뒤 검사 — 상대 결과를 cwd 에서 그대로 검사 금지»** (**[6차 정정]** 5차가 병기한 `--absolute-git-dir` 결합 대안은 `<root>/.git`+`.git/info/grafts`=이중 → 거짓 ABSENT → fail-open 이라 철회 — ⓞ E15) 한 줄 + 극성(리터럴 경로 클래스의 잔여 형태 = «파생값의 결합 기준 부재»도 같은 fail-open). **L-2**(K-4 조상성 잔여를 완화하는 «유일 항»이 ㉡ — L-1 로 새면 두 잔여가 곱해짐·grafts 는 `--no-replace-objects` 로도 안 꺼짐 실측)를 E14 근거로 병기 · **L-3**(하니스 예외 조항이 덮는 것 0건·미래 유입은 O-6 가 가로막음)·**L-5**(㉢/㉠ 분리 방출로 절차 감사 가능)를 관측 한 줄씩.  **L-4 는 자기신고 답(미검사 창 없음)**. **증거 결속(S-24)**: 이 5차 에라타도 addendum 5차로 이행. **종수 불변**(E14 는 국소 문언·결합 기준 한 줄). **[v2.19 에라타 6차 (5차 재동결 `eddbd241` 후 stop-time Codex 심판 BLOCK — 재결속 전이므로 정정 후 재동결·국소 문언)]** 심판이 5차 E14 의 «실질 오류»를 적발했다: **ⓞ E15** E14 가 병기한 «`--absolute-git-dir` 과 결합» 대안이 `--absolute-git-dir`(=`<root>/.git`) + 상대 `--git-path`(=`.git/info/grafts`) = **이중 `.git`**(`<root>/.git/.git/info/grafts`)이라 실제 graft 파일을 **«거짓 ABSENT»** 로 읽어 ㉡ 이 통과 = **fail-open**(E13/E14 가 닫으려던 바로 그 클래스가 «틀린 결합 base»로 재발). addendum-5(및 오케스트레이터)가 이 거짓 ABSENT 를 «fail-closed»로 **오분류**했다. → 결합 규칙을 **«저장소 루트(`git rev-parse --show-toplevel`) 결합만»**으로 고정하고 **`--absolute-git-dir` 결합 대안 명시 철회** · 동등 무모호 대안(`git -C <루트> rev-parse --git-path` 파생 후 그 cwd 검사 · 절대 아니면 `<루트>/<상대>`)만 허용 · 절대 출력(separate-git-dir) 그대로 · worktree 도 `--git-path` worktree-aware 상대라 `--show-toplevel` 결합 맞음(실측 addendum). **극성 정정**: «거짓 부재(ABSENT)가 «검사를 통과»시키면 fail-open 이다 — 부재 판정의 극성은 «검사 방향»에 따른다». **증거 결속(S-24)**: 이 6차 에라타도 addendum 6차로 이행. **종수 불변**(E15 는 결합 base 정정·극성 오분류 정정 국소 문언). **하니스 byte-identical(`957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d`)·`bound_paths` 편집이므로 O-6 재결속 필요.** **심사 미판정 — 동결 후 재결속 대기.** 구현 착수 금지 불변 |
@@ -2888,7 +2900,7 @@ RUNTIME/FAULT/REVIEWER 존재성·REV2·A-1/A-2·D0-5에 테스트가 없었다.
 | T-45 | S-8 리터럴 census | P0-1/P0-3 대상 census를 리터럴 grep으로 되돌림 → 7곳이 아닌 4곳을 보고하면 실패 |
 | T-46 | K-2 하한 (§5.2.8) | `EV-L3` 행의 `required_kinds`를 `{PACKAGE}`로 → 하한 미포함이 오류가 아니면 실패 |
 | T-47 | 하한 파싱 정규화 | `EV-L0/1`과 `EV-L0/L1`을 서로 다른 값으로 세는 변형 → 통과하면 실패 |
-| **T-84** | **U-17 예방 통제 활성 증거** (§12.3.4) | **v2.15 신설 / v2.16 재작성 / [v2.17 재작성 — stop-time BLOCK B3 / v2.19 확장 / v2.20 확장]** — 파라미터화 **14종**. **v2.16 에라타 E2 가 #5 근거만 고치고 이 행을 보지 않아**(S-22) `rulesets=[]`·«머지 커밋 check-runs 0»·«pulls 공집합»이 **같은 턴 실측과 충돌**한 채 남아 있었다 — 행 전체를 재작성한다. ① **live 서버 음성(실측)** — 아티팩트 선언 == 구조 파생(`main`)인 정상 구성에서 `responder=gh` 실조회: `required_status_checks {strict:false, contexts:["test"]}` 이므로 **`PREVENTION_INSUFFICIENT`** · `/rules/branches/main` → `[]`(적용 규칙 0) · `/rulesets` → `[{name:"protect_main", enforcement:"disabled"}]` ⇒ **룰셋은 실재하나 disabled 라 동등물 없음**. **인증된 진짜 음성이며 모의가 아니다**. **[E1 — v2.17 에라타]** 초안은 여기에 «작업 브랜치 → 404 → `PREVENTION_ABSENT`» 를 함께 적었으나, **v2.17 에서 `target_branch` 는 `default_branch` 로 «파생»되므로 그 구성은 ⑤(`TARGET_MISMATCH`)이지 `ABSENT` 가 아니고 실행기로 재현되지 않는다**(증거 실행 적발 — S-22: B1 의 파생 전환이 이 행에 미전파). **«비-default 브랜치 protection → 404»는 «raw probe 관측»으로만 병기**하며 상태값 기대가 아니다 ② **seam 주입(`SIMULATED`)** — `responder` 주입으로 `PREVENTION_ACTIVE`·`INSUFFICIENT`·`UNVERIFIABLE` 모의. **기본 responder 는 `gh api`**. **양성은 운영자가 보호를 설정하기 전까지 실측 불가**임을 숨기지 않는다. **진정성은 §12.3.4 «진실 원천» 절이 «판정 소비자 자신의 조회»로 닫는다** ③ **리비전 검증(실측)** — `/commits/{d}/pulls` → 착지 PR → PR `head.sha` check-runs. 실측: `origin/main` 착지 `11e382fc` 의 check-runs **15건**(push 트리거 워크플로)·`pulls` = PR #636(merged·base main), PR head `7656259d` check-runs 5건에 **`tos-gate` 없음** ⇒ **`PREVENTION_UNVERIFIED_REVISION`**. 미푸시 커밋 → 422 ⇒ `PREVENTION_UNVERIFIABLE` · 푸시됐으나 PR 없는 `be98f075` → `pulls` `[]` ⇒ UNVERIFIED_REVISION ④ **보호 해제 후(stub)** — «countersign 시 ACTIVE → 이후 해제» 후 완료 판정 재조회가 `ABSENT`/`INSUFFICIENT` ⑤ **[v2.17 신설] target 불일치** — 아티팩트가 **다른 저장소/브랜치**를 선언(예: 보호가 걸린 타 repo, 또는 default 아닌 브랜치) → **`PREVENTION_TARGET_MISMATCH`** + 비-0. **`D = ∅` 에서도 red 여야 한다** — v2.16 은 이 구성에서 **임의 대상의 보호만으로 ACTIVE** 를 냈다 ⑥ **[v2.17 신설] `app_id` 위조** — `tos-gate` 라는 이름에 `conclusion: success` 이지만 **`app.id` 가 게이트 앱(기본 `15368`)이 아닌** check-run 을 seam 으로 주입 → **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **이름만 보는 구현은 통과시키므로 실패한다** ⑦ **[v2.18] 타 앱 고정 required check** — 보호는 있고 `contexts` 에 `tos-gate` 도 있으나 `required_status_checks.checks[]` 의 그 컨텍스트 `app_id` 가 **Actions 가 아닌 앱**(예 99999) → **`PREVENTION_INSUFFICIENT`** + 비-0. **v2.17 은 이름만 봐서 `prot_ok` 를 냈고 `D=∅` 이면 그대로 진입 승인**됐다(심판이 실행기 술어로 재현) ⑧ **[v2.18] same-app wrong-workflow** — **같은 Actions app id** 로 **다른 워크플로**의 잡을 `tos-gate` 로 이름 지어 success 게시 → workflow run 의 `path` 가 `.github/workflows/tos-gate.yml` 이 아니므로 **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **app id 만 보는 구현은 통과시킨다**(실측: PR #636 head 의 5 run 이 전부 동일 app id) ⑨ **[v2.18] 아티팩트 사후 편집** — `P` → D0-A 착수 → 아티팩트 편집 → **`PREVENTION_ARTIFACT_MUTATED`** + 비-0. **`P_last` 를 쓰지 않고 «최초 도입 P» 만 보는 구현은 통과시킨다**  **[v2.20 — 심판 #3] 부모신뢰 TOCTOU 확장**: `P_last` 조상성 소비도 U-16-c 격리 스냅샷 기층을 쓰므로, ㉡ 관측과 조상성 조회 사이 graft 삽입·제거(SIMULATED seam)로 `ARTIFACT_MUTATED`↔`ACTIVE` 를 뒤집는 구현은 격리 스냅샷 안 소비로 fail-closed 됨을 함께 본다(격리 클론 픽스처·종수 불변) ⑩ **[v2.18] 타 원격·타 호스트** — 아티팩트/원격이 **계약 핀**(`github.com/kakao-harris-lee/kis_unified_sts`)과 다른 host 또는 owner/repo 를 가리킴(비-GitHub 호스트의 동일 경로 포함) → **`PREVENTION_TARGET_MISMATCH`** + 비-0. **host 를 버리는 정규화는 통과시킨다** ⑪ **[v2.19 신설 — 심판 F1] 보호 해제 창(off→merge→on) — 연속성** — **live 로 실행하지 않는다**(실측 픽스처가 서버 보호 설정 변경을 요구하므로): v2.16 (a) 방식의 **«캡처된 응답 위 결정적 술어» seam** 으로 SIMULATED 구성한다. 룰셋 응답에 `updated_at` 이 **최초 착지 `merged_at` 보다 늦은** 캡처를 주입 → **`PREVENTION_CONTINUITY_UNVERIFIABLE` + 비-0**(U-17-c). **classic branch protection 만인 캡처**(`updated_at`·`created_at` 부재) → 같은 값(연속성 판정 불가). **`updated_at`·`created_at` ≤ `merged_at` 캡처** → 그 축 통과(다른 축이 성립하면 `PREVENTION_ACTIVE`). **판별력**: 「진입·완료 두 조회가 둘 다 ACTIVE 면 통과」로 접는 구현은 이 SIMULATED 를 통과시켜 실패한다. **live 는 현행 상태 음성만**(오늘 `main` 은 룰셋 `disabled` 라 애초에 `PREVENTION_INSUFFICIENT`). **소비 시각은 «서버 시간»만**(응답의 `updated_at`·`created_at`·PR `merged_at`) — 커밋 author/committer date 는 클라이언트 공급이라 쓰지 않는다. **정직 표기**: 감사 로그 없이 «머지 시점 강제»의 완전 증명은 불가하므로 이 대조군은 **설정 변경의 관측**만 fail-closed 로 승격한다 ⑫ **[v2.19 신설 — 심판 신규 high] `GH_HOST` override — 정본 host 결속** — **live 실행 가능**(GET-only·환경변수만). 소비자는 계약 핀에서 host 를 파생해 **모든 `gh api` 에 `--hostname <핀 host>` 명시 + 자기 환경 `GH_HOST` 를 핀 host 로 설정**한다. 대조군은 `GH_HOST=<타 host>`(+`GH_ENTERPRISE_TOKEN=dummy`) 주입 후 실행 → **상태값이 override 유무와 «불변»**(조회가 핀 host 에 결속)이거나, 핀 host 도달·인증 불가면 **`PREVENTION_UNVERIFIABLE`**(fail-closed). **override 가 상태값을 바꾸면(특히 타 host 응답으로 `PREVENTION_ACTIVE`) 실패** = host 를 `gh` 환경에 위임하는 구현. **심판 실측 프로브**(`GH_HOST=example.invalid … gh api repos/a/b`, exit 1)가 host 없는 명령의 결함을 재현한 그 클래스이며, T-84 ⑩(remote URL 대조만)은 이 축을 잡지 못한다 ⑬ **[v2.20 신설 / v2.21 재편 — 심판 #1] 정본 불일치 클래스** — 동일 path/app/head 성공 워크플로 blob 에서 게이트 두 스텝(`tos-gate: run harness`·`tos-gate: verify harness sha256`)의 `run:` 이 **정규화 후 계약 정본(A/B)과 다르면** → **`PREVENTION_UNVERIFIED_REVISION`** + 비-0.  «토큰 존재»가 아니라 «정본 byte 일치»가 관측량이다(구문 우회 전 클래스를 «열거 없이» 닫음·열린→닫힌 세계). **양성(정본 일치)**: `run:` 이 정본 A/B 와 정규형 일치면 red 가 «아니어야» 한다(허용 정본 집합 안이면 통과) · **정규화 대조군**: **`|` (literal) 표기** 하에서 주석 줄·빈 줄·trailing 공백·CRLF 만 다른 blob → «일치»(정규화가 결정적으로 흡수); `>` folded 는 스텝 A(빈 줄=개행)만 우연 일치·**스텝 B 는 접혀 불일치**(fail-closed)·정본 표기는 `|`([v2.21 에라타 ⓐ/E1]). **불일치 하위 케이스(전부 UNVERIFIED_REVISION·종수 불변)**: ⑬a `echo "…경로…"`(경로가 출력 명령 인자 — 정본 아님) · ⑬b `true  # shasum…|grep 957…`(무실행 + trailing 주석 — 정본 아님) · ⑬c `shasum…|grep 957… || true`(대조 뒤 `|| true` 무효화 — 정본 아님; **v2.20 의 «미검출» 기대가 v2.21 에서 «UNVERIFIED_REVISION» 으로 뒤집힘**·증거 V220 §3 ⑬c ACTIVE 기대 갱신) · **⑬d 도달 불가 호출** — `false && bash tools/tos_entry_harness.sh || true`(하니스가 `&&` 피연산자)·`… && bash tools/…`(선행 가드) — 정본 아님 · ⑬e 스텝 `continue-on-error: true`·`if: always()`/`failure()`·**추가 메타 키**(`working-directory`·`env:`·`with:`·`uses:`) 존재(닫힌 메타 키 집합 위배) · ⑬f `set +e`·`trap … ERR`(정본에 없는 줄) · **⑬g 선행 종결자** — `set -euo pipefail; exit 0; bash tools/…`·`exec true`·`[ -n "${SKIP:-}" ] && exit 0`(하니스 호출 «전»에 제어흐름을 종결해 미실행 — 독립 검증 B10/B11/B12 재현; 정본에 그 «실행 줄»이 없어 불일치로 검출). **[v2.21 에라타 2차 — 잡 템플릿] ⑬h 실행 무력화 defaults** — 워크플로/잡 `defaults.run.shell: "true {0}"`(정본 스텝 byte·이름 보존하나 실행 무력화·success 보고) → 정본 잡 템플릿의 `defaults` 부재 위배 → UNVERIFIED_REVISION(stop-time BLOCK 재현) · **⑬i 추가/선행 스텝·비-핀 체크아웃** — 게이트 잡에 선행 `run` 스텝(`echo /x >> $GITHUB_PATH` PATH 조작)·추가 스텝 → `steps` ≠ 정확히 3 → 불일치 · **[v2.21 에라타 3차 ⓒ] 체크아웃 `uses` 가 «비-핀 40-hex SHA»(임의 포크 커밋)·태그·브랜치 → 핀 SHA `3d3c42e5…` 불일치**(초안이 형식만 검사하던 R-1 fail-open 닫음) · **⑬j 잡 실행환경 키** — 잡 `container:`(가짜 bash 이미지)·self-hosted `runs-on`·잡/워크플로 `env:` → 허용 키/값 닫힌 집합 밖 → 불일치. **⑬a~⑬j 는 전부 «정본 잡 템플릿과 다름»이라 정본 대조가 열거 없이 닫는다** — 자작 도달성 분석기·키 열거 불요(운영자 «바퀴 재발명 금지»). **양성**: 정본 잡 템플릿 정확(체크아웃 `actions/checkout@<SHA 핀>` + 정본 A/B). **정직 경계(잔여)**: 정본 잡 일치는 «런타임 실제 실행»을 증명 못 함(잡 «밖»: 다른 잡 아티팩트/캐시·runner 이미지·GitHub 내부·스텝 이름 위조·checkout 신뢰[SHA 핀] — 위조 비용↑·닫지 못함) ⑭ **[v2.20 신설 — 심판 #1] 서버 잡 스텝 부재/실패** — blob 구조는 통과하나 서버 `actions/runs/{run_id}/jobs`(또는 `actions/jobs/{job_id}`) 그 잡 `steps[]` 에 계약 리터럴 «스텝 이름»(`tos-gate: run harness`·`tos-gate: verify harness sha256`)이 **부재**하거나 그 스텝 `conclusion != success` → **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **판별력**: blob 만 보고 서버 스텝 실행 기록을 대조 안 하는 구현은 통과 → 서버 스텝 대조는 red.  **정직 경계**: 스텝 이름·결론은 «서버 기록»이지 «그 스텝의 run 내용을 그대로 실행했다»의 증명이 아니다(⑬+⑭ 는 위조 비용을 올리되 GitHub 내부 실행 간극은 안 닫는다) |
+| **T-84** | **U-17 예방 통제 활성 증거** (§12.3.4) | **v2.15 신설 / v2.16 재작성 / [v2.17 재작성 — stop-time BLOCK B3 / v2.19 확장 / v2.20 확장 / **v2.22 하위 확장**]** — 파라미터화 **14종** (**내역 병기 — S-20 «종수는 내역 병기로 적는다» 규율**: **v2.15/16 4종(①~④) + v2.17 2종(⑤⑥) + v2.18 4종(⑦~⑩) + v2.19 2종(⑪⑫) + v2.20 2종(⑬⑭) = 4+2+4+2+2 = 14**.  **[v2.22] 종수 불변** — 아래 신규 대조군은 전부 ⑬(blob 이탈)·⑭(서버)의 **하위 케이스**이며 ⑬h/⑬i/⑬j 선례와 같은 층이다). **v2.16 에라타 E2 가 #5 근거만 고치고 이 행을 보지 않아**(S-22) `rulesets=[]`·«머지 커밋 check-runs 0»·«pulls 공집합»이 **같은 턴 실측과 충돌**한 채 남아 있었다 — 행 전체를 재작성한다. ① **live 서버 음성(실측)** — 아티팩트 선언 == 구조 파생(`main`)인 정상 구성에서 `responder=gh` 실조회: `required_status_checks {strict:false, contexts:["test"]}` 이므로 **`PREVENTION_INSUFFICIENT`** · `/rules/branches/main` → `[]`(적용 규칙 0) · `/rulesets` → `[{name:"protect_main", enforcement:"disabled"}]` ⇒ **룰셋은 실재하나 disabled 라 동등물 없음**. **인증된 진짜 음성이며 모의가 아니다**. **[E1 — v2.17 에라타]** 초안은 여기에 «작업 브랜치 → 404 → `PREVENTION_ABSENT`» 를 함께 적었으나, **v2.17 에서 `target_branch` 는 `default_branch` 로 «파생»되므로 그 구성은 ⑤(`TARGET_MISMATCH`)이지 `ABSENT` 가 아니고 실행기로 재현되지 않는다**(증거 실행 적발 — S-22: B1 의 파생 전환이 이 행에 미전파). **«비-default 브랜치 protection → 404»는 «raw probe 관측»으로만 병기**하며 상태값 기대가 아니다 ② **seam 주입(`SIMULATED`)** — `responder` 주입으로 `PREVENTION_ACTIVE`·`INSUFFICIENT`·`UNVERIFIABLE` 모의. **기본 responder 는 `gh api`**. **양성은 운영자가 보호를 설정하기 전까지 실측 불가**임을 숨기지 않는다. **진정성은 §12.3.4 «진실 원천» 절이 «판정 소비자 자신의 조회»로 닫는다** ③ **리비전 검증(실측)** — `/commits/{d}/pulls` → 착지 PR → PR `head.sha` check-runs. 실측: `origin/main` 착지 `11e382fc` 의 check-runs **15건**(push 트리거 워크플로)·`pulls` = PR #636(merged·base main), PR head `7656259d` check-runs 5건에 **`tos-gate` 없음** ⇒ **`PREVENTION_UNVERIFIED_REVISION`**. 미푸시 커밋 → 422 ⇒ `PREVENTION_UNVERIFIABLE` · 푸시됐으나 PR 없는 `be98f075` → `pulls` `[]` ⇒ UNVERIFIED_REVISION ④ **보호 해제 후(stub)** — «countersign 시 ACTIVE → 이후 해제» 후 완료 판정 재조회가 `ABSENT`/`INSUFFICIENT` ⑤ **[v2.17 신설] target 불일치** — 아티팩트가 **다른 저장소/브랜치**를 선언(예: 보호가 걸린 타 repo, 또는 default 아닌 브랜치) → **`PREVENTION_TARGET_MISMATCH`** + 비-0. **`D = ∅` 에서도 red 여야 한다** — v2.16 은 이 구성에서 **임의 대상의 보호만으로 ACTIVE** 를 냈다 ⑥ **[v2.17 신설] `app_id` 위조** — `tos-gate` 라는 이름에 `conclusion: success` 이지만 **`app.id` 가 게이트 앱(기본 `15368`)이 아닌** check-run 을 seam 으로 주입 → **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **이름만 보는 구현은 통과시키므로 실패한다** ⑦ **[v2.18] 타 앱 고정 required check** — 보호는 있고 `contexts` 에 `tos-gate` 도 있으나 `required_status_checks.checks[]` 의 그 컨텍스트 `app_id` 가 **Actions 가 아닌 앱**(예 99999) → **`PREVENTION_INSUFFICIENT`** + 비-0. **v2.17 은 이름만 봐서 `prot_ok` 를 냈고 `D=∅` 이면 그대로 진입 승인**됐다(심판이 실행기 술어로 재현) ⑧ **[v2.18] same-app wrong-workflow** — **같은 Actions app id** 로 **다른 워크플로**의 잡을 `tos-gate` 로 이름 지어 success 게시 → workflow run 의 `path` 가 `.github/workflows/tos-gate.yml` 이 아니므로 **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **app id 만 보는 구현은 통과시킨다**(실측: PR #636 head 의 5 run 이 전부 동일 app id) ⑨ **[v2.18] 아티팩트 사후 편집** — `P` → D0-A 착수 → 아티팩트 편집 → **`PREVENTION_ARTIFACT_MUTATED`** + 비-0. **`P_last` 를 쓰지 않고 «최초 도입 P» 만 보는 구현은 통과시킨다**  **[v2.20 — 심판 #3] 부모신뢰 TOCTOU 확장**: `P_last` 조상성 소비도 U-16-c 격리 스냅샷 기층을 쓰므로, ㉡ 관측과 조상성 조회 사이 graft 삽입·제거(SIMULATED seam)로 `ARTIFACT_MUTATED`↔`ACTIVE` 를 뒤집는 구현은 격리 스냅샷 안 소비로 fail-closed 됨을 함께 본다(격리 클론 픽스처·종수 불변) ⑩ **[v2.18] 타 원격·타 호스트** — 아티팩트/원격이 **계약 핀**(`github.com/kakao-harris-lee/kis_unified_sts`)과 다른 host 또는 owner/repo 를 가리킴(비-GitHub 호스트의 동일 경로 포함) → **`PREVENTION_TARGET_MISMATCH`** + 비-0. **host 를 버리는 정규화는 통과시킨다** ⑪ **[v2.19 신설 — 심판 F1] 보호 해제 창(off→merge→on) — 연속성** — **live 로 실행하지 않는다**(실측 픽스처가 서버 보호 설정 변경을 요구하므로): v2.16 (a) 방식의 **«캡처된 응답 위 결정적 술어» seam** 으로 SIMULATED 구성한다. 룰셋 응답에 `updated_at` 이 **최초 착지 `merged_at` 보다 늦은** 캡처를 주입 → **`PREVENTION_CONTINUITY_UNVERIFIABLE` + 비-0**(U-17-c). **classic branch protection 만인 캡처**(`updated_at`·`created_at` 부재) → 같은 값(연속성 판정 불가). **`updated_at`·`created_at` ≤ `merged_at` 캡처** → 그 축 통과(다른 축이 성립하면 `PREVENTION_ACTIVE`). **판별력**: 「진입·완료 두 조회가 둘 다 ACTIVE 면 통과」로 접는 구현은 이 SIMULATED 를 통과시켜 실패한다. **live 는 현행 상태 음성만**(오늘 `main` 은 룰셋 `disabled` 라 애초에 `PREVENTION_INSUFFICIENT`). **소비 시각은 «서버 시간»만**(응답의 `updated_at`·`created_at`·PR `merged_at`) — 커밋 author/committer date 는 클라이언트 공급이라 쓰지 않는다. **정직 표기**: 감사 로그 없이 «머지 시점 강제»의 완전 증명은 불가하므로 이 대조군은 **설정 변경의 관측**만 fail-closed 로 승격한다 ⑫ **[v2.19 신설 — 심판 신규 high] `GH_HOST` override — 정본 host 결속** — **live 실행 가능**(GET-only·환경변수만). 소비자는 계약 핀에서 host 를 파생해 **모든 `gh api` 에 `--hostname <핀 host>` 명시 + 자기 환경 `GH_HOST` 를 핀 host 로 설정**한다. 대조군은 `GH_HOST=<타 host>`(+`GH_ENTERPRISE_TOKEN=dummy`) 주입 후 실행 → **상태값이 override 유무와 «불변»**(조회가 핀 host 에 결속)이거나, 핀 host 도달·인증 불가면 **`PREVENTION_UNVERIFIABLE`**(fail-closed). **override 가 상태값을 바꾸면(특히 타 host 응답으로 `PREVENTION_ACTIVE`) 실패** = host 를 `gh` 환경에 위임하는 구현. **심판 실측 프로브**(`GH_HOST=example.invalid … gh api repos/a/b`, exit 1)가 host 없는 명령의 결함을 재현한 그 클래스이며, T-84 ⑩(remote URL 대조만)은 이 축을 잡지 못한다 ⑬ **[v2.20 신설 / v2.21 재편 / v2.22 재편 — 심판 #1·#2·#4] 정본 불일치 클래스** — 동일 path/app/head 성공 워크플로 blob 에서 **게이트 «잡 객체 전체»**(워크플로 최상위 allowlist·`jobs` 개수·잡 허용 키·`name` 값·`runs-on` 값·`steps` **순서**·체크아웃 `with` 값·스텝 메타·파서 계약)가 **정규화 후 계약 «정본 잡 템플릿»과 다르면** → **`PREVENTION_UNVERIFIED_REVISION`** + 비-0.  **[v2.22] 정본 스텝 순서는 «verify-first» 다** — `steps` = [① 체크아웃 · ② `tos-gate: verify harness sha256`(정본 B) · ③ `tos-gate: run harness`(정본 A)].  **v2.21 순서(실행→검증)를 그대로 둔 blob 은 그 자체로 정본 불일치**이며, 대조군은 «v2.21 순서 blob → `PREVENTION_UNVERIFIED_REVISION`»을 **양방향으로** 실증한다(신규 정본 순서 = 양성 / 구 순서 = red).  «토큰 존재»가 아니라 «정본 byte 일치»가 관측량이다(구문 우회 전 클래스를 «열거 없이» 닫음·열린→닫힌 세계). **양성(정본 일치)**: `run:` 이 정본 A/B 와 정규형 일치면 red 가 «아니어야» 한다(허용 정본 집합 안이면 통과) · **정규화 대조군**: **`|` (literal) 표기** 하에서 주석 줄·빈 줄·trailing 공백·CRLF 만 다른 blob → «일치»(정규화가 결정적으로 흡수); `>` folded 는 스텝 A(빈 줄=개행)만 우연 일치·**스텝 B 는 접혀 불일치**(fail-closed)·정본 표기는 `|`([v2.21 에라타 ⓐ/E1]). **불일치 하위 케이스(전부 UNVERIFIED_REVISION·종수 불변)**: ⑬a `echo "…경로…"`(경로가 출력 명령 인자 — 정본 아님) · ⑬b `true  # shasum…|grep 957…`(무실행 + trailing 주석 — 정본 아님) · ⑬c `shasum…|grep 957… || true`(대조 뒤 `|| true` 무효화 — 정본 아님; **v2.20 의 «미검출» 기대가 v2.21 에서 «UNVERIFIED_REVISION» 으로 뒤집힘**·증거 V220 §3 ⑬c ACTIVE 기대 갱신) · **⑬d 도달 불가 호출** — `false && bash tools/tos_entry_harness.sh || true`(하니스가 `&&` 피연산자)·`… && bash tools/…`(선행 가드) — 정본 아님 · ⑬e 스텝 `continue-on-error: true`·`if: always()`/`failure()`·**추가 메타 키**(`working-directory`·`env:`·`with:`·`uses:`) 존재(닫힌 메타 키 집합 위배) · ⑬f `set +e`·`trap … ERR`(정본에 없는 줄) · **⑬g 선행 종결자** — `set -euo pipefail; exit 0; bash tools/…`·`exec true`·`[ -n "${SKIP:-}" ] && exit 0`(하니스 호출 «전»에 제어흐름을 종결해 미실행 — 독립 검증 B10/B11/B12 재현; 정본에 그 «실행 줄»이 없어 불일치로 검출). **[v2.21 에라타 2차 — 잡 템플릿] ⑬h 실행 무력화 defaults** — 워크플로/잡 `defaults.run.shell: "true {0}"`(정본 스텝 byte·이름 보존하나 실행 무력화·success 보고) → 정본 잡 템플릿의 `defaults` 부재 위배 → UNVERIFIED_REVISION(stop-time BLOCK 재현) · **⑬i 추가/선행 스텝·비-핀 체크아웃** — 게이트 잡에 선행 `run` 스텝(`echo /x >> $GITHUB_PATH` PATH 조작)·추가 스텝 → `steps` ≠ 정확히 3 → 불일치 · **[v2.21 에라타 3차 ⓒ] 체크아웃 `uses` 가 «비-핀 40-hex SHA»(임의 포크 커밋)·태그·브랜치 → 핀 SHA `3d3c42e5…` 불일치**(초안이 형식만 검사하던 R-1 fail-open 닫음) · **⑬j 잡 실행환경 키** — 잡 `container:`(가짜 bash 이미지)·self-hosted `runs-on`·잡/워크플로 `env:` → 허용 키/값 닫힌 집합 밖 → 불일치 · **[v2.22·F#4] ⑬i/⑬j 값 검사 엄격화** — ⑬i 에 **체크아웃 `with` 의 «존재·값»** 대조군을 더한다(`with` 생략 · `fetch-depth` 생략(기본 1 = 얕은 클론) · `fetch-depth: 1` · `persist-credentials` 미지정(기본 true) · `persist-credentials: true` → 각 **UNVERIFIED_REVISION**; v2.21 은 허용 키 밖만 거부해 이 넷이 전부 통과했다), ⑬j 에 **`permissions` 생략 · `permissions: {contents: write}` 등 비-정확 집합 · 비-핀 runner 라벨(`ubuntu-22.04`·`macos-latest`·self-hosted·배열·표현식)** 대조군을 더한다 · **[v2.22·F#1] ⑬k 자기수복 하니스·역순** — (ㄱ) **v2.21 순서(실행 → 검증) blob** 자체가 정본 불일치 → red · (ㄴ) **초기 sha 불일치 하니스가 실행 중 자기 파일을 정본 바이트로 복원하고 exit 0** 하는 픽스처에서, verify-first 정본이면 **검증 스텝이 먼저 비-0** 이라 하니스가 도달조차 하지 않음을 **비-0·non-ACTIVE 로 실증**한다(v2.21 정본 순서로 같은 픽스처를 돌리면 `PREVENTION_ACTIVE` 가 나오는 **반사실 대조**를 함께 둔다 — 이것이 심판 #1 «회피 2연속»의 관측면이다) · **[v2.22·C-1 — 신설] ⑬l 잡 «내부» 중복 `steps:`** — 게이트 잡 «안»에 `steps:` 를 **두 번** 두고 앞 블록은 계약 리터럴 스텝 이름 2개로 `true` 만, 뒤 블록은 정본을 둔다.  `jobs` 개수 검사·`keys\|unique` 대조·`json.loads` last-wins 는 **전부 통과**하므로 v2.21 술어로는 `BLOB_OK` 가 나온다 → **전 노드 중복 검출이 이것을 `PREVENTION_UNVERIFIED_REVISION` 으로 만든다.  «우회-먼저»/«정본-먼저» 두 순서 모두 red 여야 한다** · **[v2.22·M-2] ⑬m anchor·최상위 allowlist** — `&anchor`/`*alias` 로 게이트 잡을 복제(→ yq 확장 후 `jobs` 개수 ≠ 1 → red) · alias 뒤 키 오버라이드 · **최상위 임의 키**(allowlist `{name, run-name, on, permissions, jobs}` 밖) · `env`/`defaults`/`concurrency` 존재 · **`<<` merge key 존재**(금지 리터럴) · `yq --version` 불일치(→ **`PREVENTION_UNVERIFIABLE`**) · **[v2.22·C-1 — 신설] ⑬n 전 노드 중복 키** — 최상위 `jobs:` 중복 · `permissions:` 중복 · 잡 `runs-on:` 중복 · **시퀀스 원소 `steps[i]` 안의 중복 `run:`/`name:`** 각각 red.  **정직 워크플로 대조군**: 정본 blob 에서 **yq ↔ PyYAML `compose` 의 `.value` 키 트리 발산 0**(`on:` 이 두 파서 모두 문자열 «on» 이므로 «알려진 예외» 조항 없이 성립). **⑬a~⑬n 은 전부 «정본 잡 템플릿과 다름»이라 정본 대조가 열거 없이 닫는다** — 자작 도달성 분석기·키 열거 불요(운영자 «바퀴 재발명 금지»). **양성**: 정본 잡 템플릿 정확(체크아웃 `actions/checkout@<SHA 핀>` + 정본 A/B). **정직 경계(잔여)**: 정본 잡 일치는 «런타임 실제 실행»을 증명 못 함(잡 «밖»: 다른 잡 아티팩트/캐시·runner 이미지·GitHub 내부·스텝 이름 위조·checkout 신뢰[SHA 핀] — 위조 비용↑·닫지 못함) ⑭ **[v2.20 신설 — 심판 #1] 서버 잡 스텝 부재/실패** — blob 구조는 통과하나 서버 `actions/runs/{run_id}/jobs`(또는 `actions/jobs/{job_id}`) 그 잡 `steps[]` 에 계약 리터럴 «스텝 이름»(`tos-gate: run harness`·`tos-gate: verify harness sha256`)이 **부재**하거나 그 스텝 `conclusion != success` → **`PREVENTION_UNVERIFIED_REVISION`** + 비-0. **판별력**: blob 만 보고 서버 스텝 실행 기록을 대조 안 하는 구현은 통과 → 서버 스텝 대조는 red.  **[v2.22 확장 — F#2(ii)·M-1·M-3]** ⑭ 에 세 대조군을 더한다: (ㄱ) **이름 필터 `hit` 비-유일** — 같은 워크플로에 `name: tos-gate` 인 잡이 2개인 응답 → `len(hit) != 1` → **UNVERIFIED_REVISION**(v2.21 실행기의 `hit[0]` 은 통과시킨다) · (ㄴ) **잡 `conclusion` 이 `skipped`/`neutral`/`cancelled`/`null`** → 각 **UNVERIFIED_REVISION**(GitHub 의 required-check 계산에서는 `skipped`·`neutral` 이 «Successful» 이지만 U-17 이 묻는 것은 «머지 허용»이 아니라 «게이트 실행»이다) · (ㄷ) **path-aware check-run 전수 열거** — 동명 check-run 이 둘인 응답에서 **정본 `path` 의 것이 부재**(=evil 단독) 또는 **정본 `path` 의 것이 비-success**(=정본 fail + decoy success) → 각 **UNVERIFIED_REVISION**.  «동명 둘 다 success»(정본 path 가 success) 는 **통과이며 이것이 (a) decoy 잔여**임을 같은 대조군에서 **잔여로 실증**한다(닫힘 주장 아님).  **정직 경계**: 스텝 이름·결론은 «서버 기록»이지 «그 스텝의 run 내용을 그대로 실행했다»의 증명이 아니다(⑬+⑭ 는 위조 비용을 올리되 GitHub 내부 실행 간극은 안 닫는다) |
 | **T-83** | **K-14 매핑-부재 레벨** (§5.2.8) | **v2.12 신설 (심판 #3 — medium)** — 파라미터화 **2종**(음성 1 · 양성 1) — **문법상 유효하되 승인 매핑 도메인 밖**인 레벨(예: `EV-L7`)을 `minimum_evidence_level` 에 주입 → **floor 도출 불가 = 차단**이어야 한다. **빈 floor 로 접거나 최저 레벨 기본값으로 처리하거나 UNCHK 로 우회하면 실패.** **T-48 과 합치지 않는 근거(S-16)**: T-48 의 뮤테이션은 **문법 밖 값**이고 실패 축이 *파싱 불가*다. K-14 의 축은 *파싱은 되는데 매핑이 없다* — **다른 술어**를 건드린다. 합치면 **"문법 검사만 있고 매핑 검사는 없는 구현"이 T-48 을 통과하면서 K-14 를 비운다.** **양성 대조도 함께**: 매핑 안의 레벨(`EV-L6` — 도메인 전역화 후)은 **정상 도출**돼야 한다. 안 되면 K-14 가 과잉 차단이다 |
 | T-48 | 하한 미해석 fail-closed | `minimum_evidence_level`에 문법 밖 값 주입 → 하한이 조용히 비면 실패 (`Profile-dependent` 3행은 명시 선언 경로) |
 | T-49 | 하한→쌍 생성 | `FAULT`를 하한에 포함시켰을 때 쌍이 생성돼 `UNVERIFIABLE`로 §13에 계수되는가 → 계수 안 되면 실패 |
@@ -3770,7 +3782,7 @@ D0-4의 `tos_evidence_run.py` 분리 요구가 중요하다 — 그 파일은 EV
 | 7 | `verdict: approve` **AND** 6d·6e·6f 기록 취득 후 P-0 착수 | 차단. **[v2.9] 잔여 조건은 둘이다** — ① 6e⁗ 재결속 ② 현행 버전 `verdict: approve`. **[v2.7 신설 — 심판 #1] 이 단계는 통과가 아니라 만료를 낳는다**: P-0 는 `bound_paths` 의 하나(상위 계획)를 개정하므로 **착수 즉시 ①②를 동시에 무효화**한다. 따라서 7 다음은 8 이 아니라 **7b** 다 |
 | **7b** | **[v2.7 신설] P-0 완료 직후 — 만료 관측** | **선언이 아니라 관측이다.** P-0 커밋 뒤 `--check` 는 ① `oq11_rebinding_required = True`(U-12 (iv) — 상위 계획 내용이 바뀌어 digest 불일치) ② `approval_currency = False`(U-15-b (4) — `reviewed_at_head`..HEAD 사이에 `bound_paths` 를 건드린 커밋이 실재) 를 **자동으로 관측**한다. **저작자·구현자가 이 상태를 선언하지 않는다.** 관측되지 않으면 그것이 U-15 구현 결함이며 T-81 이 잡는다 |
 | **7c** | **[v2.7 신설] 재동결 → `OQ-11` 재결속 → 레인 B 재심** | **P-0 후 결속 재진입.** 6e″ 와 **같은 계약**(§12.3.1)이고 **같은 순서**(§12.3.2 O-1·O-6)이며, 대상은 **P-0 가 개정한 내용**이다. 세 단계가 전부 끝나야 8 로 간다. **[v2.16 — stop-time BLOCK ①]** 그리고 **`prevention_control_state == PREVENTION_ACTIVE`(live 조회)** 도 이 단계의 전제다 — v2.15 는 `U-17` 이 7c/8 결속을 **주장**했으나 **이 절차 텍스트는 여전히 `U-15` 만 요구**하고 `prevention_control_state` 를 언급하지 않았다(S-22 미전파). **회차 번호를 붙이지 않는다** — O-6 이 "`bound_paths` 를 건드리는 **모든** 단계 뒤에 온다"고 전칭으로 규정하므로 열거하면 S-6 위반이다 |
-| 8 | §12.1 순서로 **D0-A → D0-4 → D0-5** 구현 | 차단. **[v2.7 신설 / v2.8 강제 지점 확정] 진입 조건은 `U-15-c` 다**(§12.3.4): `oq11_rebinding_required == False` **AND** `approval_currency == True`. **둘 다 기계 관측이며 fail-closed** — 부재·파싱 실패·조상 관계 확인 불가는 전부 거짓으로 접는다. **"7c 를 했다"는 자기신고는 진입 근거가 아니다.** **[v2.16] 진입 조건은 논리곱 셋이다** — `oq11_rebinding_required == False` **AND** `approval_currency == True` **AND** **`prevention_control_state == PREVENTION_ACTIVE`(live 서버 조회, `U-17`)**. 착수 형식은 **가드 체인 3단** `bash <하니스> && bash <u17-verify> && <D0A-FIRST>`(U-15-f-1). **[v2.8 — 심판 #1] 그 관측을 누가 수행하는지가 v2.7 에 없었다**(강제 지점이 D0-A 산출인 검사기 하나뿐이라 **진입을 막을 표면이 진입 후에야 생기는 순환**). 확정: 이 시점의 강제 지점은 **1단 «진입 점검 레시피»**(§12.3.4-R — 오늘 실행 가능·D0-A 산출물 불요)이고, 산출물 `U15-ENTRY-CHECK.md` 가 **추적 경로에 보존**되며 **transcript 가 stale 이면 그것도 진입 거부**다(U-15-e). D0-A 가 검사기를 산출하면 **2단으로 승계**된다. **[v2.11] 착수 형식은 `U-15-f` 가드 하나뿐이다** — `bash <하니스> && <D0-A 최초 행위>`. 다른 형태의 착수는 규정 밖이며, 미사용은 **U-15-e (5) 기록 부재**로 드러난다. 억제 증거 절차는 §12.3.4-G. 대조군 T-81(§12.3.4-T·§12.3.4-G 절차로 pre-D0-A 실행). **v1.6: `D0-2 → D0-1`은 v1.5에서 D0-A로 병합됐는데 이 표에 전파되지 않았다**(심판 지적). 구현자가 이 표를 따르면 "강제 지점 없는 D0-2 완료" 결함이 재현된다 |
+| 8 | §12.1 순서로 **D0-A → D0-4 → D0-5** 구현 | 차단. **[v2.7 신설 / v2.8 강제 지점 확정] 진입 조건은 `U-15-c` 다**(§12.3.4): `oq11_rebinding_required == False` **AND** `approval_currency == True`. **둘 다 기계 관측이며 fail-closed** — 부재·파싱 실패·조상 관계 확인 불가는 전부 거짓으로 접는다. **"7c 를 했다"는 자기신고는 진입 근거가 아니다.** **[v2.16] 진입 조건은 논리곱 셋이다** — `oq11_rebinding_required == False` **AND** `approval_currency == True` **AND** **`prevention_control_state == PREVENTION_ACTIVE`(live 서버 조회, `U-17`)**. 착수 형식은 **가드 체인 3단** `bash <하니스> && bash <u17-verify> && <D0A-FIRST>`(U-15-f-1).  **[v2.22 — 심판 #2]** 가운데 `u17-verify` 는 **하니스와 구별되는 pre-D0-A 산출물**이며 **운영자/인프라 선행 단계가 D0-A 착수 «전»에 둔다**(`UNCHK-008` 도입 집합 4종 · 개발계획 §6 Phase 0 «선행 조건»). **[v2.8 — 심판 #1] 그 관측을 누가 수행하는지가 v2.7 에 없었다**(강제 지점이 D0-A 산출인 검사기 하나뿐이라 **진입을 막을 표면이 진입 후에야 생기는 순환**). 확정: 이 시점의 강제 지점은 **1단 «진입 점검 레시피»**(§12.3.4-R — 오늘 실행 가능·D0-A 산출물 불요)이고, 산출물 `U15-ENTRY-CHECK.md` 가 **추적 경로에 보존**되며 **transcript 가 stale 이면 그것도 진입 거부**다(U-15-e). D0-A 가 검사기를 산출하면 **2단으로 승계**된다. **[v2.11] 착수 형식은 `U-15-f` 가드 하나뿐이다** — `bash <하니스> && <D0-A 최초 행위>`. 다른 형태의 착수는 규정 밖이며, 미사용은 **U-15-e (5) 기록 부재**로 드러난다. 억제 증거 절차는 §12.3.4-G. 대조군 T-81(§12.3.4-T·§12.3.4-G 절차로 pre-D0-A 실행). **v1.6: `D0-2 → D0-1`은 v1.5에서 D0-A로 병합됐는데 이 표에 전파되지 않았다**(심판 지적). 구현자가 이 표를 따르면 "강제 지점 없는 D0-2 완료" 결함이 재현된다 |
 | 9 | `codex-reviewer` 적대적 코드 리뷰 | 차단 |
 
 ### 12.3.1 6e 산출 계약 — `OQ-11` 판정 아티팩트 (v2.3 — 심판 high · **v2.6 확장: `U-12`·`U-13`**)
@@ -4324,26 +4336,30 @@ v2.4·v2.5 를 무효화한 행위다. **상태 표기의 currency 와 결속의
 > 소스**다 — 두 레인은 **판정 주체·주기·형식이 다르고**, 섞으면 «직전 N 건»의
 > 계수가 어느 레인 것인지 모호해진다(이 문서가 S-13 에서 배운 계수 오염과 같은 형태).
 
-#### (A) 확정 — v2.20 판정이 내린 직전 5건의 처분
+#### (A) 확정 — v2.21 재심 판정(`20260820-082830`)이 내린 4건의 처분
 
 | 항목 | 판정 | 잔여가 어디로 갔는가 |
 |---|---|---|
-| #1 U-17 (b)③ 구조 파싱 | **회피** | 구조 파서+서버 스텝이 «토큰 존재·이름/conclusion»만 인증 — `|| true`·`set +e`·도달 불가 호출(`false && …`·선행 `exit`/`exec` 종결자)도 ACTIVE(부분 표면 검사를 해소로 제시) → v2.21 #1(정본 대조 재설계) |
-| #2 U-16-a2 g6 | **해소됨** | «(g1~g5)» 제거·전칭·T-82 ⑮ 대조 인정 — **아크 9번째 해소** |
-| #3 [PARENTS-UNTRUSTED] TOCTOU | **해소됨** | 격리 스냅샷 기층(진입 HEAD detach·내부 canary)으로 graft TOCTOU 닫힘 — **아크 10번째 해소** |
-| #4 T-82 ⑯ | **해소됨** | ⑯·⑱ 모두 `edge_seq` 미기재 현행 스키마 소비 — **아크 11번째 해소** |
-| #5 #6 두 결속 계획 충돌 | **부분해소** | 개발계획 (D) 는 맞췄으나 **활성 UNCHK-008 `owner_track=Phase 1`·U-17 하니스 «D0-A 산출물»** 미전파(S-22·비순환 순서 부재) → v2.21 #2 |
+| #1 U-17 (b)③ 하니스 실행/검증 순서 | **회피 (2연속)** | v2.21 «정본 대조»는 `⑬c`/`⑬g` 리터럴은 거부하나 **정본 순서가 [체크아웃 → 하니스 실행 → sha256 검증]** 이라, 쓰기 가능한 체크아웃에서 **비승인 하니스가 실행된 뒤 자기 파일을 정본 바이트로 복원하고 exit 0** 하면 두 스텝 success·blob 정본 유지 → `PREVENTION_ACTIVE`.  **잡 «안»·결정적 반례**라 v2.21 정직 경계(잡 «밖» 열거)에 미포섭 → v2.22 F#1(순서 반전 + 3축 + C-1) |
+| #2 (#5/#6) pre-D0-A 정본 검증기 부재 | **부분해소 (3연속)** | 개발계획 선행조건은 룰셋·워크플로·하니스 파일 3종만 실체화하고 **가드 체인이 요구하는 `u17-verify` 실행기의 소유자가 없다**.  계약은 그 소비자를 «리뷰어 / D0-A 이후의 검사기»로 적었고, 인용된 순서 실증은 `D = ∅` 라 **(b)·(c) 가 통째로 vacuous** 인 채 ACTIVE 였다 → v2.22 F#3(§6 선행조건 4종·소유자 문언 6자리) + M-7(진입 비-vacuity) |
+| **F#2 신규 high — 두 층이 다른 객체를 고른다** | **신규 결함 클래스** | blob 층은 **잡 id**(`jobs.<gate>`)로, 서버 층은 **표시 이름**으로 고르는데 **v2.21 에라타 3차가 R-3 과잉 차단 완화로 잡 `name` 을 자유 문자열로 허용**하면서 두 키가 분리 가능해졌다 — **직전 에라타의 완화가 연 자리** → v2.22 F#2((i-b) `name` 값-핀 + (ii) `jobs`=1 + 양층 `hit` 유일) |
+| **F#4 신규 medium — 닫혔다는 템플릿에 열린 값** | **R-1 재발 클래스** | «`permissions` 최소(예 …)»·«`runs-on` 닫힌 집합(… 등)»·«최소 `with`»·«기존 YAML 파서» — **계약이 «핀»이라 말하고 값을 두지 않아** 두 소비자가 같은 blob 에 다른 결론을 낼 수 있다(에라타 3차가 닫은 checkout SHA 와 **같은 클래스**) → v2.22 F#4(5자리 값 핀 + 파서 리터럴 + allowlist) |
 
-**해소 3(#2·#3·#4) / 회피 1(#1) / 부분해소 1(#5·#6) — 아크 누적 해소 11**(a2 g6·격리 스냅샷·⑯ = 9·10·11 번째).
-`CLAUDE.md` 비협상 규칙 직접 충돌 **없음**(13판 연속).  신규 결함 클래스 0·S-20 종수 불일치 0.
+**회피 1(#1·2연속) / 부분해소 1(#2·3연속) / 신규 2(F#2·F#4) — 신규 해소 0 · 아크 누적 해소 11 «불변»**.
+`CLAUDE.md` 비협상 규칙 직접 충돌 **없음**(14판 연속).  **S-20 종수 14 일관 확인**(심판·오케스트레이터 독립 실측 일치).
 
-> **아크 누적 해소 11** — a2 g6·격리 스냅샷·⑯ 이 9·10·11 번째.  **회피 1(#1)**: 구조 파서+서버 스텝
-> 대조가 «실행·실패 전파»가 아니라 «토큰 존재·이름/conclusion»만 인증해 부분 표면 검사의 green 을
-> 해소로 제시(계약 자신이 ⑬c 미검출 자인).  **#5/#6 부분**: (D) verbatim 이 두 단계 문구만 맞추고
-> 활성 형제 소비처(UNCHK-008·U-17 하니스 «D0-A 산출물»)에 미전파(S-22) — 비순환 생산 순서 부재.
+> **아크 누적 해소 11 불변** — 이 판은 «해소»를 늘리지 못했다.  **회피 1(#1)**: 순서 반전이라는
+> 최소 교정을 하지 않고 리터럴 검출만 넓혔다(«부분 표면 검사의 green 을 해소로 제시»의 2회차).
+> **#2 부분(3연속)**: 소유자 문언은 pre-D0-A 로 옮겼으나 **권위 있는 pre-D0-A 소비자를 산출하지
+> 않았고**, 인용한 증명이 `D = ∅` 라 정본 대조 층이 통째로 공허했다.  **잔여 S-22 1자리(심판 미지적·
+> 오케스트레이터 실측)**: `U-17-d` 대조군 줄이 ⑬ 를 v2.20 어휘 «비활성 리터럴»로 유지 — v2.22 에서
+> «정본 불일치 클래스»로 함께 닫는다.
+> **[v2.22 비평 레인]** 이 판의 교정 설계는 독립 비평에서 **REVISE**(CRITICAL 1 · MAJOR 8 · MINOR 5)를
+> 받아 전건 채택 후 5라운드 재검증을 거쳤다(회피 0 · 신규 결함 CRITICAL 1 → MAJOR 4 → MAJOR 1 →
+> CRITICAL 1[순수 문면] 수렴).  **그 반증 기록은 v2.22 저작의 일부이며 «해소» 계수와 무관하다.**
 
 
-#### (B) 미확정 — v2.21 이 v2.20 판정 2건에 대해 **주장**하는 처분
+#### (B) 미확정 — v2.22 가 v2.21 재심 판정 4건에 대해 **주장**하는 처분
 
 **[S-24 — 증거 결속]** 아래 «실행 증거» 열은 **현행 상태**다.  v2.15~v2.18 저작 시점의 «없음/
 미실행» 문구는 stale 이었다 — 직전 사이클의 U-17·구조 `D`·⑱ 증거가 스탬프
@@ -4394,19 +4410,34 @@ closed»로 오분류) → **E15**: 결합을 «`--show-toplevel` 루트 결합�
 철회·극성 정정(거짓 부재가 검사 통과시키면 fail-open).  **이 6차 에라타의 결속도 addendum 6차로 이행**.
 
 **[v2.20 — 층 구분]** 위 E1~E15 블록은 직전 판(v2.19)의 에라타 기록(S-24·역사이며 v2.20 이
-새로 쓰지 않는다)이다.  아래 표는 **v2.20 이 v2.19 판정 5건에 대해 주장하는 처분**이며,
+새로 쓰지 않는다)이다.  아래 표는 **v2.22 가 v2.21 재심 판정 4건에 대해 주장하는 처분**이며,
 **v2.20 신규 증거 = `d101eb63`**(`U17`/`U16-…-V220.md` — 기대 전건 일치·문언 에라타 ⓐⓑⓒ 적발·fail-open 0)이며, 그 에라타는 변경 이력 v2.20 에라타 절이 유일 소스다(S-24).  **v2.21 신규 증거 = `3e0f2429`**(`U17-…-V221.md` — 정본 대조 22픽스처 0 불일치·문언 에라타 ⓐ[E1 YAML 스칼라 표기] 적발·fail-open 0)이며 그 에라타는 변경 이력 v2.21 에라타 절이 유일 소스다(S-24).  **v2.21 에라타 2차 = stop-time BLOCK `65cf2635`**(ⓑ 잡 수준 `defaults.run.shell: "true {0}"` 실행 무력화 → 정본 «잡 템플릿» 닫힌-세계 확장; 변경 이력 유일 소스).  **v2.21 에라타 3차 = addendum-2 `5954b22d` 적발**(ⓒ 체크아웃 SHA 형식만 검사 = fail-open R-1 → `actions/checkout@3d3c42e5…`[v7.0.1] 리터럴 핀·`name` 허용; 변경 이력 유일 소스).  직전 층(v2.19) 증거는 스탬프
 `20260819-074621/`(V219 실행 파일)·판정은 `20260819-135916/` 에 있다.
 
-| v2.20 finding | 심판 지적 | v2.21 의 변경 | 왜 회피가 아닌가 | 실행 증거 |
+| v2.21 finding | 심판 지적 | v2.22 의 변경 | 왜 회피가 아닌가 | 실행 증거 |
 |---|---|---|---|---|
-| **#1 U-17 (b)③** (high, 회피) | 구조 파서+서버 스텝이 «토큰 존재·이름/conclusion»만 인증 — `|| true`·`set +e`·도달 불가 호출(`false && …`·선행 `exit`/`exec` 종결자)도 ACTIVE | **(b)③ 를 «정본 대조»로 재설계**(자작 도달성 분석기 폐기 — 운영자 «바퀴 재발명 금지»): 게이트 두 스텝 `run:` 을 정규화 후 계약 «정본 A/B»(`set -euo pipefail`+`bash tools/…` / +`printf … | shasum -a 256 -c -`)와 byte 대조 — 정본과 다르면 UNVERIFIED_REVISION(전 구문 우회를 «열거 없이» 닫음)·스텝 메타(shell/continue-on-error/if/timeout) 닫힌 키 집합 · T-84 ⑬a~⑬g(⑬g 선행 종결자=B10/B11/B12) | «구문 도달성 열거»가 아니라 «정본 byte 일치»(열린→닫힌 세계) — 1차 (iii) AST 는 «선행 종결자» 미포섭(독립 검증 C FAIL)이라 폐기·정본 대조가 그 클래스까지 닫음 | **없음 (미실행) — 동결 후 실행 (정본 일치 양성·⑬a~g 불일치·정규화 대조군)** |
-| **#2 #5/#6 비순환 생산 순서** (medium) | UNCHK-008 `owner_track=Phase 1`·U-17 하니스 «D0-A 산출물» — Phase 0 소비 전 산출·폐쇄 주체 단일 비순환 순서 부재 | **UNCHK-008 owner_track `Phase 1`→`Phase 0`**(D0-A 선행조건·운영자/인프라·산문 2곳 전파) · **U-17 하니스 «D0-A 산출물»→«pre-D0-A 실체화»** · **개발계획 Phase 0 선행조건에 하니스 파일 실체화 추가**((D) ②′ verbatim·운영자 승인 개정의 연장) | 세 소비처(UNCHK-008·U-17 하니스·개발계획)가 같은 pre-D0-A 주체·시점을 가리켜 비순환 — 형제 전파(S-22) 완료 | **없음 (미실행) — 동결 후 실행 · 개발계획 diff = `bound_paths` 편집** |
+| **#1 U-17 (b)③** (high, **회피 2연속**) | 정본 순서가 [체크아웃 → 하니스 실행 → sha256 검증] 이라 **자기수복 하니스**가 실행 후 자기 파일을 정본으로 덮으면 두 스텝 success·blob 정본 → ACTIVE.  «잡 «안»» 결정적 반례 | **① 정본 스텝 «순서 반전»** — `steps` = [① 체크아웃 · ② 정본 B(sha256 «검증») · ③ 정본 A(하니스 «실행»)].  **두 코드펜스의 내용·스텝 이름 리터럴은 byte 불변**(바뀐 것은 순서뿐) · **② F#1 3축**(전 스텝 `if:` 부재/`success()` 계열 · `continue-on-error` 키 부재 · `SHELL_OK` 리터럴 3값) · **③ C-1 전 노드 중복 키 검출**(잡 «안» 중복 `steps:` 로 ②③ 사이 개입 차단) | 심판 Recommendation 이 요구한 «자기수복·초기 불일치 하니스를 비-0/non-ACTIVE 로 거부하고 실행된 바이트 == digest 검증된 바이트임을 증명»을 **순서로** 만족한다 — ② 가 비-0 이면 ③ 이 도달하지 않아 «수복할 시점»이 없다.  단, **셋 중 하나라도 빠지면 닫히지 않는다**(암묵 `success()` 게이트 실측 반례·중복 `steps:` 개입 경로) | **없음 (미실행) — 동결 후 실행** (⑬k 자기수복 양방향[신규 정본=red·구 순서=반사실 ACTIVE] · ⑬l 잡-안 중복 `steps:` 두 순서 · 3축 각 비-0) |
+| **#2 (#5/#6) pre-D0-A 정본 검증기** (medium, **부분해소 3연속**) | 선행조건이 `u17-verify` 를 산출하지 않고, 계약은 소비자를 «리뷰어 / D0-A 이후 검사기»로 적었으며, 인용된 순서 실증은 `D = ∅` 라 (b)·(c) 가 vacuous | **① 개발계획 §6 선행조건 = 4종**(룰셋·`tos-gate.yml`·하니스 파일·**`u17-verify` 실행기**) + **도입 순서**(파일 3종 먼저·룰셋 마지막) — (D) ②″·①′ verbatim · **② 소유자 문언 정합**(계약 소비자 정의·가드 체인 절·`UNCHK-008`·예방 산문 2곳·u17-verify 존재 6자리) · **③ [M-7] 진입 비-vacuity** — (b)③ blob 층«에» `D` 무관 무조건 항 `(b-blob)@target` 을 **추가**(기존 D-지표 `(b-blob)@d` 유지·«대체» 아님) | 「같은 pre-D0-A 생산자가 검증기를 명시적 선행조건으로 소유」 = ①②, 「D0-A/Phase 1 산출물 없이 권위 경로가 ACTIVE 에 도달」 = ③ — **`D = ∅` 진입에서도 blob 층이 평가**되므로 F#1·F#2·F#4·C-1·M-4 가 진입 판정경로에서 활성이다.  **격하**: `(b-blob)@d`·`(b-server)` 는 진입선에서 여전히 평가 불가(잔여 등재) | **없음 (미실행) — 동결 후 실행** (진입 `D = ∅` 픽스처에서 정본=ACTIVE·비정본=UNVERIFIED · per-d 결속 반례[PR head 비정본 + target 정본 → UNVERIFIED] · 개발계획 diff = `bound_paths` 편집) |
+| **F#2** (high, 신규 클래스) | blob 은 잡 id 로·서버는 표시 이름으로 고른다 — 정본 `jobs.tos-gate` 를 다른 표시 이름으로 두고 `name: tos-gate` 인 두 번째 잡을 더하면 required check 와 서버 스텝이 우회 잡에서 나온다 | **(i-b) `name` 존재 강제 + 값 = 계약 리터럴 `tos-gate`**(R-3 완화를 되돌리지 않고 «값-핀»으로 정밀화) · **(ii) `jobs` 정확히 1개 ∧ 잡 id == `tos-gate`** · **양층 `hit` 유일성**(서버 `len(hit)!=1` → UNVERIFIED · blob 스텝 대조도 동일) · **게이트 체크 이름을 아티팩트 파라미터에서 계약 핀으로 이동**(선언 3항→2항·핀 규율 편입) | 심판 Recommendation 의 «same-workflow duplicate-name mutation 이 non-ACTIVE» = `jobs`=1 + `hit` 유일 · «blob·check-run·서버 잡이 하나의 유일 잡을 식별» = 한 리터럴(`tos-gate`)이 잡 id·표시 이름·required context 세 자리를 동시에 고정.  **근거는 «미규정 fallback» 이 아니라 «`name` = UI 표시 이름» 문서확인** | **없음 (미실행) — 동결 후 실행** (형제 잡·자유 문자열 `name`·잡 id 불일치 각 UNVERIFIED · 서버 `hit` 2개 응답 → UNVERIFIED) |
+| **F#4** (medium, R-1 재발) | `permissions`·`runs-on`·checkout `with`·YAML 파서가 «형식만» 검사 — 두 소비자가 같은 blob 에 다른 결론 | **다섯 자리 값 전수 핀**: ① `permissions` 존재 강제 + 정확히 `{contents: read}` ② `runs-on` 허용 리터럴 정확히 2개 ③ `with` 정확히 `{fetch-depth: 0, persist-credentials: false}` ④ 파서 = `yq (mikefarah) v4.48.x` + `yq --version` 대조 + `<<` 금지 ⑤ `SHELL_OK` 리터럴 3값(+`timeout-minutes`≠0·`if:` 허용 집합) · **워크플로 최상위 allowlist `{name, run-name, on, permissions, jobs}`** | 심판 Recommendation 의 «모든 수용 값과 파서 계약이 고정되고 권위 소비자가 누락/변조된 checkout depth·미선언 runner·permissions·파서 모호성 픽스처를 거부» 를 **전수**로 이행한다(한 자리씩 닫으면 다음 에라타가 또 난다).  **격하**: `runs-on` 은 «닫힌 값»이지 «닫힌 실행 환경»이 아니고(라벨 이동), `fetch-depth` 정확 필요치와 파서 UNMAINTAINED 선언 의존은 잔여로 등재 | **없음 (미실행) — 동결 후 실행** (⑬i `with` 4변형 · ⑬j `permissions`/runner 변형 · ⑬m anchor·allowlist·`<<`·`--version` 불일치 · `on:` 파서 대조군) |
 
-**어느 것도 «해소»로 세지 않는다.** **v2.21 이 주장할 수 있는 것은 «v2.20 판정 2건에 대해 요구된
-저작을 수행했다»이지 «해소»가 아니다.**  **#1 은 «정본 대조»의 실행 증거가 동결 후**(정본 일치 양성·⑬a~g 정본
-불일치·⑬g 선행 종결자 포함), **#2 는 형제 소비처 전파 + 개발계획 연장**이나 두 문서 재결속·재심 전이라 주장이다.
-**정직 경계**: #1 정본 대조는 «런타임 실제 실행»을 증명하지 않는다(선행 스텝 PATH/env·GitHub 내부·스텝 이름 위조 — 닫지 못함).
+**어느 것도 «해소»로 세지 않는다.** **v2.22 가 주장할 수 있는 것은 «v2.21 재심 판정 4건에 대해 요구된
+저작을 수행했다»이지 «해소»가 아니다.**  네 건 모두 **실행 증거가 동결 후**이고 두 문서 재결속·재심 전이다.
+**정직 경계(격하 — 닫히지 않는 표제를 «닫힌다»고 적지 않는다)**:
+· **#1**: 순서+3축+C-1 은 «잡 «안»»을 닫되 GitHub 의 「실패 스텝 이후 skip」·「파일대로 실행」 신뢰는 선언 잔여다.
+· **#2/M-7**: 진입(`D = ∅`)이 얻는 것은 **`(b-blob)@target` 의 «정본 파일 실재»** 뿐이고, `(b-blob)@d`·`(b-server)`
+  는 리비전·런이 없어 진입선에서 평가 불가다(완료 소관·잔여 등재).
+· **F#2**: (i-b)+(ii)+양층 유일성이 blob·서버·⑧ 를 한 잡에 결속하되, **(a) 예방 층의 동명 decoy 는 여전히
+  구별하지 못한다**(M-3 — 탐지는 (b)⑧ 사후) — «⑧ 이 워크플로 경계를 닫는다·새 잔여 없음» 이라는 초안 주장은 **철회**한다.
+· **F#4**: `runs-on` 은 «닫힌 값»이지 «닫힌 실행 환경»이 아니고, `fetch-depth` 정확 필요치(0 vs N)·파서
+  go-yaml v3 `UNMAINTAINED` 선언 의존·`persist-credentials: false` 의 대칭 잔여는 등재 대상이다.
+· **M-1(격하)**: 스킵 벡터는 **v2.22 가 닫는 신규 축이 아니다** — 잡 `if:`/`needs:` 스킵은 **v2.21 의 잡 허용 키
+  닫힌 집합이 이미 닫고 있고**, `on` 하위 필터 스킵은 **pending = 차단(fail-closed)** 이라 애초에 열려 있지 않다.
+  남는 것은 **blob «밖» 3벡터**(워크플로 API 비활성화·fork PR 승인 게이트·merge queue `merge_group`)이며 잔여 등재다.
+· **[v2.22 비평 레인 반증 기록]** 이 판의 교정 설계는 독립 비평 5라운드를 거쳤고(REVISE → 전건 채택 → 델타
+  재검증 ×4 · 회피 0), 그 과정에서 **저작자의 자기신고·심판의 관측·오케스트레이터의 실측이 «전부» 재실측
+  대상**임이 세 번째로 실증됐다.  **절단 출력(`cut`/`head`)으로 «부재»를 판정하지 않는다** — 긴 단일 라인의
+  뒷부분이 잘려 «부재»가 만들어진다(실제 발생·검색은 variant-tolerant 로).
 
 #### (B2) 레인 밖 — stop-time EV-L6 에피소드
 
@@ -4436,7 +4467,7 @@ closed»로 오분류) → **E15**: 결합을 «`--show-toplevel` 루트 결합�
 **차단 해제는 U-16 을 삭제하지 않는다** — 계약은 서 있고 종료조건 결속만 빠진다
 (§13.6 이 세 회차에 걸쳐 확정한 "등재는 차단이 아니다"의 역방향 적용).
 
-#### (D) 두 결속 계획의 Phase 0/1 선행관계 충돌 — **운영자 게이트: 적용됨** (v2.19 신규 medium · v2.20 운영자 지시로 적용 · v2.21 ②′ 하니스 파일 실체화 연장)
+#### (D) 두 결속 계획의 Phase 0/1 선행관계 충돌 — **운영자 게이트: 적용됨** (v2.19 신규 medium · v2.20 운영자 지시로 적용 · v2.21 ②′ 하니스 파일 실체화 연장 · **v2.22 ①′·②″ `u17-verify` 실체화 + 도입 순서 연장**)
 
 **심판 판정 (v2.19 — 리터럴 유지)**: 개발계획(`2026-08-11-…-development-plan.md`)은 **Phase 1 작업 7**에서 required CI
 job(TOS tests 등)을 추가하고 **Phase 1 종료조건**에 «branch protection TOS gate required 증거
@@ -4484,6 +4515,32 @@ Phase 0 D0-A 착수 선행조건)를 규정**한다.  **별도 술어는 불요*
 -  경로·sha256 검증 스텝 포함) 도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
 +  경로·sha256 검증 스텝 포함) **및 그 하니스 파일 `tools/tos_entry_harness.sh` 의
 +  실체화(계약 §12.3.4-R 블록 결속값 sha 957bf49d…)** 도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
+```
+②″ **[v2.22 — 심판 #2 3연속 «부분해소» 연장]** ②/②′ 의 예방 통제 불릿에 **`u17-verify` 실행기 실체화**와 **도입 순서**를 같은 선행조건으로 추가 — **운영자 승인 (D) 개정의 «연장»**(같은 대상·같은 pre-D0-A 주체·시점: `UNCHK-008` 도입 집합 4종·U-17 «진입자의 u17-verify» 소유자 문언과 정합):
+```diff
+   경로·sha256 검증 스텝 포함) **및 그 하니스 파일 `tools/tos_entry_harness.sh` 의
+-  실체화(계약 §12.3.4-R 블록 결속값 sha 957bf49d…)** 도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
++  실체화(계약 §12.3.4-R 블록 결속값 sha 957bf49d…)** **및 `u17-verify` 실행기의 실체화**
++  도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
++  - **`u17-verify` 는 하니스와 «구별되는» 필수 산출물**이다 — 계약의 가드 체인은 3단
++    (`bash <§12.3.4-R 하니스> && bash <u17-verify> && <D0A-FIRST>`)이고, 하니스는
++    **오프라인·결정적**이어야 하므로 live 서버 조회는 별도 실행기가 맡는다(계약 §12.3.4
++    «왜 하니스에 넣지 않는가»).  **소유자·시점은 이 선행조건과 같다** — 운영자/인프라가
++    D0-A 착수 «전»에 둔다(계약 `UNCHK-008` 도입 집합 4종).
++  - **도입 순서 = `tos-gate.yml` · 하니스 파일 · `u17-verify` 를 «먼저», 룰셋을 «마지막»** 으로 둔다.
++    룰셋(required check)을 먼저 활성화하면 그 뒤에 `tos-gate.yml` 을 올리는 PR 자신이
++    **존재하지 않는 체크를 기다리며 pending** 이 되고, 유일한 탈출구가 **«보호를 잠시 해제하는 창»**
++    이 된다 — 그 창은 계약이 «룰셋을 바꾸지 않은 우회»로 **닫지 못한다고 등재한 잔여**와 같은 형태다.
++    파일 3종이 target 에 먼저 착지하면 룰셋 활성화 시점에 이미 정본 워크플로가 존재한다.
+```
+**도입 순서는 이 diff(개발계획 §6 선행조건)가 «유일 소스»** 이며 계약 본문에서 재기술하지 않는다(S-14).
+①′ **[v2.22] Phase 1 작업 7 의 형제 열거를 «단일 참조»로 재기술**(①의 후속) — ①은 이관 대상을 «required check[룰셋]·`tos-gate.yml`» **2종으로 열거**해 두어, v2.21 이 더한 하니스 파일도 v2.22 가 더하는 `u17-verify` 도 **이 자리에는 전파되지 않는 구조**였다(S-22 형제 소비처 미전파의 정확한 형태).  열거를 지우고 §6 선행조건을 참조한다:
+```diff
+-   (tos-gate required check[룰셋]·`.github/workflows/tos-gate.yml` 도입은 Phase 0
+-    D0-A 착수 선행조건으로 이관 — 계약 §12.3.4 `U-17`.  이 작업 7 은 나머지 잡만 관장한다.)
++   (**U-17 예방 통제의 도입 집합은 전부 Phase 0 «선행 조건 (D0-A 착수 전)» 으로 이관**됐다 —
++    그 집합의 «유일 소스»는 위 Phase 0 선행조건 절이며 여기서 열거하지 않는다(계약 §12.3.4 `U-17`).
++    이 작업 7 은 나머지 잡만 관장한다.)
 ```
 ③ **Phase 1 종료조건** — «도입» 증거는 Phase 0 로 갔으므로 «연속성 유지»로 교체:
 ```diff
@@ -4937,6 +4994,10 @@ U-15-f-1  **D0-A 의 최초 행위는 가드 형태 안에서만 개시된다.**
 
               bash <§12.3.4-R 하니스> && bash <u17-verify> && <D0A-FIRST>
           **[v2.16] 3단이 됐다** — 가운데가 `U-17`(예방 인프라)이다
+          **[v2.22 — 심판 #2] 좌·중 두 실행기는 «둘 다» pre-D0-A 산출물이다** — 하니스 파일
+          (sha `957bf49d…`)과 `u17-verify` 를 **같은 운영자/인프라 선행 단계**가 D0-A 착수 «전»에
+          둔다(`UNCHK-008` 도입 집합 4종 · 개발계획 §6 Phase 0 «선행 조건»).  가드가 요구하는
+          실행기의 생산자가 진입 «후» 단계면 비순환 생산 순서가 성립하지 않는다
 
           **`D0A-FIRST` 는 §12.1 이 명명한 실제 행위**(`config/tos_completion.yaml`
           도입 커밋)이며 **대리 행위로 대체하지 않는다** — v2.11 은 우변을
@@ -4982,7 +5043,7 @@ U-15-f-4  **[v2.13 신설 — 심판 #1(a)]  부모 결속 — 하니스 통과�
 **그래서 두 가지를 분리해 적는다: 예방은 누구 소관인가, 그 전까지 무엇을 하는가.**
 
 ```text
-예방(진입 표면 거부)   **`UNCHK-008` 소관**(`Phase 0` — **[v2.21]** D0-A 착수 전 선행조건·운영자/인프라) — 브랜치 보호·훅은
+예방(진입 표면 거부)   **`UNCHK-008` 소관**(`Phase 0` — **[v2.21]** D0-A 착수 전 선행조건·운영자/인프라 · **[v2.22]** 도입 집합 4종 = 룰셋 required check·`tos-gate.yml`·하니스 파일·**`u17-verify` 실행기**) — 브랜치 보호·훅은
                        저장소 내 파일로 증명 불가한 축이고, 이 문서가
                        **처음부터 그렇게 등재해 온 축**이다.
                        **U-15 는 예방을 주장하지 않는다**
@@ -5109,7 +5170,7 @@ U-15-f-5  **D0A-FIRST 커밋 메시지 트레일러** (CORR 조건 (4) 의 입�
           **그래서 CORR 이 실제로 닫는 것**: **비준수 형태(sloppy)** — 하니스를
           아예 안 돌린 착수, 다른 HEAD 에서 돈 착수, 차단 상태를 기록한 transcript
           로의 착수, 트레일러 없는 착수. **이것들은 전부 red 가 된다.**
-          **닫지 못하는 것**: **근면한 세탁**. **예방은 `UNCHK-008`(`Phase 0` — **[v2.21]** D0-A 선행조건)**
+          **닫지 못하는 것**: **근면한 세탁**. **예방은 `UNCHK-008`(`Phase 0` — **[v2.21]** D0-A 선행조건 · **[v2.22]** 도입 집합 4종에 **`u17-verify` 실행기** 포함)**
           이며, 구체적으로 **서버측 required check** — 하니스를 **서버에서 실행**해
           D0A-FIRST 의 `parent` 가 **그 서버 실행의 HEAD** 임을 서버가 확인하는
           형태다(저장소 밖 강제 표면이라 이 문서가 만들 수 없다).
@@ -5192,7 +5253,12 @@ U-15-g-4b **[v2.14 신설]  «손 실행기» 도 하니스와 같은 규율을 
 ```text
 아티팩트   D0A-PREVENTION-CONTROL.md 는 **진실 원천이 아니다.**
            역할 = ① 운영자 기록(countersign) ② **파라미터 선언**
-                  (owner/repo · 대상 브랜치 · TOS 게이트 체크 이름)
+                  (owner/repo · 대상 브랜치)  ← **[v2.22·F#2/N-4] 3항 → 2항**:
+                  **«TOS 게이트 체크 이름»을 아티팩트 파라미터에서 «제거»**하고 계약 리터럴로
+                  옮긴다(아래 «계약 핀»).  아티팩트가 그 이름을 «선언»하면 그것이 자기선택
+                  표면이 되고(B1·C3 가 닫은 클래스), 「선언하지 않으면 고를 수 없다」는
+                  같은 규율이 이 자리에도 적용된다.  **선례**: `gate_app_id` 폐지 시 파생
+                  경로까지 함께 고친 [C2 — v2.18]
            **하드코딩 금지 — 아티팩트가 «선언»하고 서버가 «검증»한다**
 
 **[B1 — v2.17]  «선언값을 형식만 검사»하면 «잘못된 보호 대상»을 승인한다.**
@@ -5210,8 +5276,10 @@ v2.16 은 `owner_repo`·`target_branch` 를 **아티팩트 선언값 그대로**
 
 ```text
 계약 핀      canonical_target = github.com/kakao-harris-lee/kis_unified_sts
-             **아티팩트 파라미터가 아니다.**  변경하려면 이 문서를 고쳐야 하고
-             그러면 O-6 재결속이 돈다 — 그것이 이 핀의 보호다
+             **[v2.22·N-4] 게이트 체크 이름 = `tos-gate`** 도 같은 층의 계약 핀이다
+             (= 게이트 **잡 id** = 게이트 잡 **표시 이름**(`name` 값-핀) = **required context**)
+             **둘 다 아티팩트 파라미터가 아니다.**  변경하려면 이 문서를 고쳐야 하고
+             그러면 O-6 재결속이 돈다 — 그것이 이 핀들의 보호다
              **[E2 — v2.18 에라타] 아티팩트의 `owner_repo`·`target_branch` 키는
              «선택»이다.**  있으면 **핀·`default_branch` 와 대조**하고 불일치는
              `PREVENTION_TARGET_MISMATCH`, 없으면 **핀과 API 파생이 유일 소스**다.
@@ -5255,6 +5323,9 @@ D ≠ ∅ 이면    위 둘 + **(b) 의 PR `base` == target** 이 **3중 일치*
 실행기     u17-verify  (**§12.3.4-R 하니스와 «별도»** — 하니스는 byte-identical 유지)
            하니스 = «이 HEAD 에서 진입 가능한가» / u17 = «예방 인프라가 서 있는가»
            **층이 다르므로 실행기도 다르다**
+           **[v2.22 — 심판 #2] 소유자·시점**: `u17-verify` 는 **pre-D0-A 산출물**이며 하니스 파일과
+           **같은 운영자/인프라 선행 단계가 D0-A 착수 «전»에 둔다**(개발계획 §6 Phase 0 «선행 조건» ·
+           `UNCHK-008` 도입 집합 4종의 넷째).  **D0-A/Phase 1 산출물이 아니다**
 ```
 
 **(a) 진입 시점 — live 서버 조회** (7c·8·가드 체인)
@@ -5315,7 +5386,14 @@ D ≠ ∅ 이면    위 둘 + **(b) 의 PR `base` == target** 이 **3중 일치*
      ∧ **`required_status_checks.checks[]` 에서 `tos-gate` 컨텍스트의
        `app_id` == <Actions app id>**  (**[C1 — v2.18]** v2.17 은 `contexts` 의
        **이름만** 봐서, **`tos-gate` 를 제3자 앱(예 99999)에 «고정»해 두면 (a) 가
-       통과**했다 — `D = ∅` 이면 (b) 가 생략되므로 그대로 진입 승인.
+       통과**했다 — **(v2.17~v2.21 당시)** `D = ∅` 이면 (b) 가 **통째로** 생략됐으므로 그대로 진입 승인.
+       **[v2.22·M-7 — 현행 정정] 그 «(b) 통째 생략»은 더는 참이 아니다** — (b) 는 «세 사지»이고
+       그중 `(b-blob)@target` 이 **`D` 와 무관한 무조건 항**이라 **진입(`D = ∅`)에서도 blob 이
+       평가**된다(아래 «D = ∅ 처리»).  **다만 이 자리의 결함은 남는다** — `(b-blob)@target` 은
+       «정본 파일이 target 에 실재한다»만 증명하고 **required context 가 «그 파일»에서 나온다**는
+       context→file 결속은 주지 않으므로(run = C2 3중 결속 필요), **(a) 동명 decoy 잔여는
+       진입선에 존속**한다(아래 «정직 경계»·⑥).  즉 v2.22 는 이 문장의 «생략»을 닫았을 뿐
+       «이름은 정체성이 아니다»가 여는 잔여를 닫지 않았다.
        **이름은 정체성이 아니다.**  룰셋 경로에서는
        `required_status_checks[].integration_id` 가 동등물)
      ∧ required_pull_request_reviews **키 실재**  (**부재 = 불충족**)
@@ -5344,9 +5422,19 @@ D ≠ ∅ 이면    위 둘 + **(b) 의 PR `base` == target** 이 **3중 일치*
       없다.  **양성 대조군(T-84)은 룰셋 기반**이어야 하며(classic 양성은 완료에 도달 못 함), 이
       귀결을 v2.18 이 «어디에도 적지 않은» 것이 결함이었다(v2.14 `G4` 사코드·v2.18 `R1` 과 동형).
 
-TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **계약이 기본값을 정한다**:
-                      **`tos-gate`**.  하드코딩이 아니라 **파라미터의 기본값**이며
-                      **CI 잡 이름과 일치해야 한다**.
+TOS 게이트 체크 이름  **[v2.22·F#2 — 심판 신규 high] 계약 리터럴 `tos-gate` 이며 아티팩트
+                      파라미터가 «아니다»**(위 «계약 핀»).  v2.21 은 이것을 «아티팩트가 파라미터로
+                      선언 + 계약이 기본값»으로 두었고 «CI **잡 이름**과 일치»라고만 적었다 —
+                      (ㄱ) 아티팩트 자기선택 표면이고 (ㄴ) «잡 이름»이 **잡 id** 와 **표시 이름**을
+                      미분화했다.  **한 값이 세 자리를 동시에 고정한다**:
+                        · blob 의 게이트 **잡 id**            `jobs.tos-gate`            (리터럴 핀)
+                        · 게이트 잡 **표시 이름**             `jobs.tos-gate.name: tos-gate`  (값-핀)
+                        · 서버 **required context**           `tos-gate`                 (`<job name>` 형식)
+                      **근거**: required status check 의 이름 형식은 **`<job name>`**(reusable 이면
+                      `<job name> / <reusable job name>`)이고, **check 와 commit status 가 같은
+                      이름이면 둘 다 통과해야 한다**(문서확인).  `name` 의 형식·유일성 제약은
+                      문서에 없고 `name:` 미지정 fallback 도 미규정이므로, **값을 핀하지 않으면
+                      blob 층(잡 id)과 서버 층(표시 이름)이 다른 객체를 가리킬 수 있다.**
                       **현재 CI 에 그 이름의 잡이 없다** — 그래서 **오늘 `main` 은
                       `PREVENTION_INSUFFICIENT` 가 맞다**(정직 표기)
 
@@ -5366,8 +5454,15 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
 ```text
 진입자의 u17-verify   = **가드**(fail-closed 사전 점검).  transcript 는
                         «진입자가 점검했다»는 기록이자 **대조용**이다
+                        **[v2.22 — 심판 #2(#5/#6) 3연속 부분해소] 이 실행기의 «소유자»를 못박는다**:
+                        `u17-verify` 는 **pre-D0-A 산출물**이며 **하니스 파일과 «같은» 운영자/인프라
+                        선행 단계가 D0-A 착수 «전»에 둔다**(개발계획 §6 Phase 0 «선행 조건» 참조).
+                        **D0-A 나 Phase 1 의 산출물이 아니다** — 진입 판정(7c·8)이 이것을 소비하는데
+                        생산자가 진입 «후» 단계면 **비순환 생산 순서가 성립하지 않는다**
 판정 소비자           = §11 완료 판정·7c/8 진입 판정을 «내리는» 주체
-                        (리뷰어 / D0-A 이후의 검사기)
+                        (**pre-D0-A 진입 가드**(운영자/인프라) / 리뷰어 / D0-A 이후의 검사기)
+                        **[v2.22]** v2.21 은 소비자를 «리뷰어 / D0-A 이후의 검사기»로만 적어
+                        **pre-D0-A 소유자가 없는 것처럼** 읽혔다 — 세 소비자 전부를 열거한다
                         → **transcript 의 응답을 신뢰하지 않고 «스스로» live 조회**한다
 ⇒ `PREVENTION_ACTIVE` 의 진실 원천 = **판정 소비자 자신의 조회 결과**
 ```
@@ -5400,6 +5495,21 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
               위조 비용을 «올린다»**(위조하려면 `head_sha` 의 blob 이 구조상 하니스를
               호출·대조하고 서버가 그 이름의 스텝을 `success` 로 보고하게 만들어야 한다)
               **— 그러나 «닫지»는 않는다**  [C2 — v2.18 / v2.20 확장]
+              **[v2.22 — stale 갱신]** 이 문단은 v2.20 시제로 «서버 대조 = 스텝 이름·conclusion 만»
+              이라 적었는데, v2.22 는 서버 층에 **① 이름 필터 `hit` 유일성(`len != 1` → UNVERIFIED)
+              ② 잡 자신의 `conclusion == "success"`(`skipped`/`neutral`/`cancelled` 배제)
+              ③ path-aware check-run 전수 열거**(정본 `path` 의 check-run 이 정확히 1개·success)를 더했다.
+              **그래도 위 «닫지 못한다»는 유효하다** — 셋 다 «서버 기록»의 정밀화이지 «실행 내용»의
+              증명이 아니기 때문이다(격하는 후퇴가 아니라 정직)
+            · **[v2.22·M-3] (a) 예방 층은 «동명 decoy» 를 구별하지 못한다** — (a) 술어는
+              `contexts ∋ <게이트 체크 이름>` 과 `checks[].app_id` 뿐이고 **blob 을 읽지 않는다**.
+              이 계약 자신이 «다른 워크플로의 잡을 `tos-gate` 로 이름 짓기만 해도 통과했다»고
+              위 C2 절에서 자인한다.  **⑧ 의 3중 결속은 (b) 사후 탐지**이지 (a) 예방이 아니다.
+              세 케이스 중 **② 정본+decoy 둘 다 success** 는 (b) 도 red 가 아니어서 **잔여로 남는다**
+              (① evil 단독·③ 정본 fail+decoy success 는 (b) path-aware 열거가 red 로 만든다).
+              **[v2.22·M-7] `(b-blob)@target` 무조건 항도 이 자리를 닫지 못한다** — 그것은 «정본 파일이
+              target 에 실재한다»를 증명할 뿐 «required context «tos-gate» 가 그 파일에서 나온다»는
+              결속을 주지 않는다(context→file 결속은 run = C2 3중 결속이 필요).  **잔여 등재**(⑥)
             · **판정 소비자 자신의 환경 위조** — 소비자가 곧 운영자/리뷰어이므로,
               그가 자기 조회 결과를 속이면 계약 안에 남는 방어가 없다
             · **예방 자체는 서버가 한다** — U-17 은 «서버가 막고 있는가»를 «검증»할
@@ -5444,13 +5554,39 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
                  → 그 **workflow run 의 `path` == `.github/workflows/tos-gate.yml`**
                     (**계약 리터럴**이며 아티팩트 파라미터가 아니다)
               ② 그 run 의 **`head_sha` == PR `head.sha`**
-              ③ **그 `head_sha` 시점의 워크플로 파일 blob**  [R2 — v2.18 마감]
+                 **[v2.22·M-3] ①② 는 «동명 check-run 전수»에 path-aware 로 적용한다** — PR `head.sha` 의
+                 check-runs 중 **이름이 게이트 체크 이름인 것을 «전부» 열거**하고 각각을 ①의 run 으로
+                 해석해, **`path == .github/workflows/tos-gate.yml` 인 check-run 이 «정확히 1개» 실재하고
+                 그것이 `conclusion == "success"`** 여야 한다(0개·복수·비-success → `PREVENTION_UNVERIFIED_REVISION`).
+                 **같은 이름·다른 `path` 의 check-run 이 공존하는 것 자체는 (b) 를 red 로 만들지 않는다** —
+                 그것은 (a) 예방 층이 구별하지 못하는 **동명 decoy 잔여**(아래 «정직 경계»·⑥)이며 transcript 에
+                 **열거 기록**만 남긴다.  이 술어가 닫는 세 케이스: **① evil 단독**(정본 path check-run 부재 → red) ·
+                 **② 정본+evil 둘 다 success**(정본 path 가 success 라 (b) 통과 — **잔여**) ·
+                 **③ 정본 fail + evil success**(정본 path 가 비-success → red — 이름-∃ 술어였으면 통과했을 자리).
+              ③ **워크플로 파일 blob — `(b-blob)@d` 와 `(b-blob)@target` 두 항**  [R2 — v2.18 마감 / v2.22·M-7·N-7·N-11]
                  **[E1 — v2.18 에라타] blob 은 «서버»에서 읽는다.**
                  ```
+                 (b-blob)@d       — **D-지표 항**(리비전마다·기존 v2.18 항, 유지)
                  gh api --hostname <핀 host> repos/{pin}/contents/.github/workflows/tos-gate.yml?ref=<PR head.sha>
-                 → base64 decode 후 아래 «구조 YAML 파싱»(정규식·grep 아님)
+
+                 (b-blob)@target  — **`D` 무관 무조건 항**(v2.22 신설·«추가»이지 (b-blob)@d 의 «대체»가 아니다)
+                 gh api --hostname <핀 host> repos/{pin}/branches/<target_branch>   → `.commit.sha` = <target HEAD sha>
+                 gh api --hostname <핀 host> repos/{pin}/contents/.github/workflows/tos-gate.yml?ref=<target HEAD sha>
+
+                 → 각각 base64 decode 후 아래 «구조 YAML 파싱»(정규식·grep 아님)
                  ```
-                 · **404·기타 HTTP 오류 → `PREVENTION_UNVERIFIED_REVISION`**
+                 · **두 항은 서로 다른 `ref` 를 조회한다** — `(b-blob)@d` 는 착지 리비전의 PR head,
+                   `(b-blob)@target` 은 target 브랜치 HEAD.  **둘 다 `PREVENTION_ACTIVE` 의 conjunct 이며
+                   어느 하나라도 실패하면 `PREVENTION_UNVERIFIED_REVISION`**.  `(b-blob)@target` 이
+                   `(b-blob)@d` 를 **대체하면 `d` 가 비정본 워크플로로 착지한 뒤 target 을 정본으로 복원**하는
+                   경로가 열려 v2.22 payload 전체가 리비전 무결속이 된다(v2.18 `?ref=<PR head.sha>` 회귀).
+                 · **해석한 `<target HEAD sha>` 는 transcript 에 verbatim 수록한다(필수)** — 수록하지 않으면
+                   target HEAD 가 이동한 뒤 리뷰어가 같은 blob 을 재조회할 수 없어 «재조회 대조»(위 «비결정성을
+                   정직하게 적는다»·아래 §«판정 소비자 자신의 조회»)가 무력화된다.  **수록 규율의 선례는
+                   «raw 응답 verbatim 수록»**(host 결속 절 — «가능 시» 보조가 아니라 필수 항이다)
+                 · **404·기타 HTTP 오류 → `PREVENTION_UNVERIFIED_REVISION`**  (**두 항 모두 이 리터럴을 쓴다** —
+                   `(b-blob)@target` 의 blob 부재도 `PREVENTION_ABSENT` 로 접지 «않는다»: `ABSENT` 는 «아티팩트·보호
+                   부재» 축이고 전순서도 2 vs 8 로 갈려, 한 관측에 두 상태값을 주면 극성 논증이 깨진다.  새 상태값 0)
                    (**검사 생략 금지** — 부재를 «해당 없음»으로 접지 않는다)
                  · **네트워크·인증 오류 → `PREVENTION_UNVERIFIABLE`**
                  **초안은 로컬 `git show <head_sha>:…` 를 전제했다.**
@@ -5466,7 +5602,38 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
                    **«실행 스텝 구조»**를 검증한다:
                    (1) **blob «정본 잡 대조»** (자작 도달성 분석기 없이 — 운영자 «바퀴 재발명 금지» 지침·CLAUDE.md
                        Development Discipline: 기존 도구 재사용): YAML 파서(기존 도구)로 **`jobs.<게이트 잡>` 객체 전체**를
-                       얻어 계약 **«정본 잡 템플릿»과 구조 대조**한다(스텝 `run:` 은 정규화 후 정본 byte 일치).  이탈하면
+                       얻어 계약 **«정본 잡 템플릿»과 구조 대조**한다(스텝 `run:` 은 정규화 후 정본 byte 일치).
+                       **[v2.22·M-4 — 파서 계약 리터럴 핀]** «기존 도구»만 지칭하면 두 소비자가 같은 blob 에 다른
+                         결론을 낼 수 있다(R-1 형식-only 동형).  **판정 파서 = `yq (mikefarah) v4.48.x`**(YAML 1.2·
+                         go-yaml v3).  소비자는 실행 시 **`yq --version` 을 파싱해 이 리터럴과 대조**하고
+                         **불일치 = `PREVENTION_UNVERIFIABLE`**(임의 PATH 의 다른 `yq`/다른 메이저를 조용히 쓰지 않는다).
+                         **`<<` merge key 는 blob 에 존재하면 그 자체로 `PREVENTION_UNVERIFIED_REVISION`**(정본 템플릿에
+                         불요이고, yq 의 `--yaml-fix-merge-anchor-to-spec` 기본값이 «비-스펙»에서 스펙으로 바뀐 이력이
+                         실측돼 파서 버전 간 의미가 갈리는 자리다 — 미확인 잔여로 두지 않고 «금지»로 닫는다.
+                         `--yaml-fix-merge-anchor-to-spec` 을 명시해도 되나 `<<` 금지가 이미 그 자리를 무의미화한다).
+                         **`on:` 대조군 필수** — YAML 1.1 파서(PyYAML)는 최상위 키 `on` 을 **`True`(bool)** 로 해석해
+                         `d["on"]` 이 `KeyError` 가 되고 그것을 «트리거 없음»으로 접으면 **조용한 fail-open** 이다.
+                         **정직 경계(⑥)**: go-yaml v3 는 README 최상단이 «THIS PROJECT IS UNMAINTAINED» 이며,
+                         이 핀은 그 선언에 의존한다.
+                       **[v2.22·C-1 — 문서 «전 노드» 중복 키 검출 = 전 비교 경로의 선행 게이트]**
+                         **중복 키 검출이 통과한 «후»에만** 위 정본 잡 대조·아래 서버 대조로 진행한다.  YAML 1.2 스펙은
+                         키 유일성을 «요구»하나 **두 파서 어느 쪽도 중복 키를 거부하지 않는다**(실측: PyYAML `safe_load`
+                         = 예외 없이 last-wins·첫 정의 소멸 / `yq keys` = 2개 반환 exit 0 / `yq -o=json` = 중복 키를 가진
+                         JSON 방출).  그래서 **잡 «안»에 `steps:` 를 두 번 두면** 앞 블록이 계약 리터럴 스텝 이름만 갖는
+                         무해한 형태여도 last-wins 로 정본만 남아 **전 술어가 통과**한다 — `jobs` 개수 검사로는 잡히지 않는
+                         **잡-안·blob-안 반례**다.  **처분**: PyYAML `yaml.compose()` 노드 순회로 **문서의 «모든 매핑 노드»를
+                         재귀 검사**한다 — 최상위 매핑 · 모든 중첩 매핑(잡·스텝) · **시퀀스 원소 매핑**(`steps[i]` 안의
+                         중복 `run:`/`name:`)까지 포함.  하나라도 중복이면 **`PREVENTION_UNVERIFIED_REVISION`**.
+                         **키 대조 규격(예외 없음)**: 키 트리 대조는 **compose 키 노드의 `value`(원시 스칼라 문자열)** 위에서만
+                         한다 — **태그·구성값 미참조**.  `construct`/`safe_load` 로 키를 비교하는 것은 **금지**다(그러면 YAML 1.1
+                         키-bool화 `on`/`yes`/`no`/`off` 때문에 **정직한 워크플로가 전부 발산으로 오검출**된다).  `.value` 비교는
+                         `on:` 이 두 파서 모두 문자열 «on» 이라 **발산 0** 이며, «알려진 `on:` 외» 같은 **열거형 예외를 두지 않는다**(S-6).
+                         **두 파서의 `.value` 키 트리가 불일치하면 `PREVENTION_UNVERIFIED_REVISION`**(중복 검출의 벨트).
+                         **층 분리**: PyYAML 은 `on:`→bool 이라 **판정 파서로 쓰지 않는다** — 판정 = yq, **중복 검출 = compose
+                         전용 보조 통과**.  이 순서 덕분에 `yq -o=json` 의 중복 키 붕괴(`json.loads` last-wins)는 **무해**하다
+                         (중복은 이미 거부됐다).  **GitHub 실제 파서의 중복 처리(first/last/error)는 미확인이나 이 술어는 그
+                         미확인에 «무의존»** — 어느 쪽이든 거부하므로 fail-open 이 fail-closed 로 전환된다.  대조군 **T-84 ⑬l·⑬n**.
+                       이탈하면
                        (선행 `exit`/`exec`/가드·서브셸·heredoc·eval·`|| true`·`set +e`·«선행 종결자» 등 «전 구문 우회»·**실행
                        방식을 바꾸는 워크플로/잡 키**를 **열거 없이** — 열린-세계→닫힌-세계) → **`PREVENTION_UNVERIFIED_REVISION`**(T-84 ⑬).
                          **[v2.21 에라타 2차 ⓑ — stop-time BLOCK] 대조 대상을 «두 스텝 run:»에서 «게이트 잡 객체 전체»로 확장.**
@@ -5474,23 +5641,72 @@ TOS 게이트 체크 이름  아티팩트가 **파라미터로 선언**하되 **
                          보존하면서** 두 `run:` 을 실행하지 않고 success 를 보고한다 — 스텝만 정본 대조하면 통과(GitHub
                          workflow-syntax 공식 문서 확인).  «defaults 만 추가 검사»는 열거형이라 **다음 키가 또 통과**(S-6·이번
                          BLOCK).  → `jobs.<게이트 잡>` 이 **정본 잡 템플릿**과 (정규화 후) 구조 일치해야 한다:
-                           · **워크플로 수준**: `defaults` 부재 · `env` 부재(PATH 조작 차단) · `permissions` 최소(예 `contents: read`) ·
-                             `on` ∈ 닫힌 집합(`pull_request`/`push`).
-                           · **게이트 잡 허용 키 = 닫힌 집합 `{name, runs-on, steps}`**(**[v2.21 에라타 3차 ⓒ/R-3]** `name` 은 문자열 메타·실행 무영향이라 허용·과잉 차단 완화) — `container`·`services`·`defaults`·`env`·`strategy`·
-                             `uses`·`with`·`secrets`(및 그 외 키) **부재** · `runs-on` ∈ **닫힌 리터럴 집합**(`ubuntu-latest`·`ubuntu-24.04`
-                             등 GitHub-hosted; self-hosted 라벨·배열 금지).
+                           · **워크플로 수준 = 최상위 키 allowlist(닫힌 집합) `{name, run-name, on, permissions, jobs}`**
+                             — **그 밖의 최상위 키가 하나라도 존재하면 불일치**.  특히 `env`·`defaults`·`concurrency` **부재 강제**
+                             (워크플로 `env` = PATH 조작 · `defaults.run.shell` = 실행 무력화 · `concurrency` 취소 = `cancelled`).
+                             **[v2.22·M-2]** v2.21 의 denylist(«`defaults` 부재·`env` 부재»)는 **열린 세계**라 다음 키가 또 통과한다.
+                             `name`·`run-name` 은 **최상위 정본 키 집합에 실재하는 실행 무영향 메타**이므로 allowlist 에 넣는다
+                             (빼면 정직한 워크플로를 거부한다).  **allowlist 는 anchor 방어가 아니다** — `&anchor`/`*alias` 는
+                             `jobs`·`permissions` «안»에서도 정의되므로 anchor 는 **yq 확장 + `jobs` 개수 1**(아래)이 닫는다.
+                           · **`permissions` = 존재 강제 + 정확히 `{contents: read}`**  **[v2.22·F#4]** v2.21 의 «최소(예 `contents: read`)»
+                             는 **예시**라 값이 열려 있었다.  `permissions` 는 **선언 자체가 닫는 연산**(명시하지 않은 권한은 전부
+                             `none`·문서확인)이나, **부재하면 리포/조직 기본값**(워크플로 blob «밖»·가변)이 적용돼 **정적 검사만으로
+                             실효 권한을 결정할 수 없다** → **부재 = `PREVENTION_UNVERIFIED_REVISION`**.
+                           · **`on` ⊆ `{pull_request, push}`**(list·map 양형 허용).  **[v2.22·M-1] «bare-only»(하위 필터 금지) 는 두지
+                             않는다** — `paths`/`branches`/`types` 필터로 워크플로가 트리거되지 않으면 그 required check 는 «통과»가
+                             아니라 **pending = 머지 차단(fail-closed)** 이다(문서확인).  잡 수준 `if:`/`needs:` 스킵만이 «Success» 로
+                             계산되는 fail-open 벡터이고 **그 벡터는 아래 «게이트 잡 허용 키»가 이미 닫고 있다**(`if`·`needs` 부재).
+                           · **`jobs` = 정확히 1개이고 그 키(잡 id) == 계약 리터럴 `tos-gate`**  **[v2.22·F#2(ii)]** — yq 확장 후
+                             `.jobs | keys | length == 1` ∧ 위 **C-1 전 노드 중복 키 검출 통과**.  **형제 잡이 있으면 불일치**다.
+                             근거: blob 층은 **잡 id** 로, 서버 층은 **표시 이름**으로 고른다 — 정본 `jobs.tos-gate` 를 다른 표시
+                             이름으로 두고 `name: tos-gate` 인 두 번째 잡을 더하면 **required check 와 서버 스텝이 우회 잡에서 나온다**.
+                           · **게이트 잡 허용 키 = 닫힌 집합 `{name, runs-on, steps}`** — `container`·`services`·`defaults`·`env`·`strategy`·
+                             `uses`·`with`·`secrets`·`if`·`needs`(및 그 외 키) **부재**.
+                           · **`name` = 존재 강제 + 값 = 계약 리터럴 `tos-gate`**  **[v2.22·F#2(i-b)]** — v2.21 에라타 3차 ⓒ/R-3 는
+                             `name` 을 **자유 문자열**로 허용해 두 층의 키 분리를 열었다.  v2.22 는 그것을 **되돌리지 않고 «값-핀»으로
+                             정밀화**한다(과잉 차단 완화는 유지, 자유 문자열 분열만 닫는다).  **근거 사슬**: `jobs.<job_id>.name` 은
+                             «GitHub UI 에 표시되는 이름»(workflow-syntax·문서확인)이고, **`name` 의 형식·유일성 제약은 공식 문서에
+                             하나도 없다**(전칭 부정의 근거는 «금지 규정 부재»의 확인이지 «허용 명시»가 아니다) · **`name:` 미지정 시의
+                             표시 이름 fallback 은 공식 문서 미규정**(실측상 `job_id`)이라 **그 fallback 에 계약을 얹지 않는다**.
+                             값을 핀하면 **blob 잡 id · 서버 표시 이름 · required context** 가 한 값으로 결속된다.
+                           · **`runs-on` ∈ 허용 리터럴 «정확히 2개» `{ubuntu-latest, ubuntu-24.04}`**(스칼라 문자열만; 배열·표현식·
+                             self-hosted 라벨 금지)  **[v2.22·F#4]** — v2.21 의 «닫힌 리터럴 집합(… 등)» 은 «등» 때문에 **열린 열거**였다.
+                             **정직 경계(⑥ 이동 잔여)**: 라벨 집합 자체는 GitHub 이 추가·폐기하는 **열린·이동 집합**이고 `ubuntu-latest`
+                             는 **값은 고정이나 가리키는 실행 환경이 이동**한다 — «닫힌 값»이 «닫힌 실행 환경»을 주지 않는다.
                            · **`steps` = 정확히 3개·순서 고정**(추가/선행 스텝 부재): [① 체크아웃
                              **`uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1`**(**[v2.21 에라타 3차 ⓒ/E3·R-1]
                              허용 SHA = 이 1개 «계약 리터럴 핀»**·`actions/checkout` v7.0.1·닫힌 집합; 태그·브랜치·다른 40-hex SHA
                              금지 — 초안의 «`<40-hex SHA 핀>`» 은 계약 본문에 값이 없어 술어가 «형식(40-hex)만» 검사 = 임의 포크
-                             커밋 SHA 통과[fail-open·addendum-2 R-1]; 갱신 = 계약 개정·O-6 재결속)(닫힌 키 `uses`·최소
-                             `with`[`fetch-depth: 0`]) · ② 정본 A 스텝(아래 (i)) · ③ 정본 B 스텝(아래 (ii))].
-                         임의 이탈 → **`PREVENTION_UNVERIFIED_REVISION`**(T-84 ⑬h/⑬i/⑬j).  **리서치 근거**(운영자 «리서치 우선»
+                             커밋 SHA 통과[fail-open·addendum-2 R-1]; 갱신 = 계약 개정·O-6 재결속)(닫힌 키 `uses`·**`with` = 존재 강제 +
+                             정확히 `{fetch-depth: 0, persist-credentials: false}`** — **[v2.22·F#4]** `actions/checkout` `action.yml` 원본
+                             기본값이 `fetch-depth: 1`(얕은 클론)·`persist-credentials: true` 라 **«생략 = 얕은 클론 + 토큰 잔류»** 다.
+                             v2.21 은 허용 키 밖만 거부해 **존재·값을 검사하지 않았다**.  `persist-credentials: false` 는 안전하다 —
+                             checkout 의 fetch 는 credential 제거 «전»에 끝나 `fetch-depth: 0` 전체 이력이 정상 확보되고, 아래
+                             «왜 하니스에 넣지 않는가»가 하니스를 **오프라인·결정적**으로 못박아 §12.3.4-R/T 는 로컬 git 만 쓴다.
+                             `permissions: {contents: read}` 와 함께 GITHUB_TOKEN 이 `.git/config` 에 잔류하지 않게 하는 방어심화다.
+                             **잔여(⑥)**: 하니스의 정확한 필요 깊이(0 vs N)는 미확정이라 `0` 은 **보수적 상위집합**이고,
+                             하니스가 향후 네트워크 git 을 요구하면 `persist-credentials` 는 재검토 대상이다) ·
+                             ② **정본 B 스텝(아래 (ii) — sha256 «검증»)** · ③ **정본 A 스텝(아래 (i) — 하니스 «실행»)**].
+                             **[v2.22·F#1 — 심판 #1 «회피» 2연속] 순서를 반전한다.**  v2.21 정본 순서는 [체크아웃 → 하니스 «실행»
+                             → sha256 «검증»] 이었다.  **체크아웃 워크스페이스는 쓰기 가능**하므로 비승인 `tools/tos_entry_harness.sh`
+                             가 스텝 ② 에서 **실행된 뒤 자기 파일을 정본 바이트로 덮고 `exit 0`** 하면, 스텝 ③ 의 `shasum -c` 는 이미
+                             정본을 보고 `OK`/0 을 낸다 — 두 스텝 success · 정적 blob 정본 유지 → **`PREVENTION_ACTIVE` 인데 승인
+                             바이트는 한 번도 실행되지 않았다**.  이것은 «잡 «밖»»(다른 잡의 아티팩트/캐시·runner 이미지·GitHub 내부)
+                             이 아니라 **잡 «안»·체크아웃 워크스페이스**의 결정적 반례라 v2.21 정직 경계에 포섭되지 않는다.
+                             **검증을 실행보다 앞에 두면** `set -euo pipefail` 하에서 ② 가 비-0 이면 ③ 이 **도달하지 않으므로**
+                             «검증된 바이트가 실행된 바이트»가 **순서로** 성립한다(자기수복 반례는 «수복할 시점» 자체가 없어 소멸).
+                             **«정본 A/B» 는 «식별 라벨»이지 실행 순서가 아니다** — 정본 A = 하니스 실행 스텝(아래 (i)),
+                             정본 B = sha256 검증 스텝(아래 (ii))이고, **워크플로 순서는 ② 정본 B → ③ 정본 A** 다.
+                             (**두 코드펜스의 «내용»은 byte 불변**이다 — v2.22 가 바꾸는 것은 «순서»이지 «스크립트 본문»이 아니다.)
+                         임의 이탈 → **`PREVENTION_UNVERIFIED_REVISION`**(T-84 ⑬h/⑬i/⑬j·**[v2.22] ⑬k/⑬l/⑬m/⑬n**).  **리서치 근거**(운영자 «리서치 우선»
                          지침): `run:` 실행 방식을 바꾸는 정적 in-blob 키(워크플로/잡 `defaults.run.shell`·`working-directory`·잡
                          `container`·`services`·`runs-on`·`env`·`strategy`·`uses`·스텝 `shell`·`working-directory`·`env`·`with`·`uses`·
                          `continue-on-error`·`if`·`timeout-minutes`)를 «전수 열거»하는 대신 **«허용 키 닫힌 집합 밖 = 불일치»**로
                          «열거 없이» 닫는다(S-6·열린→닫힌 세계).  문서: `https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax`
                          (리서치 2026-08-19; 재확인 필요 시 D0-A 가 실측).
+                         **[v2.22·F#1] 아래 (i)/(ii) 는 «정의 순서»이자 «식별 라벨»이지 워크플로 실행 순서가 아니다** —
+                             워크플로 `steps` 의 실행 순서는 **② (ii) 정본 B(sha256 «검증») → ③ (i) 정본 A(하니스 «실행»)** 다.
+                             두 스텝의 `name:` 리터럴과 두 정본 코드펜스의 «내용»은 v2.22 에서 **byte 불변**이며, 바뀐 것은 순서뿐이다.
                          (i) **`run harness` 스텝** — `name: "tos-gate: run harness"`(계약 리터럴)이고 그 `run:` 이
                              정규화 후 **정본 A** 와 일치:
 
@@ -5514,13 +5730,36 @@ printf '%s  tools/tos_entry_harness.sh\n' 957bf49da8fc6ae39f97abe679411afeaa5a59
                              digest 불일치의 «실패 전파»를 정본이 «구조로» 보장한다[실측: 정상=`OK`/0·변조=`FAILED`/1].
                              `sha256sum -c` 등 동등 변형이 필요하면 D0-A 가 «허용 정본 집합»(닫힌 2~3개)으로 확장하되
                              계약이 그 집합을 리터럴로 고정한다 — 여전히 닫힌 집합)
+                         **[v2.22·F#1] «실패 전파»만으로는 부족하다 — 순서 + 3축이 함께 있어야 «검증된 바이트 == 실행된
+                             바이트»가 성립한다.**  ① **순서**: 정본 B(검증)가 스텝 ②, 정본 A(실행)가 스텝 ③ 이다(위 `steps` 절).
+                             ② **3축 — 「실패한 스텝 다음은 실행되지 않는다」가 «하드 정지»가 아니기 때문**(공식 문서: 후속 스텝에는
+                             **암묵 `success()` 상태 게이트**가 걸릴 뿐이며, 실측 반례로 **실패 스텝 뒤의 스텝이 실행된 run 이 존재**한다).
+                             따라서 도달-불가를 **전수로** 논증한다:
+                               (축 1) **두 스텝 모두 `if:` 부재 또는 `success()` 계열**(명시 `if:` 가 있으면 암묵 `success()` 게이트가
+                                      «대체»된다).  잡 수준 `if:` 는 «게이트 잡 허용 키» 밖이라 애초에 부재다.
+                               (축 2) **두 스텝 모두 `continue-on-error` 부재**(특히 검증 스텝 — 있으면 실패가 success 로 접힌다).
+                               (축 3) **셸이 실패를 non-zero 로 만드는 계열**(아래 «스텝 메타» 의 `SHELL_OK` 리터럴 3값)이고,
+                                      정본 B 자신이 `set -euo pipefail` 로 과결정한다.
+                             ③ **C-1 전 노드 중복 검출**(위) — 이것이 없으면 잡 «안»에 `steps:` 를 두 번 두어 ②③ «사이»에 스텝을
+                             끼워 넣을 수 있으므로, **«②③ 사이 개입 표면 0» 은 C-1 이 선 «후에만» 성립한다.**
+                             ⇒ **F#1 의 닫힘 = 순서 반전 + 3축 + C-1 셋의 «합»이다.**  ③ 안에서의 하니스 자기변조는 무해하다
+                             (U-17 의 명제는 «승인된 바이트가 실행됐다»이고 그 바이트는 이미 ② 에서 확정됐다).
+                             **닫지 못하는 것**: GitHub 의 「실패 스텝 이후 skip」·「파일대로 실행」 신뢰(선언 잔여·⑥).
                          **정규화 규칙(결정적)**: CRLF→LF · 각 줄 trailing 공백(**ASCII `[ \t]` 만** — NBSP 등 유니코드 공백은 제거하지 않아 정본 불일치=fail-closed) 제거 · «빈 줄»과 «full-line 주석»
                              (첫 비-공백 문자가 `#`) 제거 · 남은 줄을 LF 로 결합 — 이 정규형이 정본의 같은 정규형과 byte
                              동일해야 한다.  **[v2.21 에라타 ⓐ — E1] 정본 `run:` 은 YAML literal block scalar(`|`) 표기를 전제한다** — `|` 는 개행 보존이나 `>` folded 는 개행을 공백으로 접어(스텝 B 단일 파이프라인이 `set -euo pipefail` 과 한 줄로 접힘) 파싱값이 정본과 달라 «불일치=fail-closed»·인라인도 동일; **D0-A 작성자는 `|` 를 쓴다**(과잉 차단은 «표기 지정»으로 해소·S-15).  **주석·공백만 다른 blob 은 «일치»**(정규화 대조군); «실행되는 줄»이 하나라도
                              다르면 불일치(선행 `exit 0`·`exec true`·`[ -n … ] && exit 0` 는 «실행 줄»이라 정본과 달라 검출).
-                         **스텝 메타(닫힌 키 집합)**: 두 스텝에 `shell:` 이 있으면 `bash`/`bash -e…o pipefail {0}`·
-                             워크플로/잡 `defaults.run.shell` 이 이를 약화하지 않음 · `continue-on-error: true` 부재 ·
-                             `if:` 부재 또는 `if: success()` · `timeout-minutes` ≠ 0 · **run 스텝은 `name`·`run`·(선택 `shell` 정본값) 외 키 부재**(`working-directory`·`env:`·`with:`·`uses:` 등 — 닫힌-세계 일관) — 위배 시 `PREVENTION_UNVERIFIED_REVISION`.
+                         **스텝 메타(닫힌 키 집합)**: 두 스텝에 `shell:` 이 있으면 그 값 ∈ **`SHELL_OK` = 허용 리터럴 «정확히 3개»
+                             `{ bash , bash -euo pipefail {0} , bash -eo pipefail {0} }`**  **[v2.22·F#4 다섯 번째 자리·M-5]** —
+                             v2.21 의 «`bash`/`bash -e…o pipefail {0}`» 은 **생략부호**라 술어가 «형식만» 검사하는 R-1 동일 클래스였고,
+                             **하필 F#1 의 3축 중 (축 3)이 결속되는 자리**다.  `sh`·`cmd`·`powershell`·`pwsh`·`python` 등 다른 계열은
+                             실패를 non-zero 로 만드는 규약이 다르므로 **전부 배제**한다.  워크플로/잡 `defaults.run.shell` 은
+                             allowlist·허용 키 밖이라 이를 약화할 수 없다 ·
+                             **`continue-on-error` 키 자체 부재**(`false` 명시도 허용하지 않는다 — 아래 닫힌 키 집합과 일관·F#1 축 2) ·
+                             **`if:` 부재 또는 값 ∈ `{ success() , ${{ success() }} }`**(허용 집합을 계약이 리터럴로 명시한다 —
+                             실행기가 계약보다 관대해지는 자리를 없앤다·F#1 축 1) ·
+                             **`timeout-minutes` 는 존재하면 값 ≠ `0`**(리터럴 `0` 금지) ·
+                             **run 스텝은 `name`·`run`·(선택 `shell` 정본값)·(선택 `timeout-minutes`) 외 키 부재**(`working-directory`·`env:`·`with:`·`uses:`·`continue-on-error`·`id` 등 — 닫힌-세계 일관) — 위배 시 `PREVENTION_UNVERIFIED_REVISION`.
                          **극성 논증**: 정본 대조의 «구별 기준»은 «정본과 다르면 전부»라 셸 «도달성» 분석(자작·버전
                              의존·`shfmt`/`tree-sitter-bash` 도 reachability 미제공)을 **불요화**한다(S-6 «열거는 놓친다»·
                              운영자 «바퀴 재발명 금지»와 정합).  **기각 대안**: (a) run-entry 도달성 규칙(선행 화이트리스트
@@ -5529,16 +5768,38 @@ printf '%s  tools/tos_entry_harness.sh\n' 957bf49da8fc6ae39f97abe679411afeaa5a59
                        **정직 경계(비차단·상위 «닫지 못한다» 정직 경계와 같은 층)**: **정본 잡 대조는 «그 잡이 런타임에 실제로
                          그 스크립트를 실행했다»를 증명하지 않는다** — **[v2.21 에라타 2차 ⓑ] 정적 in-blob 우회**(선행 스텝
                          `$GITHUB_PATH`/`$GITHUB_ENV`·`defaults.run.shell`·`container`·workflow/잡 `env`·composite/reusable)는 **정본 잡
-                         템플릿이 «구조로» 닫는다**(정확히 3 스텝·잡/워크플로 env·defaults 부재).  남는 잔여 = **«잡 «밖»»**: 다른 잡의
+                         템플릿이 «구조로» 닫는다**(정확히 3 스텝·잡/워크플로 env·defaults 부재).
+                         **[v2.22] «자기수복 하니스»(잡 «안»·체크아웃 워크스페이스)는 v2.21 에서 이 «잔여» 열거에 포섭되지 않은
+                         반례였고, v2.22 는 그것을 잔여로 두지 않고 «구조로» 닫는다** — **순서 반전(② 검증 → ③ 실행) + 3축
+                         (`if:`·`continue-on-error`·`SHELL_OK`) + C-1 전 노드 중복 검출**의 «합»이다(위 F#1 절).  셋 중 하나라도
+                         빠지면 닫히지 않는다: 순서만 반전하면 실패-후-실행이 열리고(암묵 `success()` 게이트·실측 반례),
+                         C-1 이 없으면 잡 «안» 중복 `steps:` 로 ②③ 사이에 스텝을 끼울 수 있다.
+                         **[v2.22] «`steps` = 정확히 3개» 는 «blob 전용» 술어다** — 서버 응답의 `steps[]` 에는 GitHub 이 자동
+                         삽입하는 `Set up job`·`Post *`·`Complete job` 이 섞이므로 **서버 층에 «정확히 3개»를 적용하지 않는다**
+                         (blob 3 vs 서버 N).  서버 층이 요구하는 것은 **두 «스텝 이름»의 존재 + 각각의 `conclusion`** 이다(아래 (2)).
+                         남는 잔여 = **«잡 «밖»»**: 다른 잡의
                          아티팩트/캐시 오염·runner 이미지·GitHub 내부 실행·스텝 «이름» 위조(서버 대조도 «이름·conclusion»만)·
-                         `actions/checkout` 자체 신뢰(SHA 핀으로 내용은 고정·런타임 거동은 GitHub 소관).  **정본 잡 대조는 «정적
+                         `actions/checkout` 자체 신뢰(SHA 핀으로 내용은 고정·런타임 거동은 GitHub 소관)
+                         · **[v2.22·M-1] blob «밖» 스킵 3벡터**(워크플로 API 비활성화 · fork PR 승인 게이트 · merge queue
+                         `merge_group`) — 계약의 blob 검사로는 무독이라 **잔여로 등재**한다(⑥).  **정본 잡 대조는 «정적
                          in-blob 우회» 전 클래스를 닫되(열린→닫힌 세계) «런타임·잡 밖·GitHub 내부»는 못 닫는다** — «위조 비용을
                          «크게» 올리되 닫지 못한다».
                    (2) **서버 잡 스텝 대조** — ①에서 얻은 `run_id` 로 그 잡의 «서버 실행 스텝»을 읽는다:
                        gh api --hostname <핀 host> repos/{pin}/actions/runs/{run_id}/jobs
-                         → 그 게이트 잡(name == <게이트 잡>)이 `conclusion == "success"`
+                         → **[v2.22·F#2(ii)] 이름 필터의 «유일성»을 검사한다**: `name == <게이트 잡 이름>` 인 잡의
+                           집합을 `hit` 이라 할 때 **`len(hit) != 1` → `PREVENTION_UNVERIFIED_REVISION`**.
+                           v2.21 실행기는 `hit[0]` 을 말없이 집었고, 그것이 «blob 은 잡 id 로·서버는 표시 이름으로
+                           고른다»는 분열의 서버 쪽 절반이었다.  **blob 층의 «`jobs` 정확히 1개 + `name` 값-핀»과
+                           서버 층의 «`hit` 유일»을 «둘 다» 요구**해야 두 층이 같은 객체를 가리킨다(양층 하드닝).
+                         → 그 유일 잡의 **`conclusion` 이 리터럴 `"success"`**
+                           — **[v2.22·M-1] `"skipped"`·`"neutral"` 을 «성공»으로 접지 않는다.**  GitHub 의 required
+                           check 계산에서는 «Successful check statuses = `success`, `skipped`, `neutral`» 이지만
+                           **U-17 이 묻는 것은 «머지가 허용됐는가»가 아니라 «게이트가 실행됐는가»** 이므로 여기서는
+                           `success` 하나만 통과다(`skipped`/`neutral`/`cancelled`/`null` = `PREVENTION_UNVERIFIED_REVISION`).
                          → 그 잡 `steps[]` 에 위 두 «스텝 이름»이 각각 `conclusion == "success"` 로 실재
                            (동등: gh api …/actions/jobs/{job_id} 의 `steps[]`)
+                           — **«정확히 3개» 는 여기에 적용하지 않는다**(위 정직 경계: `Set up job`·`Post *`·
+                           `Complete job` 자동 삽입).  요구는 **두 이름의 존재 + 각각의 `conclusion == "success"`** 다.
                        blob 파싱이 얻은 두 스텝 `name:` == 서버 `steps[]` 이름을 대조 — **«그 이름의
                        스텝이 서버에서 success 로 실행됐다»는 서버 기록**이다.  **스텝 이름 부재·
                        `conclusion != success` → `PREVENTION_UNVERIFIED_REVISION`**(T-84 ⑭).
@@ -5564,10 +5825,56 @@ printf '%s  tools/tos_entry_harness.sh\n' 957bf49da8fc6ae39f97abe679411afeaa5a59
 오인**하게 되고, 그것이 통과를 만들면 (b) 의 목적이 무너진다.
 **미푸시 커밋 422 · 푸시됐으나 PR 없는 커밋(`be98f075`) `pulls` `[]`** 는 실측 그대로다
 
-**D = ∅ 처리** **[#6]**: (a) live 술어는 **`D` 와 무관하게 평가**한다 —
+**D = ∅ 처리** **[#6 / v2.22·M-7·N-11]**: (a) live 술어는 **`D` 와 무관하게 평가**한다 —
 **착수 «전»에도 `PREVENTION_ACTIVE` 가 가능해야 착수할 수 있고**, 그것이 U-17 의
-목적이다.  (b)·(c) 는 `D = ∅` 이면 **«검증 대상 없음»** 이며 **(a) «와» `owner_repo`·
-`target_branch` 구조 파생 대조**만으로 `ACTIVE` 다.
+목적이다.
+**[v2.22·M-7 — 심판 #3 «진입 판정 vacuity»] (b) 는 «세 사지»이고 그중 하나는 `D` 무관 무조건 항이다.**
+v2.21 은 `D = ∅` 이면 (b)·(c) 를 통째로 **«검증 대상 없음»** 으로 접었다 — 그래서 **D0-A 승인 판정
+(진입·`D = ∅`)에서 blob 층·서버 층이 통째로 미평가**였고, F#1(순서)·F#2(유일·name 핀)·F#4(값 핀)·
+C-1(중복)·M-4(파서)가 **전부 (b)③ 안에 살아 있는데 진입 판정은 blob 을 한 줄도 읽지 않았다**.
+증거 차원의 비-vacuity(`D ≠ ∅` 픽스처)는 **운영 판정경로의 비-vacuity가 아니다.**
+**처분 — (b)③ blob 층«에» `D` 무관 무조건 항을 «추가»한다**(선례: 아래 «target 대조는 `D` 와 무관한
+무조건 항이다»).  **«추가»이지 «대체»가 아니다**:
+
+```text
+(b-blob)@target   **무조건 항**(v2.22 신설) — target 브랜치 HEAD 의 `.github/workflows/tos-gate.yml` blob
+                  이 정본 잡 템플릿과 일치.  `D` 와 무관하게 «항상» 평가한다
+(b-blob)@d        **D-지표 항**(기존·유지) — ∀d 의 착지 PR head.sha 시점 blob 이 정본과 일치
+(b-server)        **D-지표 항**(기존) — 그 run 의 서버 잡·스텝 conclusion
+(c)               **D-지표 항**(기존) — 기록 순서 조건
+```
+
+**진입(`D = ∅`)** = (a) ∧ **(b-blob)@target** ∧ `owner_repo`·`target_branch` 구조 파생 대조.
+**완료(`D ≠ ∅`)** = (a) ∧ **(b-blob)@target** ∧ **(b-blob)@d** ∧ **(b-server)** ∧ **(c)** ∧ 연속성.
+**«(b) 세 사지»(`(b-blob)@target`·`(b-blob)@d`·`(b-server)`) 중 어느 하나라도 실패하면
+`PREVENTION_UNVERIFIED_REVISION`.**  **(a)·countersign·(c)·연속성의 실패는 «각자의 상태값»을
+따르며 전순서가 우선순위를 준다**(U-17-c 정의행이 유일 소스·S-14):
+    (a)                    → `UNVERIFIABLE`(1) · `ABSENT`(2) · `TARGET_MISMATCH`(4) · `INSUFFICIENT`(5)
+    countersign            → `UNSIGNED`(3)
+    (c) [`P_first`·`P_last` 기계 조건] → `LATE`(6) · `ARTIFACT_MUTATED`(7) · `UNVERIFIABLE`(1) · `ABSENT`(2)
+    연속성                  → `CONTINUITY_UNVERIFIABLE`(9)
+**`UNSIGNED`(3) 는 (a) 소속이 «아니다»** — 그 값의 조건은 «`operator_countersign` 부재·형식 위반»
+하나이고((c-0) 형식 블록 · U-17-c 정의행), **(a) 술어 블록에는 `countersign` 이 등장하지 않으며**
+U-17-c 도 `countersign 유효` 를 (a) 와 **별개 conjunct** 로 둔다.  (a) 실패에 3 을 방출하면 전순서상
+3 이 4·5 를 이겨 **«보호가 약하다»가 «기록의 권위가 없다»로 오귀속**된다(v2.14 `awk` 교훈).
+**이 표는 «항 → 값» 방향이지 «값 → 유일 항»이 아니다** — `UNVERIFIABLE`(1)·`ABSENT`(2) 는
+(a) 와 `P_first`/`P_last` 축 **둘 다**에서 나온다(E9/E11 «기계 조건» 블록).
+**여덟 차단값(전순서 1·2·3·4·5·6·7·9)을 `UNVERIFIED_REVISION`(8) 하나로 접지 않는다**
+(= 차단 아홉 중 (b) 자신의 8 을 뺀 나머지 전부) — `UNVERIFIED_REVISION` 의 정의가
+«(b) 불충족»(U-17-c)이므로, 접으면 그 여덟 값이 **도달 불가**해지고 T-84 ①④⑤⑥⑨⑪ 이 도달 불가한
+값을 기대하게 된다(v2.14 `G4` 가 폐기한 «사코드 분기» 클래스 · 이 계약이 이미 두 번 기록한 결함).
+극성 논증(«한 관측에 두 상태값» 금지 · «운영자가 할 일이 완전히 다르다»)도 같은 방향이다.
+**[N-11] `(b-blob)@target` 이 `(b-blob)@d` 를 대체하면 안 된다** — 대체하면 `d` 가 **비정본 워크플로로
+착지한 뒤 target 을 정본으로 복원**하는 경로가 열려 v2.22 payload 전체가 리비전 무결속이 되고, 심판
+판정 #1·#2 가 그대로 재개방된다(v2.18 `?ref=<PR head.sha>` 결속의 회귀).  둘 다 conjunct 다.
+
+**닫지 못하는 것(격하·정직 등재)**: **`(b-blob)@d`·`(b-server)` 는 진입선(`D = ∅`)에서 평가할 수 없다** —
+리비전과 런이 물리적으로 존재하지 않기 때문이다(pre-D0-A).  따라서 진입이 얻는 것은 «**정본 파일이
+target 에 실재하고 구조가 정본이다**»뿐이고, «그 파일이 착지마다 실제로 게이트로 돌았다»는 **완료
+(`D ≠ ∅`)의 `(b-blob)@d`·`(b-server)` 소관**이다.  또 **required context «tos-gate» 가 «그 파일»에서 나온다**
+는 결속은 진입선에서 성립하지 않는다(context→file 결속은 run = C2 3중 결속이 필요) — (a) 동명 decoy
+잔여가 진입선에 존속한다(아래 «정직 경계»·⑥).  즉 M-7 승격은 진입 방어를 «(a) 설정만» → «(a) + 정본
+파일 blob»으로 **강화**하되 «정본 런 성립»·«context 결속»은 완료까지 열지 못한다.
 **[R2 — v2.17 마감] target 대조는 `D` 와 무관한 «무조건 항»이다** — 초안은 그것을
 (a) 절 밖에 두고 여기서 «(a) 만으로»라 적어, **`D = ∅` 에서 target 대조가 빠지는
 읽기**가 성립했다(B1 이 닫은 «임의 대상의 보호로 진입 승인»이 그 읽기로 되살아난다).
@@ -5632,7 +5939,11 @@ v2.16 은 «보호가 꺼진 창에서 착지한 커밋은 그 흔적이 없다�
                                                        → CONTINUITY_UNVERIFIABLE
     타임스탬프 파싱 불가(형식 밖)                      → CONTINUITY_UNVERIFIABLE (fail-closed)
     삭제-재생성                                       → 새 id·새 created_at(>t_land) 로 검출
-    D = ∅                                            → 착지 대상 없음 = 연속성 vacuous((b) 와 동일)
+    D = ∅                                            → 착지 대상 없음 = 연속성 vacuous
+                                                       **[v2.22·M-7 — 참조 정밀화]** 이것은 «(b) 의 **D-지표
+                                                       사지**((b-blob)@d·(b-server))와 동일»이지 «(b) 전체와
+                                                       동일»이 아니다 — `(b-blob)@target` 은 `D` 무관 무조건
+                                                       항이라 `D = ∅` 에서도 평가된다(위 «D = ∅ 처리»)
     t_land 파생 불가(`D ≠ ∅` 인데 착지 PR 미해석)     → CONTINUITY_UNVERIFIABLE (fail-closed)
                                                        **[E2 — v2.19 에라타]** 단 이 경우 (b) 가
                                                        이미 `UNVERIFIED_REVISION`(전순서 8)로
@@ -5717,8 +6028,34 @@ operator_countersign: "<운영자 식별> <ISO-8601 UTC>"   # 예: "operator 202
 
 ```text
 U-17-c  상태  prevention_control_state   (1급 노출)
-          PREVENTION_ACTIVE            (a) 술어 충족 ∧ (b) 전 리비전 검증 ∧ **연속성 성립**
+          PREVENTION_ACTIVE            (a) 술어 충족
+                                       ∧ **(b-blob)@target** — **`D` 무관 «무조건 항»**(target 브랜치 HEAD sha 의
+                                         `.github/workflows/tos-gate.yml` blob 이 정본 잡 템플릿과 일치)  [v2.22·M-7]
+                                       ∧ **(b-blob)@d** — D-지표(**전 리비전** ∀d: 착지 PR `head.sha` 시점 blob 이 정본과 일치)
+                                       ∧ **(b-server)** — D-지표(그 run 의 서버 잡 `conclusion == success` ∧ 두 스텝 실재)
+                                       ∧ **(c)** — D-지표(기록 순서 조건)
+                                       ∧ **연속성 성립**
                                        ∧ countersign 유효 ∧ **P_last 조건**(위 «기계 조건» 블록·E9 — 재기술 안 함, S-14)  (통과)
+                                       **[v2.22·N-11] 위 «(b) 세 사지»(`(b-blob)@target`·`(b-blob)@d`·`(b-server)`) 중
+                                       어느 하나라도 실패 = `PREVENTION_UNVERIFIED_REVISION`.**  **(a)·countersign·(c)
+                                       (`P_first`·`P_last`)·연속성의 실패는 «각자의 상태값»을 따르며 전순서가 우선순위를 준다**:
+                                         (a)          → `UNVERIFIABLE`(1) · `ABSENT`(2) · `TARGET_MISMATCH`(4) · `INSUFFICIENT`(5)
+                                         countersign  → `UNSIGNED`(3)   ← **(a) 소속이 아니다**(아래 정의행: «operator_countersign
+                                                        부재·형식 위반»; (a) 술어 블록에 `countersign` 부재이고 위 ACTIVE 논리곱도
+                                                        `countersign 유효` 를 (a) 와 별개 conjunct 로 둔다)
+                                         (c)          → `LATE`(6) · `ARTIFACT_MUTATED`(7) · `UNVERIFIABLE`(1) · `ABSENT`(2)
+                                                        (E9/E11 «기계 조건»: `|P_first|`·`|P_last|` 카디널리티 포함)
+                                         연속성        → `CONTINUITY_UNVERIFIABLE`(9)
+                                       **«항 → 값» 방향이지 «값 → 유일 항»이 아니다** — `UNVERIFIABLE`(1)·`ABSENT`(2) 는
+                                       (a) 와 `P_first`/`P_last` 축 둘 다에서 나온다.  `UNVERIFIED_REVISION`
+                                       의 정의가 «(b) 불충족»(아래 상태 목록)이므로 **여덟 차단값(전순서 1·2·3·4·5·6·7·9 =
+                                       차단 아홉 중 8 을 뺀 나머지)** 을 8 로 접으면
+                                       그 값들이 **도달 불가**해지고 T-84 ①④⑤⑥⑨⑪ 이 도달 불가한 값을 기대하게 된다
+                                       (v2.14 `G4` «사코드 분기» 클래스 · 극성 «한 관측에 두 상태값» 금지).
+                                       v2.21 문언 «(b) 전 리비전 검증»은 **D-지표 사지만** 가리켜 `D = ∅` 진입에서 blob 층을
+                                       통째로 접었으므로(심판 #3), **문구와 술어를 함께** 교체한다 — conjunct 만 더하고 문구를
+                                       v2.21 어휘로 남기면 문구·술어가 갈린다.  **`(b-blob)@target` 은 `(b-blob)@d` 의 «추가»이지
+                                       «대체»가 아니다**(대체 시 `d` 비정본 착지 → target 정본 복원 경로가 열려 회귀).
           PREVENTION_UNVERIFIABLE      조회 실패(HTTP·네트워크·인증)     → 차단  [v2.16]
           PREVENTION_ABSENT            아티팩트 부재 · 404 미보호        → 차단
           PREVENTION_UNSIGNED          operator_countersign 부재·형식 위반 → 차단
@@ -5746,10 +6083,17 @@ U-17-c  상태  prevention_control_state   (1급 노출)
          10 PREVENTION_ACTIVE           위 아홉이 전부 불성립할 때만
 
 U-17-d  강제 지점  §12.3 단계 **7c**·**8**(진입) 과 **§11**(완료 판정) — **둘 다 live**
-        종료조건   §11 — `PREVENTION_ACTIVE`.  이 값이 이미 (a) 술어 ∧ (b) 전 리비전 검증
-                   ∧ **연속성 성립**(완료 판정 시점) ∧ countersign ∧ `∀d∈D: P_last ⊰ d` 를
+        진입 평가  **[v2.22·M-7] 진입(7c·8·`D = ∅`)에서도 blob 층이 평가된다** — `(b-blob)@target`(무조건 항)이
+                   target 브랜치 HEAD 의 `.github/workflows/tos-gate.yml` 을 정본 잡 템플릿과 대조한다.
+                   **`(b-blob)@d`·`(b-server)` 는 진입선에서 평가되지 않는다**(리비전·런이 물리적으로 부재) —
+                   그 둘은 **완료(`D ≠ ∅`) 소관**이며, 이 «진입 미평가»는 잔여로 등재한다(위 «D = ∅ 처리»·⑥)
+        종료조건   §11 — `PREVENTION_ACTIVE`.  이 값이 이미 (a) 술어 ∧ **(b-blob)@target**(무조건) ∧ **(b-blob)@d**
+                   (전 리비전) ∧ **(b-server)** ∧ **(c)** ∧ **연속성 성립**(완료 판정 시점) ∧ countersign ∧
+                   `∀d∈D: P_last ⊰ d` 를
                    논리곱으로 담으므로(U-17-c), §11 은 **상태값만 소비**하고 재기술하지 않는다(S-14)
-        대조군     T-84 (§8) — **14종** [v2.19: ⑪ 연속성 · ⑫ GH_HOST · v2.20: ⑬ 비활성 리터럴 · ⑭ 서버 스텝]
+        대조군     T-84 (§8) — **14종** (= v2.15/16 4종 ①~④ + v2.17 2종 ⑤⑥ + v2.18 4종 ⑦~⑩ + v2.19 2종 ⑪⑫ +
+                   v2.20 2종 ⑬⑭ = **4+2+4+2+2**) [v2.19: ⑪ 연속성 · ⑫ GH_HOST · v2.20: **⑬ 정본 불일치 클래스** ·
+                   ⑭ 서버 스텝].  **[v2.22] ⑬ 하위 케이스(⑬k~⑬n)·⑭ 확장은 종수를 늘리지 않는다**(⑬h/⑬i/⑬j 선례)
 ```
 
 **(d) 가드 체인이 3단이 된다** — `U-15-f-1` 형태 갱신:
@@ -5765,6 +6109,15 @@ bash <§12.3.4-R 하니스>  &&  bash <u17-verify>  &&  <D0A-FIRST>
 > **왜 하니스에 넣지 않는가 (v2.15 판단 유지·근거 보강)**: 하니스는 **오프라인·결정적**
 > 이어야 하고 `§12.3.4-R` **byte-identical 회귀 기준선**을 갖는다. 네트워크 조회를
 > 넣으면 그 성질이 둘 다 깨진다. **별도 실행기 + 가드 체인 3단**이 층을 유지한다.
+>
+> **[v2.22 — 심판 #2] 「별도 실행기」이므로 「별도 선행 산출물」이다.** `u17-verify` 는
+> `tools/tos_entry_harness.sh` 와 **구별되는 필수 산출물**이며, **같은 pre-D0-A 주체
+> (운영자/인프라)가 D0-A 착수 «전»에 실체화한다** — 개발계획 §6 Phase 0 «선행 조건»의
+> 항목이고 `UNCHK-008` 의 도입 집합에 함께 든다.  v2.21 까지 선행조건은 룰셋·
+> `tos-gate.yml`·하니스 파일 3종뿐이라 **가드 체인이 요구하는 두 번째 실행기의 소유자가
+> 어디에도 없었다**(심판 #2 «부분해소» 3연속의 근인).
+> **잔여(⑥)**: `u17-verify` 자체는 **온라인 조회기**라 하니스와 달리 **byte 기준선 sha 를
+> 핀하지 않는다** — 그 자리는 v2.22 가 닫지 못한다(정직 등재).
 
 ##### 현재 시제 — **실 서버 음성 증거가 지금 존재한다** (v2.16 실측)
 
@@ -5808,6 +6161,11 @@ set -u
 REPO=$(git rev-parse --show-toplevel)
 WT=$(mktemp -d)/g; git -C "$REPO" worktree add --detach "$WT" HEAD
 # (§12.3.4-R 블록을 추출해 harness.sh 로 저장)
+# **[v2.22 — 심판 #2]** 아래 세 실행 지점(G-음성-1·G-음성-2·G-양성)이 쓰는
+#   `/path/to/u17-verify.sh` 는 **하니스와 구별되는 pre-D0-A 산출물**이며 **같은
+#   운영자/인프라 선행 단계**가 D0-A 착수 «전»에 둔다(`UNCHK-008` 도입 집합 4종 ·
+#   개발계획 §6 Phase 0 «선행 조건» · U-17 «진입자의 u17-verify»).
+#   **이 소유자 문언은 여기가 유일 소스**이고 세 지점에서 재기술하지 않는다(S-14).
 
 # D0A-FIRST 를 한 줄로 표현한다 (§12.1 명명 — 대리 아님)
 # **[G6 — v2.14 마감] `D0A_FIRST` 는 트레일러를 포함해야 한다.**
@@ -6248,7 +6606,7 @@ tos-spec/src/verification/PHASE0-UNCHECKABLE-REGISTER.csv
 | UNCHK-013 | G3의 "유일한 시작 조건" | "소비처"의 범위·식별 규칙 부재 (§4.2.1) | 소비처 정의 | `Phase 7` | 공란 | `YES` | — |
 | UNCHK-014 | **문서가 선언하지 않은 축** | U-2의 우주가 문서 자신이므로 원리적 검출 불가 (§13.5). §5.2.7 "열거는 자기 자신을 빠뜨린다"의 근본형 | 외부 기준 목록 도입 여부 | **공란** (U-1a 면제) | 공란 | **`NO`** | — |
 | UNCHK-009 | 정규 경로의 **물리적 동일성** | 하드링크는 `realpath`로 해석되지 않아 서로 다른 정규형이 같은 inode를 가리킬 수 있다 (§5.2.6.1) | inode 기준 동일성 검사 도입 여부 판단 | `Phase 1` | 공란 | `YES` | — |
-| UNCHK-008 | **저장소 밖 강제 표면** — CI 필수 잡(required check) · **[v2.13] 진입 표면 거부**(브랜치 보호·pre-receive/pre-commit 훅) | 브랜치 보호 설정이라 저장소 내 파일로 증명 불가. `tos-firewall.yml`도 "NOT configured here"를 자인 | GitHub 브랜치 보호 설정 + 증거 보존 (상위 `TOS-GAP-006`). **[v2.13] `U-15-g` 가 이 축에 «비가드 D0-A 착수의 예방»을 명시 결속**했다 — U-15 는 **사후 관측(발견)만** 하고 **예방은 이 행이 담당**한다.  **[v2.21 — 심판 #2] 이 축의 도입(룰셋 required check·`.github/workflows/tos-gate.yml`·하니스 파일 실체화)은 D0-A 착수 «전» 운영자/인프라 선행 단계이며 U-17 이 live 검증한다 — 개발계획 Phase 0 «선행 조건(D0-A 착수 전)»·(D)②②′·U-17 «pre-D0-A 실체화»와 같은 주체·시점(비순환)** | `Phase 0` | 공란 | `YES` | — |
+| UNCHK-008 | **저장소 밖 강제 표면** — CI 필수 잡(required check) · **[v2.13] 진입 표면 거부**(브랜치 보호·pre-receive/pre-commit 훅) | 브랜치 보호 설정이라 저장소 내 파일로 증명 불가. `tos-firewall.yml`도 "NOT configured here"를 자인 | GitHub 브랜치 보호 설정 + 증거 보존 (상위 `TOS-GAP-006`). **[v2.13] `U-15-g` 가 이 축에 «비가드 D0-A 착수의 예방»을 명시 결속**했다 — U-15 는 **사후 관측(발견)만** 하고 **예방은 이 행이 담당**한다.  **[v2.21 — 심판 #2] 이 축의 도입(룰셋 required check·`.github/workflows/tos-gate.yml`·하니스 파일 실체화)은 D0-A 착수 «전» 운영자/인프라 선행 단계이며 U-17 이 live 검증한다 — 개발계획 Phase 0 «선행 조건(D0-A 착수 전)»·(D)②②′·U-17 «pre-D0-A 실체화»와 같은 주체·시점(비순환)**.  **[v2.22 — 심판 #2 3연속] 도입 집합에 `u17-verify` 실행기를 «넷째»로 넣는다** — 가드 체인 3단(`bash <§12.3.4-R 하니스> && bash <u17-verify> && <D0A-FIRST>`)이 요구하는 **하니스와 «구별되는» 필수 산출물**이며 **같은 pre-D0-A 주체(운영자/인프라)** 소관이다((D)②″·U-17 «진입자의 u17-verify» 절과 같은 주체·시점).  ⇒ 도입 집합 = **① 룰셋 required check · ② `.github/workflows/tos-gate.yml` · ③ 하니스 파일 `tools/tos_entry_harness.sh`(sha `957bf49d…`) · ④ `u17-verify` 실행기** | `Phase 0` | 공란 | `YES` | — |
 | **UNCHK-019** | **강제 지점 레지스트리에 등록되지 않은 계약** | T-39가 전수화됐으나 우주는 **레지스트리 키**다. 계약을 문서에 쓰고 등록을 빠뜨리면 키 수가 불변이라 count canary가 침묵한다 — **삭제는 잡고 추가 누락은 못 잡는다**(§8.3) | 계약 선언과 등록을 한 자리에서 하는 표면(데코레이터·선언적 등록) 도입 여부 | `Phase 1` | 공란 | `YES` | — |
 | **UNCHK-022** | **INV-C3 의 관측 범위 한계 (2축)** | **v2.3 실측 정정.** ① **범위**: `basis` 도입으로 관측 가능은 **5/11**(v2.1이 쓴 1/11 아님) — 나머지 **6개는 NMC 라 뮤테이션 자체가 구성 불가**(삭제할 입력이 없다). 이는 검사 실패가 아니라 **검사 대상 부재**다. ② **깊이**: `basis` 는 "입력을 **읽었는가**"만 관측하고 "**판정에 썼는가**"는 관측하지 않는다 — 판정 함수를 상수 `True` 로 바꿔도 T-2 를 통과한다(프로토타입 실측) | ①은 UNCHK-005(비기계 조건의 술어화) 소관으로 자동 해소. ②는 **판정 함수의 입력 의존성을 관측하는 별도 기제** 필요 — 이 문서 범위 밖 | `Phase 2-5` | 공란 | `YES` | — |
 | **UNCHK-021** | **`closable` 값의 저작자 재량 + 앵커 동시 수정 + `YES`→`NO` 전이의 의무 우회** | U-9a가 `closable=NO` 집합을 앵커로 고정하지만 **앵커와 데이터를 한 커밋에서 함께 고치면 통과한다**(모든 canary의 성질, §8.3). 또 U-9의 인용 검사는 **인용이 해석되는지**만 보고 **그 절이 실제로 원리적 불가능성을 확립하는지**는 보지 못한다 — UNCHK-020과 같은 의미 판정 계열이며, **직교 2필드의 나머지 한 축**이다. **[v2.5 — 심판 F7]** U-9/U-9a 가 §11 종료조건에서 철회된 뒤(§11 U-9·U-9a 철회 행)에는 이 재량이 **U-1a 소유자 의무까지 우회**한다: `closable=YES` 행이 무관한 실재 절을 근거로 `NO` 로 전이하면 U-1a(YES 한정)·철회된 U-9·U-9a·집계 findings 를 전부 벗어나고, 잔여 가시성은 **비차단 `closable_no_rows`(U-10)** 뿐이다 | **[v2.6 — 심판 F#4] 두 갈래로 분리한다** (v2.5 는 한 칸에 섞어 써서 `blocked_by` 의 "Phase 1 이연"이 `owner_track` 과 어긋나 보였다). **(가) 의미 판정 갈래 — 이 축의 소유를 결정한다**: evidence 별 "이 절이 이 축의 불가능성을 확립하는가"의 수용 기준. UNCHK-007·015·020 과 **같은 계열**이며 그 셋 전부 `Phase 2-5` 다. **(나) 보호 복원 갈래 — 소유를 옮기지 않는다**: `YES`→`NO` 전이에 **독립 리뷰 provenance 를 결속**하고 그 승인을 **소비하는 지점**을 둔다(전이가 승인 provenance 를 참조하지 않으면 전이 자체를 거부). **[v2.7 정정 — 심판 #3] "단일 커밋 내 기계 폐쇄는 불가"는 거짓이었다.** canary 는 *값*을 비교하므로 앵커·데이터 동시 갱신에 침묵하지만, **커밋 위상**(승인 행 도입 커밋이 전이 커밋의 진 조상인가)을 비교하면 **동일 커밋이 곧 위반 신호**가 된다 — **U-16**(§13.6.5)이 그 구조이며 **Phase 0 차단으로 승격**한다(§11). (나)는 더 이상 Phase 1 비차단 리뷰 표면이 아니다. **다만 (가)는 그대로 남고**, U-16 이 닫지 못하는 것도 셋 남는다: 승인 **내용의 진정성**(→`UNCHK-012`)·**조상 관계의 신뢰 기반**(→`UNCHK-023`)·`closable` 값 자체의 **적절성**(→(가)) | `Phase 2-5` | 공란 | `YES` | — **(v2.7 주)** `blocks_gate` 는 공란을 유지한다 — 이 항목이 차단하는 것은 **G1~G4 게이트가 아니라 Phase 0 완료조건(§11)** 이고, §10 이 "Phase 0 완료는 G1/G2/G3 중 어느 것도 부여하지 않는다"고 못박으므로 게이트 id 를 적으면 **고아 target**(v1.9 E2)의 재현이다. **"Phase 0 차단 승격"과 "`blocks_gate` 공란"은 모순이 아니다** — 두 필드가 서로 다른 축이며, `owner_track`↔`blocked_by` 를 §13.2.2 가 구별한 것과 같은 형태다 |

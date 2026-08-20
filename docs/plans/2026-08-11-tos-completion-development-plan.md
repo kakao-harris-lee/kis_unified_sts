@@ -272,7 +272,18 @@ runtime shell은 적어도 다음을 소유한다.
 - **예방 통제 활성**: tos-gate required check(룰셋 — `required_status_checks.checks[].app_id`
   == Actions app id)·`.github/workflows/tos-gate.yml`(하니스 `tools/tos_entry_harness.sh`
   경로·sha256 검증 스텝 포함) **및 그 하니스 파일 `tools/tos_entry_harness.sh` 의
-  실체화(계약 §12.3.4-R 블록 결속값 sha 957bf49d…)** 도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
+  실체화(계약 §12.3.4-R 블록 결속값 sha 957bf49d…)** **및 `u17-verify` 실행기의 실체화**
+  도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
+  - **`u17-verify` 는 하니스와 «구별되는» 필수 산출물**이다 — 계약의 가드 체인은 3단
+    (`bash <§12.3.4-R 하니스> && bash <u17-verify> && <D0A-FIRST>`)이고, 하니스는
+    **오프라인·결정적**이어야 하므로 live 서버 조회는 별도 실행기가 맡는다(계약 §12.3.4
+    «왜 하니스에 넣지 않는가»).  **소유자·시점은 이 선행조건과 같다** — 운영자/인프라가
+    D0-A 착수 «전»에 둔다(계약 `UNCHK-008` 도입 집합 4종).
+  - **도입 순서 = `tos-gate.yml` · 하니스 파일 · `u17-verify` 를 «먼저», 룰셋을 «마지막»** 으로 둔다.
+    룰셋(required check)을 먼저 활성화하면 그 뒤에 `tos-gate.yml` 을 올리는 PR 자신이
+    **존재하지 않는 체크를 기다리며 pending** 이 되고, 유일한 탈출구가 **«보호를 잠시 해제하는 창»**
+    이 된다 — 그 창은 계약이 «룰셋을 바꾸지 않은 우회»로 **닫지 못한다고 등재한 잔여**와 같은 형태다.
+    파일 3종이 target 에 먼저 착지하면 룰셋 활성화 시점에 이미 정본 워크플로가 존재한다.
 
 종료 조건:
 
@@ -297,8 +308,9 @@ runtime shell은 적어도 다음을 소유한다.
    순서·만료일이 있는 예외 register로 관리한다.
 7. CI required job에 firewall, import-linter, TOS tests, tool tests, L3 tests, Ruff,
    Black, mypy, status checker, mdBook을 포함한다.
-   (tos-gate required check[룰셋]·`.github/workflows/tos-gate.yml` 도입은 Phase 0
-    D0-A 착수 선행조건으로 이관 — 계약 §12.3.4 `U-17`.  이 작업 7 은 나머지 잡만 관장한다.)
+   (**U-17 예방 통제의 도입 집합은 전부 Phase 0 «선행 조건 (D0-A 착수 전)» 으로 이관**됐다 —
+    그 집합의 «유일 소스»는 위 Phase 0 선행조건 절이며 여기서 열거하지 않는다(계약 §12.3.4 `U-17`).
+    이 작업 7 은 나머지 잡만 관장한다.)
 
 종료 조건:
 
