@@ -1,0 +1,43 @@
+먼저 `CLAUDE.md` 를 읽어라 (비협상 규칙 :21-36, 85-87, 104-107 + «Development Discipline» :158-170 — 이번 판이 그 지침을 근거로 설계를 바꿨다). 이것은 **재심**이다 (레인 B · 계획 심판).
+
+심사 대상 (계획 문서 2건 — 코드 아님 · **이번 판도 두 문서 모두 개정됨**):
+- `docs/plans/2026-08-12-tos-phase0-completion-contract-design.md` (v2.21 **에라타 3차 재동결** `c4d97118`, 7,554행)
+- `docs/plans/2026-08-11-tos-completion-development-plan.md` (`0528a919`, 580행 — Phase 0 «선행 조건(D0-A 착수 전)» 불릿에 **하니스 파일 실체화** 한 줄 추가; :270-275)
+
+직전 판정 (v2.20 재심): `.omc/review/20260819-193235/verdict.md` (추적 정본 `docs/reviews/phase0-completion-contract/20260819-193235/verdict.md`) — needs-attention, findings 2 (high 1 / medium 1), **채택 2 / 기각 0**(기각 사유 3종 해당 없음 — 이번 재심에 제시할 기각 항목 없음):
+- **#1 (high, «회피»)** U-17 (b)③ — 구조 파서+서버 스텝이 «토큰 존재·이름/conclusion»만 인증. 계약 자신이 `shasum … | grep <sha> || true`·`set +e` 가 blob·서버 대조를 통과한다고 적었고, `false && bash tools/tos_entry_harness.sh || true` 같은 **도달 불가 호출**도 «실행 위치» 술어를 통과 → 승인된 하니스를 실행하지 않아도, digest 불일치를 실패로 전파하지 않아도 `PREVENTION_ACTIVE`.
+- **#2 (medium, #5/#6 부분해소)** 같은 예방 통제의 **활성 소유 시점이 여전히 Phase 1** — 개발계획은 (D) 를 적용했으나 활성 `UNCHK-008.owner_track` 이 `Phase 1`(계약 자신이 :6274-6275 에서 owner_track = «축을 닫을 트랙»으로 정의)·U-17 하니스 경로가 «D0-A 산출물» 표기 → Phase 0 가 `PREVENTION_ACTIVE` 를 소비하기 **전에** 그 축과 하니스를 누가 산출·폐쇄하는지 **단일 비순환 순서 부재**(S-22 — 형제 소비처 미전파).
+
+직전 처분 집계: **#2 a2 g6·#3 격리 스냅샷·#4 ⑯ 해소(아크 누적 11)·#1 회피 1·#5/#6 부분**·신규 결함 클래스 0·S-20 종수 불일치 0.
+
+**1순위 지시**: 직전 findings 2건이 v2.21 에서 **실제로 해소**되었는지 vs **회피**(조건 완화·문구만·대조군 무력화·부분 표면 실행기·산문 주장 대체·«정직 경계» 라벨로 미검출을 정당화)되었는지 finding 별로 «해소됨 / 부분해소 / 미해소 / 회피» 판정 + 근거 file:line. 직전 판정의 Recommendation 이 판정 기준이다:
+- #1: «도달 불가능한 하니스 호출과 `|| true`·`set +e` 로 중화된 digest 불일치가 **권위 U-17 소비자에서 비-0 및 non-ACTIVE** 가 되기 전까지 #1 해소와 출하를 인정하지 않는다»
+- #2: «UNCHK-008, U-17 하니스 소유, 개발계획 선행조건이 **동일한 pre-D0-A 생산 주체와 시점**을 가리키고 **D0-A·Phase 1 산출물 없이 `PREVENTION_ACTIVE` 에 도달함이 증명**되기 전까지 #5 를 미해소로 유지한다»
+
+경위 (저작자 주장 — 심판이 검증할 것): 재결속 `c00d808e` → v2.20 재심 `db0d27cb` → v2.21 저작(1차 설계 «셸 AST 도달성 요건»은 **독립 검증 C FAIL** — B10 `set -euo pipefail; exit 0; bash …`·B11 `exec true`·B12 `[ ] && exit 0` 의 «선행 종결자»를 「`&&` 피연산자」 규칙이 미포섭 → **폐기**; 운영자 «바퀴 재발명 금지» 지침 적용해 «정본 대조»로 재설계) → 동결 `0528a919` → 증거 `3e0f2429`(정본 대조 22 blob·기대 불일치 0·문언 에라타 ⓐ 적발) → **에라타 #1 `65cf2635`**(정본 `run:` 은 YAML literal block scalar `|` 전제 — folded `>` 과잉 차단 정정) → addendum `83f12afd` → **stop-time Codex BLOCK #7** (`defaults.run.shell: "true {0}"` 가 정본 스텝 byte·이름을 보존하면서 두 `run:` 을 실행하지 않고 success 보고 → 스텝만 정본 대조하면 통과) → **에라타 #2 `7adc1246`**(대조 대상을 «두 스텝 run:»→«게이트 **잡 객체 전체**»로 확장 = 닫힌 세계) → addendum-2 `5954b22d`(**신규 fail-open R-1 적발**: 계약이 «checkout@<40-hex SHA 핀>» 이라 적고 **값을 본문에 두지 않아** 술어가 형식만 검사 = 임의 포크 커밋 SHA 통과) → **에라타 #3 `c4d97118`**(`actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` v7.0.1 리터럴 핀·잡 `name` 허용[R-3 과잉 차단 완화]) → addendum-3 `b5afa6f6` → INDEX `85070bb3` → **재결속 `93522c09`**.
+
+v2.21 이 2건에 대해 주장하는 처분 (변경 이력 :213 · 처분표 :4403-4404 · 정직 경계 :4407-4409):
+
+1. **#1 → «정본 대조»(canonical comparison) 재설계** (:5466-5540). 골자: YAML 파서(기존 도구)로 `jobs.<게이트 잡>` **객체 전체**를 얻어 계약 «정본 잡 템플릿»과 구조 대조. 스텝 `run:` 은 정규화(CRLF→LF·ASCII trailing 공백·빈 줄·full-line 주석 제거) 후 **정본 A**(`set -euo pipefail` + `bash tools/tos_entry_harness.sh`)·**정본 B**(`set -euo pipefail` + `printf '%s  tools/tos_entry_harness.sh\n' 957bf49d… | shasum -a 256 -c -`)와 **byte 일치**. 잡 허용 키 = 닫힌 집합 `{name, runs-on, steps}` · 워크플로 `defaults`/`env` 부재·`permissions` 최소·`on` 닫힌 집합 · `steps` 정확히 3개 순서 고정(체크아웃 핀 SHA → 정본 A → 정본 B). 주장: «정본과 다르면 전부»라 exit/exec/가드/서브셸/heredoc/eval/무효화/선행 종결자·실행 방식을 바꾸는 워크플로·잡 키를 **열거 없이** 닫는다(열린→닫힌 세계·S-6). 정본 B 는 sha 불일치 시 `shasum -c` 비-0 → `set -euo pipefail` 로 스텝 실패 = **digest 불일치의 «실패 전파»를 정본이 구조로 보장**(실측 OK/0·변조 FAILED/1). T-84 ⑬ = «정본 불일치 클래스» ⑬a~⑬j. **정직 경계**(:5528-5540): 정본 잡 일치 ≠ 런타임 실제 실행 — 잔여 = «잡 «밖»»(다른 잡의 아티팩트/캐시 오염·runner 이미지·GitHub 내부·스텝 «이름» 위조·`actions/checkout` 자체 신뢰).
+2. **#2 → 비순환 pre-D0-A 생산 순서**: `UNCHK-008.owner_track` `Phase 1`→**`Phase 0`**(:6251 — 도입 = D0-A 착수 «전» 운영자/인프라 선행 단계·U-17 이 live 검증·`imprecise_owner_track` 불변 주장)·산문 2곳(:4975·:5102) 전파 · U-17 하니스 «D0-A 산출물»→**«pre-D0-A 실체화»**(:5502) · 개발계획 Phase 0 선행조건 불릿에 **하니스 파일 실체화**(sha `957bf49d…`) 한 줄 추가(:271-275 — (D) ②′ :4480 «운영자 승인 (D) 개정의 연장»).
+
+실행 증거 (추적 정본 — 같은 스탬프 sibling):
+`docs/reviews/phase0-completion-contract/20260819-193235/U17-PREVENTION-CHECK-V221.md`(정본 대조 22 blob·⑬a~⑬g·정규화 대조군 5·e2e ⑬g/⑬c UR/1 ↔ 같은 seam v2.20 실행기 ACTIVE/0 = «회피» 자리 실증) · `…-V221-ADDENDUM.md`(에라타 #1 — folded `>` red·우연 일치 Q-1) · `…-V221-ADDENDUM-2.md`(에라타 #2 — `job_template()` 신설·⑬h defaults.run.shell ×3 UR ↔ V221 스텝만 술어 BLOB_OK ×3·⑬i·⑬j·**R-1 fail-open 적발**) · `…-V221-ADDENDUM-3.md`(에라타 #3 — 핀 SHA 양성 BLOB_OK·비-핀 40-hex UR ↔ v221b 대조군 BLOB_OK/ACTIVE 0 = R-1 실증 후 폐쇄·live GET 1회로 `tags/v7.0.1` → `3d3c42e5…` 직접 일치). 실제 소비자(`--check`)는 D0-A 이후 — 전부 손 실행기 증거다.
+
+신규 결함도 찾아라 — 특히:
+(a) **«닫힌 집합»이 실제로 닫혔는가**: :5479-5491 에서 `runs-on` 을 «닫힌 리터럴 집합(`ubuntu-latest`·`ubuntu-24.04` **등**)», `permissions` 를 «최소(**예** `contents: read`)» 로 적는다 — «등»·«예»는 열린 열거 아닌가(계약 본문이 값을 고정하지 않으면 R-1 과 **같은 결함 클래스**: 술어가 형식만 검사). `on` 닫힌 집합에 `pull_request_target`·`workflow_call`·`schedule` 처분, 체크아웃 `with` «최소 `[fetch-depth: 0]`» 의 닫힘 여부.
+(b) **정규화·YAML 표기의 결정성**: 에라타 #1 은 `|` 전제만 명시 — `|-`·`|+`(chomping)·indentation indicator(`|2`)·YAML 앵커/별칭·`${{ }}` 표현식·flow scalar 는? 어떤 YAML 파서인가(계약이 구현을 고정하는가, 아니면 파서 선택이 판정을 바꾸는가).
+(c) **판정 대상 워크플로·잡의 식별**: `.github/workflows/tos-gate.yml` 한 파일·«게이트 잡» 하나를 전제하는데, 같은 required-check 이름을 **다른 워크플로/잡**이 제공하면? 서버 대조(어느 run/job·re-run attempt 선택)와 blob 대조가 **같은 실행**을 가리키는가.
+(d) **#1 Recommendation 의 두 조건이 실제로 충족되는가**: (i) 도달 불가 하니스 호출 → 비-ACTIVE (ii) `|| true`/`set +e` 로 중화된 digest 불일치 → 비-0. (ii) 는 정본 B 의 «구조 보장» 주장인데, 그 보장이 **정본 일치라는 정적 사실**에서 나오는지, 아니면 **런타임 실행**을 전제하는지 — 정직 경계(«런타임 실제 실행을 증명하지 않는다»)와 충돌하지 않는가. 즉 «실패 전파 보장»이 **미실행 시에도 성립하는 주장인가**.
+(e) **#2 의 잔여 순환**: `UNCHK-008.owner_track = Phase 0` 인데 그 축을 소비하는 D0-A 자체가 Phase 0 안에 있다 — «Phase 0 선행조건»과 «Phase 0 소유»가 같은 phase 라벨을 쓰면 비순환 순서가 **라벨 수준에서만** 성립하는 것 아닌가. `closable`·`blocked_by`·`imprecise_owner_track`·U-1a/U-5 문법과의 정합, 그리고 «운영자/인프라 선행 단계»가 **계획 어디에도 실행 주체·산출물·검증 수단으로 등재되지 않았다면** 기준 (3) 검증 가능성 결함.
+(f) **S-20/S-22**: T-84 파라미터화 **종수** 표기(⑬ 가 a~g → h/i/j 로 확장됐다 — §8 T-84 행 :2891 의 «14종»·§0 요약·심사 이력 :129-130·변경 이력 :213·(A)(B)(D) :4331-4480·§11 종료조건이 서로 일치하는가) · 형제 소비처 전수(이번 판이 고친 «D0-A 산출물»·«owner_track» 표기가 **남은 자리 없이** 전파됐는가 — 직전 2판 연속 S-22 적발).
+(g) **정직 경계 서술 정합**: «구조로 닫는다»·«전 클래스를 닫되» 표현이 잔여 경계(스텝 이름 위조·서버 대조가 이름·conclusion 만)와 충돌하는 자리. 특히 «정본 잡 대조는 정적 in-blob 우회 «전 클래스»를 닫는다»는 전칭 주장의 반례.
+(h) 에라타 3연발 자체 — 동결 후 세 번 재동결됐고 그중 하나는 **stop-time BLOCK**, 하나는 **자기 증거가 찾은 fail-open** 이다. 남은 같은 클래스(계약이 «핀»·«닫힌 집합»이라 말하고 값을 두지 않은 자리)를 전수하라.
+
+계획 심사 기준 7종 전부 적용: (1) 단계 순서·의존성 (2) 숨은 가정 (3) 검증 가능성 (4) 실패·롤백 (5) 범위 이탈·과잉 설계 (6) CLAUDE.md 비협상 규칙 충돌 (7) 누락.
+
+비협상 대조 목록(배치 권고는 오케스트레이터가 기각): 선물 long/short 대칭·실계좌 증거금/실물 선물 주문 경로 전제·주식 EOD 일괄청산·ClickHouse 신규·RL/TFT 부활·하드코딩·Redis DB 1 이탈/TTL 없는 키·비KST 세션 로직.
+
+리비전 결속: 오케스트레이터 포착 HEAD `93522c098751cd8cdc216393beeaf50f03604943` · plan_scope_digest `298869e057e71914cd239b6bffee9f00de38fbd7b47820fa1027278ab8921a8e` · bound_set_digest `0752d016ff2579901717cab82df981c96786f25d33c3eb0004b3b630e89feda4`(`tos-spec/src/part-1-foundation/decisions/OQ-11-DISPOSITION.md:9` 일치 · `requesting_plan_version: v2.21` · `decided_at_head: 85070bb3`). 커밋 순서 `0528a919`(동결·두 문서)→`3e0f2429`(증거)→`65cf2635`(에라타 #1)→`83f12afd`→`7adc1246`(에라타 #2)→`5954b22d`→`c4d97118`(에라타 #3)→`b5afa6f6`→`85070bb3`(INDEX)→`93522c09`(재결속). 계약 워킹트리 blob == `c4d97118` blob·후속 계약 커밋 0, 개발계획 blob == `0528a919` blob·후속 커밋 0 — 독립 확인하라.
+
+계획을 다시 쓰지 마라. 개정안을 제시하지 말고 결함과 근거만 지적하라. 침묵은 통과가 아니다 — 7 기준 각각 «해당 없음»이면 그렇게 명시하라.
