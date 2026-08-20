@@ -16,7 +16,7 @@ Claude 4렌즈 감사관은 **증거 생성**을 담당하며, 심각도 정규�
 리뷰 산출물은 `.omc/review/{YYYYMMDD-HHMMSS}/`에 남긴다
 (렌즈 증거 `evidence/{lens}.md`, 심판 결과 `verdict.md` — verdict는 `evidence/` 밖이며 심판 focus는 `evidence/`만 지목한다).
 
-## 전문가 풀 (29명 — 심판 2명은 전역 `~/.claude/agents/` 소속)
+## 전문가 풀 (29명 — 심판 2명 포함, 전원 이 repo `.claude/agents/` 소속)
 
 ### 전략 개발 팀
 | 에이전트 | 전문 영역 | 트리거 키워드 |
@@ -39,7 +39,7 @@ Claude 4렌즈 감사관은 **증거 생성**을 담당하며, 심각도 정규�
 | `codex-reviewer` | **코드 심판 (reviewer of record)** — Codex `adversarial-review` 포워더(판정 경로), 심각도 정규화·차단 판정. 네이티브 `review`는 보조 비판정 패스 | 리뷰, 심판, 판정, 머지 게이트, 머지해도 되는지, PR 승인, 도전, 반론, adversarial |
 | `codex-plan-reviewer` | **계획 심판** — 이미 저작된 계획 문서를 Codex가 도전·심사 | 계획 검토, 계획 심사, 플랜 리뷰, 착수 전 검증, 가정/롤백 점검, 범위 이탈 |
 
-> 심판 2종은 **전역 `~/.claude/agents/` 소속이다** (프로젝트 `.claude/agents/`에 사본 없음 — 드리프트 방지).
+> 심판 2종은 **이 repo `.claude/agents/` 소속이다** (전역 `~/.claude/agents/`에 사본 없음 — 심판 레인이 없는 다른 프로젝트로 codex 리뷰가 새는 것을 막는다, 운영자 지시 2026-08-20).
 > 이름·호출 방식은 동일하며, 이 프로젝트 고유의 비협상 대조 목록은 `codex-gate` 스킬이 공급한다.
 >
 > 심판 게이트는 `codex-gate` 스킬이 오케스트레이션한다 (레인 A=코드 심판, 레인 B=계획 심판).

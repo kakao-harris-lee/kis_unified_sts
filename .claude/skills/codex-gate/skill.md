@@ -233,19 +233,31 @@ codex-plan-reviewer 심판
 피심판자가 자기 판단으로 finding을 지우고 통과할 수 있으면 심판자를 둔 의미가 소멸한다 —
 그것이 정확히 이 게이트가 막으려는 자기 승인이다.
 
-### 심판 에이전트는 전역, 대조 목록은 이 스킬 소유
+### 심판 에이전트는 이 프로젝트 소속, 대조 목록은 이 스킬 소유
 
-심판 에이전트 2종(`codex-reviewer`, `codex-plan-reviewer`)은 **전역 `~/.claude/agents/`에 있다.**
-프로젝트 `.claude/agents/`에는 사본을 두지 않는다 — 두 벌을 유지하면 드리프트가 생긴다.
+심판 에이전트 2종(`codex-reviewer`, `codex-plan-reviewer`)은 **이 repo의
+`.claude/agents/`에 있다.** 전역 `~/.claude/agents/`에는 두지 않는다 — 전역에 두면
+심판 레인이 없는 모든 프로젝트까지 codex 리뷰가 새어 들어간다(운영자 지시, 2026-08-20).
+사본은 여전히 한 벌뿐이므로 드리프트는 생기지 않는다.
+
+codex 심판 레인을 쓰는 프로젝트는 `kis_unified_sts` / `bid-vector` / `easy-doc` 셋뿐이며,
+`bid-vector`는 `scripts/codex-review-kotlin.sh`, `easy-doc`은 자체
+`.claude/agents/codex-reviewer.md`로 각자 레인을 소유한다. 이 두 벌은 이 파일의 사본이 아니다.
+
+**⚠ stop-time 게이트는 워크트리마다 따로 켜야 한다.** codex 플러그인은
+`git rev-parse --show-toplevel` 결과를 workspace 키로 쓰므로 **워크트리는 각각 별개 workspace다**
+(`plugins/data/codex-openai-codex/state/<basename>-<hash>/state.json::config.stopReviewGate`).
+새 워크트리를 만들면 그 안에서 `/codex:setup --enable-review-gate`를 실행하지 않는 한
+stop 게이트가 붙지 않는다 — 2026-08-20 실측에서 kis 워크트리 전부가 꺼져 있었다.
 
 계층은 이렇게 갈린다:
 
 | 층 | 소유 |
 |----|------|
-| **심판 절차** (Codex 호출 규약·모드 선택·verbatim·에러 핸들링) | 전역 에이전트 |
+| **심판 절차** (Codex 호출 규약·모드 선택·verbatim·에러 핸들링) | 이 repo의 심판 에이전트 |
 | **이 repo의 비협상 대조 목록** (아래 8항목) | **이 스킬** |
 
-전역 에이전트는 "그 repo의 `CLAUDE.md`(없으면 `AGENTS.md`)를 먼저 읽으라"는 일반 지시만 갖고 있다.
+심판 에이전트는 "그 repo의 `CLAUDE.md`(없으면 `AGENTS.md`)를 먼저 읽으라"는 일반 지시만 갖고 있다.
 **이 스킬이 있을 때는 아래 목록이 그보다 구체적이므로 이쪽이 우선한다** — 오케스트레이터가
 focus text에 주입하고, 수용검사도 이 목록으로 한다.
 
