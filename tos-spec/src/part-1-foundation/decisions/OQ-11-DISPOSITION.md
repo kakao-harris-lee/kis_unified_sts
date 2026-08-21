@@ -7,18 +7,18 @@
 
 ```yaml
 disposition: RESOLVED_MAPPING_APPROVED
-bound_set_digest: 0752d016ff2579901717cab82df981c96786f25d33c3eb0004b3b630e89feda4
+bound_set_digest: 2643201a67463b22a7b828aafb950173da8983d8a901a90e15c4687c3f91a179
 bound_paths:            # repo 루트 기준 상대경로. `./` 접두 금지 (표기가 digest 에 실린다)
   - docs/plans/2026-08-12-tos-phase0-completion-contract-design.md
   - docs/plans/2026-08-11-tos-completion-development-plan.md
-requesting_plan_version: v2.21
+requesting_plan_version: v2.22
 contract: 해당 계획 §12.3.1 (6e 산출 계약)
 authority: 운영자 (this repository's corpus owner)
 
 # 비결속 참고값 — 대조 대상이 아니다. 이 값이 달라도 결속은 유효하다
 # 기입 규칙: 재결속 편집 직전 `git rev-parse HEAD` — 결속 대상(동결 커밋)이 아니라
 # **결정 행위 시점의 repo 위치**다 (6e‴ 정정 기록 참조)
-decided_at_head: 85070bb34ebb1107a25c165bb1cee318219c8998
+decided_at_head: 93684e72a810b9dc8d37d52b03ee2c94e299fca4
 ```
 
 **결속의 의미**: `bound_set_digest` 는 위 `bound_paths` 의 **(경로, 내용) 쌍 집합**에
@@ -396,6 +396,51 @@ printf '%s\0' <bound_paths> | LC_ALL=C sort -z -u \
 > 승인했다. `decided_at_head` 는 기입 규칙대로 재결속 편집 직전 실측
 > HEAD(`85070bb3…`)다. **귀속은 대화 수준이며 리포-단독 재검증 불가**다.
 > countersign 미행사는 거부가 아니다.
+
+> **재결속 기록 (현행 사이클 — 2026-08-21, v2.22 내용)**: 직전 재결속(v2.21
+> 내용, `93522c09`)의 승인은 레인 B v2.21 재심(high 2/medium 2 — **#1 회피
+> 2연속**[정본 스텝 순서가 «실행 → 검증» 이라 자기수복 하니스가 통과]·**#2 부분
+> 3연속**[`u17-verify` 소유·진입 비-vacuity]·**신규 F#2** 두 층 객체 식별 분열·
+> **신규 F#4** R-1 재발 4자리, 정본
+> `docs/reviews/phase0-completion-contract/20260820-082830/verdict.md`)을 반영한
+> **v2.22 개정으로 만료**됐다(O-6 정상 거동). 이 재결속은 계약의 **에라타 6차
+> 동결 내용**(`5e96512e` · blob `29a08e5e3c83…`)에 대해 수행됐다 — 최초 동결
+> `8ec22754`(재심 4건 전건 반영: 정본 `steps` 순서 반전 + 3축 · C-1 전 노드 중복
+> 키 · 게이트 이름을 계약 리터럴로 이동 · 값 전수 핀) 후 증거 `c477e829` 가 **문언
+> 에라타 후보 27자리**를 적발해 재동결이 이어졌다 — 1차~4차 `11e138a5`(정본 «잡
+> 템플릿» 코드펜스 실체화[EC-8: 동결본 `jobs:` 펜스 **0개**] · C-1 관측면
+> `yaml.parse()` 이벤트[ⓟ] · `ON_FILTER_OK` 7원소[ⓠ] · (b)② **4단 사다리**[ⓣ —
+> `completed_at: null` 공허 green 폐쇄] · 열거 규율[ⓛ]) · 5차 `fd13ca26`
+> (**stop-time Codex BLOCK 전건** — ① «정상 응답 오판» = **과잉 차단**[PR
+> close+reopen 이 두 번째 «run» 을 만들고 suite 가 갈려 «대체된 run» 이 «현행» 으로
+> 남았다 → 3단계 **2단 접기** (3-2) 로 폐쇄] · ② 완전성 limb ② 의 피연산자가 응답
+> 헤더라 명령한 호출로 미관측 → **본문 관측면**[`--slurp` 페이지별 개수 +
+> `?page=<N+1>` = `[]`]으로 교체) · 6차 `5e96512e`(S-24 addendum `4f3cb99d` 이 낸
+> 4자리 — **문언 3**[ⓐ «무접촉» 의 의미/행 층 구분 · ⓑ 자기참조 계수를 계약에서
+> 제거하고 불변식 «명령 자리 0건» 만 남김 · ⓒ 실측 인용에 피연산자 병기] +
+> **검증 실행 계약 1**[ⓓ ⑭(ㅍ) 판별력(iv) 층 한정 — e2e-only 소비가 불충분해져
+> 사다리 단위 실행 또는 격리 픽스처가 필수]; 독립 Codex 심판 3라운드
+> `needs-attention` → `needs-attention` → **`approve` findings 0**).
+> **개발계획은 이 사이클에서 무변경**이다(`8ec22754` 내용 · 592행 · blob
+> `b2985a05215b…`) — 그래서 이 재결속은 «계약만 바뀐» 사이클이다.
+> 재결속 없는 중간 판은 승인 표면을 가진 적이 없다. 실행 증거는
+> `20260820-184748/U17-PREVENTION-CHECK-V222.md`(동결 판) ·
+> `20260820-184748/U17-PREVENTION-CHECK-V222-ADDENDUM.md`(1차~4차+5차 S-24 ·
+> 에라타 v1.1 `a57c0f4d` / v1.2 `79576670`) ·
+> `20260821-0150/U17-PREVENTION-CHECK-V222-ADDENDUM-2.md`(6차 S-24) 에 있다.
+>
+> 매핑 내용(①②③, EV-L6 확장분 포함)은 **무변경**이다. 이전 결속값은 이 문단이
+> 역사로 보존한다:
+> `bound_set_digest 0752d016ff2579901717cab82df981c96786f25d33c3eb0004b3b630e89feda4`
+> · `requesting_plan_version v2.21` ·
+> `decided_at_head 85070bb34ebb1107a25c165bb1cee318219c8998`.
+>
+> **권위 기록 (정직 표기 — 동일 형식)**: 세션이 에라타 6차 동결과 그 S-24
+> addendum 을 보고하며 남은 것을 «푸시 · O-6 재결속 → 레인 B v2.22 재심» 둘로
+> 제시했고, 운영자가 "에라타 6차로 먼저 닫고, 재심 진행"(2026-08-21)으로 승인한 뒤
+> 그 항목을 "2. 진행."(2026-08-21)으로 지시했다. `decided_at_head` 는 기입 규칙대로
+> 재결속 편집 직전 실측 HEAD(`93684e72…`)다. **귀속은 대화 수준이며 리포-단독
+> 재검증 불가**다. countersign 미행사는 거부가 아니다.
 
 > **3회차까지의 진단 (보존)** — 근본 원인은 방향이었다. 계획이 자기
 > `plan_scope_digest` 를 본문에 적으면
