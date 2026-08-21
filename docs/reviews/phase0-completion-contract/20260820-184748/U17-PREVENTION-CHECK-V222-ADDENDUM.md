@@ -779,17 +779,19 @@ fd13ca26..HEAD 커밋 = ∅ (0건)
 ### 3-1b. `python3 s24-proof-e5.py` — **fail-closed 판 재실행**(깨끗한 트리 · rc 0)
 
 §5 T-10 전환 후 재실행이다. **깨끗한 트리**(계약 == `fd13ca26`)에서 돌렸다 — 이 시점 워킹트리에는
-에라타 6차 저작이 얹혀 있어 결속 대조가 «불일치» 를 정직하게 내므로(그 자체가 fail-closed 동작의
-증거다) 6차 저작본을 사본으로 빼고 `git checkout` 으로 복원한 뒤 돌렸고, 실행 후 사본을 sha256
-대조로 되돌렸다(`2e8d496c…` 전후 동일).
+에라타 6차 저작이 얹혀 있어 결속 대조가 «불일치» 를 정직하게 낸다(그 자체가 fail-closed 동작의
+증거다). 그래서 6차 저작본을 사본으로 빼고 `git checkout` 으로 복원해 돌린 뒤 사본을 되돌렸고,
+전후 sha256(`2e8d496c…`)과 `git diff --numstat`(33/12)로 복구를 확인했다.
 
 ```text
 s24-proof-e5 — S-24 ① 절 범위 diff 공집합 증명
-HEAD 실측 = 42d35f9dd6acca12977a248977fb51a56b3ecfc8
-워킹트리 계약 blob   = 3278b791302d5dc5221c7f13cfe97dfbc07f9eb9  ==  fd13ca26:계약 3278b791302d5dc5221c7f13cfe97dfbc07f9eb9  → 일치
-워킹트리 개발계획 blob = b2985a05215b6408816ccae8a6f2fb2e78e79b91  ==  fd13ca26:개발계획 b2985a05215b6408816ccae8a6f2fb2e78e79b91  → 일치
-개발계획 blob 8ec22754 → fd13ca26 : b2985a05215b → b2985a05215b  → 무변경
-fd13ca26..HEAD 커밋 = 42d35f9d docs(tos): addendum §2-3-2 — point the hook table at the log that actually holds it (§3-3 → §3-5)
+HEAD 실측 = ee89baa3d6f09cf1882404980a9316362cf426f7
+워킹트리 계약 blob == fd13ca26:계약                  3278b791302d / 3278b791302d  → 일치
+워킹트리 개발계획 blob == fd13ca26:개발계획              b2985a05215b / b2985a05215b  → 일치
+개발계획 blob 8ec22754 == fd13ca26               b2985a05215b / b2985a05215b  → 일치
+fd13ca26..HEAD 커밋 = ee89baa3 docs(reviews): README — addendum entry follows erratum v1.1 (findings 7 → 10, T-8 withdrawn, T-10 added)
+a57c0f4d docs(tos): addendum erratum v1.1 — withdraw T-8, record T-10 (the §1 checker could print a mismatch and still exit 0)
+42d35f9d docs(tos): addendum §2-3-2 — point the hook table at the log that actually holds it (§3-3 → §3-5)
 24ac0ac9 docs(tos): addendum §0/§6 — state the binding claim so its own recording commit is not a counterexample
 e25fccb7 docs(plans): INDEX — phase0 completion contract v2.22 chain (8ec22754 → c477e829 → 11e138a5/fd13ca26 ↔ S-24 addendum 4f3cb99d)
 4f3cb99d docs(tos): record v2.22 errata addendum evidence (S-24 — clause-scope ∅ proof + impact re-run across 3 executor / 2 predicate generations)
@@ -987,9 +989,9 @@ e25fccb7 docs(plans): INDEX — phase0 completion contract v2.22 chain (8ec22754
 [③ 비영향 근거 — (4d) 불변 주장의 피연산자 실측]
    불변식                                    8ec22754             11e138a5             fd13ca26   판정
    계약 행수                                      7912                 8345                 8525   상이(의도)
-   정본 A sha256                    e98cf2b18ca74ead     e98cf2b18ca74ead     e98cf2b18ca74ead   동일
+   정본 A sha256(4행+개행)             3f306d9fe5a59242     3f306d9fe5a59242     3f306d9fe5a59242   동일
    정본 A 위치                              :5714-5715           :6056-6057           :6226-6227   상이(의도)
-   정본 B sha256                    86b76afc6b44c639     86b76afc6b44c639     86b76afc6b44c639   동일
+   정본 B sha256(4행+개행)             a731c4f2210c92ed     a731c4f2210c92ed     a731c4f2210c92ed   동일
    정본 B 위치                              :5725-5726           :6067-6068           :6237-6238   상이(의도)
    하니스 블록 sha256                  957bf49da8fc6ae3     957bf49da8fc6ae3     957bf49da8fc6ae3   동일
    하니스 블록 위치                            :4721-4821           :4754-4854           :4793-4893   상이(의도)
@@ -998,16 +1000,17 @@ e25fccb7 docs(plans): INDEX — phase0 completion contract v2.22 chain (8ec22754
    T-84 종수                                      14                   14                   14   동일
    개발계획 blob                          b2985a05215b         b2985a05215b         b2985a05215b   동일
    개발계획 행수                                     592                  592                  592   동일
-   하니스 블록 sha256 전문(HEAD) = 957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d  위치 :4793-4893  · 계약 리터럴 957bf49d… 접두 일치 = True
+   하니스 블록 sha256 == 계약 리터럴            957bf49da8fc6ae3… vs 957bf49da8fc6ae3…  일치
+   정본 A(4행+개행) == 원장 digest           3f306d9fe5a59242… vs 3f306d9fe5a59242…  일치
+   정본 B(4행+개행) == 원장 digest           a731c4f2210c92ed… vs a731c4f2210c92ed…  일치
+   하니스 블록 위치(HEAD) = :4793-4893
    정본 A 내용 = 'set -euo pipefail\nbash tools/tos_entry_harness.sh'
    정본 B 내용 = "set -euo pipefail\nprintf '%s  tools/tos_entry_harness.sh\\n' 957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d | shasum -a 256 -c -"
-   정본 A sha256(HEAD) = e98cf2b18ca74ead3132a17dd03694379d3b9bdfcdfac382e292a6a06ddb0673
-   정본 B sha256(HEAD) = 86b76afc6b44c6391e0507a547ecc8ce3cae0e174b7a90abadd3293e9a47dc0a
    PREVENTION_* 토큰 집합(HEAD) = PREVENTION_ABSENT PREVENTION_ACTIVE PREVENTION_ARTIFACT_MUTATED PREVENTION_CONTINUITY_UNVERIFIABLE PREVENTION_INSUFFICIENT PREVENTION_LATE PREVENTION_TARGET_MISMATCH PREVENTION_UNSIGNED PREVENTION_UNVERIFIABLE PREVENTION_UNVERIFIED_REVISION
    상태값 set-diff(세 리비전) = ∅   OK
-   `^[[:space:]]*jobs:` 출현(8ec22754) = 0  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
-   `^[[:space:]]*jobs:` 출현(11e138a5) = 1  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
-   `^[[:space:]]*jobs:` 출현(fd13ca26) = 1  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
+   `^[[:space:]]*jobs:` 출현(8ec22754) = 0  기대 0  OK   (EC-8: 동결본 0 → 에라타 ⓙ 로 1)
+   `^[[:space:]]*jobs:` 출현(11e138a5) = 1  기대 1  OK   (EC-8: 동결본 0 → 에라타 ⓙ 로 1)
+   `^[[:space:]]*jobs:` 출현(fd13ca26) = 1  기대 1  OK   (EC-8: 동결본 0 → 에라타 ⓙ 로 1)
   ⇒ 예기치 않은 불변식 위반 = 0건
 
 ⇒ S-24 ① 총 기대 불일치 = 0건
@@ -3028,12 +3031,16 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-### 4-1b. `s24-proof-e5.py` — **fail-closed 판**(sha256 `c1e7d15faa1e6cfc5ebbb81b9127a3d69c014679d1c9e2149222d02bc4a5319d` · 303행)
+### 4-1b. `s24-proof-e5.py` — **fail-closed 판**(sha256 `e8fd4dfcb4584a92104432e2bba2948b09e91a2f1a26f51c87edf501b0470a46` · 329행)
 
-초판과의 델타는 **종료값 경로뿐**이다: ① 층 ③ 이 위반 수를 «반환» 하고 `main()` 이 합산 ·
-② 결속 3대조가 rc 에 들어감 · ③ 상태값 **집합** set-diff 검사 신설(개수가 같아도 토큰 이름이
-바뀌면 위반) · ④ «상이(의도)» 행 목록(`INTENDED`)을 코드에 명시해 계수 제외를 «선언»으로 만든다.
-**판정 로직(층 ①·②)은 손대지 않았다** — 그래서 재실행 결과가 초판과 같아야 하고, 실제로 같다.
+초판과의 델타는 **종료값 경로와 «핀 대조» 축뿐**이다: ① 층 ③ 이 위반 수를 «반환» 하고 `main()` 이
+합산 · ② 결속 3대조가 rc 에 들어감(계산은 한 번 — 출력과 rc 가 **같은 값**을 쓴다) · ③ 상태값
+**집합** set-diff 검사 신설 · ④ «상이(의도)» 행 목록(`INTENDED`)을 코드에 명시 · ⑤ **`jobs:` 펜스
+기대값을 리비전별로 못박음**(`{8ec22754: 0, 11e138a5: 1, fd13ca26: 1}` — 초판은 세 값을 «출력만»
+했으므로 `0/0/0` 이어도 통과했다) · ⑥ **핀 대조 축 신설** — 하니스 블록 sha256 == 계약 리터럴 ·
+정본 A/B(4행+개행) == 에라타 원장 digest. ⑥이 필요한 이유는 **«리비전 간 동일»과 «핀과 일치»가
+다른 축**이기 때문이다: 세 리비전이 «똑같이 틀려도» 동일성 검사는 통과한다.
+**판정 로직(층 ①·②)은 손대지 않았다.**
 
 ```python
 #!/usr/bin/env python3
@@ -3062,7 +3069,15 @@ import re
 import subprocess
 import sys
 
-R = "/Users/harris/Development/private/kis_unified_sts"
+import os
+
+R = os.environ.get("S24_REPO", "/Users/harris/Development/private/kis_unified_sts")
+# 계약·원장이 핀한 값 — «리비전 간 동일» 과 «핀과 일치» 는 다른 축이다(T-10 2차)
+HARNESS_LIT = "957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d"
+CANON_A_LIT = "3f306d9fe5a59242bae972e51a5ae0fb36b2ffa17f4e58d2e1a8e1c3326f35cc"
+CANON_B_LIT = "a731c4f2210c92ede5a55c5463c308680740a64d6ef2e1d5333bdab9e6aa289d"
+# `jobs:` 펜스 기대(EC-8: 동결본 0 → 에라타 ⓙ 로 1) — 값을 못박아 «0/0/0» 도 위반으로 만든다
+JOBS_EXPECT = {"8ec22754": 0, "11e138a5": 1, "fd13ca26": 1}
 C = "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md"
 DP = "docs/plans/2026-08-11-tos-completion-development-plan.md"
 BASE, MID, HEAD = "8ec22754", "11e138a5", "fd13ca26"
@@ -3228,9 +3243,16 @@ def named_proof(old, new, label):
 
 
 def fence_after(lines, anchor):
+    """(4행+개행 digest, 시작행, 끝행) — 에라타 원장과 «같은 규약»의 digest 를 돌려준다."""
     i = next(k for k, l in enumerate(lines) if anchor in l)
     f = [k for k in range(i, min(i + 16, len(lines))) if lines[k].strip() == "```"]
-    return "\n".join(lines[f[0] + 1:f[1]]), f[0] + 2, f[1]
+    return hashlib.sha256(("\n".join(lines[f[0]:f[1] + 1]) + "\n").encode()).hexdigest(), f[0] + 2, f[1]
+
+
+def fence_content(lines, anchor):
+    i = next(k for k, l in enumerate(lines) if anchor in l)
+    f = [k for k in range(i, min(i + 16, len(lines))) if lines[k].strip() == "```"]
+    return "\n".join(lines[f[0] + 1:f[1]])
 
 
 def harness_block(rev):
@@ -3257,9 +3279,9 @@ def invariants():
         states = sorted(set(re.findall(r"PREVENTION_[A-Z_]+", "\n".join(b))))
         cols[rev] = {
             "계약 행수": len(b) - 1,
-            "정본 A sha256": hashlib.sha256(a.encode()).hexdigest()[:16],
+            "정본 A sha256(4행+개행)": a[:16],
             "정본 A 위치": f":{a1}-{a2}",
-            "정본 B sha256": hashlib.sha256(bb.encode()).hexdigest()[:16],
+            "정본 B sha256(4행+개행)": bb[:16],
             "정본 B 위치": f":{b1}-{b2}",
             "하니스 블록 sha256": hs[:16],
             "하니스 블록 위치": f":{h1}-{h2}",
@@ -3285,11 +3307,19 @@ def invariants():
         print(f"   {k:26s} {v[0]:>20s} {v[1]:>20s} {v[2]:>20s}   {mark}")
     b = blob(HEAD)
     hs, h1, h2 = harness_block(HEAD)
-    print(f"   하니스 블록 sha256 전문(HEAD) = {hs}  위치 :{h1}-{h2}  · 계약 리터럴 957bf49d… 접두 일치 = {hs.startswith('957bf49d')}")
-    print("   정본 A 내용 = " + repr(fence_after(b, "**정본 A** 와 일치")[0]))
-    print("   정본 B 내용 = " + repr(fence_after(b, "**정본 B** 와 일치")[0]))
-    print("   정본 A sha256(HEAD) = " + hashlib.sha256(fence_after(b, "**정본 A** 와 일치")[0].encode()).hexdigest())
-    print("   정본 B sha256(HEAD) = " + hashlib.sha256(fence_after(b, "**정본 B** 와 일치")[0].encode()).hexdigest())
+    # [T-10 2차 — Codex stop-time 지적 «jobs: 불변식이 여전히 print-only»] «핀된 값과의 일치»는
+    #   리비전 간 동일성과 **다른 축**이다: 세 리비전이 «똑같이 틀려도» 동일성 검사는 통과한다.
+    #   그래서 계약 리터럴·원장 digest 와의 대조를 별도 축으로 세우고 전부 rc 에 넣는다.
+    for lab, got, want in (("하니스 블록 sha256 == 계약 리터럴", hs, HARNESS_LIT),
+                           ("정본 A(4행+개행) == 원장 digest", fence_after(b, "**정본 A** 와 일치")[0], CANON_A_LIT),
+                           ("정본 B(4행+개행) == 원장 digest", fence_after(b, "**정본 B** 와 일치")[0], CANON_B_LIT)):
+        ok = got == want
+        if not ok:
+            bad += 1
+        print(f"   {lab:34s} {got[:16]}… vs {want[:16]}…  {'일치' if ok else '불일치(!!)'}")
+    print(f"   하니스 블록 위치(HEAD) = :{h1}-{h2}")
+    print("   정본 A 내용 = " + repr(fence_content(b, "**정본 A** 와 일치")))
+    print("   정본 B 내용 = " + repr(fence_content(b, "**정본 B** 와 일치")))
     print("   PREVENTION_* 토큰 집합(HEAD) = " + " ".join(sorted(set(re.findall(r"PREVENTION_[A-Z_]+", "\n".join(b))))))
     sets = {r: set(re.findall(r"PREVENTION_[A-Z_]+", "\n".join(blob(r)))) for r in (BASE, MID, HEAD)}
     sd = (sets[BASE] ^ sets[MID]) | (sets[MID] ^ sets[HEAD])
@@ -3298,9 +3328,13 @@ def invariants():
         bad += 1
     # 정본 «잡 템플릿» 코드펜스 — 에라타 ⓙ 가 실체화했다(EC-8: 동결본엔 0개)
     for rev in (BASE, MID, HEAD):
-        bb = blob(rev)
-        n = sum(1 for l in bb if re.match(r"^[ \t]*jobs:", l))
-        print(f"   `^[[:space:]]*jobs:` 출현({rev}) = {n}  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)")
+        n = sum(1 for l in blob(rev) if re.match(r"^[ \t]*jobs:", l))
+        want = JOBS_EXPECT[rev]
+        ok = n == want
+        if not ok:
+            bad += 1
+        print(f"   `^[[:space:]]*jobs:` 출현({rev}) = {n}  기대 {want}  "
+              f"{'OK' if ok else '❌ 기대와 다름'}   (EC-8: 동결본 0 → 에라타 ⓙ 로 1)")
     print(f"  ⇒ 예기치 않은 불변식 위반 = {bad}건")
     return bad
 
@@ -3310,19 +3344,18 @@ def main():
     wt_c = sh("git", "-C", R, "hash-object", f"{R}/{C}").strip()
     wt_d = sh("git", "-C", R, "hash-object", f"{R}/{DP}").strip()
     print(f"HEAD 실측 = {sh('git','-C',R,'rev-parse','HEAD').strip()}")
-    print(f"워킹트리 계약 blob   = {wt_c}  ==  {HEAD}:계약 {objid(HEAD)}  → {'일치' if wt_c == objid(HEAD) else '불일치(!!)'}")
-    print(f"워킹트리 개발계획 blob = {wt_d}  ==  {HEAD}:개발계획 {objid(HEAD, DP)}  → {'일치' if wt_d == objid(HEAD, DP) else '불일치(!!)'}")
-    print(f"개발계획 blob {BASE} → {HEAD} : {objid(BASE, DP)[:12]} → {objid(HEAD, DP)[:12]}  "
-          f"→ {'무변경' if objid(BASE, DP) == objid(HEAD, DP) else '변경(!!)'}")
+    BIND = (("워킹트리 계약 blob == {h}:계약".format(h=HEAD), wt_c == objid(HEAD), f"{wt_c[:12]} / {objid(HEAD)[:12]}"),
+            ("워킹트리 개발계획 blob == {h}:개발계획".format(h=HEAD), wt_d == objid(HEAD, DP), f"{wt_d[:12]} / {objid(HEAD, DP)[:12]}"),
+            (f"개발계획 blob {BASE} == {HEAD}", objid(BASE, DP) == objid(HEAD, DP), f"{objid(BASE, DP)[:12]} / {objid(HEAD, DP)[:12]}"))
+    for lab, ok, val in BIND:
+        print(f"{lab:44s} {val}  → {'일치' if ok else '불일치(!!)'}")
     after = sh("git", "-C", R, "log", "--oneline", f"{HEAD}..HEAD").strip()
     print(f"{HEAD}..HEAD 커밋 = {'∅ (0건)' if not after else after}")
     print(f"{BASE}..{HEAD} 두 문서 커밋 = "
           + sh("git", "-C", R, "log", "--oneline", f"{BASE}..{HEAD}", "--", C, DP).strip().replace("\n", " · "))
     bad = 0
     # [Codex stop-time 지적 · §5 T-10] 아래 세 결속 대조는 초판에서 «출력만» 됐다 — rc 에 넣는다.
-    for lab, ok in (("워킹트리 계약 blob == HEAD:계약", wt_c == objid(HEAD)),
-                    ("워킹트리 개발계획 blob == HEAD:개발계획", wt_d == objid(HEAD, DP)),
-                    (f"개발계획 blob {BASE} == {HEAD}", objid(BASE, DP) == objid(HEAD, DP))):
+    for lab, ok, _ in BIND:          # 계산은 위에서 한 번 — 출력과 rc 가 «같은 값»을 쓴다
         if not ok:
             bad += 1
             print(f"   결속 위반(!!): {lab}")
@@ -8087,6 +8120,30 @@ set-diff** 를 검사(개수가 같아도 토큰이 «이름»만 바뀌면 위�
 같다). 그리고 **대조군**으로 개발계획에 한 줄을 넣어 돌리니 «변경(!!)» 과 함께 총 불일치 2건·비-0
 종료가 났다(주입 후 `git checkout` 으로 복원, blob `b2985a05215b…` 재확인). 즉 이 층은 이제
 **도달 가능한 차단값**을 갖는다.
+
+**[2차 — 같은 심판이 다시 지적했다]** 1차 전환 뒤 stop-time 심판이 «`jobs:` 불변식이 여전히
+print-only 라 fail-closed 전환이 완결되지 않았습니다» 를 냈고, **그것도 사실이었다**. 남아 있던
+자리 셋: ① **`jobs:` 펜스 세 값**이 출력만 됐다(EC-8 폐쇄의 헤드라인 근거인데 `0/0/0` 이어도
+통과) · ② **하니스 `957bf49d…` 접두 일치**가 `True/False` 로 «찍히기만» 했다 · ③ 정본 A/B 는
+리비전 간 동일성만 봤고 **원장 digest 와의 일치**는 보지 않았다 — «세 리비전이 똑같이 틀린» 경우가
+통과하는 축이다. 셋 다 rc 에 넣었고 `jobs:` 는 **기대값을 리비전별로 못박았다**.
+
+**이제 «전환했다»가 주장이 아니다 — 검사기 자신을 뮤테이션해 도달 가능성을 실증했다**(핀 상수·기대값
+5종 각각 1자/1값 변형 → **전건 rc 1 · 죽은 검사 0**):
+
+| 뮤테이션 | rc | 발화한 축 |
+| --- | --- | --- |
+| 하니스 핀 1자 변경 | **1** | 하니스 블록 sha256 == 계약 리터럴 |
+| 정본 A 핀 1자 변경 | **1** | 정본 A(4행+개행) == 원장 digest |
+| 정본 B 핀 1자 변경 | **1** | 정본 B(4행+개행) == 원장 digest |
+| `jobs:` 기대 `8ec22754: 0 → 1` | **1** | `jobs:` 펜스 리비전별 기대 |
+| `jobs:` 기대 `fd13ca26: 1 → 2` | **1** | 같음 |
+
+**내 탐지기도 이 자리를 놓쳤다(기록)**: 남은 print-only 를 찾으려고 AST 로 «판정형 어휘를 담은
+`print` 중 근처에 `bad` 증가가 없는 것» 을 뽑았는데, `jobs:` 루프는 **바로 뒤에 «⇒ … 위반 = {bad}»
+요약 print 가 있어서** 휴리스틱이 «근처에 bad 있음» 으로 읽고 걸러 버렸다. **근접성은 인과가 아니다** —
+그래서 최종 판별을 «어휘 근접» 에서 **«뮤테이션 → rc»** 로 바꿨다. 이것이 이 아크가 반복해 적은
+«도달 가능한 차단값이 없으면 검사가 아니다» 의 검사기 자신에 대한 적용이다.
 
 **왜 이 자리가 이 부속의 다른 두 결함(T-6·T-7)과 같은 층인가**: 셋 다 «검사하는 쪽»의 결함이고,
 셋 다 **주체(계약)의 결함이 아니다**. 그리고 셋 다 **배터리·대조군·독립 심판이 잡았다** — 자기
