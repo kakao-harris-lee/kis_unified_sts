@@ -6,6 +6,12 @@
   독립 git 저장소(실 저장소에 파일 생성·편집 **0**).
 - 이 부속이 처분하는 것은 **S-24 두 항**뿐이다: **①** 재동결의 «절 범위 diff 공집합» 증명 ·
   **②** 그 절들에 대한 «영향 변이 재실행». **판정이 아니다** — 레인 B 재심은 O-6 재결속 후다.
+- **[부속 에라타 v1.1 · 2026-08-21]** ① **§5 T-8 철회** — `SHELL_OK` S-22 형제 쌍은 이미 닫혀 있었다
+  (계약 `:224` 가 «[2차 ⓢ] 이 행의 이 표기는 정의 자리의 «파생»이며 지배하지 않는다» 를 달고 있고
+  §12.3.4 의 다른 렌더는 «동결본은 … 로 렌더해» 라는 역사 인용이다). **이 부속이 과대 계상했다.**
+  ② **§5 T-10 신설** — 이 부속 §1 검사기(`s24-proof-e5.py`)가 **불일치를 감지하고도 rc 0** 을 낼 수
+  있었다(Codex stop-time 지적). **결론은 불변**(fail-closed 전환 후 재실행 rc 0 · 불일치 0)이지만
+  «rc 0» 이 층 ③ 을 덮지 못했다는 사실을 기록한다. 문언 minor 계수: **5 → 4**(T-8 철회).
 
 ## 0. 결속 선언 (실측)
 
@@ -766,6 +772,243 @@ fd13ca26..HEAD 커밋 = ∅ (0건)
    `^[[:space:]]*jobs:` 출현(8ec22754) = 0  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
    `^[[:space:]]*jobs:` 출현(11e138a5) = 1  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
    `^[[:space:]]*jobs:` 출현(fd13ca26) = 1  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
+
+⇒ S-24 ① 총 기대 불일치 = 0건
+```
+
+### 3-1b. `python3 s24-proof-e5.py` — **fail-closed 판 재실행**(깨끗한 트리 · rc 0)
+
+§5 T-10 전환 후 재실행이다. **깨끗한 트리**(계약 == `fd13ca26`)에서 돌렸다 — 이 시점 워킹트리에는
+에라타 6차 저작이 얹혀 있어 결속 대조가 «불일치» 를 정직하게 내므로(그 자체가 fail-closed 동작의
+증거다) 6차 저작본을 사본으로 빼고 `git checkout` 으로 복원한 뒤 돌렸고, 실행 후 사본을 sha256
+대조로 되돌렸다(`2e8d496c…` 전후 동일).
+
+```text
+s24-proof-e5 — S-24 ① 절 범위 diff 공집합 증명
+HEAD 실측 = 42d35f9dd6acca12977a248977fb51a56b3ecfc8
+워킹트리 계약 blob   = 3278b791302d5dc5221c7f13cfe97dfbc07f9eb9  ==  fd13ca26:계약 3278b791302d5dc5221c7f13cfe97dfbc07f9eb9  → 일치
+워킹트리 개발계획 blob = b2985a05215b6408816ccae8a6f2fb2e78e79b91  ==  fd13ca26:개발계획 b2985a05215b6408816ccae8a6f2fb2e78e79b91  → 일치
+개발계획 blob 8ec22754 → fd13ca26 : b2985a05215b → b2985a05215b  → 무변경
+fd13ca26..HEAD 커밋 = 42d35f9d docs(tos): addendum §2-3-2 — point the hook table at the log that actually holds it (§3-3 → §3-5)
+24ac0ac9 docs(tos): addendum §0/§6 — state the binding claim so its own recording commit is not a counterexample
+e25fccb7 docs(plans): INDEX — phase0 completion contract v2.22 chain (8ec22754 → c477e829 → 11e138a5/fd13ca26 ↔ S-24 addendum 4f3cb99d)
+4f3cb99d docs(tos): record v2.22 errata addendum evidence (S-24 — clause-scope ∅ proof + impact re-run across 3 executor / 2 predicate generations)
+8ec22754..fd13ca26 두 문서 커밋 = fd13ca26 docs(tos): v2.22 errata 5차 — close Codex stop-time BLOCK (cross-run supersession over-block; header-operand completeness limb) · 11e138a5 docs(tos): phase0 completion contract v2.22 errata re-freeze (1차~4차) — 27 candidates disposed, canonical job template materialized, C-1 anchor surface defined, vacuous-green closed structurally
+
+[① 체인 전체 — 증거 기준선 → 현행]  8ec22754 → fd13ca26   blob ce7034ffa923 → 3278b791302d   행수 7912 → 8525
+  hunk 36개 (기계 추출): -141,1 +141,1 · -224,1 +224,1 · -2903,1 +2903,1 · -4414,1 +4414,1 · -4419,1 +4419,1 · -4422,1 +4422,1 · -4436,0 +4437,72 · -5302,1 +5374,5 · -5369,0 +5446,60 · -5501,1 +5637,5 · -5512,0 +5653,12 · -5534,1 +5686,1 · -5549,2 +5701,9 · -5558,3 +5717,180 · -5564,2 +5900,2 · -5607,3 +5943,18 · -5631,0 +5983,7 · -5635,0 +5994,65 · -5643,0 +6067,74 · -5650,0 +6148,4 · -5658,0 +6160,7 · -5688,0 +6197,4 · -5738,2 +6250,5 · -5752,6 +6267,16 · -5759,4 +6284,14 · -5787,2 +6322,4 · -5794,1 +6331,29 · -5799,1 +6364,1 · -5808,0 +6374,3 · -5855,0 +6424,2 · -5866,0 +6437,6 · -6048,0 +6625,4 · -6054,0 +6635,6 · -6059,1 +6645,18 · -6096,0 +6700,5 · -6200,0 +6809,5
+   구간#1  old[1..140] vs new[1..140]  140행/140행  fdbaaa2d24e25c57 / fdbaaa2d24e25c57 → 동일
+   구간#2  old[142..223] vs new[142..223]  82행/82행  3996c5209fb2adec / 3996c5209fb2adec → 동일
+   구간#3  old[225..2902] vs new[225..2902]  2678행/2678행  0bad451d10ddb173 / 0bad451d10ddb173 → 동일
+   구간#4  old[2904..4413] vs new[2904..4413]  1510행/1510행  909f31d002489250 / 909f31d002489250 → 동일
+   구간#5  old[4415..4418] vs new[4415..4418]  4행/4행  49106b4096fd8b81 / 49106b4096fd8b81 → 동일
+   구간#6  old[4420..4421] vs new[4420..4421]  2행/2행  78e711cf6d6eeeb4 / 78e711cf6d6eeeb4 → 동일
+   구간#7  old[4423..4436] vs new[4423..4436]  14행/14행  21680ae799ec8e2e / 21680ae799ec8e2e → 동일
+   구간#8  old[4437..5301] vs new[4509..5373]  865행/865행  96ad9b1349907746 / 96ad9b1349907746 → 동일
+   구간#9  old[5303..5369] vs new[5379..5445]  67행/67행  65720acbd4e9b5a8 / 65720acbd4e9b5a8 → 동일
+   구간#10 old[5370..5500] vs new[5506..5636]  131행/131행  7c3dafa47ba726d0 / 7c3dafa47ba726d0 → 동일
+   구간#11 old[5502..5512] vs new[5642..5652]  11행/11행  310cf740fab8573a / 310cf740fab8573a → 동일
+   구간#12 old[5513..5533] vs new[5665..5685]  21행/21행  9c2b80eb2a6336c7 / 9c2b80eb2a6336c7 → 동일
+   구간#13 old[5535..5548] vs new[5687..5700]  14행/14행  99136268fd7816aa / 99136268fd7816aa → 동일
+   구간#14 old[5551..5557] vs new[5710..5716]  7행/7행  b75388bb4f226ee6 / b75388bb4f226ee6 → 동일
+   구간#15 old[5561..5563] vs new[5897..5899]  3행/3행  b3ec74649392bc71 / b3ec74649392bc71 → 동일
+   구간#16 old[5566..5606] vs new[5902..5942]  41행/41행  0b058c63f14b2676 / 0b058c63f14b2676 → 동일
+   구간#17 old[5610..5631] vs new[5961..5982]  22행/22행  4334b094809a2478 / 4334b094809a2478 → 동일
+   구간#18 old[5632..5635] vs new[5990..5993]  4행/4행  0d1b18ae25daeac4 / 0d1b18ae25daeac4 → 동일
+   구간#19 old[5636..5643] vs new[6059..6066]  8행/8행  a9b1c9d1af6fa9fd / a9b1c9d1af6fa9fd → 동일
+   구간#20 old[5644..5650] vs new[6141..6147]  7행/7행  f03dcb128f1623e2 / f03dcb128f1623e2 → 동일
+   구간#21 old[5651..5658] vs new[6152..6159]  8행/8행  61b9c040f99a0a82 / 61b9c040f99a0a82 → 동일
+   구간#22 old[5659..5688] vs new[6167..6196]  30행/30행  45d0c084e85487c2 / 45d0c084e85487c2 → 동일
+   구간#23 old[5689..5737] vs new[6201..6249]  49행/49행  ae55a8fafa222a9e / ae55a8fafa222a9e → 동일
+   구간#24 old[5740..5751] vs new[6255..6266]  12행/12행  6f10f3d765adcf52 / 6f10f3d765adcf52 → 동일
+   구간#25 old[5758..5758] vs new[6283..6283]  1행/1행  aaa0aac359030829 / aaa0aac359030829 → 동일
+   구간#26 old[5763..5786] vs new[6298..6321]  24행/24행  6ff33c250a40d2d9 / 6ff33c250a40d2d9 → 동일
+   구간#27 old[5789..5793] vs new[6326..6330]  5행/5행  c51e73ea53f4ed7e / c51e73ea53f4ed7e → 동일
+   구간#28 old[5795..5798] vs new[6360..6363]  4행/4행  7ffaa63d97568654 / 7ffaa63d97568654 → 동일
+   구간#29 old[5800..5808] vs new[6365..6373]  9행/9행  e034374c07b5d6f8 / e034374c07b5d6f8 → 동일
+   구간#30 old[5809..5855] vs new[6377..6423]  47행/47행  7e2bb4bb6636d02e / 7e2bb4bb6636d02e → 동일
+   구간#31 old[5856..5866] vs new[6426..6436]  11행/11행  6945c522f5c063f3 / 6945c522f5c063f3 → 동일
+   구간#32 old[5867..6048] vs new[6443..6624]  182행/182행  47b812149285142f / 47b812149285142f → 동일
+   구간#33 old[6049..6054] vs new[6629..6634]  6행/6행  cb7d5f26fef34e07 / cb7d5f26fef34e07 → 동일
+   구간#34 old[6055..6058] vs new[6641..6644]  4행/4행  c7e74394e5b2f062 / c7e74394e5b2f062 → 동일
+   구간#35 old[6060..6096] vs new[6663..6699]  37행/37행  704c7631fa52f532 / 704c7631fa52f532 → 동일
+   구간#36 old[6097..6200] vs new[6705..6808]  104행/104행  60cb3728e77b8bec / 60cb3728e77b8bec → 동일
+   구간#37 old[6201..7913] vs new[6814..8526]  1713행/1713행  98d10caf71cb3d3d / 98d10caf71cb3d3d → 동일
+  ⇒ 여집합 구간 37개 · 변경이 «닿지 않은» 구간의 차이 = 0건  (0 이어야 한다)
+
+[① 에라타 1차~4차]  8ec22754 → 11e138a5   blob ce7034ffa923 → ddd19fd6d339   행수 7912 → 8345
+  hunk 34개 (기계 추출): -141,1 +141,1 · -224,1 +224,1 · -2903,1 +2903,1 · -4414,1 +4414,1 · -4419,1 +4419,1 · -4422,1 +4422,1 · -4436,0 +4437,33 · -5302,1 +5335,5 · -5369,0 +5407,28 · -5501,1 +5566,5 · -5512,0 +5582,12 · -5534,1 +5615,1 · -5558,3 +5639,88 · -5607,3 +5773,18 · -5631,0 +5813,7 · -5635,0 +5824,65 · -5643,0 +5897,74 · -5650,0 +5978,4 · -5658,0 +5990,7 · -5688,0 +6027,4 · -5738,2 +6080,5 · -5752,6 +6097,16 · -5759,4 +6114,14 · -5787,2 +6152,3 · -5794,1 +6160,20 · -5799,1 +6184,1 · -5808,0 +6194,3 · -5855,0 +6244,2 · -5866,0 +6257,6 · -6048,0 +6445,4 · -6054,0 +6455,6 · -6059,1 +6465,18 · -6096,0 +6520,5 · -6200,0 +6629,5
+  ⇒ 여집합 구간 35개 · 변경이 «닿지 않은» 구간의 차이 = 0건  (0 이어야 한다)
+
+[① 에라타 5차]  11e138a5 → fd13ca26   blob ddd19fd6d339 → 3278b791302d   행수 8345 → 8525
+  hunk 16개 (기계 추출): -141,1 +141,1 · -224,1 +224,1 · -2903,1 +2903,1 · -4469,0 +4470,39 · -5416,6 +5455,36 · -5434,1 +5503,3 · -5630,2 +5701,9 · -5648,0 +5727,9 · -5672,11 +5759,31 · -5687,1 +5794,3 · -5698,2 +5807,6 · -5720,3 +5833,5 · -5725,2 +5840,57 · -5730,2 +5900,2 · -6152,2 +6322,3 · -6168,5 +6339,14
+   구간#1  old[1..140] vs new[1..140]  140행/140행  fdbaaa2d24e25c57 / fdbaaa2d24e25c57 → 동일
+   구간#2  old[142..223] vs new[142..223]  82행/82행  3996c5209fb2adec / 3996c5209fb2adec → 동일
+   구간#3  old[225..2902] vs new[225..2902]  2678행/2678행  0bad451d10ddb173 / 0bad451d10ddb173 → 동일
+   구간#4  old[2904..4469] vs new[2904..4469]  1566행/1566행  54a78028fe85262d / 54a78028fe85262d → 동일
+   구간#5  old[4470..5415] vs new[4509..5454]  946행/946행  6be2159b013ed8a0 / 6be2159b013ed8a0 → 동일
+   구간#6  old[5422..5433] vs new[5491..5502]  12행/12행  0aba0833ecbb0406 / 0aba0833ecbb0406 → 동일
+   구간#7  old[5435..5629] vs new[5506..5700]  195행/195행  72c94299e956857d / 72c94299e956857d → 동일
+   구간#8  old[5632..5648] vs new[5710..5726]  17행/17행  c8099e324cdb96aa / c8099e324cdb96aa → 동일
+   구간#9  old[5649..5671] vs new[5736..5758]  23행/23행  7206f7d157718b97 / 7206f7d157718b97 → 동일
+   구간#10 old[5683..5686] vs new[5790..5793]  4행/4행  9146669d05e3506e / 9146669d05e3506e → 동일
+   구간#11 old[5688..5697] vs new[5797..5806]  10행/10행  589b9c26eb10ef3b / 589b9c26eb10ef3b → 동일
+   구간#12 old[5700..5719] vs new[5813..5832]  20행/20행  90490fc7f565fd8a / 90490fc7f565fd8a → 동일
+   구간#13 old[5723..5724] vs new[5838..5839]  2행/2행  a87fe81691708264 / a87fe81691708264 → 동일
+   구간#14 old[5727..5729] vs new[5897..5899]  3행/3행  b3ec74649392bc71 / b3ec74649392bc71 → 동일
+   구간#15 old[5732..6151] vs new[5902..6321]  420행/420행  230589d435c62c15 / 230589d435c62c15 → 동일
+   구간#16 old[6154..6167] vs new[6325..6338]  14행/14행  b612aca15d97c8cf / b612aca15d97c8cf → 동일
+   구간#17 old[6173..8346] vs new[6353..8526]  2174행/2174행  8c7c690464f25433 / 8c7c690464f25433 → 동일
+  ⇒ 여집합 구간 17개 · 변경이 «닿지 않은» 구간의 차이 = 0건  (0 이어야 한다)
+
+[② 체인 전체]  8ec22754 → fd13ca26  — 앵커로 위치를 찾는다(행 번호 하드코딩 0)
+  [닿음]  기대 = 양쪽 존재 ∧ 상이   (6건)
+   심사 이력 v2.22 행                              :141   → :141    상이  22d1b77a59/10f758decd   OK
+   변경 이력 v2.22 행                              :224   → :224    상이  dd7f5e3e2f/86b6fa4e25   OK
+   T-84 행 (⑬⑭ 하위 내역)                          :2903  → :2903   상이  14a0f55ef9/ca22051597   OK
+   정직 경계 — Actions app id·suite 문장            :5549  → :5701   상이  4c6d6237a6/2f704a7429   OK
+   스텝 메타(닫힌 키 집합) 행                           :5752  → :6267   상이  79cbb36f49/108383b7e4   OK
+   서버 잡 스텝 대조 — 층 (2) 도입                      :5787  → :6322   상이  45631dd8de/46627a54c5   OK
+  [신설]  기대 = 구 ∅ ∧ 신 존재   (15건)
+   사다리 1단계 — 열거 집합 E                          :0     → :5724   구 ∅ · 신 :5724   OK
+   사다리 2단계 — 완결성                              :0     → :5736   구 ∅ · 신 :5736   OK
+   사다리 3단계 — «현행» 집합 C                        :0     → :5759   구 ∅ · 신 :5759   OK
+   사다리 4단계 — ∀-success                        :0     → :5790   구 ∅ · 신 :5790   OK
+   정의역 유일 소스 대조군 포인터                          :0     → :5794   구 ∅ · 신 :5794   OK
+   ⓒ 극성 ③ — 완화되는 자리                           :0     → :5807   구 ∅ · 신 :5807   OK
+   열거 규율 (5) transcript 병기                    :0     → :5503   구 ∅ · 신 :5503   OK
+   층 (2) (ㄴ) — «현행» 구조 파생                     :0     → :5833   구 ∅ · 신 :5833   OK
+   ⓞ 극성 — (ㄴ)이 닫는 범위                          :0     → :5840   구 ∅ · 신 :5840   OK
+   E 불변 문장                                    :0     → :5784   구 ∅ · 신 :5784   OK
+   C-1 관측면 — yaml.parse 이벤트(ⓟ)                :0     → :6137   구 ∅ · 신 :6137   OK
+   ON_FILTER_OK 7원소(ⓠ)                        :0     → :6089   구 ∅ · 신 :6089   OK
+   열거 완전성 — --slurp 관측면(5차 ⓧ)                 :0     → :4485   구 ∅ · 신 :4485   OK
+   «대체된 run» 라벨(5차 ⓦ)                         :0     → :4473   구 ∅ · 신 :4473   OK
+   3단계 «2단 접기»(5차 ⓦ)                          :0     → :5759   구 ∅ · 신 :5759   OK
+  [닿지 않음]  기대 = 양쪽 존재 ∧ 동일   (13건)
+   하니스 §12.3.4-R 첫 줄(col-0 정확 일치)             :4721  → :4793   동일  e2b37d0fbe/e2b37d0fbe   OK
+   하니스 §12.3.4-R 끝 줄                          :4821  → :4893   동일  7c74c97e2e/7c74c97e2e   OK
+   정본 A 앵커 행                                  :5711  → :6223   동일  b5b16ff9cb/b5b16ff9cb   OK
+   정본 B 앵커 행                                  :5722  → :6234   동일  db1d606606/db1d606606   OK
+   T-82 행                                     :2953  → :2953   동일  a9bd7743ae/a9bd7743ae   OK
+   T-81 행                                     :2952  → :2952   동일  6eeb704aa3/6eeb704aa3   OK
+   U-17-c 상태 10값 정의                           :6030  → :6606   동일  a4770d3b3c/a4770d3b3c   OK
+   U-16-c c_APP 구조 정의                         :7502  → :8115   동일  dc53f88be2/dc53f88be2   OK
+   U-16 격리 스냅샷 «단일 방법»                        :7526  → :8139   동일  edb7664a2e/edb7664a2e   OK
+   UNCHK-008 레지스터 행                           :6609  → :7222   동일  7fa0cf88a1/7fa0cf88a1   OK
+   (α) 연속성 절                                  :229   → :229    동일  d1ecc6575a/d1ecc6575a   OK
+   U-17 하니스 pre-D0-A 실체화                      :225   → :225    동일  474f1683ec/474f1683ec   OK
+   C-1 매핑 노드 순회 문장                            :5624  → :5975   동일  2580162d65/2580162d65   OK
+  [부재]  기대 = 양쪽 ∅   (0건)
+  ⇒ 기대 불일치 = 0건 (0 이어야 한다)
+
+[② 에라타 1차~4차]  8ec22754 → 11e138a5  — 앵커로 위치를 찾는다(행 번호 하드코딩 0)
+  [닿음]  기대 = 양쪽 존재 ∧ 상이   (5건)
+   심사 이력 v2.22 행                              :141   → :141    상이  22d1b77a59/f04d12d28a   OK
+   변경 이력 v2.22 행                              :224   → :224    상이  dd7f5e3e2f/e4fc1b5ff6   OK
+   T-84 행 (⑬⑭ 하위 내역)                          :2903  → :2903   상이  14a0f55ef9/25d75d4bc2   OK
+   스텝 메타(닫힌 키 집합) 행                           :5752  → :6097   상이  79cbb36f49/108383b7e4   OK
+   서버 잡 스텝 대조 — 층 (2) 도입                      :5787  → :6152   상이  45631dd8de/5b0c3ecfa4   OK
+  [신설]  기대 = 구 ∅ ∧ 신 존재   (12건)
+   사다리 1단계 — 열거 집합 E                          :0     → :5646   구 ∅ · 신 :5646   OK
+   사다리 2단계 — 완결성                              :0     → :5649   구 ∅ · 신 :5649   OK
+   사다리 3단계 — «현행» 집합 C                        :0     → :5672   구 ∅ · 신 :5672   OK
+   사다리 4단계 — ∀-success                        :0     → :5683   구 ∅ · 신 :5683   OK
+   정의역 유일 소스 대조군 포인터                          :0     → :5687   구 ∅ · 신 :5687   OK
+   ⓒ 극성 ③ — 완화되는 자리                           :0     → :5698   구 ∅ · 신 :5698   OK
+   열거 규율 (5) transcript 병기                    :0     → :5434   구 ∅ · 신 :5434   OK
+   층 (2) (ㄴ) — «현행» 구조 파생                     :0     → :5720   구 ∅ · 신 :5720   OK
+   ⓞ 극성 — (ㄴ)이 닫는 범위                          :0     → :5725   구 ∅ · 신 :5725   OK
+   E 불변 문장                                    :0     → :5679   구 ∅ · 신 :5679   OK
+   C-1 관측면 — yaml.parse 이벤트(ⓟ)                :0     → :5967   구 ∅ · 신 :5967   OK
+   ON_FILTER_OK 7원소(ⓠ)                        :0     → :5919   구 ∅ · 신 :5919   OK
+  [닿지 않음]  기대 = 양쪽 존재 ∧ 동일   (14건)
+   하니스 §12.3.4-R 첫 줄(col-0 정확 일치)             :4721  → :4754   동일  e2b37d0fbe/e2b37d0fbe   OK
+   하니스 §12.3.4-R 끝 줄                          :4821  → :4854   동일  7c74c97e2e/7c74c97e2e   OK
+   정본 A 앵커 행                                  :5711  → :6053   동일  b5b16ff9cb/b5b16ff9cb   OK
+   정본 B 앵커 행                                  :5722  → :6064   동일  db1d606606/db1d606606   OK
+   T-82 행                                     :2953  → :2953   동일  a9bd7743ae/a9bd7743ae   OK
+   T-81 행                                     :2952  → :2952   동일  6eeb704aa3/6eeb704aa3   OK
+   U-17-c 상태 10값 정의                           :6030  → :6426   동일  a4770d3b3c/a4770d3b3c   OK
+   U-16-c c_APP 구조 정의                         :7502  → :7935   동일  dc53f88be2/dc53f88be2   OK
+   U-16 격리 스냅샷 «단일 방법»                        :7526  → :7959   동일  edb7664a2e/edb7664a2e   OK
+   UNCHK-008 레지스터 행                           :6609  → :7042   동일  7fa0cf88a1/7fa0cf88a1   OK
+   (α) 연속성 절                                  :229   → :229    동일  d1ecc6575a/d1ecc6575a   OK
+   U-17 하니스 pre-D0-A 실체화                      :225   → :225    동일  474f1683ec/474f1683ec   OK
+   정직 경계 — Actions app id·suite 문장            :5549  → :5630   동일  4c6d6237a6/4c6d6237a6   OK
+   C-1 매핑 노드 순회 문장                            :5624  → :5805   동일  2580162d65/2580162d65   OK
+  [부재]  기대 = 양쪽 ∅   (3건)
+   열거 완전성 — --slurp 관측면(5차 ⓧ)                 :0     → :0      구 ∅ · 신 ∅   OK
+   «대체된 run» 라벨(5차 ⓦ)                         :0     → :0      구 ∅ · 신 ∅   OK
+   3단계 «2단 접기»(5차 ⓦ)                          :0     → :0      구 ∅ · 신 ∅   OK
+  ⇒ 기대 불일치 = 0건 (0 이어야 한다)
+
+[② 에라타 5차 — «1·2·4단계 무접촉» 주장 검증]  11e138a5 → fd13ca26  — 앵커로 위치를 찾는다(행 번호 하드코딩 0)
+  [닿음]  기대 = 양쪽 존재 ∧ 상이   (12건)
+   심사 이력 v2.22 행                              :141   → :141    상이  f04d12d28a/10f758decd   OK
+   변경 이력 v2.22 행                              :224   → :224    상이  e4fc1b5ff6/86b6fa4e25   OK
+   T-84 행 (⑬⑭ 하위 내역)                          :2903  → :2903   상이  25d75d4bc2/ca22051597   OK
+   정직 경계 — Actions app id·suite 문장            :5630  → :5701   상이  4c6d6237a6/2f704a7429   OK
+   사다리 3단계 — «현행» 집합 C                        :5672  → :5759   상이  636434404f/9ec3e6ae55   OK
+   정의역 유일 소스 대조군 포인터                          :5687  → :5794   상이  291d75946b/dcbcdc153c   OK
+   ⓒ 극성 ③ — 완화되는 자리                           :5698  → :5807   상이  646ae16e85/a9fc3c32b7   OK
+   열거 규율 (5) transcript 병기                    :5434  → :5503   상이  02b962fdf1/31eb95b4b4   OK
+   서버 잡 스텝 대조 — 층 (2) 도입                      :6152  → :6322   상이  5b0c3ecfa4/46627a54c5   OK
+   층 (2) (ㄴ) — «현행» 구조 파생                     :5720  → :5833   상이  f3ba1c5743/6c865aa78b   OK
+   ⓞ 극성 — (ㄴ)이 닫는 범위                          :5725  → :5840   상이  68b1924171/481f6f9973   OK
+   E 불변 문장                                    :5679  → :5784   상이  37aebef74d/61f5218a2d   OK
+  [신설]  기대 = 구 ∅ ∧ 신 존재   (3건)
+   열거 완전성 — --slurp 관측면(5차 ⓧ)                 :0     → :4485   구 ∅ · 신 :4485   OK
+   «대체된 run» 라벨(5차 ⓦ)                         :0     → :4473   구 ∅ · 신 :4473   OK
+   3단계 «2단 접기»(5차 ⓦ)                          :0     → :5759   구 ∅ · 신 :5759   OK
+  [닿지 않음]  기대 = 양쪽 존재 ∧ 동일   (19건)
+   하니스 §12.3.4-R 첫 줄(col-0 정확 일치)             :4754  → :4793   동일  e2b37d0fbe/e2b37d0fbe   OK
+   하니스 §12.3.4-R 끝 줄                          :4854  → :4893   동일  7c74c97e2e/7c74c97e2e   OK
+   정본 A 앵커 행                                  :6053  → :6223   동일  b5b16ff9cb/b5b16ff9cb   OK
+   정본 B 앵커 행                                  :6064  → :6234   동일  db1d606606/db1d606606   OK
+   T-82 행                                     :2953  → :2953   동일  a9bd7743ae/a9bd7743ae   OK
+   T-81 행                                     :2952  → :2952   동일  6eeb704aa3/6eeb704aa3   OK
+   U-17-c 상태 10값 정의                           :6426  → :6606   동일  a4770d3b3c/a4770d3b3c   OK
+   U-16-c c_APP 구조 정의                         :7935  → :8115   동일  dc53f88be2/dc53f88be2   OK
+   U-16 격리 스냅샷 «단일 방법»                        :7959  → :8139   동일  edb7664a2e/edb7664a2e   OK
+   UNCHK-008 레지스터 행                           :7042  → :7222   동일  7fa0cf88a1/7fa0cf88a1   OK
+   (α) 연속성 절                                  :229   → :229    동일  d1ecc6575a/d1ecc6575a   OK
+   U-17 하니스 pre-D0-A 실체화                      :225   → :225    동일  474f1683ec/474f1683ec   OK
+   사다리 1단계 — 열거 집합 E                          :5646  → :5724   동일  10fb40892c/10fb40892c   OK
+   사다리 2단계 — 완결성                              :5649  → :5736   동일  0195e4bb4a/0195e4bb4a   OK
+   사다리 4단계 — ∀-success                        :5683  → :5790   동일  01e8db3236/01e8db3236   OK
+   스텝 메타(닫힌 키 집합) 행                           :6097  → :6267   동일  108383b7e4/108383b7e4   OK
+   C-1 매핑 노드 순회 문장                            :5805  → :5975   동일  2580162d65/2580162d65   OK
+   C-1 관측면 — yaml.parse 이벤트(ⓟ)                :5967  → :6137   동일  f7afbd3082/f7afbd3082   OK
+   ON_FILTER_OK 7원소(ⓠ)                        :5919  → :6089   동일  70c84e794d/70c84e794d   OK
+  [부재]  기대 = 양쪽 ∅   (0건)
+  ⇒ 기대 불일치 = 0건 (0 이어야 한다)
+
+[③ 비영향 근거 — (4d) 불변 주장의 피연산자 실측]
+   불변식                                    8ec22754             11e138a5             fd13ca26   판정
+   계약 행수                                      7912                 8345                 8525   상이(의도)
+   정본 A sha256                    e98cf2b18ca74ead     e98cf2b18ca74ead     e98cf2b18ca74ead   동일
+   정본 A 위치                              :5714-5715           :6056-6057           :6226-6227   상이(의도)
+   정본 B sha256                    86b76afc6b44c639     86b76afc6b44c639     86b76afc6b44c639   동일
+   정본 B 위치                              :5725-5726           :6067-6068           :6237-6238   상이(의도)
+   하니스 블록 sha256                  957bf49da8fc6ae3     957bf49da8fc6ae3     957bf49da8fc6ae3   동일
+   하니스 블록 위치                            :4721-4821           :4754-4854           :4793-4893   상이(의도)
+   col-0 코드펜스 수                                324                  324                  324   동일
+   PREVENTION_* 토큰 수                            10                   10                   10   동일
+   T-84 종수                                      14                   14                   14   동일
+   개발계획 blob                          b2985a05215b         b2985a05215b         b2985a05215b   동일
+   개발계획 행수                                     592                  592                  592   동일
+   하니스 블록 sha256 전문(HEAD) = 957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d  위치 :4793-4893  · 계약 리터럴 957bf49d… 접두 일치 = True
+   정본 A 내용 = 'set -euo pipefail\nbash tools/tos_entry_harness.sh'
+   정본 B 내용 = "set -euo pipefail\nprintf '%s  tools/tos_entry_harness.sh\\n' 957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d | shasum -a 256 -c -"
+   정본 A sha256(HEAD) = e98cf2b18ca74ead3132a17dd03694379d3b9bdfcdfac382e292a6a06ddb0673
+   정본 B sha256(HEAD) = 86b76afc6b44c6391e0507a547ecc8ce3cae0e174b7a90abadd3293e9a47dc0a
+   PREVENTION_* 토큰 집합(HEAD) = PREVENTION_ABSENT PREVENTION_ACTIVE PREVENTION_ARTIFACT_MUTATED PREVENTION_CONTINUITY_UNVERIFIABLE PREVENTION_INSUFFICIENT PREVENTION_LATE PREVENTION_TARGET_MISMATCH PREVENTION_UNSIGNED PREVENTION_UNVERIFIABLE PREVENTION_UNVERIFIED_REVISION
+   상태값 set-diff(세 리비전) = ∅   OK
+   `^[[:space:]]*jobs:` 출현(8ec22754) = 0  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
+   `^[[:space:]]*jobs:` 출현(11e138a5) = 1  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
+   `^[[:space:]]*jobs:` 출현(fd13ca26) = 1  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)
+  ⇒ 예기치 않은 불변식 위반 = 0건
 
 ⇒ S-24 ① 총 기대 불일치 = 0건
 ```
@@ -2514,7 +2757,11 @@ appeared untracked at 06:05:21 during this run — created by another lane, not 
 | `axes-e4.py` | `d5ad7b1ed149097a…` | 125 | 차단값 방출점 → U-17-c 축 사상 |
 | `mut-e4.py` | `18f44d85235cd70b…` | 280 | 술어 역방향 fail-open 사냥 |
 
-### 4-1. `s24-proof-e5.py` (sha256 `bb7ccdc66addd5e94ebfac5333f2bfd4a8dfcc0e57cd961b44b7fac3537c4ad7` · 276행)
+### 4-1. `s24-proof-e5.py` — **초판**(§3-1 전사를 낸 판 · sha256 `bb7ccdc66addd5e94ebfac5333f2bfd4a8dfcc0e57cd961b44b7fac3537c4ad7` · 276행)
+
+**이 판은 §5 T-10 의 대상이다** — 층 ③ 과 결속 대조가 «출력만» 되어 불일치를 찍고도 rc 0 을 낼 수
+있었다. 전사(§3-1)를 낸 판이므로 지우지 않고 그대로 둔다. fail-closed 판은 **§4-1b**, 그 판으로
+재실행한 전사는 **§3-1b** 다.
 
 ```python
 #!/usr/bin/env python3
@@ -2776,6 +3023,319 @@ def main():
     invariants()
     print(f"\n⇒ S-24 ① 총 기대 불일치 = {bad}건")
     return 0 if bad == 0 else 1
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+### 4-1b. `s24-proof-e5.py` — **fail-closed 판**(sha256 `c1e7d15faa1e6cfc5ebbb81b9127a3d69c014679d1c9e2149222d02bc4a5319d` · 303행)
+
+초판과의 델타는 **종료값 경로뿐**이다: ① 층 ③ 이 위반 수를 «반환» 하고 `main()` 이 합산 ·
+② 결속 3대조가 rc 에 들어감 · ③ 상태값 **집합** set-diff 검사 신설(개수가 같아도 토큰 이름이
+바뀌면 위반) · ④ «상이(의도)» 행 목록(`INTENDED`)을 코드에 명시해 계수 제외를 «선언»으로 만든다.
+**판정 로직(층 ①·②)은 손대지 않았다** — 그래서 재실행 결과가 초판과 같아야 하고, 실제로 같다.
+
+```python
+#!/usr/bin/env python3
+"""s24-proof-e5.py — S-24 ① «절 범위 diff 공집합» 증명 (v2.22 에라타 체인).
+
+증거 판 V222(`c477e829`)의 결속 기준선 = v2.22 동결 `8ec22754`.
+그 뒤 계약이 두 번 바뀌었다 — 1차~4차 재동결 `11e138a5` · 5차 `fd13ca26`(현행 HEAD).
+
+세 층:
+ ① 무변경 구간 증명(기계 생성 · 누락 구조적 불가) — `git diff -U0` hunk 를 자동 추출해 그
+    **여집합**을 양 blob 에서 sha256 비교한다.  구간을 손으로 적지 않으므로 «빠뜨린 구간»이
+    존재할 수 없다.  체인 전체 + 두 커밋 각각.
+      순수 삽입 hunk(`-a,0`)는 «a 행 뒤»에 삽입이므로 앞 구간이 a 를 «포함»한다 ·
+      순수 삭제 hunk(`+b,0`)는 신 blob 쪽에 같은 규칙이 적용된다.  이 경계 규칙을 틀리면
+      여집합이 어긋나 «상이»가 대량 발생한다(초판 실측 22건 → 규칙 정정 후 0).
+ ② 명명 절 증명(리터럴 앵커 · 행 번호 하드코딩 0) — 세 부류로 «사전» 선언한다:
+      [닿음]      양 blob 에 있고 **달라야** 한다
+      [신설]      구 blob 에 **없고** 신 blob 에 있어야 한다  ← 에라타가 «새로 쓴» 절
+                  = V222 증거가 실행할 수 없었던 절 = S-24 ② «영향 변이»의 정의역
+      [닿지 않음]  양 blob 에 있고 **같아야** 한다
+ ③ 비영향 근거 — 정본 A/B 코드펜스·하니스 §12.3.4-R 블록·펜스 수·상태값 토큰 집합·T-84
+    종수·개발계획 blob 을 세 리비전에서 «실측»한다((4d) 불변 주장의 피연산자).
+"""
+import hashlib
+import re
+import subprocess
+import sys
+
+R = "/Users/harris/Development/private/kis_unified_sts"
+C = "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md"
+DP = "docs/plans/2026-08-11-tos-completion-development-plan.md"
+BASE, MID, HEAD = "8ec22754", "11e138a5", "fd13ca26"
+
+HARNESS_FIRST = "#!/usr/bin/env bash"
+HARNESS_LAST = 'emit ENTRY_OK "R-0~R-7 전부 기대와 일치"'
+
+
+def sh(*a):
+    return subprocess.run(a, capture_output=True, text=True).stdout
+
+
+def blob(rev, path=C):
+    return sh("git", "-C", R, "show", f"{rev}:{path}").split("\n")
+
+
+def sha(lines):
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def objid(rev, path=C):
+    return sh("git", "-C", R, "rev-parse", f"{rev}:{path}").strip()
+
+
+def hunks(old, new, path=C):
+    d = sh("git", "-C", R, "diff", "-U0", f"{old}..{new}", "--", path)
+    return [(int(m.group(1)), int(m.group(2) or 1), int(m.group(3)), int(m.group(4) or 1))
+            for m in re.finditer(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", d, re.M)]
+
+
+def complement_proof(old, new, label, quiet=False):
+    o, n = blob(old), blob(new)
+    hs = hunks(old, new)
+    print(f"\n[① {label}]  {old} → {new}   blob {objid(old)[:12]} → {objid(new)[:12]}   행수 {len(o)-1} → {len(n)-1}")
+    print(f"  hunk {len(hs)}개 (기계 추출): " + " · ".join(f"-{a},{b} +{c},{d}" for a, b, c, d in hs))
+    po = pn = 0
+    bad = 0
+    rows = []
+    for i, (o1, oc, n1, nc) in enumerate(hs + [(len(o) + 1, 1, len(n) + 1, 1)], 1):
+        oe = (o1 - 1) if oc > 0 else o1
+        ne = (n1 - 1) if nc > 0 else n1
+        so, sn = o[po:oe], n[pn:ne]
+        h1, h2 = sha(so), sha(sn)
+        if h1 != h2:
+            bad += 1
+        rows.append((i, po + 1, oe, pn + 1, ne, len(so), len(sn), h1, h2))
+        po = (o1 - 1 + oc) if oc > 0 else o1
+        pn = (n1 - 1 + nc) if nc > 0 else n1
+    for i, a, b, c, d, la, lb, h1, h2 in rows:
+        if quiet and h1 == h2:
+            continue
+        print(f"   구간#{i:<2} old[{a}..{b}] vs new[{c}..{d}]  {la}행/{lb}행  {h1[:16]} / {h2[:16]} → "
+              + ("동일" if h1 == h2 else "상이(!!)"))
+    print(f"  ⇒ 여집합 구간 {len(rows)}개 · 변경이 «닿지 않은» 구간의 차이 = {bad}건  (0 이어야 한다)")
+    return bad
+
+
+# ── 앵커 표 ─────────────────────────────────────────────────────────────────────
+# (라벨, 앵커, idx=0, exact=False)
+A_HIST = ("심사 이력 v2.22 행", "| **v2.22** |", 0)
+A_CHG = ("변경 이력 v2.22 행", "| **v2.22** |", 1)
+A_T84 = ("T-84 행 (⑬⑭ 하위 내역)", "| **T-84** | **U-17 예방 통제 활성 증거**")
+A_APPID = ("정직 경계 — Actions app id·suite 문장", "잡이 같은 app id 를 갖", 1)
+A_META = ("스텝 메타(닫힌 키 집합) 행", "**스텝 메타(닫힌 키 집합)**")
+A_SRVSTEP = ("서버 잡 스텝 대조 — 층 (2) 도입", "**서버 잡 스텝 대조**")
+A_C1 = ("C-1 매핑 노드 순회 문장", "매핑 노드", 1)
+A_L1 = ("사다리 1단계 — 열거 집합 E", "1단계 — 열거 집합")
+A_L2 = ("사다리 2단계 — 완결성", "2단계 — 완결성")
+A_L3 = ("사다리 3단계 — «현행» 집합 C", "3단계 — «현행» 집합")
+A_L4 = ("사다리 4단계 — ∀-success", "4단계 — ∀-success")
+A_DOM = ("정의역 유일 소스 대조군 포인터", "전부 이 정의를 «참조»하고 재기술하지 않는다.")
+A_REL = ("ⓒ 극성 ③ — 완화되는 자리", "③ 완화되는 자리는")
+A_TR = ("열거 규율 (5) transcript 병기", "total_count`(있으면)")
+A_ODER = ("층 (2) (ㄴ) — «현행» 구조 파생", "파생 규칙과 정의역은")
+A_OPOL = ("ⓞ 극성 — (ㄴ)이 닫는 범위", "(ㄴ)으로 ", 0)
+A_EINV = ("E 불변 문장", "사다리 전 구간에서 불변")
+A_PARSE = ("C-1 관측면 — yaml.parse 이벤트(ⓟ)", "yaml.parse()", 2)
+A_ONF = ("ON_FILTER_OK 7원소(ⓠ)", "ON_FILTER_OK", 2)
+A_SLURP = ("열거 완전성 — --slurp 관측면(5차 ⓧ)", "--slurp", 2)
+A_RUNFOLD = ("«대체된 run» 라벨(5차 ⓦ)", "대체된 run", 3)
+A_TWOFOLD = ("3단계 «2단 접기»(5차 ⓦ)", "2단 접기", 2)
+
+UNTOUCH_COMMON = [
+    ("하니스 §12.3.4-R 첫 줄(col-0 정확 일치)", HARNESS_FIRST, 0, True),
+    ("하니스 §12.3.4-R 끝 줄", HARNESS_LAST),
+    ("정본 A 앵커 행", "**정본 A** 와 일치"),
+    ("정본 B 앵커 행", "**정본 B** 와 일치"),
+    ("T-82 행", "| **T-82** |"),
+    ("T-81 행", "| **T-81** |"),
+    ("U-17-c 상태 10값 정의", "U-17-c  상태  prevention_control_state"),
+    ("U-16-c c_APP 구조 정의", "c_APP(a) = { x ⊑ HEAD :"),
+    ("U-16 격리 스냅샷 «단일 방법»", "**단일 방법으로 고정**"),
+    ("UNCHK-008 레지스터 행", "| UNCHK-008 |"),
+    ("(α) 연속성 절", "룰셋 `created_at ≤ merged_at"),
+    ("U-17 하니스 pre-D0-A 실체화", "pre-D0-A 실체화", 0),
+]
+
+TABLES = {
+    # 체인 전체 — V222 증거 기준선에서 현행까지
+    (BASE, HEAD): {
+        "닿음": [A_HIST, A_CHG, A_T84, A_APPID, A_META, A_SRVSTEP],
+        "신설": [A_L1, A_L2, A_L3, A_L4, A_DOM, A_REL, A_TR, A_ODER, A_OPOL, A_EINV,
+                A_PARSE, A_ONF, A_SLURP, A_RUNFOLD, A_TWOFOLD],
+        "닿지 않음": UNTOUCH_COMMON + [A_C1],
+        "부재": [],
+    },
+    # 에라타 1차~4차
+    (BASE, MID): {
+        "닿음": [A_HIST, A_CHG, A_T84, A_META, A_SRVSTEP],
+        "신설": [A_L1, A_L2, A_L3, A_L4, A_DOM, A_REL, A_TR, A_ODER, A_OPOL, A_EINV, A_PARSE, A_ONF],
+        "닿지 않음": UNTOUCH_COMMON + [A_APPID, A_C1],
+        "부재": [A_SLURP, A_RUNFOLD, A_TWOFOLD],
+    },
+    # 에라타 5차 — «1·2·4단계와 E 불변 무접촉» 주장을 byte 로 검증한다
+    (MID, HEAD): {
+        "닿음": [A_HIST, A_CHG, A_T84, A_APPID, A_L3, A_DOM, A_REL, A_TR, A_SRVSTEP, A_ODER, A_OPOL, A_EINV],
+        "신설": [A_SLURP, A_RUNFOLD, A_TWOFOLD],
+        "닿지 않음": UNTOUCH_COMMON + [A_L1, A_L2, A_L4, A_META, A_C1, A_PARSE, A_ONF],
+        "부재": [],
+    },
+}
+
+
+def find(lines, anc, idx, exact):
+    hit = [i for i, l in enumerate(lines) if (l == anc if exact else anc in l)]
+    return hit[idx:] if len(hit) > idx else []
+
+
+def named_proof(old, new, label):
+    o, n = blob(old), blob(new)
+    t = TABLES[(old, new)]
+    print(f"\n[② {label}]  {old} → {new}  — 앵커로 위치를 찾는다(행 번호 하드코딩 0)")
+    bad = 0
+    for tag in ("닿음", "신설", "닿지 않음", "부재"):
+        exp = {"닿음": "양쪽 존재 ∧ 상이", "신설": "구 ∅ ∧ 신 존재",
+               "닿지 않음": "양쪽 존재 ∧ 동일", "부재": "양쪽 ∅"}[tag]
+        print(f"  [{tag}]  기대 = {exp}   ({len(t[tag])}건)")
+        for it in t[tag]:
+            lab, anc = it[0], it[1]
+            idx = it[2] if len(it) > 2 else 0
+            exact = it[3] if len(it) > 3 else False
+            ho, hn = find(o, anc, idx, exact), find(n, anc, idx, exact)
+            po = ho[0] + 1 if ho else 0
+            pn = hn[0] + 1 if hn else 0
+            if tag == "신설":
+                ok = (not ho) and bool(hn)
+                got = f"구 {'∅' if not ho else ':'+str(po)} · 신 {'∅' if not hn else ':'+str(pn)}"
+            elif tag == "부재":
+                ok = (not ho) and (not hn)
+                got = f"구 {'∅' if not ho else ':'+str(po)} · 신 {'∅' if not hn else ':'+str(pn)}"
+            else:
+                if not ho or not hn:
+                    ok, got = False, f"앵커 미발견(구 {po or '∅'} / 신 {pn or '∅'})"
+                else:
+                    same = o[ho[0]] == n[hn[0]]
+                    ok = same if tag == "닿지 않음" else (not same)
+                    got = ("동일" if same else "상이") + f"  {hashlib.sha256(o[ho[0]].encode()).hexdigest()[:10]}/{hashlib.sha256(n[hn[0]].encode()).hexdigest()[:10]}"
+            if not ok:
+                bad += 1
+            print(f"   {lab:42s} :{po or 0:<5} → :{pn or 0:<5}  {got}   {'OK' if ok else '❌ 기대와 다름'}")
+    print(f"  ⇒ 기대 불일치 = {bad}건 (0 이어야 한다)")
+    return bad
+
+
+def fence_after(lines, anchor):
+    i = next(k for k, l in enumerate(lines) if anchor in l)
+    f = [k for k in range(i, min(i + 16, len(lines))) if lines[k].strip() == "```"]
+    return "\n".join(lines[f[0] + 1:f[1]]), f[0] + 2, f[1]
+
+
+def harness_block(rev):
+    b = blob(rev)
+    s = next(i for i, l in enumerate(b) if l == HARNESS_FIRST)
+    e = next(i for i, l in enumerate(b) if HARNESS_LAST in l)
+    return hashlib.sha256(("\n".join(b[s:e + 1]) + "\n").encode()).hexdigest(), s + 1, e + 1
+
+
+def invariants():
+    """[Codex stop-time 지적 반영 — 부속 §5 T-10] 초판은 이 층을 **출력만** 했고 `main()` 이
+    반환값을 `bad` 에 넣지 «않았다» — 하니스 sha256·정본 A/B·펜스 수·토큰 집합·T-84 종수·개발계획
+    blob 이 «상이» 로 찍혀도 rc 0 이었다(검사기 fail-open).  이제 «요구» 행은 전부 rc 에 들어간다.
+    «상이(의도)» 로 분류되는 행은 계약 행수·블록 위치·`jobs:` 펜스(0→1) 셋뿐이다."""
+    print("\n[③ 비영향 근거 — (4d) 불변 주장의 피연산자 실측]")
+    cols = {}
+    for rev in (BASE, MID, HEAD):
+        b = blob(rev)
+        a, a1, a2 = fence_after(b, "**정본 A** 와 일치")
+        bb, b1, b2 = fence_after(b, "**정본 B** 와 일치")
+        hs, h1, h2 = harness_block(rev)
+        i84 = next(k for k, l in enumerate(b) if "| **T-84** | **U-17 예방 통제 활성 증거**" in l)
+        m84 = re.search(r"파라미터화 \*\*(\d+)종\*\*", b[i84])
+        states = sorted(set(re.findall(r"PREVENTION_[A-Z_]+", "\n".join(b))))
+        cols[rev] = {
+            "계약 행수": len(b) - 1,
+            "정본 A sha256": hashlib.sha256(a.encode()).hexdigest()[:16],
+            "정본 A 위치": f":{a1}-{a2}",
+            "정본 B sha256": hashlib.sha256(bb.encode()).hexdigest()[:16],
+            "정본 B 위치": f":{b1}-{b2}",
+            "하니스 블록 sha256": hs[:16],
+            "하니스 블록 위치": f":{h1}-{h2}",
+            "col-0 코드펜스 수": sum(1 for l in b if l.startswith("```")),
+            "PREVENTION_* 토큰 수": len(states),
+            "T-84 종수": m84.group(1) if m84 else "?",
+            "개발계획 blob": objid(rev, DP)[:12],
+            "개발계획 행수": len(blob(rev, DP)) - 1,
+        }
+    INTENDED = {"계약 행수", "정본 A 위치", "정본 B 위치", "하니스 블록 위치"}
+    bad = 0
+    keys = list(cols[BASE])
+    print(f"   {'불변식':26s} {BASE:>20s} {MID:>20s} {HEAD:>20s}   판정")
+    for k in keys:
+        v = [str(cols[r][k]) for r in (BASE, MID, HEAD)]
+        same = len(set(v)) == 1
+        if k in INTENDED:
+            mark = "상이(의도)"
+        else:
+            mark = "동일" if same else "상이(!!)"
+            if not same:
+                bad += 1
+        print(f"   {k:26s} {v[0]:>20s} {v[1]:>20s} {v[2]:>20s}   {mark}")
+    b = blob(HEAD)
+    hs, h1, h2 = harness_block(HEAD)
+    print(f"   하니스 블록 sha256 전문(HEAD) = {hs}  위치 :{h1}-{h2}  · 계약 리터럴 957bf49d… 접두 일치 = {hs.startswith('957bf49d')}")
+    print("   정본 A 내용 = " + repr(fence_after(b, "**정본 A** 와 일치")[0]))
+    print("   정본 B 내용 = " + repr(fence_after(b, "**정본 B** 와 일치")[0]))
+    print("   정본 A sha256(HEAD) = " + hashlib.sha256(fence_after(b, "**정본 A** 와 일치")[0].encode()).hexdigest())
+    print("   정본 B sha256(HEAD) = " + hashlib.sha256(fence_after(b, "**정본 B** 와 일치")[0].encode()).hexdigest())
+    print("   PREVENTION_* 토큰 집합(HEAD) = " + " ".join(sorted(set(re.findall(r"PREVENTION_[A-Z_]+", "\n".join(b))))))
+    sets = {r: set(re.findall(r"PREVENTION_[A-Z_]+", "\n".join(blob(r)))) for r in (BASE, MID, HEAD)}
+    sd = (sets[BASE] ^ sets[MID]) | (sets[MID] ^ sets[HEAD])
+    print(f"   상태값 set-diff(세 리비전) = {sd or '∅'}   {'OK' if not sd else '❌ 신규/제거 토큰'}")
+    if sd:
+        bad += 1
+    # 정본 «잡 템플릿» 코드펜스 — 에라타 ⓙ 가 실체화했다(EC-8: 동결본엔 0개)
+    for rev in (BASE, MID, HEAD):
+        bb = blob(rev)
+        n = sum(1 for l in bb if re.match(r"^[ \t]*jobs:", l))
+        print(f"   `^[[:space:]]*jobs:` 출현({rev}) = {n}  (EC-8: 동결본 0 → 에라타 ⓙ 실체화)")
+    print(f"  ⇒ 예기치 않은 불변식 위반 = {bad}건")
+    return bad
+
+
+def main():
+    print("s24-proof-e5 — S-24 ① 절 범위 diff 공집합 증명")
+    wt_c = sh("git", "-C", R, "hash-object", f"{R}/{C}").strip()
+    wt_d = sh("git", "-C", R, "hash-object", f"{R}/{DP}").strip()
+    print(f"HEAD 실측 = {sh('git','-C',R,'rev-parse','HEAD').strip()}")
+    print(f"워킹트리 계약 blob   = {wt_c}  ==  {HEAD}:계약 {objid(HEAD)}  → {'일치' if wt_c == objid(HEAD) else '불일치(!!)'}")
+    print(f"워킹트리 개발계획 blob = {wt_d}  ==  {HEAD}:개발계획 {objid(HEAD, DP)}  → {'일치' if wt_d == objid(HEAD, DP) else '불일치(!!)'}")
+    print(f"개발계획 blob {BASE} → {HEAD} : {objid(BASE, DP)[:12]} → {objid(HEAD, DP)[:12]}  "
+          f"→ {'무변경' if objid(BASE, DP) == objid(HEAD, DP) else '변경(!!)'}")
+    after = sh("git", "-C", R, "log", "--oneline", f"{HEAD}..HEAD").strip()
+    print(f"{HEAD}..HEAD 커밋 = {'∅ (0건)' if not after else after}")
+    print(f"{BASE}..{HEAD} 두 문서 커밋 = "
+          + sh("git", "-C", R, "log", "--oneline", f"{BASE}..{HEAD}", "--", C, DP).strip().replace("\n", " · "))
+    bad = 0
+    # [Codex stop-time 지적 · §5 T-10] 아래 세 결속 대조는 초판에서 «출력만» 됐다 — rc 에 넣는다.
+    for lab, ok in (("워킹트리 계약 blob == HEAD:계약", wt_c == objid(HEAD)),
+                    ("워킹트리 개발계획 blob == HEAD:개발계획", wt_d == objid(HEAD, DP)),
+                    (f"개발계획 blob {BASE} == {HEAD}", objid(BASE, DP) == objid(HEAD, DP))):
+        if not ok:
+            bad += 1
+            print(f"   결속 위반(!!): {lab}")
+    bad += complement_proof(BASE, HEAD, "체인 전체 — 증거 기준선 → 현행")
+    bad += complement_proof(BASE, MID, "에라타 1차~4차", quiet=True)
+    bad += complement_proof(MID, HEAD, "에라타 5차")
+    bad += named_proof(BASE, HEAD, "체인 전체")
+    bad += named_proof(BASE, MID, "에라타 1차~4차")
+    bad += named_proof(MID, HEAD, "에라타 5차 — «1·2·4단계 무접촉» 주장 검증")
+    bad += invariants()
+    print(f"\n⇒ S-24 ① 총 기대 불일치 = {bad}건")
+    return 0 if bad == 0 else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())
@@ -7412,9 +7972,11 @@ sys.exit(0)
 
 ## 5. 관측 보고 · 신규 결함 후보 (등급 · file:line)
 
-**요약**: **계약**에 대한 fail-open·차단 등급 신규 결함 후보 = **0**. 문언 등급 minor **5건**(T-2~T-5·T-8) ·
-**이 부속 자신의 결함 2건**(T-6 구현 fail-open · T-7 검사기 위양성 — 둘 다 이 판에서 닫혔다) ·
-위생 1건(T-9). 자기 적용 관측 1건(T-1).
+**요약**: **계약**에 대한 fail-open·차단 등급 신규 결함 후보 = **0**. 문언 등급 minor **4건**(T-2~T-5) ·
+**이 부속 자신의 결함 3건**(T-6 구현 fail-open · T-7 검사기 위양성 · **T-10 검사기 fail-open** — 셋 다
+닫혔다) · 위생 1건(T-9) · **철회 1건**(T-8). 자기 적용 관측 1건(T-1).
+**철회·신설은 부속 에라타 v1.1 소관이며 초판 본문을 지우지 않고 그 위에 적는다** — «무엇을 잘못
+세었는가»가 다음 라운드의 입력물이기 때문이다.
 
 ### T-1 **[관측 — 자기 적용]** 여집합 증명의 «경계 규칙»이 틀리면 전량 위양성이 난다
 
@@ -7488,18 +8050,49 @@ JSON=`5` 로 세 림을 전부 통과한다(실측). 계약 문언의 «**인용
 기록한 «register CSV naive grep 금지» 클래스의 재발이며, **위양성이라 fail-open 은 아니지만 «검사기가
 틀렸다»와 «주체가 틀렸다»가 전사에서 구별되지 않으면 그것이 다음 라운드의 오판 원료**가 된다.
 
-### T-8 **[문언 — nit]** `SHELL_OK` 의 S-22 형제 쌍(byte 다른 2종 표기)이 HEAD 에 그대로 남아 있다
+### T-8 **[철회 — 이 부속의 과대 계상]** `SHELL_OK` S-22 형제 쌍은 **이미 닫혀 있었다**
 
-ⓕ/EC-12 의 «통일»은 **«세 줄 열거 = 유일 소스(S-14)» 지정**으로 성립하고 **렌더 통일로는 성립하지
-않는다**(추출 충실성 실측: 두 형제 표기가 HEAD 에 잔존 · 정의 자리의 3값은 술어 상수와 byte 일치).
-덧붙여 두 형제는 백틱이 없어 표기 규약(«백틱 안이 값»)의 해독 대상이 아니다 — 규약은 정의 자리만
-해독한다. 문언 정합이나 «렌더를 통일했다»로 읽히면 다음 라운드가 없는 것을 찾는다. 등급 **nit**.
+**초판 주장**: ⓕ/EC-12 의 «통일»이 렌더 통일로는 성립하지 않고 두 형제 표기가 HEAD 에 잔존한다.
+**철회 근거(실측)**: 계약 `:224` 의 그 표기에는 **«[2차 ⓢ] 이 행의 이 표기는 정의 자리의 «파생»이며
+지배하지 않는다»** 가 붙어 있고, 괄호 안에서 «정의 자리가 원소를 한 줄씩 열거하고 표기 규약을
+선언하므로 두 표기는 같은 3원소로 읽힌다» 까지 적는다. §12.3.4 의 다른 렌더(`{ bash , … }`)는
+«**동결본은** … 로 렌더해» 라는 **역사 인용**이고 경쟁 소스가 아니다. 즉 «어느 값인가»가
+미결정인 자리는 **없다** — 초판은 그 표시를 보지 못했다.
+**남기는 관측(결함 아님)**: 표기 규약(«백틱 «안»이 값»)은 **정의 자리에서만** 해독되고 파생 자리는
+«비지배» 지정으로 처리된다 — 두 장치가 다르다는 것만 알아 두면 된다.
+**교훈**: **«닫히지 않았다»를 주장하기 전에 그 자리의 «닫힘 표시»를 먼저 grep 한다.** 이 아크는
+«닫힘 주장 문장 자체가 감사 대상»이라고 여러 번 적었는데, 이번에는 그 반대 방향 — **닫힘 표시를
+놓쳐 결함을 발명한 쪽** — 이 실현됐다. 두 방향 다 같은 규율(양방향 grep)로 막힌다.
 
 ### T-9 **[위생 — 이 부속 소관]** 판정 미소비 대조군 모드가 `RESULT=` 로 차단값 문자열을 노출한다
 
 gen-1 술어의 `keytree_mode`(대조군 전용 · 판정 미소비)가 `RESULT=UNVERIFIABLE` 을 찍는 자리 2건.
 차단값 방출점 전수 사상(§2-3-4)에서 «판정 미소비»로 분류돼 축 사상 대상이 아니지만, **전사만 grep 하는
 독자에게는 «차단값이 났다»로 보인다**. 대조군 모드의 출력 접두를 분리하면 닫힌다. 등급 **위생**.
+### T-10 **[검사기 — 이 부속 소관 · fail-open]** §1 증명기가 «불일치를 감지하고도 rc 0» 을 낼 수 있었다
+
+**Codex stop-time 심판 지적**(«증명기가 불일치를 감지해도 rc 0 을 허용합니다»)을 실측 확인했다.
+초판 `s24-proof-e5.py` 는 **층 ③(불변식)을 «출력만»** 했고 `main()` 이 그 결과를 종료값에 넣지
+**않았다** — 하니스 sha256·정본 A/B·펜스 수·상태값 토큰·T-84 종수·개발계획 blob 이 «상이»로 찍혀도
+**rc 0** 이었다. 결속 3대조(워킹트리↔HEAD 계약 blob · 워킹트리↔HEAD 개발계획 blob · 기준선↔현행
+개발계획 blob)도 «일치/불일치(!!)» 를 찍기만 했다. **극성 = fail-open**: 침묵이 아니라 «시끄럽게
+찍고도 green» 이므로, 전사를 읽은 사람은 속지 않지만 **rc 로 게이팅하는 소비자는 속는다.**
+
+**처분**: 두 증명기(`s24-proof-e5.py` · 6차용 `s24-proof-e6.py`)를 fail-closed 로 전환했다 —
+① 층 ③ 이 위반 수를 **반환**하고 `main()` 이 합산 ② 결속 대조가 rc 에 들어감 ③ **상태값 «집합»
+set-diff** 를 검사(개수가 같아도 토큰이 «이름»만 바뀌면 위반 — 초판은 개수만 봤다) ④ «상이(의도)»
+행(계약 행수·블록 위치·`jobs:` 펜스 0→1)만 계수에서 제외하고 그 목록을 코드에 명시.
+
+**결론 불변 실증**: 전환 후 **깨끗한 트리에서 재실행 → rc 0 · 총 불일치 0**(§1 의 세 층 결과는 초판과
+같다). 그리고 **대조군**으로 개발계획에 한 줄을 넣어 돌리니 «변경(!!)» 과 함께 총 불일치 2건·비-0
+종료가 났다(주입 후 `git checkout` 으로 복원, blob `b2985a05215b…` 재확인). 즉 이 층은 이제
+**도달 가능한 차단값**을 갖는다.
+
+**왜 이 자리가 이 부속의 다른 두 결함(T-6·T-7)과 같은 층인가**: 셋 다 «검사하는 쪽»의 결함이고,
+셋 다 **주체(계약)의 결함이 아니다**. 그리고 셋 다 **배터리·대조군·독립 심판이 잡았다** — 자기
+검사기를 자기 rc 로 신뢰하면 안 된다는 이 아크의 규율(«같은 커밋에서 저작된 검사기의 PASS는 독립
+증거가 아니다»)이 이번에는 **stop-time 심판 쪽에서** 실현됐다.
+
 ## 6. 사후 재조회 (서버 무변경 · HEAD 불변)
 
 실행 «후» 다시 뜬 값이다 — 이 부속이 계약·개발계획·서버 상태를 바꾸지 않았음을 사후에도 고정한다.
