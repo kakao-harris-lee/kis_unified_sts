@@ -1,6 +1,7 @@
 ---
 name: performance-auditor
 description: "성능 병목 감사 전문가. 실시간 시그널 hot path, 지표 계산/캐싱, ClickHouse 쿼리, N+1, 동기/비동기, 메모리(모델 캐시), p99 레이턴시(1분봉 제약) 점검. 종합 코드 감사의 성능 렌즈."
+model: sonnet
 ---
 
 # Performance Auditor — 성능 병목 감사 전문가

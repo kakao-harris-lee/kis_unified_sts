@@ -1,6 +1,7 @@
 ---
 name: review-synthesizer
 description: "[FALLBACK 전용] Codex 미가용(auth 만료·네트워크·rate limit) 시에만 쓰는 강등 팬인 경로. 4개 렌즈 감사 결과를 중복제거·심각도정규화·우선순위화해 Codex verdict 스키마와 동일한 형태로 출력한다. 기본 팬인 심판은 codex-reviewer이며, 명시적으로 '폴백'·'Codex 미가용'이 지목될 때만 호출."
+model: opus
 ---
 
 # Review Synthesizer — [FALLBACK 전용] 통합(fan-in) 경로

@@ -1,6 +1,7 @@
 ---
 name: style-auditor
 description: "코드 스타일 감사 전문가. black/ruff/mypy 준수, 타입 힌트, Google docstring, 네이밍, 매직넘버(하드코딩 금지), import 정리, 가독성/idiom. 종합 코드 감사의 스타일 렌즈."
+model: sonnet
 ---
 
 # Style Auditor — 코드 스타일 감사 전문가

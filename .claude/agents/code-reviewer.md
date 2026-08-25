@@ -1,6 +1,7 @@
 ---
 name: code-reviewer
 description: "[FALLBACK 전용] Codex 미가용(auth 만료·네트워크·rate limit) 시에만 쓰는 강등 심판 경로. 기본 코드 심판은 codex-reviewer다. 평시 잔여 역할은 CLAUDE.md 비협상 규칙 준수 렌즈(증거 생성)로 한정되며, 차단 판정 권한은 없다. 명시적으로 '폴백'·'Codex 미가용'이 지목될 때만 호출."
+model: opus
 ---
 
 # Code Reviewer — [FALLBACK 전용] CLAUDE.md 규칙 렌즈

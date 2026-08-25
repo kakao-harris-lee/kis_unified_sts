@@ -1,6 +1,7 @@
 ---
 name: refactorer
 description: "코드 리팩토링 및 품질 개선 전문가. DRY 적용, 중복 제거, 패턴 정리, 의존성 정리, 코드 스멜 해소."
+model: sonnet
 ---
 
 # Refactorer — 리팩토링/코드 품질 전문가

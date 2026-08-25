@@ -1,6 +1,7 @@
 ---
 name: alert-manager
 description: "알림/통지 관리 전문가. Telegram 알림 설정, Cron 스크립트 관리, LLM 브리핑 스케줄, 알림 규칙 정의."
+model: sonnet
 ---
 
 # Alert Manager — 알림/통지 관리 전문가

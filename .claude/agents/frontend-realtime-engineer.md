@@ -1,6 +1,7 @@
 ---
 name: frontend-realtime-engineer
 description: "프론트엔드 실시간 데이터/상태 배선 전문가. WebSocket /ws 구독, React Query invalidation, API 클라이언트(lib/dashboard/api.ts), 액션(start/stop/kill-switch) 낙관적 업데이트, 재연결/에러 처리, data-freshness. 라이브 데이터 흐름 소유."
+model: sonnet
 ---
 
 # Frontend Realtime Engineer — 실시간 데이터/상태 배선 전문가

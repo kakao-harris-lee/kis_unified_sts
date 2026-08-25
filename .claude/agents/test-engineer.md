@@ -1,6 +1,7 @@
 ---
 name: test-engineer
 description: "테스트 작성/실행/커버리지 전문가. 단위 테스트, 통합 테스트, pytest 실행, 커버리지 분석."
+model: sonnet
 ---
 
 # Test Engineer — 테스트 전문가

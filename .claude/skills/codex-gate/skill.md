@@ -244,11 +244,13 @@ codex 심판 레인을 쓰는 프로젝트는 `kis_unified_sts` / `bid-vector` /
 `bid-vector`는 `scripts/codex-review-kotlin.sh`, `easy-doc`은 자체
 `.claude/agents/codex-reviewer.md`로 각자 레인을 소유한다. 이 두 벌은 이 파일의 사본이 아니다.
 
-**⚠ stop-time 게이트는 워크트리마다 따로 켜야 한다.** codex 플러그인은
+**⚠ 이 프로젝트에서는 stop-time 게이트를 모든 워크트리에서 꺼 둔다.** codex 플러그인은
 `git rev-parse --show-toplevel` 결과를 workspace 키로 쓰므로 **워크트리는 각각 별개 workspace다**
 (`plugins/data/codex-openai-codex/state/<basename>-<hash>/state.json::config.stopReviewGate`).
-새 워크트리를 만들면 그 안에서 `/codex:setup --enable-review-gate`를 실행하지 않는 한
-stop 게이트가 붙지 않는다 — 2026-08-20 실측에서 kis 워크트리 전부가 꺼져 있었다.
+기존 워크트리에서 켜져 있으면 `/codex:setup --disable-review-gate`로 끄고,
+새 워크트리에서도 `/codex:setup --enable-review-gate`를 실행하지 않는다. 현재 플러그인의 Stop 훅은
+매 종료 시도마다 게이트 적격 `adversarial-review`가 아닌 새 generic `task`를 만들며, 이미 명시적 리뷰가
+실행 중이어도 중복 실행할 수 있다. 코드 변경 전용 프롬프트라 계획 심사도 대신하지 못한다.
 
 계층은 이렇게 갈린다:
 
@@ -480,19 +482,20 @@ digest를 **다시 계산해서** `verdict.md`에 기록된 값과 대조한다.
 
 ## Stop 리뷰 게이트와의 구분
 
-`/codex:setup --enable-review-gate`로 **Stop 훅**이 활성화되어 있다.
-Claude 턴이 코드 변경을 만들면 자동으로 Codex 심사가 돌고 ALLOW/BLOCK을 낸다.
+이 프로젝트에서는 `/codex:setup --disable-review-gate` 상태를 유지한다. Codex 플러그인은 활성화한 채
+리뷰가 필요한 체크포인트에서만 명시적으로 호출한다.
 
 | | Stop 리뷰 게이트 | codex-gate (이 스킬) |
 |---|---|---|
-| 발동 | 자동 (턴 종료 시) | 명시적 호출 |
+| 상태/발동 | **비활성 유지** (턴 종료마다 generic task를 만들지 않음) | 명시적 호출 |
 | 단위 | 턴 단위 변경 | 범위 단위 (diff/PR/경로/계획) |
 | 산출 | ALLOW / BLOCK | verdict + findings + next_steps + `verdict.md` |
 | 렌즈 증거 | 없음 | 4렌즈 팬아웃 동반 가능 |
 | 계획 심사 | 불가 | 레인 B |
 
-**서로 대체 관계가 아니다.** Stop 훅은 턴 단위 자동 안전망이고, 이 스킬은 명시적 게이트다.
-Stop 훅이 ALLOW를 냈다는 것이 이 게이트를 통과했다는 뜻이 아니다.
+일반 코드 관점이 필요하면 `/codex:review --background --scope working-tree`, 판정이나 설계 도전이
+필요하면 이 스킬의 `adversarial-review` 경로를 사용한다. 계획은 반드시 레인 B로 심사한다.
+Stop 훅을 이 스킬의 자동 안전망으로 다시 켜지 않는다.
 
 ## 에러 핸들링
 

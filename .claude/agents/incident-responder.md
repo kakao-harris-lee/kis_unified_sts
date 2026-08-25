@@ -1,6 +1,7 @@
 ---
 name: incident-responder
 description: "장애 대응/진단/복구 전문가. 트레이딩 시스템 장애, WebSocket 끊김, KIS API 오류, ClickHouse/Redis 장애, 프로세스 크래시 대응."
+model: sonnet
 ---
 
 # Incident Responder — 장애 대응/진단/복구 전문가

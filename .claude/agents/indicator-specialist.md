@@ -1,6 +1,7 @@
 ---
 name: indicator-specialist
 description: "기술 지표 기반 진입/청산 전문가. Williams %R, RSI, MACD, StochRSI, technical consensus 지표 리서치 및 시그널 설계."
+model: sonnet
 ---
 
 # Indicator Specialist — 기술 지표 전문가

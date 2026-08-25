@@ -1,6 +1,7 @@
 ---
 name: execution-specialist
 description: "주문 실행/KIS API 정합/ATS 라우팅 전문가. shared/execution(executor, venue_router, rate_limiter, slippage, pseudo_oco), shared/kis(auth/client/token), order_router 서비스. 실행 경로의 정확성·체결품질을 소유. live 게이트는 model-deployer와 협력."
+model: sonnet
 ---
 
 # Execution Specialist — 주문 실행/KIS API 정합 전문가
