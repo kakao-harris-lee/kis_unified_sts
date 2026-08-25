@@ -1,0 +1,21 @@
+name: tos-gate
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  tos-gate:
+    name: tos-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: "tos-gate: verify harness sha256"
+        run: |
+          set -euo pipefail
+          printf '%s  tools/tos_entry_harness.sh\n' 957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d | shasum -a 256 -c -
+      - name: "tos-gate: run harness"
+        run: |
+          set -euo pipefail
+          bash tools/tos_entry_harness.sh
