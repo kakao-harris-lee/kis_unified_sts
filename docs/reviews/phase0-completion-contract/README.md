@@ -36,8 +36,19 @@
     --exclude=U17-PREVENTION-CHECK-V220-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221.md \
     --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-2.md \
     --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V222.md \
+    --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-2.md \
+    --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-4.md \
+    --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-5.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
+
+  > **⚠ 이 명령은 현재 clean 을 반환하지 않는다 — 그리고 제외 목록을 늘려도 반환하지 않는다.**
+  > 스탬프 `20260820-184748`·`20260821-0150`·`20260822-000132`·`20260822-100701`·`20260826-000532`
+  > 이 **`.omc/review/` 에 없고 docs 쪽 단독**이라, `diff -r` 이 **디렉터리 수준**에서 갈린다
+  > (`Only in docs/reviews/…: <stamp>`).  basename `--exclude` 는 디렉터리 차이를 억제하지 못한다.
+  > 위 5건은 **파일명 등재만** 이행한 것이고(제외 목록은 이 README 가 유일 소스라는 규약의 이행 —
+  > `-ADDENDUM`~`-ADDENDUM-4` 4건은 그동안 누락돼 있었다), **불변식 성립은 주장하지 않는다.**
+  > 디렉터리 수준 분기의 처분은 별건이다(addendum-5 §3-2).
 
   (`U15-ENTRY-CHECK.md`·`U16-LEDGER-CHECK.md`·`U15-ENTRY-CHECK-ADDENDUM.md`·
   `U17-PREVENTION-CHECK.md`·`U15-ENTRY-CHECK-V216.md`·`U17-PREVENTION-CHECK-V217.md`·
@@ -49,8 +60,12 @@
   `U17-PREVENTION-CHECK-V219-ADDENDUM-8.md`·`U17-PREVENTION-CHECK-V220.md`·`U16-LEDGER-CHECK-V220.md`·
   `U17-PREVENTION-CHECK-V220-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221.md`·
   `U17-PREVENTION-CHECK-V221-ADDENDUM.md`·`U17-PREVENTION-CHECK-V221-ADDENDUM-2.md`·
-  `U17-PREVENTION-CHECK-V221-ADDENDUM-3.md`·`U17-PREVENTION-CHECK-V222.md` 는
-  **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.)
+  `U17-PREVENTION-CHECK-V221-ADDENDUM-3.md`·`U17-PREVENTION-CHECK-V222.md`·
+  `U17-PREVENTION-CHECK-V222-ADDENDUM.md`·`U17-PREVENTION-CHECK-V222-ADDENDUM-2.md`·
+  `U17-PREVENTION-CHECK-V222-ADDENDUM-3.md`·`U17-PREVENTION-CHECK-V222-ADDENDUM-4.md`·
+  `U17-PREVENTION-CHECK-V222-ADDENDUM-5.md` 는
+  **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.
+  두 사본(위 명령 · 이 산문)은 **함께 움직인다** — 한쪽만 고치면 «유일 소스»가 둘로 갈린다.)
 
 ## 두 위치의 역할
 
@@ -734,6 +749,36 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   기록).  건전 확인 8(F-E vacuity 도전 기각 · ⑤ 재키잉 형제 정합 · currency 삼자 정합 ·
   verbatim 3건 byte 일치 · **ⓓ-sweep 잔여 4원소 «미확인» → «부재 실측» 승격**).  §5 = 이 부속
   자신의 결함 6건 자기 기록.  다음 = **에라타 9차(F-1~F-3)** → 재결속 → v2.23 재심.
+  **D0/P-0 착수 금지 불변.**  서버 쓰기 0 · GET-only.
+
+- `20260826-000532/U17-PREVENTION-CHECK-V222-ADDENDUM-5.md` — **v2.22 에라타 9차 동결 `c340d602`
+  S-24 addendum**(기록 커밋 시점 415행).  **판정: 「부분 미종결」 — currency 한 자리 + 승격
+  결론 1 + 문언 2건.**  §1 절 범위 diff 공집합 = **7층 rc 0**(⓪ 결속 6핀 · ① 여집합 8구간 ·
+  ①-a 분할 17,534 원소 · ①-b 귀속 7 hunk/13 선언 + **record-only 본문 hunk 0** · ①-c 내용 핀
+  16 · ② 생산 술어 12 · ③ 불변식 42) · hunk 7 전건 귀속 · 총 증감행 +24/−9 · 증명기 자기
+  뮤테이션 **36종 죽은 검사 0** · **역방향 4종 과잉 차단 0**.  §2 = **실행기 재수행이 아니라
+  «측정된 byte-불변»으로 이행**(계약 변경 이력 v2.22 9차 절이 형식을 재결속 게이트에 위임 ·
+  운영자 2026-08-25 개시) — 생산 술어 **10/10 byte-불변** · **인벤토리 비-vacuity 를 gen-3→gen-4
+  대조군으로 실증**(8차가 실제로 바꾼 F-A·F-D·F-E 를 **9/9 적발**: 7 CHANGED + 2 NEW-SITE) ·
+  T-84 대조군 census 13=13 **신규 0**(대조군 세대에서는 `(ㅎ-5)`·`(ㅎ-6)` 2건 적발) · 불변 레인
+  뮤테이션 16종 죽은 검사 0(**B 부류 3종이 앵커 «안» 조작을 `LOST-SITE` 로 적발 = byte 민감도
+  실증**).  §3 독립 적대 = **findings 4**(medium 2 · low 2 · 기각 0 · **전건 오케스트레이터 직접
+  측정**) — **F-1** 9차가 «유지한다»고 선언한 currency 스윕 술어를 9차가 실행하지 않음
+  (`:4231`·`:4232`·`:4442` 가 «8차 이후» 잔존 · `:4231` 은 완료된 addendum-4 를 미래로 기재 ·
+  «규칙 신설 = 전수 적용» 위배 **네 번째 재발이자 그 규칙을 처분하던 회차 자신**) · **F-2**
+  부수① 승격의 결론문(«완전성 증명 가능»)이 자기 한계 병기(«미포섭 표면은 여전히 미확인»)보다
+  넓음(**출처는 addendum-4 §3-1 · 9차는 한계 병기를 추가해 부분 치유** · 둘째 limb = 6어휘
+  하드코딩 census 의 신규-표현 맹점 미등재) · **F-3** ⓑ 인용 좌표가 자기 문서 안에서 stale
+  (BASE `:5827` → NEW **`:5841`** · 같은 커밋의 삽입 +10·+4 가 밀었고 **네 자리 중 셋이 삽입
+  지점 위라 통과** · 집합은 옳음 · 판정 무영향) · **F-4** 미래 지향 필드의 리터럴 `v2.23`
+  4자리(`:96`·`:103`·`:4231`·`:4232` — `:10-13` 이 열거한 세 범주 · 버전 필드는 v2.22 이고
+  **에라타는 버전을 올리지 않는다**).  건전 확인 5(**ⓐ↔ⓔ limb 대칭 진본** · ⓒ record-only 가
+  유일하게 가능한 정정 · 생산 술어 불변 · 픽스처 6개 blob 진본 · 「문언 전용」 주장 지지).
+  기록층 관측 1(이 README 제외 목록 4건 누락 + 스탬프 5개 docs-단독 → `diff -r` 불변식 미성립 —
+  **이 커밋이 파일명 5건을 전수 보충하되 불변식 성립은 주장하지 않는다**).  §5 = 이 부속 자신의
+  결함 4건 자기 기록(**적대 레인이 3회 요청에도 보고 미반환 → §3 을 오케스트레이터가 대신 수행 ·
+  시각 다양성 1 감소를 정직 등재**).  오케스트레이터 독립 재실행: 증명기 로그 **byte-동일 재현**.
+  다음 = **O-6 재결속**(`requesting_plan_version` **v2.22 유지**) → **현행 버전 재심**.
   **D0/P-0 착수 금지 불변.**  서버 쓰기 0 · GET-only.
 
 ## 향후 관행
