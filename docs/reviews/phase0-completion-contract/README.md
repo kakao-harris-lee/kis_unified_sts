@@ -38,12 +38,13 @@
     --exclude=U17-PREVENTION-CHECK-V221-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V222.md \
     --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM.md --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-2.md \
     --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-3.md --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-4.md \
-    --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-5.md \
+    --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-5.md --exclude=U17-PREVENTION-CHECK-V222-ADDENDUM-6.md \
     .omc/review docs/reviews/phase0-completion-contract
   ```
 
   > **⚠ 이 명령은 현재 clean 을 반환하지 않는다 — 그리고 제외 목록을 늘려도 반환하지 않는다.**
-  > 스탬프 `20260820-184748`·`20260821-0150`·`20260822-000132`·`20260822-100701`·`20260826-000532`
+  > 스탬프 `20260820-184748`·`20260821-0150`·`20260822-000132`·`20260822-100701`·`20260826-000532`·
+> `20260826-001424`·`20260826-081517`
   > 이 **`.omc/review/` 에 없고 docs 쪽 단독**이라, `diff -r` 이 **디렉터리 수준**에서 갈린다
   > (`Only in docs/reviews/…: <stamp>`).  basename `--exclude` 는 디렉터리 차이를 억제하지 못한다.
   > 위 5건은 **파일명 등재만** 이행한 것이고(제외 목록은 이 README 가 유일 소스라는 규약의 이행 —
@@ -63,7 +64,7 @@
   `U17-PREVENTION-CHECK-V221-ADDENDUM-3.md`·`U17-PREVENTION-CHECK-V222.md`·
   `U17-PREVENTION-CHECK-V222-ADDENDUM.md`·`U17-PREVENTION-CHECK-V222-ADDENDUM-2.md`·
   `U17-PREVENTION-CHECK-V222-ADDENDUM-3.md`·`U17-PREVENTION-CHECK-V222-ADDENDUM-4.md`·
-  `U17-PREVENTION-CHECK-V222-ADDENDUM-5.md` 는
+  `U17-PREVENTION-CHECK-V222-ADDENDUM-5.md`·`U17-PREVENTION-CHECK-V222-ADDENDUM-6.md` 는
   **추적 전용 실행 증거**라 운영 원본이 없다 — 아래 "실행 증거 아티팩트" 절. 제외 목록은 이 README 가 유일 소스다.
   두 사본(위 명령 · 이 산문)은 **함께 움직인다** — 한쪽만 고치면 «유일 소스»가 둘로 갈린다.)
 
@@ -798,6 +799,48 @@ codex-gate 의 직전 판정 탐색이 `ls -1dt`(mtime 순)라 스탬프 디렉�
   정정이라 같은 판에서 함께 · F-6·F-7 은 처분이든 명시 기각이든 침묵만 아니면 된다.
   **재결속 `7e165b6e` 는 유효**(결속 범위는 계약 두 문서이고 부속·에라타는 그 밖이다).
   **D0/P-0 착수 금지 불변.**  서버 쓰기 0 · GET-only.
+
+- `20260826-081517/U17-PREVENTION-CHECK-V222-ADDENDUM-6.md` — **v2.22 에라타 10차 동결 `30987efe`
+  S-24 addendum**(기록 커밋 시점 374행).  **판정: 「미종결」 — findings 14(high 2 · medium 8 ·
+  low 4 · 기각 0).**  **이 회차는 §2 를 단축할 수 없었다** — 10차 ⓐ 가 판정-변경 생산 술어를
+  실제로 바꿨으므로 6차 ⓓ 규율에 따라 **실행기 전량 재수행**이고 그것이 본체다.
+  §1 = **7층 95검사 위반 0**(구간 20 전건 byte-동일 · 19 hunk 전건 귀속·헛선언 0 · +181/−24) ·
+  뮤테이션 순 50 죽은 검사 0 · 역 8 과잉 차단 0 · **오케스트레이터 재실행에서 로그 byte-동일 재현**.
+  §2 = **33픽스처 × 2세대 = 66셀 · 세대 불일치 11** · **★ 양극성 9자리**(gen-5 `ACTIVE` →
+  gen-6 `UNVERIFIABLE`) — J1 메커니즘 원문 확인: ref-level 이 suite `9001` 하나만 보고(잘린 우주)
+  하고 런 목록은 `9001`·`9002` 둘을 보고하는데 **구 술어는 승인하고 신 술어는 α 가
+  `S_R∖S_A=['9002']` 로 차단**한다(심판이 「잘린 우주 위 vacuous green」이라 부른 것의 실물
+  재현 · **재라벨링이 아니라 fail-open 폐쇄**) · 역방향 5자리 양쪽 `ACTIVE`(과잉 차단 0) ·
+  판정 동일 22(비판별 처분의 상태값 불변) · GET-only · **역방향 뮤턴트 LIVE 8 · DEAD 3**
+  (그 가드들은 제거해도 대조군이 red 를 내지 않는다 — 「전량 재수행」과 「모든 가드가 대조군을
+  진다」는 별개다).
+  §3 = **findings 14**, 판정-변경 축 4건은 **오케스트레이터 직접 재측정** — **AF-H1(high)**
+  α·β 가 «범위가 다른 두 집합»을 등호로 묶는다(`S_A` = 그 sha 의 **모든** Actions suite ·
+  `S_R` = **핀 워크플로**의 suite · 워크플로 필터 없음).  **라이브 GET 3 sha 실측**
+  (`a279fa12`·`5cdd534c`·`326756d7`) 전부 `S_A∖S_R ≠ ∅` → 핀 워크플로가 `test.yml` 이고 현행
+  트리에 `pull_request` 워크플로가 5종이므로 **`PREVENTION_ACTIVE` 가 구조적으로 도달 불가**.
+  §2-1 양극성과 모순 아님 — **fail-open 을 닫으면서 동시에 별개의 과잉 차단을 도입**했다 ·
+  **AF-H2(high)** S-25 가 「아직 없는 소비자」를 현재형으로 선언하고 등재하지 않음(`미구현`
+  grep **0** · 검사기 축 C1~C4 뿐 **RULE 없음** · `manifest` **0건** · 부수로 census 어휘
+  목록의 정본이 **지금 어디에도 없다**) · AF-M1 「대조군 필수」를 신설한 커밋 자신의 self-test
+  31종 중 **10종 죽은 검사**(HEAD 에서는 47/47 죽은 검사 0 — **결함은 상태가 아니라 그 커밋의
+  공시**) · AF-M2 A-F3 이 «명명된 둘»만 고치고 같은 +14 오프셋군 `:5894` 잔존 · AF-M3
+  `<핀 workflow_id>` 결속 문장 부재 · AF-M4 currency 처분이 같은 셀 안에서 자기모순(C4A 통과 =
+  fail-open) · AF-M5 인증서 6항이 ⓑ 가 격하한 전제 미포함 · AF-M6 S-26 ⑥ 이 자기신고이고 ①
+  과 상충 · **AF-M7 「11건 전건 처분」이 실제로 10건 + R-F1 무기록**(`R-F1` grep **0**) ·
+  PF-1 펜스 행수 지표 모호 · PF-2 10차가 **새로 쓴** 스윕 기록이 BASE 좌표 사용 · AF-L1~L3.
+  건전 확인 10((4) 7→9 **전수 적용 실측** · A-F4/A-F5/A-F7 유효 · **R-F2 핵심 주장은 참**).
+  §5 = 이 부속 자신의 결함 **6건 중 3건이 오케스트레이터 자신의 것** — **① α 재현이 vacuous
+  했다**(`044ef629…` 는 핀 워크플로가 사실상 유일했던 형상이라 AF-H1 을 드러낼 수 없는 입력 ·
+  **판별 불가능한 입력에서의 확인은 확인이 아니다**) · ② 커밋 `30987efe` 메시지의 거짓 주장
+  2건(AF-H2·AF-M7 · 커밋 불변이므로 이 부속이 정정의 정본) · ③ 레인 브리핑 오지시(PF-1).
+  레인 결함 3(SD-1 매핑 «불능»을 «부재»로 접은 위양성 — **fail-closed 극성이라 «계약의 결함»
+  으로 둔갑할 뻔했다** · SD-2 로그 기록 후 프로버 수정 · API 오류 2레인 중단).
+  **지배 패턴은 「주장을 검사보다 먼저 쓴다」**(AF-H2·AF-M1·AF-M2·AF-M4·AF-M7·PF-2 동형) —
+  「규칙 신설 = 전수 적용까지가 한 단위」는 10차가 **S-25 에서 게이트로 승격시킨 그 규칙**이고
+  같은 판에서 **일곱 번째로** 깨졌다.
+  다음 = **AF-H1 범위 정정 + 정본 워크플로 ≥2 종이 도는 sha 에서 α·β 재실측** → AF-H2 · AF-M1 ·
+  AF-M7.  재결속 `e8edbdd6` 유효.  **D0/P-0 착수 금지 불변.**  서버 쓰기 0 · GET-only.
 
 ## 향후 관행
 
