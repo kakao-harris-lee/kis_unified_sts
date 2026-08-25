@@ -55,3 +55,22 @@ jobs:
 
       - name: tos hermetic package tests
         run: pytest tos/tests
+
+      # Layer 4 — Phase 0 완료 계약의 «자기참조 stale» 게이트.
+      #
+      # 별도 잡·별도 워크플로가 아니라 이 잡의 «스텝»이다: 별도 잡이면 브랜치
+      # 보호의 필수 체크 «이름»이 하나 늘고, 이 아크의 통증이 바로 그 설정
+      # 표면이다.  이 워크플로는 이미 경로 게이팅 없이 모든 PR·main push 에서
+      # 돌므로(위 헤더 주석) 계약 문서만 고치는 PR 도 반드시 통과한다.
+      #
+      # 근거: 레인 B 재심 R-F3/R-F4 — 「규칙 신설 = 전수 적용까지가 한 단위」가
+      # 이 아크에서 다섯 번 깨졌고, 그때마다 문서 내 «수동 census» 였다.
+      # 산문 선언은 소비자가 없으면 산문이다(K-10).
+      - name: Layer 4 — phase0 contract self-reference gate
+        run: python tools/tos_contract_check.py
+
+      # 검사기 자신이 «죽은 검사»가 아님을 매 실행 증명한다.  9차의
+      # 「(4) 열거 7==7」 불변식이 세 자리 중 둘만 보고 green 을 낸 것이
+      # addendum-5 A-F5 였다 — 통과하는 검사와 «지고 있는» 검사는 다르다.
+      - name: Layer 4 self-test — mutation battery (dead-check 0)
+        run: python tools/tos_contract_check.py --self-test
