@@ -45,19 +45,74 @@ stale 인 채 green 이 나왔다(A-F5).  같은 fail-open 을 되풀이하지 �
                         「(4) 열거 N원소에 … 전수 적용」 블록의 원형숫자 분해와 **교차 검증**.
   * (4) 기수 진술     — 그 열거가 사는 «코드펜스» 안에서 (4) 를 참조하며 수량을 말하는
                         모든 문장을 정규식으로 수집(자리 목록이 아니라 술어).
+  * 인용 «목록»       — «구분자로 이어진 좌표 둘 이상» 이라는 **형상**으로 파생하되,
+                        그 모집단은 **앵커를 채택한 목록에만** 쓴다(아래 LIST-1).
 
 ------------------------------------------------------------------------------
-ANCHOR-1 — 자기인용 앵커 규약 (제안 · 아직 채택자 0)
+ANCHOR-1 — 자기인용 앵커 규약 (제안 · 인용 단위 옵트인)
 ------------------------------------------------------------------------------
 자기인용 `:N` / `:N-M` 은 «그 좌표가 무엇을 가리킨다고 주장하는지»를 기계가 알 수 없어
 완전 일반해가 없다.  그래서 규약을 제안한다::
 
-    `:N`«앵커»            `:N-M`«앵커»
+    `:N`«앵커»            `:N-M`«앵커»            (:a·:b·:c)«앵커»
 
 «앵커»는 피인용 행(범위)의 **축자 부분문자열**이어야 하고, 검사기는 그것을 실측 대조한다
 (마크다운 강조·백틱은 양쪽 모두 정규화 후 비교).  규약을 «채택한» 인용만 C2C 로 검사하며,
 미채택 인용은 위반이 아니라 **`unanchored` 계수**로 보고한다 — 100여 자리를 소급 개장하는
 것은 이 검사기의 소관이 아니기 때문이다.  그 한계는 `--report` 출력과 최종 보고에 남는다.
+
+**목록형(세 번째 형태)의 의미는 단일 좌표형의 전수 확장이다**: 목록 «전 원소»가 각자
+자기 피인용 범위에 그 앵커를 축자로 갖는다고 주장한다.  하나라도 없으면 C2C 가 그
+원소를 지목해 발화한다.  형태 규칙 셋::
+
+  * 앵커는 목록 **바로 뒤**에 붙는다.  목록을 닫는 표기(`)` `]` 백틱 `*` 공백)는
+    건너뛰지만 **판정에 쓰지 않는다** — 어떤 괄호로 감쌌든, 감싸지 않았든 따라온다.
+  * 앵커 «없는» 목록은 위반이 아니라 `unanchored` 계수다(래칫 RATCHET-1 소관).
+  * **목록 앵커는 이력 행 면제를 받지 않는다.**  단일 좌표의 면제는 «이력 행은 편집 前
+    문자열을 적는다» 는 관찰에서 나왔는데, 목록 앵커를 «다는» 행위 자체가 «이 좌표들은
+    지금 이 문자열을 가리킨다» 는 저작자의 명시 선언이다.  역사로 남길 목록은 앵커를
+    달지 않으면 되고, 그러면 계수만 는다.
+
+채택 자리의 **«수»는 이 산문에 적지 않는다.**  적는 순간 그 계수가 다음 편집에서 조용히
+stale 해지고, 그것이 바로 이 파일이 막으려는 결함이다(6차 ⓑ).  계수는 `--report` 가
+문서에서 파생해 낸다 — 산문은 «규약이 무엇인가» 만 말한다.
+
+------------------------------------------------------------------------------
+LIST-1 — «목록» 을 넓혀도 되는 축과 넓히면 안 되는 축
+------------------------------------------------------------------------------
+C2A 는 목록을 `[ … ]` 대괄호 정규식 하나로 잡는다.  이 계약은 같은 모양의 목록을
+소괄호로도 백틱으로도 적으므로, 이 모집단은 실제로 좁다 — 형상으로 파생한 목록 중
+극히 일부만 본다(계수는 `--report` 가 낸다; 산문에 적으면 그 수가 stale 해진다).
+그래서 **한 번 넓혀 봤고, 실측이 넓히면 안 된다는 것을 보여줬다.**
+
+모집단을 «형상 전수»(구분자로 이어진 좌표 둘 이상)로 옮기자 위반 3건이 새로 떴는데
+**전부 위양성**이었다.  대표 사례::
+
+    ⑥ currency 층 구분 — `:4231`·`:4232`·`:4442` 를 «v2.22 동결» vs «현행 8차 이후» 로 갈라 …
+
+이것은 «8차 ⓖ 가 그 세 자리를 두 층으로 갈랐다» 는 **역사 서술**이고, 좌표는 «8차 시점»
+좌표다.  현행 좌표로 «고치면» 오히려 역사가 거짓이 된다.  좌표에는 두 종류가 있다::
+
+    (현재 포인터)  「선언보다 위의 4자리(…)가 **이제** 문언상 포섭」  → 현행 정확해야 한다
+    (역사 기록)    「8차 ⓖ 가 `:4231`·`:4232`·`:4442` 를 갈랐다」      → 그 시점 좌표가 맞다
+
+**이 구별은 «의미»이지 «형상»이 아니다.**  그래서 모집단을 형상으로 넓히는 처분은 필연적
+으로 위양성을 낳는다 — 넓힌 술어는 둘을 가를 정보를 갖고 있지 않기 때문이다.  같은 이유로
+「목록 뒤 같은 행의 모든 «…»」를 술어로 긁는 것도 4만 자짜리 이력 행에서는 술어 57종을
+만들어 내며, 그 진단(「주장한 포섭 술어 57종」)은 저작자가 병기한 주장이 아니다.
+
+**처분은 규약이 진다 — `ANCHOR-1` 이 이미 그 답이다.**  구별을 정규식에 시키지 않고
+저작자의 **옵트인**에 맡긴다::
+
+  * C2A(자동 판정)의 모집단은 **대괄호형 그대로 둔다.**  좁은 것이 아니라 **닫힌** 것이다.
+  * ANCHOR-1 을 **목록에도** 연다(위 세 번째 형태).  앵커가 붙으면 C2C 가 원소 전수를
+    실측 대조하고, 안 붙으면 `unanchored` 계수로 가 **래칫이 잡는다.**
+  * 목록-앵커 축의 모집단만 «형상 전수»다 — 괄호가 무엇이든 앵커까지 도달한다.  여기서는
+    넓혀도 위양성이 구조적으로 불가능하다: 채택하지 않은 목록은 아예 들어오지 않는다.
+
+즉 「괄호형이라서 못 본다」가 아니라 「앵커가 없어서 계수만 한다」가 된다.  현재 포인터인
+목록에 앵커를 달면 그 자리가 검사 대상으로 편입되고, 역사 기록인 목록은 달지 않으면 된다.
+`--report` 가 목록 수와 그중 앵커 채택 수를 내고, 그 한계는 최종 보고에도 남는다.
 
 ------------------------------------------------------------------------------
 QUOTE-1 — C1 은 «살아 있는 주장» 과 «에라타가 대체한 옛 표기의 인용» 을 가른다
@@ -337,8 +392,28 @@ ENUM_SEPARATOR = "·"  # MIDDLE DOT — 문서 전역의 원소 구분자
 #: 시각 표기(`08:22:03`)는 앞 문자가 숫자라 `EXTERNAL_SUFFIX_RE` 가 이미 배제한다
 #: (실측: 1자리 자기인용 0건 · 2자리 자기인용은 `:95`·`:29` 등 전부 진짜 좌표).
 SELF_CITE_RE = re.compile(r":(\d+)(?:\s*[-–—~]\s*(\d+))?")
+
+#: C2A(술어 자동 판정)의 모집단.  **대괄호형만** 본다 — 좁은 것이 아니라 **닫힌 것**이다.
+#: 넓히면 안 되는 이유는 아래 LIST-1 에 실측과 함께 적었다.
 CITE_LIST_RE = re.compile(r"\[((?::\d+[\s·,]*)+)\]")
-GUILLEMET_RE = re.compile(r"«([^»]{1,80})»")
+
+#: 좌표 «목록» 의 원소 **사이**에 올 수 있는 것 — 구분자와 공백뿐(아래 LIST-1).
+#: 목록-앵커 축은 감싸는 괄호류를 리터럴로 적지 않는다.
+CITE_LIST_GAP_RE = re.compile(r"^[\s·,、;]*$")
+
+#: «목록» 으로 인정하는 최소 원소 수.  하나짜리 괄호는 목록이 아니라 «주장절» 이고
+#: 그쪽은 C2B 소관이다.
+CITE_LIST_MIN = 2
+
+#: 목록 뒤에 붙은 «앵커» 를 찾을 때 목록 끝에서 건너뛸 수 있는 «닫는 표기».  괄호를
+#: **판정**에 쓰지 않으므로(형상 전수) 무엇이 닫든 상관없이 앵커까지 도달해야 한다.
+#: `»` 는 **넣지 않는다** — 넣으면 `«… :1·:2» «다른 말»` 에서 바깥 인용의 닫힘을 넘어
+#: 남의 «…» 를 앵커로 읽는다(면제 남용과 같은 부류의 침묵).
+CITE_LIST_CLOSERS = ")]}』」〕】>`* \t"
+#: «…» 로 인정하는 내용 길이 상한.  대조군이 «정직한 술어» 를 지어낼 때 같은 상한을
+#: 재사용해야 «검사기가 못 보는 길이» 를 대조군이 몰래 쓰는 일이 없다.
+GUILLEMET_MAX = 80
+GUILLEMET_RE = re.compile(rf"«([^»]{{1,{GUILLEMET_MAX}}})»")
 ANCHOR1_RE = re.compile(r":(\d{2,4})(?:\s*[-–—~]\s*(\d{2,4}))?`?\s*«([^»]{1,120})»")
 
 #: `**[v2.9 신설]**` 처럼 «각괄호 안» 의 버전은 편집 출처 표기(= 이력 기록)이므로
@@ -842,6 +917,90 @@ def iter_self_citations(doc: ContractDoc) -> Iterator[tuple[int, re.Match[str]]]
             yield lineno, m
 
 
+#: 목록의 원소 하나.  `offset` 은 그 행 «안»의 축자 시작 위치다(대조군이 자리를 집을 때
+#: 다시 찾지 않게 함께 나른다 — 되찾으면 같은 토큰이 두 번 나올 때 자리를 잃는다).
+Cite = namedtuple("Cite", ["start", "end", "token", "offset"])
+
+#: 인용 «목록» 한 개.  `start`/`end` 는 목록 전체의 행 안 오프셋이다.
+CitationList = namedtuple("CitationList", ["lineno", "start", "end", "cites"])
+
+
+def _fold_citation_run(lineno: int, run: list[re.Match[str]]) -> CitationList:
+    """인접 인용 묶음을 `CitationList` 로 접는다."""
+    cites = tuple(
+        Cite(
+            int(m.group(1)),
+            int(m.group(2)) if m.group(2) else int(m.group(1)),
+            m.group(0),
+            m.start(),
+        )
+        for m in run
+    )
+    return CitationList(lineno, run[0].start(), run[-1].end(), cites)
+
+
+def derive_citation_lists(doc: ContractDoc) -> list[CitationList]:
+    """자기인용 «목록» 을 **형상**으로 파생한다 (LIST-1).
+
+    감싸는 괄호류를 리터럴로 열거하지 않는다 — 목록의 정체는 «구분자로만 이어진 좌표가
+    둘 이상» 이라는 연속성이고, 그 술어는 다음 회차에 다른 괄호가 쓰여도 따라온다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+
+    Returns:
+        원소가 `CITE_LIST_MIN` 개 이상인 목록들 (문서 순서).
+    """
+    by_line: dict[int, list[re.Match[str]]] = {}
+    for lineno, m in iter_self_citations(doc):
+        by_line.setdefault(lineno, []).append(m)
+
+    runs: list[CitationList] = []
+    for lineno in sorted(by_line):
+        line = doc.lines[lineno - 1]
+        matches = by_line[lineno]
+        run = [matches[0]]
+        for prev, nxt in zip(matches, matches[1:]):
+            gap = _normalize(line[prev.end() : nxt.start()])
+            if CITE_LIST_GAP_RE.match(gap):
+                run.append(nxt)
+                continue
+            runs.append(_fold_citation_run(lineno, run))
+            run = [nxt]
+        runs.append(_fold_citation_run(lineno, run))
+    return [lst for lst in runs if len(lst.cites) >= CITE_LIST_MIN]
+
+
+def derive_list_anchors(
+    doc: ContractDoc, cite_lists: Sequence[CitationList]
+) -> list[tuple[CitationList, str]]:
+    """ANCHOR-1 을 «채택한» 목록만 골라 낸다 (LIST-1).
+
+    채택 표기는 단일 좌표 규약과 같은 모양이다 — 목록 «바로 뒤»에 «앵커» 를 붙인다.
+    목록을 닫는 표기(`)` `]` 백틱 …)는 건너뛰지만, 그 문자들이 **판정에 들어가지는
+    않는다** — 어떤 괄호로 감쌌든 앵커까지 도달한다(형상 전수).  넓게 잡아도 위양성이
+    나지 않는 이유는 채택이 **저작자의 옵트인**이기 때문이다: 앵커를 달지 않은 목록은
+    이 축의 모집단에 들어오지 않는다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        cite_lists: 형상으로 파생된 목록들.
+
+    Returns:
+        `(목록, 앵커 축자 문자열)` 목록 (문서 순서).
+    """
+    anchored: list[tuple[CitationList, str]] = []
+    for lst in cite_lists:
+        line = doc.lines[lst.lineno - 1]
+        cursor = lst.end
+        while cursor < len(line) and line[cursor] in CITE_LIST_CLOSERS:
+            cursor += 1
+        m = GUILLEMET_RE.match(line, cursor)
+        if m is not None:
+            anchored.append((lst, m.group(1)))
+    return anchored
+
+
 def _extract_claim(line: str, cite_start: int, cite_end: int) -> str | None:
     """인용 토큰에 붙은 «주장절»을 뽑는다.
 
@@ -911,10 +1070,18 @@ def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
     violations: list[Violation] = []
     total = 0
     anchored = 0
+    anchored_in_list = 0
     claimed = 0
 
     seeds = doc.ngram_index(min_anchor)
     last_line = len(doc.lines)
+    cite_lists = derive_citation_lists(doc)
+    anchored_lists = derive_list_anchors(doc, cite_lists)
+    list_anchor_at = {
+        (lst.lineno, cite.offset): (anchor, cite)
+        for lst, anchor in anchored_lists
+        for cite in lst.cites
+    }
 
     # -- C2R: 범위 밖 좌표 --------------------------------------------------
     for lineno, m in iter_self_citations(doc):
@@ -933,7 +1100,31 @@ def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
             )
             continue
 
-        # -- C2C: ANCHOR-1 규약 채택분 ------------------------------------
+        # -- C2C: ANCHOR-1 «목록» 형 채택분 --------------------------------
+        # 목록 앵커는 **이력 행 면제를 받지 않는다.**  단일 좌표의 면제는 «이력 행은
+        # 편집 前 문자열을 적는다» 는 관찰에서 나왔는데, 목록 앵커는 규약을 «채택하는»
+        # 저작 행위 자체가 «이 좌표들은 지금 이 문자열을 가리킨다» 는 명시 선언이다.
+        # 역사 기록으로 남길 목록은 앵커를 «달지 않으면» 되고, 그때는 위반이 아니라
+        # `unanchored` 계수로 간다 — 그 구별을 규약이 지고 정규식이 지지 않는다.
+        listed = list_anchor_at.get((lineno, m.start()))
+        if listed is not None:
+            anchored += 1
+            anchored_in_list += 1
+            anchor_raw, _cite = listed
+            if _normalize(anchor_raw) not in doc.range_text(start, end):
+                violations.append(
+                    Violation(
+                        "TOS-CC-C2C",
+                        doc.display_path,
+                        lineno,
+                        f"ANCHOR-1(목록) 위반 — 앵커 «{anchor_raw}» 가 목록 원소 "
+                        f"':{start}" + (f"-{end}" if end != start else "") + "' 의 "
+                        "피인용 범위에 축자 부재",
+                    )
+                )
+            continue
+
+        # -- C2C: ANCHOR-1 규약 채택분 (단일 좌표) --------------------------
         anchor_m = ANCHOR1_RE.match(doc.lines[lineno - 1], m.start())
         if anchor_m is not None:
             anchored += 1
@@ -1021,11 +1212,15 @@ def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
                     )
 
     logger.info(
-        "C2: 자기인용 %d건 (ANCHOR-1 채택 %d · 주장절 보유 %d · 미앵커 %d)",
+        "C2: 자기인용 %d건 (ANCHOR-1 채택 %d [그중 목록 %d] · 주장절 보유 %d · 미앵커 %d)"
+        " · 인용 목록 %d개(앵커 %d)",
         total,
         anchored,
+        anchored_in_list,
         claimed,
         total - anchored - claimed,
+        len(cite_lists),
+        len(anchored_lists),
     )
     return violations
 
@@ -1038,10 +1233,13 @@ def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
 def derive_unanchored_citations(doc: ContractDoc) -> list[tuple[int, str]]:
     """대조 «대상» 자체를 갖지 못하는 자기인용을 모집단으로 파생한다.
 
-    조건은 구조뿐이다 — ANCHOR-1 앵커도, 괄호 주장절도 붙지 않은 좌표.  둘 중 하나라도
-    있으면 C2B/C2C 가 실측 대조하므로 래칫의 소관이 아니다.  `--min-anchor` 같은
-    조율값에 결속하지 않는 이유는, 조율값을 올리면 기준선이 저절로 깨져 래칫이
-    «문서 변경»이 아닌 «설정 변경»에 반응하게 되기 때문이다.
+    조건은 구조뿐이다 — ANCHOR-1 앵커(**단일 좌표형·목록형 둘 다**)도, 괄호 주장절도
+    붙지 않은 좌표.  셋 중 하나라도 있으면 C2B/C2C 가 실측 대조하므로 래칫의 소관이
+    아니다.  `--min-anchor` 같은 조율값에 결속하지 않는 이유는, 조율값을 올리면 기준선이
+    저절로 깨져 래칫이 «문서 변경»이 아닌 «설정 변경»에 반응하게 되기 때문이다.
+
+    목록형을 여기서 빼는 것이 «괄호형이라 못 본다» 와 «앵커가 없어 계수만 한다» 를
+    가르는 자리다 — 목록에 앵커를 달면 잔여가 줄고 C2C 가 그 좌표들을 실측 대조한다.
 
     Args:
         doc: 계약 문서 컨텍스트.
@@ -1049,9 +1247,16 @@ def derive_unanchored_citations(doc: ContractDoc) -> list[tuple[int, str]]:
     Returns:
         `(행번호, 좌표 토큰)` 목록 (문서 순서).
     """
+    in_anchored_list = {
+        (lst.lineno, cite.offset)
+        for lst, _anchor in derive_list_anchors(doc, derive_citation_lists(doc))
+        for cite in lst.cites
+    }
     sites: list[tuple[int, str]] = []
     for lineno, m in iter_self_citations(doc):
         line = doc.lines[lineno - 1]
+        if (lineno, m.start()) in in_anchored_list:
+            continue
         if ANCHOR1_RE.match(line, m.start()) is not None:
             continue
         if _extract_claim(line, m.start(), m.end()):
@@ -2319,20 +2524,126 @@ def _inject_out_of_range_in_list(text: str) -> str:
     """인용 «목록» 안의 좌표 하나를 문서 행 범위 밖으로 민다 (C2R)."""
     doc = ContractDoc(text, "<mutation>")
     beyond = len(doc.lines) + 1000
-    for line in doc.lines:
-        m = CITE_LIST_RE.search(line)
-        if m is None:
-            continue
-        coords = re.findall(r":\d+", m.group(1))
-        if not coords:
-            continue
-        listing = m.group(0)
-        cut = listing.rfind(coords[-1])
-        mutated = listing[:cut] + f":{beyond}" + listing[cut + len(coords[-1]) :]
+    for lst in derive_citation_lists(doc):
+        line = doc.lines[lst.lineno - 1]
+        if text.count(line) != 1:
+            continue  # 유일하지 않은 행은 어느 자리를 밀었는지 말할 수 없다
+        cite = lst.cites[-1]
         return _replace_line_once(
-            text, line, line[: m.start()] + mutated + line[m.end() :]
+            text,
+            line,
+            line[: cite.offset] + f":{beyond}" + line[cite.offset + len(cite.token) :],
         )
     raise ContractParseError("인용 목록을 하나도 찾지 못했다")
+
+
+def _pick_anchorable_pair(doc: ContractDoc) -> tuple[int, int, str]:
+    """«두 행이 함께 갖는» 축자 조각과 그 두 행을 문서에서 파생한다.
+
+    대조군이 지어내는 목록은 «정직한» 쪽이 기준이다 — 두 좌표가 실제로 그 문자열을 갖는
+    자리여야, 하나를 «틀리게» 옮겼을 때 red 가 무엇을 증명하는지 말할 수 있다.  자리를
+    상수로 적지 않는 이유는 이 파일의 다른 대조군이 이미 증명했다(문서가 움직인다).
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+
+    Returns:
+        `(첫 행, 둘째 행, 두 행이 공유하는 축자 조각)`.
+
+    Raises:
+        ContractParseError: 그런 쌍이 없을 때 (대조군 무효).
+    """
+    seen: dict[str, int] = {}
+    for lineno, norm in enumerate(doc.norm_lines, start=1):
+        for token in norm.split():
+            if len(token) < MIN_ANCHOR_LEN or len(token) > GUILLEMET_MAX:
+                continue
+            if any(ch in token for ch in "«»()[]「」·:*`"):
+                continue
+            first = seen.setdefault(token, lineno)
+            if first != lineno:
+                return first, lineno, token
+    raise ContractParseError("두 행이 함께 갖는 축자 조각을 찾지 못했다")
+
+
+def _line_without(doc: ContractDoc, token: str) -> int:
+    """`token` 이 **부재**한 행을 찾는다 (대조군의 «틀린 자리»)."""
+    for lineno, norm in enumerate(doc.norm_lines, start=1):
+        if token not in norm:
+            return lineno
+    raise ContractParseError(f"'{token}' 가 부재한 행이 없다")
+
+
+def _inject_anchored_list(closers: str, corrupt: bool) -> Callable[[str], str]:
+    """앵커를 «채택한» 목록을 말미에 둔다 (C2C 목록형).
+
+    `closers` 는 목록을 감싸는 두 글자(`"()"` · `"[]"`)다.  **검사기는 이 글자를 보지
+    않으므로**(형상 전수) 대조군이 형태를 바꿔 가며 그 사실을 고정한다 — 한 괄호에서만
+    도는 규약은 다음 회차에 다른 괄호가 쓰이는 순간 조용해진다.
+
+    Args:
+        closers: 목록을 여닫는 두 글자.
+        corrupt: 참이면 둘째 원소를 «앵커가 부재한» 행으로 민다(주입형).
+                 거짓이면 두 원소 모두 앵커를 실제로 갖는다(역방향).
+
+    Returns:
+        문서 변형 함수.
+    """
+
+    def transform(text: str) -> str:
+        doc = ContractDoc(text, "<mutation>")
+        first, second, anchor = _pick_anchorable_pair(doc)
+        if corrupt:
+            second = _line_without(doc, anchor)
+        return _append(
+            text,
+            f"대조군 {closers[0]}:{first}·:{second}{closers[1]}«{anchor}» 목록 앵커.",
+        )
+
+    return transform
+
+
+def _inject_unanchored_list(text: str) -> str:
+    """앵커 «없는» 목록을 말미에 둔다 — 위반이 아니라 `unanchored` 계수여야 한다."""
+    doc = ContractDoc(text, "<mutation>")
+    first, _second, anchor = _pick_anchorable_pair(doc)
+    return _append(
+        text, f"대조군 (:{first}·:{_line_without(doc, anchor)}) 앵커 없는 목록."
+    )
+
+
+def _anchor_one_unanchored_list(text: str) -> str:
+    """문서의 실재 목록 **한 개**를 목록-앵커로 채택시킨다 (C2U notice).
+
+    앵커 채택이 실제로 래칫 «모집단»에서 좌표를 빼내는지가 이 대조군의 전부다.  자리는
+    문서 구조에서 파생한다 — 하드코딩한 목록은 계약 편집 한 번에 무효가 된다.
+
+    Args:
+        text: 원본 문서 텍스트.
+
+    Returns:
+        목록 하나가 앵커화된 텍스트.
+
+    Raises:
+        ContractParseError: 앵커화할 수 있는 목록이 없을 때 (대조군 무효).
+    """
+    doc = ContractDoc(text, "<mutation>")
+    for lst in derive_citation_lists(doc):
+        line = doc.lines[lst.lineno - 1]
+        if text.count(line) != 1:
+            continue  # 유일하지 않은 행은 어느 목록을 채택시켰는지 말할 수 없다
+        if derive_list_anchors(doc, [lst]):
+            continue  # 이미 채택한 목록은 잔여를 줄이지 못한다
+        anchor = _pick_anchor(doc, lst.cites[0].start)
+        if anchor is None:
+            continue
+        cursor = lst.end
+        while cursor < len(line) and line[cursor] in CITE_LIST_CLOSERS:
+            cursor += 1
+        return _replace_line_once(
+            text, line, line[:cursor] + f"«{anchor}»" + line[cursor:]
+        )
+    raise ContractParseError("앵커화할 수 있는 미앵커 목록을 찾지 못했다")
 
 
 def _inject_layer_tag(offset: int) -> Callable[[str], str]:
@@ -2800,6 +3111,58 @@ def build_mutations() -> list[Mutation]:
             lambda t: _append(
                 t, "대조군 [:1·:2] 가 «대조군-술어-부재-XYZ» 를 주장한다."
             ),
+        ),
+        Mutation(
+            "C2C-inject-wrong-coord-in-anchored-paren-list",
+            "TOS-CC-C2C",
+            "inject",
+            # **이 판의 직접 대조군.**  앵커를 «채택한» 소괄호 목록의 좌표 하나를 틀린
+            # 자리로 민다 — 대괄호가 아니어도 앵커가 붙었으면 C2C 가 잡아야 한다.
+            _inject_anchored_list(closers="()", corrupt=True),
+        ),
+        Mutation(
+            "C2C-inject-wrong-coord-in-anchored-bracket-list",
+            "TOS-CC-C2C",
+            "inject",
+            # 같은 규약을 대괄호 형태로.  «형상 전수» 가 한 괄호에만 붙지 않았음을 고정.
+            _inject_anchored_list(closers="[]", corrupt=True),
+        ),
+        Mutation(
+            "C2C-honest-anchored-list-is-silent",
+            "TOS-CC-C2C",
+            "silent",
+            # 역방향 — 전 원소가 앵커를 실제로 갖는 정직한 목록은 green 이어야 한다.
+            _inject_anchored_list(closers="()", corrupt=False),
+        ),
+        Mutation(
+            "C2C-unanchored-list-is-not-a-violation",
+            "TOS-CC-C2C",
+            "clean",
+            # 앵커 «없는» 목록은 red 가 «아니다».  이 판의 처분은 «괄호형이라 못 본다»
+            # 를 «앵커가 없어 계수만 한다» 로 옮긴 것이고, 그 전반부가 이 대조군이다.
+            _inject_unanchored_list,
+        ),
+        Mutation(
+            "C2U-unanchored-list-raises-the-ratchet",
+            "TOS-CC-C2U",
+            "inject",
+            # 후반부 — 같은 목록이 **래칫**에는 잡힌다.  둘을 한 대조군에 담으면
+            # «red 가 아니다» 와 «아무도 안 본다» 가 구별되지 않는다.
+            _inject_unanchored_list,
+            None,
+            FIXTURE_MEASURED,
+            FIXTURE_MEASURED,
+        ),
+        Mutation(
+            "C2U-anchored-list-lowers-the-ratchet",
+            "TOS-CC-C2U",
+            "notice",
+            # 목록에 앵커를 달면 잔여가 «준다» — 앵커 채택이 실제로 래칫 모집단에서
+            # 좌표를 빼내는지 고정한다(갱신 안내까지 대조).
+            _anchor_one_unanchored_list,
+            "[TOS-CC-C2U] 미앵커 자기인용 좌표가",
+            FIXTURE_MEASURED,
+            FIXTURE_MEASURED,
         ),
         Mutation(
             "C2B-inject-moved-claim",
