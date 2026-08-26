@@ -22,6 +22,8 @@ addendum-5 가 낸 네 건은 전부 같은 클래스다: **계약이 자기 자
                   **같은 마크다운 표 «셀»** 안에 공존 (아래 CELL-1).
   C4  TOS-CC-C4A  currency 층 태그 «현행(N차 이후)» 의 N ≠ 현행 회차.
       TOS-CC-C4B  currency 어휘를 쓰면서 층 태그가 «전무»한 자리.
+      TOS-CC-C4C  층 태그를 «단» 필드 안에서, 태그 밖 산문이 회차를 **리터럴**로
+                  가리키며 그 태그와 어긋난 자리 (아래 LAYER-REF-1).
   RULE TOS-CC-RULE-ANCHOR   규칙 문언 앵커가 문서에 0회 또는 2회 이상.
       TOS-CC-RULE-MISSING   universe ∖ consumers ≠ ∅ (규칙이 우주 전건에 적용되지 않았다).
       TOS-CC-RULE-EXTRA     consumers ∖ universe ≠ ∅ (사라진 원소를 가리키는 stale 소비처).
@@ -113,6 +115,52 @@ C2A 는 목록을 `[ … ]` 대괄호 정규식 하나로 잡는다.  이 계약
 즉 「괄호형이라서 못 본다」가 아니라 「앵커가 없어서 계수만 한다」가 된다.  현재 포인터인
 목록에 앵커를 달면 그 자리가 검사 대상으로 편입되고, 역사 기록인 목록은 달지 않으면 된다.
 `--report` 가 목록 수와 그중 앵커 채택 수를 내고, 그 한계는 최종 보고에도 남는다.
+
+------------------------------------------------------------------------------
+LAYER-REF-1 — 층 «태그» 밖의 회차 리터럴 (C4C · addendum-6 AF-M4)
+------------------------------------------------------------------------------
+A-F1 처분이 **같은 표 셀 안에서 자기모순**을 남겼다.  실측했던 형상::
+
+    | 6c‴ … | … **현행(15차 이후) = 미착수 …** .  `:95` 는 «v2.22 동결 내용» 층을
+      가리키고 이 행의 «미착수»는 «8차 이후» 층을 가리킨다 — … |
+              ↑ 태그는 회차마다 갱신됨          ↑ 산문 설명절은 «8차» 그대로
+
+`C4A` 는 `현행(N차 이후)` **태그의 형상만** 본다.  그래서 산문 「«N차 이후» 층」 참조는
+사정거리 밖이었고, 태그를 다섯 회차 갱신하는 동안 같은 셀의 설명절은 한 번도 갱신되지
+않았다(극성 fail-open).
+
+**모집단을 「N차 이후」 형상 전수로 잡으면 위양성이 난다.**  실측이 그렇다 — 이 문서의
+「N차 이후」 리터럴 중에는 «영구 앵커»가 있다::
+
+    S-26 ⑥ **카운터 리셋** — 10차 이후 계약 본문 편집은 … 카운터를 0 으로 리셋한다
+
+이 «10차»는 **사건이 일어난 회차**라 영원히 10차다.  현행 회차로 «고치면» 규칙이 거짓이
+된다.  전역 현행 회차와 대조하는 술어는 이 둘을 가를 정보를 갖고 있지 않다(LIST-1 이
+C2A 에서 배운 것과 같은 부류).
+
+**처분은 «비교 대상을 전역이 아니라 필드-지역»으로 옮기는 것이다.**  이 계약은 8차 ⓖ 에서
+currency 주장의 형식을 스스로 성문화했다 — 「«미착수/재심 전» 어휘 grep + **층 태그 병기**」.
+즉 **층 태그를 단 필드 = 이 문서가 «여기서 현행 층을 말한다»고 선언한 자리**다.  그래서::
+
+  * 모집단 = **층 태그를 가진 필드**(표면 셀 · 표가 아니면 행 전체) 안의, 태그 매치 구간
+    «밖» 에 있는 「N차 이후」 리터럴.
+  * 대조 상대 = **그 필드의 서 있는 태그**(= 마지막 태그.  C4A 와 같은 대체 규칙).
+    전역 현행 회차가 아니다 — 태그가 stale 한 사건은 C4A 소관이고, 한 뮤턴트가 두 축을
+    흔들면 판별력이 갈린다.
+  * 태그가 없는 필드는 **모집단 밖**이다.  비교할 지역 정본이 없는 자리에서 전역 회차를
+    들이대면 위 «영구 앵커»가 전부 red 가 된다.  그 공백은 「층 태그 전무」로 C4B 가
+    이미 별도로 본다.
+
+면제 둘 (넓게 잡는다)::
+
+  * **provenance 구간** — 필드 안에서 `[vX.Y 에라타 N차 …]` 마커가 **앞서 열린** 뒤의
+    리터럴은 「그 회차가 무엇을 적었는가」의 이력 인용이다.  14차가 배운 것: 역사 기록을
+    현행으로 «고치면» 역사가 거짓이 된다.
+  * **이력 행** — S-12 가 리터럴을 허용하는 자리(`is_history_row`).
+
+한계는 정직하게 적는다: provenance 마커 뒤는 **구간 끝까지** 면제이므로, 마커 뒤에 새로
+쓴 «살아 있는» 산문이 리터럴을 박으면 C4C 는 조용하다.  그 경계를 «문장»으로 좁히려면
+의미를 읽어야 하고, 그것이 바로 LIST-1 이 거부한 길이다.
 
 ------------------------------------------------------------------------------
 QUOTE-1 — C1 은 «살아 있는 주장» 과 «에라타가 대체한 옛 표기의 인용» 을 가른다
@@ -356,6 +404,15 @@ ERRATA_ROUND_RE = re.compile(r"에라타\s*(\d+)\s*차")
 FUTURE_FIELD_DECL_RE = re.compile(r"\*\*미래 지향 필드\*\*\s*\(([^)]*)\)")
 CURRENCY_VOCAB_DECL_RE = re.compile(r"「([^」]*)」\s*어휘")
 LAYER_TAG_RE = re.compile(r"현행\s*\(\s*\*{0,2}\s*(\d+)\s*차\s*이후\s*\*{0,2}\s*\)")
+
+#: 「N차 이후」 라는 **회차 리터럴 참조**의 형상.  층 태그의 «안»도 이 형상을 가지므로
+#: C4C 는 태그 매치 구간을 먼저 빼고 남은 것만 본다(아래 LAYER-REF-1).
+ROUND_REF_RE = re.compile(r"(\d+)\s*차\s*이후")
+
+#: `**[v2.22 에라타 N차 …]**` — 편집 출처(provenance) 마커.  이 마커가 **여는** 구간은
+#: 「그 회차가 무엇을 적었는가」의 이력 기록이므로 C4C 면제다(LAYER-REF-1).
+ERRATA_PROVENANCE_RE = re.compile(r"\[\s*\**\s*v\d+\.\d+\s*에라타\s*\d+\s*차")
+
 FENCE_RE = re.compile(r"^\s*```")
 
 ENUM_DEF_RE = re.compile(r"\(4\)\s*대사?상\s*=")
@@ -1653,6 +1710,27 @@ def check_c3(doc: ContractDoc) -> list[Violation]:
 # ============================================================================
 
 
+def _prose_round_refs(
+    cell: str,
+) -> tuple[list[tuple[int, int, str]], list[re.Match[str]]]:
+    """필드 하나에서 «태그 밖» 회차 리터럴과 층 태그를 갈라 낸다 (LAYER-REF-1).
+
+    Args:
+        cell: 필드(표 셀 또는 행 전체) 텍스트.
+
+    Returns:
+        `(태그 밖 리터럴 [(회차, 필드 내 오프셋, 축자 표기)], 층 태그 매치 목록)`.
+    """
+    tags = list(LAYER_TAG_RE.finditer(cell))
+    tag_spans = [(m.start(), m.end()) for m in tags]
+    prose: list[tuple[int, int, str]] = []
+    for m in ROUND_REF_RE.finditer(cell):
+        if any(lo <= m.start() and m.end() <= hi for lo, hi in tag_spans):
+            continue  # 태그 «자신» 은 C4A 소관이다
+        prose.append((int(m.group(1)), m.start(), m.group(0)))
+    return prose, tags
+
+
 def check_c4(doc: ContractDoc) -> list[Violation]:
     """C4 — currency 층 태그가 현행 회차와 정합하는지 전수 검사한다."""
     violations: list[Violation] = []
@@ -1660,6 +1738,9 @@ def check_c4(doc: ContractDoc) -> list[Violation]:
     tagged = 0
     swept = 0
     narrowed = 0
+    prose_pop = 0
+    prose_exempt_prov = 0
+    prose_exempt_history = 0
 
     for lineno, line in enumerate(doc.lines, start=1):
         tags = [(int(m.group(1)), m.group(0)) for m in LAYER_TAG_RE.finditer(line)]
@@ -1687,6 +1768,37 @@ def check_c4(doc: ContractDoc) -> list[Violation]:
                             lineno,
                             f"앞선 층 태그 '{earlier_text}' 가 뒤 태그 "
                             f"'{standing_text}' 에 의해 대체되지 않는다(회차 비단조)",
+                        )
+                    )
+
+            # -- C4C: 태그를 «단» 필드 안의 태그 «밖» 회차 리터럴 (LAYER-REF-1) --
+            for offset, cell in _split_cells(line):
+                refs, cell_tags = _prose_round_refs(cell)
+                if not cell_tags or not refs:
+                    continue
+                standing_cell_round = int(cell_tags[-1].group(1))
+                prov = [m.start() for m in ERRATA_PROVENANCE_RE.finditer(cell)]
+                for ref_round, ref_at, ref_text in refs:
+                    prose_pop += 1
+                    if any(p < ref_at for p in prov):
+                        prose_exempt_prov += 1
+                        continue  # 이력 인용 — 현행으로 «고치면» 역사가 거짓이 된다
+                    if doc.is_history_row(lineno):
+                        prose_exempt_history += 1
+                        continue  # S-12 가 리터럴을 허용하는 자리
+                    if ref_round == standing_cell_round:
+                        continue
+                    violations.append(
+                        Violation(
+                            "TOS-CC-C4C",
+                            doc.display_path,
+                            lineno,
+                            f"층 태그 '{cell_tags[-1].group(0)}' 를 단 필드 안에서 "
+                            f"태그 «밖» 산문이 회차를 리터럴 '{ref_text}' 로 가리킨다 "
+                            f"(태그 {standing_cell_round}차와 불일치 · "
+                            f"col {offset + ref_at}) — **상대 참조**(«앞머리 층 태그가 "
+                            "가리키는 현행 층»)로 바꾸거나 «[vX.Y 에라타 N차 …]» "
+                            "provenance 로 감싸라 (LAYER-REF-1 · AF-M4)",
                         )
                     )
 
@@ -1718,12 +1830,16 @@ def check_c4(doc: ContractDoc) -> list[Violation]:
 
     logger.info(
         "C4: 현행 회차 %d차 · currency 어휘 %s · 태그 보유 행 %d · "
-        "어휘 스윕 행 %d (그중 현행-이상 판을 지목 = C4B 모집단 %d)",
+        "어휘 스윕 행 %d (그중 현행-이상 판을 지목 = C4B 모집단 %d) · "
+        "C4C 태그 밖 회차 리터럴 %d건 (provenance 면제 %d · 이력 행 면제 %d)",
         current,
         doc.currency_terms,
         tagged,
         swept,
         narrowed,
+        prose_pop,
+        prose_exempt_prov,
+        prose_exempt_history,
     )
     return violations
 
@@ -2674,6 +2790,27 @@ def _inject_nonmonotonic_layer_tags(text: str) -> str:
     )
 
 
+def _c4c_line(body: str) -> Callable[[str], str]:
+    """C4C 대조군 한 행을 만든다 — 회차를 **문서에서 파생**해 채운다.
+
+    `body` 는 세 자리를 갖는다 — `{tag}`(= 서 있는 층 태그), `{tag_round}`(= 그 태그의
+    회차 = 현행), `{past}`(= 현행보다 앞선 회차).  리터럴 회차를 상수로 적으면 다음
+    에라타에서 대조군이 조용히 의미를 잃는다 — 이 파일이 막으려는 결함과 같은 부류다.
+    """
+
+    def transform(text: str) -> str:
+        doc = ContractDoc(text, "<mutation>")
+        current = doc.current_round
+        return _append(
+            text,
+            body.format(
+                tag=f"현행({current}차 이후)", tag_round=current, past=current - 1
+            ),
+        )
+
+    return transform
+
+
 def _anchor_one_unanchored(text: str) -> str:
     """미앵커 좌표 **한 개**를 ANCHOR-1 규약으로 앵커화한다 (문서에서 자리를 파생).
 
@@ -3290,6 +3427,68 @@ def build_mutations() -> list[Mutation]:
             "TOS-CC-C4B",
             "silent",
             lambda t: _append(t, "대조군 — v2.6 당시 이 항목은 미착수였다(역사 기술)."),
+        ),
+        # ---- C4C (LAYER-REF-1 · addendum-6 AF-M4) -----------------------
+        Mutation(
+            "C4C-inject-literal-round-outside-tag",
+            "TOS-CC-C4C",
+            "inject",
+            # AF-M4 의 실측 형상 재현 — 태그는 현행, 같은 필드의 설명절은 옛 회차.
+            _c4c_line(
+                "대조군 — {tag} 층이다.  이 설명절은 «{past}차 이후» 층을 가리킨다."
+            ),
+        ),
+        Mutation(
+            "C4C-relative-reference-is-silent",
+            "TOS-CC-C4C",
+            "silent",
+            # 위 대조군의 «수리» 판 — 리터럴을 상대 참조로 바꾸면 조용해야 한다.
+            # 기준 실행 C4C 가 0 건이라 `repair` 방향은 SETUP-FAIL 이므로, 같은 행에서
+            # 리터럴만 뺀 `silent` 이 이 축의 정직한 양방향 대조다.
+            _c4c_line(
+                "대조군 — {tag} 층이다.  이 설명절은 «앞머리 층 태그가 가리키는 현행» "
+                "층을 가리킨다."
+            ),
+        ),
+        Mutation(
+            "C4C-provenance-quote-is-silent",
+            "TOS-CC-C4C",
+            "silent",
+            # provenance 가 여는 구간의 이력 인용 — 과잉 차단 0 (14차 교훈).
+            _c4c_line(
+                "대조군 — {tag} 층이다.  **[v2.22 에라타 {tag_round}차 — 대조군]** "
+                "종래 «{past}차 이후» 를 리터럴로 적었다."
+            ),
+        ),
+        Mutation(
+            "C4C-history-row-is-exempt",
+            "TOS-CC-C4C",
+            "silent",
+            # S-12 가 리터럴을 허용하는 자리 — 이력 행.
+            _c4c_line("| **v2.22** | {tag} 층인데 «{past}차 이후» (이력 행 대조군) |"),
+        ),
+        Mutation(
+            "C4C-untagged-field-is-silent",
+            "TOS-CC-C4C",
+            "silent",
+            # 태그 없는 «영구 앵커»(S-26 ⑥ 카운터 리셋 부류) — 모집단 밖이어야 한다.
+            # 이 자리가 red 가 되면 전역 현행 회차와 대조하고 있다는 뜻이다.
+            _c4c_line("대조군 — {past}차 이후 계약 본문 편집은 카운터를 리셋한다."),
+        ),
+        Mutation(
+            "C4C-matching-round-is-silent",
+            "TOS-CC-C4C",
+            "silent",
+            # 태그와 «같은» 회차를 산문이 리터럴로 적은 자리 — 지금은 모순이 아니다.
+            # (태그가 다음 회차에 올라가는 순간 red 로 뒤집히는 것이 이 축의 설계다.)
+            _c4c_line("대조군 — {tag} 층이고 이 설명절도 «{tag_round}차 이후» 다."),
+        ),
+        Mutation(
+            "C4C-split-cells-is-silent",
+            "TOS-CC-C4C",
+            "silent",
+            # 태그는 셀 1, 리터럴은 셀 2 — 갈라져야 할 둘이므로 과잉 차단 0 (CELL-1).
+            _c4c_line("| 단계 | {tag} 층 | 그리고 «{past}차 이후» |"),
         ),
         Mutation(
             "C2R-inject-bare-out-of-range",
