@@ -163,11 +163,24 @@ green»)가 직접 증명하고, 문서가 그 축에서 **이미 green 일 때*
 그래서 `before=0` 인 `repair` 대조군은 통과가 아니라 **«대조군 무효»** 로 시끄럽게 뜬다 —
 수리할 대상이 없는 수리 대조군은 조용히 참인 채로 아무것도 증명하지 않기 때문이다.
 
-배터리는 «죽은 검사»(검사가 변이를 판별하지 못함 = 검사기 결함)와 «대조군 무효»(변이를
-문서에 넣지 못함 = 앵커가 사라짐)를 **분리해** 보고한다.  둘을 섞으면 문서가 움직였을
-뿐인데 검사기가 죽은 것처럼 보인다.  그 오귀속을 피하려고 이 파일의 대조군은 자리를
-가능한 한 **문서 구조에서 파생**한다(하드코딩 앵커는 계약 편집 한 번에 전부 무효가 된다 —
-실측했다).
+배터리는 실패를 **네 부류로 갈라** 계수한다 — 원인이 다르면 처방이 다르기 때문이다::
+
+  죽은 검사        뮤턴트를 넣었는데 검사가 안 뒤집혔다   → 뮤테이션 설계 재검토
+  앵커 불일치      뮤턴트를 «넣지조차» 못했다 (count≠1)   → **재앵커**
+  역방향 과잉 차단 정직한 입력을 검사가 잡았다            → 술어 과잉 봉합 재검토
+  대조군 무효      그 밖의 대조군 구성 실패               → 대조군 재설계
+
+요약 줄은 네 수치를 각각 낸다.  한 통에 넣으면 «문서 편집이 앵커를 옮겼다» 가 «검사기가
+죽었다» 로 오귀속된다 — 10차 에라타에서 10종이 정확히 이렇게 죽었고, 그때 요약은 둘을
+구별하지 못했다.  **분리는 «진단» 이지 «관대함» 이 아니다: 어느 부류든 rc≠0 이다.**
+
+앵커 불일치는 두 경로로 잡는다.  축자 앵커를 든 대조군은 뮤턴트 실행 «전»에 문서에서
+정확히 1회인지 사전 점검하고, 구조에서 자리를 파생하는 대조군은 파생 시점에 올라오는
+`AnchorMismatch` 로 같은 부류에 든다.  그리고 그 «분리» 자체를 메타 대조군 2종이
+고정한다(앵커가 0회인 것과 2회인 것 — 둘 다 앵커 불일치로 분류되고 rc≠0 이어야 한다).
+
+이 파일의 대조군은 자리를 가능한 한 **문서 구조에서 파생**한다(하드코딩 앵커는 계약
+편집 한 번에 전부 무효가 된다 — 실측했다).
 """
 
 from __future__ import annotations
@@ -261,6 +274,10 @@ MIN_ANCHOR_LEN = 8
 #: 주장절 파싱 상한(문자).  이보다 긴 괄호는 인용의 주장절이 아니라 산문으로 본다.
 MAX_CLAIM_LEN = 240
 
+#: 앵커 불일치 진단에 앵커를 그대로 되싣는 길이 상한(문자).  «어느 앵커가» 를 재앵커에
+#: 쓸 수 있을 만큼은 보이되 한 줄을 넘기지 않는 타협점.
+ANCHOR_ECHO_LEN = 72
+
 #: 자기인용 판별 시 «파일/문서 식별자» 를 되돌아보는 창(문자).
 EXTERNAL_LOOKBACK = 40
 
@@ -350,6 +367,50 @@ Violation = namedtuple("Violation", ["rule", "path", "line", "message"])
 
 class ContractParseError(RuntimeError):
     """모집단 파생에 필요한 구조를 문서에서 찾지 못했다 (fail-closed 사유)."""
+
+
+class AnchorMismatch(ContractParseError):
+    """축자 앵커가 문서/manifest 에서 «정확히 1회» 일치하지 않았다.
+
+    `ContractParseError` 의 **하위형**이라 생산 경로의 처분은 한 글자도 바뀌지 않는다
+    (메시지도 호출부가 주면 그대로 쓴다).  달라지는 것은 대조군 배터리가 이 실패를
+    «어느 부류로 계수하는가» 뿐이다.
+
+    가르는 이유는 처방이 다르기 때문이다::
+
+      * 죽은 검사   — 뮤턴트를 넣었는데 검사가 뒤집히지 않았다  → 뮤테이션 설계 재검토
+      * 앵커 불일치 — 뮤턴트를 «넣지조차» 못했다(count≠1)       → **재앵커**
+
+    한 통에 넣으면 문서 편집이 앵커를 옮긴 사건이 «검사기 결함» 으로 오귀속된다
+    (10차 에라타에서 10종이 이렇게 죽었다).  **가르는 것은 «진단»이지 «관대함»이
+    아니다** — 어느 부류든 rc≠0 이다.
+
+    Attributes:
+        anchor: 찾지 못했거나 여럿이던 축자 앵커.
+        count: 실측 일치 횟수 (0 또는 2 이상).
+        where: 어디에서 셌는지 (문서 / manifest …) — 진단 문구용.
+    """
+
+    def __init__(
+        self, anchor: str, count: int, where: str = "문서", message: str | None = None
+    ) -> None:
+        self.anchor = anchor
+        self.count = count
+        self.where = where
+        super().__init__(
+            message
+            if message is not None
+            else (
+                f"앵커 «{_ellipsis(anchor)}» 가 {where}에 {count}회 "
+                "(정확히 1회여야 한다)"
+            )
+        )
+
+
+def _ellipsis(text: str, limit: int = ANCHOR_ECHO_LEN) -> str:
+    """진단 출력에 앵커를 그대로 싣되 한 줄을 넘기지 않게 자른다."""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
 def _normalize(text: str) -> str:
@@ -1512,9 +1573,15 @@ def _unique_anchor_line(doc: ContractDoc, anchor: str) -> int:
     """
     hits = [i for i, line in enumerate(doc.lines, start=1) if anchor in line]
     if len(hits) != 1:
-        raise ContractParseError(
+        # 메시지는 종전 그대로 — 바뀌는 것은 **형(type)** 뿐이다.  생산 경로는
+        # `ContractParseError` 로 잡으므로 처분이 불변이고, 대조군 배터리만 이
+        # 실패를 «앵커 불일치» 로 계수한다.
+        raise AnchorMismatch(
+            anchor,
+            len(hits),
+            "문서",
             f"블록 앵커 {anchor!r} 를 담은 행이 정확히 1개가 아니다 "
-            f"(실측 {len(hits)}: {hits})"
+            f"(실측 {len(hits)}: {hits})",
         )
     return hits[0]
 
@@ -1583,8 +1650,12 @@ def derive_consumers_circled(
     if not hits:
         return None
     if len(hits) > 1:
-        raise ContractParseError(
-            f"소비처 블록 앵커 {anchor!r} 를 담은 행이 여럿이다 (실측 {hits})"
+        # 형만 바꾼다 (메시지·처분 불변) — `_unique_anchor_line` 과 같은 사유.
+        raise AnchorMismatch(
+            anchor,
+            len(hits),
+            "문서",
+            f"소비처 블록 앵커 {anchor!r} 를 담은 행이 여럿이다 (실측 {hits})",
         )
     line_no = hits[0]
     block = _enumeration_block(doc, line_no, 0)
@@ -2066,13 +2137,24 @@ Mutation = namedtuple(
         "ref_baseline",
         "manifest",
         "ref_manifest",
+        "anchors",
     ],
-    defaults=(None, None, None, None, None),
+    defaults=(None, None, None, None, None, ()),
 )
 """대조군 한 건.
 
 `expect` 는 `capture`(진단 문구에 포착값이 실재해야 한다)와 `notice`(안내 문구에
 이 조각이 실재해야 한다) 방향에서만 쓴다.
+
+`anchors` 는 이 대조군이 **축자로** 겨누는 주입 대상들이다.  배터리는 뮤턴트를 돌리기
+«전»에 각 앵커가 문서에 정확히 1회 일치하는지 사전 점검하고, 어긋나면 그 대조군을
+«앵커 불일치»(재앵커 대상)로 계수한다 — «죽은 검사»(검사기 결함)와 섞지 않는다.
+앵커 문자열은 **변이 자체와 같은 상수를 공유**해야 한다.  따로 적으면 둘이 갈라져
+사전 점검이 실제 주입 대상과 다른 것을 재게 된다.
+
+구조에서 파생하는 대조군(행·블록·좌표를 문서에서 찾아 쓰는 것들)은 여기에 적을 축자
+앵커가 없다.  그쪽은 파생 시점에 `AnchorMismatch` 가 올라오므로 같은 부류로 계수된다 —
+사전 점검은 **축자 앵커를 든 대조군의 추가 방어**이지 유일한 경로가 아니다.
 
 `baseline` / `ref_baseline` 은 **기준선 픽스처 키**다(`None` = 실운용 파일,
 그 외는 `FIXTURE_*`).  둘을 나눈 이유는 두 종류의 대조군이 있기 때문이다::
@@ -2084,6 +2166,37 @@ Mutation = namedtuple(
 두 번째가 이번 판에서 실제로 문제였다: 앵커화 대조군이 주변 기준선(실운용 파일)에
 의존한 탓에, 문서가 이미 기준선을 초과한 상태에서는 «감소»를 만들 수 없어 `1→1` 로
 죽었다.  **대조군은 자기 판정에 필요한 픽스처를 스스로 들고 있어야 한다.**
+"""
+
+#: 대조군 실패의 «부류».  가르는 이유는 처방이 다르기 때문이다 — 한 통에 넣으면
+#: 계수는 같은데 해야 할 일이 다른 두 사건이 구별되지 않는다.
+BUCKET_DEAD = "dead"  # 뮤턴트를 넣었는데 검사가 안 뒤집혔다  → 뮤테이션 설계 재검토
+BUCKET_ANCHOR = "anchor"  # 뮤턴트를 «넣지조차» 못했다 (count≠1) → 재앵커
+BUCKET_OVERBLOCK = "overblock"  # 정직한 입력을 검사가 잡았다      → 술어 과잉 봉합
+BUCKET_INVALID = "invalid"  # 그 밖의 대조군 구성 실패          → 대조군 재설계
+
+#: 출력·계수 순서.  **전부 fail-closed** — 어느 부류도 통과로 접지 않는다.
+BUCKET_ORDER = (BUCKET_DEAD, BUCKET_ANCHOR, BUCKET_OVERBLOCK, BUCKET_INVALID)
+
+#: 부류 → 요약 줄 표기.
+BUCKET_LABEL = {
+    BUCKET_DEAD: "죽은 검사",
+    BUCKET_ANCHOR: "앵커 불일치",
+    BUCKET_OVERBLOCK: "역방향 과잉 차단",
+    BUCKET_INVALID: "대조군 무효",
+}
+
+#: «역방향» 대조군 — 정직한 입력에서 검사가 **발화하면 안 되는** 방향.  이쪽 실패는
+#: 판별력 부족이 아니라 과잉 차단이므로 죽은 검사와 계수를 섞지 않는다.
+REVERSE_DIRECTIONS = frozenset({"clean", "silent"})
+
+Outcome = namedtuple(
+    "Outcome", ["bucket", "status", "detail", "mismatch"], defaults=(None,)
+)
+"""대조군 한 건의 판정.
+
+`bucket` 이 `None` 이면 통과다.  `mismatch` 는 앵커 불일치일 때의 구조적 근거
+(어느 앵커가 · 몇 회) — 진단 문구를 다시 파싱하지 않고 판정에 쓰기 위한 것이다.
 """
 
 #: 기준선 픽스처 키.
@@ -2116,10 +2229,11 @@ def _enum_fence(doc: ContractDoc) -> tuple[int, int]:
 
 
 def _replace_line_once(text: str, old_line: str, new_line: str) -> str:
-    """행 «내용»만 바꾼다 (행 수 불변).  대상이 유일하지 않으면 대조군 무효."""
-    if text.count(old_line) != 1:
-        raise ContractParseError(
-            f"주입 대상 행이 유일하지 않다 (count={text.count(old_line)})"
+    """행 «내용»만 바꾼다 (행 수 불변).  대상이 유일하지 않으면 **앵커 불일치**."""
+    count = text.count(old_line)
+    if count != 1:
+        raise AnchorMismatch(
+            old_line, count, "문서", f"주입 대상 행이 유일하지 않다 (count={count})"
         )
     return text.replace(old_line, new_line, 1)
 
@@ -2300,19 +2414,22 @@ def _pick_anchor(doc: ContractDoc, lineno: int) -> str | None:
 
 
 def _sub_once(text: str, old: str, new: str) -> str:
-    """정확히 1회 치환한다.  대상이 1개가 아니면 대조군이 무효이므로 예외."""
+    """정확히 1회 치환한다.  대상이 1개가 아니면 **앵커 불일치**이므로 예외."""
     count = text.count(old)
     if count != 1:
-        raise ContractParseError(
-            f"뮤테이션 대상이 유일하지 않다 (count={count}): {old!r}"
+        raise AnchorMismatch(
+            old,
+            count,
+            "문서",
+            f"뮤테이션 대상이 유일하지 않다 (count={count}): {old!r}",
         )
     return text.replace(old, new, 1)
 
 
 def _sub_first(text: str, old: str, new: str) -> str:
-    """첫 출현 1회를 치환한다 (0회면 대조군 무효)."""
+    """첫 출현 1회를 치환한다 (0회면 **앵커 불일치**)."""
     if old not in text:
-        raise ContractParseError(f"뮤테이션 대상 부재: {old!r}")
+        raise AnchorMismatch(old, 0, "문서", f"뮤테이션 대상 부재: {old!r}")
     return text.replace(old, new, 1)
 
 
@@ -2436,10 +2553,13 @@ def _remove_last_consumer(text: str) -> str:
     if not found or not found[0]:
         raise ContractParseError("지울 소비처가 없다")
     target = found[0][-1]
-    if text.count(target.verbatim) != 1:
-        raise ContractParseError(
-            f"소비처 제거 대상이 유일하지 않다 ({text.count(target.verbatim)}건): "
-            f"{target.verbatim!r}"
+    hits = text.count(target.verbatim)
+    if hits != 1:
+        raise AnchorMismatch(
+            target.verbatim,
+            hits,
+            "문서",
+            f"소비처 제거 대상이 유일하지 않다 ({hits}건): {target.verbatim!r}",
         )
     return text.replace(target.verbatim, target.element, 1)
 
@@ -2561,6 +2681,22 @@ def build_manifest_fixtures(
     }
 
 
+# ---- 축자 주입 앵커 ---------------------------------------------------------
+#
+# 아래 상수들은 «사전 점검이 재는 것»과 «변이가 실제로 치환하는 것»이 갈라지지 않도록
+# **한 자리에** 둔다.  대조군이 앵커를 따로 한 번 더 적으면 그 둘이 드리프트해 사전
+# 점검이 엉뚱한 문자열을 재게 된다 — 그러면 방어가 아니라 장식이다.
+#
+# 이 자리들은 하드코딩이 «불가피한» 것들이다(문서 구조에서 파생할 좌표가 없다).
+# 그래서 정확히 이 자리들이 10차 계약 편집에 쓸려 죽었다 — 사전 점검의 일차 대상이다.
+ANCHOR_C1_ELEMENT = "· `rulesets` ·"
+ANCHOR_C1X_CONSUMER = "**⑦`rules/branches/{target}`**"
+ANCHOR_C3A_LITERAL = "재심 대상을 리터럴 버전으로"
+ANCHOR_PARSE_VERSION = "> **버전**: v2.22"
+ANCHOR_PARSE_FUTURE_DECL = "**미래 지향 필드**("
+ANCHOR_PARSE_ENUM_DEF = "(4) 대상 = **배열(목록)"
+
+
 def build_mutations() -> list[Mutation]:
     """각 검사 축에 대해 «주입(→red)» 과 «수리(→그 자리 green)» 양방향 대조군을 만든다."""
     return [
@@ -2632,7 +2768,8 @@ def build_mutations() -> list[Mutation]:
             "inject",
             # 실제 열거에서 원소 하나를 지운다.  실제 크기를 하드코딩한 검사기라면
             # 여기서 침묵한다 — A-F5 가 적발한 fail-open 의 직접 대조군이다.
-            lambda t: _sub_once(t, "· `rulesets` ·", "·"),
+            lambda t: _sub_once(t, ANCHOR_C1_ELEMENT, "·"),
+            anchors=(ANCHOR_C1_ELEMENT,),
         ),
         Mutation(
             "C1-consistent-rename-is-silent",
@@ -2645,9 +2782,8 @@ def build_mutations() -> list[Mutation]:
             "C1X-inject-drop-element",
             "TOS-CC-C1X",
             "inject",
-            lambda t: _sub_once(
-                t, "**⑦`rules/branches/{target}`**", "**⑦`rules/branches/OTHER`**"
-            ),
+            lambda t: _sub_once(t, ANCHOR_C1X_CONSUMER, "**⑦`rules/branches/OTHER`**"),
+            anchors=(ANCHOR_C1X_CONSUMER,),
         ),
         # ---- C2 --------------------------------------------------------
         Mutation(
@@ -2689,8 +2825,9 @@ def build_mutations() -> list[Mutation]:
             "TOS-CC-C3A",
             "inject",
             lambda t: _sub_once(
-                t, "재심 대상을 리터럴 버전으로", "재심 대상(v2.99)을 리터럴 버전으로"
+                t, ANCHOR_C3A_LITERAL, "재심 대상(v2.99)을 리터럴 버전으로"
             ),
+            anchors=(ANCHOR_C3A_LITERAL,),
         ),
         Mutation(
             "C3B-inject-future-field",
@@ -2914,15 +3051,17 @@ def build_mutations() -> list[Mutation]:
             "PARSE-inject-version-field-gone",
             "TOS-CC-PARSE",
             "inject",
-            lambda t: _sub_once(t, "> **버전**: v2.22", "> 버전 필드 삭제 대조군"),
+            lambda t: _sub_once(t, ANCHOR_PARSE_VERSION, "> 버전 필드 삭제 대조군"),
+            anchors=(ANCHOR_PARSE_VERSION,),
         ),
         Mutation(
             "PARSE-inject-future-field-decl-gone",
             "TOS-CC-PARSE",
             "inject",
             lambda t: _sub_once(
-                t, "**미래 지향 필드**(", "미래 지향 필드 선언 삭제 대조군("
+                t, ANCHOR_PARSE_FUTURE_DECL, "미래 지향 필드 선언 삭제 대조군("
             ),
+            anchors=(ANCHOR_PARSE_FUTURE_DECL,),
         ),
         Mutation(
             "PARSE-inject-currency-vocab-decl-gone",
@@ -2941,8 +3080,9 @@ def build_mutations() -> list[Mutation]:
             "TOS-CC-PARSE",
             "inject",
             lambda t: _sub_once(
-                t, "(4) 대상 = **배열(목록)", "(4) 삭제 대조군 **배열(목록)"
+                t, ANCHOR_PARSE_ENUM_DEF, "(4) 삭제 대조군 **배열(목록)"
             ),
+            anchors=(ANCHOR_PARSE_ENUM_DEF,),
         ),
         # ---- RULE — 규칙 ↔ 소비처 전수 대응 (S-25 · R-F3) -------------------
         # 문서 변이 (manifest 는 실운용 그대로).
@@ -3113,6 +3253,96 @@ def build_mutations() -> list[Mutation]:
     ]
 
 
+# ---- 분류기 메타 대조군 -----------------------------------------------------
+#
+# 배터리는 «검사기» 를 검사한다.  아래 둘은 «배터리의 분류» 를 검사한다 — 앵커
+# 불일치를 죽은 검사로 오분류하지 않는가, 그리고 분류했다고 통과시키지는 않는가.
+# 본 배터리에 넣지 «않는» 이유는 이 둘이 언제나 실패하도록 만들어졌기 때문이다:
+# 기대되는 결과가 «앵커 불일치로 분류 + rc≠0» 이므로 별도 상(phase)에서 돌린다.
+
+#: 계약 문서에 결코 실재하지 않는 앵커 (0회 자리).  문서 어휘와 겹치지 않도록
+#: 검사기 자신의 이름을 섞어 둔다.
+CLASSIFIER_ABSENT_ANCHOR = (
+    "tos_contract_check 분류기 대조군: 이 문자열은 계약 문서에 실재하지 않는다"
+)
+
+#: 2회 자리 앵커를 문서에서 파생할 때 후보로 삼는 최소 토큰 길이.  짧으면 우연히
+#: 흔한 조각이 걸려 대조군이 문서 편집마다 흔들린다.
+CLASSIFIER_TWICE_MIN_LEN = 12
+
+
+def _phrase_occurring_twice(text: str) -> str:
+    """문서에 **정확히 2회** 나타나는 축자 조각을 문서에서 «파생» 한다.
+
+    상수로 적지 않는 이유는 이 파일이 이미 실측한 교훈 그대로다 — 하드코딩한 앵커는
+    계약 편집 한 번에 무효가 된다.  2회 자리는 문서가 스스로 갖고 있으므로 거기서
+    찾는다.
+
+    Args:
+        text: 계약 문서 전체 텍스트.
+
+    Returns:
+        `text.count(...) == 2` 인 축자 조각.
+
+    Raises:
+        ContractParseError: 그런 조각이 없을 때 — 조용히 대조군을 빼지 않는다.
+    """
+    seen: dict[str, int] = {}
+    for token in text.split():
+        if len(token) < CLASSIFIER_TWICE_MIN_LEN:
+            continue
+        seen[token] = seen.get(token, 0) + 1
+    for token, hits in seen.items():
+        # 토큰 계수 ≠ 부분문자열 계수(다른 토큰의 부분일 수 있다) — 실측으로 확인한다.
+        if hits == 2 and text.count(token) == 2:
+            return token
+    raise ContractParseError("문서에서 «정확히 2회» 나타나는 조각을 찾지 못했다")
+
+
+def _never_transform(text: str) -> str:
+    """분류기 대조군의 변이 — **도달하면 안 된다**.
+
+    사전 점검이 앵커 불일치를 먼저 잡아야 하므로, 여기까지 왔다는 것은 사전 점검이
+    발화하지 않았다는 뜻이다.  조용히 통과시키지 않고 대조군 무효로 떨어뜨린다.
+    """
+    raise ContractParseError(
+        "분류기 대조군의 변이가 실행됐다 — 사전 점검이 앵커 불일치를 놓쳤다"
+    )
+
+
+def build_classifier_controls(text: str) -> list[tuple[Mutation, int]]:
+    """분류 자체를 고정하는 메타 대조군과 «기대 count» 의 짝.
+
+    Args:
+        text: 계약 문서 전체 텍스트 (2회 자리를 여기서 파생한다).
+
+    Returns:
+        `(대조군, 기대 count)` 목록.
+    """
+    return [
+        (
+            Mutation(
+                "META-anchor-absent-from-document",
+                "TOS-CC-META",
+                "inject",
+                _never_transform,
+                anchors=(CLASSIFIER_ABSENT_ANCHOR,),
+            ),
+            0,
+        ),
+        (
+            Mutation(
+                "META-anchor-twice-in-document",
+                "TOS-CC-META",
+                "inject",
+                _never_transform,
+                anchors=(_phrase_occurring_twice(text),),
+            ),
+            2,
+        ),
+    ]
+
+
 def _write_fixture(path: Path, payload: dict[str, object]) -> Path:
     """픽스처 기준선 파일 하나를 쓴다."""
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -3262,6 +3492,231 @@ def _reference_index(
     return cache[key]
 
 
+def _precheck_anchors(mut: Mutation, text: str) -> AnchorMismatch | None:
+    """뮤턴트를 돌리기 **전**에 축자 주입 앵커가 문서에 정확히 1회인지 잰다.
+
+    변이 «후»에 실패를 보면 «검사가 판별하지 못했다» 와 «변이를 넣지도 못했다» 가
+    같은 자리에서 나온다.  앞에서 재면 둘째 사건이 자기 이름을 갖는다.
+
+    Args:
+        mut: 대조군 한 건.
+        text: 원본 계약 문서 텍스트.
+
+    Returns:
+        어긋난 첫 앵커의 `AnchorMismatch` (전부 1회면 `None`).
+    """
+    for anchor in mut.anchors:
+        count = text.count(anchor)
+        if count != 1:
+            return AnchorMismatch(anchor, count)
+    return None
+
+
+def _anchor_detail(exc: AnchorMismatch) -> str:
+    """앵커 불일치를 «어느 앵커가 · 몇 회» 로 적는다 (재앵커에 필요한 최소 정보)."""
+    return (
+        f"앵커 «{_ellipsis(exc.anchor)}» 가 {exc.where}에 {exc.count}회 "
+        "(정확히 1회여야 한다) → 재앵커"
+    )
+
+
+def _evaluate_mutation(
+    mut: Mutation,
+    text: str,
+    display_path: str,
+    min_anchor: int,
+    repo_root: Path,
+    fixtures: dict[str | None, Path],
+    manifests: dict[str | None, Path],
+    cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
+) -> Outcome:
+    """대조군 한 건을 돌려 «어느 부류인지» 판정한다.
+
+    배터리 본체와 분류기 메타 대조군이 **같은 함수**를 쓴다.  분류를 두 벌 적으면
+    메타 대조군이 검증하는 것과 배터리가 실제로 쓰는 것이 갈라진다.
+
+    Args:
+        mut: 대조군 한 건.
+        text: 원본 계약 문서 텍스트.
+        display_path: 진단 출력용 경로 표기.
+        min_anchor: C2B 앵커 최소 길이.
+        repo_root: 측정 출처 blob 을 읽을 저장소 루트.
+        fixtures: 기준선 픽스처 사상.
+        manifests: manifest 픽스처 사상.
+        cache: 기준 실행 색인 캐시.
+
+    Returns:
+        판정 결과.  `bucket is None` 이 통과다.
+    """
+    mismatch = _precheck_anchors(mut, text)
+    if mismatch is not None:
+        return Outcome(BUCKET_ANCHOR, "ANCHOR", _anchor_detail(mismatch), mismatch)
+    try:
+        mutated = mut.transform(text)
+    except AnchorMismatch as exc:
+        # 구조 파생형 대조군은 축자 앵커를 미리 적을 수 없다 — 파생 시점에 올라오는
+        # 이 예외가 그쪽의 «사전 점검»이고, 부류는 같다.
+        return Outcome(BUCKET_ANCHOR, "ANCHOR", _anchor_detail(exc), exc)
+    except ContractParseError as exc:
+        return Outcome(BUCKET_INVALID, "SETUP-FAIL", f"대조군 구성 실패 — {exc}")
+
+    # 기준선·manifest «픽스처» 를 바꾸는 대조군은 문서를 건드리지 않는 것이 정상이다.
+    mutates_baseline = (mut.baseline != mut.ref_baseline) or (
+        mut.manifest != mut.ref_manifest
+    )
+    if mutated == text and not mutates_baseline:
+        # 문서를 하나도 바꾸지 못했다 = 치환 대상 0회.  전량 치환형 대조군(`replace`)
+        # 은 «정확히 1회» 를 요구하지 않으므로 사전 점검에 적을 수 없고, 그 부재가
+        # 여기서 드러난다 — 사건은 같으므로 부류도 같다(앵커 불일치).
+        exc = AnchorMismatch(f"<{mut.name} 의 치환 대상>", 0)
+        return Outcome(BUCKET_ANCHOR, "ANCHOR", _anchor_detail(exc), exc)
+
+    ref_counts, ref_sites = _reference_index(
+        text,
+        display_path,
+        min_anchor,
+        repo_root,
+        fixtures[mut.ref_baseline],
+        manifests[mut.ref_manifest],
+        cache,
+    )
+    notices: list[str] = []
+    got = check_document(
+        mutated,
+        display_path,
+        min_anchor,
+        False,
+        fixtures[mut.baseline],
+        notices,
+        repo_root,
+        manifests[mut.manifest],
+    )
+    got_count = sum(1 for v in got if v.rule == mut.rule)
+    got_sites = {v.line for v in got if v.rule == mut.rule}
+    before = ref_counts.get(mut.rule, 0)
+    # 메시지 본문은 문서 편집으로 함께 바뀌므로 판정 피연산자로 쓰지 않는다.
+    # 하중은 «그 규칙의 계수» 와 «발화 자리 집합» 이 진다.
+    delta = got_count - before
+    moved = got_sites - ref_sites.get(mut.rule, set())
+
+    if mut.direction == "repair" and before == 0:
+        # «수리» 대조군은 기준 실행에 그 위반이 실재한다는 전제 위에 선다.  전제가
+        # 깨진 채 돌리면 «수리해도 줄지 않았다» 가 되어 검사기 결함으로 오귀속된다.
+        return Outcome(
+            BUCKET_INVALID,
+            "SETUP-FAIL",
+            f"수리할 대상이 기준 실행에 없다 ({mut.rule} before=0)",
+        )
+
+    if mut.direction == "inject":
+        ok = delta > 0 or bool(moved)
+        detail = f"{mut.rule} {before}→{got_count} · 신규 자리 {sorted(moved)}"
+    elif mut.direction == "repair":
+        ok = delta < 0 and not moved
+        detail = f"{mut.rule} {before}→{got_count} · 신규 자리 {sorted(moved)}"
+    elif mut.direction == "capture":
+        # 계수만으로는 «절단된 좌표를 red 로 냈다» 와 «온전한 좌표를 red 로 냈다» 가
+        # 구별되지 않는다.  진단 문구에서 포착값 자체를 대조한다.
+        hit = [v for v in got if v.rule == mut.rule and mut.expect in v.message]
+        ok = bool(hit)
+        detail = (
+            f"포착값 '{mut.expect}' {'일치' if ok else '불일치'} · "
+            f"{mut.rule} {before}→{got_count}"
+        )
+    elif mut.direction == "clean":
+        # 상대 비교(«늘지 않았다»)가 아니라 **절대** 기대(«0 건»).  기준 실행이 이미
+        # red 인 상황에서도 판별력을 잃지 않는 유일한 형태다.
+        ok = got_count == 0
+        detail = f"{mut.rule} 위반 {got_count}건 (0 이어야 한다)"
+    elif mut.direction == "notice":
+        # 잔여가 «줄었을» 때의 계약 — 위반은 늘지 않고(green), 갱신 안내는 나온다.
+        # 안내가 없는 green 은 래칫이 조용히 헐거워진 것과 구별되지 않는다.
+        seen = [n for n in notices if mut.expect in n]
+        ok = delta <= 0 and not moved and bool(seen)
+        detail = (
+            f"{mut.rule} {before}→{got_count} · 갱신 안내 "
+            f"{'있음' if seen else '없음'}"
+        )
+    else:  # silent — 잡으면 안 되는 변형
+        ok = delta <= 0 and not moved
+        detail = f"{mut.rule} {before}→{got_count} (불변이어야 한다)"
+
+    if ok:
+        return Outcome(None, "PASS", detail)
+    if mut.direction in REVERSE_DIRECTIONS:
+        # 역방향 대조군의 실패는 «판별하지 못했다» 가 아니라 «정직한 입력을 잡았다» 다.
+        return Outcome(BUCKET_OVERBLOCK, "OVERBLOCK", detail)
+    return Outcome(BUCKET_DEAD, "DEAD", detail)
+
+
+def _battery_rc(buckets: dict[str, list[str]], meta: list[str]) -> int:
+    """부류별 잔여에서 종료 코드를 낸다 — **fail-closed**.
+
+    부류를 가른 것은 «진단» 이지 «관대함» 이 아니다.  죽은 검사든 앵커 불일치든
+    역방향 과잉 차단이든 대조군 무효든, 어느 하나라도 남으면 rc≠0 이다.
+    """
+    return 1 if meta or any(buckets[b] for b in BUCKET_ORDER) else 0
+
+
+def _run_classifier_controls(
+    text: str,
+    display_path: str,
+    min_anchor: int,
+    repo_root: Path,
+    fixtures: dict[str | None, Path],
+    manifests: dict[str | None, Path],
+    cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
+) -> list[str]:
+    """«앵커 불일치» 분류 **자체**를 고정하는 메타 대조군을 돌린다.
+
+    두 가지를 함께 실증한다::
+
+      * 앵커가 0회/2회인 대조군은 «죽은 검사» 가 아니라 «앵커 불일치» 로 분류된다.
+      * 그렇게 분류돼도 **통과가 아니다** — 같은 rc 함수가 1 을 낸다.
+
+    Returns:
+        실패 사유 목록 (비면 메타 대조군 전건 통과).
+    """
+    failures: list[str] = []
+    try:
+        controls = build_classifier_controls(text)
+    except ContractParseError as exc:
+        # 메타 대조군을 «구성하지 못했다» 를 조용히 넘기면 분리 자체가 무검증이 된다.
+        print(f"  [META-FAIL] 분류기 대조군 구성 실패 — {exc}")
+        return [f"분류기 대조군 구성 실패 — {exc}"]
+
+    for mut, expected_count in controls:
+        outcome = _evaluate_mutation(
+            mut, text, display_path, min_anchor, repo_root, fixtures, manifests, cache
+        )
+        # rc 는 배터리 본체와 **같은 함수**로 잰다 — 여기만 따로 계산하면 «분류되면
+        # 통과» 라는 회귀를 이 대조군이 놓친다.
+        rc = _battery_rc(
+            {
+                b: ([outcome.detail] if b == outcome.bucket else [])
+                for b in BUCKET_ORDER
+            },
+            [],
+        )
+        reasons: list[str] = []
+        if outcome.bucket != BUCKET_ANCHOR:
+            reasons.append(
+                f"부류가 «{BUCKET_LABEL.get(outcome.bucket, '통과')}» 다 "
+                f"(«{BUCKET_LABEL[BUCKET_ANCHOR]}» 여야 한다)"
+            )
+        if outcome.mismatch is None or outcome.mismatch.count != expected_count:
+            got = "없음" if outcome.mismatch is None else outcome.mismatch.count
+            reasons.append(f"실측 count={got} (기대 {expected_count})")
+        if rc == 0:
+            reasons.append("rc=0 — 앵커 불일치를 통과로 접었다")
+        status = "META-PASS" if not reasons else "META-FAIL"
+        detail = outcome.detail if not reasons else " · ".join(reasons)
+        print(f"  [{status}] {mut.name:36s} {'분류기 대조군':14s} {'meta':7s} {detail}")
+        if reasons:
+            failures.append(f"{mut.name} — {detail}")
+    return failures
+
+
 def _run_battery(
     text: str,
     display_path: str,
@@ -3285,114 +3740,48 @@ def _run_battery(
         )
     print()
 
-    dead: list[str] = []
-    invalid: list[str] = []
-    for mut in build_mutations():
-        try:
-            mutated = mut.transform(text)
-        except ContractParseError as exc:
-            invalid.append(f"{mut.name} ({mut.rule}): 앵커 부재 — {exc}")
-            print(f"  [SETUP-FAIL] {mut.name} ({mut.rule}) — {exc}")
-            continue
-        # 기준선·manifest «픽스처» 를 바꾸는 대조군은 문서를 건드리지 않는 것이 정상이다.
-        mutates_baseline = (mut.baseline != mut.ref_baseline) or (
-            mut.manifest != mut.ref_manifest
+    buckets: dict[str, list[str]] = {b: [] for b in BUCKET_ORDER}
+    mutations = build_mutations()
+    for mut in mutations:
+        outcome = _evaluate_mutation(
+            mut, text, display_path, min_anchor, repo_root, fixtures, manifests, cache
         )
-        if mutated == text and not mutates_baseline:
-            # 문서를 하나도 바꾸지 못한 변이는 «판별했다»고 말할 수 없다.  이전 판은
-            # 이것을 DEAD 로 접어 «검사가 죽었다» 와 «대조군이 무효다» 를 뒤섞었다.
-            reason = "변이가 문서를 전혀 바꾸지 못했다 (치환 대상 부재)"
-            invalid.append(f"{mut.name} ({mut.rule}): {reason}")
-            print(f"  [SETUP-FAIL] {mut.name} ({mut.rule}) — {reason}")
-            continue
-
-        ref_counts, ref_sites = _reference_index(
-            text,
-            display_path,
-            min_anchor,
-            repo_root,
-            fixtures[mut.ref_baseline],
-            manifests[mut.ref_manifest],
-            cache,
-        )
-        notices: list[str] = []
-        got = check_document(
-            mutated,
-            display_path,
-            min_anchor,
-            False,
-            fixtures[mut.baseline],
-            notices,
-            repo_root,
-            manifests[mut.manifest],
-        )
-        got_count = sum(1 for v in got if v.rule == mut.rule)
-        got_sites = {v.line for v in got if v.rule == mut.rule}
-        before = ref_counts.get(mut.rule, 0)
-        # 메시지 본문은 문서 편집으로 함께 바뀌므로 판정 피연산자로 쓰지 않는다.
-        # 하중은 «그 규칙의 계수» 와 «발화 자리 집합» 이 진다.
-        delta = got_count - before
-        moved = got_sites - ref_sites.get(mut.rule, set())
-
-        if mut.direction == "repair" and before == 0:
-            # «수리» 대조군은 기준 실행에 그 위반이 실재한다는 전제 위에 선다.  전제가
-            # 깨진 채 돌리면 «수리해도 줄지 않았다» 가 되어 검사기 결함으로 오귀속된다.
-            reason = f"수리할 대상이 기준 실행에 없다 ({mut.rule} before=0)"
-            invalid.append(f"{mut.name} ({mut.rule}): {reason}")
-            print(f"  [SETUP-FAIL] {mut.name} ({mut.rule}) — {reason}")
-            continue
-
-        if mut.direction == "inject":
-            ok = delta > 0 or bool(moved)
-            detail = f"{mut.rule} {before}→{got_count} · 신규 자리 {sorted(moved)}"
-        elif mut.direction == "repair":
-            ok = delta < 0 and not moved
-            detail = f"{mut.rule} {before}→{got_count} · 신규 자리 {sorted(moved)}"
-        elif mut.direction == "capture":
-            # 계수만으로는 «절단된 좌표를 red 로 냈다» 와 «온전한 좌표를 red 로 냈다» 가
-            # 구별되지 않는다.  진단 문구에서 포착값 자체를 대조한다.
-            hit = [v for v in got if v.rule == mut.rule and mut.expect in v.message]
-            ok = bool(hit)
-            detail = f"포착값 '{mut.expect}' {'일치' if ok else '불일치'} · {mut.rule} {before}→{got_count}"
-        elif mut.direction == "clean":
-            # 상대 비교(«늘지 않았다»)가 아니라 **절대** 기대(«0 건»).  기준 실행이 이미
-            # red 인 상황에서도 판별력을 잃지 않는 유일한 형태다.
-            ok = got_count == 0
-            detail = f"{mut.rule} 위반 {got_count}건 (0 이어야 한다)"
-        elif mut.direction == "notice":
-            # 잔여가 «줄었을» 때의 계약 — 위반은 늘지 않고(green), 갱신 안내는 나온다.
-            # 안내가 없는 green 은 래칫이 조용히 헐거워진 것과 구별되지 않는다.
-            seen = [n for n in notices if mut.expect in n]
-            ok = delta <= 0 and not moved and bool(seen)
-            detail = (
-                f"{mut.rule} {before}→{got_count} · 갱신 안내 "
-                f"{'있음' if seen else '없음'}"
+        if outcome.bucket is not None:
+            buckets[outcome.bucket].append(
+                f"{mut.name} ({mut.rule}/{mut.direction}) — {outcome.detail}"
             )
-        else:  # silent — 잡으면 안 되는 변형
-            ok = delta <= 0 and not moved
-            detail = f"{mut.rule} {before}→{got_count} (불변이어야 한다)"
-
-        status = "PASS" if ok else "DEAD"
-        if not ok:
-            dead.append(f"{mut.name} ({mut.rule}/{mut.direction}) — {detail}")
-        print(f"  [{status}] {mut.name:36s} {mut.rule:14s} {mut.direction:7s} {detail}")
+        print(
+            f"  [{outcome.status}] {mut.name:36s} {mut.rule:14s} "
+            f"{mut.direction:7s} {outcome.detail}"
+        )
 
     print()
-    total = len(build_mutations())
-    if dead or invalid:
+    meta = _run_classifier_controls(
+        text, display_path, min_anchor, repo_root, fixtures, manifests, cache
+    )
+
+    print()
+    total = len(mutations)
+    counts = " · ".join(f"{BUCKET_LABEL[b]} {len(buckets[b])}" for b in BUCKET_ORDER)
+    rc = _battery_rc(buckets, meta)
+    if rc != 0:
         print(
-            f"self-test: FAIL — 뮤테이션 {total}종 중 "
-            f"죽은 검사 {len(dead)}건 · 대조군 무효 {len(invalid)}건"
+            f"self-test: FAIL — 뮤테이션 {total}종 · {counts} · "
+            f"분류기 대조군 실패 {len(meta)}"
         )
-        # 둘은 다른 사실이다.  «죽은 검사» = 검사가 변이를 판별하지 못했다(검사기 결함).
-        # «대조군 무효» = 변이를 문서에 넣지 못했다(문서가 움직여 앵커가 사라졌다).
-        for d in dead:
-            print(f"  - [죽은 검사] {d}")
-        for i in invalid:
-            print(f"  - [대조군 무효] {i}")
-        return 1
-    print(f"self-test: PASS — 뮤테이션 {total}종 전부 판별 · 죽은 검사 0")
-    return 0
+        # 부류마다 처방이 다르므로 목록도 따로 낸다.  죽은 검사 = 뮤테이션 설계
+        # 재검토 · 앵커 불일치 = 재앵커 · 역방향 과잉 차단 = 술어 과잉 봉합 재검토.
+        for bucket in BUCKET_ORDER:
+            for item in buckets[bucket]:
+                print(f"  - [{BUCKET_LABEL[bucket]}] {item}")
+        for item in meta:
+            print(f"  - [분류기 대조군] {item}")
+        return rc
+    print(
+        f"self-test: PASS — 뮤테이션 {total}종 전부 판별 · {counts} · "
+        f"분류기 대조군 {len(build_classifier_controls(text))}종 전건 통과"
+    )
+    return rc
 
 
 # ============================================================================
