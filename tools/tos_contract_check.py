@@ -117,6 +117,54 @@ C2A 는 목록을 `[ … ]` 대괄호 정규식 하나로 잡는다.  이 계약
 `--report` 가 목록 수와 그중 앵커 채택 수를 내고, 그 한계는 최종 보고에도 남는다.
 
 ------------------------------------------------------------------------------
+ANCHOR-2 — 이력 행 면제는 «가리킬 대상이 사라진» 앵커에만 준다 (C2C · 단일 좌표)
+------------------------------------------------------------------------------
+14차가 LIST-1 에서 세운 논증은 이것이다 — **앵커를 «다는» 행위 자체가 「이 좌표들은
+«지금» 이 문자열을 가리킨다」는 저작자의 명시 선언**이므로 목록 앵커는 이력 행 면제를
+받지 않는다.  **그 논증은 좌표가 여럿이든 하나든 똑같이 성립하는데 14차는 목록에만
+적용했다.**  「규칙 신설 = 전수 적용까지가 한 단위」를 스스로 어긴 것이고, **그 누락이
+이 결함의 원인**이다 — 단일 좌표 쪽에는 `is_history_row` 면제가 **무조건** 남았다.
+
+면제의 실효를 실측한다(HEAD `71653ff3` 시점의 기록이므로 이 수는 영구 앵커다): 앵커를
+가진 «단일» 자기인용은 문서 전체에 **5건이고 전부 이력 행 안**이며, **다섯 다 앵커
+축자가 지목한 자리에 부재**다.  즉 넓은 면제는 그 5건을 통째로 눈감고 있었다.
+
+원 근거 자체는 유효하다: 이력 행은 «무엇을 바꿨는가»를 적으므로 앵커가 «편집 前»
+문자열일 수 있고, 그 자리는 부재가 설계상 정상이다.  그래서 처분은 폐지가 아니라
+**좁힘**이다.  **가르는 기준은 산문의 «형상»이 아니라 문서 자신에서 파생한 사실**이다
+— 초판은 `:N«A»→«B»` 인접 형상으로 갈랐고 그것이 **위양성 2건**을 냈다.  같은 편집
+쌍이라도 「그 자리의 «X» 가 틀렸다 → «Y» 로 정정」처럼 **산문을 끼워** 적히면 형상이
+성립하지 않는데, 저작 의도는 완전히 같기 때문이다.  의미를 정규식으로 가르려 한 시도가
+곧 LIST-1 이 거부한 길이었다.  술어는 이렇게 선다::
+
+    앵커가 문서 «어디에도» 없다        → 편집으로 사라진 옛 표기의 이력 인용.
+                                        가리킬 대상이 애초에 없어 고칠 수도 없다
+                                                                → **면제 (이력 행에 한해)**
+    앵커가 «다른 행에» 실재하는데
+    지목한 자리엔 없다                 → 밀린 «살아 있는» 포인터.
+                                        실재 자리로 고칠 수 있다  → **C2C 적용**
+
+검색에서 **인용 행 자신은 뺀다** — 앵커 문자열은 인용 행에 축자로 적혀 있으므로, 빼지
+않으면 모든 앵커가 «실재»가 되어 면제가 통째로 죽는다.  비교는 양쪽 다 `_normalize` 를
+거친 표현으로 한다.  이 술어가 위 5건을 **3 red / 2 면제** 로 가른다 — 실재 자리를 가진
+셋(`:6190`→6421 · `:6146`→6502 · `:4321`→4419)이 red 이고, 문서 어디에도 없는 둘이
+면제다.  red 셋 중 하나(`:4321«6c‴ 현행 버전 재심»`)는 16차가 「앵커를 달아 검사 대상으로
+편입했다」고 **적은 바로 그 앵커**다 — 그 주장이 거짓이었다.
+
+비-이력 행은 종전대로 **항상** 적용한다.  면제가 실제로 몇 자리를 먹었는지는 `--report`
+로그가 계수로 낸다 — 산문에 그 수를 적으면 다음 편집에서 조용히 stale 해지기 때문이다
+(ANCHOR-1 이 같은 이유로 채택 «수»를 적지 않는다).
+
+**정직 경계 (fail-open 극성 2건).**
+
+  * 좌표가 밀린 **동시에** 그 앵커 문자열도 편집으로 사라진 자리는 이 축이 **잡지
+    못한다.**  둘을 가를 정보가 문서에 없기 때문이다 — 「어디에도 없음」이 「사라졌다」와
+    「밀렸는데 원문도 지워졌다」를 구별하지 못한다.  극성은 **fail-open** 이다.
+  * 반대 극성도 적어 둔다: 편집 쌍의 «前» 문자열이 문서 **다른 곳에 아직 남아 있으면**
+    이 술어는 그 자리를 red 로 낸다(정당한 이력 인용일 수 있다).  현행 판에 그런 자리는
+    **0건**이라 실물 위양성은 없고, 생기면 그때 가를 재료가 함께 생긴다.
+
+------------------------------------------------------------------------------
 LAYER-REF-1 — 층 «태그» 밖의 회차 리터럴 (C4C · addendum-6 AF-M4)
 ------------------------------------------------------------------------------
 A-F1 처분이 **같은 표 셀 안에서 자기모순**을 남겼다.  실측했던 형상::
@@ -472,6 +520,10 @@ CITE_LIST_CLOSERS = ")]}』」〕】>`* \t"
 GUILLEMET_MAX = 80
 GUILLEMET_RE = re.compile(rf"«([^»]{{1,{GUILLEMET_MAX}}})»")
 ANCHOR1_RE = re.compile(r":(\d{2,4})(?:\s*[-–—~]\s*(\d{2,4}))?`?\s*«([^»]{1,120})»")
+
+#: 문서 «어디에도» 실재하지 않아야 하는 앵커 — 편집으로 사라진 옛 표기를 흉내 낸다
+#: (ANCHOR-2 면제 대조군).  실재 여부는 대조군 구성 시점에 실측해 확인한다.
+VANISHED_ANCHOR = "이 문자열은 계약 문서 어디에도 실재하지 않는다 (ANCHOR-2 대조군)"
 
 #: `**[v2.9 신설]**` 처럼 «각괄호 안» 의 버전은 편집 출처 표기(= 이력 기록)이므로
 #: S-12 상 리터럴이 허용된다.  각괄호 여는 자리를 되돌아보는 창.
@@ -1122,6 +1174,29 @@ def _longest_present(
     return best
 
 
+def _anchor_lines_elsewhere(doc: ContractDoc, anchor: str, lineno: int) -> list[int]:
+    """정규화 앵커가 «인용 행 자신을 뺀» 문서에서 실재하는 행들을 모은다 (ANCHOR-2).
+
+    인용 행을 빼는 것이 술어의 하중을 진다 — 앵커 문자열은 인용 행에 축자로 적혀 있으므로,
+    빼지 않으면 모든 앵커가 «실재»가 되어 면제가 통째로 죽는다.  비교는 양쪽 다
+    `_normalize` 를 거친 표현으로 한다(`norm_lines` · 호출자가 정규화한 `anchor`) —
+    한쪽만 정규화하면 마크다운 강조가 낀 자리에서 술어가 조용히 갈린다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        anchor: **정규화된** 앵커 문자열.
+        lineno: 인용이 적힌 1-기반 행 번호 (검색에서 제외한다).
+
+    Returns:
+        앵커가 실재하는 행 번호들 (오름차순).  비면 «문서 어디에도 없다».
+    """
+    return [
+        i
+        for i, nl in enumerate(doc.norm_lines, start=1)
+        if i != lineno and anchor in nl
+    ]
+
+
 def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
     """C2 — 자기인용 좌표가 실제로 무엇을 가리키는지 실측 대조한다."""
     violations: list[Violation] = []
@@ -1129,6 +1204,7 @@ def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
     anchored = 0
     anchored_in_list = 0
     claimed = 0
+    vanished_anchor_exempt = 0
 
     seeds = doc.ngram_index(min_anchor)
     last_line = len(doc.lines)
@@ -1185,22 +1261,33 @@ def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
         anchor_m = ANCHOR1_RE.match(doc.lines[lineno - 1], m.start())
         if anchor_m is not None:
             anchored += 1
-            # 이력 행은 «무엇을 바꿨는가»를 적으므로 앵커가 «편집 前» 문자열일 수 있다
-            # (예: `:5894 «아래 어느 자리에서든»→«이 문서 어디에서든»`).  설계상 부재가
-            # 정상이라 C2C 를 적용하지 않는다 — 이 면제는 정직 경계로 보고한다.
-            if doc.is_history_row(lineno):
-                continue
             anchor = _normalize(anchor_m.group(3))
-            if anchor not in doc.range_text(start, end):
-                violations.append(
-                    Violation(
-                        "TOS-CC-C2C",
-                        doc.display_path,
-                        lineno,
-                        f"ANCHOR-1 위반 — 앵커 «{anchor_m.group(3)}» 가 "
-                        f"피인용 범위 :{start}-{end} 에 축자 부재",
-                    )
+            if anchor in doc.range_text(start, end):
+                continue
+            # ANCHOR-2 — 이력 행 면제를 «문서에서 파생한» 술어로 좁힌다.  이력 행이라도
+            # 앵커를 «다는» 행위 자체가 «이 좌표는 지금 이 문자열을 가리킨다» 는 명시
+            # 선언이므로(LIST-1 이 목록에 대해 세운 바로 그 논증), 면제가 정당한 경우는
+            # «가리킬 대상이 애초에 없는» 자리뿐이다: 앵커 문자열이 문서 어디에도 없으면
+            # 그것은 편집으로 사라진 옛 표기의 이력 인용이고 고칠 좌표 자체가 없다.
+            # 반대로 다른 행에 실재하면 그것은 밀린 «살아 있는» 포인터이므로 red 다.
+            elsewhere = _anchor_lines_elsewhere(doc, anchor, lineno)
+            if doc.is_history_row(lineno) and not elsewhere:
+                vanished_anchor_exempt += 1
+                continue
+            # 실재 자리를 진단에 싣는다 — 이 축의 처방은 «좌표를 실재 자리로 고쳐라»
+            # 이므로, 그 자리를 말하지 않는 진단은 반쪽이다(C2B 가 같은 형식을 쓴다).
+            moved = (
+                f" — 실재 자리 {elsewhere[:5]} (좌표가 이동했다)" if elsewhere else ""
+            )
+            violations.append(
+                Violation(
+                    "TOS-CC-C2C",
+                    doc.display_path,
+                    lineno,
+                    f"ANCHOR-1 위반 — 앵커 «{anchor_m.group(3)}» 가 "
+                    f"피인용 범위 :{start}-{end} 에 축자 부재{moved}",
                 )
+            )
             continue
 
         # -- C2B: 주장절 최장 앵커 ----------------------------------------
@@ -1270,7 +1357,7 @@ def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
 
     logger.info(
         "C2: 자기인용 %d건 (ANCHOR-1 채택 %d [그중 목록 %d] · 주장절 보유 %d · 미앵커 %d)"
-        " · 인용 목록 %d개(앵커 %d)",
+        " · 인용 목록 %d개(앵커 %d) · ANCHOR-2 소멸 앵커 면제 %d",
         total,
         anchored,
         anchored_in_list,
@@ -1278,6 +1365,7 @@ def check_c2(doc: ContractDoc, min_anchor: int) -> list[Violation]:
         total - anchored - claimed,
         len(cite_lists),
         len(anchored_lists),
+        vanished_anchor_exempt,
     )
     return violations
 
@@ -2872,6 +2960,91 @@ def _pick_anchor(doc: ContractDoc, lineno: int) -> str | None:
     return None
 
 
+# ---- ANCHOR-2 대조군 (이력 행 면제의 «좁힘») --------------------------------
+
+#: ANCHOR-1 이 인정하는 최소 자릿수(`\d{2,4}`).  한 자리 행을 쓰면 앵커 정규식 자체가
+#: 물지 않아 대조군이 «검사가 조용하다» 를 «형상이 아니다» 로 오귀속한다.
+ANCHOR1_MIN_LINE = 10
+
+
+def _pick_anchor_sites(doc: ContractDoc) -> tuple[int, int, str]:
+    """`(앵커 실재 행, 앵커 부재 행, 앵커)` 를 문서에서 파생한다 (ANCHOR-2 대조군).
+
+    자리도 앵커도 상수로 적지 않는다 — 하드코딩한 좌표는 계약 편집 한 번에 SETUP-FAIL
+    로 죽고, 하드코딩한 문자열은 그 문자열이 문서에서 사라지는 순간 대조군이 «조용히»
+    의미를 잃는다(이 파일이 막으려는 결함과 같은 부류).
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+
+    Returns:
+        `(앵커를 축자로 갖는 행, 그 앵커가 부재한 행, 앵커 문자열)`.
+
+    Raises:
+        ContractParseError: 그런 자리를 찾지 못했을 때 (대조군 무효).
+    """
+    last = len(doc.lines)
+    for lineno in range(ANCHOR1_MIN_LINE, last + 1):
+        anchor = _pick_anchor(doc, lineno)
+        if anchor is None:
+            continue
+        for other in range(ANCHOR1_MIN_LINE, last + 1):
+            if anchor not in doc.norm_lines[other - 1]:
+                return lineno, other, anchor
+    raise ContractParseError("ANCHOR-2 대조군이 쓸 앵커 자리를 찾지 못했다")
+
+
+def _history_row(doc: ContractDoc, body: str) -> str:
+    """`is_history_row` 가 **구조로** 참이 되는 표 행을 만든다.
+
+    첫 셀은 **현행 버전 리터럴 그 자체**여야 한다(`HISTORY_FIRST_CELL_RE`).  버전을
+    상수로 적지 않는 이유는 자명하다 — 미래 버전을 박으면 C3A 가, 옛 버전을 박으면
+    다음 판이 이 대조군을 무의미하게 만든다.
+    """
+    major, minor = doc.current_version
+    return f"| v{major}.{minor} | {body} |"
+
+
+def _inject_anchored_row(shape: str, history: bool) -> Callable[[str], str]:
+    """앵커를 «채택한» 인용 한 줄을 말미에 덧붙인다 (ANCHOR-2 대조군).
+
+    두 축을 **독립으로** 흔든다 — 앵커의 «실재 여부»(shape)와 «이력 행인가»(history).
+    면제는 두 축의 **연언**이므로, 한 축만 흔드는 대조군만 있으면 술어가 실제로 어느
+    축에 결속돼 있는지 말할 수 없다.
+
+    Args:
+        shape: `"live"`     앵커가 **다른 행에 실재**하고 지목 자리엔 부재 → 밀린 포인터.
+               `"vanished"` 앵커가 문서 **어디에도 부재** → 편집으로 사라진 옛 표기.
+               `"honest"`   앵커가 **지목 자리에 실재** → 정직한 인용.
+        history: 참이면 이력 표 행으로, 거짓이면 평범한 산문 행으로 심는다.
+
+    Returns:
+        문서 변형 함수.
+
+    Raises:
+        ContractParseError: `"vanished"` 인데 그 문자열이 문서에 이미 실재할 때
+            (대조군의 전제가 깨진 것이므로 조용히 통과시키지 않는다).
+    """
+
+    def transform(text: str) -> str:
+        doc = ContractDoc(text, "<mutation>")
+        present, absent, anchor = _pick_anchor_sites(doc)
+        if shape == "honest":
+            body = f"대조군 :{present}«{anchor}» 앵커가 지목 자리에 실재한다."
+        elif shape == "vanished":
+            if _normalize(VANISHED_ANCHOR) in doc.norm_text:
+                raise ContractParseError(
+                    f"«소멸» 대조군의 전제가 깨졌다 — 문서에 이미 실재한다: "
+                    f"{VANISHED_ANCHOR!r}"
+                )
+            body = f"대조군 :{absent}«{VANISHED_ANCHOR}» 편집으로 사라진 표기."
+        else:
+            body = f"대조군 :{absent}«{anchor}» 는 밀린 살아 있는 포인터다."
+        return _append(text, _history_row(doc, body) if history else body)
+
+    return transform
+
+
 def _sub_once(text: str, old: str, new: str) -> str:
     """정확히 1회 치환한다.  대상이 1개가 아니면 **앵커 불일치**이므로 예외."""
     count = text.count(old)
@@ -3285,9 +3458,21 @@ def build_mutations() -> list[Mutation]:
         Mutation(
             "C2C-unanchored-list-is-not-a-violation",
             "TOS-CC-C2C",
-            "clean",
+            "silent",
             # 앵커 «없는» 목록은 red 가 «아니다».  이 판의 처분은 «괄호형이라 못 본다»
             # 를 «앵커가 없어 계수만 한다» 로 옮긴 것이고, 그 전반부가 이 대조군이다.
+            #
+            # **방향이 `clean`(전역 0건) 에서 `silent`(그 자리 0건) 로 바뀐 이유.**
+            # `clean` 의 절대 기대는 «C2C 가 실운용 문서에서 한 건도 안 난다» 를 전제로
+            # 섰다.  ANCHOR-2 가 이력 행 면제를 좁히면서 그 전제가 깨졌다 — 이제 계약
+            # 본문에 **실재하는** stale 포인터들이 C2C 로 발화하며, 그것이 이 판의
+            # 증거다.  전역 0건을 계속 요구하면 이 대조군은 «주입이 조용했는가» 가
+            # 아니라 «문서가 이미 green 인가» 를 재게 되어 측정 대상 자체가 바뀐다.
+            #
+            # 판별력은 잃지 않는다: 주입은 `_append` 로 **문서 말미에 새 행**을 만들고,
+            # 그 행이 위반을 냈다면 그 자리는 반드시 «신규 자리»다.  `silent` 의
+            # `not moved` 연언이 정확히 그것을 잡으므로, 여기서 `silent` 는 «상대» 가
+            # 아니라 «그 자리에 대한 절대» 기대다.
             _inject_unanchored_list,
         ),
         Mutation(
@@ -3329,6 +3514,47 @@ def build_mutations() -> list[Mutation]:
             "TOS-CC-C2C",
             "silent",
             lambda t: _append(t, "앵커 대조군 `:103`«재결속»"),
+        ),
+        # ---- C2C 이력 행 면제의 «좁힘» (ANCHOR-2) -------------------------
+        Mutation(
+            "C2C-history-row-live-pointer-is-red",
+            "TOS-CC-C2C",
+            "inject",
+            # **이 판의 직접 대조군.**  이력 행이어도 앵커가 다른 행에 실재하면 그것은
+            # 밀린 포인터이고 실재 자리로 «고칠 수 있다» — 14차가 목록에만 적용한
+            # 논증을 단일 좌표까지 편다.
+            _inject_anchored_row("live", history=True),
+        ),
+        Mutation(
+            "C2C-history-row-vanished-anchor-is-exempt",
+            "TOS-CC-C2C",
+            "silent",
+            # 역방향 — 면제의 원 근거는 유효하다.  앵커가 문서 어디에도 없으면 그것은
+            # 편집으로 사라진 옛 표기의 이력 인용이고 «고칠 좌표 자체가 없다».
+            _inject_anchored_row("vanished", history=True),
+        ),
+        Mutation(
+            "C2C-plain-row-vanished-anchor-is-red",
+            "TOS-CC-C2C",
+            "inject",
+            # 면제가 «이력 행» 축에 실제로 결속돼 있는지.  같은 소멸 앵커라도 비-이력
+            # 행이면 발화해야 한다 — 이것이 없으면 면제가 이력 행과 무관하게 도는
+            # (= 소멸 앵커 전부를 눈감는) 회귀를 아무도 못 잡는다.
+            _inject_anchored_row("vanished", history=False),
+        ),
+        Mutation(
+            "C2C-history-row-honest-anchor-is-silent",
+            "TOS-CC-C2C",
+            "silent",
+            # 행복 경로 회귀 — 이력 행이라도 앵커가 지목 자리에 실재하면 조용.
+            _inject_anchored_row("honest", history=True),
+        ),
+        Mutation(
+            "C2C-plain-row-honest-anchor-is-silent",
+            "TOS-CC-C2C",
+            "silent",
+            # 같은 회귀를 비-이력 행에서 — 면제를 좁히며 기존 경로를 흔들지 않았는지.
+            _inject_anchored_row("honest", history=False),
         ),
         # ---- C3 --------------------------------------------------------
         Mutation(
