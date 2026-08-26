@@ -22,6 +22,12 @@ addendum-5 가 낸 네 건은 전부 같은 클래스다: **계약이 자기 자
                   **같은 마크다운 표 «셀»** 안에 공존 (아래 CELL-1).
   C4  TOS-CC-C4A  currency 층 태그 «현행(N차 이후)» 의 N ≠ 현행 회차.
       TOS-CC-C4B  currency 어휘를 쓰면서 층 태그가 «전무»한 자리.
+  RULE TOS-CC-RULE-ANCHOR   규칙 문언 앵커가 문서에 0회 또는 2회 이상.
+      TOS-CC-RULE-MISSING   universe ∖ consumers ≠ ∅ (규칙이 우주 전건에 적용되지 않았다).
+      TOS-CC-RULE-EXTRA     consumers ∖ universe ≠ ∅ (사라진 원소를 가리키는 stale 소비처).
+      TOS-CC-RULE-DUP       같은 (rule, element) 또는 같은 소비처 마커가 2회 이상.
+      TOS-CC-RULE-MANIFEST  manifest 부재·파손·스키마 위반·미구현 파생 이름.
+      TOS-CC-RULE-VOCAB     census 어휘 정본(어휘 축 ∪ 구조 축)이 manifest 에 없다.
   --  TOS-CC-PARSE 모집단 파생 자체가 실패 (fail-closed — 파생 못 하면 green 을 내지 않는다).
 
 ------------------------------------------------------------------------------
@@ -167,6 +173,7 @@ green»)가 직접 증명하고, 문서가 그 축에서 **이미 green 일 때*
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 import re
@@ -178,6 +185,16 @@ from collections import namedtuple
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 
+#: RULE 축의 manifest 파서.  **부재를 «검사 없음»으로 접지 않는다** — 임포트가
+#: 실패하면 그 사실을 fail-closed 위반으로 낸다(아래 `load_manifest`).
+try:  # pragma: no cover - 배포 환경 결손 경로
+    import yaml
+except ImportError as _exc:  # pragma: no cover
+    yaml = None  # type: ignore[assignment]
+    YAML_IMPORT_ERROR: str | None = str(_exc)
+else:
+    YAML_IMPORT_ERROR = None
+
 logger = logging.getLogger("tos_contract_check")
 
 # ============================================================================
@@ -188,6 +205,30 @@ logger = logging.getLogger("tos_contract_check")
 DEFAULT_CONTRACT_PATH = Path(
     "docs/plans/2026-08-12-tos-phase0-completion-contract-design.md"
 )
+
+#: RULE 축 정본 ① — S-25 manifest.  계약 문서 «밖»에 두는 이유는 자기참조 함정이다:
+#: 계약이 자기 계수를 자기 안에 적으면 «적는 행위가 값을 바꾼다»(6차 ⓑ).
+DEFAULT_MANIFEST_PATH = Path(
+    "docs/plans/contracts/tos-phase0-completion-contract.manifest.yaml"
+)
+
+#: manifest 스키마 — **닫힌 키 집합**.  «담지 않는 것»(계수·행번호·원소 리터럴 목록)을
+#: 산문으로 금지하면 다음 회차에 새 키로 스며든다.  둘 곳 자체를 없애는 것이 처분이다.
+MANIFEST_TOP_KEYS = frozenset({"schema_version", "census_vocabulary", "rules"})
+MANIFEST_RULE_KEYS = frozenset(
+    {"id", "title", "statement_anchor", "universe", "consumers", "element_id"}
+)
+MANIFEST_RULE_REQUIRED = ("id", "statement_anchor", "universe", "consumers")
+MANIFEST_QUERY_KEYS = frozenset({"derivation", "block_anchor", "description"})
+MANIFEST_VOCAB_KEYS = frozenset({"lexical_axis", "structural_axis"})
+MANIFEST_STRUCTURAL_KEYS = frozenset({"nouns", "co_occurrence"})
+MANIFEST_SCHEMA_VERSION = 1
+
+#: 검사기가 «구현하는» 파생 질의의 이름.  manifest 가 모르는 이름을 쓰면 red —
+#: 모르는 질의를 «검사 없음»으로 접으면 그 규칙이 조용히 사라진다(fail-open).
+UNIVERSE_DERIVATIONS = frozenset({"separated_code_spans_in_block"})
+CONSUMER_DERIVATIONS = frozenset({"circled_items_in_block"})
+ELEMENT_ID_DERIVATIONS = frozenset({"code_span_verbatim"})
 
 #: RATCHET-1 기준선 파일 — 검사기 «밖»에 두어 개수 갱신이 사람의 기록 행위로 남게 한다.
 #: 검사기가 스스로 낮출 수 있는 자리에 두면 래칫이 성립하지 않는다.
@@ -1422,6 +1463,510 @@ def check_c4(doc: ContractDoc) -> list[Violation]:
 
 
 # ============================================================================
+# RULE — 규칙 ↔ 소비처 전수 대응 (S-25 · 레인 B 재심 R-F3)
+# ============================================================================
+#
+# S-25 는 「규칙 신설 = 전수 적용까지가 한 단위」를 **산문이 아니라 게이트**로 만든다.
+# 정본은 셋이고 어느 하나도 단독 소스가 아니다::
+#
+#   ① manifest  — **의도**.  규칙 ID · 문언 앵커 · 우주 «파생 질의» · 소비처 «판별 술어».
+#   ② 계약 문서 — **사실**.  계수·좌표는 여기 있고 «검증 대상»이다.
+#   ③ 이 축     — **측정자**.  둘 다 신뢰하지 않고 **대조**만 한다.
+#
+# 검사 넷은 전부 fail-closed 다::
+#
+#   TOS-CC-RULE-ANCHOR    `statement_anchor` 가 문서에 0회 또는 2회 이상.
+#   TOS-CC-RULE-MISSING   universe ∖ consumers ≠ ∅  (R-F3 의 본체).
+#   TOS-CC-RULE-EXTRA     consumers ∖ universe ≠ ∅  (사라진 원소를 가리키는 stale 소비처).
+#   TOS-CC-RULE-DUP       같은 (rule, element) 가 2회 이상.
+#   TOS-CC-RULE-MANIFEST  manifest 부재·파손·스키마 위반·미구현 파생 이름.
+#   TOS-CC-RULE-VOCAB     census 어휘 정본(어휘 축 ∪ 구조 축)이 manifest 에 없다.
+#
+# **비대칭 하나를 의도적으로 둔다**: «우주 블록 부재»는 `TOS-CC-PARSE`(측정 불가)이고
+# «소비처 0»은 `TOS-CC-RULE-MISSING`(측정 결과)이다.  우주가 비면 `universe ∖ consumers`
+# 가 공집합이 되어 **조용히 green** 이 되므로, 그 자리는 파생 실패로 시끄럽게 죽어야 한다.
+#
+# **판별력 경계(정직)**: CAP-1 의 두 블록은 C1X 가 이미 «집합 동일»로 대조한다.  RULE 이
+# 그 위에 얹는 판별력은 넷이다 — (i) 규칙이 **manifest 에 등재되는 순간** 대응이 강제된다
+# (C1X 는 이 한 쌍을 하드코딩한다) · (ii) C1X 의 2차 파생은 원형숫자를 키로
+# `setdefault` 해 **중복을 조용히 삼킨다**; DUP 는 그것을 red 로 만든다 ·
+# (iii) 규칙 «문언»의 존재·유일성(ANCHOR)은 어느 축도 보지 않았다 ·
+# (iv) manifest 부재/파손이 red 다(부재를 «0 위반»으로 접지 않는다).
+
+RuleConsumer = namedtuple("RuleConsumer", ["marker", "element", "verbatim"])
+
+
+def _unique_anchor_line(doc: ContractDoc, anchor: str) -> int:
+    """`anchor` 를 축자로 담은 행이 **정확히 하나**임을 확인하고 그 행번호를 준다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        anchor: 블록을 지목하는 축자 부분문자열 (manifest 가 선언한다).
+
+    Returns:
+        1-기반 행번호.
+
+    Raises:
+        ContractParseError: 0회 또는 2회 이상일 때 — 블록을 특정하지 못하면
+            «무엇의» 우주/소비처인지 잃으므로 green 을 내지 않는다.
+    """
+    hits = [i for i, line in enumerate(doc.lines, start=1) if anchor in line]
+    if len(hits) != 1:
+        raise ContractParseError(
+            f"블록 앵커 {anchor!r} 를 담은 행이 정확히 1개가 아니다 "
+            f"(실측 {len(hits)}: {hits})"
+        )
+    return hits[0]
+
+
+def derive_universe_separated(doc: ContractDoc, anchor: str) -> tuple[list[str], int]:
+    """`separated_code_spans_in_block` — 구분자 분해 · 조각별 **첫** 코드 스팬.
+
+    괄호 «안»의 코드 스팬(`check_suite_id`·`head_sha` 같은 질의 파라미터)은 조각의
+    첫 스팬이 아니므로 자동으로 빠진다 — 배제 «목록»이 필요 없다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        anchor: 정의 블록을 지목하는 축자 부분문자열.
+
+    Returns:
+        `(원소 목록(중복 보존), 정의 행번호)`.
+
+    Raises:
+        ContractParseError: 앵커가 유일하지 않거나, 원소 도입 '—' 이 없거나,
+            원소를 하나도 분해하지 못했을 때.
+    """
+    line_no = _unique_anchor_line(doc, anchor)
+    line = doc.lines[line_no - 1]
+    after = line.index(anchor) + len(anchor)
+    dash = line.find("—", after)
+    if dash < 0:
+        raise ContractParseError(
+            f"{line_no}: 우주 정의 행에 원소 도입 '—' 이 없다 (앵커 {anchor!r})"
+        )
+    block = _enumeration_block(doc, line_no, dash + 1)
+    elements: list[str] = []
+    for part in (p.strip() for p in block.split(ENUM_SEPARATOR)):
+        if not part:
+            continue
+        span = CODE_SPAN_RE.search(part)
+        if span is None:
+            raise ContractParseError(
+                f"{line_no}: 우주 분해 조각에 코드 스팬이 없다 — 분해 가정 붕괴: "
+                f"{part[:60]!r}"
+            )
+        elements.append(span.group(1))
+    if not elements:
+        raise ContractParseError(
+            f"{line_no}: 우주 블록에서 원소를 하나도 분해하지 못했다"
+        )
+    return elements, line_no
+
+
+def derive_consumers_circled(
+    doc: ContractDoc, anchor: str
+) -> tuple[list[RuleConsumer], int] | None:
+    """`circled_items_in_block` — 원형숫자 마커 + **즉시** 후행 코드 스팬.
+
+    「limb ⑤ 와 동일 형상」처럼 코드 스팬이 따라붙지 않는 원형숫자는 소비처가 아니다.
+    **중복을 접지 않는다** — 접으면 `TOS-CC-RULE-DUP` 이 눈이 먼다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        anchor: 소비처 블록을 지목하는 축자 부분문자열.
+
+    Returns:
+        `(소비처 목록, 블록 행번호)`.  블록 «자체»가 문서에 없으면 `None` —
+        그것은 파생 실패가 아니라 «소비처 0» 이라는 **측정 결과**다.
+    """
+    hits = [i for i, line in enumerate(doc.lines, start=1) if anchor in line]
+    if not hits:
+        return None
+    if len(hits) > 1:
+        raise ContractParseError(
+            f"소비처 블록 앵커 {anchor!r} 를 담은 행이 여럿이다 (실측 {hits})"
+        )
+    line_no = hits[0]
+    block = _enumeration_block(doc, line_no, 0)
+    consumers = [
+        RuleConsumer(m.group(1), m.group(2), m.group(0))
+        for m in CIRCLED_ITEM_RE.finditer(block)
+    ]
+    return consumers, line_no
+
+
+def default_manifest_path() -> Path:
+    """RULE 축 manifest 의 기본 경로 (저장소 루트 기준)."""
+    return default_repo_root() / DEFAULT_MANIFEST_PATH
+
+
+def _closed_keys(
+    node: object, allowed: frozenset[str], where: str, path: str, out: list[Violation]
+) -> bool:
+    """`node` 가 매핑이고 키가 `allowed` 안에만 있는지 본다 (닫힌 키 집합)."""
+    if not isinstance(node, dict):
+        out.append(
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                path,
+                0,
+                f"{where}: 매핑이 아니다 ({type(node).__name__})",
+            )
+        )
+        return False
+    unknown = sorted(set(node) - allowed)
+    if unknown:
+        out.append(
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                path,
+                0,
+                f"{where}: 스키마 밖 키 {unknown} — 닫힌 키 집합은 "
+                f"{sorted(allowed)} 다 (계수·행번호·원소 리터럴을 둘 자리를 만들지 않는다)",
+            )
+        )
+        return False
+    return True
+
+
+def _reject_numeric(node: object, where: str, path: str, out: list[Violation]) -> None:
+    """규칙 서브트리에 **정수 리터럴**이 스며들지 않았는지 재귀로 본다.
+
+    「하드코딩 census 는 신규 항목을 영원히 못 찾는다」가 manifest «안»에서 재발하는
+    유일한 통로가 계수다.  닫힌 키 집합이 자리를 막고, 이 술어가 값을 막는다.
+    """
+    if isinstance(node, bool):
+        return
+    if isinstance(node, int):
+        out.append(
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                path,
+                0,
+                f"{where}: 정수 리터럴 {node} — manifest 는 «의도»만 담는다 "
+                "(계수·행번호는 계약 문서의 «사실»이고 검사 대상이다)",
+            )
+        )
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            _reject_numeric(value, f"{where}.{key}", path, out)
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            _reject_numeric(value, f"{where}[{i}]", path, out)
+
+
+def load_manifest(
+    manifest_path: Path,
+) -> tuple[dict[str, object] | None, list[Violation]]:
+    """manifest 를 읽고 스키마를 강제한다.
+
+    **부재를 «0 위반»으로 접지 않는다** — C2U 기준선이 이미 그 관례를 쓴다.
+    파일이 없거나 읽히지 않거나 스키마를 위반하면 red 이고, 그 경우 규칙 대조는
+    아예 수행하지 않는다(반쯤 검사한 green 은 검사 안 한 green 과 구별되지 않는다).
+
+    Args:
+        manifest_path: manifest 파일 경로.
+
+    Returns:
+        `(적재된 manifest 또는 None, 위반 목록)`.
+    """
+    path = str(manifest_path)
+    out: list[Violation] = []
+    if yaml is None:
+        return None, [
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                path,
+                0,
+                f"PyYAML 을 임포트하지 못했다 — manifest 를 읽을 수 없다: {YAML_IMPORT_ERROR}",
+            )
+        ]
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return None, [
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                path,
+                0,
+                f"manifest 를 읽지 못했다 ({exc}) — S-25 정본 ①이 부재하면 "
+                "규칙↔소비처 대조 자체가 성립하지 않는다",
+            )
+        ]
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        return None, [
+            Violation(
+                "TOS-CC-RULE-MANIFEST", path, 0, f"manifest YAML 파싱 실패: {exc}"
+            )
+        ]
+
+    if not _closed_keys(data, MANIFEST_TOP_KEYS, "manifest 최상위", path, out):
+        return None, out
+    assert isinstance(data, dict)
+    if data.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+        out.append(
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                path,
+                0,
+                f"schema_version 이 {MANIFEST_SCHEMA_VERSION} 가 아니다 "
+                f"(실측 {data.get('schema_version')!r})",
+            )
+        )
+    rules = data.get("rules")
+    if not isinstance(rules, list) or not rules:
+        out.append(
+            Violation(
+                "TOS-CC-RULE-MANIFEST",
+                path,
+                0,
+                "`rules` 가 비어 있지 않은 목록이 아니다",
+            )
+        )
+        return None, out
+
+    seen_ids: set[str] = set()
+    for i, rule in enumerate(rules):
+        where = f"rules[{i}]"
+        if not _closed_keys(rule, MANIFEST_RULE_KEYS, where, path, out):
+            continue
+        assert isinstance(rule, dict)
+        _reject_numeric(rule, where, path, out)
+        for key in MANIFEST_RULE_REQUIRED:
+            if key not in rule:
+                out.append(
+                    Violation(
+                        "TOS-CC-RULE-MANIFEST",
+                        path,
+                        0,
+                        f"{where}: 필수 키 `{key}` 부재",
+                    )
+                )
+        rule_id = rule.get("id")
+        if isinstance(rule_id, str):
+            if rule_id in seen_ids:
+                out.append(
+                    Violation(
+                        "TOS-CC-RULE-MANIFEST",
+                        path,
+                        0,
+                        f"{where}: 규칙 ID 중복 {rule_id!r}",
+                    )
+                )
+            seen_ids.add(rule_id)
+        for key, allowed in (
+            ("universe", UNIVERSE_DERIVATIONS),
+            ("consumers", CONSUMER_DERIVATIONS),
+            ("element_id", ELEMENT_ID_DERIVATIONS),
+        ):
+            query = rule.get(key)
+            if query is None:
+                continue
+            if not _closed_keys(
+                query, MANIFEST_QUERY_KEYS, f"{where}.{key}", path, out
+            ):
+                continue
+            assert isinstance(query, dict)
+            name = query.get("derivation")
+            if name not in allowed:
+                out.append(
+                    Violation(
+                        "TOS-CC-RULE-MANIFEST",
+                        path,
+                        0,
+                        f"{where}.{key}: 미구현 파생 이름 {name!r} — "
+                        f"검사기가 구현하는 이름은 {sorted(allowed)} 다 "
+                        "(모르는 질의를 «검사 없음»으로 접지 않는다)",
+                    )
+                )
+            elif key != "element_id" and not isinstance(query.get("block_anchor"), str):
+                out.append(
+                    Violation(
+                        "TOS-CC-RULE-MANIFEST",
+                        path,
+                        0,
+                        f"{where}.{key}: `block_anchor` 문자열이 없다 — "
+                        "파생 질의가 대상 블록을 지목하지 못한다",
+                    )
+                )
+    if out:
+        return None, out
+    return data, out
+
+
+def check_rule_vocabulary(
+    manifest: dict[str, object], manifest_path: str
+) -> list[Violation]:
+    """RULE-VOCAB — census 어휘 정본(어휘 축 ∪ 구조 축)이 manifest 에 실재하는지.
+
+    10차 ⓑ 가 계약 본문에서 어휘 리터럴을 지우면서 「목록의 정본은 S-25 manifest」라고
+    적었다.  manifest 에 그 목록이 없으면 **정본이 어디에도 없다** — 그 상태를 green 으로
+    두면 계약의 이 문장이 거짓이 된다.
+    """
+    out: list[Violation] = []
+
+    def fail(message: str) -> None:
+        out.append(Violation("TOS-CC-RULE-VOCAB", manifest_path, 0, message))
+
+    def nonempty_strings(node: object) -> bool:
+        return (
+            isinstance(node, list)
+            and bool(node)
+            and all(isinstance(x, str) and x.strip() for x in node)
+        )
+
+    vocab = manifest.get("census_vocabulary")
+    if not isinstance(vocab, dict):
+        fail(
+            "census_vocabulary 가 없다 — 10차 ⓑ 가 계약 본문에서 어휘 리터럴을 지우며 "
+            "「목록의 정본은 S-25 manifest」라고 적었다.  여기가 비면 정본이 «어디에도» 없다"
+        )
+        return out
+    unknown = sorted(set(vocab) - MANIFEST_VOCAB_KEYS)
+    if unknown:
+        fail(
+            f"census_vocabulary 에 스키마 밖 키 {unknown} — 닫힌 키 집합은 "
+            f"{sorted(MANIFEST_VOCAB_KEYS)} 다 (어휘 «개수»를 둘 자리를 만들지 않는다)"
+        )
+    if not nonempty_strings(vocab.get("lexical_axis")):
+        fail("census_vocabulary.lexical_axis 가 비지 않은 문자열 목록이 아니다")
+
+    structural = vocab.get("structural_axis")
+    if not isinstance(structural, dict):
+        fail(
+            "census_vocabulary.structural_axis 가 매핑이 아니다 — 구조 축은 어휘 축의 "
+            "하드코딩성을 부분 보정하는 «두 번째» 축이고 «대체»가 아니다"
+        )
+        return out
+    unknown = sorted(set(structural) - MANIFEST_STRUCTURAL_KEYS)
+    if unknown:
+        fail(
+            f"census_vocabulary.structural_axis 에 스키마 밖 키 {unknown} — "
+            f"닫힌 키 집합은 {sorted(MANIFEST_STRUCTURAL_KEYS)} 다"
+        )
+    if not nonempty_strings(structural.get("nouns")):
+        fail(
+            "census_vocabulary.structural_axis.nouns 가 비지 않은 문자열 목록이 아니다"
+        )
+    return out
+
+
+def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
+    """RULE — manifest 가 등재한 각 규칙의 우주 ↔ 소비처를 전수 대조한다."""
+    manifest, violations = load_manifest(manifest_path)
+    if manifest is None:
+        return violations
+    mpath = str(manifest_path)
+    violations.extend(check_rule_vocabulary(manifest, mpath))
+
+    rules = manifest["rules"]
+    assert isinstance(rules, list)
+    for rule in rules:
+        assert isinstance(rule, dict)
+        rule_id = str(rule.get("id"))
+        anchor = rule.get("statement_anchor")
+        if isinstance(anchor, str):
+            hits = sum(line.count(anchor) for line in doc.lines)
+            if hits != 1:
+                violations.append(
+                    Violation(
+                        "TOS-CC-RULE-ANCHOR",
+                        doc.display_path,
+                        0,
+                        f"규칙 {rule_id}: `statement_anchor` 가 문서에 {hits}회 — "
+                        "정확히 1회여야 한다 (0회 = 규칙 문언 소실 · "
+                        "2회 이상 = 앵커가 규칙 자리를 특정하지 못한다)",
+                    )
+                )
+
+        universe_q = rule["universe"]
+        consumers_q = rule["consumers"]
+        assert isinstance(universe_q, dict) and isinstance(consumers_q, dict)
+        universe, universe_line = derive_universe_separated(
+            doc, str(universe_q["block_anchor"])
+        )
+
+        found = derive_consumers_circled(doc, str(consumers_q["block_anchor"]))
+        if found is None:
+            violations.append(
+                Violation(
+                    "TOS-CC-RULE-MISSING",
+                    doc.display_path,
+                    universe_line,
+                    f"규칙 {rule_id}: 소비처 블록이 문서에 부재 — "
+                    f"우주 {len(universe)}원소 전건 미소비 "
+                    f"({', '.join(universe)}).  규칙 신설은 «전수 적용까지가 한 단위»다",
+                )
+            )
+            continue
+        consumers, consumers_line = found
+
+        consumed = [c.element for c in consumers]
+        missing = [e for e in dict.fromkeys(universe) if e not in set(consumed)]
+        extra = [e for e in dict.fromkeys(consumed) if e not in set(universe)]
+        if missing:
+            violations.append(
+                Violation(
+                    "TOS-CC-RULE-MISSING",
+                    doc.display_path,
+                    consumers_line,
+                    f"규칙 {rule_id}: 우주 ∖ 소비처 = {missing} — "
+                    f"우주 정의 {universe_line} 의 원소가 소비처 블록에서 처분되지 않았다",
+                )
+            )
+        if extra:
+            violations.append(
+                Violation(
+                    "TOS-CC-RULE-EXTRA",
+                    doc.display_path,
+                    consumers_line,
+                    f"규칙 {rule_id}: 소비처 ∖ 우주 = {extra} — "
+                    f"우주 정의 {universe_line} 에 없는 원소를 가리키는 stale 소비처다",
+                )
+            )
+
+        for label, seq, lineno in (
+            ("우주", universe, universe_line),
+            ("소비처", consumed, consumers_line),
+        ):
+            dupes = sorted({e for e in seq if seq.count(e) > 1})
+            if dupes:
+                violations.append(
+                    Violation(
+                        "TOS-CC-RULE-DUP",
+                        doc.display_path,
+                        lineno,
+                        f"규칙 {rule_id}: {label}에 중복 원소 {dupes} — "
+                        "같은 (rule, element) 는 정확히 한 번만 나타나야 한다",
+                    )
+                )
+        markers = [c.marker for c in consumers]
+        dup_markers = sorted({m for m in markers if markers.count(m) > 1})
+        if dup_markers:
+            violations.append(
+                Violation(
+                    "TOS-CC-RULE-DUP",
+                    doc.display_path,
+                    consumers_line,
+                    f"규칙 {rule_id}: 소비처 마커 중복 {dup_markers} — "
+                    "원형숫자 마커는 소비처의 정체성이므로 유일해야 한다",
+                )
+            )
+        logger.info(
+            "RULE[%s]: 우주 %d원소(%d) · 소비처 %d건(%d) · 앵커 1회",
+            rule_id,
+            len(universe),
+            universe_line,
+            len(consumers),
+            consumers_line,
+        )
+    return violations
+
+
+# ============================================================================
 # 오케스트레이션
 # ============================================================================
 
@@ -1446,6 +1991,7 @@ def check_document(
     baseline_path: Path | None = None,
     notices: list[str] | None = None,
     repo_root: Path | None = None,
+    manifest_path: Path | None = None,
 ) -> list[Violation]:
     """계약 문서 텍스트에 모든 축을 적용한다.
 
@@ -1458,6 +2004,8 @@ def check_document(
             «지정 안 함»을 «검사 안 함»으로 접지 않는다.
         notices: 위반이 아닌 운영 안내를 모으는 목록(있으면).
         repo_root: C2UP 가 측정 출처 blob 을 읽을 저장소 루트.
+        manifest_path: RULE 축 manifest 경로.  None 이면 저장소 기본 경로 —
+            «지정 안 함»을 «검사 안 함»으로 접지 않는다.
 
     Returns:
         위반 목록.  파생 자체가 실패하면 `TOS-CC-PARSE` 단일 위반을 돌려준다
@@ -1465,6 +2013,7 @@ def check_document(
     """
     baseline = baseline_path if baseline_path is not None else default_baseline_path()
     root = repo_root if repo_root is not None else default_repo_root()
+    manifest = manifest_path if manifest_path is not None else default_manifest_path()
     try:
         doc = ContractDoc(text, display_path)
     except ContractParseError as exc:
@@ -1478,6 +2027,7 @@ def check_document(
         ("C2UP", lambda d: check_c2up(d, baseline, root, notices)),
         ("C3", check_c3),
         ("C4", check_c4),
+        ("RULE", lambda d: check_rule(d, manifest)),
     )
     for name, fn in axes:
         try:
@@ -1506,8 +2056,18 @@ def _format(violations: Iterable[Violation]) -> str:
 
 Mutation = namedtuple(
     "Mutation",
-    ["name", "rule", "direction", "transform", "expect", "baseline", "ref_baseline"],
-    defaults=(None, None, None),
+    [
+        "name",
+        "rule",
+        "direction",
+        "transform",
+        "expect",
+        "baseline",
+        "ref_baseline",
+        "manifest",
+        "ref_manifest",
+    ],
+    defaults=(None, None, None, None, None),
 )
 """대조군 한 건.
 
@@ -1534,6 +2094,16 @@ FIXTURE_PROVENANCE_OK = "prov-ok"  # 출처 blob 실측값으로 핀 → C2UP gr
 FIXTURE_STALE_COUNT = "stale-count"  # 출처는 참이나 개수가 blob 과 불일치
 FIXTURE_BAD_COMMIT = "bad-commit"  # 움직이는 ref
 FIXTURE_NO_PROVENANCE = "no-provenance"  # 출처 필드 자체가 없다
+
+#: RULE 축 manifest 픽스처 키.  기준선 픽스처와 «축»이 다르므로 별도 사상에 둔다.
+MFIXTURE_MISSING = "m-missing"  # 파일 자체가 없다 (부재를 «0 위반»으로 접지 않는다)
+MFIXTURE_NOT_YAML = "m-not-yaml"  # 존재하지만 manifest 스키마가 아니다
+MFIXTURE_EXTRA_RULE = (
+    "m-extra-rule"  # 규칙을 더했는데 소비처가 0 (R-F3 이 이름 지어 요구한 대조군)
+)
+MFIXTURE_UNKNOWN_DERIV = "m-unknown-deriv"  # 검사기가 모르는 파생 이름
+MFIXTURE_COUNT_LITERAL = "m-count-literal"  # 계수(정수 리터럴)가 스며들었다
+MFIXTURE_NO_VOCAB = "m-no-vocab"  # census 어휘 정본이 사라졌다
 
 
 def _enum_fence(doc: ContractDoc) -> tuple[int, int]:
@@ -1754,6 +2324,241 @@ def _append(text: str, line: str) -> str:
     항상 말미에 덧붙인다.
     """
     return text.rstrip("\n") + "\n\n" + line + "\n"
+
+
+# ---- RULE 축 대조군 ---------------------------------------------------------
+#
+# 자리를 하드코딩하지 «않는다» — 우주/소비처 블록은 manifest 가 선언한 앵커로 찾고,
+# 주입할 원소·마커는 문서 실측에서 «쓰이지 않은 것»을 골라 쓴다.  하드코딩 앵커는
+# 계약 편집 한 번에 전부 무효가 된다(이 파일이 이미 실측한 교훈).
+
+#: 주입용 유령 원소.  우주·소비처 어느 쪽에도 실재하지 않아야 한다.
+PHANTOM_ELEMENT = "phantom/{never}/endpoint"
+GHOST_ELEMENT = "ghost/{never}/endpoint"
+
+#: 소비처 블록에 존재하지 않는 앵커 — «규칙을 더했는데 소비처가 0» 을 만든다.
+PHANTOM_CONSUMER_ANCHOR = "이 문서에 존재하지 않는 소비처 블록 앵커 (대조군)"
+
+
+def _first_rule(manifest_path: Path) -> dict[str, object]:
+    """실운용 manifest 의 첫 규칙을 읽는다 (대조군 앵커의 출처)."""
+    manifest, violations = load_manifest(manifest_path)
+    if manifest is None:
+        raise ContractParseError(
+            f"대조군 앵커를 얻을 manifest 를 적재하지 못했다: "
+            f"{[v.message for v in violations]}"
+        )
+    rules = manifest["rules"]
+    assert isinstance(rules, list)
+    first = rules[0]
+    assert isinstance(first, dict)
+    return first
+
+
+def _block_last_line(doc: ContractDoc, start_line: int) -> int:
+    """`_enumeration_block` 이 잇는 범위의 **마지막** 행번호."""
+    last = start_line
+    for lineno in range(start_line + 1, len(doc.lines) + 1):
+        line = doc.lines[lineno - 1]
+        if not line.strip() or ENUM_BLOCK_STOP_RE.match(line):
+            break
+        last = lineno
+    return last
+
+
+def _append_in_rule_block(kind: str, suffix: str) -> Callable[[str], str]:
+    """manifest 가 지목한 블록의 **마지막 행 끝**에 `suffix` 를 덧붙이는 변이."""
+
+    def transform(text: str) -> str:
+        doc = ContractDoc(text, "<mutation>")
+        query = _first_rule(default_manifest_path())[kind]
+        assert isinstance(query, dict)
+        anchor = str(query["block_anchor"])
+        start = _unique_anchor_line(doc, anchor)
+        last = _block_last_line(doc, start)
+        line = doc.lines[last - 1]
+        return _replace_line_once(text, line, line + suffix)
+
+    return transform
+
+
+def _inject_universe_element(text: str) -> str:
+    """우주에 원소를 더한다 — 그 원소만 처분이 없으므로 RULE-MISSING 이어야 한다 (8차 ⓓ 재현)."""
+    return _append_in_rule_block("universe", f" · `{PHANTOM_ELEMENT}`")(text)
+
+
+def _unused_marker(doc: ContractDoc, anchor: str) -> str:
+    """소비처 블록에서 **아직 쓰이지 않은** 원형숫자 마커를 고른다."""
+    found = derive_consumers_circled(doc, anchor)
+    used = {c.marker for c in found[0]} if found else set()
+    for code in range(0x2460, 0x2474):  # ① .. ⑳
+        marker = chr(code)
+        if marker not in used:
+            return marker
+    raise ContractParseError("쓰이지 않은 원형숫자 마커가 없다")
+
+
+def _inject_consumer(element: Callable[[ContractDoc], str]) -> Callable[[str], str]:
+    """소비처 블록에 «마커 + 코드 스팬» 한 건을 더하는 변이를 만든다."""
+
+    def transform(text: str) -> str:
+        doc = ContractDoc(text, "<mutation>")
+        query = _first_rule(default_manifest_path())["consumers"]
+        assert isinstance(query, dict)
+        marker = _unused_marker(doc, str(query["block_anchor"]))
+        return _append_in_rule_block("consumers", f" · **{marker}`{element(doc)}`**")(
+            text
+        )
+
+    return transform
+
+
+def _inject_duplicate_marker(text: str) -> str:
+    """이미 쓰인 마커를 재사용한다 — 마커는 소비처의 «정체성»이므로 red 여야 한다."""
+    doc = ContractDoc(text, "<mutation>")
+    query = _first_rule(default_manifest_path())["consumers"]
+    assert isinstance(query, dict)
+    found = derive_consumers_circled(doc, str(query["block_anchor"]))
+    if not found or not found[0]:
+        raise ContractParseError("소비처가 없어 마커 중복을 만들 수 없다")
+    first = found[0][0]
+    return _append_in_rule_block(
+        "consumers", f" · **{first.marker}`{GHOST_ELEMENT}`**"
+    )(text)
+
+
+def _remove_last_consumer(text: str) -> str:
+    """소비처 하나를 «지운다» — 마커와 백틱만 떼면 판별 술어에 더는 걸리지 않는다."""
+    doc = ContractDoc(text, "<mutation>")
+    query = _first_rule(default_manifest_path())["consumers"]
+    assert isinstance(query, dict)
+    found = derive_consumers_circled(doc, str(query["block_anchor"]))
+    if not found or not found[0]:
+        raise ContractParseError("지울 소비처가 없다")
+    target = found[0][-1]
+    if text.count(target.verbatim) != 1:
+        raise ContractParseError(
+            f"소비처 제거 대상이 유일하지 않다 ({text.count(target.verbatim)}건): "
+            f"{target.verbatim!r}"
+        )
+    return text.replace(target.verbatim, target.element, 1)
+
+
+def _mutate_rule_anchor(text: str) -> str:
+    """규칙 문언 앵커를 바꾼다 — 앵커 0회는 «규칙 문언 소실» 이므로 red."""
+    anchor = str(_first_rule(default_manifest_path())["statement_anchor"])
+    return _sub_once(text, anchor, anchor.replace("완전성", "완전성-대조군"))
+
+
+def _duplicate_rule_anchor(text: str) -> str:
+    """규칙 문언 앵커를 한 벌 더 둔다 — 2회 이상이면 규칙 자리를 특정하지 못한다."""
+    anchor = str(_first_rule(default_manifest_path())["statement_anchor"])
+    return _append(text, f"대조군 — {anchor}")
+
+
+def _break_universe_introducer(text: str) -> str:
+    """우주 정의 행의 원소 도입 '—' 을 없앤다 — RULE 은 파생 실패로 **시끄럽게** 죽어야 한다.
+
+    우주가 비면 `universe ∖ consumers` 가 공집합이 되어 **조용히 green** 이 된다.
+    그래서 이 자리는 «측정 결과 0» 이 아니라 «측정 불가» 로 처분한다.
+    """
+    doc = ContractDoc(text, "<mutation>")
+    query = _first_rule(default_manifest_path())["universe"]
+    assert isinstance(query, dict)
+    line_no = _unique_anchor_line(doc, str(query["block_anchor"]))
+    line = doc.lines[line_no - 1]
+    if "—" not in line:
+        raise ContractParseError(f"{line_no}: 우주 정의 행에 '—' 이 없다")
+    return _replace_line_once(text, line, line.replace("—", "-", 1))
+
+
+def _benign_append(text: str) -> str:
+    """RULE 과 무관한 무해한 편집 — 역방향(과잉 차단 0) 대조군."""
+    return _append(text, "대조군 — RULE 축과 무관한 무해한 말미 덧붙임.")
+
+
+def build_manifest_fixtures(
+    tmpdir: Path, real_manifest: Path
+) -> dict[str | None, Path]:
+    """RULE 대조군이 요구하는 manifest 픽스처들을 만든다.
+
+    결함 픽스처는 실운용 manifest 에서 **한 가지만** 바꿔 만든다 — 두 가지를 함께
+    바꾸면 어느 술어가 잡았는지 알 수 없어 대조군이 판별력을 잃는다.
+
+    Args:
+        tmpdir: 픽스처를 쓸 임시 디렉터리.
+        real_manifest: 실운용 manifest 경로.
+
+    Returns:
+        픽스처 키 → 경로 사상 (`None` 은 실운용 경로).
+
+    Raises:
+        ContractParseError: 실운용 manifest 를 적재하지 못했을 때 — 그러면
+            «green 인 기준» 자체를 만들 수 없으므로 조용히 넘기지 않는다.
+    """
+    if yaml is None:  # pragma: no cover
+        raise ContractParseError(
+            f"PyYAML 부재로 픽스처를 만들 수 없다: {YAML_IMPORT_ERROR}"
+        )
+    manifest, violations = load_manifest(real_manifest)
+    if manifest is None:
+        raise ContractParseError(
+            f"실운용 manifest 가 이미 red 다 — 대조군의 기준이 없다: "
+            f"{[v.message for v in violations]}"
+        )
+
+    def write(key: str, mutate: Callable[[dict[str, object]], None]) -> Path:
+        payload = copy.deepcopy(manifest)
+        mutate(payload)
+        path = tmpdir / f"{key}.yaml"
+        path.write_text(
+            yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        return path
+
+    def add_phantom_rule(payload: dict[str, object]) -> None:
+        rules = payload["rules"]
+        assert isinstance(rules, list)
+        base = copy.deepcopy(rules[0])
+        assert isinstance(base, dict)
+        base["id"] = "CAP-PHANTOM"
+        consumers = base["consumers"]
+        assert isinstance(consumers, dict)
+        consumers["block_anchor"] = PHANTOM_CONSUMER_ANCHOR
+        rules.append(base)
+
+    def unknown_derivation(payload: dict[str, object]) -> None:
+        rules = payload["rules"]
+        assert isinstance(rules, list) and isinstance(rules[0], dict)
+        universe = rules[0]["universe"]
+        assert isinstance(universe, dict)
+        universe["derivation"] = "there_is_no_such_derivation"
+
+    def count_literal(payload: dict[str, object]) -> None:
+        rules = payload["rules"]
+        assert isinstance(rules, list) and isinstance(rules[0], dict)
+        universe = rules[0]["universe"]
+        assert isinstance(universe, dict)
+        # 스키마 밖 키가 «먼저» 걸리지 않게 허용된 키 위에 정수를 얹는다 —
+        # 그래야 «계수 거부» 술어 자신이 판별했음이 증명된다.
+        universe["description"] = 9
+
+    def drop_vocab(payload: dict[str, object]) -> None:
+        payload.pop("census_vocabulary", None)
+
+    not_yaml = tmpdir / "not-a-manifest.yaml"
+    not_yaml.write_text("이것은 매핑이 아니다\n", encoding="utf-8")
+
+    return {
+        None: real_manifest,
+        MFIXTURE_MISSING: tmpdir / "there-is-no-such-manifest.yaml",
+        MFIXTURE_NOT_YAML: not_yaml,
+        MFIXTURE_EXTRA_RULE: write(MFIXTURE_EXTRA_RULE, add_phantom_rule),
+        MFIXTURE_UNKNOWN_DERIV: write(MFIXTURE_UNKNOWN_DERIV, unknown_derivation),
+        MFIXTURE_COUNT_LITERAL: write(MFIXTURE_COUNT_LITERAL, count_literal),
+        MFIXTURE_NO_VOCAB: write(MFIXTURE_NO_VOCAB, drop_vocab),
+    }
 
 
 def build_mutations() -> list[Mutation]:
@@ -2139,6 +2944,172 @@ def build_mutations() -> list[Mutation]:
                 t, "(4) 대상 = **배열(목록)", "(4) 삭제 대조군 **배열(목록)"
             ),
         ),
+        # ---- RULE — 규칙 ↔ 소비처 전수 대응 (S-25 · R-F3) -------------------
+        # 문서 변이 (manifest 는 실운용 그대로).
+        Mutation(
+            "RULE-inject-universe-element",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            _inject_universe_element,
+        ),
+        Mutation(
+            "RULE-remove-one-consumer",
+            "TOS-CC-RULE-MISSING",
+            "inject",
+            _remove_last_consumer,
+        ),
+        Mutation(
+            "RULE-inject-phantom-consumer",
+            "TOS-CC-RULE-EXTRA",
+            "inject",
+            _inject_consumer(lambda _doc: GHOST_ELEMENT),
+        ),
+        Mutation(
+            "RULE-inject-duplicate-element",
+            "TOS-CC-RULE-DUP",
+            "capture",
+            _inject_consumer(
+                lambda doc: derive_universe_separated(
+                    doc,
+                    str(_first_rule(default_manifest_path())["universe"]["block_anchor"]),  # type: ignore[index]
+                )[0][0]
+            ),
+            "중복 원소",
+        ),
+        Mutation(
+            "RULE-inject-duplicate-marker",
+            "TOS-CC-RULE-DUP",
+            "capture",
+            _inject_duplicate_marker,
+            "마커 중복",
+        ),
+        Mutation(
+            "RULE-mutate-statement-anchor",
+            "TOS-CC-RULE-ANCHOR",
+            "capture",
+            _mutate_rule_anchor,
+            "문서에 0회",
+        ),
+        Mutation(
+            "RULE-duplicate-statement-anchor",
+            "TOS-CC-RULE-ANCHOR",
+            "capture",
+            _duplicate_rule_anchor,
+            "문서에 2회",
+        ),
+        Mutation(
+            # 우주가 비면 차집합이 공집합이 되어 «조용히 green» 이다 — 그래서 이 자리는
+            # «측정 결과 0» 이 아니라 «측정 불가»(파생 실패) 로 죽어야 한다.
+            "RULE-break-universe-derivation",
+            "TOS-CC-PARSE",
+            "capture",
+            _break_universe_introducer,
+            "RULE 모집단 파생 실패",
+        ),
+        # manifest 변이 (문서는 그대로 — 변이 주체가 정본 ① 이다).
+        Mutation(
+            "RULE-manifest-added-rule-no-consumers",
+            "TOS-CC-RULE-MISSING",
+            "capture",
+            lambda t: t,
+            "CAP-PHANTOM",
+            None,
+            None,
+            MFIXTURE_EXTRA_RULE,
+            None,
+        ),
+        Mutation(
+            "RULE-manifest-file-missing",
+            "TOS-CC-RULE-MANIFEST",
+            "capture",
+            lambda t: t,
+            "manifest 를 읽지 못했다",
+            None,
+            None,
+            MFIXTURE_MISSING,
+            None,
+        ),
+        Mutation(
+            "RULE-manifest-not-a-manifest",
+            "TOS-CC-RULE-MANIFEST",
+            "capture",
+            lambda t: t,
+            "매핑이 아니다",
+            None,
+            None,
+            MFIXTURE_NOT_YAML,
+            None,
+        ),
+        Mutation(
+            "RULE-manifest-unknown-derivation",
+            "TOS-CC-RULE-MANIFEST",
+            "capture",
+            lambda t: t,
+            "미구현 파생 이름",
+            None,
+            None,
+            MFIXTURE_UNKNOWN_DERIV,
+            None,
+        ),
+        Mutation(
+            "RULE-manifest-count-literal",
+            "TOS-CC-RULE-MANIFEST",
+            "capture",
+            lambda t: t,
+            "정수 리터럴",
+            None,
+            None,
+            MFIXTURE_COUNT_LITERAL,
+            None,
+        ),
+        Mutation(
+            "RULE-manifest-vocabulary-gone",
+            "TOS-CC-RULE-VOCAB",
+            "capture",
+            lambda t: t,
+            "정본이 «어디에도» 없다",
+            None,
+            None,
+            MFIXTURE_NO_VOCAB,
+            None,
+        ),
+        # 역방향 — 정직한 문서·manifest 에서 과잉 차단 0.
+        Mutation(
+            "RULE-honest-missing-is-clean",
+            "TOS-CC-RULE-MISSING",
+            "clean",
+            _benign_append,
+        ),
+        Mutation(
+            "RULE-honest-extra-is-clean",
+            "TOS-CC-RULE-EXTRA",
+            "clean",
+            _benign_append,
+        ),
+        Mutation(
+            "RULE-honest-anchor-is-clean",
+            "TOS-CC-RULE-ANCHOR",
+            "clean",
+            _benign_append,
+        ),
+        Mutation(
+            "RULE-honest-dup-is-clean",
+            "TOS-CC-RULE-DUP",
+            "clean",
+            _benign_append,
+        ),
+        Mutation(
+            "RULE-honest-manifest-is-clean",
+            "TOS-CC-RULE-MANIFEST",
+            "clean",
+            _benign_append,
+        ),
+        Mutation(
+            "RULE-honest-vocabulary-is-clean",
+            "TOS-CC-RULE-VOCAB",
+            "clean",
+            _benign_append,
+        ),
     ]
 
 
@@ -2227,6 +3198,7 @@ def run_self_test(
     min_anchor: int,
     baseline_path: Path,
     repo_root: Path,
+    manifest_path: Path,
 ) -> int:
     """뮤테이션 배터리를 돌려 «죽은 검사 0» 을 실증한다.
 
@@ -2249,13 +3221,21 @@ def run_self_test(
             fixtures = build_baseline_fixtures(
                 text, Path(tmp), baseline_path, repo_root
             )
+            manifests = build_manifest_fixtures(Path(tmp), manifest_path)
         except ContractParseError as exc:
             # 픽스처를 못 만들면 배터리 전체가 «green 인 기준»을 잃는다.  조용히
             # 축소 실행하지 않고 여기서 시끄럽게 실패한다.
             print(f"self-test: FAIL — 대조군 픽스처 구성 실패: {exc}")
             return 1
         return _run_battery(
-            text, display_path, min_anchor, baseline_path, repo_root, fixtures
+            text,
+            display_path,
+            min_anchor,
+            baseline_path,
+            repo_root,
+            fixtures,
+            manifest_path,
+            manifests,
         )
 
 
@@ -2265,19 +3245,21 @@ def _reference_index(
     min_anchor: int,
     repo_root: Path,
     baseline: Path,
-    cache: dict[Path, tuple[dict[str, int], dict[str, set[int]]]],
+    manifest: Path,
+    cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]],
 ) -> tuple[dict[str, int], dict[str, set[int]]]:
-    """어떤 기준선 픽스처에 대한 «원본 문서» 발화 색인을 (캐시해) 돌려준다."""
-    if baseline not in cache:
+    """어떤 (기준선, manifest) 픽스처 짝에 대한 «원본 문서» 발화 색인을 (캐시해) 준다."""
+    key = (baseline, manifest)
+    if key not in cache:
         counts: dict[str, int] = {}
         sites: dict[str, set[int]] = {}
         for v in check_document(
-            text, display_path, min_anchor, False, baseline, None, repo_root
+            text, display_path, min_anchor, False, baseline, None, repo_root, manifest
         ):
             counts[v.rule] = counts.get(v.rule, 0) + 1
             sites.setdefault(v.rule, set()).add(v.line)
-        cache[baseline] = (counts, sites)
-    return cache[baseline]
+        cache[key] = (counts, sites)
+    return cache[key]
 
 
 def _run_battery(
@@ -2287,11 +3269,13 @@ def _run_battery(
     baseline_path: Path,
     repo_root: Path,
     fixtures: dict[str | None, Path],
+    manifest_path: Path,
+    manifests: dict[str | None, Path],
 ) -> int:
     """대조군 배터리 본체 (픽스처가 준비된 뒤 실행된다)."""
-    cache: dict[Path, tuple[dict[str, int], dict[str, set[int]]]] = {}
+    cache: dict[tuple[Path, Path], tuple[dict[str, int], dict[str, set[int]]]] = {}
     base_count, base_sites = _reference_index(
-        text, display_path, min_anchor, repo_root, baseline_path, cache
+        text, display_path, min_anchor, repo_root, baseline_path, manifest_path, cache
     )
 
     print(f"self-test: 기준선 위반 {sum(base_count.values())}건 (실운용 기준선 기준)")
@@ -2310,8 +3294,10 @@ def _run_battery(
             invalid.append(f"{mut.name} ({mut.rule}): 앵커 부재 — {exc}")
             print(f"  [SETUP-FAIL] {mut.name} ({mut.rule}) — {exc}")
             continue
-        # 기준선 «픽스처» 를 바꾸는 대조군은 문서를 건드리지 않는 것이 정상이다.
-        mutates_baseline = mut.baseline != mut.ref_baseline
+        # 기준선·manifest «픽스처» 를 바꾸는 대조군은 문서를 건드리지 않는 것이 정상이다.
+        mutates_baseline = (mut.baseline != mut.ref_baseline) or (
+            mut.manifest != mut.ref_manifest
+        )
         if mutated == text and not mutates_baseline:
             # 문서를 하나도 바꾸지 못한 변이는 «판별했다»고 말할 수 없다.  이전 판은
             # 이것을 DEAD 로 접어 «검사가 죽었다» 와 «대조군이 무효다» 를 뒤섞었다.
@@ -2326,6 +3312,7 @@ def _run_battery(
             min_anchor,
             repo_root,
             fixtures[mut.ref_baseline],
+            manifests[mut.ref_manifest],
             cache,
         )
         notices: list[str] = []
@@ -2337,6 +3324,7 @@ def _run_battery(
             fixtures[mut.baseline],
             notices,
             repo_root,
+            manifests[mut.manifest],
         )
         got_count = sum(1 for v in got if v.rule == mut.rule)
         got_sites = {v.line for v in got if v.rule == mut.rule}
@@ -2480,7 +3468,7 @@ def main(argv: list[str] | None = None) -> int:
         종료 코드 — 0 통과, 1 위반, 2 내부 오류.
     """
     parser = argparse.ArgumentParser(
-        description="tos 완료-계약 «자기참조 stale» 게이트 (C1~C4)"
+        description="tos 완료-계약 «자기참조 stale» 게이트 (C1~C4 · RULE)"
     )
     parser.add_argument(
         "--contract",
@@ -2501,6 +3489,15 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "C2U 래칫 기준선 JSON "
             f"(기본: <검사기 디렉터리>/{DEFAULT_BASELINE_NAME}; 부재하면 red)"
+        ),
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help=(
+            "RULE 축 manifest (S-25 정본 ①) "
+            f"(기본: <repo>/{DEFAULT_MANIFEST_PATH}; 부재하면 red)"
         ),
     )
     parser.add_argument(
@@ -2558,13 +3555,16 @@ def main(argv: list[str] | None = None) -> int:
         rel = str(contract)
 
     baseline_path = (args.baseline or default_baseline_path()).resolve()
+    manifest_path = (args.manifest or repo_root / DEFAULT_MANIFEST_PATH).resolve()
     if args.measure_baseline:
         return measure_baseline(repo_root, args.measure_baseline, rel)
 
     notices: list[str] = []
     try:
         if args.self_test:
-            return run_self_test(text, rel, args.min_anchor, baseline_path, repo_root)
+            return run_self_test(
+                text, rel, args.min_anchor, baseline_path, repo_root, manifest_path
+            )
         violations = check_document(
             text,
             rel,
@@ -2573,6 +3573,7 @@ def main(argv: list[str] | None = None) -> int:
             baseline_path,
             notices,
             repo_root,
+            manifest_path,
         )
     except Exception:  # noqa: BLE001 — 어떤 내부 예외도 green 이 되어선 안 된다
         logger.exception("검사 중 내부 예외")

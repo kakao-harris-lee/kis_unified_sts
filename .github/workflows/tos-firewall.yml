@@ -46,6 +46,13 @@ jobs:
           pip install -e "./tos[test]"
           pip install import-linter
           pip install -e . --no-deps
+          # Layer 4 의 RULE 축은 S-25 manifest(YAML)를 읽는다.  루트 프로젝트는
+          # `pyyaml>=6.0` 를 의존으로 선언하지만 위 설치는 `--no-deps` 라 딸려오지
+          # 않는다.  **부재 시 검사기는 조용히 건너뛰지 않고 `TOS-CC-RULE-MANIFEST`
+          # 로 red 를 낸다**(fail-closed) — 그래서 여기서 명시 설치한다.
+          # (`tos` 패키지의 §3.2 서드파티 allowlist 와는 무관하다 — `tools/` 의
+          #  저장소 도구가 쓰는 것이지 `tos` 패키지가 임포트하는 것이 아니다.)
+          pip install "pyyaml>=6.0"
 
       - name: Layer 1 — custom AST firewall (default-deny)
         run: python tools/tos_firewall_check.py
