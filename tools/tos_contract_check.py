@@ -32,6 +32,8 @@ addendum-5 가 낸 네 건은 전부 같은 클래스다: **계약이 자기 자
       TOS-CC-RULE-VOCAB     census 어휘 정본(어휘 축 ∪ 구조 축)이 manifest 에 없다.
   REF TOS-CC-REF-REJECTED  계약이 «기각된» 문서를 코드스팬으로 가리키는데, 그 인용 줄
                            자신은 기각 사실을 말하지 않는다 (아래 REF-1).
+  CT  TOS-CC-CLOSED-TABLE  운영자 승인으로 «닫힌» 표의 데이터 행 수가 기준선과 다르다.
+                           **등호이지 래칫이 아니다** — 늘어도 red, 줄어도 red (아래 CLOSED-1).
   --  TOS-CC-PARSE 모집단 파생 자체가 실패 (fail-closed — 파생 못 하면 green 을 내지 않는다).
 
 ------------------------------------------------------------------------------
@@ -350,6 +352,43 @@ REF-1 — «기각된 문서를 정본으로 가리키는» 인용 (TOS-CC-REF-R
 한계를 여기에 적는다.
 
 ------------------------------------------------------------------------------
+CLOSED-1 — «닫힌 표»의 행 수 등호 (TOS-CC-CLOSED-TABLE)
+------------------------------------------------------------------------------
+27차가 운영자 승인으로 «심사 이력 표»를 **닫았다**(이후 심사는 이 표에 적지 않는다).
+그런데 그 «닫힘»을 보는 축이 **0개**였다 — `is_history_row` 는 그 표의 리터럴을 다른
+축에서 **면제**할 뿐, 표가 닫혀 있음을 강제하지 않는다.  28차 자신이 「27차의 표 닫음은
+`is_history_row` 에 기계 효과가 0」이라 적었고, 그 뒤 적대 레인이 같은 자리를 다시 냈다.
+**소비자 없는 선언은 산문이다**(K-10) — 이 축이 그 선언의 소비자다.
+
+**술어** — manifest 가 선언한 닫힌 표마다:
+
+  * `header_anchor` 를 담은 행이 **정확히 1개** · `closing_anchor` 도 **정확히 1개**.
+  * 헤더 행 **다음** 행이 구분자(`|---|…`).
+  * 구분자 다음부터 **연속하는 표 행**(구분자 행 제외)을 세어 기준선 값과 **등호**.
+
+**등호이지 래칫이 아니다.**  C2U(RATCHET-1)는 «늘지 않는다»만 보장하는 축이라 잔여를
+줄이는 편집을 막지 않는다.  닫힌 표는 성격이 다르다 — 행이 **늘면** 표가 다시 열린 것이고,
+**줄면** 역사가 훼손된 것이다.  한쪽만 보는 술어는 다른 쪽에 눈이 먼다.
+
+**앞의 셋은 «위반»이 아니라 `TOS-CC-PARSE`**(검사 불능)다.  앵커를 특정하지 못하거나
+표의 형상을 못 찾으면 «무엇을» 세는지 잃는다 — 그 상태를 «행 수 불일치»로 부르면 측정
+결과 0 과 측정 불가가 같은 이름을 갖는다(REF-1 과 같은 비대칭).
+
+**삼각 구도의 배치**(S-25) — 이 축도 세 꼭짓점을 갈라 둔다::
+
+  * «의도»(어느 표가 닫혔는가) → manifest `closed_tables`.  **부재하면 fail-closed red**
+    (`RULE-MANIFEST` 와 같은 극성).  manifest 는 계수를 담지 «못한다» — 닫힌 키 집합과
+    `_reject_numeric` 이 기계로 거부한다.
+  * «측정된 계수»(행 수)   → 기준선 파일(`.tos_contract_baseline.json`).  계약 본문에
+    둘 수 없는 이유는 6차 ⓑ 다 — 「자기 문서를 세는 숫자는 그 문서에 두지 않는다」.
+    그 파일이 `unanchored_self_citations` 로 이미 쓰는 자리이고, 값 갱신이 **사람의 기록
+    행위**로 남는다(닫힌 표의 행이 정당하게 바뀌는 일은 운영자 결정이다).
+  * «측정»                 → 이 파일.  둘 다 신뢰하지 않고 대조만 한다.
+
+기준선에 그 표의 값이 **없으면** red 다 — 부재를 «0 위반»으로 접으면 축이 장식이 된다
+(RATCHET-1 이 기준선 부재에 세운 극성과 같다).
+
+------------------------------------------------------------------------------
 운용
 ------------------------------------------------------------------------------
 fail-closed: 위반 1건 이상이면 rc=1, 내부 예외면 rc=2 (예외를 삼키고 green 을 내지 않는다).
@@ -427,7 +466,13 @@ DEFAULT_MANIFEST_PATH = Path(
 #: manifest 스키마 — **닫힌 키 집합**.  «담지 않는 것»(계수·행번호·원소 리터럴 목록)을
 #: 산문으로 금지하면 다음 회차에 새 키로 스며든다.  둘 곳 자체를 없애는 것이 처분이다.
 MANIFEST_TOP_KEYS = frozenset(
-    {"schema_version", "census_vocabulary", "rejected_markers", "rules"}
+    {
+        "schema_version",
+        "census_vocabulary",
+        "rejected_markers",
+        "closed_tables",
+        "rules",
+    }
 )
 MANIFEST_RULE_KEYS = frozenset(
     {"id", "title", "statement_anchor", "universe", "consumers", "element_id"}
@@ -439,6 +484,9 @@ MANIFEST_STRUCTURAL_KEYS = frozenset({"nouns", "co_occurrence"})
 #: REF 축 기각 마커 정본의 닫힌 키 집합.  «어휘 목록» 하나뿐이다 — 계수를 둘 자리를
 #: 만들지 않는 것이 census 어휘와 같은 규율이다.
 MANIFEST_REJECTED_KEYS = frozenset({"first_heading_tokens"})
+#: CLOSED-1 축 정본의 닫힌 키 집합.  «어느 표가 · 무엇으로 닫혔다고 선언됐는가»만 담고
+#: 행 «수»는 담지 않는다 — 계수의 자리는 기준선 파일이다(CLOSED-1 삼각 구도).
+MANIFEST_CLOSED_TABLE_KEYS = frozenset({"header_anchor", "closing_anchor"})
 MANIFEST_SCHEMA_VERSION = 1
 
 #: 검사기가 «구현하는» 파생 질의의 이름.  manifest 가 모르는 이름을 쓰면 red —
@@ -453,6 +501,12 @@ DEFAULT_BASELINE_NAME = ".tos_contract_baseline.json"
 
 #: 그 파일 안에서 미앵커 좌표 개수를 담는 키.
 BASELINE_UNANCHORED_KEY = "unanchored_self_citations"
+
+#: 같은 파일 안에서 «닫힌 표»의 데이터 행 수를 담는 키 (헤더 앵커 → 행 수, CLOSED-1).
+#: 계수를 여기에 두는 이유는 manifest·계약 본문 둘 다 자리가 «아니기» 때문이다 —
+#: manifest 는 «의도»만 담고(스키마가 정수를 거부한다), 계약 본문에 자기 행 수를 적으면
+#: 적는 행위가 값을 바꾼다(6차 ⓑ).
+BASELINE_CLOSED_TABLE_KEY = "closed_table_rows"
 
 #: 그 개수를 «어느 커밋의 어느 blob 에서» 쟀는지를 담는 키 (PROVENANCE-1).
 BASELINE_PROVENANCE_KEY = "measured_against"
@@ -585,6 +639,11 @@ PROVENANCE_OPEN_RE = re.compile(r"\[\**\s*$")
 
 TABLE_ROW_RE = re.compile(r"^\s*>?\s*\|")
 HISTORY_FIRST_CELL_RE = re.compile(r"^v\d+\.\d+(?:\s*에라타\s*\d+\s*차)?$")
+
+#: 마크다운 표 «구분자» 행에만 쓰이는 글자들.  이 집합 밖의 글자가 하나라도 있으면
+#: 데이터 행이다 — 열거가 아니라 **문자 집합**으로 판별하는 이유는 열 수·정렬 표기가
+#: 표마다 다르기 때문이다.
+TABLE_SEPARATOR_CHARS = frozenset("|-: ")
 
 #: 층 태그로 인정하는 표기.  `현행(N차 이후)` 외에 «vX.Y 동결 내용» / «… 층» 도 태그다.
 LAYER_MARK_RES: tuple[re.Pattern[str], ...] = (
@@ -2257,6 +2316,10 @@ def load_manifest(
                 f"(실측 {data.get('schema_version')!r})",
             )
         )
+    if "closed_tables" in data:
+        # 계수의 자리는 기준선 파일이다 — 여기에 정수가 스며들면 CLOSED-1 의 삼각
+        # 구도가 manifest 안에서 무너진다 (규칙 서브트리와 같은 술어로 막는다).
+        _reject_numeric(data["closed_tables"], "closed_tables", path, out)
     rules = data.get("rules")
     if not isinstance(rules, list) or not rules:
         out.append(
@@ -2720,6 +2783,242 @@ def check_ref_rejected(
 
 
 # ============================================================================
+# CLOSED-TABLE — 운영자 승인으로 «닫힌» 표의 행 수 등호 (CLOSED-1)
+# ============================================================================
+
+ClosedTable = namedtuple("ClosedTable", ["header_anchor", "closing_anchor"])
+"""manifest 가 선언한 닫힌 표 하나의 «의도» — 두 축자 앵커뿐이고 계수는 없다."""
+
+
+def is_table_separator_row(line: str) -> bool:
+    """마크다운 표의 «구분자» 행인지 본다 (blockquote 접두 `>` 를 벗겨서).
+
+    Args:
+        line: 원문 한 줄.
+
+    Returns:
+        구분자 행이면 True.
+    """
+    body = line.lstrip().lstrip(">").strip()
+    return bool(body) and "-" in body and set(body) <= TABLE_SEPARATOR_CHARS
+
+
+def derive_closed_tables(
+    manifest_path: Path,
+) -> tuple[list[ClosedTable] | None, list[Violation]]:
+    """닫힌 표 정본을 S-25 manifest 에서 읽는다 — **부재하면 fail-closed**.
+
+    「어느 표가 닫혔는가」는 «의도»이고 그 정본은 manifest 다(REF 축 기각 토큰과 같은
+    규율).  부재를 «빈 목록»으로 접으면 이 축이 조용히 사라진다 — `RULE-MANIFEST` 와
+    같은 극성으로 red.
+
+    Args:
+        manifest_path: S-25 manifest 경로.
+
+    Returns:
+        `(닫힌 표 목록 또는 None, 위반 목록)`.  `None` 이면 축을 돌리지 않는다.
+    """
+    path = str(manifest_path)
+
+    def fail(message: str) -> tuple[None, list[Violation]]:
+        return None, [Violation("TOS-CC-RULE-MANIFEST", path, 0, message)]
+
+    manifest, violations = load_manifest(manifest_path)
+    if manifest is None:
+        return fail(
+            "닫힌 표 정본이 «어디에도» 없다 (manifest 자체가 red) — CLOSED-1 축이 "
+            f"눈먼다: {[v.message for v in violations]}"
+        )
+    tables = manifest.get("closed_tables")
+    if not isinstance(tables, list) or not tables:
+        return fail(
+            "`closed_tables` 가 비지 않은 목록이 아니다 — 닫힌 표 정본이 «어디에도» "
+            "없다 (27차가 표를 닫았다는 선언에 소비자가 0개로 돌아간다)"
+        )
+    out: list[ClosedTable] = []
+    for i, entry in enumerate(tables):
+        where = f"closed_tables[{i}]"
+        if not isinstance(entry, dict):
+            return fail(f"{where}: 매핑이 아니다 ({type(entry).__name__})")
+        unknown = sorted(set(entry) - MANIFEST_CLOSED_TABLE_KEYS)
+        if unknown:
+            return fail(
+                f"{where}: 스키마 밖 키 {unknown} — 닫힌 키 집합은 "
+                f"{sorted(MANIFEST_CLOSED_TABLE_KEYS)} 다 (행 «수»를 둘 자리를 "
+                "만들지 않는다)"
+            )
+        header = entry.get("header_anchor")
+        closing = entry.get("closing_anchor")
+        for key, value in (("header_anchor", header), ("closing_anchor", closing)):
+            if not (isinstance(value, str) and value.strip()):
+                return fail(f"{where}.{key} 가 비지 않은 문자열이 아니다")
+        assert isinstance(header, str) and isinstance(closing, str)
+        out.append(ClosedTable(header, closing))
+    return out, []
+
+
+def read_closed_table_baseline(path: Path) -> dict[str, int]:
+    """기준선 파일에서 «닫힌 표 → 행 수» 사상을 읽는다 — 부재·형태 위반은 fail-closed.
+
+    Args:
+        path: 기준선 JSON 경로.
+
+    Returns:
+        헤더 앵커 → 데이터 행 수.
+
+    Raises:
+        ContractParseError: 읽기·파싱 실패 또는 키/타입 위반.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ContractParseError(f"기준선 파일을 읽지 못했다 ({path}): {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ContractParseError(
+            f"기준선 파일이 JSON 이 아니다 ({path}): {exc}"
+        ) from exc
+    if not isinstance(data, dict) or BASELINE_CLOSED_TABLE_KEY not in data:
+        raise ContractParseError(
+            f"기준선 파일에 '{BASELINE_CLOSED_TABLE_KEY}' 키가 없다 ({path})"
+        )
+    table = data[BASELINE_CLOSED_TABLE_KEY]
+    if not isinstance(table, dict) or not table:
+        raise ContractParseError(
+            f"'{BASELINE_CLOSED_TABLE_KEY}' 가 비지 않은 «앵커 → 행 수» 매핑이 아니다"
+        )
+    out: dict[str, int] = {}
+    for key, value in table.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ContractParseError(
+                f"'{BASELINE_CLOSED_TABLE_KEY}[{key!r}]' 가 음이 아닌 정수가 아니다: "
+                f"{value!r}"
+            )
+        out[str(key)] = value
+    return out
+
+
+def closed_table_row_lines(doc: ContractDoc, header_line: int) -> list[int]:
+    """헤더 행 다음 구분자부터 «연속하는 표 행»의 데이터 행번호를 모은다.
+
+    **이 파생이 유일 소스다** — 생산 술어와 대조군이 같은 리더를 쓴다.  대조군이
+    자기 방식으로 행을 세면 «무엇을 세는가»가 조용히 갈라져 배터리가 자기 자신을
+    검증하게 된다(C2UP 픽스처가 배운 것과 같은 교훈).
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        header_line: 표 헤더의 1-기반 행번호.
+
+    Returns:
+        데이터 행의 1-기반 행번호 목록 (구분자 행 제외).
+
+    Raises:
+        ContractParseError: 헤더 다음 행이 구분자가 아닐 때 — 표의 «형상»을 못 찾으면
+            무엇을 세는지 잃으므로 «0 행»으로 접지 않는다.
+    """
+    sep = header_line + 1
+    if sep > len(doc.lines) or not is_table_separator_row(doc.lines[sep - 1]):
+        found = doc.lines[sep - 1].strip() if sep <= len(doc.lines) else "<문서 끝>"
+        raise ContractParseError(
+            f"헤더 행 {header_line} 다음 행이 표 구분자가 아니다 (실측 {found!r:.60})"
+        )
+    rows: list[int] = []
+    for lineno in range(sep + 1, len(doc.lines) + 1):
+        line = doc.lines[lineno - 1]
+        if not TABLE_ROW_RE.match(line):
+            break
+        if is_table_separator_row(line):
+            continue
+        rows.append(lineno)
+    return rows
+
+
+def check_closed_tables(
+    doc: ContractDoc, manifest_path: Path, baseline_path: Path
+) -> list[Violation]:
+    """CLOSED-TABLE — 닫힌 표의 데이터 행 수가 기준선과 **같은지** (CLOSED-1).
+
+    래칫이 아니라 등호다.  행이 늘면 «닫았다»는 선언이 거짓이 되고, 줄면 종결된 이력이
+    훼손된다 — 한쪽만 보는 술어는 다른 쪽에 눈이 먼다.
+
+    Args:
+        doc: 계약 문서 컨텍스트.
+        manifest_path: 닫힌 표 정본(manifest) 경로.
+        baseline_path: 행 수 기준선 JSON 경로.
+
+    Returns:
+        위반 목록.
+
+    Raises:
+        ContractParseError: 앵커가 유일하지 않거나 표 형상을 찾지 못했을 때
+            (호출부가 `TOS-CC-PARSE` 로 접는다 — «검사 불능»과 «위반 0»은 다르다).
+    """
+    tables, violations = derive_closed_tables(manifest_path)
+    if tables is None:
+        return violations
+
+    try:
+        baseline = read_closed_table_baseline(baseline_path)
+    except ContractParseError as exc:
+        # 기준선 부재를 «0 위반» 으로 접으면 이 축이 장식이 된다 (RATCHET-1 과 같은 극성).
+        return [
+            Violation(
+                "TOS-CC-CLOSED-TABLE",
+                doc.display_path,
+                0,
+                f"닫힌 표의 행 수 기준선을 확립할 수 없다 — {exc} "
+                f"(선언된 닫힌 표 {len(tables)}건 · 부재를 «0 위반»으로 접지 않는다)",
+            )
+        ]
+
+    out: list[Violation] = []
+    for table in tables:
+        # 앵커가 유일하지 않으면 «무엇의» 표인지 잃는다 — 여기서 오르는 예외는
+        # 호출부에서 `TOS-CC-PARSE` 가 된다 (위반이 아니라 «검사 불능»).
+        header_line = _unique_anchor_line(doc, table.header_anchor)
+        closing_line = _unique_anchor_line(doc, table.closing_anchor)
+        actual = len(closed_table_row_lines(doc, header_line))
+        expected = baseline.get(table.header_anchor)
+        if expected is None:
+            out.append(
+                Violation(
+                    "TOS-CC-CLOSED-TABLE",
+                    str(baseline_path),
+                    0,
+                    f"기준선에 닫힌 표 «{_ellipsis(table.header_anchor)}» 의 행 수가 "
+                    f"없다 (실측 {actual}행) — 선언된 표에 기준선이 없으면 그 표는 "
+                    "«닫혔다»고 적혀 있을 뿐 아무도 세지 않는다",
+                )
+            )
+            continue
+        if actual != expected:
+            direction = "늘었다" if actual > expected else "줄었다"
+            out.append(
+                Violation(
+                    "TOS-CC-CLOSED-TABLE",
+                    doc.display_path,
+                    header_line,
+                    f"닫힌 표 «{_ellipsis(table.header_anchor)}» 의 데이터 행이 "
+                    f"기준선 {expected} 에서 {actual} 로 {direction} — 이 표는 "
+                    f"{closing_line}행에서 «닫힌다»고 선언됐다.  늘면 선언이 거짓이 "
+                    "되고 줄면 종결된 이력이 훼손된다(등호이지 래칫이 아니다).  "
+                    f"행이 정당하게 바뀌었다면 {baseline_path} 의 "
+                    f"'{BASELINE_CLOSED_TABLE_KEY}' 를 **사람이** 갱신하라",
+                )
+            )
+        logger.info(
+            "CLOSED-TABLE: «%s» 헤더 %d행 · 닫힘 선언 %d행 · 데이터 %d행 (기준선 %s)",
+            _ellipsis(table.header_anchor),
+            header_line,
+            closing_line,
+            actual,
+            expected,
+        )
+    return out
+
+
+# ============================================================================
 # 오케스트레이션
 # ============================================================================
 
@@ -2782,6 +3081,7 @@ def check_document(
         ("C4", check_c4),
         ("RULE", lambda d: check_rule(d, manifest)),
         ("REF", lambda d: check_ref_rejected(d, manifest, root)),
+        ("CLOSED-TABLE", lambda d: check_closed_tables(d, manifest, baseline)),
     )
     for name, fn in axes:
         try:
@@ -2890,6 +3190,7 @@ FIXTURE_PROVENANCE_OK = "prov-ok"  # 출처 blob 실측값으로 핀 → C2UP gr
 FIXTURE_STALE_COUNT = "stale-count"  # 출처는 참이나 개수가 blob 과 불일치
 FIXTURE_BAD_COMMIT = "bad-commit"  # 움직이는 ref
 FIXTURE_NO_PROVENANCE = "no-provenance"  # 출처 필드 자체가 없다
+FIXTURE_NO_CLOSED_ROWS = "no-closed-rows"  # 닫힌 표의 행 수 기준선이 없다
 
 #: RULE 축 manifest 픽스처 키.  기준선 픽스처와 «축»이 다르므로 별도 사상에 둔다.
 MFIXTURE_MISSING = "m-missing"  # 파일 자체가 없다 (부재를 «0 위반»으로 접지 않는다)
@@ -2901,6 +3202,8 @@ MFIXTURE_UNKNOWN_DERIV = "m-unknown-deriv"  # 검사기가 모르는 파생 이�
 MFIXTURE_COUNT_LITERAL = "m-count-literal"  # 계수(정수 리터럴)가 스며들었다
 MFIXTURE_NO_VOCAB = "m-no-vocab"  # census 어휘 정본이 사라졌다
 MFIXTURE_NO_REJECTED = "m-no-rejected"  # REF 축 기각 토큰 정본이 사라졌다
+MFIXTURE_NO_CLOSED = "m-no-closed-tables"  # CLOSED-1 축 닫힌 표 정본이 사라졌다
+MFIXTURE_CLOSED_COUNT = "m-closed-count"  # 닫힌 표 선언에 계수가 스며들었다
 
 
 def _enum_fence(doc: ContractDoc) -> tuple[int, int]:
@@ -3703,6 +4006,79 @@ def _strip_md_citations(text: str) -> str:
     return stripped
 
 
+# ---- CLOSED-TABLE 축 대조군 -------------------------------------------------
+#
+# 표의 자리를 하드코딩하지 «않는다» — 실운용 manifest 가 선언한 앵커로 찾고, 행은
+# 생산 술어와 **같은 파생**(`closed_table_row_lines`)으로 센다.  배터리가 앵커나 세는
+# 법을 따로 적으면 정본이 둘이 되어 조용히 갈라진다.
+
+
+def _closed_table_declaration() -> ClosedTable:
+    """실운용 manifest 가 선언한 «첫» 닫힌 표의 앵커 쌍.
+
+    Raises:
+        ContractParseError: 정본을 읽지 못했을 때 (대조군 무효 — 조용히 통과시키지 않는다).
+    """
+    tables, violations = derive_closed_tables(default_manifest_path())
+    if not tables:
+        raise ContractParseError(
+            "닫힌 표 정본을 읽지 못해 대조군을 구성할 수 없다: "
+            f"{[v.message for v in violations]}"
+        )
+    return tables[0]
+
+
+def _closed_table_last_row_line(doc: ContractDoc) -> str:
+    """닫힌 표의 **마지막 데이터 행** 원문을 문서 구조에서 파생한다."""
+    table = _closed_table_declaration()
+    rows = closed_table_row_lines(doc, _unique_anchor_line(doc, table.header_anchor))
+    if not rows:
+        raise ContractParseError("닫힌 표에 데이터 행이 없다 — 대조군 무효")
+    return doc.lines[rows[-1] - 1]
+
+
+def _closed_table_add_row(text: str) -> str:
+    """닫힌 표에 데이터 행 하나를 **더한다** — 표가 다시 열린 형상."""
+    doc = ContractDoc(text, "<mutation>")
+    last = _closed_table_last_row_line(doc)
+    # 이력 행 형상으로 심는다(`_history_row`) — 다른 축의 리터럴 술어가 먼저 발화해
+    # 이 대조군이 «무엇을 증명했는지» 흐려지지 않게 한다.
+    added = "> " + _history_row(doc, "대조군 — 닫힌 표에 더한 행")
+    return _replace_line_once(text, last, last + "\n" + added)
+
+
+def _closed_table_drop_row(text: str) -> str:
+    """닫힌 표에서 데이터 행 하나를 **지운다** — 종결된 이력이 훼손된 형상."""
+    doc = ContractDoc(text, "<mutation>")
+    last = _closed_table_last_row_line(doc)
+    return _replace_line_once(text, last + "\n", "")
+
+
+def _closed_table_anchor_gone(which: str) -> Callable[[str], str]:
+    """닫힌 표의 앵커 하나를 지운다 — 위반이 아니라 «검사 불능»(PARSE) 이어야 한다.
+
+    두 앵커를 **독립으로** 흔든다.  하나만 흔드는 대조군만 두면 다른 limb 이 지고 있어도
+    배터리가 통과한다(「(4) 열거 7==7」이 세 자리 중 둘만 보고 green 을 낸 그 형태다).
+
+    Args:
+        which: `"header"` 또는 `"closing"`.
+
+    Returns:
+        문서 변형 함수.
+    """
+
+    def transform(text: str) -> str:
+        doc = ContractDoc(text, "<mutation>")
+        table = _closed_table_declaration()
+        anchor = table.header_anchor if which == "header" else table.closing_anchor
+        line = doc.lines[_unique_anchor_line(doc, anchor) - 1]
+        # 앵커 문자열만 걷어낸다 — 행 자체는 남겨 다른 축의 모집단이 통째로 흔들리지
+        # 않게 한다(주변 축이 함께 무너지면 이 대조군의 판별력이 흐려진다).
+        return _replace_line_once(text, line, line.replace(anchor, "대조군", 1))
+
+    return transform
+
+
 def build_manifest_fixtures(
     tmpdir: Path, real_manifest: Path
 ) -> dict[str | None, Path]:
@@ -3776,6 +4152,16 @@ def build_manifest_fixtures(
     def drop_rejected(payload: dict[str, object]) -> None:
         payload.pop("rejected_markers", None)
 
+    def drop_closed_tables(payload: dict[str, object]) -> None:
+        payload.pop("closed_tables", None)
+
+    def closed_table_count_literal(payload: dict[str, object]) -> None:
+        tables = payload["closed_tables"]
+        assert isinstance(tables, list) and isinstance(tables[0], dict)
+        # 닫힌 키 집합이 «먼저» 걸리지 않게 허용된 키 위에 정수를 얹는다 — 그래야
+        # «계수 거부» 술어 자신이 판별했음이 증명된다 (규칙 서브트리와 같은 형태).
+        tables[0]["header_anchor"] = 9
+
     not_yaml = tmpdir / "not-a-manifest.yaml"
     not_yaml.write_text("이것은 매핑이 아니다\n", encoding="utf-8")
 
@@ -3788,6 +4174,8 @@ def build_manifest_fixtures(
         MFIXTURE_COUNT_LITERAL: write(MFIXTURE_COUNT_LITERAL, count_literal),
         MFIXTURE_NO_VOCAB: write(MFIXTURE_NO_VOCAB, drop_vocab),
         MFIXTURE_NO_REJECTED: write(MFIXTURE_NO_REJECTED, drop_rejected),
+        MFIXTURE_NO_CLOSED: write(MFIXTURE_NO_CLOSED, drop_closed_tables),
+        MFIXTURE_CLOSED_COUNT: write(MFIXTURE_CLOSED_COUNT, closed_table_count_literal),
     }
 
 
@@ -4605,6 +4993,86 @@ def build_mutations() -> list[Mutation]:
             "clean",
             _benign_append,
         ),
+        # ---- CLOSED-TABLE — 운영자 승인으로 «닫힌» 표의 행 수 등호 (CLOSED-1) ----
+        Mutation(
+            # 이 판의 직접 대조군 ①.  닫힌 표에 행을 더하면 «닫았다»는 선언이 거짓이
+            # 된다 — 27차 이후 그 형상을 보는 축이 0개였다.
+            "CLOSED-TABLE-inject-added-row",
+            "TOS-CC-CLOSED-TABLE",
+            "inject",
+            _closed_table_add_row,
+        ),
+        Mutation(
+            # 직접 대조군 ②.  **래칫이 아니라 등호**임을 지는 자리다 — 행 삭제(= 역사
+            # 훼손)도 red 여야 한다.  이 대조군이 없으면 술어가 한쪽 방향에만
+            # 결속돼 있어도 배터리가 통과한다.
+            "CLOSED-TABLE-inject-dropped-row",
+            "TOS-CC-CLOSED-TABLE",
+            "inject",
+            _closed_table_drop_row,
+        ),
+        Mutation(
+            # 앵커를 잃으면 «위반 0» 이 아니라 «검사 불능» 이다.  포착값으로 **이 축의**
+            # PARSE 임을 고정한다 — 계수만 보면 다른 축의 PARSE 와 구별되지 않는다.
+            "CLOSED-TABLE-header-anchor-gone-is-parse",
+            "TOS-CC-PARSE",
+            "capture",
+            _closed_table_anchor_gone("header"),
+            "CLOSED-TABLE 모집단 파생 실패",
+        ),
+        Mutation(
+            # 두 앵커를 **독립으로** 흔든다.  닫힘 선언이 사라진 표를 계속 «닫힌 표»로
+            # 세면 이 축은 자기 전제를 검증하지 않는 것이다.
+            "CLOSED-TABLE-closing-anchor-gone-is-parse",
+            "TOS-CC-PARSE",
+            "capture",
+            _closed_table_anchor_gone("closing"),
+            "CLOSED-TABLE 모집단 파생 실패",
+        ),
+        Mutation(
+            # 기준선에 그 표의 값이 없으면 red — 부재를 «0 위반»으로 접으면 축이
+            # 장식이 된다(RATCHET-1 이 기준선 부재에 세운 극성과 같다).
+            "CLOSED-TABLE-baseline-entry-gone",
+            "TOS-CC-CLOSED-TABLE",
+            "capture",
+            lambda t: t,
+            "부재를 «0 위반»으로 접지 않는다",
+            FIXTURE_NO_CLOSED_ROWS,
+            None,
+        ),
+        Mutation(
+            # 정본이 manifest 에서 사라지면 이 축은 «어느 표가 닫혔는가»를 잃는다 —
+            # RULE-MANIFEST 와 같은 극성으로 red (REF 축 기각 토큰과 같은 형태).
+            "CLOSED-TABLE-manifest-declaration-gone",
+            "TOS-CC-RULE-MANIFEST",
+            "capture",
+            lambda t: t,
+            "닫힌 표 정본이 «어디에도» 없다",
+            None,
+            None,
+            MFIXTURE_NO_CLOSED,
+            None,
+        ),
+        Mutation(
+            # 계수를 manifest 에 두는 것이 **표현 불가능**함을 실증한다.  이 술어가
+            # 없으면 CLOSED-1 의 삼각 구도가 산문 규율로 되돌아간다.
+            "CLOSED-TABLE-manifest-count-literal-rejected",
+            "TOS-CC-RULE-MANIFEST",
+            "capture",
+            lambda t: t,
+            "closed_tables[0].header_anchor: 정수 리터럴",
+            None,
+            None,
+            MFIXTURE_CLOSED_COUNT,
+            None,
+        ),
+        Mutation(
+            # 역방향 — 표 «밖» 편집은 이 축을 흔들지 않는다.  «0 건»이라는 절대 기대다.
+            "CLOSED-TABLE-benign-append-is-clean",
+            "TOS-CC-CLOSED-TABLE",
+            "clean",
+            _benign_append,
+        ),
     ]
 
 
@@ -4740,6 +5208,10 @@ def build_baseline_fixtures(
     # 검증과 같은 리더를 쓴다 — 픽스처의 기대값을 다른 경로로 만들면 «무엇을 재는가»가
     # 조용히 갈라져 C2UP 대조군이 자기 자신을 검증하게 된다.
     blob_count = count_unanchored_in_text(read_baseline_source(repo_root, record))
+    # 닫힌 표 계수는 «한 가지만 바꾼다» 규율에 따라 실운용 값을 그대로 물려준다 —
+    # 물려주지 않으면 모든 기준선 픽스처가 CLOSED-1 축에서 함께 red 가 되어, 어느
+    # 술어가 잡았는지 알 수 없어진다.
+    closed = {BASELINE_CLOSED_TABLE_KEY: read_closed_table_baseline(real_baseline)}
 
     return {
         None: real_baseline,
@@ -4748,17 +5220,26 @@ def build_baseline_fixtures(
             {
                 BASELINE_UNANCHORED_KEY: count_unanchored_in_text(text),
                 BASELINE_PROVENANCE_KEY: prov,
+                **closed,
             },
         ),
         FIXTURE_MISSING: tmpdir / "there-is-no-such-file.json",
         FIXTURE_NOT_JSON: Path(__file__).resolve(),
         FIXTURE_PROVENANCE_OK: _write_fixture(
             tmpdir / "prov-ok.json",
-            {BASELINE_UNANCHORED_KEY: blob_count, BASELINE_PROVENANCE_KEY: prov},
+            {
+                BASELINE_UNANCHORED_KEY: blob_count,
+                BASELINE_PROVENANCE_KEY: prov,
+                **closed,
+            },
         ),
         FIXTURE_STALE_COUNT: _write_fixture(
             tmpdir / "stale-count.json",
-            {BASELINE_UNANCHORED_KEY: blob_count + 1, BASELINE_PROVENANCE_KEY: prov},
+            {
+                BASELINE_UNANCHORED_KEY: blob_count + 1,
+                BASELINE_PROVENANCE_KEY: prov,
+                **closed,
+            },
         ),
         FIXTURE_BAD_COMMIT: _write_fixture(
             tmpdir / "bad-commit.json",
@@ -4769,10 +5250,18 @@ def build_baseline_fixtures(
                     "commit": "HEAD",
                     "path": record.path,
                 },
+                **closed,
             },
         ),
         FIXTURE_NO_PROVENANCE: _write_fixture(
-            tmpdir / "no-provenance.json", {BASELINE_UNANCHORED_KEY: blob_count}
+            tmpdir / "no-provenance.json",
+            {BASELINE_UNANCHORED_KEY: blob_count, **closed},
+        ),
+        # 닫힌 표 계수만 빠진 기준선 — 나머지는 실운용과 같다.  부재를 «0 위반»으로
+        # 접으면 CLOSED-1 축이 장식이 된다.
+        FIXTURE_NO_CLOSED_ROWS: _write_fixture(
+            tmpdir / "no-closed-rows.json",
+            {BASELINE_UNANCHORED_KEY: blob_count, BASELINE_PROVENANCE_KEY: prov},
         ),
     }
 

@@ -67,8 +67,8 @@ case "$DISP" in
 esac
 
 # ── R-3  최신 verdict 스탬프 — **우주는 HEAD 트리다**(워킹트리 나열 아님)
-VD=$(git ls-tree --name-only HEAD "$STAMPS/" 2>/dev/null \
-     | grep -E '/[0-9]{8}-[0-9]{6}$' | LC_ALL=C sort | tail -1) || VD=""
+VD=$(git ls-tree -d --name-only HEAD "$STAMPS/" 2>/dev/null \
+     | LC_ALL=C sort | tail -1) || VD=""
 [ -n "$VD" ] || emit APPROVAL_ABSENT "HEAD 에 verdict 스탬프 없음"
 VBODY=$(git show "HEAD:$VD/verdict.md" 2>/dev/null) \
   || emit APPROVAL_ABSENT "verdict.md 가 HEAD 에 부재: $VD"
