@@ -25,6 +25,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # **전체 이력이 필요하다** — 아래 Layer 4 검사기의 `C2UP`(측정 출처 검증)은
+          # 래칫 기준선이 기록한 커밋에서 `git show <commit>:<path>` 로 blob 을 **다시
+          # 재어** 기준선이 그 내용에서 나왔음을 확인한다.  기본 `fetch-depth: 1` 은
+          # 얕은 클론이라 그 커밋이 없고, 검사기는 재측정 실패를 **fail-closed** 로
+          # 처분한다(rc=128 → `TOS-CC-C2UP` red).
+          #
+          # 에라타 32차가 `--full-history` lockstep 을 하네스·정본 블록·live sha 핀에
+          # 걸쳐 이행했으나 **검사기를 «실행하는» 이 체크아웃에는 닿지 않았다.**
+          # 로컬은 전체 이력을 갖고 있어 영원히 green 이었고, 게이트가 CI 에서 처음
+          # 실행된 PR #637 에서야 관측됐다 — `tos-gate.yml` 은 같은 이유로 이미
+          # `fetch-depth: 0` 이다.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
