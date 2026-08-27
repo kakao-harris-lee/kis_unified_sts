@@ -272,7 +272,7 @@ runtime shell은 적어도 다음을 소유한다.
 - **예방 통제 활성**: tos-gate required check(룰셋 — `required_status_checks.checks[].app_id`
   == Actions app id)·`.github/workflows/tos-gate.yml`(하니스 `tools/tos_entry_harness.sh`
   경로·sha256 검증 스텝 포함) **및 그 하니스 파일 `tools/tos_entry_harness.sh` 의
-  실체화(계약 §12.3.4-R 블록 결속값 sha 957bf49d…)** **및 `u17-verify` 실행기의 실체화**
+  실체화(계약 §12.3.4-R 블록 결속값 sha b97fda3a…)** **및 `u17-verify` 실행기의 실체화**
   도입 → D0-A 착수 전 `PREVENTION_ACTIVE`(계약 §12.3.4 `U-17`).
   - **`u17-verify` 는 하니스와 «구별되는» 필수 산출물**이다 — 계약의 가드 체인은 3단
     (`bash <§12.3.4-R 하니스> && bash <u17-verify> && <D0A-FIRST>`)이고, 하니스는

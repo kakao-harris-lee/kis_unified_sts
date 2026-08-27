@@ -14,7 +14,7 @@ jobs:
       - name: "tos-gate: verify harness sha256"
         run: |
           set -euo pipefail
-          printf '%s  tools/tos_entry_harness.sh\n' 957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d | shasum -a 256 -c -
+          printf '%s  tools/tos_entry_harness.sh\n' b97fda3a60fb0af15fbbf048a0933156f1781b4f62b90869409e8956a56c15ed | shasum -a 256 -c -
       - name: "tos-gate: run harness"
         run: |
           set -euo pipefail

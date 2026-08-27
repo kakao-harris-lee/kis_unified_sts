@@ -94,7 +94,7 @@ git merge-base --is-ancestor "$RH" HEAD \
   || emit APPROVAL_PROVENANCE_UNVERIFIABLE "reviewed_at_head 가 HEAD 의 조상이 아님"
 
 # ── R-7  승인 이후 bound_paths 를 건드린 커밋 — 공집합인가        [U-15-b (4)]
-TOUCH=$(git log --format=%H "$RH..HEAD" -- "$BP1" "$BP2") \
+TOUCH=$(git log --full-history --format=%H "$RH..HEAD" -- "$BP1" "$BP2") \
   || emit HARNESS_ABORTED "git log 실패"
 [ -z "$TOUCH" ] || emit APPROVAL_STALE "승인 이후 변경: $(echo "$TOUCH" | tr '\n' ' ')"
 

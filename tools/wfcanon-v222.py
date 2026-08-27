@@ -90,7 +90,7 @@ except Exception as _e:                                   # pragma: no cover
 # ── 계약 리터럴 (§12.3.4 U-17 · «아티팩트 파라미터가 아니다» — env 로 «선언»하지 않는다)
 GATE_JOB = "tos-gate"                                     # [F#2/N-4] 잡 id == 표시 이름 == required context
 HARNESS  = "tools/tos_entry_harness.sh"
-SHA      = "957bf49da8fc6ae39f97abe679411afeaa5a59f707f35bf3b3a8c6f9de141f0d"
+SHA      = "b97fda3a60fb0af15fbbf048a0933156f1781b4f62b90869409e8956a56c15ed"
 STEP_RUN = "tos-gate: run harness"                        # 정본 A 스텝 이름 (byte 불변)
 STEP_VER = "tos-gate: verify harness sha256"              # 정본 B 스텝 이름 (byte 불변)
 CHECKOUT_USES = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
