@@ -30,6 +30,8 @@ addendum-5 가 낸 네 건은 전부 같은 클래스다: **계약이 자기 자
       TOS-CC-RULE-DUP       같은 (rule, element) 또는 같은 소비처 마커가 2회 이상.
       TOS-CC-RULE-MANIFEST  manifest 부재·파손·스키마 위반·미구현 파생 이름.
       TOS-CC-RULE-VOCAB     census 어휘 정본(어휘 축 ∪ 구조 축)이 manifest 에 없다.
+  REF TOS-CC-REF-REJECTED  계약이 «기각된» 문서를 코드스팬으로 가리키는데, 그 인용 줄
+                           자신은 기각 사실을 말하지 않는다 (아래 REF-1).
   --  TOS-CC-PARSE 모집단 파생 자체가 실패 (fail-closed — 파생 못 하면 green 을 내지 않는다).
 
 ------------------------------------------------------------------------------
@@ -303,6 +305,51 @@ JSON 을 출력한다.  **파일은 쓰지 않는다**(RATCHET-1 과 같은 이�
 행위여야 한다).  ref 는 그 자리에서 불변 sha 로 해소해 출력한다.
 
 ------------------------------------------------------------------------------
+REF-1 — «기각된 문서를 정본으로 가리키는» 인용 (TOS-CC-REF-REJECTED)
+------------------------------------------------------------------------------
+29차가 등재한 것은 위반이 아니라 **검사기 공백**이었다: 계약이 «기각된» 설계 문서를
+파생 정본으로 가리킨 채 **한 회차 내내 서 있었는데 어떤 축도 그것을 보지 않았다**
+(27차가 초안 2 를 가리켰고 → 28차가 그 초안을 기각했고 → 29차에 가서야 손으로 적발했다).
+이 축이 그 공백을 닫는다.
+
+**술어** — 계약의 한 줄이 코드스팬으로 저장소 마크다운 경로를 인용하고, ① 그 파일이
+실재하며 ② 그 파일의 «첫 헤딩»에 기각 토큰이 있는데 ③ **인용한 줄 자신에는 그 토큰이
+없으면** red.
+
+**면제의 근거 — 그리고 그것이 28차 함정이 «아닌» 이유.**  인용 줄에 기각 토큰이 있으면
+그 줄은 기각을 «서술»하는 정당한 인용이다(예: 「26차가 초안 1 을 기각했다」).  28차가
+적발한 함정은 **면제가 금지 대상과 동연**인 형태였다 — provenance 마커는 저작자가 «매
+회차 타이핑하는» 문자열이라, 그것을 면제로 삼으면 금지 대상 전부가 자동으로 면제됐다.
+여기서는 그 동연이 성립하지 않는다: **어떤 저작자도 문서를 정본으로 가리키면서 같은 줄에
+«기각»을 쓰지 않는다.**  가리키는 행위와 기각을 적는 행위는 서로 반대 방향의 주장이고,
+그 **비대칭**이 이 면제의 정당성이다.  면제는 «그 헤딩에서 실제로 발화한» 토큰에만
+준다 — 다른 기각 어휘가 줄 어딘가에 있다고 면제되지 않는다.
+
+**fail-closed 셋**:
+
+  * 인용된 파일을 «읽지 못하거나» 첫 헤딩이 «없으면» → 미관측이므로 `TOS-CC-PARSE`.
+    조용히 넘기면 읽히지 않는 정본이 곧 green 이 된다.
+  * 코드스팬 모집단이 **0** 이면 → `TOS-CC-PARSE`.  이 축이 눈머는 것을 시끄럽게 만든다
+    (초안 3 이 배운 것: 「모집단이 0 이면 red」).
+  * 실재하는 인용이 **0** 이면 → 같은 사유로 `TOS-CC-PARSE`.  형상은 남고 대상이 전부
+    사라진 상태는 «위반 없음»이 아니라 «검사 불능»이다.
+
+셋 다 «위반»(`REF-REJECTED`)이 아니라 «검사 불능»(`PARSE`)으로 내는 것은 이 파일이 이미
+쓰는 비대칭이다 — 측정 결과 0 과 측정 불가를 같은 이름으로 부르면 둘을 구별할 수 없다.
+
+**실재하지 «않는» 경로는 모집단 밖이다.**  「가리킨 파일이 있는가」는 별개 축의 소관이고,
+여기서 겸하면 이 축의 발화가 두 사건을 섞는다.
+
+**기각 토큰의 정본은 S-25 manifest** 다(12차·22차가 census 어휘에 세운 규율과 같다).
+검사기에 리터럴로 박지 않으며, manifest 에 그 키가 부재하면 `RULE-MANIFEST` red 다.
+
+**이 축이 «보지 않는» 것**(정직 경계): 판정 단위가 «줄»이므로, 68KB 짜리 이력 표 행처럼
+한 줄이 매우 길면 면제가 사실상 무료다 — 인용과 무관한 다른 문장이 적은 기각 토큰이
+같은 줄에 있으면 면제가 선다.  좁히는 처분(인용 근접 창)은 «역사 서술»과 «현재 포인터»를
+가르지 못해 LIST-1 이 실측한 것과 같은 위양성을 낳는다.  그래서 줄 단위를 유지하고 그
+한계를 여기에 적는다.
+
+------------------------------------------------------------------------------
 운용
 ------------------------------------------------------------------------------
 fail-closed: 위반 1건 이상이면 rc=1, 내부 예외면 rc=2 (예외를 삼키고 green 을 내지 않는다).
@@ -347,6 +394,7 @@ import tempfile
 import unicodedata
 from collections import namedtuple
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from functools import cache
 from pathlib import Path
 
 #: RULE 축의 manifest 파서.  **부재를 «검사 없음»으로 접지 않는다** — 임포트가
@@ -378,7 +426,9 @@ DEFAULT_MANIFEST_PATH = Path(
 
 #: manifest 스키마 — **닫힌 키 집합**.  «담지 않는 것»(계수·행번호·원소 리터럴 목록)을
 #: 산문으로 금지하면 다음 회차에 새 키로 스며든다.  둘 곳 자체를 없애는 것이 처분이다.
-MANIFEST_TOP_KEYS = frozenset({"schema_version", "census_vocabulary", "rules"})
+MANIFEST_TOP_KEYS = frozenset(
+    {"schema_version", "census_vocabulary", "rejected_markers", "rules"}
+)
 MANIFEST_RULE_KEYS = frozenset(
     {"id", "title", "statement_anchor", "universe", "consumers", "element_id"}
 )
@@ -386,6 +436,9 @@ MANIFEST_RULE_REQUIRED = ("id", "statement_anchor", "universe", "consumers")
 MANIFEST_QUERY_KEYS = frozenset({"derivation", "block_anchor", "description"})
 MANIFEST_VOCAB_KEYS = frozenset({"lexical_axis", "structural_axis"})
 MANIFEST_STRUCTURAL_KEYS = frozenset({"nouns", "co_occurrence"})
+#: REF 축 기각 마커 정본의 닫힌 키 집합.  «어휘 목록» 하나뿐이다 — 계수를 둘 자리를
+#: 만들지 않는 것이 census 어휘와 같은 규율이다.
+MANIFEST_REJECTED_KEYS = frozenset({"first_heading_tokens"})
 MANIFEST_SCHEMA_VERSION = 1
 
 #: 검사기가 «구현하는» 파생 질의의 이름.  manifest 가 모르는 이름을 쓰면 red —
@@ -541,6 +594,14 @@ LAYER_MARK_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"층\s*구분"),
     re.compile(r"\[\s*v\d+\.\d+\s*에라타\s*\d+\s*차"),
 )
+
+#: REF 축 — 코드스팬 «안»이 저장소 마크다운 경로로 읽히는 형상.  공백·따옴표를 허용하지
+#: 않는 것은 산문 조각(「`… .md` 라고 적었다」)이 경로로 오독되지 않게 하기 위해서다.
+MD_CITATION_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*\.md$")
+
+#: REF 축 — 마크다운 헤딩 한 줄.  인용부호(`>`)로 감싼 헤딩도 헤딩으로 읽는다 — 이
+#: 코퍼스는 `> ## …` 형태를 실제로 쓴다.
+MD_HEADING_RE = re.compile(r"^\s*(?:>\s*)*#{1,6}\s")
 
 # ============================================================================
 # 모델
@@ -2458,6 +2519,207 @@ def check_rule(doc: ContractDoc, manifest_path: Path) -> list[Violation]:
 
 
 # ============================================================================
+# REF 축 — «기각된 문서를 정본으로 가리키는» 인용 (REF-1)
+# ============================================================================
+
+CitedHeading = namedtuple("CitedHeading", ["heading", "failure"])
+"""인용된 문서의 첫 헤딩 관측 결과.
+
+`heading` 과 `failure` 중 **정확히 하나**가 `None` 이 아니다.  둘을 가르는 이유는
+«헤딩에 기각 토큰이 없다»(측정 결과)와 «헤딩을 관측하지 못했다»(측정 불가)를 같은
+값으로 접으면 후자가 조용히 green 이 되기 때문이다.
+"""
+
+
+@cache
+def read_first_heading(abs_path: str) -> CitedHeading:
+    """인용된 마크다운 파일의 «첫 헤딩»을 읽는다 (코드펜스 «밖»에서만).
+
+    코드펜스 안의 `#` 는 셸 주석이지 헤딩이 아니다.  펜스를 건너뛰지 않으면 첫 헤딩이
+    엉뚱한 줄로 잡혀 기각 표시를 **못 보거나**(fail-open) 없는 것을 본다.
+
+    Args:
+        abs_path: 인용된 파일의 절대 경로 문자열 (캐시 키로 쓰이므로 문자열이다).
+
+    Returns:
+        `CitedHeading` — 헤딩 원문, 또는 관측 실패 사유.
+    """
+    try:
+        text = Path(abs_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return CitedHeading(None, f"읽지 못했다 ({type(exc).__name__})")
+    in_fence = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence and MD_HEADING_RE.match(line):
+            return CitedHeading(line, None)
+    return CitedHeading(None, "첫 헤딩을 찾지 못했다")
+
+
+def derive_rejection_tokens(
+    manifest_path: Path,
+) -> tuple[list[str] | None, list[Violation]]:
+    """기각 토큰 정본을 S-25 manifest 에서 읽는다 — **부재하면 fail-closed**.
+
+    토큰을 검사기에 리터럴로 박지 않는 이유는 12차·22차가 census 어휘에 세운 규율과
+    같다: 「무엇을 기각으로 읽는가」는 «의도»이고 그 정본은 manifest 다.  부재를 «빈
+    목록»으로 접으면 이 축이 조용히 사라진다 — `RULE-MANIFEST` 와 같은 극성으로 red.
+
+    Args:
+        manifest_path: S-25 manifest 경로.
+
+    Returns:
+        `(정규화된 토큰 목록 또는 None, 위반 목록)`.  `None` 이면 축을 돌리지 않는다.
+    """
+    path = str(manifest_path)
+
+    def fail(message: str) -> tuple[None, list[Violation]]:
+        return None, [Violation("TOS-CC-RULE-MANIFEST", path, 0, message)]
+
+    manifest, violations = load_manifest(manifest_path)
+    if manifest is None:
+        return fail(
+            "기각 토큰 정본을 읽을 수 없다 (manifest 자체가 red) — REF 축이 눈먼다: "
+            f"{[v.message for v in violations]}"
+        )
+    markers = manifest.get("rejected_markers")
+    if not isinstance(markers, dict):
+        return fail(
+            "`rejected_markers` 가 없다 — REF 축이 «무엇을 기각으로 읽는가»의 정본이 "
+            "«어디에도» 없다 (검사기에 리터럴로 박지 않는 것이 이 축의 규율이다)"
+        )
+    unknown = sorted(set(markers) - MANIFEST_REJECTED_KEYS)
+    if unknown:
+        return fail(
+            f"`rejected_markers` 에 스키마 밖 키 {unknown} — 닫힌 키 집합은 "
+            f"{sorted(MANIFEST_REJECTED_KEYS)} 다 (계수를 둘 자리를 만들지 않는다)"
+        )
+    tokens = markers.get("first_heading_tokens")
+    if not (
+        isinstance(tokens, list)
+        and tokens
+        and all(isinstance(t, str) and t.strip() for t in tokens)
+    ):
+        return fail(
+            "`rejected_markers.first_heading_tokens` 가 비지 않은 문자열 목록이 아니다"
+        )
+    return [_normalize(t) for t in tokens], []
+
+
+def derive_md_citations(doc: ContractDoc) -> list[tuple[int, str]]:
+    """계약이 코드스팬으로 가리키는 «저장소 마크다운 경로» 인용을 전수 파생한다.
+
+    자리 목록이 아니라 **형상**이다 — 「코드스팬 안이 `.md` 로 끝나는 상대 경로」.
+    특정 디렉터리(`docs/`)로 좁히지 «않는» 이유는, 좁히는 순간 그 밖에서 가리켜진
+    기각 문서가 영원히 안 보이기 때문이다.
+
+    Args:
+        doc: 계약 문서.
+
+    Returns:
+        `(행번호, 저장소 상대 경로)` 목록 — 중복을 접지 «않는다»(같은 경로를 여러 줄이
+        가리키면 각 줄이 독립적으로 판정 대상이다).
+    """
+    out: list[tuple[int, str]] = []
+    for lineno, line in enumerate(doc.lines, start=1):
+        for match in CODE_SPAN_RE.finditer(line):
+            candidate = match.group(1).strip()
+            if MD_CITATION_RE.match(candidate):
+                out.append((lineno, candidate))
+    return out
+
+
+def check_ref_rejected(
+    doc: ContractDoc, manifest_path: Path, repo_root: Path
+) -> list[Violation]:
+    """REF — «기각된» 문서를 가리키는 인용 줄이 그 기각을 말하지 않으면 red (REF-1).
+
+    Args:
+        doc: 계약 문서.
+        manifest_path: 기각 토큰 정본(S-25 manifest) 경로.
+        repo_root: 인용 경로를 해소할 저장소 루트.
+
+    Returns:
+        위반 목록.  모집단을 파생하지 못하면 `TOS-CC-PARSE` (fail-closed).
+    """
+    tokens, violations = derive_rejection_tokens(manifest_path)
+    if tokens is None:
+        return violations
+
+    citations = derive_md_citations(doc)
+    observed = 0
+    seen: set[tuple[int, str]] = set()
+    for lineno, rel in citations:
+        target = repo_root / rel
+        if not target.is_file():
+            continue  # 부재 경로는 모집단 «밖» — 존재 축은 이 축의 소관이 아니다
+        observed += 1
+        if (lineno, rel) in seen:
+            continue
+        seen.add((lineno, rel))
+        cited = read_first_heading(str(target))
+        if cited.heading is None:
+            violations.append(
+                Violation(
+                    "TOS-CC-PARSE",
+                    doc.display_path,
+                    lineno,
+                    f"REF 모집단 원소 `{rel}` 를 관측하지 못했다 — {cited.failure}. "
+                    "읽히지 않는 정본을 «위반 없음»으로 접지 않는다",
+                )
+            )
+            continue
+        norm_heading = _normalize(cited.heading)
+        fired = [t for t in tokens if t in norm_heading]
+        if not fired:
+            continue
+        # 면제는 «그 헤딩에서 실제로 발화한» 토큰에만 준다 — 다른 기각 어휘가 줄
+        # 어딘가에 있다고 면제되지는 않는다 (REF-1 의 비대칭 논증이 서는 조건).
+        if any(t in doc.norm_lines[lineno - 1] for t in fired):
+            continue
+        violations.append(
+            Violation(
+                "TOS-CC-REF-REJECTED",
+                doc.display_path,
+                lineno,
+                f"`{rel}` 의 첫 헤딩이 기각 표시 {fired} 를 달고 있는데 "
+                "이 인용 줄은 그 사실을 말하지 않는다 — «기각된 문서를 정본으로 "
+                f"가리키는» 인용이다.  첫 헤딩: {_ellipsis(cited.heading)}",
+            )
+        )
+
+    if not citations:
+        violations.append(
+            Violation(
+                "TOS-CC-PARSE",
+                doc.display_path,
+                0,
+                "REF 모집단이 0 이다 (코드스팬 마크다운 경로 인용 0건) — "
+                "이 축이 눈먼 것을 «위반 없음»과 구별할 수 없다",
+            )
+        )
+    elif not observed:
+        violations.append(
+            Violation(
+                "TOS-CC-PARSE",
+                doc.display_path,
+                0,
+                f"REF 모집단이 0 이다 (인용 {len(citations)}건 전부 저장소에 부재) — "
+                "형상은 남고 대상이 전부 사라진 상태는 «검사 불능»이다",
+            )
+        )
+    logger.info(
+        "REF: 코드스팬 인용 %d건 · 실재 %d건 · 기각 토큰 %d종",
+        len(citations),
+        observed,
+        len(tokens),
+    )
+    return violations
+
+
+# ============================================================================
 # 오케스트레이션
 # ============================================================================
 
@@ -2519,6 +2781,7 @@ def check_document(
         ("C3", check_c3),
         ("C4", check_c4),
         ("RULE", lambda d: check_rule(d, manifest)),
+        ("REF", lambda d: check_ref_rejected(d, manifest, root)),
     )
     for name, fn in axes:
         try:
@@ -2637,6 +2900,7 @@ MFIXTURE_EXTRA_RULE = (
 MFIXTURE_UNKNOWN_DERIV = "m-unknown-deriv"  # 검사기가 모르는 파생 이름
 MFIXTURE_COUNT_LITERAL = "m-count-literal"  # 계수(정수 리터럴)가 스며들었다
 MFIXTURE_NO_VOCAB = "m-no-vocab"  # census 어휘 정본이 사라졌다
+MFIXTURE_NO_REJECTED = "m-no-rejected"  # REF 축 기각 토큰 정본이 사라졌다
 
 
 def _enum_fence(doc: ContractDoc) -> tuple[int, int]:
@@ -3229,6 +3493,216 @@ def _benign_append(text: str) -> str:
     return _append(text, "대조군 — RULE 축과 무관한 무해한 말미 덧붙임.")
 
 
+# ---- REF 축 대조군 ----------------------------------------------------------
+#
+# 리터럴 경로를 적지 «않는다» — 어느 문서가 기각됐는지·어느 문서에 헤딩이 없는지는
+# 저장소 실측에서 파생한다.  하드코딩하면 그 파일이 고쳐지는 순간 대조군이 조용히
+# 죽거나(fail-open) 엉뚱한 이유로 죽는다.
+
+#: 저장소에 결코 실재하지 «않아야» 하는 인용 경로 (부재 = 모집단 밖 대조군).
+#: 실재 여부는 대조군 구성 시점에 실측해 확인한다.
+REF_ABSENT_PATH = "docs/plans/tos-contract-check-ref-absent-control.md"
+
+#: 저장소에 결코 실재하지 «않아야» 하는 접두 디렉터리 — 인용 «형상»은 그대로 두고
+#: 대상만 전부 사라지게 만드는 대조군에 쓴다.
+REF_ABSENT_PREFIX = "tos-contract-check-ref-absent-root"
+
+#: 파생 스캔에서 제외할 디렉터리 — `.history/` 는 편집기 스냅샷이고 정본이 아니다.
+REF_SCAN_EXCLUDE = frozenset({".history", ".git", ".venv", "node_modules"})
+
+#: 파생 스캔 범위.  저장소 전체를 훑지 않는 이유는 결정성과 비용이다 — 계약이 실제로
+#: 가리키는 마크다운은 이 아래에 산다.
+REF_SCAN_ROOT = "docs"
+
+
+def _ref_tokens() -> list[str]:
+    """대조군이 쓸 기각 토큰 정본.  못 읽으면 대조군을 구성하지 않는다."""
+    tokens, violations = derive_rejection_tokens(default_manifest_path())
+    if tokens is None:
+        raise ContractParseError(
+            f"기각 토큰 정본을 읽지 못해 REF 대조군을 구성할 수 없다: "
+            f"{[v.message for v in violations]}"
+        )
+    return tokens
+
+
+def _ref_scan() -> Iterator[Path]:
+    """`docs/` 아래 마크다운을 **결정적 순서**로 훑는다."""
+    root = default_repo_root()
+    for path in sorted((root / REF_SCAN_ROOT).rglob("*.md")):
+        if REF_SCAN_EXCLUDE & set(path.relative_to(root).parts):
+            continue
+        yield path
+
+
+@cache
+def _repo_rejected_doc() -> tuple[str, str]:
+    """저장소에서 «첫 헤딩이 기각 표시를 단» 마크다운 하나를 파생한다.
+
+    Returns:
+        `(저장소 상대 경로, 그 헤딩에서 발화한 토큰)`.
+
+    Raises:
+        ContractParseError: 그런 문서가 하나도 없을 때 — 그러면 이 축의 «red 인 기준»
+            자체를 만들 수 없으므로 조용히 넘기지 않는다.
+    """
+    root = default_repo_root()
+    tokens = _ref_tokens()
+    for path in _ref_scan():
+        cited = read_first_heading(str(path))
+        if cited.heading is None:
+            continue
+        fired = [t for t in tokens if t in _normalize(cited.heading)]
+        if fired:
+            return str(path.relative_to(root)), fired[0]
+    raise ContractParseError(
+        f"`{REF_SCAN_ROOT}/` 아래에 첫 헤딩이 기각 표시를 단 문서가 없다 — "
+        "REF 대조군의 «기각된 정본» 을 파생할 수 없다"
+    )
+
+
+@cache
+def _repo_headingless_doc() -> str:
+    """저장소에서 «첫 헤딩을 관측할 수 없는» 마크다운 하나를 파생한다 (fail-closed 대조군).
+
+    Raises:
+        ContractParseError: 그런 문서가 없을 때.
+    """
+    root = default_repo_root()
+    for path in _ref_scan():
+        if read_first_heading(str(path)).heading is None:
+            return str(path.relative_to(root))
+    raise ContractParseError(
+        f"`{REF_SCAN_ROOT}/` 아래에 첫 헤딩이 없는 문서가 없다 — "
+        "REF 의 «미관측 → red» 대조군을 파생할 수 없다"
+    )
+
+
+def _ref_clean_doc(text: str) -> str:
+    """계약이 이미 가리키는 인용 중 «기각 표시가 없는» 것 하나를 파생한다."""
+    root = default_repo_root()
+    tokens = _ref_tokens()
+    doc = ContractDoc(text, "<mutation>")
+    for _lineno, rel in derive_md_citations(doc):
+        target = root / rel
+        if not target.is_file():
+            continue
+        cited = read_first_heading(str(target))
+        if cited.heading is None:
+            continue
+        if not any(t in _normalize(cited.heading) for t in tokens):
+            return rel
+    raise ContractParseError(
+        "계약이 가리키는 인용 중 «기각 표시가 없는» 것이 없다 — "
+        "REF 역방향 대조군을 파생할 수 없다"
+    )
+
+
+#: REF 대조군 다섯 종이 **공유하는** 인용 문장.  한 자리에 두는 이유는 «단일 변수»
+#: 때문이다 — 문장까지 함께 바뀌면 발화/침묵의 차이가 «어느 변수» 때문인지 알 수 없다.
+#: 발화 대조군과 면제 대조군은 이 문장이 **byte 동일**하고 기각 토큰 절 하나만 다르다.
+REF_REFERENCE_SENTENCE = "대조군 — 이 자리의 파생 정본은 `{rel}` 다"
+
+
+def _ref_reference_line(rel: str, tail: str = "") -> str:
+    """공유 인용 문장을 만든다 (`tail` 은 그 뒤에 붙는 유일한 변수)."""
+    return REF_REFERENCE_SENTENCE.format(rel=rel) + tail + "."
+
+
+def _inject_rejected_reference(text: str) -> str:
+    """기각된 문서를 **기각 토큰 없이** 가리키는 줄을 덧붙인다 → 발화해야 한다."""
+    rel, token = _repo_rejected_doc()
+    line = _ref_reference_line(rel)
+    if token in _normalize(line):
+        raise ContractParseError(
+            f"주입 줄이 이미 토큰 «{token}» 를 담고 있다 — 면제가 서서 대조군이 무효다"
+        )
+    return _append(text, line)
+
+
+def _reference_rejected_doc_with_token(text: str) -> str:
+    """같은 문서를 **기각 토큰과 함께** 가리키는 줄 → 조용해야 한다 (면제 실증).
+
+    발화 대조군과의 차이는 **기각 토큰 절 하나뿐**이다 — 그것이 이 면제가 실제로
+    하중을 진다는 «단일 변수» 증거다.
+    """
+    rel, token = _repo_rejected_doc()
+    return _append(text, _ref_reference_line(rel, f" (그 초안은 {token}됐다)"))
+
+
+def _reference_clean_doc(text: str) -> str:
+    """기각 표시가 «없는» 문서를 가리키는 줄 → 조용해야 한다."""
+    return _append(text, _ref_reference_line(_ref_clean_doc(text)))
+
+
+def _reference_absent_path(text: str) -> str:
+    """**실재하지 않는** 경로를 가리키는 줄 → 조용해야 한다 (존재 축은 별개다)."""
+    if (default_repo_root() / REF_ABSENT_PATH).exists():
+        raise ContractParseError(
+            f"부재 대조군 경로가 실재한다: {REF_ABSENT_PATH} — 대조군 재설계 필요"
+        )
+    return _append(text, _ref_reference_line(REF_ABSENT_PATH))
+
+
+def _reference_headingless_doc(text: str) -> str:
+    """첫 헤딩을 관측할 수 «없는» 문서를 가리키는 줄 → 미관측이므로 red (fail-closed)."""
+    return _append(text, _ref_reference_line(_repo_headingless_doc()))
+
+
+def _break_md_citation_targets(text: str) -> str:
+    """모든 마크다운 경로 인용을 **실재하지 않는 경로**로 민다 (형상은 남기고).
+
+    `_strip_md_citations` 와 짝을 이룬다: 저쪽은 «형상 0», 이쪽은 «형상은 남았는데
+    실재 0» 이다.  두 fail-closed 한계가 각자 대조군을 갖지 않으면 하나만 지고 있는지
+    구별되지 않는다.
+    """
+    prefix = REF_ABSENT_PREFIX
+    if (default_repo_root() / prefix).exists():
+        raise ContractParseError(
+            f"부재 대조군 접두 디렉터리가 실재한다: {prefix} — 대조군 재설계 필요"
+        )
+    moved = 0
+
+    def repoint(match: re.Match[str]) -> str:
+        nonlocal moved
+        body = match.group(1).strip()
+        if not MD_CITATION_RE.match(body):
+            return match.group(0)
+        moved += 1
+        return f"`{prefix}/{body}`"
+
+    broken = "\n".join(CODE_SPAN_RE.sub(repoint, line) for line in text.splitlines())
+    if moved == 0:
+        raise AnchorMismatch("<마크다운 경로 코드스팬>", 0)
+    return broken
+
+
+def _strip_md_citations(text: str) -> str:
+    """모든 마크다운 경로 인용에서 백틱을 벗겨 **모집단을 0 으로 무너뜨린다**.
+
+    모집단 붕괴가 «위반 0» 으로 보이면 이 축은 눈이 먼 채 green 을 낸다 — 초안 3 이
+    배운 자리다.  그래서 이 상태는 `TOS-CC-PARSE` 로 시끄럽게 죽어야 한다.
+    """
+
+    unwrapped = 0
+
+    def unwrap(match: re.Match[str]) -> str:
+        nonlocal unwrapped
+        body = match.group(1)
+        if not MD_CITATION_RE.match(body.strip()):
+            return match.group(0)
+        unwrapped += 1
+        return body
+
+    # **행 단위**로 훑는다 — `derive_md_citations` 와 같은 스캐너여야 한다.  전체
+    # 텍스트를 한 번에 훑으면 코드펜스(백틱 3개)가 짝짓기를 어긋내 인용 일부가
+    # 삼켜지고, 그러면 이 대조군이 «모집단을 0 으로 만들었다»고 착각한다.
+    stripped = "\n".join(CODE_SPAN_RE.sub(unwrap, line) for line in text.splitlines())
+    if unwrapped == 0:
+        raise AnchorMismatch("<마크다운 경로 코드스팬>", 0)
+    return stripped
+
+
 def build_manifest_fixtures(
     tmpdir: Path, real_manifest: Path
 ) -> dict[str | None, Path]:
@@ -3299,6 +3773,9 @@ def build_manifest_fixtures(
     def drop_vocab(payload: dict[str, object]) -> None:
         payload.pop("census_vocabulary", None)
 
+    def drop_rejected(payload: dict[str, object]) -> None:
+        payload.pop("rejected_markers", None)
+
     not_yaml = tmpdir / "not-a-manifest.yaml"
     not_yaml.write_text("이것은 매핑이 아니다\n", encoding="utf-8")
 
@@ -3310,6 +3787,7 @@ def build_manifest_fixtures(
         MFIXTURE_UNKNOWN_DERIV: write(MFIXTURE_UNKNOWN_DERIV, unknown_derivation),
         MFIXTURE_COUNT_LITERAL: write(MFIXTURE_COUNT_LITERAL, count_literal),
         MFIXTURE_NO_VOCAB: write(MFIXTURE_NO_VOCAB, drop_vocab),
+        MFIXTURE_NO_REJECTED: write(MFIXTURE_NO_REJECTED, drop_rejected),
     }
 
 
@@ -4046,6 +4524,84 @@ def build_mutations() -> list[Mutation]:
         Mutation(
             "RULE-honest-vocabulary-is-clean",
             "TOS-CC-RULE-VOCAB",
+            "clean",
+            _benign_append,
+        ),
+        # ---- REF — 기각된 문서를 정본으로 가리키는 인용 (29차 검사기 공백) --------
+        Mutation(
+            # 이 판의 직접 대조군.  «기각된 문서를 토큰 없이 가리키는» 줄이 red 여야
+            # 한다 — 27차가 서 있던 상태가 정확히 이 형상이다.
+            "REF-inject-rejected-reference",
+            "TOS-CC-REF-REJECTED",
+            "inject",
+            _inject_rejected_reference,
+        ),
+        Mutation(
+            # 면제 실증.  같은 문서를 **기각 토큰과 함께** 가리키면 그것은 «기각 사실의
+            # 서술»이므로 조용해야 한다.  이 대조군이 없으면 면제가 «있다고 적힌 것»
+            # 이지 «작동하는 것»이 아니다.
+            "REF-rejected-reference-that-says-so-is-exempt",
+            "TOS-CC-REF-REJECTED",
+            "silent",
+            _reference_rejected_doc_with_token,
+        ),
+        Mutation(
+            # 기각 표시가 «없는» 문서를 가리키는 것은 위반이 아니다.
+            "REF-clean-reference-is-silent",
+            "TOS-CC-REF-REJECTED",
+            "silent",
+            _reference_clean_doc,
+        ),
+        Mutation(
+            # 부재 경로는 모집단 «밖» — 존재 축은 이 축의 소관이 아니다.  여기를
+            # 잡으면 한 발화가 두 사건(기각·부재)을 섞는다.
+            "REF-absent-path-is-silent",
+            "TOS-CC-REF-REJECTED",
+            "silent",
+            _reference_absent_path,
+        ),
+        Mutation(
+            # fail-closed 실증 — 첫 헤딩을 «관측하지 못한» 인용은 조용히 넘기지 않는다.
+            # 「미관측 = 위반 없음」으로 접으면 읽히지 않는 정본이 곧 green 이 된다.
+            "REF-unobservable-target-is-red",
+            "TOS-CC-PARSE",
+            "capture",
+            _reference_headingless_doc,
+            "관측하지 못했다",
+        ),
+        Mutation(
+            # 모집단 붕괴는 «위반 0» 이 아니라 «검사 불능» 이다 (초안 3 의 교훈).
+            "REF-empty-population-is-red",
+            "TOS-CC-PARSE",
+            "capture",
+            _strip_md_citations,
+            "코드스팬 마크다운 경로 인용 0건",
+        ),
+        Mutation(
+            # 같은 fail-closed 의 «두 번째» 한계 — 형상은 남았는데 대상이 전부
+            # 사라진 상태.  둘을 한 대조군으로 덮으면 하나만 지고 있어도 통과한다.
+            "REF-all-targets-absent-is-red",
+            "TOS-CC-PARSE",
+            "capture",
+            _break_md_citation_targets,
+            "전부 저장소에 부재",
+        ),
+        Mutation(
+            # 기각 토큰 정본이 manifest 에서 사라지면 이 축은 «무엇을 기각으로 읽는가»
+            # 를 잃는다 — RULE-MANIFEST 와 같은 극성으로 red.
+            "REF-manifest-rejected-markers-gone",
+            "TOS-CC-RULE-MANIFEST",
+            "capture",
+            lambda t: t,
+            "REF 축이 «무엇을 기각으로 읽는가»의 정본이",
+            None,
+            None,
+            MFIXTURE_NO_REJECTED,
+            None,
+        ),
+        Mutation(
+            "REF-honest-reference-is-clean",
+            "TOS-CC-REF-REJECTED",
             "clean",
             _benign_append,
         ),
