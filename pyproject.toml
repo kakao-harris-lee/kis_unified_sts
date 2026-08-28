@@ -163,6 +163,16 @@ performance = [
 # suite green on the new version.
 backtest = [
     "vectorbt>=1.0,<1.1",
+    # vectorbt 1.0.x registers plotly's mapbox traces (`scattermapbox`) at *import*
+    # time (`vectorbt/_settings.py`), so an incompatible plotly breaks `import
+    # vectorbt` before any of our code runs.  plotly 7.0 removed those traces
+    # ("Bad property path: scattermapbox / Did you mean \"scattermap\"?").
+    #
+    # The boundary is **measured, not assumed**: the last green `backtest-extra`
+    # run (2026-07-20) resolved plotly 6.9.0, the first red one (2026-08-28)
+    # resolved 7.0.0.  Capping at `<6` — the intuitive guess — would have been
+    # wrong by a whole major.
+    "plotly<7",
 ]
 
 visualization = [
