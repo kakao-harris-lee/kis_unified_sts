@@ -6,12 +6,17 @@
 > |---|---|---|
 > | **A. 아티팩트 countersign** | ✅ **완료** | 커밋 `ec9daa0c` — `PREVENTION_ABSENT` 해소 |
 > | **B. `main` 착지** | ✅ **완료** | PR #637 머지 `b46c6a17`(**merge commit** — SHA 인용 87종 보존) — `PREVENTION_UNVERIFIED_REVISION` 해소 · `(b-blob)@target` = **OK** |
-> | **C. 룰셋 네 항** | ⬜ **미착수** | ← **다음에 할 일** (§4) |
+> | **C. 룰셋 네 항** | ⛔ **조건부 보류** | **`approve` verdict 선행 필수** — 지금 하면 저장소가 잠긴다(§4 머리말) |
 > | D. 예고된 에라타 | ✅ 처분 | 에라타 38차 — §5 가 예고한 대로 |
+> | **+ O-6 재결속** | ✅ **완료** | 운영자 `932632ff` — `REBINDING_REQUIRED` 해소 · digest 일치 확인 |
 >
 > ```
-> 현재: prevention_control_state=PREVENTION_INSUFFICIENT   (수집 1건 — 처음 3건에서 감소)
+> u17    : prevention_control_state=PREVENTION_INSUFFICIENT   (수집 1건 — 처음 3건에서 감소)
+> 하니스 : d0a_entry_state=APPROVAL_ABSENT                     (REBINDING_REQUIRED 에서 전이)
 > ```
+>
+> **두 실행기가 서로 다른 층을 잰다** — `u17` = «예방 인프라가 서 있는가»(단계 C 가 막는다) ·
+> 하니스 = «이 HEAD 에서 진입 가능한가»(approve 가 막는다).  **둘 다 approve 앞에서 만난다.**
 >
 > **§1 이하의 실측표는 `e9bcdc5f` 시점 «기록»이며 지금 상태가 아니다.**  고치지 않고 둔다 —
 > 무엇이 어떤 순서로 해소됐는지가 사라지기 때문이다.  **현재 상태는 위 표와 실행기 출력이
@@ -189,6 +194,38 @@ gh api repos/kakao-harris-lee/kis_unified_sts/actions/workflows/tos-gate.yml -q 
 ---
 
 ## 4. 단계 C — 룰셋 필수 체크 등재 (**마지막**)
+
+> # ⛔ 선행 조건 — **`approve` verdict 없이 이 단계를 실행하면 저장소가 잠긴다**
+>
+> **2026-08-28 실측으로 확인된 교착이다.  이 단계는 «마지막»일 뿐 아니라 «조건부»다.**
+>
+> `tos-gate` 를 required check 로 걸면 **모든 PR 이 그 체크의 통과를 요구**한다.  그런데
+> `tos-gate` 는 하니스를 돌려 `d0a_entry_state` 가 `ENTRY_OK` 일 때만 green 이고, `ENTRY_OK` 는
+> **R-4** 에서 `adjudicator: codex` **∧** `verdict: approve` 를 요구한다.
+>
+> ```text
+> 실측:  이 아크의 verdict 37건 중 approve = 0건  (전부 needs-attention)
+> 현재:  d0a_entry_state=APPROVAL_ABSENT   ← O-6 재결속(932632ff) 후의 상태
+> ```
+>
+> ⟹ **지금 이 단계를 실행하면 `tos-gate` 가 red 인 채로 required 가 되어 «모든 PR» 이
+> 무기한 머지 불가**가 된다.  탈출구는 보호를 잠시 해제하는 창뿐이고, 계약은 그 창을
+> **닫지 못한다고 등재한 잔여**로 분류한다.
+>
+> **계약이 이미 적어 둔 인접 사례와 구별하라** — 계약 §12.2 는 「룰셋만 있고 워크플로가 없으면
+> required check 가 **영구 pending**」을 등재했다.  **이 자리는 다르다**: 워크플로는 있고
+> **정상 동작하며 red 다.**  게이트가 «고장난» 것이 아니라 **제 일을 하는 중**이고, 그 일이
+> 「approve 전까지 차단」이다.
+>
+> **그래서 순서는 이렇다:**
+>
+> ```text
+> 계약에 대한 approve verdict  →  tos-gate green  →  단계 C  →  PREVENTION_ACTIVE
+> ```
+>
+> **approve 를 얻기 전에는 단계 C 를 실행하지 않는다.**  현재 상태(파일 3종 착지 · 룰셋 미설정)
+> 는 계약 §12.2 가 **부분 도입에서 «보존»으로 판정한 바로 그 상태**다 — 「보호 없음이지만
+> **거짓 보호 주장도 없다**」.  **의도된 대기 상태이지 미완의 방치가 아니다.**
 
 > **⚠ 「`tos-gate` 추가」 하나로는 끝나지 않는다.**  실행기가 낸 실제 사유는 **넷**이다
 > (실측 · `e9bcdc5f`):
