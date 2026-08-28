@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -13,12 +13,26 @@ from shared.scanner.trade_trend_priority import (
 )
 
 
+def _recent_period() -> str:
+    """Return a ``YYYY-MM`` period that is always inside the staleness window.
+
+    ``_parse_date`` resolves ``YYYY-MM`` to that month's last day, and the
+    loader drops snapshots older than ``stale_after_days`` (default 75).  A
+    hardcoded literal therefore makes the test a time bomb: it passes until
+    the literal ages past the window, then fails with no code change.  The
+    previous month is at most 31 days old, so deriving it keeps these tests
+    about the *bonus* rather than about the calendar.
+    """
+    first_of_month = date.today().replace(day=1)
+    return (first_of_month - timedelta(days=1)).strftime("%Y-%m")
+
+
 def test_trade_trend_ranker_reorders_by_bounded_sector_bonus(tmp_path):
     snapshot_path = tmp_path / "trade.csv"
     pd.DataFrame(
         [
             {
-                "period": "2026-05",
+                "period": _recent_period(),
                 "sector": "semiconductors",
                 "trade_trend_score": 1.0,
             }
